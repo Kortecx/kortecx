@@ -1,0 +1,27 @@
+[project]
+name = "kortecx"
+version = "0.1.0"
+description = "Agents, MLOps workflows and AI application Builder"
+authors = [
+    {name = "JayReddy",email = "nipunalabs@gmail.com"}
+]
+license = {text = "MIT"}
+readme = "README.md"
+requires-python = ">=3.10.16"
+dependencies = [
+    "click>=8.1.8",
+    "duckdb>=1.2.1",
+    "fastapi>=0.115.12",
+    "langchain>=0.3.23",
+    "langchain-community>=0.3.21",
+    "mcp[cli]>=1.6.0",
+    "mindsdb-sdk>=3.4.0",
+    "mlflow>=2.21.2",
+    "ollama>=0.4.7",
+    "torch>=2.6.0",
+    "transformers>=4.50.3",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
