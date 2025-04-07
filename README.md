@@ -1,1 +1,1 @@
-# Agents, MLOps workflows and AI application Builder
+# Agents, MLOps workflows and AI application Builder with smart CLI
