@@ -4,7 +4,7 @@ import os
 from kortecx.thalamus.utils.catalog_utils import setupDuckDb, SetupUCDB
 
 class ThalamusRegistry():
-    def __init__(self, registryName: str = "Kortecx.db"):
+    def __init__(self, registryName: str = "kortecxdb"):
         self.registryName = registryName
 
     def registry_init(self):
