@@ -14,7 +14,7 @@ class ConfigHandler():
             default_configs['name'] = project_name
         validate_configs = os.listdir(os.getcwd())
         if "kortecxconfig.json" not in validate_configs:
-            with open(os.getcwd() + "/kortecxconfig.json", "w") as cfg:
+            with open(os.getcwd() + "/kortecx.config.json", "w") as cfg:
                 json.dump(default_configs, cfg, indent=4)
 
 
