@@ -196,4 +196,4 @@ sample/
 .python-version
 etc
 kortecxdb
-kortecxconfig.json
+kortecx.config.json
