@@ -1,15 +1,13 @@
 
-import json
-import os
-from kortecx.thalamus.utils.catalog_utils import setupDuckDb, SetupUCDB
+from kortecx.thalamus.utils.catalog_utils import setupDuckDb
+from kortecx.utils.wrappers import WrapperClass
 
 class ThalamusRegistry():
     def __init__(self, registryName: str = "kortecxdb"):
         self.registryName = registryName
 
     def registry_init(self):
-        with open(os.getcwd() + "/kortecxconfig.json","r") as registry_conf:
-            _configs = json.load(registry_conf)
+        project_configs = WrapperClass().get_config()
         
-        if _configs['UCEnabled'] == False:
-            duckconn = setupDuckDb(defaultDatabase=self.registryName).db_entrypoint()
+        if project_configs['UCEnabled'] == False:
+            setupDuckDb(defaultDatabase=self.registryName).db_entrypoint()

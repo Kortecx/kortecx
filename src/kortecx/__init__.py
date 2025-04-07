@@ -1,2 +1,3 @@
-def hello() -> str:
-    return "Hello from kortecx!"
+from .thalamus import ThalamusRegistry
+
+__all__ = ["ThalamusRegistry"]
