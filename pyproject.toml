@@ -37,9 +37,6 @@ venvPath = "."
 venv = ".venv"
 strict = ["src/kortecx/**/*.py"]
 
-[tool.hatch.build.targets.wheel]
-packages = ["src/kortecx"]
-
 [project.urls]
 Homepage = "https://kortecx.com"
 Repository = "https://github.com/Kortecx/kortecx"
@@ -57,6 +54,3 @@ ignore = []
 [tool.ruff]
 line-length = 88
 target-version = "py310"
-
-[tool.uv.sources]
-kortecx = { workspace = true }
