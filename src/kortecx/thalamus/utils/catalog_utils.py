@@ -66,6 +66,6 @@ class setupDuckDb():
 
 
 if __name__ == '__main__':
-    setupDuckDb(defaultDatabase="Kortecx.db").db_entrypoint()
+    setupDuckDb(defaultDatabase="kortecxdb").db_entrypoint()
 
 
