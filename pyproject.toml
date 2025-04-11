@@ -31,12 +31,6 @@ source = "uv-dynamic-versioning"
 [project.scripts]
 kx = "kortecx.cli.cli:kx"
 
-[tool.pyright]
-include = ["src/kortecx", "tests"]
-venvPath = "."
-venv = ".venv"
-strict = ["src/kortecx/**/*.py"]
-
 [project.urls]
 Homepage = "https://kortecx.com"
 Repository = "https://github.com/Kortecx/kortecx"
