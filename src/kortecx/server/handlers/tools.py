@@ -1,22 +1,24 @@
 from functools import wraps
+from typing import Callable, TypeVar, ParamSpec
 import duckdb
+from duckdb import DuckDBPyConnection
 import numpy as np
 import os
 import inspect
 from mcp.server.fastmcp import FastMCP
 from kortecx.utils.wrappers import WrapperClass
+from typing import Any
 
 mcp = FastMCP("Kortecx")
 
-
-def register_tool(tool_name: str, tool_desc: str,  group: str = 'kxSchema', DB: str = "kortecxdb",traverse: str = "no"):
-    def decorator(func):
+def register_tool(tool_name: str, tool_desc: str,  group: str = 'kxSchema', DB: str = "kortecxdb",traverse: str = "no") -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
         @wraps(func)
         @mcp.tool(name=tool_name, description=tool_desc)
-        def wrapper(*args, **kwargs):
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
             project_configs = WrapperClass().get_config()
             if project_configs['UCEnabled'] != True:
-                duckconn = duckdb.connect(database=DB)
+                duckconn: DuckDBPyConnection = duckdb.connect(database="kortecxdb")
                 caller_file = inspect.getfile(func)
                 caller_dir = os.path.join(os.path.dirname(os.path.abspath(caller_file)), caller_file)
                 create_registry = f"""
