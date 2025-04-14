@@ -1,8 +1,9 @@
 from kortecx.server.handlers.tools import register_tool
+import duckdb
 
 @register_tool("Addition","functions that helps add two numbers")
-def add(x,y):
+def add_numbers(x,y):
     return x+y
 
 if __name__ == '__main__':
-    add(1,2)
+    add_numbers(1,2)
