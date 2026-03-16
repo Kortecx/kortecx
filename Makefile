@@ -1,4 +1,4 @@
-.PHONY: start stop frontend engine docker-up docker-down db-push db-seed install clean
+.PHONY: start stop frontend engine docker-up docker-down db-push db-seed install clean backup restore check-persistence
 
 # ── Full stack ────────────────────────────────────────────────────────────────
 start:
@@ -16,6 +16,8 @@ docker-down:
 	docker compose down
 
 docker-reset:
+	@echo "WARNING: This deletes ALL data volumes! Run 'make backup' first."
+	@read -p "Are you sure? (y/N) " confirm && [ "$$confirm" = "y" ] || exit 1
 	docker compose down -v && docker compose up -d
 
 # ── Frontend (Next.js) ───────────────────────────────────────────────────────
@@ -55,6 +57,17 @@ db-studio:
 # ── Install everything ───────────────────────────────────────────────────────
 install: frontend-install engine-install
 	@echo "All dependencies installed"
+
+# ── Backup & Persistence ──────────────────────────────────────────────────
+backup:
+	bash scripts/backup-db.sh
+
+restore:
+	@echo "Usage: make restore FILE=backups/kortecx_dev_YYYYMMDD_HHMMSS.sql.gz"
+	@test -n "$(FILE)" && bash scripts/restore-db.sh $(FILE) || echo "Specify FILE=<path>"
+
+check-persistence:
+	bash scripts/check-persistence.sh
 
 # ── Clean ────────────────────────────────────────────────────────────────────
 clean:

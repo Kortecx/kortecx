@@ -112,3 +112,4 @@ temp/
 *.tfstate
 *.tfstate.backup
 engine/uploads/
+backups/*.sql.gz
