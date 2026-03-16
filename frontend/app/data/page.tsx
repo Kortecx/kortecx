@@ -64,6 +64,11 @@ function DatasetViewer({ dataset, onClose }: { dataset: any; onClose: () => void
   const [sortCol, setSortCol] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
   const [fetchTrigger, setFetchTrigger] = useState(0); // manual refresh trigger
+  const [editMode, setEditMode] = useState(false);
+  const [pendingEdits, setPendingEdits] = useState<Map<string, any>>(new Map()); // key: "row-col"
+  const [saving, setSaving] = useState(false);
+  const [versions, setVersions] = useState<any[]>([]);
+  const [showVersions, setShowVersions] = useState(false);
   const PAGE_SIZE = 50;
 
   // Use a ref for columns so fetchData doesn't depend on the columns state
@@ -71,6 +76,54 @@ function DatasetViewer({ dataset, onClose }: { dataset: any; onClose: () => void
   columnsRef.current = columns;
 
   const filePath = dataset.outputPath || dataset.cachePath || '';
+
+  const editKey = (row: number, col: string) => `${row}-${col}`;
+  const getCellValue = (rowIdx: number, col: string, originalValue: any) => {
+    const key = editKey(page * PAGE_SIZE + rowIdx, col);
+    return pendingEdits.has(key) ? pendingEdits.get(key) : originalValue;
+  };
+  const setCellValue = (rowIdx: number, col: string, value: any) => {
+    const key = editKey(page * PAGE_SIZE + rowIdx, col);
+    setPendingEdits(prev => new Map(prev).set(key, value));
+  };
+
+  const handleSaveEdits = async () => {
+    if (pendingEdits.size === 0) return;
+    setSaving(true);
+    try {
+      const updates = Array.from(pendingEdits.entries()).map(([key, value]) => {
+        const [rowStr, ...colParts] = key.split('-');
+        return { rowIndex: parseInt(rowStr), column: colParts.join('-'), value };
+      });
+      const res = await fetch('/api/data/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: filePath, updates, create_version: true }),
+      });
+      const data = await res.json();
+      if (!data.error) {
+        setPendingEdits(new Map());
+        setFetchTrigger(t => t + 1);
+      }
+    } catch (err) {
+      console.error('Save failed:', err);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const loadVersions = async () => {
+    try {
+      const res = await fetch('/api/data/versions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: filePath }),
+      });
+      const data = await res.json();
+      setVersions(data.versions ?? []);
+      setShowVersions(true);
+    } catch {}
+  };
 
   const fetchData = useCallback(async () => {
     if (!filePath) { setError('No data file path available'); setLoading(false); return; }
@@ -139,7 +192,7 @@ function DatasetViewer({ dataset, onClose }: { dataset: any; onClose: () => void
       <div
         onClick={e => e.stopPropagation()}
         style={{
-          width: '100%', maxWidth: 1200,
+          width: '100%', maxWidth: 1200, position: 'relative' as const,
           background: 'var(--bg-surface)', border: '1px solid var(--border)',
           borderRadius: 12, display: 'flex', flexDirection: 'column',
           overflow: 'hidden', boxShadow: '0 24px 64px rgba(0,0,0,0.4)',
@@ -159,6 +212,46 @@ function DatasetViewer({ dataset, onClose }: { dataset: any; onClose: () => void
               {dataset.format && ` · ${dataset.format.toUpperCase()}`}
             </div>
           </div>
+          {/* Edit mode toggle */}
+          <button
+            onClick={() => { setEditMode(!editMode); if (editMode) setPendingEdits(new Map()); }}
+            style={{
+              background: editMode ? 'rgba(5,150,105,0.1)' : 'none',
+              border: `1px solid ${editMode ? 'var(--teal)' : 'var(--border)'}`,
+              borderRadius: 4, cursor: 'pointer',
+              color: editMode ? 'var(--teal)' : 'var(--text-3)',
+              display: 'flex', alignItems: 'center', gap: 4,
+              padding: '4px 8px', fontSize: 11, fontWeight: editMode ? 600 : 500,
+            }}
+          >
+            {editMode ? '✏️ Editing' : '✏️ Edit'}
+          </button>
+          {/* Save edits */}
+          {editMode && pendingEdits.size > 0 && (
+            <button
+              onClick={handleSaveEdits}
+              disabled={saving}
+              style={{
+                background: 'var(--teal)', color: '#fff', border: 'none',
+                borderRadius: 4, cursor: 'pointer', padding: '4px 10px',
+                fontSize: 11, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 4,
+              }}
+            >
+              {saving ? <Loader2 size={11} className="spin" /> : <CheckCircle2 size={11} />}
+              Save {pendingEdits.size} edit{pendingEdits.size !== 1 ? 's' : ''}
+            </button>
+          )}
+          {/* Version history */}
+          <button
+            onClick={loadVersions}
+            style={{
+              background: 'none', border: '1px solid var(--border)', borderRadius: 4,
+              cursor: 'pointer', color: 'var(--text-3)', display: 'flex', alignItems: 'center',
+              gap: 4, padding: '4px 8px', fontSize: 11,
+            }}
+          >
+            <Clock size={11} /> Versions
+          </button>
           <button
             onClick={() => setFetchTrigger(t => t + 1)}
             title="Reload data"
@@ -282,8 +375,23 @@ function DatasetViewer({ dataset, onClose }: { dataset: any; onClose: () => void
                         <td key={col.name} style={{
                           padding: '6px 12px', color: 'var(--text-2)',
                           maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                          background: pendingEdits.has(editKey(page * PAGE_SIZE + i, col.name)) ? 'rgba(5,150,105,0.08)' : undefined,
                         }} title={display}>
-                          {display}
+                          {editMode ? (
+                            <input
+                              value={getCellValue(i, col.name, val) ?? ''}
+                              onChange={e => setCellValue(i, col.name, e.target.value)}
+                              style={{
+                                width: '100%', border: 'none', background: 'transparent',
+                                fontSize: 12, color: 'var(--text-1)', outline: 'none',
+                                padding: 0, fontFamily: 'inherit',
+                              }}
+                              onFocus={e => e.currentTarget.style.background = 'rgba(5,150,105,0.06)'}
+                              onBlur={e => e.currentTarget.style.background = 'transparent'}
+                            />
+                          ) : (
+                            display
+                          )}
                         </td>
                       );
                     })}
@@ -332,6 +440,46 @@ function DatasetViewer({ dataset, onClose }: { dataset: any; onClose: () => void
             Powered by DuckDB
           </span>
         </div>
+
+        {/* Version history panel */}
+        {showVersions && (
+          <div style={{
+            position: 'absolute', top: 50, right: 20, width: 300, maxHeight: 300, overflowY: 'auto',
+            background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 8,
+            boxShadow: '0 8px 24px rgba(0,0,0,0.2)', zIndex: 10,
+          }}>
+            <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-1)' }}>Version History</span>
+              <button onClick={() => setShowVersions(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-3)' }}><X size={14} /></button>
+            </div>
+            {versions.length === 0 ? (
+              <div style={{ padding: '20px 14px', textAlign: 'center', color: 'var(--text-4)', fontSize: 12 }}>No versions yet</div>
+            ) : (
+              versions.map((v: any, i: number) => (
+                <div key={i} style={{ padding: '8px 14px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 11, color: 'var(--text-2)' }}>{v.createdAt}</div>
+                    <div style={{ fontSize: 10, color: 'var(--text-4)' }}>{fmtBytes(v.sizeBytes)}</div>
+                  </div>
+                  <button
+                    onClick={async () => {
+                      await fetch('/api/data/versions', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ restore: true, original_path: filePath, version_path: v.path }),
+                      });
+                      setShowVersions(false);
+                      setFetchTrigger(t => t + 1);
+                    }}
+                    style={{ fontSize: 10, padding: '3px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg)', cursor: 'pointer', color: 'var(--text-2)' }}
+                  >
+                    Restore
+                  </button>
+                </div>
+              ))
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -369,6 +517,31 @@ function SchemaEditorModal({
         .catch(() => {});
     }
   }, [dataset?.id]);
+
+  // Auto-detect schema from file
+  useEffect(() => {
+    const path = dataset?.outputPath;
+    if (path && columns.length <= 1 && !columns[0]?.name) {
+      fetch('/api/data/schema', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path }),
+      })
+        .then(r => r.json())
+        .then(data => {
+          if (data.columns?.length > 0) {
+            setColumns(data.columns.map((c: any) => ({
+              name: c.name,
+              type: c.type ?? 'string',
+              description: c.description ?? '',
+              required: c.required ?? false,
+            })));
+          }
+        })
+        .catch(() => {});
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dataset?.outputPath]);
 
   const addColumn = () => {
     setColumns(prev => [...prev, { name: '', type: 'string', description: '', required: false }]);
