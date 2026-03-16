@@ -6,7 +6,9 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   Star, Search, Plus, Settings, TrendingUp,
   Loader2, Activity, Zap, Clock, BarChart2,
-  ChevronDown, Play, Cpu, Tag,
+  ChevronDown, Play, Cpu, Tag, X, Save,
+  Server, Cloud, Trash2, CheckCircle2, AlertCircle,
+  Hash,
 } from 'lucide-react';
 import { useExperts } from '@/lib/hooks/useApi';
 
@@ -105,8 +107,443 @@ function SkeletonCard() {
   );
 }
 
+/* ─── Configure Modal ──────────────────────────────── */
+function ConfigureModal({
+  expert,
+  onClose,
+  onSave,
+}: {
+  expert: Record<string, unknown>;
+  onClose: () => void;
+  onSave: (id: string, updates: Record<string, unknown>) => Promise<void>;
+}) {
+  const [name, setName] = useState(expert.name as string);
+  const [role, setRole] = useState(expert.role as string);
+  const [status, setStatus] = useState(expert.status as string);
+  const [systemPrompt, setSystemPrompt] = useState((expert.systemPrompt as string) ?? '');
+  const [temperature, setTemperature] = useState(Number(expert.temperature) || 0.7);
+  const [maxTokens, setMaxTokens] = useState((expert.maxTokens as number) ?? 4096);
+  const [tagsStr, setTagsStr] = useState(((expert.tags as string[]) ?? []).join(', '));
+  const [isPublic, setIsPublic] = useState((expert.isPublic as boolean) ?? false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const modelSource = (expert.modelSource as string) ?? 'provider';
+  const isLocal = modelSource === 'local';
+
+  const handleSave = async () => {
+    if (!name.trim()) { setError('Name is required'); return; }
+    setSaving(true);
+    setError('');
+    try {
+      await onSave(expert.id as string, {
+        name: name.trim(),
+        role,
+        status,
+        systemPrompt: systemPrompt.trim() || null,
+        temperature,
+        maxTokens,
+        tags: tagsStr.split(',').map(t => t.trim()).filter(Boolean),
+        isPublic,
+      });
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Save failed');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const LABEL: React.CSSProperties = {
+    fontSize: 11, fontWeight: 600, color: 'var(--text-3)',
+    display: 'block', marginBottom: 4,
+  };
+
+  const ROLES = [
+    'researcher', 'analyst', 'writer', 'coder', 'reviewer', 'planner',
+    'synthesizer', 'critic', 'legal', 'financial', 'medical', 'coordinator',
+    'data-engineer', 'creative', 'translator', 'custom',
+  ];
+
+  const STATUSES = ['active', 'idle', 'training', 'offline'];
+
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, background: 'rgba(7,7,26,0.85)',
+      zIndex: 200, display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
+      paddingTop: 60, overflowY: 'auto',
+    }}>
+      <motion.div
+        initial={{ opacity: 0, y: 16, scale: 0.97 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        exit={{ opacity: 0, y: 8 }}
+        transition={{ duration: 0.2 }}
+        style={{
+          width: 540, maxWidth: '92vw',
+          background: 'var(--bg-surface)', border: '1px solid var(--border-md)',
+          borderRadius: 12, overflow: 'hidden',
+          boxShadow: '0 24px 80px rgba(0,0,0,0.2)',
+          marginBottom: 40,
+        }}
+      >
+        {/* Header */}
+        <div style={{
+          padding: '18px 22px', borderBottom: '1px solid var(--border)',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <Settings size={16} color={SECTION_COLOR} />
+            <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-1)' }}>Configure Expert</span>
+          </div>
+          <button onClick={onClose} style={{
+            background: 'none', border: 'none', cursor: 'pointer',
+            color: 'var(--text-3)', display: 'flex', padding: 4,
+          }}>
+            <X size={16} />
+          </button>
+        </div>
+
+        {/* Model info (read-only) */}
+        <div style={{
+          padding: '12px 22px', background: 'var(--bg-elevated)',
+          borderBottom: '1px solid var(--border)',
+          display: 'flex', alignItems: 'center', gap: 10, fontSize: 12,
+        }}>
+          {isLocal ? <Server size={13} color="#059669" /> : <Cloud size={13} color="#2563EB" />}
+          <span style={{ color: 'var(--text-2)', fontWeight: 500 }}>
+            {isLocal ? 'Local' : 'Provider'}: {(expert.modelName ?? expert.modelId) as string}
+          </span>
+          <span style={{ color: 'var(--text-4)' }}>·</span>
+          <span style={{ color: 'var(--text-4)' }}>{(expert.providerName ?? expert.providerId) as string}</span>
+        </div>
+
+        {/* Form */}
+        <div style={{ padding: '20px 22px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {/* Name + Role */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+            <div>
+              <label style={LABEL}>Name <span style={{ color: '#ef4444' }}>*</span></label>
+              <input className="input" style={{ width: '100%', fontSize: 13 }}
+                value={name} onChange={e => setName(e.target.value)} />
+            </div>
+            <div>
+              <label style={LABEL}>Role</label>
+              <select className="input" style={{ width: '100%', fontSize: 13 }}
+                value={role} onChange={e => setRole(e.target.value)}>
+                {ROLES.map(r => (
+                  <option key={r} value={r}>{r.charAt(0).toUpperCase() + r.slice(1)}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {/* Status */}
+          <div>
+            <label style={LABEL}>Status</label>
+            <div style={{ display: 'flex', gap: 6 }}>
+              {STATUSES.map(s => {
+                const sc = STATUS_CONFIG[s] ?? STATUS_CONFIG.idle;
+                return (
+                  <button key={s} onClick={() => setStatus(s)} style={{
+                    padding: '5px 12px', borderRadius: 20, fontSize: 11, fontWeight: status === s ? 700 : 400,
+                    border: `1px solid ${status === s ? sc.color : 'var(--border)'}`,
+                    background: status === s ? sc.bg : 'transparent',
+                    color: status === s ? sc.color : 'var(--text-3)',
+                    cursor: 'pointer', transition: 'all 0.12s',
+                  }}>{sc.label}</button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* System Prompt */}
+          <div>
+            <label style={LABEL}>System Prompt</label>
+            <textarea className="textarea" style={{
+              width: '100%', minHeight: 90, fontSize: 12,
+              fontFamily: 'var(--font-mono, monospace)', lineHeight: 1.5,
+            }}
+              placeholder="You are a specialized AI expert..."
+              value={systemPrompt} onChange={e => setSystemPrompt(e.target.value)} />
+          </div>
+
+          {/* Temperature + Max Tokens */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+            <div>
+              <label style={LABEL}>Temperature ({temperature.toFixed(1)})</label>
+              <input type="range" min={0} max={2} step={0.1} style={{ width: '100%' }}
+                value={temperature} onChange={e => setTemperature(Number(e.target.value))} />
+            </div>
+            <div>
+              <label style={LABEL}>Max Tokens</label>
+              <input type="number" className="input" style={{ width: '100%', fontSize: 13 }}
+                value={maxTokens} onChange={e => setMaxTokens(Number(e.target.value) || 4096)} />
+            </div>
+          </div>
+
+          {/* Tags */}
+          <div>
+            <label style={LABEL}>Tags (comma-separated)</label>
+            <input className="input" style={{ width: '100%', fontSize: 12 }}
+              placeholder="e.g. research, fast, production"
+              value={tagsStr} onChange={e => setTagsStr(e.target.value)} />
+          </div>
+
+          {/* Public toggle */}
+          <label style={{
+            display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer',
+          }}>
+            <input type="checkbox" checked={isPublic}
+              onChange={e => setIsPublic(e.target.checked)}
+              style={{ accentColor: SECTION_COLOR }} />
+            <span style={{ fontSize: 12, color: 'var(--text-2)' }}>Public — visible to all users</span>
+          </label>
+
+          {error && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#ef4444' }}>
+              <AlertCircle size={13} /> {error}
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div style={{
+          padding: '14px 22px', borderTop: '1px solid var(--border)',
+          display: 'flex', gap: 8, justifyContent: 'flex-end',
+        }}>
+          <button onClick={onClose} style={{
+            padding: '8px 16px', borderRadius: 7, fontSize: 12, fontWeight: 500,
+            border: '1px solid var(--border-md)', background: 'transparent',
+            color: 'var(--text-3)', cursor: 'pointer',
+          }}>Cancel</button>
+          <button onClick={handleSave} disabled={saving} style={{
+            display: 'flex', alignItems: 'center', gap: 6,
+            padding: '8px 18px', borderRadius: 7, fontSize: 12, fontWeight: 700,
+            border: `1.5px solid ${SECTION_COLOR}`,
+            background: `${SECTION_COLOR}14`, color: SECTION_COLOR,
+            cursor: saving ? 'wait' : 'pointer', opacity: saving ? 0.6 : 1,
+          }}>
+            {saving ? <Loader2 size={12} style={{ animation: 'spin 1s linear infinite' }} /> : <Save size={12} />}
+            Save Changes
+          </button>
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
+/* ─── Stats Modal ──────────────────────────────────── */
+function StatsModal({
+  expert,
+  onClose,
+}: {
+  expert: Record<string, unknown>;
+  onClose: () => void;
+}) {
+  const role      = (expert.role as string) ?? 'custom';
+  const roleColor = ROLE_COLOR[role] ?? '#6b7280';
+  const roleEmoji = ROLE_EMOJI[role] ?? '⚙️';
+  const statusKey = (expert.status as string) ?? 'idle';
+  const statusCfg = STATUS_CONFIG[statusKey] ?? STATUS_CONFIG.idle;
+
+  const stats       = (expert.stats as Record<string, number>) ?? {};
+  const totalRuns   = (expert.totalRuns as number) ?? stats.totalRuns ?? 0;
+  const successRate = (expert.successRate as number) ?? stats.successRate ?? 0;
+  const avgCost     = stats.avgCostPerRun ?? 0;
+  const avgLatency  = (expert.avgLatencyMs as number) ?? stats.avgLatencyMs ?? 0;
+  const rating      = stats.rating ?? 0;
+  const avgTokens   = stats.avgTokensPerRun ?? 0;
+
+  const failureRate = successRate > 0 ? 1 - successRate : 0;
+  const totalCost   = avgCost * totalRuns;
+  const totalTokens = avgTokens * totalRuns;
+
+  const statBlocks: Array<{ label: string; value: string; color: string; sub: string }> = [
+    { label: 'Total Runs',     value: fmt(totalRuns),                                    color: SECTION_COLOR, sub: 'all time' },
+    { label: 'Success Rate',   value: successRate > 0 ? pct(successRate) : '—',          color: '#10b981',     sub: `${Math.round(successRate * totalRuns)} succeeded` },
+    { label: 'Failure Rate',   value: failureRate > 0 ? pct(failureRate) : '—',          color: '#ef4444',     sub: `${Math.round(failureRate * totalRuns)} failed` },
+    { label: 'Avg Latency',    value: avgLatency > 0 ? `${avgLatency.toLocaleString()} ms` : '—', color: '#06b6d4', sub: 'per run' },
+    { label: 'Avg Cost',       value: avgCost > 0 ? `$${avgCost.toFixed(4)}` : '—',     color: '#f59e0b',     sub: 'per run' },
+    { label: 'Total Cost',     value: totalCost > 0 ? `$${totalCost.toFixed(2)}` : '—', color: '#f97316',     sub: 'all time' },
+    { label: 'Avg Tokens',     value: avgTokens > 0 ? fmt(avgTokens) : '—',             color: '#8b5cf6',     sub: 'per run' },
+    { label: 'Total Tokens',   value: totalTokens > 0 ? fmt(totalTokens) : '—',         color: '#6366f1',     sub: 'all time' },
+    { label: 'Rating',         value: rating > 0 ? `${rating.toFixed(1)} / 5` : '—',    color: '#f59e0b',     sub: rating > 0 ? `${(rating / 5 * 100).toFixed(0)}% score` : 'not rated' },
+  ];
+
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, background: 'rgba(7,7,26,0.85)',
+      zIndex: 200, display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
+      paddingTop: 60, overflowY: 'auto',
+    }}>
+      <motion.div
+        initial={{ opacity: 0, y: 16, scale: 0.97 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        exit={{ opacity: 0, y: 8 }}
+        transition={{ duration: 0.2 }}
+        style={{
+          width: 580, maxWidth: '92vw',
+          background: 'var(--bg-surface)', border: '1px solid var(--border-md)',
+          borderRadius: 12, overflow: 'hidden',
+          boxShadow: '0 24px 80px rgba(0,0,0,0.2)',
+          marginBottom: 40,
+        }}
+      >
+        {/* Header */}
+        <div style={{
+          padding: '18px 22px', borderBottom: '1px solid var(--border)',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <BarChart2 size={16} color={SECTION_COLOR} />
+            <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-1)' }}>Expert Statistics</span>
+          </div>
+          <button onClick={onClose} style={{
+            background: 'none', border: 'none', cursor: 'pointer',
+            color: 'var(--text-3)', display: 'flex', padding: 4,
+          }}>
+            <X size={16} />
+          </button>
+        </div>
+
+        {/* Expert identity */}
+        <div style={{
+          padding: '16px 22px', borderBottom: '1px solid var(--border)',
+          display: 'flex', alignItems: 'center', gap: 14,
+        }}>
+          <div style={{
+            width: 48, height: 48, borderRadius: 10, flexShrink: 0,
+            background: `${roleColor}12`, border: `1.5px solid ${roleColor}25`,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontSize: 22,
+          }}>
+            {roleEmoji}
+          </div>
+          <div style={{ flex: 1 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-1)' }}>
+                {expert.name as string}
+              </span>
+              <span style={{
+                padding: '2px 8px', borderRadius: 99, fontSize: 10, fontWeight: 700,
+                background: statusCfg.bg, color: statusCfg.color,
+                border: `1px solid ${statusCfg.color}28`,
+              }}>{statusCfg.label}</span>
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 3 }}>
+              <span style={{ textTransform: 'capitalize' }}>{role}</span>
+              <span style={{ color: 'var(--text-4)' }}> · </span>
+              {(expert.modelName ?? expert.modelId) as string}
+              <span style={{ color: 'var(--text-4)' }}> · </span>
+              {(expert.providerName ?? expert.providerId) as string}
+            </div>
+          </div>
+          {rating > 0 && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4, color: '#f59e0b' }}>
+              <Star size={16} fill="#f59e0b" strokeWidth={0} />
+              <span style={{ fontSize: 18, fontWeight: 800 }}>{rating.toFixed(1)}</span>
+            </div>
+          )}
+        </div>
+
+        {/* Stats grid */}
+        <div style={{ padding: '20px 22px' }}>
+          <div style={{
+            display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)',
+            gap: 10,
+          }}>
+            {statBlocks.map(block => (
+              <div key={block.label} style={{
+                padding: '14px 16px', borderRadius: 10,
+                background: `${block.color}06`, border: `1px solid ${block.color}15`,
+              }}>
+                <div style={{ fontSize: 24, fontWeight: 800, color: block.color, lineHeight: 1 }}>
+                  {block.value}
+                </div>
+                <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-2)', marginTop: 6 }}>
+                  {block.label}
+                </div>
+                <div style={{ fontSize: 10, color: 'var(--text-4)', marginTop: 2 }}>
+                  {block.sub}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Success rate bar */}
+          {totalRuns > 0 && (
+            <div style={{ marginTop: 20 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-2)' }}>Success Rate Distribution</span>
+                <span style={{ fontSize: 11, fontWeight: 700, color: '#10b981' }}>{pct(successRate)}</span>
+              </div>
+              <div style={{
+                height: 8, borderRadius: 99, background: 'var(--bg-elevated)',
+                border: '1px solid var(--border)', overflow: 'hidden',
+                display: 'flex',
+              }}>
+                <div style={{
+                  width: `${successRate * 100}%`, height: '100%',
+                  background: 'linear-gradient(90deg, #10b981, #059669)',
+                  borderRadius: 99,
+                  transition: 'width 0.4s ease',
+                }} />
+                {failureRate > 0 && (
+                  <div style={{
+                    width: `${failureRate * 100}%`, height: '100%',
+                    background: 'linear-gradient(90deg, #ef4444, #dc2626)',
+                  }} />
+                )}
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}>
+                <span style={{ fontSize: 10, color: '#10b981', display: 'flex', alignItems: 'center', gap: 3 }}>
+                  <CheckCircle2 size={9} /> {Math.round(successRate * totalRuns)} succeeded
+                </span>
+                {failureRate > 0 && (
+                  <span style={{ fontSize: 10, color: '#ef4444', display: 'flex', alignItems: 'center', gap: 3 }}>
+                    <AlertCircle size={9} /> {Math.round(failureRate * totalRuns)} failed
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
+
+          {totalRuns === 0 && (
+            <div style={{
+              marginTop: 20, padding: '24px 16px', textAlign: 'center',
+              border: '1px dashed var(--border-md)', borderRadius: 8,
+            }}>
+              <BarChart2 size={20} color="var(--text-4)" style={{ margin: '0 auto 8px' }} />
+              <div style={{ fontSize: 13, color: 'var(--text-3)', fontWeight: 500 }}>No run data yet</div>
+              <div style={{ fontSize: 11, color: 'var(--text-4)', marginTop: 4 }}>
+                Run this expert in a workflow to start collecting statistics.
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div style={{
+          padding: '14px 22px', borderTop: '1px solid var(--border)',
+          display: 'flex', justifyContent: 'flex-end',
+        }}>
+          <button onClick={onClose} style={{
+            padding: '8px 18px', borderRadius: 7, fontSize: 12, fontWeight: 600,
+            border: '1px solid var(--border-md)', background: 'transparent',
+            color: 'var(--text-2)', cursor: 'pointer',
+          }}>Close</button>
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
 /* ─── Expert card ───────────────────────────────────── */
-function ExpertCard({ expert }: { expert: Record<string, unknown> }) {
+function ExpertCard({ expert, onConfigure, onViewStats }: {
+  expert: Record<string, unknown>;
+  onConfigure: () => void;
+  onViewStats: () => void;
+}) {
   const role        = (expert.role as string) ?? 'custom';
   const roleColor   = ROLE_COLOR[role] ?? '#6b7280';
   const roleEmoji   = ROLE_EMOJI[role] ?? '⚙️';
@@ -328,7 +765,7 @@ function ExpertCard({ expert }: { expert: Record<string, unknown> }) {
           <Play size={10} fill={SECTION_COLOR} strokeWidth={0} />
           Run
         </button>
-        <button style={{
+        <button onClick={onConfigure} style={{
           flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5,
           padding: '8px 10px', borderRadius: 7, cursor: 'pointer',
           border: '1px solid var(--border-md)',
@@ -339,7 +776,7 @@ function ExpertCard({ expert }: { expert: Record<string, unknown> }) {
           <Settings size={10} />
           Configure
         </button>
-        <button style={{
+        <button onClick={onViewStats} style={{
           flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5,
           padding: '8px 10px', borderRadius: 7, cursor: 'pointer',
           border: '1px solid var(--border-md)',
@@ -362,7 +799,25 @@ export default function MyExpertsPage() {
   const [sortBy, setSortBy]       = useState<SortOption>('rating');
   const [sortOpen, setSortOpen]   = useState(false);
 
+  /* Modal state */
+  const [configureExpert, setConfigureExpert] = useState<Record<string, unknown> | null>(null);
+  const [statsExpert, setStatsExpert]         = useState<Record<string, unknown> | null>(null);
+
   const { experts, total, isLoading, mutate } = useExperts();
+
+  /* Save handler for configure modal */
+  const handleSaveExpert = async (id: string, updates: Record<string, unknown>) => {
+    const res = await fetch('/api/experts', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, ...updates }),
+    });
+    if (!res.ok) {
+      const data = await res.json();
+      throw new Error(data.error || 'Save failed');
+    }
+    mutate();
+  };
 
   /* Derived counts */
   const activeCt  = experts.filter((e: Record<string, unknown>) => e.status === 'active').length;
@@ -683,7 +1138,9 @@ export default function MyExpertsPage() {
               }}
             >
               {filtered.map((expert: Record<string, unknown>) => (
-                <ExpertCard key={expert.id as string} expert={expert} />
+                <ExpertCard key={expert.id as string} expert={expert}
+                  onConfigure={() => setConfigureExpert(expert)}
+                  onViewStats={() => setStatsExpert(expert)} />
               ))}
             </motion.div>
           )}
@@ -708,6 +1165,27 @@ export default function MyExpertsPage() {
           <span style={{ marginLeft: 8 }}>· Showing {filtered.length} of {total}</span>
         )}
       </motion.div>
+
+      {/* ── Modals ── */}
+      <AnimatePresence>
+        {configureExpert && (
+          <ConfigureModal
+            key="configure"
+            expert={configureExpert}
+            onClose={() => setConfigureExpert(null)}
+            onSave={handleSaveExpert}
+          />
+        )}
+      </AnimatePresence>
+      <AnimatePresence>
+        {statsExpert && (
+          <StatsModal
+            key="stats"
+            expert={statsExpert}
+            onClose={() => setStatsExpert(null)}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }
