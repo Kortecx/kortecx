@@ -1,13 +1,19 @@
 'use client';
 
 import { useState } from 'react';
+import useSWR from 'swr';
 import {
   Brain, Play, Pause, Plus, Trash2, ChevronDown, ChevronUp,
   Clock, Zap, BarChart3, CheckCircle2, AlertTriangle,
-  Database, Cpu, TrendingUp, RefreshCcw, Download,
+  Database, Cpu, TrendingUp, RefreshCcw, Download, Loader2,
 } from 'lucide-react';
-import { TRAINING_JOBS, DATASETS, EXPERTS } from '@/lib/constants';
-import type { TrainingJob } from '@/lib/types';
+import { useTrainingJobs, useExperts } from '@/lib/hooks/useApi';
+import type { TrainingJob, Expert, Dataset } from '@/lib/types';
+
+const fetcher = (url: string) => fetch(url).then(r => {
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return r.json();
+});
 
 function jobStatusBadge(status: TrainingJob['status']) {
   switch (status) {
@@ -36,10 +42,10 @@ function timeAgo(iso: string) {
   return `${Math.floor(diff / 86400)}d ago`;
 }
 
-function JobCard({ job }: { job: TrainingJob }) {
+function JobCard({ job, experts, datasets }: { job: TrainingJob; experts: Expert[]; datasets: Dataset[] }) {
   const [expanded, setExpanded] = useState(false);
-  const expert = EXPERTS.find(e => e.id === job.expertId);
-  const dataset = DATASETS.find(d => d.id === job.datasetId);
+  const expert = experts.find(e => e.id === job.expertId);
+  const dataset = datasets.find(d => d.id === job.datasetId);
   const isActive = job.status === 'training' || job.status === 'preparing' || job.status === 'evaluating';
 
   return (
@@ -199,9 +205,16 @@ function JobCard({ job }: { job: TrainingJob }) {
 export default function TrainingLabPage() {
   const [tab, setTab] = useState<'jobs' | 'datasets' | 'new'>('jobs');
 
-  const activeJobs    = TRAINING_JOBS.filter(j => j.status === 'training' || j.status === 'preparing');
-  const queuedJobs    = TRAINING_JOBS.filter(j => j.status === 'queued');
-  const completedJobs = TRAINING_JOBS.filter(j => j.status === 'completed');
+  const { jobs, isLoading: jobsLoading } = useTrainingJobs() as { jobs: TrainingJob[]; total: number; isLoading: boolean; error: unknown; mutate: () => void };
+  const { experts, isLoading: expertsLoading } = useExperts() as { experts: Expert[]; total: number; isLoading: boolean; error: unknown; mutate: () => void };
+  const { data: datasetsData, isLoading: datasetsLoading } = useSWR<{ datasets: Dataset[] }>('/api/data/datasets', fetcher);
+  const datasets = datasetsData?.datasets ?? [];
+
+  const isLoading = jobsLoading || expertsLoading || datasetsLoading;
+
+  const activeJobs    = jobs.filter(j => j.status === 'training' || j.status === 'preparing');
+  const queuedJobs    = jobs.filter(j => j.status === 'queued');
+  const completedJobs = jobs.filter(j => j.status === 'completed');
 
   return (
     <div style={{ padding: 24, maxWidth: 1200, margin: '0 auto' }}>
@@ -233,13 +246,13 @@ export default function TrainingLabPage() {
           { label: 'ACTIVE JOBS',    value: String(activeJobs.length),     color: 'var(--amber)',   icon: Brain },
           { label: 'QUEUED',         value: String(queuedJobs.length),      color: 'var(--text-3)', icon: Clock },
           { label: 'COMPLETED',      value: String(completedJobs.length),   color: 'var(--success)', icon: CheckCircle2 },
-          { label: 'DATASETS READY', value: String(DATASETS.filter(d => d.status === 'ready').length), color: 'var(--teal)', icon: Database },
+          { label: 'DATASETS READY', value: String(datasets.filter(d => d.status === 'ready').length), color: 'var(--teal)', icon: Database },
         ].map(stat => (
           <div key={stat.label} className="metric-card" style={{ position: 'relative', overflow: 'hidden' }}>
             <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 2, background: stat.color, opacity: 0.7 }} />
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
               <div>
-                <div className="metric-value">{stat.value}</div>
+                <div className="metric-value">{isLoading ? '...' : stat.value}</div>
                 <div className="metric-label" style={{ marginTop: 6 }}>{stat.label}</div>
               </div>
               <stat.icon size={16} color={stat.color} />
@@ -276,12 +289,16 @@ export default function TrainingLabPage() {
       {/* Jobs tab */}
       {tab === 'jobs' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          {TRAINING_JOBS.length === 0 ? (
+          {jobsLoading ? (
+            <div style={{ textAlign: 'center', padding: 60, color: 'var(--text-3)', fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+              <Loader2 size={16} className="animate-spin" /> Loading training jobs...
+            </div>
+          ) : jobs.length === 0 ? (
             <div style={{ textAlign: 'center', padding: 60, color: 'var(--text-3)', fontSize: 13 }}>
-              No training jobs yet.
+              No training jobs yet. Create one to get started.
             </div>
           ) : (
-            TRAINING_JOBS.map(job => <JobCard key={job.id} job={job} />)
+            jobs.map(job => <JobCard key={job.id} job={job} experts={experts} datasets={datasets} />)
           )}
         </div>
       )}
@@ -295,48 +312,58 @@ export default function TrainingLabPage() {
             </button>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {DATASETS.map(ds => (
-              <div key={ds.id} className="card" style={{ padding: '14px 18px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                  <div style={{
-                    width: 36, height: 36, borderRadius: 6,
-                    background: 'var(--teal-dim)',
-                    border: '1px solid rgba(12,166,120,0.25)',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    flexShrink: 0,
-                  }}>
-                    <Database size={15} color="var(--teal)" />
-                  </div>
-
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3 }}>
-                      <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-1)' }}>{ds.name}</span>
-                      <span className={`badge ${ds.status === 'ready' ? 'badge-success' : ds.status === 'generating' ? 'badge-amber' : 'badge-neutral'}`}>
-                        {ds.status}
-                      </span>
+            {datasetsLoading ? (
+              <div style={{ textAlign: 'center', padding: 60, color: 'var(--text-3)', fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+                <Loader2 size={16} className="animate-spin" /> Loading datasets...
+              </div>
+            ) : datasets.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: 60, color: 'var(--text-3)', fontSize: 13 }}>
+                No datasets yet. Upload or generate a dataset to begin training.
+              </div>
+            ) : (
+              datasets.map(ds => (
+                <div key={ds.id} className="card" style={{ padding: '14px 18px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                    <div style={{
+                      width: 36, height: 36, borderRadius: 6,
+                      background: 'var(--teal-dim)',
+                      border: '1px solid rgba(12,166,120,0.25)',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      flexShrink: 0,
+                    }}>
+                      <Database size={15} color="var(--teal)" />
                     </div>
-                    <div style={{ fontSize: 12, color: 'var(--text-3)' }}>{ds.description}</div>
-                    <div style={{ display: 'flex', gap: 12, marginTop: 4, fontSize: 11, color: 'var(--text-3)' }}>
-                      <span className="mono">{ds.sampleCount.toLocaleString()} samples</span>
-                      <span className="mono">{(ds.sizeBytes / 1_000_000).toFixed(0)} MB</span>
-                      <span className="badge badge-neutral" style={{ fontSize: 10 }}>{ds.format.toUpperCase()}</span>
-                      {ds.qualityScore && (
-                        <span>Quality: <span style={{ color: 'var(--success)' }}>{ds.qualityScore}%</span></span>
-                      )}
-                    </div>
-                  </div>
 
-                  <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
-                    <button className="btn btn-secondary btn-sm">
-                      <Download size={12} /> Export
-                    </button>
-                    <button className="btn btn-primary btn-sm">
-                      <Play size={12} /> Train
-                    </button>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3 }}>
+                        <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-1)' }}>{ds.name}</span>
+                        <span className={`badge ${ds.status === 'ready' ? 'badge-success' : ds.status === 'generating' ? 'badge-amber' : 'badge-neutral'}`}>
+                          {ds.status}
+                        </span>
+                      </div>
+                      <div style={{ fontSize: 12, color: 'var(--text-3)' }}>{ds.description}</div>
+                      <div style={{ display: 'flex', gap: 12, marginTop: 4, fontSize: 11, color: 'var(--text-3)' }}>
+                        <span className="mono">{ds.sampleCount.toLocaleString()} samples</span>
+                        <span className="mono">{(ds.sizeBytes / 1_000_000).toFixed(0)} MB</span>
+                        <span className="badge badge-neutral" style={{ fontSize: 10 }}>{ds.format.toUpperCase()}</span>
+                        {ds.qualityScore && (
+                          <span>Quality: <span style={{ color: 'var(--success)' }}>{ds.qualityScore}%</span></span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                      <button className="btn btn-secondary btn-sm">
+                        <Download size={12} /> Export
+                      </button>
+                      <button className="btn btn-primary btn-sm">
+                        <Play size={12} /> Train
+                      </button>
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
+              ))
+            )}
           </div>
         </div>
       )}
@@ -360,7 +387,7 @@ export default function TrainingLabPage() {
               </label>
               <select className="input">
                 <option value="">Create new expert</option>
-                {EXPERTS.map(e => <option key={e.id} value={e.id}>{e.name} (fine-tune)</option>)}
+                {experts.map(e => <option key={e.id} value={e.id}>{e.name} (fine-tune)</option>)}
               </select>
             </div>
             <div>
@@ -379,7 +406,7 @@ export default function TrainingLabPage() {
                 Training Dataset
               </label>
               <select className="input">
-                {DATASETS.filter(d => d.status === 'ready').map(d => (
+                {datasets.filter(d => d.status === 'ready').map(d => (
                   <option key={d.id} value={d.id}>{d.name} ({d.sampleCount.toLocaleString()} samples)</option>
                 ))}
               </select>

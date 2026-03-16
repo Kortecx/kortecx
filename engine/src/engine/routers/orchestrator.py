@@ -188,8 +188,19 @@ async def upload_files(files: list[UploadFile] = File(...)) -> dict[str, Any]:
 
 @router.get("/status")
 async def orchestrator_status() -> dict[str, Any]:
-    """Get orchestrator runtime status."""
-    return orchestrator.get_status()
+    """Get orchestrator runtime status including system resources."""
+    from engine.services.system_stats import get_system_stats, get_process_stats
+    status = orchestrator.get_status()
+    status["system"] = get_system_stats()
+    status["process"] = get_process_stats()
+    return status
+
+
+@router.get("/system/stats")
+async def system_stats() -> dict[str, Any]:
+    """Get current CPU/GPU/memory usage — lightweight, for frequent polling."""
+    from engine.services.system_stats import get_system_stats
+    return get_system_stats()
 
 
 @router.get("/models/active")

@@ -10,7 +10,6 @@ import {
   Cpu, Server, Sparkle, ChevronDown, ChevronRight, X,
 } from 'lucide-react';
 import Link from 'next/link';
-import { DATASETS } from '@/lib/constants';
 import type { Dataset } from '@/lib/types';
 
 /* ── Helpers ───────────────────────────────────────────── */
@@ -878,10 +877,225 @@ function ModelOption({ m, onSelect, onDelete }: {
   );
 }
 
+/* ── Synthesis Edit Modal ──────────────────────────────── */
+
+function SynthesisEditModal({
+  job, onClose, onSave,
+}: {
+  job: any;
+  onClose: () => void;
+  onSave: (id: string, updates: Record<string, unknown>, restart: boolean) => Promise<void>;
+}) {
+  const [name, setName] = useState(job.name ?? '');
+  const [description, setDescription] = useState(job.description ?? '');
+  const [source, setSource] = useState(job.source ?? 'ollama');
+  const [model, setModel] = useState(job.model ?? '');
+  const [outputFormat, setOutputFormat] = useState(job.outputFormat ?? 'jsonl');
+  const [targetSamples, setTargetSamples] = useState(job.targetSamples ?? 100);
+  const [temperature, setTemperature] = useState(Number(job.temperature) || 0.8);
+  const [batchSize, setBatchSize] = useState(job.batchSize ?? 5);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const isRunning = job.status === 'running' || job.status === 'queued';
+  const hasChanges = name !== job.name || description !== (job.description ?? '') ||
+    source !== job.source || model !== job.model || outputFormat !== (job.outputFormat ?? 'jsonl') ||
+    targetSamples !== (job.targetSamples ?? 100) || temperature !== (Number(job.temperature) || 0.8) ||
+    batchSize !== (job.batchSize ?? 5);
+
+  const handleSave = async (restart: boolean) => {
+    if (!name.trim()) { setError('Name is required'); return; }
+    if (!model.trim()) { setError('Model is required'); return; }
+    setSaving(true);
+    setError('');
+    try {
+      await onSave(job.id, { name, description, source, model, outputFormat, targetSamples, temperature, batchSize }, restart);
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Save failed');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const LABEL: React.CSSProperties = {
+    fontSize: 11, fontWeight: 700, color: 'var(--text-3)',
+    textTransform: 'uppercase', letterSpacing: '0.08em',
+    display: 'block', marginBottom: 5,
+  };
+
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
+      backdropFilter: 'blur(4px)', zIndex: 200,
+      display: 'flex', alignItems: 'flex-start', justifyContent: 'center', paddingTop: 60,
+    }} onClick={onClose}>
+      <div
+        onClick={e => e.stopPropagation()}
+        style={{
+          width: 540, maxWidth: '92vw', maxHeight: '80vh', overflowY: 'auto',
+          background: 'var(--bg-surface)', border: '1px solid var(--border)',
+          borderRadius: 12, boxShadow: '0 24px 64px rgba(0,0,0,0.3)',
+        }}
+      >
+        {/* Header */}
+        <div style={{
+          padding: '16px 20px', borderBottom: '1px solid var(--border)',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Sparkles size={16} color="var(--teal)" />
+            <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-1)' }}>Edit Synthesis Job</span>
+          </div>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-3)', display: 'flex', padding: 4 }}>
+            <X size={16} />
+          </button>
+        </div>
+
+        {/* Status bar */}
+        <div style={{
+          padding: '10px 20px', background: 'var(--bg-elevated)', borderBottom: '1px solid var(--border)',
+          display: 'flex', alignItems: 'center', gap: 10, fontSize: 12,
+        }}>
+          <span style={{
+            padding: '2px 8px', borderRadius: 4, fontSize: 10, fontWeight: 700,
+            textTransform: 'uppercase',
+            background: isRunning ? 'rgba(245,158,11,0.1)' : job.status === 'completed' ? 'rgba(16,185,129,0.1)' : 'var(--bg)',
+            color: isRunning ? '#D97706' : job.status === 'completed' ? '#059669' : 'var(--text-3)',
+            border: `1px solid ${isRunning ? '#D9770630' : job.status === 'completed' ? '#05966930' : 'var(--border)'}`,
+          }}>
+            {job.status}
+          </span>
+          {job.currentSamples > 0 && (
+            <span style={{ color: 'var(--text-3)' }}>
+              {fmtNum(job.currentSamples)} / {fmtNum(job.targetSamples)} samples
+            </span>
+          )}
+          {job.tokensUsed > 0 && (
+            <span style={{ color: 'var(--text-4)' }}>· {fmtNum(job.tokensUsed)} tokens</span>
+          )}
+        </div>
+
+        {/* Form */}
+        <div style={{ padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+          {/* Name */}
+          <div>
+            <label style={LABEL}>Name *</label>
+            <input className="input" style={{ width: '100%', fontSize: 13 }} value={name} onChange={e => setName(e.target.value)} />
+          </div>
+
+          {/* Description */}
+          <div>
+            <label style={LABEL}>Description</label>
+            <textarea className="textarea" style={{ width: '100%', minHeight: 70, fontSize: 12 }}
+              value={description} onChange={e => setDescription(e.target.value)} />
+          </div>
+
+          {/* Source + Model */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 12 }}>
+            <div>
+              <label style={LABEL}>Source</label>
+              <select className="input" style={{ width: '100%', fontSize: 12 }} value={source} onChange={e => setSource(e.target.value)}>
+                <option value="ollama">Ollama</option>
+                <option value="llamacpp">llama.cpp</option>
+                <option value="huggingface">HuggingFace</option>
+              </select>
+            </div>
+            <div>
+              <label style={LABEL}>Model *</label>
+              <input className="input" style={{ width: '100%', fontSize: 12, fontFamily: 'var(--font-mono, monospace)' }}
+                value={model} onChange={e => setModel(e.target.value)} />
+            </div>
+          </div>
+
+          {/* Format + Samples */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div>
+              <label style={LABEL}>Output Format</label>
+              <select className="input" style={{ width: '100%', fontSize: 12 }} value={outputFormat} onChange={e => setOutputFormat(e.target.value)}>
+                <option value="jsonl">JSONL</option>
+                <option value="csv">CSV</option>
+                <option value="alpaca">Alpaca</option>
+                <option value="chatml">ChatML</option>
+                <option value="sharegpt">ShareGPT</option>
+                <option value="delta">Delta</option>
+              </select>
+            </div>
+            <div>
+              <label style={LABEL}>Target Samples</label>
+              <input type="number" className="input" style={{ width: '100%', fontSize: 12 }}
+                value={targetSamples} onChange={e => setTargetSamples(Number(e.target.value) || 100)} min={10} max={100000} />
+            </div>
+          </div>
+
+          {/* Temp + Batch */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div>
+              <label style={LABEL}>Temperature ({temperature.toFixed(1)})</label>
+              <input type="range" min={0} max={2} step={0.1} style={{ width: '100%' }}
+                value={temperature} onChange={e => setTemperature(Number(e.target.value))} />
+            </div>
+            <div>
+              <label style={LABEL}>Batch Size</label>
+              <input type="number" className="input" style={{ width: '100%', fontSize: 12 }}
+                value={batchSize} onChange={e => setBatchSize(Math.max(1, Math.min(20, Number(e.target.value) || 1)))} min={1} max={20} />
+            </div>
+          </div>
+
+          {error && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#ef4444' }}>
+              <AlertTriangle size={13} /> {error}
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div style={{
+          padding: '14px 20px', borderTop: '1px solid var(--border)',
+          display: 'flex', gap: 8, justifyContent: 'flex-end',
+        }}>
+          <button onClick={onClose} style={{
+            padding: '8px 16px', borderRadius: 7, fontSize: 12, fontWeight: 500,
+            border: '1px solid var(--border-md)', background: 'transparent',
+            color: 'var(--text-3)', cursor: 'pointer',
+          }}>Cancel</button>
+          {/* Save only (name/description change, no restart) */}
+          <button onClick={() => handleSave(false)} disabled={saving || !name.trim()} style={{
+            padding: '8px 16px', borderRadius: 7, fontSize: 12, fontWeight: 600,
+            border: '1px solid var(--border-md)', background: 'var(--bg-elevated)',
+            color: 'var(--text-1)', cursor: saving ? 'wait' : 'pointer',
+            opacity: saving || !name.trim() ? 0.5 : 1,
+          }}>
+            {saving ? 'Saving...' : 'Save'}
+          </button>
+          {/* Save & restart (if configs changed) */}
+          {hasChanges && (
+            <button onClick={() => handleSave(true)} disabled={saving || !model.trim()} style={{
+              display: 'flex', alignItems: 'center', gap: 6,
+              padding: '8px 16px', borderRadius: 7, fontSize: 12, fontWeight: 700,
+              border: '1.5px solid var(--teal)',
+              background: 'rgba(5,150,105,0.08)', color: 'var(--teal)',
+              cursor: saving ? 'wait' : 'pointer',
+              opacity: saving || !model.trim() ? 0.5 : 1,
+            }}>
+              <RefreshCcw size={12} />
+              Save &amp; Restart
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ── Main Page ─────────────────────────────────────────── */
 
 export default function DataSynthesisPage() {
   const [tab, setTab] = useState<'datasets' | 'huggingface' | 'generate'>('datasets');
+
+  // Database-backed datasets
+  const { data: datasetsData, isLoading: datasetsLoading } = useSWR<{ datasets: Dataset[] }>('/api/data/datasets', fetcher);
+  const myDatasets = datasetsData?.datasets ?? [];
 
   // Synthesis form state
   const [synthName, setSynthName] = useState('');
@@ -937,6 +1151,14 @@ export default function DataSynthesisPage() {
   // Synthesis jobs list
   const { data: synthJobsData, mutate: mutateSynthJobs } = useSWR('/api/synthesis', fetcher, { refreshInterval: 5000 });
   const synthJobs: any[] = synthJobsData?.jobs ?? [];
+  const hasActiveJobs = synthJobs.some((j: any) => j.status === 'running' || j.status === 'queued');
+
+  // System stats — only poll when jobs are running
+  const { data: sysStats } = useSWR(
+    hasActiveJobs ? '/api/system/stats' : null,
+    fetcher,
+    { refreshInterval: 3000 },
+  );
 
   const handleStartSynthesis = async () => {
     if (!synthName.trim() || !synthModel.trim()) return;
@@ -973,6 +1195,31 @@ export default function DataSynthesisPage() {
     }
   };
 
+  const [editJob, setEditJob] = useState<any>(null);
+
+  const handleSaveSynthJob = async (id: string, updates: Record<string, unknown>, restart: boolean) => {
+    const res = await fetch('/api/synthesis', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, ...updates, restart }),
+    });
+    if (!res.ok) throw new Error('Save failed');
+    mutateSynthJobs();
+  };
+
+  const handleCancelSynthJob = async (id: string) => {
+    try {
+      await fetch('/api/synthesis', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, status: 'cancelled' }),
+      });
+      mutateSynthJobs();
+    } catch (err) {
+      console.error('Cancel failed:', err);
+    }
+  };
+
   const handleRemoveSynthJob = async (id: string) => {
     try {
       await fetch(`/api/synthesis?id=${id}`, { method: 'DELETE' });
@@ -990,9 +1237,9 @@ export default function DataSynthesisPage() {
   };
   const modelMismatch = synthModel && synthModelPipeline && !GEN_TYPE_PIPELINES[synthGenType]?.includes(synthModelPipeline);
 
-  const readyCount     = DATASETS.filter(d => d.status === 'ready').length;
-  const generatingCount = DATASETS.filter(d => d.status === 'generating').length;
-  const totalSamples   = DATASETS.reduce((s, d) => s + d.sampleCount, 0);
+  const readyCount     = myDatasets.filter(d => d.status === 'ready').length;
+  const generatingCount = myDatasets.filter(d => d.status === 'generating').length;
+  const totalSamples   = myDatasets.reduce((s, d) => s + d.sampleCount, 0);
 
   return (
     <div style={{ padding: 24, maxWidth: 1200, margin: '0 auto' }}>
@@ -1018,7 +1265,7 @@ export default function DataSynthesisPage() {
       {/* Stats */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 12, marginBottom: 20 }}>
         {[
-          { label: 'TOTAL DATASETS',   value: String(DATASETS.length),      color: 'var(--teal)',    icon: Database },
+          { label: 'TOTAL DATASETS',   value: datasetsLoading ? '...' : String(myDatasets.length), color: 'var(--teal)',    icon: Database },
           { label: 'READY',            value: String(readyCount),            color: 'var(--success)', icon: CheckCircle2 },
           { label: 'GENERATING',       value: String(generatingCount),       color: 'var(--amber)',   icon: RefreshCcw },
           { label: 'TOTAL SAMPLES',    value: fmt(totalSamples),             color: 'var(--primary)', icon: Zap },
@@ -1063,9 +1310,19 @@ export default function DataSynthesisPage() {
 
       {/* My Datasets */}
       {tab === 'datasets' && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px,1fr))', gap: 12 }}>
-          {DATASETS.map(ds => <DatasetCard key={ds.id} ds={ds} />)}
-        </div>
+        datasetsLoading ? (
+          <div style={{ textAlign: 'center', padding: 60, color: 'var(--text-3)', fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+            <Loader2 size={16} className="animate-spin" /> Loading datasets...
+          </div>
+        ) : myDatasets.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: 60, color: 'var(--text-3)', fontSize: 13 }}>
+            No datasets yet. Switch to the &quot;Generate New&quot; tab or import from HuggingFace Hub.
+          </div>
+        ) : (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px,1fr))', gap: 12 }}>
+            {myDatasets.map(ds => <DatasetCard key={ds.id} ds={ds} />)}
+          </div>
+        )
       )}
 
       {/* HuggingFace Hub */}
@@ -1109,34 +1366,18 @@ export default function DataSynthesisPage() {
 
               {/* Generation Type */}
               <div>
-                <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.08em', display: 'block', marginBottom: 8 }}>
+                <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.08em', display: 'block', marginBottom: 6 }}>
                   Generation Type
                 </label>
-                <div style={{ display: 'flex', gap: 8 }}>
-                  {([
-                    { key: 'text' as const, label: 'Text', emoji: '📝', desc: 'Text, code, structured data' },
-                    { key: 'image' as const, label: 'Image', emoji: '🖼️', desc: 'Image generation & editing' },
-                    { key: 'audio' as const, label: 'Audio', emoji: '🔊', desc: 'Speech, music, sound' },
-                  ]).map(g => (
-                    <button
-                      key={g.key}
-                      onClick={() => { setSynthGenType(g.key); setSynthModelPipeline(null); }}
-                      style={{
-                        flex: 1, padding: '10px 12px', borderRadius: 8,
-                        border: `1.5px solid ${synthGenType === g.key ? 'var(--teal)' : 'var(--border)'}`,
-                        background: synthGenType === g.key ? 'rgba(5,150,105,0.06)' : 'var(--bg)',
-                        cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
-                        fontSize: 12, fontWeight: synthGenType === g.key ? 700 : 500,
-                        color: synthGenType === g.key ? 'var(--text-1)' : 'var(--text-3)',
-                        transition: 'all 0.15s',
-                      }}
-                    >
-                      <span style={{ fontSize: 18 }}>{g.emoji}</span>
-                      <span>{g.label}</span>
-                      <span style={{ fontSize: 9, color: 'var(--text-4)', fontWeight: 400 }}>{g.desc}</span>
-                    </button>
-                  ))}
-                </div>
+                <select
+                  className="input"
+                  value={synthGenType}
+                  onChange={e => { setSynthGenType(e.target.value as 'text' | 'image' | 'audio'); setSynthModelPipeline(null); }}
+                >
+                  <option value="text">📝 Text — code, structured data, Q&amp;A</option>
+                  <option value="image">🖼️ Image — generation &amp; editing</option>
+                  <option value="audio">🔊 Audio — speech, music, sound</option>
+                </select>
               </div>
 
               {/* Model Source */}
@@ -1437,11 +1678,17 @@ export default function DataSynthesisPage() {
                         }} />
                       )}
 
-                      {/* Header */}
+                      {/* Header — clickable name opens edit modal */}
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
                         <div style={{ minWidth: 0, flex: 1 }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
-                            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-1)' }}>{job.name}</span>
+                            <span
+                              onClick={() => setEditJob(job)}
+                              style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-1)', cursor: 'pointer', textDecoration: 'none' }}
+                              onMouseEnter={e => { e.currentTarget.style.textDecoration = 'underline'; }}
+                              onMouseLeave={e => { e.currentTarget.style.textDecoration = 'none'; }}
+                              title="Click to edit"
+                            >{job.name}</span>
                           </div>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--text-3)' }}>
                             <span style={{
@@ -1519,6 +1766,33 @@ export default function DataSynthesisPage() {
                         <span className="mono" style={{ fontSize: 10 }}>
                           {job.outputFormat?.toUpperCase()}
                         </span>
+                        {/* CPU/GPU usage — shown for active jobs */}
+                        {isActive && sysStats && (
+                          <>
+                            <span style={{
+                              display: 'flex', alignItems: 'center', gap: 3,
+                              color: (sysStats.cpu_percent ?? 0) > 80 ? '#DC2626' : (sysStats.cpu_percent ?? 0) > 50 ? '#D97706' : '#10b981',
+                              fontWeight: 600,
+                            }}>
+                              <Cpu size={10} /> {(sysStats.cpu_percent ?? 0).toFixed(0)}% CPU
+                            </span>
+                            <span style={{
+                              display: 'flex', alignItems: 'center', gap: 3,
+                              color: (sysStats.memory_percent ?? 0) > 85 ? '#DC2626' : 'var(--text-4)',
+                            }}>
+                              {(sysStats.memory_percent ?? 0).toFixed(0)}% RAM
+                            </span>
+                            {sysStats.gpu?.devices?.[0]?.gpu_percent != null && (
+                              <span style={{
+                                display: 'flex', alignItems: 'center', gap: 3,
+                                color: sysStats.gpu.devices[0].gpu_percent > 80 ? '#DC2626' : '#7C3AED',
+                                fontWeight: 600,
+                              }}>
+                                GPU {sysStats.gpu.devices[0].gpu_percent}%
+                              </span>
+                            )}
+                          </>
+                        )}
                       </div>
 
                       {/* Output path */}
@@ -1539,14 +1813,43 @@ export default function DataSynthesisPage() {
 
                       {/* Actions */}
                       <div style={{ display: 'flex', gap: 6 }}>
+                        {/* Running: Stop + Edit */}
+                        {isActive && (
+                          <>
+                            <button
+                              className="btn btn-sm"
+                              style={{ fontSize: 11, background: '#DC2626', color: '#fff', border: 'none' }}
+                              onClick={() => handleCancelSynthJob(job.id)}
+                            >
+                              <X size={11} /> Stop
+                            </button>
+                            <button
+                              className="btn btn-ghost btn-sm"
+                              style={{ fontSize: 11 }}
+                              onClick={() => setEditJob(job)}
+                            >
+                              <Sparkles size={11} /> Edit
+                            </button>
+                          </>
+                        )}
+                        {/* Completed/Failed/Cancelled: Edit (restart) + Remove */}
                         {(isCompleted || isFailed || isCancelled) && (
-                          <button
-                            className="btn btn-ghost btn-sm"
-                            style={{ fontSize: 11, color: 'var(--error)' }}
-                            onClick={() => handleRemoveSynthJob(job.id)}
-                          >
-                            <Trash2 size={11} /> Remove
-                          </button>
+                          <>
+                            <button
+                              className="btn btn-ghost btn-sm"
+                              style={{ fontSize: 11 }}
+                              onClick={() => setEditJob(job)}
+                            >
+                              <Sparkles size={11} /> Edit &amp; Restart
+                            </button>
+                            <button
+                              className="btn btn-ghost btn-sm"
+                              style={{ fontSize: 11, color: 'var(--error)' }}
+                              onClick={() => handleRemoveSynthJob(job.id)}
+                            >
+                              <Trash2 size={11} /> Remove
+                            </button>
+                          </>
                         )}
                       </div>
                     </div>
@@ -1556,6 +1859,15 @@ export default function DataSynthesisPage() {
             )}
           </div>
         </div>
+      )}
+
+      {/* Synthesis Edit Modal */}
+      {editJob && (
+        <SynthesisEditModal
+          job={editJob}
+          onClose={() => setEditJob(null)}
+          onSave={handleSaveSynthJob}
+        />
       )}
     </div>
   );

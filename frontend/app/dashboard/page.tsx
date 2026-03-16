@@ -2,14 +2,19 @@
 
 import Link from 'next/link';
 import { motion } from 'framer-motion';
+import useSWR from 'swr';
 import {
   Cpu, CheckCircle2, TrendingUp, Zap, ArrowRight,
   Circle, ChevronRight, Play, BarChart3, Users,
   Workflow, Activity, X,
 } from 'lucide-react';
-import { SYSTEM_METRICS, ACTIVE_TASKS, RECENT_RUNS, PROVIDERS, EXPERTS } from '@/lib/constants';
-import { useMetrics, useTasks } from '@/lib/hooks/useApi';
-import type { QueuedTask, WorkflowRun } from '@/lib/types';
+import { useMetrics, useTasks, useExperts, useWorkflowRuns } from '@/lib/hooks/useApi';
+import type { QueuedTask, WorkflowRun, Expert, AIProvider } from '@/lib/types';
+
+const fetcher = (url: string) => fetch(url).then(r => {
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return r.json();
+});
 
 /* ── Animation variants ────────────────────────────────── */
 const fadeUp = {
@@ -23,10 +28,15 @@ const stagger = (delay = 0.07) => ({
 });
 
 /* ── Helpers ───────────────────────────────────────────── */
-function fmt(n: number): string {
+function fmt(n: number | null | undefined): string {
+  if (n == null) return '\u2014';
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(0)}k`;
   return String(n);
+}
+
+function v(n: number | null | undefined, fallback = '\u2014'): string {
+  return n != null ? String(n) : fallback;
 }
 
 function elapsed(iso: string): string {
@@ -44,6 +54,52 @@ function priorityLabel(p: string) {
     low:      'LOW',
   };
   return map[p] ?? p.toUpperCase();
+}
+
+/* ── Skeleton Shimmer ─────────────────────────────────── */
+function Skeleton({ width = '100%', height = 16 }: { width?: string | number; height?: number }) {
+  return (
+    <div
+      style={{
+        width,
+        height,
+        borderRadius: 4,
+        background: 'linear-gradient(90deg, var(--bg-elevated) 25%, var(--border) 50%, var(--bg-elevated) 75%)',
+        backgroundSize: '200% 100%',
+        animation: 'shimmer 1.5s ease-in-out infinite',
+      }}
+    />
+  );
+}
+
+function SkeletonCard() {
+  return (
+    <motion.div variants={fadeUp} className="metric-card" style={{ cursor: 'default' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+        <div style={{ flex: 1 }}>
+          <Skeleton width={80} height={28} />
+          <div style={{ marginTop: 8 }}><Skeleton width={100} height={12} /></div>
+          <div style={{ marginTop: 6 }}><Skeleton width={120} height={10} /></div>
+        </div>
+        <Skeleton width={34} height={34} />
+      </div>
+    </motion.div>
+  );
+}
+
+function SkeletonRow() {
+  return (
+    <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--border)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <Skeleton width={8} height={8} />
+        <div style={{ flex: 1 }}>
+          <Skeleton width="70%" height={13} />
+          <div style={{ marginTop: 4 }}><Skeleton width="50%" height={10} /></div>
+        </div>
+        <Skeleton width={40} height={12} />
+      </div>
+    </div>
+  );
 }
 
 /* ── Metric Card ───────────────────────────────────────── */
@@ -205,17 +261,35 @@ function RunRow({ run, index }: { run: WorkflowRun; index: number }) {
 
 /* ── Dashboard ──────────────────────────────────────────── */
 export default function OpsDashboard() {
-  const { metrics, isLoading } = useMetrics();
+  const { metrics, isLoading: metricsLoading } = useMetrics();
   const { tasks: liveTasks, isLoading: tasksLoading } = useTasks(undefined, 20);
-  const activeExperts   = EXPERTS.filter(e => e.status === 'active').length;
-  const idleExperts     = EXPERTS.filter(e => e.status === 'idle').length;
-  const trainingExperts = EXPERTS.filter(e => e.status === 'training').length;
-  const activeTasks: QueuedTask[] = (liveTasks.length > 0 ? liveTasks : ACTIVE_TASKS) as QueuedTask[];
-  const runningTasks    = activeTasks.filter(t => t.status === 'running').length;
-  const queuedTasks     = activeTasks.filter(t => t.status === 'queued').length;
+  const { experts, isLoading: expertsLoading } = useExperts();
+  const { runs: recentRuns, isLoading: runsLoading } = useWorkflowRuns(undefined, 10);
+  const { data: providerData, isLoading: providersLoading } = useSWR<{ providers: AIProvider[] }>(
+    '/api/providers',
+    fetcher,
+    { refreshInterval: 30_000 },
+  );
+
+  const providers = providerData?.providers ?? [];
+  const activeTasks: QueuedTask[] = liveTasks as QueuedTask[];
+  const runningTasks  = activeTasks.filter(t => t.status === 'running').length;
+  const queuedTasks   = activeTasks.filter(t => t.status === 'queued').length;
+
+  const activeExperts   = experts.filter((e: Expert) => e.status === 'active').length;
+  const idleExperts     = experts.filter((e: Expert) => e.status === 'idle').length;
+  const trainingExperts = experts.filter((e: Expert) => e.status === 'training').length;
 
   return (
     <div style={{ padding: 24, maxWidth: 1400, margin: '0 auto' }}>
+
+      {/* Shimmer keyframes — injected once */}
+      <style>{`
+        @keyframes shimmer {
+          0% { background-position: 200% 0; }
+          100% { background-position: -200% 0; }
+        }
+      `}</style>
 
       {/* ── Page Header ──────────────────────────────────── */}
       <motion.div
@@ -264,30 +338,49 @@ export default function OpsDashboard() {
         animate="show"
         style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 12, marginBottom: 20 }}
       >
-        <MetricCard
-          label="ACTIVE AGENTS"
-          value={String(metrics?.activeAgents ?? SYSTEM_METRICS.activeAgents)}
-          sub={`${runningTasks} running · ${queuedTasks} queued`}
-          icon={Cpu}
-        />
-        <MetricCard
-          label="TASKS TODAY"
-          value={String(metrics?.tasksToday ?? SYSTEM_METRICS.tasksToday)}
-          sub={`${((metrics?.successRate ?? SYSTEM_METRICS.successRate) * 100).toFixed(1)}% success rate`}
-          icon={CheckCircle2}
-        />
-        <MetricCard
-          label="TOKENS USED"
-          value={fmt(metrics?.tokensUsedToday ?? SYSTEM_METRICS.tokensUsedToday)}
-          sub={`of ${fmt(metrics?.tokenBudgetDaily ?? SYSTEM_METRICS.tokenBudgetDaily)} daily budget`}
-          icon={Zap}
-        />
-        <MetricCard
-          label="AVG LATENCY"
-          value={`${((metrics?.avgLatencyMs ?? SYSTEM_METRICS.avgLatencyMs) / 1000).toFixed(1)}s`}
-          sub={`$${(metrics?.costToday ?? SYSTEM_METRICS.costToday).toFixed(2)} spent today`}
-          icon={TrendingUp}
-        />
+        {metricsLoading ? (
+          <>
+            <SkeletonCard />
+            <SkeletonCard />
+            <SkeletonCard />
+            <SkeletonCard />
+          </>
+        ) : (
+          <>
+            <MetricCard
+              label="ACTIVE AGENTS"
+              value={v(metrics?.activeAgents)}
+              sub={`${runningTasks} running · ${queuedTasks} queued`}
+              icon={Cpu}
+            />
+            <MetricCard
+              label="TASKS TODAY"
+              value={v(metrics?.tasksToday)}
+              sub={metrics?.successRate != null
+                ? `${(metrics.successRate * 100).toFixed(1)}% success rate`
+                : '\u2014'}
+              icon={CheckCircle2}
+            />
+            <MetricCard
+              label="TOKENS USED"
+              value={fmt(metrics?.tokensUsedToday)}
+              sub={metrics?.tokenBudgetDaily != null
+                ? `of ${fmt(metrics.tokenBudgetDaily)} daily budget`
+                : '\u2014'}
+              icon={Zap}
+            />
+            <MetricCard
+              label="AVG LATENCY"
+              value={metrics?.avgLatencyMs != null
+                ? `${(metrics.avgLatencyMs / 1000).toFixed(1)}s`
+                : '\u2014'}
+              sub={metrics?.costToday != null
+                ? `$${metrics.costToday.toFixed(2)} spent today`
+                : '\u2014'}
+              icon={TrendingUp}
+            />
+          </>
+        )}
       </motion.div>
 
       {/* ── Main grid ────────────────────────────────────── */}
@@ -316,7 +409,19 @@ export default function OpsDashboard() {
               </button>
             </Link>
           </div>
-          {activeTasks.map((task, i) => <TaskRow key={task.id} task={task} index={i} />)}
+          {tasksLoading ? (
+            <>
+              <SkeletonRow />
+              <SkeletonRow />
+              <SkeletonRow />
+            </>
+          ) : activeTasks.length === 0 ? (
+            <div style={{ padding: '24px 16px', textAlign: 'center', color: 'var(--text-3)', fontSize: 13 }}>
+              No active tasks
+            </div>
+          ) : (
+            activeTasks.map((task, i) => <TaskRow key={task.id} task={task} index={i} />)
+          )}
         </motion.div>
 
         {/* Right panels */}
@@ -331,36 +436,46 @@ export default function OpsDashboard() {
               <Cpu size={13} color="var(--text-2)" /> Provider Health
             </div>
             <div style={{ padding: '6px 0' }}>
-              {PROVIDERS.filter(p => p.connected).map(p => (
-                <div key={p.id} style={{
-                  display: 'flex', alignItems: 'center', gap: 10,
-                  padding: '7px 16px',
-                }}>
-                  <span className={`status-dot ${
-                    p.status === 'operational' ? 'dot-online' :
-                    p.status === 'degraded'    ? 'dot-training' : 'dot-error'
-                  }`} />
-                  <span style={{ flex: 1, fontSize: 13, color: 'var(--text-1)' }}>{p.name}</span>
-                  <span className="mono" style={{
-                    fontSize: 11,
-                    color: p.status === 'operational' ? 'var(--text-2)' : 'var(--text-1)',
-                    fontWeight: p.status !== 'operational' ? 600 : 400,
-                  }}>
-                    {p.status === 'operational' ? `${p.latencyMs}ms`
-                      : p.status === 'degraded' ? `${p.latencyMs}ms ↑` : 'Outage'}
-                  </span>
-                </div>
-              ))}
-              {PROVIDERS.filter(p => !p.connected).slice(0, 2).map(p => (
-                <div key={p.id} style={{
-                  display: 'flex', alignItems: 'center', gap: 10,
-                  padding: '7px 16px', opacity: 0.30,
-                }}>
-                  <span className="status-dot dot-offline" />
-                  <span style={{ flex: 1, fontSize: 13, color: 'var(--text-2)' }}>{p.name}</span>
-                  <span style={{ fontSize: 11, color: 'var(--text-3)' }}>Not connected</span>
-                </div>
-              ))}
+              {providersLoading ? (
+                <>
+                  <div style={{ padding: '7px 16px' }}><Skeleton width="80%" height={13} /></div>
+                  <div style={{ padding: '7px 16px' }}><Skeleton width="60%" height={13} /></div>
+                  <div style={{ padding: '7px 16px' }}><Skeleton width="70%" height={13} /></div>
+                </>
+              ) : (
+                <>
+                  {providers.filter((p: AIProvider) => p.connected).map((p: AIProvider) => (
+                    <div key={p.id} style={{
+                      display: 'flex', alignItems: 'center', gap: 10,
+                      padding: '7px 16px',
+                    }}>
+                      <span className={`status-dot ${
+                        p.status === 'operational' ? 'dot-online' :
+                        p.status === 'degraded'    ? 'dot-training' : 'dot-error'
+                      }`} />
+                      <span style={{ flex: 1, fontSize: 13, color: 'var(--text-1)' }}>{p.name}</span>
+                      <span className="mono" style={{
+                        fontSize: 11,
+                        color: p.status === 'operational' ? 'var(--text-2)' : 'var(--text-1)',
+                        fontWeight: p.status !== 'operational' ? 600 : 400,
+                      }}>
+                        {p.status === 'operational' ? `${p.latencyMs ?? '\u2014'}ms`
+                          : p.status === 'degraded' ? `${p.latencyMs ?? '\u2014'}ms ↑` : 'Outage'}
+                      </span>
+                    </div>
+                  ))}
+                  {providers.filter((p: AIProvider) => !p.connected).slice(0, 2).map((p: AIProvider) => (
+                    <div key={p.id} style={{
+                      display: 'flex', alignItems: 'center', gap: 10,
+                      padding: '7px 16px', opacity: 0.30,
+                    }}>
+                      <span className="status-dot dot-offline" />
+                      <span style={{ flex: 1, fontSize: 13, color: 'var(--text-2)' }}>{p.name}</span>
+                      <span style={{ fontSize: 11, color: 'var(--text-3)' }}>Not connected</span>
+                    </div>
+                  ))}
+                </>
+              )}
             </div>
           </motion.div>
 
@@ -374,33 +489,43 @@ export default function OpsDashboard() {
               <Users size={13} color="var(--text-2)" /> Expert Pool
             </div>
             <div style={{ padding: '10px 16px' }}>
-              {[
-                { label: 'Active',   count: activeExperts,   dot: 'dot-online'   },
-                { label: 'Idle',     count: idleExperts,     dot: 'dot-idle'     },
-                { label: 'Training', count: trainingExperts, dot: 'dot-training' },
-              ].map((item, i) => (
-                <motion.div
-                  key={item.label}
-                  initial={{ opacity: 0, x: 8 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: i * 0.08 + 0.5 }}
-                  style={{
-                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                    marginBottom: 10,
-                  }}
-                >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span className={`status-dot ${item.dot}`} />
-                    <span style={{ fontSize: 13, color: 'var(--text-2)' }}>{item.label}</span>
-                  </div>
-                  <span style={{
-                    fontSize: 18, fontWeight: 700, color: 'var(--text-1)',
-                    fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.03em',
-                  }}>
-                    {item.count}
-                  </span>
-                </motion.div>
-              ))}
+              {expertsLoading ? (
+                <>
+                  <div style={{ marginBottom: 10 }}><Skeleton width="100%" height={18} /></div>
+                  <div style={{ marginBottom: 10 }}><Skeleton width="100%" height={18} /></div>
+                  <div style={{ marginBottom: 10 }}><Skeleton width="100%" height={18} /></div>
+                </>
+              ) : (
+                <>
+                  {[
+                    { label: 'Active',   count: activeExperts,   dot: 'dot-online'   },
+                    { label: 'Idle',     count: idleExperts,     dot: 'dot-idle'     },
+                    { label: 'Training', count: trainingExperts, dot: 'dot-training' },
+                  ].map((item, i) => (
+                    <motion.div
+                      key={item.label}
+                      initial={{ opacity: 0, x: 8 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ delay: i * 0.08 + 0.5 }}
+                      style={{
+                        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                        marginBottom: 10,
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <span className={`status-dot ${item.dot}`} />
+                        <span style={{ fontSize: 13, color: 'var(--text-2)' }}>{item.label}</span>
+                      </div>
+                      <span style={{
+                        fontSize: 18, fontWeight: 700, color: 'var(--text-1)',
+                        fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.03em',
+                      }}>
+                        {item.count}
+                      </span>
+                    </motion.div>
+                  ))}
+                </>
+              )}
               <div className="divider" style={{ margin: '8px 0 10px' }} />
               <Link href="/experts">
                 <motion.button
@@ -442,7 +567,19 @@ export default function OpsDashboard() {
             </button>
           </Link>
         </div>
-        {RECENT_RUNS.map((run, i) => <RunRow key={run.id} run={run} index={i} />)}
+        {runsLoading ? (
+          <>
+            <SkeletonRow />
+            <SkeletonRow />
+            <SkeletonRow />
+          </>
+        ) : recentRuns.length === 0 ? (
+          <div style={{ padding: '24px 16px', textAlign: 'center', color: 'var(--text-3)', fontSize: 13 }}>
+            No recent runs
+          </div>
+        ) : (
+          recentRuns.map((run: WorkflowRun, i: number) => <RunRow key={run.id} run={run} index={i} />)
+        )}
       </motion.div>
 
       {/* ── Quick Start ─────────────────────────────────────── */}

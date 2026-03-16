@@ -197,3 +197,65 @@ export function useHfDatasets() {
     mutate,
   };
 }
+
+/* ── Datasets (local synthesized) ──────────────────── */
+export function useDatasets() {
+  const { data, error, isLoading, mutate } = useSWR(
+    '/api/data/datasets',
+    fetcher,
+    { refreshInterval: 30_000 },
+  );
+  return {
+    datasets: data?.datasets ?? [],
+    total:    data?.total ?? 0,
+    error,
+    isLoading,
+    mutate,
+  };
+}
+
+/* ── Providers (with DB connection status) ─────────── */
+export function useProviders() {
+  const { data, error, isLoading, mutate } = useSWR(
+    '/api/providers',
+    fetcher,
+    { refreshInterval: 60_000 },
+  );
+  return {
+    providers: data?.providers ?? [],
+    error,
+    isLoading,
+    mutate,
+  };
+}
+
+/* ── Synthesis Jobs ────────────────────────────────── */
+export function useSynthesisJobs() {
+  const { data, error, isLoading, mutate } = useSWR(
+    '/api/synthesis',
+    fetcher,
+    { refreshInterval: 5_000 },
+  );
+  return {
+    jobs:     data?.jobs ?? [],
+    total:    data?.total ?? 0,
+    error,
+    isLoading,
+    mutate,
+  };
+}
+
+/* ── Analytics ─────────────────────────────────────── */
+export function useAnalytics() {
+  const { data, error, isLoading, mutate } = useSWR(
+    '/api/analytics',
+    fetcher,
+    { refreshInterval: 60_000 },
+  );
+  return {
+    analytics: data ?? null,
+    error,
+    isLoading,
+    mutate,
+  };
+}
