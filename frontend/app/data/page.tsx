@@ -69,6 +69,8 @@ function DatasetViewer({ dataset, onClose }: { dataset: any; onClose: () => void
   const [saving, setSaving] = useState(false);
   const [versions, setVersions] = useState<any[]>([]);
   const [showVersions, setShowVersions] = useState(false);
+  const [pendingDeletes, setPendingDeletes] = useState<Set<number>>(new Set());
+  const [newRows, setNewRows] = useState<any[]>([]); // rows to append
   const PAGE_SIZE = 50;
 
   // Use a ref for columns so fetchData doesn't depend on the columns state
@@ -91,8 +93,10 @@ function DatasetViewer({ dataset, onClose }: { dataset: any; onClose: () => void
 
   const datasetId = dataset.id ?? null;
 
+  const totalChanges = pendingEdits.size + pendingDeletes.size + newRows.length;
+
   const handleSaveEdits = async () => {
-    if (pendingEdits.size === 0) return;
+    if (totalChanges === 0) return;
     setSaving(true);
     try {
       const updates = Array.from(pendingEdits.entries()).map(([key, value]) => {
@@ -101,16 +105,20 @@ function DatasetViewer({ dataset, onClose }: { dataset: any; onClose: () => void
         const column = key.slice(sepIdx + SEP.length);
         return { rowIndex, column, value };
       });
+      const deletes = Array.from(pendingDeletes);
+      const additions = newRows.length > 0 ? newRows : undefined;
       const res = await fetch('/api/data/update', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path: filePath, updates, create_version: true, datasetId }),
+        body: JSON.stringify({ path: filePath, updates, deletes, additions, create_version: true, datasetId }),
       });
       const data = await res.json();
       if (data.error) {
         setError(`Save failed: ${data.error}`);
       } else {
         setPendingEdits(new Map());
+        setPendingDeletes(new Set());
+        setNewRows([]);
         setEditMode(false);
         setFetchTrigger(t => t + 1);
       }
@@ -224,7 +232,7 @@ function DatasetViewer({ dataset, onClose }: { dataset: any; onClose: () => void
           </div>
           {/* Edit mode toggle */}
           <button
-            onClick={() => { setEditMode(!editMode); if (editMode) setPendingEdits(new Map()); }}
+            onClick={() => { setEditMode(!editMode); if (editMode) { setPendingEdits(new Map()); setPendingDeletes(new Set()); setNewRows([]); } }}
             style={{
               background: editMode ? 'rgba(5,150,105,0.1)' : 'none',
               border: `1px solid ${editMode ? 'var(--teal)' : 'var(--border)'}`,
@@ -237,7 +245,7 @@ function DatasetViewer({ dataset, onClose }: { dataset: any; onClose: () => void
             {editMode ? <><FileText size={11} /> Editing</> : <><FileText size={11} /> Edit</>}
           </button>
           {/* Save edits */}
-          {editMode && pendingEdits.size > 0 && (
+          {editMode && totalChanges > 0 && (
             <button
               onClick={handleSaveEdits}
               disabled={saving}
@@ -248,7 +256,7 @@ function DatasetViewer({ dataset, onClose }: { dataset: any; onClose: () => void
               }}
             >
               {saving ? <Loader2 size={11} className="spin" /> : <CheckCircle2 size={11} />}
-              Save {pendingEdits.size} edit{pendingEdits.size !== 1 ? 's' : ''}
+              Save {totalChanges} change{totalChanges !== 1 ? 's' : ''}
             </button>
           )}
           {/* Version history */}
@@ -262,6 +270,13 @@ function DatasetViewer({ dataset, onClose }: { dataset: any; onClose: () => void
           >
             <Clock size={11} /> Versions
           </button>
+          <Link href={`/data/engineer?dataset=${dataset.id}&path=${encodeURIComponent(filePath)}`} style={{
+            background: 'none', border: '1px solid var(--border)', borderRadius: 4,
+            cursor: 'pointer', color: 'var(--text-3)', display: 'flex', alignItems: 'center',
+            gap: 4, padding: '4px 8px', fontSize: 11, textDecoration: 'none',
+          }}>
+            <Zap size={11} /> Data Lab
+          </Link>
           <button
             onClick={() => setFetchTrigger(t => t + 1)}
             title="Reload data"
@@ -332,9 +347,17 @@ function DatasetViewer({ dataset, onClose }: { dataset: any; onClose: () => void
               No rows match your search/filters
             </div>
           ) : (
+            <>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
               <thead>
                 <tr style={{ position: 'sticky', top: 0, background: 'var(--bg-elevated)', zIndex: 2 }}>
+                  {editMode && (
+                    <th style={{
+                      padding: '8px 6px', textAlign: 'center', fontSize: 10, fontWeight: 700,
+                      color: 'var(--text-3)', borderBottom: '2px solid var(--border)',
+                      width: 32,
+                    }} />
+                  )}
                   <th style={{
                     padding: '8px 12px', textAlign: 'left', fontSize: 10, fontWeight: 700,
                     color: 'var(--text-3)', borderBottom: '2px solid var(--border)',
@@ -366,13 +389,42 @@ function DatasetViewer({ dataset, onClose }: { dataset: any; onClose: () => void
                 </tr>
               </thead>
               <tbody>
-                {rows.map((row, i) => (
+                {rows.map((row, i) => {
+                  const absIdx = page * PAGE_SIZE + i;
+                  const isDeleted = pendingDeletes.has(absIdx);
+                  return (
                   <tr
                     key={i}
-                    style={{ borderBottom: '1px solid var(--border)' }}
-                    onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-elevated)'; }}
-                    onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
+                    style={{
+                      borderBottom: '1px solid var(--border)',
+                      background: isDeleted ? 'rgba(220,38,38,0.06)' : undefined,
+                      textDecoration: isDeleted ? 'line-through' : undefined,
+                      opacity: isDeleted ? 0.5 : undefined,
+                    }}
+                    onMouseEnter={e => { if (!isDeleted) e.currentTarget.style.background = 'var(--bg-elevated)'; }}
+                    onMouseLeave={e => { e.currentTarget.style.background = isDeleted ? 'rgba(220,38,38,0.06)' : 'transparent'; }}
                   >
+                    {editMode && (
+                      <td style={{ padding: '6px 4px', textAlign: 'center' }}>
+                        <button
+                          onClick={() => {
+                            setPendingDeletes(prev => {
+                              const next = new Set(prev);
+                              if (next.has(absIdx)) next.delete(absIdx); else next.add(absIdx);
+                              return next;
+                            });
+                          }}
+                          title={isDeleted ? 'Undo delete' : 'Delete row'}
+                          style={{
+                            background: 'none', border: 'none', cursor: 'pointer',
+                            color: isDeleted ? 'var(--teal)' : 'var(--error, #DC2626)',
+                            padding: 2, display: 'flex', alignItems: 'center',
+                          }}
+                        >
+                          <Trash2 size={12} />
+                        </button>
+                      </td>
+                    )}
                     <td style={{ padding: '6px 12px', color: 'var(--text-4)', fontSize: 10, fontVariantNumeric: 'tabular-nums' }}>
                       {page * PAGE_SIZE + i + 1}
                     </td>
@@ -406,9 +458,71 @@ function DatasetViewer({ dataset, onClose }: { dataset: any; onClose: () => void
                       );
                     })}
                   </tr>
+                  );
+                })}
+                {/* New rows (appended in edit mode) */}
+                {editMode && newRows.map((newRow, ni) => (
+                  <tr key={`new-${ni}`} style={{ borderBottom: '1px solid var(--border)', background: 'rgba(5,150,105,0.04)' }}>
+                    {editMode && (
+                      <td style={{ padding: '6px 4px', textAlign: 'center' }}>
+                        <button
+                          onClick={() => setNewRows(prev => prev.filter((_, idx) => idx !== ni))}
+                          title="Remove new row"
+                          style={{
+                            background: 'none', border: 'none', cursor: 'pointer',
+                            color: 'var(--error, #DC2626)', padding: 2, display: 'flex', alignItems: 'center',
+                          }}
+                        >
+                          <Trash2 size={12} />
+                        </button>
+                      </td>
+                    )}
+                    <td style={{ padding: '6px 12px', color: 'var(--teal)', fontSize: 10, fontWeight: 600 }}>+</td>
+                    {columns.map(col => (
+                      <td key={col.name} style={{ padding: '6px 12px' }}>
+                        <input
+                          value={newRow[col.name] ?? ''}
+                          onChange={e => {
+                            setNewRows(prev => {
+                              const copy = [...prev];
+                              copy[ni] = { ...copy[ni], [col.name]: e.target.value };
+                              return copy;
+                            });
+                          }}
+                          placeholder={col.name}
+                          style={{
+                            width: '100%', border: 'none', background: 'transparent',
+                            fontSize: 12, color: 'var(--text-1)', outline: 'none',
+                            padding: 0, fontFamily: 'inherit',
+                          }}
+                        />
+                      </td>
+                    ))}
+                  </tr>
                 ))}
               </tbody>
             </table>
+            {/* Add Row button */}
+            {editMode && (
+              <div style={{ padding: '8px 20px', borderTop: '1px solid var(--border)' }}>
+                <button
+                  onClick={() => {
+                    const empty: Record<string, any> = {};
+                    columns.forEach(c => { empty[c.name] = ''; });
+                    setNewRows(prev => [...prev, empty]);
+                  }}
+                  style={{
+                    background: 'none', border: '1px dashed var(--border)', borderRadius: 4,
+                    cursor: 'pointer', color: 'var(--teal)', padding: '6px 12px',
+                    fontSize: 11, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6,
+                    width: '100%', justifyContent: 'center',
+                  }}
+                >
+                  <Plus size={12} /> Add Row
+                </button>
+              </div>
+            )}
+            </>
           )}
         </div>
 

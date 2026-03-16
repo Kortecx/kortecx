@@ -8,16 +8,21 @@ services:
       POSTGRES_USER: kortecx
       POSTGRES_PASSWORD: kortecx
       POSTGRES_DB: kortecx_dev
+      # Prevent data loss on unclean shutdown
+      POSTGRES_INITDB_ARGS: '--data-checksums'
     ports:
       - '5433:5432'
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./frontend/scripts/seed.sql:/docker-entrypoint-initdb.d/seed.sql:ro
+      - ./backups:/backups        # mount for backup scripts
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U kortecx -d kortecx_dev']
       interval: 5s
       timeout: 5s
       retries: 5
+    # Graceful shutdown — give postgres time to flush WAL
+    stop_grace_period: 30s
 
   # ── Qdrant Vector Database ──────────────────────────────────────────────────
   qdrant:
@@ -35,6 +40,15 @@ services:
       timeout: 5s
       retries: 5
 
+# ── Named volumes (persist across container recreation) ────────────────────
+# WARNING: Do NOT use 'docker compose down -v' — it deletes these volumes!
+# Use 'docker compose down' (without -v) to stop containers safely.
 volumes:
   pgdata:
+    labels:
+      com.kortecx.description: "PostgreSQL data — all platform state"
+      com.kortecx.backup: "required"
   qdrant_data:
+    labels:
+      com.kortecx.description: "Qdrant vector embeddings"
+      com.kortecx.backup: "required"

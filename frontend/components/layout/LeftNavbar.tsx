@@ -8,7 +8,7 @@ import {
   LayoutDashboard, ListOrdered, Cpu, Users, Star, Rocket,
   Workflow, LayoutTemplate, History, Brain, Database, Sliders,
   Activity, ScrollText, Bell, Plug, Key, Settings, Cable, Store,
-  ChevronLeft, ChevronRight,
+  ChevronLeft, ChevronRight, Zap,
 } from 'lucide-react';
 import { useApp } from '@/contexts/AppContext';
 import { NAV_SECTIONS, SYSTEM_METRICS } from '@/lib/constants';
@@ -16,7 +16,7 @@ import { NAV_SECTIONS, SYSTEM_METRICS } from '@/lib/constants';
 const ICONS: Record<string, React.ElementType> = {
   LayoutDashboard, ListOrdered, Cpu, Users, Star, Rocket,
   Workflow, LayoutTemplate, History, Brain, Database, Sliders,
-  Activity, ScrollText, Bell, Plug, Key, Settings, Cable, Store,
+  Activity, ScrollText, Bell, Plug, Key, Settings, Cable, Store, Zap,
 };
 
 function KortecxLogo({ collapsed }: { collapsed: boolean }) {
