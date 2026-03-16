@@ -1,0 +1,48 @@
+name: Claude PR Review
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  review:
+    name: Claude Code Review
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Get PR diff
+        id: diff
+        run: |
+          git diff origin/${{ github.base_ref }}...HEAD > /tmp/pr.diff
+          echo "lines=$(wc -l < /tmp/pr.diff)" >> $GITHUB_OUTPUT
+      - name: Skip if diff too small
+        if: steps.diff.outputs.lines < 5
+        run: echo "Skipping review — diff too small"
+      - name: Claude Review
+        if: steps.diff.outputs.lines >= 5
+        uses: anthropics/anthropic-sdk-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          model: claude-sonnet-4-6
+          prompt: |
+            Review this pull request diff for a monorepo with Next.js frontend, Python FastAPI engine, and Go client library.
+
+            Focus on:
+            1. Security issues (injection, XSS, exposed secrets, unsafe patterns)
+            2. Performance problems (N+1 queries, missing indexes, unbounded loops)
+            3. Error handling gaps (unhandled errors, missing validation)
+            4. Type safety issues
+            5. Breaking changes to API contracts between services
+
+            Be concise. Only flag real issues, not style preferences.
+
+            Diff:
+            ```
+            $(cat /tmp/pr.diff | head -3000)
+            ```
