@@ -224,7 +224,7 @@ function DatasetViewer({ dataset, onClose }: { dataset: any; onClose: () => void
               padding: '4px 8px', fontSize: 11, fontWeight: editMode ? 600 : 500,
             }}
           >
-            {editMode ? '✏️ Editing' : '✏️ Edit'}
+            {editMode ? <><FileText size={11} /> Editing</> : <><FileText size={11} /> Edit</>}
           </button>
           {/* Save edits */}
           {editMode && pendingEdits.size > 0 && (
@@ -2285,20 +2285,29 @@ export default function DataSynthesisPage() {
                 />
               </div>
 
-              {/* Generation Type */}
-              <div>
-                <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.08em', display: 'block', marginBottom: 6 }}>
-                  Generation Type
-                </label>
-                <select
-                  className="input"
-                  value={synthGenType}
-                  onChange={e => { setSynthGenType(e.target.value as 'text' | 'image' | 'audio'); setSynthModelPipeline(null); }}
+              {/* Generation Type + Schema */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 12, alignItems: 'end' }}>
+                <div>
+                  <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.08em', display: 'block', marginBottom: 6 }}>
+                    Generation Type
+                  </label>
+                  <select
+                    className="input"
+                    value={synthGenType}
+                    onChange={e => { setSynthGenType(e.target.value as 'text' | 'image' | 'audio'); setSynthModelPipeline(null); }}
+                  >
+                    <option value="text">Text — code, structured data, Q&amp;A</option>
+                    <option value="image">Image — generation &amp; editing</option>
+                    <option value="audio">Audio — speech, music, sound</option>
+                  </select>
+                </div>
+                <button
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => setShowSynthSchema(true)}
+                  style={{ height: 36, whiteSpace: 'nowrap' }}
                 >
-                  <option value="text">📝 Text — code, structured data, Q&amp;A</option>
-                  <option value="image">🖼️ Image — generation &amp; editing</option>
-                  <option value="audio">🔊 Audio — speech, music, sound</option>
-                </select>
+                  <Database size={12} /> {synthSchema.length > 0 ? `Schema (${synthSchema.length} cols)` : 'Define Schema'}
+                </button>
               </div>
 
               {/* Model Source */}
@@ -2434,10 +2443,6 @@ export default function DataSynthesisPage() {
                   />
                 </div>
               </div>
-
-              <button className="btn btn-secondary btn-sm" style={{ marginTop: 20 }} onClick={() => setShowSynthSchema(true)}>
-                <Database size={12} /> {synthSchema.length > 0 ? `Schema (${synthSchema.length} cols)` : 'Define Schema'}
-              </button>
 
               {/* Temperature + Batch Size */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
