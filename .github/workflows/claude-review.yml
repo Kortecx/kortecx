@@ -12,37 +12,60 @@ jobs:
   review:
     name: Claude Code Review
     runs-on: ubuntu-latest
+    if: github.event.pull_request.draft == false
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
       - name: Get PR diff
         id: diff
         run: |
           git diff origin/${{ github.base_ref }}...HEAD > /tmp/pr.diff
-          echo "lines=$(wc -l < /tmp/pr.diff)" >> $GITHUB_OUTPUT
-      - name: Skip if diff too small
-        if: steps.diff.outputs.lines < 5
-        run: echo "Skipping review — diff too small"
+          LINES=$(wc -l < /tmp/pr.diff | tr -d ' ')
+          echo "lines=$LINES" >> $GITHUB_OUTPUT
+          echo "Diff has $LINES lines"
+
       - name: Claude Review
         if: steps.diff.outputs.lines >= 5
-        uses: anthropics/anthropic-sdk-action@v1
-        with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          model: claude-sonnet-4-6
-          prompt: |
-            Review this pull request diff for a monorepo with Next.js frontend, Python FastAPI engine, and Go client library.
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          # Skip if no API key configured
+          if [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "ANTHROPIC_API_KEY not set — skipping review"
+            exit 0
+          fi
 
-            Focus on:
-            1. Security issues (injection, XSS, exposed secrets, unsafe patterns)
-            2. Performance problems (N+1 queries, missing indexes, unbounded loops)
-            3. Error handling gaps (unhandled errors, missing validation)
-            4. Type safety issues
-            5. Breaking changes to API contracts between services
+          # Truncate diff to ~3000 lines for context limits
+          DIFF=$(head -3000 /tmp/pr.diff)
 
-            Be concise. Only flag real issues, not style preferences.
+          # Call Claude API
+          RESPONSE=$(curl -s https://api.anthropic.com/v1/messages \
+            -H "Content-Type: application/json" \
+            -H "x-api-key: $ANTHROPIC_API_KEY" \
+            -H "anthropic-version: 2023-06-01" \
+            -d "$(jq -n \
+              --arg diff "$DIFF" \
+              '{
+                model: "claude-sonnet-4-6-20250514",
+                max_tokens: 2048,
+                messages: [{
+                  role: "user",
+                  content: ("Review this pull request diff for a monorepo with Next.js frontend, Python FastAPI engine, and Go client library.\n\nFocus on:\n1. Security issues (injection, XSS, exposed secrets)\n2. Performance problems (N+1 queries, unbounded loops)\n3. Error handling gaps\n4. Type safety issues\n5. Breaking API contract changes between services\n\nBe concise. Only flag real issues, not style preferences. Format as markdown.\n\nDiff:\n```\n" + $diff + "\n```")
+                }]
+              }'
+            )")
 
-            Diff:
-            ```
-            $(cat /tmp/pr.diff | head -3000)
-            ```
+          # Extract the review text
+          REVIEW=$(echo "$RESPONSE" | jq -r '.content[0].text // "Review could not be generated."')
+
+          # Post as PR comment
+          gh pr comment "$PR_NUMBER" --body "## Claude Code Review
+
+          $REVIEW
+
+          ---
+          *Automated review by Claude Sonnet 4.6*"
