@@ -107,6 +107,49 @@ func (s *Service) GetSharedMemory(runID string) (*types.SharedMemory, error) {
 	return &out, err
 }
 
+// --- Local Inference ---
+
+// ListLocalModels returns available models on a local inference engine.
+func (s *Service) ListLocalModels(engine string) ([]map[string]any, error) {
+	var out struct {
+		Engine string           `json:"engine"`
+		Models []map[string]any `json:"models"`
+	}
+	err := s.c.Do(http.MethodGet, fmt.Sprintf("/api/orchestrator/models/%s", engine), nil, &out)
+	return out.Models, err
+}
+
+// CheckEngineHealth checks if a local inference engine is running.
+func (s *Service) CheckEngineHealth(engine string) (bool, error) {
+	var out struct {
+		Healthy bool `json:"healthy"`
+	}
+	err := s.c.Do(http.MethodGet, fmt.Sprintf("/api/orchestrator/health/%s", engine), nil, &out)
+	return out.Healthy, err
+}
+
+// PullModel pulls/downloads a model on Ollama.
+func (s *Service) PullModel(engine, model string) error {
+	return s.c.Do(http.MethodPost, "/api/orchestrator/models/pull", map[string]string{
+		"engine": engine,
+		"model":  model,
+	}, nil)
+}
+
+// LocalGenerate runs text generation on a local inference engine.
+func (s *Service) LocalGenerate(req types.LocalGenerateRequest) (*types.LocalInferenceResult, error) {
+	var out types.LocalInferenceResult
+	err := s.c.Do(http.MethodPost, "/api/orchestrator/inference/generate", req, &out)
+	return &out, err
+}
+
+// LocalChat runs chat completion on a local inference engine.
+func (s *Service) LocalChat(req types.LocalChatRequest) (*types.LocalInferenceResult, error) {
+	var out types.LocalInferenceResult
+	err := s.c.Do(http.MethodPost, "/api/orchestrator/inference/chat", req, &out)
+	return &out, err
+}
+
 // --- Agents ---
 
 // ListAgents returns all active agents and their task assignments.

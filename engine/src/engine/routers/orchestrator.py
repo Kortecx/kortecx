@@ -201,3 +201,95 @@ async def check_engine_health(engine: str) -> dict[str, Any]:
     """Check if a local inference engine is running."""
     healthy = await inference_router.health_check(engine)
     return {"engine": engine, "healthy": healthy}
+
+
+class PullModelRequest(BaseModel):
+    engine: str = "ollama"
+    model: str
+    baseUrl: str | None = None
+
+
+@router.post("/models/pull")
+async def pull_model(req: PullModelRequest, bg: BackgroundTasks) -> dict[str, Any]:
+    """Pull/download a model on Ollama. Runs in background."""
+    if req.engine != "ollama":
+        return {"error": "Model pull is only supported on Ollama"}
+
+    from engine.services.local_inference import OllamaService
+    svc = OllamaService(req.baseUrl) if req.baseUrl else OllamaService()
+
+    async def _pull() -> None:
+        try:
+            await svc.pull_model(req.model)
+            logger.info("Model pulled: %s", req.model)
+        except Exception as exc:
+            logger.error("Model pull failed: %s — %s", req.model, exc)
+
+    bg.add_task(_pull)
+    return {"status": "pulling", "engine": req.engine, "model": req.model}
+
+
+class GenerateRequest(BaseModel):
+    engine: str = "ollama"
+    model: str
+    prompt: str
+    system: str = ""
+    temperature: float = 0.7
+    maxTokens: int = 4096
+    baseUrl: str | None = None
+
+
+class ChatRequest(BaseModel):
+    engine: str = "ollama"
+    model: str
+    messages: list[dict[str, str]]
+    temperature: float = 0.7
+    maxTokens: int = 4096
+    baseUrl: str | None = None
+
+
+@router.post("/inference/generate")
+async def local_generate(req: GenerateRequest) -> dict[str, Any]:
+    """Run text generation on a local inference engine."""
+    try:
+        result = await inference_router.generate(
+            engine=req.engine,
+            model=req.model,
+            prompt=req.prompt,
+            system=req.system,
+            temperature=req.temperature,
+            max_tokens=req.maxTokens,
+            base_url=req.baseUrl,
+        )
+        return {
+            "text": result.text,
+            "tokensUsed": result.tokens_used,
+            "model": result.model,
+            "durationMs": result.duration_ms,
+        }
+    except Exception as exc:
+        logger.error("Local generate failed: %s", exc)
+        return {"error": str(exc), "engine": req.engine, "model": req.model}
+
+
+@router.post("/inference/chat")
+async def local_chat(req: ChatRequest) -> dict[str, Any]:
+    """Run chat completion on a local inference engine."""
+    try:
+        result = await inference_router.chat(
+            engine=req.engine,
+            model=req.model,
+            messages=req.messages,
+            temperature=req.temperature,
+            max_tokens=req.maxTokens,
+            base_url=req.baseUrl,
+        )
+        return {
+            "text": result.text,
+            "tokensUsed": result.tokens_used,
+            "model": result.model,
+            "durationMs": result.duration_ms,
+        }
+    except Exception as exc:
+        logger.error("Local chat failed: %s", exc)
+        return {"error": str(exc), "engine": req.engine, "model": req.model}

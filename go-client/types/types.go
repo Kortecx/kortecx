@@ -443,6 +443,38 @@ type StepIntegration struct {
 	Config      map[string]string `json:"config,omitempty"`
 }
 
+// --- Local Inference Request/Response ---
+
+// LocalGenerateRequest sends a text generation request to a local engine.
+type LocalGenerateRequest struct {
+	Engine      string  `json:"engine"`
+	Model       string  `json:"model"`
+	Prompt      string  `json:"prompt"`
+	System      string  `json:"system,omitempty"`
+	Temperature float64 `json:"temperature"`
+	MaxTokens   int     `json:"maxTokens"`
+	BaseURL     string  `json:"baseUrl,omitempty"`
+}
+
+// LocalChatRequest sends a chat request to a local engine.
+type LocalChatRequest struct {
+	Engine      string              `json:"engine"`
+	Model       string              `json:"model"`
+	Messages    []map[string]string `json:"messages"`
+	Temperature float64             `json:"temperature"`
+	MaxTokens   int                 `json:"maxTokens"`
+	BaseURL     string              `json:"baseUrl,omitempty"`
+}
+
+// LocalInferenceResult is the response from local generate/chat.
+type LocalInferenceResult struct {
+	Text       string  `json:"text"`
+	TokensUsed int     `json:"tokensUsed"`
+	Model      string  `json:"model"`
+	DurationMs float64 `json:"durationMs"`
+	Error      string  `json:"error,omitempty"`
+}
+
 // --- Request types ---
 
 type CreateTaskRequest struct {

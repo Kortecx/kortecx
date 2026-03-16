@@ -142,7 +142,7 @@ function TemplateCard({ template }: { template: Record<string, unknown> }) {
 export default function WorkflowTemplatesPage() {
   const [category, setCategory] = useState('All');
   const [search, setSearch] = useState('');
-  const { workflows, total, isLoading, mutate } = useWorkflows(true);
+  const { workflows, total, isLoading, mutate } = useWorkflows();
 
   const filtered = workflows.filter((w: Record<string, unknown>) => {
     const matchCat = category === 'All' || w.templateCategory === category;

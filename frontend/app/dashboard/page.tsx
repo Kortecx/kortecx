@@ -244,7 +244,7 @@ export default function OpsDashboard() {
           transition={{ delay: 0.15 }}
           style={{ display: 'flex', gap: 8 }}
         >
-          <Link href="/workflow">
+          <Link href="/workflow/builder">
             <button className="btn btn-secondary btn-sm">
               <Workflow size={13} /> New Workflow
             </button>

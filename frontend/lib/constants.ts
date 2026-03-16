@@ -225,8 +225,8 @@ export const NAV_SECTIONS = [
     label: 'WORKFLOW',
     color: '#2563EB',
     items: [
-      { id: 'builder',   label: 'Builder',     path: '/workflow',           icon: 'Workflow' },
-      { id: 'templates', label: 'Templates',   path: '/workflow/templates', icon: 'LayoutTemplate' },
+      { id: 'builder',   label: 'Builder',     path: '/workflow/builder',   icon: 'LayoutTemplate' },
+      { id: 'workflows', label: 'Workflows',   path: '/workflow',           icon: 'Workflow' },
       { id: 'history',   label: 'Run History', path: '/workflow/history',   icon: 'History' },
     ],
   },
