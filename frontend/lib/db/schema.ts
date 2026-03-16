@@ -206,6 +206,8 @@ export const datasets = pgTable('datasets', {
   sampleCount:     integer('sample_count').default(0),
   sizeBytes:       bigint('size_bytes', { mode: 'number' }).default(0),
   qualityScore:    integer('quality_score'),
+  outputPath:      text('output_path'),                  // file path for generated/imported data
+  sourceJobId:     text('source_job_id'),                // synthesis job ID if generated
   tags:            text('tags').array(),
   categories:      text('categories').array(),
   createdAt:       timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),

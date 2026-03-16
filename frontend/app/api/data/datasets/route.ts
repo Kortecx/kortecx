@@ -1,10 +1,43 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db, datasets } from '@/lib/db';
-import { eq, desc } from 'drizzle-orm';
+import { db, datasets, synthesisJobs } from '@/lib/db';
+import { eq, desc, sql } from 'drizzle-orm';
 
-/* GET /api/data/datasets — list all local datasets */
+/* GET /api/data/datasets — list all local datasets, auto-sync completed synthesis jobs */
 export async function GET() {
   try {
+    // Auto-create dataset records for completed synthesis jobs that don't have one yet
+    try {
+      const completedJobs = await db.select().from(synthesisJobs)
+        .where(eq(synthesisJobs.status, 'completed'));
+
+      if (completedJobs.length > 0) {
+        const existingNames = new Set(
+          (await db.select({ name: datasets.name }).from(datasets)).map((d: { name: string }) => d.name)
+        );
+
+        for (const job of completedJobs) {
+          if (!existingNames.has(job.name)) {
+            await db.insert(datasets).values({
+              id: `ds-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+              name: job.name,
+              description: job.description ?? `Synthesized with ${job.model} (${job.source})`,
+              status: 'ready',
+              format: job.outputFormat ?? 'jsonl',
+              sampleCount: job.currentSamples ?? job.targetSamples ?? 0,
+              sizeBytes: 0,
+              qualityScore: null,
+              outputPath: job.outputPath ?? null,
+              sourceJobId: job.id,
+              tags: job.tags ?? [],
+              categories: [],
+            });
+          }
+        }
+      }
+    } catch (syncErr) {
+      console.error('[data/datasets] synthesis sync error:', syncErr);
+    }
+
     const rows = await db.select().from(datasets).orderBy(desc(datasets.updatedAt));
     return NextResponse.json({ datasets: rows, total: rows.length });
   } catch (err) {
