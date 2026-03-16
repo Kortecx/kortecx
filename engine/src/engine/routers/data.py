@@ -295,6 +295,8 @@ def _detect_schema_sync(path: str) -> dict[str, Any]:
 class FileUpdateRequest(BaseModel):
     path: str
     updates: list[dict[str, Any]]  # [{rowIndex: int, column: str, value: Any}, ...]
+    deletes: list[int] | None = None  # row indices to delete
+    additions: list[dict[str, Any]] | None = None  # new rows to append
     create_version: bool = True  # save a version snapshot before editing
 
 
@@ -329,16 +331,22 @@ def _update_file_sync(req: FileUpdateRequest) -> dict[str, Any]:
 
     try:
         if lower.endswith(".jsonl") or lower.endswith(".json") or ".delta." in lower:
-            return _update_jsonl(path, req.updates, version_path)
+            return _update_jsonl(path, req.updates, version_path, req.deletes, req.additions)
         elif lower.endswith(".csv"):
-            return _update_csv(path, req.updates, version_path)
+            return _update_csv(path, req.updates, version_path, req.deletes, req.additions)
         else:
             return {"error": f"Unsupported format for editing: {path}", "updated": 0}
     except Exception as exc:
         return {"error": str(exc), "updated": 0}
 
 
-def _update_jsonl(path: str, updates: list[dict[str, Any]], version_path: str | None) -> dict[str, Any]:
+def _update_jsonl(
+    path: str,
+    updates: list[dict[str, Any]],
+    version_path: str | None,
+    deletes: list[int] | None = None,
+    additions: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     import json
 
     # Read all rows
@@ -364,21 +372,42 @@ def _update_jsonl(path: str, updates: list[dict[str, Any]], version_path: str | 
             rows[idx][col] = val
             updated += 1
 
+    # Delete rows (process in reverse order to avoid index shifting)
+    deleted = 0
+    if deletes:
+        for idx in sorted(deletes, reverse=True):
+            if 0 <= idx < len(rows):
+                rows.pop(idx)
+                deleted += 1
+
+    # Append new rows
+    added = 0
+    if additions:
+        for new_row in additions:
+            rows.append(new_row)
+            added += 1
+
     # Write back
     with open(path, "w", encoding="utf-8") as f:
         for row in rows:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
-    return {"updated": updated, "totalRows": len(rows), "versionPath": version_path}
+    return {"updated": updated, "deleted": deleted, "added": added, "totalRows": len(rows), "versionPath": version_path}
 
 
-def _update_csv(path: str, updates: list[dict[str, Any]], version_path: str | None) -> dict[str, Any]:
+def _update_csv(
+    path: str,
+    updates: list[dict[str, Any]],
+    version_path: str | None,
+    deletes: list[int] | None = None,
+    additions: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     import csv
 
     # Read all rows
     with open(path, encoding="utf-8", newline="") as f:
         reader = csv.DictReader(f)
-        fieldnames = reader.fieldnames or []
+        fieldnames = list(reader.fieldnames or [])
         rows = list(reader)
 
     # Apply updates
@@ -391,13 +420,30 @@ def _update_csv(path: str, updates: list[dict[str, Any]], version_path: str | No
             rows[idx][col] = val
             updated += 1
 
+    # Delete rows (process in reverse order to avoid index shifting)
+    deleted = 0
+    if deletes:
+        for idx in sorted(deletes, reverse=True):
+            if 0 <= idx < len(rows):
+                rows.pop(idx)
+                deleted += 1
+
+    # Append new rows
+    added = 0
+    if additions:
+        for new_row in additions:
+            # Only include fields that exist in fieldnames
+            row = {k: new_row.get(k, "") for k in fieldnames}
+            rows.append(row)
+            added += 1
+
     # Write back
     with open(path, "w", encoding="utf-8", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(rows)
 
-    return {"updated": updated, "totalRows": len(rows), "versionPath": version_path}
+    return {"updated": updated, "deleted": deleted, "added": added, "totalRows": len(rows), "versionPath": version_path}
 
 
 # ---------------------------------------------------------------------------

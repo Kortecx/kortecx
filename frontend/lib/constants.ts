@@ -362,9 +362,10 @@ export const NAV_SECTIONS = [
     label: 'INTELLIGENCE',
     color: '#7C3AED',
     items: [
-      { id: 'training', label: 'Training Lab',  path: '/training',          icon: 'Brain' },
-      { id: 'data',     label: 'Data Synthesis',path: '/data',              icon: 'Database' },
-      { id: 'finetune', label: 'Fine-tuning',   path: '/training/finetune', icon: 'Sliders' },
+      { id: 'training',  label: 'Training Lab',  path: '/training',          icon: 'Brain' },
+      { id: 'data',      label: 'Data Synthesis',path: '/data',              icon: 'Database' },
+      { id: 'engineer',  label: 'Data Lab',      path: '/data/engineer',     icon: 'Zap' },
+      { id: 'finetune',  label: 'Fine-tuning',   path: '/training/finetune', icon: 'Sliders' },
     ],
   },
   {
