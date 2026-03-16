@@ -1,0 +1,526 @@
+package types
+
+import "time"
+
+// Expert roles
+type ExpertRole string
+
+const (
+	RoleResearcher    ExpertRole = "researcher"
+	RoleAnalyst       ExpertRole = "analyst"
+	RoleWriter        ExpertRole = "writer"
+	RoleCoder         ExpertRole = "coder"
+	RoleReviewer      ExpertRole = "reviewer"
+	RolePlanner       ExpertRole = "planner"
+	RoleSynthesizer   ExpertRole = "synthesizer"
+	RoleCritic        ExpertRole = "critic"
+	RoleLegal         ExpertRole = "legal"
+	RoleFinancial     ExpertRole = "financial"
+	RoleMedical       ExpertRole = "medical"
+	RoleCoordinator   ExpertRole = "coordinator"
+	RoleDataEngineer  ExpertRole = "data-engineer"
+	RoleCreative      ExpertRole = "creative"
+	RoleTranslator    ExpertRole = "translator"
+	RoleCustom        ExpertRole = "custom"
+)
+
+// Task status
+type TaskStatus string
+
+const (
+	TaskQueued    TaskStatus = "queued"
+	TaskRunning   TaskStatus = "running"
+	TaskCompleted TaskStatus = "completed"
+	TaskFailed    TaskStatus = "failed"
+	TaskCancelled TaskStatus = "cancelled"
+)
+
+// Task priority
+type TaskPriority string
+
+const (
+	PriorityCritical TaskPriority = "critical"
+	PriorityHigh     TaskPriority = "high"
+	PriorityNormal   TaskPriority = "normal"
+	PriorityLow      TaskPriority = "low"
+)
+
+// Workflow status
+type WorkflowStatus string
+
+const (
+	WorkflowDraft     WorkflowStatus = "draft"
+	WorkflowReady     WorkflowStatus = "ready"
+	WorkflowRunning   WorkflowStatus = "running"
+	WorkflowPaused    WorkflowStatus = "paused"
+	WorkflowCompleted WorkflowStatus = "completed"
+	WorkflowFailed    WorkflowStatus = "failed"
+	WorkflowCancelled WorkflowStatus = "cancelled"
+)
+
+// Dataset format
+type DatasetFormat string
+
+const (
+	FormatJSONL   DatasetFormat = "jsonl"
+	FormatCSV     DatasetFormat = "csv"
+	FormatParquet DatasetFormat = "parquet"
+)
+
+// Training job status
+type TrainingStatus string
+
+const (
+	TrainingQueued     TrainingStatus = "queued"
+	TrainingPreparing  TrainingStatus = "preparing"
+	TrainingRunning    TrainingStatus = "training"
+	TrainingEvaluating TrainingStatus = "evaluating"
+	TrainingCompleted  TrainingStatus = "completed"
+	TrainingFailed     TrainingStatus = "failed"
+)
+
+// Alert severity
+type AlertSeverity string
+
+const (
+	SeverityInfo     AlertSeverity = "info"
+	SeverityWarning  AlertSeverity = "warning"
+	SeverityError    AlertSeverity = "error"
+	SeverityCritical AlertSeverity = "critical"
+)
+
+// --- Core domain types ---
+
+type Expert struct {
+	ID               string            `json:"id"`
+	Name             string            `json:"name"`
+	Role             ExpertRole        `json:"role"`
+	Status           string            `json:"status"`
+	ModelID          string            `json:"modelId"`
+	ModelName        string            `json:"modelName"`
+	ProviderID       string            `json:"providerId"`
+	ProviderName     string            `json:"providerName"`
+	ModelSource      ModelSource       `json:"modelSource"`
+	LocalModelConfig *LocalModelConfig `json:"localModelConfig,omitempty"`
+	SystemPrompt     string            `json:"systemPrompt"`
+	Temperature      float64           `json:"temperature"`
+	MaxTokens        int               `json:"maxTokens"`
+	IsFinetuned      bool              `json:"isFinetuned"`
+	ReplicaCount     int               `json:"replicaCount"`
+	TotalRuns        int               `json:"totalRuns"`
+	SuccessRate      float64           `json:"successRate"`
+	AvgLatencyMs     float64           `json:"avgLatencyMs"`
+	Rating           float64           `json:"rating"`
+	Tags             []string          `json:"tags,omitempty"`
+	IsPublic         bool              `json:"isPublic"`
+	Description      string            `json:"description"`
+	CreatedAt        time.Time         `json:"createdAt"`
+	UpdatedAt        time.Time         `json:"updatedAt"`
+}
+
+type Task struct {
+	ID              string       `json:"id"`
+	Name            string       `json:"name"`
+	WorkflowID      string       `json:"workflowId,omitempty"`
+	Status          TaskStatus   `json:"status"`
+	Priority        TaskPriority `json:"priority"`
+	CurrentStep     int          `json:"currentStep"`
+	TotalSteps      int          `json:"totalSteps"`
+	CurrentExpert   string       `json:"currentExpert,omitempty"`
+	TokensUsed      int          `json:"tokensUsed"`
+	EstimatedTokens int          `json:"estimatedTokens"`
+	Progress        int          `json:"progress"`
+	Input           string       `json:"input,omitempty"`
+	Output          string       `json:"output,omitempty"`
+	ErrorMessage    string       `json:"errorMessage,omitempty"`
+	StartedAt       *time.Time   `json:"startedAt,omitempty"`
+	CompletedAt     *time.Time   `json:"completedAt,omitempty"`
+	CreatedAt       time.Time    `json:"createdAt"`
+	UpdatedAt       time.Time    `json:"updatedAt"`
+}
+
+type Workflow struct {
+	ID                   string         `json:"id"`
+	Name                 string         `json:"name"`
+	Description          string         `json:"description"`
+	GoalStatement        string         `json:"goalStatement"`
+	Status               WorkflowStatus `json:"status"`
+	EstimatedTokens      int            `json:"estimatedTokens"`
+	EstimatedCostUsd     float64        `json:"estimatedCostUsd"`
+	EstimatedDurationSec int            `json:"estimatedDurationSec"`
+	TotalRuns            int            `json:"totalRuns"`
+	SuccessfulRuns       int            `json:"successfulRuns"`
+	IsTemplate           bool           `json:"isTemplate"`
+	TemplateCategory     string         `json:"templateCategory,omitempty"`
+	Tags                 []string       `json:"tags"`
+	CreatedAt            time.Time      `json:"createdAt"`
+	UpdatedAt            time.Time      `json:"updatedAt"`
+}
+
+type WorkflowRun struct {
+	ID              string         `json:"id"`
+	WorkflowID      string         `json:"workflowId"`
+	WorkflowName    string         `json:"workflowName"`
+	Status          WorkflowStatus `json:"status"`
+	StartedAt       time.Time      `json:"startedAt"`
+	CompletedAt     *time.Time     `json:"completedAt,omitempty"`
+	DurationSec     int            `json:"durationSec"`
+	TotalTokensUsed int            `json:"totalTokensUsed"`
+	TotalCostUsd    float64        `json:"totalCostUsd"`
+	ExpertChain     []string       `json:"expertChain"`
+	Metadata        map[string]any `json:"metadata,omitempty"`
+}
+
+type Dataset struct {
+	ID           string        `json:"id"`
+	Name         string        `json:"name"`
+	Description  string        `json:"description"`
+	Status       string        `json:"status"`
+	Format       DatasetFormat `json:"format"`
+	SampleCount  int           `json:"sampleCount"`
+	SizeBytes    int64         `json:"sizeBytes"`
+	QualityScore float64       `json:"qualityScore"`
+	Tags         []string      `json:"tags"`
+	Categories   []string      `json:"categories"`
+	CreatedAt    time.Time     `json:"createdAt"`
+	UpdatedAt    time.Time     `json:"updatedAt"`
+}
+
+type TrainingJob struct {
+	ID                string         `json:"id"`
+	Name              string         `json:"name"`
+	ExpertID          string         `json:"expertId"`
+	BaseModelID       string         `json:"baseModelId"`
+	DatasetID         string         `json:"datasetId"`
+	Status            TrainingStatus `json:"status"`
+	Progress          int            `json:"progress"`
+	Epochs            int            `json:"epochs"`
+	CurrentEpoch      int            `json:"currentEpoch"`
+	LearningRate      float64        `json:"learningRate"`
+	BatchSize         int            `json:"batchSize"`
+	TrainingSamples   int            `json:"trainingSamples"`
+	ValidationSamples int            `json:"validationSamples"`
+	EvalLoss          float64        `json:"evalLoss"`
+	EvalAccuracy      float64        `json:"evalAccuracy"`
+	GpuHours          float64        `json:"gpuHours"`
+	CostUsd           float64        `json:"costUsd"`
+	CreatedAt         time.Time      `json:"createdAt"`
+	UpdatedAt         time.Time      `json:"updatedAt"`
+}
+
+type Provider struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Type     string `json:"type"`
+	Status   string `json:"status"`
+	BaseURL  string `json:"baseUrl,omitempty"`
+	APIKey   string `json:"apiKey,omitempty"`
+	Models   []Model `json:"models,omitempty"`
+}
+
+type Model struct {
+	ID           string   `json:"id"`
+	Name         string   `json:"name"`
+	ProviderID   string   `json:"providerId"`
+	Capabilities []string `json:"capabilities"`
+	CostPer1kIn  float64  `json:"costPer1kIn"`
+	CostPer1kOut float64  `json:"costPer1kOut"`
+	MaxContext   int      `json:"maxContext"`
+}
+
+type Agent struct {
+	ID         string `json:"id"`
+	ExpertID   string `json:"expertId"`
+	ExpertName string `json:"expertName"`
+	Status     string `json:"status"`
+	TaskID     string `json:"taskId,omitempty"`
+	TaskName   string `json:"taskName,omitempty"`
+}
+
+type Alert struct {
+	ID             string        `json:"id"`
+	Severity       AlertSeverity `json:"severity"`
+	Title          string        `json:"title"`
+	Message        string        `json:"message"`
+	ProviderID     string        `json:"providerId,omitempty"`
+	ExpertID       string        `json:"expertId,omitempty"`
+	Acknowledged   bool          `json:"acknowledged"`
+	AcknowledgedAt *time.Time    `json:"acknowledgedAt,omitempty"`
+	ResolvedAt     *time.Time    `json:"resolvedAt,omitempty"`
+	CreatedAt      time.Time     `json:"createdAt"`
+}
+
+type Metrics struct {
+	ActiveAgents   int     `json:"activeAgents"`
+	TasksCompleted int     `json:"tasksCompleted"`
+	TokensUsed     int     `json:"tokensUsed"`
+	AvgLatencyMs   float64 `json:"avgLatencyMs"`
+	SuccessRate    float64 `json:"successRate"`
+	CostUsd        float64 `json:"costUsd"`
+	ErrorCount     int     `json:"errorCount"`
+}
+
+type Analytics struct {
+	DailyBreakdown    []DailyMetric      `json:"dailyBreakdown"`
+	ExpertPerformance []ExpertPerformance `json:"expertPerformance"`
+	ProviderUsage     []ProviderUsage     `json:"providerUsage"`
+}
+
+type DailyMetric struct {
+	Date           string  `json:"date"`
+	TasksCompleted int     `json:"tasksCompleted"`
+	TokensUsed     int     `json:"tokensUsed"`
+	CostUsd        float64 `json:"costUsd"`
+	SuccessRate    float64 `json:"successRate"`
+}
+
+type ExpertPerformance struct {
+	ExpertID    string  `json:"expertId"`
+	ExpertName  string  `json:"expertName"`
+	TotalRuns   int     `json:"totalRuns"`
+	SuccessRate float64 `json:"successRate"`
+	AvgLatency  float64 `json:"avgLatency"`
+}
+
+type ProviderUsage struct {
+	ProviderID   string  `json:"providerId"`
+	ProviderName string  `json:"providerName"`
+	Percentage   float64 `json:"percentage"`
+	TotalTokens  int     `json:"totalTokens"`
+}
+
+// --- Model Source ---
+
+// ModelSource indicates whether an expert runs on local inference or a cloud provider.
+type ModelSource string
+
+const (
+	ModelSourceLocal    ModelSource = "local"
+	ModelSourceProvider ModelSource = "provider"
+)
+
+// LocalInferenceEngine identifies which local inference server to use.
+type LocalInferenceEngine string
+
+const (
+	EngineOllama   LocalInferenceEngine = "ollama"
+	EngineLlamaCpp LocalInferenceEngine = "llamacpp"
+)
+
+// LocalModelConfig configures a locally-hosted model.
+type LocalModelConfig struct {
+	Engine  LocalInferenceEngine `json:"engine"`
+	Model   string               `json:"model"`
+	BaseURL string               `json:"baseUrl,omitempty"`
+}
+
+// --- Agent Memory & Orchestration ---
+
+// AgentMemory holds an agent's private execution state.
+type AgentMemory struct {
+	Plan     string   `json:"plan"`
+	Context  string   `json:"context"`
+	Findings []string `json:"findings"`
+}
+
+// SharedMemory is the run-level shared memory accessible by all agents.
+type SharedMemory struct {
+	RunID   string            `json:"runId"`
+	Entries map[string]string `json:"entries"` // agentId -> serialized memory
+	Globals map[string]string `json:"globals"` // shared key-value store
+}
+
+// AgentEvent is a real-time event emitted during workflow execution.
+type AgentEvent struct {
+	RunID   string `json:"runId"`
+	AgentID string `json:"agentId"`
+	StepID  string `json:"stepId"`
+	Event   string `json:"event"`
+	Data    any    `json:"data"`
+}
+
+// --- Workflow Execution ---
+
+// WorkflowExecuteRequest initiates a full workflow run with agents.
+type WorkflowExecuteRequest struct {
+	WorkflowID    string               `json:"workflowId,omitempty"`
+	Name          string               `json:"name"`
+	GoalFileURL   string               `json:"goalFileUrl"`
+	InputFileURLs []string             `json:"inputFileUrls"`
+	Steps         []WorkflowStepConfig `json:"steps"`
+}
+
+// WorkflowStepConfig defines a single step's configuration for execution.
+type WorkflowStepConfig struct {
+	StepID          string            `json:"stepId"`
+	ExpertID        string            `json:"expertId,omitempty"`
+	TaskDescription string            `json:"taskDescription"`
+	ModelSource     ModelSource       `json:"modelSource"`
+	LocalModel      *LocalModelConfig `json:"localModel,omitempty"`
+	Temperature     float64           `json:"temperature"`
+	MaxTokens       int               `json:"maxTokens"`
+	ConnectionType  string            `json:"connectionType"` // sequential | parallel
+}
+
+// --- Integrations & Plugins ---
+
+// IntegrationCategory classifies external integrations.
+type IntegrationCategory string
+
+const (
+	IntegrationAPI       IntegrationCategory = "api"
+	IntegrationApp       IntegrationCategory = "app"
+	IntegrationTool      IntegrationCategory = "tool"
+	IntegrationDatabase  IntegrationCategory = "database"
+	IntegrationStorage   IntegrationCategory = "storage"
+	IntegrationMessaging IntegrationCategory = "messaging"
+	IntegrationAnalytics IntegrationCategory = "analytics"
+)
+
+// Integration represents an external service connection.
+type Integration struct {
+	ID          string              `json:"id"`
+	Name        string              `json:"name"`
+	Description string              `json:"description"`
+	Category    IntegrationCategory `json:"category"`
+	Icon        string              `json:"icon"`
+	Color       string              `json:"color"`
+	Connected   bool                `json:"connected"`
+	AuthType    string              `json:"authType"`
+	BaseURL     string              `json:"baseUrl,omitempty"`
+	DocsURL     string              `json:"docsUrl,omitempty"`
+	CreatedAt   time.Time           `json:"createdAt"`
+	UpdatedAt   time.Time           `json:"updatedAt"`
+}
+
+// IntegrationConnection is a user's configured instance of an integration.
+type IntegrationConnection struct {
+	ID            string            `json:"id"`
+	IntegrationID string            `json:"integrationId"`
+	Name          string            `json:"name"`
+	Config        map[string]string `json:"config"`
+	Status        string            `json:"status"` // active | error | expired
+	LastTestedAt  *time.Time        `json:"lastTestedAt,omitempty"`
+	CreatedAt     time.Time         `json:"createdAt"`
+}
+
+// PluginSource indicates where a plugin comes from.
+type PluginSource string
+
+const (
+	PluginPersonal    PluginSource = "personal"
+	PluginMarketplace PluginSource = "marketplace"
+)
+
+// Plugin represents an installable extension for workflow agents.
+type Plugin struct {
+	ID           string       `json:"id"`
+	Name         string       `json:"name"`
+	Description  string       `json:"description"`
+	Version      string       `json:"version"`
+	Author       string       `json:"author"`
+	Source       PluginSource `json:"source"`
+	Status       string       `json:"status"` // active | disabled | error | installing
+	Icon         string       `json:"icon"`
+	Color        string       `json:"color"`
+	Category     string       `json:"category"`
+	Capabilities []string     `json:"capabilities"`
+	Installed    bool         `json:"installed"`
+	Downloads    int          `json:"downloads,omitempty"`
+	Rating       float64      `json:"rating,omitempty"`
+	CreatedAt    time.Time    `json:"createdAt"`
+	UpdatedAt    time.Time    `json:"updatedAt"`
+}
+
+// StepIntegration is an integration or plugin attached to a workflow step.
+type StepIntegration struct {
+	ID          string            `json:"id"`
+	Type        string            `json:"type"`        // integration | plugin
+	ReferenceID string            `json:"referenceId"` // integration or plugin ID
+	Name        string            `json:"name"`
+	Icon        string            `json:"icon"`
+	Color       string            `json:"color"`
+	Config      map[string]string `json:"config,omitempty"`
+}
+
+// --- Request types ---
+
+type CreateTaskRequest struct {
+	Name            string       `json:"name"`
+	WorkflowID      string       `json:"workflowId,omitempty"`
+	Priority        TaskPriority `json:"priority"`
+	Input           string       `json:"input"`
+	EstimatedTokens int          `json:"estimatedTokens,omitempty"`
+}
+
+type UpdateTaskRequest struct {
+	Status       *TaskStatus `json:"status,omitempty"`
+	Progress     *int        `json:"progress,omitempty"`
+	Output       *string     `json:"output,omitempty"`
+	ErrorMessage *string     `json:"errorMessage,omitempty"`
+}
+
+type CreateWorkflowRequest struct {
+	Name          string   `json:"name"`
+	Description   string   `json:"description"`
+	GoalStatement string   `json:"goalStatement"`
+	Tags          []string `json:"tags,omitempty"`
+}
+
+type DeployExpertRequest struct {
+	Name             string            `json:"name"`
+	Role             ExpertRole        `json:"role"`
+	Description      string            `json:"description,omitempty"`
+	ModelID          string            `json:"modelId"`
+	ProviderID       string            `json:"providerId"`
+	ModelSource      ModelSource       `json:"modelSource"`
+	LocalModelConfig *LocalModelConfig `json:"localModelConfig,omitempty"`
+	SystemPrompt     string            `json:"systemPrompt"`
+	Temperature      float64           `json:"temperature"`
+	MaxTokens        int               `json:"maxTokens"`
+	Tags             []string          `json:"tags,omitempty"`
+	IsPublic         bool              `json:"isPublic"`
+	ReplicaCount     int               `json:"replicaCount,omitempty"`
+}
+
+// UpdateExpertRequest updates an existing expert's configuration.
+type UpdateExpertRequest struct {
+	Name             *string           `json:"name,omitempty"`
+	Description      *string           `json:"description,omitempty"`
+	Role             *ExpertRole       `json:"role,omitempty"`
+	Status           *string           `json:"status,omitempty"`
+	ModelID          *string           `json:"modelId,omitempty"`
+	ProviderID       *string           `json:"providerId,omitempty"`
+	ModelSource      *ModelSource      `json:"modelSource,omitempty"`
+	LocalModelConfig *LocalModelConfig `json:"localModelConfig,omitempty"`
+	SystemPrompt     *string           `json:"systemPrompt,omitempty"`
+	Temperature      *float64          `json:"temperature,omitempty"`
+	MaxTokens        *int              `json:"maxTokens,omitempty"`
+	Tags             []string          `json:"tags,omitempty"`
+	IsPublic         *bool             `json:"isPublic,omitempty"`
+}
+
+type CreateDatasetRequest struct {
+	Name        string        `json:"name"`
+	Description string        `json:"description"`
+	Format      DatasetFormat `json:"format"`
+	Tags        []string      `json:"tags,omitempty"`
+	Categories  []string      `json:"categories,omitempty"`
+}
+
+type StartTrainingRequest struct {
+	Name         string  `json:"name"`
+	ExpertID     string  `json:"expertId"`
+	BaseModelID  string  `json:"baseModelId"`
+	DatasetID    string  `json:"datasetId"`
+	Epochs       int     `json:"epochs"`
+	LearningRate float64 `json:"learningRate"`
+	BatchSize    int     `json:"batchSize"`
+}
+
+type CreateProviderRequest struct {
+	Name    string `json:"name"`
+	Type    string `json:"type"`
+	BaseURL string `json:"baseUrl"`
+	APIKey  string `json:"apiKey"`
+}

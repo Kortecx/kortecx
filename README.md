@@ -1,36 +1,77 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+<h1 align="center" style="border-bottom: none">
+    <a href="https://kortecx.com/">
+        <img alt="Kortecx logo" src="frontend/public/kortecx_readme.png" width="400" />
+    </a>
+</h1>
+<h2 align="center" style="border-bottom: none">Executable Intelligence Platform</h2>
 
-## Getting Started
+<p align="center">
+Open-source platform for orchestrating AI agents, training models, and building agentic workflows — local or cloud.
+</p>
 
-First, run the development server:
+<div align="center">
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+[![License](https://img.shields.io/github/license/kortecx/kortecx)](LICENSE)
+<a href="https://twitter.com/intent/follow?screen_name=kortecx" target="_blank">
+<img src="https://img.shields.io/twitter/follow/kortecx?logo=X&color=%20%23f5f5f5" alt="follow on X(Twitter)"></a>
+<a href="https://www.linkedin.com/company/kortecx/" target="_blank">
+<img src="https://custom-icon-badges.demolab.com/badge/LinkedIn-0A66C2?logo=linkedin-white&logoColor=fff" alt="follow on LinkedIn"></a>
+
+</div>
+
+<div align="center">
+   <a href="https://kortecx.com/"><strong>Website</strong></a> ·
+   <a href="https://kortecx.com/docs"><strong>Docs</strong></a> ·
+   <a href="https://github.com/Kortecx/kortecx/issues/new/choose"><strong>Feature Request</strong></a> ·
+   <a href="https://www.youtube.com/@executableintelligence"><strong>YouTube</strong></a>
+</div>
+
+---
+
+## What It Does
+
+- **Workflow Builder** — Chain AI agents (sequential or parallel) with shared memory, file attachments, integrations, and plugins per step
+- **Dual Inference** — Run models locally (Ollama / llama.cpp) or via cloud providers (Anthropic, OpenAI, Google, Groq, Mistral, OpenRouter)
+- **Expert System** — 16 specialized agent roles, deployable with custom system prompts, fine-tuning, and performance tracking
+- **Training Lab** — Fine-tune models with SFT, DPO, RLHF, ORPO using Unsloth/LoRA acceleration
+- **Data Engineering** — SQL analytics (DuckDB, PySpark), vector search (Qdrant), HuggingFace Hub integration
+- **Connections** — Plug in external APIs, databases, tools, and marketplace plugins to any workflow step
+- **Monitoring** — Real-time metrics, structured logs, alerts, cost tracking
+
+```
+┌──────────┐     ┌──────────┐     ┌──────────┐     ┌──────────┐
+│ Researcher│────▶│ Analyst  │────▶│  Writer  │────▶│ Reviewer │
+│ + GitHub │     │ + SQL DB │     │ + Email  │     │          │
+│ + Scraper│     │ + Charts │     │  Plugin  │     │          │
+└──────────┘     └──────────┘     └──────────┘     └──────────┘
+                    Shared Memory (per-run KV store)
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+---
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Quick Start
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+**Prerequisites:** Docker, Node.js 20+, Python 3.11+, [uv](https://docs.astral.sh/uv/)
 
-## Learn More
+```bash
+git clone https://github.com/Kortecx/kortecx.git
+cd kortecx
+cp .env.example .env
+./start.sh
+```
 
-To learn more about Next.js, take a look at the following resources:
+Open [http://localhost:3000](http://localhost:3000).
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+`start.sh` handles everything: Docker services (PostgreSQL + Qdrant), schema sync, engine startup, and frontend dev server.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+For [Neon](https://neon.tech) cloud DB instead of local, set in `.env`:
+```
+DATABASE_URL=postgresql://user:pass@ep-xxx.us-east-2.aws.neon.tech/neondb?sslmode=require
+DB_MODE=
+```
 
-## Deploy on Vercel
+---
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## License
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+[MIT](LICENSE)

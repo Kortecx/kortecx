@@ -1,0 +1,43 @@
+{
+  "name": "kortecx",
+  "version": "0.1.0",
+  "license": "MIT",
+  "scripts": {
+    "dev": "bash scripts/setup-local.sh",
+    "dev:next": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:push": "drizzle-kit push",
+    "db:studio": "drizzle-kit studio",
+    "db:seed": "psql $DATABASE_URL -f ./scripts/seed.sql",
+    "docker:up": "docker compose up -d",
+    "docker:down": "docker compose down",
+    "docker:reset": "docker compose down -v && docker compose up -d"
+  },
+  "dependencies": {
+    "@neondatabase/serverless": "^1.0.2",
+    "@types/pg": "^8.18.0",
+    "drizzle-kit": "^0.31.9",
+    "drizzle-orm": "^0.45.1",
+    "framer-motion": "^12.36.0",
+    "lucide-react": "^0.577.0",
+    "next": "16.1.6",
+    "pg": "^8.20.0",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "swr": "^2.4.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.1.6",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  }
+}

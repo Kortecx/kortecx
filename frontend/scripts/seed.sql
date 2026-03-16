@@ -1,0 +1,3 @@
+-- Kortecx Dev Seed Data
+-- This file runs automatically when the Docker postgres container first starts.
+-- No seed data — the application starts clean. Data is populated through usage.
