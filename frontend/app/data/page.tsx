@@ -77,7 +77,9 @@ function DatasetViewer({ dataset, onClose }: { dataset: any; onClose: () => void
 
   const filePath = dataset.outputPath || dataset.cachePath || '';
 
-  const editKey = (row: number, col: string) => `${row}-${col}`;
+  // Use separator that won't appear in column names
+  const SEP = '|||';
+  const editKey = (row: number, col: string) => `${row}${SEP}${col}`;
   const getCellValue = (rowIdx: number, col: string, originalValue: any) => {
     const key = editKey(page * PAGE_SIZE + rowIdx, col);
     return pendingEdits.has(key) ? pendingEdits.get(key) : originalValue;
@@ -87,26 +89,34 @@ function DatasetViewer({ dataset, onClose }: { dataset: any; onClose: () => void
     setPendingEdits(prev => new Map(prev).set(key, value));
   };
 
+  const datasetId = dataset.id ?? null;
+
   const handleSaveEdits = async () => {
     if (pendingEdits.size === 0) return;
     setSaving(true);
     try {
       const updates = Array.from(pendingEdits.entries()).map(([key, value]) => {
-        const [rowStr, ...colParts] = key.split('-');
-        return { rowIndex: parseInt(rowStr), column: colParts.join('-'), value };
+        const sepIdx = key.indexOf(SEP);
+        const rowIndex = parseInt(key.slice(0, sepIdx));
+        const column = key.slice(sepIdx + SEP.length);
+        return { rowIndex, column, value };
       });
       const res = await fetch('/api/data/update', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path: filePath, updates, create_version: true }),
+        body: JSON.stringify({ path: filePath, updates, create_version: true, datasetId }),
       });
       const data = await res.json();
-      if (!data.error) {
+      if (data.error) {
+        setError(`Save failed: ${data.error}`);
+      } else {
         setPendingEdits(new Map());
+        setEditMode(false);
         setFetchTrigger(t => t + 1);
       }
     } catch (err) {
       console.error('Save failed:', err);
+      setError('Save failed — check engine is running');
     } finally {
       setSaving(false);
     }
@@ -117,7 +127,7 @@ function DatasetViewer({ dataset, onClose }: { dataset: any; onClose: () => void
       const res = await fetch('/api/data/versions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path: filePath }),
+        body: JSON.stringify({ path: filePath, datasetId }),
       });
       const data = await res.json();
       setVersions(data.versions ?? []);
@@ -458,15 +468,22 @@ function DatasetViewer({ dataset, onClose }: { dataset: any; onClose: () => void
               versions.map((v: any, i: number) => (
                 <div key={i} style={{ padding: '8px 14px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 8 }}>
                   <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 11, color: 'var(--text-2)' }}>{v.createdAt}</div>
-                    <div style={{ fontSize: 10, color: 'var(--text-4)' }}>{fmtBytes(v.sizeBytes)}</div>
+                    <div style={{ fontSize: 11, color: 'var(--text-2)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                      {v.versionNum && <span style={{ fontSize: 9, fontWeight: 700, padding: '1px 4px', borderRadius: 3, background: 'var(--bg-elevated)', border: '1px solid var(--border)' }}>v{v.versionNum}</span>}
+                      {v.createdAt}
+                    </div>
+                    <div style={{ fontSize: 10, color: 'var(--text-4)', marginTop: 1 }}>
+                      {fmtBytes(v.sizeBytes ?? 0)}
+                      {v.changeSummary && <> · {v.changeSummary}</>}
+                      {v.changeType && !v.changeSummary && <> · {v.changeType}</>}
+                    </div>
                   </div>
                   <button
                     onClick={async () => {
                       await fetch('/api/data/versions', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ restore: true, original_path: filePath, version_path: v.path }),
+                        body: JSON.stringify({ restore: true, original_path: filePath, version_path: v.path, datasetId }),
                       });
                       setShowVersions(false);
                       setFetchTrigger(t => t + 1);

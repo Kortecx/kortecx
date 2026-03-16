@@ -378,6 +378,20 @@ export const datasetSchemas = pgTable('dataset_schemas', {
   updatedAt:     timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 });
 
+/* ─── Data Version History ─────────────────────────── */
+export const dataVersions = pgTable('data_versions', {
+  id:            text('id').primaryKey(),
+  datasetId:     text('dataset_id').notNull(),
+  versionNum:    integer('version_num').default(1),
+  filePath:      text('file_path').notNull(),             // path to version snapshot
+  sizeBytes:     bigint('size_bytes', { mode: 'number' }).default(0),
+  rowsAffected:  integer('rows_affected').default(0),
+  changeType:    varchar('change_type', { length: 20 }),  // edit | schema_update | restore
+  changeSummary: text('change_summary'),
+  createdBy:     text('created_by'),                      // user or system
+  createdAt:     timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
 /* ─── Data Lineage Catalog ─────────────────────────── */
 export const lineage = pgTable('lineage', {
   id:              text('id').primaryKey(),
@@ -436,3 +450,6 @@ export type DatasetSchema = typeof datasetSchemas.$inferSelect;
 export type NewDatasetSchema = typeof datasetSchemas.$inferInsert;
 export type Lineage       = typeof lineage.$inferSelect;
 export type NewLineage    = typeof lineage.$inferInsert;
+
+export type DataVersion   = typeof dataVersions.$inferSelect;
+export type NewDataVersion = typeof dataVersions.$inferInsert;

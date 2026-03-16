@@ -50,6 +50,13 @@
       "when": 1773674560326,
       "tag": "0006_graceful_sister_grimm",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1773680485953,
+      "tag": "0007_first_starbolt",
+      "breakpoints": true
     }
   ]
 }
