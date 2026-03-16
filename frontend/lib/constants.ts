@@ -215,9 +215,9 @@ export const NAV_SECTIONS = [
     label: 'EXPERTS',
     color: '#D97706',
     items: [
-      { id: 'catalog',    label: 'Expert Catalog', path: '/experts',        icon: 'Users' },
-      { id: 'my-experts', label: 'My Experts',     path: '/experts/mine',   icon: 'Star' },
-      { id: 'deploy',     label: 'Deploy New',      path: '/experts/deploy', icon: 'Rocket' },
+      { id: 'experts',    label: 'Experts',         path: '/experts',                    icon: 'Users' },
+      { id: 'marketplace',label: 'Marketplace',     path: '/experts?tab=marketplace',    icon: 'Store' },
+      { id: 'deploy',     label: 'Deploy New',      path: '/experts/deploy',             icon: 'Rocket' },
     ],
   },
   {

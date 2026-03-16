@@ -7,7 +7,7 @@ import { usePathname } from 'next/navigation';
 import {
   LayoutDashboard, ListOrdered, Cpu, Users, Star, Rocket,
   Workflow, LayoutTemplate, History, Brain, Database, Sliders,
-  Activity, ScrollText, Bell, Plug, Key, Settings, Cable,
+  Activity, ScrollText, Bell, Plug, Key, Settings, Cable, Store,
   ChevronLeft, ChevronRight,
 } from 'lucide-react';
 import { useApp } from '@/contexts/AppContext';
@@ -16,7 +16,7 @@ import { NAV_SECTIONS, SYSTEM_METRICS } from '@/lib/constants';
 const ICONS: Record<string, React.ElementType> = {
   LayoutDashboard, ListOrdered, Cpu, Users, Star, Rocket,
   Workflow, LayoutTemplate, History, Brain, Database, Sliders,
-  Activity, ScrollText, Bell, Plug, Key, Settings, Cable,
+  Activity, ScrollText, Bell, Plug, Key, Settings, Cable, Store,
 };
 
 function KortecxLogo({ collapsed }: { collapsed: boolean }) {
@@ -259,11 +259,14 @@ export default function LeftNavbar() {
               }} />
             )}
             {section.items.map(item => {
-              const matchesPath = pathname === item.path || pathname.startsWith(item.path + '/');
-              const hasMoreSpecificMatch = matchesPath && section.items.some(
+              const [itemPath, itemQuery] = item.path.split('?');
+              const matchesPath = itemQuery
+                ? pathname === itemPath && typeof window !== 'undefined' && window.location.search.includes(itemQuery)
+                : pathname === itemPath || pathname.startsWith(itemPath + '/');
+              const hasMoreSpecificMatch = !itemQuery && matchesPath && section.items.some(
                 other => other.id !== item.id
-                  && other.path.startsWith(item.path + '/')
-                  && (pathname === other.path || pathname.startsWith(other.path + '/'))
+                  && other.path.split('?')[0].startsWith(itemPath + '/')
+                  && (pathname === other.path.split('?')[0] || pathname.startsWith(other.path.split('?')[0] + '/'))
               );
               const isActive = matchesPath && !hasMoreSpecificMatch;
               return (
