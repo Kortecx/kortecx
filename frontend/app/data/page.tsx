@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import useSWR from 'swr';
 import {
   Database, Plus, Play, Download, Sparkles, RefreshCcw,
@@ -63,9 +63,13 @@ function DatasetViewer({ dataset, onClose }: { dataset: any; onClose: () => void
   const [page, setPage] = useState(0);
   const [sortCol, setSortCol] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
+  const [fetchTrigger, setFetchTrigger] = useState(0); // manual refresh trigger
   const PAGE_SIZE = 50;
 
-  // Determine the file path — from outputPath (synthesis) or construct from dataset info
+  // Use a ref for columns so fetchData doesn't depend on the columns state
+  const columnsRef = useRef<{ name: string; type: string }[]>([]);
+  columnsRef.current = columns;
+
   const filePath = dataset.outputPath || dataset.cachePath || '';
 
   const fetchData = useCallback(async () => {
@@ -82,11 +86,12 @@ function DatasetViewer({ dataset, onClose }: { dataset: any; onClose: () => void
       const activeFilters = Object.fromEntries(Object.entries(filters).filter(([, v]) => v.trim()));
       if (Object.keys(activeFilters).length > 0) body.filters = activeFilters;
       if (sortCol) {
+        const currentCols = columnsRef.current;
         body.sql = `SELECT * FROM data_view${
           Object.keys(activeFilters).length > 0 || search.trim()
             ? ' WHERE ' + [
                 ...Object.entries(activeFilters).map(([c, v]) => `CAST("${c}" AS VARCHAR) ILIKE '%${v}%'`),
-                ...(search.trim() ? [`(${columns.map(c => `CAST("${c.name}" AS VARCHAR) ILIKE '%${search.trim()}%'`).join(' OR ')})`] : []),
+                ...(search.trim() && currentCols.length > 0 ? [`(${currentCols.map(c => `CAST("${c.name}" AS VARCHAR) ILIKE '%${search.trim()}%'`).join(' OR ')})`] : []),
               ].join(' AND ')
             : ''
         } ORDER BY "${sortCol}" ${sortDir} LIMIT ${PAGE_SIZE} OFFSET ${page * PAGE_SIZE}`;
@@ -105,12 +110,13 @@ function DatasetViewer({ dataset, onClose }: { dataset: any; onClose: () => void
         setTotalRows(data.totalRows ?? 0);
         setFilteredRows(data.filteredRows ?? data.totalRows ?? 0);
       }
-    } catch (err) {
+    } catch {
       setError('Failed to load data');
     } finally {
       setLoading(false);
     }
-  }, [filePath, page, search, filters, sortCol, sortDir, columns]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filePath, page, search, filters, sortCol, sortDir, fetchTrigger]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -153,6 +159,17 @@ function DatasetViewer({ dataset, onClose }: { dataset: any; onClose: () => void
               {dataset.format && ` · ${dataset.format.toUpperCase()}`}
             </div>
           </div>
+          <button
+            onClick={() => setFetchTrigger(t => t + 1)}
+            title="Reload data"
+            style={{
+              background: 'none', border: '1px solid var(--border)', borderRadius: 4,
+              cursor: 'pointer', color: 'var(--text-3)', display: 'flex', alignItems: 'center',
+              gap: 4, padding: '4px 8px', fontSize: 11, fontWeight: 500,
+            }}
+          >
+            <RefreshCcw size={12} /> Refresh
+          </button>
           <button onClick={onClose} style={{
             background: 'none', border: 'none', cursor: 'pointer',
             color: 'var(--text-3)', display: 'flex', padding: 4,
@@ -438,7 +455,7 @@ function DatasetCard({ ds, onView }: { ds: Dataset; onView?: () => void }) {
           <Download size={12} /> Export
         </button>
         <button className="btn btn-ghost btn-sm" onClick={onView} disabled={!onView}>
-          <BarChart3 size={12} /> Inspect
+          <Eye size={12} /> View Sample
         </button>
       </div>
     </div>
