@@ -43,6 +43,13 @@
       "when": 1773665914934,
       "tag": "0005_chubby_silvermane",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1773674560326,
+      "tag": "0006_graceful_sister_grimm",
+      "breakpoints": true
     }
   ]
 }

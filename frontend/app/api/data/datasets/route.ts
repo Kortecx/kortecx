@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db, datasets, synthesisJobs } from '@/lib/db';
+import { db, datasets, synthesisJobs, lineage } from '@/lib/db';
 import { eq, desc, sql } from 'drizzle-orm';
 
 /* GET /api/data/datasets — list all local datasets, auto-sync completed synthesis jobs */
@@ -17,8 +17,9 @@ export async function GET() {
 
         for (const job of completedJobs) {
           if (!existingNames.has(job.name)) {
+            const dsId = `ds-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
             await db.insert(datasets).values({
-              id: `ds-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+              id: dsId,
               name: job.name,
               description: job.description ?? `Synthesized with ${job.model} (${job.source})`,
               status: 'ready',
@@ -31,6 +32,19 @@ export async function GET() {
               tags: job.tags ?? [],
               categories: [],
             });
+
+            // Create lineage: synthesis_job → dataset
+            try {
+              await db.insert(lineage).values({
+                id: `lin-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                sourceType: 'synthesis_job',
+                sourceId: job.id,
+                targetType: 'dataset',
+                targetId: dsId,
+                relationship: 'created_by',
+                metadata: { model: job.model, source: job.source },
+              });
+            } catch {}
           }
         }
       }

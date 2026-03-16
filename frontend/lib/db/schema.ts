@@ -208,6 +208,7 @@ export const datasets = pgTable('datasets', {
   qualityScore:    integer('quality_score'),
   outputPath:      text('output_path'),                  // file path for generated/imported data
   sourceJobId:     text('source_job_id'),                // synthesis job ID if generated
+  schemaId:        text('schema_id'),                    // linked schema definition
   tags:            text('tags').array(),
   categories:      text('categories').array(),
   createdAt:       timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
@@ -365,6 +366,33 @@ export const assets = pgTable('assets', {
   updatedAt:    timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 });
 
+/* ─── Dataset Schema Definition ────────────────────── */
+export const datasetSchemas = pgTable('dataset_schemas', {
+  id:            text('id').primaryKey(),
+  datasetId:     text('dataset_id'),                     // linked dataset (null if template)
+  name:          text('name').notNull(),
+  columns:       jsonb('columns').notNull(),              // [{name, type, description, required, defaultValue, constraints}]
+  version:       integer('version').default(1),
+  isTemplate:    boolean('is_template').default(false),
+  createdAt:     timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt:     timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+/* ─── Data Lineage Catalog ─────────────────────────── */
+export const lineage = pgTable('lineage', {
+  id:              text('id').primaryKey(),
+  sourceType:      varchar('source_type', { length: 30 }).notNull(),
+  // dataset | expert | workflow | training_job | synthesis_job
+  sourceId:        text('source_id').notNull(),
+  targetType:      varchar('target_type', { length: 30 }).notNull(),
+  // dataset | expert | workflow | training_job | synthesis_job | workflow_step
+  targetId:        text('target_id').notNull(),
+  relationship:    varchar('relationship', { length: 30 }).notNull(),
+  // created_by | trained_on | used_in | produces | depends_on
+  metadata:        jsonb('metadata'),                    // extra context
+  createdAt:       timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
 /* ─── Type exports ───────────────────────────────────── */
 export type Metric        = typeof metrics.$inferSelect;
 export type Task          = typeof tasks.$inferSelect;
@@ -403,3 +431,8 @@ export type NewSynthesisJob = typeof synthesisJobs.$inferInsert;
 
 export type Asset         = typeof assets.$inferSelect;
 export type NewAsset      = typeof assets.$inferInsert;
+
+export type DatasetSchema = typeof datasetSchemas.$inferSelect;
+export type NewDatasetSchema = typeof datasetSchemas.$inferInsert;
+export type Lineage       = typeof lineage.$inferSelect;
+export type NewLineage    = typeof lineage.$inferInsert;

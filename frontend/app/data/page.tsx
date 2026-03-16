@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import useSWR from 'swr';
 import {
-  Database, Plus, Play, Download, Sparkles, RefreshCcw,
+  Database, Plus, Download, Sparkles, RefreshCcw,
   CheckCircle2, Clock, AlertTriangle, BarChart3, FileText,
   Zap, Filter, Search, Loader2, Heart, ArrowDownToLine,
   ExternalLink, Trash2, Eye, HardDrive, Rows3, Columns3, Key,
@@ -337,9 +337,236 @@ function DatasetViewer({ dataset, onClose }: { dataset: any; onClose: () => void
   );
 }
 
+/* ── Schema Editor Modal ──────────────────────────────── */
+
+function SchemaEditorModal({
+  dataset,
+  existingSchema,
+  onClose,
+  onSave,
+}: {
+  dataset?: any;
+  existingSchema?: any;
+  onClose: () => void;
+  onSave: (schema: any) => void;
+}) {
+  const [name, setName] = useState(existingSchema?.name ?? dataset?.name ?? 'New Schema');
+  const [columns, setColumns] = useState<Array<{name: string; type: string; description: string; required: boolean}>>(
+    existingSchema?.columns ?? [
+      { name: '', type: 'string', description: '', required: false },
+    ]
+  );
+  const [saving, setSaving] = useState(false);
+  const [impact, setImpact] = useState<any>(null);
+  const [showImpact, setShowImpact] = useState(false);
+
+  // Check impact for existing datasets
+  useEffect(() => {
+    if (dataset?.id) {
+      fetch(`/api/lineage?impact=${dataset.id}`)
+        .then(r => r.json())
+        .then(d => setImpact(d))
+        .catch(() => {});
+    }
+  }, [dataset?.id]);
+
+  const addColumn = () => {
+    setColumns(prev => [...prev, { name: '', type: 'string', description: '', required: false }]);
+  };
+
+  const removeColumn = (idx: number) => {
+    setColumns(prev => prev.filter((_, i) => i !== idx));
+  };
+
+  const updateColumn = (idx: number, field: string, value: any) => {
+    setColumns(prev => prev.map((c, i) => i === idx ? { ...c, [field]: value } : c));
+  };
+
+  const handleSave = async () => {
+    const validCols = columns.filter(c => c.name.trim());
+    if (validCols.length === 0) return;
+
+    // If there's impact, require confirmation
+    if (impact?.hasImpact && !showImpact) {
+      setShowImpact(true);
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const body: any = {
+        name: name.trim(),
+        columns: validCols,
+        datasetId: dataset?.id ?? null,
+      };
+
+      if (existingSchema?.id) {
+        // Update existing
+        const res = await fetch('/api/schemas', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: existingSchema.id, ...body }),
+        });
+        if (res.ok) { onSave(await res.json()); onClose(); }
+      } else {
+        // Create new
+        const res = await fetch('/api/schemas', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        if (res.ok) { onSave(await res.json()); onClose(); }
+      }
+    } catch (err) {
+      console.error('Schema save failed:', err);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const TYPES = ['string', 'text', 'integer', 'float', 'boolean', 'json', 'array', 'timestamp', 'date'];
+
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
+      backdropFilter: 'blur(4px)', zIndex: 200,
+      display: 'flex', alignItems: 'flex-start', justifyContent: 'center', paddingTop: 50,
+    }} onClick={onClose}>
+      <div onClick={e => e.stopPropagation()} style={{
+        width: 640, maxWidth: '92vw', maxHeight: '80vh', overflowY: 'auto',
+        background: 'var(--bg-surface)', border: '1px solid var(--border)',
+        borderRadius: 12, boxShadow: '0 24px 64px rgba(0,0,0,0.3)',
+      }}>
+        {/* Header */}
+        <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div>
+            <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-1)' }}>
+              {existingSchema ? 'Update Schema' : 'Define Schema'}
+            </div>
+            {existingSchema && <span style={{ fontSize: 11, color: 'var(--text-4)' }}>v{existingSchema.version ?? 1}</span>}
+          </div>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-3)', display: 'flex' }}>
+            <X size={16} />
+          </button>
+        </div>
+
+        {/* Impact warning */}
+        {showImpact && impact?.hasImpact && (
+          <div style={{
+            padding: '12px 20px', background: 'rgba(245,158,11,0.08)', borderBottom: '1px solid rgba(245,158,11,0.2)',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+              <AlertTriangle size={16} color="#D97706" />
+              <span style={{ fontSize: 13, fontWeight: 700, color: '#B45309' }}>Schema change may impact dependencies</span>
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--text-2)', lineHeight: 1.5 }}>
+              {impact.training?.length > 0 && (
+                <div>Training jobs: {impact.training.map((t: any) => t.name).join(', ')}</div>
+              )}
+              {impact.experts?.length > 0 && (
+                <div>Experts: {impact.experts.map((e: any) => e.name).join(', ')}</div>
+              )}
+              {impact.workflows?.length > 0 && (
+                <div>Workflows: {impact.workflows.map((w: any) => w.name).join(', ')}</div>
+              )}
+            </div>
+            <div style={{ marginTop: 8, display: 'flex', gap: 8 }}>
+              <button className="btn btn-sm" style={{ background: '#D97706', color: '#fff', border: 'none' }} onClick={handleSave}>
+                Update Anyway
+              </button>
+              <button className="btn btn-ghost btn-sm" onClick={() => setShowImpact(false)}>Cancel</button>
+            </div>
+          </div>
+        )}
+
+        {/* Body */}
+        <div style={{ padding: '16px 20px' }}>
+          {/* Schema name */}
+          <div style={{ marginBottom: 14 }}>
+            <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.08em', display: 'block', marginBottom: 5 }}>
+              Schema Name
+            </label>
+            <input className="input" style={{ fontSize: 13 }} value={name} onChange={e => setName(e.target.value)} />
+          </div>
+
+          {/* Columns */}
+          <div style={{ marginBottom: 10 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+              <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+                Columns ({columns.length})
+              </label>
+              <button className="btn btn-ghost btn-sm" style={{ fontSize: 11 }} onClick={addColumn}>
+                <Plus size={11} /> Add Column
+              </button>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {columns.map((col, i) => (
+                <div key={i} style={{
+                  display: 'grid', gridTemplateColumns: '2fr 1fr 2fr auto auto', gap: 6, alignItems: 'center',
+                  padding: '8px 10px', borderRadius: 6,
+                  background: 'var(--bg)', border: '1px solid var(--border)',
+                }}>
+                  <input
+                    className="input" style={{ fontSize: 11, padding: '4px 8px' }}
+                    placeholder="Column name"
+                    value={col.name}
+                    onChange={e => updateColumn(i, 'name', e.target.value)}
+                  />
+                  <select
+                    className="input" style={{ fontSize: 11, padding: '4px 6px' }}
+                    value={col.type}
+                    onChange={e => updateColumn(i, 'type', e.target.value)}
+                  >
+                    {TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                  <input
+                    className="input" style={{ fontSize: 11, padding: '4px 8px' }}
+                    placeholder="Description"
+                    value={col.description}
+                    onChange={e => updateColumn(i, 'description', e.target.value)}
+                  />
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 10, color: 'var(--text-3)', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                    <input type="checkbox" checked={col.required} onChange={e => updateColumn(i, 'required', e.target.checked)} style={{ accentColor: 'var(--teal)' }} />
+                    Req
+                  </label>
+                  <button onClick={() => removeColumn(i)} style={{
+                    background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-4)', padding: 2,
+                  }}>
+                    <Trash2 size={12} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div style={{ padding: '14px 20px', borderTop: '1px solid var(--border)', display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+          <button onClick={onClose} style={{
+            padding: '8px 16px', borderRadius: 7, fontSize: 12, fontWeight: 500,
+            border: '1px solid var(--border-md)', background: 'transparent',
+            color: 'var(--text-3)', cursor: 'pointer',
+          }}>Cancel</button>
+          <button onClick={handleSave} disabled={saving || columns.filter(c => c.name.trim()).length === 0} style={{
+            display: 'flex', alignItems: 'center', gap: 6,
+            padding: '8px 16px', borderRadius: 7, fontSize: 12, fontWeight: 700,
+            border: '1.5px solid var(--teal)', background: 'rgba(5,150,105,0.08)',
+            color: 'var(--teal)', cursor: saving ? 'wait' : 'pointer',
+            opacity: saving || columns.filter(c => c.name.trim()).length === 0 ? 0.5 : 1,
+          }}>
+            {saving ? <Loader2 size={12} className="spin" /> : <Database size={12} />}
+            {existingSchema ? 'Update Schema' : 'Save Schema'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ── Dataset Card (My Datasets tab) ────────────────────── */
 
-function DatasetCard({ ds, onView }: { ds: Dataset; onView?: () => void }) {
+function DatasetCard({ ds, onView, onEditSchema }: { ds: Dataset; onView?: () => void; onEditSchema?: () => void }) {
   const statusColor = ds.status === 'ready' ? 'var(--success)'
     : ds.status === 'generating' ? 'var(--amber)'
     : ds.status === 'failed' ? 'var(--error)'
@@ -448,8 +675,8 @@ function DatasetCard({ ds, onView }: { ds: Dataset; onView?: () => void }) {
 
       {/* Actions */}
       <div style={{ display: 'flex', gap: 8 }}>
-        <button className="btn btn-primary btn-sm">
-          <Play size={12} /> Train Expert
+        <button className="btn btn-primary btn-sm" onClick={onEditSchema}>
+          <Database size={12} /> Update Schema
         </button>
         <button className="btn btn-secondary btn-sm">
           <Download size={12} /> Export
@@ -1191,6 +1418,7 @@ function MyDatasetsTab({ datasets, loading, onViewDataset }: {
   const [uploadTags, setUploadTags] = useState('');
   const [newFolderName, setNewFolderName] = useState('');
   const [showNewFolder, setShowNewFolder] = useState(false);
+  const [schemaDataset, setSchemaDataset] = useState<any>(null);
 
   // Assets from DB
   const { data: assetsData, mutate: mutateAssets } = useSWR('/api/assets', fetcher, { refreshInterval: 15_000 });
@@ -1326,7 +1554,7 @@ function MyDatasetsTab({ datasets, loading, onViewDataset }: {
                 Datasets ({datasets.length})
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px,1fr))', gap: 12, marginBottom: 20 }}>
-                {datasets.map((ds: any) => <DatasetCard key={ds.id} ds={ds} onView={() => onViewDataset(ds)} />)}
+                {datasets.map((ds: any) => <DatasetCard key={ds.id} ds={ds} onView={() => onViewDataset(ds)} onEditSchema={() => setSchemaDataset(ds)} />)}
               </div>
             </>
           )}
@@ -1389,6 +1617,14 @@ function MyDatasetsTab({ datasets, loading, onViewDataset }: {
             </div>
           )}
         </>
+      )}
+
+      {schemaDataset && (
+        <SchemaEditorModal
+          dataset={schemaDataset}
+          onClose={() => setSchemaDataset(null)}
+          onSave={() => { setSchemaDataset(null); }}
+        />
       )}
     </div>
   );
@@ -1630,6 +1866,8 @@ export default function DataSynthesisPage() {
   const [synthSaveQdrant, setSynthSaveQdrant] = useState(false);
   const [synthSubmitting, setSynthSubmitting] = useState(false);
   const [synthModelSearchOpen, setSynthModelSearchOpen] = useState(false);
+  const [synthSchema, setSynthSchema] = useState<any[]>([]);
+  const [showSynthSchema, setShowSynthSchema] = useState(false);
 
   // Models fetched from engine — extract name strings from model objects
   const [availableModels, setAvailableModels] = useState<{ ollama: string[]; llamacpp: string[]; huggingface: string[] }>({ ollama: [], llamacpp: [], huggingface: [] });
@@ -2024,6 +2262,10 @@ export default function DataSynthesisPage() {
                 </div>
               </div>
 
+              <button className="btn btn-secondary btn-sm" style={{ marginTop: 20 }} onClick={() => setShowSynthSchema(true)}>
+                <Database size={12} /> {synthSchema.length > 0 ? `Schema (${synthSchema.length} cols)` : 'Define Schema'}
+              </button>
+
               {/* Temperature + Batch Size */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                 <div>
@@ -2394,6 +2636,14 @@ export default function DataSynthesisPage() {
         <DatasetViewer
           dataset={viewDataset}
           onClose={() => setViewDataset(null)}
+        />
+      )}
+
+      {/* Schema Editor for Synthesis */}
+      {showSynthSchema && (
+        <SchemaEditorModal
+          onClose={() => setShowSynthSchema(false)}
+          onSave={(data) => { setSynthSchema(data.schema?.columns ?? []); setShowSynthSchema(false); }}
         />
       )}
     </div>
