@@ -9,7 +9,18 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from engine.config import settings
 from engine.core.websocket import ws_manager
-from engine.routers import data, datasets, embeddings, inference, models, orchestrator, pipelines, synthesis, training, workflow_logs
+from engine.routers import (
+    data,
+    datasets,
+    embeddings,
+    inference,
+    models,
+    orchestrator,
+    pipelines,
+    synthesis,
+    training,
+    workflow_logs,
+)
 
 logger = logging.getLogger("engine")
 
@@ -28,6 +39,7 @@ async def lifespan(app: FastAPI):
 
     # Ensure upload directory exists
     from pathlib import Path
+
     Path(settings.upload_dir).mkdir(parents=True, exist_ok=True)
 
     logger.info("Services ready")

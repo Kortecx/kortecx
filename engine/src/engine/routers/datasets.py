@@ -68,9 +68,7 @@ async def download_dataset(
             content={"error": "HuggingFace API token not configured. Set it in Providers → Hugging Face."},
         )
     try:
-        result = await asyncio.to_thread(
-            hf_service.download_dataset, body.dataset_id, body.config, body.split
-        )
+        result = await asyncio.to_thread(hf_service.download_dataset, body.dataset_id, body.config, body.split)
         return result
     except Exception as exc:
         logger.exception("Dataset download failed: %s", body.dataset_id)
@@ -88,9 +86,7 @@ async def preview_dataset(
     """Preview rows of a downloaded dataset."""
     if x_hf_token:
         hf_service.set_token(x_hf_token)
-    result = await asyncio.to_thread(
-        hf_service.get_dataset_preview, body.dataset_id, body.config, body.split, body.rows
-    )
+    result = await asyncio.to_thread(hf_service.get_dataset_preview, body.dataset_id, body.config, body.split, body.rows)
     return result
 
 

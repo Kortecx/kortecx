@@ -84,5 +84,6 @@ async def list_jobs() -> dict[str, Any]:
 async def get_job(job_id: str) -> dict[str, Any]:
     if job_id not in _jobs:
         from fastapi import HTTPException
+
         raise HTTPException(404, "Job not found")
     return _jobs[job_id]

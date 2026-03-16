@@ -9,11 +9,14 @@ from fastapi import APIRouter, Header
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from engine.services.synthesis import (
-    SynthesisConfig, SynthesisSource, OutputFormat, synthesis_service,
-)
-from engine.services.local_inference import inference_router
 from engine.services.hf import hf_service
+from engine.services.local_inference import inference_router
+from engine.services.synthesis import (
+    OutputFormat,
+    SynthesisConfig,
+    SynthesisSource,
+    synthesis_service,
+)
 
 router = APIRouter()
 
@@ -21,13 +24,13 @@ router = APIRouter()
 class CreateSynthesisRequest(BaseModel):
     name: str
     description: str
-    source: str                    # "ollama" | "llamacpp" | "huggingface"
+    source: str  # "ollama" | "llamacpp" | "huggingface"
     model: str
     baseUrl: str | None = None
     promptTemplate: str = ""
     systemPrompt: str = ""
     targetSamples: int = 100
-    outputFormat: str = "jsonl"     # jsonl | csv | alpaca | chatml | sharegpt | delta
+    outputFormat: str = "jsonl"  # jsonl | csv | alpaca | chatml | sharegpt | delta
     temperature: float = 0.8
     maxTokens: int = 1024
     batchSize: int = 5
@@ -78,7 +81,7 @@ async def start_synthesis(
         categories=body.categories,
     )
 
-    job = synthesis_service.create_job(config)
+    synthesis_service.create_job(config)
     await synthesis_service.start_job(job_id)
 
     return {"jobId": job_id, "status": "running", "message": f"Synthesis started: {body.name}"}
@@ -119,20 +122,14 @@ async def list_available_models() -> dict[str, Any]:
     # Ollama — locally installed models
     try:
         models = await inference_router.list_models("ollama")
-        result["ollama"] = [
-            {"name": m["name"], "size": m.get("size", 0), "source": "ollama", "local": True}
-            for m in models
-        ]
+        result["ollama"] = [{"name": m["name"], "size": m.get("size", 0), "source": "ollama", "local": True} for m in models]
     except Exception:
         pass
 
     # llama.cpp — loaded model
     try:
         models = await inference_router.list_models("llamacpp")
-        result["llamacpp"] = [
-            {"name": m["name"], "size": m.get("size", 0), "source": "llamacpp", "local": True}
-            for m in models
-        ]
+        result["llamacpp"] = [{"name": m["name"], "size": m.get("size", 0), "source": "llamacpp", "local": True} for m in models]
     except Exception:
         pass
 
@@ -185,12 +182,14 @@ async def search_models(
                         name = m.get("name", "")
                         if not name:
                             continue
-                        results.append({
-                            "name": name,
-                            "description": m.get("description", ""),
-                            "source": "ollama",
-                            "local": False,
-                        })
+                        results.append(
+                            {
+                                "name": name,
+                                "description": m.get("description", ""),
+                                "source": "ollama",
+                                "local": False,
+                            }
+                        )
         except Exception:
             pass
 
@@ -200,12 +199,15 @@ async def search_models(
             q_lower = query.lower()
             for m in local:
                 if q_lower in m["name"].lower():
-                    results.insert(0, {
-                        "name": m["name"],
-                        "description": "Installed locally",
-                        "source": "ollama",
-                        "local": True,
-                    })
+                    results.insert(
+                        0,
+                        {
+                            "name": m["name"],
+                            "description": "Installed locally",
+                            "source": "ollama",
+                            "local": True,
+                        },
+                    )
         except Exception:
             pass
 
@@ -214,6 +216,7 @@ async def search_models(
         pipelines = GEN_TYPE_PIPELINES.get(gen_type, [])
         try:
             from engine.services.hf import hf_service as _hf
+
             all_models: list[dict[str, Any]] = []
 
             if pipelines:
@@ -244,13 +247,15 @@ async def search_models(
                     desc_parts.append(tag)
                 if dl:
                     desc_parts.append(f"{dl:,} downloads")
-                results.append({
-                    "name": m.get("id", ""),
-                    "description": " · ".join(desc_parts) if desc_parts else "",
-                    "pipeline_tag": tag,
-                    "source": "huggingface",
-                    "local": False,
-                })
+                results.append(
+                    {
+                        "name": m.get("id", ""),
+                        "description": " · ".join(desc_parts) if desc_parts else "",
+                        "pipeline_tag": tag,
+                        "source": "huggingface",
+                        "local": False,
+                    }
+                )
         except Exception:
             pass
 
@@ -261,12 +266,14 @@ async def search_models(
             q_lower = query.lower()
             for m in local:
                 if not query or q_lower in m["name"].lower():
-                    results.append({
-                        "name": m["name"],
-                        "description": "Loaded in llama.cpp server",
-                        "source": "llamacpp",
-                        "local": True,
-                    })
+                    results.append(
+                        {
+                            "name": m["name"],
+                            "description": "Loaded in llama.cpp server",
+                            "source": "llamacpp",
+                            "local": True,
+                        }
+                    )
         except Exception:
             pass
 

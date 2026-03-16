@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter
 from pydantic import BaseModel
 
 from engine.services.hf import hf_service
@@ -44,10 +44,7 @@ async def upsert_embeddings(req: UpsertRequest) -> dict[str, Any]:
     vectors = hf_service.text_embedding(req.model_id, req.texts)
     payloads = req.payloads or [{"text": t} for t in req.texts]
 
-    points = [
-        {"id": i, "vector": v, "payload": p}
-        for i, (v, p) in enumerate(zip(vectors, payloads))
-    ]
+    points = [{"id": i, "vector": v, "payload": p} for i, (v, p) in enumerate(zip(vectors, payloads))]
     count = await qdrant_service.upsert(points)
     return {"upserted": count, "model": req.model_id}
 

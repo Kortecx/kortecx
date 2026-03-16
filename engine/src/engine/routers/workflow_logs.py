@@ -14,6 +14,7 @@ router = APIRouter()
 
 # ── Request Models ───────────────────────────────────────────────────────────
 
+
 class LogInteractionRequest(BaseModel):
     workflowId: str
     action: str
@@ -59,6 +60,7 @@ class StepChangeRequest(BaseModel):
 
 
 # ── Routes ───────────────────────────────────────────────────────────────────
+
 
 @router.post("/interaction")
 async def log_interaction(req: LogInteractionRequest) -> dict[str, str]:
@@ -117,6 +119,7 @@ async def log_step_change(req: StepChangeRequest) -> dict[str, str]:
 
 
 # ── Retrieval ────────────────────────────────────────────────────────────────
+
 
 @router.get("/workflow/{workflow_id}")
 async def get_workflow_logs(workflow_id: str) -> dict[str, Any]:

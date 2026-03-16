@@ -69,7 +69,8 @@ asyncio_mode = "auto"
 
 [tool.ruff]
 target-version = "py311"
-line-length = 120
+line-length = 170
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP"]
+ignore = ["N815"]  # camelCase in Pydantic models — intentional for JSON API compatibility

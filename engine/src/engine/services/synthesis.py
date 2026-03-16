@@ -6,12 +6,10 @@ import asyncio
 import csv
 import json
 import logging
-import os
 import time
-import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from enum import Enum
+from datetime import UTC, datetime
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
@@ -21,13 +19,13 @@ from engine.services.local_inference import inference_router, model_pool
 logger = logging.getLogger("engine.synthesis")
 
 
-class SynthesisSource(str, Enum):
+class SynthesisSource(StrEnum):
     OLLAMA = "ollama"
     LLAMACPP = "llamacpp"
     HUGGINGFACE = "huggingface"
 
 
-class SynthesisStatus(str, Enum):
+class SynthesisStatus(StrEnum):
     QUEUED = "queued"
     RUNNING = "running"
     COMPLETED = "completed"
@@ -35,7 +33,7 @@ class SynthesisStatus(str, Enum):
     CANCELLED = "cancelled"
 
 
-class OutputFormat(str, Enum):
+class OutputFormat(StrEnum):
     JSONL = "jsonl"
     CSV = "csv"
     ALPACA = "alpaca"
@@ -58,7 +56,7 @@ class SynthesisConfig:
     output_format: OutputFormat = OutputFormat.JSONL
     temperature: float = 0.8
     max_tokens: int = 1024
-    batch_size: int = 5           # concurrent generation requests per batch
+    batch_size: int = 5  # concurrent generation requests per batch
     save_to_qdrant: bool = False
     qdrant_collection: str = ""
     tags: list[str] = field(default_factory=list)
@@ -193,7 +191,7 @@ class SynthesisService:
         """Execute a synthesis job — generate samples in batches."""
         cfg = job.config
         job.status = SynthesisStatus.RUNNING
-        job.started_at = datetime.now(timezone.utc).isoformat()
+        job.started_at = datetime.now(UTC).isoformat()
         start_time = time.monotonic()
 
         # Ensure output directory exists
@@ -208,10 +206,7 @@ class SynthesisService:
                 batch_start = cfg.target_samples - remaining
 
                 # Run batch concurrently
-                tasks = [
-                    self._generate_sample(cfg, batch_start + i + 1)
-                    for i in range(batch_size)
-                ]
+                tasks = [self._generate_sample(cfg, batch_start + i + 1) for i in range(batch_size)]
                 results = await asyncio.gather(*tasks, return_exceptions=True)
 
                 for r in results:
@@ -242,10 +237,13 @@ class SynthesisService:
                     await self._store_in_qdrant(job)
 
             job.status = SynthesisStatus.COMPLETED
-            job.completed_at = datetime.now(timezone.utc).isoformat()
+            job.completed_at = datetime.now(UTC).isoformat()
             logger.info(
                 "Synthesis job %s completed: %d/%d samples in %.1fs",
-                cfg.job_id, job.current_samples, cfg.target_samples, elapsed,
+                cfg.job_id,
+                job.current_samples,
+                cfg.target_samples,
+                elapsed,
             )
 
         except asyncio.CancelledError:
@@ -254,12 +252,10 @@ class SynthesisService:
         except Exception as exc:
             job.status = SynthesisStatus.FAILED
             job.error = str(exc)
-            job.completed_at = datetime.now(timezone.utc).isoformat()
+            job.completed_at = datetime.now(UTC).isoformat()
             logger.exception("Synthesis job %s failed", cfg.job_id)
 
-    async def _generate_sample(
-        self, cfg: SynthesisConfig, sample_num: int
-    ) -> tuple[dict[str, Any], int] | None:
+    async def _generate_sample(self, cfg: SynthesisConfig, sample_num: int) -> tuple[dict[str, Any], int] | None:
         """Generate a single data sample using the configured model."""
         # Build prompt
         template = FORMAT_TEMPLATES.get(cfg.output_format, FORMAT_TEMPLATES[OutputFormat.JSONL])
@@ -301,7 +297,12 @@ class SynthesisService:
             elif cfg.source == SynthesisSource.HUGGINGFACE:
                 # Use HuggingFace Transformers pipeline
                 text, tokens = await asyncio.to_thread(
-                    self._hf_generate, cfg.model, system, user_prompt, cfg.temperature, cfg.max_tokens,
+                    self._hf_generate,
+                    cfg.model,
+                    system,
+                    user_prompt,
+                    cfg.temperature,
+                    cfg.max_tokens,
                 )
             else:
                 return None
@@ -317,18 +318,23 @@ class SynthesisService:
             "sample_id": sample_num,
             "model": cfg.model,
             "source": cfg.source.value,
-            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "generated_at": datetime.now(UTC).isoformat(),
         }
 
         return sample, tokens
 
     def _hf_generate(
-        self, model_id: str, system: str, prompt: str, temperature: float, max_tokens: int,
+        self,
+        model_id: str,
+        system: str,
+        prompt: str,
+        temperature: float,
+        max_tokens: int,
     ) -> tuple[str, int]:
         """Run generation using HuggingFace Transformers (blocking — run in thread)."""
         try:
-            from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
             import torch
+            from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
 
             tokenizer = AutoTokenizer.from_pretrained(model_id)
             model = AutoModelForCausalLM.from_pretrained(
@@ -357,6 +363,7 @@ class SynthesisService:
             logger.error("HF Transformers generation failed: %s", exc)
             # Fallback to HF Inference API
             from engine.services.hf import hf_service
+
             combined = f"{system}\n\n{prompt}"
             text = str(hf_service.text_generation(model_id=model_id, prompt=combined, max_new_tokens=max_tokens))
             return text, len(combined.split()) + len(text.split())
@@ -384,7 +391,7 @@ class SynthesisService:
         end = cleaned.rfind("}")
         if start >= 0 and end > start:
             try:
-                return json.loads(cleaned[start:end + 1])
+                return json.loads(cleaned[start : end + 1])
             except json.JSONDecodeError:
                 pass
 
@@ -393,7 +400,7 @@ class SynthesisService:
         end = cleaned.rfind("]")
         if start >= 0 and end > start:
             try:
-                arr = json.loads(cleaned[start:end + 1])
+                arr = json.loads(cleaned[start : end + 1])
                 if isinstance(arr, list) and arr:
                     return arr[0] if isinstance(arr[0], dict) else {"data": arr}
             except json.JSONDecodeError:
@@ -443,8 +450,8 @@ class SynthesisService:
     async def _store_in_qdrant(self, job: SynthesisJob) -> None:
         """Optionally store samples as embeddings in Qdrant for RAG use."""
         try:
-            from engine.services.qdrant import qdrant_service
             from engine.services.hf import hf_service
+            from engine.services.qdrant import qdrant_service
 
             texts = []
             payloads = []
@@ -452,13 +459,15 @@ class SynthesisService:
                 # Create a text representation for embedding
                 text = json.dumps({k: v for k, v in sample.items() if k != "_meta"}, ensure_ascii=False)
                 texts.append(text)
-                payloads.append({
-                    "job_id": job.config.job_id,
-                    "sample_index": i,
-                    "format": job.config.output_format.value,
-                    "source": job.config.source.value,
-                    "model": job.config.model,
-                })
+                payloads.append(
+                    {
+                        "job_id": job.config.job_id,
+                        "sample_index": i,
+                        "format": job.config.output_format.value,
+                        "source": job.config.source.value,
+                        "model": job.config.model,
+                    }
+                )
 
             # Generate embeddings
             embeddings = hf_service.text_embedding(

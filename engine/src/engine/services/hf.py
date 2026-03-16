@@ -22,7 +22,7 @@ class HuggingFaceService:
         """Update the API token (e.g. loaded from database)."""
         if token != self._token:
             self._token = token
-            self._api = None      # force re-init
+            self._api = None  # force re-init
             self._inference = None
 
     @property
@@ -74,8 +74,9 @@ class HuggingFaceService:
         limit: int = 20,
     ) -> list[dict[str, Any]]:
         """Search datasets and enrich with size from the individual dataset API."""
-        import httpx as _httpx
         from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        import httpx as _httpx
 
         datasets = list(self.api.list_datasets(search=query or None, sort=sort, limit=limit))
 
@@ -130,9 +131,9 @@ class HuggingFaceService:
             "downloads": info.downloads,
             "likes": info.likes,
             "tags": info.tags,
-            "description": info.description if hasattr(info, 'description') else None,
-            "citation": info.citation if hasattr(info, 'citation') else None,
-            "card_data": info.card_data if hasattr(info, 'card_data') else None,
+            "description": info.description if hasattr(info, "description") else None,
+            "citation": info.citation if hasattr(info, "citation") else None,
+            "card_data": info.card_data if hasattr(info, "card_data") else None,
             "created_at": str(info.created_at) if info.created_at else None,
             "last_modified": str(info.last_modified) if info.last_modified else None,
             "private": info.private,
@@ -147,8 +148,9 @@ class HuggingFaceService:
         - missing configs → try without config
         - auth → uses stored token if available
         """
-        from datasets import load_dataset, get_dataset_config_names
-        from huggingface_hub import constants as hf_constants, scan_cache_dir, snapshot_download
+        from datasets import get_dataset_config_names, load_dataset
+        from huggingface_hub import constants as hf_constants
+        from huggingface_hub import scan_cache_dir, snapshot_download
 
         cache_path = str(hf_constants.HF_HUB_CACHE)
         token = self._token or None
@@ -213,11 +215,7 @@ class HuggingFaceService:
                     "note": "Downloaded as raw snapshot — dataset could not be parsed as structured data",
                 }
             except Exception as snap_exc:
-                raise RuntimeError(
-                    f"Failed to download dataset '{dataset_id}'. "
-                    f"load_dataset error: {load_error}. "
-                    f"snapshot_download error: {snap_exc}"
-                ) from snap_exc
+                raise RuntimeError(f"Failed to download dataset '{dataset_id}'. load_dataset error: {load_error}. snapshot_download error: {snap_exc}") from snap_exc
 
         # Extract info from the loaded dataset
         if split:

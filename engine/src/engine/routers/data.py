@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, UploadFile, File, Query
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from engine.services.duckdb import duckdb_service
@@ -86,8 +86,9 @@ async def query_file(req: FileQueryRequest) -> dict[str, Any]:
 
 def _query_file_sync(req: FileQueryRequest) -> dict[str, Any]:
     """Synchronous file query via DuckDB."""
-    import duckdb
     import os
+
+    import duckdb
 
     path = req.path
     if not os.path.exists(path):
@@ -112,9 +113,7 @@ def _query_file_sync(req: FileQueryRequest) -> dict[str, Any]:
             conn.execute(f"CREATE VIEW data_view AS SELECT * FROM read_json_auto('{path}')")
 
         # Get column info
-        cols_result = conn.execute(
-            "SELECT column_name, data_type FROM information_schema.columns WHERE table_name = 'data_view'"
-        ).fetchall()
+        cols_result = conn.execute("SELECT column_name, data_type FROM information_schema.columns WHERE table_name = 'data_view'").fetchall()
         columns = [{"name": r[0], "type": r[1]} for r in cols_result]
         column_names = [r[0] for r in cols_result]
 
@@ -137,11 +136,7 @@ def _query_file_sync(req: FileQueryRequest) -> dict[str, Any]:
             # Apply full-text search across string columns
             if req.search:
                 search_term = req.search.replace("'", "''")
-                string_cols = [
-                    c["name"]
-                    for c in columns
-                    if "VARCHAR" in c["type"].upper() or "TEXT" in c["type"].upper()
-                ]
+                string_cols = [c["name"] for c in columns if "VARCHAR" in c["type"].upper() or "TEXT" in c["type"].upper()]
                 if string_cols:
                     or_parts = [f"CAST(\"{c}\" AS VARCHAR) ILIKE '%{search_term}%'" for c in string_cols]
                     where_parts.append(f"({' OR '.join(or_parts)})")
@@ -165,7 +160,7 @@ def _query_file_sync(req: FileQueryRequest) -> dict[str, Any]:
                 # Convert numpy/non-serializable types to Python natives
                 if val is None:
                     row[col_names[j]] = None
-                elif hasattr(val, 'item'):  # numpy scalar
+                elif hasattr(val, "item"):  # numpy scalar
                     row[col_names[j]] = val.item()
                 elif isinstance(val, (list, dict)):
                     row[col_names[j]] = val
@@ -188,9 +183,7 @@ def _query_file_sync(req: FileQueryRequest) -> dict[str, Any]:
                 if or_parts:
                     where_parts_count.append(f"({' OR '.join(or_parts)})")
             if where_parts_count:
-                filtered_rows = conn.execute(
-                    f"SELECT COUNT(*) FROM data_view WHERE {' AND '.join(where_parts_count)}"
-                ).fetchone()[0]
+                filtered_rows = conn.execute(f"SELECT COUNT(*) FROM data_view WHERE {' AND '.join(where_parts_count)}").fetchone()[0]
 
         return {
             "rows": rows,
@@ -221,6 +214,7 @@ async def get_table_data(
 # Schema detection
 # ---------------------------------------------------------------------------
 
+
 class SchemaDetectRequest(BaseModel):
     path: str
 
@@ -229,58 +223,62 @@ class SchemaDetectRequest(BaseModel):
 async def detect_schema(req: SchemaDetectRequest) -> dict[str, Any]:
     """Detect schema (column names + types) from a CSV/JSONL/Delta file."""
     import asyncio
+
     return await asyncio.to_thread(_detect_schema_sync, req.path)
 
 
 def _detect_schema_sync(path: str) -> dict[str, Any]:
-    import duckdb, os
+    import os
+
+    import duckdb
+
     if not os.path.exists(path):
         return {"error": f"File not found: {path}", "columns": []}
     conn = duckdb.connect()
     try:
         lower = path.lower()
-        if lower.endswith('.csv'):
+        if lower.endswith(".csv"):
             conn.execute(f"CREATE VIEW data_view AS SELECT * FROM read_csv_auto('{path}')")
-        elif lower.endswith('.jsonl') or lower.endswith('.json'):
+        elif lower.endswith(".jsonl") or lower.endswith(".json"):
             conn.execute(f"CREATE VIEW data_view AS SELECT * FROM read_json_auto('{path}')")
-        elif '.delta.' in lower or lower.endswith('.parquet'):
+        elif ".delta." in lower or lower.endswith(".parquet"):
             conn.execute(f"CREATE VIEW data_view AS SELECT * FROM read_json_auto('{path}')")
         else:
             conn.execute(f"CREATE VIEW data_view AS SELECT * FROM read_json_auto('{path}')")
 
-        cols = conn.execute(
-            "SELECT column_name, data_type FROM information_schema.columns WHERE table_name = 'data_view'"
-        ).fetchall()
+        cols = conn.execute("SELECT column_name, data_type FROM information_schema.columns WHERE table_name = 'data_view'").fetchall()
         total = conn.execute("SELECT COUNT(*) FROM data_view").fetchone()[0]
 
         columns: list[dict[str, Any]] = []
         for name, dtype in cols:
             # Map DuckDB types to simpler types
-            simple = 'string'
+            simple = "string"
             upper = dtype.upper()
-            if 'INT' in upper or 'BIGINT' in upper or 'SMALLINT' in upper or 'TINYINT' in upper:
-                simple = 'integer'
-            elif 'DOUBLE' in upper or 'FLOAT' in upper or 'DECIMAL' in upper or 'NUMERIC' in upper:
-                simple = 'float'
-            elif 'BOOL' in upper:
-                simple = 'boolean'
-            elif 'TIMESTAMP' in upper or 'DATETIME' in upper:
-                simple = 'timestamp'
-            elif 'DATE' in upper:
-                simple = 'date'
-            elif 'JSON' in upper or 'STRUCT' in upper or 'MAP' in upper:
-                simple = 'json'
-            elif 'ARRAY' in upper or 'LIST' in upper:
-                simple = 'array'
-            elif 'BLOB' in upper:
-                simple = 'binary'
-            columns.append({
-                "name": name,
-                "type": simple,
-                "duckdbType": dtype,
-                "description": "",
-                "required": False,
-            })
+            if "INT" in upper or "BIGINT" in upper or "SMALLINT" in upper or "TINYINT" in upper:
+                simple = "integer"
+            elif "DOUBLE" in upper or "FLOAT" in upper or "DECIMAL" in upper or "NUMERIC" in upper:
+                simple = "float"
+            elif "BOOL" in upper:
+                simple = "boolean"
+            elif "TIMESTAMP" in upper or "DATETIME" in upper:
+                simple = "timestamp"
+            elif "DATE" in upper:
+                simple = "date"
+            elif "JSON" in upper or "STRUCT" in upper or "MAP" in upper:
+                simple = "json"
+            elif "ARRAY" in upper or "LIST" in upper:
+                simple = "array"
+            elif "BLOB" in upper:
+                simple = "binary"
+            columns.append(
+                {
+                    "name": name,
+                    "type": simple,
+                    "duckdbType": dtype,
+                    "description": "",
+                    "required": False,
+                }
+            )
 
         return {"columns": columns, "totalRows": total, "path": path}
     except Exception as exc:
@@ -293,21 +291,24 @@ def _detect_schema_sync(path: str) -> dict[str, Any]:
 # File update (batch edit rows)
 # ---------------------------------------------------------------------------
 
+
 class FileUpdateRequest(BaseModel):
     path: str
     updates: list[dict[str, Any]]  # [{rowIndex: int, column: str, value: Any}, ...]
-    create_version: bool = True     # save a version snapshot before editing
+    create_version: bool = True  # save a version snapshot before editing
 
 
 @router.post("/file/update")
 async def update_file(req: FileUpdateRequest) -> dict[str, Any]:
     """Update rows in a CSV/JSONL/Delta file. Creates a version snapshot first."""
     import asyncio
+
     return await asyncio.to_thread(_update_file_sync, req)
 
 
 def _update_file_sync(req: FileUpdateRequest) -> dict[str, Any]:
-    import json, csv, os, shutil
+    import os
+    import shutil
     from datetime import datetime
 
     path = req.path
@@ -327,9 +328,9 @@ def _update_file_sync(req: FileUpdateRequest) -> dict[str, Any]:
         shutil.copy2(path, version_path)
 
     try:
-        if lower.endswith('.jsonl') or lower.endswith('.json') or '.delta.' in lower:
+        if lower.endswith(".jsonl") or lower.endswith(".json") or ".delta." in lower:
             return _update_jsonl(path, req.updates, version_path)
-        elif lower.endswith('.csv'):
+        elif lower.endswith(".csv"):
             return _update_csv(path, req.updates, version_path)
         else:
             return {"error": f"Unsupported format for editing: {path}", "updated": 0}
@@ -341,7 +342,7 @@ def _update_jsonl(path: str, updates: list[dict[str, Any]], version_path: str | 
     import json
 
     # Read all rows
-    with open(path, 'r', encoding='utf-8') as f:
+    with open(path, encoding="utf-8") as f:
         lines = f.readlines()
 
     rows: list[dict[str, Any]] = []
@@ -364,9 +365,9 @@ def _update_jsonl(path: str, updates: list[dict[str, Any]], version_path: str | 
             updated += 1
 
     # Write back
-    with open(path, 'w', encoding='utf-8') as f:
+    with open(path, "w", encoding="utf-8") as f:
         for row in rows:
-            f.write(json.dumps(row, ensure_ascii=False) + '\n')
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
     return {"updated": updated, "totalRows": len(rows), "versionPath": version_path}
 
@@ -375,7 +376,7 @@ def _update_csv(path: str, updates: list[dict[str, Any]], version_path: str | No
     import csv
 
     # Read all rows
-    with open(path, 'r', encoding='utf-8', newline='') as f:
+    with open(path, encoding="utf-8", newline="") as f:
         reader = csv.DictReader(f)
         fieldnames = reader.fieldnames or []
         rows = list(reader)
@@ -391,7 +392,7 @@ def _update_csv(path: str, updates: list[dict[str, Any]], version_path: str | No
             updated += 1
 
     # Write back
-    with open(path, 'w', encoding='utf-8', newline='') as f:
+    with open(path, "w", encoding="utf-8", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(rows)
@@ -402,6 +403,7 @@ def _update_csv(path: str, updates: list[dict[str, Any]], version_path: str | No
 # ---------------------------------------------------------------------------
 # Version history
 # ---------------------------------------------------------------------------
+
 
 class VersionListRequest(BaseModel):
     path: str
@@ -425,13 +427,15 @@ async def list_versions(req: VersionListRequest) -> dict[str, Any]:
             full = os.path.join(version_dir, f)
             stat = os.stat(full)
             ts_part = f.split(".v")[-1]
-            versions.append({
-                "name": f,
-                "path": full,
-                "sizeBytes": stat.st_size,
-                "timestamp": ts_part,
-                "createdAt": datetime.fromtimestamp(stat.st_mtime).isoformat(),
-            })
+            versions.append(
+                {
+                    "name": f,
+                    "path": full,
+                    "sizeBytes": stat.st_size,
+                    "timestamp": ts_part,
+                    "createdAt": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                }
+            )
 
     return {"versions": versions, "path": req.path, "count": len(versions)}
 
@@ -445,11 +449,13 @@ class VersionRestoreRequest(BaseModel):
 async def restore_version(req: VersionRestoreRequest) -> dict[str, Any]:
     """Restore a file from a version snapshot (creates a new version of current first)."""
     import asyncio
+
     return await asyncio.to_thread(_restore_version_sync, req)
 
 
 def _restore_version_sync(req: VersionRestoreRequest) -> dict[str, Any]:
-    import os, shutil
+    import os
+    import shutil
     from datetime import datetime
 
     if not os.path.exists(req.version_path):
@@ -472,9 +478,10 @@ def _restore_version_sync(req: VersionRestoreRequest) -> dict[str, Any]:
 # Schema alter (rename / retype / add / drop columns)
 # ---------------------------------------------------------------------------
 
+
 class SchemaAlterRequest(BaseModel):
     path: str
-    renames: dict[str, str] | None = None     # {oldName: newName}
+    renames: dict[str, str] | None = None  # {oldName: newName}
     type_changes: dict[str, str] | None = None  # {colName: newType} — applied as cast
     drop_columns: list[str] | None = None
     add_columns: list[dict[str, Any]] | None = None  # [{name, type, default}]
@@ -485,12 +492,16 @@ class SchemaAlterRequest(BaseModel):
 async def alter_schema(req: SchemaAlterRequest) -> dict[str, Any]:
     """Alter schema of a CSV/JSONL file — rename, retype, add, drop columns."""
     import asyncio
+
     return await asyncio.to_thread(_alter_schema_sync, req)
 
 
 def _alter_schema_sync(req: SchemaAlterRequest) -> dict[str, Any]:
-    import duckdb, os, shutil
+    import os
+    import shutil
     from datetime import datetime
+
+    import duckdb
 
     path = req.path
     if not os.path.exists(path):
@@ -509,7 +520,7 @@ def _alter_schema_sync(req: SchemaAlterRequest) -> dict[str, Any]:
 
     try:
         # Read into DuckDB
-        if lower.endswith('.csv'):
+        if lower.endswith(".csv"):
             conn.execute(f"CREATE TABLE data_tbl AS SELECT * FROM read_csv_auto('{path}')")
         else:
             conn.execute(f"CREATE TABLE data_tbl AS SELECT * FROM read_json_auto('{path}')")
@@ -544,17 +555,18 @@ def _alter_schema_sync(req: SchemaAlterRequest) -> dict[str, Any]:
 
         # Write back
         tmp_path = path + ".tmp"
-        if lower.endswith('.csv'):
+        if lower.endswith(".csv"):
             conn.execute(f"COPY data_tbl TO '{tmp_path}' (HEADER, DELIMITER ',')")
         else:
             conn.execute(f"COPY data_tbl TO '{tmp_path}' (FORMAT JSON, ARRAY true)")
             # Convert JSON array to JSONL
             import json
-            with open(tmp_path, 'r') as f:
+
+            with open(tmp_path) as f:
                 arr = json.load(f)
-            with open(tmp_path, 'w') as f:
+            with open(tmp_path, "w") as f:
                 for row in arr:
-                    f.write(json.dumps(row, ensure_ascii=False) + '\n')
+                    f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
         os.replace(tmp_path, path)
 

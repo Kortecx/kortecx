@@ -29,13 +29,14 @@ async def _with_retry(coro_factory, retries: int = MAX_RETRIES) -> Any:
         except (httpx.ConnectError, httpx.ReadTimeout, httpx.ConnectTimeout) as exc:
             last_exc = exc
             if attempt < retries:
-                delay = RETRY_DELAY * (2 ** attempt)
+                delay = RETRY_DELAY * (2**attempt)
                 logger.warning("Inference retry %d/%d after %.1fs: %s", attempt + 1, retries, delay, exc)
                 await asyncio.sleep(delay)
     raise last_exc  # type: ignore[misc]
 
 
 # ── Model pool ────────────────────────────────────────────────────────────────
+
 
 class ModelPool:
     """Track which models are loaded and manage capacity for concurrent agents."""
@@ -71,6 +72,7 @@ model_pool = ModelPool()
 
 
 # ── Data types ────────────────────────────────────────────────────────────────
+
 
 @dataclass
 class GenerateResult:
@@ -112,6 +114,7 @@ class LocalInferenceBackend(ABC):
 
 
 # ── Ollama backend ────────────────────────────────────────────────────────────
+
 
 class OllamaService(LocalInferenceBackend):
     """Wraps the Ollama REST API (http://localhost:11434)."""
@@ -255,6 +258,7 @@ class OllamaService(LocalInferenceBackend):
 
 # ── llama.cpp backend ─────────────────────────────────────────────────────────
 
+
 class LlamaCppService(LocalInferenceBackend):
     """Wraps a llama.cpp server (http://localhost:8080)."""
 
@@ -339,10 +343,7 @@ class LlamaCppService(LocalInferenceBackend):
             resp = await self.client.get("/v1/models")
             resp.raise_for_status()
             data = resp.json()
-            return [
-                {"name": m.get("id", "unknown"), "size": 0, "modified_at": ""}
-                for m in data.get("data", [])
-            ]
+            return [{"name": m.get("id", "unknown"), "size": 0, "modified_at": ""} for m in data.get("data", [])]
         except Exception:
             return []
 
@@ -355,6 +356,7 @@ class LlamaCppService(LocalInferenceBackend):
 
 
 # ── Inference router ──────────────────────────────────────────────────────────
+
 
 class InferenceRouter:
     """Routes inference requests to the correct backend."""
@@ -387,8 +389,11 @@ class InferenceRouter:
     ) -> GenerateResult:
         backend = self.get_backend(engine, base_url)
         return await backend.generate(
-            model, prompt, system=system,
-            temperature=temperature, max_tokens=max_tokens,
+            model,
+            prompt,
+            system=system,
+            temperature=temperature,
+            max_tokens=max_tokens,
         )
 
     async def chat(
@@ -403,8 +408,10 @@ class InferenceRouter:
     ) -> GenerateResult:
         backend = self.get_backend(engine, base_url)
         return await backend.chat(
-            model, messages,
-            temperature=temperature, max_tokens=max_tokens,
+            model,
+            messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
         )
 
     async def list_models(self, engine: str, base_url: str | None = None) -> list[dict[str, Any]]:

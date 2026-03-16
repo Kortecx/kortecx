@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -49,15 +49,19 @@ class WebSocketManager:
         elif event == "ping":
             ws = self.active.get(conn_id)
             if ws:
-                await ws.send_json({"event": "pong", "timestamp": datetime.now(timezone.utc).isoformat()})
+                await ws.send_json({"event": "pong", "timestamp": datetime.now(UTC).isoformat()})
         elif event == "workflow.execute":
             await self._handle_workflow_execute(conn_id, msg)
 
     async def _handle_workflow_execute(self, conn_id: str, msg: dict[str, Any]) -> None:
         """Handle workflow execution triggered via WebSocket."""
         import asyncio
+
         from engine.services.orchestrator import (
-            StepConfig, StepIntegration, WorkflowRequest, orchestrator,
+            StepConfig,
+            StepIntegration,
+            WorkflowRequest,
+            orchestrator,
         )
 
         data = msg.get("data", {})
@@ -117,12 +121,14 @@ class WebSocketManager:
 
     async def broadcast(self, channel: str, event: str, data: Any) -> None:
         """Broadcast an event to all subscribers of a channel."""
-        payload = json.dumps({
-            "event": event,
-            "channel": channel,
-            "data": data,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        })
+        payload = json.dumps(
+            {
+                "event": event,
+                "channel": channel,
+                "data": data,
+                "timestamp": datetime.now(UTC).isoformat(),
+            }
+        )
         dead: list[str] = []
         for conn_id in self.subscriptions.get(channel, set()):
             ws = self.active.get(conn_id)
@@ -137,11 +143,13 @@ class WebSocketManager:
     async def send_to(self, conn_id: str, event: str, data: Any) -> None:
         ws = self.active.get(conn_id)
         if ws:
-            await ws.send_json({
-                "event": event,
-                "data": data,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-            })
+            await ws.send_json(
+                {
+                    "event": event,
+                    "data": data,
+                    "timestamp": datetime.now(UTC).isoformat(),
+                }
+            )
 
     def _remove(self, conn_id: str) -> None:
         self.active.pop(conn_id, None)

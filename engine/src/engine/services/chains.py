@@ -20,7 +20,6 @@ class ChainService:
         raise ValueError(f"Unknown chain type: {chain_type}")
 
     def _qa_chain(self, inputs: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
-        from langchain.chains import RetrievalQA
         from langchain_huggingface import HuggingFacePipeline
 
         model_id = config.get("model_id", "google/flan-t5-base")
@@ -38,9 +37,9 @@ class ChainService:
         return {"summary": llm.invoke(text), "model": model_id}
 
     def _rag_chain(self, inputs: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
-        from langchain_huggingface import HuggingFaceEmbeddings, HuggingFacePipeline
-        from langchain_community.vectorstores import Qdrant as LangchainQdrant
         from langchain.chains import RetrievalQA
+        from langchain_community.vectorstores import Qdrant as LangchainQdrant
+        from langchain_huggingface import HuggingFaceEmbeddings, HuggingFacePipeline
         from qdrant_client import QdrantClient
 
         from engine.config import settings
