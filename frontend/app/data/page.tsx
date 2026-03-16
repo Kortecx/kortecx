@@ -48,9 +48,280 @@ const fetcher = (url: string) => fetch(url).then(r => {
   return r.json();
 });
 
+/* ── Dataset Viewer (DuckDB-powered table) ─────────────── */
+
+function DatasetViewer({ dataset, onClose }: { dataset: any; onClose: () => void }) {
+  const [rows, setRows] = useState<any[]>([]);
+  const [columns, setColumns] = useState<{ name: string; type: string }[]>([]);
+  const [totalRows, setTotalRows] = useState(0);
+  const [filteredRows, setFilteredRows] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [search, setSearch] = useState('');
+  const [filters, setFilters] = useState<Record<string, string>>({});
+  const [page, setPage] = useState(0);
+  const [sortCol, setSortCol] = useState<string | null>(null);
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
+  const PAGE_SIZE = 50;
+
+  // Determine the file path — from outputPath (synthesis) or construct from dataset info
+  const filePath = dataset.outputPath || dataset.cachePath || '';
+
+  const fetchData = useCallback(async () => {
+    if (!filePath) { setError('No data file path available'); setLoading(false); return; }
+    setLoading(true);
+    setError('');
+    try {
+      const body: any = {
+        path: filePath,
+        limit: PAGE_SIZE,
+        offset: page * PAGE_SIZE,
+      };
+      if (search.trim()) body.search = search.trim();
+      const activeFilters = Object.fromEntries(Object.entries(filters).filter(([, v]) => v.trim()));
+      if (Object.keys(activeFilters).length > 0) body.filters = activeFilters;
+      if (sortCol) {
+        body.sql = `SELECT * FROM data_view${
+          Object.keys(activeFilters).length > 0 || search.trim()
+            ? ' WHERE ' + [
+                ...Object.entries(activeFilters).map(([c, v]) => `CAST("${c}" AS VARCHAR) ILIKE '%${v}%'`),
+                ...(search.trim() ? [`(${columns.map(c => `CAST("${c.name}" AS VARCHAR) ILIKE '%${search.trim()}%'`).join(' OR ')})`] : []),
+              ].join(' AND ')
+            : ''
+        } ORDER BY "${sortCol}" ${sortDir} LIMIT ${PAGE_SIZE} OFFSET ${page * PAGE_SIZE}`;
+      }
+
+      const res = await fetch('/api/data/query', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (data.error) { setError(data.error); }
+      else {
+        setRows(data.rows ?? []);
+        setColumns(data.columns ?? []);
+        setTotalRows(data.totalRows ?? 0);
+        setFilteredRows(data.filteredRows ?? data.totalRows ?? 0);
+      }
+    } catch (err) {
+      setError('Failed to load data');
+    } finally {
+      setLoading(false);
+    }
+  }, [filePath, page, search, filters, sortCol, sortDir, columns]);
+
+  useEffect(() => { fetchData(); }, [fetchData]);
+
+  // Debounce search
+  const [searchInput, setSearchInput] = useState('');
+  useEffect(() => {
+    const t = setTimeout(() => { setSearch(searchInput); setPage(0); }, 300);
+    return () => clearTimeout(t);
+  }, [searchInput]);
+
+  const totalPages = Math.ceil(filteredRows / PAGE_SIZE);
+
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)',
+      backdropFilter: 'blur(4px)', zIndex: 200,
+      display: 'flex', alignItems: 'stretch', justifyContent: 'center',
+      padding: '40px 24px',
+    }} onClick={onClose}>
+      <div
+        onClick={e => e.stopPropagation()}
+        style={{
+          width: '100%', maxWidth: 1200,
+          background: 'var(--bg-surface)', border: '1px solid var(--border)',
+          borderRadius: 12, display: 'flex', flexDirection: 'column',
+          overflow: 'hidden', boxShadow: '0 24px 64px rgba(0,0,0,0.4)',
+        }}
+      >
+        {/* Header */}
+        <div style={{
+          padding: '14px 20px', borderBottom: '1px solid var(--border)',
+          display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0,
+        }}>
+          <Database size={16} color="var(--teal)" />
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-1)' }}>{dataset.name}</div>
+            <div style={{ fontSize: 11, color: 'var(--text-3)' }}>
+              {fmtNum(totalRows)} total rows · {columns.length} columns
+              {filteredRows !== totalRows && ` · ${fmtNum(filteredRows)} matching`}
+              {dataset.format && ` · ${dataset.format.toUpperCase()}`}
+            </div>
+          </div>
+          <button onClick={onClose} style={{
+            background: 'none', border: 'none', cursor: 'pointer',
+            color: 'var(--text-3)', display: 'flex', padding: 4,
+          }}>
+            <X size={18} />
+          </button>
+        </div>
+
+        {/* Toolbar — search + column filters */}
+        <div style={{
+          padding: '10px 20px', borderBottom: '1px solid var(--border)',
+          display: 'flex', gap: 10, alignItems: 'center', flexShrink: 0, flexWrap: 'wrap',
+        }}>
+          <div style={{ position: 'relative', flex: 1, minWidth: 200 }}>
+            <Search size={13} color="var(--text-4)" style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)' }} />
+            <input
+              className="input"
+              style={{ paddingLeft: 32, fontSize: 12 }}
+              placeholder="Search across all columns..."
+              value={searchInput}
+              onChange={e => setSearchInput(e.target.value)}
+            />
+          </div>
+          {/* Column filter chips */}
+          {columns.slice(0, 5).map(col => (
+            <input
+              key={col.name}
+              className="input"
+              style={{ width: 120, fontSize: 11, padding: '5px 8px' }}
+              placeholder={col.name}
+              value={filters[col.name] ?? ''}
+              onChange={e => {
+                setFilters(prev => ({ ...prev, [col.name]: e.target.value }));
+                setPage(0);
+              }}
+            />
+          ))}
+          {columns.length > 5 && (
+            <span style={{ fontSize: 10, color: 'var(--text-4)' }}>+{columns.length - 5} cols</span>
+          )}
+        </div>
+
+        {/* Table */}
+        <div style={{ flex: 1, overflow: 'auto' }}>
+          {loading ? (
+            <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-3)', fontSize: 13 }}>
+              <Loader2 size={20} className="spin" style={{ margin: '0 auto 8px' }} />
+              Loading data...
+            </div>
+          ) : error ? (
+            <div style={{ padding: 40, textAlign: 'center', color: 'var(--error)', fontSize: 13 }}>
+              <AlertTriangle size={20} style={{ margin: '0 auto 8px' }} />
+              {error}
+            </div>
+          ) : rows.length === 0 ? (
+            <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-3)', fontSize: 13 }}>
+              No rows match your search/filters
+            </div>
+          ) : (
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+              <thead>
+                <tr style={{ position: 'sticky', top: 0, background: 'var(--bg-elevated)', zIndex: 2 }}>
+                  <th style={{
+                    padding: '8px 12px', textAlign: 'left', fontSize: 10, fontWeight: 700,
+                    color: 'var(--text-3)', borderBottom: '2px solid var(--border)',
+                    textTransform: 'uppercase', letterSpacing: '0.06em', width: 40,
+                  }}>#</th>
+                  {columns.map(col => (
+                    <th
+                      key={col.name}
+                      onClick={() => {
+                        if (sortCol === col.name) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+                        else { setSortCol(col.name); setSortDir('asc'); }
+                        setPage(0);
+                      }}
+                      style={{
+                        padding: '8px 12px', textAlign: 'left', fontSize: 10, fontWeight: 700,
+                        color: sortCol === col.name ? 'var(--text-1)' : 'var(--text-3)',
+                        borderBottom: '2px solid var(--border)',
+                        textTransform: 'uppercase', letterSpacing: '0.06em',
+                        cursor: 'pointer', whiteSpace: 'nowrap', userSelect: 'none',
+                      }}
+                    >
+                      {col.name}
+                      {sortCol === col.name && (sortDir === 'asc' ? ' \u2191' : ' \u2193')}
+                      <span style={{ fontWeight: 400, marginLeft: 4, color: 'var(--text-4)', textTransform: 'lowercase' }}>
+                        {col.type.toLowerCase().replace('varchar', 'str').replace('bigint', 'int').replace('double', 'float')}
+                      </span>
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((row, i) => (
+                  <tr
+                    key={i}
+                    style={{ borderBottom: '1px solid var(--border)' }}
+                    onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-elevated)'; }}
+                    onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
+                  >
+                    <td style={{ padding: '6px 12px', color: 'var(--text-4)', fontSize: 10, fontVariantNumeric: 'tabular-nums' }}>
+                      {page * PAGE_SIZE + i + 1}
+                    </td>
+                    {columns.map(col => {
+                      const val = row[col.name];
+                      const display = val === null || val === undefined ? '\u2014'
+                        : typeof val === 'object' ? JSON.stringify(val)
+                        : String(val);
+                      return (
+                        <td key={col.name} style={{
+                          padding: '6px 12px', color: 'var(--text-2)',
+                          maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                        }} title={display}>
+                          {display}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+
+        {/* Footer — pagination */}
+        <div style={{
+          padding: '10px 20px', borderTop: '1px solid var(--border)',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          fontSize: 11, color: 'var(--text-3)', flexShrink: 0,
+        }}>
+          <span>
+            Showing {rows.length > 0 ? page * PAGE_SIZE + 1 : 0}\u2013{page * PAGE_SIZE + rows.length} of {fmtNum(filteredRows)}
+          </span>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <button
+              disabled={page === 0}
+              onClick={() => setPage(p => Math.max(0, p - 1))}
+              style={{
+                padding: '4px 10px', borderRadius: 4, fontSize: 11,
+                border: '1px solid var(--border)', background: 'var(--bg)',
+                cursor: page === 0 ? 'default' : 'pointer', color: 'var(--text-2)',
+                opacity: page === 0 ? 0.4 : 1,
+              }}
+            >\u2190 Prev</button>
+            <span style={{ padding: '4px 8px', fontSize: 11 }}>
+              Page {page + 1} of {Math.max(1, totalPages)}
+            </span>
+            <button
+              disabled={page >= totalPages - 1}
+              onClick={() => setPage(p => p + 1)}
+              style={{
+                padding: '4px 10px', borderRadius: 4, fontSize: 11,
+                border: '1px solid var(--border)', background: 'var(--bg)',
+                cursor: page >= totalPages - 1 ? 'default' : 'pointer', color: 'var(--text-2)',
+                opacity: page >= totalPages - 1 ? 0.4 : 1,
+              }}
+            >Next \u2192</button>
+          </div>
+          <span style={{ fontFamily: 'var(--font-mono, monospace)', fontSize: 10, color: 'var(--text-4)' }}>
+            Powered by DuckDB
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ── Dataset Card (My Datasets tab) ────────────────────── */
 
-function DatasetCard({ ds }: { ds: Dataset }) {
+function DatasetCard({ ds, onView }: { ds: Dataset; onView?: () => void }) {
   const statusColor = ds.status === 'ready' ? 'var(--success)'
     : ds.status === 'generating' ? 'var(--amber)'
     : ds.status === 'failed' ? 'var(--error)'
@@ -76,7 +347,14 @@ function DatasetCard({ ds }: { ds: Dataset }) {
 
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3 }}>
-            <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-1)' }}>{ds.name}</span>
+            <span
+              style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-1)', cursor: onView ? 'pointer' : 'default' }}
+              onClick={onView}
+              onMouseEnter={e => { if (onView) e.currentTarget.style.textDecoration = 'underline'; }}
+              onMouseLeave={e => { e.currentTarget.style.textDecoration = 'none'; }}
+            >
+              {ds.name}
+            </span>
             <span style={{
               display: 'flex', alignItems: 'center', gap: 4,
               fontSize: 10, fontWeight: 600, color: statusColor,
@@ -158,7 +436,7 @@ function DatasetCard({ ds }: { ds: Dataset }) {
         <button className="btn btn-secondary btn-sm">
           <Download size={12} /> Export
         </button>
-        <button className="btn btn-ghost btn-sm">
+        <button className="btn btn-ghost btn-sm" onClick={onView} disabled={!onView}>
           <BarChart3 size={12} /> Inspect
         </button>
       </div>
@@ -1196,6 +1474,7 @@ export default function DataSynthesisPage() {
   };
 
   const [editJob, setEditJob] = useState<any>(null);
+  const [viewDataset, setViewDataset] = useState<any>(null);
 
   const handleSaveSynthJob = async (id: string, updates: Record<string, unknown>, restart: boolean) => {
     const res = await fetch('/api/synthesis', {
@@ -1320,7 +1599,7 @@ export default function DataSynthesisPage() {
           </div>
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px,1fr))', gap: 12 }}>
-            {myDatasets.map(ds => <DatasetCard key={ds.id} ds={ds} />)}
+            {myDatasets.map(ds => <DatasetCard key={ds.id} ds={ds} onView={() => setViewDataset(ds)} />)}
           </div>
         )
       )}
@@ -1832,6 +2111,15 @@ export default function DataSynthesisPage() {
                             </button>
                           </>
                         )}
+                        {isCompleted && (
+                          <button
+                            className="btn btn-ghost btn-sm"
+                            style={{ fontSize: 11 }}
+                            onClick={() => setViewDataset({ name: job.name, outputPath: job.outputPath, format: job.outputFormat })}
+                          >
+                            <Eye size={11} /> View Data
+                          </button>
+                        )}
                         {/* Completed/Failed/Cancelled: Edit (restart) + Remove */}
                         {(isCompleted || isFailed || isCancelled) && (
                           <>
@@ -1867,6 +2155,14 @@ export default function DataSynthesisPage() {
           job={editJob}
           onClose={() => setEditJob(null)}
           onSave={handleSaveSynthJob}
+        />
+      )}
+
+      {/* Dataset Viewer Modal */}
+      {viewDataset && (
+        <DatasetViewer
+          dataset={viewDataset}
+          onClose={() => setViewDataset(null)}
         />
       )}
     </div>

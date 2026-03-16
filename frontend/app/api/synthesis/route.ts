@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db, synthesisJobs, apiKeys } from '@/lib/db';
+import { db, synthesisJobs, datasets, apiKeys } from '@/lib/db';
 import { eq, desc, sql } from 'drizzle-orm';
 
 const ENGINE_URL = process.env.NEXT_PUBLIC_ENGINE_URL || 'http://localhost:8000';
@@ -250,6 +250,27 @@ function pollSynthesisJob(dbId: string, engineJobId: string, headers: Record<str
         updates.outputPath = data.outputPath ?? null;
         updates.completedAt = new Date();
         clearInterval(interval);
+
+        // Auto-create a dataset record from the completed synthesis job
+        try {
+          const [job] = await db.select().from(synthesisJobs).where(eq(synthesisJobs.id, dbId));
+          if (job) {
+            await db.insert(datasets).values({
+              id: `ds-${Date.now()}`,
+              name: job.name,
+              description: job.description ?? `Synthesized using ${job.model} (${job.source})`,
+              status: 'ready',
+              format: job.outputFormat ?? 'jsonl',
+              sampleCount: data.currentSamples ?? job.targetSamples ?? 0,
+              sizeBytes: 0,
+              qualityScore: null,
+              tags: job.tags ?? [],
+              categories: [],
+            }).onConflictDoNothing();
+          }
+        } catch (err) {
+          console.error('[synthesis] Failed to create dataset record:', err);
+        }
       } else if (data.status === 'failed') {
         updates.status = 'failed';
         updates.error = data.error ?? 'Unknown error';
