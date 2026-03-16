@@ -3,16 +3,19 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import httpx
+
 from engine.config import settings
 from engine.core.websocket import ws_manager
-from engine.services.local_inference import GenerateResult, inference_router
+from engine.services.local_inference import GenerateResult, inference_router, model_pool
 from engine.services.workflow_logger import workflow_logger
 
 logger = logging.getLogger("engine.orchestrator")
@@ -31,8 +34,8 @@ class AgentMemory:
 @dataclass
 class SharedMemory:
     run_id: str
-    entries: dict[str, str] = field(default_factory=dict)   # agentId -> JSON
-    globals: dict[str, str] = field(default_factory=dict)   # shared KV
+    entries: dict[str, str] = field(default_factory=dict)  # agentId -> JSON
+    globals: dict[str, str] = field(default_factory=dict)  # shared KV
 
     def to_dict(self) -> dict[str, Any]:
         return {"runId": self.run_id, "entries": self.entries, "globals": self.globals}
@@ -41,7 +44,7 @@ class SharedMemory:
 @dataclass
 class StepIntegration:
     id: str
-    type: str                    # "integration" | "plugin"
+    type: str  # "integration" | "plugin"
     reference_id: str
     name: str
     icon: str = ""
@@ -54,11 +57,11 @@ class StepConfig:
     step_id: str
     expert_id: str | None
     task_description: str
-    model_source: str            # "local" | "provider"
+    model_source: str  # "local" | "provider"
     local_model: dict[str, Any] | None
     temperature: float
     max_tokens: int
-    connection_type: str         # "sequential" | "parallel"
+    connection_type: str  # "sequential" | "parallel" | "conditional"
     system_instructions: str = ""
     voice_command: str = ""
     file_locations: list[str] = field(default_factory=list)
@@ -80,7 +83,7 @@ class WorkflowRequest:
 class AgentState:
     agent_id: str
     step_id: str
-    status: str = "pending"      # pending | running | completed | failed
+    status: str = "pending"  # pending | running | completed | failed
     memory: AgentMemory = field(default_factory=AgentMemory)
     output: str = ""
     error: str = ""
@@ -91,8 +94,13 @@ class AgentState:
 class AgentOrchestrator:
     """Core orchestration runtime for workflow agent execution."""
 
+    FALLBACK_MODELS = {
+        "ollama": "llama3.2:3b",
+        "llamacpp": "default",
+    }
+
     def __init__(self) -> None:
-        self._runs: dict[str, dict[str, Any]] = {}   # runId -> run state
+        self._runs: dict[str, dict[str, Any]] = {}  # runId -> run state
         self._shared_memory: dict[str, SharedMemory] = {}
         self._semaphore = asyncio.Semaphore(settings.max_concurrent_agents)
 
@@ -120,44 +128,67 @@ class AgentOrchestrator:
             "workflowId": request.workflow_id,
             "name": request.name,
             "status": "running",
-            "startedAt": datetime.now(timezone.utc).isoformat(),
+            "startedAt": datetime.now(UTC).isoformat(),
             "agents": {},
             "stepResults": {},
         }
 
         # Log run start
-        workflow_logger.log_run_event(request.workflow_id, run_id, "run.started", {
-            "name": request.name, "totalSteps": len(request.steps),
-        })
+        workflow_logger.log_run_event(
+            request.workflow_id,
+            run_id,
+            "run.started",
+            {
+                "name": request.name,
+                "totalSteps": len(request.steps),
+            },
+        )
 
         # Broadcast run started
-        await ws_manager.broadcast(channel, "run.started", {
-            "runId": run_id,
-            "name": request.name,
-            "totalSteps": len(request.steps),
-        })
+        await ws_manager.broadcast(
+            channel,
+            "run.started",
+            {
+                "runId": run_id,
+                "name": request.name,
+                "totalSteps": len(request.steps),
+            },
+        )
 
         # Orchestrate
         try:
             result = await self._orchestrate(
-                run_id, request.steps, shared,
-                goal_content, input_contents, channel,
+                run_id,
+                request.steps,
+                shared,
+                goal_content,
+                input_contents,
+                channel,
             )
             self._runs[run_id]["status"] = "completed"
-            self._runs[run_id]["completedAt"] = datetime.now(timezone.utc).isoformat()
+            self._runs[run_id]["completedAt"] = datetime.now(UTC).isoformat()
 
             # Log completion
-            workflow_logger.log_run_event(request.workflow_id, run_id, "run.completed", {
-                "outputLength": len(result),
-            })
+            workflow_logger.log_run_event(
+                request.workflow_id,
+                run_id,
+                "run.completed",
+                {
+                    "outputLength": len(result),
+                },
+            )
             workflow_logger.save_run_memory(request.workflow_id, run_id, shared.to_dict())
             workflow_logger.save_run_output(request.workflow_id, run_id, result)
 
-            await ws_manager.broadcast(channel, "workflow.complete", {
-                "runId": run_id,
-                "output": result,
-                "sharedMemory": shared.to_dict(),
-            })
+            await ws_manager.broadcast(
+                channel,
+                "workflow.complete",
+                {
+                    "runId": run_id,
+                    "output": result,
+                    "sharedMemory": shared.to_dict(),
+                },
+            )
 
             return {"runId": run_id, "status": "completed", "output": result}
 
@@ -166,14 +197,23 @@ class AgentOrchestrator:
             self._runs[run_id]["status"] = "failed"
             self._runs[run_id]["error"] = str(exc)
 
-            workflow_logger.log_run_event(request.workflow_id, run_id, "run.failed", {
-                "error": str(exc),
-            })
+            workflow_logger.log_run_event(
+                request.workflow_id,
+                run_id,
+                "run.failed",
+                {
+                    "error": str(exc),
+                },
+            )
 
-            await ws_manager.broadcast(channel, "workflow.failed", {
-                "runId": run_id,
-                "error": str(exc),
-            })
+            await ws_manager.broadcast(
+                channel,
+                "workflow.failed",
+                {
+                    "runId": run_id,
+                    "error": str(exc),
+                },
+            )
 
             return {"runId": run_id, "status": "failed", "error": str(exc)}
 
@@ -186,7 +226,7 @@ class AgentOrchestrator:
         input_contents: dict[str, str],
         channel: str,
     ) -> str:
-        """Execute steps respecting connection types (sequential / parallel)."""
+        """Execute steps respecting connection types (sequential / parallel / conditional)."""
         # Group consecutive parallel steps
         groups: list[list[StepConfig]] = []
         current_group: list[StepConfig] = []
@@ -206,11 +246,24 @@ class AgentOrchestrator:
 
         for group in groups:
             if len(group) == 1 and group[0].connection_type != "parallel":
-                # Sequential execution
+                # Sequential / conditional execution
                 step = group[0]
+
+                # Handle conditional steps — skip if previous output is empty or contains [SKIP]
+                if step.connection_type == "conditional":
+                    if not previous_output or "[SKIP]" in previous_output:
+                        logger.info("Skipping conditional step %s", step.step_id)
+                        self._runs[run_id]["stepResults"][step.step_id] = "[SKIPPED]"
+                        continue
+
                 agent_state = await self._run_agent(
-                    run_id, step, shared, goal_content,
-                    input_contents, previous_output, channel,
+                    run_id,
+                    step,
+                    shared,
+                    goal_content,
+                    input_contents,
+                    previous_output,
+                    channel,
                 )
                 previous_output = agent_state.output
                 self._runs[run_id]["stepResults"][step.step_id] = agent_state.output
@@ -218,8 +271,13 @@ class AgentOrchestrator:
                 # Parallel execution
                 tasks = [
                     self._run_agent(
-                        run_id, step, shared, goal_content,
-                        input_contents, previous_output, channel,
+                        run_id,
+                        step,
+                        shared,
+                        goal_content,
+                        input_contents,
+                        previous_output,
+                        channel,
                     )
                     for step in group
                 ]
@@ -252,27 +310,30 @@ class AgentOrchestrator:
 
         # Initialize agent memory
         agent.memory.context = goal_content
-        agent.memory.plan = (
-            f"Step: {step.task_description}\n"
-            f"Goal:\n{goal_content[:2000]}"
-        )
+        agent.memory.plan = f"Step: {step.task_description}\nGoal:\n{goal_content[:2000]}"
 
         self._runs[run_id]["agents"][agent_id] = agent
 
         # Log agent spawn
         workflow_logger.log_run_event(
-            self._runs[run_id]["workflowId"], run_id, "agent.spawned",
+            self._runs[run_id]["workflowId"],
+            run_id,
+            "agent.spawned",
             {"agentId": agent_id, "stepId": step.step_id, "modelSource": step.model_source},
         )
 
         # Broadcast agent spawned
-        await ws_manager.broadcast(channel, "agent.spawned", {
-            "runId": run_id,
-            "agentId": agent_id,
-            "stepId": step.step_id,
-            "taskDescription": step.task_description,
-            "modelSource": step.model_source,
-        })
+        await ws_manager.broadcast(
+            channel,
+            "agent.spawned",
+            {
+                "runId": run_id,
+                "agentId": agent_id,
+                "stepId": step.step_id,
+                "taskDescription": step.task_description,
+                "modelSource": step.model_source,
+            },
+        )
 
         async with self._semaphore:
             try:
@@ -296,15 +357,23 @@ class AgentOrchestrator:
                 # Build prompt
                 system_prompt = self._build_system_prompt(step, shared, expert_data)
                 user_prompt = await self._build_user_prompt(
-                    step, goal_content, input_contents, previous_output, shared,
+                    step,
+                    goal_content,
+                    input_contents,
+                    previous_output,
+                    shared,
                 )
 
                 # Broadcast thinking
-                await ws_manager.broadcast(channel, "agent.thinking", {
-                    "runId": run_id,
-                    "agentId": agent_id,
-                    "stepId": step.step_id,
-                })
+                await ws_manager.broadcast(
+                    channel,
+                    "agent.thinking",
+                    {
+                        "runId": run_id,
+                        "agentId": agent_id,
+                        "stepId": step.step_id,
+                    },
+                )
 
                 # Execute inference
                 result = await self._infer(step, system_prompt, user_prompt)
@@ -318,47 +387,108 @@ class AgentOrchestrator:
                 agent.memory.findings.append(result.text[:500])
 
                 # Write to shared memory
-                import json
                 shared.entries[agent_id] = json.dumps(agent.memory.to_dict())
                 shared.globals[step.step_id] = result.text[:1000]
 
                 # Broadcast memory update
-                await ws_manager.broadcast(channel, "agent.memory.update", {
-                    "runId": run_id,
-                    "agentId": agent_id,
-                    "stepId": step.step_id,
-                    "memory": agent.memory.to_dict(),
-                    "sharedMemory": shared.to_dict(),
-                })
+                await ws_manager.broadcast(
+                    channel,
+                    "agent.memory.update",
+                    {
+                        "runId": run_id,
+                        "agentId": agent_id,
+                        "stepId": step.step_id,
+                        "memory": agent.memory.to_dict(),
+                        "sharedMemory": shared.to_dict(),
+                    },
+                )
 
                 # Log step complete
                 workflow_logger.log_run_event(
-                    self._runs[run_id]["workflowId"], run_id, "agent.step.complete",
+                    self._runs[run_id]["workflowId"],
+                    run_id,
+                    "agent.step.complete",
                     {"agentId": agent_id, "stepId": step.step_id, "tokensUsed": result.tokens_used, "durationMs": result.duration_ms},
                 )
 
                 # Broadcast step complete
-                await ws_manager.broadcast(channel, "agent.step.complete", {
-                    "runId": run_id,
-                    "agentId": agent_id,
-                    "stepId": step.step_id,
-                    "output": result.text,
-                    "tokensUsed": result.tokens_used,
-                    "durationMs": result.duration_ms,
-                })
+                await ws_manager.broadcast(
+                    channel,
+                    "agent.step.complete",
+                    {
+                        "runId": run_id,
+                        "agentId": agent_id,
+                        "stepId": step.step_id,
+                        "output": result.text,
+                        "tokensUsed": result.tokens_used,
+                        "durationMs": result.duration_ms,
+                    },
+                )
 
                 return agent
 
             except Exception as exc:
+                # Try fallback model for local inference
+                if settings.agent_retry_enabled and step.model_source == "local" and step.local_model and not getattr(step, "_is_fallback", False):
+                    engine = step.local_model.get("engine", "ollama")
+                    fallback_model = self.FALLBACK_MODELS.get(engine)
+                    if fallback_model:
+                        logger.warning(
+                            "Agent %s failed with primary model, trying fallback %s: %s",
+                            agent_id,
+                            fallback_model,
+                            exc,
+                        )
+                        fallback_step = StepConfig(
+                            step_id=step.step_id,
+                            expert_id=step.expert_id,
+                            task_description=step.task_description,
+                            model_source="local",
+                            local_model={**step.local_model, "model": fallback_model},
+                            temperature=step.temperature,
+                            max_tokens=min(step.max_tokens, 2048),  # reduce for smaller model
+                            connection_type=step.connection_type,
+                        )
+                        fallback_step._is_fallback = True  # type: ignore[attr-defined]
+                        try:
+                            result = await self._infer(fallback_step, system_prompt, user_prompt)
+                            agent.output = f"[Fallback model: {fallback_model}]\n{result.text}"
+                            agent.tokens_used = result.tokens_used
+                            agent.duration_ms = result.duration_ms
+                            agent.status = "completed"
+                            agent.memory.findings.append(f"[Fallback] {result.text[:500]}")
+                            shared.entries[agent_id] = json.dumps(agent.memory.to_dict())
+                            shared.globals[step.step_id] = result.text[:1000]
+                            await ws_manager.broadcast(
+                                channel,
+                                "agent.step.complete",
+                                {
+                                    "runId": run_id,
+                                    "agentId": agent_id,
+                                    "stepId": step.step_id,
+                                    "output": agent.output,
+                                    "tokensUsed": result.tokens_used,
+                                    "durationMs": result.duration_ms,
+                                    "fallback": True,
+                                },
+                            )
+                            return agent
+                        except Exception as fallback_exc:
+                            logger.error("Fallback also failed for agent %s: %s", agent_id, fallback_exc)
+
                 agent.status = "failed"
                 agent.error = str(exc)
 
-                await ws_manager.broadcast(channel, "agent.step.failed", {
-                    "runId": run_id,
-                    "agentId": agent_id,
-                    "stepId": step.step_id,
-                    "error": str(exc),
-                })
+                await ws_manager.broadcast(
+                    channel,
+                    "agent.step.failed",
+                    {
+                        "runId": run_id,
+                        "agentId": agent_id,
+                        "stepId": step.step_id,
+                        "error": str(exc),
+                    },
+                )
 
                 raise
 
@@ -367,7 +497,6 @@ class AgentOrchestrator:
         if not step.expert_id:
             return None
         try:
-            import httpx
             frontend_url = "http://localhost:3000"
             async with httpx.AsyncClient(timeout=10) as client:
                 resp = await client.get(f"{frontend_url}/api/experts", params={"id": step.expert_id})
@@ -393,10 +522,12 @@ class AgentOrchestrator:
             parts.append(step.system_instructions)
             parts.append("")
 
-        parts.extend([
-            "You are a specialized AI expert in a multi-agent workflow.",
-            f"Your task: {step.task_description}",
-        ])
+        parts.extend(
+            [
+                "You are a specialized AI expert in a multi-agent workflow.",
+                f"Your task: {step.task_description}",
+            ]
+        )
         if expert:
             parts.insert(len(parts) - 2, f"Role: {expert.get('role', 'agent')}")
             parts.insert(len(parts) - 2, f"Expert: {expert.get('name', 'unnamed')}")
@@ -408,10 +539,12 @@ class AgentOrchestrator:
             parts.append(f'The user said: "{step.voice_command}"')
             parts.append("Incorporate this verbal instruction into your execution.")
 
-        parts.extend([
-            "",
-            "## Shared Context from Other Agents",
-        ])
+        parts.extend(
+            [
+                "",
+                "## Shared Context from Other Agents",
+            ]
+        )
 
         if shared.globals:
             for step_id, content in shared.globals.items():
@@ -421,14 +554,16 @@ class AgentOrchestrator:
         else:
             parts.append("No previous agent outputs available yet.")
 
-        parts.extend([
-            "",
-            "## Instructions",
-            "- Focus on your specific task description",
-            "- Build upon findings from previous agents when available",
-            "- Be thorough and precise in your output",
-            "- Structure your response clearly",
-        ])
+        parts.extend(
+            [
+                "",
+                "## Instructions",
+                "- Focus on your specific task description",
+                "- Build upon findings from previous agents when available",
+                "- Be thorough and precise in your output",
+                "- Structure your response clearly",
+            ]
+        )
 
         return "\n".join(parts)
 
@@ -480,10 +615,12 @@ class AgentOrchestrator:
                 parts.append(f"[Image attached: {fname}]")
             parts.append("")
 
-        parts.extend([
-            "## Your Task",
-            step.task_description,
-        ])
+        parts.extend(
+            [
+                "## Your Task",
+                step.task_description,
+            ]
+        )
 
         return "\n".join(parts)
 
@@ -493,10 +630,10 @@ class AgentOrchestrator:
         system_prompt: str,
         user_prompt: str,
     ) -> GenerateResult:
-        """Route inference to the correct backend."""
+        """Route inference to the correct backend with model pool tracking."""
         if step.model_source == "local" and step.local_model:
-            engine = step.local_model.get("engine", "ollama")
-            model = step.local_model.get("model", "llama3.1:8b")
+            engine = step.local_model.get("engine", settings.default_local_engine)
+            model = step.local_model.get("model", settings.default_local_model)
             base_url = step.local_model.get("baseUrl")
 
             messages = [
@@ -504,14 +641,18 @@ class AgentOrchestrator:
                 {"role": "user", "content": user_prompt},
             ]
 
-            return await inference_router.chat(
-                engine=engine,
-                model=model,
-                messages=messages,
-                temperature=step.temperature,
-                max_tokens=step.max_tokens,
-                base_url=base_url,
-            )
+            await model_pool.acquire(model)
+            try:
+                return await inference_router.chat(
+                    engine=engine,
+                    model=model,
+                    messages=messages,
+                    temperature=step.temperature,
+                    max_tokens=step.max_tokens,
+                    base_url=base_url,
+                )
+            finally:
+                await model_pool.release(model)
 
         # Provider-based: use HuggingFace inference as fallback
         from engine.services.hf import hf_service
@@ -544,7 +685,6 @@ class AgentOrchestrator:
 
         # Try as URL
         if url_or_path.startswith(("http://", "https://")):
-            import httpx
             async with httpx.AsyncClient(timeout=30) as client:
                 resp = await client.get(url_or_path)
                 resp.raise_for_status()
@@ -557,6 +697,19 @@ class AgentOrchestrator:
 
     def get_shared_memory(self, run_id: str) -> SharedMemory | None:
         return self._shared_memory.get(run_id)
+
+    def get_status(self) -> dict[str, Any]:
+        """Return orchestrator status for monitoring."""
+        active_runs = {rid: r["status"] for rid, r in self._runs.items() if r["status"] == "running"}
+        return {
+            "active_runs": len(active_runs),
+            "total_runs": len(self._runs),
+            "runs": active_runs,
+            "semaphore_available": self._semaphore._value,
+            "max_concurrent_agents": settings.max_concurrent_agents,
+            "active_models": model_pool.active_models,
+            "total_active_inferences": model_pool.total_active,
+        }
 
 
 orchestrator = AgentOrchestrator()

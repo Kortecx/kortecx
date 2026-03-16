@@ -20,8 +20,7 @@ class SparkService:
             from pyspark.sql import SparkSession
 
             self._session = (
-                SparkSession.builder
-                .master(settings.spark_master)
+                SparkSession.builder.master(settings.spark_master)
                 .appName(settings.spark_app_name)
                 .config("spark.sql.adaptive.enabled", "true")
                 .config("spark.serializer", "org.apache.spark.serializer.KryoSerializer")

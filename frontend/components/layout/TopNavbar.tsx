@@ -1,10 +1,12 @@
 'use client';
 
+import { useState, useEffect, useCallback } from 'react';
 import { usePathname } from 'next/navigation';
 import { Search, Bell, Settings, ChevronRight, Activity } from 'lucide-react';
 import Link from 'next/link';
 import { useApp } from '@/contexts/AppContext';
 import { SYSTEM_METRICS, ALERTS } from '@/lib/constants';
+import SearchCommandDialog from './SearchCommandDialog';
 
 const PRETTY: Record<string, string> = {
   dashboard: 'Dashboard',
@@ -38,8 +40,23 @@ export default function TopNavbar() {
   const left = sidebarCollapsed ? 56 : 240;
   const crumbs = buildBreadcrumb(pathname);
   const unackAlerts = ALERTS.filter(a => !a.acknowledgedAt).length;
+  const [searchOpen, setSearchOpen] = useState(false);
+
+  // Global ⌘K / Ctrl+K shortcut
+  const handleGlobalKey = useCallback((e: KeyboardEvent) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+      e.preventDefault();
+      setSearchOpen(prev => !prev);
+    }
+  }, []);
+
+  useEffect(() => {
+    document.addEventListener('keydown', handleGlobalKey);
+    return () => document.removeEventListener('keydown', handleGlobalKey);
+  }, [handleGlobalKey]);
 
   return (
+    <>
     <header style={{
       position: 'fixed',
       top: 0,
@@ -108,6 +125,7 @@ export default function TopNavbar() {
 
       {/* Search */}
       <button
+        onClick={() => setSearchOpen(true)}
         style={{
           display: 'flex',
           alignItems: 'center',
@@ -231,5 +249,9 @@ export default function TopNavbar() {
       </Link>
 
     </header>
+
+    {/* Search command dialog */}
+    <SearchCommandDialog open={searchOpen} onClose={() => setSearchOpen(false)} />
+    </>
   );
 }

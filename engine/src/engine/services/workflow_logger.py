@@ -28,8 +28,7 @@ from __future__ import annotations
 
 import json
 import logging
-import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -41,11 +40,11 @@ LOG_BASE = Path(settings.upload_dir).parent / "logs"
 
 
 def _ts() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
 def _ts_short() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    return datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def _ensure(path: Path) -> Path:
@@ -132,13 +131,7 @@ class WorkflowLogger:
     ) -> None:
         """Persist the task goal as a .md file."""
         path = self._wf_dir(workflow_id) / "goal.md"
-        header = (
-            f"---\n"
-            f"workflow: {workflow_id}\n"
-            f"source: {source}\n"
-            f"saved_at: {_ts()}\n"
-            f"---\n\n"
-        )
+        header = f"---\nworkflow: {workflow_id}\nsource: {source}\nsaved_at: {_ts()}\n---\n\n"
         _write_md(path, header + goal_content)
         self.log_interaction(workflow_id, "goal.saved", {"source": source, "length": len(goal_content)})
 
@@ -152,13 +145,13 @@ class WorkflowLogger:
         """Persist the workflow configuration as a .md snapshot."""
         path = self._wf_dir(workflow_id) / "config.md"
         lines = [
-            f"---",
+            "---",
             f"workflow: {workflow_id}",
             f"saved_at: {_ts()}",
-            f"---",
-            f"",
-            f"# Workflow Configuration",
-            f"",
+            "---",
+            "",
+            "# Workflow Configuration",
+            "",
         ]
         for section, values in config.items():
             lines.append(f"## {section}")
@@ -197,13 +190,13 @@ class WorkflowLogger:
     ) -> None:
         """Persist tag state as a .md file."""
         lines = [
-            f"---",
+            "---",
             f"workflow: {workflow_id}",
             f"updated_at: {_ts()}",
-            f"---",
-            f"",
-            f"# Workflow Tags",
-            f"",
+            "---",
+            "",
+            "# Workflow Tags",
+            "",
         ]
         for tag in tags:
             lines.append(f"- `{tag}`")
@@ -219,13 +212,13 @@ class WorkflowLogger:
     ) -> None:
         """Persist permission settings as a .md file."""
         lines = [
-            f"---",
+            "---",
             f"workflow: {workflow_id}",
             f"updated_at: {_ts()}",
-            f"---",
-            f"",
-            f"# Workflow Permissions",
-            f"",
+            "---",
+            "",
+            "# Workflow Permissions",
+            "",
         ]
         for key, value in permissions.items():
             lines.append(f"- **{key}**: {value}")
@@ -268,14 +261,14 @@ class WorkflowLogger:
         """Persist shared memory snapshot."""
         path = self._run_dir(workflow_id, run_id) / "memory.md"
         lines = [
-            f"---",
+            "---",
             f"workflow: {workflow_id}",
             f"run: {run_id}",
             f"snapshot_at: {_ts()}",
-            f"---",
-            f"",
-            f"# Shared Memory Snapshot",
-            f"",
+            "---",
+            "",
+            "# Shared Memory Snapshot",
+            "",
         ]
         for agent_id, mem in memory.get("entries", {}).items():
             lines.append(f"## Agent: {agent_id}")
@@ -297,14 +290,7 @@ class WorkflowLogger:
     ) -> None:
         """Persist final workflow output."""
         path = self._run_dir(workflow_id, run_id) / "output.md"
-        header = (
-            f"---\n"
-            f"workflow: {workflow_id}\n"
-            f"run: {run_id}\n"
-            f"completed_at: {_ts()}\n"
-            f"---\n\n"
-            f"# Workflow Output\n\n"
-        )
+        header = f"---\nworkflow: {workflow_id}\nrun: {run_id}\ncompleted_at: {_ts()}\n---\n\n# Workflow Output\n\n"
         _write_md(path, header + output)
 
     # ── Context File Logging ─────────────────────────────
@@ -354,12 +340,14 @@ class WorkflowLogger:
         files = []
         for p in sorted(wf_dir.rglob("*")):
             if p.is_file():
-                files.append({
-                    "path": str(p.relative_to(self.base)),
-                    "size": p.stat().st_size,
-                    "modified": datetime.fromtimestamp(p.stat().st_mtime, tz=timezone.utc).isoformat(),
-                    "type": "log" if p.suffix == ".log" else "md" if p.suffix == ".md" else "file",
-                })
+                files.append(
+                    {
+                        "path": str(p.relative_to(self.base)),
+                        "size": p.stat().st_size,
+                        "modified": datetime.fromtimestamp(p.stat().st_mtime, tz=UTC).isoformat(),
+                        "type": "log" if p.suffix == ".log" else "md" if p.suffix == ".md" else "file",
+                    }
+                )
         return {"workflowId": workflow_id, "files": files}
 
 

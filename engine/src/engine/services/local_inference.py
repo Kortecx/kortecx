@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -12,6 +13,65 @@ import httpx
 from engine.config import settings
 
 logger = logging.getLogger("engine.local_inference")
+
+# ── Retry helper ──────────────────────────────────────────────────────────────
+
+MAX_RETRIES = 2
+RETRY_DELAY = 1.0
+
+
+async def _with_retry(coro_factory, retries: int = MAX_RETRIES) -> Any:
+    """Retry an async operation with exponential backoff."""
+    last_exc = None
+    for attempt in range(retries + 1):
+        try:
+            return await coro_factory()
+        except (httpx.ConnectError, httpx.ReadTimeout, httpx.ConnectTimeout) as exc:
+            last_exc = exc
+            if attempt < retries:
+                delay = RETRY_DELAY * (2**attempt)
+                logger.warning("Inference retry %d/%d after %.1fs: %s", attempt + 1, retries, delay, exc)
+                await asyncio.sleep(delay)
+    raise last_exc  # type: ignore[misc]
+
+
+# ── Model pool ────────────────────────────────────────────────────────────────
+
+
+class ModelPool:
+    """Track which models are loaded and manage capacity for concurrent agents."""
+
+    def __init__(self) -> None:
+        self._active_requests: dict[str, int] = {}  # model -> active request count
+        self._lock = asyncio.Lock()
+
+    async def acquire(self, model: str) -> None:
+        """Register an active inference request for a model."""
+        async with self._lock:
+            self._active_requests[model] = self._active_requests.get(model, 0) + 1
+
+    async def release(self, model: str) -> None:
+        """Mark an inference request as complete."""
+        async with self._lock:
+            count = self._active_requests.get(model, 0)
+            if count <= 1:
+                self._active_requests.pop(model, None)
+            else:
+                self._active_requests[model] = count - 1
+
+    @property
+    def active_models(self) -> dict[str, int]:
+        return dict(self._active_requests)
+
+    @property
+    def total_active(self) -> int:
+        return sum(self._active_requests.values())
+
+
+model_pool = ModelPool()
+
+
+# ── Data types ────────────────────────────────────────────────────────────────
 
 
 @dataclass
@@ -53,11 +113,21 @@ class LocalInferenceBackend(ABC):
     async def health(self) -> bool: ...
 
 
+# ── Ollama backend ────────────────────────────────────────────────────────────
+
+
 class OllamaService(LocalInferenceBackend):
     """Wraps the Ollama REST API (http://localhost:11434)."""
 
     def __init__(self, base_url: str | None = None) -> None:
         self.base_url = (base_url or settings.ollama_url).rstrip("/")
+        self._client: httpx.AsyncClient | None = None
+
+    @property
+    def client(self) -> httpx.AsyncClient:
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(base_url=self.base_url, timeout=300)
+        return self._client
 
     async def generate(
         self,
@@ -80,16 +150,19 @@ class OllamaService(LocalInferenceBackend):
         if system:
             payload["system"] = system
 
-        async with httpx.AsyncClient(timeout=300) as client:
-            resp = await client.post(f"{self.base_url}/api/generate", json=payload)
+        async def _do() -> httpx.Response:
+            resp = await self.client.post("/api/generate", json=payload)
             resp.raise_for_status()
-            data = resp.json()
+            return resp
+
+        resp = await _with_retry(_do)
+        data = resp.json()
 
         return GenerateResult(
             text=data.get("response", ""),
             tokens_used=data.get("eval_count", 0) + data.get("prompt_eval_count", 0),
             model=model,
-            duration_ms=data.get("total_duration", 0) / 1_000_000,  # ns → ms
+            duration_ms=data.get("total_duration", 0) / 1_000_000,  # ns -> ms
         )
 
     async def chat(
@@ -110,10 +183,13 @@ class OllamaService(LocalInferenceBackend):
             },
         }
 
-        async with httpx.AsyncClient(timeout=300) as client:
-            resp = await client.post(f"{self.base_url}/api/chat", json=payload)
+        async def _do() -> httpx.Response:
+            resp = await self.client.post("/api/chat", json=payload)
             resp.raise_for_status()
-            data = resp.json()
+            return resp
+
+        resp = await _with_retry(_do)
+        data = resp.json()
 
         msg = data.get("message", {})
         return GenerateResult(
@@ -124,10 +200,9 @@ class OllamaService(LocalInferenceBackend):
         )
 
     async def list_models(self) -> list[dict[str, Any]]:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(f"{self.base_url}/api/tags")
-            resp.raise_for_status()
-            data = resp.json()
+        resp = await self.client.get("/api/tags")
+        resp.raise_for_status()
+        data = resp.json()
         return [
             {
                 "name": m["name"],
@@ -140,20 +215,48 @@ class OllamaService(LocalInferenceBackend):
 
     async def pull_model(self, model: str) -> None:
         """Pull a model from the Ollama registry."""
-        async with httpx.AsyncClient(timeout=600) as client:
-            resp = await client.post(
-                f"{self.base_url}/api/pull",
-                json={"name": model, "stream": False},
-            )
+        # Use a longer timeout for pulls — models can be large
+        pull_client = httpx.AsyncClient(base_url=self.base_url, timeout=600)
+        try:
+            resp = await pull_client.post("/api/pull", json={"name": model, "stream": False})
             resp.raise_for_status()
+        finally:
+            await pull_client.aclose()
+
+    async def get_model_info(self, model: str) -> dict[str, Any]:
+        """Get detailed info about a specific model."""
+        resp = await self.client.post("/api/show", json={"name": model})
+        resp.raise_for_status()
+        data = resp.json()
+        return {
+            "name": model,
+            "family": data.get("details", {}).get("family", ""),
+            "parameter_size": data.get("details", {}).get("parameter_size", ""),
+            "quantization": data.get("details", {}).get("quantization_level", ""),
+            "format": data.get("details", {}).get("format", ""),
+            "template": data.get("template", ""),
+            "context_length": data.get("model_info", {}).get("general.context_length", 0),
+        }
+
+    async def copy_model(self, source: str, destination: str) -> None:
+        """Create a copy of a model with a new name (useful for creating expert-specific variants)."""
+        resp = await self.client.post("/api/copy", json={"source": source, "destination": destination})
+        resp.raise_for_status()
+
+    async def delete_model(self, model: str) -> None:
+        """Delete a model from Ollama."""
+        resp = await self.client.request("DELETE", "/api/delete", json={"name": model})
+        resp.raise_for_status()
 
     async def health(self) -> bool:
         try:
-            async with httpx.AsyncClient(timeout=5) as client:
-                resp = await client.get(self.base_url)
-                return resp.status_code == 200
+            resp = await self.client.get("/")
+            return resp.status_code == 200
         except Exception:
             return False
+
+
+# ── llama.cpp backend ─────────────────────────────────────────────────────────
 
 
 class LlamaCppService(LocalInferenceBackend):
@@ -161,6 +264,13 @@ class LlamaCppService(LocalInferenceBackend):
 
     def __init__(self, base_url: str | None = None) -> None:
         self.base_url = (base_url or settings.llamacpp_url).rstrip("/")
+        self._client: httpx.AsyncClient | None = None
+
+    @property
+    def client(self) -> httpx.AsyncClient:
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(base_url=self.base_url, timeout=300)
+        return self._client
 
     async def generate(
         self,
@@ -179,10 +289,13 @@ class LlamaCppService(LocalInferenceBackend):
             "stream": False,
         }
 
-        async with httpx.AsyncClient(timeout=300) as client:
-            resp = await client.post(f"{self.base_url}/completion", json=payload)
+        async def _do() -> httpx.Response:
+            resp = await self.client.post("/completion", json=payload)
             resp.raise_for_status()
-            data = resp.json()
+            return resp
+
+        resp = await _with_retry(_do)
+        data = resp.json()
 
         return GenerateResult(
             text=data.get("content", ""),
@@ -207,12 +320,13 @@ class LlamaCppService(LocalInferenceBackend):
             "stream": False,
         }
 
-        async with httpx.AsyncClient(timeout=300) as client:
-            resp = await client.post(
-                f"{self.base_url}/v1/chat/completions", json=payload,
-            )
+        async def _do() -> httpx.Response:
+            resp = await self.client.post("/v1/chat/completions", json=payload)
             resp.raise_for_status()
-            data = resp.json()
+            return resp
+
+        resp = await _with_retry(_do)
+        data = resp.json()
 
         choice = data.get("choices", [{}])[0]
         usage = data.get("usage", {})
@@ -226,24 +340,22 @@ class LlamaCppService(LocalInferenceBackend):
     async def list_models(self) -> list[dict[str, Any]]:
         """llama.cpp serves a single model; return it via /v1/models."""
         try:
-            async with httpx.AsyncClient(timeout=5) as client:
-                resp = await client.get(f"{self.base_url}/v1/models")
-                resp.raise_for_status()
-                data = resp.json()
-            return [
-                {"name": m.get("id", "unknown"), "size": 0, "modified_at": ""}
-                for m in data.get("data", [])
-            ]
+            resp = await self.client.get("/v1/models")
+            resp.raise_for_status()
+            data = resp.json()
+            return [{"name": m.get("id", "unknown"), "size": 0, "modified_at": ""} for m in data.get("data", [])]
         except Exception:
             return []
 
     async def health(self) -> bool:
         try:
-            async with httpx.AsyncClient(timeout=5) as client:
-                resp = await client.get(f"{self.base_url}/health")
-                return resp.status_code == 200
+            resp = await self.client.get("/health")
+            return resp.status_code == 200
         except Exception:
             return False
+
+
+# ── Inference router ──────────────────────────────────────────────────────────
 
 
 class InferenceRouter:
@@ -277,8 +389,11 @@ class InferenceRouter:
     ) -> GenerateResult:
         backend = self.get_backend(engine, base_url)
         return await backend.generate(
-            model, prompt, system=system,
-            temperature=temperature, max_tokens=max_tokens,
+            model,
+            prompt,
+            system=system,
+            temperature=temperature,
+            max_tokens=max_tokens,
         )
 
     async def chat(
@@ -293,8 +408,10 @@ class InferenceRouter:
     ) -> GenerateResult:
         backend = self.get_backend(engine, base_url)
         return await backend.chat(
-            model, messages,
-            temperature=temperature, max_tokens=max_tokens,
+            model,
+            messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
         )
 
     async def list_models(self, engine: str, base_url: str | None = None) -> list[dict[str, Any]]:

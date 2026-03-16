@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 logger = logging.getLogger("engine.training")
 
 
-class TrainingMethod(str, Enum):
+class TrainingMethod(StrEnum):
     SFT = "sft"
     RLHF = "rlhf"
     DPO = "dpo"
@@ -61,7 +61,7 @@ class TrainingService:
         )
 
         from datasets import load_dataset
-        from trl import SFTTrainer, SFTConfig
+        from trl import SFTConfig, SFTTrainer
 
         dataset = load_dataset(config.dataset_id, split="train")
 
@@ -92,10 +92,10 @@ class TrainingService:
         }
 
     def _sft_trl(self, config: TrainingConfig) -> dict[str, Any]:
-        from transformers import AutoModelForCausalLM, AutoTokenizer
-        from peft import LoraConfig
-        from trl import SFTTrainer, SFTConfig
         from datasets import load_dataset
+        from peft import LoraConfig
+        from transformers import AutoModelForCausalLM, AutoTokenizer
+        from trl import SFTConfig, SFTTrainer
 
         tokenizer = AutoTokenizer.from_pretrained(config.model_id)
         model = AutoModelForCausalLM.from_pretrained(config.model_id, device_map="auto")
@@ -138,10 +138,10 @@ class TrainingService:
 
     def dpo_train(self, config: TrainingConfig) -> dict[str, Any]:
         """Direct Preference Optimization training."""
-        from transformers import AutoModelForCausalLM, AutoTokenizer
-        from trl import DPOTrainer, DPOConfig
         from datasets import load_dataset
         from peft import LoraConfig
+        from transformers import AutoModelForCausalLM, AutoTokenizer
+        from trl import DPOConfig, DPOTrainer
 
         logger.info("Starting DPO: model=%s dataset=%s", config.model_id, config.dataset_id)
 

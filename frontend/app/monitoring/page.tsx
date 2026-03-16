@@ -1,13 +1,19 @@
 'use client';
 
 import { useState } from 'react';
+import useSWR from 'swr';
 import {
   Activity, Bell, AlertTriangle, Info, CheckCircle2,
   Zap, Clock, TrendingUp, Cpu, BarChart3, RefreshCcw,
-  ChevronDown, X, ScrollText,
+  ChevronDown, X, ScrollText, Loader2,
 } from 'lucide-react';
-import { ALERTS, EXPERTS, PROVIDERS, SYSTEM_METRICS } from '@/lib/constants';
-import type { Alert } from '@/lib/types';
+import { useMonitoring, useExperts } from '@/lib/hooks/useApi';
+import type { Alert, AIProvider, Expert } from '@/lib/types';
+
+const fetcher = (url: string) => fetch(url).then(r => {
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return r.json();
+});
 
 function fmt(n: number) {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
@@ -123,8 +129,21 @@ const MOCK_HOURLY_SUCCESS = [94, 98, 96, 99, 97, 100, 98, 97, 99, 98, 99, 98];
 export default function MonitoringPage() {
   const [tab, setTab] = useState<'overview' | 'alerts' | 'logs'>('overview');
 
-  const unackedAlerts = ALERTS.filter(a => !a.acknowledgedAt);
-  const topExperts = EXPERTS
+  const { system, alerts, logs, unackedAlertCount, isLoading: monitoringLoading } = useMonitoring() as {
+    system: { successRate: number; avgLatencyMs: number; tokensUsedToday: number; costToday: number; activeAgents: number; tasksToday: number; errorCount: number } | null;
+    alerts: Alert[];
+    logs: { level: string; msg: string; time: string }[];
+    unackedAlertCount: number;
+    isLoading: boolean;
+    mutate: () => void;
+  };
+  const { experts, isLoading: expertsLoading } = useExperts() as { experts: Expert[]; total: number; isLoading: boolean; error: unknown; mutate: () => void };
+  const { data: providersData } = useSWR<{ providers: AIProvider[] }>('/api/providers', fetcher);
+  const providers = providersData?.providers ?? [];
+
+  const isLoading = monitoringLoading || expertsLoading;
+
+  const topExperts = experts
     .filter(e => e.status === 'active')
     .sort((a, b) => b.stats.totalRuns - a.stats.totalRuns)
     .slice(0, 5);
@@ -164,26 +183,26 @@ export default function MonitoringPage() {
         {[
           {
             label: 'SUCCESS RATE',
-            value: `${(SYSTEM_METRICS.successRate * 100).toFixed(1)}%`,
-            sub: `${SYSTEM_METRICS.errorCount} errors today`,
+            value: system ? `${((system.successRate ?? 0) * 100).toFixed(1)}%` : '...',
+            sub: system ? `${system.errorCount ?? 0} errors today` : '...',
             color: 'var(--success)', icon: CheckCircle2,
           },
           {
             label: 'AVG LATENCY',
-            value: `${(SYSTEM_METRICS.avgLatencyMs / 1000).toFixed(2)}s`,
+            value: system ? `${((system.avgLatencyMs ?? 0) / 1000).toFixed(2)}s` : '...',
             sub: 'across all experts',
             color: 'var(--primary)', icon: Clock,
           },
           {
             label: 'TOKENS TODAY',
-            value: fmt(SYSTEM_METRICS.tokensUsedToday),
-            sub: `$${SYSTEM_METRICS.costToday.toFixed(2)} spent`,
+            value: system ? fmt(system.tokensUsedToday ?? 0) : '...',
+            sub: system ? `$${(system.costToday ?? 0).toFixed(2)} spent` : '...',
             color: 'var(--amber)', icon: Zap,
           },
           {
             label: 'ACTIVE AGENTS',
-            value: String(SYSTEM_METRICS.activeAgents),
-            sub: `${SYSTEM_METRICS.tasksToday} tasks today`,
+            value: system ? String(system.activeAgents ?? 0) : '...',
+            sub: system ? `${system.tasksToday ?? 0} tasks today` : '...',
             color: 'var(--indigo)', icon: Cpu,
           },
         ].map(card => (
@@ -236,7 +255,7 @@ export default function MonitoringPage() {
       <div style={{ display: 'flex', gap: 0, borderBottom: '1px solid var(--border)', marginBottom: 20 }}>
         {([
           { key: 'overview', label: 'Expert Performance' },
-          { key: 'alerts',   label: `Alerts ${unackedAlerts.length > 0 ? `(${unackedAlerts.length})` : ''}` },
+          { key: 'alerts',   label: `Alerts ${unackedAlertCount > 0 ? `(${unackedAlertCount})` : ''}` },
           { key: 'logs',     label: 'System Logs' },
         ] as const).map(t => (
           <button
@@ -263,43 +282,53 @@ export default function MonitoringPage() {
           <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--border)', fontSize: 13, fontWeight: 600, color: 'var(--text-1)' }}>
             Top Experts — Last 24h
           </div>
-          <table className="table-base">
-            <thead>
-              <tr>
-                <th>Expert</th>
-                <th>Role</th>
-                <th>Provider</th>
-                <th>Success Rate</th>
-                <th>Avg Latency</th>
-                <th>Avg Tokens</th>
-                <th>Cost/Run</th>
-                <th>Total Runs</th>
-              </tr>
-            </thead>
-            <tbody>
-              {topExperts.map(expert => (
-                <tr key={expert.id}>
-                  <td>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <span className="status-dot dot-online" />
-                      <span style={{ color: 'var(--text-1)', fontWeight: 500 }}>{expert.name}</span>
-                    </div>
-                  </td>
-                  <td style={{ textTransform: 'capitalize' }}>{expert.role}</td>
-                  <td>{expert.providerName}</td>
-                  <td>
-                    <span style={{ color: expert.stats.successRate > 0.95 ? 'var(--success)' : 'var(--warning)' }}>
-                      {(expert.stats.successRate * 100).toFixed(1)}%
-                    </span>
-                  </td>
-                  <td className="mono">{(expert.stats.avgLatencyMs / 1000).toFixed(2)}s</td>
-                  <td className="mono">{fmt(expert.stats.avgTokensPerRun)}</td>
-                  <td className="mono">${expert.stats.avgCostPerRun.toFixed(3)}</td>
-                  <td className="mono">{expert.stats.totalRuns.toLocaleString()}</td>
+          {expertsLoading ? (
+            <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-3)', fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+              <Loader2 size={16} className="animate-spin" /> Loading expert data...
+            </div>
+          ) : topExperts.length === 0 ? (
+            <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-3)', fontSize: 13 }}>
+              No active experts found.
+            </div>
+          ) : (
+            <table className="table-base">
+              <thead>
+                <tr>
+                  <th>Expert</th>
+                  <th>Role</th>
+                  <th>AIProvider</th>
+                  <th>Success Rate</th>
+                  <th>Avg Latency</th>
+                  <th>Avg Tokens</th>
+                  <th>Cost/Run</th>
+                  <th>Total Runs</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {topExperts.map(expert => (
+                  <tr key={expert.id}>
+                    <td>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <span className="status-dot dot-online" />
+                        <span style={{ color: 'var(--text-1)', fontWeight: 500 }}>{expert.name}</span>
+                      </div>
+                    </td>
+                    <td style={{ textTransform: 'capitalize' }}>{expert.role}</td>
+                    <td>{expert.providerName}</td>
+                    <td>
+                      <span style={{ color: expert.stats.successRate > 0.95 ? 'var(--success)' : 'var(--warning)' }}>
+                        {(expert.stats.successRate * 100).toFixed(1)}%
+                      </span>
+                    </td>
+                    <td className="mono">{(expert.stats.avgLatencyMs / 1000).toFixed(2)}s</td>
+                    <td className="mono">{fmt(expert.stats.avgTokensPerRun)}</td>
+                    <td className="mono">${expert.stats.avgCostPerRun.toFixed(3)}</td>
+                    <td className="mono">{expert.stats.totalRuns.toLocaleString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
       )}
 
@@ -313,17 +342,21 @@ export default function MonitoringPage() {
             <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-1)', display: 'flex', alignItems: 'center', gap: 8 }}>
               <Bell size={14} color="var(--warning)" />
               Alerts
-              {unackedAlerts.length > 0 && (
-                <span className="badge badge-warning">{unackedAlerts.length} unresolved</span>
+              {unackedAlertCount > 0 && (
+                <span className="badge badge-warning">{unackedAlertCount} unresolved</span>
               )}
             </div>
           </div>
-          {ALERTS.length === 0 ? (
+          {monitoringLoading ? (
+            <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-3)', fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+              <Loader2 size={16} className="animate-spin" /> Loading alerts...
+            </div>
+          ) : alerts.length === 0 ? (
             <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-3)', fontSize: 13 }}>
               No alerts. System is healthy.
             </div>
           ) : (
-            ALERTS.map(alert => <AlertRow key={alert.id} alert={alert} />)
+            alerts.map(alert => <AlertRow key={alert.id} alert={alert} />)
           )}
         </div>
       )}
@@ -353,30 +386,32 @@ export default function MonitoringPage() {
             fontFamily: 'var(--font-geist-mono), monospace',
             fontSize: 12,
           }}>
-            {[
-              { level: 'INFO', msg: 'Task task-001 started — expert: DataAnalyst', time: '10:42:03' },
-              { level: 'INFO', msg: 'ResearchPro completed step 1 — 2840 tokens used', time: '10:42:01' },
-              { level: 'WARN', msg: 'Google API latency elevated: 620ms (baseline: 270ms)', time: '10:41:55' },
-              { level: 'INFO', msg: 'Training checkpoint saved: epoch 3/5 — job-001', time: '10:30:12' },
-              { level: 'ERROR', msg: 'Task task-XXX failed: token limit exceeded (15k)', time: '08:01:45' },
-              { level: 'INFO', msg: 'Workflow run-001 completed — 9840 tokens, $0.47', time: '08:03:12' },
-              { level: 'INFO', msg: 'Expert QAShield auto-scaled: 8 → 10 replicas', time: '07:58:30' },
-            ].map((log, i) => (
-              <div key={i} style={{
-                display: 'flex', gap: 12, marginBottom: 6,
-                color: log.level === 'ERROR' ? 'var(--error)' : log.level === 'WARN' ? 'var(--warning)' : 'var(--text-3)',
-              }}>
-                <span style={{ color: 'var(--text-4)', flexShrink: 0 }}>{log.time}</span>
-                <span style={{
-                  width: 36, flexShrink: 0,
-                  color: log.level === 'ERROR' ? 'var(--error)' : log.level === 'WARN' ? 'var(--warning)' : 'var(--success)',
-                  fontWeight: 600,
-                }}>
-                  {log.level}
-                </span>
-                <span style={{ color: 'var(--text-2)' }}>{log.msg}</span>
+            {monitoringLoading ? (
+              <div style={{ textAlign: 'center', padding: 20, color: 'var(--text-3)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+                <Loader2 size={14} className="animate-spin" /> Loading logs...
               </div>
-            ))}
+            ) : logs.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: 20, color: 'var(--text-3)' }}>
+                No system logs available.
+              </div>
+            ) : (
+              logs.map((log: { level: string; msg: string; time: string }, i: number) => (
+                <div key={i} style={{
+                  display: 'flex', gap: 12, marginBottom: 6,
+                  color: log.level === 'ERROR' ? 'var(--error)' : log.level === 'WARN' ? 'var(--warning)' : 'var(--text-3)',
+                }}>
+                  <span style={{ color: 'var(--text-4)', flexShrink: 0 }}>{log.time}</span>
+                  <span style={{
+                    width: 36, flexShrink: 0,
+                    color: log.level === 'ERROR' ? 'var(--error)' : log.level === 'WARN' ? 'var(--warning)' : 'var(--success)',
+                    fontWeight: 600,
+                  }}>
+                    {log.level}
+                  </span>
+                  <span style={{ color: 'var(--text-2)' }}>{log.msg}</span>
+                </div>
+              ))
+            )}
           </div>
         </div>
       )}

@@ -9,8 +9,11 @@ import {
   AlertCircle, Play, Ban, BarChart2, Zap, DollarSign,
   Timer, ChevronUp, FileText, Workflow,
 } from 'lucide-react';
+import useSWR from 'swr';
 import { useWorkflowRuns, useWorkflows } from '@/lib/hooks/useApi';
 import type { WorkflowRun, WorkflowStep } from '@/lib/types';
+
+const statsFetcher = (url: string) => fetch(url).then(r => r.ok ? r.json() : null);
 
 /* ── Section color ─────────────────────────────────── */
 const SECTION_COLOR = '#06b6d4';
@@ -246,7 +249,7 @@ function ExpandedPanel({ run }: { run: WorkflowRun }) {
 }
 
 /* ── Run row ────────────────────────────────────────── */
-function RunRow({ run, expanded, onToggle }: { run: WorkflowRun; expanded: boolean; onToggle: () => void }) {
+function RunRow({ run, expanded, onToggle, sysStats }: { run: WorkflowRun; expanded: boolean; onToggle: () => void; sysStats?: any }) {
   const status = (run.status as RunStatus) in STATUS_META ? (run.status as RunStatus) : 'cancelled';
   const meta   = STATUS_META[status];
   const Icon   = meta.icon;
@@ -328,6 +331,27 @@ function RunRow({ run, expanded, onToggle }: { run: WorkflowRun; expanded: boole
           {run.totalCostUsd ? fmtCost(Number(run.totalCostUsd)) : '—'}
         </div>
 
+        {/* CPU/GPU — only for running workflows */}
+        <div style={{ fontSize: 11, fontVariantNumeric: 'tabular-nums', display: 'flex', gap: 6 }}>
+          {run.status === 'running' && sysStats ? (
+            <>
+              <span style={{
+                color: (sysStats.cpu_percent ?? 0) > 80 ? '#DC2626' : (sysStats.cpu_percent ?? 0) > 50 ? '#D97706' : '#10b981',
+                fontWeight: 600,
+              }}>
+                {(sysStats.cpu_percent ?? 0).toFixed(0)}% CPU
+              </span>
+              {sysStats.gpu?.devices?.[0]?.gpu_percent != null && (
+                <span style={{ color: '#7C3AED', fontWeight: 600 }}>
+                  {sysStats.gpu.devices[0].gpu_percent}% GPU
+                </span>
+              )}
+            </>
+          ) : (
+            <span style={{ color: 'var(--text-4)' }}>—</span>
+          )}
+        </div>
+
         {/* Time + expand */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4 }}>
           <span style={{ fontSize: 11, color: 'var(--text-4)', whiteSpace: 'nowrap' }}>
@@ -388,6 +412,8 @@ export default function WorkflowHistoryPage() {
 
   const { runs, total, isLoading, mutate } = useWorkflowRuns(undefined, 500);
   const { workflows } = useWorkflows();
+  const hasRunning = (runs as WorkflowRun[]).some(r => r.status === 'running');
+  const { data: sysStats } = useSWR(hasRunning ? '/api/system/stats' : null, statsFetcher, { refreshInterval: 3000 });
 
   /* ── Filtering ── */
   const filtered = useMemo(() => {
@@ -704,6 +730,7 @@ export default function WorkflowHistoryPage() {
               run={run as WorkflowRun}
               expanded={expandedId === (run as WorkflowRun).id}
               onToggle={() => toggleExpand((run as WorkflowRun).id)}
+              sysStats={sysStats}
             />
           ))}
         </motion.div>

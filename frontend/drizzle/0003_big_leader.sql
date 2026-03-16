@@ -1,0 +1,22 @@
+CREATE TABLE "synthesis_jobs" (
+	"id" text PRIMARY KEY NOT NULL,
+	"name" text NOT NULL,
+	"description" text,
+	"source" varchar(20) NOT NULL,
+	"model" text NOT NULL,
+	"status" varchar(20) DEFAULT 'queued',
+	"target_samples" integer DEFAULT 100,
+	"current_samples" integer DEFAULT 0,
+	"output_format" varchar(20) DEFAULT 'jsonl',
+	"temperature" numeric(3, 2) DEFAULT '0.8',
+	"max_tokens" integer DEFAULT 1024,
+	"batch_size" integer DEFAULT 5,
+	"output_path" text,
+	"tokens_used" integer DEFAULT 0,
+	"progress" integer DEFAULT 0,
+	"error" text,
+	"tags" text[],
+	"started_at" timestamp with time zone,
+	"completed_at" timestamp with time zone,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL
+);

@@ -1,7 +1,14 @@
 'use client';
 
-import { BarChart3, TrendingUp, Zap, DollarSign, Activity, ChevronRight } from 'lucide-react';
-import { EXPERTS, PROVIDERS, SYSTEM_METRICS } from '@/lib/constants';
+import useSWR from 'swr';
+import { BarChart3, TrendingUp, Zap, DollarSign, Activity, ChevronRight, Loader2 } from 'lucide-react';
+import { useExperts, useMetrics } from '@/lib/hooks/useApi';
+import type { AIProvider, Expert } from '@/lib/types';
+
+const fetcher = (url: string) => fetch(url).then(r => {
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return r.json();
+});
 
 function fmt(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
@@ -9,18 +16,31 @@ function fmt(n: number): string {
   return String(n);
 }
 
-const WEEKLY_STATS = {
-  tasks: 0,
-  tokens: 0,
-  cost: 0,
-  successRate: 0,
-};
-
-const DAILY: Array<{ day: string; tasks: number; tokens: number }> = [];
-
-const maxTasks = Math.max(1, ...DAILY.map(d => d.tasks));
-
 export default function AnalyticsPage() {
+  const { experts, isLoading: expertsLoading } = useExperts() as { experts: Expert[]; total: number; isLoading: boolean; error: unknown; mutate: () => void };
+  const { metrics, totals, hourly, isLoading: metricsLoading } = useMetrics() as {
+    metrics: { successRate: number } | null;
+    totals: { tasksThisWeek: number; tokensThisWeek: number; costThisWeek: number } | null;
+    hourly: { day: string; tasks: number; tokens: number }[];
+    isLoading: boolean;
+    error: unknown;
+    mutate: () => void;
+  };
+  const { data: providersData, isLoading: providersLoading } = useSWR<{ providers: AIProvider[] }>('/api/providers', fetcher);
+  const providers = providersData?.providers ?? [];
+
+  const isLoading = expertsLoading || metricsLoading || providersLoading;
+
+  const weeklyStats = {
+    tasks: totals?.tasksThisWeek ?? 0,
+    tokens: totals?.tokensThisWeek ?? 0,
+    cost: totals?.costThisWeek ?? 0,
+    successRate: metrics?.successRate ?? 0,
+  };
+
+  const daily: Array<{ day: string; tasks: number; tokens: number }> = hourly ?? [];
+  const maxTasks = Math.max(1, ...daily.map(d => d.tasks));
+
   return (
     <div style={{ padding: 24, maxWidth: 1400, margin: '0 auto' }}>
       {/* Header */}
@@ -36,10 +56,10 @@ export default function AnalyticsPage() {
       {/* Weekly metrics */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 12, marginBottom: 20 }}>
         {[
-          { icon: Activity, label: 'Tasks this week', value: WEEKLY_STATS.tasks.toLocaleString(), color: 'var(--text-1)' },
-          { icon: Zap, label: 'Tokens used', value: fmt(WEEKLY_STATS.tokens), color: 'var(--amber)' },
-          { icon: DollarSign, label: 'Total cost', value: `$${WEEKLY_STATS.cost.toFixed(2)}`, color: 'var(--text-1)' },
-          { icon: TrendingUp, label: 'Success rate', value: `${(WEEKLY_STATS.successRate * 100).toFixed(1)}%`, color: 'var(--success)' },
+          { icon: Activity, label: 'Tasks this week', value: isLoading ? '...' : weeklyStats.tasks.toLocaleString(), color: 'var(--text-1)' },
+          { icon: Zap, label: 'Tokens used', value: isLoading ? '...' : fmt(weeklyStats.tokens), color: 'var(--amber)' },
+          { icon: DollarSign, label: 'Total cost', value: isLoading ? '...' : `$${weeklyStats.cost.toFixed(2)}`, color: 'var(--text-1)' },
+          { icon: TrendingUp, label: 'Success rate', value: isLoading ? '...' : `${(weeklyStats.successRate * 100).toFixed(1)}%`, color: 'var(--success)' },
         ].map(m => (
           <div key={m.label} className="card" style={{ padding: 16 }}>
             <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
@@ -67,55 +87,75 @@ export default function AnalyticsPage() {
           <h2 style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-1)', margin: '0 0 16px' }}>
             Daily Task Volume
           </h2>
-          <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8, height: 160 }}>
-            {DAILY.map(d => (
-              <div key={d.day} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
-                <span className="mono" style={{ fontSize: 10, color: 'var(--text-3)' }}>
-                  {d.tasks}
-                </span>
-                <div style={{
-                  width: '100%', borderRadius: '3px 3px 0 0',
-                  background: 'var(--primary)',
-                  opacity: 0.7 + (d.tasks / maxTasks) * 0.3,
-                  height: `${(d.tasks / maxTasks) * 120}px`,
-                  transition: 'height 0.3s ease',
-                }} />
-                <span style={{ fontSize: 11, color: 'var(--text-3)' }}>{d.day}</span>
-              </div>
-            ))}
-          </div>
+          {metricsLoading ? (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 160, color: 'var(--text-3)', gap: 8, fontSize: 13 }}>
+              <Loader2 size={16} className="animate-spin" /> Loading chart data...
+            </div>
+          ) : daily.length === 0 ? (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 160, color: 'var(--text-3)', fontSize: 13 }}>
+              No task data available yet.
+            </div>
+          ) : (
+            <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8, height: 160 }}>
+              {daily.map(d => (
+                <div key={d.day} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+                  <span className="mono" style={{ fontSize: 10, color: 'var(--text-3)' }}>
+                    {d.tasks}
+                  </span>
+                  <div style={{
+                    width: '100%', borderRadius: '3px 3px 0 0',
+                    background: 'var(--primary)',
+                    opacity: 0.7 + (d.tasks / maxTasks) * 0.3,
+                    height: `${(d.tasks / maxTasks) * 120}px`,
+                    transition: 'height 0.3s ease',
+                  }} />
+                  <span style={{ fontSize: 11, color: 'var(--text-3)' }}>{d.day}</span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
-        {/* Provider usage */}
+        {/* AIProvider usage */}
         <div className="card" style={{ padding: 20 }}>
           <h2 style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-1)', margin: '0 0 16px' }}>
             Provider Usage
           </h2>
-          {PROVIDERS.filter(p => p.connected && p.monthlyTokensUsed).map(provider => {
-            const pct = Math.round(((provider.monthlyTokensUsed ?? 0) / (provider.monthlyTokenLimit ?? 1)) * 100);
-            return (
-              <div key={provider.id} style={{ marginBottom: 14 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <span style={{ width: 8, height: 8, borderRadius: '50%', background: provider.color }} />
-                    <span style={{ fontSize: 13, color: 'var(--text-1)' }}>{provider.name}</span>
+          {providersLoading ? (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 100, color: 'var(--text-3)', gap: 8, fontSize: 13 }}>
+              <Loader2 size={14} className="animate-spin" /> Loading providers...
+            </div>
+          ) : providers.filter(p => p.connected && p.monthlyTokensUsed).length === 0 ? (
+            <div style={{ textAlign: 'center', padding: 20, color: 'var(--text-3)', fontSize: 13 }}>
+              No provider usage data available.
+            </div>
+          ) : (
+            providers.filter(p => p.connected && p.monthlyTokensUsed).map(provider => {
+              const pct = Math.round(((provider.monthlyTokensUsed ?? 0) / (provider.monthlyTokenLimit ?? 1)) * 100);
+              return (
+                <div key={provider.id} style={{ marginBottom: 14 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span style={{ width: 8, height: 8, borderRadius: '50%', background: provider.color }} />
+                      <span style={{ fontSize: 13, color: 'var(--text-1)' }}>{provider.name}</span>
+                    </div>
+                    <span className="mono" style={{ fontSize: 11, color: 'var(--text-2)' }}>
+                      {fmt(provider.monthlyTokensUsed ?? 0)} / {fmt(provider.monthlyTokenLimit ?? 0)}
+                    </span>
                   </div>
-                  <span className="mono" style={{ fontSize: 11, color: 'var(--text-2)' }}>
-                    {fmt(provider.monthlyTokensUsed ?? 0)} / {fmt(provider.monthlyTokenLimit ?? 0)}
-                  </span>
-                </div>
-                <div style={{
-                  height: 4, background: 'var(--bg-elevated)',
-                  borderRadius: 2, overflow: 'hidden',
-                }}>
                   <div style={{
-                    height: '100%', width: `${pct}%`,
-                    background: provider.color, borderRadius: 2,
-                  }} />
+                    height: 4, background: 'var(--bg-elevated)',
+                    borderRadius: 2, overflow: 'hidden',
+                  }}>
+                    <div style={{
+                      height: '100%', width: `${pct}%`,
+                      background: provider.color, borderRadius: 2,
+                    }} />
+                  </div>
                 </div>
-              </div>
-            );
-          })}
+              );
+            })
+          )}
         </div>
       </div>
 
@@ -128,58 +168,68 @@ export default function AnalyticsPage() {
         }}>
           <BarChart3 size={14} color="var(--text-2)" /> Expert Performance
         </div>
-        <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead>
-              <tr style={{ borderBottom: '1px solid var(--border)' }}>
-                {['Expert', 'Role', 'Runs', 'Success', 'Avg Tokens', 'Avg Latency', 'Cost/Run'].map(h => (
-                  <th key={h} style={{
-                    padding: '8px 16px', textAlign: 'left',
-                    fontSize: 10, fontWeight: 600, color: 'var(--text-3)',
-                    textTransform: 'uppercase', letterSpacing: '0.08em',
-                  }}>
-                    {h}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {EXPERTS.map(expert => (
-                <tr key={expert.id} style={{ borderBottom: '1px solid var(--border)' }}>
-                  <td style={{ padding: '10px 16px', fontSize: 13, fontWeight: 500, color: 'var(--text-1)' }}>
-                    {expert.name}
-                  </td>
-                  <td style={{ padding: '10px 16px' }}>
-                    <span style={{
-                      fontSize: 10, fontWeight: 600, textTransform: 'uppercase',
-                      letterSpacing: '0.06em', color: 'var(--text-3)',
+        {expertsLoading ? (
+          <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-3)', fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+            <Loader2 size={16} className="animate-spin" /> Loading experts...
+          </div>
+        ) : experts.length === 0 ? (
+          <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-3)', fontSize: 13 }}>
+            No experts configured yet.
+          </div>
+        ) : (
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr style={{ borderBottom: '1px solid var(--border)' }}>
+                  {['Expert', 'Role', 'Runs', 'Success', 'Avg Tokens', 'Avg Latency', 'Cost/Run'].map(h => (
+                    <th key={h} style={{
+                      padding: '8px 16px', textAlign: 'left',
+                      fontSize: 10, fontWeight: 600, color: 'var(--text-3)',
+                      textTransform: 'uppercase', letterSpacing: '0.08em',
                     }}>
-                      {expert.role}
-                    </span>
-                  </td>
-                  <td className="mono" style={{ padding: '10px 16px', fontSize: 12, color: 'var(--text-2)' }}>
-                    {expert.stats.totalRuns.toLocaleString()}
-                  </td>
-                  <td className="mono" style={{
-                    padding: '10px 16px', fontSize: 12,
-                    color: expert.stats.successRate > 0.95 ? 'var(--success)' : 'var(--text-2)',
-                  }}>
-                    {(expert.stats.successRate * 100).toFixed(1)}%
-                  </td>
-                  <td className="mono" style={{ padding: '10px 16px', fontSize: 12, color: 'var(--text-2)' }}>
-                    {fmt(expert.stats.avgTokensPerRun)}
-                  </td>
-                  <td className="mono" style={{ padding: '10px 16px', fontSize: 12, color: 'var(--text-2)' }}>
-                    {(expert.stats.avgLatencyMs / 1000).toFixed(1)}s
-                  </td>
-                  <td className="mono" style={{ padding: '10px 16px', fontSize: 12, color: 'var(--text-2)' }}>
-                    ${expert.stats.avgCostPerRun.toFixed(3)}
-                  </td>
+                      {h}
+                    </th>
+                  ))}
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {experts.map(expert => (
+                  <tr key={expert.id} style={{ borderBottom: '1px solid var(--border)' }}>
+                    <td style={{ padding: '10px 16px', fontSize: 13, fontWeight: 500, color: 'var(--text-1)' }}>
+                      {expert.name}
+                    </td>
+                    <td style={{ padding: '10px 16px' }}>
+                      <span style={{
+                        fontSize: 10, fontWeight: 600, textTransform: 'uppercase',
+                        letterSpacing: '0.06em', color: 'var(--text-3)',
+                      }}>
+                        {expert.role}
+                      </span>
+                    </td>
+                    <td className="mono" style={{ padding: '10px 16px', fontSize: 12, color: 'var(--text-2)' }}>
+                      {expert.stats.totalRuns.toLocaleString()}
+                    </td>
+                    <td className="mono" style={{
+                      padding: '10px 16px', fontSize: 12,
+                      color: expert.stats.successRate > 0.95 ? 'var(--success)' : 'var(--text-2)',
+                    }}>
+                      {(expert.stats.successRate * 100).toFixed(1)}%
+                    </td>
+                    <td className="mono" style={{ padding: '10px 16px', fontSize: 12, color: 'var(--text-2)' }}>
+                      {fmt(expert.stats.avgTokensPerRun)}
+                    </td>
+                    <td className="mono" style={{ padding: '10px 16px', fontSize: 12, color: 'var(--text-2)' }}>
+                      {(expert.stats.avgLatencyMs / 1000).toFixed(1)}s
+                    </td>
+                    <td className="mono" style={{ padding: '10px 16px', fontSize: 12, color: 'var(--text-2)' }}>
+                      ${expert.stats.avgCostPerRun.toFixed(3)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     </div>
   );

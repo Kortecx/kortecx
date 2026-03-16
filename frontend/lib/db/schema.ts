@@ -206,8 +206,36 @@ export const datasets = pgTable('datasets', {
   sampleCount:     integer('sample_count').default(0),
   sizeBytes:       bigint('size_bytes', { mode: 'number' }).default(0),
   qualityScore:    integer('quality_score'),
+  outputPath:      text('output_path'),                  // file path for generated/imported data
+  sourceJobId:     text('source_job_id'),                // synthesis job ID if generated
+  schemaId:        text('schema_id'),                    // linked schema definition
   tags:            text('tags').array(),
   categories:      text('categories').array(),
+  createdAt:       timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt:       timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+/* ─── HuggingFace Datasets (downloaded/tracked) ───── */
+export const hfDatasets = pgTable('hf_datasets', {
+  id:              text('id').primaryKey(),
+  hfId:            text('hf_id').notNull(),          // e.g. "squad", "imdb", "tatsu-lab/alpaca"
+  author:          text('author'),
+  name:            text('name').notNull(),            // display name
+  description:     text('description'),
+  tags:            text('tags').array(),
+  downloads:       integer('downloads').default(0),
+  likes:           integer('likes').default(0),
+  config:          text('config'),                    // selected config name
+  splits:          jsonb('splits'),                   // { "train": 87599, "validation": 10570 }
+  numRows:         integer('num_rows').default(0),
+  columns:         text('columns').array(),
+  features:        jsonb('features'),                 // { "text": "Value(dtype='string')", ... }
+  cachePath:       text('cache_path'),                // HF cache directory path
+  sizeBytes:       bigint('size_bytes', { mode: 'number' }).default(0),
+  status:          varchar('status', { length: 20 }).default('available'),
+  // available | downloading | downloaded | error
+  errorMessage:    text('error_message'),
+  downloadedAt:    timestamp('downloaded_at', { withTimezone: true }),
   createdAt:       timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt:       timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 });
@@ -280,6 +308,105 @@ export const projects = pgTable('projects', {
   updatedAt:     timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 });
 
+/* ─── Provider API Keys ────────────────────────────── */
+export const apiKeys = pgTable('api_keys', {
+  id:           text('id').primaryKey(),
+  providerId:   text('provider_id').notNull(),
+  keyHash:      text('key_hash').notNull(),           // SHA-256 hash for identification
+  keyPrefix:    text('key_prefix'),                    // first 8 chars for display
+  keySuffix:    text('key_suffix'),                    // last 4 chars for display
+  encryptedKey: text('encrypted_key').notNull(),       // base64 encoded (TODO: proper encryption in prod)
+  status:       varchar('status', { length: 20 }).default('active'),
+  // active | revoked | expired
+  lastUsedAt:   timestamp('last_used_at', { withTimezone: true }),
+  createdAt:    timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+/* ─── Synthesis Jobs ───────────────────────────────── */
+export const synthesisJobs = pgTable('synthesis_jobs', {
+  id:              text('id').primaryKey(),
+  name:            text('name').notNull(),
+  description:     text('description'),
+  source:          varchar('source', { length: 20 }).notNull(),
+  // ollama | llamacpp | huggingface
+  model:           text('model').notNull(),
+  status:          varchar('status', { length: 20 }).default('queued'),
+  // queued | running | completed | failed | cancelled
+  targetSamples:   integer('target_samples').default(100),
+  currentSamples:  integer('current_samples').default(0),
+  outputFormat:    varchar('output_format', { length: 20 }).default('jsonl'),
+  temperature:     decimal('temperature', { precision: 3, scale: 2 }).default('0.8'),
+  maxTokens:       integer('max_tokens').default(1024),
+  batchSize:       integer('batch_size').default(5),
+  outputPath:      text('output_path'),
+  tokensUsed:      integer('tokens_used').default(0),
+  progress:        integer('progress').default(0),
+  error:           text('error'),
+  tags:            text('tags').array(),
+  startedAt:       timestamp('started_at', { withTimezone: true }),
+  completedAt:     timestamp('completed_at', { withTimezone: true }),
+  createdAt:       timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+/* ─── Assets (files, documents, images, etc.) ──────── */
+export const assets = pgTable('assets', {
+  id:           text('id').primaryKey(),
+  name:         text('name').notNull(),
+  description:  text('description'),
+  folder:       text('folder').default('/'),             // virtual folder path
+  mimeType:     text('mime_type'),
+  fileType:     varchar('file_type', { length: 20 }),    // file | image | video | audio | document | dataset | other
+  filePath:     text('file_path').notNull(),             // absolute path on disk
+  fileName:     text('file_name').notNull(),             // original file name
+  sizeBytes:    bigint('size_bytes', { mode: 'number' }).default(0),
+  tags:         text('tags').array(),
+  metadata:     jsonb('metadata'),                       // extra info: dimensions, duration, etc.
+  datasetId:    text('dataset_id'),                      // optional link to datasets table
+  createdAt:    timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt:    timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+/* ─── Dataset Schema Definition ────────────────────── */
+export const datasetSchemas = pgTable('dataset_schemas', {
+  id:            text('id').primaryKey(),
+  datasetId:     text('dataset_id'),                     // linked dataset (null if template)
+  name:          text('name').notNull(),
+  columns:       jsonb('columns').notNull(),              // [{name, type, description, required, defaultValue, constraints}]
+  version:       integer('version').default(1),
+  isTemplate:    boolean('is_template').default(false),
+  createdAt:     timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt:     timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+/* ─── Data Version History ─────────────────────────── */
+export const dataVersions = pgTable('data_versions', {
+  id:            text('id').primaryKey(),
+  datasetId:     text('dataset_id').notNull(),
+  versionNum:    integer('version_num').default(1),
+  filePath:      text('file_path').notNull(),             // path to version snapshot
+  sizeBytes:     bigint('size_bytes', { mode: 'number' }).default(0),
+  rowsAffected:  integer('rows_affected').default(0),
+  changeType:    varchar('change_type', { length: 20 }),  // edit | schema_update | restore
+  changeSummary: text('change_summary'),
+  createdBy:     text('created_by'),                      // user or system
+  createdAt:     timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+/* ─── Data Lineage Catalog ─────────────────────────── */
+export const lineage = pgTable('lineage', {
+  id:              text('id').primaryKey(),
+  sourceType:      varchar('source_type', { length: 30 }).notNull(),
+  // dataset | expert | workflow | training_job | synthesis_job
+  sourceId:        text('source_id').notNull(),
+  targetType:      varchar('target_type', { length: 30 }).notNull(),
+  // dataset | expert | workflow | training_job | synthesis_job | workflow_step
+  targetId:        text('target_id').notNull(),
+  relationship:    varchar('relationship', { length: 30 }).notNull(),
+  // created_by | trained_on | used_in | produces | depends_on
+  metadata:        jsonb('metadata'),                    // extra context
+  createdAt:       timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
 /* ─── Type exports ───────────────────────────────────── */
 export type Metric        = typeof metrics.$inferSelect;
 export type Task          = typeof tasks.$inferSelect;
@@ -303,7 +430,26 @@ export type NewLog        = typeof logs.$inferInsert;
 export type NewMetric     = typeof metrics.$inferInsert;
 export type NewTrainingJob = typeof trainingJobs.$inferInsert;
 export type NewDataset    = typeof datasets.$inferInsert;
+export type HfDataset     = typeof hfDatasets.$inferSelect;
+export type NewHfDataset  = typeof hfDatasets.$inferInsert;
 export type NewProject    = typeof projects.$inferInsert;
 
 export type WorkflowStep  = typeof workflowSteps.$inferSelect;
 export type NewWorkflowStep = typeof workflowSteps.$inferInsert;
+
+export type ApiKey        = typeof apiKeys.$inferSelect;
+export type NewApiKey     = typeof apiKeys.$inferInsert;
+
+export type SynthesisJob  = typeof synthesisJobs.$inferSelect;
+export type NewSynthesisJob = typeof synthesisJobs.$inferInsert;
+
+export type Asset         = typeof assets.$inferSelect;
+export type NewAsset      = typeof assets.$inferInsert;
+
+export type DatasetSchema = typeof datasetSchemas.$inferSelect;
+export type NewDatasetSchema = typeof datasetSchemas.$inferInsert;
+export type Lineage       = typeof lineage.$inferSelect;
+export type NewLineage    = typeof lineage.$inferInsert;
+
+export type DataVersion   = typeof dataVersions.$inferSelect;
+export type NewDataVersion = typeof dataVersions.$inferInsert;

@@ -3,18 +3,20 @@
 from __future__ import annotations
 
 import logging
-import os
 import uuid
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, UploadFile, File
+from fastapi import APIRouter, BackgroundTasks, File, UploadFile
 from pydantic import BaseModel
 
 from engine.config import settings
-from engine.services.local_inference import inference_router
+from engine.services.local_inference import OllamaService, inference_router, model_pool
 from engine.services.orchestrator import (
-    AgentOrchestrator, StepConfig, StepIntegration, WorkflowRequest, orchestrator,
+    StepConfig,
+    StepIntegration,
+    WorkflowRequest,
+    orchestrator,
 )
 
 logger = logging.getLogger("engine.routers.orchestrator")
@@ -24,15 +26,16 @@ router = APIRouter()
 
 # ── Request / Response models ────────────────────────────────────────────────
 
+
 class LocalModelConfigModel(BaseModel):
-    engine: str = "ollama"     # ollama | llamacpp
+    engine: str = "ollama"  # ollama | llamacpp
     model: str = "llama3.1:8b"
     baseUrl: str | None = None
 
 
 class StepIntegrationModel(BaseModel):
     id: str
-    type: str                  # integration | plugin
+    type: str  # integration | plugin
     referenceId: str
     name: str
     icon: str = ""
@@ -49,7 +52,7 @@ class StepConfigModel(BaseModel):
     fileLocations: list[str] = []
     stepFileNames: list[str] = []
     stepImageNames: list[str] = []
-    modelSource: str = "local"          # local | provider
+    modelSource: str = "local"  # local | provider
     localModel: LocalModelConfigModel | None = None
     temperature: float = 0.7
     maxTokens: int = 4096
@@ -72,6 +75,7 @@ class ExecuteResponse(BaseModel):
 
 
 # ── Routes ───────────────────────────────────────────────────────────────────
+
 
 @router.post("/execute", response_model=ExecuteResponse)
 async def execute_workflow(req: ExecuteRequest, bg: BackgroundTasks) -> ExecuteResponse:
@@ -103,8 +107,12 @@ async def execute_workflow(req: ExecuteRequest, bg: BackgroundTasks) -> ExecuteR
                 step_image_names=s.stepImageNames,
                 integrations=[
                     StepIntegration(
-                        id=si.id, type=si.type, reference_id=si.referenceId,
-                        name=si.name, icon=si.icon, color=si.color,
+                        id=si.id,
+                        type=si.type,
+                        reference_id=si.referenceId,
+                        name=si.name,
+                        icon=si.icon,
+                        color=si.color,
                         config=si.config,
                     )
                     for si in s.integrations
@@ -172,19 +180,61 @@ async def upload_files(files: list[UploadFile] = File(...)) -> dict[str, Any]:
         content = await f.read()
         path.write_bytes(content)
 
-        uploaded.append({
-            "id": file_id,
-            "filename": f.filename or filename,
-            "storedAs": filename,
-            "url": f"/uploads/{filename}",
-            "size": len(content),
-        })
+        uploaded.append(
+            {
+                "id": file_id,
+                "filename": f.filename or filename,
+                "storedAs": filename,
+                "url": f"/uploads/{filename}",
+                "size": len(content),
+            }
+        )
         logger.info("Uploaded: %s → %s (%d bytes)", f.filename, filename, len(content))
 
     return {"files": uploaded, "count": len(uploaded)}
 
 
+# ── Monitoring endpoints ──────────────────────────────────────────────────────
+
+
+@router.get("/status")
+async def orchestrator_status() -> dict[str, Any]:
+    """Get orchestrator runtime status including system resources."""
+    from engine.services.system_stats import get_process_stats, get_system_stats
+
+    status = orchestrator.get_status()
+    status["system"] = get_system_stats()
+    status["process"] = get_process_stats()
+    return status
+
+
+@router.get("/system/stats")
+async def system_stats() -> dict[str, Any]:
+    """Get current CPU/GPU/memory usage — lightweight, for frequent polling."""
+    from engine.services.system_stats import get_system_stats
+
+    return get_system_stats()
+
+
+@router.get("/models/active")
+async def active_models() -> dict[str, Any]:
+    """Get currently active model usage."""
+    return {"models": model_pool.active_models, "total": model_pool.total_active}
+
+
+@router.get("/models/{engine}/{model_name:path}/info")
+async def model_info(engine: str, model_name: str) -> dict[str, Any]:
+    """Get detailed model info (Ollama only)."""
+    if engine != "ollama":
+        return {"error": "Model info only supported for Ollama"}
+    backend = inference_router.get_backend(engine)
+    if not isinstance(backend, OllamaService):
+        return {"error": "Not an Ollama backend"}
+    return await backend.get_model_info(model_name)
+
+
 # ── Local inference endpoints ────────────────────────────────────────────────
+
 
 @router.get("/models/{engine}")
 async def list_local_models(engine: str) -> dict[str, Any]:
@@ -216,6 +266,7 @@ async def pull_model(req: PullModelRequest, bg: BackgroundTasks) -> dict[str, An
         return {"error": "Model pull is only supported on Ollama"}
 
     from engine.services.local_inference import OllamaService
+
     svc = OllamaService(req.baseUrl) if req.baseUrl else OllamaService()
 
     async def _pull() -> None:
@@ -227,6 +278,26 @@ async def pull_model(req: PullModelRequest, bg: BackgroundTasks) -> dict[str, An
 
     bg.add_task(_pull)
     return {"status": "pulling", "engine": req.engine, "model": req.model}
+
+
+class DeleteModelRequest(BaseModel):
+    engine: str = "ollama"
+    model: str
+    baseUrl: str | None = None
+
+
+@router.post("/models/delete")
+async def delete_model(req: DeleteModelRequest) -> dict[str, Any]:
+    """Delete a local model from Ollama."""
+    if req.engine != "ollama":
+        return {"error": "Model delete is only supported on Ollama"}
+    try:
+        svc = OllamaService(req.baseUrl) if req.baseUrl else OllamaService()
+        await svc.delete_model(req.model)
+        return {"deleted": True, "model": req.model, "engine": req.engine}
+    except Exception as exc:
+        logger.error("Model delete failed: %s — %s", req.model, exc)
+        return {"error": str(exc), "model": req.model}
 
 
 class GenerateRequest(BaseModel):

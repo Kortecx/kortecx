@@ -37,10 +37,7 @@ class QdrantService:
 
     async def upsert(self, points: list[dict[str, Any]]) -> int:
         """Upsert vectors. Each dict needs: id, vector, payload."""
-        structs = [
-            PointStruct(id=p["id"], vector=p["vector"], payload=p.get("payload", {}))
-            for p in points
-        ]
+        structs = [PointStruct(id=p["id"], vector=p["vector"], payload=p.get("payload", {})) for p in points]
         self.client.upsert(collection_name=settings.qdrant_collection, points=structs)
         return len(structs)
 
@@ -58,10 +55,7 @@ class QdrantService:
             limit=limit,
             score_threshold=score_threshold,
         )
-        return [
-            {"id": hit.id, "score": hit.score, "payload": hit.payload}
-            for hit in results.points
-        ]
+        return [{"id": hit.id, "score": hit.score, "payload": hit.payload} for hit in results.points]
 
     async def delete(self, ids: list[str | int], collection: str | None = None) -> None:
         from qdrant_client.models import PointIdsList

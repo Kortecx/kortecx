@@ -1,9 +1,15 @@
 'use client';
 
 import { useState } from 'react';
-import { Sliders, Plus, Play, Clock, Zap, BarChart3, Cpu, ChevronRight } from 'lucide-react';
-import { TRAINING_JOBS, DATASETS, PROVIDERS } from '@/lib/constants';
-import type { TrainingJob, TrainingJobStatus } from '@/lib/types';
+import useSWR from 'swr';
+import { Sliders, Plus, Play, Clock, Zap, BarChart3, Cpu, ChevronRight, Loader2 } from 'lucide-react';
+import { useTrainingJobs } from '@/lib/hooks/useApi';
+import type { TrainingJob, TrainingJobStatus, Dataset, AIProvider } from '@/lib/types';
+
+const fetcher = (url: string) => fetch(url).then(r => {
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return r.json();
+});
 
 function statusBadge(status: TrainingJobStatus) {
   switch (status) {
@@ -24,9 +30,9 @@ function statusBadge(status: TrainingJobStatus) {
   }
 }
 
-function JobCard({ job }: { job: TrainingJob }) {
-  const dataset = DATASETS.find(d => d.id === job.datasetId);
-  const allModels = PROVIDERS.flatMap(p => p.models);
+function JobCard({ job, datasets, providers }: { job: TrainingJob; datasets: Dataset[]; providers: AIProvider[] }) {
+  const dataset = datasets.find(d => d.id === job.datasetId);
+  const allModels = providers.flatMap(p => p.models);
   const baseModel = allModels.find(m => m.id === job.baseModelId);
 
   return (
@@ -146,6 +152,14 @@ function JobCard({ job }: { job: TrainingJob }) {
 export default function FinetunePage() {
   const [showNew, setShowNew] = useState(false);
 
+  const { jobs, isLoading: jobsLoading } = useTrainingJobs() as { jobs: TrainingJob[]; total: number; isLoading: boolean; error: unknown; mutate: () => void };
+  const { data: datasetsData, isLoading: datasetsLoading } = useSWR<{ datasets: Dataset[] }>('/api/data/datasets', fetcher);
+  const { data: providersData, isLoading: providersLoading } = useSWR<{ providers: AIProvider[] }>('/api/providers', fetcher);
+
+  const datasets = datasetsData?.datasets ?? [];
+  const providers = providersData?.providers ?? [];
+  const isLoading = jobsLoading || datasetsLoading || providersLoading;
+
   return (
     <div style={{ padding: 24, maxWidth: 1400, margin: '0 auto' }}>
       {/* Header */}
@@ -158,7 +172,7 @@ export default function FinetunePage() {
             Fine-tuning
           </h1>
           <p style={{ fontSize: 13, color: 'var(--text-3)', margin: '4px 0 0' }}>
-            {TRAINING_JOBS.length} jobs · {TRAINING_JOBS.filter(j => j.status === 'training').length} active
+            {isLoading ? '...' : `${jobs.length} jobs · ${jobs.filter(j => j.status === 'training').length} active`}
           </p>
         </div>
         <button className="btn btn-primary btn-sm" onClick={() => setShowNew(!showNew)}>
@@ -178,7 +192,7 @@ export default function FinetunePage() {
                 Base Model
               </label>
               <select className="input" style={{ width: '100%' }}>
-                {PROVIDERS.filter(p => p.connected).flatMap(p =>
+                {providers.filter(p => p.connected).flatMap(p =>
                   p.models.map(m => (
                     <option key={m.id} value={m.id}>{p.name} — {m.name}</option>
                   ))
@@ -190,7 +204,7 @@ export default function FinetunePage() {
                 Training Dataset
               </label>
               <select className="input" style={{ width: '100%' }}>
-                {DATASETS.filter(d => d.status === 'ready').map(d => (
+                {datasets.filter(d => d.status === 'ready').map(d => (
                   <option key={d.id} value={d.id}>{d.name} ({d.sampleCount.toLocaleString()} samples)</option>
                 ))}
               </select>
@@ -232,15 +246,25 @@ export default function FinetunePage() {
       )}
 
       {/* Jobs grid */}
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fill, minmax(400px, 1fr))',
-        gap: 12,
-      }}>
-        {TRAINING_JOBS.map(job => (
-          <JobCard key={job.id} job={job} />
-        ))}
-      </div>
+      {jobsLoading ? (
+        <div style={{ textAlign: 'center', padding: 60, color: 'var(--text-3)', fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+          <Loader2 size={16} className="animate-spin" /> Loading fine-tune jobs...
+        </div>
+      ) : jobs.length === 0 ? (
+        <div style={{ textAlign: 'center', padding: 60, color: 'var(--text-3)', fontSize: 13 }}>
+          No fine-tune jobs yet. Click &quot;New Fine-tune Job&quot; to create one.
+        </div>
+      ) : (
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fill, minmax(400px, 1fr))',
+          gap: 12,
+        }}>
+          {jobs.map(job => (
+            <JobCard key={job.id} job={job} datasets={datasets} providers={providers} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
