@@ -154,7 +154,24 @@ def _query_file_sync(req: FileQueryRequest) -> dict[str, Any]:
             where_clause = f" WHERE {' AND '.join(where_parts)}" if where_parts else ""
             sql = f"SELECT * FROM data_view{where_clause} LIMIT {req.limit} OFFSET {req.offset}"
 
-        rows = conn.execute(sql).fetchdf().to_dict(orient="records")
+        # Use fetchall + column names to avoid numpy serialization issues
+        result_set = conn.execute(sql)
+        raw_rows = result_set.fetchall()
+        col_names = [desc[0] for desc in result_set.description] if result_set.description else column_names
+        rows = []
+        for raw in raw_rows:
+            row: dict[str, Any] = {}
+            for j, val in enumerate(raw):
+                # Convert numpy/non-serializable types to Python natives
+                if val is None:
+                    row[col_names[j]] = None
+                elif hasattr(val, 'item'):  # numpy scalar
+                    row[col_names[j]] = val.item()
+                elif isinstance(val, (list, dict)):
+                    row[col_names[j]] = val
+                else:
+                    row[col_names[j]] = val
+            rows.append(row)
 
         # Get filtered count if filters applied
         filtered_rows = total_rows

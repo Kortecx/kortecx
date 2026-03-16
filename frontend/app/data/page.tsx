@@ -8,6 +8,7 @@ import {
   Zap, Filter, Search, Loader2, Heart, ArrowDownToLine,
   ExternalLink, Trash2, Eye, HardDrive, Rows3, Columns3, Key,
   Cpu, Server, Sparkle, ChevronDown, ChevronRight, X,
+  Upload, FolderPlus, File, Image, Video, Music, FileSpreadsheet,
 } from 'lucide-react';
 import Link from 'next/link';
 import type { Dataset } from '@/lib/types';
@@ -1155,6 +1156,227 @@ function ModelOption({ m, onSelect, onDelete }: {
   );
 }
 
+/* ── My Datasets Tab (with upload + folders) ──────────── */
+
+const FILE_TYPE_ICONS: Record<string, typeof File> = {
+  image: Image, video: Video, audio: Music, document: FileText,
+  dataset: FileSpreadsheet, file: File,
+};
+
+function MyDatasetsTab({ datasets, loading, onViewDataset }: {
+  datasets: any[];
+  loading: boolean;
+  onViewDataset: (ds: any) => void;
+}) {
+  const [showUpload, setShowUpload] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [uploadFolder, setUploadFolder] = useState('/');
+  const [uploadTags, setUploadTags] = useState('');
+  const [newFolderName, setNewFolderName] = useState('');
+  const [showNewFolder, setShowNewFolder] = useState(false);
+
+  // Assets from DB
+  const { data: assetsData, mutate: mutateAssets } = useSWR('/api/assets', fetcher, { refreshInterval: 15_000 });
+  const assetsList: any[] = assetsData?.assets ?? [];
+  const folders: string[] = assetsData?.folders ?? ['/'];
+
+  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    setUploading(true);
+    try {
+      const formData = new FormData();
+      for (let i = 0; i < files.length; i++) formData.append('files', files[i]);
+      formData.append('folder', uploadFolder);
+      if (uploadTags) formData.append('tags', uploadTags);
+
+      const res = await fetch('/api/assets', { method: 'POST', body: formData });
+      if (res.ok) { mutateAssets(); setShowUpload(false); }
+    } catch (err) {
+      console.error('Upload failed:', err);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleCreateFolder = async () => {
+    if (!newFolderName.trim()) return;
+    await fetch('/api/assets/folders', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: newFolderName.trim(), parent: uploadFolder }),
+    });
+    setNewFolderName('');
+    setShowNewFolder(false);
+    mutateAssets();
+  };
+
+  const handleRemoveAsset = async (id: string) => {
+    await fetch(`/api/assets?id=${id}`, { method: 'DELETE' });
+    mutateAssets();
+  };
+
+  return (
+    <div>
+      {/* Action bar */}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 16, alignItems: 'center' }}>
+        <button
+          className="btn btn-primary btn-sm"
+          onClick={() => setShowUpload(!showUpload)}
+        >
+          <Upload size={13} /> Upload Files
+        </button>
+        <button
+          className="btn btn-secondary btn-sm"
+          onClick={() => setShowNewFolder(!showNewFolder)}
+        >
+          <FolderPlus size={13} /> New Folder
+        </button>
+        {folders.length > 1 && (
+          <select
+            className="input"
+            style={{ width: 'auto', fontSize: 12 }}
+            value={uploadFolder}
+            onChange={e => setUploadFolder(e.target.value)}
+          >
+            {folders.map(f => <option key={f} value={f}>{f === '/' ? 'Root' : f}</option>)}
+          </select>
+        )}
+      </div>
+
+      {/* Upload panel */}
+      {showUpload && (
+        <div className="card" style={{ padding: 16, marginBottom: 16 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-1)', marginBottom: 10 }}>
+            Upload files to <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--teal)' }}>{uploadFolder}</span>
+          </div>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+            <label style={{
+              flex: 1, padding: '20px 16px', borderRadius: 8,
+              border: '2px dashed var(--border-md)', textAlign: 'center',
+              cursor: 'pointer', color: 'var(--text-3)', fontSize: 12,
+              transition: 'border-color 0.15s',
+            }}>
+              <Upload size={20} style={{ margin: '0 auto 6px', display: 'block', opacity: 0.5 }} />
+              {uploading ? 'Uploading...' : 'Click to select files (documents, images, videos, datasets)'}
+              <input type="file" multiple style={{ display: 'none' }} onChange={handleUpload} disabled={uploading} />
+            </label>
+          </div>
+          <div style={{ marginTop: 8 }}>
+            <input
+              className="input"
+              style={{ fontSize: 11 }}
+              placeholder="Tags (comma-separated, optional)"
+              value={uploadTags}
+              onChange={e => setUploadTags(e.target.value)}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* New folder */}
+      {showNewFolder && (
+        <div className="card" style={{ padding: 12, marginBottom: 16, display: 'flex', gap: 8, alignItems: 'center' }}>
+          <FolderPlus size={14} color="var(--teal)" />
+          <input
+            className="input"
+            style={{ flex: 1, fontSize: 12 }}
+            placeholder="Folder name..."
+            value={newFolderName}
+            onChange={e => setNewFolderName(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && handleCreateFolder()}
+          />
+          <button className="btn btn-primary btn-sm" onClick={handleCreateFolder} disabled={!newFolderName.trim()}>
+            Create
+          </button>
+          <button className="btn btn-ghost btn-sm" onClick={() => setShowNewFolder(false)}>
+            <X size={12} />
+          </button>
+        </div>
+      )}
+
+      {/* Datasets grid */}
+      {loading ? (
+        <div style={{ textAlign: 'center', padding: 40, color: 'var(--text-3)', fontSize: 13 }}>
+          <Loader2 size={16} className="spin" style={{ margin: '0 auto 8px' }} /> Loading...
+        </div>
+      ) : (
+        <>
+          {/* Generated/imported datasets */}
+          {datasets.length > 0 && (
+            <>
+              <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-3)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                Datasets ({datasets.length})
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px,1fr))', gap: 12, marginBottom: 20 }}>
+                {datasets.map((ds: any) => <DatasetCard key={ds.id} ds={ds} onView={() => onViewDataset(ds)} />)}
+              </div>
+            </>
+          )}
+
+          {/* Uploaded assets */}
+          {assetsList.length > 0 && (
+            <>
+              <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-3)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                Uploaded Files ({assetsList.length})
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px,1fr))', gap: 10, marginBottom: 20 }}>
+                {assetsList.map((a: any) => {
+                  const Icon = FILE_TYPE_ICONS[a.fileType] ?? File;
+                  return (
+                    <div key={a.id} className="card" style={{ padding: 14, display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+                      <div style={{
+                        width: 36, height: 36, borderRadius: 6, flexShrink: 0,
+                        background: 'var(--bg-elevated)', border: '1px solid var(--border)',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      }}>
+                        <Icon size={16} color="var(--text-3)" />
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-1)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {a.name}
+                        </div>
+                        <div style={{ fontSize: 10, color: 'var(--text-4)', marginTop: 2 }}>
+                          {a.fileName} · {fmtBytes(a.sizeBytes ?? 0)}
+                          {a.folder !== '/' && <> · <span style={{ color: 'var(--teal)' }}>{a.folder}</span></>}
+                        </div>
+                        {a.tags?.length > 0 && (
+                          <div style={{ display: 'flex', gap: 3, marginTop: 4, flexWrap: 'wrap' }}>
+                            {a.tags.map((t: string) => (
+                              <span key={t} className="badge badge-neutral" style={{ fontSize: 9 }}>{t}</span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      <button
+                        onClick={() => handleRemoveAsset(a.id)}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-4)', padding: 2 }}
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          )}
+
+          {/* Empty state */}
+          {datasets.length === 0 && assetsList.length === 0 && (
+            <div style={{ textAlign: 'center', padding: 60, color: 'var(--text-3)', fontSize: 13 }}>
+              <Database size={28} style={{ opacity: 0.3, margin: '0 auto 10px' }} />
+              <div>No datasets or files yet</div>
+              <div style={{ fontSize: 11, marginTop: 4 }}>
+                Upload files, generate datasets, or import from HuggingFace Hub
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 /* ── Synthesis Edit Modal ──────────────────────────────── */
 
 function SynthesisEditModal({
@@ -1587,21 +1809,13 @@ export default function DataSynthesisPage() {
         ))}
       </div>
 
-      {/* My Datasets */}
+      {/* My Datasets + Assets */}
       {tab === 'datasets' && (
-        datasetsLoading ? (
-          <div style={{ textAlign: 'center', padding: 60, color: 'var(--text-3)', fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
-            <Loader2 size={16} className="animate-spin" /> Loading datasets...
-          </div>
-        ) : myDatasets.length === 0 ? (
-          <div style={{ textAlign: 'center', padding: 60, color: 'var(--text-3)', fontSize: 13 }}>
-            No datasets yet. Switch to the &quot;Generate New&quot; tab or import from HuggingFace Hub.
-          </div>
-        ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px,1fr))', gap: 12 }}>
-            {myDatasets.map(ds => <DatasetCard key={ds.id} ds={ds} onView={() => setViewDataset(ds)} />)}
-          </div>
-        )
+        <MyDatasetsTab
+          datasets={myDatasets}
+          loading={datasetsLoading}
+          onViewDataset={(ds: any) => setViewDataset(ds)}
+        />
       )}
 
       {/* HuggingFace Hub */}

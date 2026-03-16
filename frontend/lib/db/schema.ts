@@ -345,6 +345,24 @@ export const synthesisJobs = pgTable('synthesis_jobs', {
   createdAt:       timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 });
 
+/* ─── Assets (files, documents, images, etc.) ──────── */
+export const assets = pgTable('assets', {
+  id:           text('id').primaryKey(),
+  name:         text('name').notNull(),
+  description:  text('description'),
+  folder:       text('folder').default('/'),             // virtual folder path
+  mimeType:     text('mime_type'),
+  fileType:     varchar('file_type', { length: 20 }),    // file | image | video | audio | document | dataset | other
+  filePath:     text('file_path').notNull(),             // absolute path on disk
+  fileName:     text('file_name').notNull(),             // original file name
+  sizeBytes:    bigint('size_bytes', { mode: 'number' }).default(0),
+  tags:         text('tags').array(),
+  metadata:     jsonb('metadata'),                       // extra info: dimensions, duration, etc.
+  datasetId:    text('dataset_id'),                      // optional link to datasets table
+  createdAt:    timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt:    timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
 /* ─── Type exports ───────────────────────────────────── */
 export type Metric        = typeof metrics.$inferSelect;
 export type Task          = typeof tasks.$inferSelect;
@@ -380,3 +398,6 @@ export type NewApiKey     = typeof apiKeys.$inferInsert;
 
 export type SynthesisJob  = typeof synthesisJobs.$inferSelect;
 export type NewSynthesisJob = typeof synthesisJobs.$inferInsert;
+
+export type Asset         = typeof assets.$inferSelect;
+export type NewAsset      = typeof assets.$inferInsert;
