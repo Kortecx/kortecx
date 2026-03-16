@@ -89,6 +89,18 @@ const (
 	SeverityCritical AlertSeverity = "critical"
 )
 
+// ProviderID identifies a supported LLM provider.
+type ProviderID string
+
+const (
+	ProviderAnthropic   ProviderID = "anthropic"
+	ProviderOpenAI      ProviderID = "openai"
+	ProviderGoogle      ProviderID = "google"
+	ProviderHuggingFace ProviderID = "huggingface"
+	ProviderDeepSeek    ProviderID = "deepseek"
+	ProviderXAI         ProviderID = "xai"
+)
+
 // --- Core domain types ---
 
 type Expert struct {
@@ -305,6 +317,7 @@ type LocalInferenceEngine string
 const (
 	EngineOllama   LocalInferenceEngine = "ollama"
 	EngineLlamaCpp LocalInferenceEngine = "llamacpp"
+	EngineVLLM     LocalInferenceEngine = "vllm"
 )
 
 // LocalModelConfig configures a locally-hosted model.

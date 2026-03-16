@@ -181,3 +181,19 @@ export function useAgents() {
     mutate,
   };
 }
+
+/* ── HF Datasets (tracked) ─────────────────────────── */
+export function useHfDatasets() {
+  const { data, error, isLoading, mutate } = useSWR(
+    '/api/datasets',
+    fetcher,
+    { refreshInterval: 10_000 },
+  );
+  return {
+    datasets: data?.datasets ?? [],
+    total:    data?.total ?? 0,
+    error,
+    isLoading,
+    mutate,
+  };
+}

@@ -35,6 +35,10 @@ class Settings(BaseSettings):
     # Orchestration
     upload_dir: str = "./uploads"
     max_concurrent_agents: int = 10
+    agent_retry_enabled: bool = True
+    agent_fallback_model: str = "llama3.2:3b"
+    default_local_engine: str = "ollama"
+    default_local_model: str = "llama3.1:8b"
 
     model_config = {"env_file": "../.env", "env_file_encoding": "utf-8", "extra": "ignore"}
 

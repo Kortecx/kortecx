@@ -8,6 +8,27 @@
       "when": 1773633594705,
       "tag": "0000_rapid_living_lightning",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1773653301310,
+      "tag": "0001_empty_leech",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1773654398336,
+      "tag": "0002_yellow_mongoose",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1773658635684,
+      "tag": "0003_big_leader",
+      "breakpoints": true
     }
   ]
 }

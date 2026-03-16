@@ -12,7 +12,7 @@ from fastapi import APIRouter, BackgroundTasks, UploadFile, File
 from pydantic import BaseModel
 
 from engine.config import settings
-from engine.services.local_inference import inference_router
+from engine.services.local_inference import inference_router, OllamaService, model_pool
 from engine.services.orchestrator import (
     AgentOrchestrator, StepConfig, StepIntegration, WorkflowRequest, orchestrator,
 )
@@ -184,6 +184,31 @@ async def upload_files(files: list[UploadFile] = File(...)) -> dict[str, Any]:
     return {"files": uploaded, "count": len(uploaded)}
 
 
+# ── Monitoring endpoints ──────────────────────────────────────────────────────
+
+@router.get("/status")
+async def orchestrator_status() -> dict[str, Any]:
+    """Get orchestrator runtime status."""
+    return orchestrator.get_status()
+
+
+@router.get("/models/active")
+async def active_models() -> dict[str, Any]:
+    """Get currently active model usage."""
+    return {"models": model_pool.active_models, "total": model_pool.total_active}
+
+
+@router.get("/models/{engine}/{model_name:path}/info")
+async def model_info(engine: str, model_name: str) -> dict[str, Any]:
+    """Get detailed model info (Ollama only)."""
+    if engine != "ollama":
+        return {"error": "Model info only supported for Ollama"}
+    backend = inference_router.get_backend(engine)
+    if not isinstance(backend, OllamaService):
+        return {"error": "Not an Ollama backend"}
+    return await backend.get_model_info(model_name)
+
+
 # ── Local inference endpoints ────────────────────────────────────────────────
 
 @router.get("/models/{engine}")
@@ -227,6 +252,26 @@ async def pull_model(req: PullModelRequest, bg: BackgroundTasks) -> dict[str, An
 
     bg.add_task(_pull)
     return {"status": "pulling", "engine": req.engine, "model": req.model}
+
+
+class DeleteModelRequest(BaseModel):
+    engine: str = "ollama"
+    model: str
+    baseUrl: str | None = None
+
+
+@router.post("/models/delete")
+async def delete_model(req: DeleteModelRequest) -> dict[str, Any]:
+    """Delete a local model from Ollama."""
+    if req.engine != "ollama":
+        return {"error": "Model delete is only supported on Ollama"}
+    try:
+        svc = OllamaService(req.baseUrl) if req.baseUrl else OllamaService()
+        await svc.delete_model(req.model)
+        return {"deleted": True, "model": req.model, "engine": req.engine}
+    except Exception as exc:
+        logger.error("Model delete failed: %s — %s", req.model, exc)
+        return {"error": str(exc), "model": req.model}
 
 
 class GenerateRequest(BaseModel):

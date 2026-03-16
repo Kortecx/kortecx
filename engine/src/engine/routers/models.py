@@ -3,19 +3,10 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, Query
-from pydantic import BaseModel
 
 from engine.services.hf import hf_service
 
 router = APIRouter()
-
-
-class ModelSearchParams(BaseModel):
-    query: str = ""
-    pipeline_tag: str | None = None
-    library: str | None = None
-    sort: str = "downloads"
-    limit: int = 20
 
 
 @router.get("/search")
@@ -35,17 +26,6 @@ async def search_models(
         limit=limit,
     )
     return {"models": models, "count": len(models)}
-
-
-@router.get("/datasets")
-async def search_datasets(
-    query: str = "",
-    sort: str = "downloads",
-    limit: int = Query(20, ge=1, le=100),
-) -> dict[str, Any]:
-    """Search HuggingFace Hub datasets."""
-    datasets = hf_service.search_datasets(query=query, sort=sort, limit=limit)
-    return {"datasets": datasets, "count": len(datasets)}
 
 
 @router.get("/{model_id:path}")

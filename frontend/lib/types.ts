@@ -6,7 +6,8 @@
 /* ── Providers ──────────────────────────────────────── */
 export type ProviderSlug =
   | 'anthropic' | 'openai' | 'google' | 'openrouter'
-  | 'mistral' | 'cohere' | 'together' | 'groq' | 'custom';
+  | 'mistral' | 'cohere' | 'together' | 'groq'
+  | 'huggingface' | 'deepseek' | 'xai' | 'custom';
 
 export interface AIProvider {
   id: string;

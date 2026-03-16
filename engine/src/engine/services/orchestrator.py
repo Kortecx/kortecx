@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import uuid
 from dataclasses import dataclass, field
@@ -10,9 +11,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import httpx
+
 from engine.config import settings
 from engine.core.websocket import ws_manager
-from engine.services.local_inference import GenerateResult, inference_router
+from engine.services.local_inference import GenerateResult, inference_router, model_pool
 from engine.services.workflow_logger import workflow_logger
 
 logger = logging.getLogger("engine.orchestrator")
@@ -58,7 +61,7 @@ class StepConfig:
     local_model: dict[str, Any] | None
     temperature: float
     max_tokens: int
-    connection_type: str         # "sequential" | "parallel"
+    connection_type: str         # "sequential" | "parallel" | "conditional"
     system_instructions: str = ""
     voice_command: str = ""
     file_locations: list[str] = field(default_factory=list)
@@ -90,6 +93,11 @@ class AgentState:
 
 class AgentOrchestrator:
     """Core orchestration runtime for workflow agent execution."""
+
+    FALLBACK_MODELS = {
+        "ollama": "llama3.2:3b",
+        "llamacpp": "default",
+    }
 
     def __init__(self) -> None:
         self._runs: dict[str, dict[str, Any]] = {}   # runId -> run state
@@ -186,7 +194,7 @@ class AgentOrchestrator:
         input_contents: dict[str, str],
         channel: str,
     ) -> str:
-        """Execute steps respecting connection types (sequential / parallel)."""
+        """Execute steps respecting connection types (sequential / parallel / conditional)."""
         # Group consecutive parallel steps
         groups: list[list[StepConfig]] = []
         current_group: list[StepConfig] = []
@@ -206,8 +214,16 @@ class AgentOrchestrator:
 
         for group in groups:
             if len(group) == 1 and group[0].connection_type != "parallel":
-                # Sequential execution
+                # Sequential / conditional execution
                 step = group[0]
+
+                # Handle conditional steps — skip if previous output is empty or contains [SKIP]
+                if step.connection_type == "conditional":
+                    if not previous_output or "[SKIP]" in previous_output:
+                        logger.info("Skipping conditional step %s", step.step_id)
+                        self._runs[run_id]["stepResults"][step.step_id] = "[SKIPPED]"
+                        continue
+
                 agent_state = await self._run_agent(
                     run_id, step, shared, goal_content,
                     input_contents, previous_output, channel,
@@ -318,7 +334,6 @@ class AgentOrchestrator:
                 agent.memory.findings.append(result.text[:500])
 
                 # Write to shared memory
-                import json
                 shared.entries[agent_id] = json.dumps(agent.memory.to_dict())
                 shared.globals[step.step_id] = result.text[:1000]
 
@@ -350,6 +365,49 @@ class AgentOrchestrator:
                 return agent
 
             except Exception as exc:
+                # Try fallback model for local inference
+                if (
+                    settings.agent_retry_enabled
+                    and step.model_source == "local"
+                    and step.local_model
+                    and not getattr(step, '_is_fallback', False)
+                ):
+                    engine = step.local_model.get("engine", "ollama")
+                    fallback_model = self.FALLBACK_MODELS.get(engine)
+                    if fallback_model:
+                        logger.warning(
+                            "Agent %s failed with primary model, trying fallback %s: %s",
+                            agent_id, fallback_model, exc,
+                        )
+                        fallback_step = StepConfig(
+                            step_id=step.step_id,
+                            expert_id=step.expert_id,
+                            task_description=step.task_description,
+                            model_source="local",
+                            local_model={**step.local_model, "model": fallback_model},
+                            temperature=step.temperature,
+                            max_tokens=min(step.max_tokens, 2048),  # reduce for smaller model
+                            connection_type=step.connection_type,
+                        )
+                        fallback_step._is_fallback = True  # type: ignore[attr-defined]
+                        try:
+                            result = await self._infer(fallback_step, system_prompt, user_prompt)
+                            agent.output = f"[Fallback model: {fallback_model}]\n{result.text}"
+                            agent.tokens_used = result.tokens_used
+                            agent.duration_ms = result.duration_ms
+                            agent.status = "completed"
+                            agent.memory.findings.append(f"[Fallback] {result.text[:500]}")
+                            shared.entries[agent_id] = json.dumps(agent.memory.to_dict())
+                            shared.globals[step.step_id] = result.text[:1000]
+                            await ws_manager.broadcast(channel, "agent.step.complete", {
+                                "runId": run_id, "agentId": agent_id, "stepId": step.step_id,
+                                "output": agent.output, "tokensUsed": result.tokens_used,
+                                "durationMs": result.duration_ms, "fallback": True,
+                            })
+                            return agent
+                        except Exception as fallback_exc:
+                            logger.error("Fallback also failed for agent %s: %s", agent_id, fallback_exc)
+
                 agent.status = "failed"
                 agent.error = str(exc)
 
@@ -367,7 +425,6 @@ class AgentOrchestrator:
         if not step.expert_id:
             return None
         try:
-            import httpx
             frontend_url = "http://localhost:3000"
             async with httpx.AsyncClient(timeout=10) as client:
                 resp = await client.get(f"{frontend_url}/api/experts", params={"id": step.expert_id})
@@ -493,10 +550,10 @@ class AgentOrchestrator:
         system_prompt: str,
         user_prompt: str,
     ) -> GenerateResult:
-        """Route inference to the correct backend."""
+        """Route inference to the correct backend with model pool tracking."""
         if step.model_source == "local" and step.local_model:
-            engine = step.local_model.get("engine", "ollama")
-            model = step.local_model.get("model", "llama3.1:8b")
+            engine = step.local_model.get("engine", settings.default_local_engine)
+            model = step.local_model.get("model", settings.default_local_model)
             base_url = step.local_model.get("baseUrl")
 
             messages = [
@@ -504,14 +561,18 @@ class AgentOrchestrator:
                 {"role": "user", "content": user_prompt},
             ]
 
-            return await inference_router.chat(
-                engine=engine,
-                model=model,
-                messages=messages,
-                temperature=step.temperature,
-                max_tokens=step.max_tokens,
-                base_url=base_url,
-            )
+            await model_pool.acquire(model)
+            try:
+                return await inference_router.chat(
+                    engine=engine,
+                    model=model,
+                    messages=messages,
+                    temperature=step.temperature,
+                    max_tokens=step.max_tokens,
+                    base_url=base_url,
+                )
+            finally:
+                await model_pool.release(model)
 
         # Provider-based: use HuggingFace inference as fallback
         from engine.services.hf import hf_service
@@ -544,7 +605,6 @@ class AgentOrchestrator:
 
         # Try as URL
         if url_or_path.startswith(("http://", "https://")):
-            import httpx
             async with httpx.AsyncClient(timeout=30) as client:
                 resp = await client.get(url_or_path)
                 resp.raise_for_status()
@@ -557,6 +617,19 @@ class AgentOrchestrator:
 
     def get_shared_memory(self, run_id: str) -> SharedMemory | None:
         return self._shared_memory.get(run_id)
+
+    def get_status(self) -> dict[str, Any]:
+        """Return orchestrator status for monitoring."""
+        active_runs = {rid: r["status"] for rid, r in self._runs.items() if r["status"] == "running"}
+        return {
+            "active_runs": len(active_runs),
+            "total_runs": len(self._runs),
+            "runs": active_runs,
+            "semaphore_available": self._semaphore._value,
+            "max_concurrent_agents": settings.max_concurrent_agents,
+            "active_models": model_pool.active_models,
+            "total_active_inferences": model_pool.total_active,
+        }
 
 
 orchestrator = AgentOrchestrator()
