@@ -1,27 +1,96 @@
 import { NextResponse } from 'next/server';
+import { db } from '@/lib/db';
+import { socialConnections } from '@/lib/db/schema';
+import { eq } from 'drizzle-orm';
+import { PLATFORMS } from '@/lib/constants';
 
-const MOCK_PLATFORMS = [
-  { id: 'twitter', name: 'X (Twitter)', connected: false, color: '#1d9bf0' },
-  { id: 'linkedin', name: 'LinkedIn', connected: false, color: '#0a66c2' },
-  { id: 'reddit', name: 'Reddit', connected: false, color: '#ff4500' },
-  { id: 'discord', name: 'Discord', connected: false, color: '#5865f2' },
-  { id: 'telegram', name: 'Telegram', connected: false, color: '#26a5e4' },
-  { id: 'whatsapp', name: 'WhatsApp', connected: false, color: '#25d366' },
-  { id: 'youtube', name: 'YouTube', connected: false, color: '#ff0000' },
-  { id: 'instagram', name: 'Instagram', connected: false, color: '#e1306c' },
-];
-
+/**
+ * GET /api/platforms
+ *
+ * Lists all supported platforms with their connection status from the database.
+ */
 export async function GET() {
-  return NextResponse.json({ platforms: MOCK_PLATFORMS });
+  try {
+    // Get all active connections from DB
+    const connections: Array<{
+      platform: string;
+      platformUsername: string | null;
+      platformAvatar: string | null;
+      status: string | null;
+    }> = await db
+      .select({
+        platform: socialConnections.platform,
+        platformUsername: socialConnections.platformUsername,
+        platformAvatar: socialConnections.platformAvatar,
+        status: socialConnections.status,
+      })
+      .from(socialConnections);
+
+    const connMap = new Map(connections.map(c => [c.platform, c]));
+
+    // Merge with platform catalog
+    const platforms = PLATFORMS.map(p => {
+      const conn = connMap.get(p.id);
+      return {
+        id: p.id,
+        name: p.name,
+        color: p.color,
+        connected: conn?.status === 'active',
+        username: conn?.platformUsername || undefined,
+        avatar: conn?.platformAvatar || undefined,
+        status: conn?.status || 'disconnected',
+      };
+    });
+
+    return NextResponse.json({ platforms });
+  } catch {
+    // Fallback to static list if DB unavailable
+    const platforms = PLATFORMS.map(p => ({
+      id: p.id,
+      name: p.name,
+      color: p.color,
+      connected: false,
+      status: 'disconnected',
+    }));
+    return NextResponse.json({ platforms });
+  }
 }
 
+/**
+ * POST /api/platforms
+ *
+ * Connect/disconnect a platform. For OAuth platforms, this returns the
+ * OAuth authorization URL for the frontend to redirect to.
+ */
 export async function POST(request: Request) {
   const body = await request.json();
   const { platformId, action } = body;
-  return NextResponse.json({
-    success: true,
-    platformId,
-    action,
-    status: action === 'connect' ? 'connected' : 'disconnected',
-  });
+
+  if (action === 'connect') {
+    // Return the OAuth authorize URL for the frontend to redirect to
+    const appBase = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+    const authorizeUrl = `${appBase}/api/oauth/${platformId}/authorize`;
+    return NextResponse.json({
+      success: true,
+      platformId,
+      action: 'connect',
+      authorizeUrl,
+    });
+  }
+
+  if (action === 'disconnect') {
+    try {
+      await db.delete(socialConnections).where(eq(socialConnections.platform, platformId));
+    } catch (error) {
+      console.error(`[Platforms] Failed to disconnect ${platformId}:`, error);
+    }
+    return NextResponse.json({
+      success: true,
+      platformId,
+      action: 'disconnect',
+      status: 'disconnected',
+    });
+  }
+
+  return NextResponse.json({ error: 'Invalid action' }, { status: 400 });
 }
