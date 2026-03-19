@@ -449,7 +449,10 @@ export interface PlatformSettings {
 }
 
 /* ── Integrations & Plugins ──────────────────────────── */
-export type IntegrationCategory = 'api' | 'app' | 'tool' | 'database' | 'storage' | 'messaging' | 'analytics';
+export type IntegrationCategory = 'api' | 'app' | 'tool' | 'database' | 'storage' | 'messaging' | 'analytics' | 'social' | 'crm' | 'data_analytics';
+
+/* ── Integration Capabilities (agentic lifecycle) ──── */
+export type IntegrationCapability = 'consume' | 'generate' | 'publish' | 'schedule' | 'report' | 'execute';
 
 export interface Integration {
   id: string;

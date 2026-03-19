@@ -57,6 +57,27 @@
       "when": 1773680485953,
       "tag": "0007_first_starbolt",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1773835006801,
+      "tag": "0008_volatile_blue_marvel",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1773893677518,
+      "tag": "0009_marvelous_owl",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1773895986151,
+      "tag": "0010_lush_gorilla_man",
+      "breakpoints": true
     }
   ]
 }
