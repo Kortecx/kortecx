@@ -388,14 +388,6 @@ export const NAV_SECTIONS = [
       { id: 'connections', label: 'Connections',  path: '/providers/connections', icon: 'Cable' },
     ],
   },
-  {
-    id: 'platform',
-    label: 'PLATFORM',
-    color: '#6B7280',
-    items: [
-      { id: 'settings', label: 'Settings', path: '/settings', icon: 'Settings' },
-    ],
-  },
 ];
 
 /* ─── Social Platforms (configuration) ─────────────────── */
