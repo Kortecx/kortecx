@@ -246,7 +246,7 @@ export const integrations = pgTable('integrations', {
   name:          text('name').notNull(),
   description:   text('description'),
   category:      varchar('category', { length: 30 }).notNull(),
-  // api | app | tool | database | storage | messaging | analytics
+  // api | app | tool | database | storage | messaging | analytics | social | crm | data_analytics
   icon:          text('icon'),
   color:         text('color'),
   authType:      varchar('auth_type', { length: 20 }).default('api_key'),
@@ -407,6 +407,42 @@ export const lineage = pgTable('lineage', {
   createdAt:       timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 });
 
+/* ─── OAuth App Credentials (client ID/secret per platform) ── */
+export const oauthCredentials = pgTable('oauth_credentials', {
+  id:            text('id').primaryKey(),
+  platform:      varchar('platform', { length: 30 }).notNull().unique(),
+  // twitter | linkedin | facebook | youtube | tiktok | pinterest | reddit | medium | discord | tumblr | etc.
+  clientId:      text('client_id').notNull(),
+  clientSecret:  text('client_secret').notNull(),      // AES-256-GCM encrypted
+  keyHash:       text('key_hash').notNull(),            // SHA-256 hash of client_id for dedup
+  status:        varchar('status', { length: 20 }).default('active'),
+  // active | revoked
+  createdAt:     timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt:     timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+/* ─── Social Platform Connections (OAuth tokens) ────── */
+export const socialConnections = pgTable('social_connections', {
+  id:              text('id').primaryKey(),
+  platform:        varchar('platform', { length: 30 }).notNull(),
+  // twitter | linkedin | facebook | instagram | youtube | tiktok | pinterest | reddit | threads | bluesky | medium | substack | devto | discord | telegram | whatsapp | snapchat | tumblr
+  accessToken:     text('access_token').notNull(),        // AES-256-GCM encrypted
+  refreshToken:    text('refresh_token'),                  // AES-256-GCM encrypted (null for non-refreshable)
+  tokenExpiresAt:  timestamp('token_expires_at', { withTimezone: true }),
+  scopes:          text('scopes').array(),
+  platformUserId:  text('platform_user_id'),               // user's ID on the platform
+  platformUsername:text('platform_username'),               // display name / handle
+  platformAvatar:  text('platform_avatar'),                 // profile image URL
+  platformMeta:    jsonb('platform_meta'),                  // extra profile data (followers, etc.)
+  permissions:     jsonb('permissions'),                  // { consume: true, generate: true, publish: true, schedule: true, report: true, execute: true }
+  status:          varchar('status', { length: 20 }).default('active'),
+  // active | expired | revoked | error
+  lastUsedAt:      timestamp('last_used_at', { withTimezone: true }),
+  lastRefreshedAt: timestamp('last_refreshed_at', { withTimezone: true }),
+  createdAt:       timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt:       timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
 /* ─── Type exports ───────────────────────────────────── */
 export type Metric        = typeof metrics.$inferSelect;
 export type Task          = typeof tasks.$inferSelect;
@@ -453,3 +489,9 @@ export type NewLineage    = typeof lineage.$inferInsert;
 
 export type DataVersion   = typeof dataVersions.$inferSelect;
 export type NewDataVersion = typeof dataVersions.$inferInsert;
+
+export type SocialConnection    = typeof socialConnections.$inferSelect;
+export type NewSocialConnection = typeof socialConnections.$inferInsert;
+
+export type OAuthCredential     = typeof oauthCredentials.$inferSelect;
+export type NewOAuthCredential  = typeof oauthCredentials.$inferInsert;

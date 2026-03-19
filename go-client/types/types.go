@@ -381,29 +381,45 @@ type WorkflowStepConfig struct {
 type IntegrationCategory string
 
 const (
-	IntegrationAPI       IntegrationCategory = "api"
-	IntegrationApp       IntegrationCategory = "app"
-	IntegrationTool      IntegrationCategory = "tool"
-	IntegrationDatabase  IntegrationCategory = "database"
-	IntegrationStorage   IntegrationCategory = "storage"
-	IntegrationMessaging IntegrationCategory = "messaging"
-	IntegrationAnalytics IntegrationCategory = "analytics"
+	IntegrationAPI           IntegrationCategory = "api"
+	IntegrationApp           IntegrationCategory = "app"
+	IntegrationTool          IntegrationCategory = "tool"
+	IntegrationDatabase      IntegrationCategory = "database"
+	IntegrationStorage       IntegrationCategory = "storage"
+	IntegrationMessaging     IntegrationCategory = "messaging"
+	IntegrationAnalytics     IntegrationCategory = "analytics"
+	IntegrationSocial        IntegrationCategory = "social"
+	IntegrationCRM           IntegrationCategory = "crm"
+	IntegrationDataAnalytics IntegrationCategory = "data_analytics"
+)
+
+// IntegrationCapability describes what an integration can do in the agentic lifecycle.
+type IntegrationCapability string
+
+const (
+	CapabilityConsume  IntegrationCapability = "consume"
+	CapabilityGenerate IntegrationCapability = "generate"
+	CapabilityPublish  IntegrationCapability = "publish"
+	CapabilitySchedule IntegrationCapability = "schedule"
+	CapabilityReport   IntegrationCapability = "report"
+	CapabilityExecute  IntegrationCapability = "execute"
 )
 
 // Integration represents an external service connection.
 type Integration struct {
-	ID          string              `json:"id"`
-	Name        string              `json:"name"`
-	Description string              `json:"description"`
-	Category    IntegrationCategory `json:"category"`
-	Icon        string              `json:"icon"`
-	Color       string              `json:"color"`
-	Connected   bool                `json:"connected"`
-	AuthType    string              `json:"authType"`
-	BaseURL     string              `json:"baseUrl,omitempty"`
-	DocsURL     string              `json:"docsUrl,omitempty"`
-	CreatedAt   time.Time           `json:"createdAt"`
-	UpdatedAt   time.Time           `json:"updatedAt"`
+	ID           string                  `json:"id"`
+	Name         string                  `json:"name"`
+	Description  string                  `json:"description"`
+	Category     IntegrationCategory     `json:"category"`
+	Icon         string                  `json:"icon"`
+	Color        string                  `json:"color"`
+	Connected    bool                    `json:"connected"`
+	AuthType     string                  `json:"authType"`
+	Capabilities []IntegrationCapability `json:"capabilities"`
+	BaseURL      string                  `json:"baseUrl,omitempty"`
+	DocsURL      string                  `json:"docsUrl,omitempty"`
+	CreatedAt    time.Time               `json:"createdAt"`
+	UpdatedAt    time.Time               `json:"updatedAt"`
 }
 
 // IntegrationConnection is a user's configured instance of an integration.
