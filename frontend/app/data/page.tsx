@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, Suspense } from 'react';
+import { useSearchParams } from 'next/navigation';
 import useSWR from 'swr';
 import {
   Database, Plus, Download, Sparkles, RefreshCcw,
@@ -2254,7 +2255,20 @@ function SynthesisEditModal({
 /* ── Main Page ─────────────────────────────────────────── */
 
 export default function DataSynthesisPage() {
+  return <Suspense><DataSynthesisPageInner /></Suspense>;
+}
+
+function DataSynthesisPageInner() {
+  const searchParams = useSearchParams();
   const [tab, setTab] = useState<'datasets' | 'huggingface' | 'generate'>('datasets');
+
+  /* Handle ?action=new → auto-switch to Generate tab */
+  useEffect(() => {
+    if (searchParams.get('action') === 'new') {
+      setTab('generate');
+      window.history.replaceState({}, '', '/data');
+    }
+  }, [searchParams]);
 
   // Synthesis jobs list — declared early so hasActiveJobs drives datasets refresh
   const { data: synthJobsData, mutate: mutateSynthJobs } = useSWR('/api/synthesis', fetcher, { refreshInterval: 5000 });

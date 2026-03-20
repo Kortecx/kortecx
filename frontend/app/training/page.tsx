@@ -1,6 +1,7 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, Suspense } from 'react';
+import { useSearchParams } from 'next/navigation';
 import useSWR from 'swr';
 import {
   Brain, Play, Pause, Plus, Trash2, ChevronDown, ChevronUp,
@@ -203,7 +204,20 @@ function JobCard({ job, experts, datasets }: { job: TrainingJob; experts: Expert
 }
 
 export default function TrainingLabPage() {
+  return <Suspense><TrainingLabPageInner /></Suspense>;
+}
+
+function TrainingLabPageInner() {
+  const searchParams = useSearchParams();
   const [tab, setTab] = useState<'jobs' | 'datasets' | 'new'>('jobs');
+
+  /* Handle ?action=new → auto-switch to New tab */
+  useEffect(() => {
+    if (searchParams.get('action') === 'new') {
+      setTab('new');
+      window.history.replaceState({}, '', '/training');
+    }
+  }, [searchParams]);
 
   const { jobs, isLoading: jobsLoading } = useTrainingJobs() as { jobs: TrainingJob[]; total: number; isLoading: boolean; error: unknown; mutate: () => void };
   const { experts, isLoading: expertsLoading } = useExperts() as { experts: Expert[]; total: number; isLoading: boolean; error: unknown; mutate: () => void };

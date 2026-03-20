@@ -338,23 +338,14 @@ export const SYSTEM_METRICS = {
 /* ─── Navigation Structure ───────────────────────────── */
 export const NAV_SECTIONS = [
   {
-    id: 'ops',
-    label: 'OPS',
-    color: '#F04500',
-    items: [
-      { id: 'dashboard', label: 'Dashboard',    path: '/dashboard',       icon: 'LayoutDashboard' },
-      { id: 'tasks',     label: 'Task Queue',   path: '/tasks',           icon: 'ListOrdered' },
-      { id: 'agents',    label: 'Active Agents',path: '/agents',          icon: 'Cpu' },
-    ],
-  },
-  {
     id: 'experts',
     label: 'EXPERTS',
     color: '#D97706',
     items: [
       { id: 'experts',    label: 'Experts',         path: '/experts',                    icon: 'Users' },
-      { id: 'marketplace',label: 'Marketplace',     path: '/experts?tab=marketplace',    icon: 'Store' },
       { id: 'deploy',     label: 'Deploy New',      path: '/experts/deploy',             icon: 'Rocket' },
+      { id: 'tasks',      label: 'Task Queue',      path: '/tasks',                      icon: 'ListOrdered' },
+      { id: 'agents',     label: 'Active Agents',   path: '/agents',                     icon: 'Cpu' },
     ],
   },
   {
@@ -373,9 +364,17 @@ export const NAV_SECTIONS = [
     color: '#7C3AED',
     items: [
       { id: 'training',  label: 'Training Lab',  path: '/training',          icon: 'Brain' },
-      { id: 'data',      label: 'Data Synthesis',path: '/data',              icon: 'Database' },
-      { id: 'engineer',  label: 'Data Lab',      path: '/data/engineer',     icon: 'Zap' },
       { id: 'finetune',  label: 'Fine-tuning',   path: '/training/finetune', icon: 'Sliders' },
+    ],
+  },
+  {
+    id: 'artifacts',
+    label: 'ARTIFACTS',
+    color: '#0EA5E9',
+    items: [
+      { id: 'data',       label: 'Data Synthesis', path: '/data',            icon: 'Database' },
+      { id: 'engineer',   label: 'Data Lab',       path: '/data/engineer',   icon: 'Zap' },
+      { id: 'data-runs',  label: 'Runs History',   path: '/data/runs',       icon: 'History' },
     ],
   },
   {
@@ -394,7 +393,6 @@ export const NAV_SECTIONS = [
     color: '#059669',
     items: [
       { id: 'providers',   label: 'Providers',   path: '/providers',             icon: 'Plug' },
-      { id: 'mcp',         label: 'MCP Servers',  path: '/providers/connections?tab=mcp', icon: 'Server' },
       { id: 'connections', label: 'Connections',  path: '/providers/connections', icon: 'Cable' },
     ],
   },

@@ -1,6 +1,7 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, Suspense } from 'react';
+import { useSearchParams } from 'next/navigation';
 import useSWR from 'swr';
 import { Sliders, Plus, Play, Clock, Zap, BarChart3, Cpu, ChevronRight, Loader2 } from 'lucide-react';
 import { useTrainingJobs } from '@/lib/hooks/useApi';
@@ -150,7 +151,20 @@ function JobCard({ job, datasets, providers }: { job: TrainingJob; datasets: Dat
 }
 
 export default function FinetunePage() {
+  return <Suspense><FinetunePageInner /></Suspense>;
+}
+
+function FinetunePageInner() {
+  const searchParams = useSearchParams();
   const [showNew, setShowNew] = useState(false);
+
+  /* Handle ?action=new → auto-open create dialog */
+  useEffect(() => {
+    if (searchParams.get('action') === 'new') {
+      setShowNew(true);
+      window.history.replaceState({}, '', '/training/finetune');
+    }
+  }, [searchParams]);
 
   const { jobs, isLoading: jobsLoading } = useTrainingJobs() as { jobs: TrainingJob[]; total: number; isLoading: boolean; error: unknown; mutate: () => void };
   const { data: datasetsData, isLoading: datasetsLoading } = useSWR<{ datasets: Dataset[] }>('/api/data/datasets', fetcher);

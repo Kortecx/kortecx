@@ -275,12 +275,18 @@ function ConnectionsPageInner() {
     fetchCredentials();
   }, [fetchOAuthConnections, fetchCredentials]);
 
-  /* Handle tab query param */
+  /* Handle tab + action query params */
   useEffect(() => {
     const tab = searchParams.get('tab');
+    const action = searchParams.get('action');
     if (tab === 'mcp') setActiveSection('mcp');
     else if (tab === 'plugins') setActiveSection('plugins');
     else if (tab === 'integrations') setActiveSection('integrations');
+    // Auto-open Generate MCP Server dialog
+    if (action === 'new' && tab === 'mcp') {
+      setMcpShowPrompt(true);
+      window.history.replaceState({}, '', '/providers/connections?tab=mcp');
+    }
   }, [searchParams]);
 
   /* Handle OAuth callback — via query params (fallback) or postMessage from popup */

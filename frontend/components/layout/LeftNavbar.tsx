@@ -8,7 +8,7 @@ import {
   LayoutDashboard, ListOrdered, Cpu, Users, Star, Rocket,
   Workflow, LayoutTemplate, History, Brain, Database, Sliders,
   Activity, ScrollText, Bell, Plug, Key, Settings, Cable, Store,
-  ChevronLeft, ChevronRight, Zap, Server,
+  ChevronLeft, ChevronRight, Zap, Server, Plus,
 } from 'lucide-react';
 import { useApp } from '@/contexts/AppContext';
 import { NAV_SECTIONS, SYSTEM_METRICS } from '@/lib/constants';
@@ -16,8 +16,18 @@ import { NAV_SECTIONS, SYSTEM_METRICS } from '@/lib/constants';
 const ICONS: Record<string, React.ElementType> = {
   LayoutDashboard, ListOrdered, Cpu, Users, Star, Rocket,
   Workflow, LayoutTemplate, History, Brain, Database, Sliders,
-  Activity, ScrollText, Bell, Plug, Key, Settings, Cable, Store, Zap, Server,
+  Activity, ScrollText, Bell, Plug, Key, Settings, Cable, Store, Zap, Server, Plus,
 };
+
+/* ── New button menu items ─────────────────────────── */
+const NEW_MENU_ITEMS = [
+  { id: 'workflow',   label: 'Build Workflow',     path: '/workflow/builder',                      icon: LayoutTemplate, color: '#2563EB' },
+  { id: 'expert',     label: 'New Expert',          path: '/experts/deploy',                        icon: Rocket,         color: '#D97706' },
+  { id: 'dataset',    label: 'New Dataset',         path: '/data?action=new',                       icon: Database,       color: '#0EA5E9' },
+  { id: 'mcp',        label: 'New MCP Server',      path: '/providers/connections?tab=mcp&action=new', icon: Server,      color: '#059669' },
+  { id: 'training',   label: 'Training Job',        path: '/training?action=new',                   icon: Brain,          color: '#7C3AED' },
+  { id: 'finetune',   label: 'Fine-tuning',         path: '/training/finetune?action=new',          icon: Sliders,        color: '#7C3AED' },
+];
 
 function KortecxLogo({ collapsed }: { collapsed: boolean }) {
   return (
@@ -196,6 +206,105 @@ function NavItem({
   );
 }
 
+function NewButton({ collapsed }: { collapsed: boolean }) {
+  const [open, setOpen] = useState(false);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
+
+  useEffect(() => {
+    if (open && btnRef.current) {
+      const r = btnRef.current.getBoundingClientRect();
+      setMenuPos({ top: r.top, left: r.right + 6 });
+    }
+  }, [open]);
+
+  // Close on outside click
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node) &&
+          btnRef.current && !btnRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  return (
+    <>
+      <button
+        ref={btnRef}
+        onClick={() => setOpen(p => !p)}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 6,
+          margin: '8px 8px 6px', padding: collapsed ? '7px 0' : '7px 12px',
+          justifyContent: collapsed ? 'center' : 'flex-start',
+          width: 'calc(100% - 16px)', borderRadius: 7,
+          background: open ? 'var(--primary)' : 'var(--primary-dim)',
+          border: `1.5px solid ${open ? 'var(--primary)' : 'rgba(240,69,0,0.2)'}`,
+          color: open ? '#fff' : 'var(--primary)',
+          fontSize: 13, fontWeight: 600, cursor: 'pointer',
+          transition: 'all 0.15s',
+        }}
+      >
+        <Plus size={15} strokeWidth={2.5} />
+        {!collapsed && 'New'}
+      </button>
+
+      {/* Flyout menu — positioned to the right of the button */}
+      {open && menuPos && (
+        <div
+          ref={menuRef}
+          style={{
+            position: 'fixed',
+            top: menuPos.top,
+            left: menuPos.left,
+            zIndex: 9999,
+            background: 'var(--bg-surface)',
+            border: '1px solid var(--border-md)',
+            borderRadius: 10,
+            boxShadow: '0 12px 40px rgba(0,0,0,0.12), 0 2px 8px rgba(0,0,0,0.06)',
+            padding: '6px',
+            minWidth: 220,
+          }}
+        >
+          <div style={{ padding: '4px 10px 6px', fontSize: 10, fontWeight: 700, color: 'var(--text-4)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+            Create New
+          </div>
+          {NEW_MENU_ITEMS.map(item => (
+            <Link
+              key={item.id}
+              href={item.path}
+              onClick={() => setOpen(false)}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 10,
+                padding: '8px 10px', borderRadius: 6,
+                textDecoration: 'none', fontSize: 13, fontWeight: 500,
+                color: 'var(--text-1)',
+                transition: 'background 0.1s',
+              }}
+              onMouseEnter={e => { e.currentTarget.style.background = `${item.color}0a`; }}
+              onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
+            >
+              <span style={{
+                width: 28, height: 28, borderRadius: 6,
+                background: `${item.color}10`,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                flexShrink: 0,
+              }}>
+                <item.icon size={14} color={item.color} />
+              </span>
+              <span>{item.label}</span>
+            </Link>
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
 export default function LeftNavbar() {
   const pathname = usePathname();
   const { sidebarCollapsed, toggleSidebar } = useApp();
@@ -243,8 +352,24 @@ export default function LeftNavbar() {
         <KortecxLogo collapsed={sidebarCollapsed} />
       </div>
 
+      {/* New Button + Dashboard */}
+      <NewButton collapsed={sidebarCollapsed} />
+      <Link href="/dashboard" style={{
+        display: 'flex', alignItems: 'center', gap: 8,
+        padding: sidebarCollapsed ? '7px 0' : '6px 10px 6px 14px',
+        justifyContent: sidebarCollapsed ? 'center' : 'flex-start',
+        margin: '0 6px 4px', width: 'calc(100% - 12px)', borderRadius: 5,
+        textDecoration: 'none', fontSize: 13, fontWeight: pathname === '/dashboard' ? 600 : 450,
+        color: pathname === '/dashboard' ? '#F04500' : 'var(--text-2)',
+        background: pathname === '/dashboard' ? 'rgba(240,69,0,0.08)' : 'transparent',
+        transition: 'background 0.12s, color 0.12s',
+      }}>
+        <LayoutDashboard size={15} strokeWidth={pathname === '/dashboard' ? 2.2 : 1.8} />
+        {!sidebarCollapsed && <span>Dashboard</span>}
+      </Link>
+
       {/* Nav Sections */}
-      <div style={{ flex: 1, overflowY: 'auto', overflowX: 'visible', padding: '8px 0' }}>
+      <div style={{ flex: 1, overflowY: 'auto', overflowX: 'visible', padding: '4px 0' }}>
         {NAV_SECTIONS.map(section => (
           <div key={section.id} style={{ marginBottom: 4 }}>
             {!sidebarCollapsed && (
