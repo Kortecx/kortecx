@@ -77,7 +77,20 @@ function DatasetViewer({ dataset, onClose }: { dataset: any; onClose: () => void
   const columnsRef = useRef<{ name: string; type: string }[]>([]);
   columnsRef.current = columns;
 
-  const filePath = dataset.outputPath || dataset.cachePath || '';
+  const [filePath, setFilePath] = useState(dataset.outputPath || dataset.cachePath || '');
+
+  // If no file path, try to resolve from linked synthesis job
+  useEffect(() => {
+    if (filePath || !dataset.sourceJobId) return;
+    fetch('/api/synthesis')
+      .then(r => r.json())
+      .then(d => {
+        const job = (d.jobs ?? []).find((j: any) => j.id === dataset.sourceJobId);
+        if (job?.outputPath) setFilePath(job.outputPath);
+      })
+      .catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dataset.sourceJobId]);
 
   // Use separator that won't appear in column names
   const SEP = '|||';
@@ -706,27 +719,32 @@ function SchemaEditorModal({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dataset?.outputPath]);
 
-  // Load existing schema from DB
+  // Load existing schema from DB — try schemaId first, then datasetId
   useEffect(() => {
-    if (dataset?.schemaId && !existingSchema) {
-      fetch(`/api/schemas?id=${dataset.schemaId}`)
-        .then(r => r.json())
-        .then(d => {
-          const schema = d.schemas?.[0] ?? d.schema;
-          if (schema?.columns?.length > 0) {
-            setName(schema.name ?? name);
-            setColumns(schema.columns.map((c: any) => ({
-              name: c.name ?? '',
-              type: c.type ?? 'string',
-              description: c.description ?? '',
-              required: c.required ?? false,
-            })));
-          }
-        })
-        .catch(() => {});
-    }
+    if (existingSchema) return;
+    const url = dataset?.schemaId
+      ? `/api/schemas?id=${dataset.schemaId}`
+      : dataset?.id
+        ? `/api/schemas?datasetId=${dataset.id}`
+        : null;
+    if (!url) return;
+    fetch(url)
+      .then(r => r.json())
+      .then(d => {
+        const schema = d.schema ?? d.schemas?.[0];
+        if (schema?.columns?.length > 0) {
+          setName(schema.name ?? dataset?.name ?? 'New Schema');
+          setColumns((schema.columns as any[]).map((c: any) => ({
+            name: c.name ?? '',
+            type: c.type ?? 'string',
+            description: c.description ?? '',
+            required: c.required ?? false,
+          })));
+        }
+      })
+      .catch(() => {});
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dataset?.schemaId]);
+  }, [dataset?.schemaId, dataset?.id]);
 
   const addColumn = () => {
     setColumns(prev => [...prev, { name: '', type: 'string', description: '', required: false }]);
@@ -1047,7 +1065,7 @@ function DatasetCard({ ds, onView, onEditSchema, onDelete }: { ds: Dataset; onVi
       </div>
 
       {/* Actions */}
-      <div style={{ display: 'flex', gap: 8 }}>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
         <button className="btn btn-primary btn-sm" onClick={onEditSchema}>
           <Database size={12} /> Update Schema
         </button>
@@ -1058,9 +1076,11 @@ function DatasetCard({ ds, onView, onEditSchema, onDelete }: { ds: Dataset; onVi
           <Eye size={12} /> View Sample
         </button>
         {onDelete && (
-          <button className="btn btn-ghost btn-sm" style={{ color: 'var(--error)' }} onClick={onDelete}>
-            <Trash2 size={12} /> Delete
-          </button>
+          <div style={{ marginLeft: 'auto' }}>
+            <button className="btn btn-ghost btn-sm" style={{ color: 'var(--error)' }} onClick={e => { e.stopPropagation(); onDelete(); }}>
+              <Trash2 size={12} /> Delete
+            </button>
+          </div>
         )}
       </div>
     </div>
@@ -1785,11 +1805,12 @@ const FILE_TYPE_ICONS: Record<string, typeof File> = {
   dataset: FileSpreadsheet, file: File,
 };
 
-function MyDatasetsTab({ datasets, loading, onViewDataset, onRefresh }: {
+function MyDatasetsTab({ datasets, loading, onViewDataset, onRefresh, onRefreshJobs }: {
   datasets: any[];
   loading: boolean;
   onViewDataset: (ds: any) => void;
   onRefresh?: () => void;
+  onRefreshJobs?: () => void;
 }) {
   const [showUpload, setShowUpload] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -1843,8 +1864,8 @@ function MyDatasetsTab({ datasets, loading, onViewDataset, onRefresh }: {
   const handleDeleteDataset = async (id: string) => {
     try {
       await fetch(`/api/data/datasets?id=${id}`, { method: 'DELETE' });
-      // Also clean lineage
       onRefresh?.();
+      onRefreshJobs?.(); // Synth job may have been deleted too — refresh Generate tab
     } catch (err) {
       console.error('Delete dataset failed:', err);
     }
@@ -2257,12 +2278,15 @@ export default function DataSynthesisPage() {
   const [synthTarget, setSynthTarget] = useState(1000);
   const [synthTemp, setSynthTemp] = useState(0.8);
   const [synthBatch, setSynthBatch] = useState(5);
-  const [synthSystemPrompt, setSynthSystemPrompt] = useState('');
-  const [synthShowSystem, setSynthShowSystem] = useState(false);
+  const [synthSystemPrompt, setSynthSystemPrompt] = useState(
+    'You are a precise data generation assistant. Generate high-quality, diverse, realistic training data samples. Always return ONLY valid JSON — no markdown, no explanation, no code fences.'
+  );
+  const [synthShowSystem, setSynthShowSystem] = useState(true);
   const [synthSaveQdrant, setSynthSaveQdrant] = useState(false);
   const [synthSubmitting, setSynthSubmitting] = useState(false);
   const [synthModelSearchOpen, setSynthModelSearchOpen] = useState(false);
   const [synthSchema, setSynthSchema] = useState<any[]>([]);
+  const [synthSchemaName, setSynthSchemaName] = useState('');
   const [showSynthSchema, setShowSynthSchema] = useState(false);
 
   // Models fetched from engine — extract name strings from model objects
@@ -2320,7 +2344,7 @@ export default function DataSynthesisPage() {
           description: synthDescription,
           source: synthSource,
           model: synthModel,
-          systemPrompt: synthSystemPrompt || undefined,
+          systemPrompt: synthSystemPrompt.trim() || undefined,
           targetSamples: synthTarget,
           outputFormat: synthFormat,
           temperature: synthTemp,
@@ -2336,7 +2360,6 @@ export default function DataSynthesisPage() {
         setSynthName('');
         setSynthDescription('');
         setSynthModel('');
-        setSynthSystemPrompt('');
       }
     } catch (err) {
       console.error('Synthesis start failed:', err);
@@ -2469,6 +2492,7 @@ export default function DataSynthesisPage() {
           loading={datasetsLoading}
           onViewDataset={(ds: any) => setViewDataset(ds)}
           onRefresh={() => mutateDatasets()}
+          onRefreshJobs={() => mutateSynthJobs()}
         />
       )}
 
@@ -2718,7 +2742,7 @@ export default function DataSynthesisPage() {
                   }}
                 >
                   {synthShowSystem ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-                  System Prompt (optional)
+                  System Prompt
                 </button>
                 {synthShowSystem && (
                   <textarea
@@ -3046,8 +3070,15 @@ export default function DataSynthesisPage() {
       {/* Schema Editor for Synthesis */}
       {showSynthSchema && (
         <SchemaEditorModal
+          existingSchema={synthSchema.length > 0 ? { name: synthSchemaName || synthName || 'New Schema', columns: synthSchema } : undefined}
           onClose={() => setShowSynthSchema(false)}
-          onSave={(data) => { setSynthSchema(data.schema?.columns ?? []); setShowSynthSchema(false); }}
+          onSave={(data) => {
+            const schema = data.schema ?? data;
+            const cols = schema.columns ?? [];
+            setSynthSchema(Array.isArray(cols) ? cols : []);
+            setSynthSchemaName(schema.name ?? '');
+            setShowSynthSchema(false);
+          }}
         />
       )}
     </div>

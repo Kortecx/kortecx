@@ -258,31 +258,44 @@ class SynthesisService:
 
     async def _generate_sample(self, cfg: SynthesisConfig, sample_num: int) -> tuple[dict[str, Any], int] | None:
         """Generate a single data sample using the configured model."""
-        # Build prompt
-        template = FORMAT_TEMPLATES.get(cfg.output_format, FORMAT_TEMPLATES[OutputFormat.JSONL])
-        user_prompt = template.format(
-            description=cfg.description,
-            sample_num=sample_num,
-        )
-        if cfg.prompt_template:
-            user_prompt = cfg.prompt_template + "\n\n" + user_prompt
-
+        # Build prompt — when schema is defined, override the generic template
         if cfg.schema:
+            field_names = [c["name"] for c in cfg.schema]
             cols_desc = "\n".join(
-                f"  - {c['name']} ({c.get('type','string')}): {c.get('description','')}"
-                + (" [REQUIRED]" if c.get('required') else "")
+                f"  - \"{c['name']}\" ({c.get('type','string')}): {c.get('description','')}"
+                + (" [REQUIRED]" if c.get("required") else "")
                 for c in cfg.schema
             )
-            user_prompt += (
-                f"\n\nThe output JSON MUST contain exactly these columns/fields:\n{cols_desc}\n"
-                "Do NOT add extra fields. Do NOT omit any required fields."
+            example_obj = ", ".join(f'"{n}": <{c.get("type","string")}>' for n, c in zip(field_names, cfg.schema))
+            user_prompt = (
+                f"Generate a single JSON object for: {cfg.description}\n\n"
+                f"STRICT SCHEMA — the JSON MUST have exactly these keys, no more, no less:\n{cols_desc}\n\n"
+                f"Example structure: {{{example_obj}}}\n\n"
+                f"Return ONLY a valid JSON object with exactly {len(field_names)} keys: {', '.join(field_names)}\n"
+                f"Sample #{sample_num}:"
             )
 
-        system = cfg.system_prompt or (
-            "You are a precise data generation assistant. "
-            "Generate high-quality, diverse, realistic training data samples. "
-            "Always return ONLY valid JSON — no markdown, no explanation, no code fences."
-        )
+            system = cfg.system_prompt or (
+                "You are a precise data generation assistant. "
+                "You MUST follow the provided schema exactly. "
+                "Return ONLY a single valid JSON object with the exact field names specified. "
+                "No extra fields. No missing fields. No markdown. No explanation."
+            )
+        else:
+            template = FORMAT_TEMPLATES.get(cfg.output_format, FORMAT_TEMPLATES[OutputFormat.JSONL])
+            user_prompt = template.format(
+                description=cfg.description,
+                sample_num=sample_num,
+            )
+
+            system = cfg.system_prompt or (
+                "You are a precise data generation assistant. "
+                "Generate high-quality, diverse, realistic training data samples. "
+                "Always return ONLY valid JSON — no markdown, no explanation, no code fences."
+            )
+
+        if cfg.prompt_template:
+            user_prompt = cfg.prompt_template + "\n\n" + user_prompt
 
         async with self._semaphore:
             if cfg.source in (SynthesisSource.OLLAMA, SynthesisSource.LLAMACPP):
@@ -324,6 +337,25 @@ class SynthesisService:
         if sample is None:
             logger.debug("Failed to parse sample #%d, retrying once", sample_num)
             return None
+
+        # Enforce schema: keep only declared fields, fill missing with defaults
+        if cfg.schema:
+            schema_names = {c["name"] for c in cfg.schema}
+            filtered = {}
+            for c in cfg.schema:
+                col_name = c["name"]
+                if col_name in sample:
+                    filtered[col_name] = sample[col_name]
+                else:
+                    # Fill missing with type-appropriate default
+                    t = c.get("type", "string")
+                    filtered[col_name] = (
+                        0 if t in ("integer", "float", "number") else
+                        False if t == "boolean" else
+                        [] if t in ("array", "json") else
+                        ""
+                    )
+            sample = filtered
 
         # Add metadata
         sample["_meta"] = {

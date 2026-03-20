@@ -221,13 +221,17 @@ export async function PATCH(req: NextRequest) {
   }
 }
 
-/* DELETE /api/synthesis?id=<id> — remove a synthesis job record */
+/* DELETE /api/synthesis?id=<id> — remove a synthesis job and its linked dataset */
 export async function DELETE(req: NextRequest) {
   try {
     const id = req.nextUrl.searchParams.get('id');
     if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 });
     const [deleted] = await db.delete(synthesisJobs).where(eq(synthesisJobs.id, id)).returning();
     if (!deleted) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+
+    // Also remove the dataset that was created from this job
+    await db.delete(datasets).where(eq(datasets.sourceJobId, id)).catch(() => {});
+
     logStatus('info', `Synthesis job removed: ${id}`, 'synthesis', { jobId: id });
     return NextResponse.json({ deleted: true, id });
   } catch (err) {
