@@ -36,6 +36,7 @@ class CreateSynthesisRequest(BaseModel):
     batchSize: int = 5
     saveToQdrant: bool = False
     qdrantCollection: str = ""
+    schema: list[dict] | None = None  # [{name, type, description, required}]
     tags: list[str] = []
     categories: list[str] = []
 
@@ -77,6 +78,7 @@ async def start_synthesis(
         batch_size=body.batchSize,
         save_to_qdrant=body.saveToQdrant,
         qdrant_collection=body.qdrantCollection,
+        schema=body.schema,
         tags=body.tags,
         categories=body.categories,
     )

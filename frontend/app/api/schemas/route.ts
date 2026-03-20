@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, datasetSchemas, datasets } from '@/lib/db';
 import { eq, desc } from 'drizzle-orm';
+import { logStatus } from '@/lib/status-log';
 
 /* GET /api/schemas?datasetId=<id> — get schema for a dataset */
 export async function GET(req: NextRequest) {
@@ -54,6 +55,7 @@ export async function POST(req: NextRequest) {
       await db.update(datasets).set({ schemaId: id, updatedAt: new Date() }).where(eq(datasets.id, datasetId));
     }
 
+    logStatus('info', `Schema created: ${name}`, 'schema', { schemaId: inserted.id, columns: columns.length, datasetId });
     return NextResponse.json({ schema: inserted }, { status: 201 });
   } catch (err) {
     console.error('[schemas POST]', err);
@@ -79,6 +81,7 @@ export async function PATCH(req: NextRequest) {
     if (name) values.name = name.trim();
 
     const [updated] = await db.update(datasetSchemas).set(values).where(eq(datasetSchemas.id, id)).returning();
+    logStatus('info', `Schema updated: ${id}`, 'schema', { schemaId: id });
     return NextResponse.json({ schema: updated });
   } catch (err) {
     console.error('[schemas PATCH]', err);

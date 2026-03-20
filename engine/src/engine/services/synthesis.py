@@ -59,6 +59,7 @@ class SynthesisConfig:
     batch_size: int = 5  # concurrent generation requests per batch
     save_to_qdrant: bool = False
     qdrant_collection: str = ""
+    schema: list[dict] | None = None
     tags: list[str] = field(default_factory=list)
     categories: list[str] = field(default_factory=list)
 
@@ -266,6 +267,17 @@ class SynthesisService:
         if cfg.prompt_template:
             user_prompt = cfg.prompt_template + "\n\n" + user_prompt
 
+        if cfg.schema:
+            cols_desc = "\n".join(
+                f"  - {c['name']} ({c.get('type','string')}): {c.get('description','')}"
+                + (" [REQUIRED]" if c.get('required') else "")
+                for c in cfg.schema
+            )
+            user_prompt += (
+                f"\n\nThe output JSON MUST contain exactly these columns/fields:\n{cols_desc}\n"
+                "Do NOT add extra fields. Do NOT omit any required fields."
+            )
+
         system = cfg.system_prompt or (
             "You are a precise data generation assistant. "
             "Generate high-quality, diverse, realistic training data samples. "
@@ -422,12 +434,11 @@ class SynthesisService:
         if cfg.output_format == OutputFormat.CSV:
             path = output_dir / f"{base_name}.csv"
             if clean_samples:
-                keys = list(clean_samples[0].keys())
+                keys = [c["name"] for c in cfg.schema] if cfg.schema else list(clean_samples[0].keys())
                 with open(path, "w", newline="", encoding="utf-8") as f:
                     writer = csv.DictWriter(f, fieldnames=keys, extrasaction="ignore")
                     writer.writeheader()
                     for row in clean_samples:
-                        # Flatten nested values to strings
                         flat = {k: json.dumps(v) if isinstance(v, (dict, list)) else str(v) for k, v in row.items()}
                         writer.writerow(flat)
         elif cfg.output_format == OutputFormat.DELTA:

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, datasets, synthesisJobs, lineage } from '@/lib/db';
 import { eq, desc, sql } from 'drizzle-orm';
+import { logStatus } from '@/lib/status-log';
 
 /* GET /api/data/datasets — list all local datasets, auto-sync completed synthesis jobs */
 export async function GET() {
@@ -84,6 +85,8 @@ export async function POST(req: NextRequest) {
       categories: categories ?? [],
     }).returning();
 
+    logStatus('info', `Dataset created: ${name}`, 'dataset', { datasetId: id, format });
+
     return NextResponse.json({ dataset: inserted }, { status: 201 });
   } catch (err) {
     console.error('[data/datasets POST]', err);
@@ -111,6 +114,7 @@ export async function PATCH(req: NextRequest) {
 
     const [updated] = await db.update(datasets).set(values).where(eq(datasets.id, id)).returning();
     if (!updated) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+    logStatus('info', `Dataset updated: ${id}`, 'dataset', { datasetId: id, fields: Object.keys(updates) });
     return NextResponse.json({ dataset: updated });
   } catch (err) {
     console.error('[data/datasets PATCH]', err);
@@ -125,6 +129,7 @@ export async function DELETE(req: NextRequest) {
     if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 });
     const [deleted] = await db.delete(datasets).where(eq(datasets.id, id)).returning();
     if (!deleted) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+    logStatus('info', `Dataset deleted: ${id}`, 'dataset', { datasetId: id });
     return NextResponse.json({ deleted: true, id });
   } catch (err) {
     console.error('[data/datasets DELETE]', err);

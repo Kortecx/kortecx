@@ -8,7 +8,7 @@ import {
   Zap, Filter, Search, Loader2, Heart, ArrowDownToLine,
   ExternalLink, Trash2, Eye, HardDrive, Rows3, Columns3, Key,
   Cpu, Server, Sparkle, ChevronDown, ChevronRight, X,
-  Upload, FolderPlus, File, Image, Video, Music, FileSpreadsheet,
+  Upload, FolderPlus, File, Image, Video, Music, FileSpreadsheet, GripVertical,
 } from 'lucide-react';
 import Link from 'next/link';
 import type { Dataset } from '@/lib/types';
@@ -638,6 +638,38 @@ function SchemaEditorModal({
   const [saving, setSaving] = useState(false);
   const [impact, setImpact] = useState<any>(null);
   const [showImpact, setShowImpact] = useState(false);
+  const [dragIdx, setDragIdx] = useState<number | null>(null);
+  const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
+
+  const handleDragStart = (idx: number) => {
+    setDragIdx(idx);
+  };
+
+  const handleDragOver = (e: React.DragEvent, idx: number) => {
+    e.preventDefault();
+    setDragOverIdx(idx);
+  };
+
+  const handleDrop = (idx: number) => {
+    if (dragIdx === null || dragIdx === idx) {
+      setDragIdx(null);
+      setDragOverIdx(null);
+      return;
+    }
+    setColumns(prev => {
+      const next = [...prev];
+      const [moved] = next.splice(dragIdx, 1);
+      next.splice(idx, 0, moved);
+      return next;
+    });
+    setDragIdx(null);
+    setDragOverIdx(null);
+  };
+
+  const handleDragEnd = () => {
+    setDragIdx(null);
+    setDragOverIdx(null);
+  };
 
   // Check impact for existing datasets
   useEffect(() => {
@@ -673,6 +705,28 @@ function SchemaEditorModal({
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dataset?.outputPath]);
+
+  // Load existing schema from DB
+  useEffect(() => {
+    if (dataset?.schemaId && !existingSchema) {
+      fetch(`/api/schemas?id=${dataset.schemaId}`)
+        .then(r => r.json())
+        .then(d => {
+          const schema = d.schemas?.[0] ?? d.schema;
+          if (schema?.columns?.length > 0) {
+            setName(schema.name ?? name);
+            setColumns(schema.columns.map((c: any) => ({
+              name: c.name ?? '',
+              type: c.type ?? 'string',
+              description: c.description ?? '',
+              required: c.required ?? false,
+            })));
+          }
+        })
+        .catch(() => {});
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dataset?.schemaId]);
 
   const addColumn = () => {
     setColumns(prev => [...prev, { name: '', type: 'string', description: '', required: false }]);
@@ -806,11 +860,26 @@ function SchemaEditorModal({
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {columns.map((col, i) => (
-                <div key={i} style={{
-                  display: 'grid', gridTemplateColumns: '2fr 1fr 2fr auto auto', gap: 6, alignItems: 'center',
-                  padding: '8px 10px', borderRadius: 6,
-                  background: 'var(--bg)', border: '1px solid var(--border)',
-                }}>
+                <div
+                  key={i}
+                  draggable
+                  onDragStart={() => handleDragStart(i)}
+                  onDragOver={e => handleDragOver(e, i)}
+                  onDrop={() => handleDrop(i)}
+                  onDragEnd={handleDragEnd}
+                  style={{
+                    display: 'grid', gridTemplateColumns: 'auto 2fr 1fr 2fr auto auto', gap: 6, alignItems: 'center',
+                    padding: '8px 10px', borderRadius: 6,
+                    background: 'var(--bg)', border: '1px solid var(--border)',
+                    opacity: dragIdx === i ? 0.4 : 1,
+                    borderTop: dragOverIdx === i && dragIdx !== null && dragIdx > i ? '2px solid var(--teal)' : undefined,
+                    borderBottom: dragOverIdx === i && dragIdx !== null && dragIdx < i ? '2px solid var(--teal)' : undefined,
+                    transition: 'opacity 0.15s, border 0.15s',
+                  }}
+                >
+                  <div style={{ cursor: 'grab', color: 'var(--text-4)', display: 'flex', alignItems: 'center' }}>
+                    <GripVertical size={14} />
+                  </div>
                   <input
                     className="input" style={{ fontSize: 11, padding: '4px 8px' }}
                     placeholder="Column name"
@@ -870,7 +939,7 @@ function SchemaEditorModal({
 
 /* ── Dataset Card (My Datasets tab) ────────────────────── */
 
-function DatasetCard({ ds, onView, onEditSchema }: { ds: Dataset; onView?: () => void; onEditSchema?: () => void }) {
+function DatasetCard({ ds, onView, onEditSchema, onDelete }: { ds: Dataset; onView?: () => void; onEditSchema?: () => void; onDelete?: () => void }) {
   const statusColor = ds.status === 'ready' ? 'var(--success)'
     : ds.status === 'generating' ? 'var(--amber)'
     : ds.status === 'failed' ? 'var(--error)'
@@ -988,6 +1057,11 @@ function DatasetCard({ ds, onView, onEditSchema }: { ds: Dataset; onView?: () =>
         <button className="btn btn-ghost btn-sm" onClick={onView} disabled={!onView}>
           <Eye size={12} /> View Sample
         </button>
+        {onDelete && (
+          <button className="btn btn-ghost btn-sm" style={{ color: 'var(--error)' }} onClick={onDelete}>
+            <Trash2 size={12} /> Delete
+          </button>
+        )}
       </div>
     </div>
   );
@@ -1711,10 +1785,11 @@ const FILE_TYPE_ICONS: Record<string, typeof File> = {
   dataset: FileSpreadsheet, file: File,
 };
 
-function MyDatasetsTab({ datasets, loading, onViewDataset }: {
+function MyDatasetsTab({ datasets, loading, onViewDataset, onRefresh }: {
   datasets: any[];
   loading: boolean;
   onViewDataset: (ds: any) => void;
+  onRefresh?: () => void;
 }) {
   const [showUpload, setShowUpload] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -1763,6 +1838,16 @@ function MyDatasetsTab({ datasets, loading, onViewDataset }: {
   const handleRemoveAsset = async (id: string) => {
     await fetch(`/api/assets?id=${id}`, { method: 'DELETE' });
     mutateAssets();
+  };
+
+  const handleDeleteDataset = async (id: string) => {
+    try {
+      await fetch(`/api/data/datasets?id=${id}`, { method: 'DELETE' });
+      // Also clean lineage
+      onRefresh?.();
+    } catch (err) {
+      console.error('Delete dataset failed:', err);
+    }
   };
 
   return (
@@ -1858,7 +1943,7 @@ function MyDatasetsTab({ datasets, loading, onViewDataset }: {
                 Datasets ({datasets.length})
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px,1fr))', gap: 12, marginBottom: 20 }}>
-                {datasets.map((ds: any) => <DatasetCard key={ds.id} ds={ds} onView={() => onViewDataset(ds)} onEditSchema={() => setSchemaDataset(ds)} />)}
+                {datasets.map((ds: any) => <DatasetCard key={ds.id} ds={ds} onView={() => onViewDataset(ds)} onEditSchema={() => setSchemaDataset(ds)} onDelete={() => handleDeleteDataset(ds.id)} />)}
               </div>
             </>
           )}
@@ -1927,7 +2012,7 @@ function MyDatasetsTab({ datasets, loading, onViewDataset }: {
         <SchemaEditorModal
           dataset={schemaDataset}
           onClose={() => setSchemaDataset(null)}
-          onSave={() => { setSchemaDataset(null); }}
+          onSave={() => { setSchemaDataset(null); onRefresh?.(); }}
         />
       )}
     </div>
@@ -2150,8 +2235,15 @@ function SynthesisEditModal({
 export default function DataSynthesisPage() {
   const [tab, setTab] = useState<'datasets' | 'huggingface' | 'generate'>('datasets');
 
-  // Database-backed datasets
-  const { data: datasetsData, isLoading: datasetsLoading } = useSWR<{ datasets: Dataset[] }>('/api/data/datasets', fetcher);
+  // Synthesis jobs list — declared early so hasActiveJobs drives datasets refresh
+  const { data: synthJobsData, mutate: mutateSynthJobs } = useSWR('/api/synthesis', fetcher, { refreshInterval: 5000 });
+  const synthJobs: any[] = synthJobsData?.jobs ?? [];
+  const hasActiveJobs = synthJobs.some((j: any) => j.status === 'running' || j.status === 'queued');
+
+  // Database-backed datasets — polls faster when synthesis is running
+  const { data: datasetsData, isLoading: datasetsLoading, mutate: mutateDatasets } = useSWR<{ datasets: Dataset[] }>(
+    '/api/data/datasets', fetcher, { refreshInterval: hasActiveJobs ? 5_000 : 30_000 },
+  );
   const myDatasets = datasetsData?.datasets ?? [];
 
   // Synthesis form state
@@ -2207,10 +2299,7 @@ export default function DataSynthesisPage() {
     }
   }, [synthSource, synthModel, refreshModels]);
 
-  // Synthesis jobs list
-  const { data: synthJobsData, mutate: mutateSynthJobs } = useSWR('/api/synthesis', fetcher, { refreshInterval: 5000 });
-  const synthJobs: any[] = synthJobsData?.jobs ?? [];
-  const hasActiveJobs = synthJobs.some((j: any) => j.status === 'running' || j.status === 'queued');
+  // (synthJobs SWR + hasActiveJobs moved above datasets SWR)
 
   // System stats — only poll when jobs are running
   const { data: sysStats } = useSWR(
@@ -2238,10 +2327,12 @@ export default function DataSynthesisPage() {
           maxTokens: 1024,
           batchSize: synthBatch,
           saveToQdrant: synthSaveQdrant,
+          schema: synthSchema.length > 0 ? synthSchema : undefined,
         }),
       });
       if (res.ok) {
         mutateSynthJobs();
+        mutateDatasets();
         setSynthName('');
         setSynthDescription('');
         setSynthModel('');
@@ -2265,6 +2356,7 @@ export default function DataSynthesisPage() {
     });
     if (!res.ok) throw new Error('Save failed');
     mutateSynthJobs();
+    mutateDatasets();
   };
 
   const handleCancelSynthJob = async (id: string) => {
@@ -2275,6 +2367,7 @@ export default function DataSynthesisPage() {
         body: JSON.stringify({ id, status: 'cancelled' }),
       });
       mutateSynthJobs();
+      mutateDatasets();
     } catch (err) {
       console.error('Cancel failed:', err);
     }
@@ -2284,6 +2377,7 @@ export default function DataSynthesisPage() {
     try {
       await fetch(`/api/synthesis?id=${id}`, { method: 'DELETE' });
       mutateSynthJobs();
+      mutateDatasets();
     } catch (err) {
       console.error('Remove job failed:', err);
     }
@@ -2374,6 +2468,7 @@ export default function DataSynthesisPage() {
           datasets={myDatasets}
           loading={datasetsLoading}
           onViewDataset={(ds: any) => setViewDataset(ds)}
+          onRefresh={() => mutateDatasets()}
         />
       )}
 

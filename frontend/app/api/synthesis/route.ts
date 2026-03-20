@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, synthesisJobs, datasets, apiKeys } from '@/lib/db';
 import { eq, desc, sql } from 'drizzle-orm';
+import { logStatus } from '@/lib/status-log';
 
 const ENGINE_URL = process.env.NEXT_PUBLIC_ENGINE_URL || 'http://localhost:8000';
 
@@ -37,7 +38,7 @@ export async function POST(req: NextRequest) {
       name, description, source, model, baseUrl,
       promptTemplate, systemPrompt, targetSamples, outputFormat,
       temperature, maxTokens, batchSize, saveToQdrant,
-      qdrantCollection, tags, categories,
+      qdrantCollection, tags, categories, schema,
     } = body;
 
     if (!name?.trim()) {
@@ -64,6 +65,8 @@ export async function POST(req: NextRequest) {
       tags: tags ?? [],
     }).returning();
 
+    logStatus('info', `Synthesis job started: ${name}`, 'synthesis', { jobId: id, model, source, targetSamples });
+
     // Forward to engine to start generation
     const hfToken = await getHfToken();
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -76,7 +79,7 @@ export async function POST(req: NextRequest) {
         name, description, source, model, baseUrl,
         promptTemplate, systemPrompt, targetSamples, outputFormat,
         temperature, maxTokens, batchSize, saveToQdrant,
-        qdrantCollection, tags, categories,
+        qdrantCollection, tags, categories, schema,
       }),
     })
       .then(async (res) => {
@@ -134,6 +137,7 @@ export async function PATCH(req: NextRequest) {
 
     // If cancelling a running job, tell the engine
     if (updates.status === 'cancelled' && (existing.status === 'running' || existing.status === 'queued')) {
+      logStatus('info', `Synthesis cancelled: ${existing.name}`, 'synthesis', { jobId: id });
       const hfToken = await getHfToken();
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       if (hfToken) headers['x-hf-token'] = hfToken;
@@ -224,6 +228,7 @@ export async function DELETE(req: NextRequest) {
     if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 });
     const [deleted] = await db.delete(synthesisJobs).where(eq(synthesisJobs.id, id)).returning();
     if (!deleted) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+    logStatus('info', `Synthesis job removed: ${id}`, 'synthesis', { jobId: id });
     return NextResponse.json({ deleted: true, id });
   } catch (err) {
     console.error('[synthesis DELETE]', err);
@@ -255,8 +260,9 @@ function pollSynthesisJob(dbId: string, engineJobId: string, headers: Record<str
         try {
           const [job] = await db.select().from(synthesisJobs).where(eq(synthesisJobs.id, dbId));
           if (job) {
+            const dsId = `ds-${Date.now()}`;
             await db.insert(datasets).values({
-              id: `ds-${Date.now()}`,
+              id: dsId,
               name: job.name,
               description: job.description ?? `Synthesized using ${job.model} (${job.source})`,
               status: 'ready',
@@ -264,14 +270,18 @@ function pollSynthesisJob(dbId: string, engineJobId: string, headers: Record<str
               sampleCount: data.currentSamples ?? job.targetSamples ?? 0,
               sizeBytes: 0,
               qualityScore: null,
+              outputPath: data.outputPath ?? null,
+              sourceJobId: dbId,
               tags: job.tags ?? [],
               categories: [],
             }).onConflictDoNothing();
+            logStatus('info', `Synthesis completed: ${job.name} — ${data.currentSamples} samples`, 'synthesis', { jobId: dbId, datasetId: dsId, samples: data.currentSamples });
           }
         } catch (err) {
           console.error('[synthesis] Failed to create dataset record:', err);
         }
       } else if (data.status === 'failed') {
+        logStatus('error', `Synthesis failed: ${dbId}`, 'synthesis', { jobId: dbId, error: data.error });
         updates.status = 'failed';
         updates.error = data.error ?? 'Unknown error';
         clearInterval(interval);

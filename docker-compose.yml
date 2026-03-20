@@ -4,6 +4,14 @@ services:
     image: postgres:16-alpine
     container_name: kortecx_db
     restart: unless-stopped
+    shm_size: '256mb'
+    command: >
+      postgres
+      -c wal_level=replica
+      -c fsync=on
+      -c synchronous_commit=on
+      -c full_page_writes=on
+      -c checkpoint_timeout=300
     environment:
       POSTGRES_USER: kortecx
       POSTGRES_PASSWORD: kortecx
@@ -26,21 +34,26 @@ services:
 
   # ── Qdrant Vector Database ──────────────────────────────────────────────────
   qdrant:
-    image: qdrant/qdrant:latest
+    image: qdrant/qdrant:latest      # pin after initial deploy; downgrade breaks storage format
     container_name: kortecx_qdrant
     restart: unless-stopped
+    shm_size: '128mb'
     ports:
       - '6333:6333'   # REST API
       - '6334:6334'   # gRPC
     volumes:
       - qdrant_data:/qdrant/storage
     healthcheck:
-      test: ['CMD', 'wget', '--no-verbose', '--tries=1', '--spider', 'http://localhost:6333/healthz']
+      test: ['CMD-SHELL', 'bash -c "echo > /dev/tcp/localhost/6333"']
       interval: 5s
       timeout: 5s
       retries: 5
 
 # ── Named volumes (persist across container recreation) ────────────────────
+# Crash-proof guarantees:
+#   - PostgreSQL: WAL durability (fsync, synchronous_commit, full_page_writes)
+#   - All volumes use Docker named volumes backed by the host filesystem
+#   - Data survives container restarts, crashes, and recreations
 # WARNING: Do NOT use 'docker compose down -v' — it deletes these volumes!
 # Use 'docker compose down' (without -v) to stop containers safely.
 volumes:
@@ -51,4 +64,8 @@ volumes:
   qdrant_data:
     labels:
       com.kortecx.description: "Qdrant vector embeddings"
+      com.kortecx.backup: "required"
+  kortecx_data:
+    labels:
+      com.kortecx.description: "Local datasets, uploads, and generated assets"
       com.kortecx.backup: "required"

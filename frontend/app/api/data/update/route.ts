@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, dataVersions, lineage } from '@/lib/db';
 import { eq } from 'drizzle-orm';
+import { logStatus } from '@/lib/status-log';
 
 const ENGINE_URL = process.env.NEXT_PUBLIC_ENGINE_URL || 'http://localhost:8000';
 
@@ -66,6 +67,8 @@ export async function POST(req: NextRequest) {
         console.error('[data/update] DB tracking error:', dbErr);
       }
     }
+
+    logStatus('info', `Dataset data updated: ${path}`, 'transform', { datasetId, updatesCount: updates.length, versionCreated: create_version });
 
     return NextResponse.json(data);
   } catch (err) {
