@@ -1,13 +1,13 @@
 'use client';
 
-import { Suspense, useState, useMemo, useCallback } from 'react';
+import { Suspense, useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import {
   Zap, Database, ArrowLeft, Table2, BarChart3, Code2,
   Filter, Columns3, Rows3, Play, Download, Loader2,
   Save, Trash2, Plus, ArrowUpDown, ChevronDown, Palette,
-  Type, PieChart, ScatterChart, TrendingUp,
+  Type, PieChart, ScatterChart, TrendingUp, Search, FolderOpen, X, Check,
 } from 'lucide-react';
 import useSWR from 'swr';
 
@@ -373,6 +373,215 @@ function DataTable({ rows, columns }: { rows: any[]; columns: ColumnInfo[] }) {
   );
 }
 
+// ─── Dataset Search Dropdown ─────────────────────────────────────────────────────
+
+function DatasetSearchDropdown({
+  datasets,
+  value,
+  onChange,
+}: {
+  datasets: any[];
+  value: string;
+  onChange: (id: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const containerRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Close on outside click
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  // Focus search input when opened
+  useEffect(() => {
+    if (open && inputRef.current) inputRef.current.focus();
+  }, [open]);
+
+  const selected = datasets.find((d: any) => d.id === value);
+  const lowerQuery = query.toLowerCase();
+  const filtered = datasets.filter((d: any) => {
+    if (!query) return true;
+    const name = (d.name ?? '').toLowerCase();
+    const format = (d.format ?? '').toLowerCase();
+    const path = (d.outputPath ?? '').toLowerCase();
+    const tags = (d.tags ?? []).join(' ').toLowerCase();
+    return name.includes(lowerQuery) || format.includes(lowerQuery) || path.includes(lowerQuery) || tags.includes(lowerQuery);
+  });
+
+  // Group datasets that have paths vs those without
+  const withPath = filtered.filter((d: any) => d.outputPath);
+
+
+  return (
+    <div ref={containerRef} style={{ position: 'relative', minWidth: 320 }}>
+      {/* Trigger Button */}
+      <button
+        type="button"
+        className="input"
+        onClick={() => { setOpen(!open); setQuery(''); }}
+        style={{
+          width: '100%', fontSize: 12, display: 'flex', alignItems: 'center',
+          justifyContent: 'space-between', gap: 8, cursor: 'pointer',
+          padding: '6px 10px', textAlign: 'left', minHeight: 34,
+          background: 'var(--bg-input, var(--bg-elevated))',
+        }}
+      >
+        <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {selected
+            ? <>{selected.name} <span style={{ color: 'var(--text-4)' }}>({selected.format ?? 'unknown'}{selected.sampleCount ? ` · ${selected.sampleCount} samples` : ''})</span></>
+            : <span style={{ color: 'var(--text-4)' }}>Select a dataset...</span>}
+        </span>
+        <ChevronDown size={13} color="var(--text-4)" style={{ flexShrink: 0, transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} />
+      </button>
+
+      {/* Dropdown Panel */}
+      {open && (
+        <div style={{
+          position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50,
+          marginTop: 4, borderRadius: 8, border: '1px solid var(--border)',
+          background: 'var(--bg-surface, var(--bg))', boxShadow: '0 8px 24px rgba(0,0,0,0.15)',
+          maxHeight: 400, display: 'flex', flexDirection: 'column',
+        }}>
+          {/* Search Input */}
+          <div style={{ padding: '8px 10px', borderBottom: '1px solid var(--border)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'var(--bg-elevated)', borderRadius: 6, padding: '5px 8px' }}>
+              <Search size={13} color="var(--text-4)" style={{ flexShrink: 0 }} />
+              <input
+                ref={inputRef}
+                type="text"
+                value={query}
+                onChange={e => setQuery(e.target.value)}
+                placeholder="Search datasets by name, format, or path..."
+                style={{
+                  flex: 1, border: 'none', outline: 'none', background: 'transparent',
+                  fontSize: 12, color: 'var(--text-1)', padding: 0,
+                }}
+              />
+              {query && (
+                <button
+                  type="button"
+                  onClick={() => setQuery('')}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, display: 'flex' }}
+                >
+                  <X size={12} color="var(--text-4)" />
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Options List */}
+          <div style={{ overflowY: 'auto', flex: 1 }}>
+            {filtered.length === 0 ? (
+              <div style={{ padding: '20px 14px', textAlign: 'center', fontSize: 12, color: 'var(--text-4)' }}>
+                No datasets match &ldquo;{query}&rdquo;
+              </div>
+            ) : (
+              <>
+                {/* Dataset items */}
+                {filtered.map((ds: any) => {
+                  const isSelected = ds.id === value;
+                  return (
+                    <button
+                      key={ds.id}
+                      type="button"
+                      onClick={() => { onChange(ds.id); setOpen(false); setQuery(''); }}
+                      style={{
+                        width: '100%', textAlign: 'left', border: 'none', cursor: 'pointer',
+                        padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: 2,
+                        background: isSelected ? 'var(--bg-elevated)' : 'transparent',
+                        borderLeft: isSelected ? '2px solid #7C3AED' : '2px solid transparent',
+                      }}
+                      onMouseEnter={e => { if (!isSelected) (e.currentTarget.style.background = 'var(--bg-elevated)'); }}
+                      onMouseLeave={e => { if (!isSelected) (e.currentTarget.style.background = 'transparent'); }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <Database size={12} color={isSelected ? '#7C3AED' : 'var(--text-4)'} style={{ flexShrink: 0 }} />
+                        <span style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-1)', flex: 1 }}>{ds.name}</span>
+                        {isSelected && <Check size={13} color="#7C3AED" style={{ flexShrink: 0 }} />}
+                        <span style={{
+                          fontSize: 10, padding: '1px 5px', borderRadius: 4,
+                          background: ds.status === 'ready' ? 'rgba(16,185,129,0.1)' : 'var(--bg-elevated)',
+                          color: ds.status === 'ready' ? 'var(--success)' : 'var(--text-4)',
+                          fontWeight: 500,
+                        }}>
+                          {ds.format ?? 'unknown'}
+                        </span>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, paddingLeft: 18 }}>
+                        {ds.sampleCount != null && (
+                          <span style={{ fontSize: 10, color: 'var(--text-4)' }}>
+                            {ds.sampleCount.toLocaleString()} samples
+                          </span>
+                        )}
+                        {ds.sizeBytes != null && ds.sizeBytes > 0 && (
+                          <span style={{ fontSize: 10, color: 'var(--text-4)' }}>
+                            {(ds.sizeBytes / 1024 / 1024).toFixed(1)} MB
+                          </span>
+                        )}
+                      </div>
+                    </button>
+                  );
+                })}
+
+                {/* Paths Section — shown at the end of the dropdown */}
+                {withPath.length > 0 && (
+                  <div style={{
+                    borderTop: '1px solid var(--border)', marginTop: 4, padding: '8px 0',
+                  }}>
+                    <div style={{
+                      padding: '2px 12px 6px', fontSize: 10, fontWeight: 600,
+                      color: 'var(--text-4)', textTransform: 'uppercase', letterSpacing: '0.5px',
+                      display: 'flex', alignItems: 'center', gap: 4,
+                    }}>
+                      <FolderOpen size={11} /> Storage Paths
+                    </div>
+                    {withPath.map((ds: any) => (
+                      <button
+                        key={`path-${ds.id}`}
+                        type="button"
+                        onClick={() => { onChange(ds.id); setOpen(false); setQuery(''); }}
+                        style={{
+                          width: '100%', textAlign: 'left', border: 'none', cursor: 'pointer',
+                          padding: '4px 12px', background: 'transparent', display: 'flex',
+                          alignItems: 'center', gap: 6,
+                        }}
+                        onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-elevated)')}
+                        onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+                      >
+                        <span style={{
+                          fontSize: 10, color: ds.id === value ? '#7C3AED' : 'var(--text-3)',
+                          fontWeight: ds.id === value ? 600 : 400,
+                        }}>
+                          {ds.name}
+                        </span>
+                        <span style={{
+                          fontSize: 10, color: 'var(--text-4)',
+                          fontFamily: 'var(--font-mono, monospace)',
+                          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1,
+                        }}>
+                          {ds.outputPath}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Main Page Component ────────────────────────────────────────────────────────
 
 function DataEngineerPage() {
@@ -679,19 +888,11 @@ function DataEngineerPage() {
           <Database size={14} color="var(--text-3)" />
           <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-2)' }}>Dataset</span>
         </div>
-        <select
-          className="input"
-          style={{ minWidth: 260, fontSize: 12 }}
+        <DatasetSearchDropdown
+          datasets={datasetsList}
           value={selectedDatasetId}
-          onChange={e => setSelectedDatasetId(e.target.value)}
-        >
-          <option value="">Select a dataset...</option>
-          {datasetsList.map((ds: any) => (
-            <option key={ds.id} value={ds.id}>
-              {ds.name} ({ds.format ?? 'unknown'}{ds.sampleCount ? ` \u00b7 ${ds.sampleCount} samples` : ''})
-            </option>
-          ))}
-        </select>
+          onChange={setSelectedDatasetId}
+        />
         {showLoad && (
           <button
             className="btn btn-primary btn-sm"
@@ -770,19 +971,11 @@ function DataEngineerPage() {
                   <Database size={14} color="var(--text-3)" />
                   <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-2)' }}>Dataset</span>
                 </div>
-                <select
-                  className="input"
-                  style={{ minWidth: 260, fontSize: 12 }}
+                <DatasetSearchDropdown
+                  datasets={datasetsList}
                   value={selectedDatasetId}
-                  onChange={e => setSelectedDatasetId(e.target.value)}
-                >
-                  <option value="">Select a dataset...</option>
-                  {datasetsList.map((ds: any) => (
-                    <option key={ds.id} value={ds.id}>
-                      {ds.name} ({ds.format ?? 'unknown'}{ds.sampleCount ? ` · ${ds.sampleCount} samples` : ''})
-                    </option>
-                  ))}
-                </select>
+                  onChange={setSelectedDatasetId}
+                />
                 {activeFilePath && (
                   <span style={{ fontSize: 10, color: 'var(--text-4)', fontFamily: 'var(--font-mono, monospace)' }}>
                     {activeFilePath}
