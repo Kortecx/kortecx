@@ -5,27 +5,25 @@ import Link from 'next/link';
 import {
   Plug, Clock, ChevronRight, Check, X,
   Key, Loader2, Eye, EyeOff, ExternalLink, Shield, Terminal,
+  Bot, Sparkles, Gem, Route, Zap, Wind, Smile, Compass, Atom,
 } from 'lucide-react';
 import { PROVIDERS } from '@/lib/constants';
 import type { AIProvider } from '@/lib/types';
+
+/* ─── Provider Icon Resolver ─────────────────────── */
+const PROVIDER_ICON_MAP: Record<string, React.ComponentType<{ size?: number; color?: string }>> = {
+  Bot, Sparkles, Gem, Route, Zap, Wind, Smile, Compass, Atom,
+};
+
+function ProviderIcon({ name, size = 18, color }: { name: string; size?: number; color?: string }) {
+  const Icon = PROVIDER_ICON_MAP[name] || Plug;
+  return <Icon size={size} color={color} />;
+}
 
 function fmt(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(0)}k`;
   return String(n);
-}
-
-function statusBadge(status: string) {
-  switch (status) {
-    case 'operational':
-      return <span className="badge badge-success">Operational</span>;
-    case 'degraded':
-      return <span className="badge badge-amber">Degraded</span>;
-    case 'outage':
-      return <span className="badge badge-error">Outage</span>;
-    default:
-      return <span className="badge badge-neutral">Unknown</span>;
-  }
 }
 
 /* ─── Provider-specific hints ──────────────────────── */
@@ -98,7 +96,7 @@ function ConnectModal({
             background: `${provider.color}14`, border: `1px solid ${provider.color}30`,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
           }}>
-            <div style={{ width: 10, height: 10, borderRadius: '50%', background: provider.color }} />
+            <ProviderIcon name={provider.icon} size={18} color={provider.color} />
           </div>
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-1)' }}>
@@ -348,7 +346,15 @@ export default function ProvidersPage() {
         {filtered.map(provider => {
           const connected = provider.connected || isConnected(provider.id);
           return (
-            <div key={provider.id} className="card" style={{ padding: 20 }}>
+            <div key={provider.id} className="card" style={{ padding: 20, position: 'relative' }}>
+              {/* Status dot — top right */}
+              <div style={{
+                position: 'absolute', top: 12, right: 12,
+                width: 9, height: 9, borderRadius: '50%',
+                background: connected ? '#059669' : '#DC2626',
+                boxShadow: connected ? '0 0 0 3px rgba(5,150,105,0.15)' : '0 0 0 3px rgba(220,38,38,0.12)',
+              }} title={connected ? 'Connected' : 'Not connected'} />
+
               {/* Provider Header */}
               <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 14 }}>
                 <div style={{
@@ -358,50 +364,17 @@ export default function ProvidersPage() {
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
                   flexShrink: 0,
                 }}>
-                  <div style={{
-                    width: 12, height: 12, borderRadius: '50%',
-                    background: provider.color,
-                  }} />
+                  <ProviderIcon name={provider.icon} size={20} color={provider.color} />
                 </div>
                 <div style={{ flex: 1 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <span style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-1)' }}>
                       {provider.name}
                     </span>
-                    {connected && statusBadge('operational')}
                   </div>
                   <p style={{ fontSize: 12, color: 'var(--text-3)', margin: '3px 0 0', lineHeight: 1.5 }}>
                     {provider.description}
                   </p>
-                </div>
-              </div>
-
-              {/* Connection Status */}
-              <div style={{
-                padding: '10px 14px',
-                background: connected ? 'rgba(5,150,105,0.05)' : 'var(--bg)',
-                border: `1px solid ${connected ? 'rgba(5,150,105,0.15)' : 'var(--border)'}`,
-                borderRadius: 5,
-                marginBottom: 12,
-              }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  {connected ? (
-                    <Check size={14} color="#059669" />
-                  ) : (
-                    <X size={14} color="var(--text-4)" />
-                  )}
-                  <span style={{
-                    fontSize: 12, fontWeight: 500,
-                    color: connected ? '#059669' : 'var(--text-3)',
-                  }}>
-                    {connected ? 'Connected' : 'Not connected'}
-                  </span>
-                  {connected && (
-                    <>
-                      <span style={{ color: 'var(--text-4)' }}>·</span>
-                      <span style={{ fontSize: 11, color: 'var(--text-3)' }}>API key set</span>
-                    </>
-                  )}
                 </div>
               </div>
 

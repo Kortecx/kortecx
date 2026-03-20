@@ -14,6 +14,7 @@ from engine.routers import (
     datasets,
     embeddings,
     inference,
+    mcp,
     models,
     orchestrator,
     pipelines,
@@ -42,6 +43,9 @@ async def lifespan(app: FastAPI):
     from pathlib import Path
 
     Path(settings.upload_dir).mkdir(parents=True, exist_ok=True)
+    (Path(__file__).resolve().parents[2] / "mcp").mkdir(parents=True, exist_ok=True)
+    (Path(__file__).resolve().parents[2] / "mcp" / "prompts").mkdir(parents=True, exist_ok=True)
+    (Path(__file__).resolve().parents[2] / "mcp_scripts").mkdir(parents=True, exist_ok=True)
 
     logger.info("Services ready")
 
@@ -79,6 +83,7 @@ app.include_router(pipelines.router, prefix="/api/pipelines", tags=["pipelines"]
 app.include_router(orchestrator.router, prefix="/api/orchestrator", tags=["orchestrator"])
 app.include_router(workflow_logs.router, prefix="/api/logs", tags=["logs"])
 app.include_router(mlflow_router, prefix="/api/mlflow", tags=["mlflow"])
+app.include_router(mcp.router, prefix="/api/mcp", tags=["mcp"])
 
 # ── WebSocket ────────────────────────────────────────────────────────────────
 app.include_router(ws_manager.router, tags=["websocket"])

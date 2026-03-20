@@ -49,11 +49,11 @@
   --indigo:       #4F46E5;
   --indigo-dim:   rgba(79,70,229,0.08);
 
-  /* ─── Text ───────────────────────────────────────── */
+  /* ─── Text — slightly bolder for readability ────── */
   --text-1:  #0d0d0d;
-  --text-2:  rgba(13,13,13,0.58);
-  --text-3:  rgba(13,13,13,0.36);
-  --text-4:  rgba(13,13,13,0.18);
+  --text-2:  rgba(13,13,13,0.68);
+  --text-3:  rgba(13,13,13,0.46);
+  --text-4:  rgba(13,13,13,0.26);
 
   /* ─── Layout ─────────────────────────────────────── */
   --sidebar-width:     240px;
@@ -72,6 +72,7 @@ body {
   background: var(--bg);
   color: var(--text-1);
   font-family: var(--font-geist-sans), system-ui, sans-serif;
+  font-weight: 450;
   min-height: 100vh;
   overflow-x: hidden;
   -webkit-font-smoothing: antialiased;
@@ -137,7 +138,7 @@ input[type="range"]::-webkit-slider-thumb {
   padding: 6px 14px;
   border-radius: var(--radius-sm);
   font-size: 13px;
-  font-weight: 500;
+  font-weight: 550;
   line-height: 1;
   cursor: pointer;
   border: 1px solid transparent;
@@ -200,8 +201,8 @@ input[type="range"]::-webkit-slider-thumb {
   padding: 2px 8px;
   border-radius: 20px;
   font-size: 11px;
-  font-weight: 500;
-  letter-spacing: 0.01em;
+  font-weight: 600;
+  letter-spacing: 0.02em;
   border: 1px solid transparent;
 }
 .badge-primary { background: rgba(240,69,0,0.08);   color: #F04500;  border-color: rgba(240,69,0,0.20); }
@@ -241,7 +242,7 @@ input[type="range"]::-webkit-slider-thumb {
 /* ────────────────────────────────────────────────── */
 .section-label {
   font-size: 10px;
-  font-weight: 600;
+  font-weight: 700;
   letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--text-3);
@@ -257,6 +258,7 @@ input[type="range"]::-webkit-slider-thumb {
   border-radius: var(--radius-sm);
   padding: 8px 12px;
   font-size: 13px;
+  font-weight: 450;
   color: var(--text-1);
   transition: border-color 0.15s;
   outline: none;
@@ -310,14 +312,14 @@ input[type="range"]::-webkit-slider-thumb {
 }
 .metric-label {
   font-size: 10px;
-  font-weight: 600;
+  font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--text-3);
   margin-top: 6px;
 }
-.metric-delta-up   { color: var(--success); font-size: 11px; font-weight: 500; }
-.metric-delta-down { color: var(--error);   font-size: 11px; font-weight: 500; }
+.metric-delta-up   { color: var(--success); font-size: 11px; font-weight: 600; }
+.metric-delta-down { color: var(--error);   font-size: 11px; font-weight: 600; }
 
 /* ────────────────────────────────────────────────── */
 /*  TABLE                                             */
@@ -341,6 +343,7 @@ input[type="range"]::-webkit-slider-thumb {
   padding: 10px 12px;
   border-bottom: 1px solid var(--border);
   color: var(--text-2);
+  font-weight: 450;
 }
 .table-base tr:last-child td { border-bottom: none; }
 .table-base tr:hover td { background: var(--bg-elevated); }
@@ -431,7 +434,7 @@ input[type="range"]::-webkit-slider-thumb {
   padding: 6px 10px;
   border-radius: var(--radius-sm);
   font-size: 13px;
-  font-weight: 450;
+  font-weight: 500;
   color: var(--text-2);
   cursor: pointer;
   transition: background 0.12s, color 0.12s;
@@ -444,7 +447,7 @@ input[type="range"]::-webkit-slider-thumb {
   text-align: left;
 }
 .nav-item:hover  { background: var(--bg-elevated); color: var(--text-1); }
-.nav-item.active { background: var(--primary-dim); color: var(--primary); font-weight: 500; }
+.nav-item.active { background: var(--primary-dim); color: var(--primary); font-weight: 600; }
 
 /* ── Sidebar dark context ────────────────────────── */
 .sidebar .nav-item { color: rgba(255,255,255,0.40); }

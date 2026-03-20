@@ -585,3 +585,67 @@ type CreateProviderRequest struct {
 	BaseURL string `json:"baseUrl"`
 	APIKey  string `json:"apiKey"`
 }
+
+/* ── MCP Server Types ─────────────────────────────────────────────────── */
+
+// McpServerStatus represents the status of an MCP server script.
+type McpServerStatus string
+
+const (
+	McpStatusIdle    McpServerStatus = "idle"
+	McpStatusRunning McpServerStatus = "running"
+	McpStatusTested  McpServerStatus = "tested"
+	McpStatusError   McpServerStatus = "error"
+)
+
+// McpServerSource represents where an MCP server script originates from.
+type McpServerSource string
+
+const (
+	McpSourcePrebuilt  McpServerSource = "prebuilt"
+	McpSourceGenerated McpServerSource = "generated"
+	McpSourcePersisted McpServerSource = "persisted"
+)
+
+// McpServer represents an MCP server script.
+type McpServer struct {
+	ID          string          `json:"id"`
+	Name        string          `json:"name"`
+	Description string          `json:"description"`
+	Language    string          `json:"language"`   // python | typescript | javascript
+	Filename    string          `json:"filename"`
+	Source      McpServerSource `json:"source"`
+	Code        string          `json:"code"`
+	Status      McpServerStatus `json:"status"`
+	TestOutput       string          `json:"test_output,omitempty"`
+	CreatedAt        string          `json:"created_at,omitempty"`
+	Prompt           string          `json:"prompt,omitempty"`
+	IsPublic         bool            `json:"is_public"`
+	GenerationTimeMs int             `json:"generation_time_ms,omitempty"`
+	CpuPercent       float64         `json:"cpu_percent,omitempty"`
+}
+
+// McpServersResponse is the response from GET /api/mcp/servers.
+type McpServersResponse struct {
+	Prebuilt  []McpServer `json:"prebuilt"`
+	Persisted []McpServer `json:"persisted"`
+	Cached    []McpServer `json:"cached"`
+	Total     int         `json:"total"`
+}
+
+// GenerateMcpRequest is the request to POST /api/mcp/generate.
+type GenerateMcpRequest struct {
+	Prompt   string `json:"prompt"`
+	Language string `json:"language"` // python | typescript | javascript
+	Model    string `json:"model"`
+	Source   string `json:"source"` // ollama | llamacpp
+}
+
+// CacheMcpRequest is the request to POST /api/mcp/cache.
+type CacheMcpRequest struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Language    string `json:"language"`
+	Code        string `json:"code"`
+	Filename    string `json:"filename,omitempty"`
+}

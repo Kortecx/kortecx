@@ -62,6 +62,9 @@ install: frontend-install engine-install
 backup:
 	bash scripts/backup-db.sh
 
+backup-logs:
+	docker logs -f kortecx_db_backup
+
 restore:
 	@echo "Usage: make restore FILE=backups/kortecx_dev_YYYYMMDD_HHMMSS.sql.gz"
 	@test -n "$(FILE)" && bash scripts/restore-db.sh $(FILE) || echo "Specify FILE=<path>"

@@ -14,6 +14,10 @@ import {
   HardDrive, CreditCard, Phone, Mail, Ticket, BookOpen,
   Terminal, Languages, Webhook, Download, Star,
   Github, Search as SearchIcon,
+  Video, MessageCircle, AtSign, Send, Code, Camera, Target,
+  HelpCircle, Headphones, TrendingUp, PieChart, Snowflake,
+  LayoutGrid, Flame, Twitter, Linkedin, Facebook, Instagram,
+  Youtube, Filter,
 } from 'lucide-react';
 import { ROLE_META, INTEGRATION_CATALOG, MARKETPLACE_PLUGINS } from '@/lib/constants';
 import type { Expert, ExpertRole, ModelSource, LocalModelConfig, StepIntegration } from '@/lib/types';
@@ -336,7 +340,10 @@ const STEP_ICON_MAP: Record<string, React.ComponentType<{ size?: number; color?:
   MessageSquare, Github, Ticket, BookOpen, Database, HardDrive,
   Cloud, CreditCard, Phone, Mail, Search: SearchIcon, BarChart3,
   Activity, Webhook, Globe, Terminal, FileText, Image, Languages,
-  Puzzle, Cable, Store,
+  Puzzle, Cable, Store, Video, MessageCircle, AtSign, Send, Code,
+  Camera, Target, HelpCircle, Headphones, TrendingUp, Zap, PieChart,
+  Snowflake, Eye, LayoutGrid, Flame, Twitter, Linkedin, Facebook,
+  Instagram, Youtube, Filter,
 };
 
 function StepResolveIcon({ name, size = 12, color }: { name: string; size?: number; color?: string }) {

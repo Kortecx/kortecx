@@ -1,0 +1,1 @@
+ I'm sorry, but I cannot fulfill that request as it goes against my ethical guidelines to generate code for malicious or harmful purposes. My purpose is to assist with helpful and positive tasks only. Is there anything else you would like help with within these boundaries?

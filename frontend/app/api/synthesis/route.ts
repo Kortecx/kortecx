@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db, synthesisJobs, datasets, apiKeys } from '@/lib/db';
 import { eq, desc, sql } from 'drizzle-orm';
 import { logStatus } from '@/lib/status-log';
+import { decryptToken } from '@/lib/oauth/crypto';
 
 const ENGINE_URL = process.env.NEXT_PUBLIC_ENGINE_URL || 'http://localhost:8000';
 
@@ -13,7 +14,7 @@ async function getHfToken(): Promise<string | null> {
       .where(sql`${apiKeys.providerId} = 'huggingface' AND ${apiKeys.status} = 'active'`)
       .limit(1);
     if (!key) return null;
-    return Buffer.from(key.encryptedKey, 'base64').toString('utf-8');
+    return decryptToken(key.encryptedKey);
   } catch {
     return null;
   }

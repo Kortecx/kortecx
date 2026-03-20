@@ -73,6 +73,38 @@ services:
       timeout: 5s
       retries: 3
 
+  # ── Automated Database Backup (every 15 minutes) ───────────────────────────
+  db-backup:
+    image: postgres:16-alpine
+    container_name: kortecx_db_backup
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./backups:/backups
+    environment:
+      PGHOST: db
+      PGPORT: '5432'
+      PGUSER: kortecx
+      PGPASSWORD: kortecx
+      PGDATABASE: kortecx_dev
+      BACKUP_RETENTION: '48'
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        echo "Backup cron starting — every 15 minutes, retaining last $${BACKUP_RETENTION} dumps"
+        while true; do
+          sleep 900
+          STAMP=$$(date +%Y%m%d_%H%M%S)
+          FILE="/backups/kortecx_dev_$${STAMP}.sql.gz"
+          pg_dump -h db -U kortecx -d kortecx_dev --clean --if-exists | gzip > "$$FILE"
+          SIZE=$$(du -h "$$FILE" | cut -f1)
+          echo "[$$STAMP] backup saved: $$FILE ($$SIZE)"
+          ls -t /backups/kortecx_dev_*.sql.gz 2>/dev/null | tail -n +$$((BACKUP_RETENTION + 1)) | xargs -r rm -f
+        done
+
 # ── Named volumes (persist across container recreation) ────────────────────
 # Crash-proof guarantees:
 #   - PostgreSQL: WAL durability (fsync, synchronous_commit, full_page_writes)

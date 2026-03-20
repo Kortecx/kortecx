@@ -329,7 +329,7 @@ export const apiKeys = pgTable('api_keys', {
   keyHash:      text('key_hash').notNull(),           // SHA-256 hash for identification
   keyPrefix:    text('key_prefix'),                    // first 8 chars for display
   keySuffix:    text('key_suffix'),                    // last 4 chars for display
-  encryptedKey: text('encrypted_key').notNull(),       // base64 encoded (TODO: proper encryption in prod)
+  encryptedKey: text('encrypted_key').notNull(),       // AES-256-GCM encrypted via OAUTH_ENCRYPTION_KEY
   status:       varchar('status', { length: 20 }).default('active'),
   // active | revoked | expired
   lastUsedAt:   timestamp('last_used_at', { withTimezone: true }),

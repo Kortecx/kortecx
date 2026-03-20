@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, apiKeys } from '@/lib/db';
 import { sql } from 'drizzle-orm';
+import { decryptToken } from '@/lib/oauth/crypto';
 
 const ENGINE_URL = process.env.NEXT_PUBLIC_ENGINE_URL || 'http://localhost:8000';
 
@@ -25,7 +26,7 @@ export async function GET(req: NextRequest) {
           .where(sql`${apiKeys.providerId} = 'huggingface' AND ${apiKeys.status} = 'active'`)
           .limit(1);
         if (key) {
-          headers['x-hf-token'] = Buffer.from(key.encryptedKey, 'base64').toString('utf-8');
+          headers['x-hf-token'] = decryptToken(key.encryptedKey);
         }
       } catch { /* ignore */ }
     }

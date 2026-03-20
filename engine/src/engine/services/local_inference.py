@@ -6,6 +6,8 @@ import asyncio
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+import json
+from collections.abc import AsyncIterator
 from typing import Any
 
 import httpx
@@ -97,6 +99,22 @@ class LocalInferenceBackend(ABC):
     ) -> GenerateResult: ...
 
     @abstractmethod
+    async def generate_stream(
+        self,
+        model: str,
+        prompt: str,
+        *,
+        system: str = "",
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+    ) -> AsyncIterator[str]:
+        """Yield token chunks as they arrive from the LLM."""
+        ...
+        # Make abstract generators work
+        if False:
+            yield ""  # pragma: no cover
+
+    @abstractmethod
     async def chat(
         self,
         model: str,
@@ -164,6 +182,38 @@ class OllamaService(LocalInferenceBackend):
             model=model,
             duration_ms=data.get("total_duration", 0) / 1_000_000,  # ns -> ms
         )
+
+    async def generate_stream(
+        self,
+        model: str,
+        prompt: str,
+        *,
+        system: str = "",
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+    ) -> AsyncIterator[str]:
+        payload: dict[str, Any] = {
+            "model": model,
+            "prompt": prompt,
+            "stream": True,
+            "options": {"temperature": temperature, "num_predict": max_tokens},
+        }
+        if system:
+            payload["system"] = system
+        async with self.client.stream("POST", "/api/generate", json=payload) as resp:
+            resp.raise_for_status()
+            async for line in resp.aiter_lines():
+                if not line.strip():
+                    continue
+                try:
+                    chunk = json.loads(line)
+                    token = chunk.get("response", "")
+                    if token:
+                        yield token
+                    if chunk.get("done", False):
+                        return
+                except json.JSONDecodeError:
+                    continue
 
     async def chat(
         self,
@@ -304,6 +354,40 @@ class LlamaCppService(LocalInferenceBackend):
             duration_ms=data.get("timings", {}).get("predicted_ms", 0),
         )
 
+    async def generate_stream(
+        self,
+        model: str,
+        prompt: str,
+        *,
+        system: str = "",
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+    ) -> AsyncIterator[str]:
+        full_prompt = f"{system}\n\n{prompt}" if system else prompt
+        payload = {
+            "prompt": full_prompt,
+            "temperature": temperature,
+            "n_predict": max_tokens,
+            "stream": True,
+        }
+        async with self.client.stream("POST", "/completion", json=payload) as resp:
+            resp.raise_for_status()
+            async for line in resp.aiter_lines():
+                if not line.strip():
+                    continue
+                text = line
+                if text.startswith("data: "):
+                    text = text[6:]
+                try:
+                    chunk = json.loads(text)
+                    token = chunk.get("content", "")
+                    if token:
+                        yield token
+                    if chunk.get("stop", False):
+                        return
+                except json.JSONDecodeError:
+                    continue
+
     async def chat(
         self,
         model: str,
@@ -395,6 +479,23 @@ class InferenceRouter:
             temperature=temperature,
             max_tokens=max_tokens,
         )
+
+    async def generate_stream(
+        self,
+        engine: str,
+        model: str,
+        prompt: str,
+        *,
+        system: str = "",
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+        base_url: str | None = None,
+    ) -> AsyncIterator[str]:
+        backend = self.get_backend(engine, base_url)
+        async for token in backend.generate_stream(
+            model, prompt, system=system, temperature=temperature, max_tokens=max_tokens,
+        ):
+            yield token
 
     async def chat(
         self,

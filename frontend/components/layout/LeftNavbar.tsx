@@ -8,7 +8,7 @@ import {
   LayoutDashboard, ListOrdered, Cpu, Users, Star, Rocket,
   Workflow, LayoutTemplate, History, Brain, Database, Sliders,
   Activity, ScrollText, Bell, Plug, Key, Settings, Cable, Store,
-  ChevronLeft, ChevronRight, Zap,
+  ChevronLeft, ChevronRight, Zap, Server,
 } from 'lucide-react';
 import { useApp } from '@/contexts/AppContext';
 import { NAV_SECTIONS, SYSTEM_METRICS } from '@/lib/constants';
@@ -16,7 +16,7 @@ import { NAV_SECTIONS, SYSTEM_METRICS } from '@/lib/constants';
 const ICONS: Record<string, React.ElementType> = {
   LayoutDashboard, ListOrdered, Cpu, Users, Star, Rocket,
   Workflow, LayoutTemplate, History, Brain, Database, Sliders,
-  Activity, ScrollText, Bell, Plug, Key, Settings, Cable, Store, Zap,
+  Activity, ScrollText, Bell, Plug, Key, Settings, Cable, Store, Zap, Server,
 };
 
 function KortecxLogo({ collapsed }: { collapsed: boolean }) {
@@ -199,6 +199,15 @@ function NavItem({
 export default function LeftNavbar() {
   const pathname = usePathname();
   const { sidebarCollapsed, toggleSidebar } = useApp();
+
+  /* Track query string client-side only to avoid SSR hydration mismatch */
+  const [clientSearch, setClientSearch] = useState('');
+  useEffect(() => {
+    setClientSearch(window.location.search);
+    const onPop = () => setClientSearch(window.location.search);
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, [pathname]);
   const w = sidebarCollapsed ? 56 : 240;
   const tokPct = Math.round(
     (SYSTEM_METRICS.tokensUsedToday / SYSTEM_METRICS.tokenBudgetDaily) * 100
@@ -261,7 +270,7 @@ export default function LeftNavbar() {
             {section.items.map(item => {
               const [itemPath, itemQuery] = item.path.split('?');
               const matchesPath = itemQuery
-                ? pathname === itemPath && typeof window !== 'undefined' && window.location.search.includes(itemQuery)
+                ? pathname === itemPath && clientSearch.includes(itemQuery)
                 : pathname === itemPath || pathname.startsWith(itemPath + '/');
               const hasMoreSpecificMatch = !itemQuery && matchesPath && section.items.some(
                 other => other.id !== item.id

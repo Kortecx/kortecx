@@ -14,6 +14,7 @@ export interface AIProvider {
   slug: ProviderSlug;
   name: string;
   description: string;
+  icon: string;               /* lucide icon name */
   logoUrl?: string;
   color: string;
   connected: boolean;
@@ -521,6 +522,28 @@ export interface StepIntegration {
   icon: string;
   color: string;
   config?: Record<string, string>;
+}
+
+/* ── MCP Servers ─────────────────────────────────────── */
+export type McpServerStatus = 'idle' | 'running' | 'tested' | 'error';
+export type McpServerSource = 'prebuilt' | 'generated' | 'persisted';
+export type McpLanguage = 'python' | 'typescript' | 'javascript';
+
+export interface McpServer {
+  id: string;
+  name: string;
+  description: string;
+  language: McpLanguage;
+  filename: string;
+  source: McpServerSource;
+  code: string;
+  status: McpServerStatus;
+  test_output: string;
+  created_at: string;
+  prompt: string;
+  is_public: boolean;
+  generation_time_ms: number;
+  cpu_percent: number;
 }
 
 /* ── Navigation ──────────────────────────────────────── */

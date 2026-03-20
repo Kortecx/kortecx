@@ -1,8 +1,21 @@
 'use client';
 
 import { useState } from 'react';
-import { Key, Eye, EyeOff, RotateCcw, Trash2, Plus, Copy, Check, Shield } from 'lucide-react';
+import {
+  Key, Eye, EyeOff, RotateCcw, Trash2, Plus, Copy, Check, Shield, Plug,
+  Bot, Sparkles, Gem, Route, Zap, Wind, Smile, Compass, Atom,
+} from 'lucide-react';
 import { PROVIDERS } from '@/lib/constants';
+
+/* ─── Provider Icon Resolver ─────────────────────── */
+const PROVIDER_ICON_MAP: Record<string, React.ComponentType<{ size?: number; color?: string }>> = {
+  Bot, Sparkles, Gem, Route, Zap, Wind, Smile, Compass, Atom,
+};
+
+function ProviderIcon({ name, size = 14, color }: { name: string; size?: number; color?: string }) {
+  const Icon = PROVIDER_ICON_MAP[name] || Plug;
+  return <Icon size={size} color={color} />;
+}
 
 const MOCK_KEYS: Array<{
   providerId: string; keyPrefix: string; keySuffix: string;
@@ -67,9 +80,13 @@ export default function ApiKeysPage() {
             <div key={key.providerId} className="card" style={{ padding: '16px 20px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                 <div style={{
-                  width: 10, height: 10, borderRadius: '50%',
-                  background: provider.color, flexShrink: 0,
-                }} />
+                  width: 32, height: 32, borderRadius: 6,
+                  background: `${provider.color}12`, border: `1px solid ${provider.color}25`,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  flexShrink: 0,
+                }}>
+                  <ProviderIcon name={provider.icon} size={16} color={provider.color} />
+                </div>
                 <div style={{ flex: 1 }}>
                   <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-1)' }}>
                     {provider.name}
@@ -139,9 +156,13 @@ export default function ApiKeysPage() {
                 borderRadius: 6,
               }}>
                 <div style={{
-                  width: 10, height: 10, borderRadius: '50%',
-                  background: provider.color, opacity: 0.5, flexShrink: 0,
-                }} />
+                  width: 28, height: 28, borderRadius: 6,
+                  background: `${provider.color}0A`, border: `1px solid ${provider.color}18`,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  flexShrink: 0,
+                }}>
+                  <ProviderIcon name={provider.icon} size={14} color={`${provider.color}80`} />
+                </div>
                 <div style={{ flex: 1 }}>
                   <span style={{ fontSize: 13, color: 'var(--text-2)' }}>{provider.name}</span>
                   <span style={{ fontSize: 11, color: 'var(--text-4)', marginLeft: 8 }}>

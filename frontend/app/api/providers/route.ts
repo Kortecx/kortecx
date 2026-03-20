@@ -3,6 +3,7 @@ import { db, experts, apiKeys } from '@/lib/db';
 import { sql, eq } from 'drizzle-orm';
 import { PROVIDERS } from '@/lib/constants';
 import { createHash, randomUUID } from 'crypto';
+import { encryptToken } from '@/lib/oauth/crypto';
 
 /* GET /api/providers — returns provider list with live stats and connection status from DB */
 export async function GET() {
@@ -114,8 +115,8 @@ export async function POST(req: NextRequest) {
     const keyPrefix = apiKey.slice(0, 8);
     const keySuffix = apiKey.length > 4 ? apiKey.slice(-4) : null;
 
-    // Base64 encode for storage (TODO: use proper envelope encryption in production)
-    const encryptedKey = Buffer.from(apiKey, 'utf-8').toString('base64');
+    // AES-256-GCM encrypt for secure storage
+    const encryptedKey = encryptToken(apiKey);
 
     // Revoke any existing active keys for this provider before inserting the new one
     await db
