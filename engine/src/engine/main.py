@@ -21,6 +21,7 @@ from engine.routers import (
     training,
     workflow_logs,
 )
+from engine.routers.mlflow_router import router as mlflow_router
 
 logger = logging.getLogger("engine")
 
@@ -77,6 +78,7 @@ app.include_router(embeddings.router, prefix="/api/embeddings", tags=["embedding
 app.include_router(pipelines.router, prefix="/api/pipelines", tags=["pipelines"])
 app.include_router(orchestrator.router, prefix="/api/orchestrator", tags=["orchestrator"])
 app.include_router(workflow_logs.router, prefix="/api/logs", tags=["logs"])
+app.include_router(mlflow_router, prefix="/api/mlflow", tags=["mlflow"])
 
 # ── WebSocket ────────────────────────────────────────────────────────────────
 app.include_router(ws_manager.router, tags=["websocket"])

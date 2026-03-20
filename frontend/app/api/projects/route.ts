@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db, projects } from '@/lib/db';
+import { db, projects, projectAssets } from '@/lib/db';
 import { desc, eq, ilike, or, gte, sql } from 'drizzle-orm';
 import { projectsStore } from './store';
 import type { ProjectRecord } from '@/lib/api-client';
@@ -35,6 +35,16 @@ export async function GET(req: NextRequest) {
       : await db.select().from(projects).orderBy(desc(projects.updatedAt));
 
     if (rows.length > 0) {
+      // Enrich with asset counts
+      const assetRows = await db.select({
+        projectId: projectAssets.projectId,
+      }).from(projectAssets);
+
+      const assetCountMap = new Map<string, number>();
+      for (const a of assetRows) {
+        assetCountMap.set(a.projectId, (assetCountMap.get(a.projectId) ?? 0) + 1);
+      }
+
       const mapped = [];
       for (const r of rows) {
         mapped.push({
@@ -46,6 +56,7 @@ export async function GET(req: NextRequest) {
           platforms: r.platforms ?? [],
           postsCount: r.postsCount ?? 0,
           status: r.status ?? 'active',
+          assetCount: assetCountMap.get(r.id) ?? 0,
         });
       }
       return NextResponse.json(mapped);

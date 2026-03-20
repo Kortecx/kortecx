@@ -153,6 +153,11 @@ def _query_file_sync(req: FileQueryRequest) -> dict[str, Any]:
         result_set = conn.execute(sql)
         raw_rows = result_set.fetchall()
         col_names = [desc[0] for desc in result_set.description] if result_set.description else column_names
+
+        # When custom SQL is used, derive columns from the result set (handles aliases/renames)
+        if req.sql and result_set.description:
+            columns = [{"name": desc[0], "type": str(desc[1]) if len(desc) > 1 else "VARCHAR"} for desc in result_set.description]
+
         rows = []
         for raw in raw_rows:
             row: dict[str, Any] = {}
@@ -444,6 +449,74 @@ def _update_csv(
         writer.writerows(rows)
 
     return {"updated": updated, "deleted": deleted, "added": added, "totalRows": len(rows), "versionPath": version_path}
+
+
+# ---------------------------------------------------------------------------
+# Full file rewrite (for transforms)
+# ---------------------------------------------------------------------------
+
+
+class FileRewriteRequest(BaseModel):
+    path: str
+    rows: list[dict[str, Any]]  # complete dataset rows to write
+    columns: list[str] | None = None  # column order (optional, inferred from first row)
+    create_version: bool = True
+
+
+@router.post("/file/rewrite")
+async def rewrite_file(req: FileRewriteRequest) -> dict[str, Any]:
+    """Overwrite a data file with new rows. Creates a version snapshot first."""
+    import asyncio
+
+    return await asyncio.to_thread(_rewrite_file_sync, req)
+
+
+def _rewrite_file_sync(req: FileRewriteRequest) -> dict[str, Any]:
+    import csv
+    import json
+    import os
+    import shutil
+    from datetime import datetime
+
+    path = req.path
+    if not path:
+        return {"error": "Path is required", "written": 0}
+
+    # Create version snapshot of the original file
+    version_path: str | None = None
+    if req.create_version and os.path.exists(path):
+        version_dir = os.path.join(os.path.dirname(path), ".versions")
+        os.makedirs(version_dir, exist_ok=True)
+        ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        base = os.path.basename(path)
+        version_path = os.path.join(version_dir, f"{base}.v{ts}")
+        shutil.copy2(path, version_path)
+
+    # Ensure parent directory exists
+    os.makedirs(os.path.dirname(path) if os.path.dirname(path) else ".", exist_ok=True)
+
+    lower = path.lower()
+    rows = req.rows
+
+    try:
+        if lower.endswith(".csv"):
+            fieldnames = req.columns or (list(rows[0].keys()) if rows else [])
+            with open(path, "w", encoding="utf-8", newline="") as f:
+                writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
+                writer.writeheader()
+                for row in rows:
+                    writer.writerow({k: json.dumps(v) if isinstance(v, (dict, list)) else str(v) if v is not None else "" for k, v in row.items()})
+        else:
+            # JSONL / JSON / Delta
+            with open(path, "w", encoding="utf-8") as f:
+                for row in rows:
+                    # Strip internal metadata
+                    clean = {k: v for k, v in row.items() if not k.startswith("_")}
+                    f.write(json.dumps(clean, ensure_ascii=False) + "\n")
+
+        return {"written": len(rows), "totalRows": len(rows), "versionPath": version_path}
+    except Exception as exc:
+        return {"error": str(exc), "written": 0}
 
 
 # ---------------------------------------------------------------------------

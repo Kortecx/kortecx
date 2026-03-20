@@ -49,6 +49,30 @@ services:
       timeout: 5s
       retries: 5
 
+  # ── MLflow Tracking Server ──────────────────────────────────────────────────
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v2.18.0
+    container_name: kortecx_mlflow
+    restart: unless-stopped
+    ports:
+      - '5050:5050'
+    volumes:
+      - mlflow_data:/mlflow
+    environment:
+      MLFLOW_BACKEND_STORE_URI: sqlite:///mlflow/mlflow.db
+      MLFLOW_DEFAULT_ARTIFACT_ROOT: /mlflow/artifacts
+    command: >
+      mlflow server
+      --host 0.0.0.0
+      --port 5050
+      --backend-store-uri sqlite:///mlflow/mlflow.db
+      --default-artifact-root /mlflow/artifacts
+    healthcheck:
+      test: ['CMD-SHELL', 'python -c "import urllib.request; urllib.request.urlopen(\"http://localhost:5050/health\")"']
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
 # ── Named volumes (persist across container recreation) ────────────────────
 # Crash-proof guarantees:
 #   - PostgreSQL: WAL durability (fsync, synchronous_commit, full_page_writes)
@@ -68,4 +92,8 @@ volumes:
   kortecx_data:
     labels:
       com.kortecx.description: "Local datasets, uploads, and generated assets"
+      com.kortecx.backup: "required"
+  mlflow_data:
+    labels:
+      com.kortecx.description: "MLflow tracking data, experiments, and artifacts"
       com.kortecx.backup: "required"

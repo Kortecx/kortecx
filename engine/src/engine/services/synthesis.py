@@ -262,11 +262,9 @@ class SynthesisService:
         if cfg.schema:
             field_names = [c["name"] for c in cfg.schema]
             cols_desc = "\n".join(
-                f"  - \"{c['name']}\" ({c.get('type','string')}): {c.get('description','')}"
-                + (" [REQUIRED]" if c.get("required") else "")
-                for c in cfg.schema
+                f'  - "{c["name"]}" ({c.get("type", "string")}): {c.get("description", "")}' + (" [REQUIRED]" if c.get("required") else "") for c in cfg.schema
             )
-            example_obj = ", ".join(f'"{n}": <{c.get("type","string")}>' for n, c in zip(field_names, cfg.schema))
+            example_obj = ", ".join(f'"{n}": <{c.get("type", "string")}>' for n, c in zip(field_names, cfg.schema))
             user_prompt = (
                 f"Generate a single JSON object for: {cfg.description}\n\n"
                 f"STRICT SCHEMA — the JSON MUST have exactly these keys, no more, no less:\n{cols_desc}\n\n"
@@ -340,7 +338,6 @@ class SynthesisService:
 
         # Enforce schema: keep only declared fields, fill missing with defaults
         if cfg.schema:
-            schema_names = {c["name"] for c in cfg.schema}
             filtered = {}
             for c in cfg.schema:
                 col_name = c["name"]
@@ -349,12 +346,7 @@ class SynthesisService:
                 else:
                     # Fill missing with type-appropriate default
                     t = c.get("type", "string")
-                    filtered[col_name] = (
-                        0 if t in ("integer", "float", "number") else
-                        False if t == "boolean" else
-                        [] if t in ("array", "json") else
-                        ""
-                    )
+                    filtered[col_name] = 0 if t in ("integer", "float", "number") else False if t == "boolean" else [] if t in ("array", "json") else ""
             sample = filtered
 
         # Add metadata

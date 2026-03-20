@@ -390,6 +390,7 @@ function DataEngineerPage() {
 
   // Shared loaded data state
   const [loadedData, setLoadedData] = useState<LoadedData | null>(null);
+  const [originalColumns, setOriginalColumns] = useState<ColumnInfo[]>([]);
   const [selectedDatasetId, setSelectedDatasetId] = useState<string>(datasetId ?? '');
   const [loadingData, setLoadingData] = useState(false);
   const [savingData, setSavingData] = useState(false);
@@ -424,16 +425,19 @@ function DataEngineerPage() {
   const datasetsList: any[] = dsData?.datasets ?? [];
   const dataset = datasetsList.find((d: any) => d.id === datasetId);
 
+  // Resolve active file path — from URL param or selected dataset
+  const activeFilePath = filePath || datasetsList.find((d: any) => d.id === selectedDatasetId)?.outputPath || '';
+
   // ─── Query Tab Handler ──────────────────────────────────────────────────────
 
   const handleRunQuery = async () => {
-    if (!filePath) return;
+    if (!activeFilePath) return;
     setQuerying(true);
     try {
       const res = await fetch('/api/data/query', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path: filePath, sql }),
+        body: JSON.stringify({ path: activeFilePath, sql }),
       });
       setQueryResult(await res.json());
     } catch {
@@ -463,6 +467,7 @@ function DataEngineerPage() {
         path: ds.outputPath,
         datasetId: ds.id,
       });
+      setOriginalColumns(result.columns ?? []);
       setTransformOps([]);
     } catch (e: any) {
       console.error('Load failed:', e);
@@ -477,28 +482,34 @@ function DataEngineerPage() {
     let select = '*';
     const wheres: string[] = [];
     let orderBy = '';
-    let groupBy = '';
     const renames: { old: string; new_: string }[] = [];
     const drops: string[] = [];
     const adds: { name: string; type: string; default_: string }[] = [];
-    let aggQuery = '';
 
     for (const op of ops) {
       switch (op.type) {
         case 'filter': {
           const { column, operator, value } = op.params;
+          // Resolve actual column name (may have been renamed)
+          let actualCol = column;
+          const renameMatch = renames.find(r => r.new_ === column);
+          if (renameMatch) actualCol = renameMatch.old;
           if (operator === 'contains') {
-            wheres.push(`"${column}" LIKE '%${value.replace(/'/g, "''")}%'`);
+            wheres.push(`"${actualCol}" LIKE '%${value.replace(/'/g, "''")}%'`);
           } else {
             const isNum = !isNaN(Number(value));
             const quotedVal = isNum ? value : `'${value.replace(/'/g, "''")}'`;
-            wheres.push(`"${column}" ${operator} ${quotedVal}`);
+            wheres.push(`"${actualCol}" ${operator} ${quotedVal}`);
           }
           break;
         }
-        case 'sort':
-          orderBy = `ORDER BY "${op.params.column}" ${op.params.direction}`;
+        case 'sort': {
+          let actualCol = op.params.column;
+          const renameMatch = renames.find(r => r.new_ === op.params.column);
+          if (renameMatch) actualCol = renameMatch.old;
+          orderBy = `ORDER BY "${actualCol}" ${op.params.direction}`;
           break;
+        }
         case 'rename':
           renames.push({ old: op.params.oldName, new_: op.params.newName });
           break;
@@ -508,37 +519,61 @@ function DataEngineerPage() {
         case 'add':
           adds.push({ name: op.params.name, type: op.params.type, default_: op.params.defaultValue });
           break;
-        case 'aggregate':
-          aggQuery = `SELECT "${op.params.groupBy}", ${op.params.fn}("${op.params.valueColumn}") as "${op.params.fn.toLowerCase()}_${op.params.valueColumn}" FROM data_view`;
+        case 'aggregate': {
+          let groupCol = op.params.groupBy;
+          let valCol = op.params.valueColumn;
+          const gr = renames.find(r => r.new_ === groupCol);
+          if (gr) groupCol = gr.old;
+          const vr = renames.find(r => r.new_ === valCol);
+          if (vr) valCol = vr.old;
+          let aggQuery = `SELECT "${groupCol}"${gr ? ` AS "${op.params.groupBy}"` : ''}, ${op.params.fn}("${valCol}") as "${op.params.fn.toLowerCase()}_${op.params.valueColumn}" FROM data_view`;
           if (wheres.length > 0) aggQuery += ` WHERE ${wheres.join(' AND ')}`;
-          aggQuery += ` GROUP BY "${op.params.groupBy}"`;
+          aggQuery += ` GROUP BY "${groupCol}"`;
           if (orderBy) aggQuery += ` ${orderBy}`;
           return aggQuery;
+        }
       }
     }
 
-    // Build column list if we have renames, drops, or adds
+    // Build column list using original columns as baseline
     if (renames.length > 0 || drops.length > 0 || adds.length > 0) {
-      // We need to know all columns — work with loadedData.columns as baseline
-      if (loadedData) {
-        const colNames = loadedData.columns.map(c => c.name).filter(n => !drops.includes(n));
-        const selectParts = colNames.map(name => {
-          const rename = renames.find(r => r.old === name);
-          return rename ? `"${name}" AS "${rename.new_}"` : `"${name}"`;
-        });
-        for (const add of adds) {
-          const def = add.default_ || 'NULL';
-          selectParts.push(`${isNaN(Number(def)) ? `'${def}'` : def} AS "${add.name}"`);
+      const baseColNames = originalColumns.map(c => c.name);
+      const colNames = baseColNames.filter(n => {
+        // Drop by original name or renamed name
+        if (drops.includes(n)) return false;
+        const rename = renames.find(r => r.old === n);
+        const displayName = rename ? rename.new_ : n;
+        return !drops.includes(displayName);
+      });
+
+      const selectParts = colNames.map(name => {
+        const rename = renames.find(r => r.old === name);
+        return rename ? `"${name}" AS "${rename.new_}"` : `"${name}"`;
+      });
+      // Also drop columns that were renamed then dropped
+      const finalParts = selectParts.filter(p => {
+        for (const d of drops) {
+          if (p === `"${d}"`) return false;
+          // Check if this is a rename whose new name was dropped
+          const rename = renames.find(r => r.new_ === d);
+          if (rename && p.includes(`"${rename.old}"`)) return false;
         }
-        select = selectParts.join(', ');
+        return true;
+      });
+      for (const add of adds) {
+        if (!drops.includes(add.name)) {
+          const def = add.default_ || 'NULL';
+          finalParts.push(`${isNaN(Number(def)) ? `'${def}'` : def} AS "${add.name}"`);
+        }
       }
+      select = finalParts.length > 0 ? finalParts.join(', ') : '*';
     }
 
     let query = `SELECT ${select} FROM data_view`;
     if (wheres.length > 0) query += ` WHERE ${wheres.join(' AND ')}`;
     if (orderBy) query += ` ${orderBy}`;
     return query;
-  }, [loadedData]);
+  }, [originalColumns]);
 
   // ─── Apply Transform Op ────────────────────────────────────────────────────
 
@@ -575,28 +610,39 @@ function DataEngineerPage() {
     if (!loadedData) return;
     setSavingData(true);
     try {
-      await fetch('/api/data/update', {
+      // Get the full transformed dataset via DuckDB query
+      const sql = transformOps.length > 0 ? buildTransformSQL(transformOps) : 'SELECT * FROM data_view';
+      const queryRes = await fetch('/api/data/query', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: loadedData.path, sql }),
+      });
+      const queryData = await queryRes.json();
+      if (queryData.error) throw new Error(queryData.error);
+
+      const allRows = queryData.rows ?? loadedData.rows;
+      const colNames = (queryData.columns ?? loadedData.columns).map((c: any) => c.name);
+
+      // Write the complete transformed data back to the file
+      const res = await fetch('/api/data/rewrite', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           path: loadedData.path,
-          datasetId: loadedData.datasetId,
-          updates: loadedData.rows,
+          rows: allRows,
+          columns: colNames,
           create_version: true,
+          datasetId: loadedData.datasetId,
         }),
       });
-      await fetch('/api/lineage', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          sourceType: 'dataset',
-          sourceId: loadedData.datasetId,
-          targetType: 'dataset',
-          targetId: loadedData.datasetId,
-          relationship: 'edited',
-          metadata: { transformOps: transformOps.length, action: 'transform_save' },
-        }),
-      });
+      const saveResult = await res.json();
+      if (saveResult.error) throw new Error(saveResult.error);
+
+      // Reset — the file now matches the transformed state, reload as new baseline
+      const newCols = queryData.columns ?? loadedData.columns;
+      setLoadedData({ ...loadedData, rows: allRows, columns: newCols });
+      setOriginalColumns(newCols);
+      setTransformOps([]);
     } catch (e: any) {
       console.error('Save failed:', e);
     } finally {
@@ -716,6 +762,35 @@ function DataEngineerPage() {
       {/* ═══════════════════ SQL Query Tab ═══════════════════ */}
       {activeTab === 'query' && (
         <div>
+          {/* Dataset selector for query */}
+          {!filePath && (
+            <div className="card" style={{ padding: 16, marginBottom: 16 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <Database size={14} color="var(--text-3)" />
+                  <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-2)' }}>Dataset</span>
+                </div>
+                <select
+                  className="input"
+                  style={{ minWidth: 260, fontSize: 12 }}
+                  value={selectedDatasetId}
+                  onChange={e => setSelectedDatasetId(e.target.value)}
+                >
+                  <option value="">Select a dataset...</option>
+                  {datasetsList.map((ds: any) => (
+                    <option key={ds.id} value={ds.id}>
+                      {ds.name} ({ds.format ?? 'unknown'}{ds.sampleCount ? ` · ${ds.sampleCount} samples` : ''})
+                    </option>
+                  ))}
+                </select>
+                {activeFilePath && (
+                  <span style={{ fontSize: 10, color: 'var(--text-4)', fontFamily: 'var(--font-mono, monospace)' }}>
+                    {activeFilePath}
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
           <div style={{ display: 'flex', gap: 12, marginBottom: 16 }}>
             <textarea
               className="textarea"
@@ -729,12 +804,12 @@ function DataEngineerPage() {
             <button
               className="btn btn-primary btn-sm"
               onClick={handleRunQuery}
-              disabled={querying || !filePath}
+              disabled={querying || !activeFilePath}
             >
               {querying ? <><Loader2 size={12} className="spin" /> Running...</> : <><Play size={12} /> Run Query</>}
             </button>
             <div style={{ fontSize: 11, color: 'var(--text-4)', display: 'flex', alignItems: 'center', gap: 4 }}>
-              <Database size={11} /> Powered by DuckDB — use data_view as your table
+              <Database size={11} /> Powered by DuckDB — use <code style={{ background: 'var(--bg-elevated)', padding: '1px 4px', borderRadius: 3 }}>data_view</code> as your table
             </div>
           </div>
 
@@ -1099,25 +1174,77 @@ function DataEngineerPage() {
               {/* Chart Display Area */}
               <div className="card" style={{ padding: 16 }}>
                 {renderedChart ? (
-                  <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
-                    <svg
-                      viewBox={`0 0 ${SVG_W} ${SVG_H}`}
-                      width="100%"
-                      height="auto"
-                      style={{ maxWidth: SVG_W, maxHeight: SVG_H, overflow: 'visible' }}
-                    >
-                      {/* Background */}
-                      <rect width={SVG_W} height={SVG_H} fill="var(--bg-surface)" rx={8} />
-                      {/* Axes lines */}
-                      {!['pie', 'donut'].includes(chartType) && (
-                        <>
-                          <line x1={PAD.left} y1={PAD.top} x2={PAD.left} y2={PAD.top + PLOT_H} stroke="var(--border)" />
-                          <line x1={PAD.left} y1={PAD.top + PLOT_H} x2={PAD.left + PLOT_W} y2={PAD.top + PLOT_H} stroke="var(--border)" />
-                        </>
-                      )}
-                      {renderedChart}
-                    </svg>
-                  </div>
+                  <>
+                    <div id="chart-container" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+                      <svg
+                        viewBox={`0 0 ${SVG_W} ${SVG_H}`}
+                        width="100%"
+                        height="auto"
+                        style={{ maxWidth: SVG_W, maxHeight: SVG_H, overflow: 'visible' }}
+                      >
+                        <rect width={SVG_W} height={SVG_H} fill="var(--bg-surface)" rx={8} />
+                        {!['pie', 'donut'].includes(chartType) && (
+                          <>
+                            <line x1={PAD.left} y1={PAD.top} x2={PAD.left} y2={PAD.top + PLOT_H} stroke="var(--border)" />
+                            <line x1={PAD.left} y1={PAD.top + PLOT_H} x2={PAD.left + PLOT_W} y2={PAD.top + PLOT_H} stroke="var(--border)" />
+                          </>
+                        )}
+                        {renderedChart}
+                      </svg>
+                    </div>
+                    <div style={{ display: 'flex', gap: 8, marginTop: 12, justifyContent: 'flex-end' }}>
+                      <button
+                        className="btn btn-secondary btn-sm"
+                        onClick={() => {
+                          const svgEl = document.querySelector('#chart-container svg');
+                          if (!svgEl) return;
+                          const serializer = new XMLSerializer();
+                          const svgStr = serializer.serializeToString(svgEl);
+                          const blob = new Blob([svgStr], { type: 'image/svg+xml' });
+                          const url = URL.createObjectURL(blob);
+                          const a = document.createElement('a');
+                          a.href = url;
+                          a.download = `${(chartTitle || chartType).replace(/\s+/g, '_')}.svg`;
+                          a.click();
+                          URL.revokeObjectURL(url);
+                        }}
+                      >
+                        <Download size={12} /> Save SVG
+                      </button>
+                      <button
+                        className="btn btn-primary btn-sm"
+                        onClick={async () => {
+                          const svgEl = document.querySelector('#chart-container svg');
+                          if (!svgEl) return;
+                          const serializer = new XMLSerializer();
+                          const svgStr = serializer.serializeToString(svgEl);
+                          const canvas = document.createElement('canvas');
+                          canvas.width = SVG_W * 2;
+                          canvas.height = SVG_H * 2;
+                          const ctx = canvas.getContext('2d');
+                          if (!ctx) return;
+                          const img = new window.Image();
+                          img.onload = () => {
+                            ctx.fillStyle = '#ffffff';
+                            ctx.fillRect(0, 0, canvas.width, canvas.height);
+                            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                            canvas.toBlob(blob => {
+                              if (!blob) return;
+                              const url = URL.createObjectURL(blob);
+                              const a = document.createElement('a');
+                              a.href = url;
+                              a.download = `${(chartTitle || chartType).replace(/\s+/g, '_')}.png`;
+                              a.click();
+                              URL.revokeObjectURL(url);
+                            }, 'image/png');
+                          };
+                          img.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgStr)));
+                        }}
+                      >
+                        <Save size={12} /> Save PNG
+                      </button>
+                    </div>
+                  </>
                 ) : (
                   <div style={{ textAlign: 'center', padding: 80, color: 'var(--text-3)' }}>
                     <BarChart3 size={36} style={{ opacity: 0.2, margin: '0 auto 12px' }} />
