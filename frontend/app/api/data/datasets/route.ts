@@ -1,22 +1,26 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, datasets, synthesisJobs, lineage } from '@/lib/db';
 import { eq, desc, sql } from 'drizzle-orm';
+import { logStatus } from '@/lib/status-log';
 
 /* GET /api/data/datasets — list all local datasets, auto-sync completed synthesis jobs */
 export async function GET() {
   try {
     // Auto-create dataset records for completed synthesis jobs that don't have one yet
+    // Match by sourceJobId (not name) to avoid re-creating intentionally deleted datasets
     try {
       const completedJobs = await db.select().from(synthesisJobs)
         .where(eq(synthesisJobs.status, 'completed'));
 
       if (completedJobs.length > 0) {
-        const existingNames = new Set(
-          (await db.select({ name: datasets.name }).from(datasets)).map((d: { name: string }) => d.name)
+        const existingJobIds = new Set(
+          (await db.select({ sourceJobId: datasets.sourceJobId }).from(datasets))
+            .map((d: { sourceJobId: string | null }) => d.sourceJobId)
+            .filter(Boolean)
         );
 
         for (const job of completedJobs) {
-          if (!existingNames.has(job.name)) {
+          if (!existingJobIds.has(job.id)) {
             const dsId = `ds-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
             await db.insert(datasets).values({
               id: dsId,
@@ -84,6 +88,8 @@ export async function POST(req: NextRequest) {
       categories: categories ?? [],
     }).returning();
 
+    logStatus('info', `Dataset created: ${name}`, 'dataset', { datasetId: id, format });
+
     return NextResponse.json({ dataset: inserted }, { status: 201 });
   } catch (err) {
     console.error('[data/datasets POST]', err);
@@ -111,6 +117,7 @@ export async function PATCH(req: NextRequest) {
 
     const [updated] = await db.update(datasets).set(values).where(eq(datasets.id, id)).returning();
     if (!updated) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+    logStatus('info', `Dataset updated: ${id}`, 'dataset', { datasetId: id, fields: Object.keys(updates) });
     return NextResponse.json({ dataset: updated });
   } catch (err) {
     console.error('[data/datasets PATCH]', err);
@@ -118,13 +125,20 @@ export async function PATCH(req: NextRequest) {
   }
 }
 
-/* DELETE /api/data/datasets?id=<id> */
+/* DELETE /api/data/datasets?id=<id> — also removes linked synthesis job to prevent auto-sync revival */
 export async function DELETE(req: NextRequest) {
   try {
     const id = req.nextUrl.searchParams.get('id');
     if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 });
     const [deleted] = await db.delete(datasets).where(eq(datasets.id, id)).returning();
     if (!deleted) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+
+    // Remove the linked synthesis job so the auto-sync in GET won't re-create this dataset
+    if (deleted.sourceJobId) {
+      await db.delete(synthesisJobs).where(eq(synthesisJobs.id, deleted.sourceJobId)).catch(() => {});
+    }
+
+    logStatus('info', `Dataset deleted: ${id}`, 'dataset', { datasetId: id, sourceJobId: deleted.sourceJobId });
     return NextResponse.json({ deleted: true, id });
   } catch (err) {
     console.error('[data/datasets DELETE]', err);

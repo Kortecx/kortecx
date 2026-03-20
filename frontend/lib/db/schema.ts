@@ -308,6 +308,20 @@ export const projects = pgTable('projects', {
   updatedAt:     timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 });
 
+/* ─── Project Assets (links items to projects) ──── */
+export const projectAssets = pgTable('project_assets', {
+  id:          text('id').primaryKey(),
+  projectId:   text('project_id').notNull(),
+  assetType:   varchar('asset_type', { length: 30 }).notNull(),
+  // dataset | chart | model | document | script | workflow | expert
+  assetId:     text('asset_id').notNull(),            // ID reference to the actual entity
+  assetName:   text('asset_name').notNull(),
+  assetPath:   text('asset_path'),                     // local file path if applicable
+  mlflowRunId: text('mlflow_run_id'),                  // MLflow run ID for tracking
+  metadata:    jsonb('metadata'),                      // extra context
+  createdAt:   timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
 /* ─── Provider API Keys ────────────────────────────── */
 export const apiKeys = pgTable('api_keys', {
   id:           text('id').primaryKey(),
@@ -495,3 +509,6 @@ export type NewSocialConnection = typeof socialConnections.$inferInsert;
 
 export type OAuthCredential     = typeof oauthCredentials.$inferSelect;
 export type NewOAuthCredential  = typeof oauthCredentials.$inferInsert;
+
+export type ProjectAsset        = typeof projectAssets.$inferSelect;
+export type NewProjectAsset     = typeof projectAssets.$inferInsert;

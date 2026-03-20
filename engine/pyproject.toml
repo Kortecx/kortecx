@@ -43,6 +43,9 @@ dependencies = [
 
     # ── File uploads ────────────────────────────────────
     "python-multipart>=0.0.9",
+
+    # ── Experiment Tracking ────────────────────────────
+    "mlflow>=2.18.0",
 ]
 
 [project.scripts]

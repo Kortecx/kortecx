@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, lineage, datasets, trainingJobs, workflows, workflowSteps, experts, synthesisJobs } from '@/lib/db';
 import { eq, or, sql } from 'drizzle-orm';
+import { logStatus } from '@/lib/status-log';
 
 /* GET /api/lineage?sourceId=<id>&sourceType=<type> — get all lineage for a source */
 /* GET /api/lineage?targetId=<id>&targetType=<type> — get all lineage for a target */
@@ -110,6 +111,7 @@ export async function POST(req: NextRequest) {
       metadata: metadata ?? null,
     }).returning();
 
+    logStatus('info', `Lineage recorded: ${sourceType}→${targetType} (${relationship})`, 'lineage', { sourceId, targetId, relationship });
     return NextResponse.json({ lineage: inserted }, { status: 201 });
   } catch (err) {
     console.error('[lineage POST]', err);

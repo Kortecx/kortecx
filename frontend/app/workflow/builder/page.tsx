@@ -1096,7 +1096,7 @@ function AdvancedOptionsPanel({
                     <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
                       <div>
                         <div style={LABEL}>Tracking URI</div>
-                        <input className="input" style={{ fontSize: 11 }} placeholder="http://localhost:5000"
+                        <input className="input" style={{ fontSize: 11 }} placeholder="http://localhost:5050"
                           value={metrics.mlflowTrackingUri} onChange={e => updateMetrics({ mlflowTrackingUri: e.target.value })} />
                       </div>
                       <div>
@@ -1332,7 +1332,7 @@ function WorkflowBuilderInner() {
 
   // Advanced options
   const [metrics, setMetrics] = useState<MetricsConfig>({
-    mlflow: false, mlflowTrackingUri: 'http://localhost:5000', mlflowExperiment: 'kortecx-workflows',
+    mlflow: false, mlflowTrackingUri: 'http://localhost:5050', mlflowExperiment: 'kortecx-workflows',
     logging: true, logLevel: 'info', logFormat: 'structured',
     monitoring: false, monitoringInterval: 30, alertOnFailure: true, alertOnLatency: false, latencyThresholdMs: 5000,
   });

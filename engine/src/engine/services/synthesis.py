@@ -59,6 +59,7 @@ class SynthesisConfig:
     batch_size: int = 5  # concurrent generation requests per batch
     save_to_qdrant: bool = False
     qdrant_collection: str = ""
+    schema: list[dict] | None = None
     tags: list[str] = field(default_factory=list)
     categories: list[str] = field(default_factory=list)
 
@@ -257,20 +258,42 @@ class SynthesisService:
 
     async def _generate_sample(self, cfg: SynthesisConfig, sample_num: int) -> tuple[dict[str, Any], int] | None:
         """Generate a single data sample using the configured model."""
-        # Build prompt
-        template = FORMAT_TEMPLATES.get(cfg.output_format, FORMAT_TEMPLATES[OutputFormat.JSONL])
-        user_prompt = template.format(
-            description=cfg.description,
-            sample_num=sample_num,
-        )
+        # Build prompt — when schema is defined, override the generic template
+        if cfg.schema:
+            field_names = [c["name"] for c in cfg.schema]
+            cols_desc = "\n".join(
+                f'  - "{c["name"]}" ({c.get("type", "string")}): {c.get("description", "")}' + (" [REQUIRED]" if c.get("required") else "") for c in cfg.schema
+            )
+            example_obj = ", ".join(f'"{n}": <{c.get("type", "string")}>' for n, c in zip(field_names, cfg.schema))
+            user_prompt = (
+                f"Generate a single JSON object for: {cfg.description}\n\n"
+                f"STRICT SCHEMA — the JSON MUST have exactly these keys, no more, no less:\n{cols_desc}\n\n"
+                f"Example structure: {{{example_obj}}}\n\n"
+                f"Return ONLY a valid JSON object with exactly {len(field_names)} keys: {', '.join(field_names)}\n"
+                f"Sample #{sample_num}:"
+            )
+
+            system = cfg.system_prompt or (
+                "You are a precise data generation assistant. "
+                "You MUST follow the provided schema exactly. "
+                "Return ONLY a single valid JSON object with the exact field names specified. "
+                "No extra fields. No missing fields. No markdown. No explanation."
+            )
+        else:
+            template = FORMAT_TEMPLATES.get(cfg.output_format, FORMAT_TEMPLATES[OutputFormat.JSONL])
+            user_prompt = template.format(
+                description=cfg.description,
+                sample_num=sample_num,
+            )
+
+            system = cfg.system_prompt or (
+                "You are a precise data generation assistant. "
+                "Generate high-quality, diverse, realistic training data samples. "
+                "Always return ONLY valid JSON — no markdown, no explanation, no code fences."
+            )
+
         if cfg.prompt_template:
             user_prompt = cfg.prompt_template + "\n\n" + user_prompt
-
-        system = cfg.system_prompt or (
-            "You are a precise data generation assistant. "
-            "Generate high-quality, diverse, realistic training data samples. "
-            "Always return ONLY valid JSON — no markdown, no explanation, no code fences."
-        )
 
         async with self._semaphore:
             if cfg.source in (SynthesisSource.OLLAMA, SynthesisSource.LLAMACPP):
@@ -312,6 +335,19 @@ class SynthesisService:
         if sample is None:
             logger.debug("Failed to parse sample #%d, retrying once", sample_num)
             return None
+
+        # Enforce schema: keep only declared fields, fill missing with defaults
+        if cfg.schema:
+            filtered = {}
+            for c in cfg.schema:
+                col_name = c["name"]
+                if col_name in sample:
+                    filtered[col_name] = sample[col_name]
+                else:
+                    # Fill missing with type-appropriate default
+                    t = c.get("type", "string")
+                    filtered[col_name] = 0 if t in ("integer", "float", "number") else False if t == "boolean" else [] if t in ("array", "json") else ""
+            sample = filtered
 
         # Add metadata
         sample["_meta"] = {
@@ -422,12 +458,11 @@ class SynthesisService:
         if cfg.output_format == OutputFormat.CSV:
             path = output_dir / f"{base_name}.csv"
             if clean_samples:
-                keys = list(clean_samples[0].keys())
+                keys = [c["name"] for c in cfg.schema] if cfg.schema else list(clean_samples[0].keys())
                 with open(path, "w", newline="", encoding="utf-8") as f:
                     writer = csv.DictWriter(f, fieldnames=keys, extrasaction="ignore")
                     writer.writeheader()
                     for row in clean_samples:
-                        # Flatten nested values to strings
                         flat = {k: json.dumps(v) if isinstance(v, (dict, list)) else str(v) for k, v in row.items()}
                         writer.writerow(flat)
         elif cfg.output_format == OutputFormat.DELTA:
