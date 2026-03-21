@@ -441,3 +441,89 @@ class TestCancelCheck:
     def test_check_cancelled_passes_when_not_set(self):
         event = asyncio.Event()
         PipelineExecutor._check_cancelled(event)  # Should not raise
+
+
+class TestPromptTemplates:
+    """Validate prompt template formatting."""
+
+    def test_decompose_prompt_format(self):
+        from engine.services.quorum.executor import DECOMPOSE_PROMPT
+        formatted = DECOMPOSE_PROMPT.format(system="", workers=3, task="test task")
+        assert "3" in formatted
+        assert "test task" in formatted
+
+    def test_worker_prompt_format(self):
+        from engine.services.quorum.executor import WORKER_PROMPT
+        formatted = WORKER_PROMPT.format(system="", N=1, total=3, subtask="do analysis")
+        assert "#1" in formatted
+        assert "do analysis" in formatted
+
+    def test_synthesize_prompt_format(self):
+        from engine.services.quorum.executor import SYNTHESIZE_PROMPT
+        formatted = SYNTHESIZE_PROMPT.format(
+            system="", task="main task", workers=3,
+            error_context="", collated="output1\noutput2"
+        )
+        assert "main task" in formatted
+        assert "output1" in formatted
+
+    def test_recovery_prompt_format(self):
+        from engine.services.quorum.executor import RECOVERY_PROMPT
+        formatted = RECOVERY_PROMPT.format(
+            workerID="worker_2", subtask="sub task", errorMessage="timeout"
+        )
+        assert "worker_2" in formatted
+        assert "timeout" in formatted
+
+
+class TestRunRequestValidation:
+    """Test RunRequest edge cases."""
+
+    def test_zero_workers_rejected(self):
+        """Workers=0 should be rejected by ge=1 validator."""
+        with pytest.raises(Exception):
+            RunRequest(project="p", task="t", model="m", backend="b", workers=0)
+
+    def test_very_long_task(self):
+        long_task = "x" * 100_000
+        req = RunRequest(project="p", task=long_task, model="m", backend="b", workers=1)
+        assert len(req.task) == 100_000
+
+    def test_empty_project(self):
+        req = RunRequest(project="", task="t", model="m", backend="b", workers=1)
+        assert req.project == ""
+
+
+class TestOperationModel:
+    """Test Operation model edge cases."""
+
+    def test_operation_with_none_metadata(self):
+        op = Operation(
+            run_id="00000000-0000-0000-0000-000000000000",
+            agent_id="test", phase="execute", operation="response"
+        )
+        assert op.metadata is None
+
+    def test_operation_with_large_prompt(self):
+        op = Operation(
+            run_id="00000000-0000-0000-0000-000000000000",
+            agent_id="test", phase="execute", operation="response",
+            prompt="x" * 500_000, response="y" * 500_000,
+        )
+        assert len(op.prompt) == 500_000
+
+
+class TestMetricsSnapshotEdge:
+    """Test MetricsSnapshot edge cases."""
+
+    def test_zero_values(self):
+        snap = MetricsSnapshot(cpu_usage=0.0, active_runs=0, queued_runs=0)
+        assert snap.tokens_per_sec == 0.0
+        assert snap.memory_usage_mb == 0.0
+
+    def test_high_values(self):
+        snap = MetricsSnapshot(
+            cpu_usage=100.0, active_runs=1000, queued_runs=5000,
+            tokens_per_sec=99999.9, memory_usage_mb=65536.0,
+        )
+        assert snap.cpu_usage == 100.0

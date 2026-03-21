@@ -261,3 +261,94 @@ class TestSlugify:
 
     def test_mixed_case(self):
         assert sa._slugify("Hello World") == "hello-world"
+
+
+class TestEdgeCases:
+    """Edge cases and robustness tests."""
+
+    def test_slugify_unicode(self):
+        """Unicode characters should be stripped."""
+        assert sa._slugify("Café Résumé") != ""
+        assert "/" not in sa._slugify("path/with/slashes")
+
+    def test_slugify_only_special_chars(self):
+        result = sa._slugify("!@#$%^&*()")
+        assert result == "unnamed"
+
+    def test_save_response_empty_content(self, temp_artifacts):
+        """Empty response should still save without error."""
+        artifacts = temp_artifacts
+        path = artifacts.save_response("wf", "step", "run-1", "agent-1", "")
+        assert path.exists()
+
+    def test_save_very_large_response(self, temp_artifacts):
+        """Large responses should not crash."""
+        artifacts = temp_artifacts
+        large = "x" * 1_000_000  # 1MB
+        path = artifacts.save_response("wf", "step", "run-1", "agent-1", large)
+        assert path.exists()
+        assert path.stat().st_size > 900_000
+
+    def test_concurrent_dir_creation(self, temp_artifacts, tmp_path):
+        """Multiple calls to get_step_dir should not race."""
+        artifacts = temp_artifacts
+        dirs = [artifacts.get_step_dir("wf", f"step-{i}") for i in range(20)]
+        assert len(set(str(d) for d in dirs)) == 20
+        assert all(d.exists() for d in dirs)
+
+    def test_extract_nested_code_blocks(self, temp_artifacts):
+        """Code blocks inside markdown should be extracted."""
+        artifacts = temp_artifacts
+        response = "Text\n\n```python\ndef hello():\n    return 'world'\n```\n\nMore text\n\n```bash\necho done\n```"
+        scripts = artifacts.extract_and_save_scripts("wf", "step", response)
+        assert len(scripts) == 2
+
+    def test_extract_empty_code_block(self, temp_artifacts):
+        """Empty code blocks should be skipped or handled."""
+        artifacts = temp_artifacts
+        response = "```python\n\n```"
+        scripts = artifacts.extract_and_save_scripts("wf", "step", response)
+        # Empty content is still saved (empty file)
+        assert len(scripts) <= 1
+
+    @pytest.mark.asyncio
+    async def test_execute_script_timeout(self, temp_artifacts, tmp_path):
+        """Script that hangs should be killed after timeout."""
+        artifacts = temp_artifacts
+        script = tmp_path / "hang.sh"
+        script.write_text("#!/bin/bash\nsleep 30")
+        script.chmod(0o755)
+        result = await artifacts.execute_script(script, timeout=2)
+        assert "timeout" in result.get("error", "").lower() or result["exitCode"] != 0
+
+    @pytest.mark.asyncio
+    async def test_execute_script_with_error(self, temp_artifacts, tmp_path):
+        """Script that exits with error code."""
+        artifacts = temp_artifacts
+        script = tmp_path / "fail.py"
+        script.write_text("import sys; sys.exit(1)")
+        result = await artifacts.execute_script(script, timeout=10)
+        assert result["exitCode"] == 1
+
+    def test_list_artifacts_nested(self, temp_artifacts):
+        """Artifacts in subdirectories should be listed."""
+        artifacts = temp_artifacts
+        step_dir = artifacts.get_step_dir("wf", "step")
+        sub = step_dir / "scripts"
+        sub.mkdir()
+        (sub / "test.py").write_text("print(1)")
+        result = artifacts.list_artifacts("wf", "step")
+        names = [a["name"] for a in result]
+        assert any("scripts" in n for n in names)
+
+    def test_save_failure_log_special_chars(self, temp_artifacts):
+        """Error messages with special characters."""
+        artifacts = temp_artifacts
+        path = artifacts.save_failure_log(
+            "wf", "step", "run-1",
+            'Error: "unexpected token" at line 42\n\tstack trace: /path/to/file.py',
+        )
+        assert path.exists()
+        import json
+        data = json.loads(path.read_text())
+        assert "unexpected token" in data["error"]

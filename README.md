@@ -33,6 +33,7 @@ Open-source platform for orchestrating AI agents and building agentic workflows 
 - **Workflow Builder** — Chain AI agents (sequential or parallel) with shared memory, file attachments, integrations, and plugins per step
 - **Dual Inference** — Run models locally (Ollama / llama.cpp) or via cloud providers (Anthropic, OpenAI, Google, Groq, Mistral, OpenRouter)
 - **Expert System** — 16 agent roles + 12 prebuilt marketplace experts, deployable with custom system prompts and performance tracking
+- **Intelligence** — Fine-tune local models with LoRA, manage local/cloud model registries, cloud inference via [Kortecx Cloud](https://www.kortecx.com)
 - **Data Engineering** — SQL analytics (DuckDB, PySpark), vector search (Qdrant), HuggingFace Hub integration
 - **Connections** — Plug in external APIs, databases, tools, and marketplace plugins to any workflow step
 - **Monitoring** — Real-time metrics, structured logs, alerts, cost tracking

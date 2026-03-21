@@ -5,9 +5,10 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   ScrollText, Download, Search, ChevronDown,
   Loader2, X, ChevronRight, Filter,
-  Clock, Workflow, Users, Brain, Database, Boxes, Cpu, FileText,
+  Clock, Workflow, Users, Brain, Database, Boxes, Cpu, FileText, Globe,
 } from 'lucide-react';
 import { useLogs, useStepExecutions, useLiveMetrics } from '@/lib/hooks/useApi';
+import { TIMEZONES, formatTzLabel } from '@/lib/timezones';
 
 /* ── Constants ──────────────────────────────────────────────────────────── */
 const SECTION_COLOR = '#ef4444';
@@ -54,11 +55,12 @@ const CATEGORY_FILTERS: Array<{ id: string; label: string; icon: React.Component
 type ViewTab = 'logs' | 'executions';
 
 /* ── Helpers ────────────────────────────────────────────────────────────── */
-function formatTs(iso: string) {
+function formatTs(iso: string, tz?: string) {
   const d = new Date(iso);
   return d.toLocaleTimeString('en-US', {
     hour12: false, hour: '2-digit',
     minute: '2-digit', second: '2-digit',
+    timeZone: tz,
   }) + '.' + String(d.getMilliseconds()).padStart(3, '0');
 }
 
@@ -75,7 +77,7 @@ function isWithinRange(iso: string, range: string, customFrom?: string, customTo
 }
 
 /* ── Log Row Component ───────────────────────────────────────────────────── */
-function LogRow({ log, index }: { log: Record<string, unknown>; index: number }) {
+function LogRow({ log, index, tz }: { log: Record<string, unknown>; index: number; tz?: string }) {
   const [expanded, setExpanded] = useState(false);
   const level  = (log.level as string) ?? 'info';
   const meta   = LEVEL_META[level] ?? LEVEL_META.info;
@@ -114,7 +116,7 @@ function LogRow({ log, index }: { log: Record<string, unknown>; index: number })
           fontSize: 10.5, color: 'rgba(255,255,255,0.32)',
           fontFamily: 'monospace', whiteSpace: 'nowrap', paddingTop: 3,
         }}>
-          {log.timestamp ? formatTs(log.timestamp as string) : '—'}
+          {log.timestamp ? formatTs(log.timestamp as string, tz) : '—'}
         </span>
 
         {/* Level badge */}
@@ -194,6 +196,7 @@ export default function LogsPage() {
   const [execRunId, setExecRunId]     = useState('');
   const [customFrom, setCustomFrom]  = useState('');
   const [customTo, setCustomTo]      = useState('');
+  const [logTimezone, setLogTimezone] = useState(() => Intl.DateTimeFormat().resolvedOptions().timeZone);
   const bottomRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -521,6 +524,26 @@ export default function LogsPage() {
             </div>
           )}
 
+          {/* Timezone selector */}
+          <div style={{ position: 'relative', flexShrink: 0 }}>
+            <Globe size={11} color="var(--text-4)" style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }} />
+            <select
+              value={logTimezone}
+              onChange={e => setLogTimezone(e.target.value)}
+              style={{
+                padding: '5px 24px 5px 26px', borderRadius: 7, fontSize: 11,
+                border: '1px solid var(--border-md)', background: 'var(--bg-surface)',
+                color: 'var(--text-2)', cursor: 'pointer', outline: 'none', appearance: 'none',
+                maxWidth: 180,
+              }}
+            >
+              {TIMEZONES.map(tz => (
+                <option key={tz} value={tz}>{formatTzLabel(tz)}</option>
+              ))}
+            </select>
+            <ChevronDown size={11} color="var(--text-4)" style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }} />
+          </div>
+
           {/* Auto-scroll toggle */}
           <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 7 }}>
             <span style={{ fontSize: 11, color: 'var(--text-4)' }}>Auto-scroll</span>
@@ -709,7 +732,7 @@ export default function LogsPage() {
               </div>
 
               {filtered.slice(0, MAX_LOGS).map((log, i) => (
-                <LogRow key={(log.id ?? i) as string} log={log} index={i} />
+                <LogRow key={(log.id ?? i) as string} log={log} index={i} tz={logTimezone} />
               ))}
 
               {filtered.length > MAX_LOGS && (

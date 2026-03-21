@@ -6,6 +6,20 @@ All notable changes to the Kortecx platform.
 
 ### Added
 
+#### Intelligence Section
+- Fine-tuning page — create LoRA fine-tuning jobs with local models, dataset selection, hyperparameter config
+- Inference page — cloud-only feature with CTA to Kortecx Cloud, local inference via Workflow Builder
+- Models page — three tabs: Local Models (full management), Kortecx Models (cloud), Advanced Models (cloud)
+- Local model management — list, search, pull with SSE progress, delete across Ollama/llama.cpp
+- Kortecx Models and Advanced Models redirect to https://www.kortecx.com for cloud signup
+- Static timezone list (75 zones) replacing Intl.supportedValuesOf to prevent SSR hydration mismatches
+
+#### Settings Page Rewrite
+- 8-panel left navigation: General, Inference, Agents & Runs, Tokens & Budget, Logging & Metrics, Notifications, Security & API, Feature Flags
+- Ollama/llama.cpp enable/disable toggles with URL configuration
+- Feature flags to enable/disable platform capabilities
+- All settings persist to localStorage with deep merge on load
+
 #### Quorum Multi-Agent Engine
 - 3+1 phase pipeline executor (decompose → parallel execute → recovery → synthesize)
 - FIFO run scheduler with configurable concurrency (default 4)

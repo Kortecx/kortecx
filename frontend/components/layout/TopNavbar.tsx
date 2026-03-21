@@ -9,13 +9,17 @@ import { SYSTEM_METRICS, ALERTS } from '@/lib/constants';
 import SearchCommandDialog from './SearchCommandDialog';
 
 const PRETTY: Record<string, string> = {
-  dashboard: 'Dashboard',
-  experts:   'Experts',
-  workflow:  'Workflow',
-  monitoring:'Monitoring',
-  providers: 'Providers',
-  settings:  'Settings',
-  data:      'Data Synthesis',
+  dashboard:    'Dashboard',
+  experts:      'Experts',
+  workflow:     'Workflow',
+  intelligence: 'Intelligence',
+  finetuning:   'Fine-tuning',
+  inference:    'Inference',
+  models:       'Models',
+  monitoring:   'Monitoring',
+  providers:    'Providers',
+  settings:     'Settings',
+  data:         'Data Synthesis',
 };
 
 function buildBreadcrumb(path: string): Array<{ label: string; href: string }> {

@@ -357,6 +357,16 @@ export const NAV_SECTIONS = [
     ],
   },
   {
+    id: 'intelligence',
+    label: 'INTELLIGENCE',
+    color: '#7C3AED',
+    items: [
+      { id: 'finetuning', label: 'Fine-tuning',    path: '/intelligence/finetuning', icon: 'Sliders' },
+      { id: 'inference',  label: 'Inference',       path: '/intelligence/inference',  icon: 'Sparkles' },
+      { id: 'models',     label: 'Models',          path: '/intelligence/models',     icon: 'Boxes' },
+    ],
+  },
+  {
     id: 'artifacts',
     label: 'ARTIFACTS',
     color: '#0EA5E9',

@@ -284,3 +284,66 @@ class TestExpertManagerDelete:
         mgr.delete_expert(expert["id"])
         registry = json.loads((lp / "_registry.json").read_text())
         assert len(registry["experts"]) == 0
+
+
+class TestExpertManagerEdgeCases:
+    def test_load_corrupted_json(self, temp_experts):
+        """Corrupted expert.json should not crash load_all."""
+        mgr, mp, _ = temp_experts
+        bad_dir = mp / "bad-expert"
+        bad_dir.mkdir()
+        (bad_dir / "expert.json").write_text("{invalid json")
+        experts = mgr.load_all()
+        # Should still load the valid expert
+        assert any(e["name"] == "Test Expert" for e in experts)
+
+    def test_load_missing_expert_json(self, temp_experts):
+        """Directory without expert.json should be skipped."""
+        mgr, mp, _ = temp_experts
+        empty_dir = mp / "empty-dir"
+        empty_dir.mkdir()
+        experts = mgr.load_all()
+        assert not any(e.get("_dir", "").endswith("empty-dir") for e in experts)
+
+    def test_create_duplicate_name(self, temp_experts):
+        """Creating two experts with same name should not crash."""
+        mgr, _, _ = temp_experts
+        e1 = mgr.create_local("Same Name", "coder", {})
+        e2 = mgr.create_local("Same Name", "writer", {})
+        # Second one overwrites or coexists
+        assert e1["id"] == e2["id"]  # Same slug
+
+    def test_update_nonexistent_expert(self, temp_experts):
+        """Updating a nonexistent expert should raise."""
+        mgr, _, _ = temp_experts
+        with pytest.raises(ValueError):
+            mgr.update_file("nonexistent-id", "system.md", "content")
+
+    def test_get_versions_no_versions_dir(self, temp_experts):
+        """Expert without .versions dir should return empty list."""
+        mgr, _, _ = temp_experts
+        mgr.load_all()
+        versions = mgr.get_versions("marketplace-test-expert", "system.md")
+        assert versions == []
+
+    def test_restore_nonexistent_version(self, temp_experts):
+        """Restoring a nonexistent version file should raise."""
+        mgr, _, _ = temp_experts
+        expert = mgr.create_local("Restore Fail", "coder", {})
+        with pytest.raises(ValueError):
+            mgr.restore_version(expert["id"], "system.md.v9999999")
+
+    def test_list_files_excludes_hidden(self, temp_experts):
+        """Hidden files and .versions dir should not appear in file list."""
+        mgr, _, _ = temp_experts
+        expert = mgr.create_local("Hidden Test", "coder", {})
+        files = mgr.list_files(expert["id"])
+        names = [f["name"] for f in files]
+        assert not any(n.startswith(".") for n in names)
+
+    def test_get_prompt_missing_file(self, temp_experts):
+        """Getting a prompt that doesn't exist should return empty string."""
+        mgr, _, _ = temp_experts
+        mgr.load_all()
+        result = mgr.get_prompt("marketplace-test-expert", "nonexistent")
+        assert result == ""

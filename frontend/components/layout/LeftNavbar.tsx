@@ -9,6 +9,7 @@ import {
   Workflow, LayoutTemplate, History, Database,
   Activity, ScrollText, Bell, Plug, Key, Settings, Cable, Store,
   ChevronLeft, ChevronRight, Zap, Server, Plus,
+  Sliders, Sparkles, Boxes,
 } from 'lucide-react';
 import { useApp } from '@/contexts/AppContext';
 import { NAV_SECTIONS, SYSTEM_METRICS } from '@/lib/constants';
@@ -17,6 +18,7 @@ const ICONS: Record<string, React.ElementType> = {
   LayoutDashboard, ListOrdered, Cpu, Users, Star, Rocket,
   Workflow, LayoutTemplate, History, Database,
   Activity, ScrollText, Bell, Plug, Key, Settings, Cable, Store, Zap, Server, Plus,
+  Sliders, Sparkles, Boxes,
 };
 
 /* ── New button menu items ─────────────────────────── */
