@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { stepExecutions } from '@/lib/db/schema';
 import { desc, eq, and } from 'drizzle-orm';
+import { logStatus } from '@/lib/status-log';
 
 export async function GET(req: NextRequest) {
   try {
@@ -73,8 +74,10 @@ export async function POST(req: NextRequest) {
       completedAt: body.completedAt ? new Date(body.completedAt) : null,
     }).returning();
 
+    logStatus('info', `Step execution recorded: ${stepId}`, 'execution', { runId, stepId, status: status || 'pending' });
     return NextResponse.json({ execution: row });
   } catch (error) {
+    logStatus('error', `Step execution failed: ${error instanceof Error ? error.message : 'Unknown'}`, 'execution', { error: error instanceof Error ? error.message : 'Unknown' });
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'Failed to persist execution' },
       { status: 500 },
@@ -112,8 +115,10 @@ export async function PATCH(req: NextRequest) {
       .where(eq(stepExecutions.id, id))
       .returning();
 
+    logStatus('info', `Step execution updated: ${id}`, 'execution', { id, status: updates.status });
     return NextResponse.json({ execution: row });
   } catch (error) {
+    logStatus('error', `Step execution update failed: ${error instanceof Error ? error.message : 'Unknown'}`, 'execution', { error: error instanceof Error ? error.message : 'Unknown' });
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'Failed to update execution' },
       { status: 500 },

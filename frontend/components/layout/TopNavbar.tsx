@@ -65,7 +65,7 @@ export default function TopNavbar() {
       top: 0,
       left: left,
       right: 0,
-      height: 52,
+      height: 48,
       background: 'var(--bg-surface)',
       borderBottom: '1px solid var(--border)',
       display: 'flex',
@@ -75,8 +75,8 @@ export default function TopNavbar() {
       zIndex: 30,
       transition: 'left 0.2s ease',
     }}>
-      {/* Breadcrumb */}
-      <nav style={{ display: 'flex', alignItems: 'center', gap: 4, flex: 1 }}>
+      {/* Left: Breadcrumb */}
+      <nav style={{ display: 'flex', alignItems: 'center', gap: 4, flex: 1, minWidth: 0 }}>
         {crumbs.map((crumb, i) => (
           <span key={crumb.href} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
             {i > 0 && <ChevronRight size={12} color="var(--text-4)" />}
@@ -87,6 +87,7 @@ export default function TopNavbar() {
                 color: i === crumbs.length - 1 ? 'var(--text-1)' : 'var(--text-3)',
                 fontWeight: i === crumbs.length - 1 ? 500 : 400,
                 textDecoration: 'none',
+                whiteSpace: 'nowrap',
               }}
             >
               {crumb.label}
@@ -95,53 +96,23 @@ export default function TopNavbar() {
         ))}
       </nav>
 
-      {/* System pulse */}
-      <div style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 6,
-        padding: '4px 10px',
-        background: 'var(--bg-elevated)',
-        border: '1px solid var(--border)',
-        borderRadius: 4,
-        fontSize: 11,
-        color: 'var(--text-3)',
-      }}>
-        {/* colored live dot */}
-        <span style={{
-          width: 6, height: 6, borderRadius: '50%',
-          background: '#10b981',
-          display: 'inline-block', flexShrink: 0,
-          boxShadow: '0 0 0 2px rgba(16,185,129,0.20)',
-          animation: 'pulse-dot 2s ease-in-out infinite',
-        }} />
-        <span className="mono" style={{ color: '#10b981', fontWeight: 600 }}>
-          {SYSTEM_METRICS.activeAgents}
-        </span>
-        <span>active</span>
-        <span style={{ color: 'var(--border-strong)' }}>·</span>
-        <span className="mono" style={{ fontWeight: 500, color: 'var(--text-2)' }}>
-          {(SYSTEM_METRICS.successRate * 100).toFixed(1)}%
-        </span>
-        <span>uptime</span>
-      </div>
-
-      {/* Search */}
+      {/* Center: Search */}
       <button
         onClick={() => setSearchOpen(true)}
         style={{
           display: 'flex',
           alignItems: 'center',
           gap: 8,
-          padding: '5px 12px',
+          padding: '5px 14px',
           background: 'var(--bg-elevated)',
           border: '1px solid var(--border)',
-          borderRadius: 4,
+          borderRadius: 6,
           cursor: 'pointer',
           color: 'var(--text-3)',
           fontSize: 12,
           transition: 'border-color 0.15s, background 0.15s',
-          width: 180,
+          width: 320,
+          flexShrink: 0,
         }}
         onMouseEnter={e => {
           e.currentTarget.style.borderColor = 'var(--border-strong)';
@@ -156,6 +127,39 @@ export default function TopNavbar() {
         <span>Search...</span>
         <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--text-4)' }}>⌘K</span>
       </button>
+
+      {/* Right: System pulse + actions */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, justifyContent: 'flex-end', minWidth: 0 }}>
+        {/* Agents & uptime */}
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 6,
+          padding: '4px 10px',
+          background: 'var(--bg-elevated)',
+          border: '1px solid var(--border)',
+          borderRadius: 4,
+          fontSize: 11,
+          color: 'var(--text-3)',
+          flexShrink: 0,
+        }}>
+          <span style={{
+            width: 6, height: 6, borderRadius: '50%',
+            background: '#10b981',
+            display: 'inline-block', flexShrink: 0,
+            boxShadow: '0 0 0 2px rgba(16,185,129,0.20)',
+            animation: 'pulse-dot 2s ease-in-out infinite',
+          }} />
+          <span className="mono" style={{ color: '#10b981', fontWeight: 600 }}>
+            {SYSTEM_METRICS.activeAgents}
+          </span>
+          <span>active</span>
+          <span style={{ color: 'var(--border-strong)' }}>·</span>
+          <span className="mono" style={{ fontWeight: 500, color: 'var(--text-2)' }}>
+            {(SYSTEM_METRICS.successRate * 100).toFixed(1)}%
+          </span>
+          <span>uptime</span>
+        </div>
 
       {/* Monitoring link */}
       <Link href="/monitoring">
@@ -250,6 +254,7 @@ export default function TopNavbar() {
           <Settings size={16} />
         </button>
       </Link>
+      </div>{/* end right-side wrapper */}
 
     </header>
 

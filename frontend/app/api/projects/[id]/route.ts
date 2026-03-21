@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db, projects } from '@/lib/db';
 import { eq } from 'drizzle-orm';
 import { projectsStore } from '../store';
+import { logStatus } from '@/lib/status-log';
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -34,7 +35,10 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       .where(eq(projects.id, id))
       .returning();
 
-    if (updated) return NextResponse.json(updated);
+    if (updated) {
+      logStatus('info', `Project updated: ${id}`, 'project', { id });
+      return NextResponse.json(updated);
+    }
   } catch {
     // DB unavailable
   }
@@ -59,7 +63,10 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
 
   try {
     const [deleted] = await db.delete(projects).where(eq(projects.id, id)).returning();
-    if (deleted) return NextResponse.json({ success: true });
+    if (deleted) {
+      logStatus('info', `Project deleted: ${id}`, 'project', { id });
+      return NextResponse.json({ success: true });
+    }
   } catch {
     // DB unavailable
   }

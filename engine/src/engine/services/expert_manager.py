@@ -135,6 +135,7 @@ class ExpertManager:
 
         expert_dir = Path(expert["_dir"])
         file_path = expert_dir / filename
+        file_path.parent.mkdir(parents=True, exist_ok=True)
         versions_dir = expert_dir / ".versions"
         versions_dir.mkdir(exist_ok=True)
 

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, experts } from '@/lib/db';
 import { eq, ilike, or, desc, asc, sql } from 'drizzle-orm';
+import { logStatus } from '@/lib/status-log';
 
 /* GET /api/experts — query params: role, status, search, sort, id */
 export async function GET(req: NextRequest) {
@@ -103,10 +104,12 @@ export async function POST(req: NextRequest) {
       isPublic:      isPublic ?? false,
     }).returning();
 
+    logStatus('info', `Expert deployed: ${name}`, 'expert', { id, role, modelSource: modelSource || 'provider' });
     return NextResponse.json({ expert: inserted, message: 'Expert deployment initiated' }, { status: 201 });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Invalid request body';
     console.error('[experts POST]', err);
+    logStatus('error', `Expert creation failed: ${message}`, 'expert', { error: message });
     return NextResponse.json({ error: message }, { status: 400 });
   }
 }
@@ -152,9 +155,11 @@ export async function PATCH(req: NextRequest) {
       .where(eq(experts.id, id))
       .returning();
 
+    logStatus('info', `Expert updated: ${id}`, 'expert', { id, fields: Object.keys(updates) });
     return NextResponse.json({ expert: updated });
   } catch (err) {
     console.error('[experts PATCH]', err);
+    logStatus('error', `Expert update failed: ${err instanceof Error ? err.message : 'Unknown'}`, 'expert', { error: err instanceof Error ? err.message : 'Unknown' });
     return NextResponse.json({ error: 'Update failed' }, { status: 500 });
   }
 }
@@ -174,9 +179,11 @@ export async function DELETE(req: NextRequest) {
       return NextResponse.json({ error: 'Expert not found' }, { status: 404 });
     }
 
+    logStatus('info', `Expert deleted: ${id}`, 'expert', { id });
     return NextResponse.json({ deleted: true, id });
   } catch (err) {
     console.error('[experts DELETE]', err);
+    logStatus('error', `Expert deletion failed: ${err instanceof Error ? err.message : 'Unknown'}`, 'expert', { error: err instanceof Error ? err.message : 'Unknown' });
     return NextResponse.json({ error: 'Delete failed' }, { status: 500 });
   }
 }

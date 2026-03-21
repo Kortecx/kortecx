@@ -9,7 +9,7 @@ import {
   Loader2, Activity, Zap, Clock, BarChart2,
   ChevronDown, Play, Cpu, Tag, X, Save,
   Server, Cloud, Trash2, CheckCircle2, AlertCircle,
-  Hash, Filter, Copy, ChevronRight, RotateCcw, Store,
+  Hash, Filter, Copy, ChevronRight, RotateCcw, Store, FileText,
 } from 'lucide-react';
 import { useExperts } from '@/lib/hooks/useApi';
 import { ROLE_META, PROVIDERS } from '@/lib/constants';
@@ -743,14 +743,20 @@ function MyExpertCard({
   expert,
   onConfigure,
   onViewStats,
+  onDelete,
+  onRun,
   highlighted,
   cardRef,
+  runStatus,
 }: {
   expert: Record<string, unknown>;
   onConfigure: () => void;
   onViewStats: () => void;
+  onDelete: () => void;
+  onRun: () => void;
   highlighted: boolean;
   cardRef?: React.Ref<HTMLDivElement>;
+  runStatus?: 'running' | 'success' | 'error';
 }) {
   const role        = (expert.role as string) ?? 'custom';
   const roleColor   = ROLE_COLOR[role] ?? '#6b7280';
@@ -878,69 +884,41 @@ function MyExpertCard({
         <span style={{ color: 'var(--text-4)' }}>{(expert.modelName ?? expert.modelId) as string}</span>
       </div>
 
+      {/* Run status indicator */}
+      {runStatus && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px',
+          borderRadius: 6, fontSize: 11, fontWeight: 600,
+          background: runStatus === 'running' ? '#f59e0b08' : runStatus === 'success' ? '#10b98108' : '#ef444408',
+          border: `1px solid ${runStatus === 'running' ? '#f59e0b20' : runStatus === 'success' ? '#10b98120' : '#ef444420'}`,
+          color: runStatus === 'running' ? '#f59e0b' : runStatus === 'success' ? '#10b981' : '#ef4444',
+        }}>
+          <span style={{
+            width: 8, height: 8, borderRadius: '50%',
+            background: runStatus === 'running' ? '#f59e0b' : runStatus === 'success' ? '#10b981' : '#ef4444',
+            animation: runStatus === 'running' ? 'pulse-dot 1.5s ease-in-out infinite' : undefined,
+          }} />
+          {runStatus === 'running' ? 'Running...' : runStatus === 'success' ? 'Completed' : 'Failed'}
+        </div>
+      )}
+
       {/* Stats grid */}
       <div style={{
         display: 'grid', gridTemplateColumns: '1fr 1fr 1fr',
-        gap: 8,
-        paddingTop: 10, borderTop: '1px solid var(--border)',
+        gap: 6, paddingTop: 10, borderTop: '1px solid var(--border)',
       }}>
-        {/* Total runs */}
-        <div style={{
-          textAlign: 'center', padding: '9px 4px', borderRadius: 8,
-          background: `${SECTION_COLOR}06`, border: `1px solid ${SECTION_COLOR}12`,
-        }}>
-          <div style={{ fontSize: 18, fontWeight: 800, color: SECTION_COLOR, lineHeight: 1 }}>
-            {fmt(totalRuns)}
-          </div>
-          <div style={{ fontSize: 9, color: 'var(--text-4)', marginTop: 3, fontWeight: 500 }}>
-            Total Runs
-          </div>
+        <div style={{ textAlign: 'center', padding: '7px 4px', borderRadius: 6, background: `${SECTION_COLOR}06`, border: `1px solid ${SECTION_COLOR}12` }}>
+          <div style={{ fontSize: 16, fontWeight: 800, color: SECTION_COLOR, lineHeight: 1 }}>{fmt(totalRuns)}</div>
+          <div style={{ fontSize: 8, color: 'var(--text-4)', marginTop: 2, fontWeight: 500 }}>Runs</div>
         </div>
-
-        {/* Success rate */}
-        <div style={{
-          textAlign: 'center', padding: '9px 4px', borderRadius: 8,
-          background: '#10b98106', border: '1px solid #10b98112',
-        }}>
-          <div style={{ fontSize: 18, fontWeight: 800, color: '#10b981', lineHeight: 1 }}>
-            {successRate > 0 ? pct(successRate) : '—'}
-          </div>
-          <div style={{ fontSize: 9, color: 'var(--text-4)', marginTop: 3, fontWeight: 500 }}>
-            Success Rate
-          </div>
+        <div style={{ textAlign: 'center', padding: '7px 4px', borderRadius: 6, background: '#10b98106', border: '1px solid #10b98112' }}>
+          <div style={{ fontSize: 16, fontWeight: 800, color: '#10b981', lineHeight: 1 }}>{successRate > 0 ? pct(successRate) : '—'}</div>
+          <div style={{ fontSize: 8, color: 'var(--text-4)', marginTop: 2, fontWeight: 500 }}>Success</div>
         </div>
-
-        {/* Avg cost */}
-        <div style={{
-          textAlign: 'center', padding: '9px 4px', borderRadius: 8,
-          background: '#f59e0b06', border: '1px solid #f59e0b12',
-        }}>
-          <div style={{ fontSize: 18, fontWeight: 800, color: '#f59e0b', lineHeight: 1 }}>
-            {avgCost > 0 ? `$${avgCost.toFixed(3)}` : '—'}
-          </div>
-          <div style={{ fontSize: 9, color: 'var(--text-4)', marginTop: 3, fontWeight: 500 }}>
-            Avg Cost / Run
-          </div>
+        <div style={{ textAlign: 'center', padding: '7px 4px', borderRadius: 6, background: '#2563EB06', border: '1px solid #2563EB12' }}>
+          <div style={{ fontSize: 16, fontWeight: 800, color: '#2563EB', lineHeight: 1 }}>{avgLatency > 0 ? `${(avgLatency / 1000).toFixed(1)}s` : '—'}</div>
+          <div style={{ fontSize: 8, color: 'var(--text-4)', marginTop: 2, fontWeight: 500 }}>Avg Time</div>
         </div>
-      </div>
-
-      {/* Latency + rating row */}
-      <div style={{
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        fontSize: 11,
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 5, color: 'var(--text-3)' }}>
-          <Clock size={10} color="var(--text-4)" />
-          <span style={{ fontWeight: 500 }}>
-            {avgLatency > 0 ? `${avgLatency.toLocaleString()} ms avg latency` : 'No latency data'}
-          </span>
-        </div>
-        {rating > 0 && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 4, color: '#f59e0b' }}>
-            <Star size={11} fill="#f59e0b" strokeWidth={0} />
-            <span style={{ fontWeight: 700, fontSize: 12 }}>{rating.toFixed(1)}</span>
-          </div>
-        )}
       </div>
 
       {/* Tags */}
@@ -959,14 +937,24 @@ function MyExpertCard({
         </div>
       )}
 
+      {/* Artifact location */}
+      {totalRuns > 0 && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 10, color: 'var(--text-4)', padding: '4px 0' }}>
+          <FileText size={9} />
+          <span className="mono" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            experts/{(expert.modelSource as string) === 'local' ? 'local' : 'marketplace'}/{(expert.name as string).toLowerCase().replace(/[^a-z0-9]+/g, '-')}/
+          </span>
+        </div>
+      )}
+
       {/* Action buttons */}
       <div style={{
-        display: 'flex', gap: 7, paddingTop: 4,
+        display: 'flex', gap: 5, paddingTop: 4,
         borderTop: '1px solid var(--border)', marginTop: 'auto',
       }}>
-        <button style={{
+        <button onClick={onRun} style={{
           flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5,
-          padding: '8px 10px', borderRadius: 7, cursor: 'pointer',
+          padding: '7px 8px', borderRadius: 7, cursor: 'pointer',
           border: `1.5px solid ${SECTION_COLOR}50`,
           background: `${SECTION_COLOR}12`,
           color: SECTION_COLOR, fontSize: 11, fontWeight: 700,
@@ -977,7 +965,7 @@ function MyExpertCard({
         </button>
         <button onClick={onConfigure} style={{
           flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5,
-          padding: '8px 10px', borderRadius: 7, cursor: 'pointer',
+          padding: '7px 8px', borderRadius: 7, cursor: 'pointer',
           border: '1px solid var(--border-md)',
           background: 'transparent',
           color: 'var(--text-3)', fontSize: 11, fontWeight: 500,
@@ -988,14 +976,27 @@ function MyExpertCard({
         </button>
         <button onClick={onViewStats} style={{
           flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5,
-          padding: '8px 10px', borderRadius: 7, cursor: 'pointer',
+          padding: '7px 8px', borderRadius: 7, cursor: 'pointer',
           border: '1px solid var(--border-md)',
           background: 'transparent',
           color: 'var(--text-3)', fontSize: 11, fontWeight: 500,
           transition: 'all 0.15s',
         }}>
           <BarChart2 size={10} />
-          View Stats
+          Stats
+        </button>
+        <button onClick={onDelete} title="Delete expert" style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          padding: '7px 8px', borderRadius: 7, cursor: 'pointer',
+          border: '1px solid rgba(220,38,38,0.2)',
+          background: 'transparent',
+          color: 'var(--text-4)', fontSize: 11,
+          transition: 'all 0.15s',
+        }}
+          onMouseEnter={e => { e.currentTarget.style.color = '#DC2626'; e.currentTarget.style.background = 'rgba(220,38,38,0.06)'; e.currentTarget.style.borderColor = '#DC2626'; }}
+          onMouseLeave={e => { e.currentTarget.style.color = 'var(--text-4)'; e.currentTarget.style.background = 'transparent'; e.currentTarget.style.borderColor = 'rgba(220,38,38,0.2)'; }}
+        >
+          <Trash2 size={11} />
         </button>
       </div>
     </motion.div>
@@ -1206,8 +1207,130 @@ function ExpertsPage() {
   const [mpSortBy, setMpSortBy]         = useState<MarketplaceSortOption>('rating');
 
   const { experts, total, isLoading, mutate } = useExperts();
+  const [expertRunStatus, setExpertRunStatus] = useState<Record<string, 'running' | 'success' | 'error'>>({});
+  const [deleteTarget, setDeleteTarget] = useState<Record<string, unknown> | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const highlightRef = useRef<HTMLDivElement>(null);
+
+  const ENGINE_URL = process.env.NEXT_PUBLIC_ENGINE_URL || 'http://localhost:8000';
+
+  /* Delete expert */
+  const handleDeleteExpert = (expert: Record<string, unknown>) => {
+    setDeleteTarget(expert);
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      const resp = await fetch(`/api/experts?id=${deleteTarget.id}`, { method: 'DELETE' });
+      if (resp.ok) {
+        mutate();
+        fetch('/api/logs', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ level: 'info', message: `Expert deleted: ${deleteTarget.name}`, source: 'expert', metadata: { expertId: deleteTarget.id } }),
+        }).catch(() => {});
+      }
+    } catch { /* ignore */ }
+    setDeleting(false);
+    setDeleteTarget(null);
+  };
+
+  /* Run expert — triggers LLM call, persists response */
+  const handleRunExpert = async (expert: Record<string, unknown>) => {
+    const expertId = expert.id as string;
+    const expertName = expert.name as string;
+    const role = expert.role as string;
+    const modelSource = (expert.modelSource as string) || 'local';
+    const localConfig = expert.localModelConfig as Record<string, string> | null;
+    const systemPrompt = (expert.systemPrompt as string) || `You are ${expertName}, a specialized ${role} AI expert.`;
+
+    setExpertRunStatus(prev => ({ ...prev, [expertId]: 'running' }));
+
+    try {
+      // Build inference request
+      const engine = localConfig?.engine || 'ollama';
+      const model = localConfig?.modelName || localConfig?.model || 'llama3.2:3b';
+      const temperature = Number(expert.temperature) || 0.7;
+      const maxTokens = (expert.maxTokens as number) || 4096;
+
+      const userPrompt = `You are running as expert "${expertName}" with role "${role}". Provide a demonstration of your capabilities. Show your best work in your area of expertise with a practical example.`;
+
+      const resp = await fetch(`${ENGINE_URL}/api/orchestrator/inference/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          engine, model, temperature, maxTokens,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt },
+          ],
+        }),
+      });
+
+      const data = await resp.json();
+      const responseText = data.text || data.error || 'No response received';
+      const tokensUsed = data.tokensUsed || 0;
+      const durationMs = data.durationMs || 0;
+
+      // Persist response via engine artifacts
+      const slugName = expertName.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 60);
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+
+      // Save to engine artifacts endpoint
+      await fetch(`${ENGINE_URL}/api/experts/engine/${expert.id || `local-${slugName}`}/update`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          filename: `responses/response_${timestamp}.md`,
+          content: `---\nexpert: ${expertName}\nrole: ${role}\nmodel: ${model}\nengine: ${engine}\ntokens: ${tokensUsed}\nduration_ms: ${durationMs}\ntimestamp: ${new Date().toISOString()}\ntags: [${role}, demo, auto-run]\ncategory: expert-response\nlabel: ${expertName} Demo Run\n---\n\n${responseText}`,
+        }),
+      }).catch(() => {});
+
+      // Also persist to logs
+      fetch('/api/logs', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          level: 'info',
+          message: `Expert "${expertName}" run completed: ${tokensUsed} tokens, ${durationMs}ms`,
+          source: 'expert',
+          metadata: { expertId, model, engine, tokensUsed, durationMs, responseLength: responseText.length },
+        }),
+      }).catch(() => {});
+
+      // Update expert stats in NeonDB
+      const prevRuns = (expert.totalRuns as number) || 0;
+      const prevLatency = (expert.avgLatencyMs as number) || 0;
+      const newAvgLatency = prevRuns > 0 ? Math.round((prevLatency * prevRuns + durationMs) / (prevRuns + 1)) : Math.round(durationMs);
+      await fetch('/api/experts', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: expertId,
+          totalRuns: prevRuns + 1,
+          avgLatencyMs: newAvgLatency,
+          status: 'active',
+        }),
+      }).catch(() => {});
+
+      setExpertRunStatus(prev => ({ ...prev, [expertId]: 'success' }));
+      mutate();
+      // Clear status dot after 5 seconds
+      setTimeout(() => setExpertRunStatus(prev => { const n = { ...prev }; delete n[expertId]; return n; }), 5000);
+
+    } catch (err) {
+      // Log failure
+      fetch('/api/logs', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          level: 'error',
+          message: `Expert "${expertName}" run failed: ${err instanceof Error ? err.message : 'Unknown error'}`,
+          source: 'expert',
+          metadata: { expertId },
+        }),
+      }).catch(() => {});
+      setExpertRunStatus(prev => ({ ...prev, [expertId]: 'error' }));
+      setTimeout(() => setExpertRunStatus(prev => { const n = { ...prev }; delete n[expertId]; return n; }), 8000);
+    }
+  };
 
   /* Sync tab from URL params — intentional setState from param changes */
   /* eslint-disable react-hooks/set-state-in-effect */
@@ -1349,6 +1472,84 @@ function ExpertsPage() {
 
   return (
     <div style={{ padding: 28, maxWidth: 1200 }}>
+      {/* Delete Confirmation Dialog */}
+      <AnimatePresence>
+        {deleteTarget && (
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            style={{
+              position: 'fixed', inset: 0, background: 'rgba(7,7,26,0.85)',
+              zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}
+            onClick={() => { if (!deleting) setDeleteTarget(null); }}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.96, y: -8 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.96, y: -8 }}
+              transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+              onClick={e => e.stopPropagation()}
+              style={{
+                width: 420, background: 'var(--bg-surface)', border: '1px solid var(--border-md)',
+                borderRadius: 12, overflow: 'hidden', boxShadow: '0 24px 80px rgba(0,0,0,0.2)',
+              }}
+            >
+              <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <div style={{
+                    width: 36, height: 36, borderRadius: 8,
+                    background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.15)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  }}>
+                    <Trash2 size={16} color="#ef4444" />
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-1)' }}>Delete Expert</div>
+                    <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 1 }}>This action cannot be undone</div>
+                  </div>
+                </div>
+              </div>
+              <div style={{ padding: '16px 24px' }}>
+                <p style={{ fontSize: 13, color: 'var(--text-2)', lineHeight: 1.6, margin: 0 }}>
+                  Are you sure you want to delete <strong style={{ color: 'var(--text-1)' }}>{deleteTarget.name as string}</strong>?
+                  All configuration, run history, and associated artifacts will be permanently removed.
+                </p>
+              </div>
+              <div style={{
+                padding: '14px 24px', borderTop: '1px solid var(--border)',
+                display: 'flex', justifyContent: 'flex-end', gap: 8,
+              }}>
+                <button
+                  onClick={() => setDeleteTarget(null)}
+                  disabled={deleting}
+                  style={{
+                    padding: '8px 16px', borderRadius: 7, fontSize: 12,
+                    border: '1px solid var(--border-md)', background: 'transparent',
+                    color: 'var(--text-3)', cursor: 'pointer',
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={confirmDelete}
+                  disabled={deleting}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 5,
+                    padding: '8px 18px', borderRadius: 7, fontSize: 12, fontWeight: 700,
+                    border: '1.5px solid #ef4444', background: 'rgba(239,68,68,0.1)',
+                    color: '#ef4444', cursor: deleting ? 'wait' : 'pointer',
+                    opacity: deleting ? 0.6 : 1,
+                  }}
+                >
+                  {deleting ? <Loader2 size={12} style={{ animation: 'spin 1s linear infinite' }} /> : <Trash2 size={12} />}
+                  {deleting ? 'Deleting...' : 'Delete Expert'}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Highlight animation keyframes */}
       <style>{`
         @keyframes highlight-pulse {
@@ -1674,8 +1875,11 @@ function ExpertsPage() {
                         expert={expert}
                         onConfigure={() => setConfigureExpert(expert)}
                         onViewStats={() => setStatsExpert(expert)}
+                        onDelete={() => handleDeleteExpert(expert)}
+                        onRun={() => handleRunExpert(expert)}
                         highlighted={isHighlighted}
                         cardRef={isHighlighted ? highlightRef : undefined}
+                        runStatus={expertRunStatus[expertId]}
                       />
                     );
                   })}

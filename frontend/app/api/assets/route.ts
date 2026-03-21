@@ -4,6 +4,7 @@ import { eq, desc, sql } from 'drizzle-orm';
 import { writeFile, mkdir } from 'fs/promises';
 import { join, extname } from 'path';
 import { randomUUID } from 'crypto';
+import { logStatus } from '@/lib/status-log';
 
 const UPLOAD_DIR = join(process.cwd(), '..', 'uploads', 'assets');
 
@@ -95,9 +96,13 @@ export async function POST(req: NextRequest) {
       created.push(inserted);
     }
 
+    for (const a of created) {
+      logStatus('info', `Asset uploaded: ${a.fileName}`, 'asset', { id: a.id, fileType: a.fileType, sizeBytes: a.sizeBytes });
+    }
     return NextResponse.json({ assets: created, count: created.length }, { status: 201 });
   } catch (err) {
     console.error('[assets POST]', err);
+    logStatus('error', `Asset upload failed: ${err instanceof Error ? err.message : 'Unknown'}`, 'asset', { error: err instanceof Error ? err.message : 'Unknown' });
     return NextResponse.json({ error: 'Upload failed' }, { status: 500 });
   }
 }
@@ -131,9 +136,11 @@ export async function DELETE(req: NextRequest) {
     if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 });
     const [deleted] = await db.delete(assets).where(eq(assets.id, id)).returning();
     if (!deleted) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+    logStatus('info', `Asset deleted: ${id}`, 'asset', { id });
     return NextResponse.json({ deleted: true, id });
   } catch (err) {
     console.error('[assets DELETE]', err);
+    logStatus('error', `Asset deletion failed: ${err instanceof Error ? err.message : 'Unknown'}`, 'asset', { error: err instanceof Error ? err.message : 'Unknown' });
     return NextResponse.json({ error: 'Delete failed' }, { status: 500 });
   }
 }

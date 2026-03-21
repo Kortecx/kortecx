@@ -4,6 +4,7 @@ import { sql, eq } from 'drizzle-orm';
 import { PROVIDERS } from '@/lib/constants';
 import { createHash, randomUUID } from 'crypto';
 import { encryptToken } from '@/lib/oauth/crypto';
+import { logStatus } from '@/lib/status-log';
 
 /* GET /api/providers — returns provider list with live stats and connection status from DB */
 export async function GET() {
@@ -137,6 +138,7 @@ export async function POST(req: NextRequest) {
       status: 'active',
     });
 
+    logStatus('info', `API key added for ${providerId}`, 'provider', { providerId });
     return NextResponse.json({
       success: true,
       providerId,
@@ -145,6 +147,7 @@ export async function POST(req: NextRequest) {
     });
   } catch (err) {
     console.error('[POST /api/providers]', err);
+    logStatus('error', `API key storage failed: ${err instanceof Error ? err.message : 'Unknown'}`, 'provider', { error: err instanceof Error ? err.message : 'Unknown' });
     return NextResponse.json({ error: 'Failed to store API key' }, { status: 500 });
   }
 }
@@ -166,6 +169,7 @@ export async function DELETE(req: NextRequest) {
         sql`${apiKeys.providerId} = ${providerId} AND ${apiKeys.status} = 'active'`
       );
 
+    logStatus('info', `API key revoked for ${providerId}`, 'provider', { providerId });
     return NextResponse.json({
       success: true,
       providerId,
@@ -174,6 +178,7 @@ export async function DELETE(req: NextRequest) {
     });
   } catch (err) {
     console.error('[DELETE /api/providers]', err);
+    logStatus('error', `API key revocation failed: ${err instanceof Error ? err.message : 'Unknown'}`, 'provider', { error: err instanceof Error ? err.message : 'Unknown' });
     return NextResponse.json({ error: 'Failed to revoke API key' }, { status: 500 });
   }
 }

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db, hfDatasets, apiKeys } from '@/lib/db';
 import { eq, desc, sql } from 'drizzle-orm';
 import { decryptToken } from '@/lib/oauth/crypto';
+import { logStatus } from '@/lib/status-log';
 
 const ENGINE_URL = process.env.NEXT_PUBLIC_ENGINE_URL || 'http://localhost:8000';
 
@@ -104,9 +105,11 @@ export async function POST(req: NextRequest) {
           .where(eq(hfDatasets.id, id));
       });
 
+    logStatus('info', `HF dataset tracked: ${name?.trim() || hfId}`, 'dataset', { id, hfId });
     return NextResponse.json({ dataset: inserted, message: 'Download started' }, { status: 201 });
   } catch (err) {
     console.error('[datasets POST]', err);
+    logStatus('error', `Dataset creation failed: ${err instanceof Error ? err.message : 'Unknown'}`, 'dataset', { error: err instanceof Error ? err.message : 'Unknown' });
     return NextResponse.json({ error: 'Failed to create dataset' }, { status: 500 });
   }
 }
@@ -151,9 +154,11 @@ export async function DELETE(req: NextRequest) {
 
     const [deleted] = await db.delete(hfDatasets).where(eq(hfDatasets.id, id)).returning();
     if (!deleted) return NextResponse.json({ error: 'Dataset not found' }, { status: 404 });
+    logStatus('info', `HF dataset removed: ${id}`, 'dataset', { id });
     return NextResponse.json({ deleted: true, id });
   } catch (err) {
     console.error('[datasets DELETE]', err);
+    logStatus('error', `Dataset deletion failed: ${err instanceof Error ? err.message : 'Unknown'}`, 'dataset', { error: err instanceof Error ? err.message : 'Unknown' });
     return NextResponse.json({ error: 'Delete failed' }, { status: 500 });
   }
 }

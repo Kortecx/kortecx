@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db, workflows, workflowSteps, workflowRuns } from '@/lib/db';
 import { desc, eq, asc } from 'drizzle-orm';
 import { nanoid } from '../tasks/nanoid';
+import { logStatus } from '@/lib/status-log';
 
 function buildStepValues(workflowId: string, steps: Record<string, unknown>[]) {
   return steps.map((s, i) => ({
@@ -93,9 +94,11 @@ export async function POST(req: NextRequest) {
       await db.insert(workflowSteps).values(buildStepValues(workflowId, steps));
     }
 
+    logStatus('info', `Workflow created: ${name}`, 'workflow', { id: workflowId, stepsCount: steps?.length ?? 0 });
     return NextResponse.json({ workflow: row }, { status: 201 });
   } catch (err) {
     console.error('[workflows POST]', err);
+    logStatus('error', `Workflow creation failed: ${err instanceof Error ? err.message : 'Unknown'}`, 'workflow', { error: err instanceof Error ? err.message : 'Unknown' });
     return NextResponse.json({ error: 'Database error' }, { status: 500 });
   }
 }
@@ -144,9 +147,11 @@ export async function PATCH(req: NextRequest) {
       }
     }
 
+    logStatus('info', `Workflow updated: ${id}`, 'workflow', { id });
     return NextResponse.json({ workflow: updated });
   } catch (err) {
     console.error('[workflows PATCH]', err);
+    logStatus('error', `Workflow update failed: ${err instanceof Error ? err.message : 'Unknown'}`, 'workflow', { error: err instanceof Error ? err.message : 'Unknown' });
     return NextResponse.json({ error: 'Update failed' }, { status: 500 });
   }
 }
@@ -169,9 +174,11 @@ export async function DELETE(req: NextRequest) {
       return NextResponse.json({ error: 'Workflow not found' }, { status: 404 });
     }
 
+    logStatus('info', `Workflow deleted: ${id}`, 'workflow', { id });
     return NextResponse.json({ deleted: true, id });
   } catch (err) {
     console.error('[workflows DELETE]', err);
+    logStatus('error', `Workflow deletion failed: ${err instanceof Error ? err.message : 'Unknown'}`, 'workflow', { error: err instanceof Error ? err.message : 'Unknown' });
     return NextResponse.json({ error: 'Delete failed' }, { status: 500 });
   }
 }

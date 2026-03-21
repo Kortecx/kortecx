@@ -3,6 +3,7 @@ import { db } from '@/lib/db';
 import { socialConnections } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
 import { PLATFORMS } from '@/lib/constants';
+import { logStatus } from '@/lib/status-log';
 
 /**
  * GET /api/platforms
@@ -81,8 +82,10 @@ export async function POST(request: Request) {
   if (action === 'disconnect') {
     try {
       await db.delete(socialConnections).where(eq(socialConnections.platform, platformId));
+      logStatus('info', `Platform disconnected: ${platformId}`, 'oauth', { platform: platformId });
     } catch (error) {
       console.error(`[Platforms] Failed to disconnect ${platformId}:`, error);
+      logStatus('error', `Platform disconnect failed: ${platformId}`, 'oauth', { platform: platformId, error: error instanceof Error ? error.message : 'Unknown' });
     }
     return NextResponse.json({
       success: true,

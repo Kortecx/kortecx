@@ -4,6 +4,7 @@ import { db } from '@/lib/db';
 import { oauthCredentials } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
 import { encryptToken } from '@/lib/oauth/crypto';
+import { logStatus } from '@/lib/status-log';
 
 /**
  * GET /api/oauth/credentials
@@ -90,6 +91,7 @@ export async function POST(request: Request) {
         })
         .where(eq(oauthCredentials.platform, platform));
 
+      logStatus('info', `OAuth credentials updated for ${platform}`, 'oauth', { platform });
       return NextResponse.json({
         success: true,
         action: 'updated',
@@ -112,6 +114,7 @@ export async function POST(request: Request) {
       updatedAt: now,
     });
 
+    logStatus('info', `OAuth credentials saved for ${platform}`, 'oauth', { platform });
     return NextResponse.json({
       success: true,
       action: 'created',
@@ -124,6 +127,7 @@ export async function POST(request: Request) {
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
     console.error('[OAuth] Failed to save credentials:', message);
+    logStatus('error', `OAuth credentials save failed: ${message}`, 'oauth', { error: message });
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
@@ -143,9 +147,11 @@ export async function DELETE(request: Request) {
 
   try {
     await db.delete(oauthCredentials).where(eq(oauthCredentials.platform, platform));
+    logStatus('info', `OAuth credentials removed for ${platform}`, 'oauth', { platform });
     return NextResponse.json({ success: true, platform });
   } catch (error) {
     console.error(`[OAuth] Failed to delete credentials for ${platform}:`, error);
+    logStatus('error', `OAuth credentials removal failed for ${platform}`, 'oauth', { platform, error: error instanceof Error ? error.message : 'Unknown' });
     return NextResponse.json({ error: 'Failed to delete credentials' }, { status: 500 });
   }
 }

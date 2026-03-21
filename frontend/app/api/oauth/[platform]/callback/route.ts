@@ -5,6 +5,7 @@ import { socialConnections } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
 import { getPlatformConfig, getClientCredentials, getCallbackUrl, resolvePath } from '@/lib/oauth/platforms';
 import { encryptToken } from '@/lib/oauth/crypto';
+import { logStatus } from '@/lib/status-log';
 
 /**
  * GET /api/oauth/[platform]/callback
@@ -166,6 +167,8 @@ export async function GET(
       updatedAt: now,
     });
 
+    logStatus('info', `OAuth connected: ${platform}`, 'oauth', { platform, username: platformUsername });
+
     // Success — notify opener window and close popup
     return new NextResponse(popupResultPage('oauth_success', {
       platform,
@@ -175,6 +178,7 @@ export async function GET(
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';
     console.error(`[OAuth] Callback error for ${platform}:`, message);
+    logStatus('error', `OAuth callback failed for ${platform}: ${message}`, 'oauth', { platform, error: message });
 
     return new NextResponse(popupResultPage('oauth_error', {
       platform,
