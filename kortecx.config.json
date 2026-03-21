@@ -1,0 +1,103 @@
+{
+  "$schema": "./kortecx.schema.json",
+  "name": "kortecx",
+  "displayName": "Kortecx — Executable Intelligence Platform",
+  "version": "0.2.0",
+  "description": "Open-source platform for orchestrating AI agents, training models, and building agentic workflows",
+  "license": "MIT",
+  "repository": "https://github.com/Kortecx/kortecx",
+  "homepage": "https://kortecx.com",
+
+  "schema": {
+    "version": 3,
+    "lastMigration": "003_quorum_experts_execution",
+    "migrations": [
+      {
+        "id": "001_initial",
+        "version": 1,
+        "description": "Core tables: metrics, tasks, workflows, experts, training, datasets, integrations",
+        "applied": true
+      },
+      {
+        "id": "002_social_mcp_lineage",
+        "version": 2,
+        "description": "Social connections, OAuth, data lineage, dataset schemas, versioning, MCP",
+        "applied": true
+      },
+      {
+        "id": "003_quorum_experts_execution",
+        "version": 3,
+        "description": "Quorum engine tables, execution audit, step executions, model comparisons, workflow metadata",
+        "applied": true
+      }
+    ]
+  },
+
+  "services": {
+    "frontend": {
+      "framework": "next.js",
+      "version": "16.1.6",
+      "port": 3000,
+      "orm": "drizzle",
+      "database": "postgresql"
+    },
+    "engine": {
+      "framework": "fastapi",
+      "version": "0.115+",
+      "port": 8000,
+      "language": "python",
+      "pythonVersion": "3.11+"
+    },
+    "goClient": {
+      "module": "github.com/exi/kortecx-go",
+      "goVersion": "1.22",
+      "package": "quorum"
+    }
+  },
+
+  "infrastructure": {
+    "database": {
+      "provider": "postgresql",
+      "version": "16",
+      "localPort": 5433,
+      "defaultDatabase": "kortecx_dev",
+      "defaultUser": "kortecx"
+    },
+    "vectorStore": {
+      "provider": "qdrant",
+      "port": 6333
+    },
+    "mlflow": {
+      "port": 5050
+    }
+  },
+
+  "features": {
+    "quorumEngine": true,
+    "expertMarketplace": true,
+    "executionArtifacts": true,
+    "stepMetrics": true,
+    "modelComparison": true,
+    "draftAutoSave": true,
+    "mcpServers": true,
+    "workflowScheduling": true,
+    "perFileVersioning": true,
+    "scriptExecution": true
+  },
+
+  "experts": {
+    "marketplaceDir": "engine/experts/marketplace",
+    "localDir": "engine/experts/local",
+    "prebuiltCount": 12
+  },
+
+  "defaults": {
+    "maxConcurrentAgents": 10,
+    "quorumMaxConcurrent": 4,
+    "quorumMetricsInterval": 5.0,
+    "defaultLocalEngine": "ollama",
+    "defaultLocalModel": "llama3.1:8b",
+    "draftAutoSaveInterval": 10000,
+    "metricsRefreshInterval": 5000
+  }
+}

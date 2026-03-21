@@ -12,7 +12,7 @@ const PUBLIC_PATHS: string[] = [];
 function ShellContent({ children }: { children: ReactNode }) {
   const { sidebarCollapsed } = useApp();
   const pathname = usePathname();
-  const left = sidebarCollapsed ? 56 : 240;
+  const left = sidebarCollapsed ? 48 : 200;
 
   const isPublicPage = PUBLIC_PATHS.some(
     p => pathname === p || pathname.startsWith(p + '/')

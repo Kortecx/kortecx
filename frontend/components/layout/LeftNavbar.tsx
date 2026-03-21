@@ -6,7 +6,7 @@ import Image from 'next/image';
 import { usePathname } from 'next/navigation';
 import {
   LayoutDashboard, ListOrdered, Cpu, Users, Star, Rocket,
-  Workflow, LayoutTemplate, History, Brain, Database, Sliders,
+  Workflow, LayoutTemplate, History, Database,
   Activity, ScrollText, Bell, Plug, Key, Settings, Cable, Store,
   ChevronLeft, ChevronRight, Zap, Server, Plus,
 } from 'lucide-react';
@@ -15,7 +15,7 @@ import { NAV_SECTIONS, SYSTEM_METRICS } from '@/lib/constants';
 
 const ICONS: Record<string, React.ElementType> = {
   LayoutDashboard, ListOrdered, Cpu, Users, Star, Rocket,
-  Workflow, LayoutTemplate, History, Brain, Database, Sliders,
+  Workflow, LayoutTemplate, History, Database,
   Activity, ScrollText, Bell, Plug, Key, Settings, Cable, Store, Zap, Server, Plus,
 };
 
@@ -25,8 +25,6 @@ const NEW_MENU_ITEMS = [
   { id: 'expert',     label: 'New Expert',          path: '/experts/deploy',                        icon: Rocket,         color: '#D97706' },
   { id: 'dataset',    label: 'New Dataset',         path: '/data?action=new',                       icon: Database,       color: '#0EA5E9' },
   { id: 'mcp',        label: 'New MCP Server',      path: '/providers/connections?tab=mcp&action=new', icon: Server,      color: '#059669' },
-  { id: 'training',   label: 'Training Job',        path: '/training?action=new',                   icon: Brain,          color: '#7C3AED' },
-  { id: 'finetune',   label: 'Fine-tuning',         path: '/training/finetune?action=new',          icon: Sliders,        color: '#7C3AED' },
 ];
 
 function KortecxLogo({ collapsed }: { collapsed: boolean }) {
@@ -53,15 +51,15 @@ function KortecxLogo({ collapsed }: { collapsed: boolean }) {
       {!collapsed && (
         <div>
           <div style={{
-            fontSize: 14, fontWeight: 800,
-            letterSpacing: '-0.05em', lineHeight: 1,
+            fontSize: 16, fontWeight: 800,
+            letterSpacing: '-0.04em', lineHeight: 1,
             color: '#F04500',
           }}>
             kortecx
           </div>
           <div style={{
-            fontSize: 9, fontWeight: 600, color: 'var(--text-3)',
-            letterSpacing: '0.08em', textTransform: 'uppercase', marginTop: 2,
+            fontSize: 7.5, fontWeight: 600, color: 'var(--text-4)',
+            letterSpacing: '0.1em', textTransform: 'uppercase', marginTop: 2,
           }}>
             Intelligence Platform
           </div>
@@ -140,16 +138,16 @@ function NavItem({
           display: 'flex',
           alignItems: 'center',
           gap: 8,
-          padding: collapsed ? '7px 0' : '6px 10px 6px 14px',
+          padding: collapsed ? '6px 0' : '6px 10px 6px 12px',
           justifyContent: collapsed ? 'center' : 'flex-start',
           position: 'relative',
-          margin: '0 6px',
-          width: 'calc(100% - 12px)',
+          margin: '1px 5px',
+          width: 'calc(100% - 10px)',
           borderRadius: 5,
           cursor: 'pointer',
           textDecoration: 'none',
           fontSize: 13,
-          fontWeight: isActive ? 500 : 400,
+          fontWeight: isActive ? 650 : 520,
           color: isActive ? section.color : (hovered ? section.color : 'var(--text-2)'),
           background: isActive
             ? `${section.color}12`
@@ -239,13 +237,13 @@ function NewButton({ collapsed }: { collapsed: boolean }) {
         onClick={() => setOpen(p => !p)}
         style={{
           display: 'flex', alignItems: 'center', gap: 6,
-          margin: '8px 8px 6px', padding: collapsed ? '7px 0' : '7px 12px',
+          margin: '6px 6px 4px', padding: collapsed ? '5px 0' : '5px 10px',
           justifyContent: collapsed ? 'center' : 'flex-start',
           width: 'calc(100% - 16px)', borderRadius: 7,
           background: open ? 'var(--primary)' : 'var(--primary-dim)',
           border: `1.5px solid ${open ? 'var(--primary)' : 'rgba(240,69,0,0.2)'}`,
           color: open ? '#fff' : 'var(--primary)',
-          fontSize: 13, fontWeight: 600, cursor: 'pointer',
+          fontSize: 12.5, fontWeight: 700, cursor: 'pointer',
           transition: 'all 0.15s',
         }}
       >
@@ -317,7 +315,7 @@ export default function LeftNavbar() {
     window.addEventListener('popstate', onPop);
     return () => window.removeEventListener('popstate', onPop);
   }, [pathname]);
-  const w = sidebarCollapsed ? 56 : 240;
+  const w = sidebarCollapsed ? 48 : 200;
   const tokPct = Math.round(
     (SYSTEM_METRICS.tokensUsedToday / SYSTEM_METRICS.tokenBudgetDaily) * 100
   );
@@ -339,27 +337,57 @@ export default function LeftNavbar() {
         overflowY: 'hidden',
       }}
     >
-      {/* Brand */}
+      {/* Brand + Collapse Toggle */}
       <div style={{
-        height: 52,
+        height: 48,
         display: 'flex',
         alignItems: 'center',
-        justifyContent: sidebarCollapsed ? 'center' : 'flex-start',
-        padding: sidebarCollapsed ? '0' : '0 16px',
+        justifyContent: 'space-between',
+        padding: sidebarCollapsed ? '0 8px' : '0 10px 0 16px',
         borderBottom: '1px solid var(--border)',
         flexShrink: 0,
       }}>
         <KortecxLogo collapsed={sidebarCollapsed} />
+        <button
+          onClick={toggleSidebar}
+          title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            width: 22,
+            height: 22,
+            borderRadius: 5,
+            background: 'none',
+            border: '1px solid var(--border)',
+            cursor: 'pointer',
+            color: 'var(--text-4)',
+            flexShrink: 0,
+            transition: 'color 0.15s, background 0.15s, border-color 0.15s',
+          }}
+          onMouseEnter={e => {
+            e.currentTarget.style.color = '#F04500';
+            e.currentTarget.style.background = 'rgba(240,69,0,0.06)';
+            e.currentTarget.style.borderColor = 'rgba(240,69,0,0.25)';
+          }}
+          onMouseLeave={e => {
+            e.currentTarget.style.color = 'var(--text-4)';
+            e.currentTarget.style.background = 'none';
+            e.currentTarget.style.borderColor = 'var(--border)';
+          }}
+        >
+          {sidebarCollapsed ? <ChevronRight size={12} /> : <ChevronLeft size={12} />}
+        </button>
       </div>
 
       {/* New Button + Dashboard */}
       <NewButton collapsed={sidebarCollapsed} />
       <Link href="/dashboard" style={{
         display: 'flex', alignItems: 'center', gap: 8,
-        padding: sidebarCollapsed ? '7px 0' : '6px 10px 6px 14px',
+        padding: sidebarCollapsed ? '6px 0' : '6px 10px 6px 12px',
         justifyContent: sidebarCollapsed ? 'center' : 'flex-start',
-        margin: '0 6px 4px', width: 'calc(100% - 12px)', borderRadius: 5,
-        textDecoration: 'none', fontSize: 13, fontWeight: pathname === '/dashboard' ? 600 : 450,
+        margin: '1px 5px 2px', width: 'calc(100% - 10px)', borderRadius: 5,
+        textDecoration: 'none', fontSize: 13, fontWeight: pathname === '/dashboard' ? 650 : 520,
         color: pathname === '/dashboard' ? '#F04500' : 'var(--text-2)',
         background: pathname === '/dashboard' ? 'rgba(240,69,0,0.08)' : 'transparent',
         transition: 'background 0.12s, color 0.12s',
@@ -371,10 +399,10 @@ export default function LeftNavbar() {
       {/* Nav Sections */}
       <div style={{ flex: 1, overflowY: 'auto', overflowX: 'visible', padding: '4px 0' }}>
         {NAV_SECTIONS.map(section => (
-          <div key={section.id} style={{ marginBottom: 4 }}>
+          <div key={section.id} style={{ marginBottom: 2 }}>
             {!sidebarCollapsed && (
               <div style={{
-                padding: '6px 16px 2px',
+                padding: '5px 14px 1px',
                 fontSize: 9,
                 fontWeight: 700,
                 letterSpacing: '0.12em',
@@ -388,7 +416,7 @@ export default function LeftNavbar() {
               <div style={{
                 height: 1,
                 background: `${section.color}22`,
-                margin: '4px 10px',
+                margin: '3px 8px',
                 borderRadius: 1,
               }} />
             )}
@@ -419,7 +447,7 @@ export default function LeftNavbar() {
 
       {/* Token Usage */}
       {!sidebarCollapsed && (
-        <div style={{ padding: '10px 14px', borderTop: '1px solid var(--border)' }}>
+        <div style={{ padding: '8px 12px', borderTop: '1px solid var(--border)' }}>
           <div style={{
             display: 'flex',
             justifyContent: 'space-between',
@@ -457,45 +485,6 @@ export default function LeftNavbar() {
         </div>
       )}
 
-      {/* Collapse Toggle — bottom */}
-      <div style={{
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: sidebarCollapsed ? 'center' : 'flex-end',
-        padding: sidebarCollapsed ? '8px 0' : '8px 12px',
-        borderTop: '1px solid var(--border)',
-        flexShrink: 0,
-      }}>
-        <button
-          onClick={toggleSidebar}
-          title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            width: 28,
-            height: 28,
-            borderRadius: 6,
-            background: 'none',
-            border: '1px solid var(--border)',
-            cursor: 'pointer',
-            color: 'var(--text-3)',
-            transition: 'color 0.15s, background 0.15s, border-color 0.15s',
-          }}
-          onMouseEnter={e => {
-            e.currentTarget.style.color = 'var(--primary)';
-            e.currentTarget.style.background = 'var(--primary-dim)';
-            e.currentTarget.style.borderColor = 'var(--primary)';
-          }}
-          onMouseLeave={e => {
-            e.currentTarget.style.color = 'var(--text-3)';
-            e.currentTarget.style.background = 'none';
-            e.currentTarget.style.borderColor = 'var(--border)';
-          }}
-        >
-          {sidebarCollapsed ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}
-        </button>
-      </div>
     </aside>
   );
 }

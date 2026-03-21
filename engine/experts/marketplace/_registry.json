@@ -1,0 +1,101 @@
+{
+  "version": "1.0.0",
+  "experts": [
+    {
+      "id": "marketplace-code-architect",
+      "dir": "code-architect",
+      "name": "Code Architect",
+      "role": "coder",
+      "category": "engineering",
+      "version": "1.0.0"
+    },
+    {
+      "id": "marketplace-research-analyst",
+      "dir": "research-analyst",
+      "name": "Research Analyst",
+      "role": "researcher",
+      "category": "research",
+      "version": "1.0.0"
+    },
+    {
+      "id": "marketplace-content-strategist",
+      "dir": "content-strategist",
+      "name": "Content Strategist",
+      "role": "writer",
+      "category": "content",
+      "version": "1.0.0"
+    },
+    {
+      "id": "marketplace-data-engineer",
+      "dir": "data-engineer",
+      "name": "Data Engineer",
+      "role": "data-engineer",
+      "category": "data",
+      "version": "1.0.0"
+    },
+    {
+      "id": "marketplace-marketing-growth",
+      "dir": "marketing-growth",
+      "name": "Marketing Growth",
+      "role": "analyst",
+      "category": "marketing",
+      "version": "1.0.0"
+    },
+    {
+      "id": "marketplace-crm-specialist",
+      "dir": "crm-specialist",
+      "name": "CRM Specialist",
+      "role": "coordinator",
+      "category": "sales",
+      "version": "1.0.0"
+    },
+    {
+      "id": "marketplace-support-agent",
+      "dir": "support-agent",
+      "name": "Support Agent",
+      "role": "custom",
+      "category": "support",
+      "version": "1.0.0"
+    },
+    {
+      "id": "marketplace-social-media-auto",
+      "dir": "social-media-auto",
+      "name": "Social Media Auto",
+      "role": "creative",
+      "category": "marketing",
+      "version": "1.0.0"
+    },
+    {
+      "id": "marketplace-security-auditor",
+      "dir": "security-auditor",
+      "name": "Security Auditor",
+      "role": "reviewer",
+      "category": "security",
+      "version": "1.0.0"
+    },
+    {
+      "id": "marketplace-qa-reviewer",
+      "dir": "qa-reviewer",
+      "name": "QA Reviewer",
+      "role": "reviewer",
+      "category": "engineering",
+      "version": "1.0.0"
+    },
+    {
+      "id": "marketplace-legal-advisor",
+      "dir": "legal-advisor",
+      "name": "Legal Advisor",
+      "role": "legal",
+      "category": "legal",
+      "version": "1.0.0"
+    },
+    {
+      "id": "marketplace-financial-analyst",
+      "dir": "financial-analyst",
+      "name": "Financial Analyst",
+      "role": "financial",
+      "category": "finance",
+      "version": "1.0.0"
+    }
+  ]
+}

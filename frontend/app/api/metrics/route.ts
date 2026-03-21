@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, metrics, tasks, workflowRuns, alerts } from '@/lib/db';
-import { desc, eq, gte, count, sql } from 'drizzle-orm';
+import { desc, eq, gte, count } from 'drizzle-orm';
+
+const ENGINE_URL = process.env.NEXT_PUBLIC_ENGINE_URL || 'http://localhost:8000';
 
 /* GET /api/metrics — live dashboard metrics */
 export async function GET(req: NextRequest) {
@@ -42,6 +44,31 @@ export async function GET(req: NextRequest) {
 
     const snap = latestMetrics[0];
 
+    // Try to get live engine metrics
+    let live = null;
+    try {
+      const resp = await fetch(`${ENGINE_URL}/api/metrics/live`, {
+        signal: AbortSignal.timeout(3_000),
+      });
+      if (resp.ok) live = await resp.json();
+    } catch { /* engine offline — continue with DB data only */ }
+
+    // Auto-capture metric snapshot if stale (> 1 minute)
+    const isStale = !snap || (Date.now() - new Date(snap.capturedAt).getTime() > 60_000);
+    if (isStale && live) {
+      try {
+        await db.insert(metrics).values({
+          activeAgents: live.activeAgents ?? 0,
+          tasksCompleted: live.tasksCompleted ?? 0,
+          tokensUsed: live.tokensUsed ?? 0,
+          avgLatencyMs: live.avgLatencyMs ?? 0,
+          successRate: String(live.successRate ?? 0),
+          costUsd: '0',
+          errorCount: live.tasksFailed ?? 0,
+        });
+      } catch { /* ignore auto-capture failures */ }
+    }
+
     return NextResponse.json({
       activeAgents:   snap?.activeAgents ?? 0,
       tasksToday:     todayRuns[0]?.count ?? 0,
@@ -55,6 +82,7 @@ export async function GET(req: NextRequest) {
       queuedTasks:    queuedTasks[0]?.count ?? 0,
       unackAlerts:    unackAlerts[0]?.count ?? 0,
       sparkline:      recentMetrics.reverse(),
+      live,
     });
   } catch (err) {
     console.error('[metrics GET]', err);

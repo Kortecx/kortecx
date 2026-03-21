@@ -1209,11 +1209,13 @@ function ExpertsPage() {
 
   const highlightRef = useRef<HTMLDivElement>(null);
 
-  /* Sync tab from URL params */
+  /* Sync tab from URL params — intentional setState from param changes */
+  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     if (tabParam === 'marketplace') setActiveTab('marketplace');
     else if (tabParam === 'mine' || !tabParam) setActiveTab('mine');
   }, [tabParam]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   /* Highlight behavior */
   useEffect(() => {

@@ -3,6 +3,7 @@
 import { useState, useMemo } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { motion, AnimatePresence } from 'framer-motion';
 import {
   Workflow, Plus, Search, Play, Trash2, X, Clock, Zap,
   ChevronDown, ChevronUp, Loader2, CheckCircle2, AlertCircle,
@@ -86,18 +87,30 @@ function CreateWorkflowDialog({
   };
 
   return (
-    <div style={{
-      position: 'fixed', inset: 0, background: 'rgba(7,7,26,0.85)',
-      zIndex: 200, display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
-      paddingTop: 60, overflowY: 'auto',
-    }}>
-      <div style={{
-        width: 560, maxWidth: '92vw',
-        background: 'var(--bg-surface)', border: '1px solid var(--border-md)',
-        borderRadius: 12, overflow: 'hidden',
-        boxShadow: '0 24px 80px rgba(0,0,0,0.2)',
-        marginBottom: 40,
-      }}>
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.2 }}
+      style={{
+        position: 'fixed', inset: 0, background: 'rgba(7,7,26,0.85)',
+        zIndex: 200, display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
+        paddingTop: 60, overflowY: 'auto',
+      }}
+    >
+      <motion.div
+        initial={{ opacity: 0, scale: 0.96, y: -8 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.96, y: -8 }}
+        transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+        style={{
+          width: 560, maxWidth: '92vw',
+          background: 'var(--bg-surface)', border: '1px solid var(--border-md)',
+          borderRadius: 12, overflow: 'hidden',
+          boxShadow: '0 24px 80px rgba(0,0,0,0.2)',
+          marginBottom: 40,
+        }}
+      >
         {/* Header */}
         <div style={{
           padding: '18px 22px', borderBottom: '1px solid var(--border)',
@@ -187,8 +200,8 @@ function CreateWorkflowDialog({
             </button>
           </div>
         </div>
-      </div>
-    </div>
+      </motion.div>
+    </motion.div>
   );
 }
 
@@ -203,15 +216,27 @@ function DeleteConfirmDialog({
   onConfirm: () => void;
 }) {
   return (
-    <div style={{
-      position: 'fixed', inset: 0, background: 'rgba(7,7,26,0.85)',
-      zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center',
-    }}>
-      <div style={{
-        width: 400, background: 'var(--bg-surface)', border: '1px solid var(--border-md)',
-        borderRadius: 10, padding: 24,
-        boxShadow: '0 20px 60px rgba(0,0,0,0.2)',
-      }}>
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.2 }}
+      style={{
+        position: 'fixed', inset: 0, background: 'rgba(7,7,26,0.85)',
+        zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}
+    >
+      <motion.div
+        initial={{ opacity: 0, scale: 0.96, y: -8 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.96, y: -8 }}
+        transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+        style={{
+          width: 400, background: 'var(--bg-surface)', border: '1px solid var(--border-md)',
+          borderRadius: 10, padding: 24,
+          boxShadow: '0 20px 60px rgba(0,0,0,0.2)',
+        }}
+      >
         <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-1)', marginBottom: 8 }}>Delete Workflow</div>
         <div style={{ fontSize: 13, color: 'var(--text-3)', marginBottom: 20, lineHeight: 1.5 }}>
           Are you sure you want to delete <strong style={{ color: 'var(--text-1)' }}>{name}</strong>? This will also remove all steps and cannot be undone.
@@ -231,8 +256,8 @@ function DeleteConfirmDialog({
             <Trash2 size={12} /> Delete
           </button>
         </div>
-      </div>
-    </div>
+      </motion.div>
+    </motion.div>
   );
 }
 
@@ -306,7 +331,7 @@ export default function WorkflowsPage() {
     }
   };
 
-  const SortIcon = ({ field }: { field: SortField }) => {
+  const renderSortIcon = (field: SortField) => {
     if (sortField !== field) return <ArrowUpDown size={10} color="var(--text-4)" />;
     return sortDir === 'asc' ? <ChevronUp size={10} color={SECTION_COLOR} /> : <ChevronDown size={10} color={SECTION_COLOR} />;
   };
@@ -358,7 +383,12 @@ export default function WorkflowsPage() {
   return (
     <div style={{ padding: 24, maxWidth: 1400, margin: '0 auto' }}>
       {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
+      <motion.div
+        initial={{ opacity: 0, y: -8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.3 }}
+        style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}
+      >
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <div style={{
             width: 36, height: 36, borderRadius: 8,
@@ -384,10 +414,15 @@ export default function WorkflowsPage() {
         }}>
           <Plus size={14} strokeWidth={2.5} /> Create New Workflow
         </button>
-      </div>
+      </motion.div>
 
       {/* Filters bar */}
-      <div style={{ display: 'flex', gap: 8, marginBottom: 16, alignItems: 'center', flexWrap: 'wrap' }}>
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ delay: 0.08, duration: 0.3 }}
+        style={{ display: 'flex', gap: 8, marginBottom: 16, alignItems: 'center', flexWrap: 'wrap' }}
+      >
         {/* Search */}
         <div style={{
           display: 'flex', alignItems: 'center', gap: 8,
@@ -424,7 +459,7 @@ export default function WorkflowsPage() {
             </button>
           );
         })}
-      </div>
+      </motion.div>
 
       {/* Table */}
       {isLoading ? (
@@ -433,10 +468,15 @@ export default function WorkflowsPage() {
           <div style={{ fontSize: 13 }}>Loading workflows...</div>
         </div>
       ) : filtered.length === 0 ? (
-        <div style={{
-          textAlign: 'center', padding: '80px 20px',
-          border: '1px dashed var(--border-md)', borderRadius: 10,
-        }}>
+        <motion.div
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3 }}
+          style={{
+            textAlign: 'center', padding: '80px 20px',
+            border: '1px dashed var(--border-md)', borderRadius: 10,
+          }}
+        >
           <Workflow size={28} color="var(--text-4)" style={{ margin: '0 auto 12px' }} />
           <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-2)', marginBottom: 6 }}>
             {search || statusFilter !== 'all' ? 'No workflows match your filters' : 'No workflows yet'}
@@ -458,37 +498,42 @@ export default function WorkflowsPage() {
               <Plus size={14} /> Create Your First Workflow
             </button>
           )}
-        </div>
+        </motion.div>
       ) : (
-        <div style={{
-          background: 'var(--bg-surface)', border: '1px solid var(--border)',
-          borderRadius: 10, overflow: 'hidden',
-        }}>
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.12, duration: 0.3 }}
+          style={{
+            background: 'var(--bg-surface)', border: '1px solid var(--border)',
+            borderRadius: 10, overflow: 'hidden',
+          }}
+        >
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr style={{ background: 'var(--bg-elevated)' }}>
                 <th style={TH} onClick={() => toggleSort('name')}>
-                  <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>Name <SortIcon field="name" /></span>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>Name {renderSortIcon('name')}</span>
                 </th>
                 <th style={TH} onClick={() => toggleSort('status')}>
-                  <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>Status <SortIcon field="status" /></span>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>Status {renderSortIcon('status')}</span>
                 </th>
                 <th style={TH}>Goal</th>
                 <th style={TH} onClick={() => toggleSort('totalRuns')}>
-                  <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>Runs <SortIcon field="totalRuns" /></span>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>Runs {renderSortIcon('totalRuns')}</span>
                 </th>
                 <th style={TH} onClick={() => toggleSort('estimatedTokens')}>
-                  <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>Tokens <SortIcon field="estimatedTokens" /></span>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>Tokens {renderSortIcon('estimatedTokens')}</span>
                 </th>
                 <th style={TH}>Tags</th>
                 <th style={TH} onClick={() => toggleSort('updatedAt')}>
-                  <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>Updated <SortIcon field="updatedAt" /></span>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>Updated {renderSortIcon('updatedAt')}</span>
                 </th>
                 <th style={{ ...TH, textAlign: 'right' }}>Actions</th>
               </tr>
             </thead>
             <tbody>
-              {filtered.map(wf => {
+              {filtered.map((wf, index) => {
                 const st = STATUS_STYLE[(wf.status as string) ?? 'draft'] ?? STATUS_STYLE.draft;
                 const tags = ((wf.tags as string[]) ?? []).slice(0, 3);
                 const goal = (wf.goalStatement as string) ?? '';
@@ -496,7 +541,10 @@ export default function WorkflowsPage() {
                 const tokens = (wf.estimatedTokens as number) ?? 0;
 
                 return (
-                  <tr key={wf.id as string}
+                  <motion.tr key={wf.id as string}
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: index * 0.03, duration: 0.3 }}
                     style={{ transition: 'background 0.1s', cursor: 'pointer' }}
                     onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-elevated)')}
                     onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
@@ -513,10 +561,16 @@ export default function WorkflowsPage() {
                       ) : null}
                     </td>
                     <td style={TD}>
-                      <span style={{
-                        padding: '3px 8px', borderRadius: 99, fontSize: 10, fontWeight: 700,
-                        background: st.bg, color: st.color, border: `1px solid ${st.color}28`,
-                      }}>{st.label}</span>
+                      <motion.span
+                        initial={{ scale: 0.9 }}
+                        animate={{ scale: 1 }}
+                        transition={{ delay: index * 0.03 + 0.1, type: 'spring', damping: 20 }}
+                        style={{
+                          display: 'inline-block',
+                          padding: '3px 8px', borderRadius: 99, fontSize: 10, fontWeight: 700,
+                          background: st.bg, color: st.color, border: `1px solid ${st.color}28`,
+                        }}
+                      >{st.label}</motion.span>
                     </td>
                     <td style={{ ...TD, maxWidth: 200 }}>
                       <div style={{ fontSize: 12, color: 'var(--text-2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontStyle: goal ? 'normal' : 'italic' }}>
@@ -567,7 +621,7 @@ export default function WorkflowsPage() {
                         </button>
                       </div>
                     </td>
-                  </tr>
+                  </motion.tr>
                 );
               })}
             </tbody>
@@ -579,20 +633,24 @@ export default function WorkflowsPage() {
             <span>Showing {filtered.length} of {total} workflows</span>
             <span>Sorted by {sortField} ({sortDir})</span>
           </div>
-        </div>
+        </motion.div>
       )}
 
       {/* Modals */}
-      {showCreate && (
-        <CreateWorkflowDialog onClose={() => setShowCreate(false)} onCreate={handleCreate} />
-      )}
-      {deletingWf && (
-        <DeleteConfirmDialog
-          name={deletingWf.name as string}
-          onClose={() => setDeletingWf(null)}
-          onConfirm={() => handleDelete(deletingWf.id as string)}
-        />
-      )}
+      <AnimatePresence>
+        {showCreate && (
+          <CreateWorkflowDialog onClose={() => setShowCreate(false)} onCreate={handleCreate} />
+        )}
+      </AnimatePresence>
+      <AnimatePresence>
+        {deletingWf && (
+          <DeleteConfirmDialog
+            name={deletingWf.name as string}
+            onClose={() => setDeletingWf(null)}
+            onConfirm={() => handleDelete(deletingWf.id as string)}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }

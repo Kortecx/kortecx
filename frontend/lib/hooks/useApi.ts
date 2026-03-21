@@ -60,7 +60,7 @@ export function useAlerts(unackOnly = false) {
 }
 
 /* ── Logs ───────────────────────────────────────────── */
-export function useLogs(level?: string, limit = 100) {
+export function useLogs(level?: string, limit = 500) {
   const params = new URLSearchParams();
   if (level) params.set('level', level);
   params.set('limit', String(limit));
@@ -141,23 +141,6 @@ export function useWorkflowRuns(workflowId?: string, limit = 50) {
   );
   return {
     runs:     data?.runs  ?? [],
-    total:    data?.total ?? 0,
-    error,
-    isLoading,
-    mutate,
-  };
-}
-
-/* ── Training Jobs ──────────────────────────────────── */
-export function useTrainingJobs(status?: string) {
-  const params = status ? `?status=${status}` : '';
-  const { data, error, isLoading, mutate } = useSWR(
-    `/api/training${params}`,
-    fetcher,
-    { refreshInterval: 10_000 },
-  );
-  return {
-    jobs:     data?.jobs  ?? [],
     total:    data?.total ?? 0,
     error,
     isLoading,
@@ -254,6 +237,83 @@ export function useAnalytics() {
   );
   return {
     analytics: data ?? null,
+    error,
+    isLoading,
+    mutate,
+  };
+}
+
+/* ── Live Metrics (from engine) ───────────────────── */
+export function useLiveMetrics() {
+  const { data, error, isLoading, mutate } = useSWR(
+    `${process.env.NEXT_PUBLIC_ENGINE_URL || 'http://localhost:8000'}/api/metrics/live`,
+    fetcher,
+    { refreshInterval: 5_000 },
+  );
+  return {
+    metrics: data ?? null,
+    error,
+    isLoading,
+    mutate,
+  };
+}
+
+/* ── Metrics History ──────────────────────────────── */
+export function useMetricsHistory(limit = 100) {
+  const { data, error, isLoading, mutate } = useSWR(
+    `${process.env.NEXT_PUBLIC_ENGINE_URL || 'http://localhost:8000'}/api/metrics/history?limit=${limit}`,
+    fetcher,
+    { refreshInterval: 30_000 },
+  );
+  return {
+    snapshots: data?.snapshots ?? [],
+    total:     data?.total ?? 0,
+    error,
+    isLoading,
+    mutate,
+  };
+}
+
+/* ── Run Audit Trail ──────────────────────────────── */
+export function useRunAudit(runId: string | null) {
+  const { data, error, isLoading, mutate } = useSWR(
+    runId ? `${process.env.NEXT_PUBLIC_ENGINE_URL || 'http://localhost:8000'}/api/metrics/runs/${runId}/audit` : null,
+    fetcher,
+  );
+  return {
+    operations: data?.operations ?? [],
+    total:      data?.total ?? 0,
+    error,
+    isLoading,
+    mutate,
+  };
+}
+
+/* ── Expert Performance Stats ─────────────────────── */
+export function useExpertStats() {
+  const { data, error, isLoading, mutate } = useSWR(
+    `${process.env.NEXT_PUBLIC_ENGINE_URL || 'http://localhost:8000'}/api/metrics/experts/stats`,
+    fetcher,
+    { refreshInterval: 30_000 },
+  );
+  return {
+    experts: data?.experts ?? [],
+    error,
+    isLoading,
+    mutate,
+  };
+}
+
+/* ── Step Executions ──────────────────────────────── */
+export function useStepExecutions(runId: string | null) {
+  const { data, error, isLoading, mutate } = useSWR(
+    runId ? `/api/workflows/executions?runId=${runId}` : null,
+    fetcher,
+    { refreshInterval: 3_000 },
+  );
+  return {
+    executions: data?.executions ?? [],
+    total:      data?.total ?? 0,
     error,
     isLoading,
     mutate,

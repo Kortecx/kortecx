@@ -8,6 +8,8 @@ function buildStepValues(workflowId: string, steps: Record<string, unknown>[]) {
     id:                 `ws-${nanoid()}`,
     workflowId,
     order:              i + 1,
+    name:               (s.name as string) || null,
+    description:        (s.description as string) || null,
     expertId:           (s.expertId as string) || null,
     taskDescription:    (s.taskDescription as string) || '',
     systemInstructions: (s.systemInstructions as string) || null,
@@ -19,6 +21,7 @@ function buildStepValues(workflowId: string, steps: Record<string, unknown>[]) {
     modelSource:        (s.modelSource as string) || 'provider',
     localModelConfig:   s.localModel || s.localModelConfig || null,
     connectionType:     (s.connectionType as string) || 'sequential',
+    shareMemory:        s.shareMemory !== false,
     temperature:        s.temperature != null ? String(s.temperature) : '0.7',
     maxTokens:          (s.maxTokens as number) || 4096,
   }));
@@ -126,6 +129,7 @@ export async function PATCH(req: NextRequest) {
     if (updates.estimatedTokens !== undefined)   values.estimatedTokens = updates.estimatedTokens;
     if (updates.estimatedCostUsd !== undefined)   values.estimatedCostUsd = updates.estimatedCostUsd;
     if (updates.estimatedDurationSec !== undefined) values.estimatedDurationSec = updates.estimatedDurationSec;
+    if (updates.metadata !== undefined)            values.metadata = updates.metadata;
 
     const [updated] = await db.update(workflows)
       .set(values)

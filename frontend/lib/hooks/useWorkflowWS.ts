@@ -6,12 +6,20 @@ import type { WorkflowExecutionEvent, WorkflowExecutionEventType, SharedMemory }
 interface AgentLiveState {
   agentId: string;
   stepId: string;
-  status: 'spawned' | 'thinking' | 'completed' | 'failed';
+  status: 'idle' | 'queued' | 'spawned' | 'thinking' | 'waiting' | 'completed' | 'failed';
   taskDescription?: string;
   modelSource?: string;
+  stepName?: string;
+  model?: string;
+  engine?: string;
   output?: string;
   tokensUsed?: number;
   durationMs?: number;
+  cpuPercent?: number;
+  gpuPercent?: number;
+  memoryMb?: number;
+  startedAt?: string;
+  completedAt?: string;
   error?: string;
 }
 
@@ -67,6 +75,10 @@ export function useWorkflowWS() {
                 status: 'spawned',
                 taskDescription: data.taskDescription,
                 modelSource: data.modelSource,
+                stepName: data.stepName,
+                model: data.model,
+                engine: data.engine,
+                startedAt: msg.timestamp || new Date().toISOString(),
               },
             };
             break;
@@ -75,7 +87,11 @@ export function useWorkflowWS() {
             if (prev.agents[data.agentId]) {
               next.agents = {
                 ...prev.agents,
-                [data.agentId]: { ...prev.agents[data.agentId], status: 'thinking' },
+                [data.agentId]: {
+                  ...prev.agents[data.agentId],
+                  status: 'thinking',
+                  startedAt: data.startedAt || prev.agents[data.agentId].startedAt,
+                },
               };
             }
             break;
@@ -96,9 +112,33 @@ export function useWorkflowWS() {
                   output: data.output,
                   tokensUsed: data.tokensUsed,
                   durationMs: data.durationMs,
+                  cpuPercent: data.cpuPercent,
+                  gpuPercent: data.gpuPercent,
+                  memoryMb: data.memoryMb,
+                  completedAt: new Date().toISOString(),
                 },
               };
             }
+            // Persist step execution metrics to DB
+            fetch('/api/workflows/executions', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                runId: data.runId || execEvent.runId,
+                stepId: data.stepId,
+                agentId: data.agentId,
+                status: 'completed',
+                tokensUsed: data.tokensUsed,
+                durationMs: data.durationMs,
+                cpuPercent: data.cpuPercent,
+                gpuPercent: data.gpuPercent,
+                memoryMb: data.memoryMb,
+                model: data.model,
+                engine: data.engine,
+                responsePreview: typeof data.output === 'string' ? data.output.slice(0, 500) : '',
+                completedAt: new Date().toISOString(),
+              }),
+            }).catch(() => {});
             break;
 
           case 'agent.step.failed':
@@ -112,6 +152,19 @@ export function useWorkflowWS() {
                 },
               };
             }
+            // Persist failed step execution
+            fetch('/api/workflows/executions', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                runId: data.runId || execEvent.runId,
+                stepId: data.stepId,
+                agentId: data.agentId,
+                status: 'failed',
+                errorMessage: data.error,
+                completedAt: new Date().toISOString(),
+              }),
+            }).catch(() => {});
             break;
 
           case 'workflow.complete':

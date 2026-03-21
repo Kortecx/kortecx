@@ -12,7 +12,6 @@ const PRETTY: Record<string, string> = {
   dashboard: 'Dashboard',
   experts:   'Experts',
   workflow:  'Workflow',
-  training:  'Training',
   monitoring:'Monitoring',
   providers: 'Providers',
   settings:  'Settings',
@@ -37,7 +36,7 @@ function buildBreadcrumb(path: string): Array<{ label: string; href: string }> {
 export default function TopNavbar() {
   const pathname = usePathname();
   const { sidebarCollapsed } = useApp();
-  const left = sidebarCollapsed ? 56 : 240;
+  const left = sidebarCollapsed ? 48 : 200;
   const crumbs = buildBreadcrumb(pathname);
   const unackAlerts = ALERTS.filter(a => !a.acknowledgedAt).length;
   const [searchOpen, setSearchOpen] = useState(false);
@@ -48,7 +47,7 @@ export default function TopNavbar() {
       e.preventDefault();
       setSearchOpen(prev => !prev);
     }
-  }, []);
+  }, [setSearchOpen]);
 
   useEffect(() => {
     document.addEventListener('keydown', handleGlobalKey);

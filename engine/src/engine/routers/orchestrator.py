@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import uuid
 from pathlib import Path
 from typing import Any
 
+import httpx
 from fastapi import APIRouter, BackgroundTasks, File, UploadFile
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from engine.config import settings
@@ -45,6 +48,7 @@ class StepIntegrationModel(BaseModel):
 
 class StepConfigModel(BaseModel):
     stepId: str
+    name: str = ""
     expertId: str | None = None
     taskDescription: str
     systemInstructions: str = ""
@@ -95,6 +99,7 @@ async def execute_workflow(req: ExecuteRequest, bg: BackgroundTasks) -> ExecuteR
                 step_id=s.stepId,
                 expert_id=s.expertId,
                 task_description=s.taskDescription,
+                step_name=s.name or s.stepId,
                 model_source=s.modelSource,
                 local_model=s.localModel.model_dump() if s.localModel else None,
                 temperature=s.temperature,
@@ -280,6 +285,40 @@ async def pull_model(req: PullModelRequest, bg: BackgroundTasks) -> dict[str, An
     return {"status": "pulling", "engine": req.engine, "model": req.model}
 
 
+@router.post("/models/pull/stream")
+async def pull_model_stream(req: PullModelRequest):
+    """Pull/download a model on Ollama with streaming progress via SSE."""
+    if req.engine != "ollama":
+        return {"error": "Model pull is only supported on Ollama"}
+
+    base_url = (req.baseUrl or settings.ollama_url).rstrip("/")
+
+    async def stream_progress():
+        async with httpx.AsyncClient(base_url=base_url, timeout=600) as client:
+            async with client.stream("POST", "/api/pull", json={"name": req.model, "stream": True}) as resp:
+                resp.raise_for_status()
+                async for line in resp.aiter_lines():
+                    if not line.strip():
+                        continue
+                    try:
+                        data = json.loads(line)
+                        # Ollama sends: {"status": "pulling ...", "digest": "...", "total": N, "completed": N}
+                        event = {
+                            "status": data.get("status", ""),
+                            "digest": data.get("digest", ""),
+                            "total": data.get("total", 0),
+                            "completed": data.get("completed", 0),
+                        }
+                        if event["total"] > 0:
+                            event["percent"] = round((event["completed"] / event["total"]) * 100, 1)
+                        yield f"data: {json.dumps(event)}\n\n"
+                    except Exception:
+                        continue
+        yield f"data: {json.dumps({'status': 'success', 'percent': 100})}\n\n"
+
+    return StreamingResponse(stream_progress(), media_type="text/event-stream")
+
+
 class DeleteModelRequest(BaseModel):
     engine: str = "ollama"
     model: str
@@ -364,3 +403,15 @@ async def local_chat(req: ChatRequest) -> dict[str, Any]:
     except Exception as exc:
         logger.error("Local chat failed: %s", exc)
         return {"error": str(exc), "engine": req.engine, "model": req.model}
+
+
+# ── Artifacts endpoints ─────────────────────────────────────────────────────
+
+
+@router.get("/artifacts/{workflow_name}/{step_name}")
+async def list_step_artifacts(workflow_name: str, step_name: str) -> dict[str, Any]:
+    """List all artifacts for a workflow step."""
+    from engine.services.step_artifacts import step_artifacts
+
+    artifacts = step_artifacts.list_artifacts(workflow_name, step_name)
+    return {"artifacts": artifacts, "total": len(artifacts)}

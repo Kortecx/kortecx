@@ -40,7 +40,7 @@ export async function POST(req: NextRequest) {
     const { path, datasetId } = body;
 
     // Get DB versions
-    let dbVersions: any[] = [];
+    let dbVersions: Record<string, unknown>[] = [];
     if (datasetId) {
       dbVersions = await db.select().from(dataVersions)
         .where(eq(dataVersions.datasetId, datasetId))
@@ -48,7 +48,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Get filesystem versions from engine
-    let fsVersions: any[] = [];
+    let fsVersions: Record<string, unknown>[] = [];
     if (path) {
       try {
         const res = await fetch(`${ENGINE_URL}/api/data/file/versions`, {
@@ -62,7 +62,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Merge: FS versions are source of truth, enrich with DB metadata
-    const merged = fsVersions.map((fv: any) => {
+    const merged = fsVersions.map((fv: Record<string, unknown>) => {
       const dbMatch = dbVersions.find(dv => dv.filePath === fv.path);
       return {
         ...fv,

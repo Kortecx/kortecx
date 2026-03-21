@@ -1,31 +1,34 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, logs } from '@/lib/db';
-import { desc, eq, gte } from 'drizzle-orm';
+import { desc, eq, gte, and } from 'drizzle-orm';
 
 /* GET /api/logs */
 export async function GET(req: NextRequest) {
 
   const { searchParams } = new URL(req.url);
   const level  = searchParams.get('level');
-  const limit  = Number(searchParams.get('limit') ?? 100);
+  const limit  = Number(searchParams.get('limit') ?? 500);
   const since  = searchParams.get('since');
+  const source = searchParams.get('source');
 
   try {
+    // Build conditions — support combining level + since + source
+    const conditions = [];
+    if (level)  conditions.push(eq(logs.level, level));
+    if (since)  conditions.push(gte(logs.timestamp, new Date(since)));
+    if (source) conditions.push(eq(logs.source, source));
+
     const rows = await db
       .select()
       .from(logs)
-      .where(
-        level  ? eq(logs.level, level) :
-        since  ? gte(logs.timestamp, new Date(since)) :
-        undefined
-      )
+      .where(conditions.length > 0 ? and(...conditions) : undefined)
       .orderBy(desc(logs.timestamp))
       .limit(limit);
 
-    return NextResponse.json({ logs: rows });
+    return NextResponse.json({ logs: rows, total: rows.length });
   } catch (err) {
     console.error('[logs GET]', err);
-    return NextResponse.json({ error: 'Database error' }, { status: 500 });
+    return NextResponse.json({ error: 'Database error', logs: [], total: 0 }, { status: 500 });
   }
 }
 

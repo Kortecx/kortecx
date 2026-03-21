@@ -15,7 +15,9 @@ import httpx
 
 from engine.config import settings
 from engine.core.websocket import ws_manager
+from engine.services.execution_audit import execution_audit
 from engine.services.local_inference import GenerateResult, inference_router, model_pool
+from engine.services.step_artifacts import step_artifacts
 from engine.services.workflow_logger import workflow_logger
 
 logger = logging.getLogger("engine.orchestrator")
@@ -62,6 +64,7 @@ class StepConfig:
     temperature: float
     max_tokens: int
     connection_type: str  # "sequential" | "parallel" | "conditional"
+    step_name: str = ""
     system_instructions: str = ""
     voice_command: str = ""
     file_locations: list[str] = field(default_factory=list)
@@ -155,6 +158,9 @@ class AgentOrchestrator:
             },
         )
 
+        # Create audit trail run record
+        await execution_audit.create_run(run_id, request.name, request.steps)
+
         # Orchestrate
         try:
             result = await self._orchestrate(
@@ -190,6 +196,39 @@ class AgentOrchestrator:
                 },
             )
 
+            # Persist completion log to frontend
+            try:
+                async with httpx.AsyncClient(timeout=5) as _client:
+                    await _client.post(
+                        "http://localhost:3000/api/logs",
+                        json={
+                            "level": "info",
+                            "message": f"Workflow '{request.name}' completed successfully",
+                            "source": "orchestrator",
+                            "runId": run_id,
+                            "metadata": {
+                                "workflowId": request.workflow_id,
+                                "totalSteps": len(request.steps),
+                                "outputLength": len(result),
+                            },
+                        },
+                    )
+            except Exception:
+                pass  # Non-critical
+
+            # Persist audit trail
+            total_tokens, total_duration, succeeded, failed = self._compute_run_stats(run_id)
+            await execution_audit.complete_run(
+                run_id,
+                total_tokens,
+                total_duration,
+                result,
+                succeeded,
+                failed,
+            )
+            await execution_audit.save_shared_memory(run_id, "complete", shared.to_dict())
+            await self._update_expert_stats(run_id)
+
             return {"runId": run_id, "status": "completed", "output": result}
 
         except Exception as exc:
@@ -214,6 +253,41 @@ class AgentOrchestrator:
                     "error": str(exc),
                 },
             )
+
+            # Persist audit trail failure
+            await execution_audit.fail_run(run_id, str(exc))
+
+            # Persist workflow failure artifacts
+            try:
+                step_artifacts.save_failure_log(
+                    workflow_name=request.name,
+                    step_name="_workflow",
+                    run_id=run_id,
+                    error=str(exc),
+                    phase="workflow",
+                    metadata={"totalSteps": len(request.steps)},
+                )
+            except Exception:
+                pass  # Non-critical
+
+            # Persist failure log to frontend
+            try:
+                async with httpx.AsyncClient(timeout=5) as _client:
+                    await _client.post(
+                        "http://localhost:3000/api/logs",
+                        json={
+                            "level": "error",
+                            "message": f"Workflow '{request.name}' failed: {str(exc)[:200]}",
+                            "source": "orchestrator",
+                            "runId": run_id,
+                            "metadata": {
+                                "workflowId": request.workflow_id,
+                                "error": str(exc),
+                            },
+                        },
+                    )
+            except Exception:
+                pass  # Non-critical
 
             return {"runId": run_id, "status": "failed", "error": str(exc)}
 
@@ -332,7 +406,20 @@ class AgentOrchestrator:
                 "stepId": step.step_id,
                 "taskDescription": step.task_description,
                 "modelSource": step.model_source,
+                "stepName": getattr(step, "step_name", "") or "",
+                "model": step.local_model.get("model", "") if step.local_model else "",
+                "engine": step.local_model.get("engine", "") if step.local_model else "",
             },
+        )
+
+        # Audit: agent spawned
+        execution_audit.log_agent_spawned(
+            run_id,
+            agent_id,
+            step.step_id,
+            expert_id=step.expert_id,
+            model_source=step.model_source,
+            task_description=step.task_description,
         )
 
         async with self._semaphore:
@@ -365,6 +452,9 @@ class AgentOrchestrator:
                 )
 
                 # Broadcast thinking
+                import time as _time
+
+                _thinking_start = _time.monotonic()  # noqa: F841
                 await ws_manager.broadcast(
                     channel,
                     "agent.thinking",
@@ -372,8 +462,12 @@ class AgentOrchestrator:
                         "runId": run_id,
                         "agentId": agent_id,
                         "stepId": step.step_id,
+                        "startedAt": datetime.now(UTC).isoformat(),
                     },
                 )
+
+                # Audit: agent thinking
+                execution_audit.log_agent_thinking(run_id, agent_id, step.step_id)
 
                 # Execute inference
                 result = await self._infer(step, system_prompt, user_prompt)
@@ -383,8 +477,63 @@ class AgentOrchestrator:
                 agent.duration_ms = result.duration_ms
                 agent.status = "completed"
 
+                # Audit: inference result
+                _engine = step.local_model.get("engine", "ollama") if step.local_model else "provider"
+                _model = step.local_model.get("model", "") if step.local_model else "hf-fallback"
+                execution_audit.log_inference(
+                    run_id,
+                    agent_id,
+                    system_prompt,
+                    user_prompt,
+                    result.text,
+                    result.tokens_used,
+                    result.duration_ms,
+                    model=_model,
+                    engine=_engine,
+                    temperature=step.temperature,
+                    max_tokens=step.max_tokens,
+                )
+
                 # Update agent memory with findings
                 agent.memory.findings.append(result.text[:500])
+
+                # Persist artifacts to disk
+                _step_name = step.step_name or step.step_id
+                try:
+                    step_artifacts.save_response(
+                        workflow_name=self._runs[run_id].get("name", "unnamed"),
+                        step_name=_step_name,
+                        run_id=run_id,
+                        agent_id=agent_id,
+                        response=result.text,
+                        prompt=user_prompt,
+                        system_prompt=system_prompt,
+                        model=step.local_model.get("model", "") if step.local_model else "",
+                        tokens_used=result.tokens_used,
+                        duration_ms=result.duration_ms,
+                    )
+                except Exception as artifact_exc:
+                    logger.warning("Failed to save artifacts: %s", artifact_exc)
+
+                # Extract and execute any scripts in the response
+                try:
+                    scripts = step_artifacts.extract_and_save_scripts(
+                        self._runs[run_id].get("name", "unnamed"),
+                        _step_name,
+                        result.text,
+                    )
+                    if scripts:
+                        for script in scripts:
+                            if script.suffix in (".py", ".sh", ".js"):
+                                try:
+                                    script_result = await step_artifacts.execute_script(script, timeout=60)
+                                    if script_result.get("exitCode") == 0 and script_result.get("stdout"):
+                                        agent.memory.findings.append(f"[Script {script.name} output]: {script_result['stdout'][:1000]}")
+                                        shared.globals[f"{step.step_id}_script_{script.name}"] = script_result["stdout"][:2000]
+                                except Exception as script_exc:
+                                    logger.warning("Script execution failed: %s — %s", script.name, script_exc)
+                except Exception as extract_exc:
+                    logger.warning("Failed to extract scripts: %s", extract_exc)
 
                 # Write to shared memory
                 shared.entries[agent_id] = json.dumps(agent.memory.to_dict())
@@ -411,7 +560,19 @@ class AgentOrchestrator:
                     {"agentId": agent_id, "stepId": step.step_id, "tokensUsed": result.tokens_used, "durationMs": result.duration_ms},
                 )
 
-                # Broadcast step complete
+                # Collect system stats for this step
+                step_metrics = {"cpuPercent": 0, "gpuPercent": 0, "memoryMb": 0}
+                try:
+                    from engine.services.system_stats import get_system_stats
+
+                    stats = get_system_stats()
+                    step_metrics["cpuPercent"] = stats.get("cpu_percent", 0)
+                    step_metrics["gpuPercent"] = stats.get("gpu_percent", 0)
+                    step_metrics["memoryMb"] = stats.get("memory_used_mb", 0)
+                except Exception:
+                    pass
+
+                # Broadcast step complete with full metrics
                 await ws_manager.broadcast(
                     channel,
                     "agent.step.complete",
@@ -422,7 +583,21 @@ class AgentOrchestrator:
                         "output": result.text,
                         "tokensUsed": result.tokens_used,
                         "durationMs": result.duration_ms,
+                        "cpuPercent": step_metrics["cpuPercent"],
+                        "gpuPercent": step_metrics["gpuPercent"],
+                        "memoryMb": step_metrics["memoryMb"],
+                        "model": step.local_model.get("model", "") if step.local_model else "",
+                        "engine": step.local_model.get("engine", "") if step.local_model else "",
                     },
+                )
+
+                # Audit: step complete
+                execution_audit.log_step_complete(
+                    run_id,
+                    agent_id,
+                    step.step_id,
+                    result.tokens_used,
+                    result.duration_ms,
                 )
 
                 return agent
@@ -472,12 +647,48 @@ class AgentOrchestrator:
                                     "fallback": True,
                                 },
                             )
+                            # Audit: fallback inference
+                            execution_audit.log_inference(
+                                run_id,
+                                agent_id,
+                                system_prompt,
+                                user_prompt,
+                                result.text,
+                                result.tokens_used,
+                                result.duration_ms,
+                                model=fallback_model,
+                                engine=engine,
+                                temperature=step.temperature,
+                                max_tokens=step.max_tokens,
+                                fallback=True,
+                            )
+                            execution_audit.log_step_complete(
+                                run_id,
+                                agent_id,
+                                step.step_id,
+                                result.tokens_used,
+                                result.duration_ms,
+                            )
                             return agent
                         except Exception as fallback_exc:
                             logger.error("Fallback also failed for agent %s: %s", agent_id, fallback_exc)
 
                 agent.status = "failed"
                 agent.error = str(exc)
+
+                # Persist failure artifacts
+                try:
+                    _step_name = step.step_name or step.step_id
+                    step_artifacts.save_failure_log(
+                        workflow_name=self._runs[run_id].get("name", "unnamed"),
+                        step_name=_step_name,
+                        run_id=run_id,
+                        error=str(exc),
+                        agent_id=agent_id,
+                        phase="execute",
+                    )
+                except Exception:
+                    pass  # Never let failure logging break the flow
 
                 await ws_manager.broadcast(
                     channel,
@@ -489,6 +700,9 @@ class AgentOrchestrator:
                         "error": str(exc),
                     },
                 )
+
+                # Audit: step failed
+                execution_audit.log_step_failed(run_id, agent_id, step.step_id, str(exc))
 
                 raise
 
@@ -697,6 +911,33 @@ class AgentOrchestrator:
 
     def get_shared_memory(self, run_id: str) -> SharedMemory | None:
         return self._shared_memory.get(run_id)
+
+    def _compute_run_stats(self, run_id: str) -> tuple[int, int, int, int]:
+        """Return (total_tokens, total_duration_ms, succeeded, failed) for a run."""
+        agents = self._runs[run_id].get("agents", {})
+        total_tokens = sum(a.tokens_used for a in agents.values())
+        total_duration = sum(int(a.duration_ms) for a in agents.values())
+        succeeded = sum(1 for a in agents.values() if a.status == "completed")
+        failed = sum(1 for a in agents.values() if a.status == "failed")
+        return total_tokens, total_duration, succeeded, failed
+
+    async def _update_expert_stats(self, run_id: str) -> None:
+        """Broadcast expert stats updates after run completion."""
+        agents = self._runs[run_id].get("agents", {})
+        for agent in agents.values():
+            if agent.status == "completed":
+                await ws_manager.broadcast(
+                    f"workflow.{run_id}",
+                    "expert.stats.update",
+                    {
+                        "runId": run_id,
+                        "agentId": agent.agent_id,
+                        "stepId": agent.step_id,
+                        "tokensUsed": agent.tokens_used,
+                        "durationMs": agent.duration_ms,
+                        "status": agent.status,
+                    },
+                )
 
     def get_status(self) -> dict[str, Any]:
         """Return orchestrator status for monitoring."""

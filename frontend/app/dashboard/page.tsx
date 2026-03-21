@@ -8,7 +8,7 @@ import {
   Circle, ChevronRight, Play, BarChart3, Users,
   Workflow, Activity, X,
 } from 'lucide-react';
-import { useMetrics, useTasks, useExperts, useWorkflowRuns } from '@/lib/hooks/useApi';
+import { useMetrics, useTasks, useExperts, useWorkflowRuns, useLiveMetrics } from '@/lib/hooks/useApi';
 import type { QueuedTask, WorkflowRun, Expert, AIProvider } from '@/lib/types';
 
 const fetcher = (url: string) => fetch(url).then(r => {
@@ -262,6 +262,7 @@ function RunRow({ run, index }: { run: WorkflowRun; index: number }) {
 /* ── Dashboard ──────────────────────────────────────────── */
 export default function OpsDashboard() {
   const { metrics, isLoading: metricsLoading } = useMetrics();
+  const { metrics: liveMetrics } = useLiveMetrics();
   const { tasks: liveTasks, isLoading: tasksLoading } = useTasks(undefined, 20);
   const { experts, isLoading: expertsLoading } = useExperts();
   const { runs: recentRuns, isLoading: runsLoading } = useWorkflowRuns(undefined, 10);
@@ -278,7 +279,6 @@ export default function OpsDashboard() {
 
   const activeExperts   = experts.filter((e: Expert) => e.status === 'active').length;
   const idleExperts     = experts.filter((e: Expert) => e.status === 'idle').length;
-  const trainingExperts = experts.filter((e: Expert) => e.status === 'training').length;
 
   return (
     <div style={{ padding: 24, maxWidth: 1400, margin: '0 auto' }}>
@@ -307,6 +307,12 @@ export default function OpsDashboard() {
             margin: 0, letterSpacing: '-0.03em',
           }}>
             Ops Dashboard
+            {liveMetrics && (
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginLeft: 12, padding: '2px 8px', borderRadius: 9999, backgroundColor: 'rgba(16,185,129,0.15)', color: 'var(--color-success, #10b981)', fontSize: 11, fontWeight: 600 }}>
+                <span style={{ width: 6, height: 6, borderRadius: '50%', backgroundColor: 'currentColor', animation: 'pulse 2s infinite' }} />
+                Live
+              </span>
+            )}
           </h1>
           <p style={{ fontSize: 13, color: 'var(--text-3)', margin: '4px 0 0' }}>
             Real-time overview · {runningTasks} running · {queuedTasks} queued
@@ -349,13 +355,13 @@ export default function OpsDashboard() {
           <>
             <MetricCard
               label="ACTIVE AGENTS"
-              value={v(metrics?.activeAgents)}
+              value={v(liveMetrics?.activeAgents ?? metrics?.activeAgents)}
               sub={`${runningTasks} running · ${queuedTasks} queued`}
               icon={Cpu}
             />
             <MetricCard
               label="TASKS TODAY"
-              value={v(metrics?.tasksToday)}
+              value={v(liveMetrics?.tasksCompleted ?? metrics?.tasksToday)}
               sub={metrics?.successRate != null
                 ? `${(metrics.successRate * 100).toFixed(1)}% success rate`
                 : '\u2014'}
@@ -363,7 +369,7 @@ export default function OpsDashboard() {
             />
             <MetricCard
               label="TOKENS USED"
-              value={fmt(metrics?.tokensUsedToday)}
+              value={fmt(liveMetrics?.tokensUsed ?? metrics?.tokensUsedToday)}
               sub={metrics?.tokenBudgetDaily != null
                 ? `of ${fmt(metrics.tokenBudgetDaily)} daily budget`
                 : '\u2014'}
@@ -371,8 +377,8 @@ export default function OpsDashboard() {
             />
             <MetricCard
               label="AVG LATENCY"
-              value={metrics?.avgLatencyMs != null
-                ? `${(metrics.avgLatencyMs / 1000).toFixed(1)}s`
+              value={(liveMetrics?.avgLatencyMs ?? metrics?.avgLatencyMs) != null
+                ? `${((liveMetrics?.avgLatencyMs ?? metrics?.avgLatencyMs) / 1000).toFixed(1)}s`
                 : '\u2014'}
               sub={metrics?.costToday != null
                 ? `$${metrics.costToday.toFixed(2)} spent today`
@@ -500,7 +506,6 @@ export default function OpsDashboard() {
                   {[
                     { label: 'Active',   count: activeExperts,   dot: 'dot-online'   },
                     { label: 'Idle',     count: idleExperts,     dot: 'dot-idle'     },
-                    { label: 'Training', count: trainingExperts, dot: 'dot-training' },
                   ].map((item, i) => (
                     <motion.div
                       key={item.label}
@@ -604,10 +609,10 @@ export default function OpsDashboard() {
             desc:  'Discover and deploy specialized AI agents for any domain or task type.',
           },
           {
-            href:  '/training',
+            href:  '/data',
             icon:  Zap,
-            title: 'Train a New Expert',
-            desc:  'Fine-tune foundation models on your data to create domain-specific agents.',
+            title: 'Synthesize Data',
+            desc:  'Generate and manage datasets for expert training and evaluation.',
           },
         ].map(card => (
           <motion.div key={card.href} variants={fadeUp}>

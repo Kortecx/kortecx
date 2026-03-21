@@ -13,8 +13,10 @@ from engine.routers import (
     data,
     datasets,
     embeddings,
+    experts,
     inference,
     mcp,
+    metrics,
     models,
     orchestrator,
     pipelines,
@@ -47,12 +49,30 @@ async def lifespan(app: FastAPI):
     (Path(__file__).resolve().parents[2] / "mcp" / "prompts").mkdir(parents=True, exist_ok=True)
     (Path(__file__).resolve().parents[2] / "mcp_scripts").mkdir(parents=True, exist_ok=True)
 
+    # Load expert definitions
+    from engine.services.expert_manager import expert_manager
+
+    expert_manager.load_all()
+    logger.info("Loaded %d experts", len(expert_manager._cache))
+
+    # Quorum multi-agent orchestration engine
+    from engine.routers.quorum import init_quorum
+
+    quorum_svc = await init_quorum()
+    logger.info("Quorum service initialized")
+
+    # Wire execution audit to quorum DB
+    from engine.services.execution_audit import execution_audit
+
+    execution_audit.set_db(quorum_svc.db)
+
     logger.info("Services ready")
 
     yield
 
     # Shutdown
     logger.info("Kortecx Engine shutting down")
+    await quorum_svc.stop()
     await ws_manager.disconnect_all()
 
 
@@ -84,6 +104,8 @@ app.include_router(orchestrator.router, prefix="/api/orchestrator", tags=["orche
 app.include_router(workflow_logs.router, prefix="/api/logs", tags=["logs"])
 app.include_router(mlflow_router, prefix="/api/mlflow", tags=["mlflow"])
 app.include_router(mcp.router, prefix="/api/mcp", tags=["mcp"])
+app.include_router(experts.router, prefix="/api/experts/engine", tags=["experts"])
+app.include_router(metrics.router, prefix="/api/metrics", tags=["metrics"])
 
 # ── WebSocket ────────────────────────────────────────────────────────────────
 app.include_router(ws_manager.router, tags=["websocket"])

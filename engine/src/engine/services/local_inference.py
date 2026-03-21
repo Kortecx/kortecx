@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
-import json
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from typing import Any
 
 import httpx
@@ -493,7 +493,11 @@ class InferenceRouter:
     ) -> AsyncIterator[str]:
         backend = self.get_backend(engine, base_url)
         async for token in backend.generate_stream(
-            model, prompt, system=system, temperature=temperature, max_tokens=max_tokens,
+            model,
+            prompt,
+            system=system,
+            temperature=temperature,
+            max_tokens=max_tokens,
         ):
             yield token
 

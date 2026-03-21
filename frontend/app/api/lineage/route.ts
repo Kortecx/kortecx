@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db, lineage, datasets, trainingJobs, workflows, workflowSteps, experts, synthesisJobs } from '@/lib/db';
+import { db, lineage, workflows, workflowSteps, experts } from '@/lib/db';
 import { eq, or, sql } from 'drizzle-orm';
 import { logStatus } from '@/lib/status-log';
 
@@ -17,30 +17,26 @@ export async function GET(req: NextRequest) {
   try {
     // Impact analysis — find all downstream dependencies of a dataset
     if (impactId) {
-      // Find training jobs using this dataset
-      const trainingDeps = await db.select({
-        id: trainingJobs.id,
-        name: trainingJobs.name,
-        status: trainingJobs.status,
-      }).from(trainingJobs).where(eq(trainingJobs.datasetId, impactId));
+      // Legacy: query training_jobs table directly (kept for data preservation)
+      const trainingDeps: Record<string, unknown>[] = await db.execute(
+        sql`SELECT id, name, status FROM training_jobs WHERE dataset_id = ${impactId}`
+      ).then((rows: unknown) => (rows as Record<string, unknown>[]) ?? []);
 
-      // Find experts trained on this dataset (via training jobs)
-      const trainedExperts: any[] = [];
-      for (const job of trainingDeps) {
-        if (job.id) {
-          const exps = await db.select({
-            id: experts.id,
-            name: experts.name,
-            status: experts.status,
-          }).from(experts).where(sql`${experts.id} IN (
-            SELECT expert_id FROM training_jobs WHERE dataset_id = ${impactId} AND expert_id IS NOT NULL
-          )`);
-          trainedExperts.push(...exps);
-        }
+      // Find experts trained on this dataset (via legacy training_jobs)
+      const trainedExperts: Record<string, unknown>[] = [];
+      if (trainingDeps.length > 0) {
+        const exps = await db.select({
+          id: experts.id,
+          name: experts.name,
+          status: experts.status,
+        }).from(experts).where(sql`${experts.id} IN (
+          SELECT expert_id FROM training_jobs WHERE dataset_id = ${impactId} AND expert_id IS NOT NULL
+        )`);
+        trainedExperts.push(...exps);
       }
 
       // Find workflow steps using experts that depend on this dataset
-      const impactedWorkflows: any[] = [];
+      const impactedWorkflows: Record<string, unknown>[] = [];
       const expertIds = trainedExperts.map(e => e.id);
       if (expertIds.length > 0) {
         const steps = await db.select({

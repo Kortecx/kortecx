@@ -174,7 +174,7 @@ export default function SettingsPage() {
             onChange={e => setSettings(s => ({ ...s, webhookUrl: e.target.value }))}
           />
           <span style={{ fontSize: 11, color: 'var(--text-4)', marginTop: 2, display: 'block' }}>
-            Receive webhook notifications for task completions, alerts, and training updates
+            Receive webhook notifications for task completions and alerts
           </span>
         </div>
 

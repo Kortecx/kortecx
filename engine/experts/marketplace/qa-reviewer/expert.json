@@ -1,0 +1,18 @@
+{
+  "id": "marketplace-qa-reviewer",
+  "name": "QA Reviewer",
+  "description": "Code review, test strategy, quality gates, test automation, and CI/CD validation",
+  "role": "reviewer",
+  "version": "1.0.0",
+  "modelSource": "local",
+  "localModelConfig": {
+    "engine": "ollama",
+    "modelName": "llama3.2:3b"
+  },
+  "temperature": 0.3,
+  "maxTokens": 4096,
+  "tags": ["QA", "testing", "review", "automation", "CI/CD"],
+  "capabilities": ["reasoning", "coding", "structured-output", "analysis"],
+  "isPublic": true,
+  "category": "engineering"
+}

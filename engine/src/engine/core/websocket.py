@@ -50,8 +50,27 @@ class WebSocketManager:
             ws = self.active.get(conn_id)
             if ws:
                 await ws.send_json({"event": "pong", "timestamp": datetime.now(UTC).isoformat()})
+        elif event.startswith("quorum."):
+            await self._handle_quorum_event(conn_id, event, msg)
         elif event == "workflow.execute":
             await self._handle_workflow_execute(conn_id, msg)
+
+    async def _handle_quorum_event(self, conn_id: str, event: str, msg: dict[str, Any]) -> None:
+        """Route quorum.* events to the QuorumHandler."""
+        from engine.routers.quorum import quorum_handler
+
+        if quorum_handler is None:
+            await self.send_to(conn_id, "quorum.error", {"event": event, "error": "Quorum service not initialized"})
+            return
+
+        data = msg.get("data", {})
+        try:
+            response = await quorum_handler.handle(conn_id, event, data)
+            if response is not None:
+                await self.send_to(conn_id, f"{event}.result", response)
+        except Exception as e:
+            logger.error("Quorum event %s failed: %s", event, e)
+            await self.send_to(conn_id, "quorum.error", {"event": event, "error": str(e)})
 
     async def _handle_workflow_execute(self, conn_id: str, msg: dict[str, Any]) -> None:
         """Handle workflow execution triggered via WebSocket."""
@@ -85,6 +104,7 @@ class WebSocketManager:
                     step_id=s.get("stepId", ""),
                     expert_id=s.get("expertId"),
                     task_description=s.get("taskDescription", ""),
+                    step_name=s.get("name", "") or s.get("stepId", ""),
                     model_source=s.get("modelSource", "local"),
                     local_model=s.get("localModel"),
                     temperature=s.get("temperature", 0.7),

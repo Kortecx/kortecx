@@ -1,0 +1,18 @@
+{
+  "id": "marketplace-content-strategist",
+  "name": "Content Strategist",
+  "description": "Blog posts, documentation, marketing copy, technical writing, and SEO optimization",
+  "role": "writer",
+  "version": "1.0.0",
+  "modelSource": "local",
+  "localModelConfig": {
+    "engine": "ollama",
+    "modelName": "llama3.2:3b"
+  },
+  "temperature": 0.7,
+  "maxTokens": 4096,
+  "tags": ["writing", "content", "SEO", "marketing", "documentation"],
+  "capabilities": ["writing", "creativity", "structured-output"],
+  "isPublic": true,
+  "category": "content"
+}

@@ -29,7 +29,6 @@ export default function ProfilePage() {
     alertError: true,
     alertWarning: false,
     alertInfo: false,
-    trainingComplete: true,
     weeklyDigest: true,
   });
 
@@ -157,7 +156,6 @@ export default function ProfilePage() {
             { key: 'alertError', label: 'Error alerts' },
             { key: 'alertWarning', label: 'Warning alerts' },
             { key: 'alertInfo', label: 'Info alerts' },
-            { key: 'trainingComplete', label: 'Training job completions' },
             { key: 'weeklyDigest', label: 'Weekly usage digest' },
           ].map(item => (
             <label key={item.key} style={{
