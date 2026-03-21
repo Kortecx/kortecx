@@ -2264,10 +2264,12 @@ function DataSynthesisPageInner() {
 
   /* Handle ?action=new → auto-switch to Generate tab */
   useEffect(() => {
-    if (searchParams.get('action') === 'new') {
+    const action = searchParams.get('action');
+    if (action !== 'new') return;
+    requestAnimationFrame(() => {
       setTab('generate');
       window.history.replaceState({}, '', '/data');
-    }
+    });
   }, [searchParams]);
 
   // Synthesis jobs list — declared early so hasActiveJobs drives datasets refresh

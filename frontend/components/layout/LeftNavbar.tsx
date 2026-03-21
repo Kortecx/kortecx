@@ -312,7 +312,7 @@ export default function LeftNavbar() {
   /* Track query string client-side only to avoid SSR hydration mismatch */
   const [clientSearch, setClientSearch] = useState('');
   useEffect(() => {
-    setClientSearch(window.location.search);
+    requestAnimationFrame(() => setClientSearch(window.location.search));
     const onPop = () => setClientSearch(window.location.search);
     window.addEventListener('popstate', onPop);
     return () => window.removeEventListener('popstate', onPop);

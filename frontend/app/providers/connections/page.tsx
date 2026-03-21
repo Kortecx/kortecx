@@ -275,18 +275,12 @@ function ConnectionsPageInner() {
     fetchCredentials();
   }, [fetchOAuthConnections, fetchCredentials]);
 
-  /* Handle tab + action query params */
+  /* Handle tab query param */
   useEffect(() => {
     const tab = searchParams.get('tab');
-    const action = searchParams.get('action');
     if (tab === 'mcp') setActiveSection('mcp');
     else if (tab === 'plugins') setActiveSection('plugins');
     else if (tab === 'integrations') setActiveSection('integrations');
-    // Auto-open Generate MCP Server dialog
-    if (action === 'new' && tab === 'mcp') {
-      setMcpShowPrompt(true);
-      window.history.replaceState({}, '', '/providers/connections?tab=mcp');
-    }
   }, [searchParams]);
 
   /* Handle OAuth callback — via query params (fallback) or postMessage from popup */
@@ -727,6 +721,17 @@ function ConnectionsPageInner() {
       return () => clearTimeout(t);
     }
   }, [mcpNotice]);
+
+  /* Handle ?action=new — auto-open Generate MCP Server dialog */
+  useEffect(() => {
+    const action = searchParams.get('action');
+    const tab = searchParams.get('tab');
+    if (action !== 'new' || tab !== 'mcp') return;
+    requestAnimationFrame(() => {
+      setMcpShowPrompt(true);
+      window.history.replaceState({}, '', '/providers/connections?tab=mcp');
+    });
+  }, [searchParams]);
 
   /* Integration helpers */
   const filtered = INTEGRATION_CATALOG.filter(i => {

@@ -2,11 +2,12 @@
 
 import { useState } from 'react';
 import {
-  History, Search, ChevronDown, ChevronUp, Clock, Server, Cpu,
-  CheckCircle2, AlertTriangle, Loader2, XCircle, Sparkle, Sparkles,
-  Download, Eye, Trash2, RotateCcw, Filter,
+  History, Search, ChevronDown, ChevronUp, Clock,
+  CheckCircle2, AlertTriangle, Loader2, XCircle,
 } from 'lucide-react';
 import { useSynthesisJobs, useWorkflowRuns, useTrainingJobs } from '@/lib/hooks/useApi';
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
 
 type RunType = 'all' | 'synthesis' | 'workflow' | 'training';
 type RunStatus = 'all' | 'completed' | 'running' | 'failed' | 'queued' | 'cancelled';

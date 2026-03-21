@@ -3,7 +3,7 @@
 import { useState, useEffect, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import useSWR from 'swr';
-import { Sliders, Plus, Play, Clock, Zap, BarChart3, Cpu, ChevronRight, Loader2 } from 'lucide-react';
+import { Plus, Play, Clock, BarChart3, Cpu, Loader2 } from 'lucide-react';
 import { useTrainingJobs } from '@/lib/hooks/useApi';
 import type { TrainingJob, TrainingJobStatus, Dataset, AIProvider } from '@/lib/types';
 
@@ -160,10 +160,12 @@ function FinetunePageInner() {
 
   /* Handle ?action=new → auto-open create dialog */
   useEffect(() => {
-    if (searchParams.get('action') === 'new') {
+    const action = searchParams.get('action');
+    if (action !== 'new') return;
+    requestAnimationFrame(() => {
       setShowNew(true);
       window.history.replaceState({}, '', '/training/finetune');
-    }
+    });
   }, [searchParams]);
 
   const { jobs, isLoading: jobsLoading } = useTrainingJobs() as { jobs: TrainingJob[]; total: number; isLoading: boolean; error: unknown; mutate: () => void };

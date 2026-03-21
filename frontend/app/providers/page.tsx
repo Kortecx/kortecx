@@ -3,9 +3,10 @@
 import { useState, useCallback, useEffect } from 'react';
 import Link from 'next/link';
 import {
-  Plug, Clock, ChevronRight, Check, X,
+  Plug, ChevronRight, Check, X,
   Key, Loader2, Eye, EyeOff, ExternalLink, Shield, Terminal,
   Bot, Sparkles, Gem, Route, Zap, Wind, Smile, Compass, Atom,
+  Search, Download, Trash2, HardDrive, Server, Cpu,
 } from 'lucide-react';
 import { PROVIDERS } from '@/lib/constants';
 import type { AIProvider } from '@/lib/types';
@@ -299,10 +300,10 @@ export default function ProvidersPage() {
       }}>
         <div>
           <h1 style={{ fontSize: 20, fontWeight: 700, color: 'var(--text-1)', margin: 0 }}>
-            Provider Connections
+            Providers
           </h1>
           <p style={{ fontSize: 13, color: 'var(--text-3)', margin: '4px 0 0' }}>
-            {connectedCount} of {PROVIDERS.length} providers connected — connect via API key to enable inference and expert deployment
+            Manage local models, cloud providers, and API keys for inference
           </p>
         </div>
         <Link href="/providers/keys">
@@ -310,6 +311,19 @@ export default function ProvidersPage() {
             <Key size={13} /> Manage Keys
           </button>
         </Link>
+      </div>
+
+      {/* ── Local Models Section (above providers) ── */}
+      <ModelsSection />
+
+      {/* ── Provider Connections ── */}
+      <div style={{ marginTop: 32, marginBottom: 16 }}>
+        <h2 style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-1)', margin: '0 0 4px', display: 'flex', alignItems: 'center', gap: 8 }}>
+          <Plug size={18} /> Provider Connections
+        </h2>
+        <p style={{ fontSize: 12, color: 'var(--text-3)', margin: 0 }}>
+          {connectedCount} of {PROVIDERS.length} providers connected — connect via API key to enable inference
+        </p>
       </div>
 
       {/* Filter tabs */}
@@ -439,6 +453,331 @@ export default function ProvidersPage() {
           onClose={() => setConnectProvider(null)}
           onConnect={handleConnect}
         />
+      )}
+    </div>
+  );
+}
+
+/* ─── Models Section ──────────────────────────────── */
+interface LocalModel {
+  name: string;
+  size?: number;
+  modified_at?: string;
+  source: string;
+  local?: boolean;
+  digest?: string;
+  // HF search result fields
+  downloads?: number;
+  likes?: number;
+  pipeline_tag?: string;
+}
+
+function ModelsSection() {
+  const [source, setSource] = useState<'ollama' | 'llamacpp'>('ollama');
+  const [localModels, setLocalModels] = useState<{ ollama: LocalModel[]; llamacpp: LocalModel[] }>({ ollama: [], llamacpp: [] });
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<LocalModel[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [pulling, setPulling] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState<string | null>(null);
+  const [notice, setNotice] = useState<{ type: 'success' | 'error'; msg: string } | null>(null);
+
+  // Fetch local models on mount
+  const fetchLocal = useCallback(async () => {
+    try {
+      const res = await fetch('/api/models');
+      if (res.ok) {
+        const d = await res.json();
+        setLocalModels({
+          ollama: (d.ollama ?? []).map((m: { name: string; size?: number; modified_at?: string; digest?: string }) => ({ ...m, source: 'ollama', local: true })),
+          llamacpp: (d.llamacpp ?? []).map((m: { name: string; size?: number }) => ({ ...m, source: 'llamacpp', local: true })),
+        });
+      }
+    } catch { /* ignore */ }
+  }, []);
+
+  // Fetch on mount + poll every 15s for download completions
+  useEffect(() => {
+    requestAnimationFrame(() => fetchLocal());
+    const interval = setInterval(fetchLocal, 15000);
+    return () => clearInterval(interval);
+  }, [fetchLocal]);
+
+  // Auto-dismiss notice
+  useEffect(() => {
+    if (notice) { const t = setTimeout(() => setNotice(null), 5000); return () => clearTimeout(t); }
+  }, [notice]);
+
+  const handleSearch = async () => {
+    if (!searchQuery.trim()) return;
+    setSearching(true);
+    setSearchResults([]);
+    try {
+      const res = await fetch('/api/models', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'search', query: searchQuery, source, limit: 20 }),
+      });
+      const d = await res.json();
+      setSearchResults((d.models ?? []).map((m: { name?: string; id?: string; size?: number; downloads?: number; likes?: number; pipeline_tag?: string; local?: boolean }) => ({
+        name: m.name || m.id || '',
+        size: m.size,
+        downloads: m.downloads,
+        likes: m.likes,
+        pipeline_tag: m.pipeline_tag,
+        source,
+        local: m.local ?? false,
+      })));
+    } catch {
+      setNotice({ type: 'error', msg: 'Search failed' });
+    }
+    setSearching(false);
+  };
+
+  const handlePull = async (modelName: string) => {
+    setPulling(modelName);
+    try {
+      const res = await fetch('/api/models', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'pull', engine: source, model: modelName }),
+      });
+      const d = await res.json();
+      if (d.error) {
+        setNotice({ type: 'error', msg: d.error });
+      } else {
+        setNotice({ type: 'success', msg: `Pulling ${modelName} — this may take a few minutes` });
+        // Refresh local models after a delay
+        setTimeout(fetchLocal, 5000);
+      }
+    } catch {
+      setNotice({ type: 'error', msg: 'Pull failed' });
+    }
+    setPulling(null);
+  };
+
+  const handleDelete = async (modelName: string, engine: string) => {
+    setDeleting(modelName);
+    try {
+      const res = await fetch('/api/models', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'delete', engine, model: modelName }),
+      });
+      const d = await res.json();
+      if (d.deleted) {
+        setNotice({ type: 'success', msg: `Deleted ${modelName}` });
+        fetchLocal();
+      } else {
+        setNotice({ type: 'error', msg: d.error || 'Delete failed' });
+      }
+    } catch {
+      setNotice({ type: 'error', msg: 'Delete failed' });
+    }
+    setDeleting(null);
+  };
+
+  const fmtSize = (bytes?: number) => {
+    if (!bytes) return '';
+    if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(1)} GB`;
+    if (bytes >= 1e6) return `${(bytes / 1e6).toFixed(0)} MB`;
+    return `${bytes} B`;
+  };
+
+  const displayModels = source === 'llamacpp' ? localModels.llamacpp : source === 'ollama' ? localModels.ollama : [];
+  const isLocalSource = source === 'ollama' || source === 'llamacpp';
+
+  return (
+    <div style={{ marginTop: 32 }}>
+      {/* Section header */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+        <div>
+          <h2 style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-1)', margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
+            <HardDrive size={18} /> Local Models
+          </h2>
+          <p style={{ fontSize: 12, color: 'var(--text-3)', margin: '3px 0 0' }}>
+            Download and manage models for Ollama, llama.cpp, and HuggingFace
+          </p>
+        </div>
+      </div>
+
+      {/* Source tabs */}
+      <div style={{ display: 'flex', gap: 6, marginBottom: 16 }}>
+        {([
+          { id: 'ollama' as const, label: 'Ollama', icon: Server, color: '#10B981' },
+          { id: 'llamacpp' as const, label: 'llama.cpp', icon: Cpu, color: '#3B82F6' },
+        ]).map(s => (
+          <button key={s.id} onClick={() => { setSource(s.id); setSearchResults([]); setSearchQuery(''); }} style={{
+            display: 'flex', alignItems: 'center', gap: 6,
+            padding: '6px 14px', borderRadius: 6, fontSize: 12, fontWeight: source === s.id ? 600 : 400,
+            border: `1px solid ${source === s.id ? s.color : 'var(--border)'}`,
+            background: source === s.id ? `${s.color}12` : 'transparent',
+            color: source === s.id ? s.color : 'var(--text-3)',
+            cursor: 'pointer',
+          }}>
+            <s.icon size={13} />
+            {s.label}
+            {(
+              <span style={{ fontSize: 10, fontWeight: 700, opacity: 0.6 }}>
+                ({s.id === 'ollama' ? localModels.ollama.length : localModels.llamacpp.length})
+              </span>
+            )}
+          </button>
+        ))}
+      </div>
+
+      {/* Notice */}
+      {notice && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px', marginBottom: 12,
+          borderRadius: 6, fontSize: 12, fontWeight: 500,
+          background: notice.type === 'success' ? 'rgba(5,150,105,0.06)' : 'rgba(220,38,38,0.06)',
+          border: `1px solid ${notice.type === 'success' ? 'rgba(5,150,105,0.15)' : 'rgba(220,38,38,0.15)'}`,
+          color: notice.type === 'success' ? '#059669' : '#DC2626',
+        }}>
+          {notice.type === 'success' ? <Check size={13} /> : <X size={13} />}
+          {notice.msg}
+          <button onClick={() => setNotice(null)} style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', color: 'inherit', display: 'flex', padding: 0 }}>
+            <X size={11} />
+          </button>
+        </div>
+      )}
+
+      {/* Search bar */}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+        <div style={{
+          flex: 1, display: 'flex', alignItems: 'center', gap: 8,
+          padding: '0 12px', borderRadius: 6,
+          border: '1px solid var(--border-md)', background: 'var(--bg-surface)',
+        }}>
+          <Search size={14} color="var(--text-4)" />
+          <input
+            className="input"
+            style={{ border: 'none', padding: '8px 0', fontSize: 13, flex: 1, background: 'none' }}
+            placeholder={source === 'ollama' ? 'Search Ollama models (e.g. llama3.1, mistral, codellama)...' : 'Search loaded models...'}
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && handleSearch()}
+          />
+        </div>
+        <button className="btn btn-primary btn-sm" onClick={handleSearch} disabled={searching || !searchQuery.trim()}>
+          {searching ? <Loader2 size={13} className="spin" /> : <Search size={13} />}
+          {searching ? 'Searching...' : 'Search'}
+        </button>
+      </div>
+
+      {/* Search results */}
+      {searchResults.length > 0 && (
+        <div style={{ marginBottom: 20 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8 }}>
+            Search Results ({searchResults.length})
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {searchResults.map((m, i) => (
+              <div key={`${m.name}-${i}`} className="card" style={{ padding: '10px 14px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: '#0d0d0d' }} className="mono">{m.name}</div>
+                    <div style={{ display: 'flex', gap: 8, fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>
+                      {m.pipeline_tag && <span style={{ padding: '1px 6px', borderRadius: 4, background: 'var(--bg-elevated)', fontSize: 10 }}>{m.pipeline_tag}</span>}
+                      {m.downloads !== undefined && <span>{m.downloads.toLocaleString()} downloads</span>}
+                      {m.likes !== undefined && <span>{m.likes} likes</span>}
+                      {m.size ? <span>{fmtSize(m.size)}</span> : null}
+                    </div>
+                  </div>
+                  {m.local ? (
+                    <span style={{ fontSize: 10, fontWeight: 600, color: '#059669', padding: '2px 8px', borderRadius: 10, background: 'rgba(5,150,105,0.08)' }}>
+                      Downloaded
+                    </span>
+                  ) : (
+                    <button
+                      className="btn btn-primary btn-sm"
+                      onClick={() => handlePull(m.name)}
+                      disabled={pulling === m.name}
+                      style={{ display: 'flex', alignItems: 'center', gap: 4 }}
+                    >
+                      {pulling === m.name ? <Loader2 size={12} className="spin" /> : <Download size={12} />}
+                      {pulling === m.name ? 'Pulling...' : 'Download'}
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+
+      {/* llama.cpp instructions */}
+      {source === 'llamacpp' && localModels.llamacpp.length === 0 && (
+        <div className="card" style={{ padding: 20, marginBottom: 16 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: '#0d0d0d', marginBottom: 8 }}>Loading Models into llama.cpp</div>
+          <div style={{ fontSize: 12, color: 'var(--text-3)', lineHeight: 1.7 }}>
+            <p style={{ margin: '0 0 8px' }}>llama.cpp loads GGUF model files directly. To add a model:</p>
+            <ol style={{ margin: 0, paddingLeft: 20 }}>
+              <li>Download a GGUF file from HuggingFace (search above with HuggingFace tab)</li>
+              <li>Start llama.cpp server with the model: <code style={{ padding: '1px 5px', borderRadius: 3, background: 'var(--bg-elevated)', fontSize: 11 }}>./llama-server -m model.gguf --port 8080</code></li>
+              <li>The loaded model will appear here automatically</li>
+            </ol>
+            <p style={{ margin: '8px 0 0', fontSize: 11, color: 'var(--text-4)' }}>
+              Ensure your llama.cpp server is running on port 8080 (configurable in engine settings).
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Local model list */}
+      {isLocalSource && displayModels.length > 0 && (
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8 }}>
+            Installed Models ({displayModels.length})
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {displayModels.map((m, i) => (
+              <div key={`${m.name}-${i}`} className="card" style={{ padding: '10px 14px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <div style={{
+                    width: 32, height: 32, borderRadius: 6,
+                    background: source === 'ollama' ? 'rgba(16,185,129,0.08)' : 'rgba(59,130,246,0.08)',
+                    border: `1px solid ${source === 'ollama' ? 'rgba(16,185,129,0.15)' : 'rgba(59,130,246,0.15)'}`,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+                  }}>
+                    {source === 'ollama' ? <Server size={14} color="#10B981" /> : <Cpu size={14} color="#3B82F6" />}
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: '#0d0d0d' }} className="mono">{m.name}</div>
+                    <div style={{ display: 'flex', gap: 10, fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>
+                      {m.size ? <span>{fmtSize(m.size)}</span> : null}
+                      {m.modified_at && <span>{new Date(m.modified_at).toLocaleDateString()}</span>}
+                      {m.digest && <span className="mono" style={{ fontSize: 10, color: 'var(--text-4)' }}>{m.digest.slice(0, 12)}</span>}
+                    </div>
+                  </div>
+                  {source === 'ollama' && (
+                    <button
+                      onClick={() => handleDelete(m.name, 'ollama')}
+                      disabled={deleting === m.name}
+                      style={{
+                        background: 'none', border: 'none', cursor: 'pointer',
+                        color: deleting === m.name ? 'var(--text-4)' : 'var(--text-3)',
+                        padding: 4, display: 'flex',
+                      }}
+                      title="Delete model"
+                    >
+                      {deleting === m.name ? <Loader2 size={13} className="spin" /> : <Trash2 size={13} />}
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Empty state for ollama */}
+      {source === 'ollama' && localModels.ollama.length === 0 && (
+        <div style={{ padding: '24px 0', textAlign: 'center', color: 'var(--text-4)', fontSize: 13 }}>
+          No Ollama models installed. Search and download models above, or run <code style={{ padding: '1px 5px', borderRadius: 3, background: 'var(--bg-elevated)', fontSize: 11 }}>ollama pull llama3.1</code> in terminal.
+        </div>
       )}
     </div>
   );

@@ -4,9 +4,9 @@ import { useState, useEffect, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import useSWR from 'swr';
 import {
-  Brain, Play, Pause, Plus, Trash2, ChevronDown, ChevronUp,
-  Clock, Zap, BarChart3, CheckCircle2, AlertTriangle,
-  Database, Cpu, TrendingUp, RefreshCcw, Download, Loader2,
+  Brain, Play, Pause, Plus, ChevronDown, ChevronUp,
+  Clock, Zap, CheckCircle2,
+  Database, Cpu, TrendingUp, Download, Loader2,
 } from 'lucide-react';
 import { useTrainingJobs, useExperts } from '@/lib/hooks/useApi';
 import type { TrainingJob, Expert, Dataset } from '@/lib/types';
@@ -213,10 +213,12 @@ function TrainingLabPageInner() {
 
   /* Handle ?action=new → auto-switch to New tab */
   useEffect(() => {
-    if (searchParams.get('action') === 'new') {
+    const action = searchParams.get('action');
+    if (action !== 'new') return;
+    requestAnimationFrame(() => {
       setTab('new');
       window.history.replaceState({}, '', '/training');
-    }
+    });
   }, [searchParams]);
 
   const { jobs, isLoading: jobsLoading } = useTrainingJobs() as { jobs: TrainingJob[]; total: number; isLoading: boolean; error: unknown; mutate: () => void };
