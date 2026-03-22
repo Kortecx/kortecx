@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { db, metrics, tasks, workflowRuns, experts, stepExecutions } from '@/lib/db';
+import { db, metrics, experts, stepExecutions } from '@/lib/db';
 import { sql, gte, desc, count } from 'drizzle-orm';
 
 export async function GET() {

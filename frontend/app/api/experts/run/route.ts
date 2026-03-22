@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db, expertRuns, experts } from '@/lib/db';
+import { db, expertRuns, experts, tasks } from '@/lib/db';
 import { eq, desc } from 'drizzle-orm';
 import { logStatus } from '@/lib/status-log';
 
@@ -20,42 +20,102 @@ export async function POST(req: NextRequest) {
     }
 
     const runId = `er-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const resolvedModel = model || 'llama3.2:3b';
+    const resolvedEngine = engine || 'ollama';
+    const resolvedSystemPrompt = systemPrompt || `You are ${expertName}, a specialized ${role || 'AI'} expert.`;
+    const resolvedUserPrompt = userPrompt || `You are running as expert "${expertName}". Provide a demonstration of your capabilities.`;
 
-    // Create DB record immediately
-    const [run] = await db.insert(expertRuns).values({
+    // 1. Create DB record with status 'queued' (not running yet)
+    await db.insert(expertRuns).values({
       id: runId,
       expertId,
       expertName,
-      status: 'running',
-      model: model || 'llama3.2:3b',
-      engine: engine || 'ollama',
+      status: 'queued',
+      model: resolvedModel,
+      engine: resolvedEngine,
       temperature: String(temperature ?? 0.7),
       maxTokens: maxTokens || 4096,
-      systemPrompt: systemPrompt || `You are ${expertName}, a specialized ${role || 'AI'} expert.`,
-      userPrompt: userPrompt || `You are running as expert "${expertName}". Provide a demonstration of your capabilities.`,
+      systemPrompt: resolvedSystemPrompt,
+      userPrompt: resolvedUserPrompt,
       startedAt: new Date(),
-      metadata: { role, tags },
+      metadata: { role, tags, frontendRunId: runId },
     }).returning();
 
-    // Fire engine execution in background (don't await)
-    fetch(`${ENGINE_URL}/api/experts/engine/${expertId}/execute`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        expertName,
-        model: model || 'llama3.2:3b',
-        engine: engine || 'ollama',
-        temperature: temperature ?? 0.7,
-        maxTokens: maxTokens || 4096,
-        systemPrompt: systemPrompt || `You are ${expertName}, a specialized ${role || 'AI'} expert.`,
-        userPrompt: userPrompt || `You are running as expert "${expertName}". Provide a demonstration of your capabilities.`,
-        tags: tags || [role, 'demo', 'auto-run'],
-        metadata: { expertId, role, frontendRunId: runId },
-        callbackUrl: `${APP_URL}/api/experts/run/complete`,
-      }),
-    }).catch((err: unknown) => {
-      console.error('[experts/run] engine call failed:', err);
-    });
+    // 2. Await engine execution with timeout (15s)
+    let engineAccepted = false;
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15_000);
+
+      const engineRes = await fetch(`${ENGINE_URL}/api/experts/engine/${expertId}/execute`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
+        body: JSON.stringify({
+          expertName,
+          model: resolvedModel,
+          engine: resolvedEngine,
+          temperature: temperature ?? 0.7,
+          maxTokens: maxTokens || 4096,
+          systemPrompt: resolvedSystemPrompt,
+          userPrompt: resolvedUserPrompt,
+          tags: tags || [role, 'demo', 'auto-run'],
+          metadata: { expertId, role, frontendRunId: runId },
+          callbackUrl: `${APP_URL}/api/experts/run/complete`,
+        }),
+      });
+
+      clearTimeout(timeout);
+
+      if (engineRes.ok) {
+        engineAccepted = true;
+      } else {
+        const errText = await engineRes.text().catch(() => 'Unknown engine error');
+        throw new Error(`Engine returned ${engineRes.status}: ${errText}`);
+      }
+    } catch (engineErr) {
+      // Engine unreachable or returned error — mark run as failed
+      const errMsg = engineErr instanceof Error ? engineErr.message : 'Engine unreachable';
+      await db.update(expertRuns).set({
+        status: 'failed',
+        errorMessage: errMsg,
+        completedAt: new Date(),
+      }).where(eq(expertRuns.id, runId));
+
+      // Keep expert as idle
+      await db.update(experts).set({ status: 'idle', updatedAt: new Date() })
+        .where(eq(experts.id, expertId));
+
+      logStatus('error', `Expert run failed to start: ${expertName} — ${errMsg}`, 'expert', { runId, expertId });
+      return NextResponse.json({ runId, status: 'failed', error: errMsg }, { status: 502 });
+    }
+
+    // 3. Engine accepted — now set to running
+    if (engineAccepted) {
+      await db.update(expertRuns).set({ status: 'running' }).where(eq(expertRuns.id, runId));
+      await db.update(experts).set({ status: 'running', updatedAt: new Date() })
+        .where(eq(experts.id, expertId));
+    }
+
+    // 4. Create task queue entry (non-blocking, migration may be pending)
+    try {
+      const taskId = `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      await db.insert(tasks).values({
+        id: taskId,
+        name: `Expert Run: ${expertName}`,
+        status: 'running',
+        priority: 'normal',
+        totalSteps: 1,
+        currentStep: 0,
+        currentExpert: expertName,
+        expertId,
+        expertRunId: runId,
+        progress: 0,
+        startedAt: new Date(),
+      });
+    } catch (taskErr) {
+      console.warn('[experts/run] task creation failed (migration may be pending):', taskErr);
+    }
 
     logStatus('info', `Expert run started: ${expertName}`, 'expert', { runId, expertId });
     return NextResponse.json({ runId, status: 'running' }, { status: 202 });

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db, experts } from '@/lib/db';
+import { db, experts, expertRuns } from '@/lib/db';
 import { eq, ilike, or, desc, asc, sql } from 'drizzle-orm';
 import { logStatus } from '@/lib/status-log';
 
@@ -166,6 +166,8 @@ export async function PATCH(req: NextRequest) {
 
 /* DELETE /api/experts — Remove an expert */
 export async function DELETE(req: NextRequest) {
+  const ENGINE_URL = process.env.NEXT_PUBLIC_ENGINE_URL || 'http://localhost:8000';
+
   try {
     const { searchParams } = req.nextUrl;
     const id = searchParams.get('id');
@@ -174,10 +176,23 @@ export async function DELETE(req: NextRequest) {
       return NextResponse.json({ error: 'Expert id is required' }, { status: 400 });
     }
 
+    // Delete expert from database
     const [deleted] = await db.delete(experts).where(eq(experts.id, id)).returning();
     if (!deleted) {
       return NextResponse.json({ error: 'Expert not found' }, { status: 404 });
     }
+
+    // Delete related expert runs from database
+    try {
+      await db.delete(expertRuns).where(eq(expertRuns.expertId, id));
+    } catch (runErr) {
+      console.warn('[experts DELETE] failed to clean expert runs:', runErr);
+    }
+
+    // Delete from engine local directory (non-blocking)
+    fetch(`${ENGINE_URL}/api/experts/engine/${id}`, { method: 'DELETE' }).catch((err) => {
+      console.warn('[experts DELETE] engine cleanup failed:', err);
+    });
 
     logStatus('info', `Expert deleted: ${id}`, 'expert', { id });
     return NextResponse.json({ deleted: true, id });

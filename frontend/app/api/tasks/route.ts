@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, tasks } from '@/lib/db';
-import { desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq } from 'drizzle-orm';
 import { nanoid } from './nanoid';
 import { logStatus } from '@/lib/status-log';
 
@@ -8,14 +8,19 @@ import { logStatus } from '@/lib/status-log';
 export async function GET(req: NextRequest) {
 
   const { searchParams } = new URL(req.url);
-  const status = searchParams.get('status');
-  const limit  = Number(searchParams.get('limit') ?? 50);
+  const status   = searchParams.get('status');
+  const expertId = searchParams.get('expertId');
+  const limit    = Number(searchParams.get('limit') ?? 50);
 
   try {
+    const conditions = [];
+    if (status)   conditions.push(eq(tasks.status, status));
+    if (expertId) conditions.push(eq(tasks.expertId, expertId));
+
     const rows = await db
       .select()
       .from(tasks)
-      .where(status ? eq(tasks.status, status) : undefined)
+      .where(conditions.length > 0 ? and(...conditions) : undefined)
       .orderBy(desc(tasks.createdAt))
       .limit(limit);
 

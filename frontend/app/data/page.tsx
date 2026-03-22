@@ -7,8 +7,8 @@ import useSWR from 'swr';
 import dynamic from 'next/dynamic';
 import {
   Database, Plus, Download, Sparkles, RefreshCcw,
-  CheckCircle2, Clock, AlertTriangle, BarChart3, FileText,
-  Zap, Filter, Search, Loader2, Heart, ArrowDownToLine,
+  CheckCircle2, Clock, AlertTriangle, FileText,
+  Zap, Search, Loader2, Heart, ArrowDownToLine,
   ExternalLink, Trash2, Eye, HardDrive, Rows3, Columns3, Key,
   Cpu, Server, Sparkle, ChevronDown, ChevronRight, X,
   Upload, FolderPlus, File, Image, Video, Music, FileSpreadsheet, GripVertical,
@@ -2267,6 +2267,7 @@ const EXT_TO_LANG: Record<string, string> = {
 const TEXT_EXTS = new Set(Object.keys(EXT_TO_LANG));
 
 interface TreeNode {
+  id?: string;
   name: string;
   path: string;
   type: 'folder' | 'file';
@@ -2291,6 +2292,7 @@ function buildTree(assetList: any[]): TreeNode[] {
       node = child;
     }
     node.children.push({
+      id: a.id,
       name: a.fileName || a.name,
       path: currentPath + '/' + (a.fileName || a.name),
       type: 'file',
@@ -2339,7 +2341,7 @@ function FileTreeItem({ node, depth, expanded, selected, onToggle, onSelect }: {
           </span>
         </div>
         {isOpen && node.children.map(child => (
-          <FileTreeItem key={child.path} node={child} depth={depth + 1}
+          <FileTreeItem key={child.id || child.path} node={child} depth={depth + 1}
             expanded={expanded} selected={selected} onToggle={onToggle} onSelect={onSelect} />
         ))}
       </>
@@ -2382,7 +2384,7 @@ function AssetsTab() {
 
   const { data: assetsData, isLoading, mutate: mutateAssets } = useSWR<{
     assets: any[]; total: number; folders: string[];
-  }>(`/api/assets${qs ? `?${qs}` : ''}`, (url: string) => fetch(url).then(r => r.json()), { refreshInterval: 30_000 });
+  }>(`/api/assets${qs ? `?${qs}` : ''}`, (url: string) => fetch(url).then(r => r.json()), { refreshInterval: 10_000, revalidateOnFocus: true });
   const allAssets: any[] = assetsData?.assets ?? [];
 
   // Tree state — derive expanded paths from data + user toggles (no useEffect needed)
@@ -2512,7 +2514,7 @@ function AssetsTab() {
             </div>
           )}
           {tree.map(node => (
-            <FileTreeItem key={node.path} node={node} depth={0}
+            <FileTreeItem key={node.id || node.path} node={node} depth={0}
               expanded={expandedPaths} selected={selectedAsset?.id || null}
               onToggle={handleToggle} onSelect={handleSelectFile} />
           ))}

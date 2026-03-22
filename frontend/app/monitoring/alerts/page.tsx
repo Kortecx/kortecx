@@ -2,8 +2,8 @@
 
 import { useState } from 'react';
 import {
-  Bell, AlertTriangle, AlertCircle, Info, ShieldAlert,
-  Check, Clock, Filter, X, Loader2,
+  AlertTriangle, AlertCircle, Info, ShieldAlert,
+  Check, Clock, Loader2,
 } from 'lucide-react';
 import { useAlerts } from '@/lib/hooks/useApi';
 import type { Alert, AlertSeverity } from '@/lib/types';

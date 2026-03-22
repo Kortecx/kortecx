@@ -7,7 +7,7 @@ export async function GET() {
   try {
     const runningTasks = await db.select().from(tasks).where(eq(tasks.status, 'running')).limit(20);
     const activeExperts = await db.select().from(experts)
-      .where(inArray(experts.status, ['active', 'idle', 'training']))
+      .where(inArray(experts.status, ['active', 'running', 'idle', 'training', 'completed', 'failed']))
       .limit(50);
 
     type TaskRow   = typeof runningTasks[number];

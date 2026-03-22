@@ -10,13 +10,14 @@ const fetcher = (url: string) => fetch(url).then(r => r.json());
 import {
   Star, Search, Plus, Settings, TrendingUp,
   Loader2, Activity, Zap, Clock, BarChart2,
-  ChevronDown, Play, Cpu, Tag, X, Save,
-  Server, Cloud, Trash2, CheckCircle2, AlertCircle,
-  Hash, Filter, Copy, ChevronRight, RotateCcw, Store, FileText,
+  ChevronDown, Play, Cpu, Tag, X,
+  Trash2, CheckCircle2, AlertCircle,
+  Copy, RotateCcw, Store, FileText,
 } from 'lucide-react';
 import { useExperts } from '@/lib/hooks/useApi';
-import { ROLE_META, PROVIDERS } from '@/lib/constants';
-import type { ExpertRole } from '@/lib/types';
+import { ROLE_META } from '@/lib/constants';
+import type { Expert, ExpertRole } from '@/lib/types';
+import ExpertEditDialog from './_components/ExpertEditDialog';
 
 /* ═══════════════════════════════════════════════════════
    Constants
@@ -34,6 +35,10 @@ const stagger = { hidden: {}, show: { transition: { staggerChildren: 0.07 } } };
 const STATUS_CONFIG: Record<string, { color: string; bg: string; label: string; pulse: boolean }> = {
   active:      { color: '#10b981', bg: '#10b98112', label: 'Active',      pulse: true  },
   idle:        { color: '#6b7280', bg: '#6b728012', label: 'Idle',        pulse: false },
+  queued:      { color: '#f59e0b', bg: '#f59e0b12', label: 'Queued',      pulse: true  },
+  running:     { color: '#3b82f6', bg: '#3b82f612', label: 'Running',     pulse: true  },
+  completed:   { color: '#10b981', bg: '#10b98112', label: 'Completed',   pulse: false },
+  failed:      { color: '#ef4444', bg: '#ef444412', label: 'Failed',      pulse: false },
   training:    { color: '#f59e0b', bg: '#f59e0b12', label: 'Training',    pulse: true  },
   finetuning:  { color: '#8b5cf6', bg: '#8b5cf612', label: 'Fine-tuning', pulse: true  },
   offline:     { color: '#ef4444', bg: '#ef444412', label: 'Offline',     pulse: false },
@@ -62,7 +67,7 @@ const ROLE_COLOR: Record<string, string> = {
   creative: '#a855f7', translator: '#06b6d4', custom: '#6b7280',
 };
 
-const STATUS_FILTERS = ['all', 'active', 'idle', 'training', 'finetuning'] as const;
+const STATUS_FILTERS = ['all', 'active', 'idle', 'queued', 'running', 'completed', 'failed', 'training', 'finetuning'] as const;
 type StatusFilter = typeof STATUS_FILTERS[number];
 
 const SORT_OPTIONS = [
@@ -73,12 +78,7 @@ const SORT_OPTIONS = [
 ] as const;
 type SortOption = typeof SORT_OPTIONS[number]['value'];
 
-const MARKETPLACE_SORT_OPTIONS = [
-  { value: 'rating', label: 'Rating'     },
-  { value: 'runs',   label: 'Popularity' },
-  { value: 'name',   label: 'Name'       },
-] as const;
-type MarketplaceSortOption = typeof MARKETPLACE_SORT_OPTIONS[number]['value'];
+type MarketplaceSortOption = 'rating' | 'runs' | 'name';
 
 type TabKey = 'mine' | 'marketplace';
 
@@ -305,233 +305,6 @@ function SkeletonCard() {
 }
 
 /* ═══════════════════════════════════════════════════════
-   Configure Modal
-   ═══════════════════════════════════════════════════════ */
-function ConfigureModal({
-  expert,
-  onClose,
-  onSave,
-}: {
-  expert: Record<string, unknown>;
-  onClose: () => void;
-  onSave: (id: string, updates: Record<string, unknown>) => Promise<void>;
-}) {
-  const [name, setName] = useState(expert.name as string);
-  const [role, setRole] = useState(expert.role as string);
-  const [status, setStatus] = useState(expert.status as string);
-  const [systemPrompt, setSystemPrompt] = useState((expert.systemPrompt as string) ?? '');
-  const [temperature, setTemperature] = useState(Number(expert.temperature) || 0.7);
-  const [maxTokens, setMaxTokens] = useState((expert.maxTokens as number) ?? 4096);
-  const [tagsStr, setTagsStr] = useState(((expert.tags as string[]) ?? []).join(', '));
-  const [isPublic, setIsPublic] = useState((expert.isPublic as boolean) ?? false);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
-
-  const modelSource = (expert.modelSource as string) ?? 'provider';
-  const isLocal = modelSource === 'local';
-
-  const handleSave = async () => {
-    if (!name.trim()) { setError('Name is required'); return; }
-    setSaving(true);
-    setError('');
-    try {
-      await onSave(expert.id as string, {
-        name: name.trim(),
-        role,
-        status,
-        systemPrompt: systemPrompt.trim() || null,
-        temperature,
-        maxTokens,
-        tags: tagsStr.split(',').map(t => t.trim()).filter(Boolean),
-        isPublic,
-      });
-      onClose();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Save failed');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const LABEL: React.CSSProperties = {
-    fontSize: 11, fontWeight: 600, color: 'var(--text-3)',
-    display: 'block', marginBottom: 4,
-  };
-
-  const ROLES = [
-    'researcher', 'analyst', 'writer', 'coder', 'reviewer', 'planner',
-    'synthesizer', 'critic', 'legal', 'financial', 'medical', 'coordinator',
-    'data-engineer', 'creative', 'translator', 'custom',
-  ];
-
-  const STATUSES = ['active', 'idle', 'training', 'offline'];
-
-  return (
-    <div style={{
-      position: 'fixed', inset: 0, background: 'rgba(7,7,26,0.85)',
-      zIndex: 200, display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
-      paddingTop: 60, overflowY: 'auto',
-    }}>
-      <motion.div
-        initial={{ opacity: 0, y: 16, scale: 0.97 }}
-        animate={{ opacity: 1, y: 0, scale: 1 }}
-        exit={{ opacity: 0, y: 8 }}
-        transition={{ duration: 0.2 }}
-        style={{
-          width: 540, maxWidth: '92vw',
-          background: 'var(--bg-surface)', border: '1px solid var(--border-md)',
-          borderRadius: 12, overflow: 'hidden',
-          boxShadow: '0 24px 80px rgba(0,0,0,0.2)',
-          marginBottom: 40,
-        }}
-      >
-        {/* Header */}
-        <div style={{
-          padding: '18px 22px', borderBottom: '1px solid var(--border)',
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <Settings size={16} color={SECTION_COLOR} />
-            <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-1)' }}>Configure Expert</span>
-          </div>
-          <button onClick={onClose} style={{
-            background: 'none', border: 'none', cursor: 'pointer',
-            color: 'var(--text-3)', display: 'flex', padding: 4,
-          }}>
-            <X size={16} />
-          </button>
-        </div>
-
-        {/* Model info (read-only) */}
-        <div style={{
-          padding: '12px 22px', background: 'var(--bg-elevated)',
-          borderBottom: '1px solid var(--border)',
-          display: 'flex', alignItems: 'center', gap: 10, fontSize: 12,
-        }}>
-          {isLocal ? <Server size={13} color="#059669" /> : <Cloud size={13} color="#2563EB" />}
-          <span style={{ color: 'var(--text-2)', fontWeight: 500 }}>
-            {isLocal ? 'Local' : 'Provider'}: {(expert.modelName ?? expert.modelId) as string}
-          </span>
-          <span style={{ color: 'var(--text-4)' }}>·</span>
-          <span style={{ color: 'var(--text-4)' }}>{(expert.providerName ?? expert.providerId) as string}</span>
-        </div>
-
-        {/* Form */}
-        <div style={{ padding: '20px 22px', display: 'flex', flexDirection: 'column', gap: 16 }}>
-          {/* Name + Role */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-            <div>
-              <label style={LABEL}>Name <span style={{ color: '#ef4444' }}>*</span></label>
-              <input className="input" style={{ width: '100%', fontSize: 13 }}
-                value={name} onChange={e => setName(e.target.value)} />
-            </div>
-            <div>
-              <label style={LABEL}>Role</label>
-              <select className="input" style={{ width: '100%', fontSize: 13 }}
-                value={role} onChange={e => setRole(e.target.value)}>
-                {ROLES.map(r => (
-                  <option key={r} value={r}>{r.charAt(0).toUpperCase() + r.slice(1)}</option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          {/* Status */}
-          <div>
-            <label style={LABEL}>Status</label>
-            <div style={{ display: 'flex', gap: 6 }}>
-              {STATUSES.map(s => {
-                const sc = STATUS_CONFIG[s] ?? STATUS_CONFIG.idle;
-                return (
-                  <button key={s} onClick={() => setStatus(s)} style={{
-                    padding: '5px 12px', borderRadius: 20, fontSize: 11, fontWeight: status === s ? 700 : 400,
-                    border: `1px solid ${status === s ? sc.color : 'var(--border)'}`,
-                    background: status === s ? sc.bg : 'transparent',
-                    color: status === s ? sc.color : 'var(--text-3)',
-                    cursor: 'pointer', transition: 'all 0.12s',
-                  }}>{sc.label}</button>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* System Prompt */}
-          <div>
-            <label style={LABEL}>System Prompt</label>
-            <textarea className="textarea" style={{
-              width: '100%', minHeight: 90, fontSize: 12,
-              fontFamily: 'var(--font-mono, monospace)', lineHeight: 1.5,
-            }}
-              placeholder="You are a specialized AI expert..."
-              value={systemPrompt} onChange={e => setSystemPrompt(e.target.value)} />
-          </div>
-
-          {/* Temperature + Max Tokens */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-            <div>
-              <label style={LABEL}>Temperature ({temperature.toFixed(1)})</label>
-              <input type="range" min={0} max={2} step={0.1} style={{ width: '100%' }}
-                value={temperature} onChange={e => setTemperature(Number(e.target.value))} />
-            </div>
-            <div>
-              <label style={LABEL}>Max Tokens</label>
-              <input type="number" className="input" style={{ width: '100%', fontSize: 13 }}
-                value={maxTokens} onChange={e => setMaxTokens(Number(e.target.value) || 4096)} />
-            </div>
-          </div>
-
-          {/* Tags */}
-          <div>
-            <label style={LABEL}>Tags (comma-separated)</label>
-            <input className="input" style={{ width: '100%', fontSize: 12 }}
-              placeholder="e.g. research, fast, production"
-              value={tagsStr} onChange={e => setTagsStr(e.target.value)} />
-          </div>
-
-          {/* Public toggle */}
-          <label style={{
-            display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer',
-          }}>
-            <input type="checkbox" checked={isPublic}
-              onChange={e => setIsPublic(e.target.checked)}
-              style={{ accentColor: SECTION_COLOR }} />
-            <span style={{ fontSize: 12, color: 'var(--text-2)' }}>Public — visible to all users</span>
-          </label>
-
-          {error && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#ef4444' }}>
-              <AlertCircle size={13} /> {error}
-            </div>
-          )}
-        </div>
-
-        {/* Footer */}
-        <div style={{
-          padding: '14px 22px', borderTop: '1px solid var(--border)',
-          display: 'flex', gap: 8, justifyContent: 'flex-end',
-        }}>
-          <button onClick={onClose} style={{
-            padding: '8px 16px', borderRadius: 7, fontSize: 12, fontWeight: 500,
-            border: '1px solid var(--border-md)', background: 'transparent',
-            color: 'var(--text-3)', cursor: 'pointer',
-          }}>Cancel</button>
-          <button onClick={handleSave} disabled={saving} style={{
-            display: 'flex', alignItems: 'center', gap: 6,
-            padding: '8px 18px', borderRadius: 7, fontSize: 12, fontWeight: 700,
-            border: `1.5px solid ${SECTION_COLOR}`,
-            background: `${SECTION_COLOR}14`, color: SECTION_COLOR,
-            cursor: saving ? 'wait' : 'pointer', opacity: saving ? 0.6 : 1,
-          }}>
-            {saving ? <Loader2 size={12} style={{ animation: 'spin 1s linear infinite' }} /> : <Save size={12} />}
-            Save Changes
-          </button>
-        </div>
-      </motion.div>
-    </div>
-  );
-}
-
-/* ═══════════════════════════════════════════════════════
    Stats Modal
    ═══════════════════════════════════════════════════════ */
 function StatsModal({
@@ -750,7 +523,7 @@ function MyExpertCard({
   onRun,
   highlighted,
   cardRef,
-  runStatus,
+  runStatus: _runStatus,
 }: {
   expert: Record<string, unknown>;
   onConfigure: () => void;
@@ -772,9 +545,11 @@ function MyExpertCard({
   const stats       = (expert.stats as Record<string, number>) ?? {};
   const totalRuns   = (expert.totalRuns as number) ?? stats.totalRuns ?? 0;
   const successRate = (expert.successRate as number) ?? stats.successRate ?? 0;
-  const avgCost     = stats.avgCostPerRun ?? 0;
+  const _avgCost    = stats.avgCostPerRun ?? 0;
   const avgLatency  = (expert.avgLatencyMs as number) ?? stats.avgLatencyMs ?? 0;
-  const rating      = stats.rating ?? 0;
+  const avgTokens   = stats.avgTokensPerRun ?? 0;
+  const cpuUsage    = (expert.metadata as Record<string, unknown> | undefined)?.cpuUsage as number | undefined;
+  const _rating     = stats.rating ?? 0;
   const tags        = ((expert.tags as string[]) ?? []).slice(0, 3);
   const isFinetuned = (expert.isFinetuned as boolean) ?? false;
 
@@ -784,12 +559,13 @@ function MyExpertCard({
       variants={fadeUp}
       whileHover={{ y: -3, boxShadow: '0 10px 32px rgba(13,13,13,0.09)' }}
       transition={{ type: 'spring', stiffness: 380, damping: 28 }}
+      onClick={onConfigure}
       style={{
         background: 'var(--bg-surface)',
         border: highlighted ? `2px solid ${SECTION_COLOR}` : '1px solid var(--border)',
         borderRadius: 12, padding: 20,
         display: 'flex', flexDirection: 'column', gap: 14,
-        position: 'relative', overflow: 'hidden',
+        position: 'relative', overflow: 'hidden', cursor: 'pointer',
         animation: highlighted ? 'highlight-pulse 0.6s ease-in-out 3' : undefined,
       }}
     >
@@ -887,24 +663,6 @@ function MyExpertCard({
         <span style={{ color: 'var(--text-4)' }}>{(expert.modelName ?? expert.modelId) as string}</span>
       </div>
 
-      {/* Run status indicator */}
-      {runStatus && (
-        <div style={{
-          display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px',
-          borderRadius: 6, fontSize: 11, fontWeight: 600,
-          background: runStatus === 'running' ? '#f59e0b08' : runStatus === 'success' ? '#10b98108' : '#ef444408',
-          border: `1px solid ${runStatus === 'running' ? '#f59e0b20' : runStatus === 'success' ? '#10b98120' : '#ef444420'}`,
-          color: runStatus === 'running' ? '#f59e0b' : runStatus === 'success' ? '#10b981' : '#ef4444',
-        }}>
-          <span style={{
-            width: 8, height: 8, borderRadius: '50%',
-            background: runStatus === 'running' ? '#f59e0b' : runStatus === 'success' ? '#10b981' : '#ef4444',
-            animation: runStatus === 'running' ? 'pulse-dot 1.5s ease-in-out infinite' : undefined,
-          }} />
-          {runStatus === 'running' ? 'Running...' : runStatus === 'success' ? 'Completed' : 'Failed'}
-        </div>
-      )}
-
       {/* Stats grid */}
       <div style={{
         display: 'grid', gridTemplateColumns: '1fr 1fr 1fr',
@@ -921,6 +679,18 @@ function MyExpertCard({
         <div style={{ textAlign: 'center', padding: '7px 4px', borderRadius: 6, background: '#2563EB06', border: '1px solid #2563EB12' }}>
           <div style={{ fontSize: 16, fontWeight: 800, color: '#2563EB', lineHeight: 1 }}>{avgLatency > 0 ? `${(avgLatency / 1000).toFixed(1)}s` : '—'}</div>
           <div style={{ fontSize: 8, color: 'var(--text-4)', marginTop: 2, fontWeight: 500 }}>Avg Time</div>
+        </div>
+        <div style={{ textAlign: 'center', padding: '7px 4px', borderRadius: 6, background: '#8b5cf606', border: '1px solid #8b5cf612' }}>
+          <div style={{ fontSize: 16, fontWeight: 800, color: '#8b5cf6', lineHeight: 1 }}>{avgLatency > 0 ? `${(avgLatency / 1000).toFixed(1)}s` : '—'}</div>
+          <div style={{ fontSize: 8, color: 'var(--text-4)', marginTop: 2, fontWeight: 500 }}>Run Time</div>
+        </div>
+        <div style={{ textAlign: 'center', padding: '7px 4px', borderRadius: 6, background: '#f59e0b06', border: '1px solid #f59e0b12' }}>
+          <div style={{ fontSize: 16, fontWeight: 800, color: '#f59e0b', lineHeight: 1 }}>{cpuUsage != null ? `${cpuUsage}%` : '—'}</div>
+          <div style={{ fontSize: 8, color: 'var(--text-4)', marginTop: 2, fontWeight: 500 }}>CPU Usage</div>
+        </div>
+        <div style={{ textAlign: 'center', padding: '7px 4px', borderRadius: 6, background: '#ec489906', border: '1px solid #ec489912' }}>
+          <div style={{ fontSize: 16, fontWeight: 800, color: '#ec4899', lineHeight: 1 }}>{avgTokens > 0 ? fmt(avgTokens) : '—'}</div>
+          <div style={{ fontSize: 8, color: 'var(--text-4)', marginTop: 2, fontWeight: 500 }}>Tokens Used</div>
         </div>
       </div>
 
@@ -955,7 +725,7 @@ function MyExpertCard({
         display: 'flex', gap: 5, paddingTop: 4,
         borderTop: '1px solid var(--border)', marginTop: 'auto',
       }}>
-        <button onClick={onRun} style={{
+        <button onClick={e => { e.stopPropagation(); onRun(); }} style={{
           flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5,
           padding: '7px 8px', borderRadius: 7, cursor: 'pointer',
           border: `1.5px solid ${SECTION_COLOR}50`,
@@ -966,7 +736,7 @@ function MyExpertCard({
           <Play size={10} fill={SECTION_COLOR} strokeWidth={0} />
           Run
         </button>
-        <button onClick={onConfigure} style={{
+        <button onClick={e => { e.stopPropagation(); onConfigure(); }} style={{
           flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5,
           padding: '7px 8px', borderRadius: 7, cursor: 'pointer',
           border: '1px solid var(--border-md)',
@@ -977,7 +747,7 @@ function MyExpertCard({
           <Settings size={10} />
           Configure
         </button>
-        <button onClick={onViewStats} style={{
+        <button onClick={e => { e.stopPropagation(); onViewStats(); }} style={{
           flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5,
           padding: '7px 8px', borderRadius: 7, cursor: 'pointer',
           border: '1px solid var(--border-md)',
@@ -988,7 +758,7 @@ function MyExpertCard({
           <BarChart2 size={10} />
           Stats
         </button>
-        <button onClick={onDelete} title="Delete expert" style={{
+        <button onClick={e => { e.stopPropagation(); onDelete(); }} title="Delete expert" style={{
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           padding: '7px 8px', borderRadius: 7, cursor: 'pointer',
           border: '1px solid rgba(220,38,38,0.2)',
@@ -1157,27 +927,6 @@ function MarketplaceCard({ expert }: { expert: MarketplaceExpert }) {
 }
 
 /* ═══════════════════════════════════════════════════════
-   Star Rating Component
-   ═══════════════════════════════════════════════════════ */
-function StarRating({ rating }: { rating: number }) {
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-      {[1, 2, 3, 4, 5].map(i => (
-        <Star
-          key={i}
-          size={11}
-          fill={i <= Math.round(rating) ? '#f59e0b' : 'none'}
-          color={i <= Math.round(rating) ? '#f59e0b' : 'var(--text-4)'}
-        />
-      ))}
-      <span style={{ fontSize: 11, color: 'var(--text-3)', marginLeft: 3 }}>
-        {rating.toFixed(1)}
-      </span>
-    </div>
-  );
-}
-
-/* ═══════════════════════════════════════════════════════
    Main Page Component
    ═══════════════════════════════════════════════════════ */
 export default function ExpertsPageWrapper() {
@@ -1254,7 +1003,6 @@ function ExpertsPage() {
 
   const highlightRef = useRef<HTMLDivElement>(null);
 
-  const ENGINE_URL = process.env.NEXT_PUBLIC_ENGINE_URL || 'http://localhost:8000';
 
   /* Delete expert */
   const handleDeleteExpert = (expert: Record<string, unknown>) => {
@@ -1310,7 +1058,9 @@ function ExpertsPage() {
         throw new Error(`Server returned ${resp.status}`);
       }
 
-      // Run is now tracked server-side — UI will update via SWR polling
+      // Refresh expert list immediately so status shows "running"
+      mutate();
+
       fetch('/api/logs', { method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           level: 'info', message: `Expert "${expertName}" run started (server-side)`,
@@ -1332,12 +1082,10 @@ function ExpertsPage() {
   };
 
   /* Sync tab from URL params — intentional setState from param changes */
-  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     if (tabParam === 'marketplace') setActiveTab('marketplace');
     else if (tabParam === 'mine' || !tabParam) setActiveTab('mine');
   }, [tabParam]);
-  /* eslint-enable react-hooks/set-state-in-effect */
 
   /* Highlight behavior */
   useEffect(() => {
@@ -1370,20 +1118,6 @@ function ExpertsPage() {
     url.searchParams.set('tab', tab);
     url.searchParams.delete('highlight');
     window.history.replaceState({}, '', url.toString());
-  };
-
-  /* Save handler for configure modal */
-  const handleSaveExpert = async (id: string, updates: Record<string, unknown>) => {
-    const res = await fetch('/api/experts', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id, ...updates }),
-    });
-    if (!res.ok) {
-      const data = await res.json();
-      throw new Error(data.error || 'Save failed');
-    }
-    mutate();
   };
 
   /* ─── My Experts derived data ──────────────────────── */
@@ -2062,16 +1796,12 @@ function ExpertsPage() {
       )}
 
       {/* ── Modals ── */}
-      <AnimatePresence>
-        {configureExpert && (
-          <ConfigureModal
-            key="configure"
-            expert={configureExpert}
-            onClose={() => setConfigureExpert(null)}
-            onSave={handleSaveExpert}
-          />
-        )}
-      </AnimatePresence>
+      <ExpertEditDialog
+        expert={configureExpert as Expert | null}
+        open={!!configureExpert}
+        onClose={() => setConfigureExpert(null)}
+        onSaved={() => { mutate(); setConfigureExpert(null); }}
+      />
       <AnimatePresence>
         {statsExpert && (
           <StatsModal

@@ -2,7 +2,7 @@
 
 import useSWR from 'swr';
 import { motion } from 'framer-motion';
-import { BarChart3, TrendingUp, Zap, DollarSign, Activity, ChevronRight, Loader2, Workflow, Database } from 'lucide-react';
+import { BarChart3, TrendingUp, Zap, DollarSign, Activity, Loader2, Workflow, Database } from 'lucide-react';
 import { useExperts, useMetrics, useLogs, useLiveMetrics } from '@/lib/hooks/useApi';
 import type { AIProvider, Expert } from '@/lib/types';
 

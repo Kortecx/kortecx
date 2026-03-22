@@ -5,7 +5,7 @@ import { desc, eq, gte, count } from 'drizzle-orm';
 const ENGINE_URL = process.env.NEXT_PUBLIC_ENGINE_URL || 'http://localhost:8000';
 
 /* GET /api/metrics — live dashboard metrics */
-export async function GET(req: NextRequest) {
+export async function GET(_req: NextRequest) {
 
   try {
     const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000);

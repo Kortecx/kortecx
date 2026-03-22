@@ -193,7 +193,6 @@ export async function GET(
  */
 function popupResultPage(type: 'oauth_success' | 'oauth_error', data: Record<string, string>): string {
   const payload = JSON.stringify({ type, ...data });
-  const fallbackParams = new URLSearchParams(data).toString();
   const fallbackUrl = `/providers/connections?${type === 'oauth_success' ? `connected=${data.platform}&username=${data.username || ''}` : `error=${encodeURIComponent(data.error || 'Unknown error')}&platform=${data.platform}`}`;
 
   return `<!DOCTYPE html>

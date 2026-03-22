@@ -64,6 +64,9 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/engine"]
 
+[tool.uv.workspace]
+members = []
+
 [dependency-groups]
 dev = [
     "pytest>=8.0",

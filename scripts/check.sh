@@ -85,12 +85,12 @@ if [[ "$MODE" != "test" ]]; then
 
   section "Python (engine/)"
   cd "$ENGINE"
-  if [[ -f .venv/bin/python ]]; then
-    run_check "ruff check" .venv/bin/python -m ruff check src/
-    run_check "ruff format --check" .venv/bin/python -m ruff format --check src/ || true
+  if command -v uv &>/dev/null; then
+    run_check "ruff check" uv run --project "$ENGINE" ruff check src/
+    run_check "ruff format --check" uv run --project "$ENGINE" ruff format --check src/
   else
-    skip_check "ruff check" "no .venv found"
-    skip_check "ruff format" "no .venv found"
+    skip_check "ruff check" "uv not installed"
+    skip_check "ruff format" "uv not installed"
   fi
 
   section "Go (go-client/)"
@@ -111,10 +111,10 @@ if [[ "$MODE" != "lint" && "$MODE" != "quick" ]]; then
 
   section "Python Tests (engine/)"
   cd "$ENGINE"
-  if [[ -f .venv/bin/python ]]; then
-    run_check "pytest (all tests)" .venv/bin/python -m pytest tests/ -q --tb=short --no-header
+  if command -v uv &>/dev/null; then
+    run_check "pytest (all tests)" uv run --project "$ENGINE" pytest tests/ -q --tb=short --no-header
   else
-    skip_check "pytest" "no .venv found"
+    skip_check "pytest" "uv not installed"
   fi
 
   section "Go Tests (go-client/)"

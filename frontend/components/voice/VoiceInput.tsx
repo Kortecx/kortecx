@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback } from 'react';
-import { Mic, MicOff, Loader2, CheckCircle2, XCircle } from 'lucide-react';
+import { Mic, Loader2, CheckCircle2, XCircle } from 'lucide-react';
 import { useApp } from '@/contexts/AppContext';
 import { COMMAND_SUGGESTIONS } from '@/lib/constants';
 

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Send, Clock, FileText, Check, Eye, BarChart3, ExternalLink } from 'lucide-react';
+import { Send, Clock, Check, Eye } from 'lucide-react';
 import { PLATFORMS } from '@/lib/constants';
 
 const MOCK_PUBLICATIONS: Array<{

@@ -5,9 +5,9 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  Workflow, Plus, Search, Play, Trash2, X, Clock, Zap,
-  ChevronDown, ChevronUp, Loader2, CheckCircle2, AlertCircle,
-  Tag, ArrowUpDown, Calendar, Layers, Filter,
+  Workflow, Plus, Search, Play, Trash2, X,
+  ChevronDown, ChevronUp, Loader2, AlertCircle,
+  ArrowUpDown,
 } from 'lucide-react';
 import { useWorkflows } from '@/lib/hooks/useApi';
 
@@ -135,7 +135,7 @@ function CreateWorkflowDialog({
               borderColor: errors.name ? 'var(--error)' : undefined,
             }}
               placeholder="e.g. Research & Summarize Pipeline"
-              value={name} onChange={e => { setName(e.target.value); if (e.target.value.trim()) setErrors(p => { const { name: _, ...r } = p; return r; }); }} />
+              value={name} onChange={e => { setName(e.target.value); if (e.target.value.trim()) setErrors(p => { const { name: _n, ...r } = p; return r; }); }} />
             {errors.name && <div style={{ fontSize: 11, color: 'var(--error)', marginTop: 3, display: 'flex', alignItems: 'center', gap: 3 }}>
               <AlertCircle size={10} /> {errors.name}
             </div>}
@@ -156,7 +156,7 @@ function CreateWorkflowDialog({
               borderColor: errors.goal ? 'var(--error)' : undefined,
             }}
               placeholder={"## Objective\nDescribe what you want to accomplish...\n\n## Requirements\n- Requirement 1\n- Requirement 2"}
-              value={goalStatement} onChange={e => { setGoalStatement(e.target.value); if (e.target.value.trim()) setErrors(p => { const { goal: _, ...r } = p; return r; }); }} />
+              value={goalStatement} onChange={e => { setGoalStatement(e.target.value); if (e.target.value.trim()) setErrors(p => { const { goal: _g, ...r } = p; return r; }); }} />
             {errors.goal && <div style={{ fontSize: 11, color: 'var(--error)', marginTop: 3, display: 'flex', alignItems: 'center', gap: 3 }}>
               <AlertCircle size={10} /> {errors.goal}
             </div>}

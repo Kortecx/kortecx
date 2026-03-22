@@ -53,8 +53,8 @@ export type ExpertRole =
   | 'data-engineer' | 'creative' | 'translator' | 'custom';
 
 export type ExpertStatus =
-  | 'active' | 'idle' | 'training' | 'fine-tuning'
-  | 'deploying' | 'offline' | 'error';
+  | 'active' | 'idle' | 'queued' | 'running' | 'completed' | 'failed'
+  | 'training' | 'fine-tuning' | 'deploying' | 'offline' | 'error';
 
 export interface Expert {
   id: string;
@@ -390,6 +390,8 @@ export interface QueuedTask {
   estimatedCompletionAt?: string;
   createdAt: string;
   progress: number;  /* 0–100 */
+  expertId?: string;
+  expertRunId?: string;
 }
 
 /* ── User & Platform ─────────────────────────────────── */

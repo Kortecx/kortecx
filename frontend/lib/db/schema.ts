@@ -29,6 +29,8 @@ export const tasks = pgTable('tasks', {
   currentStep:    integer('current_step').default(0),
   totalSteps:     integer('total_steps').default(1),
   currentExpert:  text('current_expert'),
+  expertId:       text('expert_id'),
+  expertRunId:    text('expert_run_id'),
   tokensUsed:     integer('tokens_used').default(0),
   estimatedTokens:integer('estimated_tokens'),
   progress:       integer('progress').default(0),

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db, workflows, workflowSteps, workflowRuns } from '@/lib/db';
+import { db, workflows, workflowSteps } from '@/lib/db';
 import { desc, eq, asc } from 'drizzle-orm';
 import { nanoid } from '../tasks/nanoid';
 import { logStatus } from '@/lib/status-log';

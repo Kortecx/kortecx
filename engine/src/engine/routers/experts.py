@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from datetime import UTC, datetime
@@ -80,6 +81,50 @@ class RestoreVersionRequest(BaseModel):
 _expert_runs: dict[str, dict[str, Any]] = {}
 
 
+async def _send_callback(url: str, payload: dict[str, Any], run_id: str, retries: int = 3) -> bool:
+    """Send callback to frontend with retry logic (exponential backoff)."""
+    for attempt in range(retries):
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.post(url, json={**payload, "metadata": payload.get("metadata", {})})
+                if resp.status_code < 300:
+                    logger.info("Callback succeeded for %s (attempt %d)", run_id, attempt + 1)
+                    return True
+                logger.warning(
+                    "Callback returned %d for %s (attempt %d)",
+                    resp.status_code,
+                    run_id,
+                    attempt + 1,
+                )
+        except Exception as e:
+            logger.warning("Callback failed for %s (attempt %d): %s", run_id, attempt + 1, e)
+        if attempt < retries - 1:
+            await asyncio.sleep(2**attempt)  # 1s, 2s backoff
+    logger.error("Callback permanently failed for %s after %d attempts", run_id, retries)
+    return False
+
+
+def _cleanup_old_runs() -> int:
+    """Remove completed/failed runs older than 1 hour from in-memory tracking."""
+    one_hour_ago = datetime.now(UTC).timestamp() - 3600
+    to_remove = []
+    for rid, data in _expert_runs.items():
+        if data.get("status") in ("completed", "failed"):
+            completed_at = data.get("completedAt", "")
+            if completed_at:
+                try:
+                    completed_ts = datetime.fromisoformat(completed_at.replace("Z", "+00:00")).timestamp()
+                    if completed_ts < one_hour_ago:
+                        to_remove.append(rid)
+                except (ValueError, TypeError):
+                    to_remove.append(rid)
+    for rid in to_remove:
+        del _expert_runs[rid]
+    if to_remove:
+        logger.info("Cleaned up %d old expert runs from memory", len(to_remove))
+    return len(to_remove)
+
+
 async def _run_expert_background(run_id: str, expert_id: str, req: ExecuteExpertRequest) -> None:
     """Background task: run inference, save artifacts, callback to frontend."""
     _expert_runs[run_id]["status"] = "running"
@@ -132,27 +177,25 @@ async def _run_expert_background(run_id: str, expert_id: str, req: ExecuteExpert
             }
         )
 
-        # Callback to frontend with results
+        # Callback to frontend with results (retries on failure)
         if req.callbackUrl:
-            try:
-                async with httpx.AsyncClient(timeout=15) as client:
-                    await client.post(
-                        req.callbackUrl,
-                        json={
-                            "runId": run_id,
-                            "expertId": expert_id,
-                            "expertName": req.expertName,
-                            "status": "completed",
-                            "responseText": response_text,
-                            "tokensUsed": tokens_used,
-                            "durationMs": duration_ms,
-                            "model": req.model,
-                            "engine": req.engine,
-                            "artifacts": artifact_result,
-                        },
-                    )
-            except Exception as cb_err:
-                logger.warning("Expert run callback failed for %s: %s", run_id, cb_err)
+            await _send_callback(
+                req.callbackUrl,
+                {
+                    "runId": run_id,
+                    "expertId": expert_id,
+                    "expertName": req.expertName,
+                    "status": "completed",
+                    "responseText": response_text,
+                    "tokensUsed": tokens_used,
+                    "durationMs": duration_ms,
+                    "model": req.model,
+                    "engine": req.engine,
+                    "artifacts": artifact_result,
+                    "metadata": req.metadata or {},
+                },
+                run_id,
+            )
 
     except Exception as e:
         logger.exception("Expert run failed for %s (%s)", expert_id, run_id)
@@ -164,22 +207,20 @@ async def _run_expert_background(run_id: str, expert_id: str, req: ExecuteExpert
             }
         )
 
-        # Callback with failure
+        # Callback with failure (retries on failure)
         if req.callbackUrl:
-            try:
-                async with httpx.AsyncClient(timeout=15) as client:
-                    await client.post(
-                        req.callbackUrl,
-                        json={
-                            "runId": run_id,
-                            "expertId": expert_id,
-                            "expertName": req.expertName,
-                            "status": "failed",
-                            "errorMessage": str(e),
-                        },
-                    )
-            except Exception:
-                pass
+            await _send_callback(
+                req.callbackUrl,
+                {
+                    "runId": run_id,
+                    "expertId": expert_id,
+                    "expertName": req.expertName,
+                    "status": "failed",
+                    "errorMessage": str(e),
+                    "metadata": req.metadata or {},
+                },
+                run_id,
+            )
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -299,6 +340,29 @@ async def list_expert_files(expert_id: str) -> dict[str, Any]:
     return {"files": files, "total": len(files)}
 
 
+@router.patch("/{expert_id}/versions/config")
+async def update_version_config(expert_id: str, body: dict[str, Any]) -> dict[str, Any]:
+    """Update the maxVersions setting for an expert."""
+    expert = expert_manager.get(expert_id)
+    if not expert:
+        return {"error": f"Expert {expert_id} not found"}
+
+    max_versions = body.get("maxVersions", 50)
+    if not isinstance(max_versions, int) or max_versions < 1:
+        max_versions = 50
+
+    import json
+    from pathlib import Path
+
+    ej_path = Path(expert["_dir"]) / "expert.json"
+    if ej_path.exists():
+        data = json.loads(ej_path.read_text(encoding="utf-8"))
+        data["maxVersions"] = max_versions
+        ej_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+    return {"ok": True, "maxVersions": max_versions}
+
+
 @router.get("/{expert_id}/prompt/{prompt_type}")
 async def get_prompt(expert_id: str, prompt_type: str) -> dict[str, Any]:
     """Get a specific prompt file (system or user)."""
@@ -322,6 +386,7 @@ async def delete_expert(expert_id: str) -> dict[str, Any]:
 @router.post("/{expert_id}/execute")
 async def execute_expert(expert_id: str, req: ExecuteExpertRequest, bg: BackgroundTasks) -> dict[str, Any]:
     """Start expert execution in background — returns immediately with a runId."""
+    _cleanup_old_runs()
     run_id = f"er-{uuid.uuid4().hex[:12]}"
     _expert_runs[run_id] = {
         "runId": run_id,

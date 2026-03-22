@@ -3,9 +3,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import {
-  Sliders, Play, Loader2, CheckCircle2, AlertCircle, X, Plus,
-  Clock, Zap, Database, Server, ChevronDown, ChevronRight, Trash2,
-  RotateCcw, BarChart3, FileText,
+  Sliders, Play, X, Plus,
+  Trash2,
 } from 'lucide-react';
 import { useExperts } from '@/lib/hooks/useApi';
 
@@ -57,7 +56,6 @@ export default function FineTuningPage() {
     } catch { return []; }
   });
   const [showCreate, setShowCreate] = useState(false);
-  const [loading, setLoading] = useState(false);
   const { experts } = useExperts();
 
   // Form state

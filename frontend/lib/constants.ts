@@ -342,8 +342,7 @@ export const NAV_SECTIONS = [
     items: [
       { id: 'experts',    label: 'Experts',         path: '/experts',                    icon: 'Users' },
       { id: 'deploy',     label: 'Deploy New',      path: '/experts/deploy',             icon: 'Rocket' },
-      { id: 'tasks',      label: 'Task Queue',      path: '/tasks',                      icon: 'ListOrdered' },
-      { id: 'agents',     label: 'Active Agents',   path: '/agents',                     icon: 'Cpu' },
+      { id: 'agents',     label: 'Experts & Tasks', path: '/agents',                     icon: 'Cpu' },
     ],
   },
   {

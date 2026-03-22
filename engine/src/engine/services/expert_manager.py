@@ -169,6 +169,16 @@ class ExpertManager:
                 (versions_dir / version_name).write_text(old_content, encoding="utf-8")
                 logger.info("Versioned %s → %s", filename, version_name)
 
+        # Prune old versions if maxVersions is configured
+        try:
+            ej_path = expert_dir / "expert.json"
+            if ej_path.exists():
+                ej_data = json.loads(ej_path.read_text(encoding="utf-8"))
+                max_versions = ej_data.get("maxVersions", 50)
+                self._prune_versions(versions_dir, filename, max_versions)
+        except Exception:
+            logger.debug("Version pruning skipped for %s", filename)
+
         # Write new content
         file_path.write_text(content, encoding="utf-8")
 
@@ -305,6 +315,29 @@ class ExpertManager:
         return {"synced": synced, "failed": failed, "total": len(experts)}
 
     # ── Internal helpers ─────────────────────────────────────────────────────
+
+    def _prune_versions(self, versions_dir: Path, filename: str, max_versions: int) -> int:
+        """Delete oldest versions of a file beyond the max_versions limit.
+
+        Returns the number of versions pruned.
+        """
+        if max_versions < 1:
+            max_versions = 1
+        prefix = f"{filename}.v"
+        version_files = sorted(
+            (vf for vf in versions_dir.iterdir() if vf.name.startswith(prefix)),
+            key=lambda f: int(f.name.split(".v")[-1]),
+            reverse=True,
+        )
+        pruned = 0
+        for vf in version_files[max_versions:]:
+            try:
+                vf.unlink()
+                pruned += 1
+                logger.info("Pruned old version: %s", vf.name)
+            except OSError:
+                logger.warning("Failed to prune version: %s", vf.name)
+        return pruned
 
     def _load_expert(self, expert_dir: Path, source: str) -> dict[str, Any] | None:
         """Load a single expert from its directory."""

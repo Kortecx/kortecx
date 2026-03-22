@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  ListOrdered, Search, RefreshCw, X, Play, Clock,
+  Search, RefreshCw, X, Play, Clock,
   AlertTriangle, CheckCircle2, Loader2, ChevronDown,
 } from 'lucide-react';
 import { useTasks } from '@/lib/hooks/useApi';
@@ -48,7 +48,7 @@ function fmt(n: number) {
   return String(n);
 }
 
-export default function TasksPage() {
+export default function TaskList() {
   const [statusFilter, setStatusFilter] = useState('all');
   const [search, setSearch] = useState('');
 
@@ -66,31 +66,16 @@ export default function TasksPage() {
   }, {});
 
   return (
-    <div style={{ padding: 28, maxWidth: 1100 }}>
+    <div>
       {/* Header */}
-      <motion.div
-        initial={{ opacity: 0, y: -8 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.3 }}
-        style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}
-      >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <div style={{
-            width: 36, height: 36, borderRadius: 8,
-            background: `${SECTION_COLOR}18`,
-            border: `1.5px solid ${SECTION_COLOR}30`,
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-          }}>
-            <ListOrdered size={18} color={SECTION_COLOR} strokeWidth={2} />
-          </div>
-          <div>
-            <h1 style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-1)', lineHeight: 1 }}>
-              Task Queue
-            </h1>
-            <p style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 3 }}>
-              {total} total · {counts.running ?? 0} running · {counts.queued ?? 0} queued
-            </p>
-          </div>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 18 }}>
+        <div>
+          <h2 style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-1)', lineHeight: 1 }}>
+            Task Queue
+          </h2>
+          <p style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 3 }}>
+            {total} total · {counts.running ?? 0} running · {counts.queued ?? 0} queued
+          </p>
         </div>
         <button
           onClick={() => mutate()}
@@ -104,12 +89,10 @@ export default function TasksPage() {
           <RefreshCw size={12} />
           Refresh
         </button>
-      </motion.div>
+      </div>
 
       {/* Filters */}
-      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.1 }}
-        style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 18, alignItems: 'center' }}
-      >
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 18, alignItems: 'center' }}>
         {STATUS_FILTERS.map(s => (
           <button
             key={s}
@@ -138,20 +121,20 @@ export default function TasksPage() {
           <input
             value={search}
             onChange={e => setSearch(e.target.value)}
-            placeholder="Search tasks…"
+            placeholder="Search tasks\u2026"
             style={{
               border: 'none', outline: 'none', background: 'transparent',
               fontSize: 13, color: 'var(--text-1)', width: 180,
             }}
           />
         </div>
-      </motion.div>
+      </div>
 
       {/* Task list */}
       {isLoading ? (
         <div style={{ textAlign: 'center', padding: '60px 0', color: 'var(--text-4)' }}>
           <Loader2 size={22} className="spin" style={{ margin: '0 auto 8px' }} />
-          <div style={{ fontSize: 13 }}>Loading tasks…</div>
+          <div style={{ fontSize: 13 }}>Loading tasks\u2026</div>
         </div>
       ) : (
         <motion.div variants={stagger} initial="hidden" animate="show"
@@ -201,11 +184,6 @@ export default function TasksPage() {
                     </div>
 
                     <div style={{ display: 'flex', gap: 16, alignItems: 'center' }}>
-                      {task.workflowName && (
-                        <span style={{ fontSize: 11, color: 'var(--text-3)' }}>
-                          {task.workflowName as string}
-                        </span>
-                      )}
                       {task.currentExpert && (
                         <span style={{ fontSize: 11, color: SECTION_COLOR }}>
                           via {task.currentExpert as string}
@@ -309,7 +287,7 @@ export default function TasksPage() {
             Queue is empty
           </div>
           <div style={{ fontSize: 12, color: 'var(--text-4)' }}>
-            Run a workflow from the Builder or Dashboard to queue tasks.
+            Run a workflow or expert to queue tasks.
           </div>
         </motion.div>
       )}

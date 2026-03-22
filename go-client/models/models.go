@@ -65,6 +65,47 @@ func (s *Service) DeleteExpert(id string) error {
 	return s.c.Do(http.MethodDelete, fmt.Sprintf("/api/experts?id=%s", id), nil, nil)
 }
 
+// --- Expert Files ---
+
+// ListExpertFiles returns all files in an expert's directory.
+func (s *Service) ListExpertFiles(expertID string) ([]types.ExpertFile, error) {
+	var out struct {
+		Files []types.ExpertFile `json:"files"`
+	}
+	err := s.c.Do(http.MethodGet, fmt.Sprintf("/api/experts/files?expertId=%s", expertID), nil, &out)
+	return out.Files, err
+}
+
+// UpdateExpertFile updates a single file in an expert's directory (auto-versions).
+func (s *Service) UpdateExpertFile(expertID string, req types.UpdateExpertFileRequest) error {
+	body := struct {
+		types.UpdateExpertFileRequest
+		ExpertID string `json:"expertId"`
+	}{req, expertID}
+	return s.c.Do(http.MethodPost, "/api/experts/files", body, nil)
+}
+
+// --- Expert Versions ---
+
+// ListExpertVersions returns version history for a specific file.
+func (s *Service) ListExpertVersions(expertID, filename string) ([]types.ExpertVersion, error) {
+	var out struct {
+		Versions []types.ExpertVersion `json:"versions"`
+		Total    int                   `json:"total"`
+	}
+	err := s.c.Do(http.MethodGet, fmt.Sprintf("/api/experts/versions?expertId=%s&filename=%s", expertID, filename), nil, &out)
+	return out.Versions, err
+}
+
+// RestoreExpertVersion restores an expert file to a previous version.
+func (s *Service) RestoreExpertVersion(expertID string, req types.RestoreVersionRequest) error {
+	body := struct {
+		types.RestoreVersionRequest
+		ExpertID string `json:"expertId"`
+	}{req, expertID}
+	return s.c.Do(http.MethodPost, "/api/experts/versions", body, nil)
+}
+
 // --- Providers ---
 
 // ListProviders returns all configured providers. Pass optional ListOptions for pagination and sorting.

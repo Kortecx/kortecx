@@ -1,10 +1,11 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import Image from 'next/image';
 import {
   User, Save, Activity, Key, Link2, Shield, RefreshCw,
-  Copy, Eye, EyeOff, Trash2, Plus, CheckCircle2, AlertCircle,
-  BarChart3, Cpu, Zap, Database, Globe, Clock, ExternalLink,
+  Copy, Trash2, Plus, CheckCircle2, AlertCircle,
+  BarChart3, Cpu, Zap, Database, Globe, Clock,
 } from 'lucide-react';
 
 /* ── Types ─────────────────────────────────────────────── */
@@ -154,7 +155,7 @@ export default function ProfilePage() {
       } catch {
         setMetrics(prev => prev ? { ...prev, engineStatus: 'offline' } : prev);
       }
-    } catch (err) {
+    } catch (_err) {
       setError('Failed to load profile data');
     } finally {
       setLoading(false);
@@ -398,7 +399,7 @@ export default function ProfilePage() {
                 background: 'var(--bg)', border: '1px solid var(--border)',
               }}>
                 {conn.platformAvatar ? (
-                  <img src={conn.platformAvatar} alt="" style={{ width: 28, height: 28, borderRadius: '50%' }} />
+                  <Image src={conn.platformAvatar} alt="" width={28} height={28} style={{ borderRadius: '50%' }} />
                 ) : (
                   <div style={{ width: 28, height: 28, borderRadius: '50%', background: 'var(--primary-dim)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                     <Globe size={14} color="var(--text-3)" />

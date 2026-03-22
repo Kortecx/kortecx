@@ -1,19 +1,13 @@
 'use client';
 
 import { useState } from 'react';
-import useSWR from 'swr';
 import {
-  Activity, Bell, AlertTriangle, Info, CheckCircle2,
-  Zap, Clock, TrendingUp, Cpu, BarChart3, RefreshCcw,
-  ChevronDown, X, ScrollText, Loader2,
+  Bell, AlertTriangle, Info, CheckCircle2,
+  Clock, TrendingUp, Cpu, RefreshCcw,
+  X, ScrollText, Loader2, Zap,
 } from 'lucide-react';
 import { useMonitoring, useExperts } from '@/lib/hooks/useApi';
-import type { Alert, AIProvider, Expert } from '@/lib/types';
-
-const fetcher = (url: string) => fetch(url).then(r => {
-  if (!r.ok) throw new Error(`HTTP ${r.status}`);
-  return r.json();
-});
+import type { Alert, Expert } from '@/lib/types';
 
 function fmt(n: number) {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
@@ -138,11 +132,6 @@ export default function MonitoringPage() {
     mutate: () => void;
   };
   const { experts, isLoading: expertsLoading } = useExperts() as { experts: Expert[]; total: number; isLoading: boolean; error: unknown; mutate: () => void };
-  const { data: providersData } = useSWR<{ providers: AIProvider[] }>('/api/providers', fetcher);
-  const providers = providersData?.providers ?? [];
-
-  const isLoading = monitoringLoading || expertsLoading;
-
   const topExperts = experts
     .filter(e => e.status === 'active')
     .sort((a, b) => b.stats.totalRuns - a.stats.totalRuns)
