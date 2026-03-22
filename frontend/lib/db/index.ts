@@ -30,14 +30,18 @@ function createDb() {
 
   // Local mode — use standard node-postgres driver
   if (mode === 'local' || url.includes('localhost') || url.includes('127.0.0.1')) {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { drizzle } = require('drizzle-orm/node-postgres');
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { Pool }    = require('pg');
     const pool = new Pool({ connectionString: url });
     return drizzle(pool, { schema });
   }
 
   // Cloud / Neon serverless mode (default)
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { neon }    = require('@neondatabase/serverless');
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { drizzle } = require('drizzle-orm/neon-http');
   const sql = neon(url);
   return drizzle(sql, { schema });

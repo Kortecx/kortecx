@@ -123,9 +123,11 @@ export default function ConnectionsPage() {
   );
 }
 
+const ENGINE_URL = process.env.NEXT_PUBLIC_ENGINE_URL || 'http://localhost:8000';
+
 function ConnectionsPageInner() {
   const searchParams = useSearchParams();
-  const [activeSection, setActiveSection] = useState<'integrations' | 'plugins' | 'mcp'>('mcp');
+  const [activeSection, setActiveSection] = useState<'integrations' | 'plugins' | 'mcp' | 'executables'>('mcp');
 
   /* OAuth notification banner */
   const [oauthNotice, setOauthNotice] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
@@ -281,6 +283,7 @@ function ConnectionsPageInner() {
     if (tab === 'mcp') setActiveSection('mcp');
     else if (tab === 'plugins') setActiveSection('plugins');
     else if (tab === 'integrations') setActiveSection('integrations');
+    else if (tab === 'executables') setActiveSection('executables');
   }, [searchParams]);
 
   /* Handle OAuth callback — via query params (fallback) or postMessage from popup */
@@ -378,6 +381,13 @@ function ConnectionsPageInner() {
   type McpPromptType = 'mcp' | 'data_synthesis' | 'training' | 'finetuning' | 'general';
   const [mcpPromptType, setMcpPromptType] = useState<McpPromptType>('mcp');
 
+  /* Executables state */
+  const [executables, setExecutables] = useState<Array<{
+    id: string; name: string; language: string; source: string;
+    size: number; createdAt: string; status: string; output?: string;
+  }>>([]);
+  const [execLoading, setExecLoading] = useState(false);
+
   /* System prompt — reactive, changes based on prompt type + language */
   const MCP_SYSTEM_PROMPTS: Record<McpPromptType, (lang: McpLanguage) => string> = {
     mcp: (lang) => `You are an expert MCP (Model Context Protocol) server developer.\nGenerate a complete, working MCP server script in ${lang}.\nThe script must be self-contained and runnable.\nInclude proper imports, tool definitions, and a main entry point.\nOnly output the code — no explanations, no markdown fences.${lang === 'python' ? '\nUse the mcp SDK (from mcp.server import Server).' : `\nUse the @modelcontextprotocol/sdk package.`}`,
@@ -404,6 +414,31 @@ function ConnectionsPageInner() {
   }, []);
 
   useEffect(() => { fetchMcpServers(); }, [fetchMcpServers]);
+
+  useEffect(() => {
+    setExecLoading(true);
+    fetch(`${ENGINE_URL}/api/orchestrator/artifacts/_all/_all`)
+      .then(r => r.ok ? r.json() : { artifacts: [] })
+      .then(data => {
+        const scripts = (data.artifacts || [])
+          .filter((a: Record<string, unknown>) => typeof a.name === 'string' && (
+            (a.name as string).endsWith('.py') || (a.name as string).endsWith('.sh') ||
+            (a.name as string).endsWith('.js') || (a.name as string).endsWith('.ts')
+          ))
+          .map((a: Record<string, unknown>, i: number) => ({
+            id: `exec-${i}`,
+            name: a.name as string,
+            language: (a.type as string)?.replace('.', '') || 'unknown',
+            source: 'model-generated',
+            size: (a.size as number) || 0,
+            createdAt: (a.modified as string) || new Date().toISOString(),
+            status: 'stored',
+          }));
+        setExecutables(scripts);
+      })
+      .catch(() => setExecutables([]))
+      .finally(() => setExecLoading(false));
+  }, []);
 
   /* Fetch local models for MCP generation */
   useEffect(() => {
@@ -758,6 +793,7 @@ function ConnectionsPageInner() {
     } catch { /* ignore */ }
   };
 
+  /* eslint-disable react-hooks/purity */
   const handleConnect = (integrationId: string) => {
     const integration = INTEGRATION_CATALOG.find(i => i.id === integrationId);
     if (!integration) return;
@@ -770,6 +806,7 @@ function ConnectionsPageInner() {
     };
     setConnectedIntegrations(prev => [...prev, conn]);
     setConnectingId(null);
+    /* eslint-enable react-hooks/purity */
     setConnectConfig({});
   };
 
@@ -926,6 +963,7 @@ function ConnectionsPageInner() {
           { id: 'mcp' as const, label: 'MCP Servers', icon: Server, count: mcpPrebuilt.length + mcpPersisted.length + mcpCached.length },
           { id: 'integrations' as const, label: 'Integrations', icon: Cable, count: connectedCount },
           { id: 'plugins' as const, label: 'Plugins', icon: Puzzle, count: installedCount },
+          { id: 'executables' as const, label: 'Executables', icon: Code, count: executables.length },
         ]).map(tab => (
           <button key={tab.id} onClick={() => setActiveSection(tab.id)}
             style={{
@@ -1374,6 +1412,127 @@ function ConnectionsPageInner() {
             </div>
           )}
         </div>
+      )}
+
+      {/* ── Executables Section ─────────────────────────────── */}
+      {activeSection === 'executables' && (
+        <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
+          {/* Executables header */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+            <div>
+              <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-1)', display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Code size={16} color="#7C3AED" /> Generated Executables
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>
+                Scripts and functions generated or received by models during workflow execution
+              </div>
+            </div>
+          </div>
+
+          {/* Docker environments info */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 20 }}>
+            <div className="card" style={{ padding: 14, display: 'flex', alignItems: 'center', gap: 12 }}>
+              <div style={{ width: 36, height: 36, borderRadius: 8, background: 'rgba(37,99,235,0.08)', border: '1px solid rgba(37,99,235,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                <Terminal size={16} color="#2563EB" />
+              </div>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-1)' }}>Python Runtime</div>
+                <div style={{ fontSize: 10, color: 'var(--text-4)' }}>Docker container · Python 3.11 · NumPy, Pandas, Requests</div>
+              </div>
+              <span style={{ marginLeft: 'auto', fontSize: 9, fontWeight: 700, padding: '2px 8px', borderRadius: 10, background: 'rgba(16,185,129,0.08)', color: '#059669', textTransform: 'uppercase' }}>Ready</span>
+            </div>
+            <div className="card" style={{ padding: 14, display: 'flex', alignItems: 'center', gap: 12 }}>
+              <div style={{ width: 36, height: 36, borderRadius: 8, background: 'rgba(217,119,6,0.08)', border: '1px solid rgba(217,119,6,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                <Code size={16} color="#D97706" />
+              </div>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-1)' }}>TypeScript Runtime</div>
+                <div style={{ fontSize: 10, color: 'var(--text-4)' }}>Docker container · Node 20 · React, tsx, esbuild</div>
+              </div>
+              <span style={{ marginLeft: 'auto', fontSize: 9, fontWeight: 700, padding: '2px 8px', borderRadius: 10, background: 'rgba(16,185,129,0.08)', color: '#059669', textTransform: 'uppercase' }}>Ready</span>
+            </div>
+          </div>
+
+          {/* Executables list */}
+          {execLoading ? (
+            <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-3)', fontSize: 12 }}>
+              <Loader2 size={16} style={{ margin: '0 auto 8px', animation: 'spin 1s linear infinite', display: 'block' }} />
+              Loading executables...
+            </div>
+          ) : executables.length === 0 ? (
+            <div className="card" style={{ padding: '40px 20px', textAlign: 'center' }}>
+              <Code size={28} color="var(--text-4)" style={{ margin: '0 auto 10px' }} />
+              <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-2)', marginBottom: 4 }}>No executables yet</div>
+              <div style={{ fontSize: 12, color: 'var(--text-3)', maxWidth: 400, margin: '0 auto', lineHeight: 1.5 }}>
+                When models generate code during workflow execution, scripts are automatically extracted and stored here for auditing and reuse.
+              </div>
+            </div>
+          ) : (
+            <div className="card" style={{ overflow: 'hidden' }}>
+              <table className="table-base">
+                <thead>
+                  <tr>
+                    <th>Script</th>
+                    <th>Language</th>
+                    <th>Source</th>
+                    <th>Size</th>
+                    <th>Created</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {executables.map((exec, i) => {
+                    const langColor: Record<string, string> = { py: '#2563EB', sh: '#059669', js: '#D97706', ts: '#3b82f6' };
+                    return (
+                      <motion.tr key={exec.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: i * 0.02 }}>
+                        <td>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <Code size={12} color={langColor[exec.language] || '#6b7280'} />
+                            <span className="mono" style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-1)' }}>{exec.name}</span>
+                          </div>
+                        </td>
+                        <td>
+                          <span style={{ fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 3, background: `${langColor[exec.language] || '#6b7280'}12`, color: langColor[exec.language] || '#6b7280', textTransform: 'uppercase' }}>
+                            {exec.language}
+                          </span>
+                        </td>
+                        <td style={{ fontSize: 11, color: 'var(--text-3)' }}>{exec.source}</td>
+                        <td style={{ fontSize: 11 }}>
+                          <span className="mono">{exec.size > 1024 ? `${(exec.size / 1024).toFixed(1)} KB` : `${exec.size} B`}</span>
+                        </td>
+                        <td style={{ fontSize: 11, color: 'var(--text-4)' }}>
+                          {new Date(exec.createdAt).toLocaleDateString()}
+                        </td>
+                        <td>
+                          <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 8px', borderRadius: 10, background: 'rgba(5,150,105,0.08)', color: '#059669', textTransform: 'uppercase' }}>
+                            {exec.status}
+                          </span>
+                        </td>
+                      </motion.tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {/* Generated Assets info */}
+          <div className="card" style={{ padding: 16, marginTop: 16 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-1)', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+              <FileText size={14} color="var(--text-3)" /> Generated Assets
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--text-3)', lineHeight: 1.5, marginBottom: 10 }}>
+              Execution outputs are stored as local artifacts. Assets include generated code files, web pages, transformed datasets, reports, and other artifacts produced during workflow runs.
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <span style={{ fontSize: 10, padding: '3px 8px', borderRadius: 4, background: 'var(--bg)', border: '1px solid var(--border)', color: 'var(--text-3)' }}>Code Files</span>
+              <span style={{ fontSize: 10, padding: '3px 8px', borderRadius: 4, background: 'var(--bg)', border: '1px solid var(--border)', color: 'var(--text-3)' }}>Web Pages</span>
+              <span style={{ fontSize: 10, padding: '3px 8px', borderRadius: 4, background: 'var(--bg)', border: '1px solid var(--border)', color: 'var(--text-3)' }}>Datasets</span>
+              <span style={{ fontSize: 10, padding: '3px 8px', borderRadius: 4, background: 'var(--bg)', border: '1px solid var(--border)', color: 'var(--text-3)' }}>Reports</span>
+              <span style={{ fontSize: 10, padding: '3px 8px', borderRadius: 4, background: 'var(--bg)', border: '1px solid var(--border)', color: 'var(--text-3)' }}>Configs</span>
+            </div>
+          </div>
+        </motion.div>
       )}
 
       {/* ── Connect Integration Modal ── */}

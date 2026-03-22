@@ -42,7 +42,7 @@ Frontend (Next.js)                Engine (FastAPI/Python)
 - **Multiple inference sources:**
   - Local: Ollama, LlamaCpp
   - Cloud providers: Anthropic (Claude), OpenAI (GPT), Google (Gemini), and any provider with an active API key
-- **Prompt types:** MCP Server, Data Synthesis, Training, Fine-tuning, General
+- **Prompt types:** MCP Server, Data Synthesis, General
 - **Reactive system prompt:** Auto-configured based on selected type + language, fully editable by user
 - **Generation stats:** CPU usage and wall-clock time tracked, displayed as color-coded badges:
   - Green: fast / low CPU
@@ -105,8 +105,6 @@ Frontend (Next.js)                Engine (FastAPI/Python)
 - All generation prompts saved to `engine/cache/prompts/{type}/` where type is:
   - `mcp` — MCP server scripts
   - `data_synthesis` — data generation scripts
-  - `training` — training pipeline scripts
-  - `finetuning` — fine-tuning scripts
   - `general` — general-purpose scripts
 - MCP-type prompts also saved to `engine/mcp/prompts/` for backward compatibility
 - Prompt files are Markdown with metadata headers (script name, ID, type, timestamp)
@@ -203,8 +201,6 @@ engine/
 │   └── prompts/
 │       ├── mcp/                  # MCP generation prompts
 │       ├── data_synthesis/       # Data synthesis prompts
-│       ├── training/             # Training prompts
-│       ├── finetuning/           # Fine-tuning prompts
 │       └── general/              # General prompts
 └── src/engine/
     ├── routers/mcp.py            # FastAPI endpoints
@@ -264,7 +260,7 @@ File reading and listing MCP server with path traversal protection. Tools: `read
 - **Generate MCP Server** button opens the create dialog
 
 ### Generate MCP Server Dialog
-- Prompt type selector (MCP, Data Synthesis, Training, Fine-tuning, General)
+- Prompt type selector (MCP, Data Synthesis, General)
 - Prompt textarea
 - Description input
 - Collapsible system prompt (auto-configured, editable)

@@ -40,6 +40,12 @@ class Settings(BaseSettings):
     default_local_engine: str = "ollama"
     default_local_model: str = "llama3.1:8b"
 
+    # Quorum
+    quorum_max_concurrent: int = 4
+    quorum_metrics_interval: float = 5.0
+    quorum_default_workers: int = 3
+    quorum_default_retries: int = 3
+
     model_config = {"env_file": "../.env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
 

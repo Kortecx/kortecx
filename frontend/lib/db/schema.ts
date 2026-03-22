@@ -60,6 +60,30 @@ export const workflowRuns = pgTable('workflow_runs', {
   createdAt:      timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 });
 
+/* ─── Expert Run History ────────────────────────────── */
+export const expertRuns = pgTable('expert_runs', {
+  id:             text('id').primaryKey(),
+  expertId:       text('expert_id').notNull(),
+  expertName:     text('expert_name').notNull(),
+  status:         varchar('status', { length: 20 }).notNull().default('running'),
+  // running | completed | failed
+  model:          text('model'),
+  engine:         varchar('engine', { length: 20 }),
+  temperature:    decimal('temperature', { precision: 3, scale: 2 }),
+  maxTokens:      integer('max_tokens'),
+  systemPrompt:   text('system_prompt'),
+  userPrompt:     text('user_prompt'),
+  responseText:   text('response_text'),
+  tokensUsed:     integer('tokens_used').default(0),
+  durationMs:     integer('duration_ms').default(0),
+  artifactCount:  integer('artifact_count').default(0),
+  errorMessage:   text('error_message'),
+  metadata:       jsonb('metadata'),
+  startedAt:      timestamp('started_at', { withTimezone: true }),
+  completedAt:    timestamp('completed_at', { withTimezone: true }),
+  createdAt:      timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
 /* ─── System Alerts ──────────────────────────────────── */
 export const alerts = pgTable('alerts', {
   id:             text('id').primaryKey(),
@@ -131,7 +155,7 @@ export const workflows = pgTable('workflows', {
   goalFileUrl:       text('goal_file_url'),
   inputFileUrls:     text('input_file_urls').array(),
   status:            varchar('status', { length: 20 }).default('draft'),
-  // draft | ready | archived
+  // draft | ready | running | paused | completed | failed | cancelled | archived
   estimatedTokens:   integer('estimated_tokens'),
   estimatedCostUsd:  decimal('estimated_cost_usd', { precision: 8, scale: 4 }),
   estimatedDurationSec: integer('estimated_duration_sec'),
@@ -140,6 +164,7 @@ export const workflows = pgTable('workflows', {
   tags:              text('tags').array(),
   isTemplate:        boolean('is_template').default(false),
   templateCategory:  text('template_category'),
+  metadata:          jsonb('metadata'),
   createdAt:         timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt:         timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
   lastRunAt:         timestamp('last_run_at', { withTimezone: true }),
@@ -150,6 +175,8 @@ export const workflowSteps = pgTable('workflow_steps', {
   id:                text('id').primaryKey(),
   workflowId:        text('workflow_id').notNull(),
   order:             integer('step_order').notNull(),
+  name:              text('name'),
+  description:       text('step_description'),
   expertId:          text('expert_id'),
   taskDescription:   text('task_description').notNull(),
   systemInstructions:text('system_instructions'),
@@ -164,35 +191,41 @@ export const workflowSteps = pgTable('workflow_steps', {
   localModelConfig:  jsonb('local_model_config'),
   connectionType:    varchar('connection_type', { length: 20 }).default('sequential'),
   // sequential | parallel | conditional
+  shareMemory:       boolean('share_memory').default(true),
   temperature:       decimal('temperature', { precision: 3, scale: 2 }).default('0.7'),
   maxTokens:         integer('max_tokens').default(4096),
   createdAt:         timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 });
 
-/* ─── Training Jobs ──────────────────────────────────── */
-export const trainingJobs = pgTable('training_jobs', {
-  id:                text('id').primaryKey(),
-  name:              text('name').notNull(),
-  expertId:          text('expert_id'),
-  baseModelId:       text('base_model_id').notNull(),
-  datasetId:         text('dataset_id'),
-  status:            varchar('status', { length: 20 }).notNull().default('queued'),
-  // queued | preparing | training | evaluating | completed | failed | cancelled
-  progress:          integer('progress').default(0),
-  epochs:            integer('epochs').default(3),
-  currentEpoch:      integer('current_epoch').default(0),
-  learningRate:      decimal('learning_rate', { precision: 10, scale: 8 }),
-  batchSize:         integer('batch_size').default(16),
-  trainingSamples:   integer('training_samples'),
-  validationSamples: integer('validation_samples'),
-  evalLoss:          decimal('eval_loss', { precision: 8, scale: 6 }),
-  evalAccuracy:      decimal('eval_accuracy', { precision: 5, scale: 4 }),
-  gpuHours:          decimal('gpu_hours', { precision: 8, scale: 2 }),
-  costUsd:           decimal('cost_usd', { precision: 8, scale: 2 }),
-  startedAt:         timestamp('started_at', { withTimezone: true }),
-  completedAt:       timestamp('completed_at', { withTimezone: true }),
-  estimatedCompletionAt: timestamp('estimated_completion_at', { withTimezone: true }),
-  createdAt:         timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+/* ─── Step Execution Metrics ────────────────────────── */
+export const stepExecutions = pgTable('step_executions', {
+  id:             text('id').primaryKey(),
+  runId:          text('run_id').notNull(),
+  workflowId:     text('workflow_id'),
+  stepId:         text('step_id').notNull(),
+  agentId:        text('agent_id'),
+  expertId:       text('expert_id'),
+  stepName:       text('step_name'),
+  status:         varchar('status', { length: 20 }).notNull().default('pending'),
+  // pending | running | thinking | waiting | completed | failed
+  model:          text('model'),
+  engine:         varchar('engine', { length: 20 }),
+  tokensUsed:     integer('tokens_used').default(0),
+  promptTokens:   integer('prompt_tokens').default(0),
+  completionTokens: integer('completion_tokens').default(0),
+  durationMs:     integer('duration_ms').default(0),
+  queueWaitMs:    integer('queue_wait_ms').default(0),
+  inferenceMs:    integer('inference_ms').default(0),
+  cpuPercent:     decimal('cpu_percent', { precision: 5, scale: 2 }).default('0'),
+  gpuPercent:     decimal('gpu_percent', { precision: 5, scale: 2 }).default('0'),
+  memoryMb:       decimal('memory_mb', { precision: 8, scale: 2 }).default('0'),
+  promptPreview:  text('prompt_preview'),
+  responsePreview: text('response_preview'),
+  errorMessage:   text('error_message'),
+  metadata:       jsonb('metadata'),
+  startedAt:      timestamp('started_at', { withTimezone: true }),
+  completedAt:    timestamp('completed_at', { withTimezone: true }),
+  createdAt:      timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 });
 
 /* ─── Datasets ──────────────────────────────────────── */
@@ -375,7 +408,10 @@ export const assets = pgTable('assets', {
   sizeBytes:    bigint('size_bytes', { mode: 'number' }).default(0),
   tags:         text('tags').array(),
   metadata:     jsonb('metadata'),                       // extra info: dimensions, duration, etc.
-  datasetId:    text('dataset_id'),                      // optional link to datasets table
+  expertId:     text('expert_id'),                        // link to expert that generated this
+  expertRunId:  text('expert_run_id'),                    // groups artifacts from one execution
+  sourceType:   varchar('source_type', { length: 20 }),   // expert | workflow | upload | synthesis
+  datasetId:    text('dataset_id'),                       // optional link to datasets table
   createdAt:    timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt:    timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 });
@@ -457,6 +493,56 @@ export const socialConnections = pgTable('social_connections', {
   updatedAt:       timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 });
 
+/* ─── Execution Audit Trail ─────────────────────────── */
+export const executionAudit = pgTable('execution_audit', {
+  id:            text('id').primaryKey(),
+  runId:         text('run_id').notNull(),
+  workflowId:    text('workflow_id'),
+  workflowName:  text('workflow_name'),
+  agentId:       text('agent_id'),
+  stepId:        text('step_id'),
+  expertId:      text('expert_id'),
+  phase:         varchar('phase', { length: 30 }),
+  operation:     varchar('operation', { length: 30 }).notNull(),
+  // agent_created | thinking | response | step_complete | step_failed
+  prompt:        text('prompt'),
+  response:      text('response'),
+  tokensUsed:    integer('tokens_used').default(0),
+  durationMs:    integer('duration_ms').default(0),
+  model:         text('model'),
+  engine:        varchar('engine', { length: 20 }),
+  temperature:   decimal('temperature', { precision: 3, scale: 2 }),
+  status:        varchar('status', { length: 20 }).default('ok'),
+  error:         text('error'),
+  metadata:      jsonb('metadata'),
+  createdAt:     timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+/* ─── Model Comparisons ─────────────────────────────── */
+export const modelComparisons = pgTable('model_comparisons', {
+  id:              text('id').primaryKey(),
+  runId:           text('run_id').notNull(),
+  stepId:          text('step_id').notNull(),
+  originalModel:   text('original_model').notNull(),
+  originalEngine:  varchar('original_engine', { length: 20 }),
+  originalTokens:  integer('original_tokens').default(0),
+  originalDurationMs: integer('original_duration_ms').default(0),
+  originalResponse: text('original_response'),
+  comparisonModel: text('comparison_model').notNull(),
+  comparisonEngine: varchar('comparison_engine', { length: 20 }),
+  comparisonTokens: integer('comparison_tokens').default(0),
+  comparisonDurationMs: integer('comparison_duration_ms').default(0),
+  comparisonResponse: text('comparison_response'),
+  temperature:     decimal('temperature', { precision: 3, scale: 2 }),
+  prompt:          text('prompt'),
+  systemPrompt:    text('system_prompt'),
+  documentNames:   text('document_names').array(),
+  documentContent: text('document_content'),
+  originalTokensPerSec:   decimal('original_tokens_per_sec', { precision: 8, scale: 1 }),
+  comparisonTokensPerSec: decimal('comparison_tokens_per_sec', { precision: 8, scale: 1 }),
+  createdAt:       timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
 /* ─── Type exports ───────────────────────────────────── */
 export type Metric        = typeof metrics.$inferSelect;
 export type Task          = typeof tasks.$inferSelect;
@@ -465,8 +551,6 @@ export type Alert         = typeof alerts.$inferSelect;
 export type Log           = typeof logs.$inferSelect;
 export type Expert        = typeof experts.$inferSelect;
 export type Workflow      = typeof workflows.$inferSelect;
-export type TrainingJob   = typeof trainingJobs.$inferSelect;
-
 export type Dataset       = typeof datasets.$inferSelect;
 export type IntegrationRow = typeof integrations.$inferSelect;
 export type IntegrationConnectionRow = typeof integrationConnections.$inferSelect;
@@ -478,7 +562,6 @@ export type NewWorkflowRun = typeof workflowRuns.$inferInsert;
 export type NewAlert      = typeof alerts.$inferInsert;
 export type NewLog        = typeof logs.$inferInsert;
 export type NewMetric     = typeof metrics.$inferInsert;
-export type NewTrainingJob = typeof trainingJobs.$inferInsert;
 export type NewDataset    = typeof datasets.$inferInsert;
 export type HfDataset     = typeof hfDatasets.$inferSelect;
 export type NewHfDataset  = typeof hfDatasets.$inferInsert;
@@ -512,3 +595,11 @@ export type NewOAuthCredential  = typeof oauthCredentials.$inferInsert;
 
 export type ProjectAsset        = typeof projectAssets.$inferSelect;
 export type NewProjectAsset     = typeof projectAssets.$inferInsert;
+
+export type ExecutionAuditRow  = typeof executionAudit.$inferSelect;
+export type NewExecutionAudit  = typeof executionAudit.$inferInsert;
+export type ModelComparison    = typeof modelComparisons.$inferSelect;
+export type NewModelComparison = typeof modelComparisons.$inferInsert;
+
+export type StepExecution = typeof stepExecutions.$inferSelect;
+export type NewStepExecution = typeof stepExecutions.$inferInsert;

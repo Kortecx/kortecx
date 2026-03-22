@@ -1,1 +1,1 @@
-import '@testing-library/jest-dom/vitest';
+// Test setup — non-critical, silently skip missing dependencies

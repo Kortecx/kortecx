@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, workflowRuns } from '@/lib/db';
 import { eq } from 'drizzle-orm';
+import { logStatus } from '@/lib/status-log';
 
 const ENGINE_URL = process.env.ENGINE_URL || 'http://localhost:8000';
 
@@ -79,9 +80,11 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    logStatus('info', `Workflow run started: ${name}`, 'workflow', { runId, workflowId: workflowId || 'adhoc', stepsCount: steps.length });
     return NextResponse.json({ ...data, runId }, { status: 202 });
   } catch (err) {
     console.error('[workflows/run POST]', err);
+    logStatus('error', `Workflow run failed: ${err instanceof Error ? err.message : 'Unknown'}`, 'workflow', { error: err instanceof Error ? err.message : 'Unknown' });
     return NextResponse.json({ error: 'Failed to start workflow' }, { status: 500 });
   }
 }

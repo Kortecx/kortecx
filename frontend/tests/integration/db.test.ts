@@ -5,7 +5,7 @@ describe('Database schema validation', () => {
     const schema = await import('@/lib/db/schema');
     const expectedTables = [
       'metrics', 'tasks', 'workflowRuns', 'alerts', 'logs',
-      'experts', 'workflows', 'workflowSteps', 'trainingJobs',
+      'experts', 'workflows', 'workflowSteps',
       'datasets', 'hfDatasets', 'integrations', 'integrationConnections',
       'plugins', 'projects', 'apiKeys', 'synthesisJobs',
     ];

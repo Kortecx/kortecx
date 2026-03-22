@@ -1,0 +1,18 @@
+{
+  "id": "marketplace-support-agent",
+  "name": "Support Agent",
+  "description": "Customer support, ticket triage, knowledge base management, escalation, and SLA management",
+  "role": "custom",
+  "version": "1.0.0",
+  "modelSource": "local",
+  "localModelConfig": {
+    "engine": "ollama",
+    "modelName": "llama3.2:3b"
+  },
+  "temperature": 0.4,
+  "maxTokens": 2048,
+  "tags": ["support", "tickets", "helpdesk", "SLA", "customers"],
+  "capabilities": ["reasoning", "writing", "structured-output"],
+  "isPublic": true,
+  "category": "support"
+}

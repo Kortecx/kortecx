@@ -1,9 +1,14 @@
 """Tests for the synthesis service."""
+
 import json
 import pytest
 from engine.services.synthesis import (
-    SynthesisService, SynthesisConfig, SynthesisSource, OutputFormat,
-    FORMAT_TEMPLATES, SynthesisStatus,
+    SynthesisService,
+    SynthesisConfig,
+    SynthesisSource,
+    OutputFormat,
+    FORMAT_TEMPLATES,
+    SynthesisStatus,
 )
 
 

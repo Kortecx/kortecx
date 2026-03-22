@@ -4,6 +4,7 @@ import { socialConnections } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
 import { decryptToken, encryptToken } from '@/lib/oauth/crypto';
 import { getPlatformConfig, getClientCredentials } from '@/lib/oauth/platforms';
+import { logStatus } from '@/lib/status-log';
 
 export interface PlatformPermissions {
   consume: boolean;
@@ -127,6 +128,7 @@ export async function PUT(request: Request) {
         })
         .where(eq(socialConnections.platform, platform));
 
+      logStatus('info', `OAuth connection configured: ${platform}`, 'oauth', { platform, action: 'update_permissions' });
       return NextResponse.json({ success: true, action: 'permissions_updated', permissions });
     }
 
@@ -203,6 +205,7 @@ export async function PUT(request: Request) {
         })
         .where(eq(socialConnections.id, conn.id));
 
+      logStatus('info', `OAuth connection configured: ${platform}`, 'oauth', { platform, action: 'refresh_token' });
       return NextResponse.json({
         success: true,
         action: 'token_refreshed',
@@ -215,6 +218,7 @@ export async function PUT(request: Request) {
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
     console.error('[OAuth] Configure error:', message);
+    logStatus('error', `OAuth configure failed: ${message}`, 'oauth', { error: message });
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

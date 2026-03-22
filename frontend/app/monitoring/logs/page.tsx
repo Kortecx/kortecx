@@ -5,13 +5,14 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   ScrollText, Download, Search, ChevronDown,
   Loader2, X, ChevronRight, Filter,
-  Clock,
+  Clock, Workflow, Users, Brain, Database, Boxes, Cpu, FileText, Globe,
 } from 'lucide-react';
-import { useLogs } from '@/lib/hooks/useApi';
+import { useLogs, useStepExecutions, useLiveMetrics } from '@/lib/hooks/useApi';
+import { TIMEZONES, formatTzLabel } from '@/lib/timezones';
 
 /* ── Constants ──────────────────────────────────────────────────────────── */
 const SECTION_COLOR = '#ef4444';
-const MAX_LOGS      = 500;
+const MAX_LOGS      = 1000;
 
 const LEVEL_META: Record<string, { color: string; bg: string; rowBg: string; label: string }> = {
   debug:    { color: '#6b7280', bg: '#6b728018', rowBg: 'transparent',           label: 'DEBUG' },
@@ -31,30 +32,52 @@ const LEVEL_FILTERS = [
 ];
 
 const TIME_RANGES = [
-  { id: '5m',  label: 'Last 5m' },
-  { id: '30m', label: 'Last 30m' },
-  { id: '1h',  label: 'Last 1h' },
-  { id: '6h',  label: 'Last 6h' },
-  { id: 'all', label: 'All time' },
+  { id: '5m',     label: 'Last 5m' },
+  { id: '30m',    label: 'Last 30m' },
+  { id: '1h',     label: 'Last 1h' },
+  { id: '6h',     label: 'Last 6h' },
+  { id: '1d',     label: 'Last 24h' },
+  { id: '1w',     label: 'Last 7d' },
+  { id: 'all',    label: 'All time' },
+  { id: 'custom', label: 'Custom...' },
 ];
 
+const CATEGORY_FILTERS: Array<{ id: string; label: string; icon: React.ComponentType<{ size?: number }>; color: string; sources: string[] }> = [
+  { id: 'all',        label: 'All',        icon: Boxes,    color: '#6b7280', sources: [] },
+  { id: 'workflows',  label: 'Workflows',  icon: Workflow, color: '#2563EB', sources: ['orchestrator', 'workflow', 'scheduler'] },
+  { id: 'experts',    label: 'Experts',    icon: Users,    color: '#7C3AED', sources: ['expert', 'expert_manager'] },
+  { id: 'agents',     label: 'Agents',     icon: Brain,    color: '#D97706', sources: ['agent', 'quorum', 'orchestrator'] },
+  { id: 'data',       label: 'Data',       icon: Database, color: '#059669', sources: ['dataset', 'synthesis', 'transform', 'schema', 'duckdb', 'spark'] },
+  { id: 'artifacts',  label: 'Artifacts',  icon: FileText, color: '#EC4899', sources: ['artifact', 'step_artifacts', 'script'] },
+  { id: 'system',     label: 'System',     icon: Cpu,      color: '#ef4444', sources: ['system', 'engine', 'health', 'metrics'] },
+];
+
+type ViewTab = 'logs' | 'executions';
+
 /* ── Helpers ────────────────────────────────────────────────────────────── */
-function formatTs(iso: string) {
+function formatTs(iso: string, tz?: string) {
   const d = new Date(iso);
   return d.toLocaleTimeString('en-US', {
     hour12: false, hour: '2-digit',
     minute: '2-digit', second: '2-digit',
+    timeZone: tz,
   }) + '.' + String(d.getMilliseconds()).padStart(3, '0');
 }
 
-function isWithinRange(iso: string, range: string): boolean {
+function isWithinRange(iso: string, range: string, customFrom?: string, customTo?: string): boolean {
   if (range === 'all') return true;
-  const ms: Record<string, number> = { '5m': 300_000, '30m': 1_800_000, '1h': 3_600_000, '6h': 21_600_000 };
+  if (range === 'custom') {
+    const t = new Date(iso).getTime();
+    if (customFrom && t < new Date(customFrom).getTime()) return false;
+    if (customTo && t > new Date(customTo + 'T23:59:59').getTime()) return false;
+    return true;
+  }
+  const ms: Record<string, number> = { '5m': 300_000, '30m': 1_800_000, '1h': 3_600_000, '6h': 21_600_000, '1d': 86_400_000, '1w': 604_800_000 };
   return Date.now() - new Date(iso).getTime() <= (ms[range] ?? Infinity);
 }
 
 /* ── Log Row Component ───────────────────────────────────────────────────── */
-function LogRow({ log, index }: { log: Record<string, unknown>; index: number }) {
+function LogRow({ log, index, tz }: { log: Record<string, unknown>; index: number; tz?: string }) {
   const [expanded, setExpanded] = useState(false);
   const level  = (log.level as string) ?? 'info';
   const meta   = LEVEL_META[level] ?? LEVEL_META.info;
@@ -93,7 +116,7 @@ function LogRow({ log, index }: { log: Record<string, unknown>; index: number })
           fontSize: 10.5, color: 'rgba(255,255,255,0.32)',
           fontFamily: 'monospace', whiteSpace: 'nowrap', paddingTop: 3,
         }}>
-          {log.timestamp ? formatTs(log.timestamp as string) : '—'}
+          {log.timestamp ? formatTs(log.timestamp as string, tz) : '—'}
         </span>
 
         {/* Level badge */}
@@ -163,11 +186,17 @@ function LogRow({ log, index }: { log: Record<string, unknown>; index: number })
 
 /* ── Page ────────────────────────────────────────────────────────────────── */
 export default function LogsPage() {
+  const [viewTab, setViewTab] = useState<ViewTab>('logs');
   const [levelFilter, setLevelFilter] = useState('all');
+  const [categoryFilter, setCategoryFilter] = useState('all');
   const [sourceFilter, setSourceFilter] = useState('');
   const [search, setSearch]           = useState('');
-  const [timeRange, setTimeRange]     = useState('1h');
+  const [timeRange, setTimeRange]     = useState('all');
   const [autoScroll, setAutoScroll]   = useState(true);
+  const [execRunId, setExecRunId]     = useState('');
+  const [customFrom, setCustomFrom]  = useState('');
+  const [customTo, setCustomTo]      = useState('');
+  const [logTimezone, setLogTimezone] = useState(() => Intl.DateTimeFormat().resolvedOptions().timeZone);
   const bottomRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -175,19 +204,24 @@ export default function LogsPage() {
     levelFilter === 'all' ? undefined : levelFilter,
     MAX_LOGS,
   );
+  const { executions, isLoading: execLoading } = useStepExecutions(execRunId || null);
+  const { metrics: liveMetrics } = useLiveMetrics();
 
   /* Filter client-side */
   const filtered = useMemo(() => {
+    const catSources = CATEGORY_FILTERS.find(c => c.id === categoryFilter)?.sources ?? [];
     return (logs as Record<string, unknown>[]).filter(l => {
       const matchLevel  = levelFilter === 'all' || l.level === levelFilter;
       const matchSource = !sourceFilter || ((l.source as string) ?? '').toLowerCase().includes(sourceFilter.toLowerCase());
+      const matchCategory = categoryFilter === 'all' || catSources.length === 0 ||
+        catSources.some(s => ((l.source as string) ?? '').toLowerCase().includes(s));
       const matchSearch = !search ||
         (l.message as string).toLowerCase().includes(search.toLowerCase()) ||
         ((l.source as string) ?? '').toLowerCase().includes(search.toLowerCase());
-      const matchTime   = !l.timestamp || isWithinRange(l.timestamp as string, timeRange);
-      return matchLevel && matchSource && matchSearch && matchTime;
+      const matchTime   = !l.timestamp || isWithinRange(l.timestamp as string, timeRange, customFrom, customTo);
+      return matchLevel && matchSource && matchCategory && matchSearch && matchTime;
     });
-  }, [logs, levelFilter, sourceFilter, search, timeRange]);
+  }, [logs, levelFilter, categoryFilter, sourceFilter, search, timeRange, customFrom, customTo]);
 
   /* Auto-scroll to bottom */
   useEffect(() => {
@@ -219,7 +253,7 @@ export default function LogsPage() {
 
   /* Clear visible logs */
   const handleClear = useCallback(() => {
-    setSearch(''); setSourceFilter(''); setLevelFilter('all'); setTimeRange('1h');
+    setSearch(''); setSourceFilter(''); setLevelFilter('all'); setCategoryFilter('all'); setTimeRange('all');
   }, []);
 
   return (
@@ -232,7 +266,7 @@ export default function LogsPage() {
         }
       `}</style>
 
-      <div style={{ padding: 28, maxWidth: 1280, height: 'calc(100vh - 56px)', display: 'flex', flexDirection: 'column' }}>
+      <div style={{ padding: 20, maxWidth: '100%', height: 'calc(100vh - 48px)', display: 'flex', flexDirection: 'column' }}>
         {/* Header */}
         <motion.div
           initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }}
@@ -314,6 +348,61 @@ export default function LogsPage() {
               <span style={{ fontSize: 11, color: 'var(--text-4)' }}>{label}</span>
             </div>
           ))}
+        </motion.div>
+
+        {/* View tabs + Category filters */}
+        <motion.div
+          initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.08 }}
+          style={{ display: 'flex', gap: 8, marginBottom: 10, alignItems: 'center', flexShrink: 0, flexWrap: 'wrap' }}
+        >
+          {/* View tabs */}
+          <div style={{ display: 'flex', gap: 3, marginRight: 8 }}>
+            {([
+              { id: 'logs' as const, label: 'System Logs', icon: ScrollText },
+              { id: 'executions' as const, label: 'Audit Trail', icon: FileText },
+            ]).map(t => (
+              <button key={t.id} onClick={() => setViewTab(t.id)} style={{
+                display: 'flex', alignItems: 'center', gap: 5,
+                padding: '5px 12px', borderRadius: 6, fontSize: 11, fontWeight: viewTab === t.id ? 700 : 400,
+                border: `1.5px solid ${viewTab === t.id ? SECTION_COLOR : 'var(--border-md)'}`,
+                background: viewTab === t.id ? `${SECTION_COLOR}12` : 'var(--bg-surface)',
+                color: viewTab === t.id ? SECTION_COLOR : 'var(--text-3)',
+                cursor: 'pointer', transition: 'all 0.15s',
+              }}>
+                <t.icon size={12} /> {t.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Separator */}
+          <div style={{ width: 1, height: 20, background: 'var(--border-md)' }} />
+
+          {/* Category filters */}
+          {CATEGORY_FILTERS.map(cat => {
+            const active = categoryFilter === cat.id;
+            const Icon = cat.icon;
+            return (
+              <button key={cat.id} onClick={() => setCategoryFilter(cat.id)} style={{
+                display: 'flex', alignItems: 'center', gap: 4,
+                padding: '4px 10px', borderRadius: 6, fontSize: 10, fontWeight: active ? 700 : 500,
+                border: `1px solid ${active ? cat.color : 'var(--border)'}`,
+                background: active ? `${cat.color}12` : 'transparent',
+                color: active ? cat.color : 'var(--text-4)',
+                cursor: 'pointer', transition: 'all 0.15s',
+              }}>
+                <Icon size={10} /> {cat.label}
+              </button>
+            );
+          })}
+
+          {/* Live stats */}
+          {liveMetrics && (
+            <div style={{ marginLeft: 'auto', display: 'flex', gap: 10, fontSize: 10, color: 'var(--text-4)' }}>
+              <span>Agents: <strong style={{ color: '#2563EB' }}>{liveMetrics.activeAgents ?? 0}</strong></span>
+              <span>Runs: <strong style={{ color: '#059669' }}>{liveMetrics.tasksCompleted ?? 0}</strong></span>
+              <span>Errors: <strong style={{ color: '#ef4444' }}>{liveMetrics.tasksFailed ?? 0}</strong></span>
+            </div>
+          )}
         </motion.div>
 
         {/* Filter bar */}
@@ -400,6 +489,61 @@ export default function LogsPage() {
             <ChevronDown size={11} color="var(--text-4)" style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }} />
           </div>
 
+          {/* Custom date range — shown when "Custom..." is selected */}
+          {timeRange === 'custom' && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <input
+                type="date"
+                value={customFrom}
+                onChange={e => setCustomFrom(e.target.value)}
+                style={{
+                  padding: '4px 8px', borderRadius: 6, fontSize: 11,
+                  border: '1px solid var(--border-md)', background: 'var(--bg-surface)',
+                  color: 'var(--text-2)', outline: 'none',
+                  fontFamily: 'monospace',
+                }}
+              />
+              <span style={{ fontSize: 10, color: 'var(--text-4)' }}>to</span>
+              <input
+                type="date"
+                value={customTo}
+                onChange={e => setCustomTo(e.target.value)}
+                style={{
+                  padding: '4px 8px', borderRadius: 6, fontSize: 11,
+                  border: '1px solid var(--border-md)', background: 'var(--bg-surface)',
+                  color: 'var(--text-2)', outline: 'none',
+                  fontFamily: 'monospace',
+                }}
+              />
+              {(customFrom || customTo) && (
+                <button onClick={() => { setCustomFrom(''); setCustomTo(''); }}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: 'var(--text-4)', display: 'flex' }}>
+                  <X size={10} />
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* Timezone selector */}
+          <div style={{ position: 'relative', flexShrink: 0 }}>
+            <Globe size={11} color="var(--text-4)" style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }} />
+            <select
+              value={logTimezone}
+              onChange={e => setLogTimezone(e.target.value)}
+              style={{
+                padding: '5px 24px 5px 26px', borderRadius: 7, fontSize: 11,
+                border: '1px solid var(--border-md)', background: 'var(--bg-surface)',
+                color: 'var(--text-2)', cursor: 'pointer', outline: 'none', appearance: 'none',
+                maxWidth: 180,
+              }}
+            >
+              {TIMEZONES.map(tz => (
+                <option key={tz} value={tz}>{formatTzLabel(tz)}</option>
+              ))}
+            </select>
+            <ChevronDown size={11} color="var(--text-4)" style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }} />
+          </div>
+
           {/* Auto-scroll toggle */}
           <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 7 }}>
             <span style={{ fontSize: 11, color: 'var(--text-4)' }}>Auto-scroll</span>
@@ -426,8 +570,118 @@ export default function LogsPage() {
           </div>
         </motion.div>
 
-        {/* Terminal window */}
-        <div
+        {/* Audit Trail — execution history (shown when viewTab === 'executions') */}
+        {viewTab === 'executions' && (
+          <div style={{
+            flex: 1, background: '#0c0c0c', borderRadius: 11,
+            border: '1px solid rgba(255,255,255,0.07)',
+            overflow: 'auto', fontFamily: 'monospace', minHeight: 0,
+          }}>
+            {/* Search bar for run ID */}
+            <div style={{
+              padding: '10px 14px', borderBottom: '1px solid rgba(255,255,255,0.05)',
+              display: 'flex', alignItems: 'center', gap: 8,
+              position: 'sticky', top: 0, background: '#0c0c0c', zIndex: 1,
+            }}>
+              {['#ef4444', '#f59e0b', '#10b981'].map(c => (
+                <div key={c} style={{ width: 10, height: 10, borderRadius: '50%', background: c, opacity: 0.7 }} />
+              ))}
+              <span style={{ marginLeft: 4, fontSize: 11, color: 'rgba(255,255,255,0.25)' }}>audit trail</span>
+              <div style={{
+                marginLeft: 12, flex: 1, display: 'flex', alignItems: 'center', gap: 6,
+                padding: '4px 10px', borderRadius: 5, border: '1px solid rgba(255,255,255,0.1)',
+                background: 'rgba(255,255,255,0.03)',
+              }}>
+                <Search size={11} color="rgba(255,255,255,0.3)" />
+                <input
+                  value={execRunId}
+                  onChange={e => setExecRunId(e.target.value)}
+                  placeholder="Enter run ID to view execution history..."
+                  style={{ border: 'none', outline: 'none', background: 'transparent', fontSize: 11, color: 'rgba(255,255,255,0.8)', flex: 1, fontFamily: 'monospace' }}
+                />
+                {execRunId && (
+                  <button onClick={() => setExecRunId('')} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: 'rgba(255,255,255,0.3)', display: 'flex' }}>
+                    <X size={10} />
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {!execRunId ? (
+              <div style={{ padding: '48px 20px', textAlign: 'center', color: 'rgba(255,255,255,0.25)', fontSize: 12 }}>
+                Enter a run ID above to view step execution audit trail, or select a run from{' '}
+                <a href="/workflow/history" style={{ color: '#3b82f6', textDecoration: 'underline' }}>Workflow History</a>
+              </div>
+            ) : execLoading ? (
+              <div style={{ padding: '48px 0', textAlign: 'center', color: 'rgba(255,255,255,0.3)', fontSize: 12 }}>
+                <Loader2 size={18} style={{ margin: '0 auto 8px', animation: 'spin 1s linear infinite', display: 'block' }} />
+                Loading audit trail...
+              </div>
+            ) : (executions as Record<string, unknown>[]).length === 0 ? (
+              <div style={{ padding: '48px 20px', color: 'rgba(255,255,255,0.25)', fontSize: 12 }}>
+                No execution records found for run <code style={{ color: '#3b82f6' }}>{execRunId}</code>
+              </div>
+            ) : (
+              <div>
+                {/* Column headers */}
+                <div style={{
+                  display: 'grid',
+                  gridTemplateColumns: '80px 100px 80px 90px 80px 70px 70px 1fr',
+                  gap: 0, padding: '6px 14px',
+                  borderBottom: '1px solid rgba(255,255,255,0.05)',
+                  position: 'sticky', top: 44, background: '#0c0c0c', zIndex: 1,
+                }}>
+                  {['STATUS', 'STEP', 'AGENT', 'MODEL', 'TOKENS', 'CPU', 'DURATION', 'RESPONSE'].map(h => (
+                    <span key={h} style={{ fontSize: 9, fontWeight: 700, color: 'rgba(255,255,255,0.18)', letterSpacing: '0.07em' }}>{h}</span>
+                  ))}
+                </div>
+
+                {(executions as Record<string, unknown>[]).map((exec, i) => {
+                  const status = (exec.status as string) || 'pending';
+                  const statusColor = status === 'completed' ? '#10b981' : status === 'failed' ? '#ef4444' : status === 'thinking' ? '#f59e0b' : '#3b82f6';
+                  return (
+                    <div key={(exec.id as string) || i} style={{
+                      display: 'grid',
+                      gridTemplateColumns: '80px 100px 80px 90px 80px 70px 70px 1fr',
+                      gap: 0, padding: '5px 14px',
+                      borderBottom: '1px solid rgba(255,255,255,0.03)',
+                      background: status === 'failed' ? 'rgba(239,68,68,0.04)' : 'transparent',
+                      fontSize: 11, color: 'rgba(255,255,255,0.7)',
+                    }}>
+                      <span style={{ fontWeight: 700, color: statusColor, textTransform: 'uppercase', fontSize: 9, letterSpacing: '0.05em', paddingTop: 2 }}>
+                        {status}
+                      </span>
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'rgba(255,255,255,0.5)' }}>
+                        {(exec.stepName as string) || (exec.step_name as string) || (exec.stepId as string) || (exec.step_id as string) || '—'}
+                      </span>
+                      <span style={{ color: 'rgba(255,255,255,0.35)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {((exec.agentId as string) || (exec.agent_id as string) || '—').slice(-8)}
+                      </span>
+                      <span style={{ color: '#7C3AED', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {(exec.model as string) || '—'}
+                      </span>
+                      <span style={{ color: '#f59e0b' }}>
+                        {((exec.tokensUsed as number) || (exec.tokens_used as number) || 0).toLocaleString()}
+                      </span>
+                      <span style={{ color: 'rgba(255,255,255,0.4)' }}>
+                        {((exec.cpuPercent as number) || (exec.cpu_percent as number) || 0).toFixed(0)}%
+                      </span>
+                      <span style={{ color: 'rgba(255,255,255,0.5)' }}>
+                        {(((exec.durationMs as number) || (exec.duration_ms as number) || 0) / 1000).toFixed(1)}s
+                      </span>
+                      <span style={{ color: 'rgba(255,255,255,0.4)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {((exec.responsePreview as string) || (exec.response_preview as string) || (exec.errorMessage as string) || (exec.error_message as string) || '').slice(0, 80) || '—'}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Terminal window — system logs (shown when viewTab === 'logs') */}
+        {viewTab === 'logs' && <div
           ref={containerRef}
           style={{
             flex: 1, background: '#0c0c0c', borderRadius: 11,
@@ -478,7 +732,7 @@ export default function LogsPage() {
               </div>
 
               {filtered.slice(0, MAX_LOGS).map((log, i) => (
-                <LogRow key={(log.id ?? i) as string} log={log} index={i} />
+                <LogRow key={(log.id ?? i) as string} log={log} index={i} tz={logTimezone} />
               ))}
 
               {filtered.length > MAX_LOGS && (
@@ -490,7 +744,7 @@ export default function LogsPage() {
               <div ref={bottomRef} style={{ height: 8 }} />
             </div>
           )}
-        </div>
+        </div>}
 
         {/* Footer */}
         <div style={{

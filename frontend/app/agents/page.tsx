@@ -7,7 +7,7 @@ import {
   TrendingUp, Loader2, ChevronRight, Settings,
   Database, Server,
 } from 'lucide-react';
-import { useAgents } from '@/lib/hooks/useApi';
+import { useAgents, useLiveMetrics, useExpertStats } from '@/lib/hooks/useApi';
 
 const SECTION_COLOR = '#3b82f6';
 
@@ -48,7 +48,7 @@ const STATUS_CONFIG: Record<string, { color: string; label: string; pulse: boole
   error:    { color: '#ef4444', label: 'Error',    pulse: false },
 };
 
-const FILTER_TABS = ['all', 'active', 'idle', 'training'] as const;
+const FILTER_TABS = ['all', 'active', 'idle'] as const;
 type FilterTab = typeof FILTER_TABS[number];
 
 function fmt(n: number) {
@@ -87,7 +87,7 @@ function SkeletonCard() {
   );
 }
 
-function AgentCard({ agent }: { agent: Record<string, unknown> }) {
+function AgentCard({ agent, expertStats }: { agent: Record<string, unknown>; expertStats: Record<string, unknown>[] }) {
   const role      = (agent.role as string) ?? 'custom';
   const roleColor = ROLE_COLOR[role] ?? '#6b7280';
   const emoji     = ROLE_EMOJI[role] ?? '⚙️';
@@ -95,7 +95,8 @@ function AgentCard({ agent }: { agent: Record<string, unknown> }) {
   const status    = STATUS_CONFIG[statusKey] ?? STATUS_CONFIG.idle;
   const isActive  = statusKey === 'active';
 
-  const tokensUsed = (agent.tokensUsed as number) ?? 0;
+  const agentPerf = expertStats.find((e: Record<string, unknown>) => e.step_id === agent.id);
+  const tokensUsed = (agentPerf?.total_tokens as number) ?? (agent.tokensUsed as number) ?? 0;
   const tokenMax   = 8000;
   const tokenPct   = Math.min((tokensUsed / tokenMax) * 100, 100);
   const tokenColor = tokenPct > 80 ? '#ef4444' : tokenPct > 50 ? '#f59e0b' : SECTION_COLOR;
@@ -228,8 +229,8 @@ function AgentCard({ agent }: { agent: Record<string, unknown> }) {
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
         {[
           { label: 'Tokens',   value: tokensUsed > 0 ? fmt(tokensUsed) : '—', icon: Zap,      color: SECTION_COLOR },
-          { label: 'Requests', value: fmt((agent.requestsHandled as number) ?? 0), icon: Activity, color: '#10b981' },
-          { label: 'Uptime',   value: (agent.uptimeMin as number) > 0 ? `${agent.uptimeMin}m` : '—', icon: Clock, color: '#f59e0b' },
+          { label: 'Requests', value: fmt((agentPerf?.successful_runs as number) ?? (agent.requestsHandled as number) ?? 0), icon: Activity, color: '#10b981' },
+          { label: 'Latency',  value: (agentPerf?.avg_latency_ms as number) > 0 ? `${Math.round(agentPerf?.avg_latency_ms as number)}ms` : (agent.uptimeMin as number) > 0 ? `${agent.uptimeMin}m` : '—', icon: Clock, color: '#f59e0b' },
         ].map(({ label, value, icon: Icon, color }) => (
           <div key={label} style={{
             textAlign: 'center', padding: '8px 4px', borderRadius: 8,
@@ -318,9 +319,10 @@ function AgentCard({ agent }: { agent: Record<string, unknown> }) {
 export default function AgentsPage() {
   const [tab, setTab] = useState<FilterTab>('all');
   const { agents, total, active, isLoading, mutate } = useAgents();
+  const { metrics: liveMetrics } = useLiveMetrics();
+  const { experts: expertStats } = useExpertStats();
 
   const idle       = agents.filter((a: Record<string, unknown>) => a.status === 'idle').length;
-  const training   = agents.filter((a: Record<string, unknown>) => a.status === 'training').length;
 
   // Estimate total requests today from requestsHandled sum
   const totalRequests = agents.reduce(
@@ -335,7 +337,6 @@ export default function AgentsPage() {
     all:      agents.length,
     active,
     idle,
-    training,
   };
 
   const now = new Date();
@@ -415,14 +416,13 @@ export default function AgentsPage() {
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.08 }}
         style={{
-          display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)',
+          display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)',
           gap: 10, marginBottom: 22,
         }}
       >
         {[
-          { label: 'Active Now',          value: active,         color: '#10b981', icon: Activity,  desc: 'processing tasks'     },
+          { label: 'Active Now',          value: liveMetrics?.activeAgents ?? active, color: '#10b981', icon: Activity,  desc: 'processing tasks'     },
           { label: 'Idle',                value: idle,           color: '#6b7280', icon: Clock,     desc: 'awaiting tasks'       },
-          { label: 'In Training',         value: training,       color: '#f59e0b', icon: Zap,       desc: 'fine-tuning'          },
           { label: 'Requests Today',      value: totalRequests,  color: SECTION_COLOR, icon: TrendingUp, desc: 'total handled' },
         ].map(({ label, value, color, icon: Icon, desc }) => (
           <div key={label} style={{
@@ -530,7 +530,7 @@ export default function AgentsPage() {
               }}
             >
               {filtered.map((agent: Record<string, unknown>) => (
-                <AgentCard key={agent.id as string} agent={agent} />
+                <AgentCard key={agent.id as string} agent={agent} expertStats={expertStats} />
               ))}
             </motion.div>
           )}

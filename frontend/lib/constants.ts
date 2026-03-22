@@ -1,6 +1,6 @@
 import type {
   AIProvider, Expert, Workflow, WorkflowRun,
-  TrainingJob, Dataset, QueuedTask, Alert, ExpertRole, SocialPlatform,
+  Dataset, QueuedTask, Alert, ExpertRole, SocialPlatform,
   IntegrationCapability,
 } from './types';
 
@@ -315,7 +315,6 @@ export const ROLE_META: Record<ExpertRole, { label: string; emoji: string; color
 export const EXPERTS: Expert[] = [];
 export const WORKFLOWS: Workflow[] = [];
 export const ACTIVE_TASKS: QueuedTask[] = [];
-export const TRAINING_JOBS: TrainingJob[] = [];
 export const DATASETS: Dataset[] = [];
 export const ALERTS: Alert[] = [];
 export const RECENT_RUNS: WorkflowRun[] = [];
@@ -332,7 +331,6 @@ export const SYSTEM_METRICS = {
   errorCount: 0,
   activeExperts: 0,
   idleExperts: 0,
-  trainingExperts: 0,
 };
 
 /* ─── Navigation Structure ───────────────────────────── */
@@ -363,8 +361,9 @@ export const NAV_SECTIONS = [
     label: 'INTELLIGENCE',
     color: '#7C3AED',
     items: [
-      { id: 'training',  label: 'Training Lab',  path: '/training',          icon: 'Brain' },
-      { id: 'finetune',  label: 'Fine-tuning',   path: '/training/finetune', icon: 'Sliders' },
+      { id: 'finetuning', label: 'Fine-tuning',    path: '/intelligence/finetuning', icon: 'Sliders' },
+      { id: 'inference',  label: 'Inference',       path: '/intelligence/inference',  icon: 'Sparkles' },
+      { id: 'models',     label: 'Models',          path: '/intelligence/models',     icon: 'Boxes' },
     ],
   },
   {
@@ -375,6 +374,7 @@ export const NAV_SECTIONS = [
       { id: 'data',       label: 'Data Synthesis', path: '/data',            icon: 'Database' },
       { id: 'engineer',   label: 'Data Lab',       path: '/data/engineer',   icon: 'Zap' },
       { id: 'data-runs',  label: 'Runs History',   path: '/data/runs',       icon: 'History' },
+      { id: 'embeddings', label: 'Embeddings',     path: '/embeddings',      icon: 'Boxes' },
     ],
   },
   {

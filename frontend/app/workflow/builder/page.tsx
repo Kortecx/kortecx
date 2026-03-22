@@ -24,10 +24,15 @@ import type { Expert, ExpertRole, ModelSource, LocalModelConfig, StepIntegration
 import { useWorkflowWS } from '@/lib/hooks/useWorkflowWS';
 import { useWorkflowLogger } from '@/lib/hooks/useWorkflowLogger';
 import { useExperts, useWorkflows } from '@/lib/hooks/useApi';
+import { useDraftCache } from '@/lib/hooks/useDraftCache';
+import dynamic from 'next/dynamic';
+const MonacoEditor = dynamic(() => import('@monaco-editor/react').then(m => m.default), { ssr: false });
 
 /* ── Types ───────────────────────────────────────────── */
 interface DraftStep {
   id: string;
+  name: string;
+  description: string;
   expert: Expert | null;
   taskDescription: string;
   systemInstructions: string;
@@ -37,6 +42,7 @@ interface DraftStep {
   modelSource: ModelSource;
   localModel: LocalModelConfig;
   connectionType: 'sequential' | 'parallel';
+  shareMemory: boolean;
   stepFiles: UploadedFile[];
   stepImages: UploadedFile[];
   voiceCommand: string;
@@ -361,7 +367,17 @@ function IntegrationSelectorModal({
   onClose: () => void;
   existingIds: string[];
 }) {
-  const [tab, setTab] = useState<'integrations' | 'plugins'>('integrations');
+  const [tab, setTab] = useState<'integrations' | 'plugins' | 'mcp'>('integrations');
+  const [mcpServers, setMcpServers] = useState<Array<{ id: string; name: string; description: string; language: string; status: string }>>([]);
+  useEffect(() => {
+    fetch(`${process.env.NEXT_PUBLIC_ENGINE_URL || 'http://localhost:8000'}/api/mcp/servers`)
+      .then(r => r.ok ? r.json() : { servers: [] })
+      .then(data => {
+        const all = [...(data.prebuilt || []), ...(data.persisted || []), ...(data.cached || [])];
+        setMcpServers(all);
+      })
+      .catch(() => {});
+  }, []);
   const [search, setSearch] = useState('');
 
   const filteredIntegrations = INTEGRATION_CATALOG.filter(i => {
@@ -409,6 +425,7 @@ function IntegrationSelectorModal({
             {([
               { id: 'integrations' as const, label: 'Integrations', icon: Cable },
               { id: 'plugins' as const, label: 'Plugins', icon: Puzzle },
+              { id: 'mcp' as const, label: 'MCP Servers', icon: Terminal },
             ]).map(t => (
               <button key={t.id} onClick={() => setTab(t.id)} style={{
                 display: 'flex', alignItems: 'center', gap: 5,
@@ -429,7 +446,7 @@ function IntegrationSelectorModal({
           }}>
             <Search size={13} color="var(--text-3)" />
             <input autoFocus className="input" style={{ background: 'none', border: 'none', padding: 0, fontSize: 12 }}
-              placeholder={tab === 'integrations' ? 'Search integrations...' : 'Search plugins...'}
+              placeholder={tab === 'integrations' ? 'Search integrations...' : tab === 'plugins' ? 'Search plugins...' : 'Search MCP servers...'}
               value={search} onChange={e => setSearch(e.target.value)} />
           </div>
         </div>
@@ -536,16 +553,548 @@ function IntegrationSelectorModal({
               ))}
             </>
           )}
+          {tab === 'mcp' && (
+            <>
+              {mcpServers.filter(s => !existingIds.includes(s.id) && (!search || s.name.toLowerCase().includes(search.toLowerCase()))).length === 0 && (
+                <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-3)', fontSize: 13 }}>No MCP servers available.</div>
+              )}
+              {mcpServers
+                .filter(s => !existingIds.includes(s.id) && (!search || s.name.toLowerCase().includes(search.toLowerCase())))
+                .map(server => (
+                <div key={server.id}
+                  onClick={() => {
+                    onSelect({
+                      id: `mcp-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                      type: 'integration',
+                      referenceId: server.id,
+                      name: server.name,
+                      icon: 'Terminal',
+                      color: '#10B981',
+                    });
+                    onClose();
+                  }}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 12, padding: '12px 18px',
+                    borderBottom: '1px solid var(--border)', cursor: 'pointer', transition: 'background 0.1s',
+                  }}
+                  onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-elevated)')}
+                  onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+                >
+                  <div style={{
+                    width: 34, height: 34, borderRadius: 6, flexShrink: 0,
+                    background: 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.25)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  }}>
+                    <Terminal size={15} color="#10B981" />
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-1)' }}>{server.name}</span>
+                      <span style={{
+                        fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 3,
+                        background: server.status === 'running' ? 'rgba(16,185,129,0.1)' : 'rgba(107,114,128,0.1)',
+                        color: server.status === 'running' ? '#10B981' : '#6B7280',
+                        textTransform: 'uppercase',
+                      }}>{server.status}</span>
+                      <span style={{ fontSize: 9, color: 'var(--text-4)', textTransform: 'uppercase' }}>{server.language}</span>
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>{server.description}</div>
+                  </div>
+                  <ChevronRight size={14} color="var(--text-4)" />
+                </div>
+              ))}
+            </>
+          )}
         </div>
       </div>
     </div>
   );
 }
 
+/* ── Monaco Prompt Editor ────────────────────────────── */
+function MonacoPromptEditor({
+  value,
+  onChange,
+  height = 80,
+  language = 'markdown',
+  placeholder,
+}: {
+  value: string;
+  onChange: (val: string) => void;
+  height?: number;
+  language?: string;
+  placeholder?: string;
+}) {
+  return (
+    <MonacoEditor
+      height={height}
+      language={language}
+      theme="vs-dark"
+      value={value}
+      onChange={val => onChange(val ?? '')}
+      options={{
+        minimap: { enabled: false },
+        lineNumbers: 'off',
+        glyphMargin: false,
+        folding: false,
+        lineDecorationsWidth: 8,
+        lineNumbersMinChars: 0,
+        scrollBeyondLastLine: false,
+        wordWrap: 'on',
+        wrappingStrategy: 'advanced',
+        fontSize: 12,
+        fontFamily: 'var(--font-mono, monospace)',
+        renderLineHighlight: 'none',
+        overviewRulerBorder: false,
+        hideCursorInOverviewRuler: true,
+        scrollbar: { vertical: 'hidden', horizontal: 'hidden' },
+        padding: { top: 8, bottom: 8 },
+        placeholder,
+      }}
+    />
+  );
+}
+
+/* ── Markdown Preview ────────────────────────────────── */
+function MarkdownPreview({ text }: { text: string }) {
+  const lines = text.split('\n');
+  const elements: React.ReactNode[] = [];
+  let inCodeBlock = false;
+  let codeContent = '';
+  let codeLang = '';
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+
+    if (line.startsWith('```')) {
+      if (inCodeBlock) {
+        elements.push(
+          <pre key={`code-${i}`} style={{
+            background: 'var(--bg)', border: '1px solid var(--border)',
+            borderRadius: 4, padding: '10px 12px', fontSize: 11,
+            fontFamily: 'var(--font-mono, monospace)', overflowX: 'auto',
+            margin: '8px 0', lineHeight: 1.5,
+          }}>
+            {codeLang && <div style={{ fontSize: 9, color: 'var(--text-4)', marginBottom: 4, textTransform: 'uppercase' }}>{codeLang}</div>}
+            <code>{codeContent}</code>
+          </pre>
+        );
+        codeContent = '';
+        codeLang = '';
+        inCodeBlock = false;
+      } else {
+        inCodeBlock = true;
+        codeLang = line.slice(3).trim();
+      }
+      continue;
+    }
+
+    if (inCodeBlock) {
+      codeContent += (codeContent ? '\n' : '') + line;
+      continue;
+    }
+
+    if (!line.trim()) {
+      elements.push(<div key={`br-${i}`} style={{ height: 8 }} />);
+      continue;
+    }
+
+    if (line.startsWith('### ')) {
+      elements.push(<h3 key={i} style={{ fontSize: 14, fontWeight: 700, margin: '12px 0 4px', color: 'var(--text-1)' }}>{formatInline(line.slice(4))}</h3>);
+    } else if (line.startsWith('## ')) {
+      elements.push(<h2 key={i} style={{ fontSize: 15, fontWeight: 700, margin: '14px 0 6px', color: 'var(--text-1)' }}>{formatInline(line.slice(3))}</h2>);
+    } else if (line.startsWith('# ')) {
+      elements.push(<h1 key={i} style={{ fontSize: 17, fontWeight: 700, margin: '16px 0 8px', color: 'var(--text-1)' }}>{formatInline(line.slice(2))}</h1>);
+    } else if (line.match(/^[-*]\s/)) {
+      elements.push(
+        <div key={i} style={{ display: 'flex', gap: 8, paddingLeft: 4 }}>
+          <span style={{ color: 'var(--text-4)' }}>•</span>
+          <span>{formatInline(line.slice(2))}</span>
+        </div>
+      );
+    } else if (line.match(/^\d+\.\s/)) {
+      const num = line.match(/^(\d+)\./)?.[1];
+      elements.push(
+        <div key={i} style={{ display: 'flex', gap: 8, paddingLeft: 4 }}>
+          <span style={{ color: 'var(--text-4)', fontWeight: 600, minWidth: 16 }}>{num}.</span>
+          <span>{formatInline(line.replace(/^\d+\.\s*/, ''))}</span>
+        </div>
+      );
+    } else {
+      elements.push(<p key={i} style={{ margin: '4px 0' }}>{formatInline(line)}</p>);
+    }
+  }
+
+  return <>{elements}</>;
+}
+
+function formatInline(text: string): React.ReactNode {
+  const parts: React.ReactNode[] = [];
+  let remaining = text;
+  let key = 0;
+
+  while (remaining) {
+    const boldMatch = remaining.match(/\*\*(.+?)\*\*/);
+    const codeMatch = remaining.match(/`(.+?)`/);
+    const italicMatch = remaining.match(/(?<!\*)\*([^*]+?)\*(?!\*)/);
+
+    const matches = [
+      boldMatch ? { type: 'bold', match: boldMatch, index: boldMatch.index! } : null,
+      codeMatch ? { type: 'code', match: codeMatch, index: codeMatch.index! } : null,
+      italicMatch ? { type: 'italic', match: italicMatch, index: italicMatch.index! } : null,
+    ].filter(Boolean).sort((a, b) => a!.index - b!.index);
+
+    if (matches.length === 0) {
+      parts.push(remaining);
+      break;
+    }
+
+    const first = matches[0]!;
+    if (first.index > 0) {
+      parts.push(remaining.slice(0, first.index));
+    }
+
+    if (first.type === 'bold') {
+      parts.push(<strong key={key++} style={{ fontWeight: 700 }}>{first.match![1]}</strong>);
+      remaining = remaining.slice(first.index + first.match![0].length);
+    } else if (first.type === 'code') {
+      parts.push(
+        <code key={key++} style={{
+          background: 'var(--bg)', padding: '1px 5px', borderRadius: 3,
+          fontSize: '0.9em', fontFamily: 'var(--font-mono, monospace)',
+          border: '1px solid var(--border)',
+        }}>{first.match![1]}</code>
+      );
+      remaining = remaining.slice(first.index + first.match![0].length);
+    } else if (first.type === 'italic') {
+      parts.push(<em key={key++}>{first.match![1]}</em>);
+      remaining = remaining.slice(first.index + first.match![0].length);
+    }
+  }
+
+  return parts.length === 1 && typeof parts[0] === 'string' ? parts[0] : <>{parts}</>;
+}
+
+/* ── Model Selector ─────────────────────────────────── */
+function ModelSelector({
+  modelSource,
+  localModel,
+  expertModelName,
+  onSourceChange,
+  onModelChange,
+}: {
+  modelSource: 'local' | 'provider';
+  localModel: LocalModelConfig;
+  expertModelName?: string;
+  onSourceChange: (src: 'local' | 'provider') => void;
+  onModelChange: (lm: LocalModelConfig) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [models, setModels] = useState<Array<{ name: string; size: number; modified_at: string }>>([]);
+  const [loading, setLoading] = useState(false);
+  const [search, setSearch] = useState('');
+  const [pulling, setPulling] = useState<string | null>(null);
+  const [pullProgress, setPullProgress] = useState(0);
+  const [pullStatus, setPullStatus] = useState('');
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  // Fetch available models when dropdown opens
+  const fetchModels = useCallback(async () => {
+    setLoading(true);
+    try {
+      const resp = await fetch(`${ENGINE_URL}/api/orchestrator/models/${localModel.engine}`);
+      if (resp.ok) {
+        const data = await resp.json();
+        setModels(data.models || []);
+      }
+    } catch { /* engine offline */ }
+    setLoading(false);
+  }, [localModel.engine]);
+
+  useEffect(() => {
+    if (open && modelSource === 'local') void fetchModels();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, modelSource, fetchModels]);
+
+  // Close handled by fixed backdrop overlay
+
+  // Pull model with streaming progress
+  const handlePull = async (modelName: string) => {
+    setPulling(modelName);
+    setPullProgress(0);
+    setPullStatus('Starting download...');
+
+    try {
+      const resp = await fetch(`${ENGINE_URL}/api/orchestrator/models/pull/stream`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ engine: localModel.engine, model: modelName }),
+      });
+
+      if (!resp.ok || !resp.body) {
+        setPullStatus('Pull failed');
+        setTimeout(() => setPulling(null), 2000);
+        return;
+      }
+
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          try {
+            const data = JSON.parse(line.slice(6));
+            if (data.percent !== undefined) setPullProgress(data.percent);
+            if (data.status) setPullStatus(data.status);
+            if (data.status === 'success') {
+              setPullProgress(100);
+              setPullStatus('Download complete');
+              // Auto-select the model
+              onModelChange({ ...localModel, modelName: modelName });
+              // Refresh model list
+              await fetchModels();
+              setTimeout(() => setPulling(null), 1500);
+              return;
+            }
+          } catch { /* skip malformed */ }
+        }
+      }
+
+      // Stream ended — assume success
+      setPullProgress(100);
+      setPullStatus('Download complete');
+      onModelChange({ ...localModel, modelName: modelName });
+      await fetchModels();
+      setTimeout(() => setPulling(null), 1500);
+
+    } catch (err) {
+      setPullStatus(`Error: ${err instanceof Error ? err.message : 'Unknown'}`);
+      setTimeout(() => setPulling(null), 3000);
+    }
+  };
+
+  const filtered = models.filter(m =>
+    !search || m.name.toLowerCase().includes(search.toLowerCase())
+  );
+
+  const isInstalled = (name: string) => models.some(m => m.name === name);
+
+  return (
+    <div ref={dropdownRef} style={{ marginTop: 8, position: 'relative' }}>
+      {/* Header: source toggle */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+        <span style={{ ...LABEL, marginBottom: 0 }}>Model</span>
+        <div style={{ display: 'flex', gap: 3 }}>
+          {(['local', 'provider'] as const).map(src => (
+            <button key={src} onClick={() => { onSourceChange(src); setOpen(false); }}
+              style={{
+                padding: '2px 8px', borderRadius: 3, fontSize: 9, fontWeight: 700,
+                border: '1px solid', cursor: 'pointer', textTransform: 'uppercase',
+                background: modelSource === src ? (src === 'local' ? 'rgba(5,150,105,0.1)' : 'rgba(37,99,235,0.1)') : 'transparent',
+                borderColor: modelSource === src ? (src === 'local' ? '#059669' : '#2563EB') : 'var(--border)',
+                color: modelSource === src ? (src === 'local' ? '#059669' : '#2563EB') : 'var(--text-4)',
+              }}>{src}</button>
+          ))}
+        </div>
+      </div>
+
+      {modelSource === 'local' ? (
+        <div style={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 4, padding: '6px 8px' }}>
+          {/* Engine selector + model button */}
+          <div style={{ display: 'flex', gap: 4 }}>
+            <select className="input" style={{ fontSize: 10, padding: '3px 6px', flex: '0 0 80px', background: 'var(--bg-card)' }}
+              value={localModel.engine}
+              onChange={e => { onModelChange({ ...localModel, engine: e.target.value as LocalModelConfig['engine'] }); setModels([]); }}>
+              <option value="ollama">Ollama</option>
+              <option value="llamacpp">llama.cpp</option>
+            </select>
+            <button onClick={() => setOpen(!open)} style={{
+              flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              padding: '3px 8px', fontSize: 10, borderRadius: 3,
+              border: '1px solid var(--border)', background: 'var(--bg-card)',
+              cursor: 'pointer', color: localModel.modelName ? 'var(--text-1)' : 'var(--text-4)',
+              fontFamily: 'var(--font-mono, monospace)',
+            }}>
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {localModel.modelName || 'Select model...'}
+              </span>
+              <ChevronDown size={10} style={{ flexShrink: 0, transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} />
+            </button>
+          </div>
+
+          {/* Pull progress bar */}
+          {pulling && (
+            <div style={{ marginTop: 6 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 3 }}>
+                <span style={{ fontSize: 9, color: pullProgress >= 100 ? '#059669' : 'var(--text-3)', fontWeight: 500 }}>
+                  {pullStatus.length > 40 ? pullStatus.slice(0, 40) + '...' : pullStatus}
+                </span>
+                <span className="mono" style={{ fontSize: 9, color: 'var(--text-4)' }}>{pullProgress.toFixed(0)}%</span>
+              </div>
+              <div style={{ height: 3, background: 'var(--border)', borderRadius: 2, overflow: 'hidden' }}>
+                <div style={{
+                  height: '100%', borderRadius: 2, transition: 'width 0.3s',
+                  width: `${pullProgress}%`,
+                  background: pullProgress >= 100 ? '#059669' : 'var(--primary)',
+                }} />
+              </div>
+            </div>
+          )}
+
+          {/* Dropdown — fixed overlay so it doesn't expand the step container */}
+          {open && <>
+            <div style={{ position: 'fixed', inset: 0, zIndex: 299 }} onClick={() => setOpen(false)} />
+            <div style={{
+              position: 'fixed', zIndex: 300, width: 320,
+              background: 'var(--bg-card)', border: '1px solid var(--border-md)',
+              borderRadius: 6, boxShadow: '0 12px 36px rgba(0,0,0,0.35)',
+              maxHeight: 320, display: 'flex', flexDirection: 'column', overflow: 'hidden',
+            }} ref={(el) => {
+              if (el && dropdownRef.current) {
+                const rect = dropdownRef.current.getBoundingClientRect();
+                const spaceBelow = window.innerHeight - rect.bottom;
+                const dropH = Math.min(320, el.scrollHeight);
+                if (spaceBelow < dropH + 20) {
+                  el.style.bottom = `${window.innerHeight - rect.top + 4}px`;
+                  el.style.top = 'auto';
+                } else {
+                  el.style.top = `${rect.bottom + 4}px`;
+                  el.style.bottom = 'auto';
+                }
+                el.style.left = `${rect.left}px`;
+                el.style.width = `${Math.max(rect.width, 280)}px`;
+              }
+            }}>
+              {/* Search */}
+              <div style={{ padding: '8px 10px', borderBottom: '1px solid var(--border)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'var(--bg)',
+                  border: '1px solid var(--border)', borderRadius: 3, padding: '4px 8px' }}>
+                  <Search size={11} color="var(--text-4)" />
+                  <input autoFocus className="input" style={{ background: 'none', border: 'none', padding: 0, fontSize: 10 }}
+                    placeholder="Search or enter model to pull..."
+                    value={search} onChange={e => setSearch(e.target.value)} />
+                  {search && (
+                    <button onClick={() => setSearch('')} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, display: 'flex', color: 'var(--text-4)' }}>
+                      <X size={9} />
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Model list */}
+              <div style={{ flex: 1, overflowY: 'auto' }}>
+                {loading && (
+                  <div style={{ padding: 16, textAlign: 'center', fontSize: 11, color: 'var(--text-3)' }}>
+                    <Loader2 size={14} style={{ margin: '0 auto 4px', animation: 'spin 1s linear infinite' }} />
+                    Loading models...
+                  </div>
+                )}
+
+                {!loading && filtered.length === 0 && !search && (
+                  <div style={{ padding: 16, textAlign: 'center', fontSize: 11, color: 'var(--text-3)' }}>
+                    No models found. Is {localModel.engine} running?
+                  </div>
+                )}
+
+                {/* Installed models */}
+                {filtered.map(m => {
+                  const selected = localModel.modelName === m.name;
+                  const sizeMB = m.size ? (m.size / (1024 * 1024 * 1024)).toFixed(1) + ' GB' : '';
+                  return (
+                    <div key={m.name}
+                      onClick={() => { onModelChange({ ...localModel, modelName: m.name }); setOpen(false); setSearch(''); }}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 8, padding: '7px 12px',
+                        borderBottom: '1px solid var(--border)', cursor: 'pointer',
+                        background: selected ? 'var(--primary-dim)' : 'transparent',
+                        transition: 'background 0.1s',
+                      }}
+                      onMouseEnter={e => { if (!selected) e.currentTarget.style.background = 'var(--bg-elevated)'; }}
+                      onMouseLeave={e => { if (!selected) e.currentTarget.style.background = 'transparent'; }}
+                    >
+                      {selected
+                        ? <CheckCircle2 size={12} color="var(--primary-text)" />
+                        : <Server size={11} color="var(--text-4)" />}
+                      <span className="mono" style={{ flex: 1, fontSize: 11, fontWeight: selected ? 600 : 400,
+                        color: selected ? 'var(--primary-text)' : 'var(--text-1)' }}>{m.name}</span>
+                      {sizeMB && <span style={{ fontSize: 9, color: 'var(--text-4)' }}>{sizeMB}</span>}
+                    </div>
+                  );
+                })}
+
+                {/* Pull option — shown when search text doesn't match any installed model */}
+                {search.trim() && !isInstalled(search.trim()) && (
+                  <div style={{
+                    display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px',
+                    borderTop: filtered.length > 0 ? '1px solid var(--border-md)' : 'none',
+                    background: 'rgba(124,58,237,0.04)',
+                  }}>
+                    <Download size={12} color="#7C3AED" />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div className="mono" style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-1)' }}>{search.trim()}</div>
+                      <div style={{ fontSize: 9, color: 'var(--text-4)' }}>Not installed — pull from registry</div>
+                    </div>
+                    <button
+                      onClick={e => { e.stopPropagation(); handlePull(search.trim()); setOpen(false); setSearch(''); }}
+                      disabled={!!pulling}
+                      style={{
+                        padding: '3px 10px', borderRadius: 3, fontSize: 9, fontWeight: 700,
+                        border: '1px solid #7C3AED', background: 'rgba(124,58,237,0.1)',
+                        color: '#7C3AED', cursor: pulling ? 'not-allowed' : 'pointer',
+                        display: 'flex', alignItems: 'center', gap: 4,
+                      }}>
+                      <Download size={9} /> Pull
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          </>}
+        </div>
+      ) : (
+        <div style={{ padding: '6px 8px', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 4, fontSize: 10, color: 'var(--text-3)' }}>
+          {expertModelName || 'Select an expert to set provider model'}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ── Live Timer ─────────────────────────────────────── */
+function LiveTimer({ startedAt }: { startedAt: string }) {
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    const start = new Date(startedAt).getTime();
+    const interval = setInterval(() => {
+      setElapsed(Math.floor((Date.now() - start) / 1000));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [startedAt]);
+
+  const mins = Math.floor(elapsed / 60);
+  const secs = elapsed % 60;
+  return (
+    <span className="mono" style={{ color: '#D97706', fontWeight: 600 }}>
+      <Clock size={8} style={{ display: 'inline', verticalAlign: 'middle', marginRight: 2 }} />
+      {mins > 0 ? `${mins}m ${secs}s` : `${secs}s`}
+    </span>
+  );
+}
+
 /* ── Step Card ───────────────────────────────────────── */
-function StepCard({ step, index, onRemove, onUpdate, onSwap }: {
+function StepCard({ step, index, onRemove, onUpdate, onSwap, liveAgent }: {
   step: DraftStep; index: number; onRemove: () => void;
   onUpdate: (updates: Partial<DraftStep>) => void; onSwap: () => void;
+  liveAgent?: { agentId: string; stepId: string; status: string; tokensUsed?: number; durationMs?: number; cpuPercent?: number; gpuPercent?: number; memoryMb?: number; startedAt?: string; completedAt?: string; error?: string; output?: string };
 }) {
   const hasExpert = step.expert !== null;
   const m = hasExpert ? (ROLE_META[step.expert!.role as ExpertRole] || { emoji: '⚙️', label: step.expert!.role, color: '#6b7280', dimColor: 'rgba(107,114,128,0.07)' }) : null;
@@ -554,25 +1103,93 @@ function StepCard({ step, index, onRemove, onUpdate, onSwap }: {
   const stepImageInputRef = useRef<HTMLInputElement>(null);
   const [locInput, setLocInput] = useState('');
   const [showIntegrations, setShowIntegrations] = useState(false);
+  const [systemLocked, setSystemLocked] = useState(true);
+  const [showPreview, setShowPreview] = useState(false);
 
   return (
-    <div className="workflow-step" style={{ minWidth: 280, maxWidth: 340 }}>
-      {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <span className="mono" style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-3)', letterSpacing: '0.08em' }}>
-            STEP {String(index + 1).padStart(2, '0')}
-          </span>
-          <span style={{ fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 3,
-            background: isLocal ? 'rgba(5,150,105,0.1)' : 'rgba(37,99,235,0.1)',
-            color: isLocal ? '#059669' : '#2563EB' }}>
-            {isLocal ? 'LOCAL' : 'PROVIDER'}
-          </span>
-          {step.connectionType === 'parallel' && (
-            <span style={{ fontSize: 9, fontWeight: 700, padding: '1px 6px', borderRadius: 3,
-              background: 'rgba(124,58,237,0.1)', color: '#7C3AED', textTransform: 'uppercase' }}>Parallel</span>
+    <div className="workflow-step" style={{
+      minWidth: 280, maxWidth: 340,
+      borderColor: liveAgent?.status === 'completed' ? '#05966960' : liveAgent?.status === 'failed' ? 'rgba(220,38,38,0.4)' : liveAgent?.status === 'thinking' ? '#D9770660' : liveAgent?.status === 'spawned' ? '#2563EB40' : undefined,
+      boxShadow: liveAgent?.status === 'thinking' ? '0 0 12px rgba(217,119,6,0.15)' : liveAgent?.status === 'completed' ? '0 0 12px rgba(5,150,105,0.12)' : undefined,
+      transition: 'border-color 0.3s, box-shadow 0.3s',
+    }}>
+      {/* Live execution status bar */}
+      {liveAgent && (
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          padding: '5px 8px', marginBottom: 8, borderRadius: 4, fontSize: 9,
+          background: liveAgent.status === 'completed' ? 'rgba(5,150,105,0.08)' : liveAgent.status === 'failed' ? 'rgba(220,38,38,0.08)' : liveAgent.status === 'thinking' ? 'rgba(217,119,6,0.08)' : 'rgba(37,99,235,0.06)',
+          border: `1px solid ${liveAgent.status === 'completed' ? '#05966930' : liveAgent.status === 'failed' ? 'rgba(220,38,38,0.2)' : liveAgent.status === 'thinking' ? '#D9770630' : '#2563EB20'}`,
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+            {liveAgent.status === 'thinking' && <Loader2 size={10} style={{ animation: 'spin 1s linear infinite' }} color="#D97706" />}
+            {liveAgent.status === 'completed' && <CheckCircle2 size={10} color="#059669" />}
+            {liveAgent.status === 'failed' && <AlertCircle size={10} color="#DC2626" />}
+            {liveAgent.status === 'spawned' && <Zap size={10} color="#2563EB" />}
+            <span style={{
+              fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em',
+              color: liveAgent.status === 'completed' ? '#059669' : liveAgent.status === 'failed' ? '#DC2626' : liveAgent.status === 'thinking' ? '#D97706' : '#2563EB',
+            }}>
+              {liveAgent.status === 'thinking' ? 'Running' : liveAgent.status === 'spawned' ? 'Queued' : liveAgent.status}
+            </span>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            {liveAgent.durationMs != null && liveAgent.durationMs > 0 && (
+              <span className="mono" style={{ color: 'var(--text-4)' }}>
+                <Clock size={8} style={{ display: 'inline', verticalAlign: 'middle', marginRight: 2 }} />
+                {(liveAgent.durationMs / 1000).toFixed(1)}s
+              </span>
+            )}
+            {liveAgent.status === 'thinking' && liveAgent.startedAt && (
+              <LiveTimer startedAt={liveAgent.startedAt} />
+            )}
+            {liveAgent.tokensUsed != null && liveAgent.tokensUsed > 0 && (
+              <span className="mono" style={{ color: 'var(--text-4)' }}>
+                {liveAgent.tokensUsed.toLocaleString()} tok
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+      {/* Resource metrics (shown when completed or running) */}
+      {liveAgent && (liveAgent.status === 'completed' || liveAgent.status === 'thinking') && (liveAgent.cpuPercent != null || liveAgent.gpuPercent != null) && (
+        <div style={{
+          display: 'flex', gap: 8, marginBottom: 8, fontSize: 9, color: 'var(--text-4)',
+        }}>
+          {liveAgent.cpuPercent != null && (
+            <div style={{ flex: 1, background: 'var(--bg)', borderRadius: 3, padding: '3px 6px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 2 }}>
+                <span>CPU</span><span className="mono">{liveAgent.cpuPercent.toFixed(0)}%</span>
+              </div>
+              <div style={{ height: 2, background: 'var(--border)', borderRadius: 1, overflow: 'hidden' }}>
+                <div style={{ height: '100%', width: `${Math.min(liveAgent.cpuPercent, 100)}%`, background: liveAgent.cpuPercent > 80 ? '#DC2626' : '#059669', borderRadius: 1, transition: 'width 0.3s' }} />
+              </div>
+            </div>
+          )}
+          {liveAgent.gpuPercent != null && liveAgent.gpuPercent > 0 && (
+            <div style={{ flex: 1, background: 'var(--bg)', borderRadius: 3, padding: '3px 6px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 2 }}>
+                <span>GPU</span><span className="mono">{liveAgent.gpuPercent.toFixed(0)}%</span>
+              </div>
+              <div style={{ height: 2, background: 'var(--border)', borderRadius: 1, overflow: 'hidden' }}>
+                <div style={{ height: '100%', width: `${Math.min(liveAgent.gpuPercent, 100)}%`, background: liveAgent.gpuPercent > 80 ? '#DC2626' : '#7C3AED', borderRadius: 1, transition: 'width 0.3s' }} />
+              </div>
+            </div>
+          )}
+          {liveAgent.memoryMb != null && liveAgent.memoryMb > 0 && (
+            <div style={{ flex: 1, background: 'var(--bg)', borderRadius: 3, padding: '3px 6px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>RAM</span><span className="mono">{liveAgent.memoryMb > 1024 ? `${(liveAgent.memoryMb / 1024).toFixed(1)}G` : `${liveAgent.memoryMb.toFixed(0)}M`}</span>
+              </div>
+            </div>
           )}
         </div>
+      )}
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+        <span className="mono" style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-3)', letterSpacing: '0.08em' }}>
+          STEP {String(index + 1).padStart(2, '0')}
+        </span>
         <div style={{ display: 'flex', gap: 3 }}>
           <button className="btn btn-ghost btn-icon btn-sm" onClick={onSwap} title="Swap expert" style={{ padding: 4 }}>
             <RotateCcw size={11} />
@@ -581,6 +1198,14 @@ function StepCard({ step, index, onRemove, onUpdate, onSwap }: {
             style={{ padding: 4, color: 'var(--error)' }}><Trash2 size={11} /></button>
         </div>
       </div>
+
+      {/* Step name & description — editable */}
+      <input className="input" style={{ fontSize: 12, fontWeight: 600, padding: '4px 8px', marginBottom: 4, background: 'transparent', border: '1px solid transparent', borderRadius: 3 }}
+        placeholder="Step name (optional)"
+        value={step.name}
+        onChange={e => onUpdate({ name: e.target.value })}
+        onFocus={e => { e.currentTarget.style.borderColor = 'var(--border-md)'; e.currentTarget.style.background = 'var(--bg)'; }}
+        onBlur={e => { e.currentTarget.style.borderColor = 'transparent'; e.currentTarget.style.background = 'transparent'; }} />
 
       {/* Expert badge — required */}
       {hasExpert && m ? (
@@ -604,29 +1229,165 @@ function StepCard({ step, index, onRemove, onUpdate, onSwap }: {
         </div>
       )}
 
-      {/* Task description */}
-      <div style={{ marginBottom: 8 }}>
-        <div style={{ ...LABEL, display: 'flex', alignItems: 'center', gap: 4 }}>
-          Task Description <span style={{ color: 'var(--error)' }}>*</span>
-        </div>
-        <textarea className="textarea" style={{
-          minHeight: 50, fontSize: 12,
-          borderColor: !step.taskDescription.trim() && step.expert ? 'var(--error)' : undefined,
-        }}
-          placeholder="Describe what this expert should do..." value={step.taskDescription}
-          onChange={e => onUpdate({ taskDescription: e.target.value })} />
+      {/* Execution toggles — colored */}
+      <div style={{ display: 'flex', gap: 4, marginBottom: 8 }}>
+        {/* Sequential / Parallel toggle */}
+        <button
+          onClick={() => onUpdate({ connectionType: step.connectionType === 'parallel' ? 'sequential' : 'parallel' })}
+          style={{
+            flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4,
+            padding: '4px 8px', borderRadius: 4, fontSize: 9, fontWeight: 700,
+            border: '1px solid', cursor: 'pointer', transition: 'all 0.15s',
+            textTransform: 'uppercase',
+            background: step.connectionType === 'parallel' ? 'rgba(124,58,237,0.12)' : 'rgba(37,99,235,0.08)',
+            borderColor: step.connectionType === 'parallel' ? '#7C3AED' : '#2563EB50',
+            color: step.connectionType === 'parallel' ? '#7C3AED' : '#2563EB',
+          }}
+          title={step.connectionType === 'parallel' ? 'Running in parallel with other steps — click to switch to sequential' : 'Running one after another — click to switch to parallel execution'}>
+          {step.connectionType === 'parallel' ? <><Zap size={10} /> Parallel</> : <><ArrowRight size={10} /> Sequential</>}
+        </button>
+
+        {/* Share Memory toggle */}
+        <button
+          onClick={() => onUpdate({ shareMemory: !step.shareMemory })}
+          style={{
+            flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4,
+            padding: '4px 8px', borderRadius: 4, fontSize: 9, fontWeight: 700,
+            border: '1px solid', cursor: 'pointer', transition: 'all 0.15s',
+            textTransform: 'uppercase',
+            background: step.shareMemory ? 'rgba(16,185,129,0.12)' : 'rgba(107,114,128,0.06)',
+            borderColor: step.shareMemory ? '#10B981' : 'var(--border)',
+            color: step.shareMemory ? '#10B981' : 'var(--text-4)',
+          }}
+          title={step.shareMemory ? 'This step shares context with other steps — outputs visible to subsequent agents' : 'This step runs in isolation — no context sharing with other steps'}>
+          <Brain size={10} /> {step.shareMemory ? 'Shared' : 'Isolated'}
+        </button>
+
+        {/* Source badge */}
+        <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center',
+          padding: '4px 8px', borderRadius: 4, fontSize: 9, fontWeight: 700,
+          background: isLocal ? 'rgba(5,150,105,0.08)' : 'rgba(37,99,235,0.08)',
+          border: `1px solid ${isLocal ? '#05966950' : '#2563EB50'}`,
+          color: isLocal ? '#059669' : '#2563EB', textTransform: 'uppercase',
+        }}>
+          {isLocal ? <><Server size={9} /> Local</> : <><Cloud size={9} /> Cloud</>}
+        </span>
       </div>
+
+      {/* Prompt */}
+      <div style={{ marginBottom: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={{ ...LABEL, display: 'flex', alignItems: 'center', gap: 4, marginBottom: 4 }}>
+            Prompt <span style={{ color: 'var(--error)' }}>*</span>
+          </div>
+          <button
+            onClick={() => setShowPreview(true)}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 4,
+              padding: '2px 8px', borderRadius: 3, fontSize: 9, fontWeight: 600,
+              border: '1px solid var(--border)', cursor: 'pointer',
+              background: 'transparent', color: 'var(--text-3)',
+            }}
+            title="Preview as Markdown"
+          >
+            <Eye size={9} /> Preview
+          </button>
+        </div>
+        <div style={{
+          border: `1px solid ${!step.taskDescription.trim() && step.expert ? 'var(--error)' : 'var(--border-md)'}`,
+          borderRadius: 4, overflow: 'hidden',
+        }}>
+          <MonacoPromptEditor
+            value={step.taskDescription}
+            onChange={val => onUpdate({ taskDescription: val })}
+            height={80}
+            language="markdown"
+            placeholder="Describe what this expert should do..."
+          />
+        </div>
+      </div>
+
+      {/* Markdown Preview Dialog */}
+      {showPreview && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(7,7,26,0.85)',
+          zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }} onClick={() => setShowPreview(false)}>
+          <div className="animate-in" onClick={e => e.stopPropagation()} style={{
+            width: 600, maxHeight: '80vh', background: 'var(--bg-card)',
+            border: '1px solid var(--border-md)', borderRadius: 8,
+            display: 'flex', flexDirection: 'column', overflow: 'hidden',
+          }}>
+            <div style={{
+              padding: '14px 18px', borderBottom: '1px solid var(--border)',
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Eye size={14} color="var(--text-3)" />
+                <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-1)' }}>Markdown Preview</span>
+              </div>
+              <button className="btn btn-ghost btn-icon" onClick={() => setShowPreview(false)}
+                style={{ color: 'var(--text-3)' }}><X size={16} /></button>
+            </div>
+            <div style={{
+              padding: 20, flex: 1, overflowY: 'auto',
+              fontSize: 13, color: 'var(--text-1)', lineHeight: 1.7,
+            }}>
+              <MarkdownPreview text={step.taskDescription || '*No content to preview*'} />
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* System instructions */}
       <div style={{ marginBottom: 8 }}>
-        <div style={{ ...LABEL, display: 'flex', alignItems: 'center', gap: 4 }}>
-          <MessageSquare size={10} /> System Instructions
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={{ ...LABEL, display: 'flex', alignItems: 'center', gap: 4, marginBottom: 4 }}>
+            <MessageSquare size={10} /> System Prompt
+          </div>
+          <button
+            onClick={() => setSystemLocked(!systemLocked)}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 4,
+              padding: '2px 8px', borderRadius: 3, fontSize: 9, fontWeight: 600,
+              border: '1px solid', cursor: 'pointer',
+              background: systemLocked ? 'transparent' : 'rgba(124,58,237,0.1)',
+              borderColor: systemLocked ? 'var(--border)' : '#7C3AED',
+              color: systemLocked ? 'var(--text-4)' : '#7C3AED',
+            }}
+            title={systemLocked ? 'Click to edit system prompt' : 'Lock system prompt'}
+          >
+            {systemLocked ? <><Shield size={9} /> Locked</> : <><Settings size={9} /> Editing</>}
+          </button>
         </div>
-        <textarea className="textarea" style={{ minHeight: 40, fontSize: 11, fontFamily: 'var(--font-mono, monospace)' }}
-          placeholder="Override or extend the expert's system prompt for this step..."
-          value={step.systemInstructions}
-          onChange={e => onUpdate({ systemInstructions: e.target.value })} />
+        {systemLocked ? (
+          <div style={{
+            padding: '6px 8px', background: 'var(--bg)', border: '1px solid var(--border)',
+            borderRadius: 4, fontSize: 10, color: 'var(--text-4)',
+            fontFamily: 'var(--font-mono, monospace)', lineHeight: 1.5,
+            minHeight: 32, opacity: 0.7,
+          }}>
+            {step.systemInstructions || step.expert?.systemPrompt || 'You are a specialized AI expert in a multi-agent workflow.'}
+          </div>
+        ) : (
+          <div style={{ border: '1px solid #7C3AED40', borderRadius: 4, overflow: 'hidden' }}>
+            <MonacoPromptEditor
+              value={step.systemInstructions || step.expert?.systemPrompt || 'You are a specialized AI expert in a multi-agent workflow.'}
+              onChange={val => onUpdate({ systemInstructions: val })}
+              height={100}
+              language="markdown"
+            />
+          </div>
+        )}
       </div>
+
+      {/* Step description */}
+      <input className="input" style={{ fontSize: 10, padding: '3px 8px', marginBottom: 8, background: 'transparent', border: '1px solid transparent', borderRadius: 3, color: 'var(--text-3)' }}
+        placeholder="Step notes / description (optional)"
+        value={step.description}
+        onChange={e => onUpdate({ description: e.target.value })}
+        onFocus={e => { e.currentTarget.style.borderColor = 'var(--border-md)'; e.currentTarget.style.background = 'var(--bg)'; }}
+        onBlur={e => { e.currentTarget.style.borderColor = 'transparent'; e.currentTarget.style.background = 'transparent'; }} />
 
       {/* Attachments row — compact icons */}
       <div style={{ display: 'flex', gap: 4, marginBottom: 8 }}>
@@ -742,7 +1503,7 @@ function StepCard({ step, index, onRemove, onUpdate, onSwap }: {
             </button>
           </div>
           <div style={{ fontSize: 11, color: 'var(--text-2)', marginTop: 3, fontStyle: 'italic' }}>
-            "{step.voiceCommand.slice(0, 100)}{step.voiceCommand.length > 100 ? '...' : ''}"
+            &ldquo;{step.voiceCommand.slice(0, 100)}{step.voiceCommand.length > 100 ? '...' : ''}&rdquo;
           </div>
         </div>
       )}
@@ -753,12 +1514,6 @@ function StepCard({ step, index, onRemove, onUpdate, onSwap }: {
           <div style={{ ...LABEL, marginBottom: 0, display: 'flex', alignItems: 'center', gap: 4 }}>
             <Puzzle size={10} /> Integrations
           </div>
-          <button className="btn btn-ghost btn-sm"
-            onClick={() => setShowIntegrations(true)}
-            title="Add integration or plugin"
-            style={{ padding: '2px 6px', fontSize: 10, gap: 3, color: 'var(--primary-text)' }}>
-            <Plus size={10} /> Add
-          </button>
         </div>
         {step.integrations.length > 0 && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
@@ -792,7 +1547,7 @@ function StepCard({ step, index, onRemove, onUpdate, onSwap }: {
           }}
             onMouseEnter={e => (e.currentTarget.style.borderColor = 'var(--primary)')}
             onMouseLeave={e => (e.currentTarget.style.borderColor = 'var(--border)')}>
-            + APIs, tools, plugins
+            + APIs, tools, plugins, MCP
           </div>
         )}
       </div>
@@ -827,14 +1582,14 @@ function StepCard({ step, index, onRemove, onUpdate, onSwap }: {
         </div>
       )}
 
-      {/* Source footer */}
-      <div style={{ marginTop: 8, padding: '5px 8px', background: 'var(--bg)', border: '1px solid var(--border)',
-        borderRadius: 4, display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'var(--text-4)' }}>
-        <span>{isLocal ? 'Local' : 'Provider'}</span>
-        <span className="mono" style={{ color: isLocal ? '#059669' : '#2563EB' }}>
-          {step.expert?.modelName || 'no expert'}
-        </span>
-      </div>
+      {/* Model & Provider Selection — editable */}
+      <ModelSelector
+        modelSource={step.modelSource}
+        localModel={step.localModel}
+        expertModelName={step.expert?.modelName}
+        onSourceChange={src => onUpdate({ modelSource: src })}
+        onModelChange={lm => onUpdate({ localModel: lm })}
+      />
     </div>
   );
 }
@@ -1359,12 +2114,20 @@ function WorkflowBuilderInner() {
   const wfLogger = useWorkflowLogger(workflowIdRef.current);
 
   const [saving, setSaving] = useState(false);
+  const [showGoalPreview, setShowGoalPreview] = useState(false);
   const [saveErrors, setSaveErrors] = useState<{ name?: string; goal?: string; steps?: string; stepDetails?: Record<string, string>; general?: string }>({});
   const [saveSuccess, setSaveSuccess] = useState(false);
 
   const ws = useWorkflowWS();
   const { experts: dbExperts } = useExperts();
   const { workflows: dbWorkflows, mutate: mutateWorkflows } = useWorkflows();
+
+  // Draft auto-save
+  const draftCache = useDraftCache<{
+    workflowName: string; goalText: string; goalMode: string;
+    steps: Array<Record<string, unknown>>; tags: string[];
+    advancedConfig: Record<string, unknown>; permissions: Record<string, unknown>;
+  }>('workflow', workflowIdRef.current, { label: workflowName || 'Untitled Workflow' });
 
   // Log page load
   useEffect(() => {
@@ -1404,6 +2167,8 @@ function WorkflowBuilderInner() {
 
             return {
               id: (s.id as string) || uid(),
+              name: (s.name as string) || '',
+              description: (s.description as string) || '',
               expert: matchedExpert,
               taskDescription: (s.taskDescription as string) || '',
               systemInstructions: (s.systemInstructions as string) || '',
@@ -1415,6 +2180,7 @@ function WorkflowBuilderInner() {
                 ? { engine: localCfg.engine || 'ollama', modelName: localCfg.modelName || (localCfg as unknown as Record<string, unknown>).model as string || '' }
                 : { engine: 'ollama' as const, modelName: '' },
               connectionType: ((s.connectionType as string) || 'sequential') as 'sequential' | 'parallel',
+              shareMemory: s.shareMemory !== false,
               stepFiles: [],
               stepImages: [],
               voiceCommand: (s.voiceCommand as string) || '',
@@ -1433,6 +2199,38 @@ function WorkflowBuilderInner() {
 
     return () => { cancelled = true; };
   }, [editId, dbExperts]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Auto-save draft every 10 seconds
+  useEffect(() => {
+    const timer = setInterval(() => {
+      if (workflowName || steps.length > 0 || goalText) {
+        draftCache.saveDraft({
+          workflowName, goalText, goalMode,
+          steps: steps.map(s => ({
+            id: s.id, name: s.name, description: s.description,
+            expertId: s.expert?.id, taskDescription: s.taskDescription,
+            systemInstructions: s.systemInstructions, maxTokens: s.maxTokens,
+            temperature: s.temperature, modelSource: s.modelSource,
+            localModel: s.localModel, connectionType: s.connectionType,
+            shareMemory: s.shareMemory, voiceCommand: s.voiceCommand,
+            fileLocations: s.fileLocations, integrations: s.integrations,
+          })),
+          tags,
+          advancedConfig: advancedConfig as unknown as Record<string, unknown>,
+          permissions: permissions as unknown as Record<string, unknown>,
+        });
+      }
+    }, 10_000);
+    return () => clearInterval(timer);
+  }); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Recover draft on mount (only for new workflows, not edits)
+  const [showDraftRestore, setShowDraftRestore] = useState(false);
+  useEffect(() => {
+    if (!editId && draftCache.hasDraft()) {
+      setShowDraftRestore(true);
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* Validation */
   const goalContent = goalMode === 'text' ? goalText : (goalFiles[0]?.preview || '');
@@ -1453,9 +2251,9 @@ function WorkflowBuilderInner() {
       ? { engine: expert.localModelConfig.engine, modelName: expert.localModelConfig.modelName || '' }
       : { engine: 'ollama', modelName: '' };
     return {
-      id: uid(), expert, taskDescription: '', systemInstructions: '', collapsed: true,
+      id: uid(), expert, name: '', description: '', taskDescription: '', systemInstructions: '', collapsed: true,
       modelSource: expertSource, localModel: expertLocalModel,
-      connectionType: globalParallel ? 'parallel' : 'sequential',
+      connectionType: globalParallel ? 'parallel' : 'sequential', shareMemory: true,
       stepFiles: [], stepImages: [], voiceCommand: '', fileLocations: [],
       integrations: [],
     };
@@ -1560,6 +2358,8 @@ function WorkflowBuilderInner() {
         const expert = s.expert;
         const source = expert?.modelSource || s.modelSource;
         return {
+          name: s.name || null,
+          description: s.description || null,
           expertId: expert?.id || null,
           taskDescription: s.taskDescription,
           systemInstructions: s.systemInstructions || '',
@@ -1576,6 +2376,7 @@ function WorkflowBuilderInner() {
           temperature: s.temperature ?? (expert ? Number(expert.temperature) : 0.7),
           maxTokens: s.maxTokens ?? (expert?.maxTokens || 4096),
           connectionType: s.connectionType,
+          shareMemory: s.shareMemory,
           integrations: s.integrations.map(si => ({
             id: si.id, type: si.type, referenceId: si.referenceId,
             name: si.name, icon: si.icon, color: si.color,
@@ -1605,6 +2406,7 @@ function WorkflowBuilderInner() {
 
       mutateWorkflows();
       wfLogger.logInteraction('workflow.saved', { name: workflowName, mode: isUpdate ? 'update' : 'create' });
+      draftCache.clearDraft();
       router.push('/workflow');
     } catch (err) {
       setSaveErrors({ general: err instanceof Error ? err.message : 'Save failed' });
@@ -1674,6 +2476,8 @@ function WorkflowBuilderInner() {
             const source = expert?.modelSource || s.modelSource;
             return {
               stepId: s.id,
+              name: s.name || null,
+              description: s.description || null,
               expertId: expert?.id || null,
               taskDescription: s.taskDescription,
               systemInstructions: s.systemInstructions || '',
@@ -1690,6 +2494,7 @@ function WorkflowBuilderInner() {
               temperature: s.temperature ?? (expert ? Number(expert.temperature) : 0.7),
               maxTokens: s.maxTokens ?? (expert?.maxTokens || 4096),
               connectionType: s.connectionType,
+              shareMemory: s.shareMemory,
               integrations: s.integrations.map(si => ({
                 id: si.id,
                 type: si.type,
@@ -1728,6 +2533,69 @@ function WorkflowBuilderInner() {
         <ExpertSelectorModal onSelect={addExpert}
           onClose={() => { setShowSelector(false); setSwapIndex(null); }}
           allExperts={dbExperts} />
+      )}
+
+      {/* Draft restore banner */}
+      {showDraftRestore && (
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          padding: '12px 16px', marginBottom: 16, borderRadius: 8,
+          background: 'rgba(37,99,235,0.08)', border: '1px solid rgba(37,99,235,0.2)',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <RotateCcw size={14} color="#2563EB" />
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-1)' }}>Unsaved draft found</div>
+              <div style={{ fontSize: 11, color: 'var(--text-3)' }}>You have an unsaved workflow from a previous session</div>
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button onClick={() => { draftCache.clearDraft(); setShowDraftRestore(false); }}
+              style={{ padding: '6px 14px', borderRadius: 6, fontSize: 11, fontWeight: 600,
+                border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-3)', cursor: 'pointer' }}>
+              Discard
+            </button>
+            <button onClick={() => {
+              const draft = draftCache.loadDraft();
+              if (draft) {
+                setWorkflowName(draft.workflowName || '');
+                setGoalText(draft.goalText || '');
+                setGoalMode(draft.goalMode as 'text' | 'file' || 'text');
+                setTags(draft.tags || []);
+                if (draft.advancedConfig) setAdvancedConfig(draft.advancedConfig as unknown as typeof advancedConfig);
+                if (draft.permissions) setPermissions(draft.permissions as unknown as typeof permissions);
+                // Reconstruct steps (without expert objects — user re-selects)
+                if (draft.steps?.length) {
+                  const restored = draft.steps.map((s: Record<string, unknown>) => ({
+                    id: (s.id as string) || uid(),
+                    name: (s.name as string) || '',
+                    description: (s.description as string) || '',
+                    expert: null, // Expert must be re-selected
+                    taskDescription: (s.taskDescription as string) || '',
+                    systemInstructions: (s.systemInstructions as string) || '',
+                    maxTokens: (s.maxTokens as number) || 4096,
+                    temperature: s.temperature != null ? Number(s.temperature) : 0.7,
+                    collapsed: true,
+                    modelSource: ((s.modelSource as string) || 'local') as ModelSource,
+                    localModel: (s.localModel as LocalModelConfig) || { engine: 'ollama' as const, modelName: '' },
+                    connectionType: ((s.connectionType as string) || 'sequential') as 'sequential' | 'parallel',
+                    shareMemory: s.shareMemory !== false,
+                    stepFiles: [], stepImages: [],
+                    voiceCommand: (s.voiceCommand as string) || '',
+                    fileLocations: (s.fileLocations as string[]) || [],
+                    integrations: (s.integrations as StepIntegration[]) || [],
+                  }));
+                  setSteps(restored);
+                }
+              }
+              setShowDraftRestore(false);
+            }}
+              style={{ padding: '6px 14px', borderRadius: 6, fontSize: 11, fontWeight: 600,
+                border: '1px solid #2563EB', background: 'rgba(37,99,235,0.1)', color: '#2563EB', cursor: 'pointer' }}>
+              Restore Draft
+            </button>
+          </div>
+        </div>
       )}
 
       {/* Header */}
@@ -1798,10 +2666,15 @@ function WorkflowBuilderInner() {
           </div>
 
           {goalMode === 'text' ? (
-            <textarea className="textarea" style={{ minHeight: 140, fontSize: 13, fontFamily: 'var(--font-mono, monospace)', lineHeight: 1.6 }}
-              placeholder="Write your task goal in markdown format...&#10;&#10;## Objective&#10;Describe what you want to accomplish...&#10;&#10;## Requirements&#10;- Requirement 1&#10;- Requirement 2"
-              value={goalText}
-              onChange={e => { setGoalText(e.target.value); }} />
+            <div style={{ border: '1px solid var(--border-md)', borderRadius: 4, overflow: 'hidden' }}>
+              <MonacoPromptEditor
+                value={goalText}
+                onChange={val => setGoalText(val)}
+                height={160}
+                language="markdown"
+                placeholder="Write your task goal in markdown format..."
+              />
+            </div>
           ) : (
             <FileDropZone label="" accept=".md,.markdown,.txt" files={goalFiles}
               onFilesChange={f => { setGoalFiles(f); if (f[0]?.preview) wfLogger.saveGoal(f[0].preview, 'file'); }}
@@ -1819,10 +2692,43 @@ function WorkflowBuilderInner() {
           )}
 
           {hasGoal && (
-            <div style={{ marginTop: 10 }}>
+            <div style={{ marginTop: 10, display: 'flex', gap: 8 }}>
               <button className="btn btn-secondary btn-sm" onClick={suggestChain} title="Auto-suggest chain">
                 <Sparkles size={13} /> Suggest Chain
               </button>
+              <button className="btn btn-secondary btn-sm" onClick={() => setShowGoalPreview(true)} title="Preview goal as rendered markdown">
+                <Eye size={13} /> Preview
+              </button>
+            </div>
+          )}
+          {showGoalPreview && (
+            <div style={{
+              position: 'fixed', inset: 0, background: 'rgba(7,7,26,0.85)',
+              zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }} onClick={() => setShowGoalPreview(false)}>
+              <div className="animate-in" onClick={e => e.stopPropagation()} style={{
+                width: 700, maxHeight: '80vh', background: 'var(--bg-card)',
+                border: '1px solid var(--border-md)', borderRadius: 8,
+                display: 'flex', flexDirection: 'column', overflow: 'hidden',
+              }}>
+                <div style={{
+                  padding: '14px 18px', borderBottom: '1px solid var(--border)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <Eye size={14} color="var(--text-3)" />
+                    <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-1)' }}>Goal Preview</span>
+                  </div>
+                  <button className="btn btn-ghost btn-icon" onClick={() => setShowGoalPreview(false)}
+                    style={{ color: 'var(--text-3)' }}><X size={16} /></button>
+                </div>
+                <div style={{
+                  padding: 24, flex: 1, overflowY: 'auto',
+                  fontSize: 14, color: 'var(--text-1)', lineHeight: 1.7,
+                }}>
+                  <MarkdownPreview text={goalContent || '*No content to preview*'} />
+                </div>
+              </div>
             </div>
           )}
           {saveErrors.goal && (
@@ -1876,28 +2782,6 @@ function WorkflowBuilderInner() {
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-1)' }}>Workflow Steps</div>
-            {/* Global parallel toggle */}
-            <button
-              onClick={() => {
-                const next = !globalParallel;
-                setGlobalParallel(next);
-                // Apply to all existing steps
-                setSteps(prev => prev.map(s => ({ ...s, connectionType: next ? 'parallel' : 'sequential' })));
-                wfLogger.logInteraction('parallel.toggled', { enabled: next });
-              }}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 5,
-                padding: '4px 10px', borderRadius: 20, fontSize: 10, fontWeight: 600,
-                border: `1px solid ${globalParallel ? '#7C3AED' : 'var(--border)'}`,
-                background: globalParallel ? 'rgba(124,58,237,0.1)' : 'transparent',
-                color: globalParallel ? '#7C3AED' : 'var(--text-4)',
-                cursor: 'pointer', transition: 'all 0.15s',
-              }}
-              title={globalParallel ? 'All steps run in parallel' : 'Steps run sequentially — click to enable parallel'}
-            >
-              {globalParallel ? <ToggleRight size={13} /> : <ToggleLeft size={13} />}
-              {globalParallel ? 'Parallel On' : 'Sequential'}
-            </button>
           </div>
           <div style={{ display: 'flex', gap: 6 }}>
             {steps.length > 0 && (
@@ -1946,7 +2830,8 @@ function WorkflowBuilderInner() {
               {steps.map((step, idx) => (
                 <div key={step.id} style={{ display: 'flex', alignItems: 'flex-start' }}>
                   <StepCard step={step} index={idx} onRemove={() => removeStep(step.id)}
-                    onUpdate={updates => updateStep(step.id, updates)} onSwap={() => openSwap(idx)} />
+                    onUpdate={updates => updateStep(step.id, updates)} onSwap={() => openSwap(idx)}
+                    liveAgent={Object.values(ws.agents).find(a => a.stepId === step.id)} />
                   {idx < steps.length - 1 && (
                     <div className="step-connector" style={{ alignSelf: 'center', paddingTop: 0 }}><ArrowRight size={16} /></div>
                   )}
@@ -1998,19 +2883,19 @@ function WorkflowBuilderInner() {
             <FileText size={14} color="var(--text-3)" /> Workflow Templates
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 10 }}>
-            {dbWorkflows.map((wf: Record<string, any>) => (
+            {dbWorkflows.map((wf: { id: string; name: string; description?: string; estimatedTokens?: number; totalRuns?: number; successfulRuns?: number }) => (
               <div key={wf.id} className="card-hover" style={{ padding: 14, cursor: 'pointer' }}
                 onClick={() => { setWorkflowName(wf.name); wfLogger.logInteraction('template.selected', { templateId: wf.id }); }}>
                 <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-1)', marginBottom: 4 }}>{wf.name}</div>
                 <div style={{ fontSize: 12, color: 'var(--text-3)', lineHeight: 1.4, marginBottom: 10 }}>{wf.description}</div>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                   <div style={{ display: 'flex', gap: 10, fontSize: 11, color: 'var(--text-3)' }}>
-                    <span className="mono">{fmt(wf.estimatedTokens)} tok</span>
-                    <span>{wf.totalRuns} runs</span>
+                    <span className="mono">{fmt(wf.estimatedTokens ?? 0)} tok</span>
+                    <span>{wf.totalRuns ?? 0} runs</span>
                   </div>
-                  {wf.totalRuns > 0 && (
+                  {(wf.totalRuns ?? 0) > 0 && (
                     <span className="badge badge-success" style={{ fontSize: 10 }}>
-                      <CheckCircle2 size={9} /> {((wf.successfulRuns / wf.totalRuns) * 100).toFixed(0)}%
+                      <CheckCircle2 size={9} /> {(((wf.successfulRuns ?? 0) / (wf.totalRuns ?? 1)) * 100).toFixed(0)}%
                     </span>
                   )}
                 </div>

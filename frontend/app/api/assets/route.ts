@@ -4,6 +4,7 @@ import { eq, desc, sql } from 'drizzle-orm';
 import { writeFile, mkdir } from 'fs/promises';
 import { join, extname } from 'path';
 import { randomUUID } from 'crypto';
+import { logStatus } from '@/lib/status-log';
 
 const UPLOAD_DIR = join(process.cwd(), '..', 'uploads', 'assets');
 
@@ -16,10 +17,13 @@ function detectFileType(mime: string, ext: string): string {
   return 'file';
 }
 
-/* GET /api/assets?folder=<path> — list assets, optionally filtered by folder */
+/* GET /api/assets?folder=<path>&expertId=<id>&sourceType=<type>&expertRunId=<id> — list assets */
 export async function GET(req: NextRequest) {
   const folder = req.nextUrl.searchParams.get('folder');
   const search = req.nextUrl.searchParams.get('q');
+  const expertId = req.nextUrl.searchParams.get('expertId');
+  const sourceType = req.nextUrl.searchParams.get('sourceType');
+  const expertRunId = req.nextUrl.searchParams.get('expertRunId');
 
   try {
     let query = db.select().from(assets).orderBy(desc(assets.updatedAt)).$dynamic();
@@ -31,6 +35,15 @@ export async function GET(req: NextRequest) {
       query = query.where(
         sql`(${assets.name} ILIKE ${'%' + search + '%'} OR ${assets.fileName} ILIKE ${'%' + search + '%'})`
       );
+    }
+    if (expertId) {
+      query = query.where(eq(assets.expertId, expertId));
+    }
+    if (sourceType) {
+      query = query.where(eq(assets.sourceType, sourceType));
+    }
+    if (expertRunId) {
+      query = query.where(eq(assets.expertRunId, expertRunId));
     }
 
     const rows = await query;
@@ -95,9 +108,13 @@ export async function POST(req: NextRequest) {
       created.push(inserted);
     }
 
+    for (const a of created) {
+      logStatus('info', `Asset uploaded: ${a.fileName}`, 'asset', { id: a.id, fileType: a.fileType, sizeBytes: a.sizeBytes });
+    }
     return NextResponse.json({ assets: created, count: created.length }, { status: 201 });
   } catch (err) {
     console.error('[assets POST]', err);
+    logStatus('error', `Asset upload failed: ${err instanceof Error ? err.message : 'Unknown'}`, 'asset', { error: err instanceof Error ? err.message : 'Unknown' });
     return NextResponse.json({ error: 'Upload failed' }, { status: 500 });
   }
 }
@@ -131,9 +148,11 @@ export async function DELETE(req: NextRequest) {
     if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 });
     const [deleted] = await db.delete(assets).where(eq(assets.id, id)).returning();
     if (!deleted) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+    logStatus('info', `Asset deleted: ${id}`, 'asset', { id });
     return NextResponse.json({ deleted: true, id });
   } catch (err) {
     console.error('[assets DELETE]', err);
+    logStatus('error', `Asset deletion failed: ${err instanceof Error ? err.message : 'Unknown'}`, 'asset', { error: err instanceof Error ? err.message : 'Unknown' });
     return NextResponse.json({ error: 'Delete failed' }, { status: 500 });
   }
 }

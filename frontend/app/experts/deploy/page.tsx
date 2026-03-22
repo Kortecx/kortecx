@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence, type Variants } from 'framer-motion';
 import {
@@ -53,7 +53,7 @@ const ALL_MODELS = PROVIDERS.flatMap(p =>
   })),
 );
 
-const PROVIDER_TABS = PROVIDERS.filter(p => p.connected && p.models.length > 0);
+const PROVIDER_TABS = PROVIDERS.filter(p => p.models.length > 0);
 
 const CAP_COLORS: Record<string, string> = {
   reasoning: '#8b5cf6', coding: '#06b6d4', analysis: '#0ea5e9',
@@ -251,6 +251,20 @@ export default function DeployExpertPage() {
   const [localEngine, setLocalEngine]       = useState<'ollama' | 'llamacpp'>('ollama');
   const [localModelName, setLocalModelName] = useState('llama3.1:8b');
   const [localBaseUrl, setLocalBaseUrl]     = useState('');
+  const [localModels, setLocalModels] = useState<Array<{ name: string; size: number }>>([]);
+  const [localModelsLoading, setLocalModelsLoading] = useState(false);
+
+  const ENGINE_URL = process.env.NEXT_PUBLIC_ENGINE_URL || 'http://localhost:8000';
+
+  useEffect(() => {
+    if (modelSourceType !== 'local') return;
+    setLocalModelsLoading(true);
+    fetch(`${ENGINE_URL}/api/orchestrator/models/${localEngine}`)
+      .then(r => r.ok ? r.json() : { models: [] })
+      .then(data => setLocalModels(data.models || []))
+      .catch(() => setLocalModels([]))
+      .finally(() => setLocalModelsLoading(false));
+  }, [modelSourceType, localEngine]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* Step 3 — prompt & config */
   const [systemPrompt, setSystemPrompt] = useState('');
@@ -266,6 +280,61 @@ export default function DeployExpertPage() {
   const [deployedId, setDeployedId]   = useState('');
   const [error, setError]             = useState('');
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+
+  /* API key check state */
+  const [showApiKeyPrompt, setShowApiKeyPrompt] = useState(false);
+  const [apiKeyMissing, setApiKeyMissing] = useState('');
+  const [providerKeys, setProviderKeys] = useState<Record<string, boolean>>({});
+  const [keysLoaded, setKeysLoaded] = useState(false);
+
+  /* Fetch provider API key status on mount */
+  useEffect(() => {
+    fetch('/api/providers')
+      .then(r => r.ok ? r.json() : { providers: [] })
+      .then(data => {
+        const keys: Record<string, boolean> = {};
+        for (const p of (data.providers || [])) {
+          keys[p.id || p.slug] = p.apiKeySet === true || p.connected === true;
+        }
+        setProviderKeys(keys);
+        setKeysLoaded(true);
+      })
+      .catch(() => setKeysLoaded(true));
+  }, []);
+
+  /* Cache expert state to localStorage for resume after API key setup */
+  const CACHE_KEY = 'kortecx_expert_deploy_cache';
+
+  const cacheState = () => {
+    const state = { name, description, role, modelSourceType, activeProvider, modelId, localEngine, localModelName, localBaseUrl, systemPrompt, temperature, maxTokens, tags, isPublic, step };
+    localStorage.setItem(CACHE_KEY, JSON.stringify(state));
+  };
+
+  /* Restore cached state on mount */
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(CACHE_KEY);
+      if (raw) {
+        const cached = JSON.parse(raw);
+        if (cached.name) setName(cached.name);
+        if (cached.description) setDescription(cached.description);
+        if (cached.role) setRole(cached.role);
+        if (cached.modelSourceType) setModelSourceType(cached.modelSourceType);
+        if (cached.activeProvider) setActiveProvider(cached.activeProvider);
+        if (cached.modelId) setModelId(cached.modelId);
+        if (cached.localEngine) setLocalEngine(cached.localEngine);
+        if (cached.localModelName) setLocalModelName(cached.localModelName);
+        if (cached.localBaseUrl) setLocalBaseUrl(cached.localBaseUrl);
+        if (cached.systemPrompt) setSystemPrompt(cached.systemPrompt);
+        if (cached.temperature != null) setTemperature(cached.temperature);
+        if (cached.maxTokens) setMaxTokens(cached.maxTokens);
+        if (cached.tags) setTags(cached.tags);
+        if (cached.isPublic != null) setIsPublic(cached.isPublic);
+        if (cached.step) setStep(cached.step);
+        localStorage.removeItem(CACHE_KEY);
+      }
+    } catch { /* ignore */ }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* Derived */
   const selectedModel   = ALL_MODELS.find(m => m.id === modelId);
@@ -288,6 +357,19 @@ export default function DeployExpertPage() {
 
   function nextStep() {
     if (!validateStep(step)) return;
+
+    // On step 2 with provider source, check API key
+    if (step === 2 && modelSourceType === 'provider') {
+      const providerSlug = selectedModel?.providerId || activeProvider;
+      const hasKey = providerKeys[providerSlug] || providerKeys[providerSlug.toLowerCase()];
+      if (!hasKey && keysLoaded) {
+        const providerName = PROVIDERS.find(p => p.id === providerSlug || p.slug === providerSlug)?.name || providerSlug;
+        setApiKeyMissing(providerName);
+        setShowApiKeyPrompt(true);
+        return;
+      }
+    }
+
     setStep(s => Math.min(4, s + 1));
     setError('');
   }
@@ -348,7 +430,24 @@ export default function DeployExpertPage() {
       if (!res.ok) throw new Error((await res.json()).error ?? 'Deploy failed');
       const data = await res.json();
       setDeployProgress(100);
-      setTimeout(() => { setDeployed(true); setDeployedId(data.expert?.id ?? ''); }, 400);
+      setTimeout(() => {
+        setDeployed(true);
+        setDeployedId(data.expert?.id ?? '');
+        localStorage.removeItem(CACHE_KEY);
+        // Auto-redirect to My Experts after 2 seconds
+        setTimeout(() => router.push('/experts'), 2000);
+        // Log deployment
+        fetch('/api/logs', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            level: 'info',
+            message: `Expert "${name}" deployed (${modelSourceType === 'local' ? `${localEngine}/${localModelName}` : modelId})`,
+            source: 'expert',
+            metadata: { expertName: name, role, modelSource: modelSourceType, model: modelSourceType === 'local' ? localModelName : modelId },
+          }),
+        }).catch(() => {});
+      }, 400);
     } catch (e: unknown) {
       clearInterval(interval);
       setError(e instanceof Error ? e.message : 'Deploy failed');
@@ -468,13 +567,33 @@ export default function DeployExpertPage() {
             </div>
           </Field>
 
-          <Field label="Model Name" required hint={localEngine === 'ollama' ? 'e.g. llama3.1:8b, mistral:7b, codellama:13b' : 'The model loaded in your llama.cpp server'}>
-            <input
-              value={localModelName}
-              onChange={e => { setLocalModelName(e.target.value); setFieldErrors(f => ({ ...f, model: '' })); }}
-              placeholder={localEngine === 'ollama' ? 'llama3.1:8b' : 'loaded-model'}
-              style={{ ...inputStyle, borderColor: fieldErrors.model ? '#ef4444' : undefined }}
-            />
+          <Field label="Model" required hint={localModels.length > 0 ? `${localModels.length} models available on ${localEngine}` : `Enter model name or start ${localEngine} to see available models`}>
+            {localModelsLoading ? (
+              <div style={{ ...inputStyle, display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-3)' }}>
+                <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} />
+                Loading models...
+              </div>
+            ) : localModels.length > 0 ? (
+              <select
+                value={localModelName}
+                onChange={e => { setLocalModelName(e.target.value); setFieldErrors(f => ({ ...f, model: '' })); }}
+                style={{ ...inputStyle, borderColor: fieldErrors.model ? '#ef4444' : undefined, cursor: 'pointer' }}
+              >
+                <option value="">Select a model...</option>
+                {localModels.map(m => (
+                  <option key={m.name} value={m.name}>
+                    {m.name} {m.size ? `(${(m.size / 1e9).toFixed(1)} GB)` : ''}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input
+                value={localModelName}
+                onChange={e => { setLocalModelName(e.target.value); setFieldErrors(f => ({ ...f, model: '' })); }}
+                placeholder={localEngine === 'ollama' ? 'llama3.1:8b' : 'loaded-model'}
+                style={{ ...inputStyle, borderColor: fieldErrors.model ? '#ef4444' : undefined }}
+              />
+            )}
           </Field>
 
           <Field label="Server URL" hint="Leave blank for default. Ollama: http://localhost:11434, llama.cpp: http://localhost:8080">
@@ -843,6 +962,71 @@ export default function DeployExpertPage() {
   ══════════════════════════════════════════════════ */
   return (
     <div style={{ padding: 28, maxWidth: 860, margin: '0 auto' }}>
+      {/* API Key Missing Dialog */}
+      {showApiKeyPrompt && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(7,7,26,0.85)',
+          zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}>
+          <motion.div
+            initial={{ opacity: 0, scale: 0.96 }}
+            animate={{ opacity: 1, scale: 1 }}
+            style={{
+              width: 460, background: 'var(--bg-surface)', border: '1px solid var(--border-md)',
+              borderRadius: 12, overflow: 'hidden', boxShadow: '0 24px 80px rgba(0,0,0,0.2)',
+            }}
+          >
+            <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{ width: 36, height: 36, borderRadius: 8, background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <Lock size={18} color="#f59e0b" />
+                </div>
+                <div>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-1)' }}>API Key Required</div>
+                  <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 2 }}>
+                    {apiKeyMissing} requires an API key to proceed
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div style={{ padding: '20px 24px' }}>
+              <p style={{ fontSize: 13, color: 'var(--text-2)', lineHeight: 1.6, margin: '0 0 16px' }}>
+                To use <strong style={{ color: 'var(--text-1)' }}>{apiKeyMissing}</strong> models, you need to configure an API key.
+                Your current expert configuration will be saved so you can return after adding the key.
+              </p>
+              <div style={{ padding: '10px 14px', borderRadius: 6, background: 'var(--bg)', border: '1px solid var(--border)', fontSize: 11, color: 'var(--text-3)', marginBottom: 16 }}>
+                <strong style={{ color: 'var(--text-2)' }}>Where to get a key:</strong>
+                <div style={{ marginTop: 4 }}>
+                  Visit your provider&apos;s dashboard to generate an API key, then add it in
+                  Kortecx Settings → Provider Keys.
+                </div>
+              </div>
+            </div>
+            <div style={{ padding: '14px 24px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+              <button onClick={() => setShowApiKeyPrompt(false)} style={{
+                padding: '8px 16px', borderRadius: 7, fontSize: 12,
+                border: '1px solid var(--border-md)', background: 'transparent',
+                color: 'var(--text-3)', cursor: 'pointer',
+              }}>
+                Cancel
+              </button>
+              <button onClick={() => {
+                cacheState();
+                setShowApiKeyPrompt(false);
+                router.push('/providers/keys');
+              }} style={{
+                display: 'flex', alignItems: 'center', gap: 6,
+                padding: '8px 18px', borderRadius: 7, fontSize: 12, fontWeight: 700,
+                border: '1.5px solid #f59e0b', background: 'rgba(245,158,11,0.1)',
+                color: '#f59e0b', cursor: 'pointer',
+              }}>
+                <ExternalLink size={12} /> Add API Key
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
+
       {/* Page header */}
       <motion.div
         initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }}

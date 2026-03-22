@@ -118,7 +118,7 @@ export interface ExpertStats {
 
 /* ── Model Source ────────────────────────────────────── */
 export type ModelSource = 'local' | 'provider';
-export type LocalInferenceEngine = 'ollama' | 'llamacpp';
+export type LocalInferenceEngine = 'ollama' | 'llamacpp' | 'vllm';
 
 export interface LocalModelConfig {
   engine: LocalInferenceEngine;
@@ -286,44 +286,10 @@ export interface WorkflowStepConfig {
   connectionType: StepConnectionType;
 }
 
-/* ── Training ────────────────────────────────────────── */
-export type TrainingJobStatus =
-  | 'queued' | 'preparing' | 'training' | 'evaluating'
-  | 'completed' | 'failed' | 'cancelled';
-
-export interface TrainingJob {
-  id: string;
-  name: string;
-  expertId?: string;       /* expert being trained/created */
-  baseModelId: string;
-  datasetId: string;
-  status: TrainingJobStatus;
-  progress: number;         /* 0–100 */
-  createdAt: string;
-  startedAt?: string;
-  completedAt?: string;
-  estimatedCompletionAt?: string;
-  epochs: number;
-  currentEpoch?: number;
-  learningRate: number;
-  batchSize: number;
-  trainingSamples: number;
-  validationSamples: number;
-  evalMetrics?: {
-    loss: number;
-    accuracy: number;
-    f1?: number;
-    perplexity?: number;
-  };
-  gpuHours?: number;
-  costUsd?: number;
-  logs: string[];
-  hyperparams: Record<string, unknown>;
-}
-
 /* ── Data Synthesis ──────────────────────────────────── */
 export type DatasetStatus = 'draft' | 'generating' | 'ready' | 'failed' | 'archived';
-export type DataFormat = 'jsonl' | 'csv' | 'parquet' | 'alpaca' | 'chatml' | 'sharegpt';
+export type DataFormat = 'jsonl' | 'csv' | 'parquet' | 'delta' | 'alpaca' | 'chatml' | 'sharegpt';
+export type TrainingMethod = 'sft' | 'dpo' | 'rlhf' | 'orpo';
 
 export interface Dataset {
   id: string;
@@ -593,3 +559,131 @@ export interface ContentItem {
   status: 'draft' | 'published' | 'scheduled';
   createdAt: Date;
 }
+
+/* ── Quorum Multi-Agent Orchestration ──────────────── */
+
+export type QuorumRunStatus = 'queued' | 'running' | 'complete' | 'failed' | 'cancelled';
+export type QuorumPhase = 'decompose' | 'execute' | 'recovery' | 'synthesize';
+export type QuorumAgentRole = 'master' | 'worker';
+export type QuorumAgentStatus = 'created' | 'thinking' | 'success' | 'failed' | 'recovered';
+export type QuorumBackend = 'ollama' | 'llamacpp';
+
+export interface QuorumSubmitRequest {
+  project: string;
+  task: string;
+  model: string;
+  backend: QuorumBackend;
+  workers: number;
+  prompt?: string;
+  temperature?: number;
+  max_tokens?: number;
+  retries?: number;
+}
+
+export interface QuorumRunSummary {
+  id: string;
+  project: string;
+  task: string;
+  status: QuorumRunStatus;
+  backend: string;
+  model: string;
+  workers: number;
+  phase?: string;
+  totalTokens?: number;
+  totalDurationMs?: number;
+  createdAt: string;
+  startedAt?: string;
+  finishedAt?: string;
+  error?: string;
+}
+
+export interface QuorumRunResult {
+  runId: string;
+  totalTokens: number;
+  totalDurationMs: number;
+  decomposeMs: number;
+  executeMs: number;
+  synthesizeMs: number;
+  finalOutput: string;
+  workersSucceeded: number;
+  workersFailed: number;
+  workersRecovered: number;
+}
+
+export interface QuorumPhaseUpdate {
+  runId: string;
+  phase: QuorumPhase;
+  status: 'started' | 'complete';
+  detail?: string;
+  wallClockMs?: number;
+  sumIndividualMs?: number;
+  speedup?: number;
+  parallel?: boolean;
+  subtasks?: string[];
+}
+
+export interface QuorumAgentEvent {
+  runId: string;
+  agentId: string;
+  role?: QuorumAgentRole;
+  phase?: QuorumPhase;
+  subtask?: string;
+  model?: string;
+  reasoning?: string;
+  tokensUsed?: number;
+  durationMs?: number;
+  contentPreview?: string;
+  attempt?: number;
+  status?: QuorumAgentStatus;
+  error?: string;
+  attempts?: number;
+  originalAgent?: string;
+}
+
+export interface QuorumMetricsSnapshot {
+  activeRuns: number;
+  queuedRuns: number;
+  maxConcurrent: number;
+  cpuUsage: number;
+  memoryUsageMb: number;
+  tokensPerSec: number;
+  totalRunsCompleted: number;
+  totalTokensUsed: number;
+  avgRunDurationMs: number;
+}
+
+export interface QuorumOperation {
+  id: string;
+  runId: string;
+  agentId: string;
+  phase: QuorumPhase;
+  operation: string;
+  promptPreview?: string;
+  responsePreview?: string;
+  tokensUsed: number;
+  durationMs: number;
+  status: string;
+  error?: string;
+  createdAt: string;
+}
+
+export interface QuorumProjectConfig {
+  name: string;
+  config: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type QuorumEventType =
+  | 'quorum.run.queued'
+  | 'quorum.run.started'
+  | 'quorum.run.complete'
+  | 'quorum.run.failed'
+  | 'quorum.phase.update'
+  | 'quorum.agent.created'
+  | 'quorum.agent.thinking'
+  | 'quorum.agent.output'
+  | 'quorum.agent.failed'
+  | 'quorum.agent.recovered'
+  | 'quorum.metrics.snapshot'
+  | 'quorum.error';

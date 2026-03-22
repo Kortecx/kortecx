@@ -105,6 +105,57 @@ services:
           ls -t /backups/kortecx_dev_*.sql.gz 2>/dev/null | tail -n +$$((BACKUP_RETENTION + 1)) | xargs -r rm -f
         done
 
+  # ── Python Executor (sandboxed script execution) ───────────────────────────
+  executor-python:
+    image: python:3.11-slim
+    container_name: kortecx_executor_python
+    restart: unless-stopped
+    working_dir: /workspace
+    volumes:
+      - executor_python:/workspace
+      - ./engine/steps:/steps:ro
+    environment:
+      PYTHONDONTWRITEBYTECODE: '1'
+    command: >
+      sh -c "pip install --quiet numpy pandas requests httpx pydantic duckdb &&
+             echo 'Python executor ready' &&
+             tail -f /dev/null"
+    healthcheck:
+      test: ['CMD', 'python', '-c', 'print("ok")']
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '2.0'
+
+  # ── TypeScript/React Executor (sandboxed script execution) ────────────────
+  executor-typescript:
+    image: node:20-slim
+    container_name: kortecx_executor_ts
+    restart: unless-stopped
+    working_dir: /workspace
+    volumes:
+      - executor_ts:/workspace
+      - ./engine/steps:/steps:ro
+    command: >
+      sh -c "npm init -y > /dev/null 2>&1 &&
+             npm install --quiet tsx esbuild react react-dom @types/react > /dev/null 2>&1 &&
+             echo 'TypeScript executor ready' &&
+             tail -f /dev/null"
+    healthcheck:
+      test: ['CMD', 'node', '-e', 'console.log("ok")']
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '2.0'
+
 # ── Named volumes (persist across container recreation) ────────────────────
 # Crash-proof guarantees:
 #   - PostgreSQL: WAL durability (fsync, synchronous_commit, full_page_writes)
@@ -129,3 +180,9 @@ volumes:
     labels:
       com.kortecx.description: "MLflow tracking data, experiments, and artifacts"
       com.kortecx.backup: "required"
+  executor_python:
+    labels:
+      com.kortecx.description: "Python executor workspace — sandboxed script execution"
+  executor_ts:
+    labels:
+      com.kortecx.description: "TypeScript executor workspace — sandboxed script execution"

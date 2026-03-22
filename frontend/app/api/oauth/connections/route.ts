@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { socialConnections } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
+import { logStatus } from '@/lib/status-log';
 
 /**
  * GET /api/oauth/connections
@@ -55,9 +56,11 @@ export async function DELETE(request: Request) {
 
   try {
     await db.delete(socialConnections).where(eq(socialConnections.platform, platform));
+    logStatus('info', `OAuth connection disconnected: ${platform}`, 'oauth', { platform });
     return NextResponse.json({ success: true, platform, status: 'disconnected' });
   } catch (error) {
     console.error(`[OAuth] Failed to disconnect ${platform}:`, error);
+    logStatus('error', `OAuth disconnect failed for ${platform}`, 'oauth', { platform, error: error instanceof Error ? error.message : 'Unknown' });
     return NextResponse.json({ error: 'Failed to disconnect' }, { status: 500 });
   }
 }

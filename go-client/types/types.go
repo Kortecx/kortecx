@@ -301,6 +301,82 @@ type ProviderUsage struct {
 	TotalTokens  int     `json:"totalTokens"`
 }
 
+// --- Assets ---
+
+// Asset represents a file or artifact stored on disk with DB metadata.
+type Asset struct {
+	ID          string         `json:"id"`
+	Name        string         `json:"name"`
+	Description string         `json:"description,omitempty"`
+	Folder      string         `json:"folder"`
+	MimeType    string         `json:"mimeType"`
+	FileType    string         `json:"fileType"`
+	FilePath    string         `json:"filePath"`
+	FileName    string         `json:"fileName"`
+	SizeBytes   int64          `json:"sizeBytes"`
+	Tags        []string       `json:"tags,omitempty"`
+	Metadata    map[string]any `json:"metadata,omitempty"`
+	ExpertID    string         `json:"expertId,omitempty"`
+	ExpertRunID string         `json:"expertRunId,omitempty"`
+	SourceType  string         `json:"sourceType,omitempty"`
+	DatasetID   string         `json:"datasetId,omitempty"`
+	CreatedAt   time.Time      `json:"createdAt"`
+	UpdatedAt   time.Time      `json:"updatedAt"`
+}
+
+// AssetListOptions provides filter parameters for listing assets.
+type AssetListOptions struct {
+	Folder      string `json:"folder,omitempty"`
+	ExpertID    string `json:"expertId,omitempty"`
+	SourceType  string `json:"sourceType,omitempty"`
+	ExpertRunID string `json:"expertRunId,omitempty"`
+	Search      string `json:"q,omitempty"`
+}
+
+// RegisterAssetsRequest is the request body for bulk asset registration.
+type RegisterAssetsRequest struct {
+	Assets []Asset `json:"assets"`
+}
+
+// --- Expert Runs ---
+
+// ExpertRun tracks a single expert execution with its result.
+type ExpertRun struct {
+	ID            string     `json:"id"`
+	ExpertID      string     `json:"expertId"`
+	ExpertName    string     `json:"expertName"`
+	Status        string     `json:"status"`
+	Model         string     `json:"model,omitempty"`
+	Engine        string     `json:"engine,omitempty"`
+	Temperature   float64    `json:"temperature,omitempty"`
+	MaxTokens     int        `json:"maxTokens,omitempty"`
+	SystemPrompt  string     `json:"systemPrompt,omitempty"`
+	UserPrompt    string     `json:"userPrompt,omitempty"`
+	ResponseText  string     `json:"responseText,omitempty"`
+	TokensUsed    int        `json:"tokensUsed"`
+	DurationMs    int        `json:"durationMs"`
+	ArtifactCount int        `json:"artifactCount"`
+	ErrorMessage  string     `json:"errorMessage,omitempty"`
+	Metadata      map[string]any `json:"metadata,omitempty"`
+	StartedAt     *time.Time `json:"startedAt,omitempty"`
+	CompletedAt   *time.Time `json:"completedAt,omitempty"`
+	CreatedAt     time.Time  `json:"createdAt"`
+}
+
+// RunExpertRequest starts a server-side expert execution.
+type RunExpertRequest struct {
+	ExpertID     string   `json:"expertId"`
+	ExpertName   string   `json:"expertName"`
+	Model        string   `json:"model,omitempty"`
+	Engine       string   `json:"engine,omitempty"`
+	Temperature  float64  `json:"temperature,omitempty"`
+	MaxTokens    int      `json:"maxTokens,omitempty"`
+	SystemPrompt string   `json:"systemPrompt,omitempty"`
+	UserPrompt   string   `json:"userPrompt,omitempty"`
+	Role         string   `json:"role,omitempty"`
+	Tags         []string `json:"tags,omitempty"`
+}
+
 // --- Model Source ---
 
 // ModelSource indicates whether an expert runs on local inference or a cloud provider.
@@ -504,6 +580,15 @@ type LocalInferenceResult struct {
 	Error      string  `json:"error,omitempty"`
 }
 
+// --- Pagination ---
+
+// ListOptions provides optional pagination and sorting for list operations.
+type ListOptions struct {
+	Limit  int    `json:"limit,omitempty"`
+	Offset int    `json:"offset,omitempty"`
+	Sort   string `json:"sort,omitempty"`
+}
+
 // --- Request types ---
 
 type CreateTaskRequest struct {
@@ -579,6 +664,21 @@ type StartTrainingRequest struct {
 	BatchSize    int     `json:"batchSize"`
 }
 
+// UpdateProviderRequest updates an existing provider's configuration.
+type UpdateProviderRequest struct {
+	Name    *string `json:"name,omitempty"`
+	BaseURL *string `json:"baseUrl,omitempty"`
+	APIKey  *string `json:"apiKey,omitempty"`
+}
+
+// UpdateDatasetRequest updates an existing dataset.
+type UpdateDatasetRequest struct {
+	Name        *string  `json:"name,omitempty"`
+	Description *string  `json:"description,omitempty"`
+	Status      *string  `json:"status,omitempty"`
+	Tags        []string `json:"tags,omitempty"`
+}
+
 type CreateProviderRequest struct {
 	Name    string `json:"name"`
 	Type    string `json:"type"`
@@ -648,4 +748,58 @@ type CacheMcpRequest struct {
 	Language    string `json:"language"`
 	Code        string `json:"code"`
 	Filename    string `json:"filename,omitempty"`
+}
+
+// --- Model Comparison ---
+
+// CompareModelsRequest sends a side-by-side model comparison request.
+type CompareModelsRequest struct {
+	Prompt       string   `json:"prompt"`
+	SystemPrompt string   `json:"system_prompt,omitempty"`
+	ModelA       string   `json:"model_a"`
+	EngineA      string   `json:"engine_a"`
+	ModelB       string   `json:"model_b"`
+	EngineB      string   `json:"engine_b"`
+	Temperature  float64  `json:"temperature"`
+	MaxTokens    int      `json:"max_tokens"`
+	DocumentURLs []string `json:"document_urls,omitempty"`
+}
+
+// CompareModelResult is the result for a single model in a comparison.
+type CompareModelResult struct {
+	Model        string  `json:"model"`
+	Engine       string  `json:"engine"`
+	Response     string  `json:"response"`
+	Tokens       int     `json:"tokens"`
+	DurationMs   int     `json:"duration_ms"`
+	TokensPerSec float64 `json:"tokens_per_sec"`
+	Error        *string `json:"error,omitempty"`
+}
+
+// CompareModelsResponse is the response from POST /api/models/compare.
+type CompareModelsResponse struct {
+	ModelA        CompareModelResult `json:"model_a"`
+	ModelB        CompareModelResult `json:"model_b"`
+	Temperature   float64            `json:"temperature"`
+	Prompt        string             `json:"prompt"`
+	MLflowRunID   *string            `json:"mlflow_run_id"`
+	DocumentCount int                `json:"document_count,omitempty"`
+	DocumentNames []string           `json:"document_names,omitempty"`
+}
+
+// --- Integration Request/Response ---
+
+// CreateConnectionRequest creates a new integration connection.
+type CreateConnectionRequest struct {
+	IntegrationID string            `json:"integrationId"`
+	Name          string            `json:"name"`
+	Config        map[string]string `json:"config"`
+}
+
+// ConnectionTestResult is the response from testing an integration connection.
+type ConnectionTestResult struct {
+	Success  bool   `json:"success"`
+	Message  string `json:"message"`
+	Latency  int    `json:"latencyMs,omitempty"`
+	TestedAt string `json:"testedAt,omitempty"`
 }

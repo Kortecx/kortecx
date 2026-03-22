@@ -26,8 +26,11 @@ Log structure:
 
 from __future__ import annotations
 
+import gzip
 import json
 import logging
+import os
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -349,6 +352,76 @@ class WorkflowLogger:
                     }
                 )
         return {"workflowId": workflow_id, "files": files}
+
+    def rotate_logs(self, max_age_days: int = 14, max_total_mb: int = 200) -> dict[str, Any]:
+        """Rotate log files: archive old logs, purge very old archives.
+
+        1. Compress ``.log`` / ``.md`` files older than *max_age_days* into ``.gz`` archives.
+        2. Remove ``.gz`` archives older than ``2 * max_age_days``.
+
+        Returns a summary dict with ``archived``, ``removed``, and ``bytes_freed``.
+        """
+        now = time.time()
+        archive_threshold = max_age_days * 86_400
+        purge_threshold = 2 * max_age_days * 86_400
+
+        archived = 0
+        removed = 0
+        bytes_freed = 0
+
+        # Phase 1: compress old log/md files
+        for f in list(self.base.rglob("*")):
+            if not f.is_file():
+                continue
+            if f.suffix not in (".log", ".md"):
+                continue
+            age = now - f.stat().st_mtime
+            if age <= archive_threshold:
+                continue
+
+            gz_path = f.with_suffix(f.suffix + ".gz")
+            try:
+                data = f.read_bytes()
+                original_size = len(data)
+                with gzip.open(gz_path, "wb") as gz:
+                    gz.write(data)
+                # Preserve mtime on archive so purge phase works correctly
+                stat = f.stat()
+                os.utime(gz_path, (stat.st_atime, stat.st_mtime))
+                f.unlink()
+                compressed_size = gz_path.stat().st_size
+                bytes_freed += original_size - compressed_size
+                archived += 1
+                logger.info("Log rotated: %s -> %s (saved %d bytes)", f.name, gz_path.name, original_size - compressed_size)
+            except OSError as exc:
+                logger.warning("Failed to archive %s: %s", f, exc)
+
+        # Phase 2: remove very old archives
+        for f in list(self.base.rglob("*.gz")):
+            if not f.is_file():
+                continue
+            age = now - f.stat().st_mtime
+            if age <= purge_threshold:
+                continue
+            try:
+                size = f.stat().st_size
+                f.unlink()
+                removed += 1
+                bytes_freed += size
+                logger.info("Archive purged: %s (%d bytes)", f.name, size)
+            except OSError as exc:
+                logger.warning("Failed to remove archive %s: %s", f, exc)
+
+        # Clean up empty directories
+        for d in sorted(self.base.rglob("*"), reverse=True):
+            if d.is_dir() and not any(d.iterdir()):
+                try:
+                    d.rmdir()
+                except OSError:
+                    pass
+
+        logger.info("Log rotation complete: %d archived, %d removed, %d bytes freed", archived, removed, bytes_freed)
+        return {"archived": archived, "removed": removed, "bytes_freed": bytes_freed}
 
 
 workflow_logger = WorkflowLogger()

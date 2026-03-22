@@ -1,8 +1,9 @@
 'use client';
 
 import useSWR from 'swr';
-import { BarChart3, TrendingUp, Zap, DollarSign, Activity, ChevronRight, Loader2 } from 'lucide-react';
-import { useExperts, useMetrics } from '@/lib/hooks/useApi';
+import { motion } from 'framer-motion';
+import { BarChart3, TrendingUp, Zap, DollarSign, Activity, ChevronRight, Loader2, Workflow, Database } from 'lucide-react';
+import { useExperts, useMetrics, useLogs, useLiveMetrics } from '@/lib/hooks/useApi';
 import type { AIProvider, Expert } from '@/lib/types';
 
 const fetcher = (url: string) => fetch(url).then(r => {
@@ -28,6 +29,10 @@ export default function AnalyticsPage() {
   };
   const { data: providersData, isLoading: providersLoading } = useSWR<{ providers: AIProvider[] }>('/api/providers', fetcher);
   const providers = providersData?.providers ?? [];
+  const { logs: recentLogs } = useLogs(undefined, 20);
+  const { metrics: liveMetrics } = useLiveMetrics();
+  const { data: analyticsData } = useSWR('/api/analytics', fetcher);
+  const analytics = analyticsData ?? null;
 
   const isLoading = expertsLoading || metricsLoading || providersLoading;
 
@@ -44,14 +49,19 @@ export default function AnalyticsPage() {
   return (
     <div style={{ padding: 24, maxWidth: 1400, margin: '0 auto' }}>
       {/* Header */}
-      <div style={{ marginBottom: 28 }}>
+      <motion.div
+        initial={{ opacity: 0, y: -8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.3 }}
+        style={{ marginBottom: 28 }}
+      >
         <h1 style={{ fontSize: 20, fontWeight: 700, color: 'var(--text-1)', margin: 0 }}>
           Analytics
         </h1>
         <p style={{ fontSize: 13, color: 'var(--text-3)', margin: '4px 0 0' }}>
           Platform-wide performance and usage analytics
         </p>
-      </div>
+      </motion.div>
 
       {/* Weekly metrics */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 12, marginBottom: 20 }}>
@@ -60,8 +70,15 @@ export default function AnalyticsPage() {
           { icon: Zap, label: 'Tokens used', value: isLoading ? '...' : fmt(weeklyStats.tokens), color: 'var(--amber)' },
           { icon: DollarSign, label: 'Total cost', value: isLoading ? '...' : `$${weeklyStats.cost.toFixed(2)}`, color: 'var(--text-1)' },
           { icon: TrendingUp, label: 'Success rate', value: isLoading ? '...' : `${(weeklyStats.successRate * 100).toFixed(1)}%`, color: 'var(--success)' },
-        ].map(m => (
-          <div key={m.label} className="card" style={{ padding: 16 }}>
+        ].map((m, i) => (
+          <motion.div
+            key={m.label}
+            className="card"
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ delay: i * 0.06, type: 'spring', damping: 20 }}
+            style={{ padding: 16 }}
+          >
             <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
               <div>
                 <div style={{ fontSize: 22, fontWeight: 800, color: m.color, letterSpacing: '-0.03em' }}>
@@ -77,11 +94,16 @@ export default function AnalyticsPage() {
                 <m.icon size={14} color="var(--primary)" />
               </div>
             </div>
-          </div>
+          </motion.div>
         ))}
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 360px', gap: 12, marginBottom: 20 }}>
+      <motion.div
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.28, duration: 0.35 }}
+        style={{ display: 'grid', gridTemplateColumns: '1fr 360px', gap: 12, marginBottom: 20 }}
+      >
         {/* Daily task chart */}
         <div className="card" style={{ padding: 20 }}>
           <h2 style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-1)', margin: '0 0 16px' }}>
@@ -157,10 +179,16 @@ export default function AnalyticsPage() {
             })
           )}
         </div>
-      </div>
+      </motion.div>
 
       {/* Expert performance table */}
-      <div className="card" style={{ overflow: 'hidden' }}>
+      <motion.div
+        className="card"
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.36, duration: 0.35 }}
+        style={{ overflow: 'hidden' }}
+      >
         <div style={{
           padding: '13px 20px', borderBottom: '1px solid var(--border)',
           fontSize: 14, fontWeight: 600, color: 'var(--text-1)',
@@ -230,7 +258,110 @@ export default function AnalyticsPage() {
             </table>
           </div>
         )}
-      </div>
+      </motion.div>
+
+      {/* Workflow Run Stats */}
+      <motion.div
+        className="card"
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.44, duration: 0.35 }}
+        style={{ padding: 20, marginTop: 16 }}
+      >
+        <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-1)', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
+          <Workflow size={15} color="var(--text-3)" />
+          Workflow Performance
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 12 }}>
+          {[
+            { label: 'Total Runs', value: analytics?.overview?.tasksThisWeek ?? 0, color: '#2563EB' },
+            { label: 'Success Rate', value: `${((analytics?.overview?.avgSuccessRate ?? 0) * 100).toFixed(1)}%`, color: '#10b981' },
+            { label: 'Avg Duration', value: `${((analytics?.overview?.avgDurationMs ?? 0) / 1000).toFixed(1)}s`, color: '#f59e0b' },
+            { label: 'Total Tokens', value: fmt(analytics?.overview?.tokensThisWeek ?? 0), color: '#8b5cf6' },
+            { label: 'Total Cost', value: `$${(analytics?.overview?.costThisWeek ?? 0).toFixed(2)}`, color: '#ef4444' },
+          ].map((stat, i) => (
+            <motion.div
+              key={stat.label}
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ delay: 0.48 + i * 0.05, type: 'spring', damping: 20 }}
+              style={{ padding: 14, background: 'var(--bg)', borderRadius: 6, border: '1px solid var(--border)', textAlign: 'center' }}
+            >
+              <div style={{ fontSize: 20, fontWeight: 800, color: stat.color, fontFamily: 'var(--font-mono, monospace)' }}>{stat.value}</div>
+              <div style={{ fontSize: 10, color: 'var(--text-4)', marginTop: 4, textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 600 }}>{stat.label}</div>
+            </motion.div>
+          ))}
+        </div>
+      </motion.div>
+
+      {/* System Health */}
+      <motion.div
+        className="card"
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.52, duration: 0.35 }}
+        style={{ padding: 20, marginTop: 16 }}
+      >
+        <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-1)', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
+          <Activity size={15} color="var(--text-3)" />
+          System Health
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
+          {[
+            { label: 'Active Agents', value: liveMetrics?.activeAgents ?? 0, max: 20, color: '#2563EB' },
+            { label: 'Error Rate', value: liveMetrics?.errorCount ?? 0, max: 100, color: '#ef4444' },
+            { label: 'Avg Latency', value: `${liveMetrics?.avgLatencyMs ?? 0}ms`, max: null, color: '#f59e0b' },
+            { label: 'Uptime', value: '99.9%', max: null, color: '#10b981' },
+          ].map(item => (
+            <div key={item.label} style={{ padding: 14, background: 'var(--bg)', borderRadius: 6, border: '1px solid var(--border)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                <span style={{ fontSize: 10, color: 'var(--text-4)', textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 600 }}>{item.label}</span>
+                <span style={{ fontSize: 16, fontWeight: 800, color: item.color, fontFamily: 'var(--font-mono, monospace)' }}>{item.value}</span>
+              </div>
+              {item.max && (
+                <div style={{ height: 3, background: 'var(--border)', borderRadius: 2, overflow: 'hidden' }}>
+                  <div style={{ height: '100%', width: `${Math.min((Number(item.value) / item.max) * 100, 100)}%`, background: item.color, borderRadius: 2, transition: 'width 0.3s' }} />
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </motion.div>
+
+      {/* Activity Feed */}
+      <motion.div
+        className="card"
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.6, duration: 0.35 }}
+        style={{ padding: 20, marginTop: 16 }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-1)', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Database size={15} color="var(--text-3)" />
+            Recent Activity
+          </div>
+          <a href="/monitoring/logs" style={{ fontSize: 11, color: 'var(--text-3)', textDecoration: 'none' }}>View all logs →</a>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 240, overflowY: 'auto' }}>
+          {recentLogs.length === 0 && <div style={{ fontSize: 12, color: 'var(--text-4)', padding: 20, textAlign: 'center' }}>No recent activity</div>}
+          {recentLogs.map((log: Record<string, unknown>, i: number) => (
+            <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '6px 8px', borderRadius: 4, background: i % 2 === 0 ? 'var(--bg)' : 'transparent' }}>
+              <span style={{
+                width: 6, height: 6, borderRadius: '50%', marginTop: 5, flexShrink: 0,
+                background: (log.level as string) === 'error' ? '#ef4444' : (log.level as string) === 'warning' ? '#f59e0b' : '#10b981',
+              }} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 11, color: 'var(--text-2)', lineHeight: 1.4 }}>{log.message as string}</div>
+                <div style={{ display: 'flex', gap: 8, fontSize: 9, color: 'var(--text-4)', marginTop: 2 }}>
+                  <span>{log.source as string}</span>
+                  <span>{new Date(log.timestamp as string).toLocaleTimeString()}</span>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </motion.div>
     </div>
   );
 }

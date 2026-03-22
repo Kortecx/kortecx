@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import {
-  Search, X, Brain, GitBranch, ListTodo, GraduationCap,
+  Search, X, Brain, GitBranch, ListTodo,
   Database, AlertTriangle, FolderOpen, Loader2, ArrowRight,
   Clock,
 } from 'lucide-react';
@@ -11,7 +11,7 @@ import {
 /* ─── Types ──────────────────────────────────────────── */
 interface SearchResult {
   id: string;
-  type: 'expert' | 'workflow' | 'task' | 'training' | 'dataset' | 'alert' | 'project';
+  type: 'expert' | 'workflow' | 'task' | 'dataset' | 'alert' | 'project';
   name: string;
   description: string | null;
   status: string | null;
@@ -26,7 +26,6 @@ const CATEGORY_META: Record<ResultCategory, { label: string; icon: typeof Brain;
   expert:   { label: 'Experts',       icon: Brain,           color: '#D97706' },
   workflow: { label: 'Workflows',     icon: GitBranch,       color: '#2563EB' },
   task:     { label: 'Tasks',         icon: ListTodo,        color: '#F04500' },
-  training: { label: 'Training Jobs', icon: GraduationCap,   color: '#7C3AED' },
   dataset:  { label: 'Datasets',      icon: Database,        color: '#7C3AED' },
   alert:    { label: 'Alerts',        icon: AlertTriangle,   color: '#DC2626' },
   project:  { label: 'Projects',      icon: FolderOpen,      color: '#059669' },
@@ -37,7 +36,6 @@ const TYPE_FILTERS: { value: string; label: string }[] = [
   { value: 'expert',   label: 'Experts' },
   { value: 'workflow', label: 'Workflows' },
   { value: 'task',     label: 'Tasks' },
-  { value: 'training', label: 'Training' },
   { value: 'dataset',  label: 'Datasets' },
   { value: 'alert',    label: 'Alerts' },
   { value: 'project',  label: 'Projects' },
@@ -296,7 +294,7 @@ export default function SearchCommandDialog({ open, onClose }: Props) {
             }}>
               <div style={{ fontSize: 12, marginBottom: 12 }}>Search across your workspace</div>
               <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
-                {['expert', 'workflow', 'task', 'training', 'dataset', 'alert', 'project'].map(t => {
+                {['expert', 'workflow', 'task', 'dataset', 'alert', 'project'].map(t => {
                   const meta = CATEGORY_META[t as ResultCategory];
                   const Icon = meta.icon;
                   return (

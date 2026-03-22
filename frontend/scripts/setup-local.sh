@@ -38,7 +38,11 @@ echo "       Database is ready."
 # Push schema (idempotent)
 echo "[3/3] Syncing Drizzle schema..."
 cd "$FRONTEND_DIR"
-npx drizzle-kit push 2>&1 | tail -3
+# Run versioned migrations (safe, idempotent)
+npx tsx scripts/migrate.ts 2>&1 || {
+  echo "Migration runner failed, falling back to drizzle-kit push..."
+  npx drizzle-kit push 2>&1 | tail -3
+}
 
 echo ""
 echo "All services up. Starting Next.js dev server..."

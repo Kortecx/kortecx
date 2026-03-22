@@ -78,6 +78,20 @@
       "when": 1773895986151,
       "tag": "0010_lush_gorilla_man",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1774096526441,
+      "tag": "0011_gray_kree",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1774396800000,
+      "tag": "0012_expert_assets_columns",
+      "breakpoints": true
     }
   ]
 }

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, alerts } from '@/lib/db';
 import { eq, desc } from 'drizzle-orm';
+import { logStatus } from '@/lib/status-log';
 
 /* GET /api/alerts — optional ?severity=warning */
 export async function GET(req: NextRequest) {
@@ -38,6 +39,7 @@ export async function POST(req: NextRequest) {
         .where(eq(alerts.id, body.alertId))
         .returning();
 
+      logStatus('info', `Alert ${body.action}: ${body.alertId}`, 'alert', { id: body.alertId });
       return NextResponse.json({ success: true, alert: updated });
     }
 
@@ -54,9 +56,11 @@ export async function POST(req: NextRequest) {
       expertId: expertId ?? null,
     }).returning();
 
+    logStatus('info', `Alert created: ${title}`, 'alert', { id, severity });
     return NextResponse.json({ alert: inserted }, { status: 201 });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Invalid request body';
+    logStatus('error', `Alert operation failed: ${message}`, 'alert', { error: message });
     return NextResponse.json({ error: message }, { status: 400 });
   }
 }

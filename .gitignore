@@ -112,4 +112,30 @@ temp/
 *.tfstate
 *.tfstate.backup
 engine/uploads/
+engine/steps/execution/
+engine/logs/
+engine/experts/local/[0-9][0-9][0-9][0-9]-*/
 backups/*.sql.gz
+
+# ═══════════════════════════════════════════════════════════
+# Test Artifacts & Coverage (source files are tracked)
+# ═══════════════════════════════════════════════════════════
+# Python
+htmlcov/
+.coverage
+coverage.xml
+.pytest_cache/
+
+# Go
+cover.out
+coverage.out
+*.test
+
+# Frontend
+frontend/coverage/
+frontend/.vitest/
+
+# Keep test source files — only exclude generated outputs
+!engine/tests/
+!go-client/quorum/*_test.go
+!frontend/tests/

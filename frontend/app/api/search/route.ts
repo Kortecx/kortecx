@@ -1,14 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import {
-  db, experts, workflows, tasks, trainingJobs, datasets, alerts, projects,
-  type Expert, type Workflow, type Task, type TrainingJob, type Dataset, type Alert, type Project,
+  db, experts, workflows, tasks, datasets, alerts, projects,
+  type Expert, type Workflow, type Task, type Dataset, type Alert, type Project,
 } from '@/lib/db';
 import { ilike, or, desc, sql } from 'drizzle-orm';
 
 /* ─── Search result shape ────────────────────────────── */
 interface SearchResult {
   id: string;
-  type: 'expert' | 'workflow' | 'task' | 'training' | 'dataset' | 'alert' | 'project';
+  type: 'expert' | 'workflow' | 'task' | 'dataset' | 'alert' | 'project';
   name: string;
   description: string | null;
   status: string | null;
@@ -125,34 +125,6 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    /* ── Training Jobs ────────────────────────────── */
-    if (!type || type === 'training') {
-      searches.push(
-        db.select()
-          .from(trainingJobs)
-          .where(or(
-            ilike(trainingJobs.name, pattern),
-            ilike(trainingJobs.baseModelId, pattern),
-          )!)
-          .orderBy(desc(trainingJobs.createdAt))
-          .limit(limit)
-          .then((rows: TrainingJob[]) => {
-            for (const r of rows) {
-              results.push({
-                id: r.id,
-                type: 'training',
-                name: r.name,
-                description: `Base model: ${r.baseModelId}`,
-                status: r.status,
-                meta: { progress: r.progress, epochs: r.epochs, currentEpoch: r.currentEpoch },
-                href: '/training',
-                updatedAt: r.createdAt?.toISOString() ?? null,
-              });
-            }
-          }),
-      );
-    }
-
     /* ── Datasets ─────────────────────────────────── */
     if (!type || type === 'dataset') {
       searches.push(
@@ -175,7 +147,7 @@ export async function GET(req: NextRequest) {
                 description: r.description,
                 status: r.status,
                 meta: { sampleCount: r.sampleCount, qualityScore: r.qualityScore, tags: r.tags },
-                href: '/training/data',
+                href: '/data',
                 updatedAt: r.updatedAt?.toISOString() ?? null,
               });
             }

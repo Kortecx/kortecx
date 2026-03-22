@@ -6,7 +6,7 @@
 <h2 align="center" style="border-bottom: none">Executable Intelligence Platform</h2>
 
 <p align="center">
-Open-source platform for orchestrating AI agents, training models, and building agentic workflows — local or cloud.
+Open-source platform for orchestrating AI agents and building agentic workflows — local or cloud.
 </p>
 
 <div align="center">
@@ -32,8 +32,8 @@ Open-source platform for orchestrating AI agents, training models, and building 
 
 - **Workflow Builder** — Chain AI agents (sequential or parallel) with shared memory, file attachments, integrations, and plugins per step
 - **Dual Inference** — Run models locally (Ollama / llama.cpp) or via cloud providers (Anthropic, OpenAI, Google, Groq, Mistral, OpenRouter)
-- **Expert System** — 16 specialized agent roles, deployable with custom system prompts, fine-tuning, and performance tracking
-- **Training Lab** — Fine-tune models with SFT, DPO, RLHF, ORPO using Unsloth/LoRA acceleration
+- **Expert System** — 16 agent roles + 12 prebuilt marketplace experts, deployable with custom system prompts and performance tracking
+- **Intelligence** — Fine-tune local models with LoRA, manage local/cloud model registries, cloud inference via [Kortecx Cloud](https://www.kortecx.com)
 - **Data Engineering** — SQL analytics (DuckDB, PySpark), vector search (Qdrant), HuggingFace Hub integration
 - **Connections** — Plug in external APIs, databases, tools, and marketplace plugins to any workflow step
 - **Monitoring** — Real-time metrics, structured logs, alerts, cost tracking
@@ -46,6 +46,22 @@ Open-source platform for orchestrating AI agents, training models, and building 
 └──────────┘     └──────────┘     └──────────┘     └──────────┘
                     Shared Memory (per-run KV store)
 ```
+
+---
+
+## New Features
+
+### Quorum Multi-Agent Engine
+Distributed orchestration with parallel/sequential execution, backpressure management, failure recovery, and real-time WebSocket telemetry. See [docs/QUORUM_ENGINE.md](docs/QUORUM_ENGINE.md).
+
+### Expert Marketplace
+12 prebuilt production-ready experts (coding, research, marketing, data engineering, legal, finance, etc.) with per-file versioning and custom expert creation. See [docs/EXPERT_SYSTEM.md](docs/EXPERT_SYSTEM.md).
+
+### Enhanced Workflow Builder
+Monaco-powered prompt editors, live execution status overlays, model pull with progress, MCP server integration, colored execution toggles, and workflow configuration dialogs. See [docs/WORKFLOW_BUILDER.md](docs/WORKFLOW_BUILDER.md).
+
+### Enterprise Monitoring
+Full observability with execution artifacts, script auto-execution, graceful failure handling, metrics auto-capture, and comprehensive analytics. See [docs/MONITORING.md](docs/MONITORING.md).
 
 ---
 

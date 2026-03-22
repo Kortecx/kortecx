@@ -188,6 +188,31 @@ class SynthesisService:
             "progress": round(job.current_samples / max(job.config.target_samples, 1) * 100),
         }
 
+    async def _generate_batch(self, job: SynthesisJob, batch_size: int) -> list[dict]:
+        """Generate multiple samples concurrently, returning successful results.
+
+        Fires ``batch_size`` parallel generation tasks via asyncio.gather.
+        Individual failures are logged and skipped so the rest of the batch
+        is not lost.  The caller is responsible for appending results to the
+        job and updating progress counters.
+        """
+        cfg = job.config
+        batch_start = job.current_samples
+
+        tasks = [self._generate_sample(cfg, batch_start + i + 1) for i in range(batch_size)]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        successful: list[dict] = []
+        for r in results:
+            if isinstance(r, Exception):
+                logger.warning("Sample generation failed in batch: %s", r)
+                continue
+            if r is not None:
+                sample, tokens = r
+                successful.append({"sample": sample, "tokens": tokens})
+
+        return successful
+
     async def _run_job(self, job: SynthesisJob) -> None:
         """Execute a synthesis job — generate samples in batches."""
         cfg = job.config
@@ -200,27 +225,33 @@ class SynthesisService:
         output_dir.mkdir(parents=True, exist_ok=True)
 
         try:
-            # Generate in batches
+            # Generate in batches, respecting the job's batch_size config
             remaining = cfg.target_samples
+            batch_num = 0
             while remaining > 0 and job.status == SynthesisStatus.RUNNING:
                 batch_size = min(cfg.batch_size, remaining)
-                batch_start = cfg.target_samples - remaining
+                batch_num += 1
 
-                # Run batch concurrently
-                tasks = [self._generate_sample(cfg, batch_start + i + 1) for i in range(batch_size)]
-                results = await asyncio.gather(*tasks, return_exceptions=True)
+                # Run batch concurrently via dedicated method
+                batch_results = await self._generate_batch(job, batch_size)
 
-                for r in results:
-                    if isinstance(r, Exception):
-                        logger.warning("Sample generation failed: %s", r)
-                        continue
-                    if r is not None:
-                        sample, tokens = r
-                        job.samples.append(sample)
-                        job.current_samples += 1
-                        job.tokens_used += tokens
+                for item in batch_results:
+                    job.samples.append(item["sample"])
+                    job.current_samples += 1
+                    job.tokens_used += item["tokens"]
 
                 remaining = cfg.target_samples - job.current_samples
+
+                # Log batch progress
+                progress = round(job.current_samples / max(cfg.target_samples, 1) * 100)
+                logger.info(
+                    "Synthesis job %s batch #%d complete: %d/%d samples (%d%%)",
+                    cfg.job_id,
+                    batch_num,
+                    job.current_samples,
+                    cfg.target_samples,
+                    progress,
+                )
 
                 # Brief yield to allow cancellation
                 await asyncio.sleep(0.01)

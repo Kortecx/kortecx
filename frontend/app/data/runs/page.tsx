@@ -5,17 +5,17 @@ import {
   History, Search, ChevronDown, ChevronUp, Clock,
   CheckCircle2, AlertTriangle, Loader2, XCircle,
 } from 'lucide-react';
-import { useSynthesisJobs, useWorkflowRuns, useTrainingJobs } from '@/lib/hooks/useApi';
+import { useSynthesisJobs, useWorkflowRuns } from '@/lib/hooks/useApi';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-type RunType = 'all' | 'synthesis' | 'workflow' | 'training';
+type RunType = 'all' | 'synthesis' | 'workflow';
 type RunStatus = 'all' | 'completed' | 'running' | 'failed' | 'queued' | 'cancelled';
 
 interface UnifiedRun {
   id: string;
   name: string;
-  type: 'synthesis' | 'workflow' | 'training';
+  type: 'synthesis' | 'workflow';
   status: string;
   progress: number;
   tokensUsed: number;
@@ -49,7 +49,6 @@ function timeAgo(d: string): string {
 export default function RunsHistoryPage() {
   const { jobs: synthJobs } = useSynthesisJobs();
   const { runs: workflowRuns } = useWorkflowRuns(undefined, 200);
-  const { jobs: trainingJobs } = useTrainingJobs();
 
   const [typeFilter, setTypeFilter] = useState<RunType>('all');
   const [statusFilter, setStatusFilter] = useState<RunStatus>('all');
@@ -86,19 +85,6 @@ export default function RunsHistoryPage() {
       error: r.errorMessage,
       meta: { durationSec: r.durationSec, totalCostUsd: r.totalCostUsd, expertChain: r.expertChain, input: r.input },
     })),
-    ...trainingJobs.map((j: any) => ({
-      id: j.id,
-      name: j.name || 'Training Job',
-      type: 'training' as const,
-      status: j.status,
-      progress: j.progress ?? 0,
-      tokensUsed: 0,
-      duration: formatDuration(j.startedAt, j.completedAt),
-      startedAt: j.startedAt || j.createdAt,
-      completedAt: j.completedAt || '',
-      error: j.error,
-      meta: { baseModelId: j.baseModelId, epochs: j.epochs, currentEpoch: j.currentEpoch, evalLoss: j.evalLoss, evalAccuracy: j.evalAccuracy, gpuHours: j.gpuHours, costUsd: j.costUsd, learningRate: j.learningRate },
-    })),
   ].sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime());
 
   // Apply filters
@@ -118,7 +104,7 @@ export default function RunsHistoryPage() {
     cancelled: allRuns.filter(r => r.status === 'cancelled').length,
   };
 
-  const typeColor = (t: string) => t === 'synthesis' ? '#0EA5E9' : t === 'workflow' ? '#2563EB' : '#7C3AED';
+  const typeColor = (t: string) => t === 'synthesis' ? '#0EA5E9' : '#2563EB';
   const statusColor = (s: string) => s === 'completed' ? '#059669' : s === 'running' ? '#D97706' : s === 'failed' ? '#DC2626' : s === 'queued' ? '#6B7280' : '#9CA3AF';
   const StatusIcon = (s: string) => s === 'completed' ? CheckCircle2 : s === 'running' ? Loader2 : s === 'failed' ? XCircle : s === 'queued' ? Clock : AlertTriangle;
 
@@ -130,7 +116,7 @@ export default function RunsHistoryPage() {
           <History size={20} /> Runs History
         </h1>
         <p style={{ fontSize: 13, color: 'var(--text-3)', margin: '4px 0 0' }}>
-          All synthesis, workflow, and training runs across the platform — {allRuns.length} total
+          All synthesis and workflow runs across the platform — {allRuns.length} total
         </p>
       </div>
 
@@ -138,7 +124,7 @@ export default function RunsHistoryPage() {
       <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center' }}>
         {/* Type filter */}
         <div style={{ display: 'flex', gap: 4 }}>
-          {(['all', 'synthesis', 'workflow', 'training'] as const).map(t => (
+          {(['all', 'synthesis', 'workflow'] as const).map(t => (
             <button key={t} onClick={() => setTypeFilter(t)} style={{
               padding: '5px 12px', borderRadius: 6, fontSize: 12, fontWeight: typeFilter === t ? 600 : 400,
               border: `1px solid ${typeFilter === t ? (t === 'all' ? 'var(--primary)' : typeColor(t)) : 'var(--border)'}`,
@@ -313,42 +299,6 @@ export default function RunsHistoryPage() {
                             <div>
                               <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-4)', textTransform: 'uppercase', marginBottom: 2 }}>Expert Chain</div>
                               <div style={{ fontSize: 11, fontWeight: 500, color: 'var(--text-3)' }}>{(run.meta.expertChain as string[]).join(' → ')}</div>
-                            </div>
-                          )}
-                        </>
-                      )}
-
-                      {/* Training-specific */}
-                      {run.type === 'training' && (
-                        <>
-                          {run.meta.currentEpoch !== undefined && (
-                            <div>
-                              <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-4)', textTransform: 'uppercase', marginBottom: 2 }}>Epoch</div>
-                              <div style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-2)' }}>{String(run.meta.currentEpoch)} / {String(run.meta.epochs)}</div>
-                            </div>
-                          )}
-                          {run.meta.evalLoss && (
-                            <div>
-                              <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-4)', textTransform: 'uppercase', marginBottom: 2 }}>Loss</div>
-                              <div style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-2)' }}>{Number(run.meta.evalLoss).toFixed(4)}</div>
-                            </div>
-                          )}
-                          {run.meta.evalAccuracy && (
-                            <div>
-                              <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-4)', textTransform: 'uppercase', marginBottom: 2 }}>Accuracy</div>
-                              <div style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-2)' }}>{(Number(run.meta.evalAccuracy) * 100).toFixed(1)}%</div>
-                            </div>
-                          )}
-                          {run.meta.gpuHours && (
-                            <div>
-                              <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-4)', textTransform: 'uppercase', marginBottom: 2 }}>GPU Hours</div>
-                              <div style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-2)' }}>{Number(run.meta.gpuHours).toFixed(2)}h</div>
-                            </div>
-                          )}
-                          {run.meta.costUsd && (
-                            <div>
-                              <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-4)', textTransform: 'uppercase', marginBottom: 2 }}>Cost</div>
-                              <div style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-2)' }}>${Number(run.meta.costUsd).toFixed(2)}</div>
                             </div>
                           )}
                         </>

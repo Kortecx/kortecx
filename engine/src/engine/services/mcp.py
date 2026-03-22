@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-import logging
-import os
-import json
-import subprocess
 import asyncio
+import json
+import logging
 import uuid
+from dataclasses import asdict, dataclass
 from pathlib import Path
-from dataclasses import dataclass, field, asdict
 from typing import Any
 
 logger = logging.getLogger("engine.mcp")
@@ -70,16 +68,18 @@ class McpService:
                     if stripped.startswith('"""') or stripped.startswith("'''"):
                         desc = stripped.strip("\"' ").strip()
                         break
-                servers.append(McpServer(
-                    id=f"prebuilt-{f.stem}",
-                    name=f.stem.replace("_", " ").replace("-", " ").title(),
-                    description=desc or f"Prebuilt MCP server: {f.name}",
-                    language=lang,
-                    filename=f.name,
-                    source="prebuilt",
-                    code=code,
-                    status="idle",
-                ).to_dict())
+                servers.append(
+                    McpServer(
+                        id=f"prebuilt-{f.stem}",
+                        name=f.stem.replace("_", " ").replace("-", " ").title(),
+                        description=desc or f"Prebuilt MCP server: {f.name}",
+                        language=lang,
+                        filename=f.name,
+                        source="prebuilt",
+                        code=code,
+                        status="idle",
+                    ).to_dict()
+                )
         return servers
 
     def list_persisted(self) -> list[dict[str, Any]]:
@@ -97,20 +97,22 @@ class McpService:
                         meta = json.loads(meta_path.read_text(encoding="utf-8"))
                     except Exception:
                         pass
-                servers.append(McpServer(
-                    id=f"persisted-{f.stem}",
-                    name=meta.get("name", f.stem.replace("_", " ").replace("-", " ").title()),
-                    description=meta.get("description", f"User MCP server: {f.name}"),
-                    language=lang,
-                    filename=f.name,
-                    source="persisted",
-                    code=code,
-                    status="idle",
-                    prompt=meta.get("prompt", ""),
-                    is_public=meta.get("is_public", False),
-                    generation_time_ms=meta.get("generation_time_ms", 0),
-                    cpu_percent=meta.get("cpu_percent", 0.0),
-                ).to_dict())
+                servers.append(
+                    McpServer(
+                        id=f"persisted-{f.stem}",
+                        name=meta.get("name", f.stem.replace("_", " ").replace("-", " ").title()),
+                        description=meta.get("description", f"User MCP server: {f.name}"),
+                        language=lang,
+                        filename=f.name,
+                        source="persisted",
+                        code=code,
+                        status="idle",
+                        prompt=meta.get("prompt", ""),
+                        is_public=meta.get("is_public", False),
+                        generation_time_ms=meta.get("generation_time_ms", 0),
+                        cpu_percent=meta.get("cpu_percent", 0.0),
+                    ).to_dict()
+                )
         return servers
 
     def list_cached(self) -> list[dict[str, Any]]:
@@ -233,7 +235,7 @@ class McpService:
             )
             try:
                 stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 proc.kill()
                 await proc.communicate()
                 s.status = "error"
@@ -275,16 +277,22 @@ class McpService:
 
         # Write metadata sidecar
         meta_path = dest.with_suffix(dest.suffix + ".meta.json")
-        meta_path.write_text(json.dumps({
-            "name": s.name,
-            "description": s.description,
-            "language": s.language,
-            "created_at": s.created_at,
-            "prompt": s.prompt,
-            "is_public": s.is_public,
-            "generation_time_ms": s.generation_time_ms,
-            "cpu_percent": s.cpu_percent,
-        }, indent=2), encoding="utf-8")
+        meta_path.write_text(
+            json.dumps(
+                {
+                    "name": s.name,
+                    "description": s.description,
+                    "language": s.language,
+                    "created_at": s.created_at,
+                    "prompt": s.prompt,
+                    "is_public": s.is_public,
+                    "generation_time_ms": s.generation_time_ms,
+                    "cpu_percent": s.cpu_percent,
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
 
         s.source = "persisted"
         s.id = f"persisted-{dest.stem}"
@@ -302,7 +310,7 @@ class McpService:
         version_dir = MCP_VERSIONS_DIR / stem
         version_dir.mkdir(parents=True, exist_ok=True)
 
-        ts = _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%d_%H%M%S")
+        ts = _dt.datetime.now(_dt.UTC).strftime("%Y%m%d_%H%M%S")
         version_file = version_dir / f"{stem}_{ts}{suffix}"
         version_file.write_text(file_path.read_text(encoding="utf-8"), encoding="utf-8")
 
@@ -314,7 +322,7 @@ class McpService:
 
         # Prune old versions — keep only max_versions most recent
         versions = sorted(version_dir.glob(f"{stem}_*{suffix}"), key=lambda p: p.name, reverse=True)
-        for old in versions[self.max_versions:]:
+        for old in versions[self.max_versions :]:
             old.unlink(missing_ok=True)
             old_meta = old.with_suffix(old.suffix + ".meta.json")
             old_meta.unlink(missing_ok=True)
@@ -334,11 +342,13 @@ class McpService:
         versions = []
         for f in sorted(version_dir.iterdir(), key=lambda p: p.name, reverse=True):
             if f.suffix in (".py", ".ts", ".js", ".mjs") and not f.name.endswith(".meta.json"):
-                versions.append({
-                    "filename": f.name,
-                    "timestamp": f.name.rsplit("_", 2)[-1].split(".")[0] if "_" in f.name else "",
-                    "size_bytes": f.stat().st_size,
-                })
+                versions.append(
+                    {
+                        "filename": f.name,
+                        "timestamp": f.name.rsplit("_", 2)[-1].split(".")[0] if "_" in f.name else "",
+                        "size_bytes": f.stat().st_size,
+                    }
+                )
         return versions
 
     def delete_persisted(self, script_id: str) -> bool:

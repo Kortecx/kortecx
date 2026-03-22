@@ -2,12 +2,15 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db, workflows, workflowSteps, workflowRuns } from '@/lib/db';
 import { desc, eq, asc } from 'drizzle-orm';
 import { nanoid } from '../tasks/nanoid';
+import { logStatus } from '@/lib/status-log';
 
 function buildStepValues(workflowId: string, steps: Record<string, unknown>[]) {
   return steps.map((s, i) => ({
     id:                 `ws-${nanoid()}`,
     workflowId,
     order:              i + 1,
+    name:               (s.name as string) || null,
+    description:        (s.description as string) || null,
     expertId:           (s.expertId as string) || null,
     taskDescription:    (s.taskDescription as string) || '',
     systemInstructions: (s.systemInstructions as string) || null,
@@ -19,6 +22,7 @@ function buildStepValues(workflowId: string, steps: Record<string, unknown>[]) {
     modelSource:        (s.modelSource as string) || 'provider',
     localModelConfig:   s.localModel || s.localModelConfig || null,
     connectionType:     (s.connectionType as string) || 'sequential',
+    shareMemory:        s.shareMemory !== false,
     temperature:        s.temperature != null ? String(s.temperature) : '0.7',
     maxTokens:          (s.maxTokens as number) || 4096,
   }));
@@ -90,9 +94,11 @@ export async function POST(req: NextRequest) {
       await db.insert(workflowSteps).values(buildStepValues(workflowId, steps));
     }
 
+    logStatus('info', `Workflow created: ${name}`, 'workflow', { id: workflowId, stepsCount: steps?.length ?? 0 });
     return NextResponse.json({ workflow: row }, { status: 201 });
   } catch (err) {
     console.error('[workflows POST]', err);
+    logStatus('error', `Workflow creation failed: ${err instanceof Error ? err.message : 'Unknown'}`, 'workflow', { error: err instanceof Error ? err.message : 'Unknown' });
     return NextResponse.json({ error: 'Database error' }, { status: 500 });
   }
 }
@@ -126,6 +132,7 @@ export async function PATCH(req: NextRequest) {
     if (updates.estimatedTokens !== undefined)   values.estimatedTokens = updates.estimatedTokens;
     if (updates.estimatedCostUsd !== undefined)   values.estimatedCostUsd = updates.estimatedCostUsd;
     if (updates.estimatedDurationSec !== undefined) values.estimatedDurationSec = updates.estimatedDurationSec;
+    if (updates.metadata !== undefined)            values.metadata = updates.metadata;
 
     const [updated] = await db.update(workflows)
       .set(values)
@@ -140,9 +147,11 @@ export async function PATCH(req: NextRequest) {
       }
     }
 
+    logStatus('info', `Workflow updated: ${id}`, 'workflow', { id });
     return NextResponse.json({ workflow: updated });
   } catch (err) {
     console.error('[workflows PATCH]', err);
+    logStatus('error', `Workflow update failed: ${err instanceof Error ? err.message : 'Unknown'}`, 'workflow', { error: err instanceof Error ? err.message : 'Unknown' });
     return NextResponse.json({ error: 'Update failed' }, { status: 500 });
   }
 }
@@ -165,9 +174,11 @@ export async function DELETE(req: NextRequest) {
       return NextResponse.json({ error: 'Workflow not found' }, { status: 404 });
     }
 
+    logStatus('info', `Workflow deleted: ${id}`, 'workflow', { id });
     return NextResponse.json({ deleted: true, id });
   } catch (err) {
     console.error('[workflows DELETE]', err);
+    logStatus('error', `Workflow deletion failed: ${err instanceof Error ? err.message : 'Unknown'}`, 'workflow', { error: err instanceof Error ? err.message : 'Unknown' });
     return NextResponse.json({ error: 'Delete failed' }, { status: 500 });
   }
 }

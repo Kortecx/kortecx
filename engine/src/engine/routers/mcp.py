@@ -9,12 +9,12 @@ try:
 except ImportError:
     psutil = None  # type: ignore[assignment]
 
-from fastapi import APIRouter, Header
+from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from engine.services.mcp import mcp_service
 from engine.services.local_inference import inference_router as local_inference
+from engine.services.mcp import mcp_service
 
 router = APIRouter()
 
@@ -50,6 +50,7 @@ class PersistRequest(BaseModel):
 
 # ── Discovery ────────────────────────────────────────────────────────────────
 
+
 @router.get("/servers")
 async def list_servers() -> dict[str, Any]:
     """List all MCP servers — prebuilt, persisted, and session-cached."""
@@ -80,16 +81,21 @@ async def get_server(script_id: str) -> dict[str, Any]:
 
 # ── AI Generation ────────────────────────────────────────────────────────────
 
+
 @router.post("/generate")
 async def generate_mcp_script(req: GenerateMcpRequest) -> dict[str, Any]:
     """Generate an MCP server script using a local LLM."""
     # Use user-provided system prompt or fall back to default
-    sys_prompt = req.system_prompt.strip() if req.system_prompt.strip() else (
-        "You are an expert MCP (Model Context Protocol) server developer. "
-        "Generate a complete, working MCP server script. "
-        "The script must be self-contained and runnable. "
-        "Include proper imports, tool definitions, and a main entry point. "
-        "Only output the code — no explanations, no markdown fences."
+    sys_prompt = (
+        req.system_prompt.strip()
+        if req.system_prompt.strip()
+        else (
+            "You are an expert MCP (Model Context Protocol) server developer. "
+            "Generate a complete, working MCP server script. "
+            "The script must be self-contained and runnable. "
+            "Include proper imports, tool definitions, and a main entry point. "
+            "Only output the code — no explanations, no markdown fences."
+        )
     )
 
     full_prompt = f"{sys_prompt}\n\nUser request: {req.prompt}"
@@ -145,12 +151,16 @@ async def generate_mcp_script(req: GenerateMcpRequest) -> dict[str, Any]:
 @router.post("/generate/stream")
 async def generate_mcp_script_stream(req: GenerateMcpRequest) -> StreamingResponse:
     """Stream-generate an MCP server script — returns SSE with token chunks."""
-    sys_prompt = req.system_prompt.strip() if req.system_prompt.strip() else (
-        "You are an expert MCP (Model Context Protocol) server developer. "
-        "Generate a complete, working MCP server script. "
-        "The script must be self-contained and runnable. "
-        "Include proper imports, tool definitions, and a main entry point. "
-        "Only output the code — no explanations, no markdown fences."
+    sys_prompt = (
+        req.system_prompt.strip()
+        if req.system_prompt.strip()
+        else (
+            "You are an expert MCP (Model Context Protocol) server developer. "
+            "Generate a complete, working MCP server script. "
+            "The script must be self-contained and runnable. "
+            "Include proper imports, tool definitions, and a main entry point. "
+            "Only output the code — no explanations, no markdown fences."
+        )
     )
     full_prompt = f"{sys_prompt}\n\nUser request: {req.prompt}"
 
@@ -164,35 +174,37 @@ async def generate_mcp_script_stream(req: GenerateMcpRequest) -> StreamingRespon
         provider_id = req.provider_id
 
         # Provider-specific streaming endpoints
-        PROVIDER_CONFIGS: dict[str, dict[str, Any]] = {
+        provider_configs: dict[str, dict[str, Any]] = {
             "anthropic": {
                 "url": "https://api.anthropic.com/v1/messages",
                 "headers_fn": lambda key: {"x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json"},
-                "body_fn": lambda: {"model": req.model, "max_tokens": 4096, "stream": True,
-                    "messages": [{"role": "user", "content": full_prompt}]},
+                "body_fn": lambda: {"model": req.model, "max_tokens": 4096, "stream": True, "messages": [{"role": "user", "content": full_prompt}]},
                 "token_path": lambda chunk: chunk.get("delta", {}).get("text", ""),
                 "stop_check": lambda chunk: chunk.get("type") == "message_stop",
             },
             "openai": {
                 "url": "https://api.openai.com/v1/chat/completions",
                 "headers_fn": lambda key: {"Authorization": f"Bearer {key}", "content-type": "application/json"},
-                "body_fn": lambda: {"model": req.model, "max_tokens": 4096, "stream": True,
-                    "messages": [{"role": "system", "content": sys_prompt}, {"role": "user", "content": req.prompt}]},
-                "token_path": lambda chunk: (chunk.get("choices", [{}])[0].get("delta", {}).get("content") or ""),
+                "body_fn": lambda: {
+                    "model": req.model,
+                    "max_tokens": 4096,
+                    "stream": True,
+                    "messages": [{"role": "system", "content": sys_prompt}, {"role": "user", "content": req.prompt}],
+                },
+                "token_path": lambda chunk: chunk.get("choices", [{}])[0].get("delta", {}).get("content") or "",
                 "stop_check": lambda chunk: chunk.get("choices", [{}])[0].get("finish_reason") is not None,
             },
             "google": {
                 "url": f"https://generativelanguage.googleapis.com/v1beta/models/{req.model}:streamGenerateContent",
                 "headers_fn": lambda key: {"content-type": "application/json"},
-                "body_fn": lambda: {"contents": [{"parts": [{"text": full_prompt}]}],
-                    "generationConfig": {"maxOutputTokens": 4096, "temperature": 0.3}},
+                "body_fn": lambda: {"contents": [{"parts": [{"text": full_prompt}]}], "generationConfig": {"maxOutputTokens": 4096, "temperature": 0.3}},
                 "token_path": lambda chunk: "".join(p.get("text", "") for c in chunk.get("candidates", []) for p in c.get("content", {}).get("parts", [])),
                 "stop_check": lambda _: False,
                 "url_fn": lambda key: f"https://generativelanguage.googleapis.com/v1beta/models/{req.model}:streamGenerateContent?alt=sse&key={key}",
             },
         }
 
-        cfg = PROVIDER_CONFIGS.get(provider_id)
+        cfg = provider_configs.get(provider_id)
         if not cfg:
             yield f"data: {json.dumps({'type': 'error', 'error': f'Unsupported provider: {provider_id}'})}\n\n"
             return
@@ -200,14 +212,22 @@ async def generate_mcp_script_stream(req: GenerateMcpRequest) -> StreamingRespon
         # Get API key — call frontend internal API
         try:
             async with httpx.AsyncClient(timeout=10) as c:
-                kr = await c.get(f"{frontend_url}/api/providers")
+                await c.get(f"{frontend_url}/api/providers")  # check connectivity
                 # We can't get the raw key from the providers list endpoint
                 # Instead, we need to read it from the DB directly
                 # For now, use the encrypted key endpoint pattern
             # Fallback: use environment variable
             import os
-            env_map = {"anthropic": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY", "google": "GOOGLE_API_KEY",
-                       "groq": "GROQ_API_KEY", "mistral": "MISTRAL_API_KEY", "deepseek": "DEEPSEEK_API_KEY", "xai": "XAI_API_KEY"}
+
+            env_map = {
+                "anthropic": "ANTHROPIC_API_KEY",
+                "openai": "OPENAI_API_KEY",
+                "google": "GOOGLE_API_KEY",
+                "groq": "GROQ_API_KEY",
+                "mistral": "MISTRAL_API_KEY",
+                "deepseek": "DEEPSEEK_API_KEY",
+                "xai": "XAI_API_KEY",
+            }
             api_key = os.environ.get(env_map.get(provider_id, ""), "")
             if not api_key:
                 env_name = env_map.get(provider_id, "UNKNOWN")
@@ -308,13 +328,18 @@ async def generate_mcp_script_stream(req: GenerateMcpRequest) -> StreamingRespon
 
             yield f"data: {json.dumps({'type': 'done', 'server': server, 'generation_time_ms': generation_time_ms, 'cpu_percent': avg_cpu})}\n\n"
 
-    return StreamingResponse(event_stream(), media_type="text/event-stream", headers={
-        "Cache-Control": "no-cache",
-        "X-Accel-Buffering": "no",
-    })
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 # ── Caching ──────────────────────────────────────────────────────────────────
+
 
 @router.post("/cache")
 async def cache_script(req: CacheScriptRequest) -> dict[str, Any]:
@@ -352,6 +377,7 @@ async def delete_cached(script_id: str) -> dict[str, Any]:
 
 # ── Testing ──────────────────────────────────────────────────────────────────
 
+
 @router.post("/test/{script_id}")
 async def test_script(script_id: str) -> dict[str, Any]:
     """Execute a cached script to test it."""
@@ -359,6 +385,7 @@ async def test_script(script_id: str) -> dict[str, Any]:
 
 
 # ── Persistence ──────────────────────────────────────────────────────────────
+
 
 @router.post("/persist/{script_id}")
 async def persist_script(script_id: str) -> dict[str, Any]:
@@ -377,6 +404,7 @@ async def delete_persisted(script_id: str) -> dict[str, Any]:
 
 
 # ── Versioning ──────────────────────────────────────────────────────────────
+
 
 class SetMaxVersionsRequest(BaseModel):
     max_versions: int

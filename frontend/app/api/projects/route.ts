@@ -3,6 +3,7 @@ import { db, projects, projectAssets } from '@/lib/db';
 import { desc, eq, ilike, or, gte, sql } from 'drizzle-orm';
 import { projectsStore } from './store';
 import type { ProjectRecord } from '@/lib/api-client';
+import { logStatus } from '@/lib/status-log';
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
@@ -98,6 +99,7 @@ export async function POST(req: NextRequest) {
       postsCount: 0,
     }).returning();
 
+    logStatus('info', `Project created: ${body.name.trim()}`, 'project', { id: inserted.id });
     return NextResponse.json({
       id: inserted.id,
       name: inserted.name,

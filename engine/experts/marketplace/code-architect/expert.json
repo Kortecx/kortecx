@@ -1,0 +1,18 @@
+{
+  "id": "marketplace-code-architect",
+  "name": "Code Architect",
+  "description": "Enterprise-grade code generation, refactoring, architecture design, and code review",
+  "role": "coder",
+  "version": "1.0.0",
+  "modelSource": "local",
+  "localModelConfig": {
+    "engine": "ollama",
+    "modelName": "llama3.2:3b"
+  },
+  "temperature": 0.3,
+  "maxTokens": 8192,
+  "tags": ["coding", "architecture", "review", "debugging"],
+  "capabilities": ["coding", "reasoning", "structured-output"],
+  "isPublic": true,
+  "category": "engineering"
+}

@@ -41,6 +41,12 @@ dependencies = [
     # ── HTTP Client (for local inference backends) ──────
     "httpx>=0.27.0",
 
+    # ── Async PostgreSQL (for Quorum engine) ──────────
+    "asyncpg>=0.30.0",
+
+    # ── System Metrics ────────────────────────────────
+    "psutil>=6.0.0",
+
     # ── File uploads ────────────────────────────────────
     "python-multipart>=0.0.9",
 

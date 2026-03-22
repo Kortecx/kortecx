@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useRef } from 'react';
+import { useCallback, useState } from 'react';
 
 const ENGINE_URL = process.env.NEXT_PUBLIC_ENGINE_URL || 'http://localhost:8000';
 
@@ -13,7 +13,7 @@ function generateSessionId(): string {
  * local storage logger. All operations are fire-and-forget (non-blocking).
  */
 export function useWorkflowLogger(workflowId: string) {
-  const sessionIdRef = useRef(generateSessionId());
+  const [sessionId] = useState(() => generateSessionId());
 
   const post = useCallback((endpoint: string, body: Record<string, unknown>) => {
     fetch(`${ENGINE_URL}/api/logs${endpoint}`, {
@@ -28,8 +28,8 @@ export function useWorkflowLogger(workflowId: string) {
   }, [workflowId, post]);
 
   const logSessionEvent = useCallback((eventType: string, data?: Record<string, unknown>) => {
-    post('/session', { sessionId: sessionIdRef.current, eventType, data: data ?? null });
-  }, [post]);
+    post('/session', { sessionId, eventType, data: data ?? null });
+  }, [sessionId, post]);
 
   const saveGoal = useCallback((goalContent: string, source: 'text' | 'file') => {
     post('/goal', { workflowId, goalContent, source });
@@ -56,7 +56,7 @@ export function useWorkflowLogger(workflowId: string) {
   }, [workflowId, post]);
 
   return {
-    sessionId: sessionIdRef.current,
+    sessionId,
     logInteraction,
     logSessionEvent,
     saveGoal,

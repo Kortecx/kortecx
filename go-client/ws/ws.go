@@ -3,7 +3,7 @@ package ws
 import (
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -175,7 +175,7 @@ func (c *Conn) readLoop() {
 			if c.closed {
 				return
 			}
-			log.Printf("kortecx ws read error: %v", err)
+			slog.Error("websocket read failed", slog.String("component", "ws"), slog.String("error", err.Error()))
 			if c.reconnect {
 				c.tryReconnect()
 			}
@@ -184,7 +184,7 @@ func (c *Conn) readLoop() {
 
 		var msg Message
 		if err := json.Unmarshal(raw, &msg); err != nil {
-			log.Printf("kortecx ws unmarshal error: %v", err)
+			slog.Warn("websocket message unmarshal failed", slog.String("component", "ws"), slog.String("error", err.Error()))
 			continue
 		}
 
@@ -211,18 +211,18 @@ func (c *Conn) pingLoop() {
 
 func (c *Conn) tryReconnect() {
 	for i := 0; i < c.MaxReconnectTries; i++ {
-		log.Printf("kortecx ws reconnecting (%d/%d)...", i+1, c.MaxReconnectTries)
+		slog.Info("websocket reconnecting", slog.String("component", "ws"), slog.Int("attempt", i+1), slog.Int("maxAttempts", c.MaxReconnectTries))
 		time.Sleep(c.ReconnectInterval)
 
 		if err := c.connect(); err != nil {
-			log.Printf("kortecx ws reconnect failed: %v", err)
+			slog.Error("websocket reconnect failed", slog.String("component", "ws"), slog.String("error", err.Error()), slog.Int("attempt", i+1))
 			continue
 		}
 
-		log.Println("kortecx ws reconnected")
+		slog.Info("websocket reconnected", slog.String("component", "ws"), slog.Int("attempt", i+1))
 		return
 	}
-	log.Println("kortecx ws max reconnect attempts reached")
+	slog.Error("websocket max reconnect attempts reached", slog.String("component", "ws"), slog.Int("maxAttempts", c.MaxReconnectTries))
 }
 
 func (c *Conn) dispatch(msg Message) {

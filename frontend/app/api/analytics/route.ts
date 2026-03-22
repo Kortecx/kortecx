@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
-import { db, metrics, tasks, workflowRuns, experts } from '@/lib/db';
-import { sql, gte, desc } from 'drizzle-orm';
+import { db, metrics, tasks, workflowRuns, experts, stepExecutions } from '@/lib/db';
+import { sql, gte, desc, count } from 'drizzle-orm';
 
 export async function GET() {
   try {
@@ -90,16 +90,33 @@ export async function GET() {
       });
     }
 
+    // Step execution metrics
+    const stepStats = await db.select({
+      totalExecutions: count(),
+      avgDuration: sql<number>`COALESCE(avg(${stepExecutions.durationMs})::int, 0)`,
+      totalTokens: sql<number>`COALESCE(sum(${stepExecutions.tokensUsed})::int, 0)`,
+      successCount: sql<number>`count(*) filter (where ${stepExecutions.status} = 'completed')`,
+      failedCount: sql<number>`count(*) filter (where ${stepExecutions.status} = 'failed')`,
+    }).from(stepExecutions);
+
     return NextResponse.json({
       overview: {
         tasksThisWeek: Number(weeklyAgg.totalTasks),
         tokensThisWeek: Number(weeklyAgg.totalTokens),
         costThisWeek: Number(Number(weeklyAgg.totalCost).toFixed(2)),
         avgSuccessRate: Number(Number(weeklyAgg.avgSuccess).toFixed(4)),
+        avgDurationMs: Number(stepStats[0]?.avgDuration ?? 0),
       },
       dailyStats,
       expertPerformance,
       providerUsage,
+      stepMetrics: {
+        totalExecutions: stepStats[0]?.totalExecutions ?? 0,
+        avgDurationMs: stepStats[0]?.avgDuration ?? 0,
+        totalTokens: stepStats[0]?.totalTokens ?? 0,
+        successRate: stepStats[0]?.totalExecutions ? (Number(stepStats[0].successCount) / stepStats[0].totalExecutions) : 0,
+        failedCount: stepStats[0]?.failedCount ?? 0,
+      },
     });
   } catch {
     return NextResponse.json({

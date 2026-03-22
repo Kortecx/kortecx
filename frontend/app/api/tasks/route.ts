@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db, tasks } from '@/lib/db';
 import { desc, eq, sql } from 'drizzle-orm';
 import { nanoid } from './nanoid';
+import { logStatus } from '@/lib/status-log';
 
 /* GET /api/tasks — list tasks with optional status filter */
 export async function GET(req: NextRequest) {
@@ -46,9 +47,11 @@ export async function POST(req: NextRequest) {
       input:           input ?? null,
     }).returning();
 
+    logStatus('info', `Task created: ${name}`, 'task', { id: row.id, workflowId });
     return NextResponse.json({ task: row }, { status: 201 });
   } catch (err) {
     console.error('[tasks POST]', err);
+    logStatus('error', `Task creation failed: ${err instanceof Error ? err.message : 'Unknown'}`, 'task', { error: err instanceof Error ? err.message : 'Unknown' });
     return NextResponse.json({ error: 'Database error' }, { status: 500 });
   }
 }
@@ -76,9 +79,11 @@ export async function PATCH(req: NextRequest) {
       .returning();
 
     if (!row) return NextResponse.json({ error: 'Task not found' }, { status: 404 });
+    logStatus('info', `Task updated: ${id}`, 'task', { id, status: updates.status });
     return NextResponse.json({ task: row });
   } catch (err) {
     console.error('[tasks PATCH]', err);
+    logStatus('error', `Task update failed: ${err instanceof Error ? err.message : 'Unknown'}`, 'task', { error: err instanceof Error ? err.message : 'Unknown' });
     return NextResponse.json({ error: 'Database error' }, { status: 500 });
   }
 }

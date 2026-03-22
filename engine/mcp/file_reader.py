@@ -93,10 +93,12 @@ if __name__ == "__main__":
     assert len(result["tools"]) == 2
     print("[PASS] tools/list")
 
-    result = handle_request({
-        "method": "tools/call",
-        "params": {"name": "list_files", "arguments": {"directory": ".", "pattern": "*.py"}},
-    })
+    result = handle_request(
+        {
+            "method": "tools/call",
+            "params": {"name": "list_files", "arguments": {"directory": ".", "pattern": "*.py"}},
+        }
+    )
     assert "content" in result
     print("[PASS] list_files")
 

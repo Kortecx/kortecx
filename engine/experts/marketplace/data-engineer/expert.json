@@ -1,0 +1,18 @@
+{
+  "id": "marketplace-data-engineer",
+  "name": "Data Engineer",
+  "description": "SQL, data pipelines, ETL, schema design, data quality, and analytics",
+  "role": "data-engineer",
+  "version": "1.0.0",
+  "modelSource": "local",
+  "localModelConfig": {
+    "engine": "ollama",
+    "modelName": "llama3.2:3b"
+  },
+  "temperature": 0.2,
+  "maxTokens": 6144,
+  "tags": ["data", "SQL", "ETL", "pipelines", "analytics"],
+  "capabilities": ["coding", "reasoning", "structured-output", "analysis"],
+  "isPublic": true,
+  "category": "data"
+}

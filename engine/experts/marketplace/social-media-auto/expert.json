@@ -1,0 +1,18 @@
+{
+  "id": "marketplace-social-media-auto",
+  "name": "Social Media Auto",
+  "description": "Social media content creation, scheduling, engagement optimization, and platform-specific strategies",
+  "role": "creative",
+  "version": "1.0.0",
+  "modelSource": "local",
+  "localModelConfig": {
+    "engine": "ollama",
+    "modelName": "llama3.2:3b"
+  },
+  "temperature": 0.8,
+  "maxTokens": 2048,
+  "tags": ["social-media", "automation", "content", "engagement", "platforms"],
+  "capabilities": ["creativity", "writing", "structured-output"],
+  "isPublic": true,
+  "category": "marketing"
+}

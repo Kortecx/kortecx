@@ -50,7 +50,7 @@ func Example() {
 	// --- Model Handling ---
 
 	// List all coder experts
-	experts, err := k.Models.ListExperts(models.WithRole(types.RoleCoder))
+	experts, err := k.Models.ListExperts(nil, models.WithRole(types.RoleCoder))
 	if err != nil {
 		log.Fatal(err)
 	}

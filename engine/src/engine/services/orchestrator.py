@@ -15,7 +15,9 @@ import httpx
 
 from engine.config import settings
 from engine.core.websocket import ws_manager
+from engine.services.execution_audit import execution_audit
 from engine.services.local_inference import GenerateResult, inference_router, model_pool
+from engine.services.step_artifacts import step_artifacts
 from engine.services.workflow_logger import workflow_logger
 
 logger = logging.getLogger("engine.orchestrator")
@@ -62,12 +64,14 @@ class StepConfig:
     temperature: float
     max_tokens: int
     connection_type: str  # "sequential" | "parallel" | "conditional"
+    step_name: str = ""
     system_instructions: str = ""
     voice_command: str = ""
     file_locations: list[str] = field(default_factory=list)
     step_file_names: list[str] = field(default_factory=list)
     step_image_names: list[str] = field(default_factory=list)
     integrations: list[StepIntegration] = field(default_factory=list)
+    condition: dict[str, str] | None = None  # e.g. {"type": "contains", "value": "APPROVED"}
 
 
 @dataclass
@@ -155,6 +159,9 @@ class AgentOrchestrator:
             },
         )
 
+        # Create audit trail run record
+        await execution_audit.create_run(run_id, request.name, request.steps)
+
         # Orchestrate
         try:
             result = await self._orchestrate(
@@ -190,6 +197,48 @@ class AgentOrchestrator:
                 },
             )
 
+            # Persist completion log to frontend
+            try:
+                async with httpx.AsyncClient(timeout=5) as _client:
+                    await _client.post(
+                        "http://localhost:3000/api/logs",
+                        json={
+                            "level": "info",
+                            "message": f"Workflow '{request.name}' completed successfully",
+                            "source": "orchestrator",
+                            "runId": run_id,
+                            "metadata": {
+                                "workflowId": request.workflow_id,
+                                "totalSteps": len(request.steps),
+                                "outputLength": len(result),
+                            },
+                        },
+                    )
+            except Exception:
+                pass  # Non-critical
+
+            # Persist audit trail
+            total_tokens, total_duration, succeeded, failed = self._compute_run_stats(run_id)
+            await execution_audit.complete_run(
+                run_id,
+                total_tokens,
+                total_duration,
+                result,
+                succeeded,
+                failed,
+            )
+            await execution_audit.save_shared_memory(run_id, "complete", shared.to_dict())
+            await self._update_expert_stats(run_id)
+
+            # Sync run + step execution data to frontend DB
+            await self._sync_to_frontend(
+                run_id=run_id,
+                workflow_id=request.workflow_id,
+                workflow_name=request.name,
+                status="completed",
+                steps=request.steps,
+            )
+
             return {"runId": run_id, "status": "completed", "output": result}
 
         except Exception as exc:
@@ -213,6 +262,51 @@ class AgentOrchestrator:
                     "runId": run_id,
                     "error": str(exc),
                 },
+            )
+
+            # Persist audit trail failure
+            await execution_audit.fail_run(run_id, str(exc))
+
+            # Persist workflow failure artifacts
+            try:
+                step_artifacts.save_failure_log(
+                    workflow_name=request.name,
+                    step_name="_workflow",
+                    run_id=run_id,
+                    error=str(exc),
+                    phase="workflow",
+                    metadata={"totalSteps": len(request.steps)},
+                )
+            except Exception:
+                pass  # Non-critical
+
+            # Persist failure log to frontend
+            try:
+                async with httpx.AsyncClient(timeout=5) as _client:
+                    await _client.post(
+                        "http://localhost:3000/api/logs",
+                        json={
+                            "level": "error",
+                            "message": f"Workflow '{request.name}' failed: {str(exc)[:200]}",
+                            "source": "orchestrator",
+                            "runId": run_id,
+                            "metadata": {
+                                "workflowId": request.workflow_id,
+                                "error": str(exc),
+                            },
+                        },
+                    )
+            except Exception:
+                pass  # Non-critical
+
+            # Sync run + step execution data to frontend DB
+            await self._sync_to_frontend(
+                run_id=run_id,
+                workflow_id=request.workflow_id,
+                workflow_name=request.name,
+                status="failed",
+                steps=request.steps,
+                error_message=str(exc),
             )
 
             return {"runId": run_id, "status": "failed", "error": str(exc)}
@@ -249,10 +343,11 @@ class AgentOrchestrator:
                 # Sequential / conditional execution
                 step = group[0]
 
-                # Handle conditional steps — skip if previous output is empty or contains [SKIP]
+                # Handle conditional steps via expression-based evaluation
                 if step.connection_type == "conditional":
-                    if not previous_output or "[SKIP]" in previous_output:
-                        logger.info("Skipping conditional step %s", step.step_id)
+                    should_run = self._evaluate_condition(step, previous_output, run_id)
+                    if not should_run:
+                        logger.info("Skipping conditional step %s (condition not met)", step.step_id)
                         self._runs[run_id]["stepResults"][step.step_id] = "[SKIPPED]"
                         continue
 
@@ -332,7 +427,20 @@ class AgentOrchestrator:
                 "stepId": step.step_id,
                 "taskDescription": step.task_description,
                 "modelSource": step.model_source,
+                "stepName": getattr(step, "step_name", "") or "",
+                "model": step.local_model.get("model", "") if step.local_model else "",
+                "engine": step.local_model.get("engine", "") if step.local_model else "",
             },
+        )
+
+        # Audit: agent spawned
+        execution_audit.log_agent_spawned(
+            run_id,
+            agent_id,
+            step.step_id,
+            expert_id=step.expert_id,
+            model_source=step.model_source,
+            task_description=step.task_description,
         )
 
         async with self._semaphore:
@@ -365,6 +473,9 @@ class AgentOrchestrator:
                 )
 
                 # Broadcast thinking
+                import time as _time
+
+                _thinking_start = _time.monotonic()  # noqa: F841
                 await ws_manager.broadcast(
                     channel,
                     "agent.thinking",
@@ -372,8 +483,12 @@ class AgentOrchestrator:
                         "runId": run_id,
                         "agentId": agent_id,
                         "stepId": step.step_id,
+                        "startedAt": datetime.now(UTC).isoformat(),
                     },
                 )
+
+                # Audit: agent thinking
+                execution_audit.log_agent_thinking(run_id, agent_id, step.step_id)
 
                 # Execute inference
                 result = await self._infer(step, system_prompt, user_prompt)
@@ -383,8 +498,63 @@ class AgentOrchestrator:
                 agent.duration_ms = result.duration_ms
                 agent.status = "completed"
 
+                # Audit: inference result
+                _engine = step.local_model.get("engine", "ollama") if step.local_model else "provider"
+                _model = step.local_model.get("model", "") if step.local_model else "hf-fallback"
+                execution_audit.log_inference(
+                    run_id,
+                    agent_id,
+                    system_prompt,
+                    user_prompt,
+                    result.text,
+                    result.tokens_used,
+                    result.duration_ms,
+                    model=_model,
+                    engine=_engine,
+                    temperature=step.temperature,
+                    max_tokens=step.max_tokens,
+                )
+
                 # Update agent memory with findings
                 agent.memory.findings.append(result.text[:500])
+
+                # Persist artifacts to disk
+                _step_name = step.step_name or step.step_id
+                try:
+                    step_artifacts.save_response(
+                        workflow_name=self._runs[run_id].get("name", "unnamed"),
+                        step_name=_step_name,
+                        run_id=run_id,
+                        agent_id=agent_id,
+                        response=result.text,
+                        prompt=user_prompt,
+                        system_prompt=system_prompt,
+                        model=step.local_model.get("model", "") if step.local_model else "",
+                        tokens_used=result.tokens_used,
+                        duration_ms=result.duration_ms,
+                    )
+                except Exception as artifact_exc:
+                    logger.warning("Failed to save artifacts: %s", artifact_exc)
+
+                # Extract and execute any scripts in the response
+                try:
+                    scripts = step_artifacts.extract_and_save_scripts(
+                        self._runs[run_id].get("name", "unnamed"),
+                        _step_name,
+                        result.text,
+                    )
+                    if scripts:
+                        for script in scripts:
+                            if script.suffix in (".py", ".sh", ".js"):
+                                try:
+                                    script_result = await step_artifacts.execute_script(script, timeout=60)
+                                    if script_result.get("exitCode") == 0 and script_result.get("stdout"):
+                                        agent.memory.findings.append(f"[Script {script.name} output]: {script_result['stdout'][:1000]}")
+                                        shared.globals[f"{step.step_id}_script_{script.name}"] = script_result["stdout"][:2000]
+                                except Exception as script_exc:
+                                    logger.warning("Script execution failed: %s — %s", script.name, script_exc)
+                except Exception as extract_exc:
+                    logger.warning("Failed to extract scripts: %s", extract_exc)
 
                 # Write to shared memory
                 shared.entries[agent_id] = json.dumps(agent.memory.to_dict())
@@ -411,7 +581,19 @@ class AgentOrchestrator:
                     {"agentId": agent_id, "stepId": step.step_id, "tokensUsed": result.tokens_used, "durationMs": result.duration_ms},
                 )
 
-                # Broadcast step complete
+                # Collect system stats for this step
+                step_metrics = {"cpuPercent": 0, "gpuPercent": 0, "memoryMb": 0}
+                try:
+                    from engine.services.system_stats import get_system_stats
+
+                    stats = get_system_stats()
+                    step_metrics["cpuPercent"] = stats.get("cpu_percent", 0)
+                    step_metrics["gpuPercent"] = stats.get("gpu_percent", 0)
+                    step_metrics["memoryMb"] = stats.get("memory_used_mb", 0)
+                except Exception:
+                    pass
+
+                # Broadcast step complete with full metrics
                 await ws_manager.broadcast(
                     channel,
                     "agent.step.complete",
@@ -422,7 +604,21 @@ class AgentOrchestrator:
                         "output": result.text,
                         "tokensUsed": result.tokens_used,
                         "durationMs": result.duration_ms,
+                        "cpuPercent": step_metrics["cpuPercent"],
+                        "gpuPercent": step_metrics["gpuPercent"],
+                        "memoryMb": step_metrics["memoryMb"],
+                        "model": step.local_model.get("model", "") if step.local_model else "",
+                        "engine": step.local_model.get("engine", "") if step.local_model else "",
                     },
+                )
+
+                # Audit: step complete
+                execution_audit.log_step_complete(
+                    run_id,
+                    agent_id,
+                    step.step_id,
+                    result.tokens_used,
+                    result.duration_ms,
                 )
 
                 return agent
@@ -472,12 +668,48 @@ class AgentOrchestrator:
                                     "fallback": True,
                                 },
                             )
+                            # Audit: fallback inference
+                            execution_audit.log_inference(
+                                run_id,
+                                agent_id,
+                                system_prompt,
+                                user_prompt,
+                                result.text,
+                                result.tokens_used,
+                                result.duration_ms,
+                                model=fallback_model,
+                                engine=engine,
+                                temperature=step.temperature,
+                                max_tokens=step.max_tokens,
+                                fallback=True,
+                            )
+                            execution_audit.log_step_complete(
+                                run_id,
+                                agent_id,
+                                step.step_id,
+                                result.tokens_used,
+                                result.duration_ms,
+                            )
                             return agent
                         except Exception as fallback_exc:
                             logger.error("Fallback also failed for agent %s: %s", agent_id, fallback_exc)
 
                 agent.status = "failed"
                 agent.error = str(exc)
+
+                # Persist failure artifacts
+                try:
+                    _step_name = step.step_name or step.step_id
+                    step_artifacts.save_failure_log(
+                        workflow_name=self._runs[run_id].get("name", "unnamed"),
+                        step_name=_step_name,
+                        run_id=run_id,
+                        error=str(exc),
+                        agent_id=agent_id,
+                        phase="execute",
+                    )
+                except Exception:
+                    pass  # Never let failure logging break the flow
 
                 await ws_manager.broadcast(
                     channel,
@@ -490,7 +722,83 @@ class AgentOrchestrator:
                     },
                 )
 
+                # Audit: step failed
+                execution_audit.log_step_failed(run_id, agent_id, step.step_id, str(exc))
+
                 raise
+
+    def _evaluate_condition(
+        self,
+        step: StepConfig,
+        previous_output: str,
+        run_id: str,
+    ) -> bool:
+        """Evaluate whether a conditional step should execute.
+
+        Supports the following condition types via ``step.condition``:
+
+        - ``{"type": "contains", "value": "<keyword>"}``
+            Run only if *previous_output* contains *value*.
+        - ``{"type": "not_contains", "value": "<keyword>"}``
+            Skip if *previous_output* contains *value*.
+        - ``{"type": "previous_succeeded"}``
+            Run only if the most recent step completed successfully
+            (i.e. no ``[FAILED]`` marker and non-empty output).
+        - ``{"type": "previous_failed"}``
+            Run only if the most recent step failed.
+        - ``{"type": "always"}``
+            Always run — effectively a no-op guard.
+
+        When ``step.condition`` is *None* (legacy behaviour), falls back to
+        the original heuristic: skip when *previous_output* is empty or
+        contains ``[SKIP]``.
+        """
+        condition = step.condition
+
+        # Legacy fallback: no explicit condition configured
+        if condition is None:
+            return bool(previous_output) and "[SKIP]" not in previous_output
+
+        cond_type = condition.get("type", "always")
+
+        if cond_type == "always":
+            return True
+
+        if cond_type == "contains":
+            value = condition.get("value", "")
+            return value != "" and value in previous_output
+
+        if cond_type == "not_contains":
+            value = condition.get("value", "")
+            return value == "" or value not in previous_output
+
+        if cond_type == "previous_succeeded":
+            # Check that previous output exists and has no failure markers
+            if not previous_output:
+                return False
+            step_results = self._runs.get(run_id, {}).get("stepResults", {})
+            if step_results:
+                last_result = list(step_results.values())[-1]
+                if "[FAILED]" in str(last_result) or "[SKIPPED]" in str(last_result):
+                    return False
+            return True
+
+        if cond_type == "previous_failed":
+            if not previous_output:
+                return True  # no output implies failure
+            step_results = self._runs.get(run_id, {}).get("stepResults", {})
+            if step_results:
+                last_result = list(step_results.values())[-1]
+                return "[FAILED]" in str(last_result)
+            return False
+
+        # Unknown condition type — log and default to running the step
+        logger.warning(
+            "Unknown condition type '%s' on step %s, defaulting to run",
+            cond_type,
+            step.step_id,
+        )
+        return True
 
     async def _resolve_expert(self, step: StepConfig) -> dict[str, Any] | None:
         """Resolve expert config from the frontend API if expertId is set."""
@@ -697,6 +1005,130 @@ class AgentOrchestrator:
 
     def get_shared_memory(self, run_id: str) -> SharedMemory | None:
         return self._shared_memory.get(run_id)
+
+    def _compute_run_stats(self, run_id: str) -> tuple[int, int, int, int]:
+        """Return (total_tokens, total_duration_ms, succeeded, failed) for a run."""
+        agents = self._runs[run_id].get("agents", {})
+        total_tokens = sum(a.tokens_used for a in agents.values())
+        total_duration = sum(int(a.duration_ms) for a in agents.values())
+        succeeded = sum(1 for a in agents.values() if a.status == "completed")
+        failed = sum(1 for a in agents.values() if a.status == "failed")
+        return total_tokens, total_duration, succeeded, failed
+
+    async def _update_expert_stats(self, run_id: str) -> None:
+        """Broadcast expert stats updates after run completion."""
+        agents = self._runs[run_id].get("agents", {})
+        for agent in agents.values():
+            if agent.status == "completed":
+                await ws_manager.broadcast(
+                    f"workflow.{run_id}",
+                    "expert.stats.update",
+                    {
+                        "runId": run_id,
+                        "agentId": agent.agent_id,
+                        "stepId": agent.step_id,
+                        "tokensUsed": agent.tokens_used,
+                        "durationMs": agent.duration_ms,
+                        "status": agent.status,
+                    },
+                )
+
+    async def _sync_to_frontend(
+        self,
+        run_id: str,
+        workflow_id: str,
+        workflow_name: str,
+        status: str,
+        steps: list[StepConfig],
+        error_message: str | None = None,
+    ) -> None:
+        """Sync workflow run results and step execution metrics to the frontend DB."""
+        run = self._runs.get(run_id)
+        if not run:
+            return
+
+        started_at = run.get("startedAt", "")
+        completed_at = run.get("completedAt", datetime.now(UTC).isoformat())
+        total_tokens, total_duration_ms, _, _ = self._compute_run_stats(run_id)
+        duration_sec = round(total_duration_ms / 1000, 3) if total_duration_ms else 0
+
+        # Build expert chain from agents
+        agents: dict[str, AgentState] = run.get("agents", {})
+        expert_chain: list[str] = []
+        for agent in agents.values():
+            step_cfg = next((s for s in steps if s.step_id == agent.step_id), None)
+            name = step_cfg.step_name if step_cfg and step_cfg.step_name else agent.step_id
+            expert_chain.append(name)
+
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                # 1. POST run status to frontend DB
+                run_payload = {
+                    "id": run_id,
+                    "workflowId": workflow_id,
+                    "workflowName": workflow_name,
+                    "status": status,
+                    "startedAt": started_at,
+                    "completedAt": completed_at,
+                    "totalTokensUsed": total_tokens,
+                    "durationSec": duration_sec,
+                    "expertChain": expert_chain,
+                }
+                if error_message:
+                    run_payload["errorMessage"] = error_message
+
+                await client.post(
+                    "http://localhost:3000/api/workflows/runs",
+                    json=run_payload,
+                )
+
+                # 2. POST step execution metrics for each agent
+                for agent in agents.values():
+                    step_cfg = next((s for s in steps if s.step_id == agent.step_id), None)
+                    model = ""
+                    engine = ""
+                    if step_cfg and step_cfg.local_model:
+                        model = step_cfg.local_model.get("model", "")
+                        engine = step_cfg.local_model.get("engine", "")
+
+                    # Collect system metrics snapshot
+                    cpu_percent = 0.0
+                    gpu_percent = 0.0
+                    memory_mb = 0.0
+                    try:
+                        from engine.services.system_stats import get_system_stats
+
+                        stats = get_system_stats()
+                        cpu_percent = stats.get("cpu_percent", 0)
+                        gpu_percent = stats.get("gpu_percent", 0)
+                        memory_mb = stats.get("memory_used_mb", 0)
+                    except Exception:
+                        pass
+
+                    step_payload = {
+                        "runId": run_id,
+                        "stepId": agent.step_id,
+                        "agentId": agent.agent_id,
+                        "expertId": step_cfg.expert_id if step_cfg else None,
+                        "stepName": (step_cfg.step_name if step_cfg and step_cfg.step_name else agent.step_id),
+                        "status": agent.status,
+                        "model": model,
+                        "engine": engine,
+                        "tokensUsed": agent.tokens_used,
+                        "durationMs": agent.duration_ms,
+                        "cpuPercent": cpu_percent,
+                        "gpuPercent": gpu_percent,
+                        "memoryMb": memory_mb,
+                        "promptPreview": (agent.memory.plan[:500] if agent.memory.plan else ""),
+                        "responsePreview": (agent.output[:500] if agent.output else ""),
+                    }
+
+                    await client.post(
+                        "http://localhost:3000/api/workflows/executions",
+                        json=step_payload,
+                    )
+        except Exception as sync_exc:
+            logger.warning("Failed to sync run %s to frontend DB: %s", run_id, sync_exc)
 
     def get_status(self) -> dict[str, Any]:
         """Return orchestrator status for monitoring."""
