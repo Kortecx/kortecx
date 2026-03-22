@@ -6,7 +6,11 @@ import pytest
 
 
 class TestSettings:
-    def test_defaults(self):
+    def test_defaults(self, monkeypatch):
+        # Clear env overrides so we test actual defaults
+        monkeypatch.delenv("DATABASE_URL", raising=False)
+        monkeypatch.delenv("HOST", raising=False)
+        monkeypatch.delenv("PORT", raising=False)
         from engine.config import Settings
 
         s = Settings()
