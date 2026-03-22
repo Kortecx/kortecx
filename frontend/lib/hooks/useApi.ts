@@ -320,6 +320,56 @@ export function useStepExecutions(runId: string | null) {
   };
 }
 
+/* ── Expert Runs ─────────────────────────────────────── */
+export function useExpertRuns(status?: string, limit = 50) {
+  const params = new URLSearchParams();
+  if (status) params.set('status', status);
+  params.set('limit', String(limit));
+  const { data, error, isLoading, mutate } = useSWR(
+    `/api/experts/run?${params}`,
+    fetcher,
+    { refreshInterval: 5_000 },
+  );
+  return {
+    runs:     data?.runs ?? [],
+    total:    data?.total ?? 0,
+    error,
+    isLoading,
+    mutate,
+  };
+}
+
+/* ── Expert Files ────────────────────────────────────── */
+export function useExpertFiles(expertId: string | null) {
+  const { data, error, isLoading, mutate } = useSWR(
+    expertId ? `/api/experts/files?expertId=${expertId}` : null,
+    fetcher,
+  );
+  return {
+    files:    data?.files ?? [],
+    error,
+    isLoading,
+    mutate,
+  };
+}
+
+/* ── Expert Versions ─────────────────────────────────── */
+export function useExpertVersions(expertId: string | null, filename: string | null) {
+  const { data, error, isLoading, mutate } = useSWR(
+    expertId && filename
+      ? `/api/experts/versions?expertId=${expertId}&filename=${encodeURIComponent(filename)}`
+      : null,
+    fetcher,
+  );
+  return {
+    versions: data?.versions ?? [],
+    total:    data?.total ?? 0,
+    error,
+    isLoading,
+    mutate,
+  };
+}
+
 /* ── Embeddings Collections ───────────────────────────── */
 export function useEmbeddingCollections() {
   const { data, error, isLoading, mutate } = useSWR(

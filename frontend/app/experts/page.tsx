@@ -16,7 +16,8 @@ import {
 } from 'lucide-react';
 import { useExperts } from '@/lib/hooks/useApi';
 import { ROLE_META, PROVIDERS } from '@/lib/constants';
-import type { ExpertRole } from '@/lib/types';
+import type { Expert, ExpertRole } from '@/lib/types';
+import ExpertEditDialog from './_components/ExpertEditDialog';
 
 /* ═══════════════════════════════════════════════════════
    Constants
@@ -34,6 +35,10 @@ const stagger = { hidden: {}, show: { transition: { staggerChildren: 0.07 } } };
 const STATUS_CONFIG: Record<string, { color: string; bg: string; label: string; pulse: boolean }> = {
   active:      { color: '#10b981', bg: '#10b98112', label: 'Active',      pulse: true  },
   idle:        { color: '#6b7280', bg: '#6b728012', label: 'Idle',        pulse: false },
+  queued:      { color: '#f59e0b', bg: '#f59e0b12', label: 'Queued',      pulse: true  },
+  running:     { color: '#3b82f6', bg: '#3b82f612', label: 'Running',     pulse: true  },
+  completed:   { color: '#10b981', bg: '#10b98112', label: 'Completed',   pulse: false },
+  failed:      { color: '#ef4444', bg: '#ef444412', label: 'Failed',      pulse: false },
   training:    { color: '#f59e0b', bg: '#f59e0b12', label: 'Training',    pulse: true  },
   finetuning:  { color: '#8b5cf6', bg: '#8b5cf612', label: 'Fine-tuning', pulse: true  },
   offline:     { color: '#ef4444', bg: '#ef444412', label: 'Offline',     pulse: false },
@@ -62,7 +67,7 @@ const ROLE_COLOR: Record<string, string> = {
   creative: '#a855f7', translator: '#06b6d4', custom: '#6b7280',
 };
 
-const STATUS_FILTERS = ['all', 'active', 'idle', 'training', 'finetuning'] as const;
+const STATUS_FILTERS = ['all', 'active', 'idle', 'queued', 'running', 'completed', 'failed', 'training', 'finetuning'] as const;
 type StatusFilter = typeof STATUS_FILTERS[number];
 
 const SORT_OPTIONS = [
@@ -774,6 +779,8 @@ function MyExpertCard({
   const successRate = (expert.successRate as number) ?? stats.successRate ?? 0;
   const avgCost     = stats.avgCostPerRun ?? 0;
   const avgLatency  = (expert.avgLatencyMs as number) ?? stats.avgLatencyMs ?? 0;
+  const avgTokens   = stats.avgTokensPerRun ?? 0;
+  const cpuUsage    = (expert.metadata as Record<string, unknown> | undefined)?.cpuUsage as number | undefined;
   const rating      = stats.rating ?? 0;
   const tags        = ((expert.tags as string[]) ?? []).slice(0, 3);
   const isFinetuned = (expert.isFinetuned as boolean) ?? false;
@@ -784,12 +791,13 @@ function MyExpertCard({
       variants={fadeUp}
       whileHover={{ y: -3, boxShadow: '0 10px 32px rgba(13,13,13,0.09)' }}
       transition={{ type: 'spring', stiffness: 380, damping: 28 }}
+      onClick={onConfigure}
       style={{
         background: 'var(--bg-surface)',
         border: highlighted ? `2px solid ${SECTION_COLOR}` : '1px solid var(--border)',
         borderRadius: 12, padding: 20,
         display: 'flex', flexDirection: 'column', gap: 14,
-        position: 'relative', overflow: 'hidden',
+        position: 'relative', overflow: 'hidden', cursor: 'pointer',
         animation: highlighted ? 'highlight-pulse 0.6s ease-in-out 3' : undefined,
       }}
     >
@@ -887,24 +895,6 @@ function MyExpertCard({
         <span style={{ color: 'var(--text-4)' }}>{(expert.modelName ?? expert.modelId) as string}</span>
       </div>
 
-      {/* Run status indicator */}
-      {runStatus && (
-        <div style={{
-          display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px',
-          borderRadius: 6, fontSize: 11, fontWeight: 600,
-          background: runStatus === 'running' ? '#f59e0b08' : runStatus === 'success' ? '#10b98108' : '#ef444408',
-          border: `1px solid ${runStatus === 'running' ? '#f59e0b20' : runStatus === 'success' ? '#10b98120' : '#ef444420'}`,
-          color: runStatus === 'running' ? '#f59e0b' : runStatus === 'success' ? '#10b981' : '#ef4444',
-        }}>
-          <span style={{
-            width: 8, height: 8, borderRadius: '50%',
-            background: runStatus === 'running' ? '#f59e0b' : runStatus === 'success' ? '#10b981' : '#ef4444',
-            animation: runStatus === 'running' ? 'pulse-dot 1.5s ease-in-out infinite' : undefined,
-          }} />
-          {runStatus === 'running' ? 'Running...' : runStatus === 'success' ? 'Completed' : 'Failed'}
-        </div>
-      )}
-
       {/* Stats grid */}
       <div style={{
         display: 'grid', gridTemplateColumns: '1fr 1fr 1fr',
@@ -921,6 +911,18 @@ function MyExpertCard({
         <div style={{ textAlign: 'center', padding: '7px 4px', borderRadius: 6, background: '#2563EB06', border: '1px solid #2563EB12' }}>
           <div style={{ fontSize: 16, fontWeight: 800, color: '#2563EB', lineHeight: 1 }}>{avgLatency > 0 ? `${(avgLatency / 1000).toFixed(1)}s` : '—'}</div>
           <div style={{ fontSize: 8, color: 'var(--text-4)', marginTop: 2, fontWeight: 500 }}>Avg Time</div>
+        </div>
+        <div style={{ textAlign: 'center', padding: '7px 4px', borderRadius: 6, background: '#8b5cf606', border: '1px solid #8b5cf612' }}>
+          <div style={{ fontSize: 16, fontWeight: 800, color: '#8b5cf6', lineHeight: 1 }}>{avgLatency > 0 ? `${(avgLatency / 1000).toFixed(1)}s` : '—'}</div>
+          <div style={{ fontSize: 8, color: 'var(--text-4)', marginTop: 2, fontWeight: 500 }}>Run Time</div>
+        </div>
+        <div style={{ textAlign: 'center', padding: '7px 4px', borderRadius: 6, background: '#f59e0b06', border: '1px solid #f59e0b12' }}>
+          <div style={{ fontSize: 16, fontWeight: 800, color: '#f59e0b', lineHeight: 1 }}>{cpuUsage != null ? `${cpuUsage}%` : '—'}</div>
+          <div style={{ fontSize: 8, color: 'var(--text-4)', marginTop: 2, fontWeight: 500 }}>CPU Usage</div>
+        </div>
+        <div style={{ textAlign: 'center', padding: '7px 4px', borderRadius: 6, background: '#ec489906', border: '1px solid #ec489912' }}>
+          <div style={{ fontSize: 16, fontWeight: 800, color: '#ec4899', lineHeight: 1 }}>{avgTokens > 0 ? fmt(avgTokens) : '—'}</div>
+          <div style={{ fontSize: 8, color: 'var(--text-4)', marginTop: 2, fontWeight: 500 }}>Tokens Used</div>
         </div>
       </div>
 
@@ -955,7 +957,7 @@ function MyExpertCard({
         display: 'flex', gap: 5, paddingTop: 4,
         borderTop: '1px solid var(--border)', marginTop: 'auto',
       }}>
-        <button onClick={onRun} style={{
+        <button onClick={e => { e.stopPropagation(); onRun(); }} style={{
           flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5,
           padding: '7px 8px', borderRadius: 7, cursor: 'pointer',
           border: `1.5px solid ${SECTION_COLOR}50`,
@@ -966,7 +968,7 @@ function MyExpertCard({
           <Play size={10} fill={SECTION_COLOR} strokeWidth={0} />
           Run
         </button>
-        <button onClick={onConfigure} style={{
+        <button onClick={e => { e.stopPropagation(); onConfigure(); }} style={{
           flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5,
           padding: '7px 8px', borderRadius: 7, cursor: 'pointer',
           border: '1px solid var(--border-md)',
@@ -977,7 +979,7 @@ function MyExpertCard({
           <Settings size={10} />
           Configure
         </button>
-        <button onClick={onViewStats} style={{
+        <button onClick={e => { e.stopPropagation(); onViewStats(); }} style={{
           flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5,
           padding: '7px 8px', borderRadius: 7, cursor: 'pointer',
           border: '1px solid var(--border-md)',
@@ -988,7 +990,7 @@ function MyExpertCard({
           <BarChart2 size={10} />
           Stats
         </button>
-        <button onClick={onDelete} title="Delete expert" style={{
+        <button onClick={e => { e.stopPropagation(); onDelete(); }} title="Delete expert" style={{
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           padding: '7px 8px', borderRadius: 7, cursor: 'pointer',
           border: '1px solid rgba(220,38,38,0.2)',
@@ -1310,7 +1312,9 @@ function ExpertsPage() {
         throw new Error(`Server returned ${resp.status}`);
       }
 
-      // Run is now tracked server-side — UI will update via SWR polling
+      // Refresh expert list immediately so status shows "running"
+      mutate();
+
       fetch('/api/logs', { method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           level: 'info', message: `Expert "${expertName}" run started (server-side)`,
@@ -2062,16 +2066,12 @@ function ExpertsPage() {
       )}
 
       {/* ── Modals ── */}
-      <AnimatePresence>
-        {configureExpert && (
-          <ConfigureModal
-            key="configure"
-            expert={configureExpert}
-            onClose={() => setConfigureExpert(null)}
-            onSave={handleSaveExpert}
-          />
-        )}
-      </AnimatePresence>
+      <ExpertEditDialog
+        expert={configureExpert as Expert | null}
+        open={!!configureExpert}
+        onClose={() => setConfigureExpert(null)}
+        onSaved={() => { mutate(); setConfigureExpert(null); }}
+      />
       <AnimatePresence>
         {statsExpert && (
           <StatsModal

@@ -263,6 +263,84 @@ class TestExpertManagerVersioning:
         assert len(versions) == 2
 
 
+class TestExpertManagerVersionPruning:
+    def test_prune_versions_removes_oldest(self, temp_experts):
+        mgr, _, lp = temp_experts
+        expert = mgr.create_local("Prune Test", "coder", {"systemPrompt": "v1"})
+        import time
+
+        # Create several versions
+        for i in range(2, 7):
+            mgr.update_file(expert["id"], "system.md", f"v{i}")
+            time.sleep(0.01)
+
+        versions = mgr.get_versions(expert["id"], "system.md")
+        assert len(versions) == 5  # v1->v2, v2->v3, v3->v4, v4->v5, v5->v6
+
+        # Prune to 2
+        versions_dir = lp / "prune-test" / ".versions"
+        pruned = mgr._prune_versions(versions_dir, "system.md", 2)
+        assert pruned == 3
+        remaining = mgr.get_versions(expert["id"], "system.md")
+        assert len(remaining) == 2
+
+    def test_prune_via_max_versions_config(self, temp_experts):
+        """maxVersions in expert.json triggers auto-pruning on update."""
+        mgr, _, lp = temp_experts
+        expert = mgr.create_local("Auto Prune", "coder", {"systemPrompt": "v1"})
+        import time
+
+        # Set maxVersions to 2
+        ej_path = lp / "auto-prune" / "expert.json"
+        data = json.loads(ej_path.read_text())
+        data["maxVersions"] = 2
+        ej_path.write_text(json.dumps(data, indent=2))
+
+        # Create 5 updates — should auto-prune to 2 versions
+        for i in range(2, 7):
+            mgr.update_file(expert["id"], "system.md", f"v{i}")
+            time.sleep(0.01)
+
+        versions = mgr.get_versions(expert["id"], "system.md")
+        assert len(versions) <= 2
+
+    def test_prune_with_min_one(self, temp_experts):
+        mgr, _, lp = temp_experts
+        expert = mgr.create_local("Min Prune", "coder", {"systemPrompt": "v1"})
+        import time
+
+        mgr.update_file(expert["id"], "system.md", "v2")
+        time.sleep(0.01)
+        mgr.update_file(expert["id"], "system.md", "v3")
+
+        versions_dir = lp / "min-prune" / ".versions"
+        pruned = mgr._prune_versions(versions_dir, "system.md", 1)
+        assert pruned == 1
+        remaining = mgr.get_versions(expert["id"], "system.md")
+        assert len(remaining) == 1
+
+    def test_prune_invalid_max_treated_as_one(self, temp_experts):
+        mgr, _, lp = temp_experts
+        expert = mgr.create_local("Invalid Max", "coder", {"systemPrompt": "v1"})
+        import time
+
+        mgr.update_file(expert["id"], "system.md", "v2")
+        time.sleep(0.01)
+
+        versions_dir = lp / "invalid-max" / ".versions"
+        pruned = mgr._prune_versions(versions_dir, "system.md", 0)
+        assert pruned == 0  # 0 is treated as 1, but only 1 version exists
+        remaining = mgr.get_versions(expert["id"], "system.md")
+        assert len(remaining) == 1
+
+    def test_prune_no_versions_is_noop(self, temp_experts):
+        mgr, _, lp = temp_experts
+        expert = mgr.create_local("No Versions", "coder", {})
+        versions_dir = lp / "no-versions" / ".versions"
+        pruned = mgr._prune_versions(versions_dir, "system.md", 5)
+        assert pruned == 0
+
+
 class TestExpertManagerDelete:
     def test_delete_local_expert(self, temp_experts):
         mgr, _, lp = temp_experts

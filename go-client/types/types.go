@@ -24,6 +24,23 @@ const (
 	RoleCustom        ExpertRole = "custom"
 )
 
+// Expert status
+type ExpertStatus string
+
+const (
+	ExpertActive    ExpertStatus = "active"
+	ExpertIdle      ExpertStatus = "idle"
+	ExpertQueued    ExpertStatus = "queued"
+	ExpertRunning   ExpertStatus = "running"
+	ExpertCompleted ExpertStatus = "completed"
+	ExpertFailed    ExpertStatus = "failed"
+	ExpertTraining  ExpertStatus = "training"
+	ExpertFineTuning ExpertStatus = "fine-tuning"
+	ExpertDeploying ExpertStatus = "deploying"
+	ExpertOffline   ExpertStatus = "offline"
+	ExpertError     ExpertStatus = "error"
+)
+
 // Task status
 type TaskStatus string
 
@@ -107,7 +124,7 @@ type Expert struct {
 	ID               string            `json:"id"`
 	Name             string            `json:"name"`
 	Role             ExpertRole        `json:"role"`
-	Status           string            `json:"status"`
+	Status           ExpertStatus      `json:"status"`
 	ModelID          string            `json:"modelId"`
 	ModelName        string            `json:"modelName"`
 	ProviderID       string            `json:"providerId"`
@@ -139,6 +156,8 @@ type Task struct {
 	CurrentStep     int          `json:"currentStep"`
 	TotalSteps      int          `json:"totalSteps"`
 	CurrentExpert   string       `json:"currentExpert,omitempty"`
+	ExpertID        string       `json:"expertId,omitempty"`
+	ExpertRunID     string       `json:"expertRunId,omitempty"`
 	TokensUsed      int          `json:"tokensUsed"`
 	EstimatedTokens int          `json:"estimatedTokens"`
 	Progress        int          `json:"progress"`
@@ -634,7 +653,7 @@ type UpdateExpertRequest struct {
 	Name             *string           `json:"name,omitempty"`
 	Description      *string           `json:"description,omitempty"`
 	Role             *ExpertRole       `json:"role,omitempty"`
-	Status           *string           `json:"status,omitempty"`
+	Status           *ExpertStatus     `json:"status,omitempty"`
 	ModelID          *string           `json:"modelId,omitempty"`
 	ProviderID       *string           `json:"providerId,omitempty"`
 	ModelSource      *ModelSource      `json:"modelSource,omitempty"`
@@ -802,4 +821,30 @@ type ConnectionTestResult struct {
 	Message  string `json:"message"`
 	Latency  int    `json:"latencyMs,omitempty"`
 	TestedAt string `json:"testedAt,omitempty"`
+}
+
+// ExpertFile represents a file in an expert's directory.
+type ExpertFile struct {
+	Name     string `json:"name"`
+	Size     int64  `json:"size"`
+	Modified string `json:"modified"`
+}
+
+// ExpertVersion represents a versioned snapshot of an expert file.
+type ExpertVersion struct {
+	Filename  string `json:"filename"`
+	Timestamp int64  `json:"timestamp"`
+	Date      string `json:"date"`
+	Size      int64  `json:"size"`
+}
+
+// UpdateExpertFileRequest updates a single file in an expert's directory.
+type UpdateExpertFileRequest struct {
+	Filename string `json:"filename"`
+	Content  string `json:"content"`
+}
+
+// RestoreVersionRequest restores an expert file to a previous version.
+type RestoreVersionRequest struct {
+	Version string `json:"version"`
 }

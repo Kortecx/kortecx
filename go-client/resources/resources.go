@@ -54,6 +54,13 @@ func (s *Service) GetTask(id string) (*types.Task, error) {
 	return &out, err
 }
 
+// ListTasksByExpert returns all tasks linked to a specific expert.
+func (s *Service) ListTasksByExpert(expertID string) ([]types.Task, error) {
+	var out []types.Task
+	err := s.c.Do(http.MethodGet, fmt.Sprintf("/api/tasks?expertId=%s", expertID), nil, &out)
+	return out, err
+}
+
 // DeleteTask removes a task by ID.
 func (s *Service) DeleteTask(id string) error {
 	return s.c.Do(http.MethodDelete, fmt.Sprintf("/api/tasks?id=%s", id), nil, nil)
