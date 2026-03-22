@@ -3,7 +3,10 @@
 import { useState, useMemo, useEffect, useRef, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
+import useSWR from 'swr';
 import { motion, AnimatePresence } from 'framer-motion';
+
+const fetcher = (url: string) => fetch(url).then(r => r.json());
 import {
   Star, Search, Plus, Settings, TrendingUp,
   Loader2, Activity, Zap, Clock, BarChart2,
@@ -1211,6 +1214,44 @@ function ExpertsPage() {
   const [deleteTarget, setDeleteTarget] = useState<Record<string, unknown> | null>(null);
   const [deleting, setDeleting] = useState(false);
 
+  // Poll for running expert runs — survives page refresh
+  const { data: runningRunsData } = useSWR<{ runs: Array<{ id: string; expertId: string; status: string }> }>(
+    '/api/experts/run?status=running', fetcher, { refreshInterval: 3000 }
+  );
+  useEffect(() => {
+    const runs = runningRunsData?.runs ?? [];
+    if (runs.length > 0) {
+      setExpertRunStatus(prev => {
+        const next = { ...prev };
+        for (const r of runs) next[r.expertId] = 'running';
+        return next;
+      });
+    }
+  }, [runningRunsData]);
+
+  // Also poll for recently completed runs to clear running status
+  const { data: recentRunsData } = useSWR<{ runs: Array<{ id: string; expertId: string; status: string }> }>(
+    '/api/experts/run?status=completed', fetcher, { refreshInterval: 5000 }
+  );
+  useEffect(() => {
+    const completed = recentRunsData?.runs ?? [];
+    if (completed.length > 0) {
+      setExpertRunStatus(prev => {
+        const next = { ...prev };
+        let changed = false;
+        for (const r of completed) {
+          if (next[r.expertId] === 'running') {
+            next[r.expertId] = 'success';
+            changed = true;
+            setTimeout(() => setExpertRunStatus(p => { const n = { ...p }; delete n[r.expertId]; return n; }), 5000);
+          }
+        }
+        return changed ? next : prev;
+      });
+      mutate(); // refresh expert stats
+    }
+  }, [recentRunsData, mutate]);
+
   const highlightRef = useRef<HTMLDivElement>(null);
 
   const ENGINE_URL = process.env.NEXT_PUBLIC_ENGINE_URL || 'http://localhost:8000';
@@ -1236,95 +1277,53 @@ function ExpertsPage() {
     setDeleteTarget(null);
   };
 
-  /* Run expert — triggers LLM call, persists response */
+  /* Run expert — delegates to server-side API, survives page refresh */
   const handleRunExpert = async (expert: Record<string, unknown>) => {
     const expertId = expert.id as string;
     const expertName = expert.name as string;
     const role = expert.role as string;
-    const modelSource = (expert.modelSource as string) || 'local';
     const localConfig = expert.localModelConfig as Record<string, string> | null;
-    const systemPrompt = (expert.systemPrompt as string) || `You are ${expertName}, a specialized ${role} AI expert.`;
+    const engine = localConfig?.engine || 'ollama';
+    const model = localConfig?.modelName || localConfig?.model || 'llama3.2:3b';
 
     setExpertRunStatus(prev => ({ ...prev, [expertId]: 'running' }));
 
     try {
-      // Build inference request
-      const engine = localConfig?.engine || 'ollama';
-      const model = localConfig?.modelName || localConfig?.model || 'llama3.2:3b';
-      const temperature = Number(expert.temperature) || 0.7;
-      const maxTokens = (expert.maxTokens as number) || 4096;
-
-      const userPrompt = `You are running as expert "${expertName}" with role "${role}". Provide a demonstration of your capabilities. Show your best work in your area of expertise with a practical example.`;
-
-      const resp = await fetch(`${ENGINE_URL}/api/orchestrator/inference/chat`, {
+      const resp = await fetch('/api/experts/run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          engine, model, temperature, maxTokens,
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: userPrompt },
-          ],
+          expertId,
+          expertName,
+          model,
+          engine,
+          temperature: Number(expert.temperature) || 0.7,
+          maxTokens: (expert.maxTokens as number) || 4096,
+          systemPrompt: (expert.systemPrompt as string) || `You are ${expertName}, a specialized ${role} AI expert.`,
+          userPrompt: `You are running as expert "${expertName}" with role "${role}". Provide a demonstration of your capabilities. Show your best work in your area of expertise with a practical example.`,
+          role,
+          tags: [role, 'demo', 'auto-run'],
         }),
       });
 
-      const data = await resp.json();
-      const responseText = data.text || data.error || 'No response received';
-      const tokensUsed = data.tokensUsed || 0;
-      const durationMs = data.durationMs || 0;
+      if (!resp.ok) {
+        throw new Error(`Server returned ${resp.status}`);
+      }
 
-      // Persist response via engine artifacts
-      const slugName = expertName.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 60);
-      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-
-      // Save to engine artifacts endpoint
-      await fetch(`${ENGINE_URL}/api/experts/engine/${expert.id || `local-${slugName}`}/update`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          filename: `responses/response_${timestamp}.md`,
-          content: `---\nexpert: ${expertName}\nrole: ${role}\nmodel: ${model}\nengine: ${engine}\ntokens: ${tokensUsed}\nduration_ms: ${durationMs}\ntimestamp: ${new Date().toISOString()}\ntags: [${role}, demo, auto-run]\ncategory: expert-response\nlabel: ${expertName} Demo Run\n---\n\n${responseText}`,
-        }),
-      }).catch(() => {});
-
-      // Also persist to logs
+      // Run is now tracked server-side — UI will update via SWR polling
       fetch('/api/logs', { method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          level: 'info',
-          message: `Expert "${expertName}" run completed: ${tokensUsed} tokens, ${durationMs}ms`,
-          source: 'expert',
-          metadata: { expertId, model, engine, tokensUsed, durationMs, responseLength: responseText.length },
+          level: 'info', message: `Expert "${expertName}" run started (server-side)`,
+          source: 'expert', metadata: { expertId, model, engine },
         }),
       }).catch(() => {});
-
-      // Update expert stats in NeonDB
-      const prevRuns = (expert.totalRuns as number) || 0;
-      const prevLatency = (expert.avgLatencyMs as number) || 0;
-      const newAvgLatency = prevRuns > 0 ? Math.round((prevLatency * prevRuns + durationMs) / (prevRuns + 1)) : Math.round(durationMs);
-      await fetch('/api/experts', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          id: expertId,
-          totalRuns: prevRuns + 1,
-          avgLatencyMs: newAvgLatency,
-          status: 'active',
-        }),
-      }).catch(() => {});
-
-      setExpertRunStatus(prev => ({ ...prev, [expertId]: 'success' }));
-      mutate();
-      // Clear status dot after 5 seconds
-      setTimeout(() => setExpertRunStatus(prev => { const n = { ...prev }; delete n[expertId]; return n; }), 5000);
 
     } catch (err) {
-      // Log failure
       fetch('/api/logs', { method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           level: 'error',
-          message: `Expert "${expertName}" run failed: ${err instanceof Error ? err.message : 'Unknown error'}`,
-          source: 'expert',
-          metadata: { expertId },
+          message: `Expert "${expertName}" run failed to start: ${err instanceof Error ? err.message : 'Unknown'}`,
+          source: 'expert', metadata: { expertId },
         }),
       }).catch(() => {});
       setExpertRunStatus(prev => ({ ...prev, [expertId]: 'error' }));

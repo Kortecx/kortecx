@@ -60,6 +60,30 @@ export const workflowRuns = pgTable('workflow_runs', {
   createdAt:      timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 });
 
+/* ─── Expert Run History ────────────────────────────── */
+export const expertRuns = pgTable('expert_runs', {
+  id:             text('id').primaryKey(),
+  expertId:       text('expert_id').notNull(),
+  expertName:     text('expert_name').notNull(),
+  status:         varchar('status', { length: 20 }).notNull().default('running'),
+  // running | completed | failed
+  model:          text('model'),
+  engine:         varchar('engine', { length: 20 }),
+  temperature:    decimal('temperature', { precision: 3, scale: 2 }),
+  maxTokens:      integer('max_tokens'),
+  systemPrompt:   text('system_prompt'),
+  userPrompt:     text('user_prompt'),
+  responseText:   text('response_text'),
+  tokensUsed:     integer('tokens_used').default(0),
+  durationMs:     integer('duration_ms').default(0),
+  artifactCount:  integer('artifact_count').default(0),
+  errorMessage:   text('error_message'),
+  metadata:       jsonb('metadata'),
+  startedAt:      timestamp('started_at', { withTimezone: true }),
+  completedAt:    timestamp('completed_at', { withTimezone: true }),
+  createdAt:      timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
 /* ─── System Alerts ──────────────────────────────────── */
 export const alerts = pgTable('alerts', {
   id:             text('id').primaryKey(),
@@ -384,7 +408,10 @@ export const assets = pgTable('assets', {
   sizeBytes:    bigint('size_bytes', { mode: 'number' }).default(0),
   tags:         text('tags').array(),
   metadata:     jsonb('metadata'),                       // extra info: dimensions, duration, etc.
-  datasetId:    text('dataset_id'),                      // optional link to datasets table
+  expertId:     text('expert_id'),                        // link to expert that generated this
+  expertRunId:  text('expert_run_id'),                    // groups artifacts from one execution
+  sourceType:   varchar('source_type', { length: 20 }),   // expert | workflow | upload | synthesis
+  datasetId:    text('dataset_id'),                       // optional link to datasets table
   createdAt:    timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt:    timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 });

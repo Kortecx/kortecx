@@ -21,6 +21,7 @@ from engine.services.orchestrator import (
     WorkflowRequest,
     orchestrator,
 )
+from engine.services.step_artifacts import step_artifacts
 
 logger = logging.getLogger("engine.routers.orchestrator")
 
@@ -167,6 +168,32 @@ async def get_shared_memory(run_id: str) -> dict[str, Any]:
     if not mem:
         return {"error": "Run not found", "runId": run_id}
     return mem.to_dict()
+
+
+@router.get("/runs/{run_id}/artifacts")
+async def list_run_artifacts(run_id: str) -> dict[str, Any]:
+    """List all step artifacts for a workflow run."""
+    run = orchestrator.get_run(run_id)
+    if not run:
+        return {"error": "Run not found", "runId": run_id, "artifacts": []}
+
+    workflow_name = run.get("name", "unnamed")
+    all_artifacts: list[dict[str, Any]] = []
+
+    # Collect artifacts from all steps
+    agents = run.get("agents", {})
+    for agent in agents.values():
+        step_name = getattr(agent, "step_id", "") or ""
+        if step_name:
+            artifacts = step_artifacts.list_artifacts(workflow_name, step_name)
+            for a in artifacts:
+                a["workflowName"] = workflow_name
+                a["stepName"] = step_name
+                a["runId"] = run_id
+                a["sourceType"] = "workflow"
+            all_artifacts.extend(artifacts)
+
+    return {"artifacts": all_artifacts, "total": len(all_artifacts), "runId": run_id}
 
 
 @router.post("/upload")

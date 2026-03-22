@@ -301,6 +301,82 @@ type ProviderUsage struct {
 	TotalTokens  int     `json:"totalTokens"`
 }
 
+// --- Assets ---
+
+// Asset represents a file or artifact stored on disk with DB metadata.
+type Asset struct {
+	ID          string         `json:"id"`
+	Name        string         `json:"name"`
+	Description string         `json:"description,omitempty"`
+	Folder      string         `json:"folder"`
+	MimeType    string         `json:"mimeType"`
+	FileType    string         `json:"fileType"`
+	FilePath    string         `json:"filePath"`
+	FileName    string         `json:"fileName"`
+	SizeBytes   int64          `json:"sizeBytes"`
+	Tags        []string       `json:"tags,omitempty"`
+	Metadata    map[string]any `json:"metadata,omitempty"`
+	ExpertID    string         `json:"expertId,omitempty"`
+	ExpertRunID string         `json:"expertRunId,omitempty"`
+	SourceType  string         `json:"sourceType,omitempty"`
+	DatasetID   string         `json:"datasetId,omitempty"`
+	CreatedAt   time.Time      `json:"createdAt"`
+	UpdatedAt   time.Time      `json:"updatedAt"`
+}
+
+// AssetListOptions provides filter parameters for listing assets.
+type AssetListOptions struct {
+	Folder      string `json:"folder,omitempty"`
+	ExpertID    string `json:"expertId,omitempty"`
+	SourceType  string `json:"sourceType,omitempty"`
+	ExpertRunID string `json:"expertRunId,omitempty"`
+	Search      string `json:"q,omitempty"`
+}
+
+// RegisterAssetsRequest is the request body for bulk asset registration.
+type RegisterAssetsRequest struct {
+	Assets []Asset `json:"assets"`
+}
+
+// --- Expert Runs ---
+
+// ExpertRun tracks a single expert execution with its result.
+type ExpertRun struct {
+	ID            string     `json:"id"`
+	ExpertID      string     `json:"expertId"`
+	ExpertName    string     `json:"expertName"`
+	Status        string     `json:"status"`
+	Model         string     `json:"model,omitempty"`
+	Engine        string     `json:"engine,omitempty"`
+	Temperature   float64    `json:"temperature,omitempty"`
+	MaxTokens     int        `json:"maxTokens,omitempty"`
+	SystemPrompt  string     `json:"systemPrompt,omitempty"`
+	UserPrompt    string     `json:"userPrompt,omitempty"`
+	ResponseText  string     `json:"responseText,omitempty"`
+	TokensUsed    int        `json:"tokensUsed"`
+	DurationMs    int        `json:"durationMs"`
+	ArtifactCount int        `json:"artifactCount"`
+	ErrorMessage  string     `json:"errorMessage,omitempty"`
+	Metadata      map[string]any `json:"metadata,omitempty"`
+	StartedAt     *time.Time `json:"startedAt,omitempty"`
+	CompletedAt   *time.Time `json:"completedAt,omitempty"`
+	CreatedAt     time.Time  `json:"createdAt"`
+}
+
+// RunExpertRequest starts a server-side expert execution.
+type RunExpertRequest struct {
+	ExpertID     string   `json:"expertId"`
+	ExpertName   string   `json:"expertName"`
+	Model        string   `json:"model,omitempty"`
+	Engine       string   `json:"engine,omitempty"`
+	Temperature  float64  `json:"temperature,omitempty"`
+	MaxTokens    int      `json:"maxTokens,omitempty"`
+	SystemPrompt string   `json:"systemPrompt,omitempty"`
+	UserPrompt   string   `json:"userPrompt,omitempty"`
+	Role         string   `json:"role,omitempty"`
+	Tags         []string `json:"tags,omitempty"`
+}
+
 // --- Model Source ---
 
 // ModelSource indicates whether an expert runs on local inference or a cloud provider.

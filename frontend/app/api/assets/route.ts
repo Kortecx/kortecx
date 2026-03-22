@@ -17,10 +17,13 @@ function detectFileType(mime: string, ext: string): string {
   return 'file';
 }
 
-/* GET /api/assets?folder=<path> — list assets, optionally filtered by folder */
+/* GET /api/assets?folder=<path>&expertId=<id>&sourceType=<type>&expertRunId=<id> — list assets */
 export async function GET(req: NextRequest) {
   const folder = req.nextUrl.searchParams.get('folder');
   const search = req.nextUrl.searchParams.get('q');
+  const expertId = req.nextUrl.searchParams.get('expertId');
+  const sourceType = req.nextUrl.searchParams.get('sourceType');
+  const expertRunId = req.nextUrl.searchParams.get('expertRunId');
 
   try {
     let query = db.select().from(assets).orderBy(desc(assets.updatedAt)).$dynamic();
@@ -32,6 +35,15 @@ export async function GET(req: NextRequest) {
       query = query.where(
         sql`(${assets.name} ILIKE ${'%' + search + '%'} OR ${assets.fileName} ILIKE ${'%' + search + '%'})`
       );
+    }
+    if (expertId) {
+      query = query.where(eq(assets.expertId, expertId));
+    }
+    if (sourceType) {
+      query = query.where(eq(assets.sourceType, sourceType));
+    }
+    if (expertRunId) {
+      query = query.where(eq(assets.expertRunId, expertRunId));
     }
 
     const rows = await query;

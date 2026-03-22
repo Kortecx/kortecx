@@ -4,6 +4,7 @@
 import { useState, useEffect, useCallback, useRef, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import useSWR from 'swr';
+import dynamic from 'next/dynamic';
 import {
   Database, Plus, Download, Sparkles, RefreshCcw,
   CheckCircle2, Clock, AlertTriangle, BarChart3, FileText,
@@ -11,8 +12,11 @@ import {
   ExternalLink, Trash2, Eye, HardDrive, Rows3, Columns3, Key,
   Cpu, Server, Sparkle, ChevronDown, ChevronRight, X,
   Upload, FolderPlus, File, Image, Video, Music, FileSpreadsheet, GripVertical,
+  Save, FolderOpen,
 } from 'lucide-react';
 import Link from 'next/link';
+
+const MonacoEditor = dynamic(() => import('@monaco-editor/react').then(m => m.default), { ssr: false });
 import type { Dataset } from '@/lib/types';
 
 /* ── Helpers ───────────────────────────────────────────── */
@@ -2253,6 +2257,374 @@ function SynthesisEditModal({
   );
 }
 
+/* ── Assets Tab — VSCode-like file explorer with Monaco editor ── */
+
+const EXT_TO_LANG: Record<string, string> = {
+  md: 'markdown', py: 'python', js: 'javascript', ts: 'typescript', json: 'json',
+  yaml: 'yaml', yml: 'yaml', sh: 'shell', sql: 'sql', html: 'html', css: 'css',
+  toml: 'ini', xml: 'xml', csv: 'plaintext', txt: 'plaintext', log: 'plaintext',
+};
+const TEXT_EXTS = new Set(Object.keys(EXT_TO_LANG));
+
+interface TreeNode {
+  name: string;
+  path: string;
+  type: 'folder' | 'file';
+  children: TreeNode[];
+  asset?: any;
+}
+
+function buildTree(assetList: any[]): TreeNode[] {
+  const root: TreeNode = { name: '', path: '', type: 'folder', children: [] };
+  for (const a of assetList) {
+    const folder = (a.folder || '/').replace(/^\/+/, '');
+    const parts = folder ? folder.split('/') : [];
+    let node = root;
+    let currentPath = '';
+    for (const part of parts) {
+      currentPath += '/' + part;
+      let child = node.children.find(c => c.name === part && c.type === 'folder');
+      if (!child) {
+        child = { name: part, path: currentPath, type: 'folder', children: [] };
+        node.children.push(child);
+      }
+      node = child;
+    }
+    node.children.push({
+      name: a.fileName || a.name,
+      path: currentPath + '/' + (a.fileName || a.name),
+      type: 'file',
+      children: [],
+      asset: a,
+    });
+  }
+  // Sort: folders first, then files, alphabetically
+  const sortNodes = (nodes: TreeNode[]) => {
+    nodes.sort((a, b) => {
+      if (a.type !== b.type) return a.type === 'folder' ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+    for (const n of nodes) if (n.children.length) sortNodes(n.children);
+  };
+  sortNodes(root.children);
+  return root.children;
+}
+
+function FileTreeItem({ node, depth, expanded, selected, onToggle, onSelect }: {
+  node: TreeNode; depth: number; expanded: Set<string>; selected: string | null;
+  onToggle: (path: string) => void; onSelect: (asset: any) => void;
+}) {
+  const isOpen = expanded.has(node.path);
+  const isSelected = node.type === 'file' && node.asset?.id === selected;
+
+  if (node.type === 'folder') {
+    return (
+      <>
+        <div
+          onClick={() => onToggle(node.path)}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 4, padding: '3px 8px',
+            paddingLeft: 8 + depth * 16, cursor: 'pointer', fontSize: 12,
+            color: 'var(--text-2)', userSelect: 'none',
+            background: 'transparent',
+          }}
+          onMouseEnter={e => (e.currentTarget.style.background = 'var(--surface-2)')}
+          onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+        >
+          {isOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+          {isOpen ? <FolderOpen size={13} color="var(--amber)" /> : <FolderPlus size={13} color="var(--amber)" />}
+          <span style={{ fontWeight: 500 }}>{node.name}</span>
+          <span style={{ fontSize: 10, color: 'var(--text-3)', marginLeft: 'auto' }}>
+            {node.children.filter(c => c.type === 'file').length}
+          </span>
+        </div>
+        {isOpen && node.children.map(child => (
+          <FileTreeItem key={child.path} node={child} depth={depth + 1}
+            expanded={expanded} selected={selected} onToggle={onToggle} onSelect={onSelect} />
+        ))}
+      </>
+    );
+  }
+
+  const Icon = FILE_TYPE_ICONS[node.asset?.fileType] || File;
+  return (
+    <div
+      onClick={() => onSelect(node.asset)}
+      style={{
+        display: 'flex', alignItems: 'center', gap: 6, padding: '3px 8px',
+        paddingLeft: 8 + depth * 16, cursor: 'pointer', fontSize: 12,
+        color: isSelected ? 'var(--text-1)' : 'var(--text-2)',
+        background: isSelected ? 'var(--surface-2)' : 'transparent',
+        borderLeft: isSelected ? '2px solid var(--teal)' : '2px solid transparent',
+      }}
+      onMouseEnter={e => { if (!isSelected) e.currentTarget.style.background = 'var(--surface-2)'; }}
+      onMouseLeave={e => { if (!isSelected) e.currentTarget.style.background = 'transparent'; }}
+    >
+      <Icon size={13} style={{ color: 'var(--teal)', flexShrink: 0 }} />
+      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+        {node.name}
+      </span>
+      <span style={{ fontSize: 10, color: 'var(--text-3)', flexShrink: 0 }}>
+        {fmtBytes(node.asset?.sizeBytes || 0)}
+      </span>
+    </div>
+  );
+}
+
+function AssetsTab() {
+  const [assetSearch, setAssetSearch] = useState('');
+  const [assetSourceFilter, setAssetSourceFilter] = useState<string>('all');
+
+  const params = new URLSearchParams();
+  if (assetSourceFilter !== 'all') params.set('sourceType', assetSourceFilter);
+  if (assetSearch) params.set('q', assetSearch);
+  const qs = params.toString();
+
+  const { data: assetsData, isLoading, mutate: mutateAssets } = useSWR<{
+    assets: any[]; total: number; folders: string[];
+  }>(`/api/assets${qs ? `?${qs}` : ''}`, (url: string) => fetch(url).then(r => r.json()), { refreshInterval: 30_000 });
+  const allAssets: any[] = assetsData?.assets ?? [];
+
+  // Tree state
+  const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set());
+  const [selectedAsset, setSelectedAsset] = useState<any>(null);
+  const [editorContent, setEditorContent] = useState<string>('');
+  const [originalContent, setOriginalContent] = useState<string>('');
+  const [loadingContent, setLoadingContent] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const isDirty = editorContent !== originalContent;
+
+  const tree = buildTree(allAssets);
+
+  // Auto-expand all top-level folders on first load
+  useEffect(() => {
+    if (tree.length > 0 && expandedPaths.size === 0) {
+      setExpandedPaths(new Set(tree.filter(n => n.type === 'folder').map(n => n.path)));
+    }
+  }, [tree.length]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleToggle = (path: string) => {
+    setExpandedPaths(prev => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path); else next.add(path);
+      return next;
+    });
+  };
+
+  const handleSelectFile = async (asset: any) => {
+    if (saving) return;
+    setSelectedAsset(asset);
+    const ext = (asset.fileName || '').split('.').pop()?.toLowerCase() || '';
+    if (TEXT_EXTS.has(ext)) {
+      setLoadingContent(true);
+      try {
+        const resp = await fetch(`/api/assets/content?id=${asset.id}`);
+        if (resp.ok) {
+          const data = await resp.json();
+          setEditorContent(data.content || '');
+          setOriginalContent(data.content || '');
+        } else {
+          setEditorContent(`// Could not load file: ${asset.filePath}`);
+          setOriginalContent('');
+        }
+      } catch {
+        setEditorContent(`// Could not load file: ${asset.filePath}`);
+        setOriginalContent('');
+      }
+      setLoadingContent(false);
+    } else {
+      setEditorContent('');
+      setOriginalContent('');
+    }
+  };
+
+  const handleSave = async () => {
+    if (!selectedAsset || !isDirty) return;
+    setSaving(true);
+    try {
+      const resp = await fetch('/api/assets/content', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: selectedAsset.id, content: editorContent }),
+      });
+      if (resp.ok) {
+        setOriginalContent(editorContent);
+        mutateAssets();
+      }
+    } catch { /* ignore */ }
+    setSaving(false);
+  };
+
+  const handleDelete = async (id: string) => {
+    await fetch(`/api/assets?id=${id}`, { method: 'DELETE' });
+    if (selectedAsset?.id === id) { setSelectedAsset(null); setEditorContent(''); setOriginalContent(''); }
+    mutateAssets();
+  };
+
+  const selectedExt = (selectedAsset?.fileName || '').split('.').pop()?.toLowerCase() || '';
+  const isTextFile = TEXT_EXTS.has(selectedExt);
+  const monacoLang = EXT_TO_LANG[selectedExt] || 'plaintext';
+
+  return (
+    <div style={{ display: 'flex', height: 'calc(100vh - 280px)', minHeight: 400, border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden', background: 'var(--surface-1)' }}>
+      {/* Left panel — File tree */}
+      <div style={{ width: 280, minWidth: 220, borderRight: '1px solid var(--border)', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
+        {/* Search + filter bar */}
+        <div style={{ padding: 8, borderBottom: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <div style={{ position: 'relative' }}>
+            <Search size={12} style={{ position: 'absolute', left: 8, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-3)' }} />
+            <input
+              className="input"
+              placeholder="Search files..."
+              value={assetSearch}
+              onChange={e => setAssetSearch(e.target.value)}
+              style={{ paddingLeft: 26, fontSize: 11, height: 28 }}
+            />
+          </div>
+          <select
+            className="input"
+            value={assetSourceFilter}
+            onChange={e => setAssetSourceFilter(e.target.value)}
+            style={{ fontSize: 11, height: 26 }}
+          >
+            <option value="all">All Sources</option>
+            <option value="expert">Expert Runs</option>
+            <option value="workflow">Workflows</option>
+            <option value="upload">Uploads</option>
+          </select>
+        </div>
+
+        {/* Stats */}
+        <div style={{ padding: '6px 10px', fontSize: 10, color: 'var(--text-3)', borderBottom: '1px solid var(--border)', display: 'flex', gap: 10 }}>
+          <span>{allAssets.length} files</span>
+          <span>{fmtBytes(allAssets.reduce((s, a) => s + (a.sizeBytes || 0), 0))}</span>
+          <button onClick={() => mutateAssets()} style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-3)', padding: 0 }}>
+            <RefreshCcw size={10} />
+          </button>
+        </div>
+
+        {/* Tree */}
+        <div style={{ flex: 1, overflow: 'auto', paddingTop: 4 }}>
+          {isLoading && (
+            <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-3)', fontSize: 12 }}>
+              <Loader2 size={14} className="spin" /> Loading...
+            </div>
+          )}
+          {!isLoading && allAssets.length === 0 && (
+            <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-3)', fontSize: 12 }}>
+              <File size={20} style={{ marginBottom: 8, opacity: 0.4 }} /><br />
+              No assets yet. Run an expert to generate artifacts.
+            </div>
+          )}
+          {tree.map(node => (
+            <FileTreeItem key={node.path} node={node} depth={0}
+              expanded={expandedPaths} selected={selectedAsset?.id || null}
+              onToggle={handleToggle} onSelect={handleSelectFile} />
+          ))}
+        </div>
+      </div>
+
+      {/* Right panel — Editor */}
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
+        {!selectedAsset ? (
+          <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-3)' }}>
+            <div style={{ textAlign: 'center' }}>
+              <FileText size={32} style={{ marginBottom: 12, opacity: 0.3 }} />
+              <p style={{ fontSize: 13 }}>Select a file from the tree to view and edit</p>
+            </div>
+          </div>
+        ) : (
+          <>
+            {/* Toolbar */}
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 10, padding: '6px 12px',
+              borderBottom: '1px solid var(--border)', fontSize: 12, background: 'var(--surface-1)',
+            }}>
+              <span style={{ fontWeight: 600, color: 'var(--text-1)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                {(() => { const Ic = FILE_TYPE_ICONS[selectedAsset.fileType] || File; return <Ic size={13} color="var(--teal)" />; })()}
+                {selectedAsset.fileName}
+                {isDirty && <span style={{ color: 'var(--amber)', fontSize: 10, fontWeight: 700 }}>(modified)</span>}
+              </span>
+              <span style={{ fontSize: 10, color: 'var(--text-3)' }}>
+                {fmtBytes(selectedAsset.sizeBytes || 0)}
+              </span>
+              <span style={{ fontSize: 10, color: 'var(--text-3)' }}>
+                {(selectedAsset.metadata as any)?.expertName || selectedAsset.sourceType || ''}
+              </span>
+              <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
+                {isTextFile && (
+                  <button
+                    className="btn btn-primary btn-sm"
+                    onClick={handleSave}
+                    disabled={!isDirty || saving}
+                    style={{ fontSize: 11, height: 26, padding: '0 10px', opacity: isDirty ? 1 : 0.4 }}
+                  >
+                    <Save size={11} /> {saving ? 'Saving...' : 'Save'}
+                  </button>
+                )}
+                <button
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => handleDelete(selectedAsset.id)}
+                  style={{ fontSize: 11, height: 26, padding: '0 8px', color: 'var(--danger)' }}
+                >
+                  <Trash2 size={11} />
+                </button>
+                <button
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => { setSelectedAsset(null); setEditorContent(''); setOriginalContent(''); }}
+                  style={{ fontSize: 11, height: 26, padding: '0 8px' }}
+                >
+                  <X size={11} />
+                </button>
+              </div>
+            </div>
+
+            {/* Editor area */}
+            <div style={{ flex: 1 }}>
+              {loadingContent ? (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-3)' }}>
+                  <Loader2 size={16} className="spin" />
+                </div>
+              ) : isTextFile ? (
+                <MonacoEditor
+                  height="100%"
+                  language={monacoLang}
+                  theme="vs-dark"
+                  value={editorContent}
+                  onChange={val => setEditorContent(val ?? '')}
+                  options={{
+                    minimap: { enabled: false },
+                    lineNumbers: 'on',
+                    glyphMargin: false,
+                    folding: true,
+                    scrollBeyondLastLine: false,
+                    wordWrap: 'on',
+                    wrappingStrategy: 'advanced',
+                    fontSize: 12,
+                    fontFamily: 'var(--font-mono, monospace)',
+                    renderLineHighlight: 'line',
+                    padding: { top: 8, bottom: 8 },
+                  }}
+                />
+              ) : (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-3)' }}>
+                  <div className="card" style={{ padding: 32, textAlign: 'center' }}>
+                    <File size={32} style={{ marginBottom: 12, opacity: 0.4 }} />
+                    <p style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-1)', marginBottom: 4 }}>{selectedAsset.fileName}</p>
+                    <p style={{ fontSize: 12 }}>{fmtBytes(selectedAsset.sizeBytes || 0)} &middot; {selectedAsset.fileType}</p>
+                    <p style={{ fontSize: 11, marginTop: 8 }}>Binary file — preview not available</p>
+                    <p style={{ fontSize: 10, color: 'var(--text-3)', marginTop: 4, fontFamily: 'var(--font-mono)' }}>{selectedAsset.filePath}</p>
+                  </div>
+                </div>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /* ── Main Page ─────────────────────────────────────────── */
 
 export default function DataSynthesisPage() {
@@ -2261,7 +2633,7 @@ export default function DataSynthesisPage() {
 
 function DataSynthesisPageInner() {
   const searchParams = useSearchParams();
-  const [tab, setTab] = useState<'datasets' | 'huggingface' | 'generate'>('datasets');
+  const [tab, setTab] = useState<'datasets' | 'huggingface' | 'generate' | 'assets'>('datasets');
 
   /* Handle ?action=new → auto-switch to Generate tab */
   useEffect(() => {
@@ -2483,6 +2855,7 @@ function DataSynthesisPageInner() {
           { key: 'datasets', label: 'My Datasets' },
           { key: 'huggingface', label: 'HuggingFace Hub' },
           { key: 'generate', label: 'Generate New' },
+          { key: 'assets', label: 'Assets' },
         ] as const).map(t => (
           <button
             key={t.key}
@@ -3066,6 +3439,9 @@ function DataSynthesisPageInner() {
           </div>
         </div>
       )}
+
+      {/* Assets Tab — Expert-generated artifacts */}
+      {tab === 'assets' && <AssetsTab />}
 
       {/* Synthesis Edit Modal */}
       {editJob && (

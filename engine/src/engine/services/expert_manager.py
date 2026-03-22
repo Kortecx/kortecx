@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import shutil
 import time
 from datetime import UTC, datetime
@@ -48,7 +49,7 @@ class ExpertManager:
         experts: list[dict[str, Any]] = []
         for source, base_dir in [("marketplace", MARKETPLACE_DIR), ("local", LOCAL_DIR)]:
             for expert_dir in sorted(base_dir.iterdir()):
-                if not expert_dir.is_dir() or expert_dir.name.startswith(("_", ".")):
+                if not expert_dir.is_dir() or expert_dir.name.startswith(("_", ".")) or re.match(r"\d{4}-\d{2}-\d{2}", expert_dir.name):
                     continue
                 expert = self._load_expert(expert_dir, source)
                 if expert:

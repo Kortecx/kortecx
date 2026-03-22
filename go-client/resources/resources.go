@@ -223,6 +223,111 @@ func (s *Service) ListAlerts(opts ...*types.ListOptions) ([]types.Alert, error) 
 	return out, err
 }
 
+// --- Assets ---
+
+// ListAssets returns all assets, optionally filtered by the provided options.
+func (s *Service) ListAssets(opts ...*types.AssetListOptions) ([]types.Asset, error) {
+	path := "/api/assets"
+	if len(opts) > 0 && opts[0] != nil {
+		o := opts[0]
+		q := "?"
+		if o.Folder != "" {
+			q += "folder=" + o.Folder + "&"
+		}
+		if o.ExpertID != "" {
+			q += "expertId=" + o.ExpertID + "&"
+		}
+		if o.SourceType != "" {
+			q += "sourceType=" + o.SourceType + "&"
+		}
+		if o.ExpertRunID != "" {
+			q += "expertRunId=" + o.ExpertRunID + "&"
+		}
+		if o.Search != "" {
+			q += "q=" + o.Search + "&"
+		}
+		if len(q) > 1 {
+			path += q[:len(q)-1] // trim trailing &
+		}
+	}
+	var resp struct {
+		Assets []types.Asset `json:"assets"`
+	}
+	err := s.c.Do(http.MethodGet, path, nil, &resp)
+	return resp.Assets, err
+}
+
+// GetAsset retrieves a single asset by ID.
+func (s *Service) GetAsset(id string) (*types.Asset, error) {
+	var resp struct {
+		Assets []types.Asset `json:"assets"`
+	}
+	err := s.c.Do(http.MethodGet, fmt.Sprintf("/api/assets?q=%s", id), nil, &resp)
+	if err != nil {
+		return nil, err
+	}
+	for i := range resp.Assets {
+		if resp.Assets[i].ID == id {
+			return &resp.Assets[i], nil
+		}
+	}
+	return nil, fmt.Errorf("asset %s not found", id)
+}
+
+// DeleteAsset removes an asset record by ID.
+func (s *Service) DeleteAsset(id string) error {
+	return s.c.Do(http.MethodDelete, fmt.Sprintf("/api/assets?id=%s", id), nil, nil)
+}
+
+// RegisterAssets registers pre-existing files as asset records in the database.
+func (s *Service) RegisterAssets(req types.RegisterAssetsRequest) ([]types.Asset, error) {
+	var resp struct {
+		Assets []types.Asset `json:"assets"`
+	}
+	err := s.c.Do(http.MethodPost, "/api/assets/register", req, &resp)
+	return resp.Assets, err
+}
+
+// --- Expert Runs ---
+
+// RunExpert starts a server-side expert execution that survives client disconnection.
+func (s *Service) RunExpert(req types.RunExpertRequest) (string, error) {
+	var resp struct {
+		RunID  string `json:"runId"`
+		Status string `json:"status"`
+	}
+	err := s.c.Do(http.MethodPost, "/api/experts/run", req, &resp)
+	return resp.RunID, err
+}
+
+// GetExpertRun retrieves the status and result of an expert run.
+func (s *Service) GetExpertRun(id string) (*types.ExpertRun, error) {
+	var resp struct {
+		Runs []types.ExpertRun `json:"runs"`
+	}
+	err := s.c.Do(http.MethodGet, fmt.Sprintf("/api/experts/run?id=%s", id), nil, &resp)
+	if err != nil {
+		return nil, err
+	}
+	if len(resp.Runs) == 0 {
+		return nil, fmt.Errorf("expert run %s not found", id)
+	}
+	return &resp.Runs[0], nil
+}
+
+// ListExpertRuns lists expert runs, optionally filtered by status.
+func (s *Service) ListExpertRuns(status string) ([]types.ExpertRun, error) {
+	path := "/api/experts/run"
+	if status != "" {
+		path += "?status=" + status
+	}
+	var resp struct {
+		Runs []types.ExpertRun `json:"runs"`
+	}
+	err := s.c.Do(http.MethodGet, path, nil, &resp)
+	return resp.Runs, err
+}
+
 // MonitoringSnapshot is the response from the monitoring endpoint.
 type MonitoringSnapshot struct {
 	Alerts      []types.Alert `json:"alerts"`
