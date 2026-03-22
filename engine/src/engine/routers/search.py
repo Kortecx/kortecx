@@ -1,4 +1,5 @@
 """Global search API — search across workflows, experts, datasets."""
+
 from __future__ import annotations
 
 import logging
@@ -29,13 +30,15 @@ async def global_search(q: str = "", limit: int = 20) -> dict[str, Any]:
             desc = expert.get("description", "").lower()
             role = expert.get("role", "").lower()
             if query in name or query in desc or query in role:
-                results.append({
-                    "type": "expert",
-                    "id": expert.get("id"),
-                    "name": expert.get("name"),
-                    "description": expert.get("description", "")[:200],
-                    "metadata": {"role": expert.get("role"), "source": expert.get("source", "engine")},
-                })
+                results.append(
+                    {
+                        "type": "expert",
+                        "id": expert.get("id"),
+                        "name": expert.get("name"),
+                        "description": expert.get("description", "")[:200],
+                        "metadata": {"role": expert.get("role"), "source": expert.get("source", "engine")},
+                    }
+                )
     except Exception as e:
         logger.warning("Expert search failed: %s", e)
 

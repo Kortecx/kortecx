@@ -31,16 +31,16 @@ PACKAGE_JSON = {
     },
 }
 
-VITE_CONFIG = '''import { defineConfig } from "vite";
+VITE_CONFIG = """import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
 });
-'''
+"""
 
-TSCONFIG = '''{
+TSCONFIG = """{
   "compilerOptions": {
     "target": "ES2020",
     "module": "ESNext",
@@ -57,9 +57,9 @@ TSCONFIG = '''{
   },
   "include": ["src"]
 }
-'''
+"""
 
-INDEX_HTML = '''<!DOCTYPE html>
+INDEX_HTML = """<!DOCTYPE html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
@@ -71,9 +71,9 @@ INDEX_HTML = '''<!DOCTYPE html>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
-'''
+"""
 
-MAIN_TSX = '''import React from "react";
+MAIN_TSX = """import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
 import "./index.css";
@@ -83,30 +83,31 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
     <App />
   </React.StrictMode>
 );
-'''
+"""
 
-INDEX_CSS = '''@import "tailwindcss";
-'''
+INDEX_CSS = """@import "tailwindcss";
+"""
+
 
 def _make_app(title: str, description: str) -> str:
     return (
-        'export default function App() {\n'
-        '  return (\n'
+        "export default function App() {\n"
+        "  return (\n"
         '    <div className="min-h-screen bg-gradient-to-br from-gray-900 to-gray-800 flex items-center justify-center">\n'
         '      <div className="text-center space-y-6">\n'
         '        <h1 className="text-5xl font-bold text-white tracking-tight">\n'
-        f'          {title}\n'
-        '        </h1>\n'
+        f"          {title}\n"
+        "        </h1>\n"
         '        <p className="text-lg text-gray-400 max-w-md mx-auto">\n'
-        f'          {description}\n'
-        '        </p>\n'
+        f"          {description}\n"
+        "        </p>\n"
         '        <button className="px-6 py-3 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-lg transition-colors">\n'
-        '          Get Started\n'
-        '        </button>\n'
-        '      </div>\n'
-        '    </div>\n'
-        '  );\n'
-        '}\n'
+        "          Get Started\n"
+        "        </button>\n"
+        "      </div>\n"
+        "    </div>\n"
+        "  );\n"
+        "}\n"
     )
 
 
@@ -185,8 +186,13 @@ def handle_request(request: dict) -> dict:
                 (output_dir / "src" / "App.tsx").write_text(_make_app(title, description))
 
                 files = [
-                    "package.json", "vite.config.ts", "tsconfig.json",
-                    "index.html", "src/main.tsx", "src/index.css", "src/App.tsx",
+                    "package.json",
+                    "vite.config.ts",
+                    "tsconfig.json",
+                    "index.html",
+                    "src/main.tsx",
+                    "src/index.css",
+                    "src/App.tsx",
                 ]
                 return {
                     "content": [
@@ -194,9 +200,7 @@ def handle_request(request: dict) -> dict:
                             "type": "text",
                             "text": (
                                 f"React project generated at: {output_dir}\n\n"
-                                f"Files created:\n" +
-                                "\n".join(f"  - {f}" for f in files) +
-                                f"\n\nTo run:\n  cd {output_dir}\n  npm install\n  npm run dev"
+                                f"Files created:\n" + "\n".join(f"  - {f}" for f in files) + f"\n\nTo run:\n  cd {output_dir}\n  npm install\n  npm run dev"
                             ),
                         }
                     ]
@@ -223,18 +227,20 @@ if __name__ == "__main__":
 
     # Test generation in a temp directory
     with tempfile.TemporaryDirectory() as tmpdir:
-        result = handle_request({
-            "method": "tools/call",
-            "params": {
-                "name": "generate_react_page",
-                "arguments": {
-                    "project_name": "test-app",
-                    "title": "Test Page",
-                    "description": "A test page",
-                    "output_dir": tmpdir,
+        result = handle_request(
+            {
+                "method": "tools/call",
+                "params": {
+                    "name": "generate_react_page",
+                    "arguments": {
+                        "project_name": "test-app",
+                        "title": "Test Page",
+                        "description": "A test page",
+                        "output_dir": tmpdir,
+                    },
                 },
-            },
-        })
+            }
+        )
         assert "content" in result
         assert "React project generated" in result["content"][0]["text"]
 
@@ -257,10 +263,12 @@ if __name__ == "__main__":
         print("[PASS] generate_react_page")
 
     # Test unknown tool
-    result = handle_request({
-        "method": "tools/call",
-        "params": {"name": "nonexistent", "arguments": {}},
-    })
+    result = handle_request(
+        {
+            "method": "tools/call",
+            "params": {"name": "nonexistent", "arguments": {}},
+        }
+    )
     assert "error" in result
     print("[PASS] unknown tool error")
 

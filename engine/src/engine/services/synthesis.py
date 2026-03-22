@@ -199,10 +199,7 @@ class SynthesisService:
         cfg = job.config
         batch_start = job.current_samples
 
-        tasks = [
-            self._generate_sample(cfg, batch_start + i + 1)
-            for i in range(batch_size)
-        ]
+        tasks = [self._generate_sample(cfg, batch_start + i + 1) for i in range(batch_size)]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         successful: list[dict] = []

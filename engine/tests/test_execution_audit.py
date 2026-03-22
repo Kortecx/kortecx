@@ -1,4 +1,5 @@
 """Tests for execution audit service."""
+
 from __future__ import annotations
 
 import pytest

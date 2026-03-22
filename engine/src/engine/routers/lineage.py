@@ -1,4 +1,5 @@
 """Data lineage API — track downstream impact of data changes."""
+
 from __future__ import annotations
 
 import logging

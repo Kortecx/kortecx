@@ -191,7 +191,7 @@ class ExpertSyncService:
         raw = dsn or settings.database_url
         # asyncpg requires postgresql:// not postgres:// — normalise
         if raw.startswith("postgres://"):
-            raw = "postgresql://" + raw[len("postgres://"):]
+            raw = "postgresql://" + raw[len("postgres://") :]
         self._dsn = raw
         self._pool: asyncpg.Pool | None = None
 

@@ -2,6 +2,7 @@ import os
 import json
 from mcp.server import Server
 
+
 class MCPServer(Server):
     def __init__(self):
         super().__init__()
@@ -9,8 +10,8 @@ class MCPServer(Server):
         self.description = "Generates a standalone webpage in React"
 
     def on_message(self, message):
-        if message['type'] == 'generate':
-            project_name = message['data']['projectName']
+        if message["type"] == "generate":
+            project_name = message["data"]["projectName"]
             output_dir = f"./{project_name}"
 
             # Create the directory for the project
@@ -28,22 +29,20 @@ class MCPServer(Server):
                 f.write("export default App;")
 
             with open(f"{output_dir}/package.json", "w") as f:
-                json.dump({
-                    "name": project_name,
-                    "version": "1.0.0",
-                    "scripts": {
-                        "start": "react-scripts start"
+                json.dump(
+                    {
+                        "name": project_name,
+                        "version": "1.0.0",
+                        "scripts": {"start": "react-scripts start"},
+                        "dependencies": {"react": "^17.0.2", "react-dom": "^17.0.2", "react-scripts": "^4.0.3"},
                     },
-                    "dependencies": {
-                        "react": "^17.0.2",
-                        "react-dom": "^17.0.2",
-                        "react-scripts": "^4.0.3"
-                    }
-                }, f)
+                    f,
+                )
 
             return {"type": "success", "data": {"message": f"Project generated in {output_dir}"}}
         else:
             return {"type": "error", "data": {"message": "Invalid request"}}
+
 
 if __name__ == "__main__":
     server = MCPServer()

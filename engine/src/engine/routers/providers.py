@@ -1,4 +1,5 @@
 """Provider sync API — fetch provider API keys from frontend DB."""
+
 from __future__ import annotations
 
 import logging
@@ -16,9 +17,7 @@ async def get_provider_keys() -> dict[str, Any]:
     """Fetch all active provider API keys from frontend."""
     try:
         async with httpx.AsyncClient(timeout=5) as client:
-            resp = await client.get(
-                "http://localhost:3000/api/providers", params={"keys": "true"}
-            )
+            resp = await client.get("http://localhost:3000/api/providers", params={"keys": "true"})
             if resp.status_code == 200:
                 return resp.json()
     except Exception as e:

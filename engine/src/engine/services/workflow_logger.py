@@ -353,7 +353,6 @@ class WorkflowLogger:
                 )
         return {"workflowId": workflow_id, "files": files}
 
-
     def rotate_logs(self, max_age_days: int = 14, max_total_mb: int = 200) -> dict[str, Any]:
         """Rotate log files: archive old logs, purge very old archives.
 

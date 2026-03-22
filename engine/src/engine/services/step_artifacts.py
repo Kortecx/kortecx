@@ -275,7 +275,6 @@ class StepArtifacts:
                 )
         return artifacts
 
-
     def cleanup(self, max_age_days: int = 30, max_total_mb: int = 500) -> dict[str, Any]:
         """Remove stale artifacts to enforce retention policy.
 

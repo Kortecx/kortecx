@@ -199,8 +199,13 @@ class TestRunResult:
 
     def test_defaults(self):
         result = RunResult(
-            id="x", project="p", task="t", status="s",
-            backend="b", model="m", workers=1,
+            id="x",
+            project="p",
+            task="t",
+            status="s",
+            backend="b",
+            model="m",
+            workers=1,
         )
         assert result.total_tokens == 0
         assert result.final_output == ""
@@ -448,30 +453,29 @@ class TestPromptTemplates:
 
     def test_decompose_prompt_format(self):
         from engine.services.quorum.executor import DECOMPOSE_PROMPT
+
         formatted = DECOMPOSE_PROMPT.format(system="", workers=3, task="test task")
         assert "3" in formatted
         assert "test task" in formatted
 
     def test_worker_prompt_format(self):
         from engine.services.quorum.executor import WORKER_PROMPT
+
         formatted = WORKER_PROMPT.format(system="", N=1, total=3, subtask="do analysis")
         assert "#1" in formatted
         assert "do analysis" in formatted
 
     def test_synthesize_prompt_format(self):
         from engine.services.quorum.executor import SYNTHESIZE_PROMPT
-        formatted = SYNTHESIZE_PROMPT.format(
-            system="", task="main task", workers=3,
-            error_context="", collated="output1\noutput2"
-        )
+
+        formatted = SYNTHESIZE_PROMPT.format(system="", task="main task", workers=3, error_context="", collated="output1\noutput2")
         assert "main task" in formatted
         assert "output1" in formatted
 
     def test_recovery_prompt_format(self):
         from engine.services.quorum.executor import RECOVERY_PROMPT
-        formatted = RECOVERY_PROMPT.format(
-            workerID="worker_2", subtask="sub task", errorMessage="timeout"
-        )
+
+        formatted = RECOVERY_PROMPT.format(workerID="worker_2", subtask="sub task", errorMessage="timeout")
         assert "worker_2" in formatted
         assert "timeout" in formatted
 
@@ -498,17 +502,17 @@ class TestOperationModel:
     """Test Operation model edge cases."""
 
     def test_operation_with_none_metadata(self):
-        op = Operation(
-            run_id="00000000-0000-0000-0000-000000000000",
-            agent_id="test", phase="execute", operation="response"
-        )
+        op = Operation(run_id="00000000-0000-0000-0000-000000000000", agent_id="test", phase="execute", operation="response")
         assert op.metadata is None
 
     def test_operation_with_large_prompt(self):
         op = Operation(
             run_id="00000000-0000-0000-0000-000000000000",
-            agent_id="test", phase="execute", operation="response",
-            prompt="x" * 500_000, response="y" * 500_000,
+            agent_id="test",
+            phase="execute",
+            operation="response",
+            prompt="x" * 500_000,
+            response="y" * 500_000,
         )
         assert len(op.prompt) == 500_000
 
@@ -523,7 +527,10 @@ class TestMetricsSnapshotEdge:
 
     def test_high_values(self):
         snap = MetricsSnapshot(
-            cpu_usage=100.0, active_runs=1000, queued_runs=5000,
-            tokens_per_sec=99999.9, memory_usage_mb=65536.0,
+            cpu_usage=100.0,
+            active_runs=1000,
+            queued_runs=5000,
+            tokens_per_sec=99999.9,
+            memory_usage_mb=65536.0,
         )
         assert snap.cpu_usage == 100.0

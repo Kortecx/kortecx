@@ -35,11 +35,7 @@ def handle_request(request: dict) -> dict:
 
         if tool_name == "greet":
             name = args.get("name", "World")
-            return {
-                "content": [
-                    {"type": "text", "text": f"Hello, {name}! Welcome to Kortecx MCP."}
-                ]
-            }
+            return {"content": [{"type": "text", "text": f"Hello, {name}! Welcome to Kortecx MCP."}]}
 
         return {"error": {"code": -32601, "message": f"Unknown tool: {tool_name}"}}
 
@@ -57,10 +53,12 @@ if __name__ == "__main__":
     print("[PASS] tools/list")
 
     # Test tool call
-    result = handle_request({
-        "method": "tools/call",
-        "params": {"name": "greet", "arguments": {"name": "Kortecx"}},
-    })
+    result = handle_request(
+        {
+            "method": "tools/call",
+            "params": {"name": "greet", "arguments": {"name": "Kortecx"}},
+        }
+    )
     assert "Hello, Kortecx!" in result["content"][0]["text"]
     print("[PASS] tools/call greet")
 

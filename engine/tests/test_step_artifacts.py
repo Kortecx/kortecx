@@ -1,4 +1,5 @@
 """Tests for step artifacts — disk persistence and script extraction."""
+
 from __future__ import annotations
 
 import json
@@ -32,10 +33,16 @@ class TestStepArtifacts:
     def test_save_response(self, temp_artifacts):
         artifacts = temp_artifacts
         path = artifacts.save_response(
-            "test-wf", "step-1", "run-123", "agent-1",
+            "test-wf",
+            "step-1",
+            "run-123",
+            "agent-1",
             "Hello world response",
-            prompt="user prompt", system_prompt="system prompt",
-            model="llama3.2:3b", tokens_used=100, duration_ms=500,
+            prompt="user prompt",
+            system_prompt="system prompt",
+            model="llama3.2:3b",
+            tokens_used=100,
+            duration_ms=500,
         )
         assert path.exists()
         assert "Hello world" in path.read_text()
@@ -49,8 +56,13 @@ class TestStepArtifacts:
     def test_save_response_creates_prompt_files(self, temp_artifacts):
         artifacts = temp_artifacts
         path = artifacts.save_response(
-            "wf", "step", "r1", "a1", "response",
-            prompt="user prompt", system_prompt="sys prompt",
+            "wf",
+            "step",
+            "r1",
+            "a1",
+            "response",
+            prompt="user prompt",
+            system_prompt="sys prompt",
         )
         step_dir = path.parent
         prompt_files = list(step_dir.glob("prompt_*.md"))
@@ -97,8 +109,12 @@ class TestStepArtifacts:
     def test_save_failure_log_with_phase_and_metadata(self, temp_artifacts):
         artifacts = temp_artifacts
         path = artifacts.save_failure_log(
-            "wf", "step", "run-1", "Error",
-            agent_id="ag-1", phase="execute",
+            "wf",
+            "step",
+            "run-1",
+            "Error",
+            agent_id="ag-1",
+            phase="execute",
             metadata={"retry": 2},
         )
         data = json.loads(path.read_text())
@@ -132,8 +148,14 @@ class TestStepArtifacts:
     def test_save_response_context_metadata(self, temp_artifacts):
         artifacts = temp_artifacts
         path = artifacts.save_response(
-            "wf", "step", "run-1", "agent-1", "response text",
-            model="gpt-4", tokens_used=500, duration_ms=1200,
+            "wf",
+            "step",
+            "run-1",
+            "agent-1",
+            "response text",
+            model="gpt-4",
+            tokens_used=500,
+            duration_ms=1200,
         )
         step_dir = path.parent
         context_files = list(step_dir.glob("context_*.json"))
@@ -345,10 +367,13 @@ class TestEdgeCases:
         """Error messages with special characters."""
         artifacts = temp_artifacts
         path = artifacts.save_failure_log(
-            "wf", "step", "run-1",
+            "wf",
+            "step",
+            "run-1",
             'Error: "unexpected token" at line 42\n\tstack trace: /path/to/file.py',
         )
         assert path.exists()
         import json
+
         data = json.loads(path.read_text())
         assert "unexpected token" in data["error"]

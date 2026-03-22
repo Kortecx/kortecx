@@ -171,4 +171,3 @@ class ChainService:
 
 
 chain_service = ChainService()
-

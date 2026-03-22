@@ -1057,7 +1057,7 @@ class AgentOrchestrator:
         expert_chain: list[str] = []
         for agent in agents.values():
             step_cfg = next((s for s in steps if s.step_id == agent.step_id), None)
-            name = (step_cfg.step_name if step_cfg and step_cfg.step_name else agent.step_id)
+            name = step_cfg.step_name if step_cfg and step_cfg.step_name else agent.step_id
             expert_chain.append(name)
 
         try:

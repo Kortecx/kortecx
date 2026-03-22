@@ -1,4 +1,5 @@
 """Tests for engine configuration."""
+
 from __future__ import annotations
 
 import pytest
@@ -7,6 +8,7 @@ import pytest
 class TestSettings:
     def test_defaults(self):
         from engine.config import Settings
+
         s = Settings()
         assert s.port == 8000
         assert s.host == "0.0.0.0"
@@ -16,6 +18,7 @@ class TestSettings:
 
     def test_quorum_defaults(self):
         from engine.config import Settings
+
         s = Settings()
         assert s.quorum_max_concurrent == 4
         assert s.quorum_metrics_interval == 5.0
@@ -24,6 +27,7 @@ class TestSettings:
 
     def test_agent_defaults(self):
         from engine.config import Settings
+
         s = Settings()
         assert s.max_concurrent_agents == 10
         assert s.agent_retry_enabled is True
@@ -32,5 +36,6 @@ class TestSettings:
     def test_override_via_env(self, monkeypatch):
         monkeypatch.setenv("PORT", "9999")
         from engine.config import Settings
+
         s = Settings()
         assert s.port == 9999

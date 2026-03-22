@@ -1,4 +1,5 @@
 """Tests for expert manager — loading, CRUD, versioning."""
+
 from __future__ import annotations
 
 import json
@@ -24,16 +25,20 @@ def temp_experts(tmp_path, monkeypatch):
     # Create a test marketplace expert
     expert_dir = mp / "test-expert"
     expert_dir.mkdir()
-    (expert_dir / "expert.json").write_text(json.dumps({
-        "id": "marketplace-test-expert",
-        "name": "Test Expert",
-        "role": "coder",
-        "version": "1.0.0",
-        "temperature": 0.5,
-        "maxTokens": 4096,
-        "tags": ["test"],
-        "category": "engineering",
-    }))
+    (expert_dir / "expert.json").write_text(
+        json.dumps(
+            {
+                "id": "marketplace-test-expert",
+                "name": "Test Expert",
+                "role": "coder",
+                "version": "1.0.0",
+                "temperature": 0.5,
+                "maxTokens": 4096,
+                "tags": ["test"],
+                "category": "engineering",
+            }
+        )
+    )
     (expert_dir / "system.md").write_text("You are a test expert.")
     (expert_dir / "user.md").write_text("## Task\n{{task}}")
 
@@ -118,11 +123,15 @@ class TestExpertManagerLoad:
 class TestExpertManagerCreate:
     def test_create_local_expert(self, temp_experts):
         mgr, _, lp = temp_experts
-        expert = mgr.create_local("My Expert", "researcher", {
-            "description": "A test researcher",
-            "systemPrompt": "Research stuff.",
-            "temperature": 0.6,
-        })
+        expert = mgr.create_local(
+            "My Expert",
+            "researcher",
+            {
+                "description": "A test researcher",
+                "systemPrompt": "Research stuff.",
+                "temperature": 0.6,
+            },
+        )
         assert expert["id"] == "local-my-expert"
         assert expert["role"] == "researcher"
         assert (lp / "my-expert" / "expert.json").exists()
@@ -246,6 +255,7 @@ class TestExpertManagerVersioning:
         mgr, _, _ = temp_experts
         expert = mgr.create_local("Multi Version", "coder", {"systemPrompt": "v1"})
         import time
+
         mgr.update_file(expert["id"], "system.md", "v2")
         time.sleep(0.01)  # Ensure different timestamps
         mgr.update_file(expert["id"], "system.md", "v3")
