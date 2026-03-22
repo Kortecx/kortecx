@@ -2385,8 +2385,7 @@ function AssetsTab() {
   }>(`/api/assets${qs ? `?${qs}` : ''}`, (url: string) => fetch(url).then(r => r.json()), { refreshInterval: 30_000 });
   const allAssets: any[] = assetsData?.assets ?? [];
 
-  // Tree state
-  const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set());
+  // Tree state — derive expanded paths from data + user toggles (no useEffect needed)
   const [selectedAsset, setSelectedAsset] = useState<any>(null);
   const [editorContent, setEditorContent] = useState<string>('');
   const [originalContent, setOriginalContent] = useState<string>('');
@@ -2396,19 +2395,15 @@ function AssetsTab() {
 
   const tree = buildTree(allAssets);
 
-  // Auto-expand all top-level folders on first load
-  useEffect(() => {
-    if (tree.length > 0 && expandedPaths.size === 0) {
-      setExpandedPaths(new Set(tree.filter(n => n.type === 'folder').map(n => n.path)));
-    }
-  }, [tree.length]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Top-level folders are expanded by default; user can toggle individually
+  const [userToggles, setUserToggles] = useState<Record<string, boolean>>({});
+  const expandedPaths = new Set(tree.filter(n => n.type === 'folder').map(n => n.path));
+  for (const [path, open] of Object.entries(userToggles)) {
+    if (open) expandedPaths.add(path); else expandedPaths.delete(path);
+  }
 
   const handleToggle = (path: string) => {
-    setExpandedPaths(prev => {
-      const next = new Set(prev);
-      if (next.has(path)) next.delete(path); else next.add(path);
-      return next;
-    });
+    setUserToggles(prev => ({ ...prev, [path]: !expandedPaths.has(path) }));
   };
 
   const handleSelectFile = async (asset: any) => {
