@@ -9,7 +9,7 @@ import {
   Upload, File, Server, Cloud, CheckCircle2, AlertCircle,
   Brain, Loader2, Eye, Settings, Tag, Shield, BarChart3,
   Activity, ScrollText, FlaskConical, Hash,
-  Mic, Image, FolderOpen, MessageSquare, ToggleLeft, ToggleRight,
+  Mic, Image as ImageIcon, FolderOpen, MessageSquare,
   Paperclip, Users, Puzzle, Cable, Store, Globe, Database,
   HardDrive, CreditCard, Phone, Mail, Ticket, BookOpen,
   Terminal, Languages, Webhook, Download, Star,
@@ -345,7 +345,7 @@ function ExpertSelectorModal({
 const STEP_ICON_MAP: Record<string, React.ComponentType<{ size?: number; color?: string }>> = {
   MessageSquare, Github, Ticket, BookOpen, Database, HardDrive,
   Cloud, CreditCard, Phone, Mail, Search: SearchIcon, BarChart3,
-  Activity, Webhook, Globe, Terminal, FileText, Image, Languages,
+  Activity, Webhook, Globe, Terminal, FileText, Image: ImageIcon, Languages,
   Puzzle, Cable, Store, Video, MessageCircle, AtSign, Send, Code,
   Camera, Target, HelpCircle, Headphones, TrendingUp, Zap, PieChart,
   Snowflake, Eye, LayoutGrid, Flame, Twitter, Linkedin, Facebook,
@@ -812,9 +812,21 @@ function ModelSelector({
   }, [localModel.engine]);
 
   useEffect(() => {
-    if (open && modelSource === 'local') void fetchModels();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, modelSource, fetchModels]);
+    if (!open || modelSource !== 'local') return;
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      try {
+        const resp = await fetch(`${ENGINE_URL}/api/orchestrator/models/${localModel.engine}`);
+        if (resp.ok && !cancelled) {
+          const data = await resp.json();
+          setModels(data.models || []);
+        }
+      } catch { /* engine offline */ }
+      if (!cancelled) setLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, [open, modelSource, localModel.engine]);
 
   // Close handled by fixed backdrop overlay
 
@@ -1399,7 +1411,7 @@ function StepCard({ step, index, onRemove, onUpdate, onSwap, liveAgent }: {
         {/* Images */}
         <button className="btn btn-ghost btn-sm" onClick={() => stepImageInputRef.current?.click()}
           title="Attach images" style={{ flex: 1, fontSize: 10, gap: 4, padding: '5px 6px' }}>
-          <Image size={11} /> Images {step.stepImages.length > 0 && `(${step.stepImages.length})`}
+          <ImageIcon size={11} /> Images {step.stepImages.length > 0 && `(${step.stepImages.length})`}
         </button>
         {/* Voice */}
         <button className="btn btn-ghost btn-sm"
@@ -1438,7 +1450,7 @@ function StepCard({ step, index, onRemove, onUpdate, onSwap, liveAgent }: {
           {[...step.stepFiles, ...step.stepImages].map((f, i) => (
             <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 6px',
               background: 'var(--bg)', borderRadius: 3, fontSize: 10, color: 'var(--text-3)' }}>
-              {f.type.startsWith('image/') ? <Image size={9} /> : <File size={9} />}
+              {f.type.startsWith('image/') ? <ImageIcon size={9} /> : <File size={9} />}
               <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</span>
               <button onClick={() => {
                 onUpdate({
@@ -1595,7 +1607,7 @@ function StepCard({ step, index, onRemove, onUpdate, onSwap, liveAgent }: {
 }
 
 /* ── File Drop Zone ──────────────────────────────────── */
-function FileDropZone({ label, accept, files, onFilesChange, multiple }: {
+function FileDropZone({ label: _label, accept, files, onFilesChange, multiple }: {
   label: string; accept: string; files: UploadedFile[];
   onFilesChange: (files: UploadedFile[]) => void; multiple: boolean;
 }) {
@@ -1746,14 +1758,12 @@ function AdvancedOptionsPanel({
   tags, onTagsChange,
   permissions, onPermissionsChange,
   logger,
-  workflowId,
 }: {
   metrics: MetricsConfig; onMetricsChange: (m: MetricsConfig) => void;
   config: AdvancedConfig; onConfigChange: (c: AdvancedConfig) => void;
   tags: string[]; onTagsChange: (t: string[]) => void;
   permissions: PermissionsConfig; onPermissionsChange: (p: PermissionsConfig) => void;
   logger: ReturnType<typeof useWorkflowLogger>;
-  workflowId: string;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [activeTab, setActiveTab] = useState<'metrics' | 'config' | 'tags' | 'permissions'>('metrics');
@@ -2198,7 +2208,7 @@ function WorkflowBuilderInner() {
     })();
 
     return () => { cancelled = true; };
-  }, [editId, dbExperts]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [editId, dbExperts]);
 
   // Auto-save draft every 10 seconds
   useEffect(() => {
@@ -2222,7 +2232,7 @@ function WorkflowBuilderInner() {
       }
     }, 10_000);
     return () => clearInterval(timer);
-  }); // eslint-disable-line react-hooks/exhaustive-deps
+  });
 
   // Recover draft on mount (only for new workflows, not edits)
   const [showDraftRestore, setShowDraftRestore] = useState(false);
@@ -2230,7 +2240,8 @@ function WorkflowBuilderInner() {
     if (!editId && draftCache.hasDraft()) {
       setShowDraftRestore(true);
     }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only: check once on initial render
+  }, []);
 
   /* Validation */
   const goalContent = goalMode === 'text' ? goalText : (goalFiles[0]?.preview || '');
@@ -2243,7 +2254,7 @@ function WorkflowBuilderInner() {
   const totalSec = steps.length * 30;
 
   // Global parallel toggle
-  const [globalParallel, setGlobalParallel] = useState(false);
+  const [globalParallel, _setGlobalParallel] = useState(false);
 
   const makeStep = (expert: Expert | null): DraftStep => {
     const expertSource = (expert?.modelSource || 'provider') as ModelSource;
@@ -2631,7 +2642,7 @@ function WorkflowBuilderInner() {
         <input className="input" style={{ maxWidth: 480, borderColor: nameError ? 'var(--error)' : undefined }}
           placeholder="Give your workflow a name (required)" value={workflowName}
           onChange={e => { setWorkflowName(e.target.value);
-            if (e.target.value.trim()) { setNameError(false); setSaveErrors(prev => { const { name, ...rest } = prev; return rest; }); }
+            if (e.target.value.trim()) { setNameError(false); setSaveErrors(prev => { const { name: _name, ...rest } = prev; return rest; }); }
             wfLogger.logInteraction('name.changed', { name: e.target.value }); }}
           onBlur={() => { if (!workflowName.trim()) setNameError(true); }} />
         {(nameError || saveErrors.name) && <div style={{ fontSize: 11, color: 'var(--error)', marginTop: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
@@ -2867,7 +2878,7 @@ function WorkflowBuilderInner() {
         config={advancedConfig} onConfigChange={setAdvancedConfig}
         tags={tags} onTagsChange={setTags}
         permissions={permissions} onPermissionsChange={setPermissions}
-        logger={wfLogger} workflowId={workflowIdRef.current}
+        logger={wfLogger}
       />
 
       {/* Live Execution Panel */}

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, tasks } from '@/lib/db';
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq } from 'drizzle-orm';
 import { nanoid } from './nanoid';
 import { logStatus } from '@/lib/status-log';
 

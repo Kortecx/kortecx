@@ -6,9 +6,9 @@ import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import {
   Zap, Database, ArrowLeft, Table2, BarChart3, Code2,
-  Filter, Columns3, Rows3, Play, Download, Loader2,
+  Filter, Rows3, Play, Download, Loader2,
   Save, Trash2, Plus, ArrowUpDown, ChevronDown, Palette,
-  Type, PieChart, ScatterChart, TrendingUp, Search, FolderOpen, X, Check,
+  Type, Search, FolderOpen, X, Check,
 } from 'lucide-react';
 import useSWR from 'swr';
 
@@ -58,10 +58,6 @@ const PLOT_H = SVG_H - PAD.top - PAD.bottom;
 
 function numericValues(rows: any[], col: string): number[] {
   return rows.map(r => parseFloat(r[col])).filter(v => !isNaN(v));
-}
-
-function uniqueLabels(rows: any[], col: string): string[] {
-  return [...new Set(rows.map(r => String(r[col] ?? '')))];
 }
 
 function aggregateByLabel(rows: any[], xCol: string, yCol: string): { label: string; value: number }[] {

@@ -7,8 +7,8 @@ import useSWR from 'swr';
 import dynamic from 'next/dynamic';
 import {
   Database, Plus, Download, Sparkles, RefreshCcw,
-  CheckCircle2, Clock, AlertTriangle, BarChart3, FileText,
-  Zap, Filter, Search, Loader2, Heart, ArrowDownToLine,
+  CheckCircle2, Clock, AlertTriangle, FileText,
+  Zap, Search, Loader2, Heart, ArrowDownToLine,
   ExternalLink, Trash2, Eye, HardDrive, Rows3, Columns3, Key,
   Cpu, Server, Sparkle, ChevronDown, ChevronRight, X,
   Upload, FolderPlus, File, Image, Video, Music, FileSpreadsheet, GripVertical,

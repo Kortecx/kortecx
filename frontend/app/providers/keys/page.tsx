@@ -32,7 +32,6 @@ export default function ApiKeysPage() {
     setTimeout(() => setCopied(null), 2000);
   };
 
-  const connectedProviders = PROVIDERS.filter(p => p.connected);
   const unconnectedProviders = PROVIDERS.filter(p => !p.connected);
 
   return (

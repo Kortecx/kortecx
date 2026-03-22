@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, datasets, synthesisJobs, lineage } from '@/lib/db';
-import { eq, desc, sql } from 'drizzle-orm';
+import { eq, desc } from 'drizzle-orm';
 import { logStatus } from '@/lib/status-log';
 
 /* GET /api/data/datasets — list all local datasets, auto-sync completed synthesis jobs */

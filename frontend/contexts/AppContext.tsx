@@ -4,7 +4,7 @@ import {
   createContext, useContext, useState, useCallback, useEffect, ReactNode, Dispatch, SetStateAction
 } from 'react';
 import type { Expert, Workflow, WorkflowStep, QueuedTask, SocialPlatform, VoiceState, VoiceCommand, ContentItem } from '@/lib/types';
-import { ACTIVE_TASKS, EXPERTS, WORKFLOWS, SYSTEM_METRICS } from '@/lib/constants';
+import { SYSTEM_METRICS } from '@/lib/constants';
 
 interface AppContextType {
   /* System metrics */

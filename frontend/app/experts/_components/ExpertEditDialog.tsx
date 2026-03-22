@@ -1,14 +1,14 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import dynamic from 'next/dynamic';
 import {
-  X, Save, Settings, FileText, BarChart2, Server, Tag,
-  Loader2, RotateCcw, History, ChevronRight, Eye, EyeOff, Pencil,
+  X, Save, Settings, FileText, BarChart2, Server,
+  Loader2, History, Eye, EyeOff, Pencil,
 } from 'lucide-react';
-import { useExpertFiles, useExpertVersions } from '@/lib/hooks/useApi';
-import { ROLE_META, PROVIDERS } from '@/lib/constants';
+import { useExpertFiles } from '@/lib/hooks/useApi';
+import { ROLE_META } from '@/lib/constants';
 import type { Expert, ExpertRole } from '@/lib/types';
 import VersionHistoryPanel from './VersionHistoryPanel';
 

@@ -13,7 +13,7 @@ interface GlowCardProps extends Omit<HTMLMotionProps<'div'>, 'children'> {
 
 export default function GlowCard({
   children,
-  glowColor = 'rgba(0, 212, 255, 0.15)',
+  glowColor: _glowColor = 'rgba(0, 212, 255, 0.15)',
   hover = true,
   className = '',
   padding = 'p-5',

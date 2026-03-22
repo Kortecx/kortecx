@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Cpu, Activity, Zap, Clock, RefreshCw,
-  TrendingUp, ListOrdered, Loader2,
+  TrendingUp, ListOrdered,
 } from 'lucide-react';
 import { useExpertRuns, useLiveMetrics, useExpertStats } from '@/lib/hooks/useApi';
 import ExpertRunCard from './_components/ExpertRunCard';
@@ -58,8 +58,8 @@ export default function ExpertsAndTasksPage() {
   const [selectedRun, setSelectedRun] = useState<ExpertRun | null>(null);
 
   const { runs, total, isLoading, mutate } = useExpertRuns();
-  const { metrics: liveMetrics } = useLiveMetrics();
-  const { experts: expertStats } = useExpertStats();
+  useLiveMetrics();
+  useExpertStats();
 
   // Cleanup stale runs on mount and every 60s
   const cleanupDone = useRef(false);

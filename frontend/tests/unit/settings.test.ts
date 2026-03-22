@@ -58,7 +58,7 @@ describe('Feature Flags', () => {
       executionArtifacts: true, scriptExecution: true, modelComparison: true,
       draftAutoSave: true, workflowScheduling: true,
     };
-    for (const [key, val] of Object.entries(defaults)) {
+    for (const [_key, val] of Object.entries(defaults)) {
       expect(val).toBe(true);
     }
   });

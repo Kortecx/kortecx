@@ -2,7 +2,7 @@
 
 import { motion } from 'framer-motion';
 import {
-  Zap, Clock, Loader2, CheckCircle2, X, FileText,
+  Zap, Clock, Loader2, CheckCircle2, FileText,
   Server, AlertCircle,
 } from 'lucide-react';
 

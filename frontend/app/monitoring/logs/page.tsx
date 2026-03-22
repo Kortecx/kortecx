@@ -77,7 +77,7 @@ function isWithinRange(iso: string, range: string, customFrom?: string, customTo
 }
 
 /* ── Log Row Component ───────────────────────────────────────────────────── */
-function LogRow({ log, index, tz }: { log: Record<string, unknown>; index: number; tz?: string }) {
+function LogRow({ log, index: _index, tz }: { log: Record<string, unknown>; index: number; tz?: string }) {
   const [expanded, setExpanded] = useState(false);
   const level  = (log.level as string) ?? 'info';
   const meta   = LEVEL_META[level] ?? LEVEL_META.info;

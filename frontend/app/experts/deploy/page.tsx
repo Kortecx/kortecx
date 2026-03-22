@@ -6,9 +6,7 @@ import { motion, AnimatePresence, type Variants } from 'framer-motion';
 import {
   Rocket, Check, Loader2, ChevronRight, ChevronLeft,
   Globe, Lock, Cpu, Sliders, FileText, User,
-  ExternalLink, Zap, Brain, Code2, Pen, Eye,
-  Map, Scale, TrendingUp, Stethoscope, Network,
-  Database, Palette, Star,
+  ExternalLink, Zap, Star,
 } from 'lucide-react';
 import { PROVIDERS, ROLE_META } from '@/lib/constants';
 
@@ -30,12 +28,6 @@ const DEPLOY_ROLES = [
   'data-engineer','creative',
 ] as const;
 
-const ROLE_ICONS: Record<string, React.ElementType> = {
-  researcher: Brain, analyst: TrendingUp, writer: Pen, coder: Code2,
-  reviewer: Eye, planner: Map, legal: Scale, financial: TrendingUp,
-  medical: Stethoscope, coordinator: Network, 'data-engineer': Database,
-  creative: Palette,
-};
 
 const ALL_MODELS = PROVIDERS.flatMap(p =>
   p.models.map(m => ({
@@ -143,7 +135,6 @@ function StepBar({ current }: { current: number }) {
 /* ── Role card ──────────────────────────────────────── */
 function RoleCard({ id, selected, onSelect }: { id: string; selected: boolean; onSelect: () => void }) {
   const meta = ROLE_META[id as keyof typeof ROLE_META];
-  const Icon = ROLE_ICONS[id] ?? User;
   return (
     <motion.button
       whileHover={{ y: -1 }} whileTap={{ scale: 0.97 }}
@@ -334,7 +325,7 @@ export default function DeployExpertPage() {
         localStorage.removeItem(CACHE_KEY);
       }
     } catch { /* ignore */ }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
   /* Derived */
   const selectedModel   = ALL_MODELS.find(m => m.id === modelId);

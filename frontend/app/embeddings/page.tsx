@@ -6,8 +6,8 @@ import useSWR from 'swr';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Database, Search, Upload, Layers, RefreshCcw,
-  Loader2, AlertTriangle, CheckCircle2, Hash, Box,
-  ArrowRight, Sparkles, FileText,
+  Loader2, AlertTriangle, CheckCircle2, Hash,
+  Sparkles,
 } from 'lucide-react';
 import GlowCard from '@/components/ui/GlowCard';
 

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db, metrics, alerts, logs } from '@/lib/db';
 import { desc, eq, count } from 'drizzle-orm';
 
-export async function GET(req: NextRequest) {
+export async function GET(_req: NextRequest) {
 
   try {
     const [snap, recentAlerts, recentLogs, unack] = await Promise.all([

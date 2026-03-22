@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import {
-  Search, X, Brain, GitBranch, ListTodo,
+  Search, Brain, GitBranch, ListTodo,
   Database, AlertTriangle, FolderOpen, Loader2, ArrowRight,
   Clock,
 } from 'lucide-react';
@@ -110,6 +110,12 @@ export default function SearchCommandDialog({ open, onClose }: Props) {
 
   // Keyboard navigation
   const flatResults = results;
+
+  const navigateTo = useCallback((result: SearchResult) => {
+    onClose();
+    router.push(result.href);
+  }, [onClose, router]);
+
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'ArrowDown') {
       e.preventDefault();
@@ -123,18 +129,13 @@ export default function SearchCommandDialog({ open, onClose }: Props) {
     } else if (e.key === 'Escape') {
       onClose();
     }
-  }, [flatResults, selectedIndex, onClose]);
+  }, [flatResults, selectedIndex, onClose, navigateTo]);
 
   // Scroll selected item into view
   useEffect(() => {
     const el = listRef.current?.querySelector(`[data-index="${selectedIndex}"]`);
     el?.scrollIntoView({ block: 'nearest' });
   }, [selectedIndex]);
-
-  const navigateTo = (result: SearchResult) => {
-    onClose();
-    router.push(result.href);
-  };
 
   // Group results by type
   const grouped = flatResults.reduce<Record<string, SearchResult[]>>((acc, r) => {

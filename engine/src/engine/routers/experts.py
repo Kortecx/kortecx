@@ -91,12 +91,15 @@ async def _send_callback(url: str, payload: dict[str, Any], run_id: str, retries
                     logger.info("Callback succeeded for %s (attempt %d)", run_id, attempt + 1)
                     return True
                 logger.warning(
-                    "Callback returned %d for %s (attempt %d)", resp.status_code, run_id, attempt + 1,
+                    "Callback returned %d for %s (attempt %d)",
+                    resp.status_code,
+                    run_id,
+                    attempt + 1,
                 )
         except Exception as e:
             logger.warning("Callback failed for %s (attempt %d): %s", run_id, attempt + 1, e)
         if attempt < retries - 1:
-            await asyncio.sleep(2 ** attempt)  # 1s, 2s backoff
+            await asyncio.sleep(2**attempt)  # 1s, 2s backoff
     logger.error("Callback permanently failed for %s after %d attempts", run_id, retries)
     return False
 
@@ -176,19 +179,23 @@ async def _run_expert_background(run_id: str, expert_id: str, req: ExecuteExpert
 
         # Callback to frontend with results (retries on failure)
         if req.callbackUrl:
-            await _send_callback(req.callbackUrl, {
-                "runId": run_id,
-                "expertId": expert_id,
-                "expertName": req.expertName,
-                "status": "completed",
-                "responseText": response_text,
-                "tokensUsed": tokens_used,
-                "durationMs": duration_ms,
-                "model": req.model,
-                "engine": req.engine,
-                "artifacts": artifact_result,
-                "metadata": req.metadata or {},
-            }, run_id)
+            await _send_callback(
+                req.callbackUrl,
+                {
+                    "runId": run_id,
+                    "expertId": expert_id,
+                    "expertName": req.expertName,
+                    "status": "completed",
+                    "responseText": response_text,
+                    "tokensUsed": tokens_used,
+                    "durationMs": duration_ms,
+                    "model": req.model,
+                    "engine": req.engine,
+                    "artifacts": artifact_result,
+                    "metadata": req.metadata or {},
+                },
+                run_id,
+            )
 
     except Exception as e:
         logger.exception("Expert run failed for %s (%s)", expert_id, run_id)
@@ -202,14 +209,18 @@ async def _run_expert_background(run_id: str, expert_id: str, req: ExecuteExpert
 
         # Callback with failure (retries on failure)
         if req.callbackUrl:
-            await _send_callback(req.callbackUrl, {
-                "runId": run_id,
-                "expertId": expert_id,
-                "expertName": req.expertName,
-                "status": "failed",
-                "errorMessage": str(e),
-                "metadata": req.metadata or {},
-            }, run_id)
+            await _send_callback(
+                req.callbackUrl,
+                {
+                    "runId": run_id,
+                    "expertId": expert_id,
+                    "expertName": req.expertName,
+                    "status": "failed",
+                    "errorMessage": str(e),
+                    "metadata": req.metadata or {},
+                },
+                run_id,
+            )
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────

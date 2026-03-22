@@ -37,7 +37,7 @@ export default function ExpertRunDetailDialog({ run, open, onClose }: ExpertRunD
 
   // Fetch full run data (includes responseText, prompts)
   useEffect(() => {
-    if (!open || !run?.id) { setFullRun(null); return; }
+    if (!open || !run?.id) return;
     const fetchRun = async () => {
       try {
         const res = await fetch(`/api/experts/run?id=${run.id}`);
@@ -51,8 +51,9 @@ export default function ExpertRunDetailDialog({ run, open, onClose }: ExpertRunD
     // Re-fetch while running
     if (run.status === 'running') {
       const interval = setInterval(fetchRun, 3000);
-      return () => clearInterval(interval);
+      return () => { clearInterval(interval); setFullRun(null); };
     }
+    return () => { setFullRun(null); };
   }, [open, run?.id, run?.status]);
 
   if (!open || !run) return null;

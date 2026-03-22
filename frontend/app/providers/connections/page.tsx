@@ -2,12 +2,13 @@
 
 import { useState, useEffect, useCallback, Suspense, lazy } from 'react';
 import { useSearchParams } from 'next/navigation';
+import Image from 'next/image';
 import {
   Cable, Plus, Search, X, Check, ExternalLink, Trash2,
   ChevronDown, ChevronUp, Settings, Download, Star,
   Puzzle, Globe, Database, Cloud, MessageSquare, CreditCard,
   BarChart3, Activity, Phone, Mail, HardDrive, BookOpen,
-  Ticket, Terminal, FileText, Image, Languages, Webhook,
+  Ticket, Terminal, FileText, Image as ImageIcon, Languages, Webhook,
   Eye, EyeOff, Shield, Package, Store, User, Github,
   Search as SearchIcon, Video, MessageCircle, AtSign,
   Send, Code, Camera, Target, HelpCircle, Headphones,
@@ -37,7 +38,7 @@ const mcpBadgePop = {
 const ICON_MAP: Record<string, React.ComponentType<{ size?: number; color?: string }>> = {
   MessageSquare, Github, Ticket, BookOpen, Database, HardDrive,
   Cloud, CreditCard, Phone, Mail, Search: SearchIcon, BarChart3,
-  Activity, Webhook, Globe, Terminal, FileText, Image, Languages,
+  Activity, Webhook, Globe, Terminal, FileText, Image: ImageIcon, Languages,
   Package, Store, Cable, Puzzle, Video, MessageCircle, AtSign,
   Send, Code, Camera, Target, HelpCircle, Headphones, TrendingUp,
   Zap, PieChart, Snowflake, Eye, LayoutGrid, Flame,
@@ -914,7 +915,7 @@ function ConnectionsPageInner() {
                       overflow: 'hidden',
                     }}>
                       {conn.platformAvatar ? (
-                        <img src={conn.platformAvatar} alt="" width={36} height={36} style={{ borderRadius: '50%', objectFit: 'cover' }} />
+                        <Image src={conn.platformAvatar} alt="" width={36} height={36} style={{ borderRadius: '50%', objectFit: 'cover' }} />
                       ) : catalogEntry ? (
                         <ResolveIcon name={catalogEntry.icon} size={16} color={color} />
                       ) : (
@@ -2872,7 +2873,7 @@ function ConnectionsPageInner() {
                         display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
                       }}>
                         {configData.platformAvatar ? (
-                          <img src={configData.platformAvatar} alt="" width={36} height={36} style={{ borderRadius: '50%', objectFit: 'cover' }} />
+                          <Image src={configData.platformAvatar} alt="" width={36} height={36} style={{ borderRadius: '50%', objectFit: 'cover' }} />
                         ) : (
                           <ResolveIcon name={integration.icon} size={16} color={integration.color} />
                         )}

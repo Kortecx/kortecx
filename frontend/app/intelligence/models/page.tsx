@@ -7,8 +7,8 @@ import useSWR from 'swr';
 import dynamic from 'next/dynamic';
 import {
   Boxes, Server, Cloud, ExternalLink, Lock, Search,
-  Download, CheckCircle2, Loader2, Trash2, X, HardDrive,
-  Sparkles, RefreshCw, Scale, Play, Clock, Zap,
+  Download, Loader2, Trash2, X, HardDrive,
+  Sparkles, RefreshCw, Scale, Play, Clock,
   Paperclip, Eye, Code2, FileText, Cpu,
 } from 'lucide-react';
 
