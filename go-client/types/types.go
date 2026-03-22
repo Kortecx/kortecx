@@ -504,6 +504,15 @@ type LocalInferenceResult struct {
 	Error      string  `json:"error,omitempty"`
 }
 
+// --- Pagination ---
+
+// ListOptions provides optional pagination and sorting for list operations.
+type ListOptions struct {
+	Limit  int    `json:"limit,omitempty"`
+	Offset int    `json:"offset,omitempty"`
+	Sort   string `json:"sort,omitempty"`
+}
+
 // --- Request types ---
 
 type CreateTaskRequest struct {
@@ -579,6 +588,21 @@ type StartTrainingRequest struct {
 	BatchSize    int     `json:"batchSize"`
 }
 
+// UpdateProviderRequest updates an existing provider's configuration.
+type UpdateProviderRequest struct {
+	Name    *string `json:"name,omitempty"`
+	BaseURL *string `json:"baseUrl,omitempty"`
+	APIKey  *string `json:"apiKey,omitempty"`
+}
+
+// UpdateDatasetRequest updates an existing dataset.
+type UpdateDatasetRequest struct {
+	Name        *string  `json:"name,omitempty"`
+	Description *string  `json:"description,omitempty"`
+	Status      *string  `json:"status,omitempty"`
+	Tags        []string `json:"tags,omitempty"`
+}
+
 type CreateProviderRequest struct {
 	Name    string `json:"name"`
 	Type    string `json:"type"`
@@ -648,4 +672,58 @@ type CacheMcpRequest struct {
 	Language    string `json:"language"`
 	Code        string `json:"code"`
 	Filename    string `json:"filename,omitempty"`
+}
+
+// --- Model Comparison ---
+
+// CompareModelsRequest sends a side-by-side model comparison request.
+type CompareModelsRequest struct {
+	Prompt       string   `json:"prompt"`
+	SystemPrompt string   `json:"system_prompt,omitempty"`
+	ModelA       string   `json:"model_a"`
+	EngineA      string   `json:"engine_a"`
+	ModelB       string   `json:"model_b"`
+	EngineB      string   `json:"engine_b"`
+	Temperature  float64  `json:"temperature"`
+	MaxTokens    int      `json:"max_tokens"`
+	DocumentURLs []string `json:"document_urls,omitempty"`
+}
+
+// CompareModelResult is the result for a single model in a comparison.
+type CompareModelResult struct {
+	Model        string  `json:"model"`
+	Engine       string  `json:"engine"`
+	Response     string  `json:"response"`
+	Tokens       int     `json:"tokens"`
+	DurationMs   int     `json:"duration_ms"`
+	TokensPerSec float64 `json:"tokens_per_sec"`
+	Error        *string `json:"error,omitempty"`
+}
+
+// CompareModelsResponse is the response from POST /api/models/compare.
+type CompareModelsResponse struct {
+	ModelA        CompareModelResult `json:"model_a"`
+	ModelB        CompareModelResult `json:"model_b"`
+	Temperature   float64            `json:"temperature"`
+	Prompt        string             `json:"prompt"`
+	MLflowRunID   *string            `json:"mlflow_run_id"`
+	DocumentCount int                `json:"document_count,omitempty"`
+	DocumentNames []string           `json:"document_names,omitempty"`
+}
+
+// --- Integration Request/Response ---
+
+// CreateConnectionRequest creates a new integration connection.
+type CreateConnectionRequest struct {
+	IntegrationID string            `json:"integrationId"`
+	Name          string            `json:"name"`
+	Config        map[string]string `json:"config"`
+}
+
+// ConnectionTestResult is the response from testing an integration connection.
+type ConnectionTestResult struct {
+	Success  bool   `json:"success"`
+	Message  string `json:"message"`
+	Latency  int    `json:"latencyMs,omitempty"`
+	TestedAt string `json:"testedAt,omitempty"`
 }

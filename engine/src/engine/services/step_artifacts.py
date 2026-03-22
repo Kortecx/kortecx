@@ -276,4 +276,71 @@ class StepArtifacts:
         return artifacts
 
 
+    def cleanup(self, max_age_days: int = 30, max_total_mb: int = 500) -> dict[str, Any]:
+        """Remove stale artifacts to enforce retention policy.
+
+        1. Removes files older than *max_age_days*.
+        2. If the remaining total size exceeds *max_total_mb*, removes the
+           oldest files first until the budget is met.
+
+        Returns a summary dict with ``files_removed`` and ``bytes_freed``.
+        """
+        now = time.time()
+        max_age_secs = max_age_days * 86_400
+        max_total_bytes = max_total_mb * 1_048_576
+
+        files_removed = 0
+        bytes_freed = 0
+
+        # Collect all artifact files with their stats
+        all_files: list[tuple[Path, os.stat_result]] = []
+        for f in STEPS_ROOT.rglob("*"):
+            if f.is_file():
+                all_files.append((f, f.stat()))
+
+        # Phase 1: remove files older than max_age_days
+        remaining: list[tuple[Path, os.stat_result]] = []
+        for f, st in all_files:
+            age = now - st.st_mtime
+            if age > max_age_secs:
+                try:
+                    size = st.st_size
+                    f.unlink()
+                    files_removed += 1
+                    bytes_freed += size
+                    logger.info("Artifact cleanup: removed %s (age=%dd)", f, int(age / 86_400))
+                except OSError as exc:
+                    logger.warning("Failed to remove %s: %s", f, exc)
+            else:
+                remaining.append((f, st))
+
+        # Phase 2: if still over budget, remove oldest first
+        total_size = sum(st.st_size for _, st in remaining)
+        if total_size > max_total_bytes:
+            remaining.sort(key=lambda pair: pair[1].st_mtime)
+            for f, st in remaining:
+                if total_size <= max_total_bytes:
+                    break
+                try:
+                    size = st.st_size
+                    f.unlink()
+                    files_removed += 1
+                    bytes_freed += size
+                    total_size -= size
+                    logger.info("Artifact cleanup (over budget): removed %s (%d bytes)", f, size)
+                except OSError as exc:
+                    logger.warning("Failed to remove %s: %s", f, exc)
+
+        # Clean up empty directories
+        for d in sorted(STEPS_ROOT.rglob("*"), reverse=True):
+            if d.is_dir() and not any(d.iterdir()):
+                try:
+                    d.rmdir()
+                except OSError:
+                    pass
+
+        logger.info("Artifact cleanup complete: %d files removed, %d bytes freed", files_removed, bytes_freed)
+        return {"files_removed": files_removed, "bytes_freed": bytes_freed}
+
+
 step_artifacts = StepArtifacts()

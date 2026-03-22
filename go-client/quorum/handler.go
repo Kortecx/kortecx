@@ -1,7 +1,7 @@
 package quorum
 
 import (
-	"log"
+	"log/slog"
 
 	"github.com/exi/kortecx-go/ws"
 )
@@ -75,7 +75,7 @@ func makeHandler[T any](cb func(T)) ws.Handler {
 	return func(msg ws.Message) {
 		data, err := ParseData[T](msg)
 		if err != nil {
-			log.Printf("quorum: failed to parse %s: %v", msg.Event, err)
+			slog.Warn("quorum event parse failed", slog.String("component", "quorum"), slog.String("event", msg.Event), slog.String("error", err.Error()))
 			return
 		}
 		cb(data)

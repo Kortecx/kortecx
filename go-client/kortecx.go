@@ -14,6 +14,8 @@ import (
 	"github.com/exi/kortecx-go/client"
 	"github.com/exi/kortecx-go/data"
 	"github.com/exi/kortecx-go/huggingface"
+	"github.com/exi/kortecx-go/integrations"
+	"github.com/exi/kortecx-go/mcp"
 	"github.com/exi/kortecx-go/models"
 	"github.com/exi/kortecx-go/resources"
 	"github.com/exi/kortecx-go/ws"
@@ -33,6 +35,12 @@ type Kortecx struct {
 	// HuggingFace provides HuggingFace Hub and Inference API integration.
 	HuggingFace *huggingface.Service
 
+	// MCP provides MCP server management (generate, cache, persist, test).
+	MCP *mcp.Service
+
+	// Integrations provides integration and plugin management.
+	Integrations *integrations.Service
+
 	// HTTP is the underlying HTTP client.
 	HTTP *client.Client
 }
@@ -42,11 +50,13 @@ type Kortecx struct {
 func New(baseURL string, opts ...client.Option) *Kortecx {
 	c := client.New(baseURL, opts...)
 	return &Kortecx{
-		Data:        data.New(c),
-		Models:      models.New(c),
-		Resources:   resources.New(c),
-		HuggingFace: huggingface.New(c, ""),
-		HTTP:        c,
+		Data:         data.New(c),
+		Models:       models.New(c),
+		Resources:    resources.New(c),
+		HuggingFace:  huggingface.New(c, ""),
+		MCP:          mcp.New(c),
+		Integrations: integrations.New(c),
+		HTTP:         c,
 	}
 }
 
@@ -55,11 +65,13 @@ func New(baseURL string, opts ...client.Option) *Kortecx {
 func NewWithHF(baseURL, hfAPIKey string, opts ...client.Option) *Kortecx {
 	c := client.New(baseURL, opts...)
 	return &Kortecx{
-		Data:        data.New(c),
-		Models:      models.New(c),
-		Resources:   resources.New(c),
-		HuggingFace: huggingface.New(c, hfAPIKey),
-		HTTP:        c,
+		Data:         data.New(c),
+		Models:       models.New(c),
+		Resources:    resources.New(c),
+		HuggingFace:  huggingface.New(c, hfAPIKey),
+		MCP:          mcp.New(c),
+		Integrations: integrations.New(c),
+		HTTP:         c,
 	}
 }
 

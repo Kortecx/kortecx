@@ -9,6 +9,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from engine.services.expert_manager import expert_manager
+from engine.services.expert_sync import expert_sync
 
 logger = logging.getLogger("engine.routers.experts")
 
@@ -65,6 +66,19 @@ async def list_experts() -> dict[str, Any]:
         "local": local,
         "total": len(experts),
     }
+
+
+@router.post("/engine/sync")
+async def sync_experts_to_db() -> dict[str, Any]:
+    """Trigger a full sync of all engine filesystem experts to PostgreSQL."""
+    if not expert_sync.available:
+        try:
+            await expert_sync.connect()
+        except Exception:
+            logger.exception("Could not connect ExpertSyncService for bulk sync")
+            return {"error": "Database connection unavailable", "synced": 0}
+    result = await expert_manager.sync_all_to_db()
+    return result
 
 
 @router.get("/{expert_id}")

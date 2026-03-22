@@ -374,6 +374,7 @@ export const NAV_SECTIONS = [
       { id: 'data',       label: 'Data Synthesis', path: '/data',            icon: 'Database' },
       { id: 'engineer',   label: 'Data Lab',       path: '/data/engineer',   icon: 'Zap' },
       { id: 'data-runs',  label: 'Runs History',   path: '/data/runs',       icon: 'History' },
+      { id: 'embeddings', label: 'Embeddings',     path: '/embeddings',      icon: 'Boxes' },
     ],
   },
   {

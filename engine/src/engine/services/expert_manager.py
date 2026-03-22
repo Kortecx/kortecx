@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import shutil
@@ -9,6 +10,8 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+from engine.services.expert_sync import expert_sync
 
 logger = logging.getLogger("engine.expert_manager")
 
@@ -24,6 +27,19 @@ class ExpertManager:
         self._cache: dict[str, dict[str, Any]] = {}
         MARKETPLACE_DIR.mkdir(parents=True, exist_ok=True)
         LOCAL_DIR.mkdir(parents=True, exist_ok=True)
+
+    # ── Async sync helper ─────────────────────────────────────────────────────
+
+    def _fire_sync(self, coro: Any) -> None:  # noqa: ANN401
+        """Schedule an async sync coroutine without blocking the caller.
+
+        If no event loop is running, the sync is silently skipped.
+        """
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(coro)
+        except RuntimeError:
+            logger.debug("No running event loop — skipping DB sync")
 
     # ── Loading ──────────────────────────────────────────────────────────────
 
@@ -124,6 +140,10 @@ class ExpertManager:
         expert_data["_source"] = "local"
         self._cache[expert_id] = expert_data
 
+        # Sync to PostgreSQL (non-blocking)
+        sync_data = {**expert_data, "systemPrompt": config.get("systemPrompt", "")}
+        self._fire_sync(expert_sync.sync_to_db(sync_data))
+
         return expert_data
 
     def update_file(self, expert_id: str, filename: str, content: str) -> dict[str, Any]:
@@ -168,6 +188,12 @@ class ExpertManager:
                 edata["updatedAt"] = datetime.now(UTC).isoformat()
                 ej.write_text(json.dumps(edata, indent=2), encoding="utf-8")
 
+        # Sync updated expert to PostgreSQL (non-blocking)
+        updated = self.get(expert_id)
+        if updated:
+            system_prompt = self.get_prompt(expert_id, "system")
+            self._fire_sync(expert_sync.sync_to_db({**updated, "systemPrompt": system_prompt}))
+
         return {"file": filename, "versioned": True, "expert_id": expert_id}
 
     def delete_expert(self, expert_id: str) -> bool:
@@ -184,6 +210,10 @@ class ExpertManager:
             shutil.rmtree(expert_dir)
         self._cache.pop(expert_id, None)
         self._update_registry(LOCAL_DIR)
+
+        # Remove from PostgreSQL (non-blocking)
+        self._fire_sync(expert_sync.delete_from_db(expert_id))
+
         return True
 
     # ── Versioning ───────────────────────────────────────────────────────────
@@ -255,6 +285,23 @@ class ExpertManager:
                 }
             )
         return files
+
+    # ── Bulk sync ─────────────────────────────────────────────────────────────
+
+    async def sync_all_to_db(self) -> dict[str, Any]:
+        """Sync every loaded expert to PostgreSQL. Returns a summary dict."""
+        experts = self.load_all()
+        synced = 0
+        failed = 0
+        for expert in experts:
+            try:
+                system_prompt = self.get_prompt(expert["id"], "system")
+                await expert_sync.sync_to_db({**expert, "systemPrompt": system_prompt})
+                synced += 1
+            except Exception:
+                logger.exception("Failed to sync expert %s", expert.get("id"))
+                failed += 1
+        return {"synced": synced, "failed": failed, "total": len(experts)}
 
     # ── Internal helpers ─────────────────────────────────────────────────────
 

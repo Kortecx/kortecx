@@ -118,7 +118,7 @@ export interface ExpertStats {
 
 /* ── Model Source ────────────────────────────────────── */
 export type ModelSource = 'local' | 'provider';
-export type LocalInferenceEngine = 'ollama' | 'llamacpp';
+export type LocalInferenceEngine = 'ollama' | 'llamacpp' | 'vllm';
 
 export interface LocalModelConfig {
   engine: LocalInferenceEngine;
@@ -288,7 +288,8 @@ export interface WorkflowStepConfig {
 
 /* ── Data Synthesis ──────────────────────────────────── */
 export type DatasetStatus = 'draft' | 'generating' | 'ready' | 'failed' | 'archived';
-export type DataFormat = 'jsonl' | 'csv' | 'parquet' | 'alpaca' | 'chatml' | 'sharegpt';
+export type DataFormat = 'jsonl' | 'csv' | 'parquet' | 'delta' | 'alpaca' | 'chatml' | 'sharegpt';
+export type TrainingMethod = 'sft' | 'dpo' | 'rlhf' | 'orpo';
 
 export interface Dataset {
   id: string;

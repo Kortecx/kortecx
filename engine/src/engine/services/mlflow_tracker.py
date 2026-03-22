@@ -207,6 +207,40 @@ class MLflowTracker:
             logger.warning("MLflow asset log failed: %s", exc)
             return None
 
+    def log_comparison(
+        self,
+        *,
+        model_a: str,
+        model_b: str,
+        metrics_a: dict[str, float],
+        metrics_b: dict[str, float],
+        prompt: str,
+        temperature: float = 0.7,
+        document_count: int = 0,
+        project: str = "default",
+    ) -> str | None:
+        """Log a model comparison as an MLflow experiment run."""
+        if not self._enabled:
+            return None
+        try:
+            exp_id = self._ensure_experiment(f"kortecx-{project}-comparisons")
+            with mlflow.start_run(experiment_id=exp_id, run_name=f"compare-{model_a}-vs-{model_b}") as run:
+                mlflow.log_param("model_a", model_a)
+                mlflow.log_param("model_b", model_b)
+                mlflow.log_param("temperature", temperature)
+                mlflow.log_param("prompt", prompt[:250])
+                mlflow.log_param("project", project)
+                if document_count > 0:
+                    mlflow.log_param("document_count", document_count)
+                for key, val in metrics_a.items():
+                    mlflow.log_metric(f"model_a_{key}", val)
+                for key, val in metrics_b.items():
+                    mlflow.log_metric(f"model_b_{key}", val)
+                return run.info.run_id
+        except Exception as exc:
+            logger.warning("MLflow comparison log failed: %s", exc)
+            return None
+
     def get_status(self) -> dict[str, Any]:
         """Return MLflow connection status."""
         return {

@@ -66,11 +66,26 @@ class QdrantService:
         )
 
     async def collection_info(self, collection: str | None = None) -> dict[str, Any]:
-        info = self.client.get_collection(collection or settings.qdrant_collection)
+        name = collection or settings.qdrant_collection
+        info = self.client.get_collection(name)
+        vectors = info.config.params.vectors if hasattr(info.config.params, "vectors") else None
+        dim = None
+        dist = None
+        if vectors is not None:
+            if hasattr(vectors, "size"):
+                dim = vectors.size
+                dist = vectors.distance.value if vectors.distance else None
+            elif isinstance(vectors, dict):
+                first = next(iter(vectors.values()), None)
+                if first and hasattr(first, "size"):
+                    dim = first.size
+                    dist = first.distance.value if first.distance else None
         return {
-            "name": info.config.params.vectors if hasattr(info.config.params, "vectors") else None,
+            "name": name,
             "points_count": info.points_count,
             "status": info.status.value,
+            "dimension": dim,
+            "distance": dist,
         }
 
 

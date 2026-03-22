@@ -61,12 +61,7 @@ async def _run_training(job_id: str, config: TrainingConfig) -> None:
     await ws_manager.broadcast("training", "training.started", {"job_id": job_id})
 
     try:
-        if config.method == TrainingMethod.SFT:
-            result = await asyncio.to_thread(training_service.sft_train, config)
-        elif config.method == TrainingMethod.DPO:
-            result = await asyncio.to_thread(training_service.dpo_train, config)
-        else:
-            result = await asyncio.to_thread(training_service.sft_train, config)
+        result = await asyncio.to_thread(training_service.train, config)
 
         _jobs[job_id].update({"status": "completed", "result": result})
         await ws_manager.broadcast("training", "training.completed", {"job_id": job_id, "result": result})

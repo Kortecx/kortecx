@@ -22,10 +22,14 @@ func New(c *client.Client) *Service {
 
 // --- Datasets ---
 
-// ListDatasets returns all datasets.
-func (s *Service) ListDatasets() ([]types.Dataset, error) {
+// ListDatasets returns all datasets. Pass optional ListOptions for pagination and sorting.
+func (s *Service) ListDatasets(opts ...*types.ListOptions) ([]types.Dataset, error) {
+	path := "/api/training"
+	if len(opts) > 0 {
+		path = types.AppendQuery(path, opts[0])
+	}
 	var out []types.Dataset
-	err := s.c.Do(http.MethodGet, "/api/training", nil, &out)
+	err := s.c.Do(http.MethodGet, path, nil, &out)
 	return out, err
 }
 
@@ -43,12 +47,32 @@ func (s *Service) CreateDataset(req types.CreateDatasetRequest) (*types.Dataset,
 	return &out, err
 }
 
+// UpdateDataset updates an existing dataset.
+func (s *Service) UpdateDataset(id string, req types.UpdateDatasetRequest) (*types.Dataset, error) {
+	var out types.Dataset
+	body := struct {
+		types.UpdateDatasetRequest
+		ID string `json:"id"`
+	}{req, id}
+	err := s.c.Do(http.MethodPatch, "/api/training", body, &out)
+	return &out, err
+}
+
+// DeleteDataset removes a dataset by ID.
+func (s *Service) DeleteDataset(id string) error {
+	return s.c.Do(http.MethodDelete, fmt.Sprintf("/api/training?datasetId=%s", id), nil, nil)
+}
+
 // --- Training Jobs ---
 
-// ListTrainingJobs returns all training jobs.
-func (s *Service) ListTrainingJobs() ([]types.TrainingJob, error) {
+// ListTrainingJobs returns all training jobs. Pass optional ListOptions for pagination and sorting.
+func (s *Service) ListTrainingJobs(opts ...*types.ListOptions) ([]types.TrainingJob, error) {
+	path := "/api/training?type=jobs"
+	if len(opts) > 0 {
+		path = types.AppendQuery(path, opts[0])
+	}
 	var out []types.TrainingJob
-	err := s.c.Do(http.MethodGet, "/api/training?type=jobs", nil, &out)
+	err := s.c.Do(http.MethodGet, path, nil, &out)
 	return out, err
 }
 
@@ -64,6 +88,11 @@ func (s *Service) StartTraining(req types.StartTrainingRequest) (*types.Training
 	var out types.TrainingJob
 	err := s.c.Do(http.MethodPost, "/api/training", req, &out)
 	return &out, err
+}
+
+// CancelTrainingJob cancels a running or queued training job.
+func (s *Service) CancelTrainingJob(id string) error {
+	return s.c.Do(http.MethodDelete, fmt.Sprintf("/api/training?jobId=%s&action=cancel", id), nil, nil)
 }
 
 // --- Analytics ---

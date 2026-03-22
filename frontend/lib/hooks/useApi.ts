@@ -319,3 +319,18 @@ export function useStepExecutions(runId: string | null) {
     mutate,
   };
 }
+
+/* ── Embeddings Collections ───────────────────────────── */
+export function useEmbeddingCollections() {
+  const { data, error, isLoading, mutate } = useSWR(
+    '/api/embeddings?action=collections',
+    fetcher,
+    { refreshInterval: 30_000 },
+  );
+  return {
+    collections: data?.collections ?? (data?.name ? [data] : []),
+    error,
+    isLoading,
+    mutate,
+  };
+}

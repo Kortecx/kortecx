@@ -71,6 +71,7 @@ class StepConfig:
     step_file_names: list[str] = field(default_factory=list)
     step_image_names: list[str] = field(default_factory=list)
     integrations: list[StepIntegration] = field(default_factory=list)
+    condition: dict[str, str] | None = None  # e.g. {"type": "contains", "value": "APPROVED"}
 
 
 @dataclass
@@ -229,6 +230,15 @@ class AgentOrchestrator:
             await execution_audit.save_shared_memory(run_id, "complete", shared.to_dict())
             await self._update_expert_stats(run_id)
 
+            # Sync run + step execution data to frontend DB
+            await self._sync_to_frontend(
+                run_id=run_id,
+                workflow_id=request.workflow_id,
+                workflow_name=request.name,
+                status="completed",
+                steps=request.steps,
+            )
+
             return {"runId": run_id, "status": "completed", "output": result}
 
         except Exception as exc:
@@ -289,6 +299,16 @@ class AgentOrchestrator:
             except Exception:
                 pass  # Non-critical
 
+            # Sync run + step execution data to frontend DB
+            await self._sync_to_frontend(
+                run_id=run_id,
+                workflow_id=request.workflow_id,
+                workflow_name=request.name,
+                status="failed",
+                steps=request.steps,
+                error_message=str(exc),
+            )
+
             return {"runId": run_id, "status": "failed", "error": str(exc)}
 
     async def _orchestrate(
@@ -323,10 +343,11 @@ class AgentOrchestrator:
                 # Sequential / conditional execution
                 step = group[0]
 
-                # Handle conditional steps — skip if previous output is empty or contains [SKIP]
+                # Handle conditional steps via expression-based evaluation
                 if step.connection_type == "conditional":
-                    if not previous_output or "[SKIP]" in previous_output:
-                        logger.info("Skipping conditional step %s", step.step_id)
+                    should_run = self._evaluate_condition(step, previous_output, run_id)
+                    if not should_run:
+                        logger.info("Skipping conditional step %s (condition not met)", step.step_id)
                         self._runs[run_id]["stepResults"][step.step_id] = "[SKIPPED]"
                         continue
 
@@ -706,6 +727,79 @@ class AgentOrchestrator:
 
                 raise
 
+    def _evaluate_condition(
+        self,
+        step: StepConfig,
+        previous_output: str,
+        run_id: str,
+    ) -> bool:
+        """Evaluate whether a conditional step should execute.
+
+        Supports the following condition types via ``step.condition``:
+
+        - ``{"type": "contains", "value": "<keyword>"}``
+            Run only if *previous_output* contains *value*.
+        - ``{"type": "not_contains", "value": "<keyword>"}``
+            Skip if *previous_output* contains *value*.
+        - ``{"type": "previous_succeeded"}``
+            Run only if the most recent step completed successfully
+            (i.e. no ``[FAILED]`` marker and non-empty output).
+        - ``{"type": "previous_failed"}``
+            Run only if the most recent step failed.
+        - ``{"type": "always"}``
+            Always run — effectively a no-op guard.
+
+        When ``step.condition`` is *None* (legacy behaviour), falls back to
+        the original heuristic: skip when *previous_output* is empty or
+        contains ``[SKIP]``.
+        """
+        condition = step.condition
+
+        # Legacy fallback: no explicit condition configured
+        if condition is None:
+            return bool(previous_output) and "[SKIP]" not in previous_output
+
+        cond_type = condition.get("type", "always")
+
+        if cond_type == "always":
+            return True
+
+        if cond_type == "contains":
+            value = condition.get("value", "")
+            return value != "" and value in previous_output
+
+        if cond_type == "not_contains":
+            value = condition.get("value", "")
+            return value == "" or value not in previous_output
+
+        if cond_type == "previous_succeeded":
+            # Check that previous output exists and has no failure markers
+            if not previous_output:
+                return False
+            step_results = self._runs.get(run_id, {}).get("stepResults", {})
+            if step_results:
+                last_result = list(step_results.values())[-1]
+                if "[FAILED]" in str(last_result) or "[SKIPPED]" in str(last_result):
+                    return False
+            return True
+
+        if cond_type == "previous_failed":
+            if not previous_output:
+                return True  # no output implies failure
+            step_results = self._runs.get(run_id, {}).get("stepResults", {})
+            if step_results:
+                last_result = list(step_results.values())[-1]
+                return "[FAILED]" in str(last_result)
+            return False
+
+        # Unknown condition type — log and default to running the step
+        logger.warning(
+            "Unknown condition type '%s' on step %s, defaulting to run",
+            cond_type,
+            step.step_id,
+        )
+        return True
+
     async def _resolve_expert(self, step: StepConfig) -> dict[str, Any] | None:
         """Resolve expert config from the frontend API if expertId is set."""
         if not step.expert_id:
@@ -938,6 +1032,103 @@ class AgentOrchestrator:
                         "status": agent.status,
                     },
                 )
+
+    async def _sync_to_frontend(
+        self,
+        run_id: str,
+        workflow_id: str,
+        workflow_name: str,
+        status: str,
+        steps: list[StepConfig],
+        error_message: str | None = None,
+    ) -> None:
+        """Sync workflow run results and step execution metrics to the frontend DB."""
+        run = self._runs.get(run_id)
+        if not run:
+            return
+
+        started_at = run.get("startedAt", "")
+        completed_at = run.get("completedAt", datetime.now(UTC).isoformat())
+        total_tokens, total_duration_ms, _, _ = self._compute_run_stats(run_id)
+        duration_sec = round(total_duration_ms / 1000, 3) if total_duration_ms else 0
+
+        # Build expert chain from agents
+        agents: dict[str, AgentState] = run.get("agents", {})
+        expert_chain: list[str] = []
+        for agent in agents.values():
+            step_cfg = next((s for s in steps if s.step_id == agent.step_id), None)
+            name = (step_cfg.step_name if step_cfg and step_cfg.step_name else agent.step_id)
+            expert_chain.append(name)
+
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                # 1. POST run status to frontend DB
+                run_payload = {
+                    "id": run_id,
+                    "workflowId": workflow_id,
+                    "workflowName": workflow_name,
+                    "status": status,
+                    "startedAt": started_at,
+                    "completedAt": completed_at,
+                    "totalTokensUsed": total_tokens,
+                    "durationSec": duration_sec,
+                    "expertChain": expert_chain,
+                }
+                if error_message:
+                    run_payload["errorMessage"] = error_message
+
+                await client.post(
+                    "http://localhost:3000/api/workflows/runs",
+                    json=run_payload,
+                )
+
+                # 2. POST step execution metrics for each agent
+                for agent in agents.values():
+                    step_cfg = next((s for s in steps if s.step_id == agent.step_id), None)
+                    model = ""
+                    engine = ""
+                    if step_cfg and step_cfg.local_model:
+                        model = step_cfg.local_model.get("model", "")
+                        engine = step_cfg.local_model.get("engine", "")
+
+                    # Collect system metrics snapshot
+                    cpu_percent = 0.0
+                    gpu_percent = 0.0
+                    memory_mb = 0.0
+                    try:
+                        from engine.services.system_stats import get_system_stats
+
+                        stats = get_system_stats()
+                        cpu_percent = stats.get("cpu_percent", 0)
+                        gpu_percent = stats.get("gpu_percent", 0)
+                        memory_mb = stats.get("memory_used_mb", 0)
+                    except Exception:
+                        pass
+
+                    step_payload = {
+                        "runId": run_id,
+                        "stepId": agent.step_id,
+                        "agentId": agent.agent_id,
+                        "expertId": step_cfg.expert_id if step_cfg else None,
+                        "stepName": (step_cfg.step_name if step_cfg and step_cfg.step_name else agent.step_id),
+                        "status": agent.status,
+                        "model": model,
+                        "engine": engine,
+                        "tokensUsed": agent.tokens_used,
+                        "durationMs": agent.duration_ms,
+                        "cpuPercent": cpu_percent,
+                        "gpuPercent": gpu_percent,
+                        "memoryMb": memory_mb,
+                        "promptPreview": (agent.memory.plan[:500] if agent.memory.plan else ""),
+                        "responsePreview": (agent.output[:500] if agent.output else ""),
+                    }
+
+                    await client.post(
+                        "http://localhost:3000/api/workflows/executions",
+                        json=step_payload,
+                    )
+        except Exception as sync_exc:
+            logger.warning("Failed to sync run %s to frontend DB: %s", run_id, sync_exc)
 
     def get_status(self) -> dict[str, Any]:
         """Return orchestrator status for monitoring."""

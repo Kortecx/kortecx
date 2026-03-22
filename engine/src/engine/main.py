@@ -15,11 +15,14 @@ from engine.routers import (
     embeddings,
     experts,
     inference,
+    lineage,
     mcp,
     metrics,
     models,
     orchestrator,
     pipelines,
+    providers,
+    search,
     synthesis,
     training,
     workflow_logs,
@@ -106,6 +109,9 @@ app.include_router(mlflow_router, prefix="/api/mlflow", tags=["mlflow"])
 app.include_router(mcp.router, prefix="/api/mcp", tags=["mcp"])
 app.include_router(experts.router, prefix="/api/experts/engine", tags=["experts"])
 app.include_router(metrics.router, prefix="/api/metrics", tags=["metrics"])
+app.include_router(lineage.router, prefix="/api/lineage", tags=["lineage"])
+app.include_router(providers.router, prefix="/api/providers", tags=["providers"])
+app.include_router(search.router, prefix="/api/search", tags=["search"])
 
 # ── WebSocket ────────────────────────────────────────────────────────────────
 app.include_router(ws_manager.router, tags=["websocket"])

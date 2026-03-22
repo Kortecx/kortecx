@@ -131,7 +131,7 @@ export const workflows = pgTable('workflows', {
   goalFileUrl:       text('goal_file_url'),
   inputFileUrls:     text('input_file_urls').array(),
   status:            varchar('status', { length: 20 }).default('draft'),
-  // draft | ready | archived
+  // draft | ready | running | paused | completed | failed | cancelled | archived
   estimatedTokens:   integer('estimated_tokens'),
   estimatedCostUsd:  decimal('estimated_cost_usd', { precision: 8, scale: 4 }),
   estimatedDurationSec: integer('estimated_duration_sec'),
@@ -507,6 +507,12 @@ export const modelComparisons = pgTable('model_comparisons', {
   comparisonDurationMs: integer('comparison_duration_ms').default(0),
   comparisonResponse: text('comparison_response'),
   temperature:     decimal('temperature', { precision: 3, scale: 2 }),
+  prompt:          text('prompt'),
+  systemPrompt:    text('system_prompt'),
+  documentNames:   text('document_names').array(),
+  documentContent: text('document_content'),
+  originalTokensPerSec:   decimal('original_tokens_per_sec', { precision: 8, scale: 1 }),
+  comparisonTokensPerSec: decimal('comparison_tokens_per_sec', { precision: 8, scale: 1 }),
   createdAt:       timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 });
 

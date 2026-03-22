@@ -336,7 +336,7 @@ export default function LeftNavbar() {
         transition: 'width 0.2s ease',
         zIndex: 40,
         overflowX: 'visible',
-        overflowY: 'hidden',
+        overflowY: 'auto',
       }}
     >
       {/* Brand + Collapse Toggle */}

@@ -2,6 +2,7 @@ package client
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -49,8 +50,14 @@ func New(baseURL string, opts ...Option) *Client {
 	return c
 }
 
-// do executes an HTTP request and decodes the JSON response.
+// Do executes an HTTP request and decodes the JSON response.
+// It uses context.Background() internally. For explicit context control, use DoCtx.
 func (c *Client) Do(method, path string, body any, out any) error {
+	return c.DoCtx(context.Background(), method, path, body, out)
+}
+
+// DoCtx executes an HTTP request with the given context and decodes the JSON response.
+func (c *Client) DoCtx(ctx context.Context, method, path string, body any, out any) error {
 	u, err := url.JoinPath(c.BaseURL, path)
 	if err != nil {
 		return fmt.Errorf("building URL: %w", err)
@@ -65,7 +72,7 @@ func (c *Client) Do(method, path string, body any, out any) error {
 		reqBody = bytes.NewReader(b)
 	}
 
-	req, err := http.NewRequest(method, u, reqBody)
+	req, err := http.NewRequestWithContext(ctx, method, u, reqBody)
 	if err != nil {
 		return fmt.Errorf("creating request: %w", err)
 	}

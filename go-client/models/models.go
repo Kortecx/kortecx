@@ -23,11 +23,13 @@ func New(c *client.Client) *Service {
 // --- Experts ---
 
 // ListExperts returns all available experts. Optional filters: role, status, search query.
-func (s *Service) ListExperts(filters ...Filter) ([]types.Expert, error) {
+// Pass a *types.ListOptions as the last filter's value to enable pagination.
+func (s *Service) ListExperts(opts *types.ListOptions, filters ...Filter) ([]types.Expert, error) {
 	path := "/api/experts"
 	if q := buildQuery(filters); q != "" {
 		path += "?" + q
 	}
+	path = types.AppendQuery(path, opts)
 	var out []types.Expert
 	err := s.c.Do(http.MethodGet, path, nil, &out)
 	return out, err
@@ -65,10 +67,14 @@ func (s *Service) DeleteExpert(id string) error {
 
 // --- Providers ---
 
-// ListProviders returns all configured providers.
-func (s *Service) ListProviders() ([]types.Provider, error) {
+// ListProviders returns all configured providers. Pass optional ListOptions for pagination and sorting.
+func (s *Service) ListProviders(opts ...*types.ListOptions) ([]types.Provider, error) {
+	path := "/api/providers"
+	if len(opts) > 0 {
+		path = types.AppendQuery(path, opts[0])
+	}
 	var out []types.Provider
-	err := s.c.Do(http.MethodGet, "/api/providers", nil, &out)
+	err := s.c.Do(http.MethodGet, path, nil, &out)
 	return out, err
 }
 
@@ -77,6 +83,22 @@ func (s *Service) AddProvider(req types.CreateProviderRequest) (*types.Provider,
 	var out types.Provider
 	err := s.c.Do(http.MethodPost, "/api/providers", req, &out)
 	return &out, err
+}
+
+// UpdateProvider updates an existing provider's configuration.
+func (s *Service) UpdateProvider(id string, req types.UpdateProviderRequest) (*types.Provider, error) {
+	var out types.Provider
+	body := struct {
+		types.UpdateProviderRequest
+		ID string `json:"id"`
+	}{req, id}
+	err := s.c.Do(http.MethodPatch, "/api/providers", body, &out)
+	return &out, err
+}
+
+// DeleteProvider removes a provider by ID.
+func (s *Service) DeleteProvider(id string) error {
+	return s.c.Do(http.MethodDelete, fmt.Sprintf("/api/providers?id=%s", id), nil, nil)
 }
 
 // --- Filters ---
