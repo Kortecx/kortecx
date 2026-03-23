@@ -1,17 +1,19 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  Workflow, Plus, Search, Play, Trash2, X,
-  ChevronDown, ChevronUp, Loader2, AlertCircle,
-  ArrowUpDown,
+  Workflow, Plus, Search, Play, Trash2, X, Square, RotateCcw, Pencil,
+  ChevronDown, ChevronUp, Loader2, AlertCircle, ArrowUpDown,
+  Clock, Cpu, Zap, CheckCircle2, XCircle, Eye, ScrollText,
 } from 'lucide-react';
-import { useWorkflows } from '@/lib/hooks/useApi';
+import { useWorkflows, useWorkflowRuns } from '@/lib/hooks/useApi';
+import { useWorkflowWS } from '@/lib/hooks/useWorkflowWS';
 
 const SECTION_COLOR = '#2563EB';
+const ENGINE_URL = process.env.NEXT_PUBLIC_ENGINE_URL || 'http://localhost:8000';
 
 /* ── Helpers ──────────────────────────────────────────── */
 function fmt(n: number) {
@@ -32,7 +34,16 @@ function timeAgo(dateStr: string | null | undefined) {
   return d.toLocaleDateString();
 }
 
+function fmtElapsed(ms: number) {
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  const rs = s % 60;
+  return rs > 0 ? `${m}m ${rs}s` : `${m}m`;
+}
+
 const STATUS_STYLE: Record<string, { color: string; bg: string; label: string }> = {
+  idle:      { color: '#6b7280', bg: '#6b728012', label: 'Idle' },
   draft:     { color: '#6b7280', bg: '#6b728012', label: 'Draft' },
   ready:     { color: '#2563EB', bg: '#2563EB12', label: 'Ready' },
   running:   { color: '#f59e0b', bg: '#f59e0b12', label: 'Running' },
@@ -44,6 +55,24 @@ const STATUS_STYLE: Record<string, { color: string; bg: string; label: string }>
 
 type SortField = 'name' | 'updatedAt' | 'status' | 'totalRuns' | 'estimatedTokens';
 type SortDir = 'asc' | 'desc';
+
+/* ── Running Timer Component ─────────────────────────── */
+function RunningTimer({ startedAt }: { startedAt: string }) {
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    const start = new Date(startedAt).getTime();
+    const tick = () => setElapsed(Date.now() - start);
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [startedAt]);
+  return (
+    <span className="mono" style={{ fontSize: 10, color: '#f59e0b', fontWeight: 600 }}>
+      <Clock size={9} style={{ display: 'inline', verticalAlign: 'middle', marginRight: 3 }} />
+      {fmtElapsed(elapsed)}
+    </span>
+  );
+}
 
 /* ── Create Workflow Dialog ──────────────────────────── */
 function CreateWorkflowDialog({
@@ -261,6 +290,241 @@ function DeleteConfirmDialog({
   );
 }
 
+/* ── Workflow Detail Dialog ──────────────────────────── */
+function WorkflowDetailDialog({
+  wf,
+  onClose,
+  onRun,
+  onStop,
+  onRestart,
+  onDelete,
+  onEdit,
+  runningWf,
+}: {
+  wf: Record<string, unknown>;
+  onClose: () => void;
+  onRun: (id: string) => void;
+  onStop: (id: string) => void;
+  onRestart: (id: string) => void;
+  onDelete: (id: string) => void;
+  onEdit: (id: string) => void;
+  runningWf: boolean;
+}) {
+  const { runs } = useWorkflowRuns(wf.id as string, 10);
+  const [activeTab, setActiveTab] = useState<'details' | 'runs'>('details');
+  const status = (wf.status as string) || 'idle';
+  const st = STATUS_STYLE[status] ?? STATUS_STYLE.idle;
+  const canRun = ['idle', 'draft', 'ready', 'completed', 'failed', 'cancelled'].includes(status);
+  const canStop = status === 'running';
+  const canRestart = ['completed', 'failed', 'cancelled'].includes(status);
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.2 }}
+      onClick={onClose}
+      style={{
+        position: 'fixed', inset: 0, background: 'rgba(7,7,26,0.85)',
+        zIndex: 200, display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
+        paddingTop: 40, overflowY: 'auto',
+      }}
+    >
+      <motion.div
+        initial={{ opacity: 0, scale: 0.96, y: -8 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.96, y: -8 }}
+        transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+        onClick={e => e.stopPropagation()}
+        style={{
+          width: 700, maxWidth: '94vw', maxHeight: '85vh',
+          background: 'var(--bg-surface)', border: '1px solid var(--border-md)',
+          borderRadius: 12, overflow: 'hidden', display: 'flex', flexDirection: 'column',
+          boxShadow: '0 24px 80px rgba(0,0,0,0.3)',
+          marginBottom: 40,
+        }}
+      >
+        {/* Header */}
+        <div style={{
+          padding: '18px 22px', borderBottom: '1px solid var(--border)',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, flex: 1 }}>
+            <Workflow size={16} color={SECTION_COLOR} />
+            <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-1)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {wf.name as string}
+            </span>
+            <span style={{
+              padding: '3px 8px', borderRadius: 99, fontSize: 10, fontWeight: 700,
+              background: st.bg, color: st.color, border: `1px solid ${st.color}28`,
+              flexShrink: 0,
+            }}>{st.label}</span>
+            {status === 'running' && (wf.lastRunAt as string) ? (
+              <RunningTimer startedAt={wf.lastRunAt as string} />
+            ) : null}
+          </div>
+          <button onClick={onClose} style={{
+            background: 'none', border: 'none', cursor: 'pointer',
+            color: 'var(--text-3)', display: 'flex', padding: 4,
+          }}><X size={16} /></button>
+        </div>
+
+        {/* Tabs */}
+        <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', padding: '0 22px' }}>
+          {(['details', 'runs'] as const).map(tab => (
+            <button key={tab} onClick={() => setActiveTab(tab)} style={{
+              padding: '10px 16px', fontSize: 12, fontWeight: activeTab === tab ? 700 : 400,
+              color: activeTab === tab ? SECTION_COLOR : 'var(--text-3)',
+              borderBottom: activeTab === tab ? `2px solid ${SECTION_COLOR}` : '2px solid transparent',
+              background: 'none', border: 'none', cursor: 'pointer', textTransform: 'capitalize',
+            }}>{tab === 'runs' ? 'Run History' : tab}</button>
+          ))}
+        </div>
+
+        {/* Body */}
+        <div style={{ padding: '20px 22px', overflowY: 'auto', flex: 1 }}>
+          {activeTab === 'details' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+              {(wf.description as string) ? (
+                <div>
+                  <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-4)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>Description</div>
+                  <div style={{ fontSize: 13, color: 'var(--text-2)', lineHeight: 1.5 }}>{wf.description as string}</div>
+                </div>
+              ) : null}
+              {(wf.goalStatement as string) ? (
+                <div>
+                  <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-4)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>Goal</div>
+                  <div style={{ fontSize: 12, color: 'var(--text-2)', lineHeight: 1.5, fontFamily: 'var(--font-mono, monospace)', whiteSpace: 'pre-wrap', maxHeight: 200, overflow: 'auto', background: 'var(--bg)', padding: '10px 12px', borderRadius: 6, border: '1px solid var(--border)' }}>
+                    {wf.goalStatement as string}
+                  </div>
+                </div>
+              ) : null}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10 }}>
+                {[
+                  { label: 'Total Runs', value: String((wf.totalRuns as number) ?? 0), icon: Play },
+                  { label: 'Tokens', value: fmt((wf.estimatedTokens as number) ?? 0), icon: Zap },
+                  { label: 'Status', value: st.label, icon: CheckCircle2 },
+                  { label: 'Updated', value: timeAgo(wf.updatedAt as string), icon: Clock },
+                ].map(item => (
+                  <div key={item.label} style={{ padding: '10px 12px', background: 'var(--bg)', borderRadius: 6, border: '1px solid var(--border)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 4 }}>
+                      <item.icon size={10} color="var(--text-4)" />
+                      <span style={{ fontSize: 10, color: 'var(--text-4)', fontWeight: 600, textTransform: 'uppercase' }}>{item.label}</span>
+                    </div>
+                    <div className="mono" style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-1)' }}>{item.value}</div>
+                  </div>
+                ))}
+              </div>
+              {((wf.tags as string[]) ?? []).length > 0 && (
+                <div>
+                  <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-4)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>Tags</div>
+                  <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                    {((wf.tags as string[]) ?? []).map(tag => (
+                      <span key={tag} style={{ padding: '3px 8px', borderRadius: 4, fontSize: 11, fontWeight: 500, background: `${SECTION_COLOR}10`, color: SECTION_COLOR, border: `1px solid ${SECTION_COLOR}25` }}>{tag}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+          {activeTab === 'runs' && (
+            <div>
+              {(!runs || runs.length === 0) ? (
+                <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--text-4)', fontSize: 13 }}>
+                  No run history yet. Run the workflow to see results here.
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {runs.map((run: Record<string, unknown>) => {
+                    const runSt = STATUS_STYLE[(run.status as string) ?? 'idle'] ?? STATUS_STYLE.idle;
+                    return (
+                      <div key={run.id as string} style={{ padding: '12px 14px', background: 'var(--bg)', borderRadius: 6, border: '1px solid var(--border)' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <span className="mono" style={{ fontSize: 10, color: 'var(--text-4)' }}>{run.id as string}</span>
+                            <span style={{ padding: '2px 6px', borderRadius: 99, fontSize: 9, fontWeight: 700, background: runSt.bg, color: runSt.color }}>{runSt.label}</span>
+                            {run.status === 'running' && <Loader2 size={10} color="#f59e0b" style={{ animation: 'spin 1s linear infinite' }} />}
+                          </div>
+                          <span style={{ fontSize: 10, color: 'var(--text-4)' }}>
+                            {run.startedAt ? new Date(run.startedAt as string).toLocaleString() : '—'}
+                          </span>
+                        </div>
+                        <div style={{ display: 'flex', gap: 16, fontSize: 11, color: 'var(--text-3)' }}>
+                          {(run.durationSec as number) > 0 && <span className="mono"><Clock size={9} style={{ display: 'inline', verticalAlign: 'middle', marginRight: 2 }} />{run.durationSec as number}s</span>}
+                          {(run.totalTokensUsed as number) > 0 && <span className="mono"><Zap size={9} style={{ display: 'inline', verticalAlign: 'middle', marginRight: 2 }} />{fmt(run.totalTokensUsed as number)} tok</span>}
+                          {(run.errorMessage as string) ? <span style={{ color: '#ef4444', fontSize: 11 }}>{(run.errorMessage as string).slice(0, 100)}</span> : null}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Footer Actions */}
+        <div style={{
+          padding: '14px 22px', borderTop: '1px solid var(--border)',
+          display: 'flex', gap: 8, justifyContent: 'space-between', alignItems: 'center',
+        }}>
+          <div style={{ display: 'flex', gap: 6 }}>
+            {canRun && (
+              <button onClick={() => onRun(wf.id as string)} disabled={runningWf} style={{
+                display: 'flex', alignItems: 'center', gap: 5,
+                padding: '8px 16px', borderRadius: 7, fontSize: 12, fontWeight: 700,
+                border: '1.5px solid #10b981', background: '#10b98114', color: '#10b981',
+                cursor: runningWf ? 'wait' : 'pointer', opacity: runningWf ? 0.5 : 1,
+              }}>
+                {runningWf ? <Loader2 size={12} style={{ animation: 'spin 1s linear infinite' }} /> : <Play size={12} />} Run
+              </button>
+            )}
+            {canStop && (
+              <button onClick={() => onStop(wf.id as string)} style={{
+                display: 'flex', alignItems: 'center', gap: 5,
+                padding: '8px 16px', borderRadius: 7, fontSize: 12, fontWeight: 700,
+                border: '1.5px solid #ef4444', background: '#ef444414', color: '#ef4444',
+                cursor: 'pointer',
+              }}>
+                <Square size={12} /> Stop
+              </button>
+            )}
+            {canRestart && (
+              <button onClick={() => onRestart(wf.id as string)} style={{
+                display: 'flex', alignItems: 'center', gap: 5,
+                padding: '8px 14px', borderRadius: 7, fontSize: 12, fontWeight: 600,
+                border: '1px solid #f59e0b50', background: '#f59e0b10', color: '#f59e0b',
+                cursor: 'pointer',
+              }}>
+                <RotateCcw size={11} /> Restart
+              </button>
+            )}
+          </div>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <button onClick={() => onEdit(wf.id as string)} style={{
+              display: 'flex', alignItems: 'center', gap: 5,
+              padding: '8px 14px', borderRadius: 7, fontSize: 12, fontWeight: 600,
+              border: `1px solid ${SECTION_COLOR}50`, background: `${SECTION_COLOR}10`, color: SECTION_COLOR,
+              cursor: 'pointer',
+            }}>
+              <Pencil size={11} /> Edit in Builder
+            </button>
+            <button onClick={() => onDelete(wf.id as string)} style={{
+              display: 'flex', alignItems: 'center', gap: 5,
+              padding: '8px 12px', borderRadius: 7, fontSize: 12,
+              border: '1px solid var(--border)', background: 'transparent',
+              color: 'var(--text-4)', cursor: 'pointer',
+            }}>
+              <Trash2 size={11} />
+            </button>
+          </div>
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}
+
 /* ── Main Page ───────────────────────────────────────── */
 export default function WorkflowsPage() {
   const router = useRouter();
@@ -271,6 +535,20 @@ export default function WorkflowsPage() {
   const [sortDir, setSortDir] = useState<SortDir>('desc');
   const [showCreate, setShowCreate] = useState(false);
   const [deletingWf, setDeletingWf] = useState<Record<string, unknown> | null>(null);
+  const [selectedWf, setSelectedWf] = useState<Record<string, unknown> | null>(null);
+  const [runningIds, setRunningIds] = useState<Set<string>>(new Set());
+  const [runError, setRunError] = useState<string | null>(null);
+  const ws = useWorkflowWS();
+
+  // Check if any workflow is running for faster polling
+  const hasRunning = useMemo(() => workflows.some((w: Record<string, unknown>) => w.status === 'running'), [workflows]);
+
+  // Faster refresh when workflows are running
+  useEffect(() => {
+    if (!hasRunning) return;
+    const id = setInterval(() => mutate(), 5000);
+    return () => clearInterval(id);
+  }, [hasRunning, mutate]);
 
   /* Filter + sort */
   const filtered = useMemo(() => {
@@ -355,8 +633,149 @@ export default function WorkflowsPage() {
   const handleDelete = async (id: string) => {
     await fetch(`/api/workflows?id=${id}`, { method: 'DELETE' });
     setDeletingWf(null);
+    setSelectedWf(null);
     mutate();
   };
+
+  /* Run workflow handler */
+  const handleRun = useCallback(async (workflowId: string) => {
+    setRunningIds(prev => new Set(prev).add(workflowId));
+    try {
+      // Fetch workflow with steps
+      const wfRes = await fetch(`/api/workflows?id=${workflowId}`);
+      if (!wfRes.ok) throw new Error('Failed to fetch workflow');
+      const { workflow: wfData, steps: wfSteps } = await wfRes.json();
+
+      if (!wfSteps || wfSteps.length === 0) {
+        setRunError('This workflow has no steps. Edit it in the builder first.');
+        return;
+      }
+
+      // Upload goal file
+      const formData = new FormData();
+      if (wfData.goalStatement) {
+        const blob = new Blob([wfData.goalStatement], { type: 'text/markdown' });
+        formData.append('files', blob, 'goal.md');
+      }
+      let goalFileUrl = '';
+      try {
+        const uploadResp = await fetch(`${ENGINE_URL}/api/orchestrator/upload`, { method: 'POST', body: formData });
+        if (uploadResp.ok) {
+          const uploadData = await uploadResp.json();
+          const uploaded = uploadData.files || [];
+          if (uploaded.length > 0) goalFileUrl = uploaded[0].url;
+        }
+      } catch {
+        // Upload failure is non-critical for local goals
+      }
+
+      // Update workflow status to running
+      await fetch('/api/workflows', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: workflowId, status: 'running', lastRunAt: new Date().toISOString() }),
+      });
+
+      // Execute via API
+      await fetch('/api/workflows/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          workflowId,
+          name: wfData.name,
+          goalFileUrl,
+          inputFileUrls: [],
+          steps: wfSteps.map((s: Record<string, unknown>, i: number) => ({
+            stepId: s.id || `step-${i + 1}`,
+            name: s.name || null,
+            expertId: s.expertId || null,
+            taskDescription: s.taskDescription || '',
+            systemInstructions: s.systemInstructions || '',
+            voiceCommand: s.voiceCommand || '',
+            fileLocations: s.fileLocations || [],
+            stepFileNames: s.stepFileUrls || [],
+            stepImageNames: s.stepImageUrls || [],
+            modelSource: s.modelSource || 'local',
+            localModel: s.localModelConfig || null,
+            temperature: s.temperature ?? 0.7,
+            maxTokens: s.maxTokens ?? 4096,
+            connectionType: s.connectionType || 'sequential',
+            shareMemory: s.shareMemory !== false,
+            integrations: s.integrations || [],
+          })),
+        }),
+      });
+
+      mutate();
+    } catch (err) {
+      console.error('Failed to run workflow:', err);
+      // Reset workflow status on failure
+      await fetch('/api/workflows', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: workflowId, status: 'idle' }),
+      }).catch(() => {});
+    } finally {
+      setRunningIds(prev => {
+        const next = new Set(prev);
+        next.delete(workflowId);
+        return next;
+      });
+      mutate();
+    }
+  }, [mutate]);
+
+  /* Stop workflow handler */
+  const handleStop = useCallback(async (workflowId: string) => {
+    try {
+      // Find the latest running run for this workflow
+      const runsRes = await fetch(`/api/workflows/runs?workflowId=${workflowId}&limit=1`);
+      if (!runsRes.ok) return;
+      const { runs } = await runsRes.json();
+      const activeRun = runs?.find((r: Record<string, unknown>) => r.status === 'running');
+      if (!activeRun) return;
+
+      await fetch('/api/workflows/stop', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ runId: activeRun.id, workflowId }),
+      });
+      mutate();
+    } catch (err) {
+      console.error('Failed to stop workflow:', err);
+    }
+  }, [mutate]);
+
+  /* Restart workflow handler */
+  const handleRestart = useCallback(async (workflowId: string) => {
+    try {
+      // Find the latest run
+      const runsRes = await fetch(`/api/workflows/runs?workflowId=${workflowId}&limit=1`);
+      if (!runsRes.ok) return;
+      const { runs } = await runsRes.json();
+      if (!runs?.length) {
+        // No previous run — just do a fresh run
+        handleRun(workflowId);
+        return;
+      }
+
+      await fetch('/api/workflows/restart', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ runId: runs[0].id, workflowId }),
+      });
+
+      // Update workflow status
+      await fetch('/api/workflows', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: workflowId, status: 'running', lastRunAt: new Date().toISOString() }),
+      });
+      mutate();
+    } catch (err) {
+      console.error('Failed to restart workflow:', err);
+    }
+  }, [mutate, handleRun]);
 
   /* Status counts */
   const statusCounts = useMemo(() => {
@@ -441,20 +860,20 @@ export default function WorkflowsPage() {
         </div>
 
         {/* Status filters */}
-        {['all', 'draft', 'ready', 'running', 'completed', 'failed'].map(s => {
+        {['all', 'idle', 'draft', 'ready', 'running', 'completed', 'failed'].map(s => {
           const count = statusCounts[s] ?? 0;
           if (s !== 'all' && count === 0) return null;
           const active = statusFilter === s;
-          const st = s === 'all' ? { color: SECTION_COLOR, bg: `${SECTION_COLOR}12`, label: 'All' } : (STATUS_STYLE[s] ?? STATUS_STYLE.draft);
+          const stl = s === 'all' ? { color: SECTION_COLOR, bg: `${SECTION_COLOR}12`, label: 'All' } : (STATUS_STYLE[s] ?? STATUS_STYLE.idle);
           return (
             <button key={s} onClick={() => setStatusFilter(s)} style={{
               padding: '5px 12px', borderRadius: 20, fontSize: 11, cursor: 'pointer',
-              border: `1px solid ${active ? st.color : 'var(--border)'}`,
-              background: active ? st.bg : 'transparent',
-              color: active ? st.color : 'var(--text-3)',
+              border: `1px solid ${active ? stl.color : 'var(--border)'}`,
+              background: active ? stl.bg : 'transparent',
+              color: active ? stl.color : 'var(--text-3)',
               fontWeight: active ? 700 : 400, transition: 'all 0.12s',
             }}>
-              {st.label}
+              {stl.label}
               <span style={{ marginLeft: 4, fontSize: 10, opacity: 0.7 }}>({count})</span>
             </button>
           );
@@ -534,11 +953,17 @@ export default function WorkflowsPage() {
             </thead>
             <tbody>
               {filtered.map((wf, index) => {
-                const st = STATUS_STYLE[(wf.status as string) ?? 'draft'] ?? STATUS_STYLE.draft;
+                const status = (wf.status as string) ?? 'idle';
+                const st = STATUS_STYLE[status] ?? STATUS_STYLE.idle;
                 const tags = ((wf.tags as string[]) ?? []).slice(0, 3);
                 const goal = (wf.goalStatement as string) ?? '';
                 const runs = (wf.totalRuns as number) ?? 0;
                 const tokens = (wf.estimatedTokens as number) ?? 0;
+                const isRunning = status === 'running';
+                const canRun = ['idle', 'draft', 'ready', 'completed', 'failed', 'cancelled'].includes(status);
+                const canStop = isRunning;
+                const canRestart = ['completed', 'failed', 'cancelled'].includes(status);
+                const isStarting = runningIds.has(wf.id as string);
 
                 return (
                   <motion.tr key={wf.id as string}
@@ -548,7 +973,7 @@ export default function WorkflowsPage() {
                     style={{ transition: 'background 0.1s', cursor: 'pointer' }}
                     onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-elevated)')}
                     onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
-                    onClick={() => router.push(`/workflow/builder?id=${wf.id}`)}
+                    onClick={() => setSelectedWf(wf)}
                   >
                     <td style={TD}>
                       <div style={{ fontWeight: 600, color: 'var(--text-1)', fontSize: 13 }}>
@@ -561,16 +986,30 @@ export default function WorkflowsPage() {
                       ) : null}
                     </td>
                     <td style={TD}>
-                      <motion.span
-                        initial={{ scale: 0.9 }}
-                        animate={{ scale: 1 }}
-                        transition={{ delay: index * 0.03 + 0.1, type: 'spring', damping: 20 }}
-                        style={{
-                          display: 'inline-block',
-                          padding: '3px 8px', borderRadius: 99, fontSize: 10, fontWeight: 700,
-                          background: st.bg, color: st.color, border: `1px solid ${st.color}28`,
-                        }}
-                      >{st.label}</motion.span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <motion.span
+                          initial={{ scale: 0.9 }}
+                          animate={{ scale: 1 }}
+                          transition={{ delay: index * 0.03 + 0.1, type: 'spring', damping: 20 }}
+                          style={{
+                            display: 'inline-flex', alignItems: 'center', gap: 4,
+                            padding: '3px 8px', borderRadius: 99, fontSize: 10, fontWeight: 700,
+                            background: st.bg, color: st.color, border: `1px solid ${st.color}28`,
+                          }}
+                        >
+                          {isRunning && (
+                            <span style={{
+                              width: 6, height: 6, borderRadius: '50%',
+                              background: '#f59e0b',
+                              animation: 'pulse 1.5s ease-in-out infinite',
+                            }} />
+                          )}
+                          {st.label}
+                        </motion.span>
+                        {isRunning && (wf.lastRunAt as string) ? (
+                          <RunningTimer startedAt={wf.lastRunAt as string} />
+                        ) : null}
+                      </div>
                     </td>
                     <td style={{ ...TD, maxWidth: 200 }}>
                       <div style={{ fontSize: 12, color: 'var(--text-2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontStyle: goal ? 'normal' : 'italic' }}>
@@ -602,14 +1041,48 @@ export default function WorkflowsPage() {
                     </td>
                     <td style={{ ...TD, textAlign: 'right' }} onClick={e => e.stopPropagation()}>
                       <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end' }}>
+                        {canRun && (
+                          <button onClick={() => handleRun(wf.id as string)} disabled={isStarting} style={{
+                            display: 'flex', alignItems: 'center', gap: 4,
+                            padding: '5px 10px', borderRadius: 5, fontSize: 11, fontWeight: 600,
+                            border: '1px solid #10b98150',
+                            background: '#10b98110', color: '#10b981',
+                            cursor: isStarting ? 'wait' : 'pointer',
+                            opacity: isStarting ? 0.5 : 1,
+                          }}>
+                            {isStarting ? <Loader2 size={10} style={{ animation: 'spin 1s linear infinite' }} /> : <Play size={10} />} Run
+                          </button>
+                        )}
+                        {canStop && (
+                          <button onClick={() => handleStop(wf.id as string)} style={{
+                            display: 'flex', alignItems: 'center', gap: 4,
+                            padding: '5px 10px', borderRadius: 5, fontSize: 11, fontWeight: 600,
+                            border: '1px solid #ef444450',
+                            background: '#ef444410', color: '#ef4444',
+                            cursor: 'pointer',
+                          }}>
+                            <Square size={10} /> Stop
+                          </button>
+                        )}
+                        {canRestart && (
+                          <button onClick={() => handleRestart(wf.id as string)} style={{
+                            display: 'flex', alignItems: 'center', gap: 4,
+                            padding: '5px 8px', borderRadius: 5, fontSize: 11, fontWeight: 600,
+                            border: '1px solid #f59e0b40',
+                            background: '#f59e0b08', color: '#f59e0b',
+                            cursor: 'pointer',
+                          }}>
+                            <RotateCcw size={10} />
+                          </button>
+                        )}
                         <Link href={`/workflow/builder?id=${wf.id}`} style={{
                           display: 'flex', alignItems: 'center', gap: 4,
-                          padding: '5px 10px', borderRadius: 5, fontSize: 11, fontWeight: 600,
-                          border: `1px solid ${SECTION_COLOR}50`,
-                          background: `${SECTION_COLOR}10`, color: SECTION_COLOR,
+                          padding: '5px 8px', borderRadius: 5, fontSize: 11, fontWeight: 600,
+                          border: `1px solid ${SECTION_COLOR}40`,
+                          background: `${SECTION_COLOR}08`, color: SECTION_COLOR,
                           textDecoration: 'none',
                         }}>
-                          <Play size={10} /> Open
+                          <Pencil size={10} />
                         </Link>
                         <button onClick={() => setDeletingWf(wf)} style={{
                           display: 'flex', alignItems: 'center',
@@ -636,6 +1109,14 @@ export default function WorkflowsPage() {
         </motion.div>
       )}
 
+      {/* Pulse animation for running status */}
+      <style>{`
+        @keyframes pulse {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.4; }
+        }
+      `}</style>
+
       {/* Modals */}
       <AnimatePresence>
         {showCreate && (
@@ -649,6 +1130,70 @@ export default function WorkflowsPage() {
             onClose={() => setDeletingWf(null)}
             onConfirm={() => handleDelete(deletingWf.id as string)}
           />
+        )}
+      </AnimatePresence>
+      <AnimatePresence>
+        {selectedWf && (
+          <WorkflowDetailDialog
+            wf={selectedWf}
+            onClose={() => setSelectedWf(null)}
+            onRun={handleRun}
+            onStop={handleStop}
+            onRestart={handleRestart}
+            onDelete={handleDelete}
+            onEdit={(id) => router.push(`/workflow/builder?id=${id}`)}
+            runningWf={runningIds.has(selectedWf.id as string)}
+          />
+        )}
+      </AnimatePresence>
+      <AnimatePresence>
+        {runError && (
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            onClick={() => setRunError(null)}
+            style={{
+              position: 'fixed', inset: 0, background: 'rgba(7,7,26,0.85)',
+              zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.96, y: -8 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.96, y: -8 }}
+              transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+              onClick={e => e.stopPropagation()}
+              style={{
+                background: 'var(--bg-surface, #fff)', borderRadius: 14,
+                border: '1px solid var(--border)', padding: '28px 32px',
+                maxWidth: 420, width: '90%', textAlign: 'center',
+              }}
+            >
+              <div style={{
+                width: 40, height: 40, borderRadius: 10,
+                background: 'var(--error-dim, rgba(220,38,38,0.08))',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                margin: '0 auto 14px',
+              }}>
+                <AlertCircle size={20} color="var(--error, #DC2626)" />
+              </div>
+              <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-1)', marginBottom: 8 }}>
+                Cannot Run Workflow
+              </div>
+              <div style={{ fontSize: 13, color: 'var(--text-2)', lineHeight: 1.5, marginBottom: 20 }}>
+                {runError}
+              </div>
+              <button
+                onClick={() => setRunError(null)}
+                style={{
+                  padding: '8px 24px', borderRadius: 7, fontSize: 12, fontWeight: 700,
+                  border: '1px solid var(--border-md)', background: 'var(--bg-elevated)',
+                  color: 'var(--text-1)', cursor: 'pointer',
+                }}
+              >
+                Dismiss
+              </button>
+            </motion.div>
+          </motion.div>
         )}
       </AnimatePresence>
     </div>

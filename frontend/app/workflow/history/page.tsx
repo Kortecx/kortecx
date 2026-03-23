@@ -1,13 +1,14 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useCallback, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   History, Search, RefreshCw, CheckCircle2, XCircle,
   Clock, Loader2, TrendingUp, ArrowRight, ChevronDown,
   ChevronLeft, ChevronRight, Download, Filter,
-  AlertCircle, Play, Ban, BarChart2, Zap, DollarSign,
-  Timer, ChevronUp, FileText, Workflow,
+  AlertCircle, Play, Ban, BarChart2, Zap,
+  Timer, ChevronUp, FileText, Workflow, ScrollText, Trash2,
+  Cpu, FolderOpen,
 } from 'lucide-react';
 import useSWR from 'swr';
 import { useWorkflowRuns, useWorkflows } from '@/lib/hooks/useApi';
@@ -26,14 +27,17 @@ type DateRange = typeof DATE_RANGES[number];
 /* ── Status meta ────────────────────────────────────── */
 type RunStatus = 'completed' | 'failed' | 'running' | 'cancelled';
 
-const STATUS_META: Record<RunStatus, { color: string; bg: string; icon: React.ElementType; label: string }> = {
-  completed: { color: '#10b981', bg: '#10b98115', icon: CheckCircle2,  label: 'Completed' },
-  failed:    { color: '#ef4444', bg: '#ef444415', icon: XCircle,       label: 'Failed'    },
-  running:   { color: '#3b82f6', bg: '#3b82f615', icon: Play,          label: 'Running'   },
+const STATUS_META: Record<RunStatus, { color: string; bg: string; icon: React.ElementType; label: string; animation?: string }> = {
+  completed: { color: '#10b981', bg: '#10b98115', icon: CheckCircle2,  label: 'Completed', animation: 'fadeIn 0.3s ease-out' },
+  failed:    { color: '#ef4444', bg: '#ef444415', icon: XCircle,       label: 'Failed',    animation: 'shake 0.4s ease-out' },
+  running:   { color: '#3b82f6', bg: '#3b82f615', icon: Play,          label: 'Running',   animation: 'pulse 1.5s ease-in-out infinite' },
   cancelled: { color: '#6b7280', bg: '#6b728015', icon: Ban,           label: 'Cancelled' },
 };
 
 const STATUS_FILTERS = ['All', 'Completed', 'Failed', 'Running', 'Cancelled'] as const;
+
+/* ── Grid template (shared between header, row, skeleton) ── */
+const GRID_COLS = '22px minmax(0,1.4fr) minmax(0,2fr) minmax(0,1.6fr) 90px 64px 80px 24px 28px';
 
 /* ── Helpers ────────────────────────────────────────── */
 function fmtTokens(n: number): string {
@@ -42,13 +46,8 @@ function fmtTokens(n: number): string {
   return String(n);
 }
 
-function fmtCost(usd: number): string {
-  if (usd >= 1) return `$${usd.toFixed(2)}`;
-  return `$${usd.toFixed(3)}`;
-}
-
 function fmtDuration(secs: number): string {
-  if (!secs) return '—';
+  if (!secs) return '0s';
   if (secs < 60) return `${secs}s`;
   const m = Math.floor(secs / 60);
   const s = secs % 60;
@@ -80,17 +79,22 @@ function filterByDateRange(runs: WorkflowRun[], range: DateRange): WorkflowRun[]
   return runs.filter(r => now - new Date(r.startedAt).getTime() < ms);
 }
 
+function cpuColor(pct: number): string {
+  if (pct > 80) return '#DC2626';
+  if (pct > 50) return '#D97706';
+  return '#10b981';
+}
+
 /* ── Skeleton row ───────────────────────────────────── */
 function SkeletonRow() {
   return (
     <div style={{
-      display: 'grid',
-      gridTemplateColumns: '22px minmax(0,2.5fr) minmax(0,1.5fr) minmax(0,1.5fr) 70px 60px 60px 70px',
+      display: 'grid', gridTemplateColumns: GRID_COLS,
       gap: 12, alignItems: 'center', padding: '13px 16px',
       borderRadius: 9, border: '1px solid var(--border-sm)',
       background: 'var(--bg-surface)', marginBottom: 4,
     }}>
-      {[22, 160, 100, 120, 48, 40, 44, 52].map((w, i) => (
+      {[22, 110, 160, 130, 70, 48, 60, 18].map((w, i) => (
         <div key={i} style={{
           height: 12, borderRadius: 6, width: w,
           background: 'var(--border-md)',
@@ -98,6 +102,37 @@ function SkeletonRow() {
           animationDelay: `${i * 0.06}s`,
         }} />
       ))}
+    </div>
+  );
+}
+
+/* ── Neural loading animation ─────────────────────── */
+function NeuralLoader() {
+  return (
+    <div style={{ position: 'relative', width: 18, height: 18 }}>
+      {/* Outer orbit ring */}
+      <span style={{
+        position: 'absolute', inset: -2, borderRadius: '50%',
+        border: '1.5px solid transparent',
+        borderTopColor: '#3b82f6', borderBottomColor: '#3b82f640',
+        animation: 'orbit 1.2s linear infinite',
+      }} />
+      {/* Middle pulse ring */}
+      <span style={{
+        position: 'absolute', inset: 1, borderRadius: '50%',
+        border: '1px solid transparent',
+        borderLeftColor: '#60a5fa', borderRightColor: '#60a5fa40',
+        animation: 'orbit 0.8s linear infinite reverse',
+      }} />
+      {/* Core dot */}
+      <span style={{
+        position: 'absolute', top: '50%', left: '50%',
+        transform: 'translate(-50%, -50%)',
+        width: 4, height: 4, borderRadius: '50%',
+        background: '#3b82f6',
+        animation: 'neuralPulse 0.6s ease-in-out infinite alternate',
+        boxShadow: '0 0 6px #3b82f680',
+      }} />
     </div>
   );
 }
@@ -118,35 +153,33 @@ function StepBreakdown({ steps }: { steps: WorkflowStep[] }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
       {steps.map((step, i) => {
-        const meta = STEP_STATUS_META[step.status] ?? STEP_STATUS_META.pending;
-        const Icon = meta.icon;
+        const sm = STEP_STATUS_META[step.status ?? 'pending'] ?? STEP_STATUS_META.pending;
+        const StepIcon = sm.icon;
         return (
-          <div key={step.id ?? i} style={{
-            display: 'flex', alignItems: 'flex-start', gap: 10,
-            padding: '8px 12px', borderRadius: 7,
-            background: 'var(--bg-canvas, var(--bg-surface))',
-            border: '1px solid var(--border-sm)',
+          <div key={step.id || i} style={{
+            display: 'flex', alignItems: 'flex-start', gap: 8,
+            padding: '7px 10px', borderRadius: 7,
+            background: `${sm.color}08`, border: `1px solid ${sm.color}18`,
           }}>
-            <div style={{
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              width: 20, height: 20, borderRadius: '50%',
-              background: `${meta.color}15`, flexShrink: 0, marginTop: 1,
-            }}>
-              <Icon size={11} color={meta.color} style={step.status === 'running' ? { animation: 'spin 1s linear infinite' } : {}} />
-            </div>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+            <StepIcon size={13} color={sm.color} style={{
+              flexShrink: 0, marginTop: 1,
+              ...(step.status === 'running' ? { animation: 'spin 1s linear infinite' } : {}),
+            }} />
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ fontSize: 11, fontWeight: 700, color: sm.color }}>#{step.order ?? i + 1}</span>
                 <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-1)' }}>
-                  {step.order}. {step.label ?? step.expertName}
+                  {step.expertName || step.label || step.id}
                 </span>
-                <div style={{ display: 'flex', gap: 10, fontSize: 11, color: 'var(--text-4)', flexShrink: 0 }}>
-                  {step.tokensUsed != null && <span>{fmtTokens(step.tokensUsed)} tok</span>}
-                  {step.costUsd    != null && <span>{fmtCost(step.costUsd)}</span>}
-                </div>
+                {step.tokensUsed != null && step.tokensUsed > 0 && (
+                  <span style={{ fontSize: 10, color: 'var(--text-4)', marginLeft: 'auto', flexShrink: 0 }}>
+                    {fmtTokens(step.tokensUsed)} tok
+                  </span>
+                )}
               </div>
               {step.taskDescription && (
                 <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2, lineHeight: 1.4 }}>
-                  {step.taskDescription.slice(0, 120)}{step.taskDescription.length > 120 ? '…' : ''}
+                  {step.taskDescription.slice(0, 120)}{step.taskDescription.length > 120 ? '...' : ''}
                 </div>
               )}
               {step.error && (
@@ -158,6 +191,122 @@ function StepBreakdown({ steps }: { steps: WorkflowStep[] }) {
           </div>
         );
       })}
+    </div>
+  );
+}
+
+/* ── Logs Panel ────────────────────────────────────── */
+function LogsPanel({ runId, workflowId }: { runId: string; workflowId: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const [logs, setLogs] = useState<Array<{ timestamp: string; level: string; message: string }>>([]);
+  const [loading, setLoading] = useState(false);
+
+  const fetchLogs = useCallback(async () => {
+    if (logs.length > 0) return;
+    setLoading(true);
+    try {
+      const ENGINE_URL = process.env.NEXT_PUBLIC_ENGINE_URL || 'http://localhost:8000';
+      const res = await fetch(`${ENGINE_URL}/api/logs/run/${workflowId}/${runId}`);
+      if (res.ok) {
+        const data = await res.json();
+        // Engine returns { log: "..." } — plain text with newline-delimited entries
+        if (typeof data.log === 'string' && data.log.trim()) {
+          const parsed = data.log.split('\n').filter(Boolean).map((line: string) => {
+            const match = line.match(/^\[(.+?)\]\s+(\w+)\s+(.+)$/);
+            if (match) return { timestamp: match[1], level: match[2], message: match[3] };
+            // Try alternate format: "TIMESTAMP | LEVEL | message"
+            const alt = line.match(/^(.+?)\s*\|\s*(\w+)\s*\|\s*(.+)$/);
+            if (alt) return { timestamp: alt[1], level: alt[2], message: alt[3] };
+            return { timestamp: '', level: 'info', message: line };
+          });
+          setLogs(parsed);
+        } else if (Array.isArray(data.logs ?? data.entries)) {
+          setLogs(data.logs ?? data.entries ?? []);
+        }
+      }
+    } catch {
+      // Fallback to frontend logs
+      try {
+        const res = await fetch(`/api/monitoring/logs?runId=${runId}&limit=100`);
+        if (res.ok) {
+          const data = await res.json();
+          setLogs(data.logs ?? []);
+        }
+      } catch {
+        // Non-critical
+      }
+    } finally {
+      setLoading(false);
+    }
+  }, [runId, workflowId, logs.length]);
+
+  const toggleLogs = () => {
+    if (!expanded) fetchLogs();
+    setExpanded(!expanded);
+  };
+
+  const levelColor = (level: string) => {
+    switch (level.toLowerCase()) {
+      case 'error': return '#ef4444';
+      case 'warn': case 'warning': return '#f59e0b';
+      case 'info': return '#3b82f6';
+      default: return 'var(--text-4)';
+    }
+  };
+
+  return (
+    <div style={{ borderTop: '1px solid var(--border-sm)' }}>
+      <button onClick={toggleLogs} style={{
+        display: 'flex', alignItems: 'center', gap: 6, width: '100%',
+        padding: '10px 20px', background: 'none', border: 'none', cursor: 'pointer',
+        fontSize: 11, fontWeight: 700, color: 'var(--text-4)', textTransform: 'uppercase',
+        letterSpacing: '0.06em',
+      }}>
+        <ScrollText size={12} />
+        Execution Logs
+        {expanded ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
+      </button>
+      <AnimatePresence>
+        {expanded && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.2 }}
+            style={{ overflow: 'hidden' }}
+          >
+            <div style={{
+              margin: '0 20px 16px', padding: '10px 12px',
+              background: 'var(--bg-canvas, rgba(0,0,0,0.03))',
+              border: '1px solid var(--border-sm)', borderRadius: 6,
+              maxHeight: 240, overflowY: 'auto',
+              fontFamily: 'var(--font-mono, monospace)', fontSize: 11, lineHeight: 1.6,
+            }}>
+              {loading && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--text-4)', padding: '8px 0' }}>
+                  <Loader2 size={12} style={{ animation: 'spin 1s linear infinite' }} /> Loading logs...
+                </div>
+              )}
+              {!loading && logs.length === 0 && (
+                <div style={{ color: 'var(--text-4)', fontStyle: 'italic', padding: '8px 0' }}>
+                  No logs available for this run.
+                </div>
+              )}
+              {logs.map((log, i) => (
+                <div key={i} style={{ padding: '2px 0', borderBottom: i < logs.length - 1 ? '1px solid var(--border-sm)' : 'none' }}>
+                  <span style={{ color: 'var(--text-4)', marginRight: 8 }}>
+                    {log.timestamp ? (() => { try { return new Date(log.timestamp).toLocaleTimeString(); } catch { return log.timestamp; } })() : '—'}
+                  </span>
+                  <span style={{ color: levelColor(log.level || 'info'), fontWeight: 600, marginRight: 8, textTransform: 'uppercase', fontSize: 9 }}>
+                    {log.level || 'INFO'}
+                  </span>
+                  <span style={{ color: 'var(--text-2)' }}>{log.message}</span>
+                </div>
+              ))}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -219,7 +368,7 @@ function ExpandedPanel({ run }: { run: WorkflowRun }) {
                 background: '#10b98108', border: '1px solid #10b98120',
                 maxHeight: 140, overflowY: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word',
               }}>
-                {run.output.slice(0, 600)}{run.output.length > 600 ? '…' : ''}
+                {run.output.slice(0, 600)}{run.output.length > 600 ? '...' : ''}
               </div>
             </div>
           )}
@@ -233,6 +382,27 @@ function ExpandedPanel({ run }: { run: WorkflowRun }) {
           <StepBreakdown steps={run.steps ?? []} />
         </div>
       </div>
+
+      {/* View assets button */}
+      <div style={{ padding: '0 20px 12px', display: 'flex', gap: 8 }}>
+        <a
+          href={`/data?tab=assets&runId=${run.id}`}
+          style={{
+            display: 'inline-flex', alignItems: 'center', gap: 6,
+            padding: '7px 14px', borderRadius: 7,
+            border: `1px solid ${SECTION_COLOR}40`, background: `${SECTION_COLOR}08`,
+            color: SECTION_COLOR, fontSize: 12, fontWeight: 600,
+            textDecoration: 'none', transition: 'all 0.15s',
+          }}
+          onMouseEnter={e => { e.currentTarget.style.background = `${SECTION_COLOR}18`; }}
+          onMouseLeave={e => { e.currentTarget.style.background = `${SECTION_COLOR}08`; }}
+        >
+          <FolderOpen size={13} /> View Generated Assets
+        </a>
+      </div>
+
+      {/* Logs section */}
+      <LogsPanel runId={run.id} workflowId={run.workflowId} />
 
       {/* Metadata footer */}
       <div style={{
@@ -249,11 +419,33 @@ function ExpandedPanel({ run }: { run: WorkflowRun }) {
 }
 
 /* ── Run row ────────────────────────────────────────── */
-function RunRow({ run, expanded, onToggle, sysStats }: { run: WorkflowRun; expanded: boolean; onToggle: () => void; // eslint-disable-next-line @typescript-eslint/no-explicit-any
-sysStats?: any }) {
+function RunRow({ run, expanded, onToggle, onDelete, sysStats }: {
+  run: WorkflowRun; expanded: boolean; onToggle: () => void; onDelete: () => void;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  sysStats?: any;
+}) {
   const status = (run.status as RunStatus) in STATUS_META ? (run.status as RunStatus) : 'cancelled';
   const meta   = STATUS_META[status];
-  const Icon   = meta.icon;
+
+  /* Live duration counter for running workflows */
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    if (status !== 'running' || !run.startedAt) return;
+    const start = new Date(run.startedAt).getTime();
+    const tick = () => setElapsed(Math.floor((Date.now() - start) / 1000));
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [status, run.startedAt]);
+
+  const displayDuration = status === 'running'
+    ? fmtDuration(elapsed)
+    : run.durationSec != null ? fmtDuration(run.durationSec) : '—';
+
+  /* CPU display */
+  const cpuPct = status === 'running' && sysStats
+    ? (sysStats.cpu_percent ?? 0)
+    : null;
 
   return (
     <div style={{
@@ -266,30 +458,50 @@ sysStats?: any }) {
       <div
         onClick={onToggle}
         style={{
-          display: 'grid',
-          gridTemplateColumns: '22px minmax(0,2.5fr) minmax(0,1.5fr) minmax(0,1.5fr) 70px 60px 64px 74px',
+          display: 'grid', gridTemplateColumns: GRID_COLS,
           gap: 12, alignItems: 'center', padding: '12px 16px', cursor: 'pointer',
           transition: 'background 0.12s',
         }}
         onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-hover, rgba(0,0,0,0.03))')}
         onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
       >
-        {/* Status icon */}
+        {/* 1. Status icon */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <Icon
-            size={14} color={meta.color}
-            style={status === 'running' ? { animation: 'spin 1.5s linear infinite' } : {}}
-          />
+          {status === 'running' ? (
+            <NeuralLoader />
+          ) : (
+            <div style={{ animation: meta.animation }}>
+              <meta.icon size={14} color={meta.color} />
+            </div>
+          )}
         </div>
 
-        {/* Run name / input + expert chain */}
+        {/* 2. Workflow name */}
         <div style={{ minWidth: 0 }}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-1)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {run.input ? run.input.slice(0, 60) + (run.input.length > 60 ? '…' : '') : run.workflowName}
+          <div style={{
+            fontSize: 13, fontWeight: 700, color: 'var(--text-1)',
+            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          }}>
+            {run.workflowName || 'Unnamed Workflow'}
           </div>
-          {run.expertChain && run.expertChain.length > 0 && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 3, marginTop: 3, overflow: 'hidden' }}>
-              {run.expertChain.slice(0, 4).map((e, i) => (
+          <div style={{ fontSize: 11, color: 'var(--text-4)', marginTop: 1 }}>
+            {run.startedAt ? fmtElapsed(run.startedAt) : '—'}
+          </div>
+        </div>
+
+        {/* 3. Input (truncated) */}
+        <div style={{
+          fontSize: 12, color: 'var(--text-2)', minWidth: 0,
+          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+        }}>
+          {run.input ? run.input.slice(0, 80) : <span style={{ color: 'var(--text-4)', fontStyle: 'italic' }}>No input</span>}
+        </div>
+
+        {/* 4. Expert Chain */}
+        <div style={{ minWidth: 0, overflow: 'hidden' }}>
+          {run.expertChain && run.expertChain.length > 0 ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 3, overflow: 'hidden' }}>
+              {run.expertChain.slice(0, 3).map((e, i) => (
                 <span key={i} style={{ display: 'flex', alignItems: 'center', gap: 3, flexShrink: 0 }}>
                   <span style={{
                     fontSize: 10, color: SECTION_COLOR,
@@ -297,74 +509,73 @@ sysStats?: any }) {
                     background: `${SECTION_COLOR}12`,
                     whiteSpace: 'nowrap',
                   }}>{e}</span>
-                  {i < run.expertChain.slice(0, 4).length - 1 && <ArrowRight size={8} color="var(--text-4)" />}
+                  {i < run.expertChain.slice(0, 3).length - 1 && <ArrowRight size={8} color="var(--text-4)" />}
                 </span>
               ))}
-              {run.expertChain.length > 4 && (
-                <span style={{ fontSize: 10, color: 'var(--text-4)' }}>+{run.expertChain.length - 4}</span>
+              {run.expertChain.length > 3 && (
+                <span style={{ fontSize: 10, color: 'var(--text-4)' }}>+{run.expertChain.length - 3}</span>
               )}
             </div>
+          ) : (
+            <span style={{ fontSize: 11, color: 'var(--text-4)' }}>—</span>
           )}
         </div>
 
-        {/* Workflow name */}
-        <div style={{ fontSize: 12, color: 'var(--text-2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {run.workflowName}
-        </div>
-
-        {/* Steps count */}
-        <div style={{ fontSize: 12, color: 'var(--text-3)' }}>
-          {run.steps?.length ?? 0} step{(run.steps?.length ?? 0) !== 1 ? 's' : ''}
-        </div>
-
-        {/* Duration */}
-        <div style={{ fontSize: 12, color: 'var(--text-2)', fontVariantNumeric: 'tabular-nums' }}>
-          {run.durationSec != null ? fmtDuration(run.durationSec) : '—'}
-        </div>
-
-        {/* Tokens */}
-        <div style={{ fontSize: 12, color: 'var(--text-2)', fontVariantNumeric: 'tabular-nums' }}>
-          {run.totalTokensUsed ? fmtTokens(run.totalTokensUsed) : '—'}
-        </div>
-
-        {/* Cost */}
-        <div style={{ fontSize: 12, color: 'var(--text-2)', fontVariantNumeric: 'tabular-nums' }}>
-          {run.totalCostUsd ? fmtCost(Number(run.totalCostUsd)) : '—'}
-        </div>
-
-        {/* CPU/GPU — only for running workflows */}
-        <div style={{ fontSize: 11, fontVariantNumeric: 'tabular-nums', display: 'flex', gap: 6 }}>
-          {run.status === 'running' && sysStats ? (
-            <>
-              <span style={{
-                color: (sysStats.cpu_percent ?? 0) > 80 ? '#DC2626' : (sysStats.cpu_percent ?? 0) > 50 ? '#D97706' : '#10b981',
-                fontWeight: 600,
-              }}>
-                {(sysStats.cpu_percent ?? 0).toFixed(0)}% CPU
-              </span>
-              {sysStats.gpu?.devices?.[0]?.gpu_percent != null && (
-                <span style={{ color: '#7C3AED', fontWeight: 600 }}>
-                  {sysStats.gpu.devices[0].gpu_percent}% GPU
-                </span>
-              )}
-            </>
+        {/* 5. Tokens (consumed + generated) */}
+        <div style={{ fontSize: 12, fontVariantNumeric: 'tabular-nums', minWidth: 0 }}>
+          {run.totalTokensUsed ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+              <span style={{ color: 'var(--text-2)', fontWeight: 600 }}>{fmtTokens(run.totalTokensUsed)}</span>
+              <span style={{ fontSize: 9, color: 'var(--text-4)' }}>total</span>
+            </div>
           ) : (
             <span style={{ color: 'var(--text-4)' }}>—</span>
           )}
         </div>
 
-        {/* Time + expand */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4 }}>
-          <span style={{ fontSize: 11, color: 'var(--text-4)', whiteSpace: 'nowrap' }}>
-            {run.startedAt ? fmtElapsed(run.startedAt) : '—'}
-          </span>
-          <div style={{
-            width: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center',
-            borderRadius: 4, color: 'var(--text-4)', flexShrink: 0,
-          }}>
-            {expanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-          </div>
+        {/* 6. CPU */}
+        <div style={{ fontSize: 11, fontVariantNumeric: 'tabular-nums' }}>
+          {cpuPct != null ? (
+            <span style={{ color: cpuColor(cpuPct), fontWeight: 600, display: 'flex', alignItems: 'center', gap: 3 }}>
+              <Cpu size={10} />
+              {cpuPct.toFixed(0)}%
+            </span>
+          ) : (
+            <span style={{ color: 'var(--text-4)' }}>—</span>
+          )}
         </div>
+
+        {/* 7. Duration / Time */}
+        <div style={{
+          fontSize: 12, fontVariantNumeric: 'tabular-nums',
+          color: status === 'running' ? '#3b82f6' : 'var(--text-2)',
+          fontWeight: status === 'running' ? 600 : 400,
+        }}>
+          {displayDuration}
+        </div>
+
+        {/* 8. Expand chevron */}
+        <div style={{
+          width: 20, height: 20, display: 'flex', alignItems: 'center', justifyContent: 'center',
+          borderRadius: 4, color: 'var(--text-4)', flexShrink: 0,
+        }}>
+          {expanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+        </div>
+
+        {/* 9. Delete (far right) */}
+        <button
+          onClick={e => { e.stopPropagation(); onDelete(); }}
+          title="Delete run"
+          style={{
+            width: 26, height: 26, borderRadius: 6, border: '1px solid transparent',
+            background: 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center',
+            cursor: 'pointer', color: 'var(--text-4)', transition: 'all 0.15s',
+          }}
+          onMouseEnter={e => { e.currentTarget.style.color = '#ef4444'; e.currentTarget.style.background = '#ef444410'; e.currentTarget.style.borderColor = '#ef444425'; }}
+          onMouseLeave={e => { e.currentTarget.style.color = 'var(--text-4)'; e.currentTarget.style.background = 'transparent'; e.currentTarget.style.borderColor = 'transparent'; }}
+        >
+          <Trash2 size={12} />
+        </button>
       </div>
 
       {/* Expanded detail panel */}
@@ -410,6 +621,8 @@ export default function WorkflowHistoryPage() {
   const [page,         setPage]         = useState(1);
   const [expandedId,   setExpandedId]   = useState<string | null>(null);
   const [showFilters,  setShowFilters]  = useState(false);
+  const [deletingRunId, setDeletingRunId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const { runs, total, isLoading, mutate } = useWorkflowRuns(undefined, 500);
   const { workflows } = useWorkflows();
@@ -451,8 +664,7 @@ export default function WorkflowHistoryPage() {
       ? Math.round(r.reduce((a, x) => a + (x.durationSec ?? 0), 0) / r.filter(x => x.durationSec).length)
       : 0;
     const totalTok    = r.reduce((a, x) => a + (x.totalTokensUsed ?? 0), 0);
-    const totalCost   = r.reduce((a, x) => a + Number(x.totalCostUsd ?? 0), 0);
-    return { count: r.length, successRate, avgDur, totalTok, totalCost };
+    return { count: r.length, successRate, avgDur, totalTok };
   }, [filtered]);
 
   function toggleExpand(id: string) {
@@ -461,14 +673,28 @@ export default function WorkflowHistoryPage() {
 
   function handleExport() {
     const csv = [
-      ['ID', 'Workflow', 'Status', 'Duration(s)', 'Tokens', 'Cost(USD)', 'Started'].join(','),
-      ...filtered.map(r => [r.id, r.workflowName, r.status, r.durationSec ?? '', r.totalTokensUsed ?? '', r.totalCostUsd ?? '', r.startedAt].join(',')),
+      ['ID', 'Workflow', 'Status', 'Duration(s)', 'Tokens', 'Started'].join(','),
+      ...filtered.map(r => [r.id, r.workflowName, r.status, r.durationSec ?? '', r.totalTokensUsed ?? '', r.startedAt].join(',')),
     ].join('\n');
     const blob = new Blob([csv], { type: 'text/csv' });
     const url  = URL.createObjectURL(blob);
     const a    = document.createElement('a');
     a.href = url; a.download = 'workflow-runs.csv'; a.click();
     URL.revokeObjectURL(url);
+  }
+
+  async function handleDeleteRun() {
+    if (!deletingRunId) return;
+    setDeleting(true);
+    try {
+      await fetch(`/api/workflows/runs?id=${deletingRunId}`, { method: 'DELETE' });
+      mutate();
+    } catch (err) {
+      console.error('Failed to delete run:', err);
+    } finally {
+      setDeleting(false);
+      setDeletingRunId(null);
+    }
   }
 
   /* ══════════════════════════════════════════════════
@@ -494,7 +720,7 @@ export default function WorkflowHistoryPage() {
           <div>
             <h1 style={{ fontSize: 19, fontWeight: 700, color: 'var(--text-1)', lineHeight: 1 }}>Run History</h1>
             <p style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 3 }}>
-              {total} total runs · auto-refreshes every 10s
+              {total} total runs · auto-refreshes every 5s
             </p>
           </div>
         </div>
@@ -541,7 +767,7 @@ export default function WorkflowHistoryPage() {
         </div>
       </motion.div>
 
-      {/* ── Stats bar ── */}
+      {/* ── Stats bar (no cost) ── */}
       <motion.div
         initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.08 }}
@@ -551,7 +777,6 @@ export default function WorkflowHistoryPage() {
         <StatCard icon={TrendingUp} label="Success Rate" value={`${stats.successRate}%`} sub={`${filtered.filter(r => r.status === 'completed').length} completed`} />
         <StatCard icon={Timer}      label="Avg Duration" value={stats.avgDur > 0 ? fmtDuration(stats.avgDur) : '—'} />
         <StatCard icon={Zap}        label="Total Tokens" value={fmtTokens(stats.totalTok)} />
-        <StatCard icon={DollarSign} label="Total Cost"   value={fmtCost(stats.totalCost)} />
       </motion.div>
 
       {/* ── Filter bar ── */}
@@ -622,11 +847,11 @@ export default function WorkflowHistoryPage() {
             <input
               value={search}
               onChange={e => { setSearch(e.target.value); setPage(1); }}
-              placeholder="Search by name or input…"
+              placeholder="Search by name or input..."
               style={{ border: 'none', outline: 'none', background: 'transparent', fontSize: 12, color: 'var(--text-1)', width: 200 }}
             />
             {search && (
-              <button onClick={() => setSearch('')} style={{ border: 'none', background: 'none', cursor: 'pointer', padding: 0, color: 'var(--text-4)', lineHeight: 1 }}>×</button>
+              <button onClick={() => setSearch('')} style={{ border: 'none', background: 'none', cursor: 'pointer', padding: 0, color: 'var(--text-4)', lineHeight: 1 }}>x</button>
             )}
           </div>
         </div>
@@ -641,7 +866,7 @@ export default function WorkflowHistoryPage() {
                 padding: '2px 8px', borderRadius: 4, background: `${SECTION_COLOR}12`, color: SECTION_COLOR,
               }}>
                 Status: {statusFilter}
-                <button onClick={() => setStatusFilter('All')} style={{ border: 'none', background: 'none', cursor: 'pointer', color: SECTION_COLOR, padding: 0, lineHeight: 1, marginLeft: 2 }}>×</button>
+                <button onClick={() => setStatusFilter('All')} style={{ border: 'none', background: 'none', cursor: 'pointer', color: SECTION_COLOR, padding: 0, lineHeight: 1, marginLeft: 2 }}>x</button>
               </span>
             )}
             {search && (
@@ -650,7 +875,7 @@ export default function WorkflowHistoryPage() {
                 padding: '2px 8px', borderRadius: 4, background: `${SECTION_COLOR}12`, color: SECTION_COLOR,
               }}>
                 &ldquo;{search}&rdquo;
-                <button onClick={() => setSearch('')} style={{ border: 'none', background: 'none', cursor: 'pointer', color: SECTION_COLOR, padding: 0, lineHeight: 1, marginLeft: 2 }}>×</button>
+                <button onClick={() => setSearch('')} style={{ border: 'none', background: 'none', cursor: 'pointer', color: SECTION_COLOR, padding: 0, lineHeight: 1, marginLeft: 2 }}>x</button>
               </span>
             )}
           </div>
@@ -659,20 +884,20 @@ export default function WorkflowHistoryPage() {
 
       {/* ── Table header ── */}
       <div style={{
-        display: 'grid',
-        gridTemplateColumns: '22px minmax(0,2.5fr) minmax(0,1.5fr) minmax(0,1.5fr) 70px 60px 64px 74px',
+        display: 'grid', gridTemplateColumns: GRID_COLS,
         gap: 12, padding: '6px 16px', marginBottom: 6,
         fontSize: 10, fontWeight: 700, color: 'var(--text-4)',
         textTransform: 'uppercase', letterSpacing: '0.07em',
       }}>
         <div />
-        <div>Input / Name</div>
         <div>Workflow</div>
+        <div>Input</div>
         <div>Expert Chain</div>
-        <div>Duration</div>
         <div>Tokens</div>
-        <div>Cost</div>
-        <div>Time</div>
+        <div>CPU</div>
+        <div>Duration</div>
+        <div />
+        <div />
       </div>
 
       {/* ── Run rows ── */}
@@ -731,6 +956,7 @@ export default function WorkflowHistoryPage() {
               run={run as WorkflowRun}
               expanded={expandedId === (run as WorkflowRun).id}
               onToggle={() => toggleExpand((run as WorkflowRun).id)}
+              onDelete={() => setDeletingRunId((run as WorkflowRun).id)}
               sysStats={sysStats}
             />
           ))}
@@ -813,13 +1039,85 @@ export default function WorkflowHistoryPage() {
         style={{ marginTop: 20, display: 'flex', alignItems: 'center', gap: 6, color: 'var(--text-4)', fontSize: 11 }}
       >
         <AlertCircle size={11} />
-        Auto-refreshes every 10 seconds
+        Auto-refreshes every 5 seconds
         {isLoading && <Loader2 size={10} style={{ animation: 'spin 1s linear infinite', marginLeft: 4 }} />}
       </motion.div>
 
+      {/* Delete confirmation dialog */}
+      <AnimatePresence>
+        {deletingRunId && (
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            onClick={() => !deleting && setDeletingRunId(null)}
+            style={{
+              position: 'fixed', inset: 0, background: 'rgba(7,7,26,0.85)',
+              zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.96, y: -8 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.96, y: -8 }}
+              transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+              onClick={e => e.stopPropagation()}
+              style={{
+                background: 'var(--bg-surface, #fff)', borderRadius: 14,
+                border: '1px solid var(--border)', padding: '28px 32px',
+                maxWidth: 400, width: '90%', textAlign: 'center',
+              }}
+            >
+              <div style={{
+                width: 40, height: 40, borderRadius: 10,
+                background: 'var(--error-dim, rgba(220,38,38,0.08))',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                margin: '0 auto 14px',
+              }}>
+                <Trash2 size={18} color="var(--error, #DC2626)" />
+              </div>
+              <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-1)', marginBottom: 8 }}>
+                Delete Run
+              </div>
+              <div style={{ fontSize: 13, color: 'var(--text-2)', lineHeight: 1.5, marginBottom: 20 }}>
+                This will permanently delete this run and its step executions. This action cannot be undone.
+              </div>
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
+                <button
+                  onClick={() => setDeletingRunId(null)}
+                  disabled={deleting}
+                  style={{
+                    padding: '8px 20px', borderRadius: 7, fontSize: 12, fontWeight: 600,
+                    border: '1px solid var(--border-md)', background: 'var(--bg-elevated)',
+                    color: 'var(--text-2)', cursor: 'pointer',
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleDeleteRun}
+                  disabled={deleting}
+                  style={{
+                    padding: '8px 20px', borderRadius: 7, fontSize: 12, fontWeight: 700,
+                    border: '1.5px solid #ef4444', background: '#ef444414', color: '#ef4444',
+                    cursor: deleting ? 'wait' : 'pointer', opacity: deleting ? 0.6 : 1,
+                    display: 'flex', alignItems: 'center', gap: 5,
+                  }}
+                >
+                  {deleting && <Loader2 size={11} style={{ animation: 'spin 1s linear infinite' }} />}
+                  Delete
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       <style>{`
-        @keyframes spin    { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-        @keyframes pulse   { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+        @keyframes spin        { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        @keyframes pulse       { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+        @keyframes fadeIn      { from { opacity: 0; transform: scale(0.8); } to { opacity: 1; transform: scale(1); } }
+        @keyframes shake       { 0%, 100% { transform: translateX(0); } 20% { transform: translateX(-3px); } 40% { transform: translateX(3px); } 60% { transform: translateX(-2px); } 80% { transform: translateX(2px); } }
+        @keyframes orbit       { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        @keyframes neuralPulse { 0% { transform: translate(-50%, -50%) scale(0.7); opacity: 0.5; } 100% { transform: translate(-50%, -50%) scale(1.3); opacity: 1; } }
       `}</style>
     </div>
   );

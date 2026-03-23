@@ -23,20 +23,32 @@ interface AgentLiveState {
   error?: string;
 }
 
+export interface LiveMetrics {
+  cpuPercent: number;
+  gpuPercent: number;
+  memoryMb: number;
+  totalTokensUsed: number;
+  elapsedMs: number;
+}
+
 interface WorkflowLiveState {
   runId: string | null;
-  status: 'idle' | 'connecting' | 'running' | 'completed' | 'failed';
+  status: 'idle' | 'connecting' | 'running' | 'completed' | 'failed' | 'cancelled';
   agents: Record<string, AgentLiveState>;
   sharedMemory: SharedMemory | null;
   events: WorkflowExecutionEvent[];
   output: string | null;
   error: string | null;
+  liveMetrics: LiveMetrics | null;
+  /** Per-run live metrics when subscribed to multiple runs */
+  runMetrics: Record<string, LiveMetrics>;
 }
 
 const ENGINE_WS_URL = process.env.NEXT_PUBLIC_ENGINE_WS_URL || 'ws://localhost:8000/ws';
 
 export function useWorkflowWS() {
   const wsRef = useRef<WebSocket | null>(null);
+  const subscribedChannelsRef = useRef<Set<string>>(new Set());
   const [state, setState] = useState<WorkflowLiveState>({
     runId: null,
     status: 'idle',
@@ -45,6 +57,8 @@ export function useWorkflowWS() {
     events: [],
     output: null,
     error: null,
+    liveMetrics: null,
+    runMetrics: {},
   });
 
   const handleEvent = useCallback((raw: string) => {
@@ -171,12 +185,52 @@ export function useWorkflowWS() {
             next.status = 'completed';
             next.output = data.output || null;
             if (data.sharedMemory) next.sharedMemory = data.sharedMemory;
+            next.liveMetrics = null;
             break;
 
           case 'workflow.failed':
             next.status = 'failed';
             next.error = data.error || 'Workflow failed';
+            next.liveMetrics = null;
             break;
+
+          case 'workflow.cancelled' as WorkflowExecutionEventType:
+            next.status = 'cancelled';
+            next.error = data.message || 'Workflow cancelled';
+            next.liveMetrics = null;
+            break;
+
+          case 'run.metrics.update' as WorkflowExecutionEventType: {
+            const metrics: LiveMetrics = {
+              cpuPercent: data.cpuPercent ?? 0,
+              gpuPercent: data.gpuPercent ?? 0,
+              memoryMb: data.memoryMb ?? 0,
+              totalTokensUsed: data.tokensUsed ?? 0,
+              elapsedMs: data.elapsedMs ?? 0,
+            };
+            next.liveMetrics = metrics;
+            // Also track per-run metrics for multi-run support
+            if (data.runId) {
+              next.runMetrics = {
+                ...prev.runMetrics,
+                [data.runId]: metrics,
+              };
+            }
+            // Update agent-level metrics
+            if (data.agentId && prev.agents[data.agentId]) {
+              next.agents = {
+                ...prev.agents,
+                [data.agentId]: {
+                  ...prev.agents[data.agentId],
+                  cpuPercent: data.cpuPercent,
+                  gpuPercent: data.gpuPercent,
+                  memoryMb: data.memoryMb,
+                  tokensUsed: data.tokensUsed ?? prev.agents[data.agentId].tokensUsed,
+                },
+              };
+            }
+            break;
+          }
         }
 
         return next;
@@ -200,6 +254,8 @@ export function useWorkflowWS() {
       events: [],
       output: null,
       error: null,
+      liveMetrics: null,
+      runMetrics: {},
     });
 
     const ws = new WebSocket(ENGINE_WS_URL);
@@ -211,6 +267,7 @@ export function useWorkflowWS() {
         event: 'subscribe',
         channel: `workflow.${runId}`,
       }));
+      subscribedChannelsRef.current.add(`workflow.${runId}`);
       setState(prev => ({ ...prev, status: 'running' }));
     };
 
@@ -222,7 +279,45 @@ export function useWorkflowWS() {
 
     ws.onclose = () => {
       wsRef.current = null;
+      subscribedChannelsRef.current.clear();
     };
+  }, [handleEvent]);
+
+  /** Subscribe to multiple run channels on a single WebSocket connection */
+  const subscribeToRuns = useCallback((runIds: string[]) => {
+    // Ensure we have a connection
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+      // Create new connection
+      const ws = new WebSocket(ENGINE_WS_URL);
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        for (const runId of runIds) {
+          const channel = `workflow.${runId}`;
+          if (!subscribedChannelsRef.current.has(channel)) {
+            ws.send(JSON.stringify({ event: 'subscribe', channel }));
+            subscribedChannelsRef.current.add(channel);
+          }
+        }
+        setState(prev => ({ ...prev, status: 'running' }));
+      };
+
+      ws.onmessage = (e) => handleEvent(e.data);
+      ws.onerror = () => {};
+      ws.onclose = () => {
+        wsRef.current = null;
+        subscribedChannelsRef.current.clear();
+      };
+    } else {
+      // Subscribe to new channels on existing connection
+      for (const runId of runIds) {
+        const channel = `workflow.${runId}`;
+        if (!subscribedChannelsRef.current.has(channel)) {
+          wsRef.current.send(JSON.stringify({ event: 'subscribe', channel }));
+          subscribedChannelsRef.current.add(channel);
+        }
+      }
+    }
   }, [handleEvent]);
 
   const executeViaWS = useCallback((request: Record<string, unknown>) => {
@@ -240,7 +335,8 @@ export function useWorkflowWS() {
       wsRef.current.close();
       wsRef.current = null;
     }
-    setState(prev => ({ ...prev, status: 'idle' }));
+    subscribedChannelsRef.current.clear();
+    setState(prev => ({ ...prev, status: 'idle', liveMetrics: null, runMetrics: {} }));
   }, []);
 
   // Cleanup on unmount
@@ -252,5 +348,5 @@ export function useWorkflowWS() {
     };
   }, []);
 
-  return { ...state, connect, executeViaWS, disconnect };
+  return { ...state, connect, subscribeToRuns, executeViaWS, disconnect };
 }

@@ -83,7 +83,7 @@ export async function POST(req: NextRequest) {
       goalStatement:    goalStatement ?? null,
       goalFileUrl:      goalFileUrl ?? null,
       inputFileUrls:    inputFileUrls ?? [],
-      status:           'draft',
+      status:           body.status || 'draft',
       tags:             tags ?? [],
       isTemplate:       isTemplate ?? false,
       templateCategory: templateCategory ?? null,

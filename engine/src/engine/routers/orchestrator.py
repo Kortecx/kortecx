@@ -138,6 +138,27 @@ async def execute_workflow(req: ExecuteRequest, bg: BackgroundTasks) -> ExecuteR
     )
 
 
+@router.post("/runs/{run_id}/cancel")
+async def cancel_run(run_id: str) -> dict[str, Any]:
+    """Cancel a running workflow execution."""
+    return await orchestrator.cancel_run(run_id)
+
+
+@router.post("/runs/{run_id}/restart")
+async def restart_run(run_id: str, bg: BackgroundTasks) -> dict[str, Any]:
+    """Restart a completed/failed/cancelled workflow using its original config."""
+    run = orchestrator.get_run(run_id)
+    if not run:
+        return {"error": "Run not found", "runId": run_id}
+    if run["status"] == "running":
+        return {"error": "Run is still running", "runId": run_id}
+    request = run.get("request")
+    if not request:
+        return {"error": "Original request not stored", "runId": run_id}
+    bg.add_task(orchestrator.execute_workflow, request)
+    return {"runId": run_id, "status": "restarting", "message": "Workflow restart initiated"}
+
+
 @router.get("/runs/{run_id}")
 async def get_run(run_id: str) -> dict[str, Any]:
     """Get the current status of a workflow run."""

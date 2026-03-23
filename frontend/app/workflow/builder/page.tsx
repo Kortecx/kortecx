@@ -3,7 +3,7 @@
 import { useState, useCallback, useRef, useEffect, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import {
-  Play, Sparkles, Plus, Trash2, ArrowRight, X, Search,
+  Sparkles, Plus, Trash2, ArrowRight, X, Search,
   ChevronDown, ChevronUp, Zap, Clock, Layers,
   Save, FileText, ChevronRight, RotateCcw,
   Upload, File, Server, Cloud, CheckCircle2, AlertCircle,
@@ -21,7 +21,7 @@ import {
 } from 'lucide-react';
 import { ROLE_META, INTEGRATION_CATALOG, MARKETPLACE_PLUGINS } from '@/lib/constants';
 import type { Expert, ExpertRole, ModelSource, LocalModelConfig, StepIntegration } from '@/lib/types';
-import { useWorkflowWS } from '@/lib/hooks/useWorkflowWS';
+// useWorkflowWS removed — workflows are now run from the listing page
 import { useWorkflowLogger } from '@/lib/hooks/useWorkflowLogger';
 import { useExperts, useWorkflows } from '@/lib/hooks/useApi';
 import { useDraftCache } from '@/lib/hooks/useDraftCache';
@@ -1674,83 +1674,6 @@ function FileDropZone({ label: _label, accept, files, onFilesChange, multiple }:
 }
 
 /* ── Live Execution Panel ────────────────────────────── */
-function LiveExecutionPanel({ status, agents, events, output, error }: {
-  status: string;
-  agents: Record<string, { agentId: string; stepId: string; status: string; output?: string; tokensUsed?: number; durationMs?: number; error?: string; taskDescription?: string }>;
-  events: Array<{ event: string; agentId?: string; stepId?: string; timestamp: string; data: Record<string, unknown> }>;
-  output: string | null; error: string | null;
-}) {
-  const [showEvents, setShowEvents] = useState(false);
-  return (
-    <div className="card" style={{ padding: 20, marginBottom: 16 }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <Brain size={16} color={status === 'running' ? 'var(--amber)' : status === 'completed' ? '#059669' : status === 'failed' ? 'var(--error)' : 'var(--text-3)'} />
-          <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-1)' }}>Live Execution</span>
-          {status === 'running' && <Loader2 size={14} color="var(--amber)" style={{ animation: 'spin 1s linear infinite' }} />}
-          {status === 'completed' && <CheckCircle2 size={14} color="#059669" />}
-          {status === 'failed' && <AlertCircle size={14} color="var(--error)" />}
-        </div>
-        <button className="btn btn-ghost btn-sm" onClick={() => setShowEvents(!showEvents)} style={{ fontSize: 11 }}>
-          <Eye size={12} /> {showEvents ? 'Hide' : 'Show'} Events ({events.length})
-        </button>
-      </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 10, marginBottom: 16 }}>
-        {Object.values(agents).map(agent => (
-          <div key={agent.agentId} style={{ padding: '12px 14px', background: 'var(--bg)',
-            border: `1px solid ${agent.status === 'completed' ? '#05966940' : agent.status === 'failed' ? 'var(--error-dim)' : agent.status === 'thinking' ? '#D9770640' : 'var(--border)'}`,
-            borderRadius: 6 }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-              <span className="mono" style={{ fontSize: 10, color: 'var(--text-4)' }}>{agent.stepId}</span>
-              <span style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase',
-                color: agent.status === 'completed' ? '#059669' : agent.status === 'failed' ? 'var(--error)' : agent.status === 'thinking' ? '#D97706' : 'var(--text-3)' }}>
-                {agent.status}
-              </span>
-            </div>
-            {agent.taskDescription && <div style={{ fontSize: 12, color: 'var(--text-2)', marginBottom: 6, lineHeight: 1.4 }}>{agent.taskDescription}</div>}
-            {agent.output && (
-              <div style={{ fontSize: 11, color: 'var(--text-3)', lineHeight: 1.4, maxHeight: 80, overflow: 'hidden',
-                background: 'var(--bg-elevated)', padding: '6px 8px', borderRadius: 3, marginTop: 4 }}>
-                {agent.output.slice(0, 200)}{agent.output.length > 200 ? '...' : ''}
-              </div>
-            )}
-            {agent.tokensUsed !== undefined && agent.tokensUsed > 0 && (
-              <div style={{ display: 'flex', gap: 12, marginTop: 6, fontSize: 10, color: 'var(--text-4)' }}>
-                <span className="mono">{fmt(agent.tokensUsed)} tokens</span>
-                {agent.durationMs !== undefined && <span className="mono">{(agent.durationMs / 1000).toFixed(1)}s</span>}
-              </div>
-            )}
-            {agent.error && <div style={{ fontSize: 11, color: 'var(--error)', marginTop: 6 }}>{agent.error}</div>}
-          </div>
-        ))}
-      </div>
-      {output && (
-        <div style={{ padding: '14px 16px', background: 'rgba(5,150,105,0.05)', border: '1px solid #05966930', borderRadius: 6, marginBottom: 12 }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: '#059669', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Final Output</div>
-          <div style={{ fontSize: 13, color: 'var(--text-1)', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>{output}</div>
-        </div>
-      )}
-      {error && (
-        <div style={{ padding: '12px 16px', background: 'rgba(220,38,38,0.05)', border: '1px solid rgba(220,38,38,0.2)', borderRadius: 6, fontSize: 13, color: 'var(--error)' }}>
-          {error}
-        </div>
-      )}
-      {showEvents && events.length > 0 && (
-        <div style={{ marginTop: 12, maxHeight: 200, overflowY: 'auto', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 4, padding: 8 }}>
-          {events.map((ev, i) => (
-            <div key={i} style={{ fontSize: 10, fontFamily: 'var(--font-mono, monospace)', color: 'var(--text-3)', padding: '2px 0',
-              borderBottom: i < events.length - 1 ? '1px solid var(--border)' : 'none' }}>
-              <span style={{ color: 'var(--text-4)' }}>{new Date(ev.timestamp).toLocaleTimeString()}</span>{' '}
-              <span style={{ color: ev.event.includes('complete') ? '#059669' : ev.event.includes('failed') ? 'var(--error)' : ev.event.includes('thinking') ? '#D97706' : 'var(--primary-text)' }}>{ev.event}</span>
-              {ev.agentId && <span style={{ color: 'var(--text-4)' }}> [{ev.agentId}]</span>}
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
 /* ── Advanced Options Panel ──────────────────────────── */
 function AdvancedOptionsPanel({
   metrics, onMetricsChange,
@@ -2128,7 +2051,7 @@ function WorkflowBuilderInner() {
   const [saveErrors, setSaveErrors] = useState<{ name?: string; goal?: string; steps?: string; stepDetails?: Record<string, string>; general?: string }>({});
   const [saveSuccess, setSaveSuccess] = useState(false);
 
-  const ws = useWorkflowWS();
+  // WebSocket removed — workflows are now run from the listing page
   const { experts: dbExperts } = useExperts();
   const { workflows: dbWorkflows, mutate: mutateWorkflows } = useWorkflows();
 
@@ -2247,7 +2170,7 @@ function WorkflowBuilderInner() {
   const goalContent = goalMode === 'text' ? goalText : (goalFiles[0]?.preview || '');
   const hasGoal = goalMode === 'text' ? goalText.trim().length > 0 : goalFiles.length > 0;
   const isValid = workflowName.trim().length > 0 && hasGoal && steps.length > 0;
-  const isRunning = ws.status === 'running' || ws.status === 'connecting';
+  // isRunning removed — workflows are now run from the listing page
 
   /* Estimation */
   const totalTokens = steps.reduce((sum, s) => sum + (s.maxTokens ?? 4096), 0);
@@ -2405,6 +2328,7 @@ function WorkflowBuilderInner() {
           name: workflowName.trim(),
           description: advancedConfig.description || null,
           goalStatement: goalContent,
+          status: stepPayload.length > 0 ? 'ready' : 'draft',
           tags,
           steps: stepPayload,
         }),
@@ -2426,108 +2350,7 @@ function WorkflowBuilderInner() {
     }
   };
 
-  /* Run workflow */
-  const handleRun = async () => {
-    if (!workflowName.trim()) { setNameError(true); return; }
-    if (!isValid) return;
-    setNameError(false);
-
-    // Log all config before run
-    wfLogger.saveGoal(goalContent, goalMode);
-    wfLogger.saveConfig({
-      workflow: { name: workflowName, stepsCount: steps.length },
-      metrics,
-      advanced: advancedConfig,
-      permissions,
-      tags,
-    });
-    wfLogger.logInteraction('workflow.run.started', {
-      name: workflowName, goalMode, stepsCount: steps.length,
-      localSteps: steps.filter(s => s.modelSource === 'local').length,
-      providerSteps: steps.filter(s => s.modelSource === 'provider').length,
-    });
-
-    try {
-      // Upload files (goal + input + per-step files/images)
-      const formData = new FormData();
-      if (goalMode === 'file' && goalFiles[0]) formData.append('files', goalFiles[0].file);
-      if (goalMode === 'text') {
-        const blob = new Blob([goalText], { type: 'text/markdown' });
-        formData.append('files', blob, 'goal.md');
-      }
-      for (const f of inputFiles) formData.append('files', f.file);
-      for (const s of steps) {
-        for (const f of s.stepFiles) formData.append('files', f.file);
-        for (const f of s.stepImages) formData.append('files', f.file);
-      }
-
-      const uploadResp = await fetch(`${ENGINE_URL}/api/orchestrator/upload`, { method: 'POST', body: formData });
-
-      let goalFileUrl = '';
-      const inputFileUrls: string[] = [];
-      if (uploadResp.ok) {
-        const uploadData = await uploadResp.json();
-        const uploaded = uploadData.files || [];
-        if (uploaded.length > 0) goalFileUrl = uploaded[0].url;
-        for (let i = 1; i < uploaded.length; i++) inputFileUrls.push(uploaded[i].url);
-      }
-
-      const runId = `run-${Date.now()}`;
-      ws.connect(runId);
-
-      await fetch('/api/workflows/run', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: workflowName.trim(),
-          goalFileUrl,
-          inputFileUrls,
-          steps: steps.map(s => {
-            const expert = s.expert;
-            const source = expert?.modelSource || s.modelSource;
-            return {
-              stepId: s.id,
-              name: s.name || null,
-              description: s.description || null,
-              expertId: expert?.id || null,
-              taskDescription: s.taskDescription,
-              systemInstructions: s.systemInstructions || '',
-              voiceCommand: s.voiceCommand || '',
-              fileLocations: s.fileLocations,
-              stepFileNames: s.stepFiles.map(f => f.name),
-              stepImageNames: s.stepImages.map(f => f.name),
-              modelSource: source,
-              localModel: source === 'local'
-                ? (expert?.localModelConfig
-                    ? { engine: expert.localModelConfig.engine, model: expert.localModelConfig.modelName }
-                    : { engine: s.localModel.engine, model: s.localModel.modelName })
-                : null,
-              temperature: s.temperature ?? (expert ? Number(expert.temperature) : 0.7),
-              maxTokens: s.maxTokens ?? (expert?.maxTokens || 4096),
-              connectionType: s.connectionType,
-              shareMemory: s.shareMemory,
-              integrations: s.integrations.map(si => ({
-                id: si.id,
-                type: si.type,
-                referenceId: si.referenceId,
-                name: si.name,
-                icon: si.icon,
-                color: si.color,
-                config: si.config || {},
-              })),
-            };
-          }),
-          metrics,
-          config: advancedConfig,
-          tags,
-          permissions,
-        }),
-      });
-    } catch (err) {
-      console.error('Failed to start workflow:', err);
-      wfLogger.logInteraction('workflow.run.error', { error: String(err) });
-    }
-  };
+  /* Run workflow — removed from builder; workflows are run from the listing page */
 
   if (loadingExisting) {
     return (
@@ -2625,11 +2448,6 @@ function WorkflowBuilderInner() {
               : saveSuccess
               ? <><CheckCircle2 size={13} color="#059669" /> Saved</>
               : <><Save size={13} /> Save</>}
-          </button>
-          <button className="btn btn-primary btn-sm" onClick={handleRun} disabled={!isValid || isRunning}>
-            {isRunning
-              ? <><Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} /> Running...</>
-              : <><Play size={13} /> Run Workflow</>}
           </button>
         </div>
       </div>
@@ -2841,8 +2659,7 @@ function WorkflowBuilderInner() {
               {steps.map((step, idx) => (
                 <div key={step.id} style={{ display: 'flex', alignItems: 'flex-start' }}>
                   <StepCard step={step} index={idx} onRemove={() => removeStep(step.id)}
-                    onUpdate={updates => updateStep(step.id, updates)} onSwap={() => openSwap(idx)}
-                    liveAgent={Object.values(ws.agents).find(a => a.stepId === step.id)} />
+                    onUpdate={updates => updateStep(step.id, updates)} onSwap={() => openSwap(idx)} />
                   {idx < steps.length - 1 && (
                     <div className="step-connector" style={{ alignSelf: 'center', paddingTop: 0 }}><ArrowRight size={16} /></div>
                   )}
@@ -2881,13 +2698,8 @@ function WorkflowBuilderInner() {
         logger={wfLogger}
       />
 
-      {/* Live Execution Panel */}
-      {ws.status !== 'idle' && (
-        <LiveExecutionPanel status={ws.status} agents={ws.agents} events={ws.events} output={ws.output} error={ws.error} />
-      )}
-
       {/* Templates */}
-      {ws.status === 'idle' && dbWorkflows.length > 0 && (
+      {dbWorkflows.length > 0 && (
         <div className="card" style={{ padding: 20 }}>
           <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-1)', marginBottom: 14,
             display: 'flex', alignItems: 'center', gap: 8 }}>

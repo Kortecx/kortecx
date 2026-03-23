@@ -107,6 +107,8 @@ class AgentOrchestrator:
         self._runs: dict[str, dict[str, Any]] = {}  # runId -> run state
         self._shared_memory: dict[str, SharedMemory] = {}
         self._semaphore = asyncio.Semaphore(settings.max_concurrent_agents)
+        self._cancellation_events: dict[str, asyncio.Event] = {}
+        self._metrics_stop_events: dict[str, asyncio.Event] = {}
 
     async def execute_workflow(self, request: WorkflowRequest) -> dict[str, Any]:
         """Main entry point — creates a run and orchestrates agents."""
@@ -115,6 +117,8 @@ class AgentOrchestrator:
 
         shared = SharedMemory(run_id=run_id)
         self._shared_memory[run_id] = shared
+        self._cancellation_events[run_id] = asyncio.Event()
+        self._metrics_stop_events[run_id] = asyncio.Event()
 
         # Read goal file content
         goal_content = await self._read_file(request.goal_file_url)
@@ -135,6 +139,7 @@ class AgentOrchestrator:
             "startedAt": datetime.now(UTC).isoformat(),
             "agents": {},
             "stepResults": {},
+            "request": request,
         }
 
         # Log run start
@@ -241,6 +246,25 @@ class AgentOrchestrator:
 
             return {"runId": run_id, "status": "completed", "output": result}
 
+        except asyncio.CancelledError:
+            self._runs[run_id]["status"] = "cancelled"
+            self._runs[run_id]["completedAt"] = datetime.now(UTC).isoformat()
+
+            workflow_logger.log_run_event(
+                request.workflow_id, run_id, "run.cancelled", {},
+            )
+            await ws_manager.broadcast(
+                channel, "workflow.cancelled",
+                {"runId": run_id, "message": "Workflow cancelled by user"},
+            )
+            await execution_audit.fail_run(run_id, "Cancelled by user")
+            await self._sync_to_frontend(
+                run_id=run_id, workflow_id=request.workflow_id,
+                workflow_name=request.name, status="cancelled",
+                steps=request.steps, error_message="Cancelled by user",
+            )
+            return {"runId": run_id, "status": "cancelled"}
+
         except Exception as exc:
             logger.exception("Workflow %s failed", run_id)
             self._runs[run_id]["status"] = "failed"
@@ -311,6 +335,13 @@ class AgentOrchestrator:
 
             return {"runId": run_id, "status": "failed", "error": str(exc)}
 
+        finally:
+            # Cleanup cancellation and metrics stop events
+            self._cancellation_events.pop(run_id, None)
+            stop_evt = self._metrics_stop_events.pop(run_id, None)
+            if stop_evt:
+                stop_evt.set()
+
     async def _orchestrate(
         self,
         run_id: str,
@@ -339,6 +370,10 @@ class AgentOrchestrator:
         previous_output = ""
 
         for group in groups:
+            # Check cancellation before each step group
+            if self._cancellation_events.get(run_id, asyncio.Event()).is_set():
+                raise asyncio.CancelledError(f"Workflow {run_id} cancelled by user")
+
             if len(group) == 1 and group[0].connection_type != "parallel":
                 # Sequential / conditional execution
                 step = group[0]
@@ -490,8 +525,16 @@ class AgentOrchestrator:
                 # Audit: agent thinking
                 execution_audit.log_agent_thinking(run_id, agent_id, step.step_id)
 
+                # Start live metrics broadcasting
+                _metrics_task = asyncio.create_task(
+                    self._broadcast_live_metrics(run_id, agent_id, step.step_id, channel)
+                )
+
                 # Execute inference
                 result = await self._infer(step, system_prompt, user_prompt)
+
+                # Stop live metrics broadcasting
+                _metrics_task.cancel()
 
                 agent.output = result.text
                 agent.tokens_used = result.tokens_used
@@ -999,6 +1042,83 @@ class AgentOrchestrator:
                 return resp.text
 
         return f"[Could not read file: {url_or_path}]"
+
+    async def cancel_run(self, run_id: str) -> dict[str, Any]:
+        """Cancel a running workflow by setting its cancellation event."""
+        run = self._runs.get(run_id)
+        if not run:
+            return {"error": "Run not found", "runId": run_id}
+        if run["status"] != "running":
+            return {"error": f"Run is not running (status: {run['status']})", "runId": run_id}
+
+        evt = self._cancellation_events.get(run_id)
+        if evt:
+            evt.set()
+        return {"runId": run_id, "status": "cancelling", "message": "Cancel signal sent"}
+
+    async def restart_run(self, run_id: str) -> dict[str, Any]:
+        """Restart a completed/failed/cancelled workflow using its original request."""
+        run = self._runs.get(run_id)
+        if not run:
+            return {"error": "Run not found", "runId": run_id}
+        if run["status"] == "running":
+            return {"error": "Run is still running", "runId": run_id}
+
+        request: WorkflowRequest | None = run.get("request")
+        if not request:
+            return {"error": "Original request not stored for this run", "runId": run_id}
+
+        result = await self.execute_workflow(request)
+        return result
+
+    async def _broadcast_live_metrics(
+        self,
+        run_id: str,
+        agent_id: str,
+        step_id: str,
+        channel: str,
+    ) -> None:
+        """Broadcast system metrics every 2s while an agent is running."""
+        stop_evt = self._metrics_stop_events.get(run_id)
+        if not stop_evt:
+            return
+        while not stop_evt.is_set():
+            try:
+                from engine.services.system_stats import get_system_stats
+
+                stats = get_system_stats()
+                run = self._runs.get(run_id)
+                if not run:
+                    break
+                started = run.get("startedAt", "")
+                elapsed_ms = 0
+                if started:
+                    elapsed_ms = int(
+                        (datetime.now(UTC) - datetime.fromisoformat(started)).total_seconds() * 1000
+                    )
+                agent = run.get("agents", {}).get(agent_id)
+                tokens = agent.tokens_used if agent else 0
+                await ws_manager.broadcast(
+                    channel,
+                    "run.metrics.update",
+                    {
+                        "runId": run_id,
+                        "agentId": agent_id,
+                        "stepId": step_id,
+                        "cpuPercent": stats.get("cpu_percent", 0),
+                        "gpuPercent": stats.get("gpu_percent", 0),
+                        "memoryMb": stats.get("memory_used_mb", 0),
+                        "tokensUsed": tokens,
+                        "elapsedMs": elapsed_ms,
+                    },
+                )
+            except Exception:
+                pass
+            try:
+                await asyncio.wait_for(asyncio.shield(stop_evt.wait()), timeout=2.0)
+                break  # Event was set, stop broadcasting
+            except TimeoutError:
+                pass  # Continue broadcasting
 
     def get_run(self, run_id: str) -> dict[str, Any] | None:
         return self._runs.get(run_id)
