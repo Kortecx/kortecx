@@ -66,6 +66,7 @@ class StepConfigModel(BaseModel):
 
 
 class ExecuteRequest(BaseModel):
+    runId: str | None = None
     workflowId: str | None = None
     name: str
     goalFileUrl: str
@@ -129,10 +130,10 @@ async def execute_workflow(req: ExecuteRequest, bg: BackgroundTasks) -> ExecuteR
     )
 
     # Run orchestration in background so we return immediately
-    bg.add_task(orchestrator.execute_workflow, request)
+    bg.add_task(orchestrator.execute_workflow, request, req.runId)
 
     return ExecuteResponse(
-        runId=request.workflow_id,
+        runId=req.runId or request.workflow_id,
         status="started",
         message=f"Workflow '{req.name}' execution started — {len(req.steps)} agent(s) will be spawned",
     )
@@ -304,6 +305,17 @@ async def check_engine_health(engine: str) -> dict[str, Any]:
     """Check if a local inference engine is running."""
     healthy = await inference_router.health_check(engine)
     return {"engine": engine, "healthy": healthy}
+
+
+@router.get("/capabilities")
+async def get_capabilities() -> dict[str, Any]:
+    """Return live capability flags (llama.cpp / Ollama availability)."""
+    ollama_ok = await inference_router.health_check("ollama")
+    llamacpp_ok = await inference_router.health_check("llamacpp")
+    return {
+        "ollama_available": ollama_ok,
+        "llamacpp_available": llamacpp_ok,
+    }
 
 
 class PullModelRequest(BaseModel):

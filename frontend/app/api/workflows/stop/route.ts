@@ -31,7 +31,7 @@ export async function POST(req: NextRequest) {
     // Reset workflow status to idle
     if (workflowId) {
       await db.update(workflows)
-        .set({ status: 'idle' })
+        .set({ status: 'cancelled', updatedAt: new Date() })
         .where(eq(workflows.id, workflowId));
     }
 

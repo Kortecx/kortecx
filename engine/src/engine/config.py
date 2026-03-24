@@ -39,6 +39,8 @@ class Settings(BaseSettings):
     agent_fallback_model: str = "llama3.2:3b"
     default_local_engine: str = "ollama"
     default_local_model: str = "llama3.1:8b"
+    auto_route_by_connection_type: bool = True  # sequential→ollama, parallel→llamacpp
+    llamacpp_available: bool = False  # set by start.sh or env LLAMACPP_AVAILABLE
 
     # Quorum
     quorum_max_concurrent: int = 4

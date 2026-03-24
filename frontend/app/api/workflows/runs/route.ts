@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db, workflowRuns, stepExecutions } from '@/lib/db';
+import { db, workflowRuns, stepExecutions, workflows } from '@/lib/db';
 import { desc, eq } from 'drizzle-orm';
 
 /* ── POST — upsert run (called by engine _sync_to_frontend) ── */
@@ -41,6 +41,14 @@ export async function POST(req: NextRequest) {
         errorMessage: values.errorMessage,
       },
     });
+
+    // Propagate terminal status to the parent workflow row
+    if (['completed', 'failed', 'cancelled'].includes(values.status)) {
+      await db.update(workflows)
+        .set({ status: values.status, updatedAt: new Date() })
+        .where(eq(workflows.id, workflowId))
+        .catch((e: unknown) => console.warn('[workflow runs POST] failed to update workflow status', e));
+    }
 
     return NextResponse.json({ ok: true, id });
   } catch (err) {

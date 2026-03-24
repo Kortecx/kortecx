@@ -107,7 +107,7 @@ class WebSocketManager:
                     step_name=s.get("name", "") or s.get("stepId", ""),
                     model_source=s.get("modelSource", "local"),
                     local_model=s.get("localModel"),
-                    temperature=s.get("temperature", 0.7),
+                    temperature=float(s.get("temperature", 0.7)),
                     max_tokens=s.get("maxTokens", 4096),
                     connection_type=s.get("connectionType", "sequential"),
                     system_instructions=s.get("systemInstructions", ""),
@@ -132,12 +132,22 @@ class WebSocketManager:
             ],
         )
 
+        # Use provided runId or let orchestrator generate one
+        provided_run_id = data.get("runId")
+
         # Auto-subscribe the sender to the workflow channel
-        run_channel = f"workflow.{request.workflow_id}"
+        run_channel = f"workflow.{provided_run_id or request.workflow_id}"
         self.subscriptions.setdefault(run_channel, set()).add(conn_id)
 
+        # Acknowledge submission
+        await self.send_to(conn_id, "workflow.accepted", {
+            "runId": provided_run_id,
+            "workflowId": request.workflow_id,
+            "message": f"Workflow '{name}' accepted for execution",
+        })
+
         # Run in background
-        asyncio.create_task(orchestrator.execute_workflow(request))
+        asyncio.create_task(orchestrator.execute_workflow(request, provided_run_id))
 
     async def broadcast(self, channel: str, event: str, data: Any) -> None:
         """Broadcast an event to all subscribers of a channel."""

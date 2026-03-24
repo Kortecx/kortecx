@@ -28,7 +28,7 @@ async def _with_retry(coro_factory, retries: int = MAX_RETRIES) -> Any:
     for attempt in range(retries + 1):
         try:
             return await coro_factory()
-        except (httpx.ConnectError, httpx.ReadTimeout, httpx.ConnectTimeout) as exc:
+        except (httpx.ConnectError, httpx.ReadTimeout, httpx.ConnectTimeout, RuntimeError) as exc:
             last_exc = exc
             if attempt < retries:
                 delay = RETRY_DELAY * (2**attempt)
@@ -161,7 +161,7 @@ class OllamaService(LocalInferenceBackend):
             "prompt": prompt,
             "stream": False,
             "options": {
-                "temperature": temperature,
+                "temperature": float(temperature),
                 "num_predict": max_tokens,
             },
         }
@@ -196,7 +196,7 @@ class OllamaService(LocalInferenceBackend):
             "model": model,
             "prompt": prompt,
             "stream": True,
-            "options": {"temperature": temperature, "num_predict": max_tokens},
+            "options": {"temperature": float(temperature), "num_predict": max_tokens},
         }
         if system:
             payload["system"] = system
@@ -228,14 +228,22 @@ class OllamaService(LocalInferenceBackend):
             "messages": messages,
             "stream": False,
             "options": {
-                "temperature": temperature,
+                "temperature": float(temperature),
                 "num_predict": max_tokens,
             },
         }
 
         async def _do() -> httpx.Response:
             resp = await self.client.post("/api/chat", json=payload)
-            resp.raise_for_status()
+            if resp.status_code >= 400:
+                body = resp.text[:500]
+                logger.error(
+                    "Ollama error %d for model %s: %s",
+                    resp.status_code, model, body,
+                )
+                raise RuntimeError(
+                    f"Ollama returned {resp.status_code} for model '{model}': {body}"
+                )
             return resp
 
         resp = await _with_retry(_do)
@@ -406,6 +414,11 @@ class LlamaCppService(LocalInferenceBackend):
 
         async def _do() -> httpx.Response:
             resp = await self.client.post("/v1/chat/completions", json=payload)
+            if resp.status_code >= 400:
+                logger.error(
+                    "llama.cpp error %d for model %s: %s",
+                    resp.status_code, model, resp.text[:500],
+                )
             resp.raise_for_status()
             return resp
 

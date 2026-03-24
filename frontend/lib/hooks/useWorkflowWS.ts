@@ -33,6 +33,7 @@ export interface LiveMetrics {
 
 interface WorkflowLiveState {
   runId: string | null;
+  workflowId: string | null;
   status: 'idle' | 'connecting' | 'running' | 'completed' | 'failed' | 'cancelled';
   agents: Record<string, AgentLiveState>;
   sharedMemory: SharedMemory | null;
@@ -49,8 +50,10 @@ const ENGINE_WS_URL = process.env.NEXT_PUBLIC_ENGINE_WS_URL || 'ws://localhost:8
 export function useWorkflowWS() {
   const wsRef = useRef<WebSocket | null>(null);
   const subscribedChannelsRef = useRef<Set<string>>(new Set());
+  const workflowIdRef = useRef<string | null>(null);
   const [state, setState] = useState<WorkflowLiveState>({
     runId: null,
+    workflowId: null,
     status: 'idle',
     agents: {},
     sharedMemory: null,
@@ -186,18 +189,42 @@ export function useWorkflowWS() {
             next.output = data.output || null;
             if (data.sharedMemory) next.sharedMemory = data.sharedMemory;
             next.liveMetrics = null;
+            // Sync terminal status to workflows table
+            if (workflowIdRef.current) {
+              fetch('/api/workflows', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id: workflowIdRef.current, status: 'completed', updatedAt: new Date().toISOString() }),
+              }).catch(() => {});
+            }
             break;
 
           case 'workflow.failed':
             next.status = 'failed';
             next.error = data.error || 'Workflow failed';
             next.liveMetrics = null;
+            // Sync terminal status to workflows table
+            if (workflowIdRef.current) {
+              fetch('/api/workflows', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id: workflowIdRef.current, status: 'failed', updatedAt: new Date().toISOString() }),
+              }).catch(() => {});
+            }
             break;
 
           case 'workflow.cancelled' as WorkflowExecutionEventType:
             next.status = 'cancelled';
             next.error = data.message || 'Workflow cancelled';
             next.liveMetrics = null;
+            // Sync terminal status to workflows table
+            if (workflowIdRef.current) {
+              fetch('/api/workflows', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id: workflowIdRef.current, status: 'cancelled', updatedAt: new Date().toISOString() }),
+              }).catch(() => {});
+            }
             break;
 
           case 'run.metrics.update' as WorkflowExecutionEventType: {
@@ -248,6 +275,7 @@ export function useWorkflowWS() {
 
     setState({
       runId,
+      workflowId: workflowIdRef.current,
       status: 'connecting',
       agents: {},
       sharedMemory: null,
@@ -320,15 +348,69 @@ export function useWorkflowWS() {
     }
   }, [handleEvent]);
 
-  const executeViaWS = useCallback((request: Record<string, unknown>) => {
-    const ws = wsRef.current;
-    if (ws && ws.readyState === WebSocket.OPEN) {
+  /**
+   * Submit a workflow for execution via WebSocket.
+   * Establishes connection if needed, subscribes to the run channel,
+   * and sends the workflow.execute event.
+   */
+  const submitWorkflow = useCallback((runId: string, request: Record<string, unknown>) => {
+    // Track workflowId for status sync on terminal events
+    if (request.workflowId) {
+      workflowIdRef.current = request.workflowId as string;
+    }
+
+    const sendExecute = (ws: WebSocket) => {
+      // Subscribe to the run channel for real-time updates
+      const channel = `workflow.${runId}`;
+      if (!subscribedChannelsRef.current.has(channel)) {
+        ws.send(JSON.stringify({ event: 'subscribe', channel }));
+        subscribedChannelsRef.current.add(channel);
+      }
+      // Send execute command with runId
       ws.send(JSON.stringify({
         event: 'workflow.execute',
-        data: request,
+        data: { ...request, runId },
       }));
+    };
+
+    const ws = wsRef.current;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      setState(prev => ({ ...prev, runId, status: 'running' }));
+      sendExecute(ws);
+      return;
     }
-  }, []);
+
+    // Establish new connection
+    setState({
+      runId,
+      workflowId: (request.workflowId as string) || null,
+      status: 'connecting',
+      agents: {},
+      sharedMemory: null,
+      events: [],
+      output: null,
+      error: null,
+      liveMetrics: null,
+      runMetrics: {},
+    });
+
+    const newWs = new WebSocket(ENGINE_WS_URL);
+    wsRef.current = newWs;
+
+    newWs.onopen = () => {
+      setState(prev => ({ ...prev, status: 'running' }));
+      sendExecute(newWs);
+    };
+
+    newWs.onmessage = (e) => handleEvent(e.data);
+    newWs.onerror = () => {
+      setState(prev => ({ ...prev, status: 'failed', error: 'WebSocket connection error' }));
+    };
+    newWs.onclose = () => {
+      wsRef.current = null;
+      subscribedChannelsRef.current.clear();
+    };
+  }, [handleEvent]);
 
   const disconnect = useCallback(() => {
     if (wsRef.current) {
@@ -348,5 +430,5 @@ export function useWorkflowWS() {
     };
   }, []);
 
-  return { ...state, connect, subscribeToRuns, executeViaWS, disconnect };
+  return { ...state, connect, subscribeToRuns, submitWorkflow, disconnect };
 }

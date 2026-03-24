@@ -110,9 +110,9 @@ class AgentOrchestrator:
         self._cancellation_events: dict[str, asyncio.Event] = {}
         self._metrics_stop_events: dict[str, asyncio.Event] = {}
 
-    async def execute_workflow(self, request: WorkflowRequest) -> dict[str, Any]:
+    async def execute_workflow(self, request: WorkflowRequest, run_id: str | None = None) -> dict[str, Any]:
         """Main entry point — creates a run and orchestrates agents."""
-        run_id = f"run-{uuid.uuid4().hex[:12]}"
+        run_id = run_id or f"run-{uuid.uuid4().hex[:12]}"
         channel = f"workflow.{run_id}"
 
         shared = SharedMemory(run_id=run_id)
@@ -210,10 +210,11 @@ class AgentOrchestrator:
                         json={
                             "level": "info",
                             "message": f"Workflow '{request.name}' completed successfully",
-                            "source": "orchestrator",
+                            "source": "workflow",
                             "runId": run_id,
                             "metadata": {
                                 "workflowId": request.workflow_id,
+                                "workflowName": request.name,
                                 "totalSteps": len(request.steps),
                                 "outputLength": len(result),
                             },
@@ -312,10 +313,11 @@ class AgentOrchestrator:
                         json={
                             "level": "error",
                             "message": f"Workflow '{request.name}' failed: {str(exc)[:200]}",
-                            "source": "orchestrator",
+                            "source": "workflow",
                             "runId": run_id,
                             "metadata": {
                                 "workflowId": request.workflow_id,
+                                "workflowName": request.name,
                                 "error": str(exc),
                             },
                         },
@@ -478,6 +480,9 @@ class AgentOrchestrator:
             task_description=step.task_description,
         )
 
+        # Persist step status: pending
+        await self._persist_step_status(run_id, step, agent_id, "pending")
+
         async with self._semaphore:
             try:
                 # Resolve expert from DB if available
@@ -525,13 +530,34 @@ class AgentOrchestrator:
                 # Audit: agent thinking
                 execution_audit.log_agent_thinking(run_id, agent_id, step.step_id)
 
+                # Persist step status: running
+                await self._persist_step_status(run_id, step, agent_id, "running")
+
                 # Start live metrics broadcasting
                 _metrics_task = asyncio.create_task(
                     self._broadcast_live_metrics(run_id, agent_id, step.step_id, channel)
                 )
 
-                # Execute inference
-                result = await self._infer(step, system_prompt, user_prompt)
+                # Execute inference — race against cancellation event
+                cancel_evt = self._cancellation_events.get(run_id)
+                if cancel_evt:
+                    infer_task = asyncio.create_task(
+                        self._infer(step, system_prompt, user_prompt)
+                    )
+                    cancel_wait = asyncio.create_task(cancel_evt.wait())
+                    done, pending = await asyncio.wait(
+                        {infer_task, cancel_wait},
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    for p in pending:
+                        p.cancel()
+                    if cancel_wait in done:
+                        raise asyncio.CancelledError(
+                            f"Workflow {run_id} cancelled by user"
+                        )
+                    result = infer_task.result()
+                else:
+                    result = await self._infer(step, system_prompt, user_prompt)
 
                 # Stop live metrics broadcasting
                 _metrics_task.cancel()
@@ -664,6 +690,46 @@ class AgentOrchestrator:
                     result.duration_ms,
                 )
 
+                # Persist step status: completed
+                await self._persist_step_status(
+                    run_id, step, agent_id, "completed",
+                    tokens_used=result.tokens_used,
+                    duration_ms=result.duration_ms,
+                    cpu_percent=step_metrics["cpuPercent"],
+                    gpu_percent=step_metrics["gpuPercent"],
+                    memory_mb=step_metrics["memoryMb"],
+                    model=step.local_model.get("model", "") if step.local_model else "",
+                    engine=step.local_model.get("engine", "") if step.local_model else "",
+                    response_preview=result.text[:500],
+                )
+
+                # Persist enriched step log to frontend
+                try:
+                    _run = self._runs.get(run_id, {})
+                    async with httpx.AsyncClient(timeout=5) as _client:
+                        await _client.post(
+                            "http://localhost:3000/api/logs",
+                            json={
+                                "level": "info",
+                                "message": f"Step '{step.step_name or step.step_id}' completed",
+                                "source": "workflow",
+                                "runId": run_id,
+                                "metadata": {
+                                    "workflowId": _run.get("workflowId", ""),
+                                    "workflowName": _run.get("name", ""),
+                                    "expertId": step.expert_id or "",
+                                    "expertName": expert_data.get("name", "") if expert_data else "",
+                                    "stepId": step.step_id,
+                                    "stepName": step.step_name or step.step_id,
+                                    "agentId": agent_id,
+                                    "tokensUsed": result.tokens_used,
+                                    "durationMs": result.duration_ms,
+                                },
+                            },
+                        )
+                except Exception:
+                    pass  # Non-critical
+
                 return agent
 
             except Exception as exc:
@@ -733,6 +799,15 @@ class AgentOrchestrator:
                                 result.tokens_used,
                                 result.duration_ms,
                             )
+                            # Persist fallback step status: completed
+                            await self._persist_step_status(
+                                run_id, step, agent_id, "completed",
+                                tokens_used=result.tokens_used,
+                                duration_ms=result.duration_ms,
+                                model=fallback_model,
+                                engine=engine,
+                                response_preview=result.text[:500],
+                            )
                             return agent
                         except Exception as fallback_exc:
                             logger.error("Fallback also failed for agent %s: %s", agent_id, fallback_exc)
@@ -767,6 +842,38 @@ class AgentOrchestrator:
 
                 # Audit: step failed
                 execution_audit.log_step_failed(run_id, agent_id, step.step_id, str(exc))
+
+                # Persist step status: failed
+                await self._persist_step_status(
+                    run_id, step, agent_id, "failed",
+                    error_message=str(exc),
+                )
+
+                # Persist enriched step failure log to frontend
+                try:
+                    _run = self._runs.get(run_id, {})
+                    async with httpx.AsyncClient(timeout=5) as _client:
+                        await _client.post(
+                            "http://localhost:3000/api/logs",
+                            json={
+                                "level": "error",
+                                "message": f"Step '{step.step_name or step.step_id}' failed: {str(exc)[:200]}",
+                                "source": "workflow",
+                                "runId": run_id,
+                                "metadata": {
+                                    "workflowId": _run.get("workflowId", ""),
+                                    "workflowName": _run.get("name", ""),
+                                    "expertId": step.expert_id or "",
+                                    "expertName": expert_data.get("name", "") if expert_data else "",
+                                    "stepId": step.step_id,
+                                    "stepName": step.step_name or step.step_id,
+                                    "agentId": agent_id,
+                                    "error": str(exc)[:500],
+                                },
+                            },
+                        )
+                except Exception:
+                    pass  # Non-critical
 
                 raise
 
@@ -981,11 +1088,37 @@ class AgentOrchestrator:
         system_prompt: str,
         user_prompt: str,
     ) -> GenerateResult:
-        """Route inference to the correct backend with model pool tracking."""
+        """Route inference to the correct backend with model pool tracking.
+
+        When auto_route_by_connection_type is enabled (default):
+        - Sequential steps → Ollama (reliable single-stream inference)
+        - Parallel steps → llama.cpp (designed for concurrent requests)
+        Explicit local_model.engine settings always take precedence.
+        """
         if step.model_source == "local" and step.local_model:
             engine = step.local_model.get("engine", settings.default_local_engine)
             model = step.local_model.get("model", settings.default_local_model)
             base_url = step.local_model.get("baseUrl")
+
+            # Auto-route by connection type if no explicit engine was set
+            if settings.auto_route_by_connection_type and "engine" not in step.local_model:
+                if step.connection_type == "parallel" and settings.llamacpp_available:
+                    engine = "llamacpp"
+                    base_url = base_url or settings.llamacpp_url
+                    logger.info(
+                        "Auto-routing parallel step %s to llama.cpp", step.step_id
+                    )
+                else:
+                    engine = "ollama"
+                    if step.connection_type == "parallel":
+                        logger.warning(
+                            "llama.cpp not available — falling back to Ollama for parallel step %s",
+                            step.step_id,
+                        )
+                    else:
+                        logger.info(
+                            "Auto-routing sequential step %s to Ollama", step.step_id
+                        )
 
             messages = [
                 {"role": "system", "content": system_prompt},
@@ -1021,6 +1154,62 @@ class AgentOrchestrator:
             model="hf-fallback",
             duration_ms=0,
         )
+
+    async def _persist_step_status(
+        self,
+        run_id: str,
+        step: StepConfig,
+        agent_id: str,
+        status: str,
+        *,
+        tokens_used: int = 0,
+        duration_ms: float = 0,
+        cpu_percent: float = 0,
+        gpu_percent: float = 0,
+        memory_mb: float = 0,
+        model: str = "",
+        engine: str = "",
+        response_preview: str = "",
+        error_message: str = "",
+    ) -> None:
+        """Persist step execution status to NeonDB in real-time via frontend API."""
+        payload: dict[str, Any] = {
+            "runId": run_id,
+            "workflowId": self._runs.get(run_id, {}).get("workflowId", ""),
+            "stepId": step.step_id,
+            "agentId": agent_id,
+            "stepName": step.step_name or step.step_id,
+            "expertId": step.expert_id or None,
+            "status": status,
+            "model": model or (step.local_model.get("model", "") if step.local_model else ""),
+            "engine": engine or (step.local_model.get("engine", "") if step.local_model else ""),
+            "startedAt": datetime.now(UTC).isoformat(),
+        }
+        if tokens_used:
+            payload["tokensUsed"] = tokens_used
+        if duration_ms:
+            payload["durationMs"] = round(duration_ms)
+        if cpu_percent:
+            payload["cpuPercent"] = cpu_percent
+        if gpu_percent:
+            payload["gpuPercent"] = gpu_percent
+        if memory_mb:
+            payload["memoryMb"] = memory_mb
+        if response_preview:
+            payload["responsePreview"] = response_preview[:500]
+        if error_message:
+            payload["errorMessage"] = error_message
+        if status in ("completed", "failed"):
+            payload["completedAt"] = datetime.now(UTC).isoformat()
+
+        try:
+            async with httpx.AsyncClient(timeout=5) as client:
+                await client.post(
+                    "http://localhost:3000/api/workflows/executions",
+                    json=payload,
+                )
+        except Exception as exc:
+            logger.warning("Failed to persist step status: %s", exc)
 
     async def _read_file(self, url_or_path: str) -> str:
         """Read a file from the upload directory or a URL."""

@@ -357,6 +357,13 @@ func (o *Orchestrator) executeWithRetry(ctx context.Context, task AgentTask) Age
 			"stepId": task.StepID, "attempt": attempt, "maxAttempts": o.config.RetryLimit,
 		})
 
+		// Ensure temperature is always a non-integer float so Ollama
+		// accepts it as float32 (JSON integer "0" is rejected).
+		temp := task.Temperature
+		if temp == 0 {
+			temp = 0.01
+		}
+
 		submitData := map[string]any{
 			"project":     "workflow",
 			"task":        task.Prompt,
@@ -364,7 +371,7 @@ func (o *Orchestrator) executeWithRetry(ctx context.Context, task AgentTask) Age
 			"backend":     task.Backend,
 			"workers":     1,
 			"prompt":      task.System,
-			"temperature": task.Temperature,
+			"temperature": temp,
 			"max_tokens":  task.MaxTokens,
 			"retries":     1,
 		}

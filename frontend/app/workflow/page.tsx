@@ -1,15 +1,15 @@
 'use client';
 
-import { useState, useMemo, useEffect, useCallback } from 'react';
+import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Workflow, Plus, Search, Play, Trash2, X, Square, RotateCcw, Pencil,
-  ChevronDown, ChevronUp, Loader2, AlertCircle, ArrowUpDown,
-  Clock, Cpu, Zap, CheckCircle2, XCircle, Eye, ScrollText,
+  ChevronDown, ChevronUp, ChevronRight, Loader2, AlertCircle, ArrowUpDown,
+  Clock, Cpu, Zap, CheckCircle2, XCircle, Eye, ScrollText, ExternalLink,
 } from 'lucide-react';
-import { useWorkflows, useWorkflowRuns } from '@/lib/hooks/useApi';
+import { useWorkflows, useWorkflowRuns, useStepExecutions } from '@/lib/hooks/useApi';
 import { useWorkflowWS } from '@/lib/hooks/useWorkflowWS';
 
 const SECTION_COLOR = '#2563EB';
@@ -74,163 +74,110 @@ function RunningTimer({ startedAt }: { startedAt: string }) {
   );
 }
 
-/* ── Create Workflow Dialog ──────────────────────────── */
-function CreateWorkflowDialog({
-  onClose,
-  onCreate,
-}: {
-  onClose: () => void;
-  onCreate: (data: { name: string; description: string; goalStatement: string; tags: string[] }) => Promise<void>;
+/* ── Live Execution Panel ──────────────────────────────── */
+const STEP_STATUS_STYLE: Record<string, { bg: string; color: string; label: string }> = {
+  pending:   { bg: '#6b728010', color: '#6b7280', label: 'Pending' },
+  running:   { bg: '#3b82f610', color: '#3b82f6', label: 'Running' },
+  thinking:  { bg: '#8b5cf610', color: '#8b5cf6', label: 'Thinking' },
+  spawned:   { bg: '#06b6d410', color: '#06b6d4', label: 'Spawned' },
+  completed: { bg: '#10b98110', color: '#10b981', label: 'Done' },
+  failed:    { bg: '#ef444410', color: '#ef4444', label: 'Failed' },
+};
+
+function LiveExecutionPanel({ agents, liveMetrics, events }: {
+  agents: Record<string, { agentId: string; stepId: string; status: string; stepName?: string; tokensUsed?: number; durationMs?: number; model?: string; engine?: string; error?: string }>;
+  liveMetrics: { cpuPercent: number; gpuPercent: number; memoryMb: number; totalTokensUsed: number; elapsedMs: number } | null;
+  events: { event: string; agentId?: string; data: Record<string, unknown>; timestamp: string }[];
 }) {
-  const [name, setName] = useState('');
-  const [description, setDescription] = useState('');
-  const [goalStatement, setGoalStatement] = useState('');
-  const [tagsStr, setTagsStr] = useState('');
-  const [saving, setSaving] = useState(false);
-  const [errors, setErrors] = useState<{ name?: string; goal?: string; general?: string }>({});
-
-  const handleCreate = async () => {
-    const errs: typeof errors = {};
-    if (!name.trim()) errs.name = 'Workflow name is required';
-    if (!goalStatement.trim()) errs.goal = 'Task goal is required';
-    if (Object.keys(errs).length > 0) { setErrors(errs); return; }
-
-    setSaving(true);
-    setErrors({});
-    try {
-      await onCreate({
-        name: name.trim(),
-        description: description.trim(),
-        goalStatement: goalStatement.trim(),
-        tags: tagsStr.split(',').map(t => t.trim()).filter(Boolean),
-      });
-    } catch (err) {
-      setErrors({ general: err instanceof Error ? err.message : 'Create failed' });
-      setSaving(false);
-    }
-  };
-
-  const LABEL: React.CSSProperties = {
-    fontSize: 11, fontWeight: 600, color: 'var(--text-3)',
-    display: 'block', marginBottom: 4,
-  };
+  const agentList = Object.values(agents);
+  if (agentList.length === 0 && !liveMetrics) return null;
 
   return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      transition={{ duration: 0.2 }}
-      style={{
-        position: 'fixed', inset: 0, background: 'rgba(7,7,26,0.85)',
-        zIndex: 200, display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
-        paddingTop: 60, overflowY: 'auto',
-      }}
-    >
-      <motion.div
-        initial={{ opacity: 0, scale: 0.96, y: -8 }}
-        animate={{ opacity: 1, scale: 1, y: 0 }}
-        exit={{ opacity: 0, scale: 0.96, y: -8 }}
-        transition={{ type: 'spring', damping: 25, stiffness: 300 }}
-        style={{
-          width: 560, maxWidth: '92vw',
-          background: 'var(--bg-surface)', border: '1px solid var(--border-md)',
-          borderRadius: 12, overflow: 'hidden',
-          boxShadow: '0 24px 80px rgba(0,0,0,0.2)',
-          marginBottom: 40,
-        }}
-      >
-        {/* Header */}
-        <div style={{
-          padding: '18px 22px', borderBottom: '1px solid var(--border)',
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <Plus size={16} color={SECTION_COLOR} />
-            <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-1)' }}>Create New Workflow</span>
-          </div>
-          <button onClick={onClose} style={{
-            background: 'none', border: 'none', cursor: 'pointer',
-            color: 'var(--text-3)', display: 'flex', padding: 4,
-          }}><X size={16} /></button>
-        </div>
+    <tr>
+      <td colSpan={8} style={{ padding: 0, border: 'none' }}>
+        <motion.div
+          initial={{ opacity: 0, height: 0 }}
+          animate={{ opacity: 1, height: 'auto' }}
+          exit={{ opacity: 0, height: 0 }}
+          style={{
+            margin: '0 12px 8px', padding: '12px 14px',
+            background: 'var(--bg)', borderRadius: 8,
+            border: '1px solid var(--border)',
+          }}
+        >
+          {/* System metrics bar */}
+          {liveMetrics && (
+            <div style={{ display: 'flex', gap: 16, marginBottom: 10, fontSize: 11, color: 'var(--text-3)' }}>
+              <span className="mono"><Cpu size={10} style={{ display: 'inline', verticalAlign: 'middle', marginRight: 3 }} />CPU {liveMetrics.cpuPercent.toFixed(0)}%</span>
+              <span className="mono">GPU {liveMetrics.gpuPercent.toFixed(0)}%</span>
+              <span className="mono">Mem {liveMetrics.memoryMb.toFixed(0)} MB</span>
+              <span className="mono"><Zap size={10} style={{ display: 'inline', verticalAlign: 'middle', marginRight: 3 }} />{fmt(liveMetrics.totalTokensUsed)} tok</span>
+              <span className="mono"><Clock size={10} style={{ display: 'inline', verticalAlign: 'middle', marginRight: 3 }} />{fmtElapsed(liveMetrics.elapsedMs)}</span>
+            </div>
+          )}
 
-        {/* Form */}
-        <div style={{ padding: '20px 22px', display: 'flex', flexDirection: 'column', gap: 16 }}>
-          <div>
-            <label style={LABEL}>Workflow Name <span style={{ color: '#ef4444' }}>*</span></label>
-            <input className="input" style={{
-              width: '100%', fontSize: 13,
-              borderColor: errors.name ? 'var(--error)' : undefined,
-            }}
-              placeholder="e.g. Research & Summarize Pipeline"
-              value={name} onChange={e => { setName(e.target.value); if (e.target.value.trim()) setErrors(p => { const { name: _n, ...r } = p; return r; }); }} />
-            {errors.name && <div style={{ fontSize: 11, color: 'var(--error)', marginTop: 3, display: 'flex', alignItems: 'center', gap: 3 }}>
-              <AlertCircle size={10} /> {errors.name}
-            </div>}
-          </div>
-
-          <div>
-            <label style={LABEL}>Description</label>
-            <textarea className="textarea" style={{ width: '100%', minHeight: 60, fontSize: 12 }}
-              placeholder="What does this workflow accomplish?"
-              value={description} onChange={e => setDescription(e.target.value)} />
-          </div>
-
-          <div>
-            <label style={LABEL}>Task Goal <span style={{ color: '#ef4444' }}>*</span></label>
-            <textarea className="textarea" style={{
-              width: '100%', minHeight: 100, fontSize: 12,
-              fontFamily: 'var(--font-mono, monospace)', lineHeight: 1.5,
-              borderColor: errors.goal ? 'var(--error)' : undefined,
-            }}
-              placeholder={"## Objective\nDescribe what you want to accomplish...\n\n## Requirements\n- Requirement 1\n- Requirement 2"}
-              value={goalStatement} onChange={e => { setGoalStatement(e.target.value); if (e.target.value.trim()) setErrors(p => { const { goal: _g, ...r } = p; return r; }); }} />
-            {errors.goal && <div style={{ fontSize: 11, color: 'var(--error)', marginTop: 3, display: 'flex', alignItems: 'center', gap: 3 }}>
-              <AlertCircle size={10} /> {errors.goal}
-            </div>}
+          {/* Step progress */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {agentList.map(agent => {
+              const ss = STEP_STATUS_STYLE[agent.status] ?? STEP_STATUS_STYLE.pending;
+              return (
+                <div key={agent.agentId} style={{
+                  display: 'flex', alignItems: 'center', gap: 10,
+                  padding: '8px 10px', borderRadius: 6,
+                  background: 'var(--bg-surface)', border: '1px solid var(--border)',
+                }}>
+                  <span style={{
+                    padding: '2px 7px', borderRadius: 99, fontSize: 9, fontWeight: 700,
+                    background: ss.bg, color: ss.color, border: `1px solid ${ss.color}28`,
+                    flexShrink: 0, minWidth: 52, textAlign: 'center',
+                  }}>{ss.label}</span>
+                  <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-1)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {agent.stepName || agent.stepId}
+                  </span>
+                  {agent.model && (
+                    <span className="mono" style={{ fontSize: 10, color: 'var(--text-4)' }}>
+                      {agent.engine ? `${agent.engine}:` : ''}{agent.model}
+                    </span>
+                  )}
+                  {agent.tokensUsed ? (
+                    <span className="mono" style={{ fontSize: 10, color: 'var(--text-3)' }}>
+                      <Zap size={9} style={{ display: 'inline', verticalAlign: 'middle', marginRight: 2 }} />
+                      {fmt(agent.tokensUsed)}
+                    </span>
+                  ) : null}
+                  {agent.durationMs ? (
+                    <span className="mono" style={{ fontSize: 10, color: 'var(--text-3)' }}>
+                      {(agent.durationMs / 1000).toFixed(1)}s
+                    </span>
+                  ) : null}
+                  {agent.status === 'running' || agent.status === 'thinking' ? (
+                    <Loader2 size={12} color={ss.color} style={{ animation: 'spin 1s linear infinite', flexShrink: 0 }} />
+                  ) : null}
+                  {agent.error && (
+                    <span style={{ fontSize: 10, color: '#ef4444', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {agent.error}
+                    </span>
+                  )}
+                </div>
+              );
+            })}
           </div>
 
-          <div>
-            <label style={LABEL}>Tags (comma-separated)</label>
-            <input className="input" style={{ width: '100%', fontSize: 12 }}
-              placeholder="e.g. research, production, weekly"
-              value={tagsStr} onChange={e => setTagsStr(e.target.value)} />
-          </div>
-
-          {errors.general && <div style={{ fontSize: 11, color: 'var(--error)', display: 'flex', alignItems: 'center', gap: 4 }}>
-            <AlertCircle size={11} /> {errors.general}
-          </div>}
-        </div>
-
-        {/* Footer */}
-        <div style={{
-          padding: '14px 22px', borderTop: '1px solid var(--border)',
-          display: 'flex', gap: 8, justifyContent: 'space-between', alignItems: 'center',
-        }}>
-          <span style={{ fontSize: 11, color: 'var(--text-4)' }}>
-            You can add expert steps after creating the workflow.
-          </span>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button onClick={onClose} style={{
-              padding: '8px 16px', borderRadius: 7, fontSize: 12, fontWeight: 500,
-              border: '1px solid var(--border-md)', background: 'transparent',
-              color: 'var(--text-3)', cursor: 'pointer',
-            }}>Cancel</button>
-            <button onClick={handleCreate} disabled={saving} style={{
-              display: 'flex', alignItems: 'center', gap: 6,
-              padding: '8px 18px', borderRadius: 7, fontSize: 12, fontWeight: 700,
-              border: `1.5px solid ${SECTION_COLOR}`,
-              background: `${SECTION_COLOR}14`, color: SECTION_COLOR,
-              cursor: saving ? 'wait' : 'pointer', opacity: saving ? 0.6 : 1,
-            }}>
-              {saving ? <Loader2 size={12} style={{ animation: 'spin 1s linear infinite' }} /> : <Plus size={12} />}
-              Create Workflow
-            </button>
-          </div>
-        </div>
-      </motion.div>
-    </motion.div>
+          {/* Recent events log */}
+          {events.length > 0 && (
+            <div style={{ marginTop: 8, maxHeight: 100, overflowY: 'auto', fontSize: 10, fontFamily: 'var(--font-mono, monospace)', color: 'var(--text-4)', lineHeight: 1.6 }}>
+              {events.slice(-8).map((ev, i) => (
+                <div key={i} style={{ display: 'flex', gap: 8 }}>
+                  <span style={{ color: 'var(--text-4)', flexShrink: 0 }}>{new Date(ev.timestamp).toLocaleTimeString()}</span>
+                  <span style={{ color: STEP_STATUS_STYLE[ev.event.split('.').pop() || '']?.color || 'var(--text-3)' }}>{ev.event}</span>
+                  {ev.agentId && <span style={{ color: 'var(--text-4)' }}>{ev.agentId}</span>}
+                </div>
+              ))}
+            </div>
+          )}
+        </motion.div>
+      </td>
+    </tr>
   );
 }
 
@@ -290,6 +237,78 @@ function DeleteConfirmDialog({
   );
 }
 
+/* ── Run Log Panel (expandable step executions) ─────── */
+function RunLogPanel({ runId }: { runId: string }) {
+  const { executions, isLoading } = useStepExecutions(runId);
+
+  if (isLoading) {
+    return (
+      <div style={{ padding: '16px 14px', borderTop: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 6, color: 'var(--text-4)', fontSize: 11 }}>
+        <Loader2 size={10} style={{ animation: 'spin 1s linear infinite' }} /> Loading step logs...
+      </div>
+    );
+  }
+
+  if (!executions || executions.length === 0) {
+    return (
+      <div style={{ padding: '16px 14px', borderTop: '1px solid var(--border)', color: 'var(--text-4)', fontSize: 11, textAlign: 'center' }}>
+        No step executions recorded for this run.
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ borderTop: '1px solid var(--border)', maxHeight: 280, overflowY: 'auto' }}>
+      {executions.map((step: Record<string, unknown>, i: number) => {
+        const stepSt = STEP_STATUS_STYLE[(step.status as string) ?? 'pending'] ?? STEP_STATUS_STYLE.pending;
+        return (
+          <div key={(step.id as string) || i} style={{
+            padding: '8px 14px 8px 33px',
+            borderBottom: i < executions.length - 1 ? '1px solid rgba(255,255,255,0.04)' : 'none',
+            fontSize: 11,
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3 }}>
+              <span style={{
+                padding: '1px 5px', borderRadius: 3, fontSize: 8, fontWeight: 700,
+                background: stepSt.bg, color: stepSt.color,
+              }}>{stepSt.label}</span>
+              <span style={{ fontWeight: 600, color: 'var(--text-2)' }}>
+                {(step.stepName as string) || (step.stepId as string) || `Step ${i + 1}`}
+              </span>
+              {(step.model as string) && (
+                <span className="mono" style={{ fontSize: 9, color: 'var(--text-4)', background: 'var(--bg-surface)', padding: '1px 4px', borderRadius: 3 }}>
+                  {step.model as string}
+                </span>
+              )}
+            </div>
+            <div style={{ display: 'flex', gap: 12, color: 'var(--text-4)', fontSize: 10 }}>
+              {(step.tokensUsed as number) > 0 && (
+                <span className="mono"><Zap size={8} style={{ display: 'inline', verticalAlign: 'middle', marginRight: 2 }} />{fmt(step.tokensUsed as number)} tok</span>
+              )}
+              {(step.durationMs as number) > 0 && (
+                <span className="mono"><Clock size={8} style={{ display: 'inline', verticalAlign: 'middle', marginRight: 2 }} />{fmtElapsed(step.durationMs as number)}</span>
+              )}
+              {(step.completedAt as string) && (
+                <span>{new Date(step.completedAt as string).toLocaleTimeString()}</span>
+              )}
+            </div>
+            {(step.errorMessage as string) && (
+              <div style={{ marginTop: 4, padding: '4px 8px', borderRadius: 4, background: '#ef444410', color: '#ef4444', fontSize: 10, fontFamily: 'var(--font-mono, monospace)', whiteSpace: 'pre-wrap', maxHeight: 80, overflow: 'auto' }}>
+                {step.errorMessage as string}
+              </div>
+            )}
+            {(step.responsePreview as string) && (
+              <div style={{ marginTop: 4, padding: '4px 8px', borderRadius: 4, background: 'rgba(255,255,255,0.03)', color: 'var(--text-3)', fontSize: 10, fontFamily: 'var(--font-mono, monospace)', whiteSpace: 'pre-wrap', maxHeight: 60, overflow: 'auto' }}>
+                {(step.responsePreview as string).slice(0, 300)}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 /* ── Workflow Detail Dialog ──────────────────────────── */
 function WorkflowDetailDialog({
   wf,
@@ -310,8 +329,10 @@ function WorkflowDetailDialog({
   onEdit: (id: string) => void;
   runningWf: boolean;
 }) {
+  const router = useRouter();
   const { runs } = useWorkflowRuns(wf.id as string, 10);
   const [activeTab, setActiveTab] = useState<'details' | 'runs'>('details');
+  const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
   const status = (wf.status as string) || 'idle';
   const st = STATUS_STYLE[status] ?? STATUS_STYLE.idle;
   const canRun = ['idle', 'draft', 'ready', 'completed', 'failed', 'cancelled'].includes(status);
@@ -376,8 +397,9 @@ function WorkflowDetailDialog({
             <button key={tab} onClick={() => setActiveTab(tab)} style={{
               padding: '10px 16px', fontSize: 12, fontWeight: activeTab === tab ? 700 : 400,
               color: activeTab === tab ? SECTION_COLOR : 'var(--text-3)',
+              background: 'none', borderTop: 'none', borderLeft: 'none', borderRight: 'none',
               borderBottom: activeTab === tab ? `2px solid ${SECTION_COLOR}` : '2px solid transparent',
-              background: 'none', border: 'none', cursor: 'pointer', textTransform: 'capitalize',
+              cursor: 'pointer', textTransform: 'capitalize',
             }}>{tab === 'runs' ? 'Run History' : tab}</button>
           ))}
         </div>
@@ -437,24 +459,47 @@ function WorkflowDetailDialog({
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                   {runs.map((run: Record<string, unknown>) => {
+                    const runId = run.id as string;
                     const runSt = STATUS_STYLE[(run.status as string) ?? 'idle'] ?? STATUS_STYLE.idle;
+                    const isExpanded = expandedRunId === runId;
                     return (
-                      <div key={run.id as string} style={{ padding: '12px 14px', background: 'var(--bg)', borderRadius: 6, border: '1px solid var(--border)' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                            <span className="mono" style={{ fontSize: 10, color: 'var(--text-4)' }}>{run.id as string}</span>
-                            <span style={{ padding: '2px 6px', borderRadius: 99, fontSize: 9, fontWeight: 700, background: runSt.bg, color: runSt.color }}>{runSt.label}</span>
-                            {run.status === 'running' && <Loader2 size={10} color="#f59e0b" style={{ animation: 'spin 1s linear infinite' }} />}
+                      <div key={runId} style={{ background: 'var(--bg)', borderRadius: 6, border: '1px solid var(--border)', overflow: 'hidden' }}>
+                        <div
+                          onClick={() => setExpandedRunId(prev => prev === runId ? null : runId)}
+                          style={{ padding: '12px 14px', cursor: 'pointer', transition: 'background 0.15s' }}
+                        >
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                              <ChevronRight size={11} color="var(--text-4)" style={{ transform: isExpanded ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s', flexShrink: 0 }} />
+                              <span className="mono" style={{ fontSize: 10, color: 'var(--text-4)' }}>{runId}</span>
+                              <span style={{ padding: '2px 6px', borderRadius: 99, fontSize: 9, fontWeight: 700, background: runSt.bg, color: runSt.color }}>{runSt.label}</span>
+                              {run.status === 'running' && <Loader2 size={10} color="#f59e0b" style={{ animation: 'spin 1s linear infinite' }} />}
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                              <span style={{ fontSize: 10, color: 'var(--text-4)' }}>
+                                {run.startedAt ? new Date(run.startedAt as string).toLocaleString() : '—'}
+                              </span>
+                              <button
+                                onClick={(e) => { e.stopPropagation(); router.push(`/monitoring/logs?category=workflows&runId=${runId}`); }}
+                                title="View in Logs"
+                                style={{
+                                  display: 'flex', alignItems: 'center', gap: 3,
+                                  padding: '3px 7px', borderRadius: 4, fontSize: 9, fontWeight: 600,
+                                  border: '1px solid var(--border)', background: 'transparent',
+                                  color: 'var(--text-4)', cursor: 'pointer',
+                                }}
+                              >
+                                <ExternalLink size={8} /> Logs
+                              </button>
+                            </div>
                           </div>
-                          <span style={{ fontSize: 10, color: 'var(--text-4)' }}>
-                            {run.startedAt ? new Date(run.startedAt as string).toLocaleString() : '—'}
-                          </span>
+                          <div style={{ display: 'flex', gap: 16, fontSize: 11, color: 'var(--text-3)', paddingLeft: 19 }}>
+                            {(run.durationSec as number) > 0 && <span className="mono"><Clock size={9} style={{ display: 'inline', verticalAlign: 'middle', marginRight: 2 }} />{run.durationSec as number}s</span>}
+                            {(run.totalTokensUsed as number) > 0 && <span className="mono"><Zap size={9} style={{ display: 'inline', verticalAlign: 'middle', marginRight: 2 }} />{fmt(run.totalTokensUsed as number)} tok</span>}
+                            {(run.errorMessage as string) ? <span style={{ color: '#ef4444', fontSize: 11 }}>{(run.errorMessage as string).slice(0, 100)}</span> : null}
+                          </div>
                         </div>
-                        <div style={{ display: 'flex', gap: 16, fontSize: 11, color: 'var(--text-3)' }}>
-                          {(run.durationSec as number) > 0 && <span className="mono"><Clock size={9} style={{ display: 'inline', verticalAlign: 'middle', marginRight: 2 }} />{run.durationSec as number}s</span>}
-                          {(run.totalTokensUsed as number) > 0 && <span className="mono"><Zap size={9} style={{ display: 'inline', verticalAlign: 'middle', marginRight: 2 }} />{fmt(run.totalTokensUsed as number)} tok</span>}
-                          {(run.errorMessage as string) ? <span style={{ color: '#ef4444', fontSize: 11 }}>{(run.errorMessage as string).slice(0, 100)}</span> : null}
-                        </div>
+                        {isExpanded && <RunLogPanel runId={runId} />}
                       </div>
                     );
                   })}
@@ -533,10 +578,10 @@ export default function WorkflowsPage() {
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [sortField, setSortField] = useState<SortField>('updatedAt');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
-  const [showCreate, setShowCreate] = useState(false);
   const [deletingWf, setDeletingWf] = useState<Record<string, unknown> | null>(null);
   const [selectedWf, setSelectedWf] = useState<Record<string, unknown> | null>(null);
   const [runningIds, setRunningIds] = useState<Set<string>>(new Set());
+  const runGuardRef = useRef<Set<string>>(new Set());
   const [runError, setRunError] = useState<string | null>(null);
   const ws = useWorkflowWS();
 
@@ -549,6 +594,29 @@ export default function WorkflowsPage() {
     const id = setInterval(() => mutate(), 5000);
     return () => clearInterval(id);
   }, [hasRunning, mutate]);
+
+  // Auto-subscribe to running workflow runs for live updates
+  useEffect(() => {
+    if (!hasRunning) return;
+    const runningWfs = workflows.filter((w: Record<string, unknown>) => w.status === 'running');
+    // Find run IDs for running workflows via latest runs
+    const fetchRuns = async () => {
+      for (const wf of runningWfs) {
+        try {
+          const res = await fetch(`/api/workflows/runs?workflowId=${wf.id}&limit=1`);
+          if (res.ok) {
+            const { runs } = await res.json();
+            const activeRun = runs?.find((r: Record<string, unknown>) => r.status === 'running');
+            if (activeRun) {
+              ws.connect(activeRun.id as string);
+              return; // Connect to first running workflow
+            }
+          }
+        } catch { /* ignore */ }
+      }
+    };
+    fetchRuns();
+  }, [hasRunning]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* Filter + sort */
   const filtered = useMemo(() => {
@@ -614,21 +682,6 @@ export default function WorkflowsPage() {
     return sortDir === 'asc' ? <ChevronUp size={10} color={SECTION_COLOR} /> : <ChevronDown size={10} color={SECTION_COLOR} />;
   };
 
-  /* Create handler */
-  const handleCreate = async (data: { name: string; description: string; goalStatement: string; tags: string[] }) => {
-    const res = await fetch('/api/workflows', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
-    });
-    if (!res.ok) {
-      const body = await res.json();
-      throw new Error(body.error || 'Create failed');
-    }
-    setShowCreate(false);
-    mutate();
-  };
-
   /* Delete handler */
   const handleDelete = async (id: string) => {
     await fetch(`/api/workflows?id=${id}`, { method: 'DELETE' });
@@ -639,6 +692,13 @@ export default function WorkflowsPage() {
 
   /* Run workflow handler */
   const handleRun = useCallback(async (workflowId: string) => {
+    // Synchronous ref guard — prevents double-invocation before React re-renders
+    if (runGuardRef.current.has(workflowId)) {
+      console.warn('[handleRun] blocked duplicate invocation for', workflowId);
+      return;
+    }
+    runGuardRef.current.add(workflowId);
+    console.trace('[handleRun] called', workflowId, new Date().toISOString());
     setRunningIds(prev => new Set(prev).add(workflowId));
     try {
       // Fetch workflow with steps
@@ -676,34 +736,48 @@ export default function WorkflowsPage() {
         body: JSON.stringify({ id: workflowId, status: 'running', lastRunAt: new Date().toISOString() }),
       });
 
-      // Execute via API
+      // Build step configs
+      const stepConfigs = wfSteps.map((s: Record<string, unknown>, i: number) => ({
+        stepId: s.id || `step-${i + 1}`,
+        name: s.name || null,
+        expertId: s.expertId || null,
+        taskDescription: s.taskDescription || '',
+        systemInstructions: s.systemInstructions || '',
+        voiceCommand: s.voiceCommand || '',
+        fileLocations: s.fileLocations || [],
+        stepFileNames: s.stepFileUrls || [],
+        stepImageNames: s.stepImageUrls || [],
+        modelSource: s.modelSource || 'local',
+        localModel: s.localModelConfig || null,
+        temperature: s.temperature ?? 0.7,
+        maxTokens: s.maxTokens ?? 4096,
+        connectionType: s.connectionType || 'sequential',
+        shareMemory: s.shareMemory !== false,
+        integrations: s.integrations || [],
+      }));
+
+      // Create run record in NeonDB via REST (reliable DB insert)
+      const runId = `run-${Date.now()}`;
       await fetch('/api/workflows/run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          runId,
           workflowId,
           name: wfData.name,
           goalFileUrl,
           inputFileUrls: [],
-          steps: wfSteps.map((s: Record<string, unknown>, i: number) => ({
-            stepId: s.id || `step-${i + 1}`,
-            name: s.name || null,
-            expertId: s.expertId || null,
-            taskDescription: s.taskDescription || '',
-            systemInstructions: s.systemInstructions || '',
-            voiceCommand: s.voiceCommand || '',
-            fileLocations: s.fileLocations || [],
-            stepFileNames: s.stepFileUrls || [],
-            stepImageNames: s.stepImageUrls || [],
-            modelSource: s.modelSource || 'local',
-            localModel: s.localModelConfig || null,
-            temperature: s.temperature ?? 0.7,
-            maxTokens: s.maxTokens ?? 4096,
-            connectionType: s.connectionType || 'sequential',
-            shareMemory: s.shareMemory !== false,
-            integrations: s.integrations || [],
-          })),
+          steps: stepConfigs,
         }),
+      });
+
+      // Submit execution to engine via WebSocket for real-time updates
+      ws.submitWorkflow(runId, {
+        workflowId,
+        name: wfData.name,
+        goalFileUrl,
+        inputFileUrls: [],
+        steps: stepConfigs,
       });
 
       mutate();
@@ -716,6 +790,7 @@ export default function WorkflowsPage() {
         body: JSON.stringify({ id: workflowId, status: 'idle' }),
       }).catch(() => {});
     } finally {
+      runGuardRef.current.delete(workflowId);
       setRunningIds(prev => {
         const next = new Set(prev);
         next.delete(workflowId);
@@ -723,7 +798,7 @@ export default function WorkflowsPage() {
       });
       mutate();
     }
-  }, [mutate]);
+  }, [mutate, ws.submitWorkflow]);
 
   /* Stop workflow handler */
   const handleStop = useCallback(async (workflowId: string) => {
@@ -740,11 +815,12 @@ export default function WorkflowsPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ runId: activeRun.id, workflowId }),
       });
+      ws.disconnect();
       mutate();
     } catch (err) {
       console.error('Failed to stop workflow:', err);
     }
-  }, [mutate]);
+  }, [mutate, ws]);
 
   /* Restart workflow handler */
   const handleRestart = useCallback(async (workflowId: string) => {
@@ -823,7 +899,7 @@ export default function WorkflowsPage() {
             </p>
           </div>
         </div>
-        <button onClick={() => setShowCreate(true)} style={{
+        <button onClick={() => router.push('/workflow/builder')} style={{
           display: 'flex', alignItems: 'center', gap: 6,
           padding: '9px 18px', borderRadius: 8,
           border: `1.5px solid ${SECTION_COLOR}`,
@@ -906,7 +982,7 @@ export default function WorkflowsPage() {
               : 'Create your first workflow to start building agent pipelines.'}
           </div>
           {!search && statusFilter === 'all' && (
-            <button onClick={() => setShowCreate(true)} style={{
+            <button onClick={() => router.push('/workflow/builder')} style={{
               display: 'inline-flex', alignItems: 'center', gap: 6,
               padding: '10px 20px', borderRadius: 8,
               border: `1.5px solid ${SECTION_COLOR}`,
@@ -966,7 +1042,8 @@ export default function WorkflowsPage() {
                 const isStarting = runningIds.has(wf.id as string);
 
                 return (
-                  <motion.tr key={wf.id as string}
+                  <React.Fragment key={wf.id as string}>
+                  <motion.tr
                     initial={{ opacity: 0, y: 8 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: index * 0.03, duration: 0.3 }}
@@ -1095,6 +1172,14 @@ export default function WorkflowsPage() {
                       </div>
                     </td>
                   </motion.tr>
+                  {isRunning && ws.status === 'running' && (
+                    <LiveExecutionPanel
+                      agents={ws.agents}
+                      liveMetrics={ws.liveMetrics}
+                      events={ws.events}
+                    />
+                  )}
+                  </React.Fragment>
                 );
               })}
             </tbody>
@@ -1118,11 +1203,6 @@ export default function WorkflowsPage() {
       `}</style>
 
       {/* Modals */}
-      <AnimatePresence>
-        {showCreate && (
-          <CreateWorkflowDialog onClose={() => setShowCreate(false)} onCreate={handleCreate} />
-        )}
-      </AnimatePresence>
       <AnimatePresence>
         {deletingWf && (
           <DeleteConfirmDialog

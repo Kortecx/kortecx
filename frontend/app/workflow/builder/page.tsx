@@ -1103,10 +1103,11 @@ function LiveTimer({ startedAt }: { startedAt: string }) {
 }
 
 /* ── Step Card ───────────────────────────────────────── */
-function StepCard({ step, index, onRemove, onUpdate, onSwap, liveAgent }: {
+function StepCard({ step, index, onRemove, onUpdate, onSwap, liveAgent, llamacppAvailable }: {
   step: DraftStep; index: number; onRemove: () => void;
   onUpdate: (updates: Partial<DraftStep>) => void; onSwap: () => void;
   liveAgent?: { agentId: string; stepId: string; status: string; tokensUsed?: number; durationMs?: number; cpuPercent?: number; gpuPercent?: number; memoryMb?: number; startedAt?: string; completedAt?: string; error?: string; output?: string };
+  llamacppAvailable?: boolean;
 }) {
   const hasExpert = step.expert !== null;
   const m = hasExpert ? (ROLE_META[step.expert!.role as ExpertRole] || { emoji: '⚙️', label: step.expert!.role, color: '#6b7280', dimColor: 'rgba(107,114,128,0.07)' }) : null;
@@ -1245,17 +1246,23 @@ function StepCard({ step, index, onRemove, onUpdate, onSwap, liveAgent }: {
       <div style={{ display: 'flex', gap: 4, marginBottom: 8 }}>
         {/* Sequential / Parallel toggle */}
         <button
-          onClick={() => onUpdate({ connectionType: step.connectionType === 'parallel' ? 'sequential' : 'parallel' })}
+          onClick={() => {
+            if (!llamacppAvailable && step.connectionType !== 'parallel') return;
+            onUpdate({ connectionType: step.connectionType === 'parallel' ? 'sequential' : 'parallel' });
+          }}
+          disabled={!llamacppAvailable && step.connectionType !== 'parallel'}
           style={{
             flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4,
             padding: '4px 8px', borderRadius: 4, fontSize: 9, fontWeight: 700,
-            border: '1px solid', cursor: 'pointer', transition: 'all 0.15s',
+            border: '1px solid', transition: 'all 0.15s',
             textTransform: 'uppercase',
+            cursor: !llamacppAvailable && step.connectionType !== 'parallel' ? 'not-allowed' : 'pointer',
+            opacity: !llamacppAvailable && step.connectionType !== 'parallel' ? 0.5 : 1,
             background: step.connectionType === 'parallel' ? 'rgba(124,58,237,0.12)' : 'rgba(37,99,235,0.08)',
             borderColor: step.connectionType === 'parallel' ? '#7C3AED' : '#2563EB50',
             color: step.connectionType === 'parallel' ? '#7C3AED' : '#2563EB',
           }}
-          title={step.connectionType === 'parallel' ? 'Running in parallel with other steps — click to switch to sequential' : 'Running one after another — click to switch to parallel execution'}>
+          title={!llamacppAvailable ? 'Parallel execution requires llama.cpp' : step.connectionType === 'parallel' ? 'Running in parallel with other steps — click to switch to sequential' : 'Running one after another — click to switch to parallel execution'}>
           {step.connectionType === 'parallel' ? <><Zap size={10} /> Parallel</> : <><ArrowRight size={10} /> Sequential</>}
         </button>
 
@@ -2051,6 +2058,15 @@ function WorkflowBuilderInner() {
   const [saveErrors, setSaveErrors] = useState<{ name?: string; goal?: string; steps?: string; stepDetails?: Record<string, string>; general?: string }>({});
   const [saveSuccess, setSaveSuccess] = useState(false);
 
+  // Capability detection — llama.cpp availability gates parallel execution
+  const [llamacppAvailable, setLlamacppAvailable] = useState(false);
+  useEffect(() => {
+    fetch('http://localhost:8000/api/orchestrator/capabilities')
+      .then(r => r.json())
+      .then(d => setLlamacppAvailable(!!d.llamacpp_available))
+      .catch(() => setLlamacppAvailable(false));
+  }, []);
+
   // WebSocket removed — workflows are now run from the listing page
   const { experts: dbExperts } = useExperts();
   const { workflows: dbWorkflows, mutate: mutateWorkflows } = useWorkflows();
@@ -2659,7 +2675,8 @@ function WorkflowBuilderInner() {
               {steps.map((step, idx) => (
                 <div key={step.id} style={{ display: 'flex', alignItems: 'flex-start' }}>
                   <StepCard step={step} index={idx} onRemove={() => removeStep(step.id)}
-                    onUpdate={updates => updateStep(step.id, updates)} onSwap={() => openSwap(idx)} />
+                    onUpdate={updates => updateStep(step.id, updates)} onSwap={() => openSwap(idx)}
+                    llamacppAvailable={llamacppAvailable} />
                   {idx < steps.length - 1 && (
                     <div className="step-connector" style={{ alignSelf: 'center', paddingTop: 0 }}><ArrowRight size={16} /></div>
                   )}

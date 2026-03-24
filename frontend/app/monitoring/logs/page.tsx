@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   ScrollText, Download, Search, ChevronDown,
@@ -186,14 +187,17 @@ function LogRow({ log, index: _index, tz }: { log: Record<string, unknown>; inde
 
 /* ── Page ────────────────────────────────────────────────────────────────── */
 export default function LogsPage() {
+  const searchParams = useSearchParams();
   const [viewTab, setViewTab] = useState<ViewTab>('logs');
   const [levelFilter, setLevelFilter] = useState('all');
-  const [categoryFilter, setCategoryFilter] = useState('all');
+  const [categoryFilter, setCategoryFilter] = useState(() => searchParams.get('category') || 'all');
   const [sourceFilter, setSourceFilter] = useState('');
   const [search, setSearch]           = useState('');
   const [timeRange, setTimeRange]     = useState('all');
   const [autoScroll, setAutoScroll]   = useState(true);
   const [execRunId, setExecRunId]     = useState('');
+  const [runIdFilter, setRunIdFilter] = useState(() => searchParams.get('runId') || '');
+  const [nameFilter, setNameFilter]   = useState(() => searchParams.get('workflowName') || searchParams.get('expertName') || '');
   const [customFrom, setCustomFrom]  = useState('');
   const [customTo, setCustomTo]      = useState('');
   const [logTimezone, setLogTimezone] = useState(() => Intl.DateTimeFormat().resolvedOptions().timeZone);
@@ -219,9 +223,20 @@ export default function LogsPage() {
         (l.message as string).toLowerCase().includes(search.toLowerCase()) ||
         ((l.source as string) ?? '').toLowerCase().includes(search.toLowerCase());
       const matchTime   = !l.timestamp || isWithinRange(l.timestamp as string, timeRange, customFrom, customTo);
-      return matchLevel && matchSource && matchCategory && matchSearch && matchTime;
+      // Run ID filter
+      const matchRunId = !runIdFilter || ((l.runId as string) ?? '') === runIdFilter;
+      // Name filter: match against metadata workflowName or expertName
+      let matchName = true;
+      if (nameFilter) {
+        const meta = (l.metadata ?? {}) as Record<string, unknown>;
+        const wfName = ((meta.workflowName as string) ?? '').toLowerCase();
+        const exName = ((meta.expertName as string) ?? '').toLowerCase();
+        const q = nameFilter.toLowerCase();
+        matchName = wfName.includes(q) || exName.includes(q);
+      }
+      return matchLevel && matchSource && matchCategory && matchSearch && matchTime && matchRunId && matchName;
     });
-  }, [logs, levelFilter, categoryFilter, sourceFilter, search, timeRange, customFrom, customTo]);
+  }, [logs, levelFilter, categoryFilter, sourceFilter, search, timeRange, customFrom, customTo, runIdFilter, nameFilter]);
 
   /* Auto-scroll to bottom */
   useEffect(() => {
@@ -254,6 +269,7 @@ export default function LogsPage() {
   /* Clear visible logs */
   const handleClear = useCallback(() => {
     setSearch(''); setSourceFilter(''); setLevelFilter('all'); setCategoryFilter('all'); setTimeRange('all');
+    setRunIdFilter(''); setNameFilter('');
   }, []);
 
   return (
@@ -448,6 +464,40 @@ export default function LogsPage() {
               placeholder="Source…"
               style={{ border: 'none', outline: 'none', background: 'transparent', fontSize: 12, color: 'var(--text-1)', width: 100, fontFamily: 'monospace' }}
             />
+          </div>
+
+          {/* Run ID filter */}
+          {runIdFilter && (
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 5,
+              padding: '4px 10px', borderRadius: 6, fontSize: 10, fontWeight: 600,
+              border: '1px solid #2563EB', background: '#2563EB12', color: '#2563EB',
+            }}>
+              <span className="mono">Run: {runIdFilter.slice(0, 16)}{runIdFilter.length > 16 ? '…' : ''}</span>
+              <button onClick={() => setRunIdFilter('')} style={{ border: 'none', background: 'none', cursor: 'pointer', padding: 0, color: '#2563EB', display: 'flex' }}>
+                <X size={9} />
+              </button>
+            </div>
+          )}
+
+          {/* Name filter */}
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 7,
+            padding: '5px 11px', borderRadius: 7, border: '1px solid var(--border-md)',
+            background: 'var(--bg-surface)',
+          }}>
+            <Workflow size={11} color="var(--text-4)" />
+            <input
+              value={nameFilter}
+              onChange={e => setNameFilter(e.target.value)}
+              placeholder="Workflow / Expert name…"
+              style={{ border: 'none', outline: 'none', background: 'transparent', fontSize: 12, color: 'var(--text-1)', width: 150, fontFamily: 'monospace' }}
+            />
+            {nameFilter && (
+              <button onClick={() => setNameFilter('')} style={{ border: 'none', background: 'none', cursor: 'pointer', padding: 0, color: 'var(--text-4)', display: 'flex', alignItems: 'center' }}>
+                <X size={9} />
+              </button>
+            )}
           </div>
 
           {/* Search */}
