@@ -15,6 +15,7 @@ import httpx
 
 from engine.config import settings
 from engine.core.websocket import ws_manager
+from engine.services.action_runner import action_runner
 from engine.services.execution_audit import execution_audit
 from engine.services.local_inference import GenerateResult, inference_router, model_pool
 from engine.services.step_artifacts import step_artifacts
@@ -72,6 +73,8 @@ class StepConfig:
     step_image_names: list[str] = field(default_factory=list)
     integrations: list[StepIntegration] = field(default_factory=list)
     condition: dict[str, str] | None = None  # e.g. {"type": "contains", "value": "APPROVED"}
+    step_type: str = "agent"  # "agent" | "action"
+    action_config: dict[str, Any] | None = None
 
 
 @dataclass
@@ -388,21 +391,10 @@ class AgentOrchestrator:
                         self._runs[run_id]["stepResults"][step.step_id] = "[SKIPPED]"
                         continue
 
-                agent_state = await self._run_agent(
-                    run_id,
-                    step,
-                    shared,
-                    goal_content,
-                    input_contents,
-                    previous_output,
-                    channel,
-                )
-                previous_output = agent_state.output
-                self._runs[run_id]["stepResults"][step.step_id] = agent_state.output
-            else:
-                # Parallel execution
-                tasks = [
-                    self._run_agent(
+                if step.step_type == "action":
+                    agent_state = await self._run_action(run_id, step, shared, previous_output, channel)
+                else:
+                    agent_state = await self._run_agent(
                         run_id,
                         step,
                         shared,
@@ -411,8 +403,16 @@ class AgentOrchestrator:
                         previous_output,
                         channel,
                     )
-                    for step in group
-                ]
+                previous_output = agent_state.output
+                self._runs[run_id]["stepResults"][step.step_id] = agent_state.output
+            else:
+                # Parallel execution
+                async def _run_step(s: StepConfig) -> AgentState:
+                    if s.step_type == "action":
+                        return await self._run_action(run_id, s, shared, previous_output, channel)
+                    return await self._run_agent(run_id, s, shared, goal_content, input_contents, previous_output, channel)
+
+                tasks = [_run_step(step) for step in group]
                 results = await asyncio.gather(*tasks, return_exceptions=True)
                 outputs = []
                 for i, r in enumerate(results):
@@ -425,6 +425,132 @@ class AgentOrchestrator:
                 previous_output = "\n\n---\n\n".join(outputs)
 
         return previous_output
+
+    async def _run_action(
+        self,
+        run_id: str,
+        step: StepConfig,
+        shared: SharedMemory,
+        previous_output: str,
+        channel: str,
+    ) -> AgentState:
+        """Execute an action step — generate files without LLM inference."""
+        agent_id = f"action-{uuid.uuid4().hex[:8]}"
+        agent = AgentState(agent_id=agent_id, step_id=step.step_id, status="running")
+        start = datetime.now(UTC)
+
+        step_name = step.step_name or step.step_id
+        workflow_name = self._runs[run_id].get("name", "unknown")
+        workflow_id = self._runs[run_id].get("workflowId", "")
+
+        # Broadcast action started
+        await ws_manager.broadcast(
+            channel,
+            "action.started",
+            {
+                "runId": run_id,
+                "agentId": agent_id,
+                "stepId": step.step_id,
+                "stepName": step_name,
+                "stepType": "action",
+                "actionConfig": step.action_config,
+            },
+        )
+
+        try:
+            config = step.action_config or {}
+            result = await action_runner.run(
+                previous_output=previous_output,
+                action_config=config,
+                workflow_name=workflow_name,
+                step_name=step_name,
+                run_id=run_id,
+            )
+
+            if not result.success:
+                raise RuntimeError(result.error)
+
+            # Register the generated file as an asset
+            try:
+                async with httpx.AsyncClient(timeout=15) as client:
+                    await client.post(
+                        "http://localhost:3000/api/assets/register",
+                        json={
+                            "assets": [
+                                {
+                                    "name": result.file_name,
+                                    "fileName": result.file_name,
+                                    "filePath": result.file_path,
+                                    "sizeBytes": result.size_bytes,
+                                    "mimeType": result.mime_type,
+                                    "fileType": "document",
+                                    "sourceType": "workflow",
+                                    "folder": f"/workflows/{workflow_name}/{step_name}",
+                                    "tags": ["workflow", "action", workflow_name, step_name],
+                                    "metadata": {
+                                        "runId": run_id,
+                                        "workflowId": workflow_id,
+                                        "workflowName": workflow_name,
+                                        "stepName": step_name,
+                                        "stepType": "action",
+                                        "outputFormat": result.output_format,
+                                    },
+                                }
+                            ]
+                        },
+                    )
+            except Exception as reg_exc:
+                logger.warning("Failed to register action asset: %s", reg_exc)
+
+            elapsed = (datetime.now(UTC) - start).total_seconds() * 1000
+            agent.status = "completed"
+            agent.output = f"[ACTION] Generated {result.file_name} ({result.size_bytes} bytes) at {result.file_path}"
+            agent.duration_ms = elapsed
+
+            # Store in shared memory for downstream steps
+            shared.globals[step.step_id] = agent.output[:1000]
+
+            await ws_manager.broadcast(
+                channel,
+                "action.complete",
+                {
+                    "runId": run_id,
+                    "agentId": agent_id,
+                    "stepId": step.step_id,
+                    "stepName": step_name,
+                    "filePath": result.file_path,
+                    "fileName": result.file_name,
+                    "mimeType": result.mime_type,
+                    "sizeBytes": result.size_bytes,
+                    "outputFormat": result.output_format,
+                    "durationMs": elapsed,
+                },
+            )
+
+        except Exception as exc:
+            elapsed = (datetime.now(UTC) - start).total_seconds() * 1000
+            agent.status = "failed"
+            agent.error = str(exc)
+            agent.duration_ms = elapsed
+            logger.exception("Action step %s failed: %s", step.step_id, exc)
+
+            await ws_manager.broadcast(
+                channel,
+                "action.failed",
+                {
+                    "runId": run_id,
+                    "agentId": agent_id,
+                    "stepId": step.step_id,
+                    "stepName": step_name,
+                    "error": str(exc),
+                    "durationMs": elapsed,
+                },
+            )
+
+        # Track agent in run state
+        self._runs[run_id]["agents"][agent_id] = agent
+
+        return agent
 
     async def _run_agent(
         self,
@@ -1436,6 +1562,62 @@ class AgentOrchestrator:
                         "http://localhost:3000/api/workflows/executions",
                         json=step_payload,
                     )
+
+                # 3. Register step artifacts as assets in frontend DB
+                for agent in agents.values():
+                    step_cfg = next(
+                        (s for s in steps if s.step_id == agent.step_id), None
+                    )
+                    _step_name = (
+                        step_cfg.step_name
+                        if step_cfg and step_cfg.step_name
+                        else agent.step_id
+                    )
+                    artifacts = step_artifacts.list_artifacts(
+                        workflow_name, _step_name
+                    )
+                    if artifacts:
+                        step_dir = step_artifacts.get_step_dir(
+                            workflow_name, _step_name
+                        )
+                        asset_records = []
+                        for a in artifacts:
+                            file_path = str(step_dir / a["name"])
+                            ext = a.get("type", "").lower()
+                            mime = "text/plain"
+                            file_type = "document"
+                            if ext in (".json",):
+                                mime = "application/json"
+                            elif ext in (".py", ".js", ".ts", ".sh"):
+                                file_type = "file"
+                            asset_records.append(
+                                {
+                                    "name": a["name"],
+                                    "fileName": a["name"],
+                                    "filePath": file_path,
+                                    "sizeBytes": a.get("size", 0),
+                                    "mimeType": mime,
+                                    "fileType": file_type,
+                                    "sourceType": "workflow",
+                                    "folder": f"/workflows/{workflow_name}/{_step_name}",
+                                    "tags": [
+                                        "workflow",
+                                        workflow_name,
+                                        _step_name,
+                                    ],
+                                    "metadata": {
+                                        "runId": run_id,
+                                        "workflowId": workflow_id,
+                                        "workflowName": workflow_name,
+                                        "stepName": _step_name,
+                                    },
+                                }
+                            )
+                        if asset_records:
+                            await client.post(
+                                "http://localhost:3000/api/assets/register",
+                                json={"assets": asset_records},
+                            )
         except Exception as sync_exc:
             logger.warning("Failed to sync run %s to frontend DB: %s", run_id, sync_exc)
 

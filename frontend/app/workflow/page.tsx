@@ -754,6 +754,8 @@ export default function WorkflowsPage() {
         connectionType: s.connectionType || 'sequential',
         shareMemory: s.shareMemory !== false,
         integrations: s.integrations || [],
+        stepType: s.stepType || 'agent',
+        actionConfig: s.actionConfig || null,
       }));
 
       // Create run record in NeonDB via REST (reliable DB insert)

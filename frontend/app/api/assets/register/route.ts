@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, assets, lineage } from '@/lib/db';
+import { eq } from 'drizzle-orm';
 import { logStatus } from '@/lib/status-log';
 
 interface AssetRecord {
@@ -30,6 +31,10 @@ export async function POST(req: NextRequest) {
 
     const created = [];
     for (const record of records) {
+      // Dedup guard — skip if an asset with the same filePath already exists
+      const existing = await db.select({ id: assets.id }).from(assets).where(eq(assets.filePath, record.filePath)).limit(1);
+      if (existing.length > 0) continue;
+
       const id = `asset-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
       const [inserted] = await db.insert(assets).values({
@@ -69,6 +74,27 @@ export async function POST(req: NextRequest) {
           },
         }).catch((e: unknown) => {
           console.warn('[assets/register] lineage insert failed:', e);
+        });
+      }
+
+      // Create lineage record: workflow -> asset
+      const meta = record.metadata as Record<string, unknown> | undefined;
+      if (meta?.workflowId) {
+        const lineageId = `lin-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        await db.insert(lineage).values({
+          id: lineageId,
+          sourceType: 'workflow',
+          sourceId: meta.workflowId as string,
+          targetType: 'asset',
+          targetId: id,
+          relationship: 'produces',
+          metadata: {
+            runId: meta.runId,
+            stepName: meta.stepName,
+            fileName: record.fileName,
+          },
+        }).catch((e: unknown) => {
+          console.warn('[assets/register] workflow lineage insert failed:', e);
         });
       }
     }

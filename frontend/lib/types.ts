@@ -188,6 +188,18 @@ export type StepStatus =
   | 'pending' | 'running' | 'completed' | 'failed' | 'skipped';
 
 export type StepConnectionType = 'sequential' | 'parallel' | 'conditional';
+export type StepType = 'agent' | 'action';
+
+export interface ActionConfig {
+  outputFormat: 'markdown' | 'pdf';
+  outputFilename: string;
+  targetFolder?: string;
+  transformerType: 'none' | 'mcp' | 'executable';
+  mcpServerId?: string;
+  executablePath?: string;
+  executableArgs?: string[];
+  executionRuntime?: 'python' | 'typescript';
+}
 
 export interface WorkflowStep {
   id: string;

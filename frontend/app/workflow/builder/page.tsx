@@ -17,10 +17,10 @@ import {
   Video, MessageCircle, AtSign, Send, Code, Camera, Target,
   HelpCircle, Headphones, TrendingUp, PieChart, Snowflake,
   LayoutGrid, Flame, Twitter, Linkedin, Facebook, Instagram,
-  Youtube, Filter,
+  Youtube, Filter, FileOutput,
 } from 'lucide-react';
 import { ROLE_META, INTEGRATION_CATALOG, MARKETPLACE_PLUGINS } from '@/lib/constants';
-import type { Expert, ExpertRole, ModelSource, LocalModelConfig, StepIntegration } from '@/lib/types';
+import type { Expert, ExpertRole, ModelSource, LocalModelConfig, StepIntegration, ActionConfig } from '@/lib/types';
 // useWorkflowWS removed — workflows are now run from the listing page
 import { useWorkflowLogger } from '@/lib/hooks/useWorkflowLogger';
 import { useExperts, useWorkflows } from '@/lib/hooks/useApi';
@@ -48,6 +48,8 @@ interface DraftStep {
   voiceCommand: string;
   fileLocations: string[];
   integrations: StepIntegration[];
+  stepType: 'agent' | 'action';
+  actionConfig?: ActionConfig;
 }
 
 interface UploadedFile {
@@ -1119,6 +1121,147 @@ function StepCard({ step, index, onRemove, onUpdate, onSwap, liveAgent, llamacpp
   const [systemLocked, setSystemLocked] = useState(true);
   const [showPreview, setShowPreview] = useState(false);
 
+  /* ── Action Step Card ── */
+  if (step.stepType === 'action') {
+    const ac = step.actionConfig || { outputFormat: 'markdown', outputFilename: 'output.md', transformerType: 'none' };
+    return (
+      <div className="workflow-step" style={{
+        minWidth: 280, maxWidth: 340,
+        borderColor: 'rgba(16,185,129,0.35)',
+        boxShadow: '0 0 8px rgba(16,185,129,0.08)',
+      }}>
+        {/* Header */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div style={{ width: 28, height: 28, borderRadius: 6, background: 'rgba(16,185,129,0.1)',
+              border: '1px solid rgba(16,185,129,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <FileOutput size={14} color="#10b981" />
+            </div>
+            <div>
+              <div style={{ fontSize: 9, fontWeight: 700, color: '#10b981', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                ACTION {String(index + 1).padStart(2, '0')}
+              </div>
+              <input className="input input-sm" placeholder="Action name"
+                value={step.name} onChange={e => onUpdate({ name: e.target.value })}
+                style={{ fontSize: 11, height: 22, padding: '0 6px', width: 160 }} />
+            </div>
+          </div>
+          <button className="btn btn-ghost btn-xs" onClick={onRemove}>
+            <Trash2 size={12} color="var(--text-4)" />
+          </button>
+        </div>
+
+        {/* Output Format */}
+        <div style={{ marginBottom: 10 }}>
+          <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 }}>
+            Output Format
+          </div>
+          <div style={{ display: 'flex', gap: 4 }}>
+            {(['markdown', 'pdf'] as const).map(fmt => (
+              <button key={fmt} className={`btn btn-xs ${ac.outputFormat === fmt ? 'btn-primary' : 'btn-ghost'}`}
+                onClick={() => onUpdate({ actionConfig: { ...ac, outputFormat: fmt, outputFilename: ac.outputFilename.replace(/\.\w+$/, fmt === 'pdf' ? '.pdf' : '.md') } })}
+                style={{ fontSize: 10, textTransform: 'uppercase' }}>
+                {fmt === 'markdown' ? 'Markdown' : 'PDF'}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Output Filename */}
+        <div style={{ marginBottom: 10 }}>
+          <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 }}>
+            Output Filename *
+          </div>
+          <input className="input input-sm" placeholder="output.md"
+            value={ac.outputFilename}
+            onChange={e => onUpdate({ actionConfig: { ...ac, outputFilename: e.target.value } })}
+            style={{ fontSize: 11, width: '100%' }} />
+        </div>
+
+        {/* Target Folder */}
+        <div style={{ marginBottom: 10 }}>
+          <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 }}>
+            Target Folder
+          </div>
+          <input className="input input-sm" placeholder="/workflows/my-workflow/outputs (optional)"
+            value={ac.targetFolder || ''}
+            onChange={e => onUpdate({ actionConfig: { ...ac, targetFolder: e.target.value } })}
+            style={{ fontSize: 11, width: '100%' }} />
+        </div>
+
+        {/* Transformer Type */}
+        <div style={{ marginBottom: 10 }}>
+          <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 }}>
+            Transformer
+          </div>
+          <div style={{ display: 'flex', gap: 4 }}>
+            {(['none', 'mcp', 'executable'] as const).map(t => (
+              <button key={t} className={`btn btn-xs ${ac.transformerType === t ? 'btn-primary' : 'btn-ghost'}`}
+                onClick={() => onUpdate({ actionConfig: { ...ac, transformerType: t } })}
+                style={{ fontSize: 10 }}>
+                {t === 'none' ? 'None' : t === 'mcp' ? 'MCP Server' : 'Executable'}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* MCP Server ID */}
+        {ac.transformerType === 'mcp' && (
+          <div style={{ marginBottom: 10 }}>
+            <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 }}>
+              MCP Server ID
+            </div>
+            <input className="input input-sm" placeholder="prebuilt-my-server"
+              value={ac.mcpServerId || ''}
+              onChange={e => onUpdate({ actionConfig: { ...ac, mcpServerId: e.target.value } })}
+              style={{ fontSize: 11, width: '100%' }} />
+          </div>
+        )}
+
+        {/* Executable Config */}
+        {ac.transformerType === 'executable' && (
+          <>
+            <div style={{ marginBottom: 10 }}>
+              <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 }}>
+                Script / Executable Path
+              </div>
+              <input className="input input-sm" placeholder="/path/to/transform.py"
+                value={ac.executablePath || ''}
+                onChange={e => onUpdate({ actionConfig: { ...ac, executablePath: e.target.value } })}
+                style={{ fontSize: 11, width: '100%' }} />
+            </div>
+            <div style={{ marginBottom: 10 }}>
+              <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 }}>
+                Execution Runtime
+              </div>
+              <div style={{ display: 'flex', gap: 4 }}>
+                {(['python', 'typescript'] as const).map(rt => (
+                  <button key={rt} className={`btn btn-xs ${ac.executionRuntime === rt ? 'btn-primary' : 'btn-ghost'}`}
+                    onClick={() => onUpdate({ actionConfig: { ...ac, executionRuntime: rt } })}
+                    style={{ fontSize: 10 }}>
+                    {rt === 'python' ? 'Python' : 'TypeScript'}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </>
+        )}
+
+        {/* Connection badge */}
+        <div style={{ display: 'flex', gap: 4, marginTop: 8 }}>
+          <span style={{ fontSize: 9, padding: '2px 6px', borderRadius: 4, background: 'rgba(16,185,129,0.1)',
+            color: '#10b981', fontWeight: 600, border: '1px solid rgba(16,185,129,0.2)' }}>
+            Sequential
+          </span>
+          <span style={{ fontSize: 9, padding: '2px 6px', borderRadius: 4, background: 'var(--bg-elevated)',
+            color: 'var(--text-3)', fontWeight: 600, border: '1px solid var(--border-md)' }}>
+            {ac.transformerType === 'none' ? 'Direct Write' : ac.transformerType === 'mcp' ? 'MCP Container' : 'Executable Container'}
+          </span>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="workflow-step" style={{
       minWidth: 280, maxWidth: 340,
@@ -2135,6 +2278,8 @@ function WorkflowBuilderInner() {
               voiceCommand: (s.voiceCommand as string) || '',
               fileLocations: (s.fileLocations as string[]) || [],
               integrations: ((s.integrations as StepIntegration[]) || []),
+              stepType: ((s.stepType as string) || 'agent') as 'agent' | 'action',
+              actionConfig: (s.actionConfig as ActionConfig) || undefined,
             };
           });
           setSteps(reconstructed);
@@ -2205,7 +2350,7 @@ function WorkflowBuilderInner() {
       modelSource: expertSource, localModel: expertLocalModel,
       connectionType: globalParallel ? 'parallel' : 'sequential', shareMemory: true,
       stepFiles: [], stepImages: [], voiceCommand: '', fileLocations: [],
-      integrations: [],
+      integrations: [], stepType: 'agent' as const,
     };
   };
 
@@ -2224,6 +2369,22 @@ function WorkflowBuilderInner() {
       wfLogger.logStepChange('added', { stepId: step.id, expertId: expert.id, modelSource: expert.modelSource || 'provider' });
     }
   }, [swapIndex, wfLogger, globalParallel]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const addAction = useCallback(() => {
+    const step: DraftStep = {
+      id: uid(), expert: null, name: '', description: '',
+      taskDescription: 'Transform previous step output into a file',
+      systemInstructions: '', collapsed: false,
+      modelSource: 'provider' as ModelSource,
+      localModel: { engine: 'ollama', modelName: '' },
+      connectionType: 'sequential', shareMemory: true,
+      stepFiles: [], stepImages: [], voiceCommand: '', fileLocations: [],
+      integrations: [], stepType: 'action',
+      actionConfig: { outputFormat: 'markdown', outputFilename: 'output.md', transformerType: 'none' },
+    };
+    setSteps(prev => [...prev, step]);
+    wfLogger.logStepChange('added', { stepId: step.id, stepType: 'action' });
+  }, [wfLogger]);
 
   const removeStep = useCallback((id: string) => {
     setSteps(prev => prev.filter(s => s.id !== id));
@@ -2287,8 +2448,12 @@ function WorkflowBuilderInner() {
       const stepIssues: Record<string, string> = {};
       steps.forEach((s, i) => {
         const msgs: string[] = [];
-        if (!s.expert) msgs.push('no expert assigned');
-        if (!s.taskDescription.trim()) msgs.push('task description is empty');
+        if (s.stepType === 'action') {
+          if (!s.actionConfig?.outputFilename?.trim()) msgs.push('output filename is required');
+        } else {
+          if (!s.expert) msgs.push('no expert assigned');
+          if (!s.taskDescription.trim()) msgs.push('task description is empty');
+        }
         if (msgs.length > 0) stepIssues[s.id] = `Step ${i + 1}: ${msgs.join(', ')}`;
       });
       if (Object.keys(stepIssues).length > 0) {
@@ -2332,6 +2497,8 @@ function WorkflowBuilderInner() {
             name: si.name, icon: si.icon, color: si.color,
             config: si.config || {},
           })),
+          stepType: s.stepType || 'agent',
+          actionConfig: s.stepType === 'action' ? s.actionConfig : null,
         };
       });
 
@@ -2434,6 +2601,8 @@ function WorkflowBuilderInner() {
                     voiceCommand: (s.voiceCommand as string) || '',
                     fileLocations: (s.fileLocations as string[]) || [],
                     integrations: (s.integrations as StepIntegration[]) || [],
+                    stepType: ((s.stepType as string) || 'agent') as 'agent' | 'action',
+                    actionConfig: (s.actionConfig as ActionConfig) || undefined,
                   }));
                   setSteps(restored);
                 }
@@ -2637,6 +2806,10 @@ function WorkflowBuilderInner() {
             <button className="btn btn-secondary btn-sm" onClick={() => setShowSelector(true)}>
               <Plus size={12} /> Add Expert
             </button>
+            <button className="btn btn-secondary btn-sm" onClick={addAction}
+              style={{ borderColor: 'var(--accent-green, #10b981)' }}>
+              <FileOutput size={12} /> Add Action
+            </button>
           </div>
         </div>
         {saveErrors.steps && (
@@ -2667,6 +2840,10 @@ function WorkflowBuilderInner() {
             </div>
             <button className="btn btn-primary" onClick={() => setShowSelector(true)}>
               <Users size={14} /> Add Expert Step
+            </button>
+            <button className="btn btn-secondary" onClick={addAction}
+              style={{ borderColor: 'var(--accent-green, #10b981)', marginTop: 8 }}>
+              <FileOutput size={14} /> Add Action Step
             </button>
           </div>
         ) : (

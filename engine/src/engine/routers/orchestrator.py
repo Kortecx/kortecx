@@ -63,6 +63,8 @@ class StepConfigModel(BaseModel):
     maxTokens: int = 4096
     connectionType: str = "sequential"  # sequential | parallel
     integrations: list[StepIntegrationModel] = []
+    stepType: str = "agent"  # agent | action
+    actionConfig: dict[str, Any] | None = None
 
 
 class ExecuteRequest(BaseModel):
@@ -124,6 +126,8 @@ async def execute_workflow(req: ExecuteRequest, bg: BackgroundTasks) -> ExecuteR
                     )
                     for si in s.integrations
                 ],
+                step_type=s.stepType,
+                action_config=s.actionConfig,
             )
             for s in req.steps
         ],

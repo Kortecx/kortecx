@@ -40,7 +40,12 @@ export async function GET(req: NextRequest) {
       query = query.where(eq(assets.expertId, expertId));
     }
     if (sourceType) {
-      query = query.where(eq(assets.sourceType, sourceType));
+      if (sourceType === 'upload') {
+        // Include both explicit 'upload' and legacy null (manually uploaded before sourceType was set)
+        query = query.where(sql`(${assets.sourceType} = 'upload' OR ${assets.sourceType} IS NULL)`);
+      } else {
+        query = query.where(eq(assets.sourceType, sourceType));
+      }
     }
     if (expertRunId) {
       query = query.where(eq(assets.expertRunId, expertRunId));
@@ -103,6 +108,7 @@ export async function POST(req: NextRequest) {
         sizeBytes: bytes.length,
         tags,
         metadata: { originalName: file.name, extension: ext },
+        sourceType: 'upload',
       }).returning();
 
       created.push(inserted);

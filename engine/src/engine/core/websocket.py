@@ -127,6 +127,8 @@ class WebSocketManager:
                         )
                         for si in s.get("integrations", [])
                     ],
+                    step_type=s.get("stepType", "agent"),
+                    action_config=s.get("actionConfig"),
                 )
                 for s in steps_raw
             ],

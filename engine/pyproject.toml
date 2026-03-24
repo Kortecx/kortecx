@@ -52,6 +52,9 @@ dependencies = [
 
     # ── Experiment Tracking ────────────────────────────
     "mlflow>=2.18.0",
+
+    # ── PDF Generation (action steps) ────────────────
+    "fpdf2>=2.7.0",
 ]
 
 [project.scripts]

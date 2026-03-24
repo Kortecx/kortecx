@@ -196,6 +196,8 @@ export const workflowSteps = pgTable('workflow_steps', {
   shareMemory:       boolean('share_memory').default(true),
   temperature:       decimal('temperature', { precision: 3, scale: 2 }).default('0.7'),
   maxTokens:         integer('max_tokens').default(4096),
+  stepType:          varchar('step_type', { length: 20 }).default('agent'),
+  actionConfig:      jsonb('action_config'),
   createdAt:         timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 });
 

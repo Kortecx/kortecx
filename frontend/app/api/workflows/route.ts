@@ -22,6 +22,8 @@ function buildStepValues(workflowId: string, steps: Record<string, unknown>[]) {
     modelSource:        (s.modelSource as string) || 'provider',
     localModelConfig:   s.localModel || s.localModelConfig || null,
     connectionType:     (s.connectionType as string) || 'sequential',
+    stepType:           (s.stepType as string) || 'agent',
+    actionConfig:       s.actionConfig || null,
     shareMemory:        s.shareMemory !== false,
     temperature:        s.temperature != null ? String(s.temperature) : '0.7',
     maxTokens:          (s.maxTokens as number) || 4096,
