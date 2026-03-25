@@ -142,11 +142,15 @@ class WebSocketManager:
         self.subscriptions.setdefault(run_channel, set()).add(conn_id)
 
         # Acknowledge submission
-        await self.send_to(conn_id, "workflow.accepted", {
-            "runId": provided_run_id,
-            "workflowId": request.workflow_id,
-            "message": f"Workflow '{name}' accepted for execution",
-        })
+        await self.send_to(
+            conn_id,
+            "workflow.accepted",
+            {
+                "runId": provided_run_id,
+                "workflowId": request.workflow_id,
+                "message": f"Workflow '{name}' accepted for execution",
+            },
+        )
 
         # Run in background
         asyncio.create_task(orchestrator.execute_workflow(request, provided_run_id))

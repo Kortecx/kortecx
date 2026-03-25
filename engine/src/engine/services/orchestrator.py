@@ -255,17 +255,24 @@ class AgentOrchestrator:
             self._runs[run_id]["completedAt"] = datetime.now(UTC).isoformat()
 
             workflow_logger.log_run_event(
-                request.workflow_id, run_id, "run.cancelled", {},
+                request.workflow_id,
+                run_id,
+                "run.cancelled",
+                {},
             )
             await ws_manager.broadcast(
-                channel, "workflow.cancelled",
+                channel,
+                "workflow.cancelled",
                 {"runId": run_id, "message": "Workflow cancelled by user"},
             )
             await execution_audit.fail_run(run_id, "Cancelled by user")
             await self._sync_to_frontend(
-                run_id=run_id, workflow_id=request.workflow_id,
-                workflow_name=request.name, status="cancelled",
-                steps=request.steps, error_message="Cancelled by user",
+                run_id=run_id,
+                workflow_id=request.workflow_id,
+                workflow_name=request.name,
+                status="cancelled",
+                steps=request.steps,
+                error_message="Cancelled by user",
             )
             return {"runId": run_id, "status": "cancelled"}
 
@@ -660,16 +667,12 @@ class AgentOrchestrator:
                 await self._persist_step_status(run_id, step, agent_id, "running")
 
                 # Start live metrics broadcasting
-                _metrics_task = asyncio.create_task(
-                    self._broadcast_live_metrics(run_id, agent_id, step.step_id, channel)
-                )
+                _metrics_task = asyncio.create_task(self._broadcast_live_metrics(run_id, agent_id, step.step_id, channel))
 
                 # Execute inference — race against cancellation event
                 cancel_evt = self._cancellation_events.get(run_id)
                 if cancel_evt:
-                    infer_task = asyncio.create_task(
-                        self._infer(step, system_prompt, user_prompt)
-                    )
+                    infer_task = asyncio.create_task(self._infer(step, system_prompt, user_prompt))
                     cancel_wait = asyncio.create_task(cancel_evt.wait())
                     done, pending = await asyncio.wait(
                         {infer_task, cancel_wait},
@@ -678,9 +681,7 @@ class AgentOrchestrator:
                     for p in pending:
                         p.cancel()
                     if cancel_wait in done:
-                        raise asyncio.CancelledError(
-                            f"Workflow {run_id} cancelled by user"
-                        )
+                        raise asyncio.CancelledError(f"Workflow {run_id} cancelled by user")
                     result = infer_task.result()
                 else:
                     result = await self._infer(step, system_prompt, user_prompt)
@@ -818,7 +819,10 @@ class AgentOrchestrator:
 
                 # Persist step status: completed
                 await self._persist_step_status(
-                    run_id, step, agent_id, "completed",
+                    run_id,
+                    step,
+                    agent_id,
+                    "completed",
                     tokens_used=result.tokens_used,
                     duration_ms=result.duration_ms,
                     cpu_percent=step_metrics["cpuPercent"],
@@ -927,7 +931,10 @@ class AgentOrchestrator:
                             )
                             # Persist fallback step status: completed
                             await self._persist_step_status(
-                                run_id, step, agent_id, "completed",
+                                run_id,
+                                step,
+                                agent_id,
+                                "completed",
                                 tokens_used=result.tokens_used,
                                 duration_ms=result.duration_ms,
                                 model=fallback_model,
@@ -971,7 +978,10 @@ class AgentOrchestrator:
 
                 # Persist step status: failed
                 await self._persist_step_status(
-                    run_id, step, agent_id, "failed",
+                    run_id,
+                    step,
+                    agent_id,
+                    "failed",
                     error_message=str(exc),
                 )
 
@@ -1231,9 +1241,7 @@ class AgentOrchestrator:
                 if step.connection_type == "parallel" and settings.llamacpp_available:
                     engine = "llamacpp"
                     base_url = base_url or settings.llamacpp_url
-                    logger.info(
-                        "Auto-routing parallel step %s to llama.cpp", step.step_id
-                    )
+                    logger.info("Auto-routing parallel step %s to llama.cpp", step.step_id)
                 else:
                     engine = "ollama"
                     if step.connection_type == "parallel":
@@ -1242,9 +1250,7 @@ class AgentOrchestrator:
                             step.step_id,
                         )
                     else:
-                        logger.info(
-                            "Auto-routing sequential step %s to Ollama", step.step_id
-                        )
+                        logger.info("Auto-routing sequential step %s to Ollama", step.step_id)
 
             messages = [
                 {"role": "system", "content": system_prompt},
@@ -1408,9 +1414,7 @@ class AgentOrchestrator:
                 started = run.get("startedAt", "")
                 elapsed_ms = 0
                 if started:
-                    elapsed_ms = int(
-                        (datetime.now(UTC) - datetime.fromisoformat(started)).total_seconds() * 1000
-                    )
+                    elapsed_ms = int((datetime.now(UTC) - datetime.fromisoformat(started)).total_seconds() * 1000)
                 agent = run.get("agents", {}).get(agent_id)
                 tokens = agent.tokens_used if agent else 0
                 await ws_manager.broadcast(
@@ -1565,21 +1569,11 @@ class AgentOrchestrator:
 
                 # 3. Register step artifacts as assets in frontend DB
                 for agent in agents.values():
-                    step_cfg = next(
-                        (s for s in steps if s.step_id == agent.step_id), None
-                    )
-                    _step_name = (
-                        step_cfg.step_name
-                        if step_cfg and step_cfg.step_name
-                        else agent.step_id
-                    )
-                    artifacts = step_artifacts.list_artifacts(
-                        workflow_name, _step_name
-                    )
+                    step_cfg = next((s for s in steps if s.step_id == agent.step_id), None)
+                    _step_name = step_cfg.step_name if step_cfg and step_cfg.step_name else agent.step_id
+                    artifacts = step_artifacts.list_artifacts(workflow_name, _step_name)
                     if artifacts:
-                        step_dir = step_artifacts.get_step_dir(
-                            workflow_name, _step_name
-                        )
+                        step_dir = step_artifacts.get_step_dir(workflow_name, _step_name)
                         asset_records = []
                         for a in artifacts:
                             file_path = str(step_dir / a["name"])

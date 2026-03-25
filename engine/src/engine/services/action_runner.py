@@ -75,16 +75,24 @@ class ActionRunner:
                 return await self._run_in_container(previous_output, action_config, output_format, output_filename, step_dir)
             else:
                 return ActionResult(
-                    file_path="", file_name=output_filename, mime_type="",
-                    size_bytes=0, output_format=output_format,
-                    success=False, error=f"Unknown transformer type: {transformer_type}",
+                    file_path="",
+                    file_name=output_filename,
+                    mime_type="",
+                    size_bytes=0,
+                    output_format=output_format,
+                    success=False,
+                    error=f"Unknown transformer type: {transformer_type}",
                 )
         except Exception as exc:
             logger.exception("Action step failed: %s", exc)
             return ActionResult(
-                file_path="", file_name=output_filename, mime_type="",
-                size_bytes=0, output_format=output_format,
-                success=False, error=str(exc),
+                file_path="",
+                file_name=output_filename,
+                mime_type="",
+                size_bytes=0,
+                output_format=output_format,
+                success=False,
+                error=str(exc),
             )
 
     # ── Direct (none) transformer — runs on host ──────────────────────────────
@@ -179,9 +187,13 @@ class ActionRunner:
         script_path = await self._resolve_script(action_config, transformer_type)
         if not script_path or not script_path.exists():
             return ActionResult(
-                file_path="", file_name=output_filename, mime_type="",
-                size_bytes=0, output_format=output_format,
-                success=False, error=f"Script not found for {transformer_type} transformer",
+                file_path="",
+                file_name=output_filename,
+                mime_type="",
+                size_bytes=0,
+                output_format=output_format,
+                success=False,
+                error=f"Script not found for {transformer_type} transformer",
             )
 
         # Determine which container to use
@@ -202,9 +214,12 @@ class ActionRunner:
 
         # Execute inside container
         env_vars = [
-            "-e", f"INPUT_FILE={container_input}",
-            "-e", f"OUTPUT_FILE={container_output}",
-            "-e", f"OUTPUT_FORMAT={output_format}",
+            "-e",
+            f"INPUT_FILE={container_input}",
+            "-e",
+            f"OUTPUT_FILE={container_output}",
+            "-e",
+            f"OUTPUT_FORMAT={output_format}",
         ]
 
         cmd = ["docker", "exec", *env_vars, container, *interpreter, script_dest]
@@ -220,18 +235,26 @@ class ActionRunner:
         except TimeoutError:
             proc.kill()
             return ActionResult(
-                file_path="", file_name=output_filename, mime_type="",
-                size_bytes=0, output_format=output_format,
-                success=False, error="Container execution timed out after 120s",
+                file_path="",
+                file_name=output_filename,
+                mime_type="",
+                size_bytes=0,
+                output_format=output_format,
+                success=False,
+                error="Container execution timed out after 120s",
             )
 
         if proc.returncode != 0:
             err_msg = stderr.decode("utf-8", errors="replace").strip()
             logger.error("Container script failed (rc=%d): %s", proc.returncode, err_msg)
             return ActionResult(
-                file_path="", file_name=output_filename, mime_type="",
-                size_bytes=0, output_format=output_format,
-                success=False, error=f"Script exited with code {proc.returncode}: {err_msg[:500]}",
+                file_path="",
+                file_name=output_filename,
+                mime_type="",
+                size_bytes=0,
+                output_format=output_format,
+                success=False,
+                error=f"Script exited with code {proc.returncode}: {err_msg[:500]}",
             )
 
         # Read output file from the shared mount on the host side
@@ -244,9 +267,13 @@ class ActionRunner:
                 logger.info("Action: script wrote to stdout, saved as %s", host_output)
             else:
                 return ActionResult(
-                    file_path="", file_name=output_filename, mime_type="",
-                    size_bytes=0, output_format=output_format,
-                    success=False, error="Script completed but no output file was generated",
+                    file_path="",
+                    file_name=output_filename,
+                    mime_type="",
+                    size_bytes=0,
+                    output_format=output_format,
+                    success=False,
+                    error="Script completed but no output file was generated",
                 )
 
         # Clean up input file
@@ -288,6 +315,7 @@ class ActionRunner:
             for server in mcp_service.list_prebuilt():
                 if server["id"] == mcp_server_id:
                     from engine.services.mcp import MCP_PREBUILT_DIR
+
                     script_file = MCP_PREBUILT_DIR / server["filename"]
                     if script_file.exists():
                         return script_file
@@ -296,6 +324,7 @@ class ActionRunner:
             for server in mcp_service.list_persisted():
                 if server["id"] == mcp_server_id:
                     from engine.services.mcp import MCP_SCRIPTS_DIR
+
                     script_file = MCP_SCRIPTS_DIR / server["filename"]
                     if script_file.exists():
                         return script_file
@@ -332,7 +361,10 @@ class ActionRunner:
     async def _docker_cp(self, src: str, container: str, dest: str) -> None:
         """Copy a file into a Docker container."""
         proc = await asyncio.create_subprocess_exec(
-            "docker", "cp", src, f"{container}:{dest}",
+            "docker",
+            "cp",
+            src,
+            f"{container}:{dest}",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )

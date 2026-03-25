@@ -239,11 +239,11 @@ class OllamaService(LocalInferenceBackend):
                 body = resp.text[:500]
                 logger.error(
                     "Ollama error %d for model %s: %s",
-                    resp.status_code, model, body,
+                    resp.status_code,
+                    model,
+                    body,
                 )
-                raise RuntimeError(
-                    f"Ollama returned {resp.status_code} for model '{model}': {body}"
-                )
+                raise RuntimeError(f"Ollama returned {resp.status_code} for model '{model}': {body}")
             return resp
 
         resp = await _with_retry(_do)
@@ -417,7 +417,9 @@ class LlamaCppService(LocalInferenceBackend):
             if resp.status_code >= 400:
                 logger.error(
                     "llama.cpp error %d for model %s: %s",
-                    resp.status_code, model, resp.text[:500],
+                    resp.status_code,
+                    model,
+                    resp.text[:500],
                 )
             resp.raise_for_status()
             return resp
