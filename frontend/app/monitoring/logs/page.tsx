@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
+import { useEffect, useRef, useState, useCallback, useMemo, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -186,7 +186,7 @@ function LogRow({ log, index: _index, tz }: { log: Record<string, unknown>; inde
 }
 
 /* ── Page ────────────────────────────────────────────────────────────────── */
-export default function LogsPage() {
+function LogsPageInner() {
   const searchParams = useSearchParams();
   const [viewTab, setViewTab] = useState<ViewTab>('logs');
   const [levelFilter, setLevelFilter] = useState('all');
@@ -820,4 +820,8 @@ export default function LogsPage() {
       </div>
     </>
   );
+}
+
+export default function LogsPage() {
+  return <Suspense><LogsPageInner /></Suspense>;
 }
