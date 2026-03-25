@@ -63,9 +63,12 @@ class StepConfigModel(BaseModel):
     maxTokens: int = 4096
     connectionType: str = "sequential"  # sequential | parallel
     integrations: list[StepIntegrationModel] = []
+    stepType: str = "agent"  # agent | action
+    actionConfig: dict[str, Any] | None = None
 
 
 class ExecuteRequest(BaseModel):
+    runId: str | None = None
     workflowId: str | None = None
     name: str
     goalFileUrl: str
@@ -123,19 +126,42 @@ async def execute_workflow(req: ExecuteRequest, bg: BackgroundTasks) -> ExecuteR
                     )
                     for si in s.integrations
                 ],
+                step_type=s.stepType,
+                action_config=s.actionConfig,
             )
             for s in req.steps
         ],
     )
 
     # Run orchestration in background so we return immediately
-    bg.add_task(orchestrator.execute_workflow, request)
+    bg.add_task(orchestrator.execute_workflow, request, req.runId)
 
     return ExecuteResponse(
-        runId=request.workflow_id,
+        runId=req.runId or request.workflow_id,
         status="started",
         message=f"Workflow '{req.name}' execution started — {len(req.steps)} agent(s) will be spawned",
     )
+
+
+@router.post("/runs/{run_id}/cancel")
+async def cancel_run(run_id: str) -> dict[str, Any]:
+    """Cancel a running workflow execution."""
+    return await orchestrator.cancel_run(run_id)
+
+
+@router.post("/runs/{run_id}/restart")
+async def restart_run(run_id: str, bg: BackgroundTasks) -> dict[str, Any]:
+    """Restart a completed/failed/cancelled workflow using its original config."""
+    run = orchestrator.get_run(run_id)
+    if not run:
+        return {"error": "Run not found", "runId": run_id}
+    if run["status"] == "running":
+        return {"error": "Run is still running", "runId": run_id}
+    request = run.get("request")
+    if not request:
+        return {"error": "Original request not stored", "runId": run_id}
+    bg.add_task(orchestrator.execute_workflow, request)
+    return {"runId": run_id, "status": "restarting", "message": "Workflow restart initiated"}
 
 
 @router.get("/runs/{run_id}")
@@ -283,6 +309,17 @@ async def check_engine_health(engine: str) -> dict[str, Any]:
     """Check if a local inference engine is running."""
     healthy = await inference_router.health_check(engine)
     return {"engine": engine, "healthy": healthy}
+
+
+@router.get("/capabilities")
+async def get_capabilities() -> dict[str, Any]:
+    """Return live capability flags (llama.cpp / Ollama availability)."""
+    ollama_ok = await inference_router.health_check("ollama")
+    llamacpp_ok = await inference_router.health_check("llamacpp")
+    return {
+        "ollama_available": ollama_ok,
+        "llamacpp_available": llamacpp_ok,
+    }
 
 
 class PullModelRequest(BaseModel):

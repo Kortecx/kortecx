@@ -15,6 +15,7 @@ import httpx
 
 from engine.config import settings
 from engine.core.websocket import ws_manager
+from engine.services.action_runner import action_runner
 from engine.services.execution_audit import execution_audit
 from engine.services.local_inference import GenerateResult, inference_router, model_pool
 from engine.services.step_artifacts import step_artifacts
@@ -72,6 +73,8 @@ class StepConfig:
     step_image_names: list[str] = field(default_factory=list)
     integrations: list[StepIntegration] = field(default_factory=list)
     condition: dict[str, str] | None = None  # e.g. {"type": "contains", "value": "APPROVED"}
+    step_type: str = "agent"  # "agent" | "action"
+    action_config: dict[str, Any] | None = None
 
 
 @dataclass
@@ -107,14 +110,18 @@ class AgentOrchestrator:
         self._runs: dict[str, dict[str, Any]] = {}  # runId -> run state
         self._shared_memory: dict[str, SharedMemory] = {}
         self._semaphore = asyncio.Semaphore(settings.max_concurrent_agents)
+        self._cancellation_events: dict[str, asyncio.Event] = {}
+        self._metrics_stop_events: dict[str, asyncio.Event] = {}
 
-    async def execute_workflow(self, request: WorkflowRequest) -> dict[str, Any]:
+    async def execute_workflow(self, request: WorkflowRequest, run_id: str | None = None) -> dict[str, Any]:
         """Main entry point — creates a run and orchestrates agents."""
-        run_id = f"run-{uuid.uuid4().hex[:12]}"
+        run_id = run_id or f"run-{uuid.uuid4().hex[:12]}"
         channel = f"workflow.{run_id}"
 
         shared = SharedMemory(run_id=run_id)
         self._shared_memory[run_id] = shared
+        self._cancellation_events[run_id] = asyncio.Event()
+        self._metrics_stop_events[run_id] = asyncio.Event()
 
         # Read goal file content
         goal_content = await self._read_file(request.goal_file_url)
@@ -135,6 +142,7 @@ class AgentOrchestrator:
             "startedAt": datetime.now(UTC).isoformat(),
             "agents": {},
             "stepResults": {},
+            "request": request,
         }
 
         # Log run start
@@ -205,10 +213,11 @@ class AgentOrchestrator:
                         json={
                             "level": "info",
                             "message": f"Workflow '{request.name}' completed successfully",
-                            "source": "orchestrator",
+                            "source": "workflow",
                             "runId": run_id,
                             "metadata": {
                                 "workflowId": request.workflow_id,
+                                "workflowName": request.name,
                                 "totalSteps": len(request.steps),
                                 "outputLength": len(result),
                             },
@@ -240,6 +249,32 @@ class AgentOrchestrator:
             )
 
             return {"runId": run_id, "status": "completed", "output": result}
+
+        except asyncio.CancelledError:
+            self._runs[run_id]["status"] = "cancelled"
+            self._runs[run_id]["completedAt"] = datetime.now(UTC).isoformat()
+
+            workflow_logger.log_run_event(
+                request.workflow_id,
+                run_id,
+                "run.cancelled",
+                {},
+            )
+            await ws_manager.broadcast(
+                channel,
+                "workflow.cancelled",
+                {"runId": run_id, "message": "Workflow cancelled by user"},
+            )
+            await execution_audit.fail_run(run_id, "Cancelled by user")
+            await self._sync_to_frontend(
+                run_id=run_id,
+                workflow_id=request.workflow_id,
+                workflow_name=request.name,
+                status="cancelled",
+                steps=request.steps,
+                error_message="Cancelled by user",
+            )
+            return {"runId": run_id, "status": "cancelled"}
 
         except Exception as exc:
             logger.exception("Workflow %s failed", run_id)
@@ -288,10 +323,11 @@ class AgentOrchestrator:
                         json={
                             "level": "error",
                             "message": f"Workflow '{request.name}' failed: {str(exc)[:200]}",
-                            "source": "orchestrator",
+                            "source": "workflow",
                             "runId": run_id,
                             "metadata": {
                                 "workflowId": request.workflow_id,
+                                "workflowName": request.name,
                                 "error": str(exc),
                             },
                         },
@@ -310,6 +346,13 @@ class AgentOrchestrator:
             )
 
             return {"runId": run_id, "status": "failed", "error": str(exc)}
+
+        finally:
+            # Cleanup cancellation and metrics stop events
+            self._cancellation_events.pop(run_id, None)
+            stop_evt = self._metrics_stop_events.pop(run_id, None)
+            if stop_evt:
+                stop_evt.set()
 
     async def _orchestrate(
         self,
@@ -339,6 +382,10 @@ class AgentOrchestrator:
         previous_output = ""
 
         for group in groups:
+            # Check cancellation before each step group
+            if self._cancellation_events.get(run_id, asyncio.Event()).is_set():
+                raise asyncio.CancelledError(f"Workflow {run_id} cancelled by user")
+
             if len(group) == 1 and group[0].connection_type != "parallel":
                 # Sequential / conditional execution
                 step = group[0]
@@ -351,21 +398,10 @@ class AgentOrchestrator:
                         self._runs[run_id]["stepResults"][step.step_id] = "[SKIPPED]"
                         continue
 
-                agent_state = await self._run_agent(
-                    run_id,
-                    step,
-                    shared,
-                    goal_content,
-                    input_contents,
-                    previous_output,
-                    channel,
-                )
-                previous_output = agent_state.output
-                self._runs[run_id]["stepResults"][step.step_id] = agent_state.output
-            else:
-                # Parallel execution
-                tasks = [
-                    self._run_agent(
+                if step.step_type == "action":
+                    agent_state = await self._run_action(run_id, step, shared, previous_output, channel)
+                else:
+                    agent_state = await self._run_agent(
                         run_id,
                         step,
                         shared,
@@ -374,8 +410,16 @@ class AgentOrchestrator:
                         previous_output,
                         channel,
                     )
-                    for step in group
-                ]
+                previous_output = agent_state.output
+                self._runs[run_id]["stepResults"][step.step_id] = agent_state.output
+            else:
+                # Parallel execution
+                async def _run_step(s: StepConfig) -> AgentState:
+                    if s.step_type == "action":
+                        return await self._run_action(run_id, s, shared, previous_output, channel)
+                    return await self._run_agent(run_id, s, shared, goal_content, input_contents, previous_output, channel)
+
+                tasks = [_run_step(step) for step in group]
                 results = await asyncio.gather(*tasks, return_exceptions=True)
                 outputs = []
                 for i, r in enumerate(results):
@@ -388,6 +432,132 @@ class AgentOrchestrator:
                 previous_output = "\n\n---\n\n".join(outputs)
 
         return previous_output
+
+    async def _run_action(
+        self,
+        run_id: str,
+        step: StepConfig,
+        shared: SharedMemory,
+        previous_output: str,
+        channel: str,
+    ) -> AgentState:
+        """Execute an action step — generate files without LLM inference."""
+        agent_id = f"action-{uuid.uuid4().hex[:8]}"
+        agent = AgentState(agent_id=agent_id, step_id=step.step_id, status="running")
+        start = datetime.now(UTC)
+
+        step_name = step.step_name or step.step_id
+        workflow_name = self._runs[run_id].get("name", "unknown")
+        workflow_id = self._runs[run_id].get("workflowId", "")
+
+        # Broadcast action started
+        await ws_manager.broadcast(
+            channel,
+            "action.started",
+            {
+                "runId": run_id,
+                "agentId": agent_id,
+                "stepId": step.step_id,
+                "stepName": step_name,
+                "stepType": "action",
+                "actionConfig": step.action_config,
+            },
+        )
+
+        try:
+            config = step.action_config or {}
+            result = await action_runner.run(
+                previous_output=previous_output,
+                action_config=config,
+                workflow_name=workflow_name,
+                step_name=step_name,
+                run_id=run_id,
+            )
+
+            if not result.success:
+                raise RuntimeError(result.error)
+
+            # Register the generated file as an asset
+            try:
+                async with httpx.AsyncClient(timeout=15) as client:
+                    await client.post(
+                        "http://localhost:3000/api/assets/register",
+                        json={
+                            "assets": [
+                                {
+                                    "name": result.file_name,
+                                    "fileName": result.file_name,
+                                    "filePath": result.file_path,
+                                    "sizeBytes": result.size_bytes,
+                                    "mimeType": result.mime_type,
+                                    "fileType": "document",
+                                    "sourceType": "workflow",
+                                    "folder": f"/workflows/{workflow_name}/{step_name}",
+                                    "tags": ["workflow", "action", workflow_name, step_name],
+                                    "metadata": {
+                                        "runId": run_id,
+                                        "workflowId": workflow_id,
+                                        "workflowName": workflow_name,
+                                        "stepName": step_name,
+                                        "stepType": "action",
+                                        "outputFormat": result.output_format,
+                                    },
+                                }
+                            ]
+                        },
+                    )
+            except Exception as reg_exc:
+                logger.warning("Failed to register action asset: %s", reg_exc)
+
+            elapsed = (datetime.now(UTC) - start).total_seconds() * 1000
+            agent.status = "completed"
+            agent.output = f"[ACTION] Generated {result.file_name} ({result.size_bytes} bytes) at {result.file_path}"
+            agent.duration_ms = elapsed
+
+            # Store in shared memory for downstream steps
+            shared.globals[step.step_id] = agent.output[:1000]
+
+            await ws_manager.broadcast(
+                channel,
+                "action.complete",
+                {
+                    "runId": run_id,
+                    "agentId": agent_id,
+                    "stepId": step.step_id,
+                    "stepName": step_name,
+                    "filePath": result.file_path,
+                    "fileName": result.file_name,
+                    "mimeType": result.mime_type,
+                    "sizeBytes": result.size_bytes,
+                    "outputFormat": result.output_format,
+                    "durationMs": elapsed,
+                },
+            )
+
+        except Exception as exc:
+            elapsed = (datetime.now(UTC) - start).total_seconds() * 1000
+            agent.status = "failed"
+            agent.error = str(exc)
+            agent.duration_ms = elapsed
+            logger.exception("Action step %s failed: %s", step.step_id, exc)
+
+            await ws_manager.broadcast(
+                channel,
+                "action.failed",
+                {
+                    "runId": run_id,
+                    "agentId": agent_id,
+                    "stepId": step.step_id,
+                    "stepName": step_name,
+                    "error": str(exc),
+                    "durationMs": elapsed,
+                },
+            )
+
+        # Track agent in run state
+        self._runs[run_id]["agents"][agent_id] = agent
+
+        return agent
 
     async def _run_agent(
         self,
@@ -443,6 +613,9 @@ class AgentOrchestrator:
             task_description=step.task_description,
         )
 
+        # Persist step status: pending
+        await self._persist_step_status(run_id, step, agent_id, "pending")
+
         async with self._semaphore:
             try:
                 # Resolve expert from DB if available
@@ -490,8 +663,31 @@ class AgentOrchestrator:
                 # Audit: agent thinking
                 execution_audit.log_agent_thinking(run_id, agent_id, step.step_id)
 
-                # Execute inference
-                result = await self._infer(step, system_prompt, user_prompt)
+                # Persist step status: running
+                await self._persist_step_status(run_id, step, agent_id, "running")
+
+                # Start live metrics broadcasting
+                _metrics_task = asyncio.create_task(self._broadcast_live_metrics(run_id, agent_id, step.step_id, channel))
+
+                # Execute inference — race against cancellation event
+                cancel_evt = self._cancellation_events.get(run_id)
+                if cancel_evt:
+                    infer_task = asyncio.create_task(self._infer(step, system_prompt, user_prompt))
+                    cancel_wait = asyncio.create_task(cancel_evt.wait())
+                    done, pending = await asyncio.wait(
+                        {infer_task, cancel_wait},
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    for p in pending:
+                        p.cancel()
+                    if cancel_wait in done:
+                        raise asyncio.CancelledError(f"Workflow {run_id} cancelled by user")
+                    result = infer_task.result()
+                else:
+                    result = await self._infer(step, system_prompt, user_prompt)
+
+                # Stop live metrics broadcasting
+                _metrics_task.cancel()
 
                 agent.output = result.text
                 agent.tokens_used = result.tokens_used
@@ -621,6 +817,49 @@ class AgentOrchestrator:
                     result.duration_ms,
                 )
 
+                # Persist step status: completed
+                await self._persist_step_status(
+                    run_id,
+                    step,
+                    agent_id,
+                    "completed",
+                    tokens_used=result.tokens_used,
+                    duration_ms=result.duration_ms,
+                    cpu_percent=step_metrics["cpuPercent"],
+                    gpu_percent=step_metrics["gpuPercent"],
+                    memory_mb=step_metrics["memoryMb"],
+                    model=step.local_model.get("model", "") if step.local_model else "",
+                    engine=step.local_model.get("engine", "") if step.local_model else "",
+                    response_preview=result.text[:500],
+                )
+
+                # Persist enriched step log to frontend
+                try:
+                    _run = self._runs.get(run_id, {})
+                    async with httpx.AsyncClient(timeout=5) as _client:
+                        await _client.post(
+                            "http://localhost:3000/api/logs",
+                            json={
+                                "level": "info",
+                                "message": f"Step '{step.step_name or step.step_id}' completed",
+                                "source": "workflow",
+                                "runId": run_id,
+                                "metadata": {
+                                    "workflowId": _run.get("workflowId", ""),
+                                    "workflowName": _run.get("name", ""),
+                                    "expertId": step.expert_id or "",
+                                    "expertName": expert_data.get("name", "") if expert_data else "",
+                                    "stepId": step.step_id,
+                                    "stepName": step.step_name or step.step_id,
+                                    "agentId": agent_id,
+                                    "tokensUsed": result.tokens_used,
+                                    "durationMs": result.duration_ms,
+                                },
+                            },
+                        )
+                except Exception:
+                    pass  # Non-critical
+
                 return agent
 
             except Exception as exc:
@@ -690,6 +929,18 @@ class AgentOrchestrator:
                                 result.tokens_used,
                                 result.duration_ms,
                             )
+                            # Persist fallback step status: completed
+                            await self._persist_step_status(
+                                run_id,
+                                step,
+                                agent_id,
+                                "completed",
+                                tokens_used=result.tokens_used,
+                                duration_ms=result.duration_ms,
+                                model=fallback_model,
+                                engine=engine,
+                                response_preview=result.text[:500],
+                            )
                             return agent
                         except Exception as fallback_exc:
                             logger.error("Fallback also failed for agent %s: %s", agent_id, fallback_exc)
@@ -724,6 +975,41 @@ class AgentOrchestrator:
 
                 # Audit: step failed
                 execution_audit.log_step_failed(run_id, agent_id, step.step_id, str(exc))
+
+                # Persist step status: failed
+                await self._persist_step_status(
+                    run_id,
+                    step,
+                    agent_id,
+                    "failed",
+                    error_message=str(exc),
+                )
+
+                # Persist enriched step failure log to frontend
+                try:
+                    _run = self._runs.get(run_id, {})
+                    async with httpx.AsyncClient(timeout=5) as _client:
+                        await _client.post(
+                            "http://localhost:3000/api/logs",
+                            json={
+                                "level": "error",
+                                "message": f"Step '{step.step_name or step.step_id}' failed: {str(exc)[:200]}",
+                                "source": "workflow",
+                                "runId": run_id,
+                                "metadata": {
+                                    "workflowId": _run.get("workflowId", ""),
+                                    "workflowName": _run.get("name", ""),
+                                    "expertId": step.expert_id or "",
+                                    "expertName": expert_data.get("name", "") if expert_data else "",
+                                    "stepId": step.step_id,
+                                    "stepName": step.step_name or step.step_id,
+                                    "agentId": agent_id,
+                                    "error": str(exc)[:500],
+                                },
+                            },
+                        )
+                except Exception:
+                    pass  # Non-critical
 
                 raise
 
@@ -938,11 +1224,33 @@ class AgentOrchestrator:
         system_prompt: str,
         user_prompt: str,
     ) -> GenerateResult:
-        """Route inference to the correct backend with model pool tracking."""
+        """Route inference to the correct backend with model pool tracking.
+
+        When auto_route_by_connection_type is enabled (default):
+        - Sequential steps → Ollama (reliable single-stream inference)
+        - Parallel steps → llama.cpp (designed for concurrent requests)
+        Explicit local_model.engine settings always take precedence.
+        """
         if step.model_source == "local" and step.local_model:
             engine = step.local_model.get("engine", settings.default_local_engine)
             model = step.local_model.get("model", settings.default_local_model)
             base_url = step.local_model.get("baseUrl")
+
+            # Auto-route by connection type if no explicit engine was set
+            if settings.auto_route_by_connection_type and "engine" not in step.local_model:
+                if step.connection_type == "parallel" and settings.llamacpp_available:
+                    engine = "llamacpp"
+                    base_url = base_url or settings.llamacpp_url
+                    logger.info("Auto-routing parallel step %s to llama.cpp", step.step_id)
+                else:
+                    engine = "ollama"
+                    if step.connection_type == "parallel":
+                        logger.warning(
+                            "llama.cpp not available — falling back to Ollama for parallel step %s",
+                            step.step_id,
+                        )
+                    else:
+                        logger.info("Auto-routing sequential step %s to Ollama", step.step_id)
 
             messages = [
                 {"role": "system", "content": system_prompt},
@@ -979,6 +1287,62 @@ class AgentOrchestrator:
             duration_ms=0,
         )
 
+    async def _persist_step_status(
+        self,
+        run_id: str,
+        step: StepConfig,
+        agent_id: str,
+        status: str,
+        *,
+        tokens_used: int = 0,
+        duration_ms: float = 0,
+        cpu_percent: float = 0,
+        gpu_percent: float = 0,
+        memory_mb: float = 0,
+        model: str = "",
+        engine: str = "",
+        response_preview: str = "",
+        error_message: str = "",
+    ) -> None:
+        """Persist step execution status to NeonDB in real-time via frontend API."""
+        payload: dict[str, Any] = {
+            "runId": run_id,
+            "workflowId": self._runs.get(run_id, {}).get("workflowId", ""),
+            "stepId": step.step_id,
+            "agentId": agent_id,
+            "stepName": step.step_name or step.step_id,
+            "expertId": step.expert_id or None,
+            "status": status,
+            "model": model or (step.local_model.get("model", "") if step.local_model else ""),
+            "engine": engine or (step.local_model.get("engine", "") if step.local_model else ""),
+            "startedAt": datetime.now(UTC).isoformat(),
+        }
+        if tokens_used:
+            payload["tokensUsed"] = tokens_used
+        if duration_ms:
+            payload["durationMs"] = round(duration_ms)
+        if cpu_percent:
+            payload["cpuPercent"] = cpu_percent
+        if gpu_percent:
+            payload["gpuPercent"] = gpu_percent
+        if memory_mb:
+            payload["memoryMb"] = memory_mb
+        if response_preview:
+            payload["responsePreview"] = response_preview[:500]
+        if error_message:
+            payload["errorMessage"] = error_message
+        if status in ("completed", "failed"):
+            payload["completedAt"] = datetime.now(UTC).isoformat()
+
+        try:
+            async with httpx.AsyncClient(timeout=5) as client:
+                await client.post(
+                    "http://localhost:3000/api/workflows/executions",
+                    json=payload,
+                )
+        except Exception as exc:
+            logger.warning("Failed to persist step status: %s", exc)
+
     async def _read_file(self, url_or_path: str) -> str:
         """Read a file from the upload directory or a URL."""
         # Local file path
@@ -999,6 +1363,81 @@ class AgentOrchestrator:
                 return resp.text
 
         return f"[Could not read file: {url_or_path}]"
+
+    async def cancel_run(self, run_id: str) -> dict[str, Any]:
+        """Cancel a running workflow by setting its cancellation event."""
+        run = self._runs.get(run_id)
+        if not run:
+            return {"error": "Run not found", "runId": run_id}
+        if run["status"] != "running":
+            return {"error": f"Run is not running (status: {run['status']})", "runId": run_id}
+
+        evt = self._cancellation_events.get(run_id)
+        if evt:
+            evt.set()
+        return {"runId": run_id, "status": "cancelling", "message": "Cancel signal sent"}
+
+    async def restart_run(self, run_id: str) -> dict[str, Any]:
+        """Restart a completed/failed/cancelled workflow using its original request."""
+        run = self._runs.get(run_id)
+        if not run:
+            return {"error": "Run not found", "runId": run_id}
+        if run["status"] == "running":
+            return {"error": "Run is still running", "runId": run_id}
+
+        request: WorkflowRequest | None = run.get("request")
+        if not request:
+            return {"error": "Original request not stored for this run", "runId": run_id}
+
+        result = await self.execute_workflow(request)
+        return result
+
+    async def _broadcast_live_metrics(
+        self,
+        run_id: str,
+        agent_id: str,
+        step_id: str,
+        channel: str,
+    ) -> None:
+        """Broadcast system metrics every 2s while an agent is running."""
+        stop_evt = self._metrics_stop_events.get(run_id)
+        if not stop_evt:
+            return
+        while not stop_evt.is_set():
+            try:
+                from engine.services.system_stats import get_system_stats
+
+                stats = get_system_stats()
+                run = self._runs.get(run_id)
+                if not run:
+                    break
+                started = run.get("startedAt", "")
+                elapsed_ms = 0
+                if started:
+                    elapsed_ms = int((datetime.now(UTC) - datetime.fromisoformat(started)).total_seconds() * 1000)
+                agent = run.get("agents", {}).get(agent_id)
+                tokens = agent.tokens_used if agent else 0
+                await ws_manager.broadcast(
+                    channel,
+                    "run.metrics.update",
+                    {
+                        "runId": run_id,
+                        "agentId": agent_id,
+                        "stepId": step_id,
+                        "cpuPercent": stats.get("cpu_percent", 0),
+                        "gpuPercent": stats.get("gpu_percent", 0),
+                        "memoryMb": stats.get("memory_used_mb", 0),
+                        "tokensUsed": tokens,
+                        "elapsedMs": elapsed_ms,
+                    },
+                )
+            except Exception:
+                pass
+            try:
+                await asyncio.wait_for(asyncio.shield(stop_evt.wait()), timeout=2.0)
+                break  # Event was set, stop broadcasting
+            except TimeoutError:
+                pass  # Continue broadcasting
 
     def get_run(self, run_id: str) -> dict[str, Any] | None:
         return self._runs.get(run_id)
@@ -1127,6 +1566,52 @@ class AgentOrchestrator:
                         "http://localhost:3000/api/workflows/executions",
                         json=step_payload,
                     )
+
+                # 3. Register step artifacts as assets in frontend DB
+                for agent in agents.values():
+                    step_cfg = next((s for s in steps if s.step_id == agent.step_id), None)
+                    _step_name = step_cfg.step_name if step_cfg and step_cfg.step_name else agent.step_id
+                    artifacts = step_artifacts.list_artifacts(workflow_name, _step_name)
+                    if artifacts:
+                        step_dir = step_artifacts.get_step_dir(workflow_name, _step_name)
+                        asset_records = []
+                        for a in artifacts:
+                            file_path = str(step_dir / a["name"])
+                            ext = a.get("type", "").lower()
+                            mime = "text/plain"
+                            file_type = "document"
+                            if ext in (".json",):
+                                mime = "application/json"
+                            elif ext in (".py", ".js", ".ts", ".sh"):
+                                file_type = "file"
+                            asset_records.append(
+                                {
+                                    "name": a["name"],
+                                    "fileName": a["name"],
+                                    "filePath": file_path,
+                                    "sizeBytes": a.get("size", 0),
+                                    "mimeType": mime,
+                                    "fileType": file_type,
+                                    "sourceType": "workflow",
+                                    "folder": f"/workflows/{workflow_name}/{_step_name}",
+                                    "tags": [
+                                        "workflow",
+                                        workflow_name,
+                                        _step_name,
+                                    ],
+                                    "metadata": {
+                                        "runId": run_id,
+                                        "workflowId": workflow_id,
+                                        "workflowName": workflow_name,
+                                        "stepName": _step_name,
+                                    },
+                                }
+                            )
+                        if asset_records:
+                            await client.post(
+                                "http://localhost:3000/api/assets/register",
+                                json={"assets": asset_records},
+                            )
         except Exception as sync_exc:
             logger.warning("Failed to sync run %s to frontend DB: %s", run_id, sync_exc)
 

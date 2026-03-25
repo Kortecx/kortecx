@@ -114,6 +114,7 @@ services:
     volumes:
       - executor_python:/workspace
       - ./engine/steps:/steps:ro
+      - ./engine/steps/execution:/output
     environment:
       PYTHONDONTWRITEBYTECODE: '1'
     command: >
@@ -140,6 +141,7 @@ services:
     volumes:
       - executor_ts:/workspace
       - ./engine/steps:/steps:ro
+      - ./engine/steps/execution:/output
     command: >
       sh -c "npm init -y > /dev/null 2>&1 &&
              npm install --quiet tsx esbuild react react-dom @types/react > /dev/null 2>&1 &&

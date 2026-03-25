@@ -247,10 +247,27 @@ class WorkflowLogger:
         run_id: str,
         event: str,
         data: dict[str, Any] | None = None,
+        *,
+        level: str | None = None,
     ) -> None:
-        """Log a run execution event."""
+        """Log a run execution event with appropriate level.
+
+        When *level* is not given it is inferred from the event name:
+        events containing ``failed`` or ``error`` → ``error``,
+        events containing ``cancelled`` or ``warn`` → ``warning``,
+        everything else → ``info``.
+        """
+        if level is None:
+            lower = event.lower()
+            if "failed" in lower or "error" in lower:
+                level = "error"
+            elif "cancelled" in lower or "warn" in lower:
+                level = "warning"
+            else:
+                level = "info"
+
         path = self._run_dir(workflow_id, run_id) / "execution.log"
-        entry = f"[{_ts_short()}] {event}"
+        entry = f"—{level}[{_ts_short()}] {event}"
         if data:
             entry += f" | {json.dumps(data, default=str)}"
         _append_log(path, entry)

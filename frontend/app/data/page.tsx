@@ -12,7 +12,7 @@ import {
   ExternalLink, Trash2, Eye, HardDrive, Rows3, Columns3, Key,
   Cpu, Server, Sparkle, ChevronDown, ChevronRight, X,
   Upload, FolderPlus, File, Image, Video, Music, FileSpreadsheet, GripVertical,
-  Save, FolderOpen,
+  Save, FolderOpen, LayoutGrid, List,
 } from 'lucide-react';
 import Link from 'next/link';
 
@@ -1825,9 +1825,10 @@ function MyDatasetsTab({ datasets, loading, onViewDataset, onRefresh, onRefreshJ
   const [newFolderName, setNewFolderName] = useState('');
   const [showNewFolder, setShowNewFolder] = useState(false);
   const [schemaDataset, setSchemaDataset] = useState<any>(null);
+  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
 
   // Assets from DB
-  const { data: assetsData, mutate: mutateAssets } = useSWR('/api/assets', fetcher, { refreshInterval: 15_000 });
+  const { data: assetsData, mutate: mutateAssets } = useSWR('/api/assets?sourceType=upload', fetcher, { refreshInterval: 15_000 });
   const assetsList: any[] = assetsData?.assets ?? [];
   const folders: string[] = assetsData?.folders ?? ['/'];
 
@@ -1903,6 +1904,32 @@ function MyDatasetsTab({ datasets, loading, onViewDataset, onRefresh, onRefreshJ
             {folders.map(f => <option key={f} value={f}>{f === '/' ? 'Root' : f}</option>)}
           </select>
         )}
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 2, background: 'var(--bg-elevated)', borderRadius: 6, padding: 2 }}>
+          <button
+            className="btn btn-ghost btn-sm"
+            onClick={() => setViewMode('grid')}
+            style={{
+              color: viewMode === 'grid' ? 'var(--teal)' : 'var(--text-4)',
+              background: viewMode === 'grid' ? 'var(--surface-1)' : 'transparent',
+              borderRadius: 4, padding: '2px 6px',
+            }}
+            title="Grid view"
+          >
+            <LayoutGrid size={14} />
+          </button>
+          <button
+            className="btn btn-ghost btn-sm"
+            onClick={() => setViewMode('list')}
+            style={{
+              color: viewMode === 'list' ? 'var(--teal)' : 'var(--text-4)',
+              background: viewMode === 'list' ? 'var(--surface-1)' : 'transparent',
+              borderRadius: 4, padding: '2px 6px',
+            }}
+            title="List view"
+          >
+            <List size={14} />
+          </button>
+        </div>
       </div>
 
       {/* Upload panel */}
@@ -1981,44 +2008,113 @@ function MyDatasetsTab({ datasets, loading, onViewDataset, onRefresh, onRefreshJ
               <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-3)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
                 Uploaded Files ({assetsList.length})
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px,1fr))', gap: 10, marginBottom: 20 }}>
-                {assetsList.map((a: any) => {
-                  const Icon = FILE_TYPE_ICONS[a.fileType] ?? File;
-                  return (
-                    <div key={a.id} className="card" style={{ padding: 14, display: 'flex', gap: 12, alignItems: 'flex-start' }}>
-                      <div style={{
-                        width: 36, height: 36, borderRadius: 6, flexShrink: 0,
-                        background: 'var(--bg-elevated)', border: '1px solid var(--border)',
-                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      }}>
-                        <Icon size={16} color="var(--text-3)" />
-                      </div>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-1)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {a.name}
+
+              {viewMode === 'grid' ? (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px,1fr))', gap: 10, marginBottom: 20 }}>
+                  {assetsList.map((a: any) => {
+                    const Icon = FILE_TYPE_ICONS[a.fileType] ?? File;
+                    return (
+                      <div key={a.id} className="card" style={{ padding: 14, display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+                        <div style={{
+                          width: 36, height: 36, borderRadius: 6, flexShrink: 0,
+                          background: 'var(--bg-elevated)', border: '1px solid var(--border)',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        }}>
+                          <Icon size={16} color="var(--text-3)" />
                         </div>
-                        <div style={{ fontSize: 10, color: 'var(--text-4)', marginTop: 2 }}>
-                          {a.fileName} · {fmtBytes(a.sizeBytes ?? 0)}
-                          {a.folder !== '/' && <> · <span style={{ color: 'var(--teal)' }}>{a.folder}</span></>}
-                        </div>
-                        {a.tags?.length > 0 && (
-                          <div style={{ display: 'flex', gap: 3, marginTop: 4, flexWrap: 'wrap' }}>
-                            {a.tags.map((t: string) => (
-                              <span key={t} className="badge badge-neutral" style={{ fontSize: 9 }}>{t}</span>
-                            ))}
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-1)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {a.name}
                           </div>
-                        )}
+                          <div style={{ fontSize: 10, color: 'var(--text-4)', marginTop: 2 }}>
+                            {a.fileName} · {fmtBytes(a.sizeBytes ?? 0)}
+                            {a.folder !== '/' && <> · <span style={{ color: 'var(--teal)' }}>{a.folder}</span></>}
+                          </div>
+                          {a.tags?.length > 0 && (
+                            <div style={{ display: 'flex', gap: 3, marginTop: 4, flexWrap: 'wrap' }}>
+                              {a.tags.map((t: string) => (
+                                <span key={t} className="badge badge-neutral" style={{ fontSize: 9 }}>{t}</span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                        <button
+                          onClick={() => handleRemoveAsset(a.id)}
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-4)', padding: 2 }}
+                        >
+                          <Trash2 size={12} />
+                        </button>
                       </div>
-                      <button
-                        onClick={() => handleRemoveAsset(a.id)}
-                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-4)', padding: 2 }}
+                    );
+                  })}
+                </div>
+              ) : (
+                <div style={{ marginBottom: 20, border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
+                  {/* List header */}
+                  <div style={{
+                    display: 'grid',
+                    gridTemplateColumns: '36px 1fr 180px 90px 100px 32px',
+                    gap: 8, padding: '8px 12px',
+                    fontSize: 10, fontWeight: 700, color: 'var(--text-4)',
+                    textTransform: 'uppercase', letterSpacing: '0.06em',
+                    background: 'var(--bg-elevated)', borderBottom: '1px solid var(--border)',
+                  }}>
+                    <span />
+                    <span>Name</span>
+                    <span>File</span>
+                    <span>Size</span>
+                    <span>Folder</span>
+                    <span />
+                  </div>
+                  {/* List rows */}
+                  {assetsList.map((a: any) => {
+                    const Icon = FILE_TYPE_ICONS[a.fileType] ?? File;
+                    return (
+                      <div key={a.id} style={{
+                        display: 'grid',
+                        gridTemplateColumns: '36px 1fr 180px 90px 100px 32px',
+                        gap: 8, padding: '8px 12px', alignItems: 'center',
+                        borderBottom: '1px solid var(--border-light)',
+                        fontSize: 12, transition: 'background 0.1s',
+                      }}
+                        onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-elevated)')}
+                        onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
                       >
-                        <Trash2 size={12} />
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
+                        <div style={{
+                          width: 28, height: 28, borderRadius: 4,
+                          background: 'var(--bg-elevated)', border: '1px solid var(--border)',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        }}>
+                          <Icon size={13} color="var(--text-3)" />
+                        </div>
+                        <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          <span style={{ fontWeight: 600, color: 'var(--text-1)' }}>{a.name}</span>
+                          {a.tags?.length > 0 && (
+                            <span style={{ marginLeft: 6 }}>
+                              {a.tags.map((t: string) => (
+                                <span key={t} className="badge badge-neutral" style={{ fontSize: 9, marginRight: 2 }}>{t}</span>
+                              ))}
+                            </span>
+                          )}
+                        </div>
+                        <div style={{ color: 'var(--text-4)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 11 }}>
+                          {a.fileName}
+                        </div>
+                        <div style={{ color: 'var(--text-3)', fontSize: 11 }}>{fmtBytes(a.sizeBytes ?? 0)}</div>
+                        <div style={{ color: a.folder !== '/' ? 'var(--teal)' : 'var(--text-4)', fontSize: 11 }}>
+                          {a.folder === '/' ? 'Root' : a.folder}
+                        </div>
+                        <button
+                          onClick={() => handleRemoveAsset(a.id)}
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-4)', padding: 2 }}
+                        >
+                          <Trash2 size={12} />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </>
           )}
 
@@ -2349,6 +2445,14 @@ function FileTreeItem({ node, depth, expanded, selected, onToggle, onSelect }: {
   }
 
   const Icon = FILE_TYPE_ICONS[node.asset?.fileType] || File;
+  const srcType = node.asset?.sourceType;
+  const srcBadgeColors: Record<string, { bg: string; fg: string }> = {
+    workflow: { bg: 'rgba(5,150,105,0.12)', fg: 'var(--teal)' },
+    expert: { bg: 'rgba(139,92,246,0.12)', fg: '#8b5cf6' },
+    upload: { bg: 'rgba(59,130,246,0.12)', fg: '#3b82f6' },
+    synthesis: { bg: 'rgba(245,158,11,0.12)', fg: '#f59e0b' },
+  };
+  const srcBadge = srcType && srcBadgeColors[srcType];
   return (
     <div
       onClick={() => onSelect(node.asset)}
@@ -2366,6 +2470,15 @@ function FileTreeItem({ node, depth, expanded, selected, onToggle, onSelect }: {
       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
         {node.name}
       </span>
+      {srcBadge && (
+        <span style={{
+          fontSize: 8, fontWeight: 700, padding: '1px 4px', borderRadius: 3,
+          background: srcBadge.bg, color: srcBadge.fg, textTransform: 'uppercase',
+          letterSpacing: '0.04em', flexShrink: 0,
+        }}>
+          {srcType === 'workflow' ? 'WF' : srcType === 'expert' ? 'EXP' : srcType === 'synthesis' ? 'SYN' : 'UP'}
+        </span>
+      )}
       <span style={{ fontSize: 10, color: 'var(--text-3)', flexShrink: 0 }}>
         {fmtBytes(node.asset?.sizeBytes || 0)}
       </span>
@@ -2488,6 +2601,7 @@ function AssetsTab() {
             <option value="expert">Expert Runs</option>
             <option value="workflow">Workflows</option>
             <option value="upload">Uploads</option>
+            <option value="synthesis">Synthesis</option>
           </select>
         </div>
 
@@ -2510,7 +2624,7 @@ function AssetsTab() {
           {!isLoading && allAssets.length === 0 && (
             <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-3)', fontSize: 12 }}>
               <File size={20} style={{ marginBottom: 8, opacity: 0.4 }} /><br />
-              No assets yet. Run an expert to generate artifacts.
+              No assets yet. Run an expert or workflow to generate artifacts.
             </div>
           )}
           {tree.map(node => (
@@ -2545,9 +2659,29 @@ function AssetsTab() {
               <span style={{ fontSize: 10, color: 'var(--text-3)' }}>
                 {fmtBytes(selectedAsset.sizeBytes || 0)}
               </span>
-              <span style={{ fontSize: 10, color: 'var(--text-3)' }}>
-                {(selectedAsset.metadata as any)?.expertName || selectedAsset.sourceType || ''}
-              </span>
+              {selectedAsset.sourceType && (() => {
+                const colors: Record<string, { bg: string; fg: string; label: string }> = {
+                  workflow: { bg: 'rgba(5,150,105,0.12)', fg: 'var(--teal)', label: 'Workflow' },
+                  expert: { bg: 'rgba(139,92,246,0.12)', fg: '#8b5cf6', label: 'Expert' },
+                  upload: { bg: 'rgba(59,130,246,0.12)', fg: '#3b82f6', label: 'Upload' },
+                  synthesis: { bg: 'rgba(245,158,11,0.12)', fg: '#f59e0b', label: 'Synthesis' },
+                };
+                const c = colors[selectedAsset.sourceType];
+                if (!c) return null;
+                const meta = selectedAsset.metadata as any;
+                const detail = meta?.workflowName || meta?.expertName || meta?.stepName || '';
+                return (
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <span style={{
+                      fontSize: 9, fontWeight: 700, padding: '1px 6px', borderRadius: 4,
+                      background: c.bg, color: c.fg, textTransform: 'uppercase',
+                    }}>
+                      {c.label}
+                    </span>
+                    {detail && <span style={{ fontSize: 10, color: 'var(--text-3)' }}>{detail}</span>}
+                  </span>
+                );
+              })()}
               <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
                 {isTextFile && (
                   <button

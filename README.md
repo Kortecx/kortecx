@@ -28,9 +28,20 @@ Open-source platform for orchestrating AI agents and building agentic workflows 
 
 ---
 
+## Philosophy
+
+**Executable Intelligence** — AI agents that produce tangible outputs (reports, datasets, code, artifacts), not just chat responses. Every workflow run generates files, metrics, and lineage you can inspect, version, and reuse.
+
+- **Local-first, cloud-optional** — Models run on your hardware by default via Ollama or llama.cpp. Cloud providers (Anthropic, OpenAI, Google, Groq, Mistral, OpenRouter) are opt-in, never required.
+- **Open & self-hostable** — MIT license, no authentication wall, no vendor lock-in. Run on a laptop or deploy to your own infrastructure. PostgreSQL via Docker or Neon cloud.
+- **Orchestration, not framework** — Kortecx is the control plane for chaining AI experts into workflows. It is not an SDK for building agents — it is where agents get work done.
+- **Data lineage & durability** — Every execution is tracked. Artifacts are versioned. Schema migrations are managed. Backups run automatically. Nothing is lost.
+
+---
+
 ## What It Does
 
-- **Workflow Builder** — Chain AI agents (sequential or parallel) with shared memory, file attachments, integrations, and plugins per step
+- **Workflow Builder** — Chain AI agents (sequential, parallel, conditional) with shared memory, file attachments, integrations, action steps, and plugins per step
 - **Dual Inference** — Run models locally (Ollama / llama.cpp) or via cloud providers (Anthropic, OpenAI, Google, Groq, Mistral, OpenRouter)
 - **Expert System** — 16 agent roles + 12 prebuilt marketplace experts, deployable with custom system prompts and performance tracking
 - **Intelligence** — Fine-tune local models with LoRA, manage local/cloud model registries, cloud inference via [Kortecx Cloud](https://www.kortecx.com)
@@ -39,17 +50,159 @@ Open-source platform for orchestrating AI agents and building agentic workflows 
 - **Monitoring** — Real-time metrics, structured logs, alerts, cost tracking
 
 ```
-┌──────────┐     ┌──────────┐     ┌──────────┐     ┌──────────┐
-│ Researcher│────▶│ Analyst  │────▶│  Writer  │────▶│ Reviewer │
-│ + GitHub │     │ + SQL DB │     │ + Email  │     │          │
-│ + Scraper│     │ + Charts │     │  Plugin  │     │          │
-└──────────┘     └──────────┘     └──────────┘     └──────────┘
+┌──────────┐     ┌──────────┐     ┌──────────┐     ┌──────────┐     ┌──────────┐
+│ Researcher│────▶│ Analyst  │────▶│  Writer  │────▶│ Reviewer │────▶│ Action   │
+│ + GitHub │     │ + SQL DB │     │ + Email  │     │          │     │ → PDF    │
+│ + Scraper│     │ + Charts │     │  Plugin  │     │          │     │ → Assets │
+└──────────┘     └──────────┘     └──────────┘     └──────────┘     └──────────┘
                     Shared Memory (per-run KV store)
 ```
 
 ---
 
-## New Features
+## Prerequisites
+
+### Required
+
+| Tool | Version | Purpose | Install |
+|------|---------|---------|---------|
+| **Docker** + Docker Compose | 20.10+ / v2+ | Runs PostgreSQL, Qdrant, MLflow, sandboxed executor containers | [docker.com](https://docs.docker.com/get-docker/) |
+| **Node.js** | 20+ | Frontend (Next.js 16, React 19) | [nodejs.org](https://nodejs.org/) or `nvm install 20` |
+| **Python** | 3.11+ | Engine (FastAPI, PyTorch, Transformers) | [python.org](https://www.python.org/) or `pyenv install 3.11` |
+| **uv** | latest | Fast Python package manager (replaces pip/poetry) | [docs.astral.sh/uv](https://docs.astral.sh/uv/) |
+| **Git** | 2.x+ | Source control | [git-scm.com](https://git-scm.com/) |
+
+### Optional
+
+| Tool | Purpose |
+|------|---------|
+| **Ollama** | Local LLM inference (recommended) — [ollama.com](https://ollama.com/) |
+| **llama.cpp** | Alternative local inference with parallel execution support |
+| **HuggingFace token** | Download gated models, push datasets to Hub |
+| **Go 1.22+** | Only if using the Go client library |
+
+---
+
+## Setup
+
+### 1. Clone the repository
+
+```bash
+git clone https://github.com/Kortecx/kortecx.git
+cd kortecx
+```
+
+### 2. Configure environment
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` if needed. Key variables:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DATABASE_URL` | `postgresql://kortecx:kortecx@localhost:5433/kortecx_dev` | PostgreSQL connection string |
+| `DB_MODE` | `local` | Set to empty for Neon cloud DB |
+| `QDRANT_URL` | `http://localhost:6333` | Qdrant vector database |
+| `NEXT_PUBLIC_ENGINE_URL` | `http://localhost:8000` | Engine URL for frontend |
+| `HF_TOKEN` | *(empty)* | HuggingFace token (optional) |
+
+### 3. Start everything
+
+```bash
+./start.sh
+```
+
+This single script handles:
+1. Preflight checks (Docker, Node, uv, Python)
+2. Environment file setup
+3. Port cleanup (3000, 5050, 8000)
+4. Docker services (PostgreSQL, Qdrant, MLflow, backup, executor containers)
+5. Health check polling until all services are ready
+6. Dependency installation (`npm install` + `uv sync`)
+7. Database schema migrations (Drizzle + Quorum)
+8. Engine (FastAPI on port 8000) and Frontend (Next.js on port 3000) startup
+
+### 4. Verify
+
+Open [http://localhost:3000](http://localhost:3000) — you should see the Kortecx dashboard.
+
+Check Docker services are running:
+```bash
+docker compose ps
+```
+
+You should see: `kortecx_db`, `kortecx_qdrant`, `kortecx_mlflow`, `kortecx_executor_python`, `kortecx_executor_ts`.
+
+### Alternative: Neon Cloud Database
+
+For [Neon](https://neon.tech) instead of local PostgreSQL, set in `.env`:
+```
+DATABASE_URL=postgresql://user:pass@ep-xxx.us-east-2.aws.neon.tech/neondb?sslmode=require
+DB_MODE=
+```
+
+### Alternative: Manual Start
+
+```bash
+make docker-up          # Start Docker services
+make install            # Install frontend + engine dependencies
+make db-push            # Apply database schema
+make engine &           # Start FastAPI engine (port 8000)
+make frontend           # Start Next.js frontend (port 3000)
+```
+
+---
+
+## Makefile Commands
+
+| Command | Description |
+|---------|-------------|
+| `make start` | Full stack bootstrap via `start.sh` |
+| `make stop` | Stop all services and processes |
+| `make docker-up` / `docker-down` | Start / stop Docker containers |
+| `make docker-reset` | Wipe volumes and restart (destructive) |
+| `make frontend` | Next.js dev server |
+| `make engine` | FastAPI with hot reload |
+| `make install` | Install all dependencies (frontend + engine) |
+| `make db-push` | Apply Drizzle schema to database |
+| `make db-seed` | Populate sample data |
+| `make db-studio` | Open Drizzle visual schema editor |
+| `make backup` | Manual PostgreSQL backup |
+| `make restore FILE=...` | Restore from backup file |
+| `make clean` | Remove build artifacts and node_modules |
+
+---
+
+## Project Structure
+
+```
+kortecx/
+├── frontend/             # Next.js 16 — UI, API routes, Drizzle ORM
+├── engine/               # FastAPI — ML/AI, orchestration, inference
+├── go-client/            # Go client library (Quorum types)
+├── docs/                 # Feature documentation
+│   ├── QUORUM_ENGINE.md
+│   ├── WORKFLOW_BUILDER.md
+│   ├── EXPERT_SYSTEM.md
+│   ├── MONITORING.md
+│   ├── INTELLIGENCE.md
+│   ├── MCP_SERVERS.md
+│   └── TESTING.md
+├── scripts/              # Setup, backup, quality gates
+├── docker-compose.yml    # PostgreSQL, Qdrant, MLflow, executors
+├── kortecx.config.json   # Central platform metadata & schema versioning
+├── Makefile              # Developer commands
+├── start.sh              # One-command bootstrap
+└── CHANGELOG.md          # Release history
+```
+
+See [`frontend/README.md`](frontend/README.md) and [`engine/README.md`](engine/README.md) for component-specific documentation.
+
+---
+
+## Features
 
 ### Quorum Multi-Agent Engine
 Distributed orchestration with parallel/sequential execution, backpressure management, failure recovery, and real-time WebSocket telemetry. See [docs/QUORUM_ENGINE.md](docs/QUORUM_ENGINE.md).
@@ -58,33 +211,22 @@ Distributed orchestration with parallel/sequential execution, backpressure manag
 12 prebuilt production-ready experts (coding, research, marketing, data engineering, legal, finance, etc.) with per-file versioning and custom expert creation. See [docs/EXPERT_SYSTEM.md](docs/EXPERT_SYSTEM.md).
 
 ### Enhanced Workflow Builder
-Monaco-powered prompt editors, live execution status overlays, model pull with progress, MCP server integration, colored execution toggles, and workflow configuration dialogs. See [docs/WORKFLOW_BUILDER.md](docs/WORKFLOW_BUILDER.md).
+Monaco-powered prompt editors, live execution status overlays, model pull with progress, MCP server integration, action steps for file generation, and workflow configuration dialogs. See [docs/WORKFLOW_BUILDER.md](docs/WORKFLOW_BUILDER.md).
 
 ### Enterprise Monitoring
 Full observability with execution artifacts, script auto-execution, graceful failure handling, metrics auto-capture, and comprehensive analytics. See [docs/MONITORING.md](docs/MONITORING.md).
 
 ---
 
-## Quick Start
-
-**Prerequisites:** Docker, Node.js 20+, Python 3.11+, [uv](https://docs.astral.sh/uv/)
+## Quality Gates
 
 ```bash
-git clone https://github.com/Kortecx/kortecx.git
-cd kortecx
-cp .env.example .env
-./start.sh
+./scripts/check.sh          # Full: typecheck, lint, test, build
+./scripts/check.sh --quick  # Fast: tsc, eslint, ruff, go vet
+./scripts/check.sh --test   # Tests only
 ```
 
-Open [http://localhost:3000](http://localhost:3000).
-
-`start.sh` handles everything: Docker services (PostgreSQL + Qdrant), schema sync, engine startup, and frontend dev server.
-
-For [Neon](https://neon.tech) cloud DB instead of local, set in `.env`:
-```
-DATABASE_URL=postgresql://user:pass@ep-xxx.us-east-2.aws.neon.tech/neondb?sslmode=require
-DB_MODE=
-```
+A pre-push hook runs `--quick` mode automatically before every `git push`.
 
 ---
 

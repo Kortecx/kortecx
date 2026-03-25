@@ -10,13 +10,15 @@ export async function GET(req: NextRequest) {
   const limit  = Number(searchParams.get('limit') ?? 500);
   const since  = searchParams.get('since');
   const source = searchParams.get('source');
+  const runId  = searchParams.get('runId');
 
   try {
-    // Build conditions — support combining level + since + source
+    // Build conditions — support combining level + since + source + runId
     const conditions = [];
     if (level)  conditions.push(eq(logs.level, level));
     if (since)  conditions.push(gte(logs.timestamp, new Date(since)));
     if (source) conditions.push(eq(logs.source, source));
+    if (runId)  conditions.push(eq(logs.runId, runId));
 
     const rows = await db
       .select()

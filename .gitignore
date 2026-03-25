@@ -139,3 +139,5 @@ frontend/.vitest/
 !engine/tests/
 !go-client/quorum/*_test.go
 !frontend/tests/
+
+STRATEGY.md

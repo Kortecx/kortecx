@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -134,6 +135,11 @@ type Orchestrator struct {
 
 	// Optional progress callback for orchestration lifecycle events.
 	onProgress func(event string, data map[string]any)
+
+	// Cancel support: calling Cancel() closes this channel to signal all goroutines.
+	cancelCh   chan struct{}
+	cancelOnce sync.Once
+	cancelled  atomic.Bool
 }
 
 // NewOrchestrator creates a new orchestrator bound to the given quorum service.
@@ -155,10 +161,11 @@ func NewOrchestrator(svc *Service, cfg OrchestratorConfig) *Orchestrator {
 		cfg.BackpressureQ = 100
 	}
 	return &Orchestrator{
-		svc:    svc,
-		config: cfg,
-		sem:    make(chan struct{}, cfg.MaxParallel),
-		memory: NewSharedMemory(),
+		svc:      svc,
+		config:   cfg,
+		sem:      make(chan struct{}, cfg.MaxParallel),
+		memory:   NewSharedMemory(),
+		cancelCh: make(chan struct{}),
 	}
 }
 
@@ -186,6 +193,33 @@ func (o *Orchestrator) Stats() map[string]int64 {
 	}
 }
 
+// Cancel signals all running goroutines to stop. Safe to call multiple times.
+func (o *Orchestrator) Cancel() {
+	o.cancelOnce.Do(func() {
+		o.cancelled.Store(true)
+		close(o.cancelCh)
+		o.emit("workflow.cancelled", map[string]any{
+			"message": "Orchestrator cancelled by user",
+		})
+	})
+}
+
+// IsCancelled reports whether Cancel has been called.
+func (o *Orchestrator) IsCancelled() bool {
+	return o.cancelled.Load()
+}
+
+// Reset prepares the orchestrator for reuse after cancellation.
+func (o *Orchestrator) Reset() {
+	o.cancelCh = make(chan struct{})
+	o.cancelOnce = sync.Once{}
+	o.cancelled.Store(false)
+	o.totalSubmitted.Store(0)
+	o.totalCompleted.Store(0)
+	o.totalFailed.Store(0)
+	o.totalRetries.Store(0)
+}
+
 // ExecuteParallel runs multiple agent tasks concurrently with backpressure.
 // The semaphore limits concurrency to MaxParallel. Results are returned in
 // the same order as the input tasks. Cancelling the context aborts pending work.
@@ -195,6 +229,18 @@ func (o *Orchestrator) ExecuteParallel(ctx context.Context, tasks []AgentTask) [
 
 	for i := range tasks {
 		resultChs[i] = make(chan AgentResult, 1)
+	}
+
+	// Inject shared memory context into parallel tasks that opt in.
+	snapshot := o.memory.Snapshot()
+	for i := range tasks {
+		if tasks[i].ShareMemory && len(snapshot) > 0 {
+			var sb strings.Builder
+			for sid, out := range snapshot {
+				sb.WriteString(fmt.Sprintf("## Step %s Output\n%s\n\n", sid, truncate(out, 1500)))
+			}
+			tasks[i].Prompt = sb.String() + "## Your Task\n" + tasks[i].Prompt
+		}
 	}
 
 	// Fan out: one goroutine per task, gated by the semaphore.
@@ -211,8 +257,17 @@ func (o *Orchestrator) ExecuteParallel(ctx context.Context, tasks []AgentTask) [
 			case <-ctx.Done():
 				ch <- AgentResult{StepID: t.StepID, Status: "failed", Error: "cancelled"}
 				return
+			case <-o.cancelCh:
+				ch <- AgentResult{StepID: t.StepID, Status: "failed", Error: "cancelled"}
+				return
 			}
 			defer func() { <-o.sem }()
+
+			// Check cancellation before executing
+			if o.IsCancelled() {
+				ch <- AgentResult{StepID: t.StepID, Status: "failed", Error: "cancelled"}
+				return
+			}
 
 			result := o.executeWithRetry(ctx, t)
 
@@ -251,6 +306,14 @@ func (o *Orchestrator) ExecuteSequential(ctx context.Context, tasks []AgentTask)
 	var previousOutput string
 
 	for i, task := range tasks {
+		// Check cancellation before each step
+		if o.IsCancelled() {
+			o.emit("workflow.cancelled", map[string]any{
+				"stepId": task.StepID, "step": i + 1,
+			})
+			break
+		}
+
 		o.totalSubmitted.Add(1)
 
 		// Inject previous output into prompt for chained reasoning.
@@ -294,6 +357,13 @@ func (o *Orchestrator) executeWithRetry(ctx context.Context, task AgentTask) Age
 			"stepId": task.StepID, "attempt": attempt, "maxAttempts": o.config.RetryLimit,
 		})
 
+		// Ensure temperature is always a non-integer float so Ollama
+		// accepts it as float32 (JSON integer "0" is rejected).
+		temp := task.Temperature
+		if temp == 0 {
+			temp = 0.01
+		}
+
 		submitData := map[string]any{
 			"project":     "workflow",
 			"task":        task.Prompt,
@@ -301,7 +371,7 @@ func (o *Orchestrator) executeWithRetry(ctx context.Context, task AgentTask) Age
 			"backend":     task.Backend,
 			"workers":     1,
 			"prompt":      task.System,
-			"temperature": task.Temperature,
+			"temperature": temp,
 			"max_tokens":  task.MaxTokens,
 			"retries":     1,
 		}

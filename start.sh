@@ -110,6 +110,15 @@ until curl -sf http://localhost:5050/ &>/dev/null; do
 done
 [ "$retries" -lt 20 ] && echo "       MLflow ready."
 
+# ── 5b. Check llama.cpp availability ─────────────────────────────────────────
+if curl -sf http://localhost:8080/health > /dev/null 2>&1; then
+  export LLAMACPP_AVAILABLE=true
+  echo "       llama.cpp detected — parallel execution enabled."
+else
+  export LLAMACPP_AVAILABLE=false
+  echo "       llama.cpp not detected — parallel execution disabled (Ollama only)."
+fi
+
 # ── 6. Install dependencies ─────────────────────────────────────────────────
 progress_bar "Installing dependencies..."
 npm install --prefix "$ROOT/frontend" --silent

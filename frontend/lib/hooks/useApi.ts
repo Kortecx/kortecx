@@ -118,7 +118,7 @@ export function useWorkflows(templatesOnly = false) {
   const { data, error, isLoading, mutate } = useSWR(
     url,
     fetcher,
-    { refreshInterval: 30_000 },
+    { refreshInterval: 5_000 },
   );
   return {
     workflows: data?.workflows ?? [],
@@ -137,7 +137,7 @@ export function useWorkflowRuns(workflowId?: string, limit = 50) {
   const { data, error, isLoading, mutate } = useSWR(
     `/api/workflows/runs?${params}`,
     fetcher,
-    { refreshInterval: 10_000 },
+    { refreshInterval: 5_000 },
   );
   return {
     runs:     data?.runs  ?? [],
