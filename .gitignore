@@ -141,3 +141,4 @@ frontend/.vitest/
 !frontend/tests/
 
 STRATEGY.md
+FEATURES/
