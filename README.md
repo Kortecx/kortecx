@@ -49,15 +49,6 @@ Open-source platform for orchestrating AI agents and building agentic workflows 
 - **Connections** — Plug in external APIs, databases, tools, and marketplace plugins to any workflow step
 - **Monitoring** — Real-time metrics, structured logs, alerts, cost tracking
 
-```
-┌──────────┐     ┌──────────┐     ┌──────────┐     ┌──────────┐     ┌──────────┐
-│ Researcher│────▶│ Analyst  │────▶│  Writer  │────▶│ Reviewer │────▶│ Action   │
-│ + GitHub │     │ + SQL DB │     │ + Email  │     │          │     │ → PDF    │
-│ + Scraper│     │ + Charts │     │  Plugin  │     │          │     │ → Assets │
-└──────────┘     └──────────┘     └──────────┘     └──────────┘     └──────────┘
-                    Shared Memory (per-run KV store)
-```
-
 ---
 
 ## Prerequisites
@@ -71,15 +62,7 @@ Open-source platform for orchestrating AI agents and building agentic workflows 
 | **Python** | 3.11+ | Engine (FastAPI, PyTorch, Transformers) | [python.org](https://www.python.org/) or `pyenv install 3.11` |
 | **uv** | latest | Fast Python package manager (replaces pip/poetry) | [docs.astral.sh/uv](https://docs.astral.sh/uv/) |
 | **Git** | 2.x+ | Source control | [git-scm.com](https://git-scm.com/) |
-
-### Optional
-
-| Tool | Purpose |
-|------|---------|
-| **Ollama** | Local LLM inference (recommended) — [ollama.com](https://ollama.com/) |
-| **llama.cpp** | Alternative local inference with parallel execution support |
-| **HuggingFace token** | Download gated models, push datasets to Hub |
-| **Go 1.22+** | Only if using the Go client library |
+| **Go 1.22+** | 1.26.1 | Parallelizm | [golang](https://go.dev/doc/install) |
 
 ---
 
@@ -106,23 +89,12 @@ Edit `.env` if needed. Key variables:
 | `DB_MODE` | `local` | Set to empty for Neon cloud DB |
 | `QDRANT_URL` | `http://localhost:6333` | Qdrant vector database |
 | `NEXT_PUBLIC_ENGINE_URL` | `http://localhost:8000` | Engine URL for frontend |
-| `HF_TOKEN` | *(empty)* | HuggingFace token (optional) |
 
 ### 3. Start everything
 
 ```bash
 ./start.sh
 ```
-
-This single script handles:
-1. Preflight checks (Docker, Node, uv, Python)
-2. Environment file setup
-3. Port cleanup (3000, 5050, 8000)
-4. Docker services (PostgreSQL, Qdrant, MLflow, backup, executor containers)
-5. Health check polling until all services are ready
-6. Dependency installation (`npm install` + `uv sync`)
-7. Database schema migrations (Drizzle + Quorum)
-8. Engine (FastAPI on port 8000) and Frontend (Next.js on port 3000) startup
 
 ### 4. Verify
 
@@ -152,54 +124,6 @@ make db-push            # Apply database schema
 make engine &           # Start FastAPI engine (port 8000)
 make frontend           # Start Next.js frontend (port 3000)
 ```
-
----
-
-## Makefile Commands
-
-| Command | Description |
-|---------|-------------|
-| `make start` | Full stack bootstrap via `start.sh` |
-| `make stop` | Stop all services and processes |
-| `make docker-up` / `docker-down` | Start / stop Docker containers |
-| `make docker-reset` | Wipe volumes and restart (destructive) |
-| `make frontend` | Next.js dev server |
-| `make engine` | FastAPI with hot reload |
-| `make install` | Install all dependencies (frontend + engine) |
-| `make db-push` | Apply Drizzle schema to database |
-| `make db-seed` | Populate sample data |
-| `make db-studio` | Open Drizzle visual schema editor |
-| `make backup` | Manual PostgreSQL backup |
-| `make restore FILE=...` | Restore from backup file |
-| `make clean` | Remove build artifacts and node_modules |
-
----
-
-## Project Structure
-
-```
-kortecx/
-├── frontend/             # Next.js 16 — UI, API routes, Drizzle ORM
-├── engine/               # FastAPI — ML/AI, orchestration, inference
-├── go-client/            # Go client library (Quorum types)
-├── docs/                 # Feature documentation
-│   ├── QUORUM_ENGINE.md
-│   ├── WORKFLOW_BUILDER.md
-│   ├── EXPERT_SYSTEM.md
-│   ├── MONITORING.md
-│   ├── INTELLIGENCE.md
-│   ├── MCP_SERVERS.md
-│   └── TESTING.md
-├── scripts/              # Setup, backup, quality gates
-├── docker-compose.yml    # PostgreSQL, Qdrant, MLflow, executors
-├── kortecx.config.json   # Central platform metadata & schema versioning
-├── Makefile              # Developer commands
-├── start.sh              # One-command bootstrap
-└── CHANGELOG.md          # Release history
-```
-
-See [`frontend/README.md`](frontend/README.md) and [`engine/README.md`](engine/README.md) for component-specific documentation.
-
 ---
 
 ## Features
@@ -215,18 +139,6 @@ Monaco-powered prompt editors, live execution status overlays, model pull with p
 
 ### Enterprise Monitoring
 Full observability with execution artifacts, script auto-execution, graceful failure handling, metrics auto-capture, and comprehensive analytics. See [docs/MONITORING.md](docs/MONITORING.md).
-
----
-
-## Quality Gates
-
-```bash
-./scripts/check.sh          # Full: typecheck, lint, test, build
-./scripts/check.sh --quick  # Fast: tsc, eslint, ruff, go vet
-./scripts/check.sh --test   # Tests only
-```
-
-A pre-push hook runs `--quick` mode automatically before every `git push`.
 
 ---
 
