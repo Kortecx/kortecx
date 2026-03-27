@@ -95,6 +95,10 @@ export interface Expert {
   /* Performance */
   stats: ExpertStats;
 
+  /* Graph metadata */
+  category?: string;
+  complexityLevel?: number;
+
   /* Ownership */
   isPublic: boolean;
   ownerId?: string;
@@ -701,3 +705,52 @@ export type QuorumEventType =
   | 'quorum.agent.recovered'
   | 'quorum.metrics.snapshot'
   | 'quorum.error';
+
+/* ── Plans & DAG ─────────────────────────────────────── */
+export interface PlanNode {
+  id: string;
+  prismId: string;
+  label: string;
+  position: { x: number; y: number };
+  dependsOn?: string[];
+  status?: 'pending' | 'running' | 'completed' | 'failed';
+  tokensUsed?: number;
+  durationMs?: number;
+}
+
+export interface PlanEdge {
+  id: string;
+  source: string;
+  target: string;
+  animated?: boolean;
+}
+
+export interface Plan {
+  id: string;
+  workflowId?: string;
+  name: string;
+  description?: string;
+  dag: { nodes: PlanNode[]; edges: PlanEdge[] };
+  status: 'draft' | 'ready' | 'executing' | 'completed' | 'failed';
+  generatedBy: 'user' | 'model';
+  modelUsed?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/* ── Unified Run (combines expert + workflow runs) ──── */
+export interface UnifiedRun {
+  id: string;
+  type: 'prism' | 'workflow';
+  name: string;
+  status: string;
+  startedAt?: string;
+  completedAt?: string;
+  durationMs?: number;
+  tokensUsed?: number;
+  costUsd?: number;
+  model?: string;
+  engine?: string;
+  planId?: string;
+  errorMessage?: string;
+}

@@ -25,6 +25,8 @@ _ENGINE_TO_DB: dict[str, str] = {
     "localModelConfig": "local_model_config",
     "temperature": "temperature",
     "maxTokens": "max_tokens",
+    "category": "category",
+    "complexityLevel": "complexity_level",
     "tags": "tags",
     "isPublic": "is_public",
     "createdAt": "created_at",
@@ -60,6 +62,8 @@ def _to_db_row(expert: dict[str, Any]) -> dict[str, Any]:
         "system_prompt": system_prompt or None,
         "temperature": float(expert.get("temperature", 0.7)),
         "max_tokens": int(expert.get("maxTokens", 4096)),
+        "category": expert.get("category", "custom"),
+        "complexity_level": int(expert.get("complexityLevel", 3)),
         "tags": expert.get("tags") or None,
         "is_public": bool(expert.get("isPublic", False)),
         "is_finetuned": bool(expert.get("isFinetuned", False)),
@@ -94,6 +98,8 @@ def _from_db_row(row: dict[str, Any]) -> dict[str, Any]:
         "modelSource": row.get("model_source", "local"),
         "temperature": float(row["temperature"]) if row.get("temperature") is not None else 0.7,
         "maxTokens": row.get("max_tokens", 4096),
+        "category": row.get("category", "custom"),
+        "complexityLevel": row.get("complexity_level", 3),
         "tags": row.get("tags") or [],
         "isPublic": bool(row.get("is_public", False)),
         "isFinetuned": bool(row.get("is_finetuned", False)),
@@ -141,6 +147,7 @@ INSERT INTO experts (
     model_id, model_name, provider_id, provider_name,
     model_source, local_model_config,
     system_prompt, temperature, max_tokens,
+    category, complexity_level,
     tags, is_public, is_finetuned, replica_count,
     created_at, updated_at
 ) VALUES (
@@ -148,8 +155,9 @@ INSERT INTO experts (
     $7, $8, $9, $10,
     $11, $12,
     $13, $14, $15,
-    $16, $17, $18, $19,
-    $20, $21
+    $16, $17,
+    $18, $19, $20, $21,
+    $22, $23
 )
 ON CONFLICT (id) DO UPDATE SET
     name              = EXCLUDED.name,
@@ -165,6 +173,8 @@ ON CONFLICT (id) DO UPDATE SET
     system_prompt     = EXCLUDED.system_prompt,
     temperature       = EXCLUDED.temperature,
     max_tokens        = EXCLUDED.max_tokens,
+    category          = EXCLUDED.category,
+    complexity_level  = EXCLUDED.complexity_level,
     tags              = EXCLUDED.tags,
     is_public         = EXCLUDED.is_public,
     is_finetuned      = EXCLUDED.is_finetuned,
@@ -251,6 +261,8 @@ class ExpertSyncService:
                     row["system_prompt"],
                     row["temperature"],
                     row["max_tokens"],
+                    row["category"],
+                    row["complexity_level"],
                     row["tags"],
                     row["is_public"],
                     row["is_finetuned"],

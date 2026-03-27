@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useMemo, useEffect, useRef, Suspense } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useSearchParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import useSWR from 'swr';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -13,11 +13,15 @@ import {
   ChevronDown, Play, Cpu, Tag, X,
   Trash2, CheckCircle2, AlertCircle,
   Copy, RotateCcw, Store, FileText,
+  Network, LayoutGrid,
 } from 'lucide-react';
-import { useExperts } from '@/lib/hooks/useApi';
+import { useExperts, usePrismGraph } from '@/lib/hooks/useApi';
 import { ROLE_META } from '@/lib/constants';
 import type { Expert, ExpertRole } from '@/lib/types';
 import ExpertEditDialog from './_components/ExpertEditDialog';
+import PrismGraph from './_components/PrismGraph';
+import type { SimilarityEdge } from './_components/PrismGraph';
+import PrismListView from './_components/PrismListView';
 
 /* ═══════════════════════════════════════════════════════
    Constants
@@ -95,6 +99,24 @@ interface MarketplaceExpert {
   tags: string[];
   specializations: string[];
   capabilities: string[];
+}
+
+/* ─── Marketplace edge computation (client-side Jaccard) ── */
+function computeMarketplaceEdges(items: MarketplaceExpert[]): SimilarityEdge[] {
+  const out: SimilarityEdge[] = [];
+  for (let i = 0; i < items.length; i++) {
+    for (let j = i + 1; j < items.length; j++) {
+      const a = items[i], b = items[j];
+      const aSet = new Set([...a.specializations, ...a.capabilities]);
+      const bSet = new Set([...b.specializations, ...b.capabilities]);
+      const inter = [...aSet].filter(x => bSet.has(x)).length;
+      const union = new Set([...aSet, ...bSet]).size;
+      let score = union > 0 ? (inter / union) * 0.7 : 0;
+      if (a.role === b.role) score += 0.3;
+      if (score > 0.2) out.push({ source: a.id, target: b.id, weight: Math.round(score * 100) / 100 });
+    }
+  }
+  return out;
 }
 
 /* ─── Marketplace experts data ─────────────────────── */
@@ -370,7 +392,7 @@ function StatsModal({
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <BarChart2 size={16} color={SECTION_COLOR} />
-            <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-1)' }}>Expert Statistics</span>
+            <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-1)' }}>PRISM Statistics</span>
           </div>
           <button onClick={onClose} style={{
             background: 'none', border: 'none', cursor: 'pointer',
@@ -490,7 +512,7 @@ function StatsModal({
               <BarChart2 size={20} color="var(--text-4)" style={{ margin: '0 auto 8px' }} />
               <div style={{ fontSize: 13, color: 'var(--text-3)', fontWeight: 500 }}>No run data yet</div>
               <div style={{ fontSize: 11, color: 'var(--text-4)', marginTop: 4 }}>
-                Run this expert in a workflow to start collecting statistics.
+                Run this PRISM in a workflow to start collecting statistics.
               </div>
             </div>
           )}
@@ -758,7 +780,7 @@ function MyExpertCard({
           <BarChart2 size={10} />
           Stats
         </button>
-        <button onClick={e => { e.stopPropagation(); onDelete(); }} title="Delete expert" style={{
+        <button onClick={e => { e.stopPropagation(); onDelete(); }} title="Delete PRISM" style={{
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           padding: '7px 8px', borderRadius: 7, cursor: 'pointer',
           border: '1px solid rgba(220,38,38,0.2)',
@@ -957,8 +979,12 @@ function ExpertsPage() {
   const [mpSearch, setMpSearch]         = useState('');
   const [mpRoleFilter, setMpRoleFilter] = useState<ExpertRole | 'all'>('all');
   const [mpSortBy, setMpSortBy]         = useState<MarketplaceSortOption>('rating');
+  const [mpViewMode, setMpViewMode]     = useState<'graph' | 'list'>('graph');
 
+  const router = useRouter();
   const { experts, total, isLoading, mutate } = useExperts();
+  const { edges: graphEdges, mutate: mutateGraph } = usePrismGraph();
+  const [viewMode, setViewMode] = useState<'graph' | 'list'>('graph');
   const [expertRunStatus, setExpertRunStatus] = useState<Record<string, 'running' | 'success' | 'error'>>({});
   const [deleteTarget, setDeleteTarget] = useState<Record<string, unknown> | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -1016,6 +1042,7 @@ function ExpertsPage() {
       const resp = await fetch(`/api/experts?id=${deleteTarget.id}`, { method: 'DELETE' });
       if (resp.ok) {
         mutate();
+        setTimeout(() => mutateGraph(), 1000); // refresh graph after Qdrant cleanup
         fetch('/api/logs', { method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ level: 'info', message: `Expert deleted: ${deleteTarget.name}`, source: 'expert', metadata: { expertId: deleteTarget.id } }),
         }).catch(() => {});
@@ -1237,7 +1264,7 @@ function ExpertsPage() {
                     <Trash2 size={16} color="#ef4444" />
                   </div>
                   <div>
-                    <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-1)' }}>Delete Expert</div>
+                    <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-1)' }}>Delete PRISM</div>
                     <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 1 }}>This action cannot be undone</div>
                   </div>
                 </div>
@@ -1275,7 +1302,7 @@ function ExpertsPage() {
                   }}
                 >
                   {deleting ? <Loader2 size={12} style={{ animation: 'spin 1s linear infinite' }} /> : <Trash2 size={12} />}
-                  {deleting ? 'Deleting...' : 'Delete Expert'}
+                  {deleting ? 'Deleting...' : 'Delete PRISM'}
                 </button>
               </div>
             </motion.div>
@@ -1312,10 +1339,10 @@ function ExpertsPage() {
           </div>
           <div>
             <h1 style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-1)', lineHeight: 1, margin: 0 }}>
-              Experts
+              PRISM
             </h1>
             <p style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 4, margin: '4px 0 0' }}>
-              Manage your experts and discover new templates
+              Manage your PRISMs and discover new templates
             </p>
           </div>
         </div>
@@ -1353,7 +1380,7 @@ function ExpertsPage() {
         borderBottom: '1px solid var(--border)',
       }}>
         {([
-          { key: 'mine' as TabKey, label: 'My Experts', icon: Star, count: total },
+          { key: 'mine' as TabKey, label: 'My PRISMs', icon: Star, count: total },
           { key: 'marketplace' as TabKey, label: 'Marketplace', icon: Store, count: MARKETPLACE_EXPERTS.length },
         ]).map(tab => {
           const isActive = activeTab === tab.key;
@@ -1405,10 +1432,10 @@ function ExpertsPage() {
             }}
           >
             {[
-              { label: 'Total Experts',    value: String(total),             color: SECTION_COLOR, icon: Star,      sub: 'deployed'        },
+              { label: 'Total PRISMs',     value: String(total),             color: SECTION_COLOR, icon: Star,      sub: 'deployed'        },
               { label: 'Active',           value: String(activeCt),          color: '#10b981',     icon: Activity,  sub: 'processing'      },
               { label: 'Fine-tuned',       value: String(fineTunedCt),       color: '#f97316',     icon: Zap,       sub: 'custom models'   },
-              { label: 'Avg Success Rate', value: avgSuccess > 0 ? `${(avgSuccess * 100).toFixed(1)}%` : '—', color: '#06b6d4', icon: TrendingUp, sub: 'across all experts' },
+              { label: 'Avg Success Rate', value: avgSuccess > 0 ? `${(avgSuccess * 100).toFixed(1)}%` : '—', color: '#06b6d4', icon: TrendingUp, sub: 'across all PRISMs' },
             ].map(({ label, value, color, icon: Icon, sub }) => (
               <div key={label} style={{
                 background: 'var(--bg-surface)',
@@ -1532,10 +1559,70 @@ function ExpertsPage() {
                 )}
               </AnimatePresence>
             </div>
+
+            {/* Graph / List toggle */}
+            <div style={{ display: 'flex', gap: 2, marginLeft: 'auto', background: 'var(--bg-surface)', borderRadius: 8, border: '1px solid var(--border-md)', padding: 2 }}>
+              {([
+                { mode: 'graph' as const, icon: Network, title: 'Graph view' },
+                { mode: 'list' as const, icon: LayoutGrid, title: 'List view' },
+              ]).map(({ mode, icon: Icon, title }) => (
+                <button
+                  key={mode}
+                  onClick={() => setViewMode(mode)}
+                  title={title}
+                  style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    width: 30, height: 28, borderRadius: 6, border: 'none',
+                    background: viewMode === mode ? `${SECTION_COLOR}18` : 'transparent',
+                    color: viewMode === mode ? SECTION_COLOR : 'var(--text-4)',
+                    cursor: 'pointer', transition: 'all 0.15s',
+                  }}
+                >
+                  <Icon size={14} />
+                </button>
+              ))}
+            </div>
           </motion.div>
 
-          {/* Expert cards grid */}
-          {isLoading ? (
+          {/* PRISM Graph view */}
+          {viewMode === 'graph' && !isLoading && (
+            <div style={{ marginBottom: 20 }}>
+              <PrismGraph
+                prisms={experts}
+                edges={graphEdges}
+                onNodeClick={(id) => {
+                  const expert = experts.find((e: Record<string, unknown>) => e.id === id);
+                  if (expert) setConfigureExpert(expert);
+                }}
+                search={mineSearch}
+              />
+            </div>
+          )}
+
+          {/* PRISM List view */}
+          {viewMode === 'list' && !isLoading && (
+            <PrismListView
+              prisms={mineFiltered}
+              edges={graphEdges}
+              onConfigure={setConfigureExpert}
+              onRun={handleRunExpert}
+              onDelete={handleDeleteExpert}
+              onCreateEdge={async (sourceId, targetId) => {
+                try {
+                  await fetch('/api/experts/graph', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ source: sourceId, target: targetId }),
+                  });
+                  mutate();
+                  setTimeout(() => mutateGraph(), 2000); // refresh graph after re-embedding
+                } catch { /* ignore */ }
+              }}
+            />
+          )}
+
+          {/* PRISM cards loading skeleton */}
+          {viewMode === 'list' && isLoading && (
             <div style={{
               display: 'grid',
               gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
@@ -1543,82 +1630,6 @@ function ExpertsPage() {
             }}>
               {[0, 1, 2, 3].map(i => <SkeletonCard key={i} />)}
             </div>
-          ) : (
-            <AnimatePresence mode="wait">
-              {mineFiltered.length === 0 ? (
-                <motion.div
-                  key="empty"
-                  initial={{ opacity: 0, y: 12 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0 }}
-                  style={{
-                    textAlign: 'center', padding: '80px 0',
-                    display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14,
-                  }}
-                >
-                  <div style={{
-                    width: 56, height: 56, borderRadius: 14,
-                    background: 'var(--bg-elevated)', border: '1px solid var(--border)',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  }}>
-                    <Star size={24} color="var(--text-4)" />
-                  </div>
-                  <div>
-                    <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-2)', marginBottom: 6 }}>
-                      {mineSearch || mineStatusFilter !== 'all' ? 'No experts match your filters' : 'No experts deployed yet'}
-                    </div>
-                    <div style={{ fontSize: 12, color: 'var(--text-4)', maxWidth: 340 }}>
-                      {mineSearch || mineStatusFilter !== 'all'
-                        ? 'Try adjusting your search terms or clearing the status filter.'
-                        : 'Deploy your first expert to get started building AI-powered workflows.'}
-                    </div>
-                  </div>
-                  {!mineSearch && mineStatusFilter === 'all' && (
-                    <Link href="/experts/deploy" style={{
-                      display: 'inline-flex', alignItems: 'center', gap: 7,
-                      padding: '9px 20px', borderRadius: 8,
-                      border: `1.5px solid ${SECTION_COLOR}`,
-                      background: `${SECTION_COLOR}14`,
-                      color: SECTION_COLOR, fontSize: 13, fontWeight: 700,
-                      textDecoration: 'none', marginTop: 4,
-                    }}>
-                      <Plus size={14} strokeWidth={2.5} />
-                      Deploy Your First Expert
-                    </Link>
-                  )}
-                </motion.div>
-              ) : (
-                <motion.div
-                  key={`${mineStatusFilter}-${mineSortBy}`}
-                  variants={stagger}
-                  initial="hidden"
-                  animate="show"
-                  style={{
-                    display: 'grid',
-                    gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
-                    gap: 16,
-                  }}
-                >
-                  {mineFiltered.map((expert: Record<string, unknown>) => {
-                    const expertId = expert.id as string;
-                    const isHighlighted = highlightedId === expertId;
-                    return (
-                      <MyExpertCard
-                        key={expertId}
-                        expert={expert}
-                        onConfigure={() => setConfigureExpert(expert)}
-                        onViewStats={() => setStatsExpert(expert)}
-                        onDelete={() => handleDeleteExpert(expert)}
-                        onRun={() => handleRunExpert(expert)}
-                        highlighted={isHighlighted}
-                        cardRef={isHighlighted ? highlightRef : undefined}
-                        runStatus={expertRunStatus[expertId]}
-                      />
-                    );
-                  })}
-                </motion.div>
-              )}
-            </AnimatePresence>
           )}
 
           {/* Footer */}
@@ -1686,6 +1697,29 @@ function ExpertsPage() {
               <option value="runs">Sort: Popularity</option>
               <option value="name">Sort: Name</option>
             </select>
+
+            {/* Graph / List toggle */}
+            <div style={{ display: 'flex', gap: 2, marginLeft: 'auto', background: 'var(--bg-surface)', borderRadius: 8, border: '1px solid var(--border-md)', padding: 2 }}>
+              {([
+                { mode: 'graph' as const, icon: Network, title: 'Graph view' },
+                { mode: 'list' as const, icon: LayoutGrid, title: 'Card view' },
+              ]).map(({ mode, icon: Icon, title }) => (
+                <button
+                  key={mode}
+                  onClick={() => setMpViewMode(mode)}
+                  title={title}
+                  style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    width: 30, height: 28, borderRadius: 6, border: 'none',
+                    background: mpViewMode === mode ? `${SECTION_COLOR}18` : 'transparent',
+                    color: mpViewMode === mode ? SECTION_COLOR : 'var(--text-4)',
+                    cursor: 'pointer', transition: 'all 0.15s',
+                  }}
+                >
+                  <Icon size={14} />
+                </button>
+              ))}
+            </div>
           </motion.div>
 
           {/* Role filter pills */}
@@ -1738,8 +1772,27 @@ function ExpertsPage() {
             </div>
           )}
 
-          {/* Marketplace grid */}
-          {mpFiltered.length === 0 ? (
+          {/* Marketplace graph view */}
+          {mpViewMode === 'graph' && (
+            <div style={{ marginBottom: 20 }}>
+              <PrismGraph
+                prisms={mpFiltered.map(e => ({
+                  id: e.id, name: e.name, description: e.description,
+                  role: e.role, status: 'active', tags: e.tags,
+                  category: e.role, complexityLevel: 3,
+                  totalRuns: e.totalRuns, rating: e.rating,
+                }))}
+                edges={computeMarketplaceEdges(mpFiltered)}
+                onNodeClick={(id) => {
+                  router.push(`/experts/deploy`);
+                }}
+                search={mpSearch}
+              />
+            </div>
+          )}
+
+          {/* Marketplace card grid */}
+          {mpViewMode === 'list' && (mpFiltered.length === 0 ? (
             <motion.div
               initial={{ opacity: 0, y: 12 }}
               animate={{ opacity: 1, y: 0 }}
@@ -1791,7 +1844,7 @@ function ExpertsPage() {
                 <MarketplaceCard key={expert.id} expert={expert} />
               ))}
             </motion.div>
-          )}
+          ))}
         </>
       )}
 
@@ -1800,7 +1853,7 @@ function ExpertsPage() {
         expert={configureExpert as Expert | null}
         open={!!configureExpert}
         onClose={() => setConfigureExpert(null)}
-        onSaved={() => { mutate(); setConfigureExpert(null); }}
+        onSaved={() => { mutate(); setTimeout(() => mutateGraph(), 2000); setConfigureExpert(null); }}
       />
       <AnimatePresence>
         {statsExpert && (

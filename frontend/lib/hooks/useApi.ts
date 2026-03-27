@@ -112,6 +112,45 @@ export function useExperts(status?: string) {
   };
 }
 
+/* ── PRISM Graph (version-based efficient polling) ─── */
+export function usePrismGraph() {
+  // Poll version cheaply every 10s
+  const { data: versionData } = useSWR(
+    '/api/experts/graph/version',
+    (url: string) => fetch(url).then(r => r.ok ? r.json() : null).catch(() => null),
+    { refreshInterval: 10_000 },
+  );
+  const versionKey = versionData?.version ?? null;
+
+  // Only fetch full edges when version changes (or on first load)
+  const { data, error, isLoading, mutate } = useSWR(
+    versionKey !== null ? `/api/experts/graph?v=${versionKey}` : '/api/experts/graph',
+    fetcher,
+    { refreshInterval: 0, revalidateOnFocus: false },
+  );
+  return {
+    edges: data?.edges ?? [],
+    total: data?.total ?? 0,
+    version: data?.version ?? null,
+    error,
+    isLoading,
+    mutate,
+  };
+}
+
+/* ── Plans ─────────────────────────────────────────── */
+export function usePlans(workflowId?: string) {
+  const url = workflowId ? `/api/plans?workflowId=${workflowId}` : '/api/plans';
+  const { data, error, isLoading, mutate } = useSWR(url, fetcher);
+  return {
+    plans: data?.plans ?? [],
+    total: data?.total ?? 0,
+    error,
+    isLoading,
+    mutate,
+  };
+}
+
 /* ── Workflows ──────────────────────────────────────── */
 export function useWorkflows(templatesOnly = false) {
   const url = templatesOnly ? '/api/workflows?templates=1' : '/api/workflows';

@@ -3,6 +3,15 @@ import { db, experts, expertRuns } from '@/lib/db';
 import { eq, ilike, or, desc, asc, sql } from 'drizzle-orm';
 import { logStatus } from '@/lib/status-log';
 
+const ENGINE_URL = process.env.NEXT_PUBLIC_ENGINE_URL || 'http://localhost:8000';
+
+/** Fire-and-forget: embed a PRISM into Qdrant for graph similarity. */
+function embedPrism(expertId: string): void {
+  fetch(`${ENGINE_URL}/api/experts/engine/${expertId}/embed`, { method: 'POST' }).catch((err) => {
+    console.warn('[experts] embed failed:', err);
+  });
+}
+
 /* GET /api/experts — query params: role, status, search, sort, id */
 export async function GET(req: NextRequest) {
   const { searchParams } = req.nextUrl;
@@ -60,6 +69,7 @@ export async function POST(req: NextRequest) {
     const {
       name, role, modelId, providerId, systemPrompt, temperature,
       maxTokens, description, tags, isPublic, modelSource, localModelConfig,
+      category, complexityLevel,
     } = body;
 
     if (!name?.trim()) {
@@ -102,7 +112,12 @@ export async function POST(req: NextRequest) {
       version:       '1.0.0',
       tags:          tags ?? [],
       isPublic:      isPublic ?? false,
+      category:      category ?? 'custom',
+      complexityLevel: complexityLevel ?? 3,
     }).returning();
+
+    // Embed into Qdrant for graph similarity (non-blocking)
+    embedPrism(id);
 
     logStatus('info', `Expert deployed: ${name}`, 'expert', { id, role, modelSource: modelSource || 'provider' });
     return NextResponse.json({ expert: inserted, message: 'Expert deployment initiated' }, { status: 201 });
@@ -147,6 +162,8 @@ export async function PATCH(req: NextRequest) {
     if (updates.maxTokens !== undefined)        values.maxTokens = updates.maxTokens;
     if (updates.tags !== undefined)             values.tags = updates.tags;
     if (updates.isPublic !== undefined)         values.isPublic = updates.isPublic;
+    if (updates.category !== undefined)         values.category = updates.category;
+    if (updates.complexityLevel !== undefined)  values.complexityLevel = updates.complexityLevel;
     if (updates.isFinetuned !== undefined)      values.isFinetuned = updates.isFinetuned;
     if (updates.replicaCount !== undefined)     values.replicaCount = updates.replicaCount;
 
@@ -154,6 +171,12 @@ export async function PATCH(req: NextRequest) {
       .set(values)
       .where(eq(experts.id, id))
       .returning();
+
+    // Re-embed into Qdrant if any graph-relevant field changed (non-blocking)
+    const graphFields = ['name', 'description', 'role', 'category', 'tags', 'complexityLevel'];
+    if (graphFields.some(f => updates[f] !== undefined)) {
+      embedPrism(id);
+    }
 
     logStatus('info', `Expert updated: ${id}`, 'expert', { id, fields: Object.keys(updates) });
     return NextResponse.json({ expert: updated });
@@ -164,10 +187,8 @@ export async function PATCH(req: NextRequest) {
   }
 }
 
-/* DELETE /api/experts — Remove an expert */
+/* DELETE /api/experts — Remove an expert (also cleans Qdrant via engine) */
 export async function DELETE(req: NextRequest) {
-  const ENGINE_URL = process.env.NEXT_PUBLIC_ENGINE_URL || 'http://localhost:8000';
-
   try {
     const { searchParams } = req.nextUrl;
     const id = searchParams.get('id');

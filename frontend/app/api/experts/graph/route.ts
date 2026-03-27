@@ -1,0 +1,48 @@
+import { NextRequest, NextResponse } from 'next/server';
+
+const ENGINE_URL = process.env.NEXT_PUBLIC_ENGINE_URL || 'http://localhost:8000';
+
+/* GET /api/experts/graph — Fetch similarity edges from engine (Qdrant) */
+export async function GET(req: NextRequest) {
+  const { searchParams } = req.nextUrl;
+  const threshold = searchParams.get('threshold') ?? '0.15';
+  const limit = searchParams.get('limit') ?? '30';
+
+  try {
+    const resp = await fetch(
+      `${ENGINE_URL}/api/experts/engine/graph/edges?threshold=${threshold}&limit=${limit}`,
+      { cache: 'no-store' },
+    );
+    if (!resp.ok) {
+      return NextResponse.json({ edges: [], total: 0 });
+    }
+    const data = await resp.json();
+    return NextResponse.json(data);
+  } catch (err) {
+    console.error('[experts/graph GET]', err);
+    return NextResponse.json({ edges: [], total: 0 });
+  }
+}
+
+/* POST /api/experts/graph — Create explicit edge between two PRISMs */
+export async function POST(req: NextRequest) {
+  try {
+    const { source, target } = await req.json();
+    if (!source || !target) {
+      return NextResponse.json({ error: 'source and target required' }, { status: 400 });
+    }
+    const resp = await fetch(
+      `${ENGINE_URL}/api/experts/engine/${source}/attach`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ targetId: target }),
+      },
+    );
+    const data = await resp.json();
+    return NextResponse.json(data);
+  } catch (err) {
+    console.error('[experts/graph POST]', err);
+    return NextResponse.json({ error: 'Failed to create edge' }, { status: 500 });
+  }
+}

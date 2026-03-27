@@ -337,12 +337,11 @@ export const SYSTEM_METRICS = {
 export const NAV_SECTIONS = [
   {
     id: 'experts',
-    label: 'EXPERTS',
+    label: 'PRISM',
     color: '#D97706',
     items: [
-      { id: 'experts',    label: 'Experts',         path: '/experts',                    icon: 'Users' },
-      { id: 'deploy',     label: 'Deploy New',      path: '/experts/deploy',             icon: 'Rocket' },
-      { id: 'agents',     label: 'Experts & Tasks', path: '/agents',                     icon: 'Cpu' },
+      { id: 'experts',    label: 'PRISM',           path: '/experts',                    icon: 'Boxes' },
+      { id: 'deploy',     label: 'Bundle',           path: '/experts/deploy',             icon: 'Rocket' },
     ],
   },
   {
@@ -352,7 +351,6 @@ export const NAV_SECTIONS = [
     items: [
       { id: 'builder',   label: 'Builder',     path: '/workflow/builder',   icon: 'LayoutTemplate' },
       { id: 'workflows', label: 'Workflows',   path: '/workflow',           icon: 'Workflow' },
-      { id: 'history',   label: 'Run History', path: '/workflow/history',   icon: 'History' },
     ],
   },
   {
@@ -381,6 +379,7 @@ export const NAV_SECTIONS = [
     label: 'MONITORING',
     color: '#DC2626',
     items: [
+      { id: 'runs',        label: 'Runs',         path: '/monitoring/runs',    icon: 'Zap' },
       { id: 'performance', label: 'Performance', path: '/monitoring',         icon: 'Activity' },
       { id: 'logs',        label: 'Logs',         path: '/monitoring/logs',   icon: 'ScrollText' },
       { id: 'alerts',      label: 'Alerts',        path: '/monitoring/alerts', icon: 'Bell' },
