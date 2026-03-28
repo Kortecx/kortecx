@@ -611,7 +611,7 @@ export default function ExpertEditDialog({ expert, open, onClose, onSaved }: Exp
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                     <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-2)' }}>
-                      Expert Files
+                      PRISM Files
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       <label style={{ fontSize: 12, color: 'var(--text-3)' }}>Max Versions:</label>

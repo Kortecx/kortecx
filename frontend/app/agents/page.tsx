@@ -133,7 +133,7 @@ export default function ExpertsAndTasksPage() {
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
               <h1 style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-1)', lineHeight: 1 }}>
-                Experts & Tasks
+                PRISM & Tasks
               </h1>
               {running > 0 && (
                 <div style={{
@@ -228,7 +228,7 @@ export default function ExpertsAndTasksPage() {
         }}
       >
         {([
-          { key: 'experts' as SectionTab, label: 'Expert Runs',  icon: Cpu },
+          { key: 'experts' as SectionTab, label: 'PRISM Runs',   icon: Cpu },
           { key: 'tasks' as SectionTab,   label: 'Task Queue',   icon: ListOrdered },
         ]).map(({ key, label, icon: Icon }) => (
           <button
@@ -314,11 +314,11 @@ export default function ExpertsAndTasksPage() {
                       <Cpu size={22} color="var(--text-4)" />
                     </div>
                     <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-2)' }}>
-                      No expert runs found
+                      No PRISM runs found
                     </div>
                     <div style={{ fontSize: 12, color: 'var(--text-4)', maxWidth: 320 }}>
                       {runFilter === 'all'
-                        ? 'Run an expert from the Experts page to see runs here.'
+                        ? 'Run a PRISM from the PRISM page to see runs here.'
                         : `No ${runFilter} runs. Switch tabs to see other runs.`}
                     </div>
                   </motion.div>

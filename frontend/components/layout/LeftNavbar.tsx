@@ -24,7 +24,7 @@ const ICONS: Record<string, React.ElementType> = {
 /* ── New button menu items ─────────────────────────── */
 const NEW_MENU_ITEMS = [
   { id: 'workflow',   label: 'Build Workflow',     path: '/workflow/builder',                      icon: LayoutTemplate, color: '#2563EB' },
-  { id: 'expert',     label: 'New Expert',          path: '/experts/deploy',                        icon: Rocket,         color: '#D97706' },
+  { id: 'expert',     label: 'New PRISM',           path: '/experts/deploy',                        icon: Rocket,         color: '#D97706' },
   { id: 'dataset',    label: 'New Dataset',         path: '/data?action=new',                       icon: Database,       color: '#0EA5E9' },
   { id: 'mcp',        label: 'New MCP Server',      path: '/providers/connections?tab=mcp&action=new', icon: Server,      color: '#059669' },
 ];

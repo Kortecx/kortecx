@@ -141,3 +141,5 @@ frontend/.vitest/
 !frontend/tests/
 
 STRATEGY.md
+FEATURES/
+cache_dir

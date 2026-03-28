@@ -57,6 +57,7 @@ export const workflowRuns = pgTable('workflow_runs', {
   durationSec:    integer('duration_sec'),
   input:          text('input'),
   expertChain:    text('expert_chain').array(),
+  planId:         text('plan_id'),
   errorMessage:   text('error_message'),
   metadata:       jsonb('metadata'),
   createdAt:      timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
@@ -140,10 +141,26 @@ export const experts = pgTable('experts', {
   avgLatencyMs:  integer('avg_latency_ms').default(0),
   avgCostPerRun: decimal('avg_cost_per_run', { precision: 8, scale: 4 }).default('0'),
   rating:        decimal('rating', { precision: 3, scale: 2 }).default('0'),
+  category:      varchar('category', { length: 30 }).default('custom'),
+  complexityLevel: integer('complexity_level').default(3),
   tags:          text('tags').array(),
   isPublic:      boolean('is_public').default(false),
   isFinetuned:   boolean('is_finetuned').default(false),
   replicaCount:  integer('replica_count').default(1),
+  createdAt:     timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt:     timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+/* ─── Plans (DAG execution blueprints) ───────────────── */
+export const plans = pgTable('plans', {
+  id:            text('id').primaryKey(),
+  workflowId:    text('workflow_id'),
+  name:          text('name').notNull(),
+  description:   text('description'),
+  dag:           jsonb('dag'),           // { nodes: PlanNode[], edges: PlanEdge[] }
+  status:        varchar('status', { length: 20 }).default('draft'),
+  generatedBy:   varchar('generated_by', { length: 10 }).default('user'),
+  modelUsed:     text('model_used'),
   createdAt:     timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt:     timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 });

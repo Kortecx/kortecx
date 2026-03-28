@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState, useEffect, Suspense } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { motion, AnimatePresence, type Variants } from 'framer-motion';
 import {
   Rocket, Check, Loader2, ChevronRight, ChevronLeft,
@@ -90,7 +90,7 @@ const STEPS = [
   { n: 1, label: 'Configuration', icon: User },
   { n: 2, label: 'Model',         icon: Cpu },
   { n: 3, label: 'Prompt & Config', icon: Sliders },
-  { n: 4, label: 'Review & Deploy', icon: Rocket },
+  { n: 4, label: 'Review & Bundle', icon: Rocket },
 ];
 
 function StepBar({ current }: { current: number }) {
@@ -224,7 +224,17 @@ function SummaryRow({ label, value }: { label: string; value: React.ReactNode })
    MAIN PAGE
 ══════════════════════════════════════════════════════ */
 export default function DeployExpertPage() {
+  return (
+    <Suspense fallback={<div style={{ padding: 28 }}><Loader2 size={24} style={{ animation: 'spin 1s linear infinite' }} /></div>}>
+      <DeployExpertPageInner />
+    </Suspense>
+  );
+}
+
+function DeployExpertPageInner() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const connectTo = searchParams.get('connectTo');
 
   /* Step */
   const [step, setStep] = useState(1);
@@ -233,6 +243,11 @@ export default function DeployExpertPage() {
   const [name, setName]               = useState('');
   const [description, setDescription] = useState('');
   const [role, setRole]               = useState('researcher');
+  const [category, setCategory]       = useState('custom');
+  const [complexityLevel, setComplexityLevel] = useState(3);
+  const [capabilities, setCapabilities] = useState<string[]>([]);
+  const [specializations, setSpecializations] = useState('');
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   /* Step 2 — model source */
   const [modelSourceType, setModelSourceType] = useState<ModelSourceType>('provider');
@@ -294,10 +309,10 @@ export default function DeployExpertPage() {
   }, []);
 
   /* Cache expert state to localStorage for resume after API key setup */
-  const CACHE_KEY = 'kortecx_expert_deploy_cache';
+  const CACHE_KEY = 'kortecx_prism_bundle_cache';
 
   const cacheState = () => {
-    const state = { name, description, role, modelSourceType, activeProvider, modelId, localEngine, localModelName, localBaseUrl, systemPrompt, temperature, maxTokens, tags, isPublic, step };
+    const state = { name, description, role, category, complexityLevel, capabilities, specializations, modelSourceType, activeProvider, modelId, localEngine, localModelName, localBaseUrl, systemPrompt, temperature, maxTokens, tags, isPublic, step };
     localStorage.setItem(CACHE_KEY, JSON.stringify(state));
   };
 
@@ -321,6 +336,10 @@ export default function DeployExpertPage() {
         if (cached.maxTokens) setMaxTokens(cached.maxTokens);
         if (cached.tags) setTags(cached.tags);
         if (cached.isPublic != null) setIsPublic(cached.isPublic);
+        if (cached.category) setCategory(cached.category);
+        if (cached.complexityLevel != null) setComplexityLevel(cached.complexityLevel);
+        if (cached.capabilities) setCapabilities(cached.capabilities);
+        if (cached.specializations) setSpecializations(cached.specializations);
         if (cached.step) setStep(cached.step);
         localStorage.removeItem(CACHE_KEY);
       }
@@ -335,7 +354,7 @@ export default function DeployExpertPage() {
   function validateStep(n: number): boolean {
     const errs: Record<string, string> = {};
     if (n === 1) {
-      if (!name.trim()) errs.name = 'Expert name is required';
+      if (!name.trim()) errs.name = 'PRISM name is required';
       else if (name.trim().length < 2) errs.name = 'Name must be at least 2 characters';
     }
     if (n === 2) {
@@ -397,6 +416,10 @@ export default function DeployExpertPage() {
         maxTokens,
         tags: tags.split(',').map(t => t.trim()).filter(Boolean),
         isPublic,
+        category,
+        complexityLevel,
+        capabilities,
+        specializations: specializations.split(',').map(s => s.trim()).filter(Boolean),
       };
 
       if (modelSourceType === 'local') {
@@ -421,11 +444,24 @@ export default function DeployExpertPage() {
       if (!res.ok) throw new Error((await res.json()).error ?? 'Deploy failed');
       const data = await res.json();
       setDeployProgress(100);
-      setTimeout(() => {
+      setTimeout(async () => {
+        const newId = data.expert?.id ?? '';
         setDeployed(true);
-        setDeployedId(data.expert?.id ?? '');
+        setDeployedId(newId);
         localStorage.removeItem(CACHE_KEY);
-        // Auto-redirect to My Experts after 2 seconds
+
+        // Auto-connect to parent node if created from graph
+        if (connectTo && newId) {
+          try {
+            await fetch('/api/experts/graph', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ source: connectTo, target: newId }),
+            });
+          } catch { /* ignore */ }
+        }
+
+        // Auto-redirect to PRISMs after 2 seconds
         setTimeout(() => router.push('/experts'), 2000);
         // Log deployment
         fetch('/api/logs', {
@@ -460,7 +496,18 @@ export default function DeployExpertPage() {
   /* Step 1 */
   const Step1 = (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 22 }}>
-      <Field label="Expert Name" required hint="A unique, memorable name for this expert instance" error={fieldErrors.name}>
+      {connectTo && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 8,
+          padding: '10px 14px', borderRadius: 8,
+          background: 'rgba(217,119,6,0.08)', border: '1.5px solid rgba(217,119,6,0.25)',
+          fontSize: 12, color: '#D97706',
+        }}>
+          <span style={{ fontSize: 14 }}>🔗</span>
+          This PRISM will be connected to <strong>{connectTo}</strong> in the graph
+        </div>
+      )}
+      <Field label="PRISM Name" required hint="A unique, memorable name for this PRISM" error={fieldErrors.name}>
         <input
           value={name}
           onChange={e => { setName(e.target.value); setFieldErrors(f => ({ ...f, name: '' })); }}
@@ -469,7 +516,7 @@ export default function DeployExpertPage() {
         />
       </Field>
 
-      <Field label="Description" hint="A brief summary of what this expert specialises in">
+      <Field label="Description" hint="A brief summary of what this PRISM specialises in">
         <textarea
           value={description}
           onChange={e => setDescription(e.target.value)}
@@ -479,7 +526,7 @@ export default function DeployExpertPage() {
         />
       </Field>
 
-      <Field label="Role" required hint="Defines the expert's primary function and persona">
+      <Field label="Role" required hint="Defines the PRISM's primary function and persona">
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, marginTop: 4 }}>
           {DEPLOY_ROLES.map(id => (
             <div key={id} style={{ position: 'relative' }}>
@@ -488,6 +535,100 @@ export default function DeployExpertPage() {
           ))}
         </div>
       </Field>
+
+      <Field label="Category" required hint="Dimension for graph-based grouping of related PRISMs">
+        <select
+          value={category}
+          onChange={e => setCategory(e.target.value)}
+          style={{ ...inputStyle, cursor: 'pointer' }}
+        >
+          {['research', 'engineering', 'creative', 'analysis', 'operations', 'domain-specific', 'custom'].map(c => (
+            <option key={c} value={c}>{c.charAt(0).toUpperCase() + c.slice(1)}</option>
+          ))}
+        </select>
+      </Field>
+
+      <Field label="Tags" hint="Comma-separated tags for search, filtering, and PRISM similarity">
+        <input
+          value={tags}
+          onChange={e => setTags(e.target.value)}
+          placeholder="e.g. research, NLP, summarisation, RAG…"
+          style={inputStyle}
+        />
+      </Field>
+
+      {/* ── Collapsible Advanced Metadata ── */}
+      <button
+        type="button"
+        onClick={() => setShowAdvanced(!showAdvanced)}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 6,
+          background: 'none', border: 'none', cursor: 'pointer',
+          fontSize: 12, fontWeight: 600, color: 'var(--text-3)',
+          padding: '4px 0',
+        }}
+      >
+        <ChevronRight size={14} style={{ transform: showAdvanced ? 'rotate(90deg)' : 'none', transition: 'transform 0.2s' }} />
+        Advanced Metadata
+      </button>
+
+      <AnimatePresence>
+        {showAdvanced && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1, transition: { duration: 0.25 } }}
+            exit={{ height: 0, opacity: 0, transition: { duration: 0.2 } }}
+            style={{ overflow: 'hidden', display: 'flex', flexDirection: 'column', gap: 18 }}
+          >
+            <Field label="Complexity Level" hint="1 (simple) to 5 (complex) — affects graph node size">
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <input
+                  type="range" min={1} max={5} step={1}
+                  value={complexityLevel}
+                  onChange={e => setComplexityLevel(Number(e.target.value))}
+                  style={{ flex: 1, accentColor: SECTION_COLOR }}
+                />
+                <span style={{ fontSize: 14, fontWeight: 700, color: SECTION_COLOR, minWidth: 20, textAlign: 'center' }}>
+                  {complexityLevel}
+                </span>
+              </div>
+            </Field>
+
+            <Field label="Capabilities" hint="Select what this PRISM excels at">
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 4 }}>
+                {['web-search', 'code-gen', 'data-analysis', 'document-writing', 'translation', 'reasoning', 'structured-output'].map(cap => {
+                  const active = capabilities.includes(cap);
+                  return (
+                    <button
+                      key={cap}
+                      type="button"
+                      onClick={() => setCapabilities(prev => active ? prev.filter(c => c !== cap) : [...prev, cap])}
+                      style={{
+                        padding: '5px 12px', borderRadius: 6, fontSize: 11, fontWeight: 500,
+                        border: active ? `1.5px solid ${SECTION_COLOR}` : '1px solid var(--border-sm)',
+                        background: active ? `${SECTION_COLOR}14` : 'var(--bg-surface)',
+                        color: active ? SECTION_COLOR : 'var(--text-3)',
+                        cursor: 'pointer', transition: 'all 0.15s',
+                      }}
+                    >
+                      {cap}
+                    </button>
+                  );
+                })}
+              </div>
+            </Field>
+
+            <Field label="Specializations" hint="Comma-separated domain-specific expertise areas">
+              <input
+                value={specializations}
+                onChange={e => setSpecializations(e.target.value)}
+                placeholder="e.g. NLP, computer vision, financial modelling…"
+                style={inputStyle}
+              />
+            </Field>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 
@@ -728,25 +869,6 @@ export default function DeployExpertPage() {
         </Field>
       </div>
 
-      <Field label="Tags" hint="Comma-separated tags for discovery and filtering (e.g. research, academic, citations)">
-        <input
-          value={tags}
-          onChange={e => setTags(e.target.value)}
-          placeholder="research, academic, citations, analysis"
-          style={inputStyle}
-        />
-        {tags && (
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginTop: 6 }}>
-            {tags.split(',').map(t => t.trim()).filter(Boolean).map(t => (
-              <span key={t} style={{
-                fontSize: 11, padding: '2px 8px', borderRadius: 4,
-                background: `${SECTION_COLOR}12`, color: SECTION_COLOR, fontWeight: 500,
-              }}>{t}</span>
-            ))}
-          </div>
-        )}
-      </Field>
-
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 16px', borderRadius: 10, border: '1px solid var(--border-sm)', background: 'var(--bg-surface)' }}>
         <button
           onClick={() => setIsPublic(!isPublic)}
@@ -766,10 +888,10 @@ export default function DeployExpertPage() {
           {isPublic ? <Globe size={14} color={SECTION_COLOR} /> : <Lock size={14} color="var(--text-4)" />}
           <div>
             <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-1)' }}>
-              {isPublic ? 'Public Expert' : 'Private Expert'}
+              {isPublic ? 'Public PRISM' : 'Private PRISM'}
             </div>
             <div style={{ fontSize: 11, color: 'var(--text-4)' }}>
-              {isPublic ? 'Visible in the public Expert Catalog — anyone can use this expert' : 'Only you and your team can access this expert'}
+              {isPublic ? 'Visible in the public PRISM Catalog — anyone can use this PRISM' : 'Only you and your team can access this PRISM'}
             </div>
           </div>
         </div>
@@ -798,7 +920,7 @@ export default function DeployExpertPage() {
         <Check size={28} color="#10b981" strokeWidth={2.5} />
       </motion.div>
       <div>
-        <h2 style={{ fontSize: 20, fontWeight: 700, color: 'var(--text-1)', marginBottom: 6 }}>Expert Deployed!</h2>
+        <h2 style={{ fontSize: 20, fontWeight: 700, color: 'var(--text-1)', marginBottom: 6 }}>PRISM Bundled!</h2>
         <p style={{ fontSize: 13, color: 'var(--text-3)', maxWidth: 340 }}>
           <strong style={{ color: 'var(--text-1)' }}>{name}</strong> is now live and ready to accept tasks on the platform.
         </p>
@@ -812,7 +934,7 @@ export default function DeployExpertPage() {
             border: 'none', color: '#fff', fontSize: 13, fontWeight: 600, cursor: 'pointer',
           }}
         >
-          <ExternalLink size={13} /> View Expert
+          <ExternalLink size={13} /> View PRISM
         </button>
         <button
           onClick={() => router.push('/experts')}
@@ -821,7 +943,7 @@ export default function DeployExpertPage() {
             background: 'transparent', color: 'var(--text-2)', fontSize: 13, cursor: 'pointer',
           }}
         >
-          All Experts
+          All PRISMs
         </button>
       </div>
     </motion.div>
@@ -838,10 +960,10 @@ export default function DeployExpertPage() {
           display: 'flex', alignItems: 'center', gap: 8,
         }}>
           <FileText size={14} color={SECTION_COLOR} />
-          <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-1)' }}>Deployment Summary</span>
+          <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-1)' }}>Bundle Summary</span>
         </div>
         <div style={{ padding: '4px 18px 8px' }}>
-          <SummaryRow label="Expert Name" value={<strong>{name}</strong>} />
+          <SummaryRow label="PRISM Name" value={<strong>{name}</strong>} />
           <SummaryRow
             label="Role"
             value={
@@ -928,7 +1050,7 @@ export default function DeployExpertPage() {
           />
           <div style={{ padding: '8px 12px', fontSize: 12, color: 'var(--text-3)', display: 'flex', alignItems: 'center', gap: 6 }}>
             <Loader2 size={12} color={SECTION_COLOR} style={{ animation: 'spin 1s linear infinite' }} />
-            Deploying expert… {Math.round(deployProgress)}%
+            Bundling PRISM… {Math.round(deployProgress)}%
           </div>
         </div>
       )}
@@ -983,7 +1105,7 @@ export default function DeployExpertPage() {
             <div style={{ padding: '20px 24px' }}>
               <p style={{ fontSize: 13, color: 'var(--text-2)', lineHeight: 1.6, margin: '0 0 16px' }}>
                 To use <strong style={{ color: 'var(--text-1)' }}>{apiKeyMissing}</strong> models, you need to configure an API key.
-                Your current expert configuration will be saved so you can return after adding the key.
+                Your current PRISM configuration will be saved so you can return after adding the key.
               </p>
               <div style={{ padding: '10px 14px', borderRadius: 6, background: 'var(--bg)', border: '1px solid var(--border)', fontSize: 11, color: 'var(--text-3)', marginBottom: 16 }}>
                 <strong style={{ color: 'var(--text-2)' }}>Where to get a key:</strong>
@@ -1032,10 +1154,10 @@ export default function DeployExpertPage() {
         </div>
         <div>
           <h1 style={{ fontSize: 19, fontWeight: 700, color: 'var(--text-1)', lineHeight: 1 }}>
-            Deploy New Expert
+            Bundle New PRISM
           </h1>
           <p style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 3 }}>
-            Configure and deploy an AI expert — step {step} of 4
+            Configure and bundle a new PRISM — step {step} of 4
           </p>
         </div>
       </motion.div>
@@ -1121,8 +1243,8 @@ export default function DeployExpertPage() {
                 }}
               >
                 {deploying
-                  ? <><Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> Deploying…</>
-                  : <><Rocket size={14} /> Deploy Expert</>}
+                  ? <><Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> Bundling…</>
+                  : <><Rocket size={14} /> Bundle PRISM</>}
               </button>
             )}
           </div>
