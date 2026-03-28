@@ -30,14 +30,19 @@ EMBED_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 async def _embed_expert(expert: dict[str, Any]) -> None:
     """Embed a PRISM into Qdrant for similarity graph. Non-blocking."""
     try:
-        text = ". ".join(filter(None, [
-            expert.get("name", ""),
-            expert.get("description", ""),
-            f"Role: {expert.get('role', '')}",
-            f"Category: {expert.get('category', 'custom')}",
-            f"Tags: {', '.join(expert.get('tags', []))}",
-            f"Capabilities: {', '.join(expert.get('capabilities', []))}",
-        ]))
+        text = ". ".join(
+            filter(
+                None,
+                [
+                    expert.get("name", ""),
+                    expert.get("description", ""),
+                    f"Role: {expert.get('role', '')}",
+                    f"Category: {expert.get('category', 'custom')}",
+                    f"Tags: {', '.join(expert.get('tags', []))}",
+                    f"Capabilities: {', '.join(expert.get('capabilities', []))}",
+                ],
+            )
+        )
         vectors = hf_service.text_embedding(EMBED_MODEL, text)
         if not vectors:
             return
@@ -45,6 +50,7 @@ async def _embed_expert(expert: dict[str, Any]) -> None:
         collections = qdrant_service.client.get_collections().collections
         if PRISM_COLLECTION not in [c.name for c in collections]:
             from qdrant_client.models import Distance, VectorParams
+
             qdrant_service.client.create_collection(
                 collection_name=PRISM_COLLECTION,
                 vectors_config=VectorParams(size=len(vectors[0]), distance=Distance.COSINE),
@@ -52,21 +58,24 @@ async def _embed_expert(expert: dict[str, Any]) -> None:
         # Use hash of expert_id as int for Qdrant point ID
         point_id = abs(hash(expert["id"])) % (2**63)
         from qdrant_client.models import PointStruct
+
         qdrant_service.client.upsert(
             collection_name=PRISM_COLLECTION,
-            points=[PointStruct(
-                id=point_id,
-                vector=vectors[0],
-                payload={
-                    "expert_id": expert["id"],
-                    "name": expert.get("name", ""),
-                    "role": expert.get("role", ""),
-                    "category": expert.get("category", "custom"),
-                    "tags": expert.get("tags", []),
-                    "complexityLevel": expert.get("complexityLevel", 3),
-                    "status": expert.get("status", "idle"),
-                },
-            )],
+            points=[
+                PointStruct(
+                    id=point_id,
+                    vector=vectors[0],
+                    payload={
+                        "expert_id": expert["id"],
+                        "name": expert.get("name", ""),
+                        "role": expert.get("role", ""),
+                        "category": expert.get("category", "custom"),
+                        "tags": expert.get("tags", []),
+                        "complexityLevel": expert.get("complexityLevel", 3),
+                        "status": expert.get("status", "idle"),
+                    },
+                )
+            ],
         )
         logger.info("Embedded PRISM %s into Qdrant", expert["id"])
     except Exception:
@@ -617,11 +626,13 @@ async def get_graph_edges(threshold: float = 0.3, limit: int = 20) -> dict[str, 
                 if key_str in seen:
                     continue
                 seen.add(key_str)
-                edges.append({
-                    "source": expert_id,
-                    "target": target_id,
-                    "weight": round(hit.score, 4),
-                })
+                edges.append(
+                    {
+                        "source": expert_id,
+                        "target": target_id,
+                        "weight": round(hit.score, 4),
+                    }
+                )
 
         edges.sort(key=lambda e: e["weight"], reverse=True)
         # Version hash: point count + sum of IDs for change detection

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { motion, AnimatePresence, type Variants } from 'framer-motion';
 import {
@@ -224,6 +224,14 @@ function SummaryRow({ label, value }: { label: string; value: React.ReactNode })
    MAIN PAGE
 ══════════════════════════════════════════════════════ */
 export default function DeployExpertPage() {
+  return (
+    <Suspense fallback={<div style={{ padding: 28 }}><Loader2 size={24} style={{ animation: 'spin 1s linear infinite' }} /></div>}>
+      <DeployExpertPageInner />
+    </Suspense>
+  );
+}
+
+function DeployExpertPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const connectTo = searchParams.get('connectTo');
