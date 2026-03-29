@@ -1,11 +1,11 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Zap, Activity, TrendingUp, Clock, AlertCircle,
   Search, ChevronDown, ChevronRight,
-  CheckCircle2, XCircle, Loader2,
+  CheckCircle2, XCircle, Loader2, RotateCcw,
 } from 'lucide-react';
 import { fadeUp, stagger, hoverLift, filterTab, rowEntrance, emptyState } from '@/lib/motion';
 import { useExpertRuns, useWorkflowRuns, useSynthesisJobs } from '@/lib/hooks/useApi';
@@ -39,10 +39,18 @@ export default function RunsPage() {
   const [expandedRun, setExpandedRun] = useState<string | null>(null);
   const [runTypeFilter, setRunTypeFilter] = useState<RunTypeFilter>('all');
 
-  const { runs: expertRuns, isLoading: erLoading } = useExpertRuns();
-  const { runs: workflowRuns, isLoading: wrLoading } = useWorkflowRuns();
-  const { jobs: synthJobs, isLoading: sjLoading } = useSynthesisJobs();
+  const { runs: expertRuns, isLoading: erLoading, mutate: mutateER } = useExpertRuns();
+  const { runs: workflowRuns, isLoading: wrLoading, mutate: mutateWR } = useWorkflowRuns();
+  const { jobs: synthJobs, isLoading: sjLoading, mutate: mutateSJ } = useSynthesisJobs();
   const isLoading = erLoading || wrLoading || sjLoading;
+
+  /* LiveSync — manual refresh that revalidates all SWR caches */
+  const [syncing, setSyncing] = useState(false);
+  const liveSync = useCallback(async () => {
+    setSyncing(true);
+    await Promise.all([mutateER(), mutateWR(), mutateSJ()]);
+    setSyncing(false);
+  }, [mutateER, mutateWR, mutateSJ]);
 
   // Unify runs from all three sources
   const allRuns: UnifiedRun[] = useMemo(() => {
@@ -142,21 +150,37 @@ export default function RunsPage() {
       <motion.div
         initial={{ opacity: 0, y: -8 }}
         animate={{ opacity: 1, y: 0 }}
-        style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 24 }}
+        style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}
       >
-        <div style={{
-          width: 40, height: 40, borderRadius: 10,
-          background: `${SECTION_COLOR}12`, border: `1.5px solid ${SECTION_COLOR}30`,
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-        }}>
-          <Zap size={19} color={SECTION_COLOR} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+          <div style={{
+            width: 40, height: 40, borderRadius: 10,
+            background: `${SECTION_COLOR}12`, border: `1.5px solid ${SECTION_COLOR}30`,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}>
+            <Zap size={19} color={SECTION_COLOR} />
+          </div>
+          <div>
+            <h1 style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-1)', margin: 0 }}>Runs</h1>
+            <p style={{ fontSize: 12, color: 'var(--text-3)', margin: '3px 0 0' }}>
+              All PRISM, workflow, and data synthesis executions
+            </p>
+          </div>
         </div>
-        <div>
-          <h1 style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-1)', margin: 0 }}>Runs</h1>
-          <p style={{ fontSize: 12, color: 'var(--text-3)', margin: '3px 0 0' }}>
-            All PRISM, workflow, and data synthesis executions
-          </p>
-        </div>
+        <button
+          onClick={liveSync}
+          disabled={syncing}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 6,
+            padding: '8px 15px', borderRadius: 8, border: '1px solid var(--border-md)',
+            background: 'var(--bg-surface)', cursor: syncing ? 'default' : 'pointer',
+            fontSize: 12, fontWeight: 500, color: 'var(--text-2)',
+            opacity: syncing ? 0.7 : 1, transition: 'all 0.15s',
+          }}
+        >
+          <RotateCcw size={12} style={syncing ? { animation: 'spin 1s linear infinite' } : undefined} />
+          {syncing ? 'Syncing...' : 'Refresh'}
+        </button>
       </motion.div>
 
       {/* Metrics bar */}

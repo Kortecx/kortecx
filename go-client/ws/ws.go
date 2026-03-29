@@ -39,6 +39,13 @@ const (
 	EventWorkflowFailed    = "workflow.failed"
 	EventSharedMemorySync  = "shared.memory.sync"
 
+	// Quick Check events
+	EventQuickCheckSubmit    = "quick_check.submit"
+	EventQuickCheckAccepted  = "quick_check.accepted"
+	EventQuickCheckToken     = "quick_check.token"
+	EventQuickCheckCompleted = "quick_check.completed"
+	EventQuickCheckError     = "quick_check.error"
+
 	// HuggingFace events
 	EventHFSearchModels      = "hf.models.search"
 	EventHFModelsResult      = "hf.models.result"

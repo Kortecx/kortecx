@@ -59,6 +59,21 @@ export function useAlerts(unackOnly = false) {
   };
 }
 
+/* ── Alert Rules ───────────────────────────────────── */
+export function useAlertRules() {
+  const { data, error, isLoading, mutate } = useSWR(
+    '/api/alerts/rules',
+    fetcher,
+    { refreshInterval: 30_000 },
+  );
+  return {
+    rules:    data?.rules ?? [],
+    error,
+    isLoading,
+    mutate,
+  };
+}
+
 /* ── Logs ───────────────────────────────────────────── */
 export function useLogs(level?: string, limit = 500) {
   const params = new URLSearchParams();

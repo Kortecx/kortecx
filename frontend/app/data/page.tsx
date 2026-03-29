@@ -23,6 +23,9 @@ import {
 
 const MonacoEditor = dynamic(() => import('@monaco-editor/react').then(m => m.default), { ssr: false });
 import type { Dataset } from '@/lib/types';
+import { ImportButton, SharedImportButton } from '@/components/ImportExportButtons';
+import SharedConfigImportDialog from '@/components/SharedConfigImportDialog';
+import { exportEntity } from '@/lib/config-export';
 
 /* ── Helpers ───────────────────────────────────────────── */
 
@@ -1081,7 +1084,7 @@ function DatasetCard({ ds, onView, onEditSchema, onDelete }: { ds: Dataset; onVi
         <motion.button {...buttonHover} className="btn btn-primary btn-sm" onClick={onEditSchema}>
           <Database size={12} /> Update Schema
         </motion.button>
-        <button className="btn btn-secondary btn-sm">
+        <button className="btn btn-secondary btn-sm" onClick={() => exportEntity('dataset', ds.id, ds.name)}>
           <Download size={12} /> Export
         </button>
         <button className="btn btn-ghost btn-sm" onClick={onView} disabled={!onView}>
@@ -2815,6 +2818,7 @@ function DataSynthesisPageInner() {
   );
   const [synthShowSystem, setSynthShowSystem] = useState(true);
   const [synthSaveQdrant, setSynthSaveQdrant] = useState(false);
+  const [showSharedImport, setShowSharedImport] = useState(false);
   const [synthSubmitting, setSynthSubmitting] = useState(false);
   const [synthModelSearchOpen, setSynthModelSearchOpen] = useState(false);
   const [synthSchema, setSynthSchema] = useState<any[]>([]);
@@ -2966,9 +2970,13 @@ function DataSynthesisPageInner() {
             Generate, manage, and export high-quality training datasets
           </p>
         </div>
-        <motion.button variants={fadeRight} initial="hidden" animate="show" {...buttonHover} className="btn btn-primary btn-sm" onClick={() => setTab('generate')}>
-          <Sparkles size={13} /> Synthesize Data
-        </motion.button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <ImportButton entityType="dataset" onImported={() => mutateDatasets()} size="md" />
+          <SharedImportButton onClick={() => setShowSharedImport(true)} size="md" />
+          <motion.button variants={fadeRight} initial="hidden" animate="show" {...buttonHover} className="btn btn-primary btn-sm" onClick={() => setTab('generate')}>
+            <Sparkles size={13} /> Synthesize Data
+          </motion.button>
+        </div>
       </motion.div>
 
       {/* Stats */}
@@ -3625,6 +3633,14 @@ function DataSynthesisPageInner() {
           />
         )}
       </AnimatePresence>
+
+      {/* Shared Config Import Dialog */}
+      <SharedConfigImportDialog
+        open={showSharedImport}
+        onClose={() => setShowSharedImport(false)}
+        onImported={() => { mutateDatasets(); setShowSharedImport(false); }}
+        filterType="dataset"
+      />
     </div>
   );
 }

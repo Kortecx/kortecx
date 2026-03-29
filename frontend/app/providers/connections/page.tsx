@@ -22,6 +22,10 @@ import { INTEGRATION_CATALOG, MARKETPLACE_PLUGINS } from '@/lib/constants';
 import type { IntegrationCategory, McpServer, McpLanguage } from '@/lib/types';
 import { motion, AnimatePresence } from 'framer-motion';
 import { buttonHover } from '@/lib/motion';
+import ExecutableGenerateDialog from './_components/ExecutableGenerateDialog';
+import { ImportButton, SharedImportButton } from '@/components/ImportExportButtons';
+import SharedConfigImportDialog from '@/components/SharedConfigImportDialog';
+import { exportEntity } from '@/lib/config-export';
 
 const MonacoEditor = lazy(() => import('@monaco-editor/react'));
 
@@ -389,6 +393,8 @@ function ConnectionsPageInner() {
     size: number; createdAt: string; status: string; output?: string;
   }>>([]);
   const [execLoading, setExecLoading] = useState(false);
+  const [execShowGenerate, setExecShowGenerate] = useState(false);
+  const [showSharedImport, setShowSharedImport] = useState(false);
 
   /* System prompt — reactive, changes based on prompt type + language */
   const MCP_SYSTEM_PROMPTS: Record<McpPromptType, (lang: McpLanguage) => string> = {
@@ -417,7 +423,7 @@ function ConnectionsPageInner() {
 
   useEffect(() => { fetchMcpServers(); }, [fetchMcpServers]);
 
-  useEffect(() => {
+  const fetchExecutables = useCallback(() => {
     setExecLoading(true);
     fetch(`${ENGINE_URL}/api/orchestrator/artifacts/_all/_all`)
       .then(r => r.ok ? r.json() : { artifacts: [] })
@@ -441,6 +447,8 @@ function ConnectionsPageInner() {
       .catch(() => setExecutables([]))
       .finally(() => setExecLoading(false));
   }, []);
+
+  useEffect(() => { fetchExecutables(); }, [fetchExecutables]);
 
   /* Fetch local models for MCP generation */
   useEffect(() => {
@@ -1429,6 +1437,12 @@ function ConnectionsPageInner() {
                 Scripts and functions generated or received by models during workflow execution
               </div>
             </div>
+            <motion.button {...buttonHover} className="btn btn-primary btn-sm"
+              onClick={() => setExecShowGenerate(true)}
+              style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+            >
+              <Sparkles size={12} /> Generate
+            </motion.button>
           </div>
 
           {/* Docker environments info */}
@@ -1536,6 +1550,77 @@ function ConnectionsPageInner() {
           </div>
         </motion.div>
       )}
+
+      {/* ── Executable Generate Dialog ── */}
+      <ExecutableGenerateDialog
+        open={execShowGenerate}
+        onClose={() => setExecShowGenerate(false)}
+        onGenerated={() => fetchExecutables()}
+        providers={mcpProviders}
+        models={mcpModels}
+        streamGenerate={async (opts) => {
+          try {
+            const res = await fetch('/api/mcp/stream', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                prompt: opts.prompt,
+                description: opts.description,
+                language: opts.language,
+                model: opts.model || undefined,
+                source: opts.source,
+                provider_id: opts.providerId || undefined,
+                system_prompt: opts.systemPrompt,
+                prompt_type: opts.promptType,
+              }),
+            });
+
+            if (!res.ok || !res.body) {
+              opts.onError('Stream connection failed');
+              return;
+            }
+
+            const reader = res.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+            let code = '';
+
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+
+              buffer += decoder.decode(value, { stream: true });
+              const lines = buffer.split('\n');
+              buffer = lines.pop() || '';
+
+              for (const line of lines) {
+                if (!line.startsWith('data: ')) continue;
+                try {
+                  const evt = JSON.parse(line.slice(6));
+                  if (evt.type === 'token') {
+                    code += evt.token;
+                    opts.onToken(code);
+                  } else if (evt.type === 'error') {
+                    opts.onError(evt.error);
+                  } else if (evt.type === 'done') {
+                    opts.onDone({
+                      time_ms: evt.generation_time_ms || evt.server?.generation_time_ms || 0,
+                      cpu: evt.cpu_percent || evt.server?.cpu_percent || 0,
+                    });
+                  }
+                } catch { /* skip malformed SSE lines */ }
+              }
+            }
+
+            // If stream ended without done event, still signal completion
+            if (code && !code.includes('done')) {
+              opts.onDone({ time_ms: 0, cpu: 0 });
+            }
+          } catch {
+            opts.onError('Stream failed');
+          }
+        }}
+      />
 
       {/* ── Connect Integration Modal ── */}
       {connectingId && (() => {
@@ -1988,6 +2073,8 @@ function ConnectionsPageInner() {
                   <Edit3 size={10} />
                 </button>
               </div>
+              <ImportButton entityType="mcp_server" onImported={() => fetchMcpServers()} size="sm" label="Import" />
+              <SharedImportButton onClick={() => setShowSharedImport(true)} />
               <motion.button {...buttonHover} className="btn btn-primary btn-sm" onClick={() => setMcpShowPrompt(true)}>
                 <Sparkles size={12} /> Generate MCP Server
               </motion.button>
@@ -3054,6 +3141,14 @@ function ConnectionsPageInner() {
           </div>
         );
       })()}
+
+      {/* Shared Config Import Dialog */}
+      <SharedConfigImportDialog
+        open={showSharedImport}
+        onClose={() => setShowSharedImport(false)}
+        onImported={() => { fetchMcpServers(); setShowSharedImport(false); }}
+        filterType="mcp_server"
+      />
     </div>
   );
 }

@@ -2,7 +2,7 @@
 
 import { useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ChevronDown, ChevronRight, Play, Settings, Trash2, Star, ArrowUpDown, Plus, X, Link2 } from 'lucide-react';
+import { ChevronDown, ChevronRight, Play, Settings, Trash2, Star, ArrowUpDown, Plus, X, Link2, Download } from 'lucide-react';
 import { rowEntrance, filterTab, emptyState } from '@/lib/motion';
 import type { SimilarityEdge } from './PrismGraph';
 
@@ -34,10 +34,11 @@ interface PrismListViewProps {
   onConfigure: (p: Record<string, unknown>) => void;
   onRun: (p: Record<string, unknown>) => void;
   onDelete: (p: Record<string, unknown>) => void;
+  onExport?: (p: Record<string, unknown>) => void;
   onCreateEdge: (sourceId: string, targetId: string) => void;
 }
 
-export default function PrismListView({ prisms, edges, onConfigure, onRun, onDelete, onCreateEdge }: PrismListViewProps) {
+export default function PrismListView({ prisms, edges, onConfigure, onRun, onDelete, onExport, onCreateEdge }: PrismListViewProps) {
   const [sortBy, setSortBy] = useState<SortKey>('name');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
   const [groupBy, setGroupBy] = useState<GroupKey>('role');
@@ -277,10 +278,11 @@ export default function PrismListView({ prisms, edges, onConfigure, onRun, onDel
                   </div>
 
                   {/* Actions */}
-                  <div style={{ width: 84, display: 'flex', gap: 4, justifyContent: 'center' }}>
+                  <div style={{ width: 112, display: 'flex', gap: 4, justifyContent: 'center' }}>
                     {[
                       { icon: Play, color: '#10b981', title: 'Run', action: onRun },
                       { icon: Settings, color: '#6b7280', title: 'Configure', action: onConfigure },
+                      ...(onExport ? [{ icon: Download, color: '#2563EB', title: 'Export', action: onExport }] : []),
                       { icon: Trash2, color: '#ef4444', title: 'Delete', action: onDelete },
                     ].map(({ icon: Icon, color, title, action }) => (
                       <motion.button

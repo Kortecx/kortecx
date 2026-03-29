@@ -8,12 +8,17 @@ import {
   Workflow, Plus, Search, Play, Trash2, X, Square, RotateCcw, Pencil,
   ChevronDown, ChevronUp, ChevronRight, Loader2, AlertCircle, ArrowUpDown,
   Clock, Cpu, Zap, CheckCircle2, XCircle, Eye, ScrollText, ExternalLink,
-  FileText, Lock, Unlock, Snowflake, Upload,
+  FileText, Lock, Unlock, Snowflake, Upload, Download, TrendingUp, Activity,
 } from 'lucide-react';
 import { useWorkflows, useWorkflowRuns, useStepExecutions } from '@/lib/hooks/useApi';
 import { useWorkflowWS } from '@/lib/hooks/useWorkflowWS';
+import { ImportButton, SharedImportButton } from '@/components/ImportExportButtons';
+import SharedConfigImportDialog from '@/components/SharedConfigImportDialog';
+import { exportEntity } from '@/lib/config-export';
+import { fadeUp, stagger, hoverLift } from '@/lib/motion';
 
 const SECTION_COLOR = '#2563EB';
+const staggerDefault = stagger();
 const ENGINE_URL = process.env.NEXT_PUBLIC_ENGINE_URL || 'http://localhost:8000';
 
 /* ── Helpers ──────────────────────────────────────────── */
@@ -1146,6 +1151,7 @@ export default function WorkflowsPage() {
   const [planDialogWf, setPlanDialogWf] = useState<Record<string, unknown> | null>(null);
   const [viewPlanWf, setViewPlanWf] = useState<Record<string, unknown> | null>(null);
   const [freezingId, setFreezingId] = useState<string | null>(null);
+  const [showSharedImport, setShowSharedImport] = useState(false);
   const ws = useWorkflowWS();
 
   // Check if any workflow is running for faster polling
@@ -1447,6 +1453,24 @@ export default function WorkflowsPage() {
     return counts;
   }, [workflows]);
 
+  /* Stats for panels */
+  const runningCt = statusCounts['running'] ?? 0;
+  const completedCt = statusCounts['completed'] ?? 0;
+  const failedCt = statusCounts['failed'] ?? 0;
+  const avgSuccessRate = useMemo(() => {
+    const done = completedCt + failedCt;
+    return done > 0 ? completedCt / done : 0;
+  }, [completedCt, failedCt]);
+  const totalRunsAll = useMemo(() => {
+    return workflows.reduce((sum: number, w: Record<string, unknown>) => sum + ((w.totalRuns as number) ?? 0), 0);
+  }, [workflows]);
+
+  /* Sort dropdown state */
+  const [sortOpen, setSortOpen] = useState(false);
+  const SORT_LABELS: Record<SortField, string> = {
+    name: 'Name', updatedAt: 'Last Modified', status: 'Status', totalRuns: 'Runs', estimatedTokens: 'Tokens',
+  };
+
   const TH: React.CSSProperties = {
     padding: '10px 14px', fontSize: 10, fontWeight: 700, color: 'var(--text-3)',
     textTransform: 'uppercase', letterSpacing: '0.06em', textAlign: 'left',
@@ -1478,21 +1502,75 @@ export default function WorkflowsPage() {
           </div>
           <div>
             <h1 style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-1)', margin: 0 }}>Workflows</h1>
-            <p style={{ fontSize: 12, color: 'var(--text-3)', margin: '3px 0 0' }}>
-              {total} workflow{total !== 1 ? 's' : ''} · Build and manage agent pipelines
+            <p style={{ fontSize: 10, color: 'var(--text-4)', marginTop: 3, margin: '3px 0 0', letterSpacing: '0.5px', textTransform: 'uppercase' }}>
+              Wiring &middot; Orchestration &middot; Routing &middot; Knowledge &middot; Flow
+            </p>
+            <p style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 4, margin: '4px 0 0', maxWidth: 420 }}>
+              Build autonomous agent pipelines — orchestrate multi-step reasoning,
+              code generation, and domain tasks into workflows that execute,
+              monitor, and scale automatically.
             </p>
           </div>
         </div>
-        <button onClick={() => router.push('/workflow/builder')} style={{
-          display: 'flex', alignItems: 'center', gap: 6,
-          padding: '9px 18px', borderRadius: 8,
-          border: `1.5px solid ${SECTION_COLOR}`,
-          background: `${SECTION_COLOR}14`,
-          color: SECTION_COLOR, fontSize: 13, fontWeight: 700,
-          cursor: 'pointer',
-        }}>
-          <Plus size={14} strokeWidth={2.5} /> Create New Workflow
-        </button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <ImportButton entityType="workflow" onImported={() => mutate()} size="md" />
+          <SharedImportButton onClick={() => setShowSharedImport(true)} size="md" />
+          <button onClick={() => router.push('/workflow/builder')} style={{
+            display: 'flex', alignItems: 'center', gap: 6,
+            padding: '9px 18px', borderRadius: 8,
+            border: `1.5px solid ${SECTION_COLOR}`,
+            background: `${SECTION_COLOR}14`,
+            color: SECTION_COLOR, fontSize: 13, fontWeight: 700,
+            cursor: 'pointer',
+          }}>
+            <Plus size={14} strokeWidth={2.5} /> Create New
+          </button>
+        </div>
+      </motion.div>
+
+      {/* Stats panels */}
+      <motion.div
+        variants={stagger(0.06)}
+        initial="hidden"
+        animate="show"
+        style={{
+          display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)',
+          gap: 10, marginBottom: 22,
+        }}
+      >
+        {[
+          { label: 'Total Workflows', value: String(total),       color: SECTION_COLOR, icon: Workflow,     sub: 'pipelines'      },
+          { label: 'Running',         value: String(runningCt),    color: '#f59e0b',     icon: Activity,     sub: 'executing now'  },
+          { label: 'Total Runs',      value: fmt(totalRunsAll),    color: '#10b981',     icon: Play,         sub: 'all time'       },
+          { label: 'Success Rate',    value: avgSuccessRate > 0 ? `${(avgSuccessRate * 100).toFixed(1)}%` : '—', color: '#06b6d4', icon: TrendingUp, sub: 'completed / total' },
+        ].map(({ label, value, color, icon: Icon, sub }) => (
+          <motion.div
+            key={label}
+            variants={fadeUp}
+            whileHover={hoverLift.whileHover}
+            transition={hoverLift.transition}
+            style={{
+              background: 'var(--bg-surface)',
+              border: '1px solid var(--border)',
+              borderRadius: 11, padding: '15px 18px',
+              display: 'flex', alignItems: 'center', gap: 13,
+              cursor: 'default',
+            }}
+          >
+            <div style={{
+              width: 36, height: 36, borderRadius: 8, flexShrink: 0,
+              background: `${color}12`, border: `1.5px solid ${color}22`,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}>
+              <Icon size={16} color={color} strokeWidth={2} />
+            </div>
+            <div>
+              <div style={{ fontSize: 22, fontWeight: 800, color, lineHeight: 1 }}>{value}</div>
+              <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-2)', marginTop: 2 }}>{label}</div>
+              <div style={{ fontSize: 10, color: 'var(--text-4)', marginTop: 1 }}>{sub}</div>
+            </div>
+          </motion.div>
+        ))}
       </motion.div>
 
       {/* Filters bar */}
@@ -1538,6 +1616,56 @@ export default function WorkflowsPage() {
             </button>
           );
         })}
+
+        {/* Sort dropdown */}
+        <div style={{ position: 'relative', marginLeft: 'auto' }}>
+          <button
+            onClick={() => setSortOpen(o => !o)}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 6,
+              padding: '7px 13px', borderRadius: 8, border: '1px solid var(--border-md)',
+              background: 'var(--bg-surface)', cursor: 'pointer',
+              fontSize: 12, color: 'var(--text-2)', fontWeight: 500,
+            }}
+          >
+            <ArrowUpDown size={12} />
+            Sort: {SORT_LABELS[sortField]}
+            <ChevronDown size={11} style={{ transition: 'transform 0.15s', transform: sortOpen ? 'rotate(180deg)' : 'none' }} />
+          </button>
+          <AnimatePresence>
+            {sortOpen && (
+              <motion.div
+                initial={{ opacity: 0, y: -6, scale: 0.97 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: -4, scale: 0.97 }}
+                transition={{ duration: 0.14 }}
+                style={{
+                  position: 'absolute', top: 'calc(100% + 6px)', right: 0, zIndex: 50,
+                  background: 'var(--bg-surface)', border: '1px solid var(--border-md)',
+                  borderRadius: 9, padding: 6, minWidth: 150,
+                  boxShadow: '0 8px 24px rgba(13,13,13,0.10)',
+                }}
+              >
+                {(Object.keys(SORT_LABELS) as SortField[]).map(field => (
+                  <button
+                    key={field}
+                    onClick={() => { setSortField(field); setSortDir(field === 'name' ? 'asc' : 'desc'); setSortOpen(false); }}
+                    style={{
+                      display: 'block', width: '100%', textAlign: 'left',
+                      padding: '7px 12px', borderRadius: 6, cursor: 'pointer',
+                      fontSize: 12, fontWeight: sortField === field ? 700 : 400,
+                      background: sortField === field ? `${SECTION_COLOR}12` : 'transparent',
+                      color: sortField === field ? SECTION_COLOR : 'var(--text-2)',
+                      border: 'none',
+                    }}
+                  >
+                    {SORT_LABELS[field]}
+                  </button>
+                ))}
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
       </motion.div>
 
       {/* Table */}
@@ -1574,7 +1702,7 @@ export default function WorkflowsPage() {
               color: SECTION_COLOR, fontSize: 13, fontWeight: 700,
               cursor: 'pointer',
             }}>
-              <Plus size={14} /> Create Your First Workflow
+              <Plus size={14} /> Create Your First
             </button>
           )}
         </motion.div>
@@ -1790,6 +1918,14 @@ export default function WorkflowsPage() {
                         }}>
                           <Pencil size={10} />
                         </Link>
+                        <button onClick={() => exportEntity('workflow', wf.id as string, wf.name as string)} title="Export" style={{
+                          display: 'flex', alignItems: 'center',
+                          padding: '5px 8px', borderRadius: 5,
+                          border: '1px solid var(--border)', background: 'transparent',
+                          color: 'var(--text-4)', cursor: 'pointer', fontSize: 11,
+                        }}>
+                          <Download size={10} />
+                        </button>
                         <button onClick={() => setDeletingWf(wf)} style={{
                           display: 'flex', alignItems: 'center',
                           padding: '5px 8px', borderRadius: 5,
@@ -1915,6 +2051,14 @@ export default function WorkflowsPage() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Shared Config Import Dialog */}
+      <SharedConfigImportDialog
+        open={showSharedImport}
+        onClose={() => setShowSharedImport(false)}
+        onImported={() => { mutate(); setShowSharedImport(false); }}
+        filterType="workflow"
+      />
     </div>
   );
 }

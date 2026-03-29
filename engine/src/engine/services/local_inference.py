@@ -200,20 +200,38 @@ class OllamaService(LocalInferenceBackend):
         }
         if system:
             payload["system"] = system
-        async with self.client.stream("POST", "/api/generate", json=payload) as resp:
-            resp.raise_for_status()
-            async for line in resp.aiter_lines():
-                if not line.strip():
+
+        last_exc: Exception | None = None
+        for attempt in range(MAX_RETRIES + 1):
+            try:
+                async with self.client.stream("POST", "/api/generate", json=payload) as resp:
+                    resp.raise_for_status()
+                    async for line in resp.aiter_lines():
+                        if not line.strip():
+                            continue
+                        try:
+                            chunk = json.loads(line)
+                            token = chunk.get("response", "")
+                            if token:
+                                yield token
+                            if chunk.get("done", False):
+                                return
+                        except json.JSONDecodeError:
+                            continue
+                return  # stream completed successfully
+            except (httpx.ConnectError, httpx.ReadTimeout, httpx.ConnectTimeout) as exc:
+                last_exc = exc
+                if attempt < MAX_RETRIES:
+                    delay = RETRY_DELAY * (2**attempt)
+                    logger.warning(
+                        "generate_stream retry %d/%d after %.1fs: %s",
+                        attempt + 1, MAX_RETRIES, delay, exc,
+                    )
+                    await asyncio.sleep(delay)
                     continue
-                try:
-                    chunk = json.loads(line)
-                    token = chunk.get("response", "")
-                    if token:
-                        yield token
-                    if chunk.get("done", False):
-                        return
-                except json.JSONDecodeError:
-                    continue
+                raise
+        if last_exc:
+            raise last_exc
 
     async def chat(
         self,
@@ -378,23 +396,41 @@ class LlamaCppService(LocalInferenceBackend):
             "n_predict": max_tokens,
             "stream": True,
         }
-        async with self.client.stream("POST", "/completion", json=payload) as resp:
-            resp.raise_for_status()
-            async for line in resp.aiter_lines():
-                if not line.strip():
+
+        last_exc: Exception | None = None
+        for attempt in range(MAX_RETRIES + 1):
+            try:
+                async with self.client.stream("POST", "/completion", json=payload) as resp:
+                    resp.raise_for_status()
+                    async for line in resp.aiter_lines():
+                        if not line.strip():
+                            continue
+                        text = line
+                        if text.startswith("data: "):
+                            text = text[6:]
+                        try:
+                            chunk = json.loads(text)
+                            token = chunk.get("content", "")
+                            if token:
+                                yield token
+                            if chunk.get("stop", False):
+                                return
+                        except json.JSONDecodeError:
+                            continue
+                return  # stream completed successfully
+            except (httpx.ConnectError, httpx.ReadTimeout, httpx.ConnectTimeout) as exc:
+                last_exc = exc
+                if attempt < MAX_RETRIES:
+                    delay = RETRY_DELAY * (2**attempt)
+                    logger.warning(
+                        "generate_stream retry %d/%d after %.1fs: %s",
+                        attempt + 1, MAX_RETRIES, delay, exc,
+                    )
+                    await asyncio.sleep(delay)
                     continue
-                text = line
-                if text.startswith("data: "):
-                    text = text[6:]
-                try:
-                    chunk = json.loads(text)
-                    token = chunk.get("content", "")
-                    if token:
-                        yield token
-                    if chunk.get("stop", False):
-                        return
-                except json.JSONDecodeError:
-                    continue
+                raise
+        if last_exc:
+            raise last_exc
 
     async def chat(
         self,

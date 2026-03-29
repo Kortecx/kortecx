@@ -387,3 +387,44 @@ type LogEntry struct {
 	TaskID    string         `json:"taskId,omitempty"`
 	RunID     string         `json:"runId,omitempty"`
 }
+
+// --- Quick Check ---
+
+// QuickCheck submits a platform-aware Q&A prompt via the REST API.
+// For streaming, use the WebSocket quick_check.submit event instead.
+func (s *Service) QuickCheck(req types.QuickCheckRequest) (*types.QuickCheckResult, error) {
+	var resp types.QuickCheckResult
+	if err := s.c.Do(http.MethodPost, "/api/quick-check", req, &resp); err != nil {
+		return nil, fmt.Errorf("quick check: %w", err)
+	}
+	return &resp, nil
+}
+
+// ListQuickChecks returns recent quick check results.
+func (s *Service) ListQuickChecks(limit int) ([]types.QuickCheckResult, error) {
+	path := fmt.Sprintf("/api/quick-check?limit=%d", limit)
+	var resp struct {
+		Checks []types.QuickCheckResult `json:"checks"`
+	}
+	if err := s.c.Do(http.MethodGet, path, nil, &resp); err != nil {
+		return nil, fmt.Errorf("list quick checks: %w", err)
+	}
+	return resp.Checks, nil
+}
+
+// GetQuickCheck retrieves a single quick check by ID.
+func (s *Service) GetQuickCheck(id string) (*types.QuickCheckResult, error) {
+	var resp types.QuickCheckResult
+	if err := s.c.Do(http.MethodGet, "/api/quick-check/"+id, nil, &resp); err != nil {
+		return nil, fmt.Errorf("get quick check: %w", err)
+	}
+	return &resp, nil
+}
+
+// DeleteQuickCheck removes a quick check record.
+func (s *Service) DeleteQuickCheck(id string) error {
+	if err := s.c.Do(http.MethodDelete, "/api/quick-check/"+id, nil, nil); err != nil {
+		return fmt.Errorf("delete quick check: %w", err)
+	}
+	return nil
+}

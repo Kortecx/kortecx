@@ -1,14 +1,16 @@
 'use client';
 
+import { useState, useRef, useEffect } from 'react';
 import Link from 'next/link';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import useSWR from 'swr';
 import {
   Cpu, CheckCircle2, TrendingUp, Zap, ArrowRight,
   Circle, ChevronRight, Play, BarChart3, Users,
-  Workflow, Activity, X,
+  Workflow, Activity, X, Sparkles, Send, Loader2,
 } from 'lucide-react';
 import { useMetrics, useTasks, useExperts, useWorkflowRuns, useLiveMetrics } from '@/lib/hooks/useApi';
+import { useQuickCheckWS } from '@/lib/hooks/useQuickCheckWS';
 import type { QueuedTask, WorkflowRun, Expert, AIProvider } from '@/lib/types';
 import { fadeUp, stagger, buttonHover } from '@/lib/motion';
 
@@ -270,6 +272,35 @@ export default function OpsDashboard() {
   const activeExperts   = experts.filter((e: Expert) => e.status === 'active').length;
   const idleExperts     = experts.filter((e: Expert) => e.status === 'idle').length;
 
+  /* Quick Check state */
+  const [quickCheckOpen, setQuickCheckOpen] = useState(false);
+  const [qcPrompt, setQcPrompt] = useState('');
+  const qc = useQuickCheckWS();
+  const responseEndRef = useRef<HTMLDivElement>(null);
+
+  // Auto-scroll response
+  useEffect(() => {
+    responseEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [qc.response]);
+
+  const handleQuickCheckSubmit = () => {
+    if (!qcPrompt.trim() || qc.status === 'streaming' || qc.status === 'connecting') return;
+    const checkId = `qc-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    // Create DB record
+    fetch('/api/quick-check', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: checkId, prompt: qcPrompt.trim() }),
+    }).catch(() => {});
+    qc.submit(checkId, qcPrompt.trim());
+  };
+
+  const handleQuickCheckClose = () => {
+    setQuickCheckOpen(false);
+    setQcPrompt('');
+    qc.reset();
+  };
+
   return (
     <div style={{ padding: 24, maxWidth: 1400, margin: '0 auto' }}>
 
@@ -314,16 +345,13 @@ export default function OpsDashboard() {
           transition={{ delay: 0.15 }}
           style={{ display: 'flex', gap: 8 }}
         >
-          <Link href="/workflow/builder">
-            <button className="btn btn-secondary btn-sm">
-              <Workflow size={13} /> New Workflow
-            </button>
-          </Link>
-          <Link href="/workflow">
-            <motion.button {...buttonHover} className="btn btn-primary btn-sm">
-              <Play size={13} /> Quick Run
-            </motion.button>
-          </Link>
+          <motion.button
+            {...buttonHover}
+            className="btn btn-primary btn-sm"
+            onClick={() => setQuickCheckOpen(true)}
+          >
+            <Sparkles size={13} /> Quick Check
+          </motion.button>
         </motion.div>
       </motion.div>
 
@@ -653,6 +681,152 @@ export default function OpsDashboard() {
           </motion.div>
         ))}
       </motion.div>
+
+      {/* Quick Check Dialog */}
+      <AnimatePresence>
+        {quickCheckOpen && (
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            onClick={handleQuickCheckClose}
+            style={{
+              position: 'fixed', inset: 0, background: 'rgba(7,7,26,0.85)',
+              backdropFilter: 'blur(4px)', zIndex: 200,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.96, y: -8 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.96, y: -8 }}
+              transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+              onClick={e => e.stopPropagation()}
+              style={{
+                background: 'var(--bg-surface)', border: '1px solid var(--border)',
+                borderRadius: 14, width: 560, maxWidth: '92vw',
+                maxHeight: '80vh', display: 'flex', flexDirection: 'column',
+                overflow: 'hidden',
+              }}
+            >
+              {/* Header */}
+              <div style={{
+                padding: '18px 22px', borderBottom: '1px solid var(--border)',
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <div style={{
+                    width: 32, height: 32, borderRadius: 8,
+                    background: 'rgba(249,115,22,0.1)', border: '1.5px solid rgba(249,115,22,0.2)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  }}>
+                    <Sparkles size={15} color="#F97316" />
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-1)' }}>Quick Check</div>
+                    <div style={{ fontSize: 10, color: 'var(--text-4)' }}>
+                      Platform-aware Q&A · llama3.1
+                    </div>
+                  </div>
+                </div>
+                <button onClick={handleQuickCheckClose} style={{
+                  background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-4)',
+                  display: 'flex', padding: 4,
+                }}>
+                  <X size={16} />
+                </button>
+              </div>
+
+              {/* Response area */}
+              {(qc.status !== 'idle' || qc.response) && (
+                <div style={{
+                  flex: 1, overflowY: 'auto', padding: '16px 22px',
+                  maxHeight: 340, minHeight: 120,
+                  fontSize: 13, color: 'var(--text-2)', lineHeight: 1.7,
+                  whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                }}>
+                  {(qc.phase === 'connecting' || qc.phase === 'gathering_context') && !qc.response && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-4)' }}>
+                      <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} />
+                      {qc.phase === 'connecting' ? 'Connecting to engine...' : 'Gathering platform context...'}
+                    </div>
+                  )}
+                  {qc.response}
+                  {qc.status === 'streaming' && (
+                    <span style={{
+                      display: 'inline-block', width: 6, height: 14,
+                      background: '#F97316', borderRadius: 1, marginLeft: 2,
+                      animation: 'pulse 1s infinite',
+                    }} />
+                  )}
+                  {qc.status === 'error' && (
+                    <div style={{ color: '#ef4444', marginTop: 8, fontSize: 12 }}>
+                      <div>{qc.error}</div>
+                      <button
+                        onClick={() => qc.retry()}
+                        style={{
+                          marginTop: 8, padding: '4px 12px', fontSize: 11,
+                          background: 'rgba(249,115,22,0.1)', border: '1px solid rgba(249,115,22,0.3)',
+                          borderRadius: 6, color: '#F97316', cursor: 'pointer',
+                        }}
+                      >
+                        Retry
+                      </button>
+                    </div>
+                  )}
+                  {qc.status === 'completed' && (
+                    <div style={{
+                      marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--border)',
+                      fontSize: 10, color: 'var(--text-4)', display: 'flex', gap: 16,
+                    }}>
+                      <span>{qc.tokensUsed} tokens</span>
+                      <span>{(qc.durationMs / 1000).toFixed(1)}s</span>
+                      {qc.model && <span>{qc.model}</span>}
+                    </div>
+                  )}
+                  <div ref={responseEndRef} />
+                </div>
+              )}
+
+              {/* Input area */}
+              <div style={{
+                padding: '14px 22px', borderTop: '1px solid var(--border)',
+                display: 'flex', gap: 10, alignItems: 'flex-end',
+              }}>
+                <textarea
+                  value={qcPrompt}
+                  onChange={e => setQcPrompt(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleQuickCheckSubmit(); } }}
+                  placeholder="Ask anything about your platform..."
+                  rows={2}
+                  disabled={qc.status === 'streaming' || qc.status === 'connecting'}
+                  style={{
+                    flex: 1, resize: 'none', border: '1px solid var(--border-md)',
+                    borderRadius: 8, padding: '10px 14px', fontSize: 13,
+                    background: 'var(--bg)', color: 'var(--text-1)',
+                    outline: 'none', lineHeight: 1.5,
+                  }}
+                />
+                <button
+                  onClick={handleQuickCheckSubmit}
+                  disabled={!qcPrompt.trim() || qc.status === 'streaming' || qc.status === 'connecting'}
+                  style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    width: 40, height: 40, borderRadius: 8, border: 'none',
+                    background: qcPrompt.trim() ? '#F97316' : 'var(--bg-elevated)',
+                    color: qcPrompt.trim() ? '#fff' : 'var(--text-4)',
+                    cursor: qcPrompt.trim() ? 'pointer' : 'default',
+                    transition: 'all 0.15s', flexShrink: 0,
+                  }}
+                >
+                  {qc.status === 'streaming' || qc.status === 'connecting'
+                    ? <Loader2 size={16} style={{ animation: 'spin 1s linear infinite' }} />
+                    : <Send size={16} />
+                  }
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

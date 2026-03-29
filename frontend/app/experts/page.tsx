@@ -13,15 +13,17 @@ import {
   ChevronDown, Play, Cpu, Tag, X,
   Trash2, CheckCircle2, AlertCircle,
   Copy, RotateCcw, Store, FileText,
-  Network, LayoutGrid,
+  Network, LayoutGrid, Download,
 } from 'lucide-react';
 import { useExperts, usePrismGraph, useMarketplaceGraph } from '@/lib/hooks/useApi';
 import { ROLE_META } from '@/lib/constants';
 import type { Expert, ExpertRole } from '@/lib/types';
 import ExpertEditDialog from './_components/ExpertEditDialog';
 import PrismGraph from './_components/PrismGraph';
-
 import PrismListView from './_components/PrismListView';
+import { ImportButton, SharedImportButton } from '@/components/ImportExportButtons';
+import SharedConfigImportDialog from '@/components/SharedConfigImportDialog';
+import { exportEntity } from '@/lib/config-export';
 
 /* ═══════════════════════════════════════════════════════
    Constants
@@ -535,6 +537,7 @@ function MyExpertCard({
   onConfigure,
   onViewStats,
   onDelete,
+  onExport,
   onRun,
   highlighted,
   cardRef,
@@ -544,6 +547,7 @@ function MyExpertCard({
   onConfigure: () => void;
   onViewStats: () => void;
   onDelete: () => void;
+  onExport: () => void;
   onRun: () => void;
   highlighted: boolean;
   cardRef?: React.Ref<HTMLDivElement>;
@@ -773,6 +777,16 @@ function MyExpertCard({
           <BarChart2 size={10} />
           Stats
         </button>
+        <button onClick={e => { e.stopPropagation(); onExport(); }} title="Export PRISM" style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          padding: '7px 8px', borderRadius: 7, cursor: 'pointer',
+          border: '1px solid var(--border-md)',
+          background: 'transparent',
+          color: 'var(--text-4)', fontSize: 11,
+          transition: 'all 0.15s',
+        }}>
+          <Download size={11} />
+        </button>
         <button onClick={e => { e.stopPropagation(); onDelete(); }} title="Delete PRISM" style={{
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           padding: '7px 8px', borderRadius: 7, cursor: 'pointer',
@@ -966,6 +980,9 @@ function ExpertsPage() {
   const [mineSortOpen, setMineSortOpen]       = useState(false);
   const [configureExpert, setConfigureExpert] = useState<Record<string, unknown> | null>(null);
   const [statsExpert, setStatsExpert]         = useState<Record<string, unknown> | null>(null);
+
+  /* Import/Export state */
+  const [showSharedImport, setShowSharedImport] = useState(false);
 
   /* Marketplace tab state */
   const [mpSearch, setMpSearch]         = useState('');
@@ -1358,18 +1375,8 @@ function ExpertsPage() {
         </div>
 
         <div style={{ display: 'flex', gap: 8 }}>
-          <button
-            onClick={() => mutate()}
-            style={{
-              display: 'flex', alignItems: 'center', gap: 6,
-              padding: '8px 15px', borderRadius: 8, border: '1px solid var(--border-md)',
-              background: 'var(--bg-surface)', cursor: 'pointer',
-              fontSize: 12, fontWeight: 500, color: 'var(--text-2)',
-            }}
-          >
-            <Activity size={12} />
-            Refresh
-          </button>
+          <ImportButton entityType="expert" onImported={() => mutate()} size="md" />
+          <SharedImportButton onClick={() => setShowSharedImport(true)} size="md" />
           <Link href="/experts/deploy" style={{
             display: 'flex', alignItems: 'center', gap: 6,
             padding: '8px 15px', borderRadius: 8,
@@ -1379,7 +1386,7 @@ function ExpertsPage() {
             textDecoration: 'none',
           }}>
             <Plus size={13} strokeWidth={2.5} />
-            Deploy New
+            Create New
           </Link>
         </div>
       </motion.div>
@@ -1624,6 +1631,7 @@ function ExpertsPage() {
               onConfigure={setConfigureExpert}
               onRun={handleRunExpert}
               onDelete={handleDeleteExpert}
+              onExport={(p) => exportEntity('expert', p.id as string, p.name as string)}
               onCreateEdge={async (sourceId, targetId) => {
                 try {
                   await fetch('/api/experts/graph', {
@@ -1881,6 +1889,14 @@ function ExpertsPage() {
           />
         )}
       </AnimatePresence>
+
+      {/* Shared Config Import Dialog */}
+      <SharedConfigImportDialog
+        open={showSharedImport}
+        onClose={() => setShowSharedImport(false)}
+        onImported={() => { mutate(); setShowSharedImport(false); }}
+        filterType="expert"
+      />
     </div>
   );
 }

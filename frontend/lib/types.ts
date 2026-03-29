@@ -508,6 +508,20 @@ export interface StepIntegration {
   config?: Record<string, string>;
 }
 
+/* ── Executables ─────────────────────────────────────── */
+export interface Executable {
+  id: string;
+  name: string;
+  language: string;
+  source: string;
+  size: number;
+  createdAt: string;
+  status: string;
+  output?: string;
+  code?: string;
+  description?: string;
+}
+
 /* ── MCP Servers ─────────────────────────────────────── */
 export type McpServerStatus = 'idle' | 'running' | 'tested' | 'error';
 export type McpServerSource = 'prebuilt' | 'generated' | 'persisted';

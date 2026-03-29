@@ -9,8 +9,8 @@
   "homepage": "https://kortecx.com",
 
   "schema": {
-    "version": 4,
-    "lastMigration": "004_plan_freeze_versioning",
+    "version": 6,
+    "lastMigration": "006_quick_checks",
     "migrations": [
       {
         "id": "001_initial",
@@ -34,6 +34,18 @@
         "id": "004_plan_freeze_versioning",
         "version": 4,
         "description": "Plan freeze/versioning: workflow plan columns, plan version/type/markdown/source fields",
+        "applied": true
+      },
+      {
+        "id": "005_alert_rules",
+        "version": 5,
+        "description": "Alert rules: trigger-based notification configuration with MCP, integration, and webhook channels",
+        "applied": true
+      },
+      {
+        "id": "006_quick_checks",
+        "version": 6,
+        "description": "Quick Checks: platform-aware Q&A with context from NeonDB and Qdrant, streamed via Ollama",
         "applied": true
       }
     ]
@@ -90,7 +102,9 @@
     "perFileVersioning": true,
     "scriptExecution": true,
     "planFreeze": true,
-    "planPrismGeneration": true
+    "planPrismGeneration": true,
+    "alertRules": true,
+    "configImportExport": true
   },
 
   "experts": {
