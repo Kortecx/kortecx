@@ -56,10 +56,11 @@ export async function POST(req: NextRequest) {
       const text = data.text || data.response || '';
       const tokensUsed = data.tokens_used ?? data.tokensUsed ?? 0;
       const durationMs = Math.round(data.duration_ms ?? data.durationMs ?? 0);
+      const cpuPercent = await fetchCpuPercent();
 
       const ndjson =
         JSON.stringify({ token: text }) + '\n' +
-        JSON.stringify({ done: true, model, tokensUsed, durationMs }) + '\n';
+        JSON.stringify({ done: true, model, tokensUsed, durationMs, cpuPercent }) + '\n';
 
       return new Response(encoder.encode(ndjson), {
         headers: {
@@ -126,8 +127,9 @@ async function streamFromOllama(prompt: string, model: string): Promise<Response
         const { done, value } = await reader.read();
 
         if (done) {
+          const cpuPercent = await fetchCpuPercent();
           controller.enqueue(encoder.encode(
-            JSON.stringify({ done: true, model, tokensUsed, durationMs: Date.now() - startMs }) + '\n',
+            JSON.stringify({ done: true, model, tokensUsed, durationMs: Date.now() - startMs, cpuPercent }) + '\n',
           ));
           controller.close();
           return;
@@ -144,6 +146,7 @@ async function streamFromOllama(prompt: string, model: string): Promise<Response
 
             if (chunk.done) {
               const evalCount = (chunk.eval_count || 0) + (chunk.prompt_eval_count || 0);
+              const cpuPercent = await fetchCpuPercent();
               controller.enqueue(encoder.encode(
                 JSON.stringify({
                   done: true,
@@ -152,6 +155,7 @@ async function streamFromOllama(prompt: string, model: string): Promise<Response
                   durationMs: chunk.total_duration
                     ? Math.round(chunk.total_duration / 1_000_000)
                     : Date.now() - startMs,
+                  cpuPercent,
                 }) + '\n',
               ));
               controller.close();
@@ -186,6 +190,17 @@ async function streamFromOllama(prompt: string, model: string): Promise<Response
 }
 
 /* ── Helpers ──────────────────────────────────────────────────────────── */
+
+async function fetchCpuPercent(): Promise<number> {
+  try {
+    const res = await fetch(`${ENGINE_URL}/api/orchestrator/system/stats`);
+    if (res.ok) {
+      const data = await res.json();
+      return data.cpu_percent ?? 0;
+    }
+  } catch { /* engine may be down */ }
+  return 0;
+}
 
 function jsonError(message: string, status: number): Response {
   return new Response(JSON.stringify({ error: message }), {

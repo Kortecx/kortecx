@@ -14,6 +14,7 @@ from typing import Any
 
 import asyncpg
 import httpx
+import psutil
 
 from engine.config import settings
 
@@ -201,6 +202,9 @@ class QuickCheckService:
         tokens_total = 0
         context_sources: list[str] = []
 
+        # Prime CPU measurement (non-blocking baseline)
+        psutil.cpu_percent(interval=None)
+
         try:
             # 1. Gather context
             context = await self.gather_platform_context(prompt)
@@ -230,6 +234,7 @@ class QuickCheckService:
                 )
 
             duration_ms = int((time.time() - start) * 1000)
+            cpu_percent = psutil.cpu_percent(interval=None)
 
             # 4. Save result
             await self.save_result(check_id, prompt, full_response, tokens_total, duration_ms, context_sources)
@@ -246,6 +251,7 @@ class QuickCheckService:
                     "contextSources": context_sources,
                     "model": model_name,
                     "engine": engine_name,
+                    "cpuPercent": cpu_percent,
                 },
             )
 

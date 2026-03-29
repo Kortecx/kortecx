@@ -23,6 +23,7 @@ interface QuickCheckState {
   tokensUsed: number;
   durationMs: number;
   model: string | null;
+  cpuPercent: number | null;
 }
 
 const INITIAL_STATE: QuickCheckState = {
@@ -34,6 +35,7 @@ const INITIAL_STATE: QuickCheckState = {
   tokensUsed: 0,
   durationMs: 0,
   model: null,
+  cpuPercent: null,
 };
 
 const MAX_WS_RETRIES = 2;
@@ -108,6 +110,7 @@ export function useQuickCheckWS() {
                 tokensUsed: chunk.tokensUsed ?? prev.tokensUsed,
                 durationMs: chunk.durationMs ?? 0,
                 model: chunk.model ?? null,
+                cpuPercent: chunk.cpuPercent ?? null,
               }));
               return;
             }
@@ -197,6 +200,7 @@ export function useQuickCheckWS() {
               tokensUsed: msg.data?.tokensUsed ?? prev.tokensUsed,
               durationMs: msg.data?.durationMs ?? 0,
               model: msg.data?.model ?? null,
+              cpuPercent: msg.data?.cpuPercent ?? null,
             }));
             ws.close();
           } else if (event === 'quick_check.error') {
@@ -259,5 +263,6 @@ export function useQuickCheckWS() {
     tokensUsed: state.tokensUsed,
     durationMs: state.durationMs,
     model: state.model,
+    cpuPercent: state.cpuPercent,
   };
 }

@@ -7,7 +7,7 @@ import useSWR from 'swr';
 import {
   Cpu, CheckCircle2, TrendingUp, Zap, ArrowRight,
   Circle, ChevronRight, Play, BarChart3, Users,
-  Workflow, Activity, X, Sparkles, Send, Loader2,
+  Workflow, Activity, X, Sparkles, Send, Loader2, Copy, Check,
 } from 'lucide-react';
 import { useMetrics, useTasks, useExperts, useWorkflowRuns, useLiveMetrics } from '@/lib/hooks/useApi';
 import { useQuickCheckWS } from '@/lib/hooks/useQuickCheckWS';
@@ -46,6 +46,23 @@ function priorityLabel(p: string) {
     low:      'LOW',
   };
   return map[p] ?? p.toUpperCase();
+}
+
+const QC_ING_WORDS = [
+  'Analyzing', 'Processing', 'Synthesizing', 'Computing',
+  'Evaluating', 'Generating', 'Reasoning', 'Indexing',
+  'Inferring', 'Parsing', 'Interpreting', 'Resolving',
+];
+
+function fmtDuration(ms: number): string {
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${(ms / 1000).toFixed(1)}s`;
+  const m = Math.floor(s / 60);
+  const rs = s % 60;
+  if (m < 60) return `${m}m ${rs}s`;
+  const h = Math.floor(m / 60);
+  const rm = m % 60;
+  return `${h}h ${rm}m`;
 }
 
 /* ── Skeleton Shimmer ─────────────────────────────────── */
@@ -277,6 +294,36 @@ export default function OpsDashboard() {
   const [qcPrompt, setQcPrompt] = useState('');
   const qc = useQuickCheckWS();
   const responseEndRef = useRef<HTMLDivElement>(null);
+  const [qcCopied, setQcCopied] = useState(false);
+
+  // Cycling "-ing" word for loading phase
+  const [qcIngWord, setQcIngWord] = useState(QC_ING_WORDS[0]);
+  useEffect(() => {
+    const isActive = qc.status === 'connecting' || qc.status === 'streaming';
+    if (!isActive) return;
+    const id = setInterval(() => {
+      setQcIngWord(QC_ING_WORDS[Math.floor(Math.random() * QC_ING_WORDS.length)]);
+    }, 1500);
+    return () => clearInterval(id);
+  }, [qc.status]);
+
+  // Live elapsed timer — ticks while request is in progress
+  const [qcElapsed, setQcElapsed] = useState(0);
+  const qcStartRef = useRef<number | null>(null);
+  useEffect(() => {
+    const isActive = qc.status === 'connecting' || qc.status === 'streaming';
+    if (isActive && qcStartRef.current === null) {
+      qcStartRef.current = Date.now();
+    }
+    if (!isActive && qcStartRef.current !== null) {
+      qcStartRef.current = null;
+    }
+    if (!isActive) return;
+    const id = setInterval(() => {
+      if (qcStartRef.current) setQcElapsed(Date.now() - qcStartRef.current);
+    }, 100);
+    return () => clearInterval(id);
+  }, [qc.status]);
 
   // Auto-scroll response
   useEffect(() => {
@@ -722,7 +769,7 @@ export default function OpsDashboard() {
                   </div>
                   <div>
                     <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-1)' }}>Quick Check</div>
-                    <div style={{ fontSize: 10, color: 'var(--text-4)' }}>
+                    <div style={{ fontSize: 10, color: '#F97316' }}>
                       Platform-aware Q&A · llama3.1
                     </div>
                   </div>
@@ -746,7 +793,7 @@ export default function OpsDashboard() {
                   {(qc.phase === 'connecting' || qc.phase === 'gathering_context') && !qc.response && (
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-4)' }}>
                       <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} />
-                      {qc.phase === 'connecting' ? 'Connecting to engine...' : 'Gathering platform context...'}
+                      {qcIngWord}...
                     </div>
                   )}
                   {qc.response}
@@ -772,14 +819,36 @@ export default function OpsDashboard() {
                       </button>
                     </div>
                   )}
-                  {qc.status === 'completed' && (
+                  {(qc.status === 'connecting' || qc.status === 'streaming' || qc.status === 'completed') && (
                     <div style={{
                       marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--border)',
-                      fontSize: 10, color: 'var(--text-4)', display: 'flex', gap: 16,
+                      fontSize: 10, color: '#F97316', display: 'flex', alignItems: 'center', gap: 16,
                     }}>
                       <span>{qc.tokensUsed} tokens</span>
-                      <span>{(qc.durationMs / 1000).toFixed(1)}s</span>
-                      {qc.model && <span>{qc.model}</span>}
+                      <span>{fmtDuration(qc.status === 'completed' ? qc.durationMs : qcElapsed)}</span>
+                      <span>{qc.status === 'completed' && qc.model ? qc.model : 'llama3.1:8b'}</span>
+                      {qc.response && (
+                        <button
+                          onClick={() => {
+                            navigator.clipboard.writeText(qc.response);
+                            setQcCopied(true);
+                            setTimeout(() => setQcCopied(false), 2000);
+                          }}
+                          title="Copy response"
+                          style={{
+                            marginLeft: 'auto',
+                            background: qcCopied ? 'rgba(16,185,129,0.12)' : 'rgba(249,115,22,0.1)',
+                            border: `1px solid ${qcCopied ? 'rgba(16,185,129,0.4)' : 'rgba(249,115,22,0.3)'}`,
+                            borderRadius: 5,
+                            padding: '3px 8px', cursor: 'pointer',
+                            color: qcCopied ? '#10b981' : '#F97316',
+                            display: 'flex', alignItems: 'center', gap: 4, fontSize: 10,
+                            transition: 'all 0.2s ease',
+                          }}
+                        >
+                          {qcCopied ? <><Check size={10} /> Copied</> : <><Copy size={10} /> Copy</>}
+                        </button>
+                      )}
                     </div>
                   )}
                   <div ref={responseEndRef} />
