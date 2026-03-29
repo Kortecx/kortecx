@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/exi/kortecx-go/client"
+	"github.com/exi/kortecx-go/quorum"
 	"github.com/exi/kortecx-go/types"
 )
 
@@ -335,11 +336,44 @@ func (s *Service) ListExpertRuns(status string) ([]types.ExpertRun, error) {
 	return resp.Runs, err
 }
 
+// --- Graph ---
+
+// GetGraphEdges fetches similarity edges from the PRISM graph.
+func (s *Service) GetGraphEdges(threshold float64, limit int) (*quorum.GraphEdgesResponse, error) {
+	url := fmt.Sprintf("/api/prism/engine/graph/edges?threshold=%g&limit=%d", threshold, limit)
+	var resp quorum.GraphEdgesResponse
+	if err := s.c.Do("GET", url, nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// EmbedExpert triggers re-embedding of a single PRISM.
+func (s *Service) EmbedExpert(expertID string) error {
+	url := fmt.Sprintf("/api/prism/engine/%s/embed", expertID)
+	var resp map[string]interface{}
+	return s.c.Do("POST", url, nil, &resp)
+}
+
+// EmbedExpertWithAssets re-embeds a PRISM with attached file content.
+func (s *Service) EmbedExpertWithAssets(expertID string, fileTexts []string) error {
+	url := fmt.Sprintf("/api/prism/engine/%s/embed-assets", expertID)
+	body := quorum.EmbedAssetsRequest{FileTexts: fileTexts}
+	var resp map[string]interface{}
+	return s.c.Do("POST", url, body, &resp)
+}
+
+// EmbedAllExperts triggers batch re-embedding of all PRISMs.
+func (s *Service) EmbedAllExperts() error {
+	var resp map[string]interface{}
+	return s.c.Do("POST", "/api/prism/engine/embed/all", nil, &resp)
+}
+
 // MonitoringSnapshot is the response from the monitoring endpoint.
 type MonitoringSnapshot struct {
-	Alerts      []types.Alert `json:"alerts"`
-	Metrics     types.Metrics `json:"metrics"`
-	RecentLogs  []LogEntry      `json:"recentLogs"`
+	Alerts     []types.Alert `json:"alerts"`
+	Metrics    types.Metrics `json:"metrics"`
+	RecentLogs []LogEntry    `json:"recentLogs"`
 }
 
 // LogEntry is a single log from the kortecx system.

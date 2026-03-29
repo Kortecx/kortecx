@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 
 class TestSettings:
     def test_defaults(self, monkeypatch):

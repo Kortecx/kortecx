@@ -21,6 +21,7 @@ import {
 import { INTEGRATION_CATALOG, MARKETPLACE_PLUGINS } from '@/lib/constants';
 import type { IntegrationCategory, McpServer, McpLanguage } from '@/lib/types';
 import { motion, AnimatePresence } from 'framer-motion';
+import { buttonHover } from '@/lib/motion';
 
 const MonacoEditor = lazy(() => import('@monaco-editor/react'));
 
@@ -1194,7 +1195,7 @@ function ConnectionsPageInner() {
                         <Settings size={11} /> Configure
                       </button>
                     ) : (
-                      <button className="btn btn-primary btn-sm" style={{ fontSize: 11 }}
+                      <motion.button {...buttonHover} className="btn btn-primary btn-sm" style={{ fontSize: 11 }}
                         onClick={() => {
                           setConnectingId(integration.id);
                           setCredClientId('');
@@ -1203,7 +1204,7 @@ function ConnectionsPageInner() {
                           setShowCredSecrets(false);
                         }}>
                         <Plus size={11} /> Connect
-                      </button>
+                      </motion.button>
                     )}
                   </div>
                 </div>
@@ -1242,9 +1243,9 @@ function ConnectionsPageInner() {
               ))}
             </div>
             {pluginTab === 'personal' && (
-              <button className="btn btn-primary btn-sm" onClick={() => setShowCreatePlugin(true)}>
+              <motion.button {...buttonHover} className="btn btn-primary btn-sm" onClick={() => setShowCreatePlugin(true)}>
                 <Plus size={13} /> Create Plugin
-              </button>
+              </motion.button>
             )}
           </div>
 
@@ -1374,10 +1375,10 @@ function ConnectionsPageInner() {
                             <Check size={12} /> Installed
                           </span>
                         ) : (
-                          <button className="btn btn-primary btn-sm" style={{ fontSize: 11 }}
+                          <motion.button {...buttonHover} className="btn btn-primary btn-sm" style={{ fontSize: 11 }}
                             onClick={() => handleInstallPlugin(plugin.id)}>
                             <Download size={11} /> Install
-                          </button>
+                          </motion.button>
                         )}
                       </div>
                     </div>
@@ -1405,9 +1406,9 @@ function ConnectionsPageInner() {
                   <div style={{ fontSize: 13, color: 'var(--text-3)', marginBottom: 16, maxWidth: 400, margin: '0 auto 16px' }}>
                     Create custom plugins to extend your workflow agents with specialized capabilities.
                   </div>
-                  <button className="btn btn-primary" onClick={() => setShowCreatePlugin(true)}>
+                  <motion.button {...buttonHover} className="btn btn-primary" onClick={() => setShowCreatePlugin(true)}>
                     <Plus size={14} /> Create Your First Plugin
-                  </button>
+                  </motion.button>
                 </div>
               )}
             </div>
@@ -1708,13 +1709,14 @@ function ConnectionsPageInner() {
                         A new tab will open for you to sign in with {integration.name}.
                         Kortecx will never see your password.
                       </div>
-                      <button
+                      <motion.button
+                        {...buttonHover}
                         className="btn btn-primary btn-sm"
                         style={{ background: integration.color, borderColor: integration.color, fontSize: 13, padding: '9px 24px' }}
                         onClick={() => handleOAuthConnect(integration.id)}
                       >
                         <ExternalLink size={12} /> Continue with {integration.name}
-                      </button>
+                      </motion.button>
                       <div style={{ fontSize: 10, color: 'var(--text-4)', marginTop: 10 }}>
                         Scopes: {integration.capabilities.join(' / ')}
                       </div>
@@ -1833,9 +1835,9 @@ function ConnectionsPageInner() {
                     Cancel
                   </button>
                   {!isOAuth && (
-                    <button className="btn btn-primary btn-sm" onClick={() => handleConnect(integration.id)}>
+                    <motion.button {...buttonHover} className="btn btn-primary btn-sm" onClick={() => handleConnect(integration.id)}>
                       <Check size={12} /> Connect
-                    </button>
+                    </motion.button>
                   )}
                 </div>
               </div>
@@ -1908,9 +1910,9 @@ function ConnectionsPageInner() {
               <button className="btn btn-secondary btn-sm" onClick={() => setShowCreatePlugin(false)}>
                 Cancel
               </button>
-              <button className="btn btn-primary btn-sm" onClick={handleCreatePlugin} disabled={!newPlugin.name.trim()}>
+              <motion.button {...buttonHover} className="btn btn-primary btn-sm" onClick={handleCreatePlugin} disabled={!newPlugin.name.trim()}>
                 <Plus size={12} /> Create Plugin
-              </button>
+              </motion.button>
             </div>
           </div>
         </div>
@@ -1986,9 +1988,9 @@ function ConnectionsPageInner() {
                   <Edit3 size={10} />
                 </button>
               </div>
-              <button className="btn btn-primary btn-sm" onClick={() => setMcpShowPrompt(true)}>
+              <motion.button {...buttonHover} className="btn btn-primary btn-sm" onClick={() => setMcpShowPrompt(true)}>
                 <Sparkles size={12} /> Generate MCP Server
-              </button>
+              </motion.button>
             </div>
           </div>
 
@@ -2405,13 +2407,13 @@ function ConnectionsPageInner() {
               )}
               {!mcpGenStats && <div style={{ flex: 1 }} />}
               <button className="btn btn-secondary btn-sm" onClick={() => { setMcpShowPrompt(false); setMcpTemplateSrc(null); }} disabled={mcpGenerating}>Cancel</button>
-              <button className="btn btn-primary btn-sm" onClick={handleMcpGenerate} disabled={mcpGenerating || !mcpPrompt.trim()} style={{
+              <motion.button {...buttonHover} className="btn btn-primary btn-sm" onClick={handleMcpGenerate} disabled={mcpGenerating || !mcpPrompt.trim()} style={{
                 display: 'flex', alignItems: 'center', gap: 6,
                 opacity: mcpGenerating || !mcpPrompt.trim() ? 0.5 : 1,
               }}>
                 {mcpGenerating ? <Loader2 size={12} style={{ animation: 'spin 1s linear infinite' }} /> : <Sparkles size={12} />}
                 {mcpGenerating ? 'Generating...' : 'Generate'}
-              </button>
+              </motion.button>
             </div>
           </div>
         </div>
@@ -2786,11 +2788,11 @@ function ConnectionsPageInner() {
               )}
               {/* Persist button — only for cached (generated) scripts */}
               {mcpViewServer.source === 'generated' && (
-                <button className="btn btn-primary btn-sm" onClick={() => handleMcpPersist(mcpViewServer)} disabled={mcpPersisting}
+                <motion.button {...buttonHover} className="btn btn-primary btn-sm" onClick={() => handleMcpPersist(mcpViewServer)} disabled={mcpPersisting}
                   style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                   {mcpPersisting ? <Loader2 size={12} style={{ animation: 'spin 1s linear infinite' }} /> : <Save size={12} />}
                   {mcpPersisting ? 'Persisting...' : 'Persist'}
-                </button>
+                </motion.button>
               )}
               <button className="btn btn-secondary btn-sm" onClick={() => setMcpViewServer(null)}>Close</button>
             </div>

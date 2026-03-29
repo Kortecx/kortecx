@@ -5,6 +5,7 @@ import { useState, useEffect, useCallback, useRef, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import useSWR from 'swr';
 import dynamic from 'next/dynamic';
+import { motion, AnimatePresence } from 'framer-motion';
 import {
   Database, Plus, Download, Sparkles, RefreshCcw,
   CheckCircle2, Clock, AlertTriangle, FileText,
@@ -15,6 +16,10 @@ import {
   Save, FolderOpen, LayoutGrid, List,
 } from 'lucide-react';
 import Link from 'next/link';
+import {
+  fadeUp, fadeDown, fadeRight, stagger, hoverLift, tapScale, buttonHover,
+  modalOverlay, modalContent, rowEntrance, emptyState, filterTab,
+} from '@/lib/motion';
 
 const MonacoEditor = dynamic(() => import('@monaco-editor/react').then(m => m.default), { ssr: false });
 import type { Dataset } from '@/lib/types';
@@ -220,13 +225,14 @@ function DatasetViewer({ dataset, onClose }: { dataset: any; onClose: () => void
   const totalPages = Math.ceil(filteredRows / PAGE_SIZE);
 
   return (
-    <div style={{
+    <motion.div {...modalOverlay} style={{
       position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)',
       backdropFilter: 'blur(4px)', zIndex: 200,
       display: 'flex', alignItems: 'stretch', justifyContent: 'center',
       padding: '40px 24px',
     }} onClick={onClose}>
-      <div
+      <motion.div
+        {...modalContent}
         onClick={e => e.stopPropagation()}
         style={{
           width: '100%', maxWidth: 1200, position: 'relative' as const,
@@ -630,8 +636,8 @@ function DatasetViewer({ dataset, onClose }: { dataset: any; onClose: () => void
             )}
           </div>
         )}
-      </div>
-    </div>
+      </motion.div>
+    </motion.div>
   );
 }
 
@@ -809,12 +815,12 @@ function SchemaEditorModal({
   const TYPES = ['string', 'text', 'integer', 'float', 'boolean', 'json', 'array', 'timestamp', 'date'];
 
   return (
-    <div style={{
+    <motion.div {...modalOverlay} style={{
       position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
       backdropFilter: 'blur(4px)', zIndex: 200,
       display: 'flex', alignItems: 'flex-start', justifyContent: 'center', paddingTop: 50,
     }} onClick={onClose}>
-      <div onClick={e => e.stopPropagation()} style={{
+      <motion.div {...modalContent} onClick={e => e.stopPropagation()} style={{
         width: 640, maxWidth: '92vw', maxHeight: '80vh', overflowY: 'auto',
         background: 'var(--bg-surface)', border: '1px solid var(--border)',
         borderRadius: 12, boxShadow: '0 24px 64px rgba(0,0,0,0.3)',
@@ -956,8 +962,8 @@ function SchemaEditorModal({
             {existingSchema ? 'Update Schema' : 'Save Schema'}
           </button>
         </div>
-      </div>
-    </div>
+      </motion.div>
+    </motion.div>
   );
 }
 
@@ -975,7 +981,7 @@ function DatasetCard({ ds, onView, onEditSchema, onDelete }: { ds: Dataset; onVi
     : Clock;
 
   return (
-    <div className="card" style={{ padding: 18 }}>
+    <motion.div variants={fadeUp} {...hoverLift} className="card" style={{ padding: 18 }}>
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 14 }}>
         <div style={{
           width: 38, height: 38, borderRadius: 6,
@@ -1072,9 +1078,9 @@ function DatasetCard({ ds, onView, onEditSchema, onDelete }: { ds: Dataset; onVi
 
       {/* Actions */}
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-        <button className="btn btn-primary btn-sm" onClick={onEditSchema}>
+        <motion.button {...buttonHover} className="btn btn-primary btn-sm" onClick={onEditSchema}>
           <Database size={12} /> Update Schema
-        </button>
+        </motion.button>
         <button className="btn btn-secondary btn-sm">
           <Download size={12} /> Export
         </button>
@@ -1089,7 +1095,7 @@ function DatasetCard({ ds, onView, onEditSchema, onDelete }: { ds: Dataset; onVi
           </div>
         )}
       </div>
-    </div>
+    </motion.div>
   );
 }
 
@@ -1241,7 +1247,7 @@ function HuggingFaceHubTab() {
         </div>
 
         {/* Search + Sort */}
-        <div style={{ display: 'flex', gap: 10, marginBottom: 16 }}>
+        <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }} style={{ display: 'flex', gap: 10, marginBottom: 16 }}>
           <div style={{ flex: 1, position: 'relative' }}>
             <Search
               size={14}
@@ -1267,7 +1273,7 @@ function HuggingFaceHubTab() {
             <option value="likes">Most Likes</option>
             <option value="lastModified">Recently Updated</option>
           </select>
-        </div>
+        </motion.div>
 
         {/* Results */}
         {hfLoading ? (
@@ -1288,7 +1294,7 @@ function HuggingFaceHubTab() {
             ))}
           </div>
         ) : hfResults.length > 0 ? (
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 10 }}>
+          <motion.div variants={stagger(0.08)} initial="hidden" animate="show" style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 10 }}>
             {hfResults.map((ds: any) => {
               const hfId = ds.id ?? ds.hfId ?? '';
               const author = ds.author ?? hfId.split('/')[0] ?? '';
@@ -1300,7 +1306,7 @@ function HuggingFaceHubTab() {
               const hfUrl = `https://huggingface.co/datasets/${hfId}`;
 
               return (
-                <div key={hfId} style={{
+                <motion.div key={hfId} variants={fadeUp} {...hoverLift} style={{
                   background: 'var(--bg-card, var(--bg-surface, var(--bg-2)))',
                   border: '1px solid var(--border)',
                   borderRadius: 8,
@@ -1386,28 +1392,28 @@ function HuggingFaceHubTab() {
                       </span>
                     )}
                   </div>
-                </div>
+                </motion.div>
               );
             })}
-          </div>
+          </motion.div>
         ) : hfQuery.trim() ? (
-          <div style={{
+          <motion.div {...emptyState} style={{
             textAlign: 'center', padding: '48px 24px',
             color: 'var(--text-3)', fontSize: 13,
           }}>
             <Database size={32} style={{ opacity: 0.3, marginBottom: 12 }} />
             <div>No datasets found for &ldquo;{hfQuery}&rdquo;</div>
             <div style={{ fontSize: 11, marginTop: 4 }}>Try a different search term</div>
-          </div>
+          </motion.div>
         ) : (
-          <div style={{
+          <motion.div {...emptyState} style={{
             textAlign: 'center', padding: '48px 24px',
             color: 'var(--text-3)', fontSize: 13,
           }}>
             <Search size={32} style={{ opacity: 0.3, marginBottom: 12 }} />
             <div>Search for datasets on HuggingFace Hub</div>
             <div style={{ fontSize: 11, marginTop: 4 }}>Type a query above to get started</div>
-          </div>
+          </motion.div>
         )}
       </div>
 
@@ -1427,17 +1433,17 @@ function HuggingFaceHubTab() {
         </div>
 
         {sortedDownloaded.length === 0 ? (
-          <div className="card" style={{
+          <motion.div {...emptyState} className="card" style={{
             padding: '40px 20px', textAlign: 'center',
             color: 'var(--text-3)', fontSize: 13,
           }}>
             <ArrowDownToLine size={28} style={{ opacity: 0.3, marginBottom: 10 }} />
             <div>No downloaded datasets yet</div>
             <div style={{ fontSize: 11, marginTop: 4 }}>Search and download datasets from HuggingFace</div>
-          </div>
+          </motion.div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {sortedDownloaded.map((ds: any) => {
+            {sortedDownloaded.map((ds: any, _dlIdx: number) => {
               const statusColor = ds.status === 'downloaded' || ds.status === 'ready'
                 ? 'var(--success)'
                 : ds.status === 'downloading'
@@ -1455,7 +1461,7 @@ function HuggingFaceHubTab() {
                 : Clock;
 
               return (
-                <div key={ds.id} className="card" style={{ padding: 14, position: 'relative', overflow: 'hidden' }}>
+                <motion.div key={ds.id} {...rowEntrance(_dlIdx)} className="card" style={{ padding: 14, position: 'relative', overflow: 'hidden' }}>
                   {ds.status === 'downloading' && (
                     <div style={{
                       position: 'absolute', top: 0, left: 0, right: 0, height: 2,
@@ -1581,7 +1587,7 @@ function HuggingFaceHubTab() {
                       </>
                     )}
                   </div>
-                </div>
+                </motion.div>
               );
             })}
           </div>
@@ -1882,18 +1888,20 @@ function MyDatasetsTab({ datasets, loading, onViewDataset, onRefresh, onRefreshJ
     <div>
       {/* Action bar */}
       <div style={{ display: 'flex', gap: 8, marginBottom: 16, alignItems: 'center' }}>
-        <button
+        <motion.button
+          {...buttonHover}
           className="btn btn-primary btn-sm"
           onClick={() => setShowUpload(!showUpload)}
         >
           <Upload size={13} /> Upload Files
-        </button>
-        <button
+        </motion.button>
+        <motion.button
+          {...tapScale}
           className="btn btn-secondary btn-sm"
           onClick={() => setShowNewFolder(!showNewFolder)}
         >
           <FolderPlus size={13} /> New Folder
-        </button>
+        </motion.button>
         {folders.length > 1 && (
           <select
             className="input"
@@ -1974,9 +1982,9 @@ function MyDatasetsTab({ datasets, loading, onViewDataset, onRefresh, onRefreshJ
             onChange={e => setNewFolderName(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && handleCreateFolder()}
           />
-          <button className="btn btn-primary btn-sm" onClick={handleCreateFolder} disabled={!newFolderName.trim()}>
+          <motion.button {...buttonHover} className="btn btn-primary btn-sm" onClick={handleCreateFolder} disabled={!newFolderName.trim()}>
             Create
-          </button>
+          </motion.button>
           <button className="btn btn-ghost btn-sm" onClick={() => setShowNewFolder(false)}>
             <X size={12} />
           </button>
@@ -1996,9 +2004,9 @@ function MyDatasetsTab({ datasets, loading, onViewDataset, onRefresh, onRefreshJ
               <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-3)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
                 Datasets ({datasets.length})
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px,1fr))', gap: 12, marginBottom: 20 }}>
+              <motion.div variants={stagger(0.08)} initial="hidden" animate="show" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px,1fr))', gap: 12, marginBottom: 20 }}>
                 {datasets.map((ds: any) => <DatasetCard key={ds.id} ds={ds} onView={() => onViewDataset(ds)} onEditSchema={() => setSchemaDataset(ds)} onDelete={() => handleDeleteDataset(ds.id)} />)}
-              </div>
+              </motion.div>
             </>
           )}
 
@@ -2011,10 +2019,10 @@ function MyDatasetsTab({ datasets, loading, onViewDataset, onRefresh, onRefreshJ
 
               {viewMode === 'grid' ? (
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px,1fr))', gap: 10, marginBottom: 20 }}>
-                  {assetsList.map((a: any) => {
+                  {assetsList.map((a: any, aIdx: number) => {
                     const Icon = FILE_TYPE_ICONS[a.fileType] ?? File;
                     return (
-                      <div key={a.id} className="card" style={{ padding: 14, display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+                      <motion.div key={a.id} {...rowEntrance(aIdx)} className="card" style={{ padding: 14, display: 'flex', gap: 12, alignItems: 'flex-start' }}>
                         <div style={{
                           width: 36, height: 36, borderRadius: 6, flexShrink: 0,
                           background: 'var(--bg-elevated)', border: '1px solid var(--border)',
@@ -2044,7 +2052,7 @@ function MyDatasetsTab({ datasets, loading, onViewDataset, onRefresh, onRefreshJ
                         >
                           <Trash2 size={12} />
                         </button>
-                      </div>
+                      </motion.div>
                     );
                   })}
                 </div>
@@ -2067,10 +2075,10 @@ function MyDatasetsTab({ datasets, loading, onViewDataset, onRefresh, onRefreshJ
                     <span />
                   </div>
                   {/* List rows */}
-                  {assetsList.map((a: any) => {
+                  {assetsList.map((a: any, aListIdx: number) => {
                     const Icon = FILE_TYPE_ICONS[a.fileType] ?? File;
                     return (
-                      <div key={a.id} style={{
+                      <motion.div key={a.id} {...rowEntrance(aListIdx)} style={{
                         display: 'grid',
                         gridTemplateColumns: '36px 1fr 180px 90px 100px 32px',
                         gap: 8, padding: '8px 12px', alignItems: 'center',
@@ -2110,7 +2118,7 @@ function MyDatasetsTab({ datasets, loading, onViewDataset, onRefresh, onRefreshJ
                         >
                           <Trash2 size={12} />
                         </button>
-                      </div>
+                      </motion.div>
                     );
                   })}
                 </div>
@@ -2120,24 +2128,26 @@ function MyDatasetsTab({ datasets, loading, onViewDataset, onRefresh, onRefreshJ
 
           {/* Empty state */}
           {datasets.length === 0 && assetsList.length === 0 && (
-            <div style={{ textAlign: 'center', padding: 60, color: 'var(--text-3)', fontSize: 13 }}>
+            <motion.div {...emptyState} style={{ textAlign: 'center', padding: 60, color: 'var(--text-3)', fontSize: 13 }}>
               <Database size={28} style={{ opacity: 0.3, margin: '0 auto 10px' }} />
               <div>No datasets or files yet</div>
               <div style={{ fontSize: 11, marginTop: 4 }}>
                 Upload files, generate datasets, or import from HuggingFace Hub
               </div>
-            </div>
+            </motion.div>
           )}
         </>
       )}
 
-      {schemaDataset && (
-        <SchemaEditorModal
-          dataset={schemaDataset}
-          onClose={() => setSchemaDataset(null)}
-          onSave={() => { setSchemaDataset(null); onRefresh?.(); }}
-        />
-      )}
+      <AnimatePresence>
+        {schemaDataset && (
+          <SchemaEditorModal
+            dataset={schemaDataset}
+            onClose={() => setSchemaDataset(null)}
+            onSave={() => { setSchemaDataset(null); onRefresh?.(); }}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -2190,12 +2200,13 @@ function SynthesisEditModal({
   };
 
   return (
-    <div style={{
+    <motion.div {...modalOverlay} style={{
       position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
       backdropFilter: 'blur(4px)', zIndex: 200,
       display: 'flex', alignItems: 'flex-start', justifyContent: 'center', paddingTop: 60,
     }} onClick={onClose}>
-      <div
+      <motion.div
+        {...modalContent}
         onClick={e => e.stopPropagation()}
         style={{
           width: 540, maxWidth: '92vw', maxHeight: '80vh', overflowY: 'auto',
@@ -2348,8 +2359,8 @@ function SynthesisEditModal({
             </button>
           )}
         </div>
-      </div>
-    </div>
+      </motion.div>
+    </motion.div>
   );
 }
 
@@ -2684,14 +2695,15 @@ function AssetsTab() {
               })()}
               <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
                 {isTextFile && (
-                  <button
+                  <motion.button
+                    {...buttonHover}
                     className="btn btn-primary btn-sm"
                     onClick={handleSave}
                     disabled={!isDirty || saving}
                     style={{ fontSize: 11, height: 26, padding: '0 10px', opacity: isDirty ? 1 : 0.4 }}
                   >
                     <Save size={11} /> {saving ? 'Saving...' : 'Save'}
-                  </button>
+                  </motion.button>
                 )}
                 <button
                   className="btn btn-secondary btn-sm"
@@ -2942,7 +2954,7 @@ function DataSynthesisPageInner() {
     <div style={{ padding: 24, maxWidth: 1200, margin: '0 auto' }}>
 
       {/* Header */}
-      <div style={{
+      <motion.div variants={fadeDown} initial="hidden" animate="show" style={{
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         marginBottom: 24,
       }}>
@@ -2954,20 +2966,20 @@ function DataSynthesisPageInner() {
             Generate, manage, and export high-quality training datasets
           </p>
         </div>
-        <button className="btn btn-primary btn-sm" onClick={() => setTab('generate')}>
+        <motion.button variants={fadeRight} initial="hidden" animate="show" {...buttonHover} className="btn btn-primary btn-sm" onClick={() => setTab('generate')}>
           <Sparkles size={13} /> Synthesize Data
-        </button>
-      </div>
+        </motion.button>
+      </motion.div>
 
       {/* Stats */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 12, marginBottom: 20 }}>
+      <motion.div variants={stagger(0.08)} initial="hidden" animate="show" style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 12, marginBottom: 20 }}>
         {[
           { label: 'TOTAL DATASETS',   value: datasetsLoading ? '...' : String(myDatasets.length), color: 'var(--teal)',    icon: Database },
           { label: 'READY',            value: String(readyCount),            color: 'var(--success)', icon: CheckCircle2 },
           { label: 'GENERATING',       value: String(generatingCount),       color: 'var(--amber)',   icon: RefreshCcw },
           { label: 'TOTAL SAMPLES',    value: fmt(totalSamples),             color: 'var(--primary)', icon: Zap },
         ].map(stat => (
-          <div key={stat.label} className="metric-card" style={{ position: 'relative', overflow: 'hidden' }}>
+          <motion.div key={stat.label} variants={fadeUp} {...hoverLift} className="metric-card" style={{ position: 'relative', overflow: 'hidden' }}>
             <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 2, background: stat.color, opacity: 0.7 }} />
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
               <div>
@@ -2976,9 +2988,9 @@ function DataSynthesisPageInner() {
               </div>
               <stat.icon size={16} color={stat.color} />
             </div>
-          </div>
+          </motion.div>
         ))}
-      </div>
+      </motion.div>
 
       {/* Tabs */}
       <div style={{ display: 'flex', gap: 0, borderBottom: '1px solid var(--border)', marginBottom: 20 }}>
@@ -2988,8 +3000,9 @@ function DataSynthesisPageInner() {
           { key: 'generate', label: 'Generate New' },
           { key: 'assets', label: 'Assets' },
         ] as const).map(t => (
-          <button
+          <motion.button
             key={t.key}
+            {...filterTab}
             onClick={() => setTab(t.key)}
             style={{
               padding: '10px 18px',
@@ -3002,7 +3015,7 @@ function DataSynthesisPageInner() {
             }}
           >
             {t.label}
-          </button>
+          </motion.button>
         ))}
       </div>
 
@@ -3289,7 +3302,8 @@ function DataSynthesisPageInner() {
 
               {/* Submit */}
               <div style={{ display: 'flex', gap: 8, paddingTop: 4 }}>
-                <button
+                <motion.button
+                  {...buttonHover}
                   className="btn btn-primary"
                   onClick={handleStartSynthesis}
                   disabled={!synthName.trim() || !synthModel.trim() || synthSubmitting}
@@ -3298,7 +3312,7 @@ function DataSynthesisPageInner() {
                     ? <><Loader2 size={14} className="spin" /> Starting...</>
                     : <><Sparkles size={14} /> Start Synthesis</>
                   }
-                </button>
+                </motion.button>
               </div>
             </div>
           </div>
@@ -3319,17 +3333,17 @@ function DataSynthesisPageInner() {
             </div>
 
             {synthJobs.length === 0 ? (
-              <div className="card" style={{
+              <motion.div {...emptyState} className="card" style={{
                 padding: '48px 20px', textAlign: 'center',
                 color: 'var(--text-3)', fontSize: 13,
               }}>
                 <Sparkles size={28} style={{ opacity: 0.3, marginBottom: 10 }} />
                 <div>No synthesis jobs yet</div>
                 <div style={{ fontSize: 11, marginTop: 4 }}>Configure and start a synthesis to see progress here</div>
-              </div>
+              </motion.div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                {synthJobs.map((job: any) => {
+                {synthJobs.map((job: any, jobIdx: number) => {
                   const isActive = job.status === 'running' || job.status === 'queued';
                   const isCompleted = job.status === 'completed';
                   const isFailed = job.status === 'failed';
@@ -3369,7 +3383,7 @@ function DataSynthesisPageInner() {
                   }
 
                   return (
-                    <div key={job.id} className="card" style={{ padding: 14, position: 'relative', overflow: 'hidden' }}>
+                    <motion.div key={job.id} {...rowEntrance(jobIdx)} className="card" style={{ padding: 14, position: 'relative', overflow: 'hidden' }}>
                       {job.status === 'running' && (
                         <div style={{
                           position: 'absolute', top: 0, left: 0, right: 0, height: 2,
@@ -3562,7 +3576,7 @@ function DataSynthesisPageInner() {
                           </>
                         )}
                       </div>
-                    </div>
+                    </motion.div>
                   );
                 })}
               </div>
@@ -3575,36 +3589,42 @@ function DataSynthesisPageInner() {
       {tab === 'assets' && <AssetsTab />}
 
       {/* Synthesis Edit Modal */}
-      {editJob && (
-        <SynthesisEditModal
-          job={editJob}
-          onClose={() => setEditJob(null)}
-          onSave={handleSaveSynthJob}
-        />
-      )}
+      <AnimatePresence>
+        {editJob && (
+          <SynthesisEditModal
+            job={editJob}
+            onClose={() => setEditJob(null)}
+            onSave={handleSaveSynthJob}
+          />
+        )}
+      </AnimatePresence>
 
       {/* Dataset Viewer Modal */}
-      {viewDataset && (
-        <DatasetViewer
-          dataset={viewDataset}
-          onClose={() => setViewDataset(null)}
-        />
-      )}
+      <AnimatePresence>
+        {viewDataset && (
+          <DatasetViewer
+            dataset={viewDataset}
+            onClose={() => setViewDataset(null)}
+          />
+        )}
+      </AnimatePresence>
 
       {/* Schema Editor for Synthesis */}
-      {showSynthSchema && (
-        <SchemaEditorModal
-          existingSchema={synthSchema.length > 0 ? { name: synthSchemaName || synthName || 'New Schema', columns: synthSchema } : undefined}
-          onClose={() => setShowSynthSchema(false)}
-          onSave={(data) => {
-            const schema = data.schema ?? data;
-            const cols = schema.columns ?? [];
-            setSynthSchema(Array.isArray(cols) ? cols : []);
-            setSynthSchemaName(schema.name ?? '');
-            setShowSynthSchema(false);
-          }}
-        />
-      )}
+      <AnimatePresence>
+        {showSynthSchema && (
+          <SchemaEditorModal
+            existingSchema={synthSchema.length > 0 ? { name: synthSchemaName || synthName || 'New Schema', columns: synthSchema } : undefined}
+            onClose={() => setShowSynthSchema(false)}
+            onSave={(data) => {
+              const schema = data.schema ?? data;
+              const cols = schema.columns ?? [];
+              setSynthSchema(Array.isArray(cols) ? cols : []);
+              setSynthSchemaName(schema.name ?? '');
+              setShowSynthSchema(false);
+            }}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }

@@ -37,6 +37,8 @@ interface AppContextType {
   /* UI state */
   sidebarCollapsed: boolean;
   toggleSidebar: () => void;
+  sidebarWidth: number;
+  setSidebarWidth: (w: number) => void;
   activeTaskPanelOpen: boolean;
   setActiveTaskPanelOpen: (open: boolean) => void;
 
@@ -77,12 +79,24 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [draftWorkflow, setDraftWorkflow] = useState<Partial<Workflow> | null>(null);
   const [draftSteps, setDraftSteps] = useState<WorkflowStep[]>([]);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarWidth, setSidebarWidthState] = useState(200);
 
   useEffect(() => {
     const stored = localStorage.getItem('kortecx-sidebar-collapsed');
     if (stored === 'true') {
       setSidebarCollapsed(true);
     }
+    const storedWidth = localStorage.getItem('kortecx-sidebar-width');
+    if (storedWidth) {
+      const parsed = parseInt(storedWidth, 10);
+      if (parsed >= 160 && parsed <= 320) setSidebarWidthState(parsed);
+    }
+  }, []);
+
+  const setSidebarWidth = useCallback((w: number) => {
+    const clamped = Math.max(160, Math.min(320, w));
+    setSidebarWidthState(clamped);
+    localStorage.setItem('kortecx-sidebar-width', String(clamped));
   }, []);
   const [activeTaskPanelOpen, setActiveTaskPanelOpen] = useState(false);
 
@@ -199,6 +213,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       workflows,
       sidebarCollapsed,
       toggleSidebar,
+      sidebarWidth,
+      setSidebarWidth,
       activeTaskPanelOpen,
       setActiveTaskPanelOpen,
       togglePlatformConnection,

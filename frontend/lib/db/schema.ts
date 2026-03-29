@@ -153,16 +153,21 @@ export const experts = pgTable('experts', {
 
 /* ─── Plans (DAG execution blueprints) ───────────────── */
 export const plans = pgTable('plans', {
-  id:            text('id').primaryKey(),
-  workflowId:    text('workflow_id'),
-  name:          text('name').notNull(),
-  description:   text('description'),
-  dag:           jsonb('dag'),           // { nodes: PlanNode[], edges: PlanEdge[] }
-  status:        varchar('status', { length: 20 }).default('draft'),
-  generatedBy:   varchar('generated_by', { length: 10 }).default('user'),
-  modelUsed:     text('model_used'),
-  createdAt:     timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
-  updatedAt:     timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  id:              text('id').primaryKey(),
+  workflowId:      text('workflow_id'),
+  name:            text('name').notNull(),
+  description:     text('description'),
+  dag:             jsonb('dag'),           // { nodes: PlanNode[], edges: PlanEdge[] }
+  status:          varchar('status', { length: 20 }).default('draft'),
+  generatedBy:     varchar('generated_by', { length: 10 }).default('user'),
+  modelUsed:       text('model_used'),
+  version:         integer('version').default(1),
+  planType:        varchar('plan_type', { length: 10 }).default('live'),    // 'live' | 'frozen'
+  markdownContent: text('markdown_content'),
+  sourceType:      varchar('source_type', { length: 20 }).default('manual'), // 'manual' | 'upload' | 'prompt' | 'prism_generated'
+  frozenAt:        timestamp('frozen_at', { withTimezone: true }),
+  createdAt:       timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt:       timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 });
 
 /* ─── Workflows ──────────────────────────────────────── */
@@ -184,6 +189,10 @@ export const workflows = pgTable('workflows', {
   isTemplate:        boolean('is_template').default(false),
   templateCategory:  text('template_category'),
   metadata:          jsonb('metadata'),
+  planFrozen:        boolean('plan_frozen').default(false),
+  frozenPlanId:      text('frozen_plan_id'),
+  activePlanId:      text('active_plan_id'),
+  planMaxVersions:   integer('plan_max_versions').default(3),
   createdAt:         timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt:         timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
   lastRunAt:         timestamp('last_run_at', { withTimezone: true }),

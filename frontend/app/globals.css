@@ -142,7 +142,7 @@ input[type="range"]::-webkit-slider-thumb {
   line-height: 1;
   cursor: pointer;
   border: 1px solid transparent;
-  transition: background 0.15s, border-color 0.15s, color 0.15s, opacity 0.15s;
+  transition: background 0.15s, border-color 0.15s, color 0.15s, opacity 0.15s, box-shadow 0.2s, filter 0.2s;
   white-space: nowrap;
   text-decoration: none;
 }
@@ -154,8 +154,7 @@ input[type="range"]::-webkit-slider-thumb {
   border-color: var(--primary);
 }
 .btn-primary:hover:not(:disabled) {
-  background: var(--primary-h);
-  border-color: var(--primary-h);
+  filter: brightness(1.08);
 }
 
 .btn-secondary {
@@ -570,7 +569,6 @@ input[type="range"]::-webkit-slider-thumb {
 }
 .btn-primary:hover:not(:disabled) {
   box-shadow: 0 3px 10px rgba(240,69,0,0.35);
-  transform: translateY(-0.5px);
 }
 
 /* ── Secondary buttons — colored border tint ──────── */

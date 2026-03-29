@@ -1,12 +1,13 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import {
   Sliders, Play, X, Plus,
   Trash2,
 } from 'lucide-react';
 import { useExperts } from '@/lib/hooks/useApi';
+import { hoverLift, tapScale, buttonHover, progressBar, modalOverlay, modalContent } from '@/lib/motion';
 
 const ENGINE_URL = process.env.NEXT_PUBLIC_ENGINE_URL || 'http://localhost:8000';
 
@@ -127,6 +128,7 @@ export default function FineTuningPage() {
     <div style={{ padding: 20, maxWidth: '100%' }}>
       {/* Header */}
       <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }}
+        transition={{ type: 'spring', stiffness: 400, damping: 30 }}
         style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
         <div>
           <h1 style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-1)', margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -136,9 +138,10 @@ export default function FineTuningPage() {
             Fine-tune local models with LoRA adapters using your datasets
           </p>
         </div>
-        <button className="btn btn-primary btn-sm" onClick={() => setShowCreate(true)}>
+        <motion.button className="btn btn-primary btn-sm" onClick={() => setShowCreate(true)}
+          {...buttonHover}>
           <Plus size={13} /> New Job
-        </button>
+        </motion.button>
       </motion.div>
 
       {/* Stats */}
@@ -150,7 +153,9 @@ export default function FineTuningPage() {
           { label: 'Completed', value: jobs.filter(j => j.status === 'completed').length, color: '#059669' },
           { label: 'Failed', value: jobs.filter(j => j.status === 'failed').length, color: '#DC2626' },
         ].map((s, i) => (
-          <motion.div key={s.label} initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} transition={{ delay: 0.05 + i * 0.04 }}
+          <motion.div key={s.label} initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }}
+            {...hoverLift}
+            transition={{ delay: 0.05 + i * 0.04, type: 'spring', stiffness: 400, damping: 30 }}
             className="card" style={{ padding: 16, textAlign: 'center' }}>
             <div style={{ fontSize: 24, fontWeight: 800, color: s.color, fontFamily: 'var(--font-mono)' }}>{s.value}</div>
             <div style={{ fontSize: 10, color: 'var(--text-4)', textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 600, marginTop: 4 }}>{s.label}</div>
@@ -159,13 +164,14 @@ export default function FineTuningPage() {
       </motion.div>
 
       {/* Create Dialog */}
+      <AnimatePresence>
       {showCreate && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(7,7,26,0.85)', zIndex: 200, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', paddingTop: 60 }}>
-          <motion.div initial={{ opacity: 0, scale: 0.96 }} animate={{ opacity: 1, scale: 1 }}
+        <motion.div {...modalOverlay} style={{ position: 'fixed', inset: 0, background: 'rgba(7,7,26,0.85)', zIndex: 200, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', paddingTop: 60 }}>
+          <motion.div {...modalContent}
             style={{ width: 560, background: 'var(--bg-surface)', border: '1px solid var(--border-md)', borderRadius: 10, overflow: 'hidden' }}>
             <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-1)' }}>New Fine-tuning Job</div>
-              <button onClick={() => setShowCreate(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-3)', display: 'flex' }}><X size={16} /></button>
+              <motion.button {...tapScale} onClick={() => setShowCreate(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-3)', display: 'flex' }}><X size={16} /></motion.button>
             </div>
             <div style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 14 }}>
               <div>
@@ -215,14 +221,15 @@ export default function FineTuningPage() {
               </div>
             </div>
             <div style={{ padding: '14px 20px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-              <button className="btn btn-secondary btn-sm" onClick={() => setShowCreate(false)}>Cancel</button>
-              <button className="btn btn-primary btn-sm" onClick={handleCreate} disabled={!jobName.trim() || !datasetPath.trim()}>
+              <motion.button {...tapScale} className="btn btn-secondary btn-sm" onClick={() => setShowCreate(false)}>Cancel</motion.button>
+              <motion.button {...buttonHover} className="btn btn-primary btn-sm" onClick={handleCreate} disabled={!jobName.trim() || !datasetPath.trim()}>
                 <Play size={12} /> Create Job
-              </button>
+              </motion.button>
             </div>
           </motion.div>
-        </div>
+        </motion.div>
       )}
+      </AnimatePresence>
 
       {/* Job List */}
       <div className="card" style={{ overflow: 'hidden' }}>
@@ -231,9 +238,9 @@ export default function FineTuningPage() {
             <Sliders size={32} color="var(--text-4)" style={{ margin: '0 auto 12px' }} />
             <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-2)', marginBottom: 6 }}>No fine-tuning jobs yet</div>
             <div style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 16 }}>Create a job to fine-tune a local model with your dataset</div>
-            <button className="btn btn-primary btn-sm" onClick={() => setShowCreate(true)}>
+            <motion.button {...buttonHover} className="btn btn-primary btn-sm" onClick={() => setShowCreate(true)}>
               <Plus size={12} /> Create First Job
-            </button>
+            </motion.button>
           </div>
         ) : (
           <table className="table-base" style={{ width: '100%' }}>
@@ -252,21 +259,24 @@ export default function FineTuningPage() {
               {jobs.map((job, i) => {
                 const st = STATUS_STYLE[job.status] || STATUS_STYLE.queued;
                 return (
-                  <motion.tr key={job.id} initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.03 }}>
+                  <motion.tr key={job.id} initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: i * 0.03, type: 'spring', stiffness: 400, damping: 30 }}
+                    whileHover={{ backgroundColor: 'rgba(255,255,255,0.02)' }}>
                     <td>
                       <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-1)' }}>{job.name}</div>
                       <div style={{ fontSize: 10, color: 'var(--text-4)', fontFamily: 'var(--font-mono)' }}>{job.id}</div>
                     </td>
                     <td><span className="mono" style={{ fontSize: 11, color: '#7C3AED' }}>{job.baseModel}</span></td>
                     <td>
-                      <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 10, background: st.bg, color: st.color, textTransform: 'uppercase' }}>
+                      <motion.span whileHover={{ scale: 1.05 }} transition={{ type: 'spring', stiffness: 400, damping: 30 }}
+                        style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 10, background: st.bg, color: st.color, textTransform: 'uppercase', display: 'inline-block' }}>
                         {job.status}
-                      </span>
+                      </motion.span>
                     </td>
                     <td>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                         <div style={{ flex: 1, height: 3, background: 'var(--border)', borderRadius: 2, overflow: 'hidden' }}>
-                          <div style={{ height: '100%', width: `${job.progress}%`, background: st.color, borderRadius: 2 }} />
+                          <motion.div {...progressBar(job.progress)} style={{ height: '100%', background: st.color, borderRadius: 2 }} />
                         </div>
                         <span className="mono" style={{ fontSize: 10, color: 'var(--text-4)' }}>{job.progress}%</span>
                       </div>
@@ -274,9 +284,9 @@ export default function FineTuningPage() {
                     <td style={{ fontSize: 11 }}>{job.currentEpoch}/{job.epochs}</td>
                     <td style={{ fontSize: 11, color: 'var(--text-4)' }}>{timeAgo(job.createdAt)}</td>
                     <td>
-                      <button onClick={() => deleteJob(job.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-4)', display: 'flex' }}>
+                      <motion.button {...tapScale} onClick={() => deleteJob(job.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-4)', display: 'flex' }}>
                         <Trash2 size={12} />
-                      </button>
+                      </motion.button>
                     </td>
                   </motion.tr>
                 );

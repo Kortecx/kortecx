@@ -27,22 +27,32 @@ PRISM_COLLECTION = "kortecx_prisms"
 EMBED_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 
 
-async def _embed_expert(expert: dict[str, Any]) -> None:
-    """Embed a PRISM into Qdrant for similarity graph. Non-blocking."""
+async def _embed_prism(
+    expert: dict[str, Any],
+    file_texts: list[str] | None = None,
+    source: str = "local",
+) -> None:
+    """Embed a PRISM into Qdrant for similarity graph using rich metadata.
+
+    Combines name, description, systemPrompt, role, category, tags,
+    capabilities, specializations, and optional file content into a single
+    embedding vector for semantic similarity search.
+    """
     try:
-        text = ". ".join(
-            filter(
-                None,
-                [
-                    expert.get("name", ""),
-                    expert.get("description", ""),
-                    f"Role: {expert.get('role', '')}",
-                    f"Category: {expert.get('category', 'custom')}",
-                    f"Tags: {', '.join(expert.get('tags', []))}",
-                    f"Capabilities: {', '.join(expert.get('capabilities', []))}",
-                ],
-            )
-        )
+        parts: list[str] = [
+            expert.get("name", ""),
+            expert.get("description", ""),
+            expert.get("systemPrompt", ""),
+            f"Role: {expert.get('role', '')}",
+            f"Category: {expert.get('category', 'custom')}",
+            f"Tags: {', '.join(expert.get('tags', []))}",
+            f"Capabilities: {', '.join(expert.get('capabilities', []))}",
+            f"Specializations: {', '.join(expert.get('specializations', []))}",
+        ]
+        if file_texts:
+            for ft in file_texts[:5]:
+                parts.append(ft[:500])
+        text = ". ".join(filter(None, parts))
         vectors = hf_service.text_embedding(EMBED_MODEL, text)
         if not vectors:
             return
@@ -73,13 +83,25 @@ async def _embed_expert(expert: dict[str, Any]) -> None:
                         "tags": expert.get("tags", []),
                         "complexityLevel": expert.get("complexityLevel", 3),
                         "status": expert.get("status", "idle"),
+                        "description": expert.get("description", ""),
+                        "source": source,
+                        "has_files": bool(file_texts),
                     },
                 )
             ],
         )
-        logger.info("Embedded PRISM %s into Qdrant", expert["id"])
-    except Exception:
-        logger.warning("Failed to embed PRISM %s — Qdrant may be unavailable", expert.get("id"), exc_info=True)
+        logger.info("Embedded PRISM %s into Qdrant (source=%s)", expert["id"], source)
+    except Exception as exc:
+        error_msg = str(exc)
+        if "401" in error_msg or "Unauthorized" in error_msg:
+            detail = "HuggingFace authentication failed (check HF_TOKEN)"
+        elif "connection" in error_msg.lower() or "timeout" in error_msg.lower():
+            detail = "Network error (HF API or Qdrant unreachable)"
+        elif "Collection" in error_msg or "collection" in error_msg:
+            detail = "Qdrant collection error"
+        else:
+            detail = f"{type(exc).__name__}: {error_msg}"
+        logger.warning("Failed to embed PRISM %s — %s", expert.get("id"), detail, exc_info=True)
 
 
 # ── Request models ───────────────────────────────────────────────────────────
@@ -361,7 +383,7 @@ async def create_expert(req: CreateExpertRequest) -> dict[str, Any]:
         },
     )
     # Auto-embed into Qdrant for graph similarity
-    await _embed_expert(expert)
+    await _embed_prism(expert)
     return {"expert": _clean(expert)}
 
 
@@ -372,6 +394,10 @@ async def update_expert_file(expert_id: str, req: UpdateFileRequest) -> dict[str
         result = expert_manager.update_file(expert_id, req.filename, req.content)
     except ValueError as e:
         return {"error": str(e)}
+    # Re-embed after file update for graph-relevant changes
+    expert = expert_manager.get(expert_id)
+    if expert and req.filename in ("system.md", "expert.json"):
+        await _embed_prism(expert)
     return result
 
 
@@ -537,7 +563,7 @@ async def embed_expert(expert_id: str) -> dict[str, Any]:
     expert = expert_manager.get(expert_id)
     if not expert:
         return {"error": f"Expert {expert_id} not found"}
-    await _embed_expert(expert)
+    await _embed_prism(expert)
     return {"embedded": True, "id": expert_id}
 
 
@@ -549,12 +575,46 @@ async def embed_all_experts() -> dict[str, Any]:
     errors = 0
     for expert in all_experts:
         try:
-            await _embed_expert(expert)
+            await _embed_prism(expert)
             embedded += 1
         except Exception:
             errors += 1
             logger.warning("Failed to embed %s during batch", expert.get("id"))
     return {"embedded": embedded, "errors": errors, "total": len(all_experts)}
+
+
+class EmbedBulkRequest(BaseModel):
+    experts: list[dict[str, Any]]
+    source: str = "marketplace"
+
+
+@router.post("/embed/bulk")
+async def embed_bulk_experts(req: EmbedBulkRequest) -> dict[str, Any]:
+    """Embed a batch of experts sent from the frontend (e.g. marketplace templates)."""
+    embedded = 0
+    errors = 0
+    for expert in req.experts:
+        try:
+            await _embed_prism(expert, source=req.source)
+            embedded += 1
+        except Exception:
+            errors += 1
+            logger.warning("Failed to embed %s during bulk", expert.get("id"))
+    return {"embedded": embedded, "errors": errors, "total": len(req.experts)}
+
+
+class EmbedAssetsRequest(BaseModel):
+    file_texts: list[str]
+
+
+@router.post("/{expert_id}/embed-assets")
+async def embed_expert_with_assets(expert_id: str, req: EmbedAssetsRequest) -> dict[str, Any]:
+    """Re-embed PRISM with attached file/context content for richer similarity."""
+    expert = expert_manager.get(expert_id)
+    if not expert:
+        return {"error": f"Expert {expert_id} not found"}
+    await _embed_prism(expert, file_texts=req.file_texts)
+    return {"embedded": True, "id": expert_id, "fileCount": len(req.file_texts)}
 
 
 class AttachRequest(BaseModel):
@@ -573,20 +633,28 @@ async def attach_experts(expert_id: str, req: AttachRequest) -> dict[str, Any]:
 
     # Re-embed source with target's name/tags appended for affinity
     source_copy = {**source, "description": f"{source.get('description', '')} Connected to: {target.get('name', '')}. {', '.join(target.get('tags', []))}"}
-    await _embed_expert(source_copy)
+    await _embed_prism(source_copy)
 
     # Re-embed target with source's name/tags appended for affinity
     target_copy = {**target, "description": f"{target.get('description', '')} Connected to: {source.get('name', '')}. {', '.join(source.get('tags', []))}"}
-    await _embed_expert(target_copy)
+    await _embed_prism(target_copy)
 
     return {"attached": True, "source": expert_id, "target": req.targetId}
 
 
 @router.get("/graph/edges")
-async def get_graph_edges(threshold: float = 0.3, limit: int = 20) -> dict[str, Any]:
+async def get_graph_edges(
+    threshold: float = 0.15,
+    limit: int = 30,
+    min_edges_per_node: int = 1,
+    source: str | None = None,
+) -> dict[str, Any]:
     """Compute pairwise similarity edges from Qdrant for the PRISM graph.
 
-    Returns edges between PRISMs whose cosine similarity exceeds `threshold`.
+    Returns edges between PRISMs whose cosine similarity exceeds *threshold*.
+    When *source* is set (``"marketplace"`` or ``"local"``), only edges between
+    PRISMs of that source type are returned.  The *min_edges_per_node* param
+    guarantees every node gets at least that many edges (falls back to top-1).
     """
     try:
         # Check if collection exists
@@ -602,37 +670,65 @@ async def get_graph_edges(threshold: float = 0.3, limit: int = 20) -> dict[str, 
             with_payload=True,
         )
         points = scroll_result[0]
+
+        # Filter by source if requested
+        if source:
+            points = [p for p in points if p.payload.get("source") == source]
+
         if len(points) < 2:
             return {"edges": [], "total": 0}
 
         # For each point, search for similar points
         edges: list[dict[str, Any]] = []
         seen: set[str] = set()
+        node_edge_count: dict[str, int] = {}
+        # Track best match per node for min_edges guarantee
+        best_match: dict[str, dict[str, Any]] = {}
+
+        valid_ids = {p.payload.get("expert_id", str(p.id)) for p in points}
 
         for point in points:
             expert_id = point.payload.get("expert_id", str(point.id))
+            node_edge_count.setdefault(expert_id, 0)
             results = qdrant_service.client.query_points(
                 collection_name=PRISM_COLLECTION,
                 query=point.vector,
                 limit=limit + 1,  # +1 to exclude self
-                score_threshold=threshold,
+                score_threshold=0.01,  # low threshold to find best-match fallbacks
             )
             for hit in results.points:
                 target_id = hit.payload.get("expert_id", str(hit.id))
                 if target_id == expert_id:
                     continue
+                # Skip targets not in our filtered set
+                if target_id not in valid_ids:
+                    continue
+
                 edge_key = tuple(sorted([expert_id, target_id]))
                 key_str = f"{edge_key[0]}:{edge_key[1]}"
+
+                # Track best match for fallback
+                if expert_id not in best_match or hit.score > best_match[expert_id]["weight"]:
+                    best_match[expert_id] = {"source": expert_id, "target": target_id, "weight": round(hit.score, 4)}
+
+                if hit.score < threshold:
+                    continue
                 if key_str in seen:
                     continue
                 seen.add(key_str)
-                edges.append(
-                    {
-                        "source": expert_id,
-                        "target": target_id,
-                        "weight": round(hit.score, 4),
-                    }
-                )
+                edges.append({"source": expert_id, "target": target_id, "weight": round(hit.score, 4)})
+                node_edge_count[expert_id] = node_edge_count.get(expert_id, 0) + 1
+                node_edge_count[target_id] = node_edge_count.get(target_id, 0) + 1
+
+        # Guarantee min_edges_per_node — add best-match fallbacks
+        for node_id in valid_ids:
+            if node_edge_count.get(node_id, 0) < min_edges_per_node and node_id in best_match:
+                bm = best_match[node_id]
+                edge_key = tuple(sorted([bm["source"], bm["target"]]))
+                key_str = f"{edge_key[0]}:{edge_key[1]}"
+                if key_str not in seen:
+                    seen.add(key_str)
+                    edges.append(bm)
 
         edges.sort(key=lambda e: e["weight"], reverse=True)
         # Version hash: point count + sum of IDs for change detection

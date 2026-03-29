@@ -16,7 +16,7 @@ from engine.services.expert_sync import expert_sync
 
 logger = logging.getLogger("engine.expert_manager")
 
-EXPERTS_ROOT = Path(__file__).resolve().parents[3] / "experts"
+EXPERTS_ROOT = Path(__file__).resolve().parents[3] / "PRISM"
 MARKETPLACE_DIR = EXPERTS_ROOT / "marketplace"
 LOCAL_DIR = EXPERTS_ROOT / "local"
 
@@ -103,6 +103,7 @@ class ExpertManager:
             "capabilities": config.get("capabilities", []),
             "isPublic": config.get("isPublic", False),
             "category": config.get("category", "custom"),
+            "complexityLevel": config.get("complexityLevel", 3),
             "createdAt": datetime.now(UTC).isoformat(),
             "updatedAt": datetime.now(UTC).isoformat(),
         }

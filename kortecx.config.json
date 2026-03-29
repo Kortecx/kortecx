@@ -9,8 +9,8 @@
   "homepage": "https://kortecx.com",
 
   "schema": {
-    "version": 3,
-    "lastMigration": "003_quorum_experts_execution",
+    "version": 4,
+    "lastMigration": "004_plan_freeze_versioning",
     "migrations": [
       {
         "id": "001_initial",
@@ -28,6 +28,12 @@
         "id": "003_quorum_experts_execution",
         "version": 3,
         "description": "Quorum engine tables, execution audit, step executions, model comparisons, workflow metadata",
+        "applied": true
+      },
+      {
+        "id": "004_plan_freeze_versioning",
+        "version": 4,
+        "description": "Plan freeze/versioning: workflow plan columns, plan version/type/markdown/source fields",
         "applied": true
       }
     ]
@@ -82,12 +88,14 @@
     "mcpServers": true,
     "workflowScheduling": true,
     "perFileVersioning": true,
-    "scriptExecution": true
+    "scriptExecution": true,
+    "planFreeze": true,
+    "planPrismGeneration": true
   },
 
   "experts": {
-    "marketplaceDir": "engine/experts/marketplace",
-    "localDir": "engine/experts/local",
+    "marketplaceDir": "engine/PRISM/marketplace",
+    "localDir": "engine/PRISM/local",
     "prebuiltCount": 12
   },
 
@@ -98,6 +106,8 @@
     "defaultLocalEngine": "ollama",
     "defaultLocalModel": "llama3.1:8b",
     "draftAutoSaveInterval": 10000,
-    "metricsRefreshInterval": 5000
+    "metricsRefreshInterval": 5000,
+    "planMaxVersions": 3,
+    "planAutoGenerateOnRun": false
   }
 }

@@ -17,6 +17,8 @@ class HuggingFaceService:
         self._api: HfApi | None = None
         self._inference: InferenceClient | None = None
         self._token: str = settings.hf_token or ""
+        self._local_model: Any = None
+        self._local_available: bool | None = None  # None = not checked yet
 
     def set_token(self, token: str) -> None:
         """Update the API token (e.g. loaded from database)."""
@@ -300,12 +302,56 @@ class HuggingFaceService:
         result = self.inference.text_generation(prompt, model=model_id, **kwargs)
         return result
 
+    def _get_local_model(self, model_id: str) -> Any:
+        """Lazily load sentence-transformers model for local embedding."""
+        if self._local_available is False:
+            return None
+        if self._local_model is not None:
+            return self._local_model
+        try:
+            from sentence_transformers import SentenceTransformer
+
+            self._local_model = SentenceTransformer(model_id)
+            self._local_available = True
+            logger.info("Loaded local embedding model: %s", model_id)
+            return self._local_model
+        except ImportError:
+            logger.warning("sentence-transformers not installed; local embeddings unavailable")
+            self._local_available = False
+            return None
+        except Exception as exc:
+            logger.warning("Failed to load local embedding model %s: %s", model_id, exc)
+            self._local_available = False
+            return None
+
     def text_embedding(self, model_id: str, text: str | list[str]) -> list[list[float]]:
-        """Get embeddings from a HuggingFace model."""
-        result = self.inference.feature_extraction(text, model=model_id)
-        if isinstance(result[0], float):
-            return [result]
-        return result
+        """Get embeddings — tries local sentence-transformers first, then HF API."""
+        # Strategy 1: Local model (no token needed, faster)
+        local_model = self._get_local_model(model_id)
+        if local_model is not None:
+            try:
+                texts = [text] if isinstance(text, str) else text
+                embeddings = local_model.encode(texts, convert_to_numpy=True)
+                return embeddings.tolist()
+            except Exception as exc:
+                logger.warning("Local embedding failed, trying HF API: %s", exc)
+
+        # Strategy 2: HF Inference API (requires token)
+        if not self.has_token:
+            logger.warning(
+                "No HF_TOKEN set and local sentence-transformers unavailable; "
+                "cannot generate embeddings. Set HF_TOKEN in .env or install sentence-transformers."
+            )
+            return []
+
+        try:
+            result = self.inference.feature_extraction(text, model=model_id)
+            if isinstance(result[0], float):
+                return [result]
+            return result
+        except Exception as exc:
+            logger.error("HF Inference API embedding failed: %s", exc)
+            return []
 
 
 hf_service = HuggingFaceService()

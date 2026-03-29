@@ -1,7 +1,9 @@
 'use client';
 
 import { useState } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { FolderOpen, Plus, Workflow, Users, Clock, MoreHorizontal } from 'lucide-react';
+import { fadeUp, fadeDown, fadeRight, stagger, hoverLiftLarge, modalOverlay, modalContent, buttonHover } from '@/lib/motion';
 
 const MOCK_PROJECTS: Array<{
   id: string; name: string; description: string;
@@ -18,10 +20,15 @@ export default function ProjectsPage() {
   return (
     <div style={{ padding: 24, maxWidth: 1400, margin: '0 auto' }}>
       {/* Header */}
-      <div style={{
-        display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between',
-        marginBottom: 24,
-      }}>
+      <motion.div
+        variants={fadeDown}
+        initial="hidden"
+        animate="show"
+        style={{
+          display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between',
+          marginBottom: 24,
+        }}
+      >
         <div>
           <h1 style={{ fontSize: 20, fontWeight: 700, color: 'var(--text-1)', margin: 0 }}>
             Projects
@@ -30,19 +37,26 @@ export default function ProjectsPage() {
             {MOCK_PROJECTS.length} projects · {activeCount} active
           </p>
         </div>
-        <button className="btn btn-primary btn-sm" onClick={() => setShowNew(true)}>
-          <Plus size={13} /> Create Project
-        </button>
-      </div>
+        <motion.div variants={fadeRight} initial="hidden" animate="show" transition={{ delay: 0.15 }}>
+          <motion.button {...buttonHover} className="btn btn-primary btn-sm" onClick={() => setShowNew(true)}>
+            <Plus size={13} /> Create Project
+          </motion.button>
+        </motion.div>
+      </motion.div>
 
       {/* Project grid */}
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))',
-        gap: 12,
-      }}>
+      <motion.div
+        variants={stagger(0.08)}
+        initial="hidden"
+        animate="show"
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))',
+          gap: 12,
+        }}
+      >
         {MOCK_PROJECTS.map(project => (
-          <div key={project.id} className="card" style={{ padding: 20, position: 'relative' }}>
+          <motion.div key={project.id} className="card" style={{ padding: 20, position: 'relative' }} variants={fadeUp} {...hoverLiftLarge}>
             {/* Color accent */}
             <div style={{
               position: 'absolute', top: 0, left: 0, right: 0,
@@ -101,11 +115,12 @@ export default function ProjectsPage() {
                 <span style={{ color: 'var(--text-4)' }}>{project.lastActivity}</span>
               </span>
             </div>
-          </div>
+          </motion.div>
         ))}
 
         {/* New project card */}
-        <div
+        <motion.div
+          variants={fadeUp}
           onClick={() => setShowNew(true)}
           style={{
             border: '1px dashed var(--border-md)',
@@ -126,51 +141,61 @@ export default function ProjectsPage() {
         >
           <Plus size={24} color="var(--text-3)" />
           <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-2)' }}>Create New Project</span>
-        </div>
-      </div>
+        </motion.div>
+      </motion.div>
 
       {/* Create project modal */}
-      {showNew && (
-        <div style={{
-          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100,
-        }}>
-          <div style={{
-            background: 'var(--bg-surface)', borderRadius: 8,
-            padding: 24, width: 440, maxWidth: '90vw',
-            boxShadow: '0 20px 60px rgba(0,0,0,0.15)',
-          }}>
-            <h3 style={{ fontSize: 16, fontWeight: 600, color: 'var(--text-1)', margin: '0 0 16px' }}>
-              Create Project
-            </h3>
-            <div style={{ marginBottom: 12 }}>
-              <label style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-2)', display: 'block', marginBottom: 4 }}>
-                Project Name
-              </label>
-              <input className="input" placeholder="My Project" style={{ width: '100%' }} />
-            </div>
-            <div style={{ marginBottom: 16 }}>
-              <label style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-2)', display: 'block', marginBottom: 4 }}>
-                Description
-              </label>
-              <textarea
-                className="input"
-                placeholder="Describe your project..."
-                rows={3}
-                style={{ width: '100%', resize: 'vertical' }}
-              />
-            </div>
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-              <button className="btn btn-secondary btn-sm" onClick={() => setShowNew(false)}>
-                Cancel
-              </button>
-              <button className="btn btn-primary btn-sm" onClick={() => setShowNew(false)}>
+      <AnimatePresence>
+        {showNew && (
+          <motion.div
+            {...modalOverlay}
+            style={{
+              position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100,
+            }}
+            onClick={() => setShowNew(false)}
+          >
+            <motion.div
+              {...modalContent}
+              onClick={e => e.stopPropagation()}
+              style={{
+                background: 'var(--bg-surface)', borderRadius: 8,
+                padding: 24, width: 440, maxWidth: '90vw',
+                boxShadow: '0 20px 60px rgba(0,0,0,0.15)',
+              }}
+            >
+              <h3 style={{ fontSize: 16, fontWeight: 600, color: 'var(--text-1)', margin: '0 0 16px' }}>
                 Create Project
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+              </h3>
+              <div style={{ marginBottom: 12 }}>
+                <label style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-2)', display: 'block', marginBottom: 4 }}>
+                  Project Name
+                </label>
+                <input className="input" placeholder="My Project" style={{ width: '100%' }} />
+              </div>
+              <div style={{ marginBottom: 16 }}>
+                <label style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-2)', display: 'block', marginBottom: 4 }}>
+                  Description
+                </label>
+                <textarea
+                  className="input"
+                  placeholder="Describe your project..."
+                  rows={3}
+                  style={{ width: '100%', resize: 'vertical' }}
+                />
+              </div>
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                <button className="btn btn-secondary btn-sm" onClick={() => setShowNew(false)}>
+                  Cancel
+                </button>
+                <motion.button {...buttonHover} className="btn btn-primary btn-sm" onClick={() => setShowNew(false)}>
+                  Create Project
+                </motion.button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
+
+import pytest
 
 from engine.services.execution_audit import ExecutionAudit
 from engine.services.quorum.db import QuorumDB
-from engine.services.quorum.types import Operation, RunRequest
 
 
 class TestExecutionAuditDisabled:

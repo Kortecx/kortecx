@@ -11,6 +11,8 @@ import {
   Type, Search, FolderOpen, X, Check,
 } from 'lucide-react';
 import useSWR from 'swr';
+import { motion, AnimatePresence } from 'framer-motion';
+import { fadeUp, fadeDown, fadeRight, stagger, hoverLift, tapScale, buttonHover, rowEntrance, emptyState, filterTab } from '@/lib/motion';
 
 const fetcher = (url: string) => fetch(url).then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); });
 
@@ -350,7 +352,7 @@ function DataTable({ rows, columns }: { rows: any[]; columns: ColumnInfo[] }) {
         </thead>
         <tbody>
           {rows.map((row, i) => (
-            <tr key={i} style={{ borderBottom: '1px solid var(--border)' }}>
+            <motion.tr key={i} {...rowEntrance(i, 0.15)} style={{ borderBottom: '1px solid var(--border)' }}>
               {columns.map(c => (
                 <td key={c.name} style={{
                   padding: '6px 12px', color: 'var(--text-2)',
@@ -359,7 +361,7 @@ function DataTable({ rows, columns }: { rows: any[]; columns: ColumnInfo[] }) {
                   {row[c.name] === null ? '\u2014' : typeof row[c.name] === 'object' ? JSON.stringify(row[c.name]) : String(row[c.name])}
                 </td>
               ))}
-            </tr>
+            </motion.tr>
           ))}
         </tbody>
       </table>
@@ -440,13 +442,19 @@ function DatasetSearchDropdown({
       </button>
 
       {/* Dropdown Panel */}
+      <AnimatePresence>
       {open && (
-        <div style={{
-          position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50,
-          marginTop: 4, borderRadius: 8, border: '1px solid var(--border)',
-          background: 'var(--bg-surface, var(--bg))', boxShadow: '0 8px 24px rgba(0,0,0,0.15)',
-          maxHeight: 400, display: 'flex', flexDirection: 'column',
-        }}>
+        <motion.div
+          initial={{ opacity: 0, y: -8 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -8 }}
+          transition={{ duration: 0.2 }}
+          style={{
+            position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50,
+            marginTop: 4, borderRadius: 8, border: '1px solid var(--border)',
+            background: 'var(--bg-surface, var(--bg))', boxShadow: '0 8px 24px rgba(0,0,0,0.15)',
+            maxHeight: 400, display: 'flex', flexDirection: 'column',
+          }}>
           {/* Search Input */}
           <div style={{ padding: '8px 10px', borderBottom: '1px solid var(--border)' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'var(--bg-elevated)', borderRadius: 6, padding: '5px 8px' }}>
@@ -573,8 +581,9 @@ function DatasetSearchDropdown({
               </>
             )}
           </div>
-        </div>
+        </motion.div>
       )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -879,7 +888,7 @@ function DataEngineerPage() {
   // ─── Dataset Selector Component ─────────────────────────────────────────────
 
   const DatasetSelector = ({ showLoad = true }: { showLoad?: boolean }) => (
-    <div className="card" style={{ padding: 16, marginBottom: 16 }}>
+    <motion.div {...hoverLift} className="card" style={{ padding: 16, marginBottom: 16 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <Database size={14} color="var(--text-3)" />
@@ -891,13 +900,14 @@ function DataEngineerPage() {
           onChange={setSelectedDatasetId}
         />
         {showLoad && (
-          <button
+          <motion.button
+            {...buttonHover}
             className="btn btn-primary btn-sm"
             onClick={handleLoadDataset}
             disabled={!selectedDatasetId || loadingData}
           >
             {loadingData ? <><Loader2 size={12} className="spin" /> Loading...</> : <><Download size={12} /> Load Data</>}
-          </button>
+          </motion.button>
         )}
         {loadedData && (
           <span style={{ fontSize: 11, color: 'var(--success)', fontWeight: 500 }}>
@@ -905,7 +915,7 @@ function DataEngineerPage() {
           </span>
         )}
       </div>
-    </div>
+    </motion.div>
   );
 
   // ─── Render ─────────────────────────────────────────────────────────────────
@@ -918,7 +928,7 @@ function DataEngineerPage() {
   return (
     <div style={{ padding: 24, maxWidth: 1400, margin: '0 auto' }}>
       {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
+      <motion.div variants={fadeDown} initial="hidden" animate="show" style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
         <Link href="/data" style={{ color: 'var(--text-3)', display: 'flex' }}>
           <ArrowLeft size={18} />
         </Link>
@@ -931,17 +941,18 @@ function DataEngineerPage() {
             {dataset?.name ?? 'Dataset'} — query, transform, and visualize data
           </p>
         </div>
-      </div>
+      </motion.div>
 
       {/* Tabs */}
-      <div style={{ display: 'flex', gap: 0, borderBottom: '1px solid var(--border)', marginBottom: 20 }}>
+      <motion.div variants={fadeRight} initial="hidden" animate="show" style={{ display: 'flex', gap: 0, borderBottom: '1px solid var(--border)', marginBottom: 20 }}>
         {([
           { key: 'query' as const, label: 'SQL Query', icon: Code2 },
           { key: 'transform' as const, label: 'Transforms', icon: Filter },
           { key: 'visualize' as const, label: 'Visualize', icon: BarChart3 },
         ]).map(t => (
-          <button
+          <motion.button
             key={t.key}
+            {...filterTab}
             onClick={() => setActiveTab(t.key)}
             style={{
               padding: '10px 18px', background: 'none', border: 'none',
@@ -953,9 +964,9 @@ function DataEngineerPage() {
             }}
           >
             <t.icon size={14} /> {t.label}
-          </button>
+          </motion.button>
         ))}
-      </div>
+      </motion.div>
 
       {/* ═══════════════════ SQL Query Tab ═══════════════════ */}
       {activeTab === 'query' && (
@@ -991,13 +1002,14 @@ function DataEngineerPage() {
             />
           </div>
           <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
-            <button
+            <motion.button
+              {...buttonHover}
               className="btn btn-primary btn-sm"
               onClick={handleRunQuery}
               disabled={querying || !activeFilePath}
             >
               {querying ? <><Loader2 size={12} className="spin" /> Running...</> : <><Play size={12} /> Run Query</>}
-            </button>
+            </motion.button>
             <div style={{ fontSize: 11, color: 'var(--text-4)', display: 'flex', alignItems: 'center', gap: 4 }}>
               <Database size={11} /> Powered by DuckDB — use <code style={{ background: 'var(--bg-elevated)', padding: '1px 4px', borderRadius: 3 }}>data_view</code> as your table
             </div>
@@ -1025,7 +1037,7 @@ function DataEngineerPage() {
                   </thead>
                   <tbody>
                     {(queryResult.rows ?? []).map((row: any, i: number) => (
-                      <tr key={i} style={{ borderBottom: '1px solid var(--border)' }}>
+                      <motion.tr key={i} {...rowEntrance(i, 0.15)} style={{ borderBottom: '1px solid var(--border)' }}>
                         {(queryResult.columns ?? []).map((c: any) => (
                           <td key={c.name} style={{
                             padding: '6px 12px', color: 'var(--text-2)',
@@ -1034,7 +1046,7 @@ function DataEngineerPage() {
                             {row[c.name] === null ? '\u2014' : typeof row[c.name] === 'object' ? JSON.stringify(row[c.name]) : String(row[c.name])}
                           </td>
                         ))}
-                      </tr>
+                      </motion.tr>
                     ))}
                   </tbody>
                 </table>
@@ -1060,7 +1072,7 @@ function DataEngineerPage() {
               {transformOps.length > 0 && (
                 <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12 }}>
                   {transformOps.map((op, i) => (
-                    <span key={i} style={{
+                    <motion.span key={i} {...rowEntrance(i)} style={{
                       padding: '3px 10px', borderRadius: 12, fontSize: 10, fontWeight: 600,
                       background: 'var(--bg-elevated)', color: 'var(--text-2)',
                       border: '1px solid var(--border)',
@@ -1090,15 +1102,15 @@ function DataEngineerPage() {
                       >
                         x
                       </button>
-                    </span>
+                    </motion.span>
                   ))}
                 </div>
               )}
 
               {/* Transform Operations Panel */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 }}>
+              <motion.div variants={stagger()} initial="hidden" animate="show" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 }}>
                 {/* Filter Rows */}
-                <div className="card" style={panelCardStyle}>
+                <motion.div variants={fadeUp} className="card" style={panelCardStyle}>
                   <div style={sectionLabel}><Filter size={11} style={{ marginRight: 4, verticalAlign: 'middle' }} />Filter Rows</div>
                   <div style={opRow}>
                     <select className="input" style={inputStyle} value={filterCol} onChange={e => setFilterCol(e.target.value)}>
@@ -1122,10 +1134,10 @@ function DataEngineerPage() {
                       <Plus size={11} /> Add
                     </button>
                   </div>
-                </div>
+                </motion.div>
 
                 {/* Sort */}
-                <div className="card" style={panelCardStyle}>
+                <motion.div variants={fadeUp} className="card" style={panelCardStyle}>
                   <div style={sectionLabel}><ArrowUpDown size={11} style={{ marginRight: 4, verticalAlign: 'middle' }} />Sort</div>
                   <div style={opRow}>
                     <select className="input" style={inputStyle} value={sortCol} onChange={e => setSortCol(e.target.value)}>
@@ -1142,10 +1154,10 @@ function DataEngineerPage() {
                       <Play size={11} /> Apply
                     </button>
                   </div>
-                </div>
+                </motion.div>
 
                 {/* Rename Column */}
-                <div className="card" style={panelCardStyle}>
+                <motion.div variants={fadeUp} className="card" style={panelCardStyle}>
                   <div style={sectionLabel}><Type size={11} style={{ marginRight: 4, verticalAlign: 'middle' }} />Rename Column</div>
                   <div style={opRow}>
                     <select className="input" style={inputStyle} value={renameOld} onChange={e => setRenameOld(e.target.value)}>
@@ -1162,10 +1174,10 @@ function DataEngineerPage() {
                       <Play size={11} /> Rename
                     </button>
                   </div>
-                </div>
+                </motion.div>
 
                 {/* Drop Column */}
-                <div className="card" style={panelCardStyle}>
+                <motion.div variants={fadeUp} className="card" style={panelCardStyle}>
                   <div style={sectionLabel}><Trash2 size={11} style={{ marginRight: 4, verticalAlign: 'middle' }} />Drop Column</div>
                   <div style={opRow}>
                     <select className="input" style={inputStyle} value={dropCol} onChange={e => setDropCol(e.target.value)}>
@@ -1181,10 +1193,10 @@ function DataEngineerPage() {
                       <Trash2 size={11} /> Drop
                     </button>
                   </div>
-                </div>
+                </motion.div>
 
                 {/* Add Column */}
-                <div className="card" style={panelCardStyle}>
+                <motion.div variants={fadeUp} className="card" style={panelCardStyle}>
                   <div style={sectionLabel}><Plus size={11} style={{ marginRight: 4, verticalAlign: 'middle' }} />Add Column</div>
                   <div style={opRow}>
                     <input className="input" style={inputStyle} placeholder="Name..." value={addColName} onChange={e => setAddColName(e.target.value)} />
@@ -1206,10 +1218,10 @@ function DataEngineerPage() {
                       <Plus size={11} /> Add
                     </button>
                   </div>
-                </div>
+                </motion.div>
 
                 {/* Aggregate */}
-                <div className="card" style={panelCardStyle}>
+                <motion.div variants={fadeUp} className="card" style={panelCardStyle}>
                   <div style={sectionLabel}><Rows3 size={11} style={{ marginRight: 4, verticalAlign: 'middle' }} />Aggregate</div>
                   <div style={opRow}>
                     <select className="input" style={inputStyle} value={aggGroupBy} onChange={e => setAggGroupBy(e.target.value)}>
@@ -1233,14 +1245,14 @@ function DataEngineerPage() {
                       <Play size={11} /> Run
                     </button>
                   </div>
-                </div>
-              </div>
+                </motion.div>
+              </motion.div>
 
               {/* Save Button */}
               <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
-                <button className="btn btn-primary btn-sm" onClick={handleSave} disabled={savingData || transformOps.length === 0}>
+                <motion.button {...buttonHover} className="btn btn-primary btn-sm" onClick={handleSave} disabled={savingData || transformOps.length === 0}>
                   {savingData ? <><Loader2 size={12} className="spin" /> Saving...</> : <><Save size={12} /> Save Transformed Data</>}
-                </button>
+                </motion.button>
                 {transformOps.length > 0 && (
                   <span style={{ fontSize: 11, color: 'var(--text-3)', display: 'flex', alignItems: 'center' }}>
                     {transformOps.length} operation{transformOps.length !== 1 ? 's' : ''} applied
@@ -1267,13 +1279,13 @@ function DataEngineerPage() {
           )}
 
           {!loadedData && !loadingData && (
-            <div style={{ textAlign: 'center', padding: 60, color: 'var(--text-3)' }}>
+            <motion.div {...emptyState} style={{ textAlign: 'center', padding: 60, color: 'var(--text-3)' }}>
               <Filter size={32} style={{ opacity: 0.3, margin: '0 auto 12px' }} />
               <div style={{ fontSize: 15, fontWeight: 600 }}>Select and load a dataset to begin</div>
               <div style={{ fontSize: 12, marginTop: 4 }}>
                 Filter, sort, rename, drop, add columns, and aggregate your data
               </div>
-            </div>
+            </motion.div>
           )}
         </div>
       )}
@@ -1287,7 +1299,7 @@ function DataEngineerPage() {
             <div style={{ display: 'grid', gridTemplateColumns: '300px 1fr', gap: 16 }}>
               {/* Chart Configuration Panel */}
               <div>
-                <div className="card" style={{ padding: 16 }}>
+                <motion.div variants={fadeUp} initial="hidden" animate="show" className="card" style={{ padding: 16 }}>
                   <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-1)', marginBottom: 14 }}>
                     <Palette size={14} style={{ verticalAlign: 'middle', marginRight: 6 }} />
                     Chart Configuration
@@ -1358,11 +1370,11 @@ function DataEngineerPage() {
                     <label style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-3)', display: 'block', marginBottom: 4 }}>Chart Title</label>
                     <input className="input" style={{ width: '100%', fontSize: 12 }} value={chartTitle} onChange={e => setChartTitle(e.target.value)} placeholder="Untitled chart" />
                   </div>
-                </div>
+                </motion.div>
               </div>
 
               {/* Chart Display Area */}
-              <div className="card" style={{ padding: 16 }}>
+              <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2, duration: 0.4 }} className="card" style={{ padding: 16 }}>
                 {renderedChart ? (
                   <>
                     <div id="chart-container" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
@@ -1382,8 +1394,9 @@ function DataEngineerPage() {
                         {renderedChart}
                       </svg>
                     </div>
-                    <div style={{ display: 'flex', gap: 8, marginTop: 12, justifyContent: 'flex-end' }}>
-                      <button
+                    <motion.div variants={fadeRight} initial="hidden" animate="show" style={{ display: 'flex', gap: 8, marginTop: 12, justifyContent: 'flex-end' }}>
+                      <motion.button
+                        {...tapScale}
                         className="btn btn-secondary btn-sm"
                         onClick={() => {
                           const svgEl = document.querySelector('#chart-container svg');
@@ -1400,8 +1413,9 @@ function DataEngineerPage() {
                         }}
                       >
                         <Download size={12} /> Save SVG
-                      </button>
-                      <button
+                      </motion.button>
+                      <motion.button
+                        {...buttonHover}
                         className="btn btn-primary btn-sm"
                         onClick={async () => {
                           const svgEl = document.querySelector('#chart-container svg');
@@ -1432,28 +1446,28 @@ function DataEngineerPage() {
                         }}
                       >
                         <Save size={12} /> Save PNG
-                      </button>
-                    </div>
+                      </motion.button>
+                    </motion.div>
                   </>
                 ) : (
-                  <div style={{ textAlign: 'center', padding: 80, color: 'var(--text-3)' }}>
+                  <motion.div {...emptyState} style={{ textAlign: 'center', padding: 80, color: 'var(--text-3)' }}>
                     <BarChart3 size={36} style={{ opacity: 0.2, margin: '0 auto 12px' }} />
                     <div style={{ fontSize: 14, fontWeight: 600 }}>Configure your chart</div>
                     <div style={{ fontSize: 12, marginTop: 4, color: 'var(--text-4)' }}>
                       Select X-axis{chartType !== 'histogram' ? ' and Y-axis' : ''} column{chartType !== 'histogram' ? 's' : ''} to render
                     </div>
-                  </div>
+                  </motion.div>
                 )}
-              </div>
+              </motion.div>
             </div>
           ) : (
-            <div style={{ textAlign: 'center', padding: 60, color: 'var(--text-3)' }}>
+            <motion.div {...emptyState} style={{ textAlign: 'center', padding: 60, color: 'var(--text-3)' }}>
               <BarChart3 size={32} style={{ opacity: 0.3, margin: '0 auto 12px' }} />
               <div style={{ fontSize: 15, fontWeight: 600 }}>Select and load a dataset to visualize</div>
               <div style={{ fontSize: 12, marginTop: 4 }}>
                 Bar, line, pie, scatter, histogram, area, and donut charts with pure SVG
               </div>
-            </div>
+            </motion.div>
           )}
         </div>
       )}

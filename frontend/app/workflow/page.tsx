@@ -8,6 +8,7 @@ import {
   Workflow, Plus, Search, Play, Trash2, X, Square, RotateCcw, Pencil,
   ChevronDown, ChevronUp, ChevronRight, Loader2, AlertCircle, ArrowUpDown,
   Clock, Cpu, Zap, CheckCircle2, XCircle, Eye, ScrollText, ExternalLink,
+  FileText, Lock, Unlock, Snowflake, Upload,
 } from 'lucide-react';
 import { useWorkflows, useWorkflowRuns, useStepExecutions } from '@/lib/hooks/useApi';
 import { useWorkflowWS } from '@/lib/hooks/useWorkflowWS';
@@ -178,6 +179,565 @@ function LiveExecutionPanel({ agents, liveMetrics, events }: {
         </motion.div>
       </td>
     </tr>
+  );
+}
+
+/* ── Plan Dialog ────────────────────────────────────── */
+function PlanDialog({
+  wf,
+  onClose,
+}: {
+  wf: Record<string, unknown>;
+  onClose: () => void;
+}) {
+  const [tab, setTab] = useState<'upload' | 'prompt' | 'editor' | 'generated'>('editor');
+  const [markdown, setMarkdown] = useState('');
+  const [prompt, setPrompt] = useState('');
+  const [generating, setGenerating] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [dagPreview, setDagPreview] = useState<{ nodes: unknown[]; edges: unknown[] } | null>(null);
+  const [versions, setVersions] = useState<Record<string, unknown>[]>([]);
+  const [maxVersions, setMaxVersions] = useState((wf.planMaxVersions as number) || 3);
+  const [loadedPlan, setLoadedPlan] = useState<Record<string, unknown> | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const slug = ((wf.name as string) || 'untitled').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+
+  // Load existing plan and versions on open
+  useEffect(() => {
+    (async () => {
+      try {
+        const [plansRes, versionsRes] = await Promise.all([
+          fetch(`/api/plans?workflowId=${wf.id}`),
+          fetch(`/api/plans/versions?workflowId=${wf.id}`),
+        ]);
+        const plansData = await plansRes.json();
+        const versionsData = await versionsRes.json();
+        setVersions(versionsData.versions || []);
+        const latest = plansData.plans?.[0];
+        if (latest) {
+          setLoadedPlan(latest);
+          setMarkdown((latest.markdownContent as string) || '');
+          const dag = latest.dag as { nodes: unknown[]; edges: unknown[] } | null;
+          if (dag && dag.nodes) setDagPreview(dag);
+        }
+      } catch { /* ignore */ }
+    })();
+  }, [wf.id]);
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      setMarkdown(reader.result as string);
+      setTab('editor');
+    };
+    reader.readAsText(file);
+  };
+
+  const handleGenerate = async () => {
+    setGenerating(true);
+    try {
+      const res = await fetch('/api/plans/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          workflowId: wf.id,
+          workflowSlug: slug,
+          prompt: prompt || undefined,
+          useGraph: true,
+        }),
+      });
+      const data = await res.json();
+      if (data.dag) {
+        setDagPreview(data.dag);
+        setTab('generated');
+      }
+    } catch (err) {
+      console.error('Plan generation failed:', err);
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      const dag = dagPreview || { nodes: [], edges: [] };
+      const nextVersion = versions.length > 0
+        ? Math.max(...versions.map(v => (v.version as number) || 0)) + 1
+        : 1;
+
+      // Save to DB
+      const res = await fetch('/api/plans', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          workflowId: wf.id,
+          name: `${wf.name} Plan v${nextVersion}`,
+          description: `Plan version ${nextVersion}`,
+          dag,
+          markdownContent: markdown,
+          sourceType: tab === 'upload' ? 'upload' : tab === 'prompt' ? 'prompt' : tab === 'generated' ? 'prism_generated' : 'manual',
+          version: nextVersion,
+          planType: 'live',
+          generatedBy: tab === 'generated' || tab === 'prompt' ? 'model' : 'user',
+        }),
+      });
+      const { plan } = await res.json();
+
+      // Update workflow active plan
+      await fetch('/api/workflows', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: wf.id, activePlanId: plan?.id }),
+      });
+
+      // Save to engine filesystem
+      await fetch(`${ENGINE_URL}/api/plans/save`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workflowSlug: slug, dag, markdown, maxVersions }),
+      });
+
+      // Prune excess DB versions
+      await fetch('/api/plans/versions', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workflowId: wf.id, maxVersions }),
+      });
+
+      onClose();
+    } catch (err) {
+      console.error('Save plan failed:', err);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const loadVersion = async (plan: Record<string, unknown>) => {
+    setLoadedPlan(plan);
+    setMarkdown((plan.markdownContent as string) || '');
+    const dag = plan.dag as { nodes: unknown[]; edges: unknown[] } | null;
+    if (dag && dag.nodes) setDagPreview(dag);
+  };
+
+  const tabs = [
+    { key: 'upload' as const, label: 'Upload' },
+    { key: 'prompt' as const, label: 'Prompt' },
+    { key: 'editor' as const, label: 'Editor' },
+    { key: 'generated' as const, label: 'Generated' },
+  ];
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+      onClick={onClose}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 1000,
+        background: 'rgba(7,7,26,0.85)', backdropFilter: 'blur(4px)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}
+    >
+      <motion.div
+        initial={{ opacity: 0, scale: 0.95, y: 20 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.95, y: 20 }}
+        transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+        onClick={e => e.stopPropagation()}
+        style={{
+          background: 'var(--bg-2)', border: '1px solid var(--border)',
+          borderRadius: 12, width: '90vw', maxWidth: 1000, maxHeight: '85vh',
+          overflow: 'hidden', display: 'flex', flexDirection: 'column',
+        }}
+      >
+        {/* Header */}
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          padding: '16px 20px', borderBottom: '1px solid var(--border)',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <FileText size={18} color="#8b5cf6" />
+            <span style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-1)' }}>
+              Plan — {wf.name as string}
+            </span>
+            {loadedPlan && (
+              <span style={{
+                fontSize: 10, padding: '2px 8px', borderRadius: 4,
+                background: (loadedPlan.planType === 'frozen') ? '#06b6d420' : '#8b5cf620',
+                color: (loadedPlan.planType === 'frozen') ? '#06b6d4' : '#8b5cf6',
+                fontWeight: 600,
+              }}>
+                {(loadedPlan.planType as string)?.toUpperCase() || 'LIVE'} v{(loadedPlan.version as number) || 1}
+              </span>
+            )}
+          </div>
+          <button onClick={onClose} style={{
+            background: 'transparent', border: 'none', cursor: 'pointer',
+            color: 'var(--text-3)', padding: 4,
+          }}>
+            <X size={18} />
+          </button>
+        </div>
+
+        {/* Tabs */}
+        <div style={{
+          display: 'flex', gap: 0, borderBottom: '1px solid var(--border)',
+          padding: '0 20px',
+        }}>
+          {tabs.map(t => (
+            <button key={t.key} onClick={() => setTab(t.key)} style={{
+              padding: '10px 16px', fontSize: 12, fontWeight: 600,
+              background: 'transparent', border: 'none', cursor: 'pointer',
+              color: tab === t.key ? '#8b5cf6' : 'var(--text-3)',
+              borderBottom: tab === t.key ? '2px solid #8b5cf6' : '2px solid transparent',
+            }}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Body */}
+        <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+          {/* Main content */}
+          <div style={{ flex: 1, padding: 20, overflowY: 'auto' }}>
+            {tab === 'upload' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                <div style={{
+                  border: '2px dashed var(--border)', borderRadius: 8,
+                  padding: 40, textAlign: 'center', cursor: 'pointer',
+                }} onClick={() => fileRef.current?.click()}>
+                  <Upload size={32} color="var(--text-4)" style={{ marginBottom: 8 }} />
+                  <p style={{ fontSize: 13, color: 'var(--text-3)', margin: 0 }}>
+                    Click to upload a Markdown (.md) plan file
+                  </p>
+                  <input ref={fileRef} type="file" accept=".md,.markdown,.txt"
+                    style={{ display: 'none' }} onChange={handleFileUpload} />
+                </div>
+                {markdown && (
+                  <pre style={{
+                    background: 'var(--bg-1)', border: '1px solid var(--border)',
+                    borderRadius: 8, padding: 16, fontSize: 12, color: 'var(--text-2)',
+                    maxHeight: 300, overflow: 'auto', whiteSpace: 'pre-wrap',
+                  }}>{markdown}</pre>
+                )}
+              </div>
+            )}
+
+            {tab === 'prompt' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-2)' }}>
+                  Describe the plan you want to generate
+                </label>
+                <textarea
+                  value={prompt}
+                  onChange={e => setPrompt(e.target.value)}
+                  placeholder="e.g., Create a research workflow that first gathers data, then analyzes it, and finally generates a report..."
+                  style={{
+                    width: '100%', minHeight: 120, padding: 12, borderRadius: 8,
+                    border: '1px solid var(--border)', background: 'var(--bg-1)',
+                    color: 'var(--text-1)', fontSize: 13, fontFamily: 'inherit',
+                    resize: 'vertical',
+                  }}
+                />
+                <button onClick={handleGenerate} disabled={generating || !prompt.trim()} style={{
+                  display: 'flex', alignItems: 'center', gap: 6, alignSelf: 'flex-start',
+                  padding: '8px 16px', borderRadius: 6, fontSize: 12, fontWeight: 600,
+                  background: generating ? '#8b5cf630' : '#8b5cf6', color: '#fff',
+                  border: 'none', cursor: generating ? 'wait' : 'pointer',
+                  opacity: (!prompt.trim() || generating) ? 0.5 : 1,
+                }}>
+                  {generating ? <Loader2 size={12} style={{ animation: 'spin 1s linear infinite' }} /> : <Zap size={12} />}
+                  {generating ? 'Generating...' : 'Generate Plan'}
+                </button>
+              </div>
+            )}
+
+            {tab === 'editor' && (
+              <textarea
+                value={markdown}
+                onChange={e => setMarkdown(e.target.value)}
+                placeholder="# Execution Plan&#10;&#10;## Step 1: Research&#10;- Agent: Research Analyst&#10;- Task: Gather relevant data...&#10;&#10;## Step 2: Analysis&#10;..."
+                style={{
+                  width: '100%', minHeight: 400, padding: 16, borderRadius: 8,
+                  border: '1px solid var(--border)', background: 'var(--bg-1)',
+                  color: 'var(--text-1)', fontSize: 13, fontFamily: 'monospace',
+                  resize: 'vertical', lineHeight: 1.6,
+                }}
+              />
+            )}
+
+            {tab === 'generated' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                <button onClick={handleGenerate} disabled={generating} style={{
+                  display: 'flex', alignItems: 'center', gap: 6, alignSelf: 'flex-start',
+                  padding: '8px 16px', borderRadius: 6, fontSize: 12, fontWeight: 600,
+                  background: generating ? '#8b5cf630' : '#8b5cf6', color: '#fff',
+                  border: 'none', cursor: generating ? 'wait' : 'pointer',
+                }}>
+                  {generating ? <Loader2 size={12} style={{ animation: 'spin 1s linear infinite' }} /> : <Zap size={12} />}
+                  {generating ? 'Generating...' : 'Generate from PRISM Graph'}
+                </button>
+                {dagPreview && dagPreview.nodes.length > 0 && (
+                  <div style={{
+                    background: 'var(--bg-1)', border: '1px solid var(--border)',
+                    borderRadius: 8, padding: 16, minHeight: 200,
+                  }}>
+                    <p style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-2)', margin: '0 0 8px' }}>
+                      DAG Preview — {dagPreview.nodes.length} nodes, {dagPreview.edges.length} edges
+                    </p>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                      {(dagPreview.nodes as Record<string, unknown>[]).map((n) => (
+                        <div key={n.id as string} style={{
+                          padding: '6px 12px', borderRadius: 6, fontSize: 11, fontWeight: 500,
+                          background: '#8b5cf615', color: '#8b5cf6',
+                          border: '1px solid #8b5cf630',
+                        }}>
+                          {(n.label as string) || (n.id as string)}
+                          {n.connectionType === 'parallel' && (
+                            <span style={{ marginLeft: 4, fontSize: 9, opacity: 0.7 }}>⟂</span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Version sidebar */}
+          <div style={{
+            width: 220, borderLeft: '1px solid var(--border)',
+            padding: 16, overflowY: 'auto', background: 'var(--bg-1)',
+          }}>
+            <p style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-2)', marginTop: 0 }}>
+              Versions
+            </p>
+            {versions.length === 0 && (
+              <p style={{ fontSize: 11, color: 'var(--text-4)', fontStyle: 'italic' }}>
+                No versions yet
+              </p>
+            )}
+            {versions.map((v) => (
+              <button key={v.id as string} onClick={() => loadVersion(v)} style={{
+                width: '100%', textAlign: 'left', padding: '8px 10px', marginBottom: 4,
+                borderRadius: 6, fontSize: 11, cursor: 'pointer',
+                background: loadedPlan?.id === v.id ? '#8b5cf615' : 'transparent',
+                border: loadedPlan?.id === v.id ? '1px solid #8b5cf640' : '1px solid transparent',
+                color: 'var(--text-2)',
+              }}>
+                <div style={{ fontWeight: 600 }}>v{v.version as number}</div>
+                <div style={{ fontSize: 10, color: 'var(--text-4)' }}>
+                  {v.sourceType as string} • {timeAgo(v.createdAt as string)}
+                </div>
+              </button>
+            ))}
+
+            <div style={{ marginTop: 16, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
+              <label style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-3)' }}>
+                Max Versions
+              </label>
+              <input
+                type="number" min={1} max={50} value={maxVersions}
+                onChange={e => setMaxVersions(Math.max(1, Math.min(50, Number(e.target.value))))}
+                style={{
+                  width: '100%', padding: '6px 8px', borderRadius: 4, marginTop: 4,
+                  border: '1px solid var(--border)', background: 'var(--bg-2)',
+                  color: 'var(--text-1)', fontSize: 12,
+                }}
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8,
+          padding: '12px 20px', borderTop: '1px solid var(--border)',
+        }}>
+          <button onClick={onClose} style={{
+            padding: '8px 16px', borderRadius: 6, fontSize: 12, fontWeight: 600,
+            background: 'transparent', border: '1px solid var(--border)',
+            color: 'var(--text-3)', cursor: 'pointer',
+          }}>
+            Cancel
+          </button>
+          <button onClick={handleSave} disabled={saving} style={{
+            display: 'flex', alignItems: 'center', gap: 6,
+            padding: '8px 20px', borderRadius: 6, fontSize: 12, fontWeight: 600,
+            background: saving ? '#8b5cf650' : '#8b5cf6', color: '#fff',
+            border: 'none', cursor: saving ? 'wait' : 'pointer',
+          }}>
+            {saving ? <Loader2 size={12} style={{ animation: 'spin 1s linear infinite' }} /> : <CheckCircle2 size={12} />}
+            {saving ? 'Saving...' : 'Save Plan'}
+          </button>
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}
+
+/* ── View Plan Dialog (read-only) ──────────────────── */
+function ViewPlanDialog({
+  wf,
+  onClose,
+}: {
+  wf: Record<string, unknown>;
+  onClose: () => void;
+}) {
+  const [plan, setPlan] = useState<Record<string, unknown> | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch(`/api/plans?workflowId=${wf.id}`);
+        const data = await res.json();
+        setPlan(data.plans?.[0] || null);
+      } catch { /* ignore */ }
+      setLoading(false);
+    })();
+  }, [wf.id]);
+
+  const dag = plan?.dag as { nodes: Record<string, unknown>[]; edges: Record<string, unknown>[] } | null;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+      onClick={onClose}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 1000,
+        background: 'rgba(7,7,26,0.85)', backdropFilter: 'blur(4px)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}
+    >
+      <motion.div
+        initial={{ opacity: 0, scale: 0.95, y: 20 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.95, y: 20 }}
+        transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+        onClick={e => e.stopPropagation()}
+        style={{
+          background: 'var(--bg-2)', border: '1px solid var(--border)',
+          borderRadius: 12, width: '80vw', maxWidth: 800, maxHeight: '80vh',
+          overflow: 'hidden', display: 'flex', flexDirection: 'column',
+        }}
+      >
+        {/* Header */}
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          padding: '16px 20px', borderBottom: '1px solid var(--border)',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <Eye size={18} color="var(--text-3)" />
+            <span style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-1)' }}>
+              View Plan — {wf.name as string}
+            </span>
+            {plan && (
+              <span style={{
+                fontSize: 10, padding: '2px 8px', borderRadius: 4,
+                background: (plan.planType === 'frozen') ? '#06b6d420' : '#8b5cf620',
+                color: (plan.planType === 'frozen') ? '#06b6d4' : '#8b5cf6',
+                fontWeight: 600,
+              }}>
+                {(plan.planType as string)?.toUpperCase() || 'LIVE'} v{(plan.version as number) || 1}
+              </span>
+            )}
+          </div>
+          <button onClick={onClose} style={{
+            background: 'transparent', border: 'none', cursor: 'pointer',
+            color: 'var(--text-3)', padding: 4,
+          }}>
+            <X size={18} />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div style={{ flex: 1, padding: 20, overflowY: 'auto' }}>
+          {loading && (
+            <div style={{ textAlign: 'center', padding: 40, color: 'var(--text-4)' }}>
+              <Loader2 size={24} style={{ animation: 'spin 1s linear infinite' }} />
+            </div>
+          )}
+
+          {!loading && !plan && (
+            <div style={{ textAlign: 'center', padding: 40, color: 'var(--text-4)' }}>
+              <p style={{ fontSize: 13 }}>No plan exists for this workflow yet.</p>
+              <p style={{ fontSize: 11 }}>Click the PLAN button to create one.</p>
+            </div>
+          )}
+
+          {!loading && plan && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+              {/* Plan info */}
+              <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+                <div>
+                  <span style={{ fontSize: 10, color: 'var(--text-4)', fontWeight: 600 }}>Name</span>
+                  <p style={{ fontSize: 13, color: 'var(--text-1)', margin: '2px 0 0' }}>{String(plan.name ?? '')}</p>
+                </div>
+                <div>
+                  <span style={{ fontSize: 10, color: 'var(--text-4)', fontWeight: 600 }}>Source</span>
+                  <p style={{ fontSize: 13, color: 'var(--text-1)', margin: '2px 0 0' }}>{String(plan.sourceType ?? '')}</p>
+                </div>
+                <div>
+                  <span style={{ fontSize: 10, color: 'var(--text-4)', fontWeight: 600 }}>Updated</span>
+                  <p style={{ fontSize: 13, color: 'var(--text-1)', margin: '2px 0 0' }}>{timeAgo(plan.updatedAt as string)}</p>
+                </div>
+                {Boolean(wf.planFrozen) && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <Snowflake size={12} color="#06b6d4" />
+                    <span style={{ fontSize: 11, color: '#06b6d4', fontWeight: 600 }}>FROZEN</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Markdown content */}
+              {Boolean(plan.markdownContent) && (
+                <div>
+                  <span style={{ fontSize: 10, color: 'var(--text-4)', fontWeight: 600 }}>Plan Content</span>
+                  <pre style={{
+                    background: 'var(--bg-1)', border: '1px solid var(--border)',
+                    borderRadius: 8, padding: 16, fontSize: 12, color: 'var(--text-2)',
+                    maxHeight: 300, overflow: 'auto', whiteSpace: 'pre-wrap',
+                    marginTop: 4,
+                  }}>{String(plan.markdownContent)}</pre>
+                </div>
+              )}
+
+              {/* DAG visualization */}
+              {dag && dag.nodes && dag.nodes.length > 0 && (
+                <div>
+                  <span style={{ fontSize: 10, color: 'var(--text-4)', fontWeight: 600 }}>
+                    DAG — {dag.nodes.length} nodes, {dag.edges.length} edges
+                  </span>
+                  <div style={{
+                    background: 'var(--bg-1)', border: '1px solid var(--border)',
+                    borderRadius: 8, padding: 16, marginTop: 4,
+                    display: 'flex', flexWrap: 'wrap', gap: 8,
+                  }}>
+                    {dag.nodes.map((n) => (
+                      <div key={n.id as string} style={{
+                        padding: '6px 12px', borderRadius: 6, fontSize: 11, fontWeight: 500,
+                        background: n.status === 'completed' ? '#10b98115' : n.status === 'running' ? '#f59e0b15' : '#8b5cf615',
+                        color: n.status === 'completed' ? '#10b981' : n.status === 'running' ? '#f59e0b' : '#8b5cf6',
+                        border: `1px solid ${n.status === 'completed' ? '#10b98130' : n.status === 'running' ? '#f59e0b30' : '#8b5cf630'}`,
+                      }}>
+                        {(n.label as string) || (n.id as string)}
+                        {n.connectionType === 'parallel' && (
+                          <span style={{ marginLeft: 4, fontSize: 9, opacity: 0.7 }}>⟂</span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </motion.div>
+    </motion.div>
   );
 }
 
@@ -583,6 +1143,9 @@ export default function WorkflowsPage() {
   const [runningIds, setRunningIds] = useState<Set<string>>(new Set());
   const runGuardRef = useRef<Set<string>>(new Set());
   const [runError, setRunError] = useState<string | null>(null);
+  const [planDialogWf, setPlanDialogWf] = useState<Record<string, unknown> | null>(null);
+  const [viewPlanWf, setViewPlanWf] = useState<Record<string, unknown> | null>(null);
+  const [freezingId, setFreezingId] = useState<string | null>(null);
   const ws = useWorkflowWS();
 
   // Check if any workflow is running for faster polling
@@ -689,6 +1252,25 @@ export default function WorkflowsPage() {
     setSelectedWf(null);
     mutate();
   };
+
+  /* Freeze / unfreeze handler */
+  const handleFreeze = useCallback(async (workflowId: string) => {
+    const wf = workflows.find((w: Record<string, unknown>) => (w.id as string) === workflowId);
+    const isFrozen = (wf?.planFrozen as boolean) || false;
+    setFreezingId(workflowId);
+    try {
+      await fetch('/api/plans/freeze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workflowId, action: isFrozen ? 'unfreeze' : 'freeze' }),
+      });
+      mutate();
+    } catch (err) {
+      console.error('Freeze toggle failed:', err);
+    } finally {
+      setFreezingId(null);
+    }
+  }, [workflows, mutate]);
 
   /* Run workflow handler */
   const handleRun = useCallback(async (workflowId: string) => {
@@ -1042,6 +1624,7 @@ export default function WorkflowsPage() {
                 const canStop = isRunning;
                 const canRestart = ['completed', 'failed', 'cancelled'].includes(status);
                 const isStarting = runningIds.has(wf.id as string);
+                const isFrozen = (wf.planFrozen as boolean) || false;
 
                 return (
                   <React.Fragment key={wf.id as string}>
@@ -1088,6 +1671,11 @@ export default function WorkflowsPage() {
                         {isRunning && (wf.lastRunAt as string) ? (
                           <RunningTimer startedAt={wf.lastRunAt as string} />
                         ) : null}
+                        {isFrozen && (
+                          <span title="Plan Frozen" style={{ display: 'inline-flex', alignItems: 'center', gap: 2, padding: '2px 6px', borderRadius: 99, fontSize: 9, fontWeight: 700, background: '#06b6d412', color: '#06b6d4', border: '1px solid #06b6d428' }}>
+                            <Snowflake size={8} /> FROZEN
+                          </span>
+                        )}
                       </div>
                     </td>
                     <td style={{ ...TD, maxWidth: 200 }}>
@@ -1154,6 +1742,45 @@ export default function WorkflowsPage() {
                             <RotateCcw size={10} />
                           </button>
                         )}
+                        <button onClick={() => setPlanDialogWf(wf)} title="Edit Plan" style={{
+                          display: 'flex', alignItems: 'center', gap: 4,
+                          padding: '5px 8px', borderRadius: 5, fontSize: 11, fontWeight: 600,
+                          border: '1px solid #8b5cf640',
+                          background: '#8b5cf608', color: '#8b5cf6',
+                          cursor: 'pointer',
+                        }}>
+                          <FileText size={10} /> Plan
+                        </button>
+                        <button onClick={() => setViewPlanWf(wf)} title="View Plan" style={{
+                          display: 'flex', alignItems: 'center',
+                          padding: '5px 8px', borderRadius: 5, fontSize: 11, fontWeight: 600,
+                          border: '1px solid var(--border)',
+                          background: 'transparent', color: 'var(--text-3)',
+                          cursor: 'pointer',
+                        }}>
+                          <Eye size={10} />
+                        </button>
+                        <button
+                          onClick={() => handleFreeze(wf.id as string)}
+                          disabled={freezingId === (wf.id as string)}
+                          title={isFrozen ? 'Unfreeze Plan' : 'Freeze Plan'}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: 3,
+                            padding: '5px 8px', borderRadius: 5, fontSize: 11, fontWeight: 600,
+                            border: isFrozen ? '1px solid #06b6d450' : '1px solid var(--border)',
+                            background: isFrozen ? '#06b6d412' : 'transparent',
+                            color: isFrozen ? '#06b6d4' : 'var(--text-4)',
+                            cursor: freezingId === (wf.id as string) ? 'wait' : 'pointer',
+                          }}
+                        >
+                          {freezingId === (wf.id as string) ? (
+                            <Loader2 size={10} style={{ animation: 'spin 1s linear infinite' }} />
+                          ) : isFrozen ? (
+                            <Lock size={10} />
+                          ) : (
+                            <Unlock size={10} />
+                          )}
+                        </button>
                         <Link href={`/workflow/builder?id=${wf.id}`} style={{
                           display: 'flex', alignItems: 'center', gap: 4,
                           padding: '5px 8px', borderRadius: 5, fontSize: 11, fontWeight: 600,
@@ -1212,6 +1839,16 @@ export default function WorkflowsPage() {
             onClose={() => setDeletingWf(null)}
             onConfirm={() => handleDelete(deletingWf.id as string)}
           />
+        )}
+      </AnimatePresence>
+      <AnimatePresence>
+        {planDialogWf && (
+          <PlanDialog wf={planDialogWf} onClose={() => { setPlanDialogWf(null); mutate(); }} />
+        )}
+      </AnimatePresence>
+      <AnimatePresence>
+        {viewPlanWf && (
+          <ViewPlanDialog wf={viewPlanWf} onClose={() => setViewPlanWf(null)} />
         )}
       </AnimatePresence>
       <AnimatePresence>

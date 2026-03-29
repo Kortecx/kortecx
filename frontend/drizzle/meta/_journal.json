@@ -99,6 +99,20 @@
       "when": 1774635085796,
       "tag": "0013_worthless_bloodscream",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1774699500000,
+      "tag": "0014_action_steps",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1774699560000,
+      "tag": "0015_plan_freeze_versioning",
+      "breakpoints": true
     }
   ]
 }

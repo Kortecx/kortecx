@@ -15,25 +15,23 @@ import {
   Copy, RotateCcw, Store, FileText,
   Network, LayoutGrid,
 } from 'lucide-react';
-import { useExperts, usePrismGraph } from '@/lib/hooks/useApi';
+import { useExperts, usePrismGraph, useMarketplaceGraph } from '@/lib/hooks/useApi';
 import { ROLE_META } from '@/lib/constants';
 import type { Expert, ExpertRole } from '@/lib/types';
 import ExpertEditDialog from './_components/ExpertEditDialog';
 import PrismGraph from './_components/PrismGraph';
-import type { SimilarityEdge } from './_components/PrismGraph';
+
 import PrismListView from './_components/PrismListView';
 
 /* ═══════════════════════════════════════════════════════
    Constants
    ═══════════════════════════════════════════════════════ */
 
+import { fadeUp, stagger, hoverLift } from '@/lib/motion';
+
 const SECTION_COLOR = '#D97706';
 
-const fadeUp = {
-  hidden: { opacity: 0, y: 14 },
-  show:   { opacity: 1, y: 0, transition: { duration: 0.32, ease: [0.25, 0.46, 0.45, 0.94] as const } },
-};
-const stagger = { hidden: {}, show: { transition: { staggerChildren: 0.07 } } };
+const staggerDefault = stagger();
 
 /* ─── Status config ─────────────────────────────────── */
 const STATUS_CONFIG: Record<string, { color: string; bg: string; label: string; pulse: boolean }> = {
@@ -91,6 +89,7 @@ interface MarketplaceExpert {
   id: string;
   name: string;
   description: string;
+  systemPrompt: string;
   role: ExpertRole;
   modelName: string;
   providerName: string;
@@ -101,181 +100,175 @@ interface MarketplaceExpert {
   capabilities: string[];
 }
 
-/* ─── Marketplace edge computation (client-side Jaccard) ── */
-function computeMarketplaceEdges(items: MarketplaceExpert[]): SimilarityEdge[] {
-  const out: SimilarityEdge[] = [];
-  for (let i = 0; i < items.length; i++) {
-    for (let j = i + 1; j < items.length; j++) {
-      const a = items[i], b = items[j];
-      const aSet = new Set([...a.specializations, ...a.capabilities]);
-      const bSet = new Set([...b.specializations, ...b.capabilities]);
-      const inter = [...aSet].filter(x => bSet.has(x)).length;
-      const union = new Set([...aSet, ...bSet]).size;
-      let score = union > 0 ? (inter / union) * 0.7 : 0;
-      if (a.role === b.role) score += 0.3;
-      if (score > 0.2) out.push({ source: a.id, target: b.id, weight: Math.round(score * 100) / 100 });
-    }
-  }
-  return out;
-}
-
 /* ─── Marketplace experts data ─────────────────────── */
 const MARKETPLACE_EXPERTS: MarketplaceExpert[] = [
   {
     id: 'mp-research-analyst-pro',
     name: 'Research Analyst Pro',
-    description: 'Deep research agent specializing in academic papers, literature reviews, and structured data analysis with citation tracking.',
+    description: 'Deep research agent for academic papers, literature reviews, and structured data analysis. Synthesizes findings from multiple sources into actionable insights with full citation tracking and evidence scoring.',
+    systemPrompt: 'You are a meticulous research analyst. Gather evidence from multiple sources, cross-reference findings, assess credibility, and produce structured research reports with citations. Use data analysis to support every conclusion.',
     role: 'researcher',
     modelName: 'Claude Sonnet 4.6',
     providerName: 'Anthropic',
     rating: 4.8,
     totalRuns: 12400,
-    tags: ['research', 'analysis', 'papers'],
-    specializations: ['Deep Research', 'Academic Papers', 'Data Analysis', 'Literature Review', 'Citation Tracking'],
-    capabilities: ['reasoning', 'analysis', 'research'],
+    tags: ['research', 'analysis', 'papers', 'synthesis'],
+    specializations: ['Deep Research', 'Academic Papers', 'Data Analysis', 'Literature Review', 'Citation Tracking', 'Evidence Synthesis'],
+    capabilities: ['reasoning', 'analysis', 'research', 'synthesis', 'writing'],
   },
   {
     id: 'mp-code-architect',
     name: 'Code Architect',
-    description: 'System design and architecture expert for large-scale applications. Excels at code review, design patterns, and technical documentation.',
+    description: 'System design and architecture expert for large-scale applications. Performs thorough code review, applies design patterns, generates technical documentation, and analyzes performance bottlenecks in distributed systems.',
+    systemPrompt: 'You are a senior software architect. Review code for quality, suggest design patterns, document architecture decisions, and analyze system performance. Use data-driven reasoning to justify technical choices.',
     role: 'coder',
     modelName: 'Claude Opus 4.6',
     providerName: 'Anthropic',
     rating: 4.9,
     totalRuns: 15000,
-    tags: ['architecture', 'code-review', 'design'],
-    specializations: ['System Design', 'Code Review', 'Architecture Patterns', 'Technical Docs'],
-    capabilities: ['coding', 'reasoning', 'analysis'],
+    tags: ['architecture', 'code-review', 'design', 'performance'],
+    specializations: ['System Design', 'Code Review', 'Architecture Patterns', 'Technical Docs', 'Performance Analysis', 'Data Analysis'],
+    capabilities: ['coding', 'reasoning', 'analysis', 'review', 'writing'],
   },
   {
     id: 'mp-content-strategist',
     name: 'Content Strategist',
-    description: 'Content marketing specialist with expertise in SEO optimization, brand voice development, and multi-channel content planning.',
+    description: 'Content marketing specialist with expertise in SEO optimization, brand voice development, and multi-channel content planning. Analyzes audience data and synthesizes trends into compelling editorial strategies.',
+    systemPrompt: 'You are a content strategist. Analyze audience data, research trending topics, write compelling content, plan editorial calendars, and synthesize market research into brand-aligned messaging.',
     role: 'writer',
     modelName: 'GPT-4o',
     providerName: 'OpenAI',
     rating: 4.5,
     totalRuns: 8200,
-    tags: ['content', 'seo', 'marketing'],
-    specializations: ['Content Marketing', 'SEO Optimization', 'Brand Voice', 'Editorial Calendar'],
-    capabilities: ['writing', 'analysis', 'reasoning'],
+    tags: ['content', 'seo', 'marketing', 'strategy'],
+    specializations: ['Content Marketing', 'SEO Optimization', 'Brand Voice', 'Editorial Calendar', 'Audience Analysis', 'Data Analysis'],
+    capabilities: ['writing', 'analysis', 'reasoning', 'research', 'synthesis'],
   },
   {
     id: 'mp-data-pipeline-engineer',
     name: 'Data Pipeline Engineer',
-    description: 'ETL pipeline designer and optimizer. Specializes in data modeling, SQL optimization, and building scalable data architectures.',
+    description: 'ETL pipeline designer and optimizer specializing in data modeling, SQL optimization, and scalable data architectures. Reviews data quality, analyzes pipeline performance, and writes production-grade transformation code.',
+    systemPrompt: 'You are a data engineer. Design ETL pipelines, optimize SQL queries, model data schemas, enforce data quality standards, and write clean transformation code. Analyze performance metrics to improve throughput.',
     role: 'data-engineer',
     modelName: 'Claude Sonnet 4.6',
     providerName: 'Anthropic',
     rating: 4.6,
     totalRuns: 6500,
-    tags: ['etl', 'sql', 'data-modeling'],
-    specializations: ['ETL Pipelines', 'Data Modeling', 'SQL Optimization', 'Schema Design', 'Data Quality'],
-    capabilities: ['coding', 'analysis', 'reasoning'],
+    tags: ['etl', 'sql', 'data-modeling', 'pipelines'],
+    specializations: ['ETL Pipelines', 'Data Modeling', 'SQL Optimization', 'Schema Design', 'Data Quality', 'Performance Analysis'],
+    capabilities: ['coding', 'analysis', 'reasoning', 'data-processing', 'review'],
   },
   {
     id: 'mp-legal-compliance',
     name: 'Legal Compliance Advisor',
-    description: 'Contract review and regulatory compliance expert. Analyzes legal documents, identifies risks, and ensures regulatory adherence.',
+    description: 'Contract review and regulatory compliance expert. Analyzes legal documents, identifies risks, researches case precedents, and writes compliance reports with evidence-based policy recommendations.',
+    systemPrompt: 'You are a legal compliance advisor. Review contracts, research regulations, assess risk exposure, analyze policy implications, and write detailed compliance reports. Support every recommendation with legal precedent.',
     role: 'legal',
     modelName: 'Claude Opus 4.6',
     providerName: 'Anthropic',
     rating: 4.7,
     totalRuns: 3800,
-    tags: ['legal', 'compliance', 'contracts'],
-    specializations: ['Contract Review', 'Regulatory Compliance', 'Risk Assessment', 'Policy Analysis'],
-    capabilities: ['reasoning', 'analysis', 'writing'],
+    tags: ['legal', 'compliance', 'contracts', 'risk'],
+    specializations: ['Contract Review', 'Regulatory Compliance', 'Risk Assessment', 'Policy Analysis', 'Legal Research', 'Evidence Synthesis'],
+    capabilities: ['reasoning', 'analysis', 'writing', 'research', 'review'],
   },
   {
     id: 'mp-financial-analyst',
     name: 'Financial Analyst',
-    description: 'Financial modeling and market analysis specialist. Builds forecasts, evaluates risk, and generates comprehensive financial reports.',
+    description: 'Financial modeling and market analysis specialist. Builds forecasts from structured data, evaluates risk scenarios, researches market trends, and generates comprehensive financial reports with synthesis of multiple data sources.',
+    systemPrompt: 'You are a financial analyst. Build financial models, analyze market data, assess risk scenarios, research economic trends, and synthesize findings into actionable investment or budget recommendations.',
     role: 'financial',
     modelName: 'GPT-4o',
     providerName: 'OpenAI',
     rating: 4.4,
     totalRuns: 5100,
-    tags: ['finance', 'modeling', 'risk'],
-    specializations: ['Financial Modeling', 'Market Analysis', 'Risk Assessment', 'Forecasting'],
-    capabilities: ['reasoning', 'analysis', 'math'],
+    tags: ['finance', 'modeling', 'risk', 'forecasting'],
+    specializations: ['Financial Modeling', 'Market Analysis', 'Risk Assessment', 'Forecasting', 'Data Analysis', 'Evidence Synthesis'],
+    capabilities: ['reasoning', 'analysis', 'research', 'synthesis', 'data-processing'],
   },
   {
     id: 'mp-creative-director',
     name: 'Creative Director',
-    description: 'Branding and creative strategy expert. Develops visual concepts, creative briefs, and cohesive brand identity systems.',
+    description: 'Branding and creative strategy expert. Develops visual concepts, writes creative briefs, researches design trends, and synthesizes audience insights into cohesive brand identity systems.',
+    systemPrompt: 'You are a creative director. Research design trends, analyze audience preferences, develop brand concepts, write creative briefs, and synthesize market insights into compelling visual and verbal brand identities.',
     role: 'creative',
     modelName: 'Claude Sonnet 4.6',
     providerName: 'Anthropic',
     rating: 4.3,
     totalRuns: 4200,
-    tags: ['branding', 'creative', 'design'],
-    specializations: ['Branding', 'Visual Concepts', 'Creative Briefs', 'Brand Identity'],
-    capabilities: ['writing', 'reasoning', 'analysis'],
+    tags: ['branding', 'creative', 'design', 'strategy'],
+    specializations: ['Branding', 'Visual Concepts', 'Creative Briefs', 'Brand Identity', 'Audience Analysis', 'Trend Research'],
+    capabilities: ['writing', 'reasoning', 'analysis', 'research', 'synthesis'],
   },
   {
     id: 'mp-qa-reviewer',
     name: 'QA Reviewer',
-    description: 'Code review and quality assurance specialist. Designs test plans, identifies bugs, and enforces coding standards across teams.',
+    description: 'Code review and quality assurance specialist. Designs test plans, analyzes code coverage data, identifies bugs through systematic review, and writes detailed defect reports with reproduction steps.',
+    systemPrompt: 'You are a QA reviewer. Review code for defects, design comprehensive test plans, analyze coverage metrics, enforce coding standards, and write detailed bug reports. Use data-driven quality assessment.',
     role: 'reviewer',
     modelName: 'Claude Haiku 4.5',
     providerName: 'Anthropic',
     rating: 4.2,
     totalRuns: 9800,
-    tags: ['qa', 'testing', 'review'],
-    specializations: ['Code Review', 'Test Planning', 'Quality Assurance', 'Bug Detection', 'Standards Enforcement'],
-    capabilities: ['coding', 'analysis', 'fast'],
+    tags: ['qa', 'testing', 'review', 'quality'],
+    specializations: ['Code Review', 'Test Planning', 'Quality Assurance', 'Bug Detection', 'Standards Enforcement', 'Data Analysis'],
+    capabilities: ['coding', 'analysis', 'review', 'reasoning', 'writing'],
   },
   {
     id: 'mp-project-coordinator',
     name: 'Project Coordinator',
-    description: 'Project planning and task management expert. Decomposes complex goals, tracks progress, and generates status reports.',
+    description: 'Project planning and task management expert. Decomposes complex goals into actionable plans, tracks progress with data analysis, writes stakeholder reports, and synthesizes team feedback into process improvements.',
+    systemPrompt: 'You are a project coordinator. Decompose goals into tasks, track progress metrics, analyze team velocity data, write status reports for stakeholders, and synthesize feedback into actionable improvements.',
     role: 'coordinator',
     modelName: 'Gemini 2.5 Pro',
     providerName: 'Google',
     rating: 4.1,
     totalRuns: 3200,
-    tags: ['project', 'planning', 'management'],
-    specializations: ['Project Planning', 'Task Decomposition', 'Status Tracking', 'Stakeholder Reports'],
-    capabilities: ['reasoning', 'writing', 'analysis'],
+    tags: ['project', 'planning', 'management', 'coordination'],
+    specializations: ['Project Planning', 'Task Decomposition', 'Status Tracking', 'Stakeholder Reports', 'Data Analysis', 'Process Synthesis'],
+    capabilities: ['reasoning', 'writing', 'analysis', 'planning', 'synthesis'],
   },
   {
     id: 'mp-medical-research',
     name: 'Medical Research Analyst',
-    description: 'Clinical data and medical literature specialist. Reviews studies, analyzes health data, and supports evidence-based decision making.',
+    description: 'Clinical data and medical literature specialist. Reviews published studies, analyzes patient data patterns, researches treatment outcomes, and synthesizes evidence into clinical decision support recommendations.',
+    systemPrompt: 'You are a medical research analyst. Review clinical studies, analyze health data, research treatment outcomes, assess evidence quality, and synthesize findings into evidence-based clinical recommendations.',
     role: 'medical',
     modelName: 'Claude Opus 4.6',
     providerName: 'Anthropic',
     rating: 4.8,
     totalRuns: 2100,
-    tags: ['medical', 'clinical', 'health'],
-    specializations: ['Clinical Data', 'Medical Literature', 'Health Informatics', 'Evidence-Based Analysis'],
-    capabilities: ['reasoning', 'analysis', 'research'],
+    tags: ['medical', 'clinical', 'health', 'evidence-based'],
+    specializations: ['Clinical Data', 'Medical Literature', 'Health Informatics', 'Evidence Synthesis', 'Data Analysis', 'Treatment Research'],
+    capabilities: ['reasoning', 'analysis', 'research', 'synthesis', 'data-processing'],
   },
   {
     id: 'mp-strategy-planner',
     name: 'Strategy Planner',
-    description: 'Business strategy and roadmap planning specialist. Develops OKR frameworks, competitive analysis, and strategic recommendations.',
+    description: 'Business strategy and roadmap planning specialist. Researches competitive landscapes, analyzes market data, develops OKR frameworks, and synthesizes insights into strategic recommendations with evidence-backed priorities.',
+    systemPrompt: 'You are a strategy planner. Research market landscapes, analyze competitive data, develop OKR frameworks, plan strategic roadmaps, and synthesize multi-source insights into prioritized recommendations.',
     role: 'planner',
     modelName: 'GPT-4o',
     providerName: 'OpenAI',
     rating: 4.3,
     totalRuns: 4700,
-    tags: ['strategy', 'roadmap', 'okr'],
-    specializations: ['Business Strategy', 'Roadmap Planning', 'OKR Frameworks', 'Competitive Analysis'],
-    capabilities: ['reasoning', 'writing', 'analysis'],
+    tags: ['strategy', 'roadmap', 'okr', 'planning'],
+    specializations: ['Business Strategy', 'Roadmap Planning', 'OKR Frameworks', 'Competitive Analysis', 'Market Research', 'Data Analysis'],
+    capabilities: ['reasoning', 'writing', 'analysis', 'research', 'planning', 'synthesis'],
   },
   {
     id: 'mp-translation-specialist',
     name: 'Translation Specialist',
-    description: 'Multilingual translation and localization expert. Handles cultural adaptation, terminology management, and context-aware translations.',
+    description: 'Multilingual translation and localization expert. Handles cultural adaptation, researches regional conventions, analyzes terminology consistency, and writes localized content that preserves meaning across languages.',
+    systemPrompt: 'You are a translation specialist. Translate content accurately, research cultural contexts, analyze terminology consistency, adapt messaging for regional audiences, and write localized copy that preserves intent.',
     role: 'translator',
     modelName: 'Gemini 2.5 Pro',
     providerName: 'Google',
     rating: 4.5,
     totalRuns: 7600,
-    tags: ['translation', 'localization', 'multilingual'],
-    specializations: ['Multilingual Translation', 'Localization', 'Cultural Adaptation', 'Terminology Management', 'Context-Aware'],
-    capabilities: ['multilingual', 'writing', 'reasoning'],
+    tags: ['translation', 'localization', 'multilingual', 'adaptation'],
+    specializations: ['Multilingual Translation', 'Localization', 'Cultural Adaptation', 'Terminology Management', 'Content Analysis', 'Regional Research'],
+    capabilities: ['writing', 'reasoning', 'analysis', 'research', 'communication'],
   },
 ];
 
@@ -810,8 +803,7 @@ function MarketplaceCard({ expert }: { expert: MarketplaceExpert }) {
   return (
     <motion.div
       variants={fadeUp}
-      whileHover={{ y: -3, boxShadow: '0 10px 32px rgba(13,13,13,0.09)' }}
-      transition={{ type: 'spring', stiffness: 380, damping: 28 }}
+      {...hoverLift}
       style={{
         background: 'var(--bg-surface)',
         border: '1px solid var(--border)',
@@ -979,15 +971,28 @@ function ExpertsPage() {
   const [mpSearch, setMpSearch]         = useState('');
   const [mpRoleFilter, setMpRoleFilter] = useState<ExpertRole | 'all'>('all');
   const [mpSortBy, setMpSortBy]         = useState<MarketplaceSortOption>('rating');
-  const [mpViewMode, setMpViewMode]     = useState<'graph' | 'list'>('graph');
+  const [mpViewMode, setMpViewMode]     = useState<'graph' | 'list'>('list');
 
   const router = useRouter();
   const { experts, total, isLoading, mutate } = useExperts();
   const { edges: graphEdges, mutate: mutateGraph } = usePrismGraph();
-  const [viewMode, setViewMode] = useState<'graph' | 'list'>('graph');
+  const { edges: mpGraphEdges } = useMarketplaceGraph();
+  const [viewMode, setViewMode] = useState<'graph' | 'list'>('list');
   const [expertRunStatus, setExpertRunStatus] = useState<Record<string, 'running' | 'success' | 'error'>>({});
   const [deleteTarget, setDeleteTarget] = useState<Record<string, unknown> | null>(null);
   const [deleting, setDeleting] = useState(false);
+
+  // Embed marketplace experts into Qdrant on first load (idempotent upsert)
+  const mpEmbedded = useRef(false);
+  useEffect(() => {
+    if (mpEmbedded.current) return;
+    mpEmbedded.current = true;
+    fetch('/api/experts/graph/embed-marketplace', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ experts: MARKETPLACE_EXPERTS }),
+    }).catch(() => {/* non-critical */});
+  }, []);
 
   // Poll for running expert runs — survives page refresh
   const { data: runningRunsData } = useSWR<{ runs: Array<{ id: string; expertId: string; status: string }> }>(
@@ -1341,8 +1346,13 @@ function ExpertsPage() {
             <h1 style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-1)', lineHeight: 1, margin: 0 }}>
               PRISM
             </h1>
-            <p style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 4, margin: '4px 0 0' }}>
-              Manage your PRISMs and discover new templates
+            <p style={{ fontSize: 10, color: 'var(--text-4)', marginTop: 3, margin: '3px 0 0', letterSpacing: '0.5px', textTransform: 'uppercase' }}>
+              Prompt &middot; References &middot; Instructions &middot; Scripts &middot; Models
+            </p>
+            <p style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 4, margin: '4px 0 0', maxWidth: 420 }}>
+              Build autonomous AI specialists — chain reasoning, code generation,
+              and domain expertise into intelligent agents that collaborate, learn,
+              and evolve with every run.
             </p>
           </div>
         </div>
@@ -1423,9 +1433,9 @@ function ExpertsPage() {
         <>
           {/* Stats bar */}
           <motion.div
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.08 }}
+            variants={stagger(0.06)}
+            initial="hidden"
+            animate="show"
             style={{
               display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)',
               gap: 10, marginBottom: 22,
@@ -1437,12 +1447,19 @@ function ExpertsPage() {
               { label: 'Fine-tuned',       value: String(fineTunedCt),       color: '#f97316',     icon: Zap,       sub: 'custom models'   },
               { label: 'Avg Success Rate', value: avgSuccess > 0 ? `${(avgSuccess * 100).toFixed(1)}%` : '—', color: '#06b6d4', icon: TrendingUp, sub: 'across all PRISMs' },
             ].map(({ label, value, color, icon: Icon, sub }) => (
-              <div key={label} style={{
-                background: 'var(--bg-surface)',
-                border: '1px solid var(--border)',
-                borderRadius: 11, padding: '15px 18px',
-                display: 'flex', alignItems: 'center', gap: 13,
-              }}>
+              <motion.div
+                key={label}
+                variants={fadeUp}
+                whileHover={hoverLift.whileHover}
+                transition={hoverLift.transition}
+                style={{
+                  background: 'var(--bg-surface)',
+                  border: '1px solid var(--border)',
+                  borderRadius: 11, padding: '15px 18px',
+                  display: 'flex', alignItems: 'center', gap: 13,
+                  cursor: 'default',
+                }}
+              >
                 <div style={{
                   width: 36, height: 36, borderRadius: 8, flexShrink: 0,
                   background: `${color}12`, border: `1.5px solid ${color}22`,
@@ -1455,7 +1472,7 @@ function ExpertsPage() {
                   <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-2)', marginTop: 2 }}>{label}</div>
                   <div style={{ fontSize: 10, color: 'var(--text-4)', marginTop: 1 }}>{sub}</div>
                 </div>
-              </div>
+              </motion.div>
             ))}
           </motion.div>
 
@@ -1782,7 +1799,7 @@ function ExpertsPage() {
                   category: e.role, complexityLevel: 3,
                   totalRuns: e.totalRuns, rating: e.rating,
                 }))}
-                edges={computeMarketplaceEdges(mpFiltered)}
+                edges={mpGraphEdges}
                 onNodeClick={(id) => {
                   router.push(`/experts/deploy`);
                 }}
@@ -1831,7 +1848,7 @@ function ExpertsPage() {
           ) : (
             <motion.div
               key={`mp-${mpRoleFilter}-${mpSortBy}`}
-              variants={stagger}
+              variants={staggerDefault}
               initial="hidden"
               animate="show"
               style={{

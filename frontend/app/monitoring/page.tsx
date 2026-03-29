@@ -1,12 +1,17 @@
 'use client';
 
 import { useState } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import {
   Bell, AlertTriangle, Info, CheckCircle2,
   Clock, TrendingUp, Cpu, RefreshCcw,
   X, ScrollText, Loader2, Zap,
 } from 'lucide-react';
 import { useMonitoring, useExperts } from '@/lib/hooks/useApi';
+import {
+  fadeUp, fadeDown, fadeRight, stagger, hoverLift,
+  filterTab, rowEntrance, emptyState,
+} from '@/lib/motion';
 import type { Alert, Expert } from '@/lib/types';
 
 function fmt(n: number) {
@@ -23,7 +28,7 @@ function timeAgo(iso: string) {
   return `${Math.floor(diff / 86400)}d ago`;
 }
 
-function AlertRow({ alert }: { alert: Alert }) {
+function AlertRow({ alert, index }: { alert: Alert; index: number }) {
   const [dismissed, setDismissed] = useState(false);
   if (dismissed) return null;
 
@@ -44,12 +49,17 @@ function AlertRow({ alert }: { alert: Alert }) {
   const isResolved = !!alert.resolvedAt;
 
   return (
-    <div style={{
-      display: 'flex', alignItems: 'flex-start', gap: 12,
-      padding: '12px 16px',
-      borderBottom: '1px solid var(--border)',
-      opacity: isResolved ? 0.5 : 1,
-    }}>
+    <motion.div
+      {...rowEntrance(index)}
+      exit={{ opacity: 0, x: -20 }}
+      layout
+      style={{
+        display: 'flex', alignItems: 'flex-start', gap: 12,
+        padding: '12px 16px',
+        borderBottom: '1px solid var(--border)',
+        opacity: isResolved ? 0.5 : 1,
+      }}
+    >
       <div style={{
         width: 32, height: 32, borderRadius: 6, flexShrink: 0,
         background: `${color}14`, border: `1px solid ${color}28`,
@@ -94,7 +104,7 @@ function AlertRow({ alert }: { alert: Alert }) {
           <X size={14} />
         </button>
       )}
-    </div>
+    </motion.div>
   );
 }
 
@@ -104,14 +114,21 @@ function Sparkline({ data, color }: { data: number[]; color: string }) {
   return (
     <div style={{ display: 'flex', alignItems: 'flex-end', gap: 3, height: 36 }}>
       {data.map((v, i) => (
-        <div key={i} style={{
-          flex: 1,
-          height: `${(v / max) * 100}%`,
-          minHeight: 2,
-          background: color,
-          borderRadius: 1,
-          opacity: 0.4 + (i / data.length) * 0.6,
-        }} />
+        <motion.div
+          key={i}
+          initial={{ scaleY: 0 }}
+          animate={{ scaleY: 1 }}
+          transition={{ delay: i * 0.04 + 0.2, duration: 0.35, ease: 'easeOut' }}
+          style={{
+            flex: 1,
+            height: `${(v / max) * 100}%`,
+            minHeight: 2,
+            background: color,
+            borderRadius: 1,
+            opacity: 0.4 + (i / data.length) * 0.6,
+            transformOrigin: 'bottom',
+          }}
+        />
       ))}
     </div>
   );
@@ -141,10 +158,15 @@ export default function MonitoringPage() {
     <div style={{ padding: 24, maxWidth: 1200, margin: '0 auto' }}>
 
       {/* Header */}
-      <div style={{
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        marginBottom: 24,
-      }}>
+      <motion.div
+        variants={fadeDown}
+        initial="hidden"
+        animate="show"
+        style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          marginBottom: 24,
+        }}
+      >
         <div>
           <h1 style={{ fontSize: 20, fontWeight: 700, color: 'var(--text-1)', margin: 0 }}>
             Monitoring
@@ -153,7 +175,12 @@ export default function MonitoringPage() {
             System health, performance metrics, and alerts
           </p>
         </div>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        <motion.div
+          variants={fadeRight}
+          initial="hidden"
+          animate="show"
+          style={{ display: 'flex', gap: 8, alignItems: 'center' }}
+        >
           <div style={{
             display: 'flex', alignItems: 'center', gap: 6,
             fontSize: 12, color: 'var(--success)',
@@ -164,11 +191,16 @@ export default function MonitoringPage() {
           <button className="btn btn-ghost btn-sm">
             <RefreshCcw size={13} /> Refresh
           </button>
-        </div>
-      </div>
+        </motion.div>
+      </motion.div>
 
       {/* System health cards */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 12, marginBottom: 20 }}>
+      <motion.div
+        variants={stagger(0.08)}
+        initial="hidden"
+        animate="show"
+        style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 12, marginBottom: 20 }}
+      >
         {[
           {
             label: 'SUCCESS RATE',
@@ -195,7 +227,13 @@ export default function MonitoringPage() {
             color: 'var(--indigo)', icon: Cpu,
           },
         ].map(card => (
-          <div key={card.label} className="metric-card" style={{ position: 'relative', overflow: 'hidden' }}>
+          <motion.div
+            key={card.label}
+            variants={fadeUp}
+            {...hoverLift}
+            className="metric-card"
+            style={{ position: 'relative', overflow: 'hidden' }}
+          >
             <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 2, background: card.color, opacity: 0.7 }} />
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
               <div>
@@ -205,13 +243,18 @@ export default function MonitoringPage() {
               </div>
               <card.icon size={16} color={card.color} />
             </div>
-          </div>
+          </motion.div>
         ))}
-      </div>
+      </motion.div>
 
       {/* Charts row */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 20 }}>
-        <div className="card" style={{ padding: 18 }}>
+      <motion.div
+        variants={stagger(0.08)}
+        initial="hidden"
+        animate="show"
+        style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 20 }}
+      >
+        <motion.div variants={fadeUp} className="card" style={{ padding: 18 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
             <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-1)', display: 'flex', alignItems: 'center', gap: 8 }}>
               <Zap size={14} color="var(--amber)" /> Token Usage (12h)
@@ -223,9 +266,9 @@ export default function MonitoringPage() {
             <span>12h ago</span>
             <span>Now</span>
           </div>
-        </div>
+        </motion.div>
 
-        <div className="card" style={{ padding: 18 }}>
+        <motion.div variants={fadeUp} className="card" style={{ padding: 18 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
             <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-1)', display: 'flex', alignItems: 'center', gap: 8 }}>
               <TrendingUp size={14} color="var(--success)" /> Success Rate (12h)
@@ -237,8 +280,8 @@ export default function MonitoringPage() {
             <span>12h ago</span>
             <span>Now</span>
           </div>
-        </div>
-      </div>
+        </motion.div>
+      </motion.div>
 
       {/* Tabs */}
       <div style={{ display: 'flex', gap: 0, borderBottom: '1px solid var(--border)', marginBottom: 20 }}>
@@ -247,8 +290,9 @@ export default function MonitoringPage() {
           { key: 'alerts',   label: `Alerts ${unackedAlertCount > 0 ? `(${unackedAlertCount})` : ''}` },
           { key: 'logs',     label: 'System Logs' },
         ] as const).map(t => (
-          <button
+          <motion.button
             key={t.key}
+            {...filterTab}
             onClick={() => setTab(t.key)}
             style={{
               padding: '10px 18px',
@@ -261,24 +305,31 @@ export default function MonitoringPage() {
             }}
           >
             {t.label}
-          </button>
+          </motion.button>
         ))}
       </div>
 
       {/* Expert performance */}
       {tab === 'overview' && (
-        <div className="card">
+        <motion.div variants={fadeUp} initial="hidden" animate="show" className="card">
           <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--border)', fontSize: 13, fontWeight: 600, color: 'var(--text-1)' }}>
             Top Experts — Last 24h
           </div>
           {expertsLoading ? (
-            <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-3)', fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              style={{ padding: 40, textAlign: 'center', color: 'var(--text-3)', fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}
+            >
               <Loader2 size={16} className="animate-spin" /> Loading expert data...
-            </div>
+            </motion.div>
           ) : topExperts.length === 0 ? (
-            <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-3)', fontSize: 13 }}>
+            <motion.div
+              {...emptyState}
+              style={{ padding: 40, textAlign: 'center', color: 'var(--text-3)', fontSize: 13 }}
+            >
               No active experts found.
-            </div>
+            </motion.div>
           ) : (
             <table className="table-base">
               <thead>
@@ -294,8 +345,8 @@ export default function MonitoringPage() {
                 </tr>
               </thead>
               <tbody>
-                {topExperts.map(expert => (
-                  <tr key={expert.id}>
+                {topExperts.map((expert, index) => (
+                  <motion.tr key={expert.id} {...rowEntrance(index, 0.3)}>
                     <td>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                         <span className="status-dot dot-online" />
@@ -313,17 +364,17 @@ export default function MonitoringPage() {
                     <td className="mono">{fmt(expert.stats.avgTokensPerRun)}</td>
                     <td className="mono">${expert.stats.avgCostPerRun.toFixed(3)}</td>
                     <td className="mono">{expert.stats.totalRuns.toLocaleString()}</td>
-                  </tr>
+                  </motion.tr>
                 ))}
               </tbody>
             </table>
           )}
-        </div>
+        </motion.div>
       )}
 
       {/* Alerts */}
       {tab === 'alerts' && (
-        <div className="card">
+        <motion.div variants={fadeUp} initial="hidden" animate="show" className="card">
           <div style={{
             padding: '14px 16px', borderBottom: '1px solid var(--border)',
             display: 'flex', alignItems: 'center', justifyContent: 'space-between',
@@ -337,22 +388,31 @@ export default function MonitoringPage() {
             </div>
           </div>
           {monitoringLoading ? (
-            <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-3)', fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              style={{ padding: 40, textAlign: 'center', color: 'var(--text-3)', fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}
+            >
               <Loader2 size={16} className="animate-spin" /> Loading alerts...
-            </div>
+            </motion.div>
           ) : alerts.length === 0 ? (
-            <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-3)', fontSize: 13 }}>
+            <motion.div
+              {...emptyState}
+              style={{ padding: 40, textAlign: 'center', color: 'var(--text-3)', fontSize: 13 }}
+            >
               No alerts. System is healthy.
-            </div>
+            </motion.div>
           ) : (
-            alerts.map(alert => <AlertRow key={alert.id} alert={alert} />)
+            <AnimatePresence>
+              {alerts.map((alert, index) => <AlertRow key={alert.id} alert={alert} index={index} />)}
+            </AnimatePresence>
           )}
-        </div>
+        </motion.div>
       )}
 
       {/* Logs */}
       {tab === 'logs' && (
-        <div className="card">
+        <motion.div variants={fadeUp} initial="hidden" animate="show" className="card">
           <div style={{
             padding: '14px 16px', borderBottom: '1px solid var(--border)',
             display: 'flex', alignItems: 'center', justifyContent: 'space-between',
@@ -376,19 +436,30 @@ export default function MonitoringPage() {
             fontSize: 12,
           }}>
             {monitoringLoading ? (
-              <div style={{ textAlign: 'center', padding: 20, color: 'var(--text-3)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                style={{ textAlign: 'center', padding: 20, color: 'var(--text-3)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}
+              >
                 <Loader2 size={14} className="animate-spin" /> Loading logs...
-              </div>
+              </motion.div>
             ) : logs.length === 0 ? (
-              <div style={{ textAlign: 'center', padding: 20, color: 'var(--text-3)' }}>
+              <motion.div
+                {...emptyState}
+                style={{ textAlign: 'center', padding: 20, color: 'var(--text-3)' }}
+              >
                 No system logs available.
-              </div>
+              </motion.div>
             ) : (
               logs.map((log: { level: string; msg: string; time: string }, i: number) => (
-                <div key={i} style={{
-                  display: 'flex', gap: 12, marginBottom: 6,
-                  color: log.level === 'ERROR' ? 'var(--error)' : log.level === 'WARN' ? 'var(--warning)' : 'var(--text-3)',
-                }}>
+                <motion.div
+                  key={i}
+                  {...rowEntrance(i, 0.1)}
+                  style={{
+                    display: 'flex', gap: 12, marginBottom: 6,
+                    color: log.level === 'ERROR' ? 'var(--error)' : log.level === 'WARN' ? 'var(--warning)' : 'var(--text-3)',
+                  }}
+                >
                   <span style={{ color: 'var(--text-4)', flexShrink: 0 }}>{log.time}</span>
                   <span style={{
                     width: 36, flexShrink: 0,
@@ -398,11 +469,11 @@ export default function MonitoringPage() {
                     {log.level}
                   </span>
                   <span style={{ color: 'var(--text-2)' }}>{log.msg}</span>
-                </div>
+                </motion.div>
               ))
             )}
           </div>
-        </div>
+        </motion.div>
       )}
     </div>
   );

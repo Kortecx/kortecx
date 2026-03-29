@@ -138,6 +138,22 @@ export function usePrismGraph() {
   };
 }
 
+/* ── Marketplace Graph (Qdrant-based, with auto-embed on first load) ── */
+export function useMarketplaceGraph() {
+  const { data, error, isLoading, mutate } = useSWR(
+    '/api/experts/graph?source=marketplace',
+    fetcher,
+    { refreshInterval: 0, revalidateOnFocus: false },
+  );
+  return {
+    edges: data?.edges ?? [],
+    total: data?.total ?? 0,
+    error,
+    isLoading,
+    mutate,
+  };
+}
+
 /* ── Plans ─────────────────────────────────────────── */
 export function usePlans(workflowId?: string) {
   const url = workflowId ? `/api/plans?workflowId=${workflowId}` : '/api/plans';

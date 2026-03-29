@@ -1,6 +1,7 @@
 'use client';
 
 import { motion } from 'framer-motion';
+import { buttonHover } from '@/lib/motion';
 import { Sparkles, Cloud, ExternalLink, Lock, Zap, Globe, Server, Shield } from 'lucide-react';
 
 const KORTECX_CLOUD_URL = 'https://www.kortecx.com';
@@ -40,10 +41,10 @@ export default function InferencePage() {
             Deploy models to dedicated GPU endpoints with auto-scaling, load balancing, and 99.9% uptime SLA.
             Available on Kortecx Cloud for enterprise and production workloads.
           </p>
-          <a href={KORTECX_CLOUD_URL} target="_blank" rel="noopener noreferrer"
+          <motion.a {...buttonHover} href={KORTECX_CLOUD_URL} target="_blank" rel="noopener noreferrer"
             className="btn btn-primary" style={{ fontSize: 13, padding: '10px 24px', textDecoration: 'none', display: 'inline-flex' }}>
             <ExternalLink size={14} /> Go to Kortecx Cloud
-          </a>
+          </motion.a>
         </div>
       </motion.div>
 

@@ -136,14 +136,14 @@ export default function ExpertEditDialog({ expert, open, onClose, onSaved }: Exp
     const loadPrompts = async () => {
       try {
         const sysRes = await fetch(
-          `${process.env.NEXT_PUBLIC_ENGINE_URL || 'http://localhost:8000'}/api/experts/engine/${expert.id}/prompt/system`,
+          `${process.env.NEXT_PUBLIC_ENGINE_URL || 'http://localhost:8000'}/api/prism/engine/${expert.id}/prompt/system`,
         );
         if (sysRes.ok) {
           const sysData = await sysRes.json();
           if (sysData.content) setSystemPrompt(sysData.content);
         }
         const userRes = await fetch(
-          `${process.env.NEXT_PUBLIC_ENGINE_URL || 'http://localhost:8000'}/api/experts/engine/${expert.id}/prompt/user`,
+          `${process.env.NEXT_PUBLIC_ENGINE_URL || 'http://localhost:8000'}/api/prism/engine/${expert.id}/prompt/user`,
         );
         if (userRes.ok) {
           const userData = await userRes.json();
@@ -235,7 +235,7 @@ export default function ExpertEditDialog({ expert, open, onClose, onSaved }: Exp
       }
 
       // Update maxVersions config in engine
-      await fetch(`${engineUrl}/api/experts/engine/${expert.id}/versions/config`, {
+      await fetch(`${engineUrl}/api/prism/engine/${expert.id}/versions/config`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ maxVersions }),

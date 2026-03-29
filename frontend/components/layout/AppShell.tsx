@@ -10,9 +10,9 @@ import TopNavbar from './TopNavbar';
 const PUBLIC_PATHS: string[] = [];
 
 function ShellContent({ children }: { children: ReactNode }) {
-  const { sidebarCollapsed } = useApp();
+  const { sidebarCollapsed, sidebarWidth } = useApp();
   const pathname = usePathname();
-  const left = sidebarCollapsed ? 48 : 200;
+  const left = sidebarCollapsed ? 48 : sidebarWidth;
 
   const isPublicPage = PUBLIC_PATHS.some(
     p => pathname === p || pathname.startsWith(p + '/')

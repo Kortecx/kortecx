@@ -8,7 +8,9 @@ import {
   Bot, Sparkles, Gem, Route, Zap, Wind, Smile, Compass, Atom,
   Search, Download, Trash2, HardDrive, Server, Cpu,
 } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { PROVIDERS } from '@/lib/constants';
+import { fadeUp, fadeDown, fadeRight, stagger, hoverLift, tapScale, modalOverlay, modalContent } from '@/lib/motion';
 import type { AIProvider } from '@/lib/types';
 
 /* ─── Provider Icon Resolver ─────────────────────── */
@@ -72,13 +74,14 @@ function ConnectModal({
   };
 
   return (
-    <div style={{
+    <motion.div {...modalOverlay} style={{
       position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
       backdropFilter: 'blur(4px)',
       zIndex: 200, display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
       paddingTop: 80,
     }} onClick={onClose}>
-      <div
+      <motion.div
+        {...modalContent}
         onClick={e => e.stopPropagation()}
         style={{
           width: 480, maxWidth: '92vw',
@@ -219,12 +222,12 @@ function ConnectModal({
             </a>
           )}
           <div style={{ display: 'flex', gap: 8, marginLeft: 'auto' }}>
-            <button onClick={onClose} style={{
+            <motion.button {...tapScale} onClick={onClose} style={{
               padding: '8px 16px', borderRadius: 7, fontSize: 12, fontWeight: 500,
               border: '1px solid var(--border-md)', background: 'transparent',
               color: 'var(--text-3)', cursor: 'pointer',
-            }}>Cancel</button>
-            <button onClick={handleSave} disabled={saving || !apiKey.trim()} style={{
+            }}>Cancel</motion.button>
+            <motion.button {...tapScale} onClick={handleSave} disabled={saving || !apiKey.trim()} style={{
               display: 'flex', alignItems: 'center', gap: 6,
               padding: '8px 18px', borderRadius: 7, fontSize: 12, fontWeight: 700,
               border: `1.5px solid ${provider.color}`,
@@ -233,11 +236,11 @@ function ConnectModal({
             }}>
               {saving ? <Loader2 size={12} style={{ animation: 'spin 1s linear infinite' }} /> : <Plug size={12} />}
               Connect
-            </button>
+            </motion.button>
           </div>
         </div>
-      </div>
-    </div>
+      </motion.div>
+    </motion.div>
   );
 }
 
@@ -294,7 +297,7 @@ export default function ProvidersPage() {
   return (
     <div style={{ padding: 24, maxWidth: 1400, margin: '0 auto' }}>
       {/* Header */}
-      <div style={{
+      <motion.div variants={fadeDown} initial="hidden" animate="show" style={{
         display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between',
         marginBottom: 24,
       }}>
@@ -306,12 +309,14 @@ export default function ProvidersPage() {
             Manage local models, cloud providers, and API keys for inference
           </p>
         </div>
-        <Link href="/providers/keys">
-          <button className="btn btn-secondary btn-sm">
-            <Key size={13} /> Manage Keys
-          </button>
-        </Link>
-      </div>
+        <motion.div variants={fadeRight} initial="hidden" animate="show" transition={{ delay: 0.15 }}>
+          <Link href="/providers/keys">
+            <button className="btn btn-secondary btn-sm">
+              <Key size={13} /> Manage Keys
+            </button>
+          </Link>
+        </motion.div>
+      </motion.div>
 
       {/* ── Local Models Section (above providers) ── */}
       <ModelsSection />
@@ -327,7 +332,7 @@ export default function ProvidersPage() {
       </div>
 
       {/* Filter tabs */}
-      <div style={{ display: 'flex', gap: 6, marginBottom: 20 }}>
+      <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }} style={{ display: 'flex', gap: 6, marginBottom: 20 }}>
         {(['all', 'connected', 'available'] as const).map(f => (
           <button
             key={f}
@@ -348,10 +353,10 @@ export default function ProvidersPage() {
             {f}
           </button>
         ))}
-      </div>
+      </motion.div>
 
       {/* Provider Grid */}
-      <div style={{
+      <motion.div variants={stagger(0.08)} initial="hidden" animate="show" style={{
         display: 'grid',
         gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))',
         gap: 12,
@@ -360,7 +365,7 @@ export default function ProvidersPage() {
         {filtered.map(provider => {
           const connected = provider.connected || isConnected(provider.id);
           return (
-            <div key={provider.id} className="card" style={{ padding: 20, position: 'relative' }}>
+            <motion.div key={provider.id} variants={fadeUp} {...hoverLift} className="card" style={{ padding: 20, position: 'relative' }}>
               {/* Status dot — top right */}
               <div style={{
                 position: 'absolute', top: 12, right: 12,
@@ -394,8 +399,8 @@ export default function ProvidersPage() {
 
               {/* Stats (connected only) — Latency & Tokens/mo */}
               {connected && (
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: 8, marginBottom: 14 }}>
-                  <div style={{
+                <motion.div variants={stagger(0.06)} initial="hidden" animate="show" style={{ display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: 8, marginBottom: 14 }}>
+                  <motion.div variants={fadeUp} style={{
                     padding: '8px', background: 'var(--bg)',
                     border: '1px solid var(--border)', borderRadius: 4, textAlign: 'center',
                   }}>
@@ -403,8 +408,8 @@ export default function ProvidersPage() {
                       {provider.latencyMs ?? '\u2014'}ms
                     </div>
                     <div style={{ fontSize: 10, color: 'var(--text-3)', marginTop: 2 }}>Latency</div>
-                  </div>
-                  <div style={{
+                  </motion.div>
+                  <motion.div variants={fadeUp} style={{
                     padding: '8px', background: 'var(--bg)',
                     border: '1px solid var(--border)', borderRadius: 4, textAlign: 'center',
                   }}>
@@ -412,48 +417,52 @@ export default function ProvidersPage() {
                       {fmt(provider.monthlyTokensUsed ?? 0)}
                     </div>
                     <div style={{ fontSize: 10, color: 'var(--text-3)', marginTop: 2 }}>Tokens/mo</div>
-                  </div>
-                </div>
+                  </motion.div>
+                </motion.div>
               )}
 
               {/* Action */}
               <div style={{ display: 'flex', gap: 6 }}>
                 {connected ? (
                   <>
-                    <button className="btn btn-secondary btn-sm" style={{ flex: 1, justifyContent: 'center' }}>
+                    <motion.button {...tapScale} className="btn btn-secondary btn-sm" style={{ flex: 1, justifyContent: 'center' }}>
                       Configure <ChevronRight size={12} />
-                    </button>
-                    <button
+                    </motion.button>
+                    <motion.button
+                      {...tapScale}
                       className="btn btn-ghost btn-sm"
                       style={{ color: '#DC2626' }}
                       onClick={() => handleDisconnect(provider.id)}
                     >
                       Disconnect
-                    </button>
+                    </motion.button>
                   </>
                 ) : (
-                  <button
+                  <motion.button
+                    {...tapScale}
                     className="btn btn-primary btn-sm"
                     style={{ flex: 1, justifyContent: 'center' }}
                     onClick={() => setConnectProvider(provider)}
                   >
                     <Key size={12} /> Connect with API Key
-                  </button>
+                  </motion.button>
                 )}
               </div>
-            </div>
+            </motion.div>
           );
         })}
-      </div>
+      </motion.div>
 
       {/* Connect Modal */}
-      {connectProvider && (
-        <ConnectModal
-          provider={connectProvider}
-          onClose={() => setConnectProvider(null)}
-          onConnect={handleConnect}
-        />
-      )}
+      <AnimatePresence>
+        {connectProvider && (
+          <ConnectModal
+            provider={connectProvider}
+            onClose={() => setConnectProvider(null)}
+            onConnect={handleConnect}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }

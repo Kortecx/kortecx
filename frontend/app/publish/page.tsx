@@ -1,8 +1,13 @@
 'use client';
 
 import { useState } from 'react';
+import { motion } from 'framer-motion';
 import { Send, Clock, Check, Eye } from 'lucide-react';
 import { PLATFORMS } from '@/lib/constants';
+import {
+  fadeUp, fadeDown, stagger, buttonHover,
+  rowEntrance, emptyState, filterTab,
+} from '@/lib/motion';
 
 const MOCK_PUBLICATIONS: Array<{
   id: string; content: string; platforms: string[];
@@ -23,20 +28,25 @@ export default function PublishPage() {
   return (
     <div style={{ padding: 24, maxWidth: 1200, margin: '0 auto' }}>
       {/* Header */}
-      <div style={{ marginBottom: 28 }}>
+      <motion.div variants={fadeDown} initial="hidden" animate="show" style={{ marginBottom: 28 }}>
         <h1 style={{ fontSize: 20, fontWeight: 700, color: 'var(--text-1)', margin: 0 }}>
           Content Publishing
         </h1>
         <p style={{ fontSize: 13, color: 'var(--text-3)', margin: '4px 0 0' }}>
           Create and distribute content across platforms
         </p>
-      </div>
+      </motion.div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 340px', gap: 16 }}>
+      <motion.div
+        variants={stagger(0.1)}
+        initial="hidden"
+        animate="show"
+        style={{ display: 'grid', gridTemplateColumns: '1fr 340px', gap: 16 }}
+      >
         {/* Main content area */}
         <div>
           {/* Compose */}
-          <div className="card" style={{ padding: 20, marginBottom: 16 }}>
+          <motion.div variants={fadeUp} className="card" style={{ padding: 20, marginBottom: 16 }}>
             <h2 style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-1)', margin: '0 0 12px' }}>
               Compose
             </h2>
@@ -56,82 +66,98 @@ export default function PublishPage() {
                 <button className="btn btn-secondary btn-sm">
                   <Clock size={12} /> Schedule
                 </button>
-                <button
+                <motion.button
                   className="btn btn-primary btn-sm"
                   disabled={!content || selectedPlatforms.length === 0}
+                  {...buttonHover}
                 >
                   <Send size={12} /> Publish Now
-                </button>
+                </motion.button>
               </div>
             </div>
-          </div>
+          </motion.div>
 
           {/* Recent publications */}
-          <div className="card" style={{ overflow: 'hidden' }}>
+          <motion.div variants={fadeUp} className="card" style={{ overflow: 'hidden' }}>
             <div style={{
               padding: '13px 20px', borderBottom: '1px solid var(--border)',
               fontSize: 14, fontWeight: 600, color: 'var(--text-1)',
             }}>
               Recent Publications
             </div>
-            {MOCK_PUBLICATIONS.map((pub, i) => (
-              <div
-                key={pub.id}
+            {MOCK_PUBLICATIONS.length === 0 ? (
+              <motion.div
+                {...emptyState}
                 style={{
-                  padding: '14px 20px',
-                  borderBottom: i < MOCK_PUBLICATIONS.length - 1 ? '1px solid var(--border)' : 'none',
+                  padding: '32px 20px',
+                  textAlign: 'center',
+                  fontSize: 13,
+                  color: 'var(--text-4)',
                 }}
               >
-                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
-                  <div style={{ flex: 1 }}>
-                    <p style={{
-                      fontSize: 13, color: 'var(--text-1)', margin: '0 0 8px',
-                      lineHeight: 1.5,
-                      display: '-webkit-box', WebkitLineClamp: 2,
-                      WebkitBoxOrient: 'vertical', overflow: 'hidden',
-                    }}>
-                      {pub.content}
-                    </p>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: 'var(--text-3)' }}>
-                      <div style={{ display: 'flex', gap: 4 }}>
-                        {pub.platforms.map(pId => {
-                          const platform = PLATFORMS.find(p => p.id === pId);
-                          return platform ? (
-                            <span key={pId} style={{
-                              width: 6, height: 6, borderRadius: '50%',
-                              background: platform.color,
-                            }} />
-                          ) : null;
-                        })}
+                No publications yet. Compose content above and publish it.
+              </motion.div>
+            ) : (
+              MOCK_PUBLICATIONS.map((pub, i) => (
+                <motion.div
+                  key={pub.id}
+                  {...rowEntrance(i)}
+                  style={{
+                    padding: '14px 20px',
+                    borderBottom: i < MOCK_PUBLICATIONS.length - 1 ? '1px solid var(--border)' : 'none',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+                    <div style={{ flex: 1 }}>
+                      <p style={{
+                        fontSize: 13, color: 'var(--text-1)', margin: '0 0 8px',
+                        lineHeight: 1.5,
+                        display: '-webkit-box', WebkitLineClamp: 2,
+                        WebkitBoxOrient: 'vertical', overflow: 'hidden',
+                      }}>
+                        {pub.content}
+                      </p>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: 'var(--text-3)' }}>
+                        <div style={{ display: 'flex', gap: 4 }}>
+                          {pub.platforms.map(pId => {
+                            const platform = PLATFORMS.find(p => p.id === pId);
+                            return platform ? (
+                              <span key={pId} style={{
+                                width: 6, height: 6, borderRadius: '50%',
+                                background: platform.color,
+                              }} />
+                            ) : null;
+                          })}
+                        </div>
+                        <span>{pub.platforms.map(pId => PLATFORMS.find(p => p.id === pId)?.name).join(', ')}</span>
+                        <span style={{ color: 'var(--text-4)' }}>·</span>
+                        <span>{new Date(pub.publishedAt).toLocaleDateString()}</span>
                       </div>
-                      <span>{pub.platforms.map(pId => PLATFORMS.find(p => p.id === pId)?.name).join(', ')}</span>
-                      <span style={{ color: 'var(--text-4)' }}>·</span>
-                      <span>{new Date(pub.publishedAt).toLocaleDateString()}</span>
+                    </div>
+                    <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                      <span className={`badge ${pub.status === 'published' ? 'badge-success' : 'badge-amber'}`}>
+                        {pub.status}
+                      </span>
+                      {pub.status === 'published' && (
+                        <div style={{ display: 'flex', gap: 8, marginTop: 6, fontSize: 11, color: 'var(--text-3)' }}>
+                          <span style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                            <Eye size={10} /> {pub.engagement.views}
+                          </span>
+                          <span>♥ {pub.engagement.likes}</span>
+                        </div>
+                      )}
                     </div>
                   </div>
-                  <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                    <span className={`badge ${pub.status === 'published' ? 'badge-success' : 'badge-amber'}`}>
-                      {pub.status}
-                    </span>
-                    {pub.status === 'published' && (
-                      <div style={{ display: 'flex', gap: 8, marginTop: 6, fontSize: 11, color: 'var(--text-3)' }}>
-                        <span style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                          <Eye size={10} /> {pub.engagement.views}
-                        </span>
-                        <span>♥ {pub.engagement.likes}</span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
+                </motion.div>
+              ))
+            )}
+          </motion.div>
         </div>
 
         {/* Right sidebar */}
         <div>
           {/* Platform selector */}
-          <div className="card" style={{ padding: 16, marginBottom: 12 }}>
+          <motion.div variants={fadeUp} className="card" style={{ padding: 16, marginBottom: 12 }}>
             <h3 style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-1)', margin: '0 0 12px' }}>
               Select Platforms
             </h3>
@@ -139,9 +165,15 @@ export default function PublishPage() {
               {PLATFORMS.map(platform => {
                 const selected = selectedPlatforms.includes(platform.id);
                 return (
-                  <button
+                  <motion.button
                     key={platform.id}
                     onClick={() => togglePlatform(platform.id)}
+                    {...filterTab}
+                    animate={selected ? { scale: [1, 1.04, 1] } : {}}
+                    transition={selected
+                      ? { type: 'spring', stiffness: 500, damping: 15 }
+                      : filterTab.transition
+                    }
                     style={{
                       display: 'flex', alignItems: 'center', gap: 10,
                       padding: '8px 12px',
@@ -151,7 +183,7 @@ export default function PublishPage() {
                       fontSize: 13, textAlign: 'left',
                       color: selected ? platform.color : 'var(--text-2)',
                       fontWeight: selected ? 500 : 400,
-                      transition: 'all 0.12s',
+                      transition: 'background 0.12s, border-color 0.12s, color 0.12s',
                     }}
                   >
                     <span style={{
@@ -160,14 +192,14 @@ export default function PublishPage() {
                     }} />
                     <span style={{ flex: 1 }}>{platform.name}</span>
                     {selected && <Check size={14} />}
-                  </button>
+                  </motion.button>
                 );
               })}
             </div>
-          </div>
+          </motion.div>
 
           {/* Quick stats */}
-          <div className="card" style={{ padding: 16 }}>
+          <motion.div variants={fadeUp} className="card" style={{ padding: 16 }}>
             <h3 style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-1)', margin: '0 0 12px' }}>
               Publishing Stats
             </h3>
@@ -187,9 +219,9 @@ export default function PublishPage() {
                 </div>
               ))}
             </div>
-          </div>
+          </motion.div>
         </div>
-      </div>
+      </motion.div>
     </div>
   );
 }

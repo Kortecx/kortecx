@@ -10,21 +10,11 @@ import {
 } from 'lucide-react';
 import { useMetrics, useTasks, useExperts, useWorkflowRuns, useLiveMetrics } from '@/lib/hooks/useApi';
 import type { QueuedTask, WorkflowRun, Expert, AIProvider } from '@/lib/types';
+import { fadeUp, stagger, buttonHover } from '@/lib/motion';
 
 const fetcher = (url: string) => fetch(url).then(r => {
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   return r.json();
-});
-
-/* ── Animation variants ────────────────────────────────── */
-const fadeUp = {
-  hidden: { opacity: 0, y: 16 },
-  show:   { opacity: 1, y: 0, transition: { duration: 0.38, ease: [0.25, 0.46, 0.45, 0.94] as const } },
-};
-
-const stagger = (delay = 0.07) => ({
-  hidden: {},
-  show:   { transition: { staggerChildren: delay } },
 });
 
 /* ── Helpers ───────────────────────────────────────────── */
@@ -330,9 +320,9 @@ export default function OpsDashboard() {
             </button>
           </Link>
           <Link href="/workflow">
-            <button className="btn btn-primary btn-sm">
+            <motion.button {...buttonHover} className="btn btn-primary btn-sm">
               <Play size={13} /> Quick Run
-            </button>
+            </motion.button>
           </Link>
         </motion.div>
       </motion.div>

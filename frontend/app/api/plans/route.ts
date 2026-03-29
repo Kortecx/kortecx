@@ -22,7 +22,8 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { workflowId, name, description, dag, generatedBy, modelUsed } = body;
+    const { workflowId, name, description, dag, generatedBy, modelUsed,
+            markdownContent, sourceType, version, planType } = body;
 
     if (!name?.trim()) {
       return NextResponse.json({ error: 'Plan name is required' }, { status: 400 });
@@ -38,6 +39,10 @@ export async function POST(req: NextRequest) {
       status: 'draft',
       generatedBy: generatedBy ?? 'user',
       modelUsed: modelUsed ?? null,
+      markdownContent: markdownContent ?? null,
+      sourceType: sourceType ?? 'manual',
+      version: version ?? 1,
+      planType: planType ?? 'live',
     }).returning();
 
     return NextResponse.json({ plan: inserted }, { status: 201 });
@@ -60,6 +65,11 @@ export async function PATCH(req: NextRequest) {
     if (updates.description !== undefined) values.description = updates.description;
     if (updates.dag !== undefined) values.dag = updates.dag;
     if (updates.status !== undefined) values.status = updates.status;
+    if (updates.markdownContent !== undefined) values.markdownContent = updates.markdownContent;
+    if (updates.sourceType !== undefined) values.sourceType = updates.sourceType;
+    if (updates.version !== undefined) values.version = updates.version;
+    if (updates.planType !== undefined) values.planType = updates.planType;
+    if (updates.frozenAt !== undefined) values.frozenAt = updates.frozenAt;
 
     const [updated] = await db.update(plans).set(values).where(eq(plans.id, id)).returning();
     return NextResponse.json({ plan: updated });

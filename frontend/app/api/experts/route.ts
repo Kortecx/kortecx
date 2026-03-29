@@ -7,7 +7,7 @@ const ENGINE_URL = process.env.NEXT_PUBLIC_ENGINE_URL || 'http://localhost:8000'
 
 /** Fire-and-forget: embed a PRISM into Qdrant for graph similarity. */
 function embedPrism(expertId: string): void {
-  fetch(`${ENGINE_URL}/api/experts/engine/${expertId}/embed`, { method: 'POST' }).catch((err) => {
+  fetch(`${ENGINE_URL}/api/prism/engine/${expertId}/embed`, { method: 'POST' }).catch((err) => {
     console.warn('[experts] embed failed:', err);
   });
 }
@@ -62,7 +62,7 @@ export async function GET(req: NextRequest) {
   }
 }
 
-/* POST /api/experts — Deploy/create a new expert */
+/* POST /api/experts — Create a new expert via engine (local files first, then synced to DB) */
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
@@ -79,48 +79,37 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Expert role is required' }, { status: 400 });
     }
 
-    const isLocal = modelSource === 'local';
+    // Route creation through the engine — creates local files on disk,
+    // syncs to NeonDB, and auto-embeds into Qdrant for the graph.
+    const engineRes = await fetch(`${ENGINE_URL}/api/prism/engine/create`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: name.trim(),
+        role,
+        description: description?.trim() || '',
+        systemPrompt: systemPrompt?.trim() || '',
+        modelSource: modelSource || 'local',
+        localModelConfig: localModelConfig || { engine: 'ollama', modelName: 'llama3.2:3b' },
+        temperature: temperature ?? 0.7,
+        maxTokens: maxTokens ?? 4096,
+        tags: tags ?? [],
+        isPublic: isPublic ?? false,
+        category: category ?? 'custom',
+        complexityLevel: complexityLevel ?? 3,
+      }),
+    });
 
-    // Local experts use the model name from localModelConfig
-    const resolvedModelId = isLocal
-      ? (localModelConfig?.model || localModelConfig?.modelName || 'llama3.1:8b')
-      : modelId;
-    const resolvedProviderId = isLocal
-      ? (localModelConfig?.engine || 'ollama')
-      : providerId;
-
-    if (!isLocal && (!modelId || !providerId)) {
-      return NextResponse.json({ error: 'modelId and providerId required for provider experts' }, { status: 400 });
+    if (!engineRes.ok) {
+      const errText = await engineRes.text().catch(() => 'Engine error');
+      throw new Error(`Engine create failed (${engineRes.status}): ${errText}`);
     }
 
-    const id = `exp-${Date.now()}`;
-    const [inserted] = await db.insert(experts).values({
-      id,
-      name: name.trim(),
-      role,
-      modelId:       resolvedModelId,
-      providerId:    resolvedProviderId,
-      modelName:     isLocal ? resolvedModelId : (modelId || ''),
-      providerName:  isLocal ? (localModelConfig?.engine || 'ollama') : (providerId || ''),
-      modelSource:   modelSource || 'provider',
-      localModelConfig: isLocal ? localModelConfig : null,
-      description:   description?.trim() || null,
-      systemPrompt:  systemPrompt?.trim() || null,
-      temperature:   String(temperature ?? 0.7),
-      maxTokens:     maxTokens ?? 4096,
-      status:        'deploying',
-      version:       '1.0.0',
-      tags:          tags ?? [],
-      isPublic:      isPublic ?? false,
-      category:      category ?? 'custom',
-      complexityLevel: complexityLevel ?? 3,
-    }).returning();
+    const engineData = await engineRes.json();
+    const expert = engineData.expert || engineData;
 
-    // Embed into Qdrant for graph similarity (non-blocking)
-    embedPrism(id);
-
-    logStatus('info', `Expert deployed: ${name}`, 'expert', { id, role, modelSource: modelSource || 'provider' });
-    return NextResponse.json({ expert: inserted, message: 'Expert deployment initiated' }, { status: 201 });
+    logStatus('info', `Expert deployed: ${name}`, 'expert', { id: expert.id, role, modelSource: modelSource || 'local' });
+    return NextResponse.json({ expert, message: 'Expert deployment initiated' }, { status: 201 });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Invalid request body';
     console.error('[experts POST]', err);
@@ -129,7 +118,7 @@ export async function POST(req: NextRequest) {
   }
 }
 
-/* PATCH /api/experts — Update an existing expert */
+/* PATCH /api/experts — Update an existing expert (syncs to engine local files + NeonDB) */
 export async function PATCH(req: NextRequest) {
   try {
     const body = await req.json();
@@ -145,7 +134,48 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ error: 'Expert not found' }, { status: 404 });
     }
 
-    // Build update values
+    // Sync file-backed fields to engine local files (non-blocking)
+    const fileFields = ['name', 'description', 'role', 'temperature', 'maxTokens', 'tags',
+      'isPublic', 'category', 'complexityLevel', 'modelSource', 'localModelConfig'];
+    if (fileFields.some(f => updates[f] !== undefined)) {
+      // Update expert.json on disk via engine
+      const merged = { ...existing, ...updates, updatedAt: new Date().toISOString() };
+      fetch(`${ENGINE_URL}/api/prism/engine/${id}/update`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          filename: 'expert.json',
+          content: JSON.stringify({
+            id: merged.id,
+            name: merged.name,
+            description: merged.description,
+            role: merged.role,
+            version: merged.version,
+            modelSource: merged.modelSource,
+            localModelConfig: merged.localModelConfig,
+            temperature: merged.temperature,
+            maxTokens: merged.maxTokens,
+            tags: merged.tags,
+            isPublic: merged.isPublic,
+            category: merged.category,
+            complexityLevel: merged.complexityLevel,
+            createdAt: merged.createdAt,
+            updatedAt: new Date().toISOString(),
+          }, null, 2),
+        }),
+      }).catch((err) => console.warn('[experts PATCH] engine expert.json sync failed:', err));
+    }
+
+    // Update system.md on disk if systemPrompt changed
+    if (updates.systemPrompt !== undefined) {
+      fetch(`${ENGINE_URL}/api/prism/engine/${id}/update`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filename: 'system.md', content: updates.systemPrompt || '' }),
+      }).catch((err) => console.warn('[experts PATCH] engine system.md sync failed:', err));
+    }
+
+    // Build update values for NeonDB
     const values: Record<string, unknown> = { updatedAt: new Date() };
     if (updates.name !== undefined)             values.name = updates.name.trim();
     if (updates.description !== undefined)      values.description = updates.description?.trim() || null;
@@ -173,7 +203,7 @@ export async function PATCH(req: NextRequest) {
       .returning();
 
     // Re-embed into Qdrant if any graph-relevant field changed (non-blocking)
-    const graphFields = ['name', 'description', 'role', 'category', 'tags', 'complexityLevel'];
+    const graphFields = ['name', 'description', 'role', 'category', 'tags', 'complexityLevel', 'systemPrompt'];
     if (graphFields.some(f => updates[f] !== undefined)) {
       embedPrism(id);
     }
@@ -211,7 +241,7 @@ export async function DELETE(req: NextRequest) {
     }
 
     // Delete from engine local directory (non-blocking)
-    fetch(`${ENGINE_URL}/api/experts/engine/${id}`, { method: 'DELETE' }).catch((err) => {
+    fetch(`${ENGINE_URL}/api/prism/engine/${id}`, { method: 'DELETE' }).catch((err) => {
       console.warn('[experts DELETE] engine cleanup failed:', err);
     });
 

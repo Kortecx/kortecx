@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname } from 'next/navigation';
@@ -307,7 +307,7 @@ function NewButton({ collapsed }: { collapsed: boolean }) {
 
 export default function LeftNavbar() {
   const pathname = usePathname();
-  const { sidebarCollapsed, toggleSidebar } = useApp();
+  const { sidebarCollapsed, toggleSidebar, sidebarWidth, setSidebarWidth } = useApp();
 
   /* Track query string client-side only to avoid SSR hydration mismatch */
   const [clientSearch, setClientSearch] = useState('');
@@ -317,7 +317,30 @@ export default function LeftNavbar() {
     window.addEventListener('popstate', onPop);
     return () => window.removeEventListener('popstate', onPop);
   }, [pathname]);
-  const w = sidebarCollapsed ? 48 : 200;
+  const w = sidebarCollapsed ? 48 : sidebarWidth;
+
+  /* ── Drag-to-resize ─────────────────────────────── */
+  const [dragging, setDragging] = useState(false);
+  const [resizeHover, setResizeHover] = useState(false);
+
+  const onResizeStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    setDragging(true);
+    const onMove = (ev: MouseEvent) => {
+      setSidebarWidth(ev.clientX);
+    };
+    const onUp = () => {
+      setDragging(false);
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  }, [setSidebarWidth]);
   const tokPct = Math.round(
     (SYSTEM_METRICS.tokensUsedToday / SYSTEM_METRICS.tokenBudgetDaily) * 100
   );
@@ -333,7 +356,7 @@ export default function LeftNavbar() {
         borderRight: '1px solid var(--border)',
         display: 'flex',
         flexDirection: 'column',
-        transition: 'width 0.2s ease',
+        transition: dragging ? 'none' : 'width 0.2s ease',
         zIndex: 40,
         overflowX: 'visible',
         overflowY: 'auto',
@@ -344,10 +367,11 @@ export default function LeftNavbar() {
         height: 48,
         display: 'flex',
         alignItems: 'center',
-        justifyContent: 'space-between',
-        padding: sidebarCollapsed ? '0 8px' : '0 10px 0 16px',
+        justifyContent: sidebarCollapsed ? 'center' : 'space-between',
+        padding: sidebarCollapsed ? '0' : '0 10px 0 16px',
         borderBottom: '1px solid var(--border)',
         flexShrink: 0,
+        position: 'relative',
       }}>
         <KortecxLogo collapsed={sidebarCollapsed} />
         <button
@@ -366,6 +390,17 @@ export default function LeftNavbar() {
             color: 'var(--text-4)',
             flexShrink: 0,
             transition: 'color 0.15s, background 0.15s, border-color 0.15s',
+            ...(sidebarCollapsed ? {
+              position: 'absolute' as const,
+              bottom: -11,
+              left: '50%',
+              transform: 'translateX(-50%)',
+              background: 'var(--bg-surface)',
+              zIndex: 2,
+              width: 20,
+              height: 20,
+              borderRadius: 10,
+            } : {}),
           }}
           onMouseEnter={e => {
             e.currentTarget.style.color = '#F04500';
@@ -374,7 +409,7 @@ export default function LeftNavbar() {
           }}
           onMouseLeave={e => {
             e.currentTarget.style.color = 'var(--text-4)';
-            e.currentTarget.style.background = 'none';
+            e.currentTarget.style.background = sidebarCollapsed ? 'var(--bg-surface)' : 'none';
             e.currentTarget.style.borderColor = 'var(--border)';
           }}
         >
@@ -487,6 +522,25 @@ export default function LeftNavbar() {
         </div>
       )}
 
+      {/* Resize handle */}
+      {!sidebarCollapsed && (
+        <div
+          onMouseDown={onResizeStart}
+          onMouseEnter={() => setResizeHover(true)}
+          onMouseLeave={() => setResizeHover(false)}
+          style={{
+            position: 'absolute',
+            top: 0,
+            right: -2,
+            bottom: 0,
+            width: 4,
+            cursor: 'col-resize',
+            zIndex: 50,
+            background: dragging || resizeHover ? 'rgba(240,69,0,0.3)' : 'transparent',
+            transition: dragging ? 'none' : 'background 0.15s',
+          }}
+        />
+      )}
     </aside>
   );
 }

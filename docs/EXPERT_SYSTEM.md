@@ -9,7 +9,7 @@ Kortecx ships with 12 production-ready prebuilt experts and supports creating cu
 ## Directory Structure
 
 ```
-engine/experts/
+engine/PRISM/
 ├── marketplace/              # Shipped with platform (read-only)
 │   ├── _registry.json        # Index of all marketplace experts
 │   ├── code-architect/
@@ -147,12 +147,12 @@ Version files are named `{filename}.v{unix_timestamp_ms}`. This allows:
 
 ## API Endpoints
 
-All endpoints are served by the Python engine under the `/api/experts/engine/` prefix.
+All endpoints are served by the Python engine under the `/api/prism/engine/` prefix.
 
 ### List All Experts
 
 ```
-GET /api/experts/engine/list
+GET /api/prism/engine/list
 ```
 
 Returns all experts from both marketplace and local registries, merged into a single list.
@@ -176,7 +176,7 @@ Returns all experts from both marketplace and local registries, merged into a si
 ### Get Expert Details
 
 ```
-GET /api/experts/engine/{id}
+GET /api/prism/engine/{id}
 ```
 
 Returns the full expert definition including prompt contents and file listings.
@@ -194,7 +194,7 @@ Returns the full expert definition including prompt contents and file listings.
 ### Create Local Expert
 
 ```
-POST /api/experts/engine/create
+POST /api/prism/engine/create
 ```
 
 Creates a new expert in the `local/` directory with all required files.
@@ -215,7 +215,7 @@ Creates a new expert in the `local/` directory with all required files.
 ### Update Expert File
 
 ```
-POST /api/experts/engine/{id}/update
+POST /api/prism/engine/{id}/update
 ```
 
 Updates a single file within the expert directory. The previous version is automatically saved to `.versions/`.
@@ -231,7 +231,7 @@ Updates a single file within the expert directory. The previous version is autom
 ### List File Versions
 
 ```
-GET /api/experts/engine/{id}/versions/{file}
+GET /api/prism/engine/{id}/versions/{file}
 ```
 
 Returns all historical versions of a specific file.
@@ -249,7 +249,7 @@ Returns all historical versions of a specific file.
 ### Restore File Version
 
 ```
-POST /api/experts/engine/{id}/restore
+POST /api/prism/engine/{id}/restore
 ```
 
 Restores a file to a previous version. The current version is saved to `.versions/` before restoring.
@@ -265,7 +265,7 @@ Restores a file to a previous version. The current version is saved to `.version
 ### Delete Expert
 
 ```
-DELETE /api/experts/engine/{id}
+DELETE /api/prism/engine/{id}
 ```
 
 Deletes a local expert and all its files. Marketplace experts cannot be deleted.
@@ -299,7 +299,7 @@ const { data, isLoading } = useExpertStats();
 5. Write the user prompt template with `{{task}}`, `{{context}}`, `{{constraints}}` placeholders
 6. Save — the expert appears in all dropdowns and can be used in workflows
 
-Alternatively, create experts via the API or by directly adding a directory under `engine/experts/local/` with the required files and updating `_registry.json`.
+Alternatively, create experts via the API or by directly adding a directory under `engine/PRISM/local/` with the required files and updating `_registry.json`.
 
 ---
 
