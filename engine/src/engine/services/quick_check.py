@@ -26,7 +26,7 @@ class QuickCheckService:
     def __init__(self) -> None:
         raw = settings.database_url
         if raw.startswith("postgres://"):
-            raw = "postgresql://" + raw[len("postgres://"):]
+            raw = "postgresql://" + raw[len("postgres://") :]
         self._dsn = raw
         self._pool: asyncpg.Pool | None = None
 
@@ -81,9 +81,7 @@ class QuickCheckService:
             from engine.services.hf import hf_service
             from engine.services.qdrant import qdrant_service
 
-            vectors = hf_service.text_embedding(
-                "sentence-transformers/all-MiniLM-L6-v2", prompt
-            )
+            vectors = hf_service.text_embedding("sentence-transformers/all-MiniLM-L6-v2", prompt)
             if vectors:
                 # Search experts
                 prism_results = await qdrant_service.search(
@@ -134,18 +132,9 @@ class QuickCheckService:
             "Current platform state:",
         ]
         if db:
-            parts.append(
-                f"  - {db.get('workflows', 0)} workflows, {db.get('experts', 0)} experts, "
-                f"{db.get('datasets', 0)} datasets"
-            )
-            parts.append(
-                f"  - {db.get('runs', 0)} total runs, "
-                f"{db.get('running_workflows', 0)} workflows running, "
-                f"{db.get('running_experts', 0)} experts running"
-            )
-            parts.append(
-                f"  - {db.get('tasks', 0)} tasks, {db.get('active_alerts', 0)} active alerts"
-            )
+            parts.append(f"  - {db.get('workflows', 0)} workflows, {db.get('experts', 0)} experts, {db.get('datasets', 0)} datasets")
+            parts.append(f"  - {db.get('runs', 0)} total runs, {db.get('running_workflows', 0)} workflows running, {db.get('running_experts', 0)} experts running")
+            parts.append(f"  - {db.get('tasks', 0)} tasks, {db.get('active_alerts', 0)} active alerts")
 
         semantic = context.get("semantic", [])
         if semantic:
@@ -154,10 +143,7 @@ class QuickCheckService:
                 parts.append("")
                 parts.append("Relevant experts:")
                 for e in experts_ctx[:3]:
-                    parts.append(
-                        f"  - {e.get('name', '?')} ({e.get('role', '?')}): "
-                        f"{e.get('description', '')[:120]}"
-                    )
+                    parts.append(f"  - {e.get('name', '?')} ({e.get('role', '?')}): {e.get('description', '')[:120]}")
 
             embed_ctx = [s for s in semantic if s.get("source") == "embedding"]
             if embed_ctx:
@@ -167,10 +153,7 @@ class QuickCheckService:
                     parts.append(f"  - {e.get('text', '')[:150]}")
 
         parts.append("")
-        parts.append(
-            "Answer concisely and accurately. "
-            "Refer to specific platform entities when relevant."
-        )
+        parts.append("Answer concisely and accurately. Refer to specific platform entities when relevant.")
 
         return "\n".join(parts)
 
@@ -193,10 +176,7 @@ class QuickCheckService:
             healthy = False
 
         if not healthy:
-            error_msg = (
-                f"{engine_name.capitalize()} is not reachable. "
-                "Please ensure it is running before using Quick Check."
-            )
+            error_msg = f"{engine_name.capitalize()} is not reachable. Please ensure it is running before using Quick Check."
             logger.warning("QuickCheck %s aborted — %s unreachable", check_id, engine_name)
             await self.save_result(check_id, prompt, None, 0, 0, [], error=error_msg)
             await ws_manager.broadcast(channel, "quick_check.error", {"checkId": check_id, "error": error_msg})
@@ -208,10 +188,7 @@ class QuickCheckService:
             model_names = [m["name"] for m in models]
             # Ollama may list as "llama3.1:8b" or "llama3.1:8b" — check both with and without :latest
             if model_name not in model_names and f"{model_name}:latest" not in model_names:
-                error_msg = (
-                    f"Model '{model_name}' is not available on {engine_name}. "
-                    "Pull it first via the Inference page."
-                )
+                error_msg = f"Model '{model_name}' is not available on {engine_name}. Pull it first via the Inference page."
                 logger.warning("QuickCheck %s aborted — model '%s' not found", check_id, model_name)
                 await self.save_result(check_id, prompt, None, 0, 0, [], error=error_msg)
                 await ws_manager.broadcast(channel, "quick_check.error", {"checkId": check_id, "error": error_msg})
@@ -255,9 +232,7 @@ class QuickCheckService:
             duration_ms = int((time.time() - start) * 1000)
 
             # 4. Save result
-            await self.save_result(
-                check_id, prompt, full_response, tokens_total, duration_ms, context_sources
-            )
+            await self.save_result(check_id, prompt, full_response, tokens_total, duration_ms, context_sources)
 
             # 5. Broadcast completion
             await ws_manager.broadcast(
@@ -281,15 +256,9 @@ class QuickCheckService:
             # Humanize common inference errors
             raw = str(exc)
             if isinstance(exc, httpx.ConnectError):
-                error_msg = (
-                    f"Cannot connect to {engine_name}. "
-                    "Ensure it is running on the configured port."
-                )
+                error_msg = f"Cannot connect to {engine_name}. Ensure it is running on the configured port."
             elif isinstance(exc, (httpx.ReadTimeout, httpx.ConnectTimeout)):
-                error_msg = (
-                    f"{engine_name.capitalize()} timed out generating a response. "
-                    "The model may be overloaded or the prompt too long."
-                )
+                error_msg = f"{engine_name.capitalize()} timed out generating a response. The model may be overloaded or the prompt too long."
             elif "model" in raw.lower() and "not found" in raw.lower():
                 error_msg = f"Model '{model_name}' not found on {engine_name}. Pull it first."
             else:

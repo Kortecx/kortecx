@@ -225,7 +225,10 @@ class OllamaService(LocalInferenceBackend):
                     delay = RETRY_DELAY * (2**attempt)
                     logger.warning(
                         "generate_stream retry %d/%d after %.1fs: %s",
-                        attempt + 1, MAX_RETRIES, delay, exc,
+                        attempt + 1,
+                        MAX_RETRIES,
+                        delay,
+                        exc,
                     )
                     await asyncio.sleep(delay)
                     continue
@@ -424,7 +427,10 @@ class LlamaCppService(LocalInferenceBackend):
                     delay = RETRY_DELAY * (2**attempt)
                     logger.warning(
                         "generate_stream retry %d/%d after %.1fs: %s",
-                        attempt + 1, MAX_RETRIES, delay, exc,
+                        attempt + 1,
+                        MAX_RETRIES,
+                        delay,
+                        exc,
                     )
                     await asyncio.sleep(delay)
                     continue

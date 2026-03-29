@@ -1,70 +1,104 @@
 import { NextRequest } from 'next/server';
 
+const ENGINE_URL = process.env.NEXT_PUBLIC_ENGINE_URL || 'http://localhost:8000';
 const OLLAMA_URL = process.env.OLLAMA_URL || 'http://localhost:11434';
 const DEFAULT_MODEL = process.env.DEFAULT_LOCAL_MODEL || 'llama3.1:8b';
+
+const SYSTEM_PROMPT =
+  'You are the Kortecx platform assistant. ' +
+  'Help the user understand their platform, data, workflows, and AI agents. ' +
+  'Answer concisely and accurately.';
 
 /**
  * POST /api/quick-check/stream
  *
- * Streams Ollama generate tokens back to the frontend as NDJSON lines.
+ * Streams inference tokens back to the frontend as NDJSON lines.
  * Each line: { "token": "..." }            — a token chunk
  * Final line: { "done": true, "model": "...", "tokensUsed": N, "durationMs": N }
  *
- * This route talks directly to Ollama from the Next.js server,
- * so the browser never needs to reach Ollama or the engine.
+ * Strategy: try engine first (sanctioned path with retry/pool tracking),
+ * fall back to direct Ollama if engine is unreachable.
  */
 export async function POST(req: NextRequest) {
   let body: { prompt?: string; model?: string; checkId?: string };
   try {
     body = await req.json();
   } catch {
-    return new Response(JSON.stringify({ error: 'Invalid JSON body' }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json' },
-    });
+    return jsonError('Invalid JSON body', 400);
   }
 
   const prompt = body.prompt?.trim();
   if (!prompt) {
-    return new Response(JSON.stringify({ error: 'prompt is required' }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json' },
-    });
+    return jsonError('prompt is required', 400);
   }
 
   const model = body.model || DEFAULT_MODEL;
 
-  // Build system prompt with minimal platform context
-  const system =
-    'You are the Kortecx platform assistant. ' +
-    'Help the user understand their platform, data, workflows, and AI agents. ' +
-    'Answer concisely and accurately.';
+  // ── 1. Try engine (sanctioned path) ────────────────────────────────────
+  try {
+    const engineRes = await fetch(`${ENGINE_URL}/api/orchestrator/inference/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        engine: 'ollama',
+        model,
+        prompt,
+        system: SYSTEM_PROMPT,
+        temperature: 0.7,
+        maxTokens: 4096,
+      }),
+    });
 
-  const ollamaPayload = {
-    model,
-    prompt,
-    system,
-    stream: true,
-    options: { temperature: 0.7, num_predict: 4096 },
-  };
+    if (engineRes.ok) {
+      const data = await engineRes.json();
+      // Engine returns the full response at once — emit as NDJSON stream
+      const encoder = new TextEncoder();
+      const text = data.text || data.response || '';
+      const tokensUsed = data.tokens_used ?? data.tokensUsed ?? 0;
+      const durationMs = Math.round(data.duration_ms ?? data.durationMs ?? 0);
 
-  // Call Ollama streaming API
+      const ndjson =
+        JSON.stringify({ token: text }) + '\n' +
+        JSON.stringify({ done: true, model, tokensUsed, durationMs }) + '\n';
+
+      return new Response(encoder.encode(ndjson), {
+        headers: {
+          'Content-Type': 'application/x-ndjson',
+          'Cache-Control': 'no-cache',
+        },
+      });
+    }
+    // Engine returned non-OK — fall through to Ollama fallback
+  } catch {
+    // Engine unreachable — fall through to Ollama fallback
+  }
+
+  // ── 2. Fallback: direct Ollama streaming ───────────────────────────────
+  return streamFromOllama(prompt, model);
+}
+
+/* ── Ollama streaming fallback ────────────────────────────────────────── */
+
+async function streamFromOllama(prompt: string, model: string): Promise<Response> {
   let ollamaRes: Response;
   try {
     ollamaRes = await fetch(`${OLLAMA_URL}/api/generate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(ollamaPayload),
+      body: JSON.stringify({
+        model,
+        prompt,
+        system: SYSTEM_PROMPT,
+        stream: true,
+        options: { temperature: 0.7, num_predict: 4096 },
+      }),
     });
   } catch (err) {
     const msg =
       err instanceof TypeError && String(err).includes('fetch')
         ? `Cannot connect to Ollama at ${OLLAMA_URL}. Ensure Ollama is running.`
         : `Ollama request failed: ${String(err)}`;
-    return new Response(JSON.stringify({ error: msg }), {
-      status: 502,
-      headers: { 'Content-Type': 'application/json' },
-    });
+    return jsonError(msg, 502);
   }
 
   if (!ollamaRes.ok) {
@@ -72,23 +106,15 @@ export async function POST(req: NextRequest) {
     const msg = text.includes('not found')
       ? `Model '${model}' not found. Pull it first with: ollama pull ${model}`
       : `Ollama returned ${ollamaRes.status}: ${text.slice(0, 200)}`;
-    return new Response(JSON.stringify({ error: msg }), {
-      status: ollamaRes.status,
-      headers: { 'Content-Type': 'application/json' },
-    });
+    return jsonError(msg, ollamaRes.status);
   }
 
   if (!ollamaRes.body) {
-    return new Response(JSON.stringify({ error: 'Ollama returned no body' }), {
-      status: 502,
-      headers: { 'Content-Type': 'application/json' },
-    });
+    return jsonError('Ollama returned no body', 502);
   }
 
-  // Pipe Ollama NDJSON → our NDJSON, transforming to our format
   const startMs = Date.now();
   let tokensUsed = 0;
-
   const reader = ollamaRes.body.getReader();
   const decoder = new TextDecoder();
   const encoder = new TextEncoder();
@@ -100,21 +126,16 @@ export async function POST(req: NextRequest) {
         const { done, value } = await reader.read();
 
         if (done) {
-          // If we never got a "done" chunk from Ollama, emit one now
-          const final = JSON.stringify({
-            done: true,
-            model,
-            tokensUsed,
-            durationMs: Date.now() - startMs,
-          });
-          controller.enqueue(encoder.encode(final + '\n'));
+          controller.enqueue(encoder.encode(
+            JSON.stringify({ done: true, model, tokensUsed, durationMs: Date.now() - startMs }) + '\n',
+          ));
           controller.close();
           return;
         }
 
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split('\n');
-        buffer = lines.pop() || ''; // keep incomplete last line in buffer
+        buffer = lines.pop() || '';
 
         for (const line of lines) {
           if (!line.trim()) continue;
@@ -122,17 +143,17 @@ export async function POST(req: NextRequest) {
             const chunk = JSON.parse(line);
 
             if (chunk.done) {
-              // Final chunk from Ollama — emit our done event
               const evalCount = (chunk.eval_count || 0) + (chunk.prompt_eval_count || 0);
-              const final = JSON.stringify({
-                done: true,
-                model,
-                tokensUsed: evalCount || tokensUsed,
-                durationMs: chunk.total_duration
-                  ? Math.round(chunk.total_duration / 1_000_000)
-                  : Date.now() - startMs,
-              });
-              controller.enqueue(encoder.encode(final + '\n'));
+              controller.enqueue(encoder.encode(
+                JSON.stringify({
+                  done: true,
+                  model,
+                  tokensUsed: evalCount || tokensUsed,
+                  durationMs: chunk.total_duration
+                    ? Math.round(chunk.total_duration / 1_000_000)
+                    : Date.now() - startMs,
+                }) + '\n',
+              ));
               controller.close();
               return;
             }
@@ -140,9 +161,7 @@ export async function POST(req: NextRequest) {
             const token = chunk.response || '';
             if (token) {
               tokensUsed++;
-              controller.enqueue(
-                encoder.encode(JSON.stringify({ token }) + '\n'),
-              );
+              controller.enqueue(encoder.encode(JSON.stringify({ token }) + '\n'));
             }
           } catch {
             // skip unparseable lines
@@ -163,5 +182,14 @@ export async function POST(req: NextRequest) {
       'Cache-Control': 'no-cache',
       'Transfer-Encoding': 'chunked',
     },
+  });
+}
+
+/* ── Helpers ──────────────────────────────────────────────────────────── */
+
+function jsonError(message: string, status: number): Response {
+  return new Response(JSON.stringify({ error: message }), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
   });
 }

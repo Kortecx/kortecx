@@ -29,6 +29,7 @@ from engine.routers import (
     workflow_logs,
 )
 from engine.routers.mlflow_router import router as mlflow_router
+from engine.routers.quick_check import router as _qc_router
 
 logger = logging.getLogger("engine")
 
@@ -137,7 +138,6 @@ app.include_router(providers.router, prefix="/api/providers", tags=["providers"]
 app.include_router(search.router, prefix="/api/search", tags=["search"])
 app.include_router(plans.router, prefix="/api/plans", tags=["plans"])
 
-from engine.routers.quick_check import router as _qc_router
 app.include_router(_qc_router, prefix="/api/quick-check", tags=["quick-check"])
 
 # ── WebSocket ────────────────────────────────────────────────────────────────
