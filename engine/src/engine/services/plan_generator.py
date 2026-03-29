@@ -97,11 +97,13 @@ async def fetch_prism_edges(threshold: float = 0.3, limit: int = 20) -> list[dic
                 if key_str in seen:
                     continue
                 seen.add(key_str)
-                edges.append({
-                    "source": expert_id,
-                    "target": target_id,
-                    "weight": round(hit.score, 4),
-                })
+                edges.append(
+                    {
+                        "source": expert_id,
+                        "target": target_id,
+                        "weight": round(hit.score, 4),
+                    }
+                )
 
         edges.sort(key=lambda e: e["weight"], reverse=True)
         return edges
@@ -159,26 +161,30 @@ def _build_dag_from_layers(
     for layer_idx, layer in enumerate(layers):
         for node_idx, nid in enumerate(layer):
             expert = node_map.get(nid, {})
-            nodes.append({
-                "id": nid,
-                "prismId": nid,
-                "label": expert.get("name", nid),
-                "description": expert.get("description", ""),
-                "category": expert.get("category", ""),
-                "position": {"x": layer_idx * x_spacing, "y": node_idx * y_spacing},
-                "connectionType": "parallel" if len(layer) > 1 else "sequential",
-                "status": "pending",
-                "tokensUsed": 0,
-                "durationMs": 0,
-            })
+            nodes.append(
+                {
+                    "id": nid,
+                    "prismId": nid,
+                    "label": expert.get("name", nid),
+                    "description": expert.get("description", ""),
+                    "category": expert.get("category", ""),
+                    "position": {"x": layer_idx * x_spacing, "y": node_idx * y_spacing},
+                    "connectionType": "parallel" if len(layer) > 1 else "sequential",
+                    "status": "pending",
+                    "tokensUsed": 0,
+                    "durationMs": 0,
+                }
+            )
 
             for dep_id in dependencies.get(nid, []):
-                edges.append({
-                    "id": f"e-{dep_id}-{nid}",
-                    "source": dep_id,
-                    "target": nid,
-                    "animated": False,
-                })
+                edges.append(
+                    {
+                        "id": f"e-{dep_id}-{nid}",
+                        "source": dep_id,
+                        "target": nid,
+                        "animated": False,
+                    }
+                )
 
     return {"nodes": nodes, "edges": edges}
 
@@ -213,10 +219,7 @@ async def _generate_with_llm(
     engine: str,
 ) -> dict[str, Any]:
     """Use LLM to select relevant experts and determine ordering."""
-    expert_summaries = "\n".join(
-        f"- {e['id']}: {e['name']} ({e['category']}) — {e['description'][:100]}"
-        for e in expert_map.values()
-    )
+    expert_summaries = "\n".join(f"- {e['id']}: {e['name']} ({e['category']}) — {e['description'][:100]}" for e in expert_map.values())
 
     user_prompt = f"""Available experts:
 {expert_summaries}
@@ -236,6 +239,7 @@ Select the relevant experts and output the execution plan as a JSON array."""
         )
 
         import json
+
         # Try to parse JSON from the response
         text = result.text.strip()
         # Find JSON array in response

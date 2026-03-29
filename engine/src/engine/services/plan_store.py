@@ -71,7 +71,7 @@ def save_live_plan(
 def _prune_versions(wf_dir: Path, max_versions: int) -> None:
     """Remove oldest versions beyond the limit."""
     json_files = sorted(wf_dir.glob("plan_v*.json"), key=lambda p: p.name, reverse=True)
-    for old_json in json_files[max(1, max_versions):]:
+    for old_json in json_files[max(1, max_versions) :]:
         old_json.unlink(missing_ok=True)
         old_md = old_json.with_suffix(".md")
         old_md.unlink(missing_ok=True)
@@ -117,11 +117,13 @@ def list_live_versions(slug: str) -> list[dict[str, Any]]:
             v = int(jf.stem.split("_v")[1])
         except (IndexError, ValueError):
             continue
-        results.append({
-            "version": v,
-            "path": str(jf),
-            "modified": jf.stat().st_mtime,
-        })
+        results.append(
+            {
+                "version": v,
+                "path": str(jf),
+                "modified": jf.stat().st_mtime,
+            }
+        )
     return results
 
 

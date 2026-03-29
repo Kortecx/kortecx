@@ -154,18 +154,20 @@ class AgentOrchestrator:
             conn_type = "parallel" if len(layer) > 1 else "sequential"
             for nid in layer:
                 node = node_map.get(nid, {})
-                steps.append(StepConfig(
-                    step_id=nid,
-                    expert_id=node.get("prismId") or node.get("expertId"),
-                    task_description=node.get("description", ""),
-                    model_source="local",
-                    local_model=None,
-                    temperature=0.7,
-                    max_tokens=4096,
-                    connection_type=conn_type,
-                    step_name=node.get("label", nid),
-                    system_instructions=node.get("systemInstructions", ""),
-                ))
+                steps.append(
+                    StepConfig(
+                        step_id=nid,
+                        expert_id=node.get("prismId") or node.get("expertId"),
+                        task_description=node.get("description", ""),
+                        model_source="local",
+                        local_model=None,
+                        temperature=0.7,
+                        max_tokens=4096,
+                        connection_type=conn_type,
+                        step_name=node.get("label", nid),
+                        system_instructions=node.get("systemInstructions", ""),
+                    )
+                )
 
         return steps
 

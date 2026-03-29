@@ -339,8 +339,7 @@ class HuggingFaceService:
         # Strategy 2: HF Inference API (requires token)
         if not self.has_token:
             logger.warning(
-                "No HF_TOKEN set and local sentence-transformers unavailable; "
-                "cannot generate embeddings. Set HF_TOKEN in .env or install sentence-transformers."
+                "No HF_TOKEN set and local sentence-transformers unavailable; cannot generate embeddings. Set HF_TOKEN in .env or install sentence-transformers."
             )
             return []
 
