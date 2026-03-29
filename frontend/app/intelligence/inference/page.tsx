@@ -1,6 +1,7 @@
 'use client';
 
 import { motion } from 'framer-motion';
+import { buttonHover } from '@/lib/motion';
 import { Sparkles, Cloud, ExternalLink, Lock, Zap, Globe, Server, Shield } from 'lucide-react';
 
 const KORTECX_CLOUD_URL = 'https://www.kortecx.com';
@@ -40,10 +41,10 @@ export default function InferencePage() {
             Deploy models to dedicated GPU endpoints with auto-scaling, load balancing, and 99.9% uptime SLA.
             Available on Kortecx Cloud for enterprise and production workloads.
           </p>
-          <a href={KORTECX_CLOUD_URL} target="_blank" rel="noopener noreferrer"
+          <motion.a {...buttonHover} href={KORTECX_CLOUD_URL} target="_blank" rel="noopener noreferrer"
             className="btn btn-primary" style={{ fontSize: 13, padding: '10px 24px', textDecoration: 'none', display: 'inline-flex' }}>
             <ExternalLink size={14} /> Go to Kortecx Cloud
-          </a>
+          </motion.a>
         </div>
       </motion.div>
 
@@ -51,20 +52,32 @@ export default function InferencePage() {
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.1 }}
         style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 14 }}>
         {[
-          { icon: Zap, label: 'Auto-Scaling', desc: 'Scale from 0 to thousands of requests per second based on demand', color: '#D97706' },
-          { icon: Globe, label: 'Global Edge', desc: 'Deploy to 30+ regions for low-latency inference worldwide', color: '#2563EB' },
-          { icon: Server, label: 'Dedicated GPUs', desc: 'A100, H100, and L40S GPU instances with reserved capacity', color: '#059669' },
-          { icon: Shield, label: 'Enterprise SLA', desc: '99.9% uptime guarantee with 24/7 support and monitoring', color: '#7C3AED' },
-          { icon: Lock, label: 'Data Privacy', desc: 'SOC 2 compliant, data never leaves your VPC, HIPAA ready', color: '#DC2626' },
-          { icon: Sparkles, label: 'Model Registry', desc: 'Version, tag, and deploy any model from a central registry', color: '#EC4899' },
-        ].map((feat, i) => (
-          <motion.div key={feat.label} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.12 + i * 0.04 }}
-            className="card" style={{ padding: 20, opacity: 0.7 }}>
-            <feat.icon size={18} color={feat.color} style={{ marginBottom: 10 }} />
-            <div style={{ fontSize: 13, fontWeight: 650, color: 'var(--text-1)', marginBottom: 4 }}>{feat.label}</div>
-            <div style={{ fontSize: 11, color: 'var(--text-3)', lineHeight: 1.5 }}>{feat.desc}</div>
-          </motion.div>
-        ))}
+          { icon: Zap, label: 'Auto-Scaling', desc: 'Scale from 0 to thousands of requests per second based on demand', color: '#D97706', status: 'alpha' as const },
+          { icon: Globe, label: 'Global Edge', desc: 'Deploy to 30+ regions for low-latency inference worldwide', color: '#2563EB', status: 'alpha' as const },
+          { icon: Server, label: 'Dedicated GPUs', desc: 'A100, H100, and L40S GPU instances with reserved capacity', color: '#059669', status: 'alpha' as const },
+          { icon: Shield, label: 'Enterprise SLA', desc: '99.9% uptime guarantee with 24/7 support and monitoring', color: '#7C3AED', status: 'alpha' as const },
+          { icon: Lock, label: 'Data Privacy', desc: 'SOC 2 compliant, data never leaves your VPC, HIPAA ready', color: '#DC2626', status: 'in-progress' as const },
+          { icon: Sparkles, label: 'Model Registry', desc: 'Version, tag, and deploy any model from a central registry', color: '#EC4899', status: 'alpha' as const },
+        ].map((feat, i) => {
+          const badge = feat.status === 'in-progress'
+            ? { label: 'In Progress', color: '#f59e0b', bg: '#f59e0b12' }
+            : { label: 'Alpha', color: '#10b981', bg: '#10b98112' };
+          return (
+            <motion.div key={feat.label} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.12 + i * 0.04 }}
+              className="card" style={{ padding: 20, opacity: feat.status === 'in-progress' ? 0.55 : 0.7 }}>
+              <feat.icon size={18} color={feat.color} style={{ marginBottom: 10 }} />
+              <div style={{ fontSize: 13, fontWeight: 650, color: 'var(--text-1)', marginBottom: 4, display: 'flex', alignItems: 'center', gap: 8 }}>
+                {feat.label}
+                <span style={{
+                  fontSize: 8, fontWeight: 700, padding: '2px 6px', borderRadius: 4,
+                  textTransform: 'uppercase', letterSpacing: '0.04em',
+                  color: badge.color, background: badge.bg, border: `1px solid ${badge.color}22`,
+                }}>{badge.label}</span>
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--text-3)', lineHeight: 1.5 }}>{feat.desc}</div>
+            </motion.div>
+          );
+        })}
       </motion.div>
 
       {/* Disabled overlay info */}

@@ -59,6 +59,21 @@ export function useAlerts(unackOnly = false) {
   };
 }
 
+/* ── Alert Rules ───────────────────────────────────── */
+export function useAlertRules() {
+  const { data, error, isLoading, mutate } = useSWR(
+    '/api/alerts/rules',
+    fetcher,
+    { refreshInterval: 30_000 },
+  );
+  return {
+    rules:    data?.rules ?? [],
+    error,
+    isLoading,
+    mutate,
+  };
+}
+
 /* ── Logs ───────────────────────────────────────────── */
 export function useLogs(level?: string, limit = 500) {
   const params = new URLSearchParams();
@@ -132,6 +147,22 @@ export function usePrismGraph() {
     edges: data?.edges ?? [],
     total: data?.total ?? 0,
     version: data?.version ?? null,
+    error,
+    isLoading,
+    mutate,
+  };
+}
+
+/* ── Marketplace Graph (Qdrant-based, with auto-embed on first load) ── */
+export function useMarketplaceGraph() {
+  const { data, error, isLoading, mutate } = useSWR(
+    '/api/experts/graph?source=marketplace',
+    fetcher,
+    { refreshInterval: 0, revalidateOnFocus: false },
+  );
+  return {
+    edges: data?.edges ?? [],
+    total: data?.total ?? 0,
     error,
     isLoading,
     mutate,

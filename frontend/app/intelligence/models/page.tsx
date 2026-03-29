@@ -3,6 +3,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { motion } from 'framer-motion';
+import { buttonHover } from '@/lib/motion';
 import useSWR from 'swr';
 import dynamic from 'next/dynamic';
 import {
@@ -845,11 +846,11 @@ function CompareTab() {
         </div>
 
         {/* Run Button */}
-        <button className="btn btn-primary" onClick={handleCompare} disabled={!canRun}
+        <motion.button {...buttonHover} className="btn btn-primary" onClick={handleCompare} disabled={!canRun}
           style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           {running ? <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> : <Play size={14} />}
           {running ? 'Running...' : 'Run Comparison'}
-        </button>
+        </motion.button>
       </div>
 
       {/* Error */}
@@ -1135,9 +1136,9 @@ export default function ModelsPage() {
             <div style={{ display: 'flex', gap: 4 }}>
               <input className="input" style={{ width: 200, fontFamily: 'var(--font-mono)' }} placeholder="Model to pull (e.g. mistral:7b)" value={pullModel} onChange={e => setPullModel(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter') handlePull(); }} />
-              <button className="btn btn-primary btn-sm" onClick={handlePull} disabled={!pullModel.trim() || !!pulling}>
+              <motion.button {...buttonHover} className="btn btn-primary btn-sm" onClick={handlePull} disabled={!pullModel.trim() || !!pulling}>
                 <Download size={12} /> Pull
-              </button>
+              </motion.button>
             </div>
           </div>
 
@@ -1233,10 +1234,10 @@ export default function ModelsPage() {
             <p style={{ fontSize: 13, color: 'var(--text-3)', lineHeight: 1.6, maxWidth: 480, margin: '0 auto 20px' }}>
               Access fine-tuned, optimized models built by the Kortecx team. Includes domain-specific models for coding, research, legal, finance, and more.
             </p>
-            <a href={KORTECX_CLOUD_URL} target="_blank" rel="noopener noreferrer"
+            <motion.a {...buttonHover} href={KORTECX_CLOUD_URL} target="_blank" rel="noopener noreferrer"
               className="btn btn-primary" style={{ textDecoration: 'none', display: 'inline-flex', padding: '10px 24px' }}>
               <ExternalLink size={14} /> Sign Up for Kortecx Cloud
-            </a>
+            </motion.a>
           </div>
         </motion.div>
       )}
@@ -1257,10 +1258,10 @@ export default function ModelsPage() {
               Enterprise-grade models with extended context windows, multi-modal capabilities, and custom training.
               Includes GPT-4o, Claude Opus, Gemini Ultra, and exclusive Kortecx Mixture-of-Experts models.
             </p>
-            <a href={KORTECX_CLOUD_URL} target="_blank" rel="noopener noreferrer"
+            <motion.a {...buttonHover} href={KORTECX_CLOUD_URL} target="_blank" rel="noopener noreferrer"
               className="btn btn-primary" style={{ textDecoration: 'none', display: 'inline-flex', padding: '10px 24px' }}>
               <ExternalLink size={14} /> Sign Up for Kortecx Cloud
-            </a>
+            </motion.a>
           </div>
         </motion.div>
       )}

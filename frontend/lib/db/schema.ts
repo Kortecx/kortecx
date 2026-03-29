@@ -102,6 +102,26 @@ export const alerts = pgTable('alerts', {
   createdAt:      timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 });
 
+/* ─── Alert Rules (trigger-based notifications) ────── */
+export const alertRules = pgTable('alert_rules', {
+  id:                 text('id').primaryKey(),
+  name:               text('name').notNull(),
+  description:        text('description'),
+  triggerType:        varchar('trigger_type', { length: 30 }).notNull(),
+  // workflow_failure | expert_error | high_latency | cost_threshold | error_rate | custom
+  conditions:         jsonb('conditions').notNull(),
+  // { metric?: string, operator?: 'gt'|'lt'|'eq', threshold?: number, workflowId?: string, expertId?: string }
+  notificationConfig: jsonb('notification_config').notNull(),
+  // { channel: 'mcp_server'|'integration'|'webhook', targetId?: string, webhookUrl?: string, config?: {} }
+  severity:           varchar('severity', { length: 20 }).notNull().default('warning'),
+  // info | warning | error | critical
+  enabled:            boolean('enabled').default(true),
+  cooldownMinutes:    integer('cooldown_minutes').default(15),
+  lastTriggeredAt:    timestamp('last_triggered_at', { withTimezone: true }),
+  createdAt:          timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt:          timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
 /* ─── System Logs ────────────────────────────────────── */
 export const logs = pgTable('logs', {
   id:        serial('id').primaryKey(),
@@ -153,16 +173,21 @@ export const experts = pgTable('experts', {
 
 /* ─── Plans (DAG execution blueprints) ───────────────── */
 export const plans = pgTable('plans', {
-  id:            text('id').primaryKey(),
-  workflowId:    text('workflow_id'),
-  name:          text('name').notNull(),
-  description:   text('description'),
-  dag:           jsonb('dag'),           // { nodes: PlanNode[], edges: PlanEdge[] }
-  status:        varchar('status', { length: 20 }).default('draft'),
-  generatedBy:   varchar('generated_by', { length: 10 }).default('user'),
-  modelUsed:     text('model_used'),
-  createdAt:     timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
-  updatedAt:     timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  id:              text('id').primaryKey(),
+  workflowId:      text('workflow_id'),
+  name:            text('name').notNull(),
+  description:     text('description'),
+  dag:             jsonb('dag'),           // { nodes: PlanNode[], edges: PlanEdge[] }
+  status:          varchar('status', { length: 20 }).default('draft'),
+  generatedBy:     varchar('generated_by', { length: 10 }).default('user'),
+  modelUsed:       text('model_used'),
+  version:         integer('version').default(1),
+  planType:        varchar('plan_type', { length: 10 }).default('live'),    // 'live' | 'frozen'
+  markdownContent: text('markdown_content'),
+  sourceType:      varchar('source_type', { length: 20 }).default('manual'), // 'manual' | 'upload' | 'prompt' | 'prism_generated'
+  frozenAt:        timestamp('frozen_at', { withTimezone: true }),
+  createdAt:       timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt:       timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 });
 
 /* ─── Workflows ──────────────────────────────────────── */
@@ -184,6 +209,10 @@ export const workflows = pgTable('workflows', {
   isTemplate:        boolean('is_template').default(false),
   templateCategory:  text('template_category'),
   metadata:          jsonb('metadata'),
+  planFrozen:        boolean('plan_frozen').default(false),
+  frozenPlanId:      text('frozen_plan_id'),
+  activePlanId:      text('active_plan_id'),
+  planMaxVersions:   integer('plan_max_versions').default(3),
   createdAt:         timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt:         timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
   lastRunAt:         timestamp('last_run_at', { withTimezone: true }),
@@ -564,6 +593,22 @@ export const modelComparisons = pgTable('model_comparisons', {
   createdAt:       timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 });
 
+/* ─── Quick Checks ──────────────────────────────────── */
+export const quickChecks = pgTable('quick_checks', {
+  id:             text('id').primaryKey(),
+  prompt:         text('prompt').notNull(),
+  response:       text('response'),
+  status:         varchar('status', { length: 20 }).notNull().default('running'),
+  model:          text('model').default('llama3.1:8b'),
+  engine:         text('engine').default('ollama'),
+  tokensUsed:     integer('tokens_used').default(0),
+  durationMs:     integer('duration_ms').default(0),
+  contextSources: jsonb('context_sources').default([]),
+  errorMessage:   text('error_message'),
+  createdAt:      timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  completedAt:    timestamp('completed_at', { withTimezone: true }),
+});
+
 /* ─── Type exports ───────────────────────────────────── */
 export type Metric        = typeof metrics.$inferSelect;
 export type Task          = typeof tasks.$inferSelect;
@@ -593,6 +638,9 @@ export type NewWorkflowStep = typeof workflowSteps.$inferInsert;
 
 export type ApiKey        = typeof apiKeys.$inferSelect;
 export type NewApiKey     = typeof apiKeys.$inferInsert;
+
+export type QuickCheck    = typeof quickChecks.$inferSelect;
+export type NewQuickCheck = typeof quickChecks.$inferInsert;
 
 export type SynthesisJob  = typeof synthesisJobs.$inferSelect;
 export type NewSynthesisJob = typeof synthesisJobs.$inferInsert;

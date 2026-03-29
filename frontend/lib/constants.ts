@@ -336,21 +336,12 @@ export const SYSTEM_METRICS = {
 /* ─── Navigation Structure ───────────────────────────── */
 export const NAV_SECTIONS = [
   {
-    id: 'experts',
-    label: 'PRISM',
+    id: 'orchestration',
+    label: 'ORCHESTRATION',
     color: '#D97706',
     items: [
-      { id: 'experts',    label: 'PRISM',           path: '/experts',                    icon: 'Boxes' },
-      { id: 'deploy',     label: 'Bundle',           path: '/experts/deploy',             icon: 'Rocket' },
-    ],
-  },
-  {
-    id: 'workflow',
-    label: 'WORKFLOW',
-    color: '#2563EB',
-    items: [
-      { id: 'builder',   label: 'Builder',     path: '/workflow/builder',   icon: 'LayoutTemplate' },
-      { id: 'workflows', label: 'Workflows',   path: '/workflow',           icon: 'Workflow' },
+      { id: 'experts',   label: 'PRISM',       path: '/experts',  icon: 'Boxes' },
+      { id: 'workflows', label: 'Workflows',   path: '/workflow', icon: 'Workflow' },
     ],
   },
   {
@@ -370,7 +361,6 @@ export const NAV_SECTIONS = [
     items: [
       { id: 'data',       label: 'Data Synthesis', path: '/data',            icon: 'Database' },
       { id: 'engineer',   label: 'Data Lab',       path: '/data/engineer',   icon: 'Zap' },
-      { id: 'data-runs',  label: 'Runs History',   path: '/data/runs',       icon: 'History' },
       { id: 'embeddings', label: 'Embeddings',     path: '/embeddings',      icon: 'Boxes' },
     ],
   },

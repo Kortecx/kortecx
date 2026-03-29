@@ -7,10 +7,12 @@ export async function GET(req: NextRequest) {
   const { searchParams } = req.nextUrl;
   const threshold = searchParams.get('threshold') ?? '0.15';
   const limit = searchParams.get('limit') ?? '30';
+  const source = searchParams.get('source') ?? '';
 
   try {
+    const sourceParam = source ? `&source=${encodeURIComponent(source)}` : '';
     const resp = await fetch(
-      `${ENGINE_URL}/api/experts/engine/graph/edges?threshold=${threshold}&limit=${limit}`,
+      `${ENGINE_URL}/api/prism/engine/graph/edges?threshold=${threshold}&limit=${limit}${sourceParam}`,
       { cache: 'no-store' },
     );
     if (!resp.ok) {
@@ -32,7 +34,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'source and target required' }, { status: 400 });
     }
     const resp = await fetch(
-      `${ENGINE_URL}/api/experts/engine/${source}/attach`,
+      `${ENGINE_URL}/api/prism/engine/${source}/attach`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

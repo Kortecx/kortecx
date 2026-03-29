@@ -21,6 +21,7 @@ from engine.routers import (
     models,
     orchestrator,
     pipelines,
+    plans,
     providers,
     search,
     synthesis,
@@ -28,6 +29,7 @@ from engine.routers import (
     workflow_logs,
 )
 from engine.routers.mlflow_router import router as mlflow_router
+from engine.routers.quick_check import router as _qc_router
 
 logger = logging.getLogger("engine")
 
@@ -51,12 +53,34 @@ async def lifespan(app: FastAPI):
     (Path(__file__).resolve().parents[2] / "mcp").mkdir(parents=True, exist_ok=True)
     (Path(__file__).resolve().parents[2] / "mcp" / "prompts").mkdir(parents=True, exist_ok=True)
     (Path(__file__).resolve().parents[2] / "mcp_scripts").mkdir(parents=True, exist_ok=True)
+    (Path(__file__).resolve().parents[2] / "plans" / "LIVE").mkdir(parents=True, exist_ok=True)
+    (Path(__file__).resolve().parents[2] / "plans" / "FREEZE").mkdir(parents=True, exist_ok=True)
 
     # Load expert definitions
     from engine.services.expert_manager import expert_manager
 
     expert_manager.load_all()
     logger.info("Loaded %d experts", len(expert_manager._cache))
+
+    # Auto-embed all loaded experts into Qdrant for graph similarity
+    from engine.routers.experts import _embed_prism
+    from engine.services.hf import hf_service
+
+    if hf_service.has_token:
+        logger.info("HF_TOKEN set — using HuggingFace Inference API for embeddings")
+    else:
+        logger.info("HF_TOKEN not set — will use local sentence-transformers if available")
+
+    embedded_count = 0
+    for exp in expert_manager._cache.values():
+        src = exp.get("_source", "local")
+        try:
+            await _embed_prism(exp, source=src)
+            embedded_count += 1
+        except Exception:
+            logger.warning("Failed to embed expert %s on startup", exp.get("id"))
+    if embedded_count:
+        logger.info("Embedded %d experts into Qdrant on startup", embedded_count)
 
     # Quorum multi-agent orchestration engine
     from engine.routers.quorum import init_quorum
@@ -107,11 +131,14 @@ app.include_router(orchestrator.router, prefix="/api/orchestrator", tags=["orche
 app.include_router(workflow_logs.router, prefix="/api/logs", tags=["logs"])
 app.include_router(mlflow_router, prefix="/api/mlflow", tags=["mlflow"])
 app.include_router(mcp.router, prefix="/api/mcp", tags=["mcp"])
-app.include_router(experts.router, prefix="/api/experts/engine", tags=["experts"])
+app.include_router(experts.router, prefix="/api/prism/engine", tags=["experts"])
 app.include_router(metrics.router, prefix="/api/metrics", tags=["metrics"])
 app.include_router(lineage.router, prefix="/api/lineage", tags=["lineage"])
 app.include_router(providers.router, prefix="/api/providers", tags=["providers"])
 app.include_router(search.router, prefix="/api/search", tags=["search"])
+app.include_router(plans.router, prefix="/api/plans", tags=["plans"])
+
+app.include_router(_qc_router, prefix="/api/quick-check", tags=["quick-check"])
 
 # ── WebSocket ────────────────────────────────────────────────────────────────
 app.include_router(ws_manager.router, tags=["websocket"])

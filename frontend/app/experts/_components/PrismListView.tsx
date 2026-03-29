@@ -1,7 +1,9 @@
 'use client';
 
 import { useState, useMemo } from 'react';
-import { ChevronDown, ChevronRight, Play, Settings, Trash2, Star, ArrowUpDown, Plus, X, Link2 } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { ChevronDown, ChevronRight, Play, Settings, Trash2, Star, ArrowUpDown, Plus, X, Link2, Download } from 'lucide-react';
+import { rowEntrance, filterTab, emptyState } from '@/lib/motion';
 import type { SimilarityEdge } from './PrismGraph';
 
 const ROLE_EMOJI: Record<string, string> = {
@@ -32,10 +34,11 @@ interface PrismListViewProps {
   onConfigure: (p: Record<string, unknown>) => void;
   onRun: (p: Record<string, unknown>) => void;
   onDelete: (p: Record<string, unknown>) => void;
+  onExport?: (p: Record<string, unknown>) => void;
   onCreateEdge: (sourceId: string, targetId: string) => void;
 }
 
-export default function PrismListView({ prisms, edges, onConfigure, onRun, onDelete, onCreateEdge }: PrismListViewProps) {
+export default function PrismListView({ prisms, edges, onConfigure, onRun, onDelete, onExport, onCreateEdge }: PrismListViewProps) {
   const [sortBy, setSortBy] = useState<SortKey>('name');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
   const [groupBy, setGroupBy] = useState<GroupKey>('role');
@@ -136,9 +139,10 @@ export default function PrismListView({ prisms, edges, onConfigure, onRun, onDel
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
         <span style={{ fontSize: 11, color: 'var(--text-4)', fontWeight: 600 }}>Group by:</span>
         {(['none', 'role', 'category', 'status'] as GroupKey[]).map(g => (
-          <button
+          <motion.button
             key={g}
             onClick={() => setGroupBy(g)}
+            {...filterTab}
             style={{
               padding: '4px 10px', borderRadius: 6, fontSize: 11, cursor: 'pointer',
               border: groupBy === g ? '1.5px solid #D97706' : '1px solid var(--border-md)',
@@ -148,7 +152,7 @@ export default function PrismListView({ prisms, edges, onConfigure, onRun, onDel
             }}
           >
             {g === 'none' ? 'None' : g.charAt(0).toUpperCase() + g.slice(1)}
-          </button>
+          </motion.button>
         ))}
       </div>
 
@@ -172,8 +176,11 @@ export default function PrismListView({ prisms, edges, onConfigure, onRun, onDel
       {groups.map(group => (
         <div key={group.key}>
           {groupBy !== 'none' && (
-            <button
+            <motion.button
               onClick={() => toggleGroup(group.key)}
+              whileHover={{ backgroundColor: 'var(--bg-elevated)' }}
+              whileTap={{ scale: 0.99 }}
+              transition={{ type: 'spring', stiffness: 400, damping: 30 }}
               style={{
                 display: 'flex', alignItems: 'center', gap: 8, width: '100%',
                 padding: '8px 12px', marginBottom: 2, borderRadius: 6,
@@ -184,10 +191,10 @@ export default function PrismListView({ prisms, edges, onConfigure, onRun, onDel
               {collapsed.has(group.key) ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
               <span style={{ color: ROLE_COLOR[group.key] ?? 'var(--text-2)' }}>{group.label}</span>
               <span style={{ fontSize: 11, color: 'var(--text-4)', fontWeight: 400 }}>({group.items.length})</span>
-            </button>
+            </motion.button>
           )}
 
-          {!collapsed.has(group.key) && group.items.map(p => {
+          {!collapsed.has(group.key) && group.items.map((p, idx) => {
             const id = p.id as string;
             const role = (p.role as string) ?? 'custom';
             const status = (p.status as string) ?? 'idle';
@@ -197,16 +204,16 @@ export default function PrismListView({ prisms, edges, onConfigure, onRun, onDel
             const isConnecting = connectingId === id;
 
             return (
-              <div key={id} style={{ marginLeft: groupBy !== 'none' ? 16 : 0 }}>
-                <div
+              <motion.div key={id} style={{ marginLeft: groupBy !== 'none' ? 16 : 0 }} {...rowEntrance(idx, 0.05)}>
+                <motion.div
                   onClick={() => onConfigure(p)}
+                  whileHover={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)', y: -1, boxShadow: '0 4px 16px rgba(13,13,13,0.06)' }}
+                  transition={{ type: 'spring', stiffness: 400, damping: 30 }}
                   style={{
                     display: 'flex', alignItems: 'center', gap: 8,
                     padding: '9px 12px', borderRadius: 6, cursor: 'pointer',
-                    border: '1px solid transparent', transition: 'all 0.12s',
+                    border: '1px solid transparent',
                   }}
-                  onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-surface)'; e.currentTarget.style.borderColor = 'var(--border)'; }}
-                  onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.borderColor = 'transparent'; }}
                 >
                   {/* Name */}
                   <div style={{ ...colStyle(2.5), display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -271,80 +278,92 @@ export default function PrismListView({ prisms, edges, onConfigure, onRun, onDel
                   </div>
 
                   {/* Actions */}
-                  <div style={{ width: 84, display: 'flex', gap: 4, justifyContent: 'center' }}>
+                  <div style={{ width: 112, display: 'flex', gap: 4, justifyContent: 'center' }}>
                     {[
                       { icon: Play, color: '#10b981', title: 'Run', action: onRun },
                       { icon: Settings, color: '#6b7280', title: 'Configure', action: onConfigure },
+                      ...(onExport ? [{ icon: Download, color: '#2563EB', title: 'Export', action: onExport }] : []),
                       { icon: Trash2, color: '#ef4444', title: 'Delete', action: onDelete },
                     ].map(({ icon: Icon, color, title, action }) => (
-                      <button
+                      <motion.button
                         key={title}
                         onClick={e => { e.stopPropagation(); action(p); }}
                         title={title}
+                        whileHover={{ background: `${color}18`, scale: 1.1 }}
+                        whileTap={{ scale: 0.92 }}
+                        transition={{ type: 'spring', stiffness: 400, damping: 25 }}
                         style={{
                           display: 'flex', alignItems: 'center', justifyContent: 'center',
                           width: 24, height: 24, borderRadius: 5,
                           border: `1px solid ${color}30`, background: `${color}08`,
-                          color, cursor: 'pointer', transition: 'all 0.12s',
+                          color, cursor: 'pointer',
                         }}
-                        onMouseEnter={e => { e.currentTarget.style.background = `${color}18`; }}
-                        onMouseLeave={e => { e.currentTarget.style.background = `${color}08`; }}
                       >
                         <Icon size={11} />
-                      </button>
+                      </motion.button>
                     ))}
                   </div>
-                </div>
+                </motion.div>
 
                 {/* Inline connect input */}
+                <AnimatePresence>
                 {isConnecting && (
-                  <div style={{
-                    display: 'flex', gap: 6, alignItems: 'center',
-                    padding: '6px 12px 10px', marginLeft: 40,
-                  }}>
-                    <Link2 size={12} color="#818cf8" />
-                    <input
-                      value={connectInput}
-                      onChange={e => setConnectInput(e.target.value)}
-                      placeholder="Type PRISM name to connect…"
-                      list={`connect-list-${id}`}
-                      autoFocus
-                      style={{
-                        flex: 1, maxWidth: 260, padding: '5px 10px', borderRadius: 6, fontSize: 12,
-                        border: '1px solid var(--border-md)', background: 'var(--bg-surface)',
-                        color: 'var(--text-1)', outline: 'none',
-                      }}
-                      onKeyDown={e => { if (e.key === 'Enter') handleConnect(id); if (e.key === 'Escape') { setConnectingId(null); setConnectInput(''); } }}
-                    />
-                    <datalist id={`connect-list-${id}`}>
-                      {prisms.filter(pp => (pp.id as string) !== id).map(pp => (
-                        <option key={pp.id as string} value={pp.name as string} />
-                      ))}
-                    </datalist>
-                    <button
-                      onClick={() => handleConnect(id)}
-                      disabled={!connectInput.trim()}
-                      style={{
-                        padding: '5px 12px', borderRadius: 6, fontSize: 11, fontWeight: 600,
-                        border: '1.5px solid #818cf8', background: connectInput.trim() ? 'rgba(99,102,241,0.12)' : 'transparent',
-                        color: '#818cf8', cursor: connectInput.trim() ? 'pointer' : 'default',
-                        opacity: connectInput.trim() ? 1 : 0.4,
-                      }}
-                    >
-                      Connect
-                    </button>
-                  </div>
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: 'auto' }}
+                    exit={{ opacity: 0, height: 0 }}
+                    transition={{ duration: 0.2 }}
+                    style={{ overflow: 'hidden' }}
+                  >
+                    <div style={{
+                      display: 'flex', gap: 6, alignItems: 'center',
+                      padding: '6px 12px 10px', marginLeft: 40,
+                    }}>
+                      <Link2 size={12} color="#818cf8" />
+                      <input
+                        value={connectInput}
+                        onChange={e => setConnectInput(e.target.value)}
+                        placeholder="Type PRISM name to connect…"
+                        list={`connect-list-${id}`}
+                        autoFocus
+                        style={{
+                          flex: 1, maxWidth: 260, padding: '5px 10px', borderRadius: 6, fontSize: 12,
+                          border: '1px solid var(--border-md)', background: 'var(--bg-surface)',
+                          color: 'var(--text-1)', outline: 'none',
+                        }}
+                        onKeyDown={e => { if (e.key === 'Enter') handleConnect(id); if (e.key === 'Escape') { setConnectingId(null); setConnectInput(''); } }}
+                      />
+                      <datalist id={`connect-list-${id}`}>
+                        {prisms.filter(pp => (pp.id as string) !== id).map(pp => (
+                          <option key={pp.id as string} value={pp.name as string} />
+                        ))}
+                      </datalist>
+                      <button
+                        onClick={() => handleConnect(id)}
+                        disabled={!connectInput.trim()}
+                        style={{
+                          padding: '5px 12px', borderRadius: 6, fontSize: 11, fontWeight: 600,
+                          border: '1.5px solid #818cf8', background: connectInput.trim() ? 'rgba(99,102,241,0.12)' : 'transparent',
+                          color: '#818cf8', cursor: connectInput.trim() ? 'pointer' : 'default',
+                          opacity: connectInput.trim() ? 1 : 0.4,
+                        }}
+                      >
+                        Connect
+                      </button>
+                    </div>
+                  </motion.div>
                 )}
-              </div>
+                </AnimatePresence>
+              </motion.div>
             );
           })}
         </div>
       ))}
 
       {prisms.length === 0 && (
-        <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--text-4)', fontSize: 13 }}>
+        <motion.div {...emptyState} style={{ textAlign: 'center', padding: '40px 0', color: 'var(--text-4)', fontSize: 13 }}>
           No PRISMs to display
-        </div>
+        </motion.div>
       )}
     </div>
   );

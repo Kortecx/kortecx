@@ -52,6 +52,8 @@ class WebSocketManager:
                 await ws.send_json({"event": "pong", "timestamp": datetime.now(UTC).isoformat()})
         elif event.startswith("quorum."):
             await self._handle_quorum_event(conn_id, event, msg)
+        elif event == "quick_check.submit":
+            await self._handle_quick_check(conn_id, msg)
         elif event == "workflow.execute":
             await self._handle_workflow_execute(conn_id, msg)
 
@@ -71,6 +73,30 @@ class WebSocketManager:
         except Exception as e:
             logger.error("Quorum event %s failed: %s", event, e)
             await self.send_to(conn_id, "quorum.error", {"event": event, "error": str(e)})
+
+    async def _handle_quick_check(self, conn_id: str, msg: dict[str, Any]) -> None:
+        """Handle Quick Check — platform-aware Q&A via default model."""
+        import asyncio
+
+        from engine.services.quick_check import quick_check_service
+
+        data = msg.get("data", {})
+        prompt = data.get("prompt", "").strip()
+        check_id = data.get("checkId") or quick_check_service.new_id()
+
+        if not prompt:
+            await self.send_to(conn_id, "quick_check.error", {"error": "Prompt is required", "checkId": check_id})
+            return
+
+        # Auto-subscribe sender to the check channel
+        channel = f"quick_check.{check_id}"
+        self.subscriptions.setdefault(channel, set()).add(conn_id)
+
+        # Acknowledge
+        await self.send_to(conn_id, "quick_check.accepted", {"checkId": check_id})
+
+        # Run in background
+        asyncio.create_task(quick_check_service.execute(check_id, prompt, conn_id))
 
     async def _handle_workflow_execute(self, conn_id: str, msg: dict[str, Any]) -> None:
         """Handle workflow execution triggered via WebSocket."""

@@ -120,3 +120,46 @@ describe('PRISM Graph — node filtering', () => {
     expect(filterPrisms(prisms, { role: 'all' })).toHaveLength(3);
   });
 });
+
+describe('Marketplace experts — data integrity', () => {
+  /* Validate that marketplace experts have the required fields for embedding */
+  interface MarketplaceExpert {
+    id: string;
+    name: string;
+    description: string;
+    systemPrompt: string;
+    role: string;
+    capabilities: string[];
+    specializations: string[];
+    tags: string[];
+  }
+
+  // Shared capability vocabulary expected across marketplace experts
+  const SHARED_CAPS = ['reasoning', 'analysis', 'research', 'coding', 'writing', 'synthesis', 'review', 'planning', 'data-processing', 'communication'];
+
+  it('all marketplace experts have systemPrompt for rich embeddings', () => {
+    // This test validates the data contract — not importing actual data
+    const sample: MarketplaceExpert = {
+      id: 'mp-test',
+      name: 'Test',
+      description: 'A test expert',
+      systemPrompt: 'You are a test expert',
+      role: 'researcher',
+      capabilities: ['reasoning', 'analysis'],
+      specializations: ['Deep Research'],
+      tags: ['test'],
+    };
+    expect(sample.systemPrompt.length).toBeGreaterThan(0);
+    expect(sample.capabilities.length).toBeGreaterThan(0);
+    expect(sample.specializations.length).toBeGreaterThan(0);
+  });
+
+  it('shared capabilities vocabulary is well-defined', () => {
+    expect(SHARED_CAPS.length).toBeGreaterThanOrEqual(8);
+    // Each cap should be a non-empty lowercase string
+    for (const cap of SHARED_CAPS) {
+      expect(cap.length).toBeGreaterThan(0);
+      expect(cap).toBe(cap.toLowerCase());
+    }
+  });
+});

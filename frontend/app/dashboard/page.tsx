@@ -1,30 +1,22 @@
 'use client';
 
+import { useState, useRef, useEffect } from 'react';
 import Link from 'next/link';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import useSWR from 'swr';
 import {
   Cpu, CheckCircle2, TrendingUp, Zap, ArrowRight,
   Circle, ChevronRight, Play, BarChart3, Users,
-  Workflow, Activity, X,
+  Workflow, Activity, X, Sparkles, Send, Loader2, Copy, Check,
 } from 'lucide-react';
 import { useMetrics, useTasks, useExperts, useWorkflowRuns, useLiveMetrics } from '@/lib/hooks/useApi';
+import { useQuickCheckWS } from '@/lib/hooks/useQuickCheckWS';
 import type { QueuedTask, WorkflowRun, Expert, AIProvider } from '@/lib/types';
+import { fadeUp, stagger, buttonHover } from '@/lib/motion';
 
 const fetcher = (url: string) => fetch(url).then(r => {
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   return r.json();
-});
-
-/* ── Animation variants ────────────────────────────────── */
-const fadeUp = {
-  hidden: { opacity: 0, y: 16 },
-  show:   { opacity: 1, y: 0, transition: { duration: 0.38, ease: [0.25, 0.46, 0.45, 0.94] as const } },
-};
-
-const stagger = (delay = 0.07) => ({
-  hidden: {},
-  show:   { transition: { staggerChildren: delay } },
 });
 
 /* ── Helpers ───────────────────────────────────────────── */
@@ -54,6 +46,23 @@ function priorityLabel(p: string) {
     low:      'LOW',
   };
   return map[p] ?? p.toUpperCase();
+}
+
+const QC_ING_WORDS = [
+  'Analyzing', 'Processing', 'Synthesizing', 'Computing',
+  'Evaluating', 'Generating', 'Reasoning', 'Indexing',
+  'Inferring', 'Parsing', 'Interpreting', 'Resolving',
+];
+
+function fmtDuration(ms: number): string {
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${(ms / 1000).toFixed(1)}s`;
+  const m = Math.floor(s / 60);
+  const rs = s % 60;
+  if (m < 60) return `${m}m ${rs}s`;
+  const h = Math.floor(m / 60);
+  const rm = m % 60;
+  return `${h}h ${rm}m`;
 }
 
 /* ── Skeleton Shimmer ─────────────────────────────────── */
@@ -280,6 +289,65 @@ export default function OpsDashboard() {
   const activeExperts   = experts.filter((e: Expert) => e.status === 'active').length;
   const idleExperts     = experts.filter((e: Expert) => e.status === 'idle').length;
 
+  /* Quick Check state */
+  const [quickCheckOpen, setQuickCheckOpen] = useState(false);
+  const [qcPrompt, setQcPrompt] = useState('');
+  const qc = useQuickCheckWS();
+  const responseEndRef = useRef<HTMLDivElement>(null);
+  const [qcCopied, setQcCopied] = useState(false);
+
+  // Cycling "-ing" word for loading phase
+  const [qcIngWord, setQcIngWord] = useState(QC_ING_WORDS[0]);
+  useEffect(() => {
+    const isActive = qc.status === 'connecting' || qc.status === 'streaming';
+    if (!isActive) return;
+    const id = setInterval(() => {
+      setQcIngWord(QC_ING_WORDS[Math.floor(Math.random() * QC_ING_WORDS.length)]);
+    }, 1500);
+    return () => clearInterval(id);
+  }, [qc.status]);
+
+  // Live elapsed timer — ticks while request is in progress
+  const [qcElapsed, setQcElapsed] = useState(0);
+  const qcStartRef = useRef<number | null>(null);
+  useEffect(() => {
+    const isActive = qc.status === 'connecting' || qc.status === 'streaming';
+    if (isActive && qcStartRef.current === null) {
+      qcStartRef.current = Date.now();
+    }
+    if (!isActive && qcStartRef.current !== null) {
+      qcStartRef.current = null;
+    }
+    if (!isActive) return;
+    const id = setInterval(() => {
+      if (qcStartRef.current) setQcElapsed(Date.now() - qcStartRef.current);
+    }, 100);
+    return () => clearInterval(id);
+  }, [qc.status]);
+
+  // Auto-scroll response
+  useEffect(() => {
+    responseEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [qc.response]);
+
+  const handleQuickCheckSubmit = () => {
+    if (!qcPrompt.trim() || qc.status === 'streaming' || qc.status === 'connecting') return;
+    const checkId = `qc-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    // Create DB record
+    fetch('/api/quick-check', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: checkId, prompt: qcPrompt.trim() }),
+    }).catch(() => {});
+    qc.submit(checkId, qcPrompt.trim());
+  };
+
+  const handleQuickCheckClose = () => {
+    setQuickCheckOpen(false);
+    setQcPrompt('');
+    qc.reset();
+  };
+
   return (
     <div style={{ padding: 24, maxWidth: 1400, margin: '0 auto' }}>
 
@@ -324,16 +392,13 @@ export default function OpsDashboard() {
           transition={{ delay: 0.15 }}
           style={{ display: 'flex', gap: 8 }}
         >
-          <Link href="/workflow/builder">
-            <button className="btn btn-secondary btn-sm">
-              <Workflow size={13} /> New Workflow
-            </button>
-          </Link>
-          <Link href="/workflow">
-            <button className="btn btn-primary btn-sm">
-              <Play size={13} /> Quick Run
-            </button>
-          </Link>
+          <motion.button
+            {...buttonHover}
+            className="btn btn-primary btn-sm"
+            onClick={() => setQuickCheckOpen(true)}
+          >
+            <Sparkles size={13} /> Quick Check
+          </motion.button>
         </motion.div>
       </motion.div>
 
@@ -663,6 +728,174 @@ export default function OpsDashboard() {
           </motion.div>
         ))}
       </motion.div>
+
+      {/* Quick Check Dialog */}
+      <AnimatePresence>
+        {quickCheckOpen && (
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            onClick={handleQuickCheckClose}
+            style={{
+              position: 'fixed', inset: 0, background: 'rgba(7,7,26,0.85)',
+              backdropFilter: 'blur(4px)', zIndex: 200,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.96, y: -8 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.96, y: -8 }}
+              transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+              onClick={e => e.stopPropagation()}
+              style={{
+                background: 'var(--bg-surface)', border: '1px solid var(--border)',
+                borderRadius: 14, width: 560, maxWidth: '92vw',
+                maxHeight: '80vh', display: 'flex', flexDirection: 'column',
+                overflow: 'hidden',
+              }}
+            >
+              {/* Header */}
+              <div style={{
+                padding: '18px 22px', borderBottom: '1px solid var(--border)',
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <div style={{
+                    width: 32, height: 32, borderRadius: 8,
+                    background: 'rgba(249,115,22,0.1)', border: '1.5px solid rgba(249,115,22,0.2)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  }}>
+                    <Sparkles size={15} color="#F97316" />
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-1)' }}>Quick Check</div>
+                    <div style={{ fontSize: 10, color: '#F97316' }}>
+                      Platform-aware Q&A · llama3.1
+                    </div>
+                  </div>
+                </div>
+                <button onClick={handleQuickCheckClose} style={{
+                  background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-4)',
+                  display: 'flex', padding: 4,
+                }}>
+                  <X size={16} />
+                </button>
+              </div>
+
+              {/* Response area */}
+              {(qc.status !== 'idle' || qc.response) && (
+                <div style={{
+                  flex: 1, overflowY: 'auto', padding: '16px 22px',
+                  maxHeight: 340, minHeight: 120,
+                  fontSize: 13, color: 'var(--text-2)', lineHeight: 1.7,
+                  whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                }}>
+                  {(qc.phase === 'connecting' || qc.phase === 'gathering_context') && !qc.response && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-4)' }}>
+                      <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} />
+                      {qcIngWord}...
+                    </div>
+                  )}
+                  {qc.response}
+                  {qc.status === 'streaming' && (
+                    <span style={{
+                      display: 'inline-block', width: 6, height: 14,
+                      background: '#F97316', borderRadius: 1, marginLeft: 2,
+                      animation: 'pulse 1s infinite',
+                    }} />
+                  )}
+                  {qc.status === 'error' && (
+                    <div style={{ color: '#ef4444', marginTop: 8, fontSize: 12 }}>
+                      <div>{qc.error}</div>
+                      <button
+                        onClick={() => qc.retry()}
+                        style={{
+                          marginTop: 8, padding: '4px 12px', fontSize: 11,
+                          background: 'rgba(249,115,22,0.1)', border: '1px solid rgba(249,115,22,0.3)',
+                          borderRadius: 6, color: '#F97316', cursor: 'pointer',
+                        }}
+                      >
+                        Retry
+                      </button>
+                    </div>
+                  )}
+                  {(qc.status === 'connecting' || qc.status === 'streaming' || qc.status === 'completed') && (
+                    <div style={{
+                      marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--border)',
+                      fontSize: 10, color: '#F97316', display: 'flex', alignItems: 'center', gap: 16,
+                    }}>
+                      <span>{qc.tokensUsed} tokens</span>
+                      <span>{fmtDuration(qc.status === 'completed' ? qc.durationMs : qcElapsed)}</span>
+                      <span>{qc.status === 'completed' && qc.model ? qc.model : 'llama3.1:8b'}</span>
+                      {qc.response && (
+                        <button
+                          onClick={() => {
+                            navigator.clipboard.writeText(qc.response);
+                            setQcCopied(true);
+                            setTimeout(() => setQcCopied(false), 2000);
+                          }}
+                          title="Copy response"
+                          style={{
+                            marginLeft: 'auto',
+                            background: qcCopied ? 'rgba(16,185,129,0.12)' : 'rgba(249,115,22,0.1)',
+                            border: `1px solid ${qcCopied ? 'rgba(16,185,129,0.4)' : 'rgba(249,115,22,0.3)'}`,
+                            borderRadius: 5,
+                            padding: '3px 8px', cursor: 'pointer',
+                            color: qcCopied ? '#10b981' : '#F97316',
+                            display: 'flex', alignItems: 'center', gap: 4, fontSize: 10,
+                            transition: 'all 0.2s ease',
+                          }}
+                        >
+                          {qcCopied ? <><Check size={10} /> Copied</> : <><Copy size={10} /> Copy</>}
+                        </button>
+                      )}
+                    </div>
+                  )}
+                  <div ref={responseEndRef} />
+                </div>
+              )}
+
+              {/* Input area */}
+              <div style={{
+                padding: '14px 22px', borderTop: '1px solid var(--border)',
+                display: 'flex', gap: 10, alignItems: 'flex-end',
+              }}>
+                <textarea
+                  value={qcPrompt}
+                  onChange={e => setQcPrompt(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleQuickCheckSubmit(); } }}
+                  placeholder="Ask anything about your platform..."
+                  rows={2}
+                  disabled={qc.status === 'streaming' || qc.status === 'connecting'}
+                  style={{
+                    flex: 1, resize: 'none', border: '1px solid var(--border-md)',
+                    borderRadius: 8, padding: '10px 14px', fontSize: 13,
+                    background: 'var(--bg)', color: 'var(--text-1)',
+                    outline: 'none', lineHeight: 1.5,
+                  }}
+                />
+                <button
+                  onClick={handleQuickCheckSubmit}
+                  disabled={!qcPrompt.trim() || qc.status === 'streaming' || qc.status === 'connecting'}
+                  style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    width: 40, height: 40, borderRadius: 8, border: 'none',
+                    background: qcPrompt.trim() ? '#F97316' : 'var(--bg-elevated)',
+                    color: qcPrompt.trim() ? '#fff' : 'var(--text-4)',
+                    cursor: qcPrompt.trim() ? 'pointer' : 'default',
+                    transition: 'all 0.15s', flexShrink: 0,
+                  }}
+                >
+                  {qc.status === 'streaming' || qc.status === 'connecting'
+                    ? <Loader2 size={16} style={{ animation: 'spin 1s linear infinite' }} />
+                    : <Send size={16} />
+                  }
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

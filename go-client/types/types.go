@@ -848,3 +848,27 @@ type UpdateExpertFileRequest struct {
 type RestoreVersionRequest struct {
 	Version string `json:"version"`
 }
+
+/* ── Quick Check Types ────────────────────────────────────────────────── */
+
+// QuickCheckRequest is sent to the engine to start a platform-aware Q&A.
+type QuickCheckRequest struct {
+	CheckID string `json:"checkId"`
+	Prompt  string `json:"prompt"`
+}
+
+// QuickCheckResult is the persisted result of a quick check.
+type QuickCheckResult struct {
+	ID             string    `json:"id"`
+	Prompt         string    `json:"prompt"`
+	Response       string    `json:"response"`
+	Status         string    `json:"status"`
+	Model          string    `json:"model"`
+	Engine         string    `json:"engine"`
+	TokensUsed     int       `json:"tokensUsed"`
+	DurationMs     int       `json:"durationMs"`
+	ContextSources []string  `json:"contextSources"`
+	ErrorMessage   string    `json:"errorMessage,omitempty"`
+	CreatedAt      time.Time `json:"createdAt"`
+	CompletedAt    time.Time `json:"completedAt,omitempty"`
+}

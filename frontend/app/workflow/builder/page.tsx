@@ -19,6 +19,8 @@ import {
   LayoutGrid, Flame, Twitter, Linkedin, Facebook, Instagram,
   Youtube, Filter, FileOutput,
 } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { fadeUp, fadeDown, fadeRight, stagger, hoverLift, tapScale, buttonHover, modalOverlay, modalContent, emptyState } from '@/lib/motion';
 import { ROLE_META, INTEGRATION_CATALOG, MARKETPLACE_PLUGINS } from '@/lib/constants';
 import type { Expert, ExpertRole, ModelSource, LocalModelConfig, StepIntegration, ActionConfig } from '@/lib/types';
 // useWorkflowWS removed — workflows are now run from the listing page
@@ -231,14 +233,14 @@ function ExpertSelectorModal({
   const roles: ExpertRole[] = [...new Set(allExperts.map(e => e.role as ExpertRole))];
 
   return (
-    <div style={{
+    <motion.div {...modalOverlay} style={{
       position: 'fixed', inset: 0,
       background: 'rgba(7,7,26,0.85)',
       zIndex: 200,
       display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
       paddingTop: 80,
     }}>
-      <div className="animate-in" style={{
+      <motion.div {...modalContent} style={{
         width: 560, maxHeight: 'calc(100vh - 140px)',
         background: 'var(--bg-card)', border: '1px solid var(--border-md)',
         borderRadius: 8, display: 'flex', flexDirection: 'column', overflow: 'hidden',
@@ -337,8 +339,8 @@ function ExpertSelectorModal({
             );
           })}
         </div>
-      </div>
-    </div>
+      </motion.div>
+    </motion.div>
   );
 }
 
@@ -395,14 +397,14 @@ function IntegrationSelectorModal({
   });
 
   return (
-    <div style={{
+    <motion.div {...modalOverlay} style={{
       position: 'fixed', inset: 0,
       background: 'rgba(7,7,26,0.85)',
       zIndex: 200,
       display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
       paddingTop: 80,
     }}>
-      <div className="animate-in" style={{
+      <motion.div {...modalContent} style={{
         width: 500, maxHeight: 'calc(100vh - 140px)',
         background: 'var(--bg-card)', border: '1px solid var(--border-md)',
         borderRadius: 8, display: 'flex', flexDirection: 'column', overflow: 'hidden',
@@ -608,8 +610,8 @@ function IntegrationSelectorModal({
             </>
           )}
         </div>
-      </div>
-    </div>
+      </motion.div>
+    </motion.div>
   );
 }
 
@@ -1470,36 +1472,38 @@ function StepCard({ step, index, onRemove, onUpdate, onSwap, liveAgent, llamacpp
       </div>
 
       {/* Markdown Preview Dialog */}
-      {showPreview && (
-        <div style={{
-          position: 'fixed', inset: 0, background: 'rgba(7,7,26,0.85)',
-          zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center',
-        }} onClick={() => setShowPreview(false)}>
-          <div className="animate-in" onClick={e => e.stopPropagation()} style={{
-            width: 600, maxHeight: '80vh', background: 'var(--bg-card)',
-            border: '1px solid var(--border-md)', borderRadius: 8,
-            display: 'flex', flexDirection: 'column', overflow: 'hidden',
-          }}>
-            <div style={{
-              padding: '14px 18px', borderBottom: '1px solid var(--border)',
-              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+      <AnimatePresence>
+        {showPreview && (
+          <motion.div {...modalOverlay} style={{
+            position: 'fixed', inset: 0, background: 'rgba(7,7,26,0.85)',
+            zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }} onClick={() => setShowPreview(false)}>
+            <motion.div {...modalContent} onClick={e => e.stopPropagation()} style={{
+              width: 600, maxHeight: '80vh', background: 'var(--bg-card)',
+              border: '1px solid var(--border-md)', borderRadius: 8,
+              display: 'flex', flexDirection: 'column', overflow: 'hidden',
             }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <Eye size={14} color="var(--text-3)" />
-                <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-1)' }}>Markdown Preview</span>
+              <div style={{
+                padding: '14px 18px', borderBottom: '1px solid var(--border)',
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <Eye size={14} color="var(--text-3)" />
+                  <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-1)' }}>Markdown Preview</span>
+                </div>
+                <button className="btn btn-ghost btn-icon" onClick={() => setShowPreview(false)}
+                  style={{ color: 'var(--text-3)' }}><X size={16} /></button>
               </div>
-              <button className="btn btn-ghost btn-icon" onClick={() => setShowPreview(false)}
-                style={{ color: 'var(--text-3)' }}><X size={16} /></button>
-            </div>
-            <div style={{
-              padding: 20, flex: 1, overflowY: 'auto',
-              fontSize: 13, color: 'var(--text-1)', lineHeight: 1.7,
-            }}>
-              <MarkdownPreview text={step.taskDescription || '*No content to preview*'} />
-            </div>
-          </div>
-        </div>
-      )}
+              <div style={{
+                padding: 20, flex: 1, overflowY: 'auto',
+                fontSize: 13, color: 'var(--text-1)', lineHeight: 1.7,
+              }}>
+                <MarkdownPreview text={step.taskDescription || '*No content to preview*'} />
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* System instructions */}
       <div style={{ marginBottom: 8 }}>
@@ -1728,21 +1732,31 @@ function StepCard({ step, index, onRemove, onUpdate, onSwap, liveAgent, llamacpp
         <span>Advanced config</span>
         {step.collapsed ? <ChevronDown size={12} /> : <ChevronUp size={12} />}
       </button>
-      {!step.collapsed && (
-        <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
-          <div>
-            <label style={LABEL}>Max Tokens</label>
-            <input type="number" className="input" style={{ marginTop: 4, fontSize: 12 }}
-              placeholder="4096" value={step.maxTokens ?? ''}
-              onChange={e => onUpdate({ maxTokens: Number(e.target.value) || undefined })} />
-          </div>
-          <div>
-            <label style={LABEL}>Temperature ({(step.temperature ?? 0.7).toFixed(1)})</label>
-            <input type="range" min={0} max={2} step={0.1} style={{ marginTop: 4, width: '100%' }}
-              value={step.temperature ?? 0.7} onChange={e => onUpdate({ temperature: Number(e.target.value) })} />
-          </div>
-        </div>
-      )}
+      <AnimatePresence>
+        {!step.collapsed && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.25, ease: 'easeOut' }}
+            style={{ overflow: 'hidden' }}
+          >
+            <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <div>
+                <label style={LABEL}>Max Tokens</label>
+                <input type="number" className="input" style={{ marginTop: 4, fontSize: 12 }}
+                  placeholder="4096" value={step.maxTokens ?? ''}
+                  onChange={e => onUpdate({ maxTokens: Number(e.target.value) || undefined })} />
+              </div>
+              <div>
+                <label style={LABEL}>Temperature ({(step.temperature ?? 0.7).toFixed(1)})</label>
+                <input type="range" min={0} max={2} step={0.1} style={{ marginTop: 4, width: '100%' }}
+                  value={step.temperature ?? 0.7} onChange={e => onUpdate({ temperature: Number(e.target.value) })} />
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Model & Provider Selection — editable */}
       <ModelSelector
@@ -1905,8 +1919,15 @@ function AdvancedOptionsPanel({
         {expanded ? <ChevronUp size={14} color="var(--text-3)" /> : <ChevronDown size={14} color="var(--text-3)" />}
       </button>
 
-      {expanded && (
-        <div style={{ borderTop: '1px solid var(--border)' }}>
+      <AnimatePresence>
+        {expanded && (
+        <motion.div
+          initial={{ height: 0, opacity: 0 }}
+          animate={{ height: 'auto', opacity: 1 }}
+          exit={{ height: 0, opacity: 0 }}
+          transition={{ duration: 0.3, ease: 'easeOut' }}
+          style={{ overflow: 'hidden', borderTop: '1px solid var(--border)' }}
+        >
           {/* Tab bar */}
           <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', padding: '0 20px' }}>
             {tabs.map(tab => (
@@ -2150,8 +2171,9 @@ function AdvancedOptionsPanel({
               </div>
             )}
           </div>
-        </div>
-      )}
+        </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -2546,11 +2568,13 @@ function WorkflowBuilderInner() {
 
   return (
     <div style={{ padding: 24, maxWidth: 1400, margin: '0 auto' }}>
-      {showSelector && (
-        <ExpertSelectorModal onSelect={addExpert}
-          onClose={() => { setShowSelector(false); setSwapIndex(null); }}
-          allExperts={dbExperts} />
-      )}
+      <AnimatePresence>
+        {showSelector && (
+          <ExpertSelectorModal onSelect={addExpert}
+            onClose={() => { setShowSelector(false); setSwapIndex(null); }}
+            allExperts={dbExperts} />
+        )}
+      </AnimatePresence>
 
       {/* Draft restore banner */}
       {showDraftRestore && (
@@ -2618,14 +2642,14 @@ function WorkflowBuilderInner() {
       )}
 
       {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
+      <motion.div variants={fadeDown} initial="hidden" animate="show" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
         <div>
           <h1 style={{ fontSize: 20, fontWeight: 700, color: 'var(--text-1)', margin: 0 }}>Workflow Builder</h1>
           <p style={{ fontSize: 13, color: 'var(--text-3)', margin: '4px 0 0' }}>
             Chain specialized agents to solve complex tasks — local or cloud models
           </p>
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <motion.div variants={fadeRight} initial="hidden" animate="show" transition={{ delay: 0.15 }} style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-secondary btn-sm" onClick={() => window.location.href = '/workflow/templates'}><FileText size={13} /> Templates</button>
           <button className="btn btn-secondary btn-sm" disabled={saving} onClick={handleSave}>
             {saving
@@ -2634,8 +2658,8 @@ function WorkflowBuilderInner() {
               ? <><CheckCircle2 size={13} color="#059669" /> Saved</>
               : <><Save size={13} /> Save</>}
           </button>
-        </div>
-      </div>
+        </motion.div>
+      </motion.div>
 
       {/* Workflow Name (MANDATORY) */}
       <div className="card" style={{ padding: 20, marginBottom: 16 }}>
@@ -2715,36 +2739,38 @@ function WorkflowBuilderInner() {
               </button>
             </div>
           )}
-          {showGoalPreview && (
-            <div style={{
-              position: 'fixed', inset: 0, background: 'rgba(7,7,26,0.85)',
-              zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center',
-            }} onClick={() => setShowGoalPreview(false)}>
-              <div className="animate-in" onClick={e => e.stopPropagation()} style={{
-                width: 700, maxHeight: '80vh', background: 'var(--bg-card)',
-                border: '1px solid var(--border-md)', borderRadius: 8,
-                display: 'flex', flexDirection: 'column', overflow: 'hidden',
-              }}>
-                <div style={{
-                  padding: '14px 18px', borderBottom: '1px solid var(--border)',
-                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          <AnimatePresence>
+            {showGoalPreview && (
+              <motion.div {...modalOverlay} style={{
+                position: 'fixed', inset: 0, background: 'rgba(7,7,26,0.85)',
+                zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center',
+              }} onClick={() => setShowGoalPreview(false)}>
+                <motion.div {...modalContent} onClick={e => e.stopPropagation()} style={{
+                  width: 700, maxHeight: '80vh', background: 'var(--bg-card)',
+                  border: '1px solid var(--border-md)', borderRadius: 8,
+                  display: 'flex', flexDirection: 'column', overflow: 'hidden',
                 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <Eye size={14} color="var(--text-3)" />
-                    <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-1)' }}>Goal Preview</span>
+                  <div style={{
+                    padding: '14px 18px', borderBottom: '1px solid var(--border)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <Eye size={14} color="var(--text-3)" />
+                      <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-1)' }}>Goal Preview</span>
+                    </div>
+                    <button className="btn btn-ghost btn-icon" onClick={() => setShowGoalPreview(false)}
+                      style={{ color: 'var(--text-3)' }}><X size={16} /></button>
                   </div>
-                  <button className="btn btn-ghost btn-icon" onClick={() => setShowGoalPreview(false)}
-                    style={{ color: 'var(--text-3)' }}><X size={16} /></button>
-                </div>
-                <div style={{
-                  padding: 24, flex: 1, overflowY: 'auto',
-                  fontSize: 14, color: 'var(--text-1)', lineHeight: 1.7,
-                }}>
-                  <MarkdownPreview text={goalContent || '*No content to preview*'} />
-                </div>
-              </div>
-            </div>
-          )}
+                  <div style={{
+                    padding: 24, flex: 1, overflowY: 'auto',
+                    fontSize: 14, color: 'var(--text-1)', lineHeight: 1.7,
+                  }}>
+                    <MarkdownPreview text={goalContent || '*No content to preview*'} />
+                  </div>
+                </motion.div>
+              </motion.div>
+            )}
+          </AnimatePresence>
           {saveErrors.goal && (
             <div style={{ fontSize: 11, color: 'var(--error)', marginTop: 8, display: 'flex', alignItems: 'center', gap: 4 }}>
               <AlertCircle size={11} /> {saveErrors.goal}
@@ -2770,7 +2796,7 @@ function WorkflowBuilderInner() {
 
       {/* Estimation bar */}
       {steps.length > 0 && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 24, padding: '12px 20px',
+        <motion.div variants={fadeUp} initial="hidden" animate="show" style={{ display: 'flex', alignItems: 'center', gap: 24, padding: '12px 20px',
           background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 6, marginBottom: 16 }}>
           <span style={SECTION_TITLE}>Estimation</span>
           <div style={{ display: 'flex', gap: 24, flex: 1 }}>
@@ -2788,7 +2814,7 @@ function WorkflowBuilderInner() {
               </div>
             ))}
           </div>
-        </div>
+        </motion.div>
       )}
 
       {/* Workflow canvas */}
@@ -2803,13 +2829,13 @@ function WorkflowBuilderInner() {
                 <RotateCcw size={12} /> Reset
               </button>
             )}
-            <button className="btn btn-secondary btn-sm" onClick={() => setShowSelector(true)}>
+            <motion.button {...tapScale} className="btn btn-secondary btn-sm" onClick={() => setShowSelector(true)}>
               <Plus size={12} /> Add Expert
-            </button>
-            <button className="btn btn-secondary btn-sm" onClick={addAction}
+            </motion.button>
+            <motion.button {...tapScale} className="btn btn-secondary btn-sm" onClick={addAction}
               style={{ borderColor: 'var(--accent-green, #10b981)' }}>
               <FileOutput size={12} /> Add Action
-            </button>
+            </motion.button>
           </div>
         </div>
         {saveErrors.steps && (
@@ -2825,7 +2851,7 @@ function WorkflowBuilderInner() {
           </div>
         )}
         {steps.length === 0 ? (
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+          <motion.div {...emptyState} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
             padding: '60px 20px', border: '1px dashed var(--border-md)', borderRadius: 6, textAlign: 'center', gap: 16 }}>
             <div style={{ width: 56, height: 56, borderRadius: 12, background: 'var(--bg-elevated)',
               border: '1px solid var(--border-md)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -2838,30 +2864,42 @@ function WorkflowBuilderInner() {
                 then chain them here. Each expert gets system instructions, files, images, and voice commands.
               </div>
             </div>
-            <button className="btn btn-primary" onClick={() => setShowSelector(true)}>
+            <motion.button {...buttonHover} className="btn btn-primary" onClick={() => setShowSelector(true)}>
               <Users size={14} /> Add Expert Step
-            </button>
-            <button className="btn btn-secondary" onClick={addAction}
+            </motion.button>
+            <motion.button {...tapScale} className="btn btn-secondary" onClick={addAction}
               style={{ borderColor: 'var(--accent-green, #10b981)', marginTop: 8 }}>
               <FileOutput size={14} /> Add Action Step
-            </button>
-          </div>
+            </motion.button>
+          </motion.div>
         ) : (
           <div style={{ overflowX: 'auto', paddingBottom: 8 }}>
             <div style={{ display: 'flex', alignItems: 'flex-start', gap: 0, minWidth: 'max-content' }}>
-              {steps.map((step, idx) => (
-                <div key={step.id} style={{ display: 'flex', alignItems: 'flex-start' }}>
-                  <StepCard step={step} index={idx} onRemove={() => removeStep(step.id)}
-                    onUpdate={updates => updateStep(step.id, updates)} onSwap={() => openSwap(idx)}
-                    llamacppAvailable={llamacppAvailable} />
-                  {idx < steps.length - 1 && (
-                    <div className="step-connector" style={{ alignSelf: 'center', paddingTop: 0 }}><ArrowRight size={16} /></div>
-                  )}
-                </div>
-              ))}
+              <AnimatePresence mode="popLayout">
+                {steps.map((step, idx) => (
+                  <motion.div
+                    key={step.id}
+                    variants={fadeUp}
+                    initial="hidden"
+                    animate="show"
+                    exit={{ opacity: 0, height: 0, marginBottom: 0, transition: { duration: 0.25 } }}
+                    layout
+                    {...hoverLift}
+                    style={{ display: 'flex', alignItems: 'flex-start' }}
+                  >
+                    <StepCard step={step} index={idx} onRemove={() => removeStep(step.id)}
+                      onUpdate={updates => updateStep(step.id, updates)} onSwap={() => openSwap(idx)}
+                      llamacppAvailable={llamacppAvailable} />
+                    {idx < steps.length - 1 && (
+                      <div className="step-connector" style={{ alignSelf: 'center', paddingTop: 0 }}><ArrowRight size={16} /></div>
+                    )}
+                  </motion.div>
+                ))}
+              </AnimatePresence>
               <div style={{ display: 'flex', alignItems: 'center' }}>
                 {steps.length > 0 && <div className="step-connector"><ArrowRight size={16} /></div>}
-                <button
+                <motion.button
+                  {...tapScale}
                   onClick={() => setShowSelector(true)}
                   style={{
                     width: 48, height: 48, borderRadius: 8,
@@ -2876,7 +2914,7 @@ function WorkflowBuilderInner() {
                   title="Add expert step"
                 >
                   <Plus size={16} />
-                </button>
+                </motion.button>
               </div>
             </div>
           </div>
@@ -2894,14 +2932,14 @@ function WorkflowBuilderInner() {
 
       {/* Templates */}
       {dbWorkflows.length > 0 && (
-        <div className="card" style={{ padding: 20 }}>
+        <motion.div variants={fadeUp} initial="hidden" animate="show" className="card" style={{ padding: 20 }}>
           <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-1)', marginBottom: 14,
             display: 'flex', alignItems: 'center', gap: 8 }}>
             <FileText size={14} color="var(--text-3)" /> Workflow Templates
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 10 }}>
+          <motion.div variants={stagger(0.04)} initial="hidden" animate="show" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 10 }}>
             {dbWorkflows.map((wf: { id: string; name: string; description?: string; estimatedTokens?: number; totalRuns?: number; successfulRuns?: number }) => (
-              <div key={wf.id} className="card-hover" style={{ padding: 14, cursor: 'pointer' }}
+              <motion.div key={wf.id} variants={fadeUp} {...hoverLift} className="card-hover" style={{ padding: 14, cursor: 'pointer' }}
                 onClick={() => { setWorkflowName(wf.name); wfLogger.logInteraction('template.selected', { templateId: wf.id }); }}>
                 <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-1)', marginBottom: 4 }}>{wf.name}</div>
                 <div style={{ fontSize: 12, color: 'var(--text-3)', lineHeight: 1.4, marginBottom: 10 }}>{wf.description}</div>
@@ -2916,10 +2954,10 @@ function WorkflowBuilderInner() {
                     </span>
                   )}
                 </div>
-              </div>
+              </motion.div>
             ))}
-          </div>
-        </div>
+          </motion.div>
+        </motion.div>
       )}
     </div>
   );

@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import uuid
 from datetime import UTC, datetime
-from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -21,7 +19,6 @@ from engine.routers.experts import (
     _expert_runs,
     router,
 )
-
 
 # ── Request model tests ─────────────────────────────────────────────────────
 
@@ -225,7 +222,7 @@ def mock_expert_artifacts():
 
 @pytest.fixture
 def mock_embed():
-    with patch("engine.routers.experts._embed_expert", new_callable=AsyncMock) as mock:
+    with patch("engine.routers.experts._embed_prism", new_callable=AsyncMock) as mock:
         yield mock
 
 
@@ -441,7 +438,7 @@ class TestGetPrompt:
 
 
 class TestEmbedEndpoints:
-    def test_embed_expert(self, client):
+    def test_embed_prism(self, client):
         resp = client.post("/experts/exp-1/embed")
         assert resp.status_code == 200
         data = resp.json()
@@ -479,9 +476,54 @@ class TestAttach:
         assert "error" in data
 
     def test_attach_missing_target(self, client, mock_expert_manager):
-        mock_expert_manager.get.side_effect = lambda eid: (
-            {"id": "exp-1", "name": "Alpha", "_source": "local"} if eid == "exp-1" else None
-        )
+        mock_expert_manager.get.side_effect = lambda eid: {"id": "exp-1", "name": "Alpha", "_source": "local"} if eid == "exp-1" else None
         resp = client.post("/experts/exp-1/attach", json={"targetId": "missing"})
         data = resp.json()
         assert "error" in data
+
+
+class TestEmbedAssets:
+    def test_embed_assets_success(self, client):
+        resp = client.post(
+            "/experts/exp-1/embed-assets",
+            json={"file_texts": ["document about data analysis", "readme for pipeline"]},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["embedded"] is True
+        assert data["fileCount"] == 2
+
+    def test_embed_assets_nonexistent(self, client, mock_expert_manager):
+        mock_expert_manager.get.return_value = None
+        resp = client.post(
+            "/experts/nonexistent/embed-assets",
+            json={"file_texts": ["some text"]},
+        )
+        data = resp.json()
+        assert "error" in data
+
+
+class TestEmbedBulk:
+    def test_embed_bulk_success(self, client):
+        experts_data = [
+            {"id": "mp-1", "name": "Expert A", "description": "A specialist", "role": "researcher"},
+            {"id": "mp-2", "name": "Expert B", "description": "B specialist", "role": "coder"},
+        ]
+        resp = client.post(
+            "/experts/embed/bulk",
+            json={"experts": experts_data, "source": "marketplace"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["embedded"] == 2
+        assert data["errors"] == 0
+        assert data["total"] == 2
+
+    def test_embed_bulk_empty(self, client):
+        resp = client.post(
+            "/experts/embed/bulk",
+            json={"experts": [], "source": "marketplace"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["embedded"] == 0

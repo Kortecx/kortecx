@@ -1,12 +1,13 @@
 """Tests for local inference infrastructure (no server required)."""
 
 import pytest
+
 from engine.services.local_inference import (
     GenerateResult,
     InferenceRouter,
+    LlamaCppService,
     ModelPool,
     OllamaService,
-    LlamaCppService,
 )
 
 

@@ -316,6 +316,75 @@ func TestEventConstants(t *testing.T) {
 	}
 }
 
+// ── Graph Type Tests ─────────────────────────────────
+
+func TestSimilarityEdge_JSON(t *testing.T) {
+	edge := SimilarityEdge{Source: "prism-a", Target: "prism-b", Weight: 0.85}
+	data, err := json.Marshal(edge)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var got SimilarityEdge
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got.Source != "prism-a" || got.Target != "prism-b" || got.Weight != 0.85 {
+		t.Fatalf("unexpected: %+v", got)
+	}
+}
+
+func TestGraphEdgesResponse_JSON(t *testing.T) {
+	resp := GraphEdgesResponse{
+		Edges:   []SimilarityEdge{{Source: "a", Target: "b", Weight: 0.9}},
+		Total:   1,
+		Version: "3-12345",
+	}
+	data, err := json.Marshal(resp)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var got GraphEdgesResponse
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got.Total != 1 || len(got.Edges) != 1 || got.Version != "3-12345" {
+		t.Fatalf("unexpected: %+v", got)
+	}
+}
+
+func TestEmbedAssetsRequest_JSON(t *testing.T) {
+	req := EmbedAssetsRequest{FileTexts: []string{"hello world", "test content"}}
+	data, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var got EmbedAssetsRequest
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(got.FileTexts) != 2 || got.FileTexts[0] != "hello world" {
+		t.Fatalf("unexpected: %+v", got)
+	}
+}
+
+func TestEmbedBulkRequest_JSON(t *testing.T) {
+	req := EmbedBulkRequest{
+		Experts: []map[string]interface{}{{"id": "mp-1", "name": "Test"}},
+		Source:  "marketplace",
+	}
+	data, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var got EmbedBulkRequest
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got.Source != "marketplace" || len(got.Experts) != 1 {
+		t.Fatalf("unexpected: %+v", got)
+	}
+}
+
 // ── Context cancellation ─────────────────────────────
 
 func TestContextCancellation(t *testing.T) {

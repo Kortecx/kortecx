@@ -6,7 +6,7 @@ const ENGINE_URL = process.env.NEXT_PUBLIC_ENGINE_URL || 'http://localhost:8000'
 export async function GET() {
   try {
     const resp = await fetch(
-      `${ENGINE_URL}/api/experts/engine/graph/version`,
+      `${ENGINE_URL}/api/prism/engine/graph/version`,
       { cache: 'no-store' },
     );
     if (!resp.ok) return NextResponse.json({ count: 0, version: '0-0' });

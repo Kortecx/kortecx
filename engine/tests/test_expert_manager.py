@@ -335,7 +335,7 @@ class TestExpertManagerVersionPruning:
 
     def test_prune_no_versions_is_noop(self, temp_experts):
         mgr, _, lp = temp_experts
-        expert = mgr.create_local("No Versions", "coder", {})
+        mgr.create_local("No Versions", "coder", {})
         versions_dir = lp / "no-versions" / ".versions"
         pruned = mgr._prune_versions(versions_dir, "system.md", 5)
         assert pruned == 0

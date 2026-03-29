@@ -508,6 +508,20 @@ export interface StepIntegration {
   config?: Record<string, string>;
 }
 
+/* ── Executables ─────────────────────────────────────── */
+export interface Executable {
+  id: string;
+  name: string;
+  language: string;
+  source: string;
+  size: number;
+  createdAt: string;
+  status: string;
+  output?: string;
+  code?: string;
+  description?: string;
+}
+
 /* ── MCP Servers ─────────────────────────────────────── */
 export type McpServerStatus = 'idle' | 'running' | 'tested' | 'error';
 export type McpServerSource = 'prebuilt' | 'generated' | 'persisted';
@@ -734,6 +748,11 @@ export interface Plan {
   status: 'draft' | 'ready' | 'executing' | 'completed' | 'failed';
   generatedBy: 'user' | 'model';
   modelUsed?: string;
+  version?: number;
+  planType?: 'live' | 'frozen';
+  markdownContent?: string;
+  sourceType?: 'manual' | 'upload' | 'prompt' | 'prism_generated';
+  frozenAt?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -741,7 +760,7 @@ export interface Plan {
 /* ── Unified Run (combines expert + workflow runs) ──── */
 export interface UnifiedRun {
   id: string;
-  type: 'prism' | 'workflow';
+  type: 'prism' | 'workflow' | 'synthesis';
   name: string;
   status: string;
   startedAt?: string;

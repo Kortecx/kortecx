@@ -9,15 +9,12 @@ dependencies = [
     "websockets>=14.0",
     "pydantic>=2.10.0",
     "pydantic-settings>=2.7.0",
-
     # ── Database & Data ───────────────────────────────────
     "duckdb>=1.2.0",
     "psycopg[binary]>=3.2.0",
     "sqlalchemy>=2.0.0",
-
     # ── Vector Store ──────────────────────────────────────
     "qdrant-client>=1.13.0",
-
     # ── ML / AI ───────────────────────────────────────────
     "torch>=2.5.0",
     "transformers>=4.48.0",
@@ -26,35 +23,27 @@ dependencies = [
     "peft>=0.14.0",
     "trl>=0.15.0",
     "unsloth>=2025.3.0",
-
     # ── Spark ─────────────────────────────────────────────
     "pyspark>=3.5.0",
-
     # ── Orchestration ─────────────────────────────────────
     "langchain>=0.3.0",
     "langchain-community>=0.3.0",
     "langchain-huggingface>=0.1.0",
-
     # ── HuggingFace Hub ───────────────────────────────────
     "huggingface-hub>=0.28.0",
-
     # ── HTTP Client (for local inference backends) ──────
     "httpx>=0.27.0",
-
     # ── Async PostgreSQL (for Quorum engine) ──────────
     "asyncpg>=0.30.0",
-
     # ── System Metrics ────────────────────────────────
     "psutil>=6.0.0",
-
     # ── File uploads ────────────────────────────────────
     "python-multipart>=0.0.9",
-
     # ── Experiment Tracking ────────────────────────────
     "mlflow>=2.18.0",
-
     # ── PDF Generation (action steps) ────────────────
     "fpdf2>=2.7.0",
+    "sentence-transformers>=3.0.0",
 ]
 
 [project.scripts]

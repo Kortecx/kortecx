@@ -113,10 +113,84 @@ class AgentOrchestrator:
         self._cancellation_events: dict[str, asyncio.Event] = {}
         self._metrics_stop_events: dict[str, asyncio.Event] = {}
 
-    async def execute_workflow(self, request: WorkflowRequest, run_id: str | None = None) -> dict[str, Any]:
-        """Main entry point — creates a run and orchestrates agents."""
+    def _plan_dag_to_steps(self, dag: dict[str, Any]) -> list[StepConfig]:
+        """Convert a plan DAG into a list of StepConfigs with correct connection types.
+
+        Performs topological ordering and groups parallel-capable nodes.
+        """
+        nodes = dag.get("nodes", [])
+        edges = dag.get("edges", [])
+
+        if not nodes:
+            return []
+
+        # Build dependency map: node_id -> list of dependency node_ids
+        deps: dict[str, list[str]] = {n["id"]: [] for n in nodes}
+        for edge in edges:
+            src, tgt = edge.get("source"), edge.get("target")
+            if tgt in deps:
+                deps[tgt].append(src)
+
+        # Topological sort into layers
+        node_map = {n["id"]: n for n in nodes}
+        in_degree = {nid: len(d) for nid, d in deps.items()}
+        queue = [nid for nid in in_degree if in_degree[nid] == 0]
+        layers: list[list[str]] = []
+
+        while queue:
+            layers.append(list(queue))
+            next_queue: list[str] = []
+            for nid in queue:
+                for dep_nid, dep_list in deps.items():
+                    if nid in dep_list:
+                        in_degree[dep_nid] -= 1
+                        if in_degree[dep_nid] == 0:
+                            next_queue.append(dep_nid)
+            queue = next_queue
+
+        # Convert layers to StepConfigs
+        steps: list[StepConfig] = []
+        for layer in layers:
+            conn_type = "parallel" if len(layer) > 1 else "sequential"
+            for nid in layer:
+                node = node_map.get(nid, {})
+                steps.append(
+                    StepConfig(
+                        step_id=nid,
+                        expert_id=node.get("prismId") or node.get("expertId"),
+                        task_description=node.get("description", ""),
+                        model_source="local",
+                        local_model=None,
+                        temperature=0.7,
+                        max_tokens=4096,
+                        connection_type=conn_type,
+                        step_name=node.get("label", nid),
+                        system_instructions=node.get("systemInstructions", ""),
+                    )
+                )
+
+        return steps
+
+    async def execute_workflow(self, request: WorkflowRequest, run_id: str | None = None, plan: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Main entry point — creates a run and orchestrates agents.
+
+        If a plan DAG is provided, it overrides request.steps with the DAG-derived step order.
+        """
         run_id = run_id or f"run-{uuid.uuid4().hex[:12]}"
         channel = f"workflow.{run_id}"
+
+        # If a plan DAG is provided, convert it to steps and override request
+        if plan and plan.get("nodes"):
+            plan_steps = self._plan_dag_to_steps(plan)
+            if plan_steps:
+                logger.info("Using plan DAG with %d steps for run %s", len(plan_steps), run_id)
+                request = WorkflowRequest(
+                    workflow_id=request.workflow_id,
+                    name=request.name,
+                    goal_file_url=request.goal_file_url,
+                    input_file_urls=request.input_file_urls,
+                    steps=plan_steps,
+                )
 
         shared = SharedMemory(run_id=run_id)
         self._shared_memory[run_id] = shared

@@ -7,15 +7,46 @@ package quorum
 
 // SubmitRequest describes a new quorum run to be executed.
 type SubmitRequest struct {
-	Project     string  `json:"project"`
-	Task        string  `json:"task"`
-	Model       string  `json:"model"`
-	Backend     string  `json:"backend"`
-	Workers     int     `json:"workers"`
-	Prompt      string  `json:"prompt,omitempty"`
-	Temperature float64 `json:"temperature,omitempty"`
-	MaxTokens   int     `json:"max_tokens,omitempty"`
-	Retries     int     `json:"retries,omitempty"`
+	Project     string   `json:"project"`
+	Task        string   `json:"task"`
+	Model       string   `json:"model"`
+	Backend     string   `json:"backend"`
+	Workers     int      `json:"workers"`
+	Prompt      string   `json:"prompt,omitempty"`
+	Temperature float64  `json:"temperature,omitempty"`
+	MaxTokens   int      `json:"max_tokens,omitempty"`
+	Retries     int      `json:"retries,omitempty"`
+	Plan        *PlanDAG `json:"plan,omitempty"`
+}
+
+// PlanDAG represents an execution plan DAG with nodes and edges.
+type PlanDAG struct {
+	Nodes []PlanNode `json:"nodes"`
+	Edges []PlanEdge `json:"edges"`
+}
+
+// PlanNode is a single node in the execution plan DAG.
+type PlanNode struct {
+	ID             string   `json:"id"`
+	PrismID        string   `json:"prismId,omitempty"`
+	Label          string   `json:"label"`
+	Description    string   `json:"description,omitempty"`
+	ConnectionType string   `json:"connectionType,omitempty"` // "sequential" | "parallel"
+	Position       Position `json:"position,omitempty"`
+}
+
+// PlanEdge represents a dependency edge between plan nodes.
+type PlanEdge struct {
+	ID       string `json:"id"`
+	Source   string `json:"source"`
+	Target   string `json:"target"`
+	Animated bool   `json:"animated,omitempty"`
+}
+
+// Position represents x/y coordinates for graph layout.
+type Position struct {
+	X float64 `json:"x"`
+	Y float64 `json:"y"`
 }
 
 // RunID is a thin wrapper used to reference a single run by its identifier.
@@ -194,6 +225,7 @@ type ExpertRunRequest struct {
 	GoalFileURL   string             `json:"goalFileUrl"`
 	InputFileURLs []string           `json:"inputFileUrls,omitempty"`
 	Steps         []ExpertStepConfig `json:"steps"`
+	Plan          *PlanDAG           `json:"plan,omitempty"`
 }
 
 // ExpertStepConfig configures a single expert step in a workflow.
@@ -202,7 +234,7 @@ type ExpertStepConfig struct {
 	ExpertID           string            `json:"expertId,omitempty"`
 	TaskDescription    string            `json:"taskDescription"`
 	SystemInstructions string            `json:"systemInstructions,omitempty"`
-	ModelSource        string            `json:"modelSource"`    // "local" | "provider"
+	ModelSource        string            `json:"modelSource"` // "local" | "provider"
 	LocalModel         *LocalModelConfig `json:"localModel,omitempty"`
 	Temperature        float64           `json:"temperature,omitempty"`
 	MaxTokens          int               `json:"maxTokens,omitempty"`
@@ -212,7 +244,7 @@ type ExpertStepConfig struct {
 
 // LocalModelConfig specifies local inference backend configuration.
 type LocalModelConfig struct {
-	Engine  string `json:"engine"`  // "ollama" | "llamacpp"
+	Engine  string `json:"engine"` // "ollama" | "llamacpp"
 	Model   string `json:"model"`
 	BaseURL string `json:"baseUrl,omitempty"`
 }
@@ -220,7 +252,7 @@ type LocalModelConfig struct {
 // StepIntegration attaches an integration or plugin to a workflow step.
 type StepIntegration struct {
 	ID          string            `json:"id"`
-	Type        string            `json:"type"`        // "integration" | "plugin"
+	Type        string            `json:"type"` // "integration" | "plugin"
 	ReferenceID string            `json:"referenceId"`
 	Name        string            `json:"name"`
 	Icon        string            `json:"icon,omitempty"`
@@ -291,4 +323,32 @@ type AuditOperation struct {
 	Error      string         `json:"error,omitempty"`
 	Metadata   map[string]any `json:"metadata,omitempty"`
 	CreatedAt  string         `json:"created_at"`
+}
+
+// ── Graph ──────────────────────────────────────────
+
+// SimilarityEdge represents a weighted connection between two PRISMs
+// in the similarity graph.
+type SimilarityEdge struct {
+	Source string  `json:"source"`
+	Target string  `json:"target"`
+	Weight float64 `json:"weight"`
+}
+
+// GraphEdgesResponse is returned by the PRISM graph edges endpoint.
+type GraphEdgesResponse struct {
+	Edges   []SimilarityEdge `json:"edges"`
+	Total   int              `json:"total"`
+	Version string           `json:"version,omitempty"`
+}
+
+// EmbedAssetsRequest triggers re-embedding of a PRISM with file content.
+type EmbedAssetsRequest struct {
+	FileTexts []string `json:"file_texts"`
+}
+
+// EmbedBulkRequest sends a batch of expert definitions for embedding.
+type EmbedBulkRequest struct {
+	Experts []map[string]interface{} `json:"experts"`
+	Source  string                   `json:"source"`
 }

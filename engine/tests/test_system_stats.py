@@ -1,7 +1,8 @@
 """Tests for system stats service."""
 
 import platform
-from engine.services.system_stats import get_system_stats, get_process_stats
+
+from engine.services.system_stats import get_process_stats, get_system_stats
 
 
 class TestSystemStats:

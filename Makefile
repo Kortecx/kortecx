@@ -1,4 +1,4 @@
-.PHONY: start stop frontend engine docker-up docker-down db-push db-seed install clean backup restore check-persistence
+.PHONY: start stop frontend engine docker-up docker-down db-push db-seed install clean clean-slate backup restore check-persistence
 
 # ── Full stack ────────────────────────────────────────────────────────────────
 start:
@@ -75,3 +75,7 @@ check-persistence:
 # ── Clean ────────────────────────────────────────────────────────────────────
 clean:
 	rm -rf frontend/.next frontend/node_modules engine/.venv
+
+clean-slate:
+	@echo "=== CLEAN SLATE: Wipe ALL user data (schema + marketplace preserved) ==="
+	bash scripts/clean-slate.sh

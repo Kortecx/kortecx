@@ -13,7 +13,7 @@ export async function GET(req: NextRequest) {
 
   try {
     const res = await fetch(
-      `${ENGINE_URL}/api/experts/engine/${expertId}/versions/${encodeURIComponent(filename)}`,
+      `${ENGINE_URL}/api/prism/engine/${expertId}/versions/${encodeURIComponent(filename)}`,
     );
     const data = await res.json();
     return NextResponse.json(data);
@@ -33,7 +33,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'expertId and version required' }, { status: 400 });
     }
 
-    const res = await fetch(`${ENGINE_URL}/api/experts/engine/${expertId}/restore`, {
+    const res = await fetch(`${ENGINE_URL}/api/prism/engine/${expertId}/restore`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ version }),

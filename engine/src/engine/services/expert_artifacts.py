@@ -14,7 +14,7 @@ from typing import Any
 
 logger = logging.getLogger("engine.expert_artifacts")
 
-EXPERTS_ROOT = Path(__file__).resolve().parents[3] / "experts" / "local"
+EXPERTS_ROOT = Path(__file__).resolve().parents[3] / "PRISM" / "local"
 
 # Extension to language mapping for script extraction
 _EXT_MAP: dict[str, str] = {
