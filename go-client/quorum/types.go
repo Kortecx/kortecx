@@ -28,7 +28,7 @@ type PlanDAG struct {
 // PlanNode is a single node in the execution plan DAG.
 type PlanNode struct {
 	ID             string   `json:"id"`
-	PrismID        string   `json:"prismId,omitempty"`
+	AgentID        string   `json:"agentId,omitempty"`
 	Label          string   `json:"label"`
 	Description    string   `json:"description,omitempty"`
 	ConnectionType string   `json:"connectionType,omitempty"` // "sequential" | "parallel"
@@ -327,7 +327,7 @@ type AuditOperation struct {
 
 // ── Graph ──────────────────────────────────────────
 
-// SimilarityEdge represents a weighted connection between two PRISMs
+// SimilarityEdge represents a weighted connection between two agents
 // in the similarity graph.
 type SimilarityEdge struct {
 	Source string  `json:"source"`
@@ -335,14 +335,14 @@ type SimilarityEdge struct {
 	Weight float64 `json:"weight"`
 }
 
-// GraphEdgesResponse is returned by the PRISM graph edges endpoint.
+// GraphEdgesResponse is returned by the agent graph edges endpoint.
 type GraphEdgesResponse struct {
 	Edges   []SimilarityEdge `json:"edges"`
 	Total   int              `json:"total"`
 	Version string           `json:"version,omitempty"`
 }
 
-// EmbedAssetsRequest triggers re-embedding of a PRISM with file content.
+// EmbedAssetsRequest triggers re-embedding of an agent with file content.
 type EmbedAssetsRequest struct {
 	FileTexts []string `json:"file_texts"`
 }

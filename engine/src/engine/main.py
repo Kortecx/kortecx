@@ -63,7 +63,7 @@ async def lifespan(app: FastAPI):
     logger.info("Loaded %d experts", len(expert_manager._cache))
 
     # Auto-embed all loaded experts into Qdrant for graph similarity
-    from engine.routers.experts import _embed_prism
+    from engine.routers.experts import _embed_agent
     from engine.services.hf import hf_service
 
     if hf_service.has_token:
@@ -75,7 +75,7 @@ async def lifespan(app: FastAPI):
     for exp in expert_manager._cache.values():
         src = exp.get("_source", "local")
         try:
-            await _embed_prism(exp, source=src)
+            await _embed_agent(exp, source=src)
             embedded_count += 1
         except Exception:
             logger.warning("Failed to embed expert %s on startup", exp.get("id"))
@@ -131,7 +131,7 @@ app.include_router(orchestrator.router, prefix="/api/orchestrator", tags=["orche
 app.include_router(workflow_logs.router, prefix="/api/logs", tags=["logs"])
 app.include_router(mlflow_router, prefix="/api/mlflow", tags=["mlflow"])
 app.include_router(mcp.router, prefix="/api/mcp", tags=["mcp"])
-app.include_router(experts.router, prefix="/api/prism/engine", tags=["experts"])
+app.include_router(experts.router, prefix="/api/agents/engine", tags=["experts"])
 app.include_router(metrics.router, prefix="/api/metrics", tags=["metrics"])
 app.include_router(lineage.router, prefix="/api/lineage", tags=["lineage"])
 app.include_router(providers.router, prefix="/api/providers", tags=["providers"])

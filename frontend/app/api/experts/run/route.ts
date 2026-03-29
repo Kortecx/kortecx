@@ -47,7 +47,7 @@ export async function POST(req: NextRequest) {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 15_000);
 
-      const engineRes = await fetch(`${ENGINE_URL}/api/prism/engine/${expertId}/execute`, {
+      const engineRes = await fetch(`${ENGINE_URL}/api/agents/engine/${expertId}/execute`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         signal: controller.signal,

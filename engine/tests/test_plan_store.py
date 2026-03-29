@@ -24,8 +24,8 @@ def clean_plans(tmp_path, monkeypatch):
 def sample_dag():
     return {
         "nodes": [
-            {"id": "n1", "label": "Research", "prismId": "researcher"},
-            {"id": "n2", "label": "Analyze", "prismId": "analyst"},
+            {"id": "n1", "label": "Research", "agentId": "researcher"},
+            {"id": "n2", "label": "Analyze", "agentId": "analyst"},
         ],
         "edges": [{"id": "e1", "source": "n1", "target": "n2"}],
     }

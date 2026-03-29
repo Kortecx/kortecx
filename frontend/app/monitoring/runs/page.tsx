@@ -25,10 +25,10 @@ const STATUS_CONFIG: Record<string, { color: string; bg: string; icon: React.Ele
 };
 
 type StatusFilter = 'all' | 'running' | 'completed' | 'failed' | 'queued';
-type RunTypeFilter = 'all' | 'prism' | 'workflow' | 'synthesis';
+type RunTypeFilter = 'all' | 'agent' | 'workflow' | 'synthesis';
 
 const TYPE_BADGE: Record<string, { label: string; abbr: string; color: string }> = {
-  prism:     { label: 'PRISM',     abbr: 'PR', color: '#D97706' },
+  agent:     { label: 'Agent',     abbr: 'AG', color: '#D97706' },
   workflow:  { label: 'Workflows', abbr: 'WF', color: '#2563eb' },
   synthesis: { label: 'Synthesis', abbr: 'SY', color: '#0EA5E9' },
 };
@@ -59,8 +59,8 @@ export default function RunsPage() {
     for (const r of (expertRuns as Array<Record<string, unknown>>)) {
       unified.push({
         id: r.id as string,
-        type: 'prism',
-        name: (r.expertName as string) ?? 'PRISM Run',
+        type: 'agent',
+        name: (r.expertName as string) ?? 'Agent Run',
         status: (r.status as string) ?? 'unknown',
         startedAt: r.startedAt as string,
         completedAt: r.completedAt as string,
@@ -163,7 +163,7 @@ export default function RunsPage() {
           <div>
             <h1 style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-1)', margin: 0 }}>Runs</h1>
             <p style={{ fontSize: 12, color: 'var(--text-3)', margin: '3px 0 0' }}>
-              All PRISM, workflow, and data synthesis executions
+              All agent, workflow, and data synthesis executions
             </p>
           </div>
         </div>
@@ -241,7 +241,7 @@ export default function RunsPage() {
         <div style={{ display: 'flex', gap: 2, background: 'var(--bg-surface)', borderRadius: 8, border: '1px solid var(--border)', padding: 2 }}>
           {([
             { key: 'all' as RunTypeFilter, label: 'All' },
-            { key: 'prism' as RunTypeFilter, label: 'PRISM' },
+            { key: 'agent' as RunTypeFilter, label: 'Agent' },
             { key: 'workflow' as RunTypeFilter, label: 'Workflows' },
             { key: 'synthesis' as RunTypeFilter, label: 'Synthesis' },
           ]).map(({ key, label }) => (
@@ -316,7 +316,7 @@ export default function RunsPage() {
           const sc = STATUS_CONFIG[run.status] ?? STATUS_CONFIG.queued;
           const StatusIcon = sc.icon;
           const isExpanded = expandedRun === run.id;
-          const badge = TYPE_BADGE[run.type] ?? TYPE_BADGE.prism;
+          const badge = TYPE_BADGE[run.type] ?? TYPE_BADGE.agent;
 
           return (
             <motion.div key={run.id} {...rowEntrance(index)}>

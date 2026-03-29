@@ -10,7 +10,7 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const res = await fetch(`${ENGINE_URL}/api/prism/engine/${expertId}/files`);
+    const res = await fetch(`${ENGINE_URL}/api/agents/engine/${expertId}/files`);
     const data = await res.json();
     return NextResponse.json(data);
   } catch (err) {
@@ -32,7 +32,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const res = await fetch(`${ENGINE_URL}/api/prism/engine/${expertId}/update`, {
+    const res = await fetch(`${ENGINE_URL}/api/agents/engine/${expertId}/update`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ filename, content }),

@@ -7,13 +7,13 @@
 #
 # What is preserved:
 #   - Database schema & migrations (_kortecx_schema, __drizzle_migrations)
-#   - Marketplace PRISMs (engine/PRISM/marketplace/)
+#   - Marketplace agents (engine/agents/marketplace/)
 #   - All platform code and configuration
 #
 # What is wiped:
 #   - All 33 PostgreSQL tables (28 Drizzle + 5 Quorum)
 #   - Qdrant embeddings collection
-#   - User-created PRISMs, uploads, plans on disk
+#   - User-created agents, uploads, plans on disk
 
 set -euo pipefail
 
@@ -33,9 +33,9 @@ if [ "${1:-}" != "--force" ]; then
   echo "║  This will permanently delete ALL user data:               ║"
   echo "║    - All PostgreSQL rows (33 tables)                       ║"
   echo "║    - All Qdrant embeddings                                 ║"
-  echo "║    - User-created PRISMs, uploads, plans on disk           ║"
+  echo "║    - User-created agents, uploads, plans on disk            ║"
   echo "║                                                            ║"
-  echo "║  Preserved: schema, migrations, marketplace PRISMs         ║"
+  echo "║  Preserved: schema, migrations, marketplace agents          ║"
   echo "║                                                            ║"
   echo "║  A backup will be created before any data is deleted.      ║"
   echo "╚══════════════════════════════════════════════════════════════╝"
@@ -131,12 +131,12 @@ echo ""
 # ── Step 5: Local filesystem ─────────────────────────────────────────────────
 echo "Step 5/5: Cleaning local files..."
 
-# User-created PRISMs (keep marketplace)
-PRISM_LOCAL="$PROJECT_ROOT/engine/PRISM/local"
-if [ -d "$PRISM_LOCAL" ]; then
-  find "$PRISM_LOCAL" -mindepth 1 -maxdepth 1 -type d -exec rm -rf {} +
-  echo '{"version": "1.0.0", "experts": []}' > "$PRISM_LOCAL/_registry.json"
-  echo "  Cleared engine/PRISM/local/ (marketplace preserved)"
+# User-created agents (keep marketplace)
+AGENTS_LOCAL="$PROJECT_ROOT/engine/agents/local"
+if [ -d "$AGENTS_LOCAL" ]; then
+  find "$AGENTS_LOCAL" -mindepth 1 -maxdepth 1 -type d -exec rm -rf {} +
+  echo '{"version": "1.0.0", "experts": []}' > "$AGENTS_LOCAL/_registry.json"
+  echo "  Cleared engine/agents/local/ (marketplace preserved)"
 fi
 
 # Uploads
@@ -159,8 +159,8 @@ echo "════════════════════════�
 echo "  Clean slate complete."
 echo "  - 33 PostgreSQL tables truncated"
 echo "  - Qdrant collection reset"
-echo "  - Local PRISMs, uploads, plans cleared"
-echo "  - Marketplace PRISMs preserved (12 experts)"
+echo "  - Local agents, uploads, plans cleared"
+echo "  - Marketplace agents preserved (12 experts)"
 echo "  - Backup created in ./backups/"
 echo ""
 echo "  Restart the engine to reset in-memory state:"

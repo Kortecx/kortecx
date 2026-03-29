@@ -284,7 +284,7 @@ function PlanDialog({
           description: `Plan version ${nextVersion}`,
           dag,
           markdownContent: markdown,
-          sourceType: tab === 'upload' ? 'upload' : tab === 'prompt' ? 'prompt' : tab === 'generated' ? 'prism_generated' : 'manual',
+          sourceType: tab === 'upload' ? 'upload' : tab === 'prompt' ? 'prompt' : tab === 'generated' ? 'agent_generated' : 'manual',
           version: nextVersion,
           planType: 'live',
           generatedBy: tab === 'generated' || tab === 'prompt' ? 'model' : 'user',
@@ -482,7 +482,7 @@ function PlanDialog({
                   border: 'none', cursor: generating ? 'wait' : 'pointer',
                 }}>
                   {generating ? <Loader2 size={12} style={{ animation: 'spin 1s linear infinite' }} /> : <Zap size={12} />}
-                  {generating ? 'Generating...' : 'Generate from PRISM Graph'}
+                  {generating ? 'Generating...' : 'Generate from Agent Graph'}
                 </button>
                 {dagPreview && dagPreview.nodes.length > 0 && (
                   <div style={{

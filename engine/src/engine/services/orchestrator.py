@@ -157,7 +157,7 @@ class AgentOrchestrator:
                 steps.append(
                     StepConfig(
                         step_id=nid,
-                        expert_id=node.get("prismId") or node.get("expertId"),
+                        expert_id=node.get("agentId") or node.get("expertId"),
                         task_description=node.get("description", ""),
                         model_source="local",
                         local_model=None,

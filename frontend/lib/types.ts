@@ -723,7 +723,7 @@ export type QuorumEventType =
 /* ── Plans & DAG ─────────────────────────────────────── */
 export interface PlanNode {
   id: string;
-  prismId: string;
+  agentId: string;
   label: string;
   position: { x: number; y: number };
   dependsOn?: string[];
@@ -751,7 +751,7 @@ export interface Plan {
   version?: number;
   planType?: 'live' | 'frozen';
   markdownContent?: string;
-  sourceType?: 'manual' | 'upload' | 'prompt' | 'prism_generated';
+  sourceType?: 'manual' | 'upload' | 'prompt' | 'agent_generated';
   frozenAt?: string;
   createdAt: string;
   updatedAt: string;
@@ -760,7 +760,7 @@ export interface Plan {
 /* ── Unified Run (combines expert + workflow runs) ──── */
 export interface UnifiedRun {
   id: string;
-  type: 'prism' | 'workflow' | 'synthesis';
+  type: 'agent' | 'workflow' | 'synthesis';
   name: string;
   status: string;
   startedAt?: string;

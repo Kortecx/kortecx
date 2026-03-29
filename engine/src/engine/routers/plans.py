@@ -50,14 +50,14 @@ class FreezeRequest(BaseModel):
 
 @router.post("/generate")
 async def generate_plan(req: GenerateRequest) -> dict[str, Any]:
-    """Generate a plan DAG from the PRISM graph, optionally guided by a prompt."""
+    """Generate a plan DAG from the agent graph, optionally guided by a prompt."""
     dag = await plan_generator.generate_plan_from_graph(
         workflow_id=req.workflowId,
         prompt=req.prompt if req.prompt else None,
         model=req.model,
         engine=req.engine,
     )
-    return {"dag": dag, "generatedBy": dag.get("generatedBy", "prism_graph")}
+    return {"dag": dag, "generatedBy": dag.get("generatedBy", "agent_graph")}
 
 
 @router.post("/save")

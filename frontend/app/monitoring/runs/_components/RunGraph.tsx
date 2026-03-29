@@ -19,7 +19,7 @@ import '@xyflow/react/dist/style.css';
 import RunGraphNode from './RunGraphNode';
 import type { PlanNode, PlanEdge } from '@/lib/types';
 
-const nodeTypes = { prismNode: RunGraphNode };
+const nodeTypes = { agentNode: RunGraphNode };
 
 interface RunGraphProps {
   planNodes: PlanNode[];
@@ -33,15 +33,15 @@ export default function RunGraph({ planNodes, planEdges, editable = false, onSav
 
   const initialNodes: Node[] = useMemo(() => planNodes.map(n => ({
     id: n.id,
-    type: 'prismNode',
+    type: 'agentNode',
     position: n.position ?? { x: 0, y: 0 },
     data: {
       label: n.label,
-      role: n.prismId?.includes('researcher') ? 'researcher' : 'custom',
+      role: n.agentId?.includes('researcher') ? 'researcher' : 'custom',
       status: n.status ?? 'pending',
       tokensUsed: n.tokensUsed ?? 0,
       durationMs: n.durationMs ?? 0,
-      prismId: n.prismId,
+      agentId: n.agentId,
     },
     draggable: editMode,
   })), [planNodes, editMode]);
@@ -67,7 +67,7 @@ export default function RunGraph({ planNodes, planEdges, editable = false, onSav
     if (!onSave) return;
     const savedNodes: PlanNode[] = nodes.map(n => ({
       id: n.id,
-      prismId: (n.data as Record<string, unknown>).prismId as string ?? '',
+      agentId: (n.data as Record<string, unknown>).agentId as string ?? '',
       label: (n.data as Record<string, unknown>).label as string ?? '',
       position: n.position,
       status: (n.data as Record<string, unknown>).status as PlanNode['status'],

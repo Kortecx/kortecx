@@ -4,7 +4,7 @@ import { useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ChevronDown, ChevronRight, Play, Settings, Trash2, Star, ArrowUpDown, Plus, X, Link2, Download } from 'lucide-react';
 import { rowEntrance, filterTab, emptyState } from '@/lib/motion';
-import type { SimilarityEdge } from './PrismGraph';
+import type { SimilarityEdge } from './AgentGraph';
 
 const ROLE_EMOJI: Record<string, string> = {
   researcher: '🔬', analyst: '📊', writer: '✍️', coder: '💻',
@@ -28,8 +28,8 @@ const STATUS_DOT: Record<string, string> = {
 type SortKey = 'name' | 'role' | 'category' | 'status' | 'totalRuns' | 'rating';
 type GroupKey = 'none' | 'role' | 'category' | 'status';
 
-interface PrismListViewProps {
-  prisms: Array<Record<string, unknown>>;
+interface AgentListViewProps {
+  agents: Array<Record<string, unknown>>;
   edges: SimilarityEdge[];
   onConfigure: (p: Record<string, unknown>) => void;
   onRun: (p: Record<string, unknown>) => void;
@@ -38,7 +38,7 @@ interface PrismListViewProps {
   onCreateEdge: (sourceId: string, targetId: string) => void;
 }
 
-export default function PrismListView({ prisms, edges, onConfigure, onRun, onDelete, onExport, onCreateEdge }: PrismListViewProps) {
+export default function AgentListView({ agents, edges, onConfigure, onRun, onDelete, onExport, onCreateEdge }: AgentListViewProps) {
   const [sortBy, setSortBy] = useState<SortKey>('name');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
   const [groupBy, setGroupBy] = useState<GroupKey>('role');
@@ -46,11 +46,11 @@ export default function PrismListView({ prisms, edges, onConfigure, onRun, onDel
   const [connectingId, setConnectingId] = useState<string | null>(null);
   const [connectInput, setConnectInput] = useState('');
 
-  // Build a map of connections per PRISM
+  // Build a map of connections per Agent
   const connectionsMap = useMemo(() => {
     const map = new Map<string, string[]>();
     const nameMap = new Map<string, string>();
-    for (const p of prisms) nameMap.set(p.id as string, (p.name as string) ?? '');
+    for (const p of agents) nameMap.set(p.id as string, (p.name as string) ?? '');
     for (const e of edges) {
       const sn = nameMap.get(e.source);
       const tn = nameMap.get(e.target);
@@ -64,7 +64,7 @@ export default function PrismListView({ prisms, edges, onConfigure, onRun, onDel
       }
     }
     return map;
-  }, [prisms, edges]);
+  }, [agents, edges]);
 
   const toggleSort = (key: SortKey) => {
     if (sortBy === key) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
@@ -80,7 +80,7 @@ export default function PrismListView({ prisms, edges, onConfigure, onRun, onDel
   };
 
   const handleConnect = (sourceId: string) => {
-    const target = prisms.find(p => (p.name as string)?.toLowerCase() === connectInput.trim().toLowerCase());
+    const target = agents.find(p => (p.name as string)?.toLowerCase() === connectInput.trim().toLowerCase());
     if (!target) return;
     onCreateEdge(sourceId, target.id as string);
     setConnectingId(null);
@@ -88,7 +88,7 @@ export default function PrismListView({ prisms, edges, onConfigure, onRun, onDel
   };
 
   const sorted = useMemo(() => {
-    const list = [...prisms];
+    const list = [...agents];
     list.sort((a, b) => {
       const av = a[sortBy] as string | number ?? '';
       const bv = b[sortBy] as string | number ?? '';
@@ -96,10 +96,10 @@ export default function PrismListView({ prisms, edges, onConfigure, onRun, onDel
       return sortDir === 'asc' ? cmp : -cmp;
     });
     return list;
-  }, [prisms, sortBy, sortDir]);
+  }, [agents, sortBy, sortDir]);
 
   const groups = useMemo(() => {
-    if (groupBy === 'none') return [{ key: 'all', label: 'All PRISMs', items: sorted }];
+    if (groupBy === 'none') return [{ key: 'all', label: 'All Agents', items: sorted }];
     const map = new Map<string, Array<Record<string, unknown>>>();
     for (const p of sorted) {
       const gk = (p[groupBy] as string) ?? 'unknown';
@@ -254,7 +254,7 @@ export default function PrismListView({ prisms, edges, onConfigure, onRun, onDel
                     )}
                     <button
                       onClick={(e) => { e.stopPropagation(); setConnectingId(isConnecting ? null : id); setConnectInput(''); }}
-                      title="Connect to another PRISM"
+                      title="Connect to another Agent"
                       style={{
                         display: 'flex', alignItems: 'center', justifyContent: 'center',
                         width: 20, height: 20, borderRadius: 4, flexShrink: 0,
@@ -323,7 +323,7 @@ export default function PrismListView({ prisms, edges, onConfigure, onRun, onDel
                       <input
                         value={connectInput}
                         onChange={e => setConnectInput(e.target.value)}
-                        placeholder="Type PRISM name to connect…"
+                        placeholder="Type Agent name to connect…"
                         list={`connect-list-${id}`}
                         autoFocus
                         style={{
@@ -334,7 +334,7 @@ export default function PrismListView({ prisms, edges, onConfigure, onRun, onDel
                         onKeyDown={e => { if (e.key === 'Enter') handleConnect(id); if (e.key === 'Escape') { setConnectingId(null); setConnectInput(''); } }}
                       />
                       <datalist id={`connect-list-${id}`}>
-                        {prisms.filter(pp => (pp.id as string) !== id).map(pp => (
+                        {agents.filter(pp => (pp.id as string) !== id).map(pp => (
                           <option key={pp.id as string} value={pp.name as string} />
                         ))}
                       </datalist>
@@ -360,9 +360,9 @@ export default function PrismListView({ prisms, edges, onConfigure, onRun, onDel
         </div>
       ))}
 
-      {prisms.length === 0 && (
+      {agents.length === 0 && (
         <motion.div {...emptyState} style={{ textAlign: 'center', padding: '40px 0', color: 'var(--text-4)', fontSize: 13 }}>
-          No PRISMs to display
+          No Agents to display
         </motion.div>
       )}
     </div>

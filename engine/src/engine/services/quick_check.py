@@ -85,11 +85,11 @@ class QuickCheckService:
             vectors = hf_service.text_embedding("sentence-transformers/all-MiniLM-L6-v2", prompt)
             if vectors:
                 # Search experts
-                prism_results = await qdrant_service.search(
+                agent_results = await qdrant_service.search(
                     vector=vectors[0],
                     limit=5,
                     score_threshold=0.2,
-                    collection="kortecx_prisms",
+                    collection="kortecx_agents",
                 )
                 # Search general embeddings
                 general_results = await qdrant_service.search(
@@ -106,7 +106,7 @@ class QuickCheckService:
                             "description": r["payload"].get("description", ""),
                             "score": round(r["score"], 3),
                         }
-                        for r in prism_results
+                        for r in agent_results
                     ),
                     *(
                         {

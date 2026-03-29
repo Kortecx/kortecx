@@ -114,7 +114,7 @@ temp/
 engine/uploads/
 engine/steps/execution/
 engine/logs/
-engine/PRISM/local/[0-9][0-9][0-9][0-9]-*/
+engine/agents/local/[0-9][0-9][0-9][0-9]-*/
 backups/*.sql.gz
 
 # ═══════════════════════════════════════════════════════════

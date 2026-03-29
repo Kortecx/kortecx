@@ -1,5 +1,5 @@
 """
-Plan generator — builds execution DAGs from PRISM graph using semantic similarity.
+Plan generator — builds execution DAGs from agent graph using semantic similarity.
 
 Generates plans by:
 1. Fetching expert nodes from Qdrant
@@ -19,7 +19,7 @@ from engine.services.qdrant import qdrant_service
 
 logger = logging.getLogger("engine.services.plan_generator")
 
-PRISM_COLLECTION = "kortecx_prisms"
+AGENTS_COLLECTION = "kortecx_agents"
 
 PLAN_SYSTEM_PROMPT = """You are an AI workflow planner for the Kortecx platform.
 Given a list of available AI experts (agents) and a user's goal, select the relevant
@@ -30,15 +30,15 @@ which experts must complete before this one can start. Experts with empty
 dependsOn arrays can run in parallel."""
 
 
-async def fetch_prism_nodes() -> list[dict[str, Any]]:
-    """Fetch all expert nodes from the Qdrant PRISM collection."""
+async def fetch_agent_nodes() -> list[dict[str, Any]]:
+    """Fetch all expert nodes from the Qdrant agents collection."""
     try:
         collections = qdrant_service.client.get_collections().collections
-        if PRISM_COLLECTION not in [c.name for c in collections]:
+        if AGENTS_COLLECTION not in [c.name for c in collections]:
             return []
 
         scroll_result = qdrant_service.client.scroll(
-            collection_name=PRISM_COLLECTION,
+            collection_name=AGENTS_COLLECTION,
             limit=500,
             with_vectors=False,
             with_payload=True,
@@ -56,19 +56,19 @@ async def fetch_prism_nodes() -> list[dict[str, Any]]:
             for p in points
         ]
     except Exception:
-        logger.exception("Failed to fetch PRISM nodes")
+        logger.exception("Failed to fetch agent nodes")
         return []
 
 
-async def fetch_prism_edges(threshold: float = 0.3, limit: int = 20) -> list[dict[str, Any]]:
+async def fetch_agent_edges(threshold: float = 0.3, limit: int = 20) -> list[dict[str, Any]]:
     """Compute similarity edges from Qdrant. Reuses the same logic as experts.get_graph_edges."""
     try:
         collections = qdrant_service.client.get_collections().collections
-        if PRISM_COLLECTION not in [c.name for c in collections]:
+        if AGENTS_COLLECTION not in [c.name for c in collections]:
             return []
 
         scroll_result = qdrant_service.client.scroll(
-            collection_name=PRISM_COLLECTION,
+            collection_name=AGENTS_COLLECTION,
             limit=500,
             with_vectors=True,
             with_payload=True,
@@ -83,7 +83,7 @@ async def fetch_prism_edges(threshold: float = 0.3, limit: int = 20) -> list[dic
         for point in points:
             expert_id = point.payload.get("expert_id", str(point.id))
             results = qdrant_service.client.query_points(
-                collection_name=PRISM_COLLECTION,
+                collection_name=AGENTS_COLLECTION,
                 query=point.vector,
                 limit=limit + 1,
                 score_threshold=threshold,
@@ -108,7 +108,7 @@ async def fetch_prism_edges(threshold: float = 0.3, limit: int = 20) -> list[dic
         edges.sort(key=lambda e: e["weight"], reverse=True)
         return edges
     except Exception:
-        logger.exception("Failed to fetch PRISM edges")
+        logger.exception("Failed to fetch agent edges")
         return []
 
 
@@ -164,7 +164,7 @@ def _build_dag_from_layers(
             nodes.append(
                 {
                     "id": nid,
-                    "prismId": nid,
+                    "agentId": nid,
                     "label": expert.get("name", nid),
                     "description": expert.get("description", ""),
                     "category": expert.get("category", ""),
@@ -195,14 +195,14 @@ async def generate_plan_from_graph(
     model: str = "llama3.1:8b",
     engine: str = "ollama",
 ) -> dict[str, Any]:
-    """Generate a plan DAG from the PRISM graph.
+    """Generate a plan DAG from the agent graph.
 
     If prompt is provided, uses the LLM to select and order experts.
     Otherwise, builds a DAG from all experts using similarity edges.
     """
-    experts = await fetch_prism_nodes()
+    experts = await fetch_agent_nodes()
     if not experts:
-        return {"nodes": [], "edges": [], "error": "No PRISM experts found"}
+        return {"nodes": [], "edges": [], "error": "No agent experts found"}
 
     expert_map = {e["id"]: e for e in experts}
 
@@ -284,7 +284,7 @@ async def _generate_from_similarity(
     High-similarity experts with bidirectional edges run in parallel.
     Lower-similarity connections form sequential chains.
     """
-    edges = await fetch_prism_edges(threshold=0.3, limit=20)
+    edges = await fetch_agent_edges(threshold=0.3, limit=20)
     node_ids = list(expert_map.keys())
 
     # Build adjacency: experts with strong similarity (>0.6) are independent (parallel).
@@ -304,5 +304,5 @@ async def _generate_from_similarity(
 
     layers = _topological_sort(node_ids, dependencies)
     dag = _build_dag_from_layers(layers, expert_map, dependencies)
-    dag["generatedBy"] = "prism_graph"
+    dag["generatedBy"] = "agent_graph"
     return dag

@@ -9,7 +9,7 @@ export async function POST(req: NextRequest) {
     if (!Array.isArray(experts) || experts.length === 0) {
       return NextResponse.json({ error: 'experts array required' }, { status: 400 });
     }
-    const resp = await fetch(`${ENGINE_URL}/api/prism/engine/embed/bulk`, {
+    const resp = await fetch(`${ENGINE_URL}/api/agents/engine/embed/bulk`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ experts, source: 'marketplace' }),

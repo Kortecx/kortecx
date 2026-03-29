@@ -127,8 +127,8 @@ export function useExperts(status?: string) {
   };
 }
 
-/* ── PRISM Graph (version-based efficient polling) ─── */
-export function usePrismGraph() {
+/* ── Agent Graph (version-based efficient polling) ─── */
+export function useAgentGraph() {
   // Poll version cheaply every 10s
   const { data: versionData } = useSWR(
     '/api/experts/graph/version',

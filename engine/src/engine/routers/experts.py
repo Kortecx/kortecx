@@ -23,16 +23,16 @@ logger = logging.getLogger("engine.routers.experts")
 
 router = APIRouter()
 
-PRISM_COLLECTION = "kortecx_prisms"
+AGENTS_COLLECTION = "kortecx_agents"
 EMBED_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 
 
-async def _embed_prism(
+async def _embed_agent(
     expert: dict[str, Any],
     file_texts: list[str] | None = None,
     source: str = "local",
 ) -> None:
-    """Embed a PRISM into Qdrant for similarity graph using rich metadata.
+    """Embed an agent into Qdrant for similarity graph using rich metadata.
 
     Combines name, description, systemPrompt, role, category, tags,
     capabilities, specializations, and optional file content into a single
@@ -58,11 +58,11 @@ async def _embed_prism(
             return
         # Ensure collection exists
         collections = qdrant_service.client.get_collections().collections
-        if PRISM_COLLECTION not in [c.name for c in collections]:
+        if AGENTS_COLLECTION not in [c.name for c in collections]:
             from qdrant_client.models import Distance, VectorParams
 
             qdrant_service.client.create_collection(
-                collection_name=PRISM_COLLECTION,
+                collection_name=AGENTS_COLLECTION,
                 vectors_config=VectorParams(size=len(vectors[0]), distance=Distance.COSINE),
             )
         # Use hash of expert_id as int for Qdrant point ID
@@ -70,7 +70,7 @@ async def _embed_prism(
         from qdrant_client.models import PointStruct
 
         qdrant_service.client.upsert(
-            collection_name=PRISM_COLLECTION,
+            collection_name=AGENTS_COLLECTION,
             points=[
                 PointStruct(
                     id=point_id,
@@ -90,7 +90,7 @@ async def _embed_prism(
                 )
             ],
         )
-        logger.info("Embedded PRISM %s into Qdrant (source=%s)", expert["id"], source)
+        logger.info("Embedded agent %s into Qdrant (source=%s)", expert["id"], source)
     except Exception as exc:
         error_msg = str(exc)
         if "401" in error_msg or "Unauthorized" in error_msg:
@@ -101,7 +101,7 @@ async def _embed_prism(
             detail = "Qdrant collection error"
         else:
             detail = f"{type(exc).__name__}: {error_msg}"
-        logger.warning("Failed to embed PRISM %s — %s", expert.get("id"), detail, exc_info=True)
+        logger.warning("Failed to embed agent %s — %s", expert.get("id"), detail, exc_info=True)
 
 
 # ── Request models ───────────────────────────────────────────────────────────
@@ -383,7 +383,7 @@ async def create_expert(req: CreateExpertRequest) -> dict[str, Any]:
         },
     )
     # Auto-embed into Qdrant for graph similarity
-    await _embed_prism(expert)
+    await _embed_agent(expert)
     return {"expert": _clean(expert)}
 
 
@@ -397,7 +397,7 @@ async def update_expert_file(expert_id: str, req: UpdateFileRequest) -> dict[str
     # Re-embed after file update for graph-relevant changes
     expert = expert_manager.get(expert_id)
     if expert and req.filename in ("system.md", "expert.json"):
-        await _embed_prism(expert)
+        await _embed_agent(expert)
     return result
 
 
@@ -470,9 +470,9 @@ async def delete_expert(expert_id: str) -> dict[str, Any]:
     # Remove from Qdrant
     try:
         point_id = abs(hash(expert_id)) % (2**63)
-        await qdrant_service.delete([point_id], collection=PRISM_COLLECTION)
+        await qdrant_service.delete([point_id], collection=AGENTS_COLLECTION)
     except Exception:
-        logger.warning("Failed to delete PRISM %s from Qdrant", expert_id, exc_info=True)
+        logger.warning("Failed to delete agent %s from Qdrant", expert_id, exc_info=True)
     return {"deleted": deleted, "id": expert_id}
 
 
@@ -554,28 +554,28 @@ async def list_expert_artifacts(expert_id: str, date: str | None = None) -> dict
     return {"artifacts": artifacts, "total": len(artifacts)}
 
 
-# ── PRISM Graph Endpoints ───────────────────────────────────────────────────
+# ── Agent Graph Endpoints ──────────────────────────────────────────────────
 
 
 @router.post("/{expert_id}/embed")
 async def embed_expert(expert_id: str) -> dict[str, Any]:
-    """Manually (re-)embed a PRISM into Qdrant for graph similarity."""
+    """Manually (re-)embed an agent into Qdrant for graph similarity."""
     expert = expert_manager.get(expert_id)
     if not expert:
         return {"error": f"Expert {expert_id} not found"}
-    await _embed_prism(expert)
+    await _embed_agent(expert)
     return {"embedded": True, "id": expert_id}
 
 
 @router.post("/embed/all")
 async def embed_all_experts() -> dict[str, Any]:
-    """Batch re-embed ALL PRISMs into Qdrant. Use to bootstrap or refresh the graph."""
+    """Batch re-embed ALL agents into Qdrant. Use to bootstrap or refresh the graph."""
     all_experts = expert_manager.load_all()
     embedded = 0
     errors = 0
     for expert in all_experts:
         try:
-            await _embed_prism(expert)
+            await _embed_agent(expert)
             embedded += 1
         except Exception:
             errors += 1
@@ -595,7 +595,7 @@ async def embed_bulk_experts(req: EmbedBulkRequest) -> dict[str, Any]:
     errors = 0
     for expert in req.experts:
         try:
-            await _embed_prism(expert, source=req.source)
+            await _embed_agent(expert, source=req.source)
             embedded += 1
         except Exception:
             errors += 1
@@ -609,11 +609,11 @@ class EmbedAssetsRequest(BaseModel):
 
 @router.post("/{expert_id}/embed-assets")
 async def embed_expert_with_assets(expert_id: str, req: EmbedAssetsRequest) -> dict[str, Any]:
-    """Re-embed PRISM with attached file/context content for richer similarity."""
+    """Re-embed agent with attached file/context content for richer similarity."""
     expert = expert_manager.get(expert_id)
     if not expert:
         return {"error": f"Expert {expert_id} not found"}
-    await _embed_prism(expert, file_texts=req.file_texts)
+    await _embed_agent(expert, file_texts=req.file_texts)
     return {"embedded": True, "id": expert_id, "fileCount": len(req.file_texts)}
 
 
@@ -623,7 +623,7 @@ class AttachRequest(BaseModel):
 
 @router.post("/{expert_id}/attach")
 async def attach_experts(expert_id: str, req: AttachRequest) -> dict[str, Any]:
-    """Create an explicit connection between two PRISMs by re-embedding with affinity."""
+    """Create an explicit connection between two agents by re-embedding with affinity."""
     source = expert_manager.get(expert_id)
     target = expert_manager.get(req.targetId)
     if not source:
@@ -633,11 +633,11 @@ async def attach_experts(expert_id: str, req: AttachRequest) -> dict[str, Any]:
 
     # Re-embed source with target's name/tags appended for affinity
     source_copy = {**source, "description": f"{source.get('description', '')} Connected to: {target.get('name', '')}. {', '.join(target.get('tags', []))}"}
-    await _embed_prism(source_copy)
+    await _embed_agent(source_copy)
 
     # Re-embed target with source's name/tags appended for affinity
     target_copy = {**target, "description": f"{target.get('description', '')} Connected to: {source.get('name', '')}. {', '.join(source.get('tags', []))}"}
-    await _embed_prism(target_copy)
+    await _embed_agent(target_copy)
 
     return {"attached": True, "source": expert_id, "target": req.targetId}
 
@@ -649,22 +649,22 @@ async def get_graph_edges(
     min_edges_per_node: int = 1,
     source: str | None = None,
 ) -> dict[str, Any]:
-    """Compute pairwise similarity edges from Qdrant for the PRISM graph.
+    """Compute pairwise similarity edges from Qdrant for the agent graph.
 
-    Returns edges between PRISMs whose cosine similarity exceeds *threshold*.
+    Returns edges between agents whose cosine similarity exceeds *threshold*.
     When *source* is set (``"marketplace"`` or ``"local"``), only edges between
-    PRISMs of that source type are returned.  The *min_edges_per_node* param
+    agents of that source type are returned.  The *min_edges_per_node* param
     guarantees every node gets at least that many edges (falls back to top-1).
     """
     try:
         # Check if collection exists
         collections = qdrant_service.client.get_collections().collections
-        if PRISM_COLLECTION not in [c.name for c in collections]:
+        if AGENTS_COLLECTION not in [c.name for c in collections]:
             return {"edges": [], "total": 0}
 
         # Fetch all points from the collection
         scroll_result = qdrant_service.client.scroll(
-            collection_name=PRISM_COLLECTION,
+            collection_name=AGENTS_COLLECTION,
             limit=500,
             with_vectors=True,
             with_payload=True,
@@ -691,7 +691,7 @@ async def get_graph_edges(
             expert_id = point.payload.get("expert_id", str(point.id))
             node_edge_count.setdefault(expert_id, 0)
             results = qdrant_service.client.query_points(
-                collection_name=PRISM_COLLECTION,
+                collection_name=AGENTS_COLLECTION,
                 query=point.vector,
                 limit=limit + 1,  # +1 to exclude self
                 score_threshold=0.01,  # low threshold to find best-match fallbacks
@@ -747,9 +747,9 @@ async def get_graph_version() -> dict[str, Any]:
     """
     try:
         collections = qdrant_service.client.get_collections().collections
-        if PRISM_COLLECTION not in [c.name for c in collections]:
+        if AGENTS_COLLECTION not in [c.name for c in collections]:
             return {"count": 0, "version": "0-0"}
-        info = qdrant_service.client.get_collection(PRISM_COLLECTION)
+        info = qdrant_service.client.get_collection(AGENTS_COLLECTION)
         count = info.points_count or 0
         # Use points_count as a lightweight version indicator
         return {"count": count, "version": f"{count}"}

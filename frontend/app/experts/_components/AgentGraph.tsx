@@ -18,23 +18,23 @@ export interface SimilarityEdge {
   weight: number;
 }
 
-interface PrismGraphProps {
-  prisms: Array<Record<string, unknown>>;
+interface AgentGraphProps {
+  agents: Array<Record<string, unknown>>;
   edges: SimilarityEdge[];
-  onNodeClick: (prismId: string) => void;
+  onNodeClick: (agentId: string) => void;
   roleFilter?: string;
   statusFilter?: string;
   search?: string;
 }
 
-export default function PrismGraph({
-  prisms, edges, onNodeClick, roleFilter, statusFilter, search,
-}: PrismGraphProps) {
+export default function AgentGraph({
+  agents, edges, onNodeClick, roleFilter, statusFilter, search,
+}: AgentGraphProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const cyRef = useRef<cytoscape.Core | null>(null);
   const [ready, setReady] = useState(false);
 
-  const filteredPrisms = prisms.filter(p => {
+  const filteredAgents = agents.filter(p => {
     if (roleFilter && roleFilter !== 'all' && p.role !== roleFilter) return false;
     if (statusFilter && statusFilter !== 'all' && p.status !== statusFilter) return false;
     if (search) {
@@ -46,7 +46,7 @@ export default function PrismGraph({
     return true;
   });
 
-  const filteredIds = new Set(filteredPrisms.map(p => p.id as string));
+  const filteredIds = new Set(filteredAgents.map(p => p.id as string));
   const filteredEdges = edges.filter(e => filteredIds.has(e.source) && filteredIds.has(e.target));
 
   const initGraph = useCallback(async () => {
@@ -57,7 +57,7 @@ export default function PrismGraph({
     const fcose = (await import('cytoscape-fcose')).default;
     cy.use(fcose);
 
-    const nodes = filteredPrisms.map(p => {
+    const nodes = filteredAgents.map(p => {
       const id = p.id as string;
       const role = (p.role as string) ?? 'custom';
       const complexity = (p.complexityLevel as number) ?? 3;
@@ -167,7 +167,7 @@ export default function PrismGraph({
 
     cyRef.current = instance;
     setReady(true);
-  }, [filteredPrisms, filteredEdges, onNodeClick]);
+  }, [filteredAgents, filteredEdges, onNodeClick]);
 
   useEffect(() => {
     initGraph();
@@ -223,19 +223,19 @@ export default function PrismGraph({
       </div>
 
       {/* Empty state */}
-      {ready && filteredPrisms.length === 0 && (
+      {ready && filteredAgents.length === 0 && (
         <div style={{
           position: 'absolute', top: '50%', left: '50%',
           transform: 'translate(-50%, -50%)',
           textAlign: 'center', color: '#9ca3af',
         }}>
-          <div style={{ fontSize: 14, fontWeight: 600 }}>No PRISMs to display</div>
-          <div style={{ fontSize: 12, marginTop: 4 }}>Bundle PRISMs to see them in the graph</div>
+          <div style={{ fontSize: 14, fontWeight: 600 }}>No Agents to display</div>
+          <div style={{ fontSize: 12, marginTop: 4 }}>Bundle Agents to see them in the graph</div>
         </div>
       )}
 
       {/* Legend */}
-      {filteredPrisms.length > 0 && (
+      {filteredAgents.length > 0 && (
         <div style={{
           position: 'absolute', bottom: 12, left: 12,
           display: 'flex', flexWrap: 'wrap', gap: 8,

@@ -23,7 +23,7 @@ interface RunNodeData {
   status: string;
   tokensUsed?: number;
   durationMs?: number;
-  prismId?: string;
+  agentId?: string;
   [key: string]: unknown;
 }
 

@@ -5,9 +5,9 @@ import { logStatus } from '@/lib/status-log';
 
 const ENGINE_URL = process.env.NEXT_PUBLIC_ENGINE_URL || 'http://localhost:8000';
 
-/** Fire-and-forget: embed a PRISM into Qdrant for graph similarity. */
-function embedPrism(expertId: string): void {
-  fetch(`${ENGINE_URL}/api/prism/engine/${expertId}/embed`, { method: 'POST' }).catch((err) => {
+/** Fire-and-forget: embed an agent into Qdrant for graph similarity. */
+function embedAgent(expertId: string): void {
+  fetch(`${ENGINE_URL}/api/agents/engine/${expertId}/embed`, { method: 'POST' }).catch((err) => {
     console.warn('[experts] embed failed:', err);
   });
 }
@@ -81,7 +81,7 @@ export async function POST(req: NextRequest) {
 
     // Route creation through the engine — creates local files on disk,
     // syncs to NeonDB, and auto-embeds into Qdrant for the graph.
-    const engineRes = await fetch(`${ENGINE_URL}/api/prism/engine/create`, {
+    const engineRes = await fetch(`${ENGINE_URL}/api/agents/engine/create`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -140,7 +140,7 @@ export async function PATCH(req: NextRequest) {
     if (fileFields.some(f => updates[f] !== undefined)) {
       // Update expert.json on disk via engine
       const merged = { ...existing, ...updates, updatedAt: new Date().toISOString() };
-      fetch(`${ENGINE_URL}/api/prism/engine/${id}/update`, {
+      fetch(`${ENGINE_URL}/api/agents/engine/${id}/update`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -168,7 +168,7 @@ export async function PATCH(req: NextRequest) {
 
     // Update system.md on disk if systemPrompt changed
     if (updates.systemPrompt !== undefined) {
-      fetch(`${ENGINE_URL}/api/prism/engine/${id}/update`, {
+      fetch(`${ENGINE_URL}/api/agents/engine/${id}/update`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ filename: 'system.md', content: updates.systemPrompt || '' }),
@@ -205,7 +205,7 @@ export async function PATCH(req: NextRequest) {
     // Re-embed into Qdrant if any graph-relevant field changed (non-blocking)
     const graphFields = ['name', 'description', 'role', 'category', 'tags', 'complexityLevel', 'systemPrompt'];
     if (graphFields.some(f => updates[f] !== undefined)) {
-      embedPrism(id);
+      embedAgent(id);
     }
 
     logStatus('info', `Expert updated: ${id}`, 'expert', { id, fields: Object.keys(updates) });
@@ -241,7 +241,7 @@ export async function DELETE(req: NextRequest) {
     }
 
     // Delete from engine local directory (non-blocking)
-    fetch(`${ENGINE_URL}/api/prism/engine/${id}`, { method: 'DELETE' }).catch((err) => {
+    fetch(`${ENGINE_URL}/api/agents/engine/${id}`, { method: 'DELETE' }).catch((err) => {
       console.warn('[experts DELETE] engine cleanup failed:', err);
     });
 

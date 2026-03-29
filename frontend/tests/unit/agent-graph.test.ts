@@ -23,7 +23,7 @@ function filterByThreshold(edges: SimilarityEdge[], threshold: number): Similari
   return edges.filter(e => e.weight >= threshold);
 }
 
-describe('PRISM Graph — edge deduplication', () => {
+describe('Agent Graph — edge deduplication', () => {
   it('removes duplicate A→B / B→A edges, keeping highest weight', () => {
     const edges: SimilarityEdge[] = [
       { source: 'a', target: 'b', weight: 0.8 },
@@ -49,7 +49,7 @@ describe('PRISM Graph — edge deduplication', () => {
   });
 });
 
-describe('PRISM Graph — threshold filtering', () => {
+describe('Agent Graph — threshold filtering', () => {
   const edges: SimilarityEdge[] = [
     { source: 'a', target: 'b', weight: 0.9 },
     { source: 'a', target: 'c', weight: 0.2 },
@@ -71,14 +71,14 @@ describe('PRISM Graph — threshold filtering', () => {
   });
 });
 
-describe('PRISM Graph — node filtering', () => {
-  type MockPrism = { id: string; name: string; role: string; status: string };
+describe('Agent Graph — node filtering', () => {
+  type MockAgent = { id: string; name: string; role: string; status: string };
 
-  function filterPrisms(
-    prisms: MockPrism[],
+  function filterAgents(
+    agents: MockAgent[],
     opts: { role?: string; status?: string; search?: string },
-  ): MockPrism[] {
-    return prisms.filter(p => {
+  ): MockAgent[] {
+    return agents.filter(p => {
       if (opts.role && opts.role !== 'all' && p.role !== opts.role) return false;
       if (opts.status && opts.status !== 'all' && p.status !== opts.status) return false;
       if (opts.search) {
@@ -89,35 +89,35 @@ describe('PRISM Graph — node filtering', () => {
     });
   }
 
-  const prisms: MockPrism[] = [
+  const agents: MockAgent[] = [
     { id: '1', name: 'ResearchBot', role: 'researcher', status: 'active' },
     { id: '2', name: 'CodeGen',     role: 'coder',      status: 'idle' },
     { id: '3', name: 'LegalAide',   role: 'legal',      status: 'active' },
   ];
 
   it('filters by role', () => {
-    const result = filterPrisms(prisms, { role: 'coder' });
+    const result = filterAgents(agents, { role: 'coder' });
     expect(result).toHaveLength(1);
     expect(result[0].id).toBe('2');
   });
 
   it('filters by status', () => {
-    const result = filterPrisms(prisms, { status: 'active' });
+    const result = filterAgents(agents, { status: 'active' });
     expect(result).toHaveLength(2);
   });
 
   it('filters by search', () => {
-    const result = filterPrisms(prisms, { search: 'legal' });
+    const result = filterAgents(agents, { search: 'legal' });
     expect(result).toHaveLength(1);
     expect(result[0].id).toBe('3');
   });
 
   it('returns all when no filters', () => {
-    expect(filterPrisms(prisms, {})).toHaveLength(3);
+    expect(filterAgents(agents, {})).toHaveLength(3);
   });
 
   it('returns all with role=all', () => {
-    expect(filterPrisms(prisms, { role: 'all' })).toHaveLength(3);
+    expect(filterAgents(agents, { role: 'all' })).toHaveLength(3);
   });
 });
 

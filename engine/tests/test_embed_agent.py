@@ -1,4 +1,4 @@
-"""Tests for _embed_prism — rich embedding with metadata, files, and source tracking."""
+"""Tests for _embed_agent — rich embedding with metadata, files, and source tracking."""
 
 from __future__ import annotations
 
@@ -26,10 +26,10 @@ def mock_qdrant():
         yield mock
 
 
-class TestEmbedPrism:
+class TestEmbedAgent:
     @pytest.mark.asyncio
     async def test_basic_embed(self, mock_hf: Any, mock_qdrant: Any) -> None:
-        from engine.routers.experts import _embed_prism
+        from engine.routers.experts import _embed_agent
 
         expert = {
             "id": "exp-test",
@@ -40,7 +40,7 @@ class TestEmbedPrism:
             "tags": ["data", "analysis"],
             "capabilities": ["reasoning", "analysis"],
         }
-        await _embed_prism(expert)
+        await _embed_agent(expert)
 
         # Verify embedding was called with rich text
         call_args = mock_hf.text_embedding.call_args
@@ -61,7 +61,7 @@ class TestEmbedPrism:
 
     @pytest.mark.asyncio
     async def test_embed_with_system_prompt(self, mock_hf: Any, mock_qdrant: Any) -> None:
-        from engine.routers.experts import _embed_prism
+        from engine.routers.experts import _embed_agent
 
         expert = {
             "id": "exp-prompt",
@@ -70,7 +70,7 @@ class TestEmbedPrism:
             "systemPrompt": "You are a deep research analyst specializing in data science",
             "role": "researcher",
         }
-        await _embed_prism(expert)
+        await _embed_agent(expert)
 
         text = mock_hf.text_embedding.call_args[0][1]
         assert "deep research analyst" in text
@@ -78,11 +78,11 @@ class TestEmbedPrism:
 
     @pytest.mark.asyncio
     async def test_embed_with_file_texts(self, mock_hf: Any, mock_qdrant: Any) -> None:
-        from engine.routers.experts import _embed_prism
+        from engine.routers.experts import _embed_agent
 
         expert = {"id": "exp-files", "name": "File Expert", "role": "coder"}
         file_texts = ["README: This project handles ETL pipelines", "Config: database connection settings"]
-        await _embed_prism(expert, file_texts=file_texts)
+        await _embed_agent(expert, file_texts=file_texts)
 
         text = mock_hf.text_embedding.call_args[0][1]
         assert "ETL pipelines" in text
@@ -93,17 +93,17 @@ class TestEmbedPrism:
 
     @pytest.mark.asyncio
     async def test_embed_with_marketplace_source(self, mock_hf: Any, mock_qdrant: Any) -> None:
-        from engine.routers.experts import _embed_prism
+        from engine.routers.experts import _embed_agent
 
         expert = {"id": "mp-test", "name": "Marketplace Expert", "role": "writer"}
-        await _embed_prism(expert, source="marketplace")
+        await _embed_agent(expert, source="marketplace")
 
         point = mock_qdrant.client.upsert.call_args[1]["points"][0]
         assert point.payload["source"] == "marketplace"
 
     @pytest.mark.asyncio
     async def test_embed_with_specializations(self, mock_hf: Any, mock_qdrant: Any) -> None:
-        from engine.routers.experts import _embed_prism
+        from engine.routers.experts import _embed_agent
 
         expert = {
             "id": "exp-spec",
@@ -111,7 +111,7 @@ class TestEmbedPrism:
             "role": "analyst",
             "specializations": ["Deep Research", "Data Analysis", "Machine Learning"],
         }
-        await _embed_prism(expert)
+        await _embed_agent(expert)
 
         text = mock_hf.text_embedding.call_args[0][1]
         assert "Deep Research" in text
@@ -119,11 +119,11 @@ class TestEmbedPrism:
 
     @pytest.mark.asyncio
     async def test_file_texts_truncated(self, mock_hf: Any, mock_qdrant: Any) -> None:
-        from engine.routers.experts import _embed_prism
+        from engine.routers.experts import _embed_agent
 
         expert = {"id": "exp-trunc", "name": "Trunc", "role": "coder"}
         long_text = "q" * 1000
-        await _embed_prism(expert, file_texts=[long_text])
+        await _embed_agent(expert, file_texts=[long_text])
 
         text = mock_hf.text_embedding.call_args[0][1]
         # File text should be truncated to 500 chars (not the full 1000)
@@ -134,11 +134,11 @@ class TestEmbedPrism:
 
     @pytest.mark.asyncio
     async def test_max_five_files(self, mock_hf: Any, mock_qdrant: Any) -> None:
-        from engine.routers.experts import _embed_prism
+        from engine.routers.experts import _embed_agent
 
         expert = {"id": "exp-max", "name": "Max Files Expert", "role": "coder"}
         file_texts = [f"file-{i}-content" for i in range(10)]
-        await _embed_prism(expert, file_texts=file_texts)
+        await _embed_agent(expert, file_texts=file_texts)
 
         text = mock_hf.text_embedding.call_args[0][1]
         # Only first 5 files should be included
@@ -147,58 +147,58 @@ class TestEmbedPrism:
 
     @pytest.mark.asyncio
     async def test_embed_fails_gracefully(self, mock_hf: Any, mock_qdrant: Any) -> None:
-        from engine.routers.experts import _embed_prism
+        from engine.routers.experts import _embed_agent
 
         mock_hf.text_embedding.return_value = []
         expert = {"id": "exp-empty", "name": "Empty", "role": "coder"}
         # Should not raise
-        await _embed_prism(expert)
+        await _embed_agent(expert)
         mock_qdrant.client.upsert.assert_not_called()
 
 
-class TestEmbedPrismErrorClassification:
-    """Verify that _embed_prism logs specific error types, not generic messages."""
+class TestEmbedAgentErrorClassification:
+    """Verify that _embed_agent logs specific error types, not generic messages."""
 
     @pytest.mark.asyncio
     async def test_logs_auth_error_clearly(self, mock_hf: Any, mock_qdrant: Any, caplog: Any) -> None:
-        from engine.routers.experts import _embed_prism
+        from engine.routers.experts import _embed_agent
 
         mock_hf.text_embedding.side_effect = Exception("401 Unauthorized for url")
         expert = {"id": "exp-auth", "name": "Auth Fail", "role": "coder"}
 
-        await _embed_prism(expert)
+        await _embed_agent(expert)
 
         assert any("authentication failed" in r.message.lower() for r in caplog.records)
 
     @pytest.mark.asyncio
     async def test_logs_network_error_clearly(self, mock_hf: Any, mock_qdrant: Any, caplog: Any) -> None:
-        from engine.routers.experts import _embed_prism
+        from engine.routers.experts import _embed_agent
 
         mock_hf.text_embedding.side_effect = ConnectionError("Connection refused")
         expert = {"id": "exp-net", "name": "Net Fail", "role": "coder"}
 
-        await _embed_prism(expert)
+        await _embed_agent(expert)
 
         assert any("network error" in r.message.lower() for r in caplog.records)
 
     @pytest.mark.asyncio
     async def test_logs_qdrant_error_clearly(self, mock_hf: Any, mock_qdrant: Any, caplog: Any) -> None:
-        from engine.routers.experts import _embed_prism
+        from engine.routers.experts import _embed_agent
 
         mock_qdrant.client.get_collections.side_effect = Exception("Collection not found")
         expert = {"id": "exp-qd", "name": "Qdrant Fail", "role": "coder"}
 
-        await _embed_prism(expert)
+        await _embed_agent(expert)
 
         assert any("qdrant collection error" in r.message.lower() for r in caplog.records)
 
     @pytest.mark.asyncio
     async def test_startup_no_crash_when_nothing_available(self, mock_hf: Any, mock_qdrant: Any) -> None:
-        from engine.routers.experts import _embed_prism
+        from engine.routers.experts import _embed_agent
 
         mock_hf.text_embedding.return_value = []
         expert = {"id": "exp-skip", "name": "Skipped", "role": "coder"}
 
         # Should not raise, just skip
-        await _embed_prism(expert)
+        await _embed_agent(expert)
         mock_qdrant.client.upsert.assert_not_called()

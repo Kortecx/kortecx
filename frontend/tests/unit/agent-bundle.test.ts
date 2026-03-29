@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 
-describe('PRISM Bundle — payload construction', () => {
+describe('Agent Bundle — payload construction', () => {
   function buildPayload(form: {
     name: string;
     role: string;
@@ -77,10 +77,10 @@ describe('PRISM Bundle — payload construction', () => {
   });
 });
 
-describe('PRISM Bundle — validation', () => {
+describe('Agent Bundle — validation', () => {
   function validate(name: string, role: string): Record<string, string> {
     const errors: Record<string, string> = {};
-    if (!name.trim()) errors.name = 'PRISM name is required';
+    if (!name.trim()) errors.name = 'Agent name is required';
     else if (name.trim().length < 2) errors.name = 'Name must be at least 2 characters';
     if (!role) errors.role = 'Role is required';
     return errors;
@@ -92,7 +92,7 @@ describe('PRISM Bundle — validation', () => {
 
   it('fails with empty name', () => {
     const errors = validate('', 'researcher');
-    expect(errors.name).toBe('PRISM name is required');
+    expect(errors.name).toBe('Agent name is required');
   });
 
   it('fails with short name', () => {
@@ -102,11 +102,11 @@ describe('PRISM Bundle — validation', () => {
 
   it('fails with whitespace-only name', () => {
     const errors = validate('   ', 'researcher');
-    expect(errors.name).toBe('PRISM name is required');
+    expect(errors.name).toBe('Agent name is required');
   });
 });
 
-describe('PRISM Bundle — embedding text construction', () => {
+describe('Agent Bundle — embedding text construction', () => {
   function buildEmbeddingText(expert: {
     name: string;
     description: string;

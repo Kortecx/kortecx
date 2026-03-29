@@ -16,7 +16,7 @@ from engine.services.expert_sync import expert_sync
 
 logger = logging.getLogger("engine.expert_manager")
 
-EXPERTS_ROOT = Path(__file__).resolve().parents[3] / "PRISM"
+EXPERTS_ROOT = Path(__file__).resolve().parents[3] / "agents"
 MARKETPLACE_DIR = EXPERTS_ROOT / "marketplace"
 LOCAL_DIR = EXPERTS_ROOT / "local"
 

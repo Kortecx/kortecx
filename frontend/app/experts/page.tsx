@@ -15,12 +15,12 @@ import {
   Copy, RotateCcw, Store, FileText,
   Network, LayoutGrid, Download,
 } from 'lucide-react';
-import { useExperts, usePrismGraph, useMarketplaceGraph } from '@/lib/hooks/useApi';
+import { useExperts, useAgentGraph, useMarketplaceGraph } from '@/lib/hooks/useApi';
 import { ROLE_META } from '@/lib/constants';
 import type { Expert, ExpertRole } from '@/lib/types';
 import ExpertEditDialog from './_components/ExpertEditDialog';
-import PrismGraph from './_components/PrismGraph';
-import PrismListView from './_components/PrismListView';
+import AgentGraph from './_components/AgentGraph';
+import AgentListView from './_components/AgentListView';
 import { ImportButton, SharedImportButton } from '@/components/ImportExportButtons';
 import SharedConfigImportDialog from '@/components/SharedConfigImportDialog';
 import { exportEntity } from '@/lib/config-export';
@@ -387,7 +387,7 @@ function StatsModal({
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <BarChart2 size={16} color={SECTION_COLOR} />
-            <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-1)' }}>PRISM Statistics</span>
+            <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-1)' }}>Agent Statistics</span>
           </div>
           <button onClick={onClose} style={{
             background: 'none', border: 'none', cursor: 'pointer',
@@ -507,7 +507,7 @@ function StatsModal({
               <BarChart2 size={20} color="var(--text-4)" style={{ margin: '0 auto 8px' }} />
               <div style={{ fontSize: 13, color: 'var(--text-3)', fontWeight: 500 }}>No run data yet</div>
               <div style={{ fontSize: 11, color: 'var(--text-4)', marginTop: 4 }}>
-                Run this PRISM in a workflow to start collecting statistics.
+                Run this Agent in a workflow to start collecting statistics.
               </div>
             </div>
           )}
@@ -777,7 +777,7 @@ function MyExpertCard({
           <BarChart2 size={10} />
           Stats
         </button>
-        <button onClick={e => { e.stopPropagation(); onExport(); }} title="Export PRISM" style={{
+        <button onClick={e => { e.stopPropagation(); onExport(); }} title="Export Agent" style={{
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           padding: '7px 8px', borderRadius: 7, cursor: 'pointer',
           border: '1px solid var(--border-md)',
@@ -787,7 +787,7 @@ function MyExpertCard({
         }}>
           <Download size={11} />
         </button>
-        <button onClick={e => { e.stopPropagation(); onDelete(); }} title="Delete PRISM" style={{
+        <button onClick={e => { e.stopPropagation(); onDelete(); }} title="Delete Agent" style={{
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           padding: '7px 8px', borderRadius: 7, cursor: 'pointer',
           border: '1px solid rgba(220,38,38,0.2)',
@@ -992,7 +992,7 @@ function ExpertsPage() {
 
   const router = useRouter();
   const { experts, total, isLoading, mutate } = useExperts();
-  const { edges: graphEdges, mutate: mutateGraph } = usePrismGraph();
+  const { edges: graphEdges, mutate: mutateGraph } = useAgentGraph();
   const { edges: mpGraphEdges } = useMarketplaceGraph();
   const [viewMode, setViewMode] = useState<'graph' | 'list'>('list');
   const [expertRunStatus, setExpertRunStatus] = useState<Record<string, 'running' | 'success' | 'error'>>({});
@@ -1286,7 +1286,7 @@ function ExpertsPage() {
                     <Trash2 size={16} color="#ef4444" />
                   </div>
                   <div>
-                    <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-1)' }}>Delete PRISM</div>
+                    <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-1)' }}>Delete Agent</div>
                     <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 1 }}>This action cannot be undone</div>
                   </div>
                 </div>
@@ -1324,7 +1324,7 @@ function ExpertsPage() {
                   }}
                 >
                   {deleting ? <Loader2 size={12} style={{ animation: 'spin 1s linear infinite' }} /> : <Trash2 size={12} />}
-                  {deleting ? 'Deleting...' : 'Delete PRISM'}
+                  {deleting ? 'Deleting...' : 'Delete Agent'}
                 </button>
               </div>
             </motion.div>
@@ -1361,10 +1361,10 @@ function ExpertsPage() {
           </div>
           <div>
             <h1 style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-1)', lineHeight: 1, margin: 0 }}>
-              PRISM
+              Agents
             </h1>
             <p style={{ fontSize: 10, color: 'var(--text-4)', marginTop: 3, margin: '3px 0 0', letterSpacing: '0.5px', textTransform: 'uppercase' }}>
-              Prompt &middot; References &middot; Instructions &middot; Scripts &middot; Models
+              Autonomous AI Specialists
             </p>
             <p style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 4, margin: '4px 0 0', maxWidth: 420 }}>
               Build autonomous AI specialists — chain reasoning, code generation,
@@ -1397,7 +1397,7 @@ function ExpertsPage() {
         borderBottom: '1px solid var(--border)',
       }}>
         {([
-          { key: 'mine' as TabKey, label: 'My PRISMs', icon: Star, count: total },
+          { key: 'mine' as TabKey, label: 'My Agents', icon: Star, count: total },
           { key: 'marketplace' as TabKey, label: 'Marketplace', icon: Store, count: MARKETPLACE_EXPERTS.length },
         ]).map(tab => {
           const isActive = activeTab === tab.key;
@@ -1449,10 +1449,10 @@ function ExpertsPage() {
             }}
           >
             {[
-              { label: 'Total PRISMs',     value: String(total),             color: SECTION_COLOR, icon: Star,      sub: 'deployed'        },
+              { label: 'Total Agents',     value: String(total),             color: SECTION_COLOR, icon: Star,      sub: 'deployed'        },
               { label: 'Active',           value: String(activeCt),          color: '#10b981',     icon: Activity,  sub: 'processing'      },
               { label: 'Fine-tuned',       value: String(fineTunedCt),       color: '#f97316',     icon: Zap,       sub: 'custom models'   },
-              { label: 'Avg Success Rate', value: avgSuccess > 0 ? `${(avgSuccess * 100).toFixed(1)}%` : '—', color: '#06b6d4', icon: TrendingUp, sub: 'across all PRISMs' },
+              { label: 'Avg Success Rate', value: avgSuccess > 0 ? `${(avgSuccess * 100).toFixed(1)}%` : '—', color: '#06b6d4', icon: TrendingUp, sub: 'across all Agents' },
             ].map(({ label, value, color, icon: Icon, sub }) => (
               <motion.div
                 key={label}
@@ -1608,11 +1608,11 @@ function ExpertsPage() {
             </div>
           </motion.div>
 
-          {/* PRISM Graph view */}
+          {/* Agent Graph view */}
           {viewMode === 'graph' && !isLoading && (
             <div style={{ marginBottom: 20 }}>
-              <PrismGraph
-                prisms={experts}
+              <AgentGraph
+                agents={experts}
                 edges={graphEdges}
                 onNodeClick={(id) => {
                   const expert = experts.find((e: Record<string, unknown>) => e.id === id);
@@ -1623,10 +1623,10 @@ function ExpertsPage() {
             </div>
           )}
 
-          {/* PRISM List view */}
+          {/* Agent List view */}
           {viewMode === 'list' && !isLoading && (
-            <PrismListView
-              prisms={mineFiltered}
+            <AgentListView
+              agents={mineFiltered}
               edges={graphEdges}
               onConfigure={setConfigureExpert}
               onRun={handleRunExpert}
@@ -1646,7 +1646,7 @@ function ExpertsPage() {
             />
           )}
 
-          {/* PRISM cards loading skeleton */}
+          {/* Agent cards loading skeleton */}
           {viewMode === 'list' && isLoading && (
             <div style={{
               display: 'grid',
@@ -1800,8 +1800,8 @@ function ExpertsPage() {
           {/* Marketplace graph view */}
           {mpViewMode === 'graph' && (
             <div style={{ marginBottom: 20 }}>
-              <PrismGraph
-                prisms={mpFiltered.map(e => ({
+              <AgentGraph
+                agents={mpFiltered.map(e => ({
                   id: e.id, name: e.name, description: e.description,
                   role: e.role, status: 'active', tags: e.tags,
                   category: e.role, complexityLevel: 3,

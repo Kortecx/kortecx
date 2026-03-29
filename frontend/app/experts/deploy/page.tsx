@@ -309,7 +309,7 @@ function DeployExpertPageInner() {
   }, []);
 
   /* Cache expert state to localStorage for resume after API key setup */
-  const CACHE_KEY = 'kortecx_prism_bundle_cache';
+  const CACHE_KEY = 'kortecx_agent_bundle_cache';
 
   const cacheState = () => {
     const state = { name, description, role, category, complexityLevel, capabilities, specializations, modelSourceType, activeProvider, modelId, localEngine, localModelName, localBaseUrl, systemPrompt, temperature, maxTokens, tags, isPublic, step };
@@ -354,7 +354,7 @@ function DeployExpertPageInner() {
   function validateStep(n: number): boolean {
     const errs: Record<string, string> = {};
     if (n === 1) {
-      if (!name.trim()) errs.name = 'PRISM name is required';
+      if (!name.trim()) errs.name = 'Agent name is required';
       else if (name.trim().length < 2) errs.name = 'Name must be at least 2 characters';
     }
     if (n === 2) {
@@ -461,7 +461,7 @@ function DeployExpertPageInner() {
           } catch { /* ignore */ }
         }
 
-        // Auto-redirect to PRISMs after 2 seconds
+        // Auto-redirect to Agents after 2 seconds
         setTimeout(() => router.push('/experts'), 2000);
         // Log deployment
         fetch('/api/logs', {
@@ -504,10 +504,10 @@ function DeployExpertPageInner() {
           fontSize: 12, color: '#D97706',
         }}>
           <span style={{ fontSize: 14 }}>🔗</span>
-          This PRISM will be connected to <strong>{connectTo}</strong> in the graph
+          This Agent will be connected to <strong>{connectTo}</strong> in the graph
         </div>
       )}
-      <Field label="PRISM Name" required hint="A unique, memorable name for this PRISM" error={fieldErrors.name}>
+      <Field label="Agent Name" required hint="A unique, memorable name for this Agent" error={fieldErrors.name}>
         <input
           value={name}
           onChange={e => { setName(e.target.value); setFieldErrors(f => ({ ...f, name: '' })); }}
@@ -516,7 +516,7 @@ function DeployExpertPageInner() {
         />
       </Field>
 
-      <Field label="Description" hint="A brief summary of what this PRISM specialises in">
+      <Field label="Description" hint="A brief summary of what this Agent specialises in">
         <textarea
           value={description}
           onChange={e => setDescription(e.target.value)}
@@ -526,7 +526,7 @@ function DeployExpertPageInner() {
         />
       </Field>
 
-      <Field label="Role" required hint="Defines the PRISM's primary function and persona">
+      <Field label="Role" required hint="Defines the Agent's primary function and persona">
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, marginTop: 4 }}>
           {DEPLOY_ROLES.map(id => (
             <div key={id} style={{ position: 'relative' }}>
@@ -536,7 +536,7 @@ function DeployExpertPageInner() {
         </div>
       </Field>
 
-      <Field label="Category" required hint="Dimension for graph-based grouping of related PRISMs">
+      <Field label="Category" required hint="Dimension for graph-based grouping of related Agents">
         <select
           value={category}
           onChange={e => setCategory(e.target.value)}
@@ -548,7 +548,7 @@ function DeployExpertPageInner() {
         </select>
       </Field>
 
-      <Field label="Tags" hint="Comma-separated tags for search, filtering, and PRISM similarity">
+      <Field label="Tags" hint="Comma-separated tags for search, filtering, and Agent similarity">
         <input
           value={tags}
           onChange={e => setTags(e.target.value)}
@@ -594,7 +594,7 @@ function DeployExpertPageInner() {
               </div>
             </Field>
 
-            <Field label="Capabilities" hint="Select what this PRISM excels at">
+            <Field label="Capabilities" hint="Select what this Agent excels at">
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 4 }}>
                 {['web-search', 'code-gen', 'data-analysis', 'document-writing', 'translation', 'reasoning', 'structured-output'].map(cap => {
                   const active = capabilities.includes(cap);
@@ -888,10 +888,10 @@ function DeployExpertPageInner() {
           {isPublic ? <Globe size={14} color={SECTION_COLOR} /> : <Lock size={14} color="var(--text-4)" />}
           <div>
             <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-1)' }}>
-              {isPublic ? 'Public PRISM' : 'Private PRISM'}
+              {isPublic ? 'Public Agent' : 'Private Agent'}
             </div>
             <div style={{ fontSize: 11, color: 'var(--text-4)' }}>
-              {isPublic ? 'Visible in the public PRISM Catalog — anyone can use this PRISM' : 'Only you and your team can access this PRISM'}
+              {isPublic ? 'Visible in the public Agent Catalog — anyone can use this Agent' : 'Only you and your team can access this Agent'}
             </div>
           </div>
         </div>
@@ -920,7 +920,7 @@ function DeployExpertPageInner() {
         <Check size={28} color="#10b981" strokeWidth={2.5} />
       </motion.div>
       <div>
-        <h2 style={{ fontSize: 20, fontWeight: 700, color: 'var(--text-1)', marginBottom: 6 }}>PRISM Bundled!</h2>
+        <h2 style={{ fontSize: 20, fontWeight: 700, color: 'var(--text-1)', marginBottom: 6 }}>Agent Bundled!</h2>
         <p style={{ fontSize: 13, color: 'var(--text-3)', maxWidth: 340 }}>
           <strong style={{ color: 'var(--text-1)' }}>{name}</strong> is now live and ready to accept tasks on the platform.
         </p>
@@ -934,7 +934,7 @@ function DeployExpertPageInner() {
             border: 'none', color: '#fff', fontSize: 13, fontWeight: 600, cursor: 'pointer',
           }}
         >
-          <ExternalLink size={13} /> View PRISM
+          <ExternalLink size={13} /> View Agent
         </button>
         <button
           onClick={() => router.push('/experts')}
@@ -943,7 +943,7 @@ function DeployExpertPageInner() {
             background: 'transparent', color: 'var(--text-2)', fontSize: 13, cursor: 'pointer',
           }}
         >
-          All PRISMs
+          All Agents
         </button>
       </div>
     </motion.div>
@@ -963,7 +963,7 @@ function DeployExpertPageInner() {
           <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-1)' }}>Bundle Summary</span>
         </div>
         <div style={{ padding: '4px 18px 8px' }}>
-          <SummaryRow label="PRISM Name" value={<strong>{name}</strong>} />
+          <SummaryRow label="Agent Name" value={<strong>{name}</strong>} />
           <SummaryRow
             label="Role"
             value={
@@ -1050,7 +1050,7 @@ function DeployExpertPageInner() {
           />
           <div style={{ padding: '8px 12px', fontSize: 12, color: 'var(--text-3)', display: 'flex', alignItems: 'center', gap: 6 }}>
             <Loader2 size={12} color={SECTION_COLOR} style={{ animation: 'spin 1s linear infinite' }} />
-            Bundling PRISM… {Math.round(deployProgress)}%
+            Bundling Agent… {Math.round(deployProgress)}%
           </div>
         </div>
       )}
@@ -1105,7 +1105,7 @@ function DeployExpertPageInner() {
             <div style={{ padding: '20px 24px' }}>
               <p style={{ fontSize: 13, color: 'var(--text-2)', lineHeight: 1.6, margin: '0 0 16px' }}>
                 To use <strong style={{ color: 'var(--text-1)' }}>{apiKeyMissing}</strong> models, you need to configure an API key.
-                Your current PRISM configuration will be saved so you can return after adding the key.
+                Your current Agent configuration will be saved so you can return after adding the key.
               </p>
               <div style={{ padding: '10px 14px', borderRadius: 6, background: 'var(--bg)', border: '1px solid var(--border)', fontSize: 11, color: 'var(--text-3)', marginBottom: 16 }}>
                 <strong style={{ color: 'var(--text-2)' }}>Where to get a key:</strong>
@@ -1154,10 +1154,10 @@ function DeployExpertPageInner() {
         </div>
         <div>
           <h1 style={{ fontSize: 19, fontWeight: 700, color: 'var(--text-1)', lineHeight: 1 }}>
-            Bundle New PRISM
+            Bundle New Agent
           </h1>
           <p style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 3 }}>
-            Configure and bundle a new PRISM — step {step} of 4
+            Configure and bundle a new Agent — step {step} of 4
           </p>
         </div>
       </motion.div>
@@ -1244,7 +1244,7 @@ function DeployExpertPageInner() {
               >
                 {deploying
                   ? <><Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> Bundling…</>
-                  : <><Rocket size={14} /> Bundle PRISM</>}
+                  : <><Rocket size={14} /> Bundle Agent</>}
               </button>
             )}
           </div>

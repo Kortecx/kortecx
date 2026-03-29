@@ -222,7 +222,7 @@ def mock_expert_artifacts():
 
 @pytest.fixture
 def mock_embed():
-    with patch("engine.routers.experts._embed_prism", new_callable=AsyncMock) as mock:
+    with patch("engine.routers.experts._embed_agent", new_callable=AsyncMock) as mock:
         yield mock
 
 
@@ -438,7 +438,7 @@ class TestGetPrompt:
 
 
 class TestEmbedEndpoints:
-    def test_embed_prism(self, client):
+    def test_embed_agent(self, client):
         resp = client.post("/experts/exp-1/embed")
         assert resp.status_code == 200
         data = resp.json()

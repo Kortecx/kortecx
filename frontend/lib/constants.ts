@@ -340,7 +340,7 @@ export const NAV_SECTIONS = [
     label: 'ORCHESTRATION',
     color: '#D97706',
     items: [
-      { id: 'experts',   label: 'PRISM',       path: '/experts',  icon: 'Boxes' },
+      { id: 'experts',   label: 'Agents',       path: '/experts',  icon: 'Boxes' },
       { id: 'workflows', label: 'Workflows',   path: '/workflow', icon: 'Workflow' },
     ],
   },

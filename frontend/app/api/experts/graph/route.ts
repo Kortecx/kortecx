@@ -12,7 +12,7 @@ export async function GET(req: NextRequest) {
   try {
     const sourceParam = source ? `&source=${encodeURIComponent(source)}` : '';
     const resp = await fetch(
-      `${ENGINE_URL}/api/prism/engine/graph/edges?threshold=${threshold}&limit=${limit}${sourceParam}`,
+      `${ENGINE_URL}/api/agents/engine/graph/edges?threshold=${threshold}&limit=${limit}${sourceParam}`,
       { cache: 'no-store' },
     );
     if (!resp.ok) {
@@ -26,7 +26,7 @@ export async function GET(req: NextRequest) {
   }
 }
 
-/* POST /api/experts/graph — Create explicit edge between two PRISMs */
+/* POST /api/experts/graph — Create explicit edge between two agents */
 export async function POST(req: NextRequest) {
   try {
     const { source, target } = await req.json();
@@ -34,7 +34,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'source and target required' }, { status: 400 });
     }
     const resp = await fetch(
-      `${ENGINE_URL}/api/prism/engine/${source}/attach`,
+      `${ENGINE_URL}/api/agents/engine/${source}/attach`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

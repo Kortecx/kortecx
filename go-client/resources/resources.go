@@ -338,9 +338,9 @@ func (s *Service) ListExpertRuns(status string) ([]types.ExpertRun, error) {
 
 // --- Graph ---
 
-// GetGraphEdges fetches similarity edges from the PRISM graph.
+// GetGraphEdges fetches similarity edges from the agent graph.
 func (s *Service) GetGraphEdges(threshold float64, limit int) (*quorum.GraphEdgesResponse, error) {
-	url := fmt.Sprintf("/api/prism/engine/graph/edges?threshold=%g&limit=%d", threshold, limit)
+	url := fmt.Sprintf("/api/agents/engine/graph/edges?threshold=%g&limit=%d", threshold, limit)
 	var resp quorum.GraphEdgesResponse
 	if err := s.c.Do("GET", url, nil, &resp); err != nil {
 		return nil, err
@@ -348,25 +348,25 @@ func (s *Service) GetGraphEdges(threshold float64, limit int) (*quorum.GraphEdge
 	return &resp, nil
 }
 
-// EmbedExpert triggers re-embedding of a single PRISM.
+// EmbedExpert triggers re-embedding of a single agent.
 func (s *Service) EmbedExpert(expertID string) error {
-	url := fmt.Sprintf("/api/prism/engine/%s/embed", expertID)
+	url := fmt.Sprintf("/api/agents/engine/%s/embed", expertID)
 	var resp map[string]interface{}
 	return s.c.Do("POST", url, nil, &resp)
 }
 
-// EmbedExpertWithAssets re-embeds a PRISM with attached file content.
+// EmbedExpertWithAssets re-embeds an agent with attached file content.
 func (s *Service) EmbedExpertWithAssets(expertID string, fileTexts []string) error {
-	url := fmt.Sprintf("/api/prism/engine/%s/embed-assets", expertID)
+	url := fmt.Sprintf("/api/agents/engine/%s/embed-assets", expertID)
 	body := quorum.EmbedAssetsRequest{FileTexts: fileTexts}
 	var resp map[string]interface{}
 	return s.c.Do("POST", url, body, &resp)
 }
 
-// EmbedAllExperts triggers batch re-embedding of all PRISMs.
+// EmbedAllExperts triggers batch re-embedding of all agents.
 func (s *Service) EmbedAllExperts() error {
 	var resp map[string]interface{}
-	return s.c.Do("POST", "/api/prism/engine/embed/all", nil, &resp)
+	return s.c.Do("POST", "/api/agents/engine/embed/all", nil, &resp)
 }
 
 // MonitoringSnapshot is the response from the monitoring endpoint.

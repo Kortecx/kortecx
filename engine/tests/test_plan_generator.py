@@ -56,7 +56,7 @@ def _build_dag_from_layers(
             expert = node_map.get(nid, {})
             nodes.append({
                 "id": nid,
-                "prismId": nid,
+                "agentId": nid,
                 "label": expert.get("name", nid),
                 "description": expert.get("description", ""),
                 "category": expert.get("category", ""),

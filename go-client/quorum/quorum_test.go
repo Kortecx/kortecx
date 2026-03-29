@@ -319,7 +319,7 @@ func TestEventConstants(t *testing.T) {
 // ── Graph Type Tests ─────────────────────────────────
 
 func TestSimilarityEdge_JSON(t *testing.T) {
-	edge := SimilarityEdge{Source: "prism-a", Target: "prism-b", Weight: 0.85}
+	edge := SimilarityEdge{Source: "agent-a", Target: "agent-b", Weight: 0.85}
 	data, err := json.Marshal(edge)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
@@ -328,7 +328,7 @@ func TestSimilarityEdge_JSON(t *testing.T) {
 	if err := json.Unmarshal(data, &got); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if got.Source != "prism-a" || got.Target != "prism-b" || got.Weight != 0.85 {
+	if got.Source != "agent-a" || got.Target != "agent-b" || got.Weight != 0.85 {
 		t.Fatalf("unexpected: %+v", got)
 	}
 }

@@ -184,7 +184,7 @@ export const plans = pgTable('plans', {
   version:         integer('version').default(1),
   planType:        varchar('plan_type', { length: 10 }).default('live'),    // 'live' | 'frozen'
   markdownContent: text('markdown_content'),
-  sourceType:      varchar('source_type', { length: 20 }).default('manual'), // 'manual' | 'upload' | 'prompt' | 'prism_generated'
+  sourceType:      varchar('source_type', { length: 20 }).default('manual'), // 'manual' | 'upload' | 'prompt' | 'agent_generated'
   frozenAt:        timestamp('frozen_at', { withTimezone: true }),
   createdAt:       timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt:       timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
