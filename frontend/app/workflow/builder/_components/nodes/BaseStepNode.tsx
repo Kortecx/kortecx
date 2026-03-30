@@ -3,7 +3,7 @@
 import { memo } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 
-export type StepNodeType = 'start' | 'agent' | 'mcp-server' | 'executable' | 'action' | 'integration' | 'cloud-model' | 'master-agent';
+export type StepNodeType = 'start' | 'agent' | 'mcp-server' | 'executable' | 'action' | 'integration' | 'cloud-model' | 'master-agent' | 'transformer' | 'model' | 'plugin';
 
 export interface StepNodeData {
   label: string;
@@ -33,6 +33,9 @@ const TYPE_META: Record<StepNodeType, { label: string; abbr: string }> = {
   'integration':  { label: 'Integration',  abbr: 'INT' },
   'cloud-model':  { label: 'Cloud Model',  abbr: 'CLM' },
   'master-agent': { label: 'Master Agent', abbr: 'MA' },
+  'transformer':  { label: 'Transformer',  abbr: 'TFM' },
+  'model':        { label: 'Model',        abbr: 'MDL' },
+  'plugin':       { label: 'Plugin',       abbr: 'PLG' },
 };
 
 function BaseStepNode({ id, data }: NodeProps & { data: StepNodeData }) {

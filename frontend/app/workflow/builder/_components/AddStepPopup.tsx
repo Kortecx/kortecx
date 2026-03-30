@@ -10,6 +10,9 @@ const STEP_OPTIONS: Array<{ type: StepNodeType; label: string; icon: string; col
   { type: 'action',       label: 'Action',       icon: '📄', color: '#8b5cf6', note: 'Generate Markdown or PDF' },
   { type: 'integration',  label: 'Integration',  icon: '🔗', color: '#06b6d4', note: 'Connect external service' },
   { type: 'cloud-model',  label: 'Cloud Model',  icon: '☁️', color: '#6366f1', note: 'Anthropic, OpenAI, Google' },
+  { type: 'transformer',  label: 'Transformer',  icon: '🔄', color: '#f43f5e', note: 'HuggingFace NLP/vision/audio tasks' },
+  { type: 'model',        label: 'Model',        icon: '🧠', color: '#8b5cf6', note: 'Direct inference local/cloud' },
+  { type: 'plugin',       label: 'Plugin',       icon: '🧩', color: '#ec4899', note: 'Use installed plugin' },
 ];
 
 interface AddStepPopupProps {

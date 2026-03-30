@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState, useRef, useEffect } from 'react';
+import { useMemo, useState, useRef, useEffect, useCallback } from 'react';
 import {
   ReactFlow,
   Background,
@@ -28,6 +28,9 @@ const STEP_DEFAULTS: Record<StepNodeType, { icon: string; color: string; label: 
   'integration':  { icon: '🔗', color: '#06b6d4', label: 'Integration' },
   'cloud-model':  { icon: '☁️', color: '#6366f1', label: 'Cloud Model' },
   'master-agent': { icon: '🛡️', color: '#06b6d4', label: 'Master Agent' },
+  'transformer':  { icon: '🔄', color: '#f43f5e', label: 'Transformer' },
+  'model':        { icon: '🧠', color: '#8b5cf6', label: 'Model' },
+  'plugin':       { icon: '🧩', color: '#ec4899', label: 'Plugin' },
 };
 
 interface StepFlowEditorProps {
@@ -52,6 +55,18 @@ export default function StepFlowEditor({
   onConnect,
 }: StepFlowEditorProps) {
   const [showAddMenu, setShowAddMenu] = useState(false);
+  const addMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!showAddMenu) return;
+    const handler = (e: MouseEvent) => {
+      if (addMenuRef.current && !addMenuRef.current.contains(e.target as globalThis.Node)) {
+        setShowAddMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [showAddMenu]);
 
   const defaultEdgeOptions = useMemo(() => ({
     animated: true,
@@ -61,7 +76,7 @@ export default function StepFlowEditor({
 
   return (
     <div style={{
-      width: '100%', height: '100%', minHeight: 400, borderRadius: 10,
+      width: '100%', height: '100%', borderRadius: 10,
       border: '1px solid var(--border)', overflow: 'hidden',
       background: 'var(--bg-elevated)', position: 'relative',
     }}>
@@ -95,7 +110,7 @@ export default function StepFlowEditor({
       </ReactFlow>
 
       {/* Top-right Add Step button + dropdown */}
-      <div style={{ position: 'absolute', top: 10, right: 10, zIndex: 10 }}>
+      <div ref={addMenuRef} style={{ position: 'absolute', top: 10, right: 10, zIndex: 10 }}>
         <button
           onClick={() => setShowAddMenu(o => !o)}
           style={{

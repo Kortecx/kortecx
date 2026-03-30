@@ -167,6 +167,9 @@ export const experts = pgTable('experts', {
   isPublic:      boolean('is_public').default(false),
   isFinetuned:   boolean('is_finetuned').default(false),
   replicaCount:  integer('replica_count').default(1),
+  capabilities:  text('capabilities').array(),
+  specializations: text('specializations').array(),
+  customRoleDescription: text('custom_role_description'),
   createdAt:     timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt:     timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 });

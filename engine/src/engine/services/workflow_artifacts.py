@@ -27,6 +27,7 @@ from typing import Any
 logger = logging.getLogger("engine.workflow_artifacts")
 
 OUTPUTS_ROOT = Path(__file__).resolve().parents[3] / "outputs" / "workflows"
+LOCAL_ROOT = Path(__file__).resolve().parents[3] / "workflows" / "local"
 
 _EXT_MAP: dict[str, str] = {
     "python": ".py", "py": ".py", "bash": ".sh", "sh": ".sh", "shell": ".sh",
@@ -366,6 +367,107 @@ class WorkflowArtifacts:
 
         logger.info("Workflow config saved: %s (max_versions=%d)", wf_slug, max_versions)
         return {"saved": True, "workflowSlug": wf_slug, "configPath": str(config_path), "planPath": str(plan_path)}
+
+
+    # ── Local persistence with versioning ──────────────────────────────────
+
+    def save_local(
+        self,
+        workflow_name: str,
+        config: dict[str, Any],
+        graph: dict[str, Any] | None = None,
+        max_versions: int = 3,
+    ) -> dict[str, Any]:
+        """Save workflow to local directory with versioning."""
+        import time as _time
+
+        wf_slug = _slugify(workflow_name)
+        wf_dir = LOCAL_ROOT / wf_slug
+        wf_dir.mkdir(parents=True, exist_ok=True)
+        versions_dir = wf_dir / ".versions"
+        versions_dir.mkdir(exist_ok=True)
+
+        ts = int(_time.time() * 1000)
+
+        # Version existing files
+        for fname in ("config.json", "plan.md", "graph.json"):
+            fpath = wf_dir / fname
+            if fpath.exists():
+                (versions_dir / f"{fname}.v{ts}").write_text(fpath.read_text(encoding="utf-8"), encoding="utf-8")
+
+        # Prune old versions
+        for prefix in ("config.json.v", "plan.md.v", "graph.json.v"):
+            vfiles = sorted(
+                (f for f in versions_dir.iterdir() if f.name.startswith(prefix)),
+                key=lambda f: int(f.name.split(".v")[-1]),
+                reverse=True,
+            )
+            for old in vfiles[max_versions:]:
+                try:
+                    old.unlink()
+                except OSError:
+                    pass
+
+        # Write config.json
+        (wf_dir / "config.json").write_text(json.dumps(config, indent=2), encoding="utf-8")
+
+        # Write graph.json
+        if graph:
+            (wf_dir / "graph.json").write_text(json.dumps(graph, indent=2), encoding="utf-8")
+
+        # Generate plan.md
+        steps = config.get("steps", [])
+        plan_lines = [f"# Workflow Plan: {workflow_name}\n"]
+        if config.get("description"):
+            plan_lines.append(f"**Description:** {config['description']}\n")
+        plan_lines.append(f"**Steps:** {len(steps)}\n---\n")
+        for i, step in enumerate(steps):
+            plan_lines.append(f"## Step {i + 1}: {step.get('name', 'Unnamed')}")
+            plan_lines.append(f"- Type: {step.get('stepType', 'agent')}")
+            plan_lines.append(f"- Connection: {step.get('connectionType', 'sequential')}")
+            model_cfg = step.get("localModelConfig", {})
+            if model_cfg:
+                plan_lines.append(f"- Model: {model_cfg.get('modelName', 'N/A')} ({model_cfg.get('engine', 'N/A')})")
+            plan_lines.append("")
+        (wf_dir / "plan.md").write_text("\n".join(plan_lines), encoding="utf-8")
+
+        logger.info("Workflow saved locally: %s (max_versions=%d)", wf_slug, max_versions)
+        return {"saved": True, "path": str(wf_dir), "workflowSlug": wf_slug}
+
+    def list_local_versions(self, workflow_name: str) -> list[dict[str, Any]]:
+        """List available versions for a workflow."""
+        wf_slug = _slugify(workflow_name)
+        versions_dir = LOCAL_ROOT / wf_slug / ".versions"
+        if not versions_dir.exists():
+            return []
+
+        # Group by timestamp
+        timestamps: set[int] = set()
+        for f in versions_dir.iterdir():
+            if ".v" in f.name:
+                try:
+                    ts = int(f.name.split(".v")[-1])
+                    timestamps.add(ts)
+                except (ValueError, IndexError):
+                    pass
+
+        versions = []
+        for ts in sorted(timestamps, reverse=True):
+            from datetime import UTC, datetime
+            versions.append({
+                "timestamp": ts,
+                "date": datetime.fromtimestamp(ts / 1000, tz=UTC).isoformat(),
+                "files": [f.name for f in versions_dir.iterdir() if f.name.endswith(f".v{ts}")],
+            })
+        return versions
+
+    def load_local_version(self, workflow_name: str, timestamp: int) -> dict[str, Any] | None:
+        """Load a specific version's config."""
+        wf_slug = _slugify(workflow_name)
+        version_file = LOCAL_ROOT / wf_slug / ".versions" / f"config.json.v{timestamp}"
+        if not version_file.exists():
+            return None
+        return json.loads(version_file.read_text(encoding="utf-8"))
 
 
 workflow_artifacts = WorkflowArtifacts()

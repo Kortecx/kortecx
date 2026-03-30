@@ -134,6 +134,9 @@ export async function POST(req: NextRequest) {
         isPublic: isPublic ?? false,
         category: category ?? 'custom',
         complexityLevel: complexityLevel ?? 3,
+        capabilities: capabilities ?? [],
+        specializations: specializations ?? [],
+        customRoleDescription: customRoleDescription ?? null,
       }).onConflictDoNothing();
     } catch (dbErr) {
       console.warn('[experts POST] direct DB insert failed (engine sync will retry):', dbErr);

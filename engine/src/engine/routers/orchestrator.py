@@ -518,3 +518,37 @@ async def save_workflow_config(req: SaveConfigRequest) -> dict[str, Any]:
         config=req.config,
         max_versions=req.maxVersions,
     )
+
+
+class SaveLocalRequest(BaseModel):
+    workflowName: str
+    config: dict[str, Any]
+    graph: dict[str, Any] | None = None
+    maxVersions: int = 3
+
+
+@router.post("/workflow-save-local")
+async def save_workflow_local(req: SaveLocalRequest) -> dict[str, Any]:
+    """Save workflow to local directory with versioning."""
+    return workflow_artifacts.save_local(
+        workflow_name=req.workflowName,
+        config=req.config,
+        graph=req.graph,
+        max_versions=req.maxVersions,
+    )
+
+
+@router.get("/workflow-versions/{workflow_name}")
+async def list_workflow_versions(workflow_name: str) -> dict[str, Any]:
+    """List available versions for a workflow."""
+    versions = workflow_artifacts.list_local_versions(workflow_name)
+    return {"versions": versions, "total": len(versions)}
+
+
+@router.get("/workflow-versions/{workflow_name}/{timestamp}")
+async def load_workflow_version(workflow_name: str, timestamp: int) -> dict[str, Any]:
+    """Load a specific version's config."""
+    config = workflow_artifacts.load_local_version(workflow_name, timestamp)
+    if config is None:
+        return {"error": "Version not found"}
+    return {"config": config}

@@ -331,6 +331,86 @@ export default function StepConfigDrawer({ open, nodeId, config, onClose, onSave
                 </div>
               </div>
             )}
+
+            {/* Transformer: HuggingFace task config */}
+            {form.stepType === 'transformer' && (
+              <>
+                <div>
+                  <div style={labelStyle}>Task Type</div>
+                  <select value={form.provider ?? 'text-generation'} onChange={e => update('provider', e.target.value)} style={{ ...inputStyle, cursor: 'pointer' }}>
+                    <option value="text-generation">Text Generation</option>
+                    <option value="summarization">Summarization</option>
+                    <option value="translation">Translation</option>
+                    <option value="text-classification">Text Classification</option>
+                    <option value="fill-mask">Fill Mask</option>
+                    <option value="question-answering">Question Answering</option>
+                    <option value="feature-extraction">Feature Extraction</option>
+                  </select>
+                </div>
+                <div>
+                  <div style={labelStyle}>HuggingFace Model</div>
+                  <input value={form.model} onChange={e => update('model', e.target.value)} placeholder="e.g. facebook/bart-large-cnn" style={inputStyle} />
+                </div>
+                <div>
+                  <div style={labelStyle}>Max Length</div>
+                  <input type="number" value={form.maxTokens} onChange={e => update('maxTokens', parseInt(e.target.value) || 512)} style={inputStyle} />
+                </div>
+              </>
+            )}
+
+            {/* Model: Direct inference */}
+            {form.stepType === 'model' && (
+              <>
+                <div>
+                  <div style={labelStyle}>Task Description</div>
+                  <textarea value={form.taskDescription} onChange={e => update('taskDescription', e.target.value)} rows={3} style={{ ...inputStyle, resize: 'vertical' }} />
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                  <div>
+                    <div style={labelStyle}>Engine</div>
+                    <select value={form.engine} onChange={e => { update('engine', e.target.value); if (e.target.value === 'anthropic') update('model', 'claude-sonnet-4-6'); else if (e.target.value === 'openai') update('model', 'gpt-4o'); else update('model', 'llama3.2:3b'); }} style={{ ...inputStyle, cursor: 'pointer' }}>
+                      <option value="ollama">Ollama</option>
+                      <option value="llamacpp">llama.cpp</option>
+                      <option value="anthropic">Anthropic</option>
+                      <option value="openai">OpenAI</option>
+                      <option value="google">Google</option>
+                    </select>
+                  </div>
+                  <div>
+                    <div style={labelStyle}>Model</div>
+                    <input value={form.model} onChange={e => update('model', e.target.value)} style={inputStyle} />
+                  </div>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                  <div>
+                    <div style={labelStyle}>Temperature ({form.temperature.toFixed(1)})</div>
+                    <input type="range" min={0} max={2} step={0.1} value={form.temperature} onChange={e => update('temperature', parseFloat(e.target.value))} style={{ width: '100%' }} />
+                  </div>
+                  <div>
+                    <div style={labelStyle}>Max Tokens</div>
+                    <input type="number" value={form.maxTokens} onChange={e => update('maxTokens', parseInt(e.target.value) || 4096)} style={inputStyle} />
+                  </div>
+                </div>
+              </>
+            )}
+
+            {/* Plugin: Select from installed */}
+            {form.stepType === 'plugin' && (
+              <div>
+                <div style={labelStyle}>Plugin</div>
+                <select value={form.mcpServerId ?? ''} onChange={e => update('mcpServerId', e.target.value)} style={{ ...inputStyle, cursor: 'pointer' }}>
+                  <option value="">Select installed plugin...</option>
+                  <option value="web-scraper">Web Scraper</option>
+                  <option value="pdf-parser">PDF Parser</option>
+                  <option value="code-executor">Code Executor</option>
+                  <option value="image-generator">Image Generator</option>
+                  <option value="multi-translator">Multi-Translator</option>
+                  <option value="chart-builder">Chart Builder</option>
+                  <option value="email-composer">Email Composer</option>
+                  <option value="vector-search">Vector Search</option>
+                </select>
+              </div>
+            )}
           </div>
 
           {/* Footer */}
@@ -375,11 +455,17 @@ function ExecutableSection({ form, update, inputStyle, labelStyle }: {
   const [generating, setGenerating] = useState(false);
 
   useEffect(() => {
-    fetch('/api/orchestrator/artifacts/_all/_all')
+    fetch('/api/mcp/servers')
       .then(r => r.ok ? r.json() : { artifacts: [] })
-      .then(d => setExecutables((d.artifacts ?? []).filter((a: Record<string, unknown>) =>
-        typeof a.name === 'string' && /\.(py|ts|js|sh)$/.test(a.name as string)
-      ).map((a: Record<string, unknown>) => ({ name: a.name as string, language: (a.name as string).endsWith('.py') ? 'python' : 'typescript' }))))
+      .then(d => {
+        const servers = [...(d.prebuilt ?? []), ...(d.persisted ?? []), ...(d.cached ?? [])];
+        setExecutables(servers.filter((s: Record<string, unknown>) =>
+          typeof s.name === 'string'
+        ).map((s: Record<string, unknown>) => ({
+          name: (s.name as string) || (s.id as string) || 'unnamed',
+          language: ((s.language as string) || 'python'),
+        })));
+      })
       .catch(() => {});
   }, []);
 

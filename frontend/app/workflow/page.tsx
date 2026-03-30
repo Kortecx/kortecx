@@ -1838,6 +1838,8 @@ export default function WorkflowsPage() {
                     </td>
                     <td style={{ ...TD, textAlign: 'right' }} onClick={e => e.stopPropagation()}>
                       <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end' }}>
+                        {/* Fixed-width container for conditional Run/Stop/Restart */}
+                        <div style={{ display: 'flex', gap: 4, minWidth: 70, justifyContent: 'flex-end' }}>
                         {canRun && (
                           <button onClick={() => handleRun(wf.id as string)} disabled={isStarting} style={{
                             display: 'flex', alignItems: 'center', gap: 4,
@@ -1872,6 +1874,7 @@ export default function WorkflowsPage() {
                             <RotateCcw size={10} />
                           </button>
                         )}
+                        </div>
                         <button onClick={() => setPlanDialogWf(wf)} title="Edit Plan" style={{
                           display: 'flex', alignItems: 'center', gap: 4,
                           padding: '5px 8px', borderRadius: 5, fontSize: 11, fontWeight: 600,

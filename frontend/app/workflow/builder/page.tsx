@@ -5,8 +5,8 @@ import { useSearchParams, useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import dynamic from 'next/dynamic';
 import {
-  Loader2, Save, Paperclip, X, Mic, Eye, EyeOff, Calendar, Tag,
-  Workflow as WorkflowIcon, ArrowLeft, FileText, ChevronDown, ChevronUp,
+  Loader2, Save, Paperclip, X, Mic, Eye, EyeOff, Calendar, Tag, Play,
+  Workflow as WorkflowIcon, ArrowLeft, FileText, ChevronDown, ChevronUp, ExternalLink,
   Zap, Cpu, HardDrive, Brain, Lock,
 } from 'lucide-react';
 import {
@@ -194,6 +194,8 @@ function WorkflowBuilderInner() {
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [attachments, setAttachments] = useState<Array<{ name: string; url: string }>>([]);
   const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [lastTestRunId, setLastTestRunId] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   // Master agent + connected agents
@@ -271,6 +273,10 @@ function WorkflowBuilderInner() {
             target: ge.target,
           })));
         }
+        // Restore nodeConfigs from metadata
+        if (meta.nodeConfigs && typeof meta.nodeConfigs === 'object') {
+          setNodeConfigs(meta.nodeConfigs as Record<string, StepConfig>);
+        }
       } catch { /* ignore */ }
     })();
   }, [workflowId]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -347,7 +353,7 @@ function WorkflowBuilderInner() {
       });
       const body = {
         ...(workflowId ? { id: workflowId } : {}),
-        name: name.trim(), description: description.trim(), goalStatement: prompt.trim(),
+        name: name.trim(), description: description.trim(), goalStatement: prompt.trim(), status: 'ready',
         inputFileUrls: attachments.map(a => a.url), tags,
         steps: stepConfigs,
         metadata: {
@@ -355,14 +361,117 @@ function WorkflowBuilderInner() {
           connectedAgents: connectedAgents.map(a => ({ expertId: a.expertId, name: a.name, role: a.role, model: a.model })),
           graphNodes: nodes.map(n => ({ id: n.id, position: n.position, data: { label: (n.data as unknown as StepNodeData).label, stepType: (n.data as unknown as StepNodeData).stepType } })),
           graphEdges: edges.map(e => ({ source: e.source, target: e.target })),
+          nodeConfigs: nodeConfigs,
         },
       };
       const res = await fetch('/api/workflows', { method: workflowId ? 'PATCH' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       if (res.ok) {
         fetch('/api/workflows/save-config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ workflowName: name.trim(), config: body, maxVersions: 3 }) }).catch(() => {});
+        // Save locally with graph + nodeConfigs for full restoration
+        fetch('/api/workflows/save-local', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+          workflowName: name.trim(), config: body,
+          graph: { nodes: body.metadata?.graphNodes, edges: body.metadata?.graphEdges, nodeConfigs },
+          maxVersions: 3,
+        }) }).catch(() => {});
         router.push('/workflow');
       }
     } catch (err) { console.error('Save failed:', err); } finally { setSaving(false); }
+  };
+
+  // Test run — save as draft + trigger execution
+  const handleTestRun = async () => {
+    if (!name.trim()) return;
+    setTesting(true);
+    try {
+      const stepNodes = nodes.filter(n => n.id !== 'start');
+      const stepConfigs = stepNodes.map((n, i) => {
+        const cfg = nodeConfigs[n.id];
+        return {
+          order: i + 1, name: cfg?.label || (n.data as unknown as StepNodeData).label,
+          expertId: cfg?.expertId || null, taskDescription: cfg?.taskDescription || '',
+          systemInstructions: cfg?.systemInstructions || '',
+          modelSource: cfg?.stepType === 'cloud-model' ? 'provider' : 'local',
+          localModelConfig: { engine: cfg?.engine || 'ollama', modelName: cfg?.model || 'llama3.2:3b' },
+          connectionType: 'sequential',
+          stepType: cfg?.stepType === 'agent' || cfg?.stepType === 'cloud-model' || cfg?.stepType === 'model' ? 'agent' : 'action',
+          actionConfig: cfg?.stepType === 'executable' ? { transformerType: 'executable', executionRuntime: cfg.runtime || 'python', outputFormat: 'markdown' }
+            : cfg?.stepType === 'mcp-server' ? { transformerType: 'mcp', mcpServerId: cfg.mcpServerId || '', outputFormat: 'markdown' }
+            : cfg?.stepType === 'action' ? { transformerType: 'none', outputFormat: cfg.outputFormat || 'markdown', outputFilename: cfg.outputFilename || 'output.md' }
+            : undefined,
+          temperature: cfg?.temperature ?? 0.7, maxTokens: cfg?.maxTokens ?? 4096,
+        };
+      });
+
+      // Save as draft first
+      const draftBody = {
+        ...(workflowId ? { id: workflowId } : {}),
+        name: name.trim(), description: description.trim(), goalStatement: prompt.trim(), status: 'draft',
+        inputFileUrls: attachments.map(a => a.url), tags, steps: stepConfigs,
+        metadata: {
+          masterAgent: masterAgent ? { expertId: masterAgent.expertId, name: masterAgent.name, role: masterAgent.role, model: masterAgent.model } : null,
+          connectedAgents: connectedAgents.map(a => ({ expertId: a.expertId, name: a.name, role: a.role, model: a.model })),
+          graphNodes: nodes.map(n => ({ id: n.id, position: n.position, data: { label: (n.data as unknown as StepNodeData).label, stepType: (n.data as unknown as StepNodeData).stepType } })),
+          graphEdges: edges.map(e => ({ source: e.source, target: e.target })),
+          nodeConfigs,
+        },
+      };
+      const saveRes = await fetch('/api/workflows', { method: workflowId ? 'PATCH' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(draftBody) });
+      if (!saveRes.ok) throw new Error('Draft save failed');
+      const saveData = await saveRes.json();
+      const wfId = saveData.workflow?.id || workflowId;
+
+      // Cache draft in localStorage
+      try { localStorage.setItem(`kortecx:workflow-draft:${wfId}`, JSON.stringify(draftBody)); } catch { /* ignore */ }
+
+      // Trigger test run — create DB record + submit to engine
+      if (wfId && stepConfigs.length > 0) {
+        // Create DB run record
+        const runRes = await fetch('/api/workflows/run', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            workflowId: wfId, name: name.trim(),
+            goalFileUrl: attachments[0]?.url || '', steps: stepConfigs,
+          }),
+        });
+        let runId: string | null = null;
+        if (runRes.ok) {
+          const runData = await runRes.json();
+          runId = runData.runId || runData.id;
+          if (runId) setLastTestRunId(runId);
+        }
+
+        // Submit to engine for actual execution
+        const engineSteps = stepConfigs.map(s => ({
+          stepId: `step-${s.order}`,
+          name: s.name,
+          expertId: s.expertId,
+          taskDescription: s.taskDescription,
+          systemInstructions: s.systemInstructions,
+          modelSource: s.modelSource,
+          localModel: s.localModelConfig ? { engine: s.localModelConfig.engine, model: s.localModelConfig.modelName } : null,
+          temperature: s.temperature,
+          maxTokens: s.maxTokens,
+          connectionType: s.connectionType,
+          stepType: s.stepType,
+          actionConfig: s.actionConfig,
+        }));
+        const ENGINE_URL = process.env.NEXT_PUBLIC_ENGINE_URL || 'http://localhost:8000';
+        fetch(`${ENGINE_URL}/api/orchestrator/execute`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            runId: runId || undefined,
+            workflowId: wfId,
+            name: name.trim(),
+            goalFileUrl: attachments[0]?.url || '',
+            steps: engineSteps,
+            masterAgentId: masterAgent?.expertId || null,
+            connectedAgentIds: connectedAgents.map(a => a.expertId),
+          }),
+        }).catch(() => {}); // non-blocking
+      }
+    } catch (err) { console.error('Test run failed:', err); } finally { setTesting(false); }
   };
 
   const configForDrawer = configNodeId ? nodeConfigs[configNodeId] ?? null : null;
@@ -371,33 +480,56 @@ function WorkflowBuilderInner() {
 
   return (
     <div style={{ padding: '10px 20px', maxWidth: 1400, margin: '0 auto', display: 'flex', flexDirection: 'column', height: '100vh' }}>
-      {/* Row 1: Back + Name + Schedule + Save */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, flexShrink: 0 }}>
+      {/* Row 1: Back + Name + Schedule + Play + Save */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexShrink: 0, background: `linear-gradient(135deg, ${ACCENT}08, ${ACCENT}03)`, border: `1px solid ${ACCENT}20`, borderRadius: 8, padding: '5px 10px' }}>
         <button onClick={() => router.push('/workflow')} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, borderRadius: 6, border: '1px solid var(--border)', background: 'transparent', cursor: 'pointer', color: 'var(--text-3)', flexShrink: 0 }}>
           <ArrowLeft size={13} />
         </button>
         <WorkflowIcon size={14} color={ACCENT} style={{ flexShrink: 0 }} />
         <input value={name} onChange={e => setName(e.target.value)}
-          style={{ width: 260, padding: '5px 8px', borderRadius: 6, border: '1px solid transparent', background: 'transparent', fontSize: 15, fontWeight: 700, color: 'var(--text-1)', outline: 'none' }}
+          style={{ width: 220, padding: '4px 6px', borderRadius: 6, border: '1px solid transparent', background: 'transparent', fontSize: 13, fontWeight: 700, color: 'var(--text-1)', outline: 'none' }}
           onFocus={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.background = 'var(--bg-surface)'; }}
           onBlur={e => { e.currentTarget.style.borderColor = 'transparent'; e.currentTarget.style.background = 'transparent'; }}
         />
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
-          <button disabled title="Coming soon" style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '5px 12px', borderRadius: 6, fontSize: 10, fontWeight: 600, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-4)', cursor: 'not-allowed', opacity: 0.5 }}>
+          <button disabled title="Coming soon" style={{ display: 'flex', alignItems: 'center', gap: 3, padding: '4px 10px', borderRadius: 6, fontSize: 9, fontWeight: 600, border: `1.5px solid ${ACCENT}40`, background: 'transparent', color: `${ACCENT}90`, cursor: 'not-allowed' }}>
             <Calendar size={10} /> Schedule
           </button>
-          <button onClick={handleSave} disabled={saving || !name.trim()} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '5px 12px', borderRadius: 6, fontSize: 10, fontWeight: 700, border: `1.5px solid ${ACCENT}`, background: ACCENT, color: '#fff', cursor: saving ? 'wait' : 'pointer', opacity: (!name.trim() || saving) ? 0.5 : 1 }}>
+          <button onClick={handleTestRun} disabled={testing || !name.trim() || nodes.length <= 1} title="Test Run (saves as draft)" style={{ display: 'flex', alignItems: 'center', gap: 3, padding: '4px 10px', borderRadius: 6, fontSize: 9, fontWeight: 700, border: `1.5px solid ${ACCENT}`, background: 'transparent', color: ACCENT, cursor: testing ? 'wait' : 'pointer', opacity: (!name.trim() || testing || nodes.length <= 1) ? 0.5 : 1 }}>
+            {testing ? <Loader2 size={10} className="spin" /> : <Play size={10} />} Test Run
+          </button>
+          <button onClick={handleSave} disabled={saving || !name.trim()} style={{ display: 'flex', alignItems: 'center', gap: 3, padding: '4px 10px', borderRadius: 6, fontSize: 9, fontWeight: 700, border: `1.5px solid ${ACCENT}`, background: ACCENT, color: '#fff', cursor: saving ? 'wait' : 'pointer', opacity: (!name.trim() || saving) ? 0.5 : 1 }}>
             {saving ? <Loader2 size={10} className="spin" /> : <Save size={10} />} Save
           </button>
         </div>
       </div>
 
+      {/* Test run link */}
+      {lastTestRunId && (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', marginBottom: 4, flexShrink: 0 }}>
+          <a
+            href={`/workflow/history?runId=${lastTestRunId}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{
+              display: 'flex', alignItems: 'center', gap: 4,
+              padding: '3px 10px', borderRadius: 5, fontSize: 9, fontWeight: 600,
+              background: `${ACCENT}10`, border: `1px solid ${ACCENT}30`,
+              color: ACCENT, textDecoration: 'none', transition: 'all 0.12s',
+            }}
+          >
+            <ExternalLink size={9} />
+            View Test Run: {lastTestRunId.slice(0, 20)}...
+          </a>
+        </div>
+      )}
+
       {/* Row 2: Left (prompt + tags + advanced) | Right (master agent + metrics + inference) */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginBottom: 4, flexShrink: 0 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4, marginBottom: 3, flexShrink: 0 }}>
         {/* Left column */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           {/* Prompt preview */}
-          <button onClick={() => setShowPromptDialog(true)} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px', borderRadius: 8, border: '1px solid #333', background: '#1e1e1e', cursor: 'pointer', textAlign: 'left', transition: 'all 0.12s' }}
+          <button onClick={() => setShowPromptDialog(true)} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px', borderRadius: 8, border: '1px solid #333', borderLeft: `3px solid ${ACCENT}`, background: '#1e1e1e', cursor: 'pointer', textAlign: 'left', transition: 'all 0.12s' }}
             onMouseEnter={e => { e.currentTarget.style.borderColor = `${ACCENT}60`; }}
             onMouseLeave={e => { e.currentTarget.style.borderColor = '#333'; }}>
             <FileText size={13} color="#808080" style={{ flexShrink: 0 }} />
@@ -408,7 +540,7 @@ function WorkflowBuilderInner() {
           </button>
 
           {/* Tags */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap', padding: '6px 12px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-surface)', minHeight: 30 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap', padding: '6px 12px', borderRadius: 8, border: '1px solid var(--border)', borderLeft: '3px solid #06b6d4', background: 'var(--bg-surface)', minHeight: 30 }}>
             <Tag size={12} color="var(--text-4)" />
             {tags.map((t, i) => (
               <span key={t} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '2px 8px', borderRadius: 5, fontSize: 11, fontWeight: 500, background: `${ACCENT}12`, color: ACCENT, border: `1px solid ${ACCENT}25` }}>
@@ -436,7 +568,7 @@ function WorkflowBuilderInner() {
                 <div key={m.type} style={{
                   display: 'flex', alignItems: 'center', gap: 5,
                   padding: '4px 10px', borderRadius: 6,
-                  background: count > 0 ? `${m.color}10` : 'var(--bg-surface)',
+                  background: count > 0 ? `${m.color}18` : 'var(--bg-surface)',
                   border: `1px solid ${count > 0 ? `${m.color}30` : 'var(--border)'}`,
                 }}>
                   <span style={{ fontSize: 12, fontWeight: 700, color: count > 0 ? m.color : 'var(--text-4)' }}>{count}</span>
@@ -447,7 +579,7 @@ function WorkflowBuilderInner() {
           </div>
 
           {/* Advanced Configs */}
-          <button onClick={() => setShowAdvanced(a => !a)} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--bg-surface)', cursor: 'pointer', fontSize: 12, fontWeight: 600, color: 'var(--text-3)' }}>
+          <button onClick={() => setShowAdvanced(a => !a)} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 7, border: '1px solid var(--border)', borderLeft: '3px solid #8b5cf6', background: 'var(--bg-surface)', cursor: 'pointer', fontSize: 12, fontWeight: 600, color: 'var(--text-3)' }}>
             <Brain size={12} /> Advanced Configs
             {showAdvanced ? <ChevronUp size={12} style={{ marginLeft: 'auto' }} /> : <ChevronDown size={12} style={{ marginLeft: 'auto' }} />}
             <span style={{ fontSize: 9, padding: '2px 6px', borderRadius: 4, background: '#f59e0b18', color: '#f59e0b', fontWeight: 700 }}>SOON</span>
@@ -474,47 +606,37 @@ function WorkflowBuilderInner() {
           )}
         </div>
 
-        {/* Right column: Master Agent + Metrics (expanded) + Inference */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+        {/* Right column: Master Agent + Metrics + Inference */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
           <MasterAgentPanel
-            masterAgent={masterAgent}
-            connectedAgents={connectedAgents}
-            onAttach={() => { setExpertPickerTarget('master'); setShowExpertPicker(true); }}
-            onDetach={() => { setMasterAgent(null); setConnectedAgents([]); }}
-            onAttachConnected={() => { setExpertPickerTarget('connected'); setShowExpertPicker(true); }}
-            onDetachConnected={(i) => setConnectedAgents(prev => prev.filter((_, j) => j !== i))}
-          />
+              masterAgent={masterAgent}
+              connectedAgents={connectedAgents}
+              onAttach={() => { setExpertPickerTarget('master'); setShowExpertPicker(true); }}
+              onDetach={() => { setMasterAgent(null); setConnectedAgents([]); }}
+              onAttachConnected={() => { setExpertPickerTarget('connected'); setShowExpertPicker(true); }}
+              onDetachConnected={(i) => setConnectedAgents(prev => prev.filter((_, j) => j !== i))}
+            />
 
-          {/* Metrics — 2 rows of 3 */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 3 }}>
-            {[
-              { label: 'Steps', value: String(stepCount) },
-              { label: 'Est. Tokens', value: stepCount > 0 ? `~${stepCount * 4}k` : '—' },
-              { label: 'Est. Cost', value: stepCount > 0 ? `$${(stepCount * 0.008).toFixed(3)}` : '—' },
-              { label: 'Parallel', value: '—' },
-              { label: 'Avg Latency', value: '—' },
-              { label: 'Agents', value: String(Object.values(nodeConfigs).filter(c => c.stepType === 'agent').length) },
-            ].map(m => (
-              <div key={m.label} style={{ padding: '2px 4px', borderRadius: 4, background: 'var(--bg-surface)', border: '1px solid var(--border)', textAlign: 'center' }}>
-                <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-1)', lineHeight: 1.1 }}>{m.value}</div>
-                <div style={{ fontSize: 6, color: 'var(--text-4)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{m.label}</div>
-              </div>
-            ))}
-          </div>
-
-          {/* Inference — single compact row */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 3, padding: '2px 6px', borderRadius: 4, background: 'var(--bg-surface)', border: '1px solid var(--border)', opacity: 0.5 }}>
-            <Cpu size={7} color="var(--text-4)" />
-            {['KV:Auto', 'Mem:Std', 'Q:None', 'SLM:Std'].map(s => (
-              <span key={s} style={{ padding: '0px 3px', borderRadius: 2, fontSize: 6, background: 'var(--bg-elevated)', color: 'var(--text-4)', border: '1px solid var(--border)' }}>{s}</span>
-            ))}
-            <Lock size={6} color="var(--text-4)" style={{ marginLeft: 'auto' }} />
-          </div>
+              {[
+                { label: 'Steps', value: String(stepCount), color: '#D97706' },
+                { label: 'Est. Tokens', value: stepCount > 0 ? `~${stepCount * 4}k` : '—', color: '#3b82f6' },
+                { label: 'Est. Cost', value: stepCount > 0 ? `$${(stepCount * 0.008).toFixed(3)}` : '—', color: '#10b981' },
+                { label: 'Parallel', value: '—', color: '#8b5cf6' },
+                { label: 'Avg Latency', value: '—', color: '#f59e0b' },
+                { label: 'Agents', value: String(Object.values(nodeConfigs).filter(c => c.stepType === 'agent').length), color: '#06b6d4' },
+              ].map(m => (
+                <div key={m.label} style={{ padding: '3px 6px', borderRadius: 5, background: 'var(--bg-surface)', border: '1px solid var(--border)', borderTop: `2px solid ${m.color}30`, textAlign: 'center' }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-1)', lineHeight: 1.1 }}>{m.value}</div>
+                  <div style={{ fontSize: 7, color: 'var(--text-4)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{m.label}</div>
+                </div>
+              ))}
+            </div>
         </div>
       </div>
 
       {/* ReactFlow — fills remaining space */}
-      <div style={{ flex: 1, minHeight: 300 }}>
+      <div style={{ flex: 1, minHeight: 0, width: '100%' }}>
         <StepFlowEditor onAddStep={handleAddStep} onConfigureNode={setConfigNodeId}
           onDeleteNode={(nid) => { setNodes(ns => ns.filter(n => n.id !== nid)); setEdges(es => es.filter(e => e.source !== nid && e.target !== nid)); setNodeConfigs(prev => { const next = { ...prev }; delete next[nid]; return next; }); }}
           nodes={nodes} edges={edges} onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} onConnect={onConnect} />
