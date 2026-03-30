@@ -2,7 +2,7 @@
 
 ## Overview
 
-Kortecx maintains a comprehensive testing and quality gate pipeline that runs across all three services (Python engine, Go client, TypeScript frontend). Every push is validated by the pre-push hook, and the full test suite provides 244 tests covering types, services, edge cases, and integration points.
+Kortecx maintains a comprehensive testing and quality gate pipeline that runs across both services (Python engine and TypeScript frontend). Every push is validated by the pre-push hook, and the full test suite covers types, services, edge cases, and integration points.
 
 ---
 
@@ -12,8 +12,8 @@ Kortecx maintains a comprehensive testing and quality gate pipeline that runs ac
 
 | Mode | Command | What it checks |
 |------|---------|----------------|
-| `--quick` | `./scripts/check.sh --quick` | TypeScript (`tsc`), ESLint, Ruff check + format, Go vet |
-| `--test` | `./scripts/check.sh --test` | Python pytest, Go test, Vitest |
+| `--quick` | `./scripts/check.sh --quick` | TypeScript (`tsc`), ESLint, Ruff check + format |
+| `--test` | `./scripts/check.sh --test` | Python pytest, Vitest |
 | `--lint` | `./scripts/check.sh --lint` | Lint only (no tests) |
 | `(default)` | `./scripts/check.sh` | Everything + `next build` |
 
@@ -48,17 +48,6 @@ npm run lint         # eslint (errors only)
 | `test_local_inference.py` | 14 | — | Inference backends |
 | `test_synthesis.py` | 10 | — | Data synthesis |
 | `test_system_stats.py` | 7 | — | System resource monitoring |
-
-### Go Client (15 tests)
-
-| Area | Tests | Focus |
-|------|-------|-------|
-| Type serialization | 7 | JSON roundtrip for SubmitRequest, RunResult, PhaseUpdate, AgentCreated, ExpertRunRequest, MetricsSnapshot, LiveMetrics |
-| SharedMemoryStore | 1 | Set/Get, globals, snapshot isolation |
-| Orchestrator | 2 | Config defaults, stats |
-| Utilities | 2 | `truncate` helper, event constants |
-| Context | 1 | Cancellation propagation |
-| Agent types | 2 | AgentTask fields, AgentResult serialization |
 
 ### Frontend (36 tests)
 
@@ -134,7 +123,6 @@ npm run lint         # eslint (errors only)
 | TypeScript | ESLint 9 | Next.js config + `--quiet` for errors only |
 | Python | Ruff | `pyproject.toml` — `target-version = "py311"`, `line-length = 170` |
 | Python | Ruff format | Auto-formatting check |
-| Go | `go vet` | Standard Go vet |
 
 ---
 
@@ -146,9 +134,6 @@ npm run lint         # eslint (errors only)
 
 # Python only
 cd engine && .venv/bin/python -m pytest tests/ -v --cov=engine
-
-# Go only
-cd go-client && go test ./quorum/ -v -count=1
 
 # Frontend only
 cd frontend && npx vitest run --reporter=verbose
@@ -162,6 +147,5 @@ cd frontend && npx vitest run --coverage
 ## Adding New Tests
 
 1. **Python:** Add to `engine/tests/test_*.py`, use `pytest` fixtures (`tmp_path`, `monkeypatch`)
-2. **Go:** Add to `go-client/quorum/quorum_test.go`, use standard `testing` package
-3. **Frontend:** Add to `frontend/tests/unit/*.test.ts`, use `vitest` (`describe`/`it`/`expect`)
+2. **Frontend:** Add to `frontend/tests/unit/*.test.ts`, use `vitest` (`describe`/`it`/`expect`)
 4. Run `./scripts/check.sh` to verify everything passes before committing

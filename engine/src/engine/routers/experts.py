@@ -56,15 +56,19 @@ async def _embed_agent(
         vectors = hf_service.text_embedding(EMBED_MODEL, text)
         if not vectors:
             return
-        # Ensure collection exists
+        # Ensure collection exists (ignore 409 if another coroutine created it first)
         collections = qdrant_service.client.get_collections().collections
         if AGENTS_COLLECTION not in [c.name for c in collections]:
             from qdrant_client.models import Distance, VectorParams
 
-            qdrant_service.client.create_collection(
-                collection_name=AGENTS_COLLECTION,
-                vectors_config=VectorParams(size=len(vectors[0]), distance=Distance.COSINE),
-            )
+            try:
+                qdrant_service.client.create_collection(
+                    collection_name=AGENTS_COLLECTION,
+                    vectors_config=VectorParams(size=len(vectors[0]), distance=Distance.COSINE),
+                )
+            except Exception as create_exc:
+                if "already" not in str(create_exc).lower() and "409" not in str(create_exc):
+                    raise
         # Use hash of expert_id as int for Qdrant point ID
         point_id = abs(hash(expert["id"])) % (2**63)
         from qdrant_client.models import PointStruct

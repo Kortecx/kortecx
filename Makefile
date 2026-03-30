@@ -37,13 +37,6 @@ engine:
 engine-install:
 	cd engine && uv sync
 
-# ── Go Client ────────────────────────────────────────────────────────────────
-go-test:
-	cd go-client && go test ./...
-
-go-vet:
-	cd go-client && go vet ./...
-
 # ── Database ─────────────────────────────────────────────────────────────────
 db-push:
 	cd frontend && npx drizzle-kit push

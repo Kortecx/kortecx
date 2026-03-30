@@ -2,6 +2,14 @@
 
 All notable changes to the Kortecx platform.
 
+## [Unreleased] — 2026-03-30
+
+### Removed
+
+- **Go Client** — `go-client/` directory and all Go-based orchestration removed. All orchestration is now handled by the Python async engine (FastAPI). Historical Go Client entries below are preserved for reference but are no longer part of the codebase.
+
+---
+
 ## [Unreleased] — 2026-03-21
 
 ### Added
@@ -25,9 +33,9 @@ All notable changes to the Kortecx platform.
 - FIFO run scheduler with configurable concurrency (default 4)
 - Async PostgreSQL persistence via asyncpg with fire-and-forget operation logging
 - WebSocket event protocol with 20+ event types for real-time telemetry
-- Go client SDK with typed methods, generic callbacks, and `ParseData[T]` helper
-- Client-side orchestrator with semaphore-based backpressure
-- Thread-safe shared memory store (`RWMutex`) for inter-agent context
+- ~~Go client SDK with typed methods, generic callbacks, and `ParseData[T]` helper~~ *(removed)*
+- ~~Client-side orchestrator with semaphore-based backpressure~~ *(removed)*
+- ~~Thread-safe shared memory store (`RWMutex`) for inter-agent context~~ *(removed)*
 - Exponential backoff retry with configurable limits
 
 #### Expert Marketplace
@@ -70,7 +78,7 @@ All notable changes to the Kortecx platform.
 - Step execution history API (`/api/workflows/executions`)
 - Streaming model pull endpoint (`/api/orchestrator/models/pull/stream`)
 
-#### Go Client
+#### Go Client *(removed — see 2026-03-30 entry above)*
 - `quorum/` package with 30+ event constants and typed service methods
 - Generic `Callbacks` struct with `RegisterCallbacks` for type-safe event handling
 - `Orchestrator` with `ExecuteParallel`, `ExecuteSequential`, and `SharedMemoryStore`

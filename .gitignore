@@ -89,20 +89,6 @@ outputs/
 !requirements*.txt
 
 # ═══════════════════════════════════════════════════════════
-# Go (go-client/)
-# ═══════════════════════════════════════════════════════════
-vendor/
-*.exe
-*.exe~
-*.dll
-*.dylib
-*.test
-*.out
-*.prof
-cover.out
-coverage.out
-
-# ═══════════════════════════════════════════════════════════
 # Docker / Infra
 # ═══════════════════════════════════════════════════════════
 *.log
@@ -126,18 +112,12 @@ htmlcov/
 coverage.xml
 .pytest_cache/
 
-# Go
-cover.out
-coverage.out
-*.test
-
 # Frontend
 frontend/coverage/
 frontend/.vitest/
 
 # Keep test source files — only exclude generated outputs
 !engine/tests/
-!go-client/quorum/*_test.go
 !frontend/tests/
 
 STRATEGY.md

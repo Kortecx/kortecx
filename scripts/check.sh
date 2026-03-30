@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Kortecx Pre-Push Quality Gate
-# Runs all linting, type checking, and tests across Go, Python, and TypeScript.
+# Runs all linting, type checking, and tests across Python and TypeScript.
 # Exit code 0 = all clear, non-zero = blocked.
 #
 # Usage:
@@ -15,7 +15,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 FRONTEND="$ROOT/frontend"
 ENGINE="$ROOT/engine"
-GO_CLIENT="$ROOT/go-client"
+
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -93,14 +93,6 @@ if [[ "$MODE" != "test" ]]; then
     skip_check "ruff format" "uv not installed"
   fi
 
-  section "Go (go-client/)"
-  cd "$GO_CLIENT"
-  if command -v go &>/dev/null; then
-    run_check "go vet ./..." go vet ./...
-  else
-    skip_check "go vet" "go not installed"
-  fi
-
 fi
 
 # ═══════════════════════════════════════════════════════
@@ -115,14 +107,6 @@ if [[ "$MODE" != "lint" && "$MODE" != "quick" ]]; then
     run_check "pytest (all tests)" uv run --project "$ENGINE" pytest tests/ -q --tb=short --no-header
   else
     skip_check "pytest" "uv not installed"
-  fi
-
-  section "Go Tests (go-client/)"
-  cd "$GO_CLIENT"
-  if command -v go &>/dev/null; then
-    run_check "go test ./quorum/" go test ./quorum/ -count=1 -v
-  else
-    skip_check "go test" "go not installed"
   fi
 
   section "Frontend Tests (frontend/)"

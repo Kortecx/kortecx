@@ -9,18 +9,18 @@ The Quorum Engine is a distributed multi-agent LLM orchestration system that pow
 ## Architecture
 
 ```
-Frontend (Next.js)                    Engine (FastAPI/Python)                Go Client
-┌─────────────────┐                   ┌──────────────────────────┐         ┌────────────────────┐
-│ useQuorumWS     │──WebSocket──────▸│ core/websocket.py         │         │ quorum/quorum.go   │
-│ useWorkflowWS   │                  │   ├─ quorum.* handlers    │         │ quorum/types.go    │
-│                 │                  │   └─ workflow.* handlers   │         │ quorum/handler.go  │
-│ Dashboard       │                  │                            │         │ quorum/orchestrator│
-│ Agents Page     │                  │ services/quorum/           │         │                    │
-│ Workflow Builder│                  │   ├─ service.py            │         │ Backpressure mgmt  │
-│ Analytics       │                  │   ├─ scheduler.py          │         │ Parallel execution │
-│ Monitoring      │                  │   ├─ executor.py           │         │ Shared memory      │
-└─────────────────┘                  │   ├─ inference.py          │         │ Retry + recovery   │
-        │                            │   ├─ db.py (asyncpg)      │         └────────────────────┘
+Frontend (Next.js)                    Engine (FastAPI/Python)
+┌─────────────────┐                   ┌──────────────────────────┐
+│ useQuorumWS     │──WebSocket──────▸│ core/websocket.py         │
+│ useWorkflowWS   │                  │   ├─ quorum.* handlers    │
+│                 │                  │   └─ workflow.* handlers   │
+│ Dashboard       │                  │                            │
+│ Agents Page     │                  │ services/quorum/           │
+│ Workflow Builder│                  │   ├─ service.py            │
+│ Analytics       │                  │   ├─ scheduler.py          │
+│ Monitoring      │                  │   ├─ executor.py           │
+└─────────────────┘                  │   ├─ inference.py          │
+        │                            │   ├─ db.py (asyncpg)      │
         ▼                            │   └─ types.py             │
    NeonDB (PostgreSQL)               │                            │
    ├─ quorum_runs                    │ services/orchestrator.py   │
@@ -46,15 +46,6 @@ Frontend (Next.js)                    Engine (FastAPI/Python)                Go 
 | `db.py` | Async PostgreSQL via asyncpg — fire-and-forget operation logging, full CRUD |
 | `types.py` | 14 Pydantic V2 models (RunRequest, RunResult, AgentOutput, Operation, etc.) |
 | `errors.py` | Exception hierarchy (QuorumError → Inference/Scheduler/Execution/ValidationError) |
-
-### Go Client (`go-client/quorum/`)
-
-| File | Purpose |
-|------|---------|
-| `quorum.go` | Service with 30+ event constants, typed methods, handler registration |
-| `types.go` | All protocol types with JSON tags (runs, agents, metrics, expert configs) |
-| `handler.go` | Generic Callbacks struct with type-safe deserialization |
-| `orchestrator.go` | Client-side orchestrator with backpressure, parallel execution, shared memory |
 
 ### Frontend Hooks
 
@@ -271,34 +262,11 @@ Five tables in `kortecx_dev` (prefixed with `quorum_`):
 
 ## Backpressure & Concurrency
 
-The Go orchestrator uses semaphore-based backpressure:
+The Python engine uses `asyncio.Semaphore` for backpressure:
 
-```go
-sem := make(chan struct{}, MaxParallel) // e.g., 4 concurrent agents
-
-// Each agent acquires before execution, releases after
-sem <- struct{}{}
-result, err := executeAgent(ctx, agent)
-<-sem
-```
-
-- **Parallel mode**: Fan-out with rate limiting via semaphore
-- **Sequential mode**: Chain execution passing output between steps
-- **Retry**: Exponential backoff (base delay x attempt number)
-- **Shared memory**: Thread-safe `RWMutex` store for inter-agent context
-
-### Shared Memory Store
-
-```go
-type SharedMemoryStore struct {
-    mu   sync.RWMutex
-    data map[string]interface{}
-}
-
-func (s *SharedMemoryStore) Set(key string, value interface{})
-func (s *SharedMemoryStore) Get(key string) (interface{}, bool)
-func (s *SharedMemoryStore) GetAll() map[string]interface{}
-```
+- **Parallel mode**: `asyncio.gather()` with semaphore-based concurrency limit
+- **Sequential mode**: Chain execution passing output between steps via shared memory
+- **Retry**: Fallback models with exponential backoff
 
 Agents read from shared memory at the start of execution and write their outputs back on completion, enabling inter-agent communication within a run.
 

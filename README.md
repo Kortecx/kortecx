@@ -62,11 +62,25 @@ Open-source platform for orchestrating AI agents and building agentic workflows 
 | **Python** | 3.11+ | Engine (FastAPI, PyTorch, Transformers) | [python.org](https://www.python.org/) or `pyenv install 3.11` |
 | **uv** | latest | Fast Python package manager (replaces pip/poetry) | [docs.astral.sh/uv](https://docs.astral.sh/uv/) |
 | **Git** | 2.x+ | Source control | [git-scm.com](https://git-scm.com/) |
-| **Go 1.22+** | 1.26.1 | Parallelizm | [golang](https://go.dev/doc/install) |
 
 ---
 
-## Setup
+## Quick Start
+
+```bash
+git clone https://github.com/Kortecx/kortecx.git
+cd kortecx
+cp .env.example .env
+./start.sh
+```
+
+Open [http://localhost:3000](http://localhost:3000) — you should see the Kortecx dashboard.
+
+> `start.sh` handles everything: Docker services, dependency installation, database migrations, and starting both the engine and frontend.
+
+---
+
+## Setup (Detailed)
 
 ### 1. Clone the repository
 
@@ -124,6 +138,107 @@ make db-push            # Apply database schema
 make engine &           # Start FastAPI engine (port 8000)
 make frontend           # Start Next.js frontend (port 3000)
 ```
+
+---
+
+## Usage
+
+### Workflow Builder
+Create multi-step workflows from the **Workflow** page. Add steps, assign agents, configure prompts with the Monaco editor, choose inference source (local or cloud), and execute. Each step produces versioned artifacts (responses, extracted scripts, metrics) stored with full lineage.
+
+### Quorum Runs
+Launch multi-agent orchestration from the **Agents** page. Define a goal, select worker agents, and Kortecx decomposes the task, runs agents in parallel, handles failures with retry, and synthesizes a final output. Monitor progress in real time via WebSocket telemetry.
+
+### Agents Management
+Browse the **12 prebuilt marketplace agents** (coding, research, marketing, data engineering, security, legal, finance, etc.) or create custom agents with your own system prompts, model config, and temperature settings. All agents support per-file versioning and semantic search via Qdrant.
+
+### Model Management
+Pull and manage local models from the **Intelligence** page. Switch between Ollama and llama.cpp engines. Connect cloud providers (Anthropic, OpenAI, Google, Groq, Mistral, OpenRouter) from **Settings > Inference**. Fine-tune local models with LoRA from the Intelligence tab.
+
+### MCP Servers
+Generate, edit, test, and persist Model Context Protocol scripts from the **Providers > MCP** page. Scripts are AI-generated with streaming, testable in-browser, and version-controlled on disk.
+
+### Quick Check
+Platform-aware Q&A from the dashboard. Combines your platform context (workflows, agents, runs, datasets) with Qdrant semantic search and local inference to answer questions about your Kortecx instance.
+
+### Common Commands
+
+| Command | Description |
+|---------|-------------|
+| `make start` | Full-stack bootstrap |
+| `make docker-up` / `make docker-down` | Start / stop Docker services |
+| `make frontend` | Start Next.js dev server (port 3000) |
+| `make engine` | Start FastAPI engine (port 8000) |
+| `make install` | Install all dependencies |
+| `make db-push` | Apply database migrations |
+| `make backup` / `make restore` | Database backup and restore |
+| `make check` | Run linting + tests + build |
+| `make clean-slate` | Reset user data (preserves schema + marketplace) |
+
+---
+
+## How it Works
+
+```
+┌─────────────┐     ┌─────────────┐     ┌──────────────────┐
+│  Frontend    │────▶│   Engine    │────▶│   Inference       │
+│  Next.js 16  │◀────│  FastAPI    │◀────│  Ollama / Cloud   │
+│  port 3000   │ WS  │  port 8000  │     │  port 11434       │
+└─────────────┘     └──────┬──────┘     └──────────────────┘
+                           │
+              ┌────────────┼────────────┐
+              ▼            ▼            ▼
+        ┌──────────┐ ┌──────────┐ ┌──────────┐
+        │PostgreSQL│ │  Qdrant  │ │  MLflow  │
+        │ port 5433│ │ port 6333│ │ port 5050│
+        └──────────┘ └──────────┘ └──────────┘
+```
+
+**Workflow Execution**: Each step sends a prompt through the inference layer, receives a response, extracts code blocks into executable scripts, runs them in sandboxed Docker containers, and persists all artifacts (prompts, responses, scripts, results, metrics) with full lineage tracking.
+
+**Quorum Pipeline**: The multi-agent engine follows a 3+1 phase pattern — **Decompose** (lead agent breaks task into sub-tasks) → **Parallel Execute** (workers run concurrently with shared memory) → **Recovery** (failed agents retry with enriched context) → **Synthesize** (final agent aggregates all outputs).
+
+**Real-Time Updates**: WebSocket connections push live events for every phase — agent thinking, token streaming, step status changes, and system metrics (CPU, GPU, memory, throughput) every 5 seconds.
+
+---
+
+## Project Structure
+
+```
+kortecx/
+├── frontend/              # Next.js 16 + React 19 dashboard
+│   ├── app/               # Pages (workflow, agents, intelligence, monitoring, ...)
+│   ├── lib/               # Hooks, DB schema (Drizzle ORM), utilities
+│   └── drizzle/           # Frontend database migrations
+├── engine/                # FastAPI Python backend
+│   ├── src/engine/        # Core app (routers, services, core)
+│   ├── agents/            # Marketplace + local agent definitions
+│   ├── migrations/        # SQL schema migrations
+│   ├── mcp_scripts/       # User-persisted MCP server scripts
+│   └── tests/             # pytest test suite
+├── docs/                  # Feature documentation
+├── scripts/               # Utility scripts (backup, check, clean-slate)
+├── shared_configs/        # Shared configuration templates
+├── docker-compose.yml     # PostgreSQL, Qdrant, MLflow, executors
+├── Makefile               # Dev commands
+├── start.sh               # Full-stack bootstrap script
+└── kortecx.config.json    # Platform metadata & feature flags
+```
+
+---
+
+## Platform Support
+
+| Category | Supported |
+|----------|-----------|
+| **Development OS** | macOS, Linux, Windows (WSL2) |
+| **Deployment** | Any Docker-capable host |
+| **Local Inference** | Ollama, llama.cpp |
+| **Cloud Inference** | Anthropic, OpenAI, Google, Groq, Mistral, OpenRouter |
+| **Databases** | PostgreSQL 16 (local Docker or Neon cloud), Qdrant (vector store) |
+| **Experiment Tracking** | MLflow |
+| **CI/CD** | GitHub Actions — lint (Ruff, ESLint, tsc), test (pytest, Vitest), build, integration |
+
 ---
 
 ## Features

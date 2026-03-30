@@ -20,9 +20,6 @@ Frontend (Next.js)                Engine (FastAPI/Python)
 └──────────────────┘              │ Anthropic / OpenAI   │
         │                         │ Google Gemini        │
         ▼                         └──────────────────────┘
-  Go Client (types)                        │
-  go-client/types/                         ▼
-  types.go                         engine/mcp/         (prebuilt)
                                    engine/mcp/prompts/ (generation prompts)
                                    engine/mcp_scripts/ (persisted user scripts)
                                    engine/cache/prompts/{type}/ (cached prompts by type)
@@ -220,7 +217,6 @@ frontend/
 └── components/layout/
     └── LeftNavbar.tsx             # Server icon in nav
 
-go-client/types/types.go          # McpServer Go struct
 ```
 
 ---
