@@ -13,6 +13,7 @@ import {
 import useSWR from 'swr';
 import { useWorkflowRuns, useWorkflows } from '@/lib/hooks/useApi';
 import type { WorkflowRun, WorkflowStep } from '@/lib/types';
+import RunDetailDialog from './_components/RunDetailDialog';
 
 const statsFetcher = (url: string) => fetch(url).then(r => r.ok ? r.json() : null);
 
@@ -37,7 +38,7 @@ const STATUS_META: Record<RunStatus, { color: string; bg: string; icon: React.El
 const STATUS_FILTERS = ['All', 'Completed', 'Failed', 'Running', 'Cancelled'] as const;
 
 /* ── Grid template (shared between header, row, skeleton) ── */
-const GRID_COLS = '22px minmax(0,1.4fr) minmax(0,2fr) minmax(0,1.6fr) 90px 64px 80px 24px 28px';
+const GRID_COLS = '22px minmax(0,1.4fr) minmax(0,2fr) minmax(0,1.6fr) 90px 64px 80px 24px 28px 28px 28px';
 
 /* ── Helpers ────────────────────────────────────────── */
 function fmtTokens(n: number): string {
@@ -419,8 +420,9 @@ function ExpandedPanel({ run }: { run: WorkflowRun }) {
 }
 
 /* ── Run row ────────────────────────────────────────── */
-function RunRow({ run, expanded, onToggle, onDelete, sysStats }: {
+function RunRow({ run, expanded, onToggle, onDelete, onCancel, onViewDetails, sysStats }: {
   run: WorkflowRun; expanded: boolean; onToggle: () => void; onDelete: () => void;
+  onCancel: () => void; onViewDetails: () => void;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   sysStats?: any;
 }) {
@@ -562,7 +564,41 @@ function RunRow({ run, expanded, onToggle, onDelete, sysStats }: {
           {expanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
         </div>
 
-        {/* 9. Delete (far right) */}
+        {/* 9. Cancel button (running only) */}
+        {status === 'running' ? (
+          <button
+            onClick={e => { e.stopPropagation(); onCancel(); }}
+            title="Cancel run"
+            style={{
+              width: 26, height: 26, borderRadius: 6,
+              border: '1px solid #ef444440',
+              background: '#ef444410',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              cursor: 'pointer', color: '#ef4444', transition: 'all 0.15s',
+            }}
+          >
+            <Ban size={11} />
+          </button>
+        ) : (
+          <div style={{ width: 26 }} />
+        )}
+
+        {/* 10. Details button */}
+        <button
+          onClick={e => { e.stopPropagation(); onViewDetails(); }}
+          title="View details"
+          style={{
+            width: 26, height: 26, borderRadius: 6,
+            border: `1px solid ${SECTION_COLOR}40`,
+            background: `${SECTION_COLOR}08`,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            cursor: 'pointer', color: SECTION_COLOR, transition: 'all 0.15s',
+          }}
+        >
+          <FileText size={11} />
+        </button>
+
+        {/* 10. Delete (far right) */}
         <button
           onClick={e => { e.stopPropagation(); onDelete(); }}
           title="Delete run"
@@ -623,6 +659,7 @@ export default function WorkflowHistoryPage() {
   const [showFilters,  setShowFilters]  = useState(false);
   const [deletingRunId, setDeletingRunId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [detailRun, setDetailRun] = useState<WorkflowRun | null>(null);
 
   const { runs, total, isLoading, mutate } = useWorkflowRuns(undefined, 500);
   const { workflows } = useWorkflows();
@@ -681,6 +718,19 @@ export default function WorkflowHistoryPage() {
     const a    = document.createElement('a');
     a.href = url; a.download = 'workflow-runs.csv'; a.click();
     URL.revokeObjectURL(url);
+  }
+
+  async function handleCancelRun(runId: string, workflowId: string) {
+    try {
+      await fetch('/api/workflows/stop', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ runId, workflowId }),
+      });
+      mutate();
+    } catch (err) {
+      console.error('Failed to cancel run:', err);
+    }
   }
 
   async function handleDeleteRun() {
@@ -957,6 +1007,8 @@ export default function WorkflowHistoryPage() {
               expanded={expandedId === (run as WorkflowRun).id}
               onToggle={() => toggleExpand((run as WorkflowRun).id)}
               onDelete={() => setDeletingRunId((run as WorkflowRun).id)}
+              onCancel={() => handleCancelRun((run as WorkflowRun).id, (run as WorkflowRun).workflowId)}
+              onViewDetails={() => setDetailRun(run as WorkflowRun)}
               sysStats={sysStats}
             />
           ))}
@@ -1119,6 +1171,13 @@ export default function WorkflowHistoryPage() {
         @keyframes orbit       { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
         @keyframes neuralPulse { 0% { transform: translate(-50%, -50%) scale(0.7); opacity: 0.5; } 100% { transform: translate(-50%, -50%) scale(1.3); opacity: 1; } }
       `}</style>
+
+      {/* Run Detail Dialog */}
+      <RunDetailDialog
+        run={detailRun}
+        open={!!detailRun}
+        onClose={() => setDetailRun(null)}
+      />
     </div>
   );
 }

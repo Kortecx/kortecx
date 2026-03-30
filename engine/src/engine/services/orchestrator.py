@@ -19,6 +19,7 @@ from engine.services.action_runner import action_runner
 from engine.services.execution_audit import execution_audit
 from engine.services.local_inference import GenerateResult, inference_router, model_pool
 from engine.services.step_artifacts import step_artifacts
+from engine.services.workflow_artifacts import workflow_artifacts
 from engine.services.workflow_logger import workflow_logger
 
 logger = logging.getLogger("engine.orchestrator")
@@ -176,7 +177,11 @@ class AgentOrchestrator:
 
         If a plan DAG is provided, it overrides request.steps with the DAG-derived step order.
         """
-        run_id = run_id or f"run-{uuid.uuid4().hex[:12]}"
+        if not run_id:
+            slug = request.name.lower().replace(" ", "-").replace("_", "-")[:30] if request.name else "wf"
+            slug = "".join(c for c in slug if c.isalnum() or c == "-")
+            ts = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+            run_id = f"wfr-{slug}-{ts}-{uuid.uuid4().hex[:4]}"
         channel = f"workflow.{run_id}"
 
         # If a plan DAG is provided, convert it to steps and override request
@@ -268,6 +273,47 @@ class AgentOrchestrator:
             )
             workflow_logger.save_run_memory(request.workflow_id, run_id, shared.to_dict())
             workflow_logger.save_run_output(request.workflow_id, run_id, result)
+
+            # Save structured outputs to outputs/workflows/
+            total_tokens_out, total_dur_out, succ_out, fail_out = self._compute_run_stats(run_id)
+            agents_data = self._runs[run_id].get("agents", {})
+            expert_chain_out = [a.name for a in agents_data.values()] if agents_data else []
+            try:
+                workflow_artifacts.save_run_summary(
+                    workflow_name=request.name,
+                    workflow_id=request.workflow_id,
+                    run_id=run_id,
+                    output=result,
+                    goal=goal_content,
+                    status="completed",
+                    total_tokens=total_tokens_out,
+                    duration_sec=int(total_dur_out / 1000) if total_dur_out else 0,
+                    steps_completed=succ_out,
+                    total_steps=len(request.steps),
+                    expert_chain=expert_chain_out,
+                )
+                # Save per-step outputs
+                for idx, step in enumerate(request.steps):
+                    agent_id = step.agent_id or step.expert_id or f"step-{idx}"
+                    agent_state = agents_data.get(agent_id)
+                    if agent_state:
+                        workflow_artifacts.save_step_output(
+                            workflow_name=request.name,
+                            run_id=run_id,
+                            step_number=idx + 1,
+                            step_name=step.name or agent_id,
+                            response=agent_state.output or "",
+                            prompt=step.task or "",
+                            system_prompt=step.system_prompt or "",
+                            model=step.model or "",
+                            engine=step.engine or "",
+                            tokens_used=agent_state.tokens_used,
+                            duration_ms=agent_state.duration_ms,
+                            status=agent_state.status,
+                            error_message=agent_state.error or "",
+                        )
+            except Exception:
+                logger.warning("Failed to save workflow artifacts for %s", run_id, exc_info=True)
 
             await ws_manager.broadcast(
                 channel,

@@ -22,6 +22,7 @@ from engine.services.orchestrator import (
     orchestrator,
 )
 from engine.services.step_artifacts import step_artifacts
+from engine.services.workflow_artifacts import workflow_artifacts
 
 logger = logging.getLogger("engine.routers.orchestrator")
 
@@ -479,3 +480,19 @@ async def list_step_artifacts(workflow_name: str, step_name: str) -> dict[str, A
 
     artifacts = step_artifacts.list_artifacts(workflow_name, step_name)
     return {"artifacts": artifacts, "total": len(artifacts)}
+
+
+@router.get("/outputs/{workflow_name}")
+async def list_workflow_outputs(workflow_name: str) -> dict[str, Any]:
+    """List all run output folders for a workflow."""
+    runs = workflow_artifacts.list_runs(workflow_name)
+    return {"runs": runs, "total": len(runs)}
+
+
+@router.get("/outputs/{workflow_name}/{run_id}/{filename:path}")
+async def get_workflow_output_file(workflow_name: str, run_id: str, filename: str) -> dict[str, Any]:
+    """Read content of a specific file from a workflow run output folder."""
+    content = workflow_artifacts.get_file_content(workflow_name, run_id, filename)
+    if content is None:
+        return {"error": f"File {filename} not found in run {run_id}"}
+    return {"content": content, "filename": filename, "runId": run_id}

@@ -8,13 +8,14 @@ import {
   Workflow, Plus, Search, Play, Trash2, X, Square, RotateCcw, Pencil,
   ChevronDown, ChevronUp, ChevronRight, Loader2, AlertCircle, ArrowUpDown,
   Clock, Cpu, Zap, CheckCircle2, XCircle, Eye, ScrollText, ExternalLink,
-  FileText, Lock, Unlock, Snowflake, Upload, Download, TrendingUp, Activity,
+  FileText, Lock, Unlock, Snowflake, Upload, Download, TrendingUp, Activity, FolderOpen,
 } from 'lucide-react';
 import { useWorkflows, useWorkflowRuns, useStepExecutions } from '@/lib/hooks/useApi';
 import { useWorkflowWS } from '@/lib/hooks/useWorkflowWS';
 import { ImportButton, SharedImportButton } from '@/components/ImportExportButtons';
 import SharedConfigImportDialog from '@/components/SharedConfigImportDialog';
 import { exportEntity } from '@/lib/config-export';
+import WorkflowOutputDialog from './_components/WorkflowOutputDialog';
 import { fadeUp, stagger, hoverLift } from '@/lib/motion';
 
 const SECTION_COLOR = '#2563EB';
@@ -352,7 +353,7 @@ function PlanDialog({
         transition={{ type: 'spring', damping: 25, stiffness: 300 }}
         onClick={e => e.stopPropagation()}
         style={{
-          background: 'var(--bg-2)', border: '1px solid var(--border)',
+          background: 'var(--bg-surface)', border: '1px solid var(--border)',
           borderRadius: 12, width: '90vw', maxWidth: 1000, maxHeight: '85vh',
           overflow: 'hidden', display: 'flex', flexDirection: 'column',
         }}
@@ -625,7 +626,7 @@ function ViewPlanDialog({
         transition={{ type: 'spring', damping: 25, stiffness: 300 }}
         onClick={e => e.stopPropagation()}
         style={{
-          background: 'var(--bg-2)', border: '1px solid var(--border)',
+          background: 'var(--bg-surface)', border: '1px solid var(--border)',
           borderRadius: 12, width: '80vw', maxWidth: 800, maxHeight: '80vh',
           overflow: 'hidden', display: 'flex', flexDirection: 'column',
         }}
@@ -1151,6 +1152,7 @@ export default function WorkflowsPage() {
   const [planDialogWf, setPlanDialogWf] = useState<Record<string, unknown> | null>(null);
   const [viewPlanWf, setViewPlanWf] = useState<Record<string, unknown> | null>(null);
   const [freezingId, setFreezingId] = useState<string | null>(null);
+  const [outputWf, setOutputWf] = useState<Record<string, unknown> | null>(null);
   const [showSharedImport, setShowSharedImport] = useState(false);
   const ws = useWorkflowWS();
 
@@ -1926,6 +1928,15 @@ export default function WorkflowsPage() {
                         }}>
                           <Download size={10} />
                         </button>
+                        <button onClick={() => setOutputWf(wf)} title="View Outputs" style={{
+                          display: 'flex', alignItems: 'center', gap: 3,
+                          padding: '5px 8px', borderRadius: 5, fontSize: 11, fontWeight: 600,
+                          border: `1px solid ${SECTION_COLOR}40`,
+                          background: `${SECTION_COLOR}08`, color: SECTION_COLOR,
+                          cursor: 'pointer',
+                        }}>
+                          <FolderOpen size={10} /> Output
+                        </button>
                         <button onClick={() => setDeletingWf(wf)} style={{
                           display: 'flex', alignItems: 'center',
                           padding: '5px 8px', borderRadius: 5,
@@ -2058,6 +2069,13 @@ export default function WorkflowsPage() {
         onClose={() => setShowSharedImport(false)}
         onImported={() => { mutate(); setShowSharedImport(false); }}
         filterType="workflow"
+      />
+
+      {/* Workflow Output Dialog */}
+      <WorkflowOutputDialog
+        workflowName={(outputWf?.name as string) ?? ''}
+        open={!!outputWf}
+        onClose={() => setOutputWf(null)}
       />
     </div>
   );
