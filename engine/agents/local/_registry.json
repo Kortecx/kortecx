@@ -1,1 +1,37 @@
-{"version": "1.0.0", "experts": []}
+{
+  "version": "1.0.0",
+  "experts": [
+    {
+      "id": "local-creative-director-agent",
+      "dir": "creative-director-agent",
+      "name": "Creative Director agent",
+      "role": "creative",
+      "category": "custom",
+      "version": "1.0.0"
+    },
+    {
+      "id": "local-fastapi-cli-generator",
+      "dir": "fastapi-cli-generator",
+      "name": "FastAPI CLI Generator",
+      "role": "coder",
+      "category": "custom",
+      "version": "1.0.0"
+    },
+    {
+      "id": "local-project-coordinator",
+      "dir": "project-coordinator",
+      "name": "Project Coordinator",
+      "role": "coordinator",
+      "category": "custom",
+      "version": "1.0.0"
+    },
+    {
+      "id": "local-project-orchestrator",
+      "dir": "project-orchestrator",
+      "name": "Project Orchestrator",
+      "role": "coordinator",
+      "category": "custom",
+      "version": "1.0.0"
+    }
+  ]
+}

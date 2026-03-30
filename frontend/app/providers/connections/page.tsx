@@ -18,7 +18,7 @@ import {
   Share2, Lock, Unlock, RefreshCw, Cpu, Clock, Edit3, Copy,
   LayoutTemplate,
 } from 'lucide-react';
-import { INTEGRATION_CATALOG, MARKETPLACE_PLUGINS } from '@/lib/constants';
+import { INTEGRATION_CATALOG, MARKETPLACE_PLUGINS, CLOUD_PLUGINS } from '@/lib/constants';
 import type { IntegrationCategory, McpServer, McpLanguage } from '@/lib/types';
 import { motion, AnimatePresence } from 'framer-motion';
 import { buttonHover } from '@/lib/motion';
@@ -1398,6 +1398,53 @@ function ConnectionsPageInner() {
                   No plugins match your search.
                 </div>
               )}
+            </div>
+          )}
+
+          {/* Cloud & Data Providers */}
+          {pluginTab === 'marketplace' && (
+            <div style={{ marginTop: 24 }}>
+              <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-1)', marginBottom: 4 }}>
+                Cloud & Data Providers
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--text-4)', marginBottom: 12 }}>
+                Connect your AI workflows to cloud platforms, vector databases, and frameworks
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 10 }}>
+                {CLOUD_PLUGINS.map(cp => (
+                  <div key={cp.id} className="card" style={{ padding: '14px 16px', opacity: 0.7 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <div style={{
+                        width: 36, height: 36, borderRadius: 7, flexShrink: 0,
+                        background: `${cp.color}12`, border: `1px solid ${cp.color}25`,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18,
+                      }}>
+                        {cp.icon}
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-1)' }}>{cp.name}</span>
+                          <span style={{
+                            fontSize: 8, padding: '1px 5px', borderRadius: 3,
+                            background: '#f59e0b18', color: '#f59e0b', fontWeight: 700,
+                            textTransform: 'uppercase', letterSpacing: '0.04em',
+                          }}>COMING SOON</span>
+                        </div>
+                        <div style={{ fontSize: 10, color: 'var(--text-3)', marginTop: 2 }}>{cp.description}</div>
+                        <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap', marginTop: 4 }}>
+                          {cp.services.slice(0, 3).map(s => (
+                            <span key={s} style={{
+                              fontSize: 8, padding: '1px 5px', borderRadius: 10,
+                              background: `${cp.color}08`, border: `1px solid ${cp.color}15`,
+                              color: cp.color, fontWeight: 500,
+                            }}>{s}</span>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
 

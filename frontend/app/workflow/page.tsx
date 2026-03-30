@@ -8,13 +8,14 @@ import {
   Workflow, Plus, Search, Play, Trash2, X, Square, RotateCcw, Pencil,
   ChevronDown, ChevronUp, ChevronRight, Loader2, AlertCircle, ArrowUpDown,
   Clock, Cpu, Zap, CheckCircle2, XCircle, Eye, ScrollText, ExternalLink,
-  FileText, Lock, Unlock, Snowflake, Upload, Download, TrendingUp, Activity,
+  FileText, Lock, Unlock, Snowflake, Upload, Download, TrendingUp, Activity, FolderOpen,
 } from 'lucide-react';
 import { useWorkflows, useWorkflowRuns, useStepExecutions } from '@/lib/hooks/useApi';
 import { useWorkflowWS } from '@/lib/hooks/useWorkflowWS';
 import { ImportButton, SharedImportButton } from '@/components/ImportExportButtons';
 import SharedConfigImportDialog from '@/components/SharedConfigImportDialog';
 import { exportEntity } from '@/lib/config-export';
+import WorkflowOutputDialog from './_components/WorkflowOutputDialog';
 import { fadeUp, stagger, hoverLift } from '@/lib/motion';
 
 const SECTION_COLOR = '#2563EB';
@@ -352,7 +353,7 @@ function PlanDialog({
         transition={{ type: 'spring', damping: 25, stiffness: 300 }}
         onClick={e => e.stopPropagation()}
         style={{
-          background: 'var(--bg-2)', border: '1px solid var(--border)',
+          background: 'var(--bg-surface)', border: '1px solid var(--border)',
           borderRadius: 12, width: '90vw', maxWidth: 1000, maxHeight: '85vh',
           overflow: 'hidden', display: 'flex', flexDirection: 'column',
         }}
@@ -625,7 +626,7 @@ function ViewPlanDialog({
         transition={{ type: 'spring', damping: 25, stiffness: 300 }}
         onClick={e => e.stopPropagation()}
         style={{
-          background: 'var(--bg-2)', border: '1px solid var(--border)',
+          background: 'var(--bg-surface)', border: '1px solid var(--border)',
           borderRadius: 12, width: '80vw', maxWidth: 800, maxHeight: '80vh',
           overflow: 'hidden', display: 'flex', flexDirection: 'column',
         }}
@@ -1151,6 +1152,7 @@ export default function WorkflowsPage() {
   const [planDialogWf, setPlanDialogWf] = useState<Record<string, unknown> | null>(null);
   const [viewPlanWf, setViewPlanWf] = useState<Record<string, unknown> | null>(null);
   const [freezingId, setFreezingId] = useState<string | null>(null);
+  const [outputWf, setOutputWf] = useState<Record<string, unknown> | null>(null);
   const [showSharedImport, setShowSharedImport] = useState(false);
   const ws = useWorkflowWS();
 
@@ -1484,31 +1486,26 @@ export default function WorkflowsPage() {
   };
 
   return (
-    <div style={{ padding: 24, maxWidth: 1400, margin: '0 auto' }}>
+    <div style={{ padding: 18, maxWidth: 1400, margin: '0 auto' }}>
       {/* Header */}
       <motion.div
         initial={{ opacity: 0, y: -8 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.3 }}
-        style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}
+        style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <div style={{
-            width: 36, height: 36, borderRadius: 8,
+            width: 30, height: 30, borderRadius: 7,
             background: `${SECTION_COLOR}15`, border: `1.5px solid ${SECTION_COLOR}30`,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
           }}>
-            <Workflow size={18} color={SECTION_COLOR} />
+            <Workflow size={15} color={SECTION_COLOR} />
           </div>
           <div>
-            <h1 style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-1)', margin: 0 }}>Workflows</h1>
-            <p style={{ fontSize: 10, color: 'var(--text-4)', marginTop: 3, margin: '3px 0 0', letterSpacing: '0.5px', textTransform: 'uppercase' }}>
-              Wiring &middot; Orchestration &middot; Routing &middot; Knowledge &middot; Flow
-            </p>
-            <p style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 4, margin: '4px 0 0', maxWidth: 420 }}>
-              Build autonomous agent pipelines — orchestrate multi-step reasoning,
-              code generation, and domain tasks into workflows that execute,
-              monitor, and scale automatically.
+            <h1 style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-1)', margin: 0 }}>Workflows</h1>
+            <p style={{ fontSize: 9, color: 'var(--text-4)', margin: '2px 0 0', letterSpacing: '0.5px', textTransform: 'uppercase' }}>
+              Orchestration &middot; Routing &middot; Multi-agent pipelines that execute and scale
             </p>
           </div>
         </div>
@@ -1726,13 +1723,6 @@ export default function WorkflowsPage() {
                   <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>Status {renderSortIcon('status')}</span>
                 </th>
                 <th style={TH}>Goal</th>
-                <th style={TH} onClick={() => toggleSort('totalRuns')}>
-                  <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>Runs {renderSortIcon('totalRuns')}</span>
-                </th>
-                <th style={TH} onClick={() => toggleSort('estimatedTokens')}>
-                  <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>Tokens {renderSortIcon('estimatedTokens')}</span>
-                </th>
-                <th style={TH}>Tags</th>
                 <th style={TH} onClick={() => toggleSort('updatedAt')}>
                   <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>Updated {renderSortIcon('updatedAt')}</span>
                 </th>
@@ -1812,30 +1802,14 @@ export default function WorkflowsPage() {
                       </div>
                     </td>
                     <td style={TD}>
-                      <span className="mono" style={{ fontSize: 12, fontWeight: 600 }}>{runs}</span>
-                    </td>
-                    <td style={TD}>
-                      <span className="mono" style={{ fontSize: 12 }}>{tokens > 0 ? fmt(tokens) : '—'}</span>
-                    </td>
-                    <td style={TD}>
-                      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                        {tags.map(tag => (
-                          <span key={tag} style={{
-                            padding: '2px 7px', borderRadius: 4, fontSize: 10, fontWeight: 500,
-                            background: `${SECTION_COLOR}10`, color: SECTION_COLOR,
-                            border: `1px solid ${SECTION_COLOR}25`,
-                          }}>{tag}</span>
-                        ))}
-                        {tags.length === 0 && <span style={{ fontSize: 11, color: 'var(--text-3)', fontStyle: 'italic' }}>none</span>}
-                      </div>
-                    </td>
-                    <td style={TD}>
                       <span style={{ fontSize: 11, color: 'var(--text-2)', fontWeight: 500 }}>
                         {timeAgo(wf.updatedAt as string)}
                       </span>
                     </td>
-                    <td style={{ ...TD, textAlign: 'right' }} onClick={e => e.stopPropagation()}>
-                      <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end' }}>
+                    <td style={{ ...TD, textAlign: 'right', whiteSpace: 'nowrap' }} onClick={e => e.stopPropagation()}>
+                      <div style={{ display: 'flex', gap: 3, justifyContent: 'flex-end', flexWrap: 'nowrap' }}>
+                        {/* Fixed-width container for conditional Run/Stop/Restart */}
+                        <div style={{ display: 'flex', gap: 3, width: 80, justifyContent: 'flex-end', flexShrink: 0 }}>
                         {canRun && (
                           <button onClick={() => handleRun(wf.id as string)} disabled={isStarting} style={{
                             display: 'flex', alignItems: 'center', gap: 4,
@@ -1870,18 +1844,19 @@ export default function WorkflowsPage() {
                             <RotateCcw size={10} />
                           </button>
                         )}
+                        </div>
                         <button onClick={() => setPlanDialogWf(wf)} title="Edit Plan" style={{
-                          display: 'flex', alignItems: 'center', gap: 4,
-                          padding: '5px 8px', borderRadius: 5, fontSize: 11, fontWeight: 600,
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          padding: '4px 6px', borderRadius: 5,
                           border: '1px solid #8b5cf640',
                           background: '#8b5cf608', color: '#8b5cf6',
                           cursor: 'pointer',
                         }}>
-                          <FileText size={10} /> Plan
+                          <FileText size={10} />
                         </button>
                         <button onClick={() => setViewPlanWf(wf)} title="View Plan" style={{
-                          display: 'flex', alignItems: 'center',
-                          padding: '5px 8px', borderRadius: 5, fontSize: 11, fontWeight: 600,
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          padding: '4px 6px', borderRadius: 5,
                           border: '1px solid var(--border)',
                           background: 'transparent', color: 'var(--text-3)',
                           cursor: 'pointer',
@@ -1893,8 +1868,8 @@ export default function WorkflowsPage() {
                           disabled={freezingId === (wf.id as string)}
                           title={isFrozen ? 'Unfreeze Plan' : 'Freeze Plan'}
                           style={{
-                            display: 'flex', alignItems: 'center', gap: 3,
-                            padding: '5px 8px', borderRadius: 5, fontSize: 11, fontWeight: 600,
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            padding: '4px 6px', borderRadius: 5,
                             border: isFrozen ? '1px solid #06b6d450' : '1px solid var(--border)',
                             background: isFrozen ? '#06b6d412' : 'transparent',
                             color: isFrozen ? '#06b6d4' : 'var(--text-4)',
@@ -1909,9 +1884,9 @@ export default function WorkflowsPage() {
                             <Unlock size={10} />
                           )}
                         </button>
-                        <Link href={`/workflow/builder?id=${wf.id}`} style={{
-                          display: 'flex', alignItems: 'center', gap: 4,
-                          padding: '5px 8px', borderRadius: 5, fontSize: 11, fontWeight: 600,
+                        <Link href={`/workflow/builder?id=${wf.id}`} title="Edit" style={{
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          padding: '4px 6px', borderRadius: 5,
                           border: `1px solid ${SECTION_COLOR}40`,
                           background: `${SECTION_COLOR}08`, color: SECTION_COLOR,
                           textDecoration: 'none',
@@ -1919,18 +1894,27 @@ export default function WorkflowsPage() {
                           <Pencil size={10} />
                         </Link>
                         <button onClick={() => exportEntity('workflow', wf.id as string, wf.name as string)} title="Export" style={{
-                          display: 'flex', alignItems: 'center',
-                          padding: '5px 8px', borderRadius: 5,
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          padding: '4px 6px', borderRadius: 5,
                           border: '1px solid var(--border)', background: 'transparent',
-                          color: 'var(--text-4)', cursor: 'pointer', fontSize: 11,
+                          color: 'var(--text-4)', cursor: 'pointer',
                         }}>
                           <Download size={10} />
                         </button>
-                        <button onClick={() => setDeletingWf(wf)} style={{
-                          display: 'flex', alignItems: 'center',
-                          padding: '5px 8px', borderRadius: 5,
+                        <button onClick={() => setOutputWf(wf)} title="View Outputs" style={{
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          padding: '4px 6px', borderRadius: 5,
+                          border: `1px solid ${SECTION_COLOR}40`,
+                          background: `${SECTION_COLOR}08`, color: SECTION_COLOR,
+                          cursor: 'pointer',
+                        }}>
+                          <FolderOpen size={10} />
+                        </button>
+                        <button onClick={() => setDeletingWf(wf)} title="Delete" style={{
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          padding: '4px 6px', borderRadius: 5,
                           border: '1px solid var(--border)', background: 'transparent',
-                          color: 'var(--text-4)', cursor: 'pointer', fontSize: 11,
+                          color: 'var(--text-4)', cursor: 'pointer',
                         }}>
                           <Trash2 size={10} />
                         </button>
@@ -2058,6 +2042,13 @@ export default function WorkflowsPage() {
         onClose={() => setShowSharedImport(false)}
         onImported={() => { mutate(); setShowSharedImport(false); }}
         filterType="workflow"
+      />
+
+      {/* Workflow Output Dialog */}
+      <WorkflowOutputDialog
+        workflowName={(outputWf?.name as string) ?? ''}
+        open={!!outputWf}
+        onClose={() => setOutputWf(null)}
       />
     </div>
   );

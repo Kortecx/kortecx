@@ -1,14 +1,14 @@
 'use client';
 
-import { useState, useEffect, Suspense } from 'react';
+import { useState, useEffect, useRef, useCallback, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { motion, AnimatePresence, type Variants } from 'framer-motion';
 import {
   Rocket, Check, Loader2, ChevronRight, ChevronLeft,
   Globe, Lock, Cpu, Sliders, FileText, User,
-  ExternalLink, Zap, Star,
+  ExternalLink, Zap, Star, X, Settings, Search, RefreshCw,
 } from 'lucide-react';
-import { PROVIDERS, ROLE_META } from '@/lib/constants';
+import { PROVIDERS, ROLE_META, ROLE_DESCRIPTIONS } from '@/lib/constants';
 
 /* ── Section color ─────────────────────────────────── */
 const SECTION_COLOR = '#8b5cf6';
@@ -67,7 +67,7 @@ const inputStyle: React.CSSProperties = {
 type FieldProps = {
   label: string;
   required?: boolean;
-  hint?: string;
+  hint?: React.ReactNode;
   children: React.ReactNode;
   error?: string;
 };
@@ -132,31 +132,175 @@ function StepBar({ current }: { current: number }) {
   );
 }
 
-/* ── Role card ──────────────────────────────────────── */
-function RoleCard({ id, selected, onSelect }: { id: string; selected: boolean; onSelect: () => void }) {
-  const meta = ROLE_META[id as keyof typeof ROLE_META];
+/* ── Role tooltip ──────────────────────────────────── */
+function RoleTooltip({ label, anchorRect }: { label: string; anchorRect: DOMRect | null }) {
+  if (!anchorRect) return null;
   return (
-    <motion.button
-      whileHover={{ y: -1 }} whileTap={{ scale: 0.97 }}
-      onClick={onSelect}
-      style={{
-        display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-        gap: 6, padding: '14px 10px', borderRadius: 10, cursor: 'pointer',
-        border: selected ? `1.5px solid ${SECTION_COLOR}` : '1px solid var(--border-sm)',
-        background: selected ? `${SECTION_COLOR}12` : 'var(--bg-surface)',
-        transition: 'all 0.15s', outline: 'none',
-      }}
-    >
-      <div style={{ fontSize: 22, lineHeight: 1 }}>{meta?.emoji ?? '⚙️'}</div>
-      <div style={{ fontSize: 11, fontWeight: selected ? 700 : 500, color: selected ? SECTION_COLOR : 'var(--text-2)', textAlign: 'center' }}>
-        {meta?.label ?? id}
-      </div>
-      {selected && (
-        <div style={{ position: 'absolute', top: 4, right: 4, width: 14, height: 14, borderRadius: '50%', background: SECTION_COLOR, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <Check size={8} color="#fff" strokeWidth={3} />
+    <div style={{
+      position: 'fixed',
+      left: anchorRect.left + anchorRect.width / 2,
+      top: anchorRect.bottom + 8,
+      transform: 'translateX(-50%)',
+      background: '#0d0d0d', color: '#fff',
+      fontSize: 11, fontWeight: 500,
+      padding: '6px 10px', borderRadius: 6,
+      whiteSpace: 'nowrap', pointerEvents: 'none',
+      zIndex: 9999, boxShadow: '0 4px 12px rgba(0,0,0,0.18)',
+      maxWidth: 260,
+    }}>
+      <div style={{
+        position: 'absolute', top: -4, left: '50%', transform: 'translateX(-50%)',
+        width: 0, height: 0,
+        borderLeft: '5px solid transparent', borderRight: '5px solid transparent',
+        borderBottom: '5px solid #0d0d0d',
+      }} />
+      {label}
+    </div>
+  );
+}
+
+/* ── Role card ──────────────────────────────────────── */
+function RoleCard({ id, selected, onSelect, customLabel }: { id: string; selected: boolean; onSelect: () => void; customLabel?: string }) {
+  const meta = ROLE_META[id as keyof typeof ROLE_META];
+  const description = ROLE_DESCRIPTIONS[id] ?? '';
+  const [hovered, setHovered] = useState(false);
+  const ref = useRef<HTMLButtonElement>(null);
+  const [rect, setRect] = useState<DOMRect | null>(null);
+
+  useEffect(() => {
+    if (hovered && ref.current) {
+      setRect(ref.current.getBoundingClientRect());
+    } else {
+      setRect(null);
+    }
+  }, [hovered]);
+
+  return (
+    <>
+      <motion.button
+        ref={ref}
+        whileHover={{ y: -2 }} whileTap={{ scale: 0.97 }}
+        onClick={onSelect}
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+        style={{
+          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+          gap: 6, padding: '14px 10px', borderRadius: 10, cursor: 'pointer',
+          border: selected ? `1.5px solid ${SECTION_COLOR}` : '1px solid var(--border-sm)',
+          background: selected ? `${SECTION_COLOR}12` : hovered ? `${SECTION_COLOR}08` : 'var(--bg-surface)',
+          transition: 'all 0.18s ease', outline: 'none',
+          position: 'relative',
+        }}
+      >
+        <div style={{ fontSize: 22, lineHeight: 1, transition: 'transform 0.15s', transform: hovered ? 'scale(1.1)' : 'scale(1)' }}>{meta?.emoji ?? '⚙️'}</div>
+        <div style={{ fontSize: 11, fontWeight: selected ? 700 : hovered ? 600 : 500, color: selected ? SECTION_COLOR : hovered ? SECTION_COLOR : 'var(--text-2)', textAlign: 'center', transition: 'color 0.15s, font-weight 0.15s' }}>
+          {customLabel || meta?.label || id}
         </div>
-      )}
-    </motion.button>
+        {selected && (
+          <div style={{ position: 'absolute', top: 4, right: 4, width: 14, height: 14, borderRadius: '50%', background: SECTION_COLOR, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <Check size={8} color="#fff" strokeWidth={3} />
+          </div>
+        )}
+      </motion.button>
+      {hovered && description && <RoleTooltip label={description} anchorRect={rect} />}
+    </>
+  );
+}
+
+/* ── Custom Role Dialog ────────────────────────────── */
+function CustomRoleDialog({ open, onSave, onClose, initialName, initialDescription }: {
+  open: boolean;
+  onSave: (name: string, description: string) => void;
+  onClose: () => void;
+  initialName: string;
+  initialDescription: string;
+}) {
+  const [roleName, setRoleName] = useState(initialName);
+  const [roleDesc, setRoleDesc] = useState(initialDescription);
+
+  /* eslint-disable react-hooks/set-state-in-effect */
+  useEffect(() => {
+    if (open) { setRoleName(initialName); setRoleDesc(initialDescription); }
+  }, [open, initialName, initialDescription]);
+  /* eslint-enable react-hooks/set-state-in-effect */
+
+  if (!open) return null;
+
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, background: 'rgba(7,7,26,0.85)',
+      zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center',
+    }}>
+      <motion.div
+        initial={{ opacity: 0, scale: 0.96 }}
+        animate={{ opacity: 1, scale: 1 }}
+        style={{
+          width: 440, background: 'var(--bg-surface)', border: '1px solid var(--border-md)',
+          borderRadius: 12, overflow: 'hidden', boxShadow: '0 24px 80px rgba(0,0,0,0.2)',
+        }}
+      >
+        <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div style={{ width: 36, height: 36, borderRadius: 8, background: `${SECTION_COLOR}15`, border: `1px solid ${SECTION_COLOR}30`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <Settings size={18} color={SECTION_COLOR} />
+          </div>
+          <div>
+            <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-1)' }}>Custom Role</div>
+            <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 2 }}>Define a custom role for this Agent</div>
+          </div>
+        </div>
+        <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <div>
+            <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-2)', marginBottom: 6 }}>
+              Role Name <span style={{ color: '#ef4444' }}>*</span>
+            </label>
+            <input
+              value={roleName}
+              onChange={e => setRoleName(e.target.value)}
+              placeholder="e.g. Prompt Engineer, DevOps, Recruiter…"
+              style={{
+                width: '100%', padding: '9px 12px', borderRadius: 8,
+                border: '1px solid var(--border-md)', background: 'var(--bg-surface)',
+                color: 'var(--text-1)', fontSize: 13, outline: 'none', boxSizing: 'border-box',
+              }}
+            />
+          </div>
+          <div>
+            <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-2)', marginBottom: 6 }}>
+              Description
+            </label>
+            <textarea
+              value={roleDesc}
+              onChange={e => setRoleDesc(e.target.value)}
+              placeholder="Describe what this role specialises in…"
+              rows={3}
+              style={{
+                width: '100%', padding: '9px 12px', borderRadius: 8,
+                border: '1px solid var(--border-md)', background: 'var(--bg-surface)',
+                color: 'var(--text-1)', fontSize: 13, outline: 'none', boxSizing: 'border-box',
+                resize: 'vertical', lineHeight: 1.55,
+              }}
+            />
+          </div>
+        </div>
+        <div style={{ padding: '14px 24px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+          <button onClick={onClose} style={{
+            padding: '8px 16px', borderRadius: 7, fontSize: 12,
+            border: '1px solid var(--border-md)', background: 'transparent',
+            color: 'var(--text-3)', cursor: 'pointer',
+          }}>Cancel</button>
+          <button
+            onClick={() => { if (roleName.trim()) onSave(roleName.trim(), roleDesc.trim()); }}
+            disabled={!roleName.trim()}
+            style={{
+              padding: '8px 18px', borderRadius: 7, fontSize: 12, fontWeight: 700,
+              border: `1.5px solid ${SECTION_COLOR}`, background: `${SECTION_COLOR}15`,
+              color: SECTION_COLOR, cursor: roleName.trim() ? 'pointer' : 'not-allowed',
+              opacity: roleName.trim() ? 1 : 0.5,
+            }}
+          >Save Role</button>
+        </div>
+      </motion.div>
+    </div>
   );
 }
 
@@ -210,6 +354,182 @@ function ModelCard({ model, selected, onSelect }: { model: typeof ALL_MODELS[0];
   );
 }
 
+/* ── Searchable model dropdown ──────────────────────── */
+function ModelSearchDropdown({
+  models, value, onChange, engine, error, onRefresh,
+}: {
+  models: Array<{ name: string; size: number }>;
+  value: string;
+  onChange: (name: string) => void;
+  engine: string;
+  error?: boolean;
+  onRefresh?: () => void;
+}) {
+  const hasModels = models.length > 0;
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState('');
+  const [highlightIdx, setHighlightIdx] = useState(0);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+
+  const filtered = models.filter(m =>
+    m.name.toLowerCase().includes(search.toLowerCase()),
+  );
+
+  // Close on outside click
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  useEffect(() => { setHighlightIdx(0); }, [search]); // eslint-disable-line react-hooks/set-state-in-effect -- reset on search change
+
+  useEffect(() => {
+    if (!open || !listRef.current) return;
+    const el = listRef.current.children[highlightIdx] as HTMLElement | undefined;
+    el?.scrollIntoView({ block: 'nearest' });
+  }, [highlightIdx, open]);
+
+  const handleKey = (e: React.KeyboardEvent) => {
+    if (!hasModels) return;
+    if (e.key === 'ArrowDown') { e.preventDefault(); setHighlightIdx(i => Math.min(filtered.length - 1, i + 1)); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setHighlightIdx(i => Math.max(0, i - 1)); }
+    else if (e.key === 'Enter' && filtered[highlightIdx]) { e.preventDefault(); onChange(filtered[highlightIdx].name); setOpen(false); setSearch(''); }
+    else if (e.key === 'Escape') { setOpen(false); setSearch(''); }
+  };
+
+  const selectedModel = models.find(m => m.name === value);
+
+  /* No models available — show editable text input with search icon */
+  if (!hasModels) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+        <div style={{
+          ...inputStyle,
+          display: 'flex', alignItems: 'center', gap: 8,
+          borderColor: error ? '#ef4444' : undefined,
+        }}>
+          <Search size={13} color="var(--text-4)" style={{ flexShrink: 0 }} />
+          <input
+            value={value}
+            onChange={e => onChange(e.target.value)}
+            placeholder={engine === 'Ollama' ? 'llama3.1:8b' : 'loaded-model'}
+            style={{
+              border: 'none', outline: 'none', background: 'transparent',
+              color: 'var(--text-1)', fontSize: 13, flex: 1, padding: 0,
+            }}
+          />
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--text-4)' }}>
+          <span>Start {engine} to see available models, or type a model name manually</span>
+          {onRefresh && (
+            <button
+              onClick={onRefresh}
+              title="Refresh models"
+              style={{
+                display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                width: 22, height: 22, borderRadius: 4, border: '1px solid var(--border-sm)',
+                background: 'var(--bg-surface)', cursor: 'pointer', flexShrink: 0, padding: 0,
+              }}
+            >
+              <RefreshCw size={11} color="var(--text-4)" />
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div ref={wrapRef} style={{ position: 'relative' }}>
+      {/* Trigger / input */}
+      <div
+        onClick={() => { setOpen(true); setTimeout(() => inputRef.current?.focus(), 0); }}
+        style={{
+          ...inputStyle,
+          display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer',
+          borderColor: error ? '#ef4444' : open ? SECTION_COLOR : undefined,
+        }}
+      >
+        <Search size={13} color="var(--text-4)" style={{ flexShrink: 0 }} />
+        {open ? (
+          <input
+            ref={inputRef}
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            onKeyDown={handleKey}
+            placeholder="Search models…"
+            style={{
+              border: 'none', outline: 'none', background: 'transparent',
+              color: 'var(--text-1)', fontSize: 13, flex: 1, padding: 0,
+            }}
+          />
+        ) : (
+          <span style={{ flex: 1, color: value ? 'var(--text-1)' : 'var(--text-4)' }}>
+            {value || 'Select a model…'}
+          </span>
+        )}
+        {selectedModel && !open && selectedModel.size > 0 && (
+          <span style={{ fontSize: 10, color: 'var(--text-4)', flexShrink: 0 }}>
+            {(selectedModel.size / 1e9).toFixed(1)} GB
+          </span>
+        )}
+        <ChevronRight size={12} color="var(--text-4)" style={{ transform: open ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s', flexShrink: 0 }} />
+      </div>
+
+      {/* Dropdown */}
+      {open && (
+        <div
+          ref={listRef}
+          style={{
+            position: 'absolute', top: '100%', left: 0, right: 0, marginTop: 4,
+            background: 'var(--bg-surface)', border: '1px solid var(--border-md)',
+            borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.12)',
+            maxHeight: 260, overflowY: 'auto', zIndex: 100,
+          }}
+        >
+          {filtered.length === 0 ? (
+            <div style={{ padding: '14px 12px', fontSize: 12, color: 'var(--text-4)', textAlign: 'center' }}>
+              No models match &ldquo;{search}&rdquo;
+            </div>
+          ) : (
+            filtered.map((m, i) => (
+              <div
+                key={m.name}
+                onClick={() => { onChange(m.name); setOpen(false); setSearch(''); }}
+                onMouseEnter={() => setHighlightIdx(i)}
+                style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                  padding: '8px 12px', cursor: 'pointer',
+                  background: i === highlightIdx ? `${SECTION_COLOR}12` : value === m.name ? `${SECTION_COLOR}08` : 'transparent',
+                  transition: 'background 0.1s',
+                }}
+              >
+                <span style={{ fontSize: 13, fontWeight: value === m.name ? 600 : 400, color: 'var(--text-1)' }}>
+                  {m.name}
+                </span>
+                <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  {m.size > 0 && (
+                    <span style={{ fontSize: 10, color: 'var(--text-4)', padding: '1px 5px', borderRadius: 3, background: 'var(--bg-elevated)' }}>
+                      {(m.size / 1e9).toFixed(1)} GB
+                    </span>
+                  )}
+                  {value === m.name && <Check size={12} color={SECTION_COLOR} strokeWidth={2.5} />}
+                </span>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ── Summary row ────────────────────────────────────── */
 function SummaryRow({ label, value }: { label: string; value: React.ReactNode }) {
   return (
@@ -248,6 +568,13 @@ function DeployExpertPageInner() {
   const [capabilities, setCapabilities] = useState<string[]>([]);
   const [specializations, setSpecializations] = useState('');
   const [showAdvanced, setShowAdvanced] = useState(false);
+  /* Custom role */
+  const [customRoleName, setCustomRoleName] = useState('');
+  const [customRoleDescription, setCustomRoleDescription] = useState('');
+  const [showCustomRoleDialog, setShowCustomRoleDialog] = useState(false);
+  /* Tag chips */
+  const [tagsList, setTagsList] = useState<string[]>([]);
+  const [tagInput, setTagInput] = useState('');
 
   /* Step 2 — model source */
   const [modelSourceType, setModelSourceType] = useState<ModelSourceType>('provider');
@@ -262,21 +589,65 @@ function DeployExpertPageInner() {
 
   const ENGINE_URL = process.env.NEXT_PUBLIC_ENGINE_URL || 'http://localhost:8000';
 
+  const fetchLocalModels = useCallback(async () => {
+    setLocalModelsLoading(true);
+    try {
+      try {
+        // Try engine backend first
+        const r = await fetch(`${ENGINE_URL}/api/orchestrator/models/${localEngine}`);
+        if (r.ok) {
+          const data = await r.json();
+          if (data.models?.length > 0) {
+            setLocalModels(data.models);
+            return;
+          }
+        }
+      } catch { /* engine unreachable, try direct */ }
+
+      // Fallback: fetch directly from the inference server
+      try {
+        const directUrl = localEngine === 'ollama'
+          ? (localBaseUrl || 'http://localhost:11434')
+          : (localBaseUrl || 'http://localhost:8080');
+
+        if (localEngine === 'ollama') {
+          const r = await fetch(`${directUrl}/api/tags`);
+          if (r.ok) {
+            const data = await r.json();
+            const models = (data.models || []).map((m: Record<string, unknown>) => ({
+              name: m.name as string,
+              size: (m.size as number) || 0,
+            }));
+            if (models.length > 0) { setLocalModels(models); return; }
+          }
+        } else {
+          const r = await fetch(`${directUrl}/v1/models`);
+          if (r.ok) {
+            const data = await r.json();
+            const models = (data.data || []).map((m: Record<string, unknown>) => ({
+              name: (m.id as string) || 'unknown',
+              size: 0,
+            }));
+            if (models.length > 0) { setLocalModels(models); return; }
+          }
+        }
+      } catch { /* inference server also unreachable */ }
+
+      setLocalModels([]);
+    } finally {
+      setLocalModelsLoading(false);
+    }
+  }, [localEngine, localBaseUrl]); // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => {
     if (modelSourceType !== 'local') return;
-    setLocalModelsLoading(true);
-    fetch(`${ENGINE_URL}/api/orchestrator/models/${localEngine}`)
-      .then(r => r.ok ? r.json() : { models: [] })
-      .then(data => setLocalModels(data.models || []))
-      .catch(() => setLocalModels([]))
-      .finally(() => setLocalModelsLoading(false));
-  }, [modelSourceType, localEngine]); // eslint-disable-line react-hooks/exhaustive-deps
+    fetchLocalModels();
+  }, [modelSourceType, fetchLocalModels]);
 
   /* Step 3 — prompt & config */
   const [systemPrompt, setSystemPrompt] = useState('');
   const [temperature, setTemperature]   = useState(0.5);
   const [maxTokens, setMaxTokens]       = useState(4096);
-  const [tags, setTags]                 = useState('');
   const [isPublic, setIsPublic]         = useState(false);
 
   /* Deploy state */
@@ -312,7 +683,7 @@ function DeployExpertPageInner() {
   const CACHE_KEY = 'kortecx_agent_bundle_cache';
 
   const cacheState = () => {
-    const state = { name, description, role, category, complexityLevel, capabilities, specializations, modelSourceType, activeProvider, modelId, localEngine, localModelName, localBaseUrl, systemPrompt, temperature, maxTokens, tags, isPublic, step };
+    const state = { name, description, role, category, complexityLevel, capabilities, specializations, modelSourceType, activeProvider, modelId, localEngine, localModelName, localBaseUrl, systemPrompt, temperature, maxTokens, tagsList, isPublic, step, customRoleName, customRoleDescription };
     localStorage.setItem(CACHE_KEY, JSON.stringify(state));
   };
 
@@ -334,17 +705,34 @@ function DeployExpertPageInner() {
         if (cached.systemPrompt) setSystemPrompt(cached.systemPrompt);
         if (cached.temperature != null) setTemperature(cached.temperature);
         if (cached.maxTokens) setMaxTokens(cached.maxTokens);
-        if (cached.tags) setTags(cached.tags);
+        if (cached.tagsList) setTagsList(cached.tagsList);
         if (cached.isPublic != null) setIsPublic(cached.isPublic);
         if (cached.category) setCategory(cached.category);
         if (cached.complexityLevel != null) setComplexityLevel(cached.complexityLevel);
         if (cached.capabilities) setCapabilities(cached.capabilities);
         if (cached.specializations) setSpecializations(cached.specializations);
         if (cached.step) setStep(cached.step);
+        if (cached.customRoleName) setCustomRoleName(cached.customRoleName);
+        if (cached.customRoleDescription) setCustomRoleDescription(cached.customRoleDescription);
         localStorage.removeItem(CACHE_KEY);
       }
     } catch { /* ignore */ }
   }, []);
+
+  /* Read template from marketplace clone */
+  useEffect(() => {
+    const raw = searchParams.get('template');
+    if (!raw) return;
+    try {
+      const t = JSON.parse(decodeURIComponent(raw));
+      if (t.name) setName(t.name);
+      if (t.description) setDescription(t.description);
+      if (t.role) setRole(t.role);
+      if (t.systemPrompt) setSystemPrompt(t.systemPrompt);
+      if (t.tags?.length) setTagsList(t.tags);
+      if (t.capabilities?.length) setCapabilities(t.capabilities);
+    } catch { /* ignore bad template */ }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* Derived */
   const selectedModel   = ALL_MODELS.find(m => m.id === modelId);
@@ -414,11 +802,12 @@ function DeployExpertPageInner() {
         systemPrompt: systemPrompt.trim(),
         temperature,
         maxTokens,
-        tags: tags.split(',').map(t => t.trim()).filter(Boolean),
+        tags: tagsList,
         isPublic,
         category,
         complexityLevel,
         capabilities,
+        customRoleDescription,
         specializations: specializations.split(',').map(s => s.trim()).filter(Boolean),
       };
 
@@ -530,31 +919,100 @@ function DeployExpertPageInner() {
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, marginTop: 4 }}>
           {DEPLOY_ROLES.map(id => (
             <div key={id} style={{ position: 'relative' }}>
-              <RoleCard id={id} selected={role === id} onSelect={() => setRole(id)} />
+              <RoleCard id={id} selected={role === id && !customRoleName} onSelect={() => { setRole(id); setCustomRoleName(''); setCustomRoleDescription(''); }} />
             </div>
           ))}
+          {/* Custom role button */}
+          <div style={{ position: 'relative' }}>
+            <RoleCard
+              id="custom"
+              selected={role === 'custom' && !!customRoleName}
+              customLabel={customRoleName || 'Custom'}
+              onSelect={() => setShowCustomRoleDialog(true)}
+            />
+          </div>
         </div>
       </Field>
 
+      <CustomRoleDialog
+        open={showCustomRoleDialog}
+        initialName={customRoleName}
+        initialDescription={customRoleDescription}
+        onClose={() => setShowCustomRoleDialog(false)}
+        onSave={(rName, rDesc) => {
+          setCustomRoleName(rName);
+          setCustomRoleDescription(rDesc);
+          setRole('custom');
+          setShowCustomRoleDialog(false);
+        }}
+      />
+
       <Field label="Category" required hint="Dimension for graph-based grouping of related Agents">
-        <select
-          value={category}
-          onChange={e => setCategory(e.target.value)}
-          style={{ ...inputStyle, cursor: 'pointer' }}
-        >
-          {['research', 'engineering', 'creative', 'analysis', 'operations', 'domain-specific', 'custom'].map(c => (
-            <option key={c} value={c}>{c.charAt(0).toUpperCase() + c.slice(1)}</option>
-          ))}
-        </select>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 4 }}>
+          {['research', 'engineering', 'creative', 'analysis', 'operations', 'domain-specific', 'custom'].map(cat => {
+            const active = category === cat;
+            return (
+              <button
+                key={cat}
+                type="button"
+                onClick={() => setCategory(cat)}
+                style={{
+                  padding: '5px 12px', borderRadius: 6, fontSize: 11, fontWeight: active ? 600 : 500,
+                  border: active ? `1.5px solid ${SECTION_COLOR}` : '1px solid var(--border-sm)',
+                  background: active ? `${SECTION_COLOR}14` : 'var(--bg-surface)',
+                  color: active ? SECTION_COLOR : 'var(--text-3)',
+                  cursor: 'pointer', transition: 'all 0.15s',
+                }}
+              >
+                {cat.charAt(0).toUpperCase() + cat.slice(1)}
+              </button>
+            );
+          })}
+        </div>
       </Field>
 
-      <Field label="Tags" hint="Comma-separated tags for search, filtering, and Agent similarity">
+      <Field label="Tags" hint="Press Enter or Space to add a tag">
         <input
-          value={tags}
-          onChange={e => setTags(e.target.value)}
-          placeholder="e.g. research, NLP, summarisation, RAG…"
+          value={tagInput}
+          onChange={e => setTagInput(e.target.value)}
+          onKeyDown={e => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              const val = tagInput.trim();
+              if (val && !tagsList.includes(val)) setTagsList(prev => [...prev, val]);
+              setTagInput('');
+            }
+            if (e.key === 'Backspace' && !tagInput && tagsList.length > 0) {
+              setTagsList(prev => prev.slice(0, -1));
+            }
+          }}
+          placeholder={tagsList.length === 0 ? 'e.g. research, NLP, summarisation, RAG…' : 'Add another tag…'}
           style={inputStyle}
         />
+        {tagsList.length > 0 && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+            {tagsList.map(tag => (
+              <span key={tag} style={{
+                display: 'inline-flex', alignItems: 'center', gap: 4,
+                fontSize: 11, fontWeight: 600, padding: '3px 8px', borderRadius: 5,
+                background: `${SECTION_COLOR}12`, color: SECTION_COLOR,
+              }}>
+                {tag}
+                <button
+                  type="button"
+                  onClick={() => setTagsList(prev => prev.filter(t => t !== tag))}
+                  style={{
+                    background: 'none', border: 'none', cursor: 'pointer',
+                    color: SECTION_COLOR, padding: 0, display: 'flex', alignItems: 'center',
+                    opacity: 0.7,
+                  }}
+                >
+                  <X size={10} strokeWidth={2.5} />
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
       </Field>
 
       {/* ── Collapsible Advanced Metadata ── */}
@@ -618,14 +1076,6 @@ function DeployExpertPageInner() {
               </div>
             </Field>
 
-            <Field label="Specializations" hint="Comma-separated domain-specific expertise areas">
-              <input
-                value={specializations}
-                onChange={e => setSpecializations(e.target.value)}
-                placeholder="e.g. NLP, computer vision, financial modelling…"
-                style={inputStyle}
-              />
-            </Field>
           </motion.div>
         )}
       </AnimatePresence>
@@ -699,31 +1149,39 @@ function DeployExpertPageInner() {
             </div>
           </Field>
 
-          <Field label="Model" required hint={localModels.length > 0 ? `${localModels.length} models available on ${localEngine}` : `Enter model name or start ${localEngine} to see available models`}>
+          <Field label="Model" required hint={
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+              {localModels.length > 0
+                ? `${localModels.length} models available on ${localEngine}`
+                : `Enter model name or start ${localEngine} to see available models`}
+              {!localModelsLoading && (
+                <button
+                  onClick={fetchLocalModels}
+                  title="Refresh model list"
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                    width: 18, height: 18, borderRadius: 4, border: '1px solid var(--border-sm)',
+                    background: 'transparent', cursor: 'pointer', padding: 0,
+                  }}
+                >
+                  <RefreshCw size={10} color="var(--text-4)" />
+                </button>
+              )}
+            </span>
+          }>
             {localModelsLoading ? (
               <div style={{ ...inputStyle, display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-3)' }}>
                 <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} />
                 Loading models...
               </div>
-            ) : localModels.length > 0 ? (
-              <select
-                value={localModelName}
-                onChange={e => { setLocalModelName(e.target.value); setFieldErrors(f => ({ ...f, model: '' })); }}
-                style={{ ...inputStyle, borderColor: fieldErrors.model ? '#ef4444' : undefined, cursor: 'pointer' }}
-              >
-                <option value="">Select a model...</option>
-                {localModels.map(m => (
-                  <option key={m.name} value={m.name}>
-                    {m.name} {m.size ? `(${(m.size / 1e9).toFixed(1)} GB)` : ''}
-                  </option>
-                ))}
-              </select>
             ) : (
-              <input
+              <ModelSearchDropdown
+                models={localModels}
                 value={localModelName}
-                onChange={e => { setLocalModelName(e.target.value); setFieldErrors(f => ({ ...f, model: '' })); }}
-                placeholder={localEngine === 'ollama' ? 'llama3.1:8b' : 'loaded-model'}
-                style={{ ...inputStyle, borderColor: fieldErrors.model ? '#ef4444' : undefined }}
+                onChange={v => { setLocalModelName(v); setFieldErrors(f => ({ ...f, model: '' })); }}
+                engine={localEngine === 'ollama' ? 'Ollama' : 'llama.cpp'}
+                error={!!fieldErrors.model}
+                onRefresh={fetchLocalModels}
               />
             )}
           </Field>
@@ -1017,10 +1475,10 @@ function DeployExpertPageInner() {
           <SummaryRow
             label="Tags"
             value={
-              tags
+              tagsList.length > 0
                 ? (
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                    {tags.split(',').map(t => t.trim()).filter(Boolean).map(t => (
+                    {tagsList.map(t => (
                       <span key={t} style={{ fontSize: 11, padding: '1px 6px', borderRadius: 4, background: `${SECTION_COLOR}12`, color: SECTION_COLOR }}>{t}</span>
                     ))}
                   </div>

@@ -13,7 +13,7 @@ import {
   ChevronDown, Play, Cpu, Tag, X,
   Trash2, CheckCircle2, AlertCircle,
   Copy, RotateCcw, Store, FileText,
-  Network, LayoutGrid, Download,
+  Network, LayoutGrid, Download, FolderOpen,
 } from 'lucide-react';
 import { useExperts, useAgentGraph, useMarketplaceGraph } from '@/lib/hooks/useApi';
 import { ROLE_META } from '@/lib/constants';
@@ -21,6 +21,7 @@ import type { Expert, ExpertRole } from '@/lib/types';
 import ExpertEditDialog from './_components/ExpertEditDialog';
 import AgentGraph from './_components/AgentGraph';
 import AgentListView from './_components/AgentListView';
+import OutputDialog from './_components/OutputDialog';
 import { ImportButton, SharedImportButton } from '@/components/ImportExportButtons';
 import SharedConfigImportDialog from '@/components/SharedConfigImportDialog';
 import { exportEntity } from '@/lib/config-export';
@@ -539,6 +540,7 @@ function MyExpertCard({
   onDelete,
   onExport,
   onRun,
+  onOutput,
   highlighted,
   cardRef,
   runStatus: _runStatus,
@@ -549,6 +551,7 @@ function MyExpertCard({
   onDelete: () => void;
   onExport: () => void;
   onRun: () => void;
+  onOutput: () => void;
   highlighted: boolean;
   cardRef?: React.Ref<HTMLDivElement>;
   runStatus?: 'running' | 'success' | 'error';
@@ -777,6 +780,17 @@ function MyExpertCard({
           <BarChart2 size={10} />
           Stats
         </button>
+        <button onClick={e => { e.stopPropagation(); onOutput(); }} title="View Outputs" style={{
+          flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5,
+          padding: '7px 8px', borderRadius: 7, cursor: 'pointer',
+          border: '1px solid var(--border-md)',
+          background: 'transparent',
+          color: 'var(--text-3)', fontSize: 11, fontWeight: 500,
+          transition: 'all 0.15s',
+        }}>
+          <FolderOpen size={10} />
+          Output
+        </button>
         <button onClick={e => { e.stopPropagation(); onExport(); }} title="Export Agent" style={{
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           padding: '7px 8px', borderRadius: 7, cursor: 'pointer',
@@ -936,7 +950,7 @@ function MarketplaceCard({ expert }: { expert: MarketplaceExpert }) {
 
       {/* Deploy button */}
       <div style={{ marginTop: 'auto', paddingTop: 4, borderTop: '1px solid var(--border)' }}>
-        <Link href="/experts/deploy" style={{ textDecoration: 'none' }}>
+        <Link href={`/experts/deploy?template=${encodeURIComponent(JSON.stringify({ name: expert.name, description: expert.description, role: expert.role, systemPrompt: expert.systemPrompt, tags: expert.tags, capabilities: expert.capabilities }))}`} style={{ textDecoration: 'none' }}>
           <button style={{
             width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
             padding: '9px 14px', borderRadius: 7, cursor: 'pointer',
@@ -980,6 +994,7 @@ function ExpertsPage() {
   const [mineSortOpen, setMineSortOpen]       = useState(false);
   const [configureExpert, setConfigureExpert] = useState<Record<string, unknown> | null>(null);
   const [statsExpert, setStatsExpert]         = useState<Record<string, unknown> | null>(null);
+  const [outputExpert, setOutputExpert]       = useState<Record<string, unknown> | null>(null);
 
   /* Import/Export state */
   const [showSharedImport, setShowSharedImport] = useState(false);
@@ -1051,6 +1066,18 @@ function ExpertsPage() {
 
   const highlightRef = useRef<HTMLDivElement>(null);
 
+  /* Sort dropdown outside-click close */
+  const sortRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!mineSortOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (sortRef.current && !sortRef.current.contains(e.target as Node)) {
+        setMineSortOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [mineSortOpen]);
 
   /* Delete expert */
   const handleDeleteExpert = (expert: Record<string, unknown>) => {
@@ -1253,7 +1280,7 @@ function ExpertsPage() {
   }, [mpRoleFilter, mpSearch, mpSortBy]);
 
   return (
-    <div style={{ padding: 28, maxWidth: 1200 }}>
+    <div style={{ padding: 20, maxWidth: 1200 }}>
       {/* Delete Confirmation Dialog */}
       <AnimatePresence>
         {deleteTarget && (
@@ -1347,29 +1374,24 @@ function ExpertsPage() {
         transition={{ duration: 0.3 }}
         style={{
           display: 'flex', alignItems: 'center',
-          justifyContent: 'space-between', marginBottom: 20,
+          justifyContent: 'space-between', marginBottom: 12,
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <div style={{
-            width: 38, height: 38, borderRadius: 9,
+            width: 32, height: 32, borderRadius: 8,
             background: `${SECTION_COLOR}15`,
             border: `1.5px solid ${SECTION_COLOR}30`,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
           }}>
-            <Star size={19} color={SECTION_COLOR} strokeWidth={2} />
+            <Star size={16} color={SECTION_COLOR} strokeWidth={2} />
           </div>
           <div>
-            <h1 style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-1)', lineHeight: 1, margin: 0 }}>
+            <h1 style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-1)', lineHeight: 1, margin: 0 }}>
               Agents
             </h1>
-            <p style={{ fontSize: 10, color: 'var(--text-4)', marginTop: 3, margin: '3px 0 0', letterSpacing: '0.5px', textTransform: 'uppercase' }}>
-              Autonomous AI Specialists
-            </p>
-            <p style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 4, margin: '4px 0 0', maxWidth: 420 }}>
-              Build autonomous AI specialists — chain reasoning, code generation,
-              and domain expertise into intelligent agents that collaborate, learn,
-              and evolve with every run.
+            <p style={{ fontSize: 9, color: 'var(--text-4)', margin: '2px 0 0', letterSpacing: '0.5px', textTransform: 'uppercase' }}>
+              Autonomous AI Specialists — Build, deploy, and orchestrate intelligent agents
             </p>
           </div>
         </div>
@@ -1393,7 +1415,7 @@ function ExpertsPage() {
 
       {/* ── Tabs ── */}
       <div style={{
-        display: 'flex', gap: 0, marginBottom: 24,
+        display: 'flex', gap: 0, marginBottom: 14,
         borderBottom: '1px solid var(--border)',
       }}>
         {([
@@ -1488,7 +1510,7 @@ function ExpertsPage() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             transition={{ delay: 0.13 }}
-            style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 20 }}
+            style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 12 }}
           >
             {/* Search */}
             <div style={{
@@ -1535,14 +1557,19 @@ function ExpertsPage() {
             </div>
 
             {/* Sort dropdown */}
-            <div style={{ position: 'relative', marginLeft: 'auto' }}>
+            <div ref={sortRef} style={{ position: 'relative' }}>
               <button
                 onClick={() => setMineSortOpen(o => !o)}
                 style={{
                   display: 'flex', alignItems: 'center', gap: 6,
-                  padding: '7px 13px', borderRadius: 8, border: '1px solid var(--border-md)',
-                  background: 'var(--bg-surface)', cursor: 'pointer',
-                  fontSize: 12, color: 'var(--text-2)', fontWeight: 500,
+                  padding: '7px 13px', borderRadius: 8,
+                  border: mineSortBy !== 'rating' ? `1.5px solid ${SECTION_COLOR}` : '1px solid var(--border-md)',
+                  background: mineSortBy !== 'rating' ? `${SECTION_COLOR}14` : 'var(--bg-surface)',
+                  cursor: 'pointer',
+                  fontSize: 12,
+                  color: mineSortBy !== 'rating' ? SECTION_COLOR : 'var(--text-2)',
+                  fontWeight: mineSortBy !== 'rating' ? 700 : 500,
+                  transition: 'all 0.15s',
                 }}
               >
                 <Clock size={12} />
@@ -1557,7 +1584,7 @@ function ExpertsPage() {
                     exit={{ opacity: 0, y: -4, scale: 0.97 }}
                     transition={{ duration: 0.14 }}
                     style={{
-                      position: 'absolute', top: 'calc(100% + 6px)', right: 0, zIndex: 50,
+                      position: 'absolute', top: 'calc(100% + 6px)', left: 0, zIndex: 50,
                       background: 'var(--bg-surface)', border: '1px solid var(--border-md)',
                       borderRadius: 9, padding: 6, minWidth: 140,
                       boxShadow: '0 8px 24px rgba(13,13,13,0.10)',
@@ -1574,6 +1601,7 @@ function ExpertsPage() {
                           background: mineSortBy === opt.value ? `${SECTION_COLOR}12` : 'transparent',
                           color: mineSortBy === opt.value ? SECTION_COLOR : 'var(--text-2)',
                           border: 'none',
+                          transition: 'all 0.15s',
                         }}
                       >
                         {opt.label}
@@ -1632,6 +1660,7 @@ function ExpertsPage() {
               onRun={handleRunExpert}
               onDelete={handleDeleteExpert}
               onExport={(p) => exportEntity('expert', p.id as string, p.name as string)}
+              onOutput={setOutputExpert}
               onCreateEdge={async (sourceId, targetId) => {
                 try {
                   await fetch('/api/experts/graph', {
@@ -1889,6 +1918,14 @@ function ExpertsPage() {
           />
         )}
       </AnimatePresence>
+
+      {/* Output Dialog */}
+      <OutputDialog
+        expertId={(outputExpert?.id as string) ?? ''}
+        expertName={(outputExpert?.name as string) ?? ''}
+        open={!!outputExpert}
+        onClose={() => setOutputExpert(null)}
+      />
 
       {/* Shared Config Import Dialog */}
       <SharedConfigImportDialog

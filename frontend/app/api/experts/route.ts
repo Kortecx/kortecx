@@ -69,7 +69,7 @@ export async function POST(req: NextRequest) {
     const {
       name, role, modelId, providerId, systemPrompt, temperature,
       maxTokens, description, tags, isPublic, modelSource, localModelConfig,
-      category, complexityLevel,
+      category, complexityLevel, capabilities, customRoleDescription, specializations,
     } = body;
 
     if (!name?.trim()) {
@@ -97,6 +97,9 @@ export async function POST(req: NextRequest) {
         isPublic: isPublic ?? false,
         category: category ?? 'custom',
         complexityLevel: complexityLevel ?? 3,
+        capabilities: capabilities ?? [],
+        customRoleDescription: customRoleDescription ?? '',
+        specializations: specializations ?? [],
       }),
     });
 
@@ -107,6 +110,37 @@ export async function POST(req: NextRequest) {
 
     const engineData = await engineRes.json();
     const expert = engineData.expert || engineData;
+
+    // Insert into NeonDB immediately so agents page sees it right away
+    // (engine's async sync may not finish before the page redirects)
+    try {
+      await db.insert(experts).values({
+        id: expert.id,
+        name: name.trim(),
+        description: description?.trim() || null,
+        role,
+        status: 'idle',
+        version: '1.0.0',
+        modelId: body.modelId || localModelConfig?.model || localModelConfig?.modelName || 'llama3.2:3b',
+        modelName: body.modelId || localModelConfig?.model || localModelConfig?.modelName || 'llama3.2:3b',
+        providerId: body.providerId || localModelConfig?.engine || 'ollama',
+        providerName: body.providerId || localModelConfig?.engine || 'ollama',
+        modelSource: modelSource || 'local',
+        localModelConfig: localModelConfig || null,
+        systemPrompt: systemPrompt?.trim() || null,
+        temperature: String(temperature ?? 0.7),
+        maxTokens: maxTokens ?? 4096,
+        tags: tags ?? [],
+        isPublic: isPublic ?? false,
+        category: category ?? 'custom',
+        complexityLevel: complexityLevel ?? 3,
+        capabilities: capabilities ?? [],
+        specializations: specializations ?? [],
+        customRoleDescription: customRoleDescription ?? null,
+      }).onConflictDoNothing();
+    } catch (dbErr) {
+      console.warn('[experts POST] direct DB insert failed (engine sync will retry):', dbErr);
+    }
 
     logStatus('info', `Expert deployed: ${name}`, 'expert', { id: expert.id, role, modelSource: modelSource || 'local' });
     return NextResponse.json({ expert, message: 'Expert deployment initiated' }, { status: 201 });

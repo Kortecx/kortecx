@@ -311,6 +311,26 @@ export const ROLE_META: Record<ExpertRole, { label: string; emoji: string; color
   custom:          { label: 'Custom',        emoji: '⚙️', color: '#1a1a1a', dimColor: 'rgba(13,13,13,0.07)' },
 };
 
+/* ─── Role Descriptions (for tooltips) ────────────────── */
+export const ROLE_DESCRIPTIONS: Record<string, string> = {
+  researcher:      'Investigates topics, gathers evidence, and synthesizes findings',
+  analyst:         'Examines data patterns, trends, and provides structured insights',
+  writer:          'Creates content — blog posts, documentation, marketing copy',
+  coder:           'Generates, reviews, and refactors code across languages',
+  reviewer:        'Evaluates quality, identifies issues, and suggests improvements',
+  planner:         'Breaks down goals into actionable steps and timelines',
+  synthesizer:     'Merges information from multiple sources into unified outputs',
+  critic:          'Challenges assumptions and identifies weaknesses in reasoning',
+  legal:           'Analyses contracts, compliance requirements, and regulations',
+  financial:       'Models financials, forecasts, and evaluates business metrics',
+  medical:         'Processes medical literature and health-related information',
+  coordinator:     'Orchestrates tasks across teams and manages workflows',
+  'data-engineer': 'Designs pipelines, schemas, and data transformations',
+  creative:        'Generates creative concepts, designs, and artistic content',
+  translator:      'Converts content between languages preserving meaning and tone',
+  custom:          'A user-defined role with custom capabilities',
+};
+
 /* ─── Empty data arrays (populated from database) ────── */
 export const EXPERTS: Expert[] = [];
 export const WORKFLOWS: Workflow[] = [];
@@ -512,4 +532,23 @@ export const COMMAND_SUGGESTIONS: string[] = [
   'Generate a Reddit post for the r/MachineLearning community',
   'Write a Discord announcement for our community',
   'Create a Telegram message about today\'s updates',
+];
+
+/* ── Cloud & Data Provider Plugins ──────────────────── */
+export const CLOUD_PLUGINS: Array<{
+  id: string; name: string; icon: string; color: string;
+  description: string; services: string[]; category: string; status: 'available' | 'coming_soon';
+}> = [
+  { id: 'aws',         name: 'AWS',           icon: '☁️', color: '#FF9900', description: 'S3, SageMaker, Bedrock, Lambda',           services: ['S3', 'SageMaker', 'Bedrock', 'Lambda'],              category: 'cloud_data', status: 'coming_soon' },
+  { id: 'gcp',         name: 'Google Cloud',   icon: '🔵', color: '#4285F4', description: 'BigQuery, Vertex AI, Cloud Storage',       services: ['BigQuery', 'Vertex AI', 'Cloud Storage', 'Functions'], category: 'cloud_data', status: 'coming_soon' },
+  { id: 'azure',       name: 'Azure',          icon: '🔷', color: '#0078D4', description: 'Azure AI, Blob Storage, Functions',        services: ['Azure AI', 'Blob Storage', 'Azure Functions'],       category: 'cloud_data', status: 'coming_soon' },
+  { id: 'snowflake',   name: 'Snowflake',      icon: '❄️', color: '#29B5E8', description: 'Data Warehouse, ML Functions, Cortex',     services: ['Data Warehouse', 'ML Functions', 'Cortex AI'],       category: 'cloud_data', status: 'coming_soon' },
+  { id: 'databricks',  name: 'Databricks',     icon: '🧱', color: '#FF3621', description: 'Unity Catalog, MLflow, Spark',             services: ['Unity Catalog', 'MLflow', 'Spark'],                  category: 'cloud_data', status: 'coming_soon' },
+  { id: 'confluent',   name: 'Confluent',      icon: '🔄', color: '#172B4D', description: 'Kafka Streaming, Schema Registry',         services: ['Kafka', 'Schema Registry', 'ksqlDB'],               category: 'cloud_data', status: 'coming_soon' },
+  { id: 'mongodb',     name: 'MongoDB',        icon: '🍃', color: '#00684A', description: 'Atlas, Vector Search, Aggregation',        services: ['Atlas', 'Vector Search', 'Aggregation'],            category: 'cloud_data', status: 'coming_soon' },
+  { id: 'pinecone',    name: 'Pinecone',       icon: '🌲', color: '#000000', description: 'Vector Database, Serverless Index',         services: ['Vector DB', 'Serverless', 'Namespaces'],            category: 'cloud_data', status: 'coming_soon' },
+  { id: 'weaviate',    name: 'Weaviate',       icon: '🔮', color: '#35B8BE', description: 'Vector Database, Hybrid Search',            services: ['Vector DB', 'Hybrid Search', 'Generative'],         category: 'cloud_data', status: 'coming_soon' },
+  { id: 'langchain',   name: 'LangChain',      icon: '🦜', color: '#1C3C3C', description: 'Agent Framework, Chains, Memory',          services: ['Agents', 'Chains', 'Memory', 'Tools'],              category: 'cloud_data', status: 'coming_soon' },
+  { id: 'llamaindex',  name: 'LlamaIndex',     icon: '🦙', color: '#8B5CF6', description: 'RAG Framework, Data Connectors',           services: ['RAG', 'Data Connectors', 'Query Engine'],           category: 'cloud_data', status: 'coming_soon' },
+  { id: 'huggingface', name: 'Hugging Face',   icon: '🤗', color: '#FFD21E', description: 'Model Hub, Inference API, Datasets',       services: ['Model Hub', 'Inference API', 'Datasets'],           category: 'cloud_data', status: 'coming_soon' },
 ];

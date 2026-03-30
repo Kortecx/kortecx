@@ -58,9 +58,15 @@ export default function ExpertRunDetailDialog({ run, open, onClose }: ExpertRunD
 
   if (!open || !run) return null;
 
-  const statusCfg = STATUS_CONFIG[run.status] ?? STATUS_CONFIG.running;
+  // Merge live-polled data with static prop for reactive updates
+  const liveStatus = (fullRun?.status as string) ?? run.status;
+  const liveTokens = (fullRun?.tokensUsed as number) ?? run.tokensUsed;
+  const liveDuration = (fullRun?.durationMs as number) ?? run.durationMs;
+  const liveArtifacts = (fullRun?.artifactCount as number) ?? run.artifactCount;
+
+  const statusCfg = STATUS_CONFIG[liveStatus] ?? STATUS_CONFIG.running;
   const StatusIcon = statusCfg.icon;
-  const isRunning = run.status === 'running';
+  const isRunning = liveStatus === 'running';
   const meta = (fullRun?.metadata ?? run.metadata ?? {}) as Record<string, unknown>;
   const artifactDir = meta.artifactDir as string ?? '';
   const responseText = (fullRun?.responseText ?? '') as string;
@@ -147,10 +153,10 @@ export default function ExpertRunDetailDialog({ run, open, onClose }: ExpertRunD
               {/* Stats grid */}
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10 }}>
                 {[
-                  { label: 'Tokens Used',  value: run.tokensUsed > 0 ? fmt(run.tokensUsed) : '\u2014', icon: Zap, color: '#3b82f6' },
-                  { label: 'Duration',     value: run.durationMs > 0 ? `${(run.durationMs / 1000).toFixed(1)}s` : isRunning ? '...' : '\u2014', icon: Clock, color: '#f59e0b' },
-                  { label: 'Artifacts',    value: String(run.artifactCount ?? 0), icon: FileText, color: '#10b981' },
-                  { label: 'Model',        value: run.model || '\u2014', icon: Server, color: '#8b5cf6' },
+                  { label: 'Tokens Used',  value: liveTokens > 0 ? fmt(liveTokens) : isRunning ? '...' : '\u2014', icon: Zap, color: '#3b82f6' },
+                  { label: 'Duration',     value: liveDuration > 0 ? `${(liveDuration / 1000).toFixed(1)}s` : isRunning ? '...' : '\u2014', icon: Clock, color: '#f59e0b' },
+                  { label: 'Artifacts',    value: String(liveArtifacts ?? 0), icon: FileText, color: '#10b981' },
+                  { label: 'Model',        value: (fullRun?.model as string) || run.model || '\u2014', icon: Server, color: '#8b5cf6' },
                 ].map(({ label, value, icon: Icon, color }) => (
                   <div key={label} style={{
                     padding: '12px 14px', borderRadius: 10,

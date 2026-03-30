@@ -22,6 +22,7 @@ from engine.services.orchestrator import (
     orchestrator,
 )
 from engine.services.step_artifacts import step_artifacts
+from engine.services.workflow_artifacts import workflow_artifacts
 
 logger = logging.getLogger("engine.routers.orchestrator")
 
@@ -74,6 +75,9 @@ class ExecuteRequest(BaseModel):
     goalFileUrl: str
     inputFileUrls: list[str] = []
     steps: list[StepConfigModel]
+    masterAgentId: str | None = None
+    connectedAgentIds: list[str] = []
+    failFast: bool = False
 
 
 class ExecuteResponse(BaseModel):
@@ -98,6 +102,9 @@ async def execute_workflow(req: ExecuteRequest, bg: BackgroundTasks) -> ExecuteR
         name=req.name,
         goal_file_url=req.goalFileUrl,
         input_file_urls=req.inputFileUrls,
+        master_agent_id=req.masterAgentId,
+        connected_agent_ids=req.connectedAgentIds,
+        fail_fast=req.failFast,
         steps=[
             StepConfig(
                 step_id=s.stepId,
@@ -479,3 +486,69 @@ async def list_step_artifacts(workflow_name: str, step_name: str) -> dict[str, A
 
     artifacts = step_artifacts.list_artifacts(workflow_name, step_name)
     return {"artifacts": artifacts, "total": len(artifacts)}
+
+
+@router.get("/outputs/{workflow_name}")
+async def list_workflow_outputs(workflow_name: str) -> dict[str, Any]:
+    """List all run output folders for a workflow."""
+    runs = workflow_artifacts.list_runs(workflow_name)
+    return {"runs": runs, "total": len(runs)}
+
+
+@router.get("/outputs/{workflow_name}/{run_id}/{filename:path}")
+async def get_workflow_output_file(workflow_name: str, run_id: str, filename: str) -> dict[str, Any]:
+    """Read content of a specific file from a workflow run output folder."""
+    content = workflow_artifacts.get_file_content(workflow_name, run_id, filename)
+    if content is None:
+        return {"error": f"File {filename} not found in run {run_id}"}
+    return {"content": content, "filename": filename, "runId": run_id}
+
+
+class SaveConfigRequest(BaseModel):
+    workflowName: str
+    config: dict[str, Any]
+    maxVersions: int = 3
+
+
+@router.post("/save-config")
+async def save_workflow_config(req: SaveConfigRequest) -> dict[str, Any]:
+    """Save workflow configuration and plan to disk with versioning."""
+    return workflow_artifacts.save_workflow_config(
+        workflow_name=req.workflowName,
+        config=req.config,
+        max_versions=req.maxVersions,
+    )
+
+
+class SaveLocalRequest(BaseModel):
+    workflowName: str
+    config: dict[str, Any]
+    graph: dict[str, Any] | None = None
+    maxVersions: int = 3
+
+
+@router.post("/workflow-save-local")
+async def save_workflow_local(req: SaveLocalRequest) -> dict[str, Any]:
+    """Save workflow to local directory with versioning."""
+    return workflow_artifacts.save_local(
+        workflow_name=req.workflowName,
+        config=req.config,
+        graph=req.graph,
+        max_versions=req.maxVersions,
+    )
+
+
+@router.get("/workflow-versions/{workflow_name}")
+async def list_workflow_versions(workflow_name: str) -> dict[str, Any]:
+    """List available versions for a workflow."""
+    versions = workflow_artifacts.list_local_versions(workflow_name)
+    return {"versions": versions, "total": len(versions)}
+
+
+@router.get("/workflow-versions/{workflow_name}/{timestamp}")
+async def load_workflow_version(workflow_name: str, timestamp: int) -> dict[str, Any]:
+    """Load a specific version's config."""
+    config = workflow_artifacts.load_local_version(workflow_name, timestamp)
+    if config is None:
+        return {"error": "Version not found"}
+    return {"config": config}

@@ -772,4 +772,6 @@ export interface UnifiedRun {
   engine?: string;
   planId?: string;
   errorMessage?: string;
+  /** Internal: workflow ID for cancel/stop API */
+  _workflowId?: string;
 }

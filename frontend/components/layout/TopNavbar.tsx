@@ -1,12 +1,48 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { usePathname } from 'next/navigation';
 import { Search, Bell, Settings, ChevronRight, Activity } from 'lucide-react';
 import Link from 'next/link';
 import { useApp } from '@/contexts/AppContext';
 import { SYSTEM_METRICS, ALERTS } from '@/lib/constants';
 import SearchCommandDialog from './SearchCommandDialog';
+
+/* ── Tooltip rendered below anchor ── */
+function TopNavTooltip({ label, anchorRect }: { label: string; anchorRect: DOMRect | null }) {
+  if (!anchorRect) return null;
+  return (
+    <div style={{
+      position: 'fixed',
+      left: anchorRect.left + anchorRect.width / 2,
+      top: anchorRect.bottom + 8,
+      transform: 'translateX(-50%)',
+      background: '#0d0d0d',
+      color: '#fff',
+      fontSize: 12,
+      fontWeight: 500,
+      padding: '5px 10px',
+      borderRadius: 5,
+      whiteSpace: 'nowrap',
+      pointerEvents: 'none',
+      zIndex: 9999,
+      boxShadow: '0 4px 12px rgba(0,0,0,0.18)',
+    }}>
+      {/* Arrow */}
+      <div style={{
+        position: 'absolute',
+        top: -4,
+        left: '50%',
+        transform: 'translateX(-50%)',
+        width: 0, height: 0,
+        borderLeft: '5px solid transparent',
+        borderRight: '5px solid transparent',
+        borderBottom: '5px solid #0d0d0d',
+      }} />
+      {label}
+    </div>
+  );
+}
 
 const PRETTY: Record<string, string> = {
   dashboard:    'Dashboard',
@@ -39,11 +75,36 @@ function buildBreadcrumb(path: string): Array<{ label: string; href: string }> {
 
 export default function TopNavbar() {
   const pathname = usePathname();
-  const { sidebarCollapsed } = useApp();
-  const left = sidebarCollapsed ? 48 : 200;
+  const { sidebarCollapsed, sidebarWidth } = useApp();
+  const left = sidebarCollapsed ? 48 : sidebarWidth;
   const crumbs = buildBreadcrumb(pathname);
   const unackAlerts = ALERTS.filter(a => !a.acknowledgedAt).length;
   const [searchOpen, setSearchOpen] = useState(false);
+
+  /* Tooltip state for top-nav icons */
+  const [monHovered, setMonHovered] = useState(false);
+  const monRef = useRef<HTMLButtonElement>(null);
+  const [monRect, setMonRect] = useState<DOMRect | null>(null);
+
+  const [alertHovered, setAlertHovered] = useState(false);
+  const alertRef = useRef<HTMLButtonElement>(null);
+  const [alertRect, setAlertRect] = useState<DOMRect | null>(null);
+
+  const [settingsHovered, setSettingsHovered] = useState(false);
+  const settingsRef = useRef<HTMLButtonElement>(null);
+  const [settingsRect, setSettingsRect] = useState<DOMRect | null>(null);
+
+  /* eslint-disable react-hooks/set-state-in-effect */
+  useEffect(() => {
+    setMonRect(monHovered && monRef.current ? monRef.current.getBoundingClientRect() : null);
+  }, [monHovered]);
+  useEffect(() => {
+    setAlertRect(alertHovered && alertRef.current ? alertRef.current.getBoundingClientRect() : null);
+  }, [alertHovered]);
+  useEffect(() => {
+    setSettingsRect(settingsHovered && settingsRef.current ? settingsRef.current.getBoundingClientRect() : null);
+  }, [settingsHovered]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   // Global ⌘K / Ctrl+K shortcut
   const handleGlobalKey = useCallback((e: KeyboardEvent) => {
@@ -164,6 +225,7 @@ export default function TopNavbar() {
       {/* Monitoring link */}
       <Link href="/monitoring">
         <button
+          ref={monRef}
           style={{
             background: 'none',
             border: 'none',
@@ -175,24 +237,26 @@ export default function TopNavbar() {
             padding: 6,
             transition: 'color 0.15s, background 0.15s',
           }}
-          title="Monitoring"
           onMouseEnter={e => {
+            setMonHovered(true);
             e.currentTarget.style.color = '#DC2626';
             e.currentTarget.style.background = 'rgba(220,38,38,0.08)';
           }}
           onMouseLeave={e => {
+            setMonHovered(false);
             e.currentTarget.style.color = 'var(--text-3)';
             e.currentTarget.style.background = 'none';
           }}
         >
           <Activity size={16} />
-
         </button>
       </Link>
+      {monHovered && <TopNavTooltip label="Monitoring" anchorRect={monRect} />}
 
       {/* Alerts bell — colored when there are unread */}
       <Link href="/monitoring/alerts" style={{ position: 'relative' }}>
         <button
+          ref={alertRef}
           style={{
             background: unackAlerts > 0 ? 'rgba(240,69,0,0.08)' : 'none',
             border: 'none',
@@ -204,12 +268,13 @@ export default function TopNavbar() {
             padding: 6,
             transition: 'color 0.15s, background 0.15s',
           }}
-          title="Alerts"
           onMouseEnter={e => {
+            setAlertHovered(true);
             e.currentTarget.style.color = '#F04500';
             e.currentTarget.style.background = 'rgba(240,69,0,0.08)';
           }}
           onMouseLeave={e => {
+            setAlertHovered(false);
             e.currentTarget.style.color = unackAlerts > 0 ? '#F04500' : 'var(--text-3)';
             e.currentTarget.style.background = unackAlerts > 0 ? 'rgba(240,69,0,0.08)' : 'none';
           }}
@@ -227,10 +292,12 @@ export default function TopNavbar() {
           )}
         </button>
       </Link>
+      {alertHovered && <TopNavTooltip label="Alerts" anchorRect={alertRect} />}
 
       {/* Settings */}
       <Link href="/settings">
         <button
+          ref={settingsRef}
           style={{
             background: 'none',
             border: 'none',
@@ -243,10 +310,12 @@ export default function TopNavbar() {
             transition: 'color 0.15s, background 0.15s',
           }}
           onMouseEnter={e => {
+            setSettingsHovered(true);
             e.currentTarget.style.color = '#6b7280';
             e.currentTarget.style.background = 'rgba(107,114,128,0.08)';
           }}
           onMouseLeave={e => {
+            setSettingsHovered(false);
             e.currentTarget.style.color = 'var(--text-3)';
             e.currentTarget.style.background = 'none';
           }}
@@ -254,6 +323,7 @@ export default function TopNavbar() {
           <Settings size={16} />
         </button>
       </Link>
+      {settingsHovered && <TopNavTooltip label="Settings" anchorRect={settingsRect} />}
       </div>{/* end right-side wrapper */}
 
     </header>

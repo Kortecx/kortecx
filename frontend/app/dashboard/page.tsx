@@ -224,7 +224,12 @@ function TaskRow({ task, index }: { task: QueuedTask; index: number }) {
 
 /* ── Run Row ────────────────────────────────────────────── */
 function RunRow({ run, index }: { run: WorkflowRun; index: number }) {
-  const isOk = run.status === 'completed';
+  const isRunning = run.status === 'running';
+  const statusColor = run.status === 'completed' ? '#10b981' : run.status === 'failed' ? '#ef4444' : isRunning ? '#3b82f6' : '#6b7280';
+  // eslint-disable-next-line react-hooks/purity -- Date.now() needed for live elapsed time
+  const durationSec = run.durationSec ?? (run.startedAt ? Math.floor((Date.now() - new Date(run.startedAt).getTime()) / 1000) : 0);
+  const fmtDur = durationSec < 60 ? `${durationSec}s` : `${Math.floor(durationSec / 60)}m ${durationSec % 60}s`;
+
   return (
     <motion.div
       initial={{ opacity: 0 }}
@@ -236,31 +241,59 @@ function RunRow({ run, index }: { run: WorkflowRun; index: number }) {
       }}
     >
       <span style={{ flexShrink: 0 }}>
-        {isOk
-          ? <CheckCircle2 size={14} color="var(--primary)" />
+        {isRunning
+          ? <Loader2 size={14} color={statusColor} style={{ animation: 'spin 1s linear infinite' }} />
+          : run.status === 'completed'
+          ? <CheckCircle2 size={14} color={statusColor} />
           : run.status === 'failed'
-          ? <X size={14} color="var(--text-2)" />
-          : <Circle size={14} color="var(--text-3)" />
+          ? <X size={14} color={statusColor} />
+          : <Circle size={14} color={statusColor} />
         }
       </span>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{
-          fontSize: 13, color: 'var(--text-1)',
-          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-        }}>
-          {run.input}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-1)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            {run.workflowName}
+          </span>
+          <span style={{
+            fontSize: 9, padding: '1px 6px', borderRadius: 4, fontWeight: 600,
+            background: `${statusColor}15`, color: statusColor,
+            textTransform: 'capitalize', flexShrink: 0,
+          }}>
+            {run.status}
+          </span>
+          <span className="mono" style={{ fontSize: 9, color: 'var(--text-4)', flexShrink: 0 }}>
+            {run.id.slice(0, 16)}
+          </span>
         </div>
-        <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2, display: 'flex', gap: 6 }}>
-          <span>{run.workflowName}</span>
-          <span style={{ color: 'var(--border-strong)' }}>·</span>
-          <span className="mono">{run.expertChain.join(' → ')}</span>
-        </div>
+        {run.expertChain.length > 0 && (
+          <div className="mono" style={{ fontSize: 10, color: 'var(--text-3)', marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            {run.expertChain.join(' → ')}
+          </div>
+        )}
       </div>
-      <div style={{ textAlign: 'right', flexShrink: 0 }}>
-        <div className="mono" style={{ fontSize: 11, color: 'var(--text-2)' }}>
-          {fmt(run.totalTokensUsed)} tok
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+        <div style={{ textAlign: 'center' }}>
+          <div className="mono" style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-1)' }}>
+            {fmt(run.totalTokensUsed)}
+          </div>
+          <div style={{ fontSize: 8, color: 'var(--text-4)', textTransform: 'uppercase' }}>tokens</div>
         </div>
-        <div style={{ fontSize: 10, color: 'var(--text-3)', marginTop: 1 }}>
+        <div style={{ textAlign: 'center' }}>
+          <div className="mono" style={{ fontSize: 11, fontWeight: 600, color: isRunning ? '#3b82f6' : 'var(--text-1)' }}>
+            {fmtDur}
+          </div>
+          <div style={{ fontSize: 8, color: 'var(--text-4)', textTransform: 'uppercase' }}>time</div>
+        </div>
+        {run.totalCostUsd != null && Number(run.totalCostUsd) > 0 && (
+          <div style={{ textAlign: 'center' }}>
+            <div className="mono" style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-1)' }}>
+              ${Number(run.totalCostUsd).toFixed(3)}
+            </div>
+            <div style={{ fontSize: 8, color: 'var(--text-4)', textTransform: 'uppercase' }}>cost</div>
+          </div>
+        )}
+        <div style={{ fontSize: 10, color: 'var(--text-4)', minWidth: 50, textAlign: 'right' }}>
           {elapsed(run.startedAt)}
         </div>
       </div>

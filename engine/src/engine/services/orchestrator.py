@@ -19,6 +19,7 @@ from engine.services.action_runner import action_runner
 from engine.services.execution_audit import execution_audit
 from engine.services.local_inference import GenerateResult, inference_router, model_pool
 from engine.services.step_artifacts import step_artifacts
+from engine.services.workflow_artifacts import workflow_artifacts
 from engine.services.workflow_logger import workflow_logger
 
 logger = logging.getLogger("engine.orchestrator")
@@ -75,6 +76,8 @@ class StepConfig:
     condition: dict[str, str] | None = None  # e.g. {"type": "contains", "value": "APPROVED"}
     step_type: str = "agent"  # "agent" | "action"
     action_config: dict[str, Any] | None = None
+    max_retries: int = 0
+    retry_delay_sec: int = 2
 
 
 @dataclass
@@ -84,6 +87,9 @@ class WorkflowRequest:
     goal_file_url: str
     input_file_urls: list[str]
     steps: list[StepConfig]
+    master_agent_id: str | None = None
+    connected_agent_ids: list[str] = field(default_factory=list)
+    fail_fast: bool = False
 
 
 @dataclass
@@ -176,7 +182,11 @@ class AgentOrchestrator:
 
         If a plan DAG is provided, it overrides request.steps with the DAG-derived step order.
         """
-        run_id = run_id or f"run-{uuid.uuid4().hex[:12]}"
+        if not run_id:
+            slug = request.name.lower().replace(" ", "-").replace("_", "-")[:30] if request.name else "wf"
+            slug = "".join(c for c in slug if c.isalnum() or c == "-")
+            ts = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+            run_id = f"wfr-{slug}-{ts}-{uuid.uuid4().hex[:4]}"
         channel = f"workflow.{run_id}"
 
         # If a plan DAG is provided, convert it to steps and override request
@@ -268,6 +278,90 @@ class AgentOrchestrator:
             )
             workflow_logger.save_run_memory(request.workflow_id, run_id, shared.to_dict())
             workflow_logger.save_run_output(request.workflow_id, run_id, result)
+
+            # Save structured outputs to outputs/workflows/
+            total_tokens_out, total_dur_out, succ_out, fail_out = self._compute_run_stats(run_id)
+            agents_data = self._runs[run_id].get("agents", {})
+            expert_chain_out = [a.step_id for a in agents_data.values()] if agents_data else []
+            try:
+                workflow_artifacts.save_run_summary(
+                    workflow_name=request.name,
+                    workflow_id=request.workflow_id,
+                    run_id=run_id,
+                    output=result,
+                    goal=goal_content,
+                    status="completed",
+                    total_tokens=total_tokens_out,
+                    duration_sec=int(total_dur_out / 1000) if total_dur_out else 0,
+                    steps_completed=succ_out,
+                    total_steps=len(request.steps),
+                    expert_chain=expert_chain_out,
+                )
+                # Save per-step outputs
+                for idx, step in enumerate(request.steps):
+                    agent_id = step.agent_id or step.expert_id or f"step-{idx}"
+                    agent_state = agents_data.get(agent_id)
+                    if agent_state:
+                        workflow_artifacts.save_step_output(
+                            workflow_name=request.name,
+                            run_id=run_id,
+                            step_number=idx + 1,
+                            step_name=step.name or agent_id,
+                            response=agent_state.output or "",
+                            prompt=step.task or "",
+                            system_prompt=step.system_prompt or "",
+                            model=step.model or "",
+                            engine=step.engine or "",
+                            tokens_used=agent_state.tokens_used,
+                            duration_ms=agent_state.duration_ms,
+                            status=agent_state.status,
+                            error_message=agent_state.error or "",
+                        )
+            except Exception:
+                logger.warning("Failed to save workflow artifacts for %s", run_id, exc_info=True)
+
+            # Master agent post-processing: collect all outputs and produce refined summary
+            if request.master_agent_id:
+                try:
+                    from engine.services.expert_manager import expert_manager
+
+                    master_expert = expert_manager.get(request.master_agent_id)
+                    if master_expert:
+                        master_system = expert_manager.get_prompt(request.master_agent_id, "system")
+                        agents_data = self._runs[run_id].get("agents", {})
+                        step_outputs = "\n\n---\n\n".join(f"## Step: {a.name}\n\n{a.output}" for a in agents_data.values() if a.output)
+                        master_prompt = (
+                            f"You are the master agent for workflow '{request.name}'.\n\n"
+                            f"Goal: {goal_content}\n\n"
+                            f"All step outputs are below. Synthesize, refine, and enhance them into a final output.\n\n"
+                            f"{step_outputs}"
+                        )
+                        master_model = (master_expert.get("localModelConfig") or {}).get("modelName", "llama3.2:3b")
+                        master_engine = (master_expert.get("localModelConfig") or {}).get("engine", "ollama")
+
+                        master_result = await inference_router.chat(
+                            engine=master_engine,
+                            model=master_model,
+                            messages=[
+                                {"role": "system", "content": master_system or "You are a master agent that synthesizes and refines outputs."},
+                                {"role": "user", "content": master_prompt},
+                            ],
+                            temperature=0.7,
+                            max_tokens=8192,
+                        )
+                        result = f"# Master Agent Output\n\n{master_result.text}\n\n---\n\n# Step Outputs\n\n{result}"
+                        workflow_artifacts.save_run_summary(
+                            workflow_name=request.name,
+                            workflow_id=request.workflow_id,
+                            run_id=run_id,
+                            output=master_result.text,
+                            goal=goal_content,
+                            status="completed",
+                            metadata={"masterAgentId": request.master_agent_id},
+                        )
+                        logger.info("Master agent processed outputs for run %s", run_id)
+                except Exception:
+                    logger.warning("Master agent post-processing failed for %s", run_id, exc_info=True)
 
             await ws_manager.broadcast(
                 channel,
@@ -743,22 +837,36 @@ class AgentOrchestrator:
                 # Start live metrics broadcasting
                 _metrics_task = asyncio.create_task(self._broadcast_live_metrics(run_id, agent_id, step.step_id, channel))
 
-                # Execute inference — race against cancellation event
-                cancel_evt = self._cancellation_events.get(run_id)
-                if cancel_evt:
-                    infer_task = asyncio.create_task(self._infer(step, system_prompt, user_prompt))
-                    cancel_wait = asyncio.create_task(cancel_evt.wait())
-                    done, pending = await asyncio.wait(
-                        {infer_task, cancel_wait},
-                        return_when=asyncio.FIRST_COMPLETED,
-                    )
-                    for p in pending:
-                        p.cancel()
-                    if cancel_wait in done:
-                        raise asyncio.CancelledError(f"Workflow {run_id} cancelled by user")
-                    result = infer_task.result()
-                else:
-                    result = await self._infer(step, system_prompt, user_prompt)
+                # Execute inference with retry — race against cancellation event
+                max_attempts = 1 + getattr(step, "max_retries", 0)
+                retry_delay = getattr(step, "retry_delay_sec", 2)
+                result = None
+                for attempt in range(max_attempts):
+                    try:
+                        cancel_evt = self._cancellation_events.get(run_id)
+                        if cancel_evt:
+                            infer_task = asyncio.create_task(self._infer(step, system_prompt, user_prompt))
+                            cancel_wait = asyncio.create_task(cancel_evt.wait())
+                            done, pending = await asyncio.wait(
+                                {infer_task, cancel_wait},
+                                return_when=asyncio.FIRST_COMPLETED,
+                            )
+                            for p in pending:
+                                p.cancel()
+                            if cancel_wait in done:
+                                raise asyncio.CancelledError(f"Workflow {run_id} cancelled by user")
+                            result = infer_task.result()
+                        else:
+                            result = await self._infer(step, system_prompt, user_prompt)
+                        break  # success
+                    except asyncio.CancelledError:
+                        raise  # don't retry cancellations
+                    except Exception as retry_err:  # noqa: F841
+                        if attempt < max_attempts - 1:
+                            logger.warning("Step %s attempt %d failed, retrying in %ds: %s", step.step_id, attempt + 1, retry_delay, retry_err)
+                            await asyncio.sleep(retry_delay * (2**attempt))  # exponential backoff
+                        else:
+                            raise  # final attempt, let outer handler catch
 
                 # Stop live metrics broadcasting
                 _metrics_task.cancel()

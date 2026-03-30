@@ -167,8 +167,21 @@ export const experts = pgTable('experts', {
   isPublic:      boolean('is_public').default(false),
   isFinetuned:   boolean('is_finetuned').default(false),
   replicaCount:  integer('replica_count').default(1),
+  capabilities:  text('capabilities').array(),
+  specializations: text('specializations').array(),
+  customRoleDescription: text('custom_role_description'),
   createdAt:     timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt:     timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+/* ─── Agent Groups ──────────────────────────────────── */
+export const agentGroups = pgTable('agent_groups', {
+  id:          text('id').primaryKey(),
+  name:        text('name').notNull(),
+  description: text('description'),
+  agentIds:    text('agent_ids').array(),
+  createdAt:   timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt:   timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 });
 
 /* ─── Plans (DAG execution blueprints) ───────────────── */

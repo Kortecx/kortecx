@@ -1,11 +1,12 @@
 'use client';
 
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Zap, Activity, TrendingUp, Clock, AlertCircle,
   Search, ChevronDown, ChevronRight,
   CheckCircle2, XCircle, Loader2, RotateCcw,
+  Ban, Trash2, FileText, X, FolderOpen,
 } from 'lucide-react';
 import { fadeUp, stagger, hoverLift, filterTab, rowEntrance, emptyState } from '@/lib/motion';
 import { useExpertRuns, useWorkflowRuns, useSynthesisJobs } from '@/lib/hooks/useApi';
@@ -33,11 +34,168 @@ const TYPE_BADGE: Record<string, { label: string; abbr: string; color: string }>
   synthesis: { label: 'Synthesis', abbr: 'SY', color: '#0EA5E9' },
 };
 
+type MetaLevel = 'critical' | 'important' | 'recommended';
+const LEVEL_COLORS: Record<MetaLevel, { border: string; bg: string; accent: string }> = {
+  critical:    { border: '#ef444440', bg: '#ef444408', accent: '#ef4444' },
+  important:   { border: '#f59e0b40', bg: '#f59e0b08', accent: '#f59e0b' },
+  recommended: { border: '#3b82f640', bg: '#3b82f608', accent: '#3b82f6' },
+};
+
+/* ── Run Detail Dialog ──────────────────────────────── */
+function RunDetailDialog({ run, open, onClose }: { run: UnifiedRun | null; open: boolean; onClose: () => void }) {
+  const [elapsed, setElapsed] = useState(0);
+  const isRunning = run?.status === 'running' || run?.status === 'started';
+
+  useEffect(() => {
+    if (!isRunning || !run?.startedAt) return;
+    const tick = () => setElapsed(Math.floor((Date.now() - new Date(run.startedAt!).getTime()) / 1000));
+    tick();
+    const iv = setInterval(tick, 1000);
+    return () => clearInterval(iv);
+  }, [isRunning, run?.startedAt]);
+
+  if (!open || !run) return null;
+
+  const sc = STATUS_CONFIG[run.status] ?? STATUS_CONFIG.queued;
+  const StatusIcon = sc.icon;
+  const badge = TYPE_BADGE[run.type] ?? TYPE_BADGE.agent;
+  const duration = isRunning ? elapsed * 1000 : (run.durationMs ?? 0);
+
+  const fmtDur = (ms: number) => {
+    if (!ms) return '—';
+    const s = Math.floor(ms / 1000);
+    if (s < 60) return `${s}s`;
+    const m = Math.floor(s / 60);
+    return `${m}m ${s % 60}s`;
+  };
+
+  const fmtTok = (n?: number) => {
+    if (!n) return '—';
+    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+    if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+    return String(n);
+  };
+
+  const metaCards: Array<{ label: string; value: string; level: MetaLevel; show: boolean }> = [
+    { label: 'Status', value: run.status.charAt(0).toUpperCase() + run.status.slice(1), level: 'critical', show: true },
+    { label: 'Duration', value: fmtDur(duration) + (isRunning ? ' (live)' : ''), level: 'critical', show: true },
+    { label: 'Error', value: run.errorMessage?.slice(0, 200) ?? '', level: 'critical', show: !!run.errorMessage },
+    { label: 'Total Tokens', value: fmtTok(run.tokensUsed), level: 'important', show: true },
+    { label: 'Cost', value: run.costUsd ? `$${run.costUsd.toFixed(4)}` : '—', level: 'important', show: true },
+    { label: 'Model', value: run.model ?? '—', level: 'important', show: true },
+    { label: 'Engine', value: run.engine ?? '—', level: 'important', show: !!run.engine },
+    { label: 'Run Type', value: badge.label, level: 'important', show: true },
+    { label: 'Run ID', value: run.id, level: 'recommended', show: true },
+    { label: 'Started', value: run.startedAt ? new Date(run.startedAt).toLocaleString() : '—', level: 'recommended', show: true },
+    { label: 'Completed', value: run.completedAt ? new Date(run.completedAt).toLocaleString() : '—', level: 'recommended', show: !!run.completedAt },
+    { label: 'Plan ID', value: run.planId ?? '—', level: 'recommended', show: !!run.planId },
+  ];
+
+  return (
+    <AnimatePresence>
+      {open && (
+        <motion.div
+          initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+          style={{
+            position: 'fixed', inset: 0, zIndex: 1000,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(4px)',
+          }}
+          onClick={onClose}
+        >
+          <motion.div
+            initial={{ opacity: 0, scale: 0.96, y: 20 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.96, y: 20 }}
+            transition={{ type: 'spring', stiffness: 400, damping: 30 }}
+            onClick={e => e.stopPropagation()}
+            style={{
+              background: 'var(--bg-surface)', border: '1px solid var(--border)',
+              borderRadius: 16, width: '100%', maxWidth: 720,
+              maxHeight: '85vh', display: 'flex', flexDirection: 'column',
+              overflow: 'hidden',
+            }}
+          >
+            {/* Header */}
+            <div style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              padding: '18px 24px', borderBottom: '1px solid var(--border)',
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <StatusIcon size={20} color={sc.color} style={isRunning ? { animation: 'spin 1s linear infinite' } : undefined} />
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-1)' }}>{run.name}</span>
+                    <span style={{
+                      fontSize: 9, padding: '2px 6px', borderRadius: 4, fontWeight: 600,
+                      background: `${badge.color}14`, color: badge.color, textTransform: 'uppercase',
+                    }}>{badge.abbr}</span>
+                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--text-4)', fontFamily: 'monospace', marginTop: 2 }}>{run.id}</div>
+                </div>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <div style={{
+                  padding: '4px 12px', borderRadius: 99, fontSize: 12, fontWeight: 700,
+                  background: sc.color + '15', color: sc.color, border: `1px solid ${sc.color}30`,
+                }}>
+                  {run.status}{isRunning ? ` · ${fmtDur(elapsed * 1000)}` : ''}
+                </div>
+                <button onClick={onClose} style={{
+                  width: 30, height: 30, borderRadius: 8, border: '1px solid var(--border)',
+                  background: 'transparent', cursor: 'pointer', color: 'var(--text-3)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                }}>
+                  <X size={14} />
+                </button>
+              </div>
+            </div>
+
+            {/* Metadata cards */}
+            <div style={{ flex: 1, overflow: 'auto', padding: '16px 24px' }}>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                {metaCards.filter(c => c.show).map(card => {
+                  const lc = LEVEL_COLORS[card.level];
+                  return (
+                    <div key={card.label} style={{
+                      padding: '8px 14px', borderRadius: 8,
+                      border: `1px solid ${lc.border}`, background: lc.bg,
+                      minWidth: (card.label === 'Error' || card.label === 'Run ID') ? '100%' : undefined,
+                      flex: (card.label === 'Error' || card.label === 'Run ID') ? undefined : '1 1 140px',
+                    }}>
+                      <div style={{ fontSize: 9, fontWeight: 700, color: lc.accent, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                        {card.label}
+                      </div>
+                      <div style={{
+                        fontSize: 12, fontWeight: 600, color: 'var(--text-1)', marginTop: 3,
+                        fontFamily: (card.label === 'Run ID' || card.label === 'Plan ID') ? 'monospace' : undefined,
+                        wordBreak: 'break-all', lineHeight: 1.4,
+                      }}>
+                        {card.value}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+}
+
+/* ── Main Page ──────────────────────────────────────── */
 export default function RunsPage() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [expandedRun, setExpandedRun] = useState<string | null>(null);
   const [runTypeFilter, setRunTypeFilter] = useState<RunTypeFilter>('all');
+  const [selectedRun, setSelectedRun] = useState<UnifiedRun | null>(null);
+  const [outputRun, setOutputRun] = useState<UnifiedRun | null>(null);
+  const [outputFiles, setOutputFiles] = useState<Array<{ fileName: string; sizeBytes: number }>>([]);
+  const [outputContent, setOutputContent] = useState<Record<string, string>>({});
+  const [outputExpanded, setOutputExpanded] = useState<string | null>(null);
 
   const { runs: expertRuns, isLoading: erLoading, mutate: mutateER } = useExpertRuns();
   const { runs: workflowRuns, isLoading: wrLoading, mutate: mutateWR } = useWorkflowRuns();
@@ -50,6 +208,10 @@ export default function RunsPage() {
     setSyncing(true);
     await Promise.all([mutateER(), mutateWR(), mutateSJ()]);
     setSyncing(false);
+  }, [mutateER, mutateWR, mutateSJ]);
+
+  const refreshAll = useCallback(() => {
+    mutateER(); mutateWR(); mutateSJ();
   }, [mutateER, mutateWR, mutateSJ]);
 
   // Unify runs from all three sources
@@ -85,6 +247,7 @@ export default function RunsPage() {
         costUsd: r.totalCostUsd ? Number(r.totalCostUsd) : undefined,
         planId: r.planId as string,
         errorMessage: r.errorMessage as string,
+        _workflowId: r.workflowId as string,
       });
     }
 
@@ -142,6 +305,37 @@ export default function RunsPage() {
     if (ms < 1000) return `${ms}ms`;
     if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
     return `${(ms / 60000).toFixed(1)}m`;
+  };
+
+  // Cancel handler (workflow only)
+  const handleCancel = async (run: UnifiedRun) => {
+    if (run.type !== 'workflow') return;
+    try {
+      await fetch('/api/workflows/stop', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ runId: run.id, workflowId: run._workflowId }),
+      });
+      refreshAll();
+    } catch (err) {
+      console.error('Failed to cancel run:', err);
+    }
+  };
+
+  // Delete handler (routes to correct API by type)
+  const handleDelete = async (run: UnifiedRun) => {
+    try {
+      if (run.type === 'workflow') {
+        await fetch(`/api/workflows/runs?id=${run.id}`, { method: 'DELETE' });
+      } else if (run.type === 'agent') {
+        await fetch(`/api/experts/run?id=${run.id}`, { method: 'DELETE' });
+      } else if (run.type === 'synthesis') {
+        await fetch(`/api/synthesis?id=${run.id}`, { method: 'DELETE' });
+      }
+      refreshAll();
+    } catch (err) {
+      console.error('Failed to delete run:', err);
+    }
   };
 
   return (
@@ -297,6 +491,7 @@ export default function RunsPage() {
           <div style={{ flex: 1 }}>Duration</div>
           <div style={{ flex: 1 }}>Tokens</div>
           <div style={{ flex: 1.5 }}>Started</div>
+          <div style={{ width: 90, textAlign: 'right' }}>Actions</div>
         </div>
 
         {isLoading && (
@@ -317,6 +512,8 @@ export default function RunsPage() {
           const StatusIcon = sc.icon;
           const isExpanded = expandedRun === run.id;
           const badge = TYPE_BADGE[run.type] ?? TYPE_BADGE.agent;
+          const isRunning = run.status === 'running' || run.status === 'started';
+          const canCancel = isRunning && run.type === 'workflow';
 
           return (
             <motion.div key={run.id} {...rowEntrance(index)}>
@@ -353,7 +550,7 @@ export default function RunsPage() {
 
                 {/* Status */}
                 <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 5 }}>
-                  <StatusIcon size={12} color={sc.color} style={run.status === 'running' ? { animation: 'spin 1s linear infinite' } : undefined} />
+                  <StatusIcon size={12} color={sc.color} style={isRunning ? { animation: 'spin 1s linear infinite' } : undefined} />
                   <span style={{ fontSize: 11, color: sc.color, fontWeight: 500 }}>{run.status}</span>
                 </div>
 
@@ -370,6 +567,67 @@ export default function RunsPage() {
                 {/* Started */}
                 <div style={{ flex: 1.5, fontSize: 11, color: 'var(--text-4)' }}>
                   {run.startedAt ? new Date(run.startedAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—'}
+                </div>
+
+                {/* Action buttons */}
+                <div style={{ width: 120, display: 'flex', gap: 4, justifyContent: 'flex-end' }} onClick={e => e.stopPropagation()}>
+                  {/* Output */}
+                  {run.status === 'completed' && (
+                    <button
+                      onClick={() => setOutputRun(run)}
+                      title="View Output"
+                      style={{
+                        width: 26, height: 26, borderRadius: 6,
+                        border: '1px solid #D9770640', background: '#D9770608',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        cursor: 'pointer', color: '#D97706', transition: 'all 0.15s',
+                      }}
+                    >
+                      <FolderOpen size={11} />
+                    </button>
+                  )}
+                  {/* Details */}
+                  <button
+                    onClick={() => setSelectedRun(run)}
+                    title="View details"
+                    style={{
+                      width: 26, height: 26, borderRadius: 6,
+                      border: `1px solid ${SECTION_COLOR}40`, background: `${SECTION_COLOR}08`,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      cursor: 'pointer', color: SECTION_COLOR, transition: 'all 0.15s',
+                    }}
+                  >
+                    <FileText size={11} />
+                  </button>
+                  {/* Cancel (workflow running only) */}
+                  {canCancel && (
+                    <button
+                      onClick={() => handleCancel(run)}
+                      title="Cancel run"
+                      style={{
+                        width: 26, height: 26, borderRadius: 6,
+                        border: '1px solid #ef444440', background: '#ef444410',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        cursor: 'pointer', color: '#ef4444', transition: 'all 0.15s',
+                      }}
+                    >
+                      <Ban size={11} />
+                    </button>
+                  )}
+                  {/* Delete */}
+                  <button
+                    onClick={() => handleDelete(run)}
+                    title="Delete run"
+                    style={{
+                      width: 26, height: 26, borderRadius: 6, border: '1px solid transparent',
+                      background: 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      cursor: 'pointer', color: 'var(--text-4)', transition: 'all 0.15s',
+                    }}
+                    onMouseEnter={e => { e.currentTarget.style.color = '#ef4444'; e.currentTarget.style.background = '#ef444410'; e.currentTarget.style.borderColor = '#ef444425'; }}
+                    onMouseLeave={e => { e.currentTarget.style.color = 'var(--text-4)'; e.currentTarget.style.background = 'transparent'; e.currentTarget.style.borderColor = 'transparent'; }}
+                  >
+                    <Trash2 size={11} />
+                  </button>
                 </div>
               </div>
 
@@ -406,6 +664,98 @@ export default function RunsPage() {
           );
         })}
       </div>
+
+      {/* Run Detail Dialog */}
+      <RunDetailDialog
+        run={selectedRun}
+        open={!!selectedRun}
+        onClose={() => setSelectedRun(null)}
+      />
+
+      {/* Output Dialog */}
+      <AnimatePresence>
+        {outputRun && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            style={{ position: 'fixed', inset: 0, zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(4px)' }}
+            onClick={() => { setOutputRun(null); setOutputFiles([]); setOutputContent({}); setOutputExpanded(null); }}>
+            <motion.div initial={{ opacity: 0, scale: 0.96, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.96, y: 20 }}
+              onClick={e => e.stopPropagation()}
+              style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 14, width: '90vw', maxWidth: 600, maxHeight: '80vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 20px', borderBottom: '1px solid var(--border)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <FolderOpen size={16} color="#D97706" />
+                  <div>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-1)' }}>Run Output</div>
+                    <div style={{ fontSize: 10, color: 'var(--text-4)', fontFamily: 'monospace' }}>{outputRun.id}</div>
+                  </div>
+                </div>
+                <button onClick={() => { setOutputRun(null); setOutputFiles([]); setOutputContent({}); setOutputExpanded(null); }} style={{ width: 28, height: 28, borderRadius: 7, border: '1px solid var(--border)', background: 'transparent', cursor: 'pointer', color: 'var(--text-3)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <X size={13} />
+                </button>
+              </div>
+              <OutputFileList runName={outputRun.name} runId={outputRun.id} runType={outputRun.type} />
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+/* ── Output File List (fetches + displays files for a run) ── */
+function OutputFileList({ runName, runId, runType }: { runName: string; runId: string; runType: string }) {
+  const [files, setFiles] = useState<Array<{ fileName: string; sizeBytes: number }>>([]);
+  const [loading, setLoading] = useState(true);
+  const [content, setContent] = useState<Record<string, string>>({});
+  const [expanded, setExpanded] = useState<string | null>(null);
+
+  useEffect(() => {
+    const slug = runName.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    const url = runType === 'workflow'
+      ? `/api/workflows/outputs?workflowName=${encodeURIComponent(slug)}`
+      : `/api/experts/outputs?expertId=${encodeURIComponent(runId)}`;
+    fetch(url).then(r => r.json()).then(d => {
+      const runs = d.runs ?? [];
+      const match = runs.find((r: Record<string, unknown>) => r.runId === runId || r.runTs === runId);
+      setFiles(match?.files ?? runs[0]?.files ?? []);
+    }).catch(() => {}).finally(() => setLoading(false));
+  }, [runName, runId, runType]);
+
+  const handleView = async (fileName: string) => {
+    if (expanded === fileName) { setExpanded(null); return; }
+    setExpanded(fileName);
+    if (content[fileName]) return;
+    const slug = runName.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    try {
+      const res = await fetch(`/api/workflows/outputs/file?workflowName=${encodeURIComponent(slug)}&runId=${encodeURIComponent(runId)}&filename=${encodeURIComponent(fileName)}`);
+      const d = await res.json();
+      if (d.content) setContent(prev => ({ ...prev, [fileName]: d.content }));
+    } catch { /* ignore */ }
+  };
+
+  return (
+    <div style={{ flex: 1, overflow: 'auto', padding: '12px 20px' }}>
+      {loading && <div style={{ textAlign: 'center', padding: 20, color: 'var(--text-4)' }}><Loader2 size={16} className="spin" /></div>}
+      {!loading && files.length === 0 && <div style={{ textAlign: 'center', padding: 20, color: 'var(--text-4)', fontSize: 12 }}>No output files found</div>}
+      {files.map(f => (
+        <div key={f.fileName} style={{ marginBottom: 4 }}>
+          <button onClick={() => handleView(f.fileName)} style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%',
+            padding: '6px 10px', borderRadius: 6, cursor: 'pointer',
+            border: expanded === f.fileName ? '1px solid #D9770640' : '1px solid var(--border)',
+            background: expanded === f.fileName ? '#D9770606' : 'var(--bg-elevated)',
+            transition: 'all 0.12s',
+          }}>
+            <span style={{ fontSize: 11, fontWeight: 500, color: 'var(--text-2)' }}>{f.fileName}</span>
+            <span style={{ fontSize: 9, color: 'var(--text-4)' }}>{f.sizeBytes > 1024 ? `${(f.sizeBytes/1024).toFixed(1)}KB` : `${f.sizeBytes}B`}</span>
+          </button>
+          {expanded === f.fileName && content[f.fileName] && (
+            <div style={{ margin: '3px 0 3px 16px', padding: '8px 12px', borderRadius: 6, background: 'var(--bg-elevated)', border: '1px solid var(--border)', maxHeight: 250, overflow: 'auto' }}>
+              <pre style={{ margin: 0, fontSize: 10, lineHeight: 1.5, color: 'var(--text-2)', fontFamily: 'monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{content[f.fileName]}</pre>
+            </div>
+          )}
+        </div>
+      ))}
     </div>
   );
 }

@@ -6,10 +6,11 @@ import asyncio
 import logging
 import uuid
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, BackgroundTasks
+from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel
 
 from engine.services.expert_artifacts import expert_artifacts
@@ -126,6 +127,7 @@ class CreateExpertRequest(BaseModel):
     isPublic: bool = False
     category: str = "custom"
     complexityLevel: int = 3
+    customRoleDescription: str = ""
 
 
 class UpdateFileRequest(BaseModel):
@@ -368,24 +370,28 @@ async def get_expert(expert_id: str) -> dict[str, Any]:
 @router.post("/create")
 async def create_expert(req: CreateExpertRequest) -> dict[str, Any]:
     """Create a new local expert."""
-    expert = expert_manager.create_local(
-        name=req.name,
-        role=req.role,
-        config={
-            "description": req.description,
-            "systemPrompt": req.systemPrompt,
-            "userPrompt": req.userPrompt,
-            "modelSource": req.modelSource,
-            "localModelConfig": req.localModelConfig or {"engine": "ollama", "modelName": "llama3.2:3b"},
-            "temperature": req.temperature,
-            "maxTokens": req.maxTokens,
-            "tags": req.tags,
-            "capabilities": req.capabilities,
-            "isPublic": req.isPublic,
-            "category": req.category,
-            "complexityLevel": req.complexityLevel,
-        },
-    )
+    try:
+        expert = expert_manager.create_local(
+            name=req.name,
+            role=req.role,
+            config={
+                "description": req.description,
+                "systemPrompt": req.systemPrompt,
+                "userPrompt": req.userPrompt,
+                "modelSource": req.modelSource,
+                "localModelConfig": req.localModelConfig or {"engine": "ollama", "modelName": "llama3.2:3b"},
+                "temperature": req.temperature,
+                "maxTokens": req.maxTokens,
+                "tags": req.tags,
+                "capabilities": req.capabilities,
+                "isPublic": req.isPublic,
+                "category": req.category,
+                "complexityLevel": req.complexityLevel,
+                "customRoleDescription": req.customRoleDescription,
+            },
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
     # Auto-embed into Qdrant for graph similarity
     await _embed_agent(expert)
     return {"expert": _clean(expert)}
@@ -462,6 +468,41 @@ async def get_prompt(expert_id: str, prompt_type: str) -> dict[str, Any]:
     """Get a specific prompt file (system or user)."""
     content = expert_manager.get_prompt(expert_id, prompt_type)
     return {"content": content, "type": prompt_type}
+
+
+@router.get("/{expert_id}/file/{filename:path}")
+async def get_file_content(expert_id: str, filename: str) -> dict[str, Any]:
+    """Get raw content of any file in an expert's directory."""
+    expert = expert_manager.get(expert_id)
+    if not expert:
+        return {"error": f"Expert {expert_id} not found"}
+    file_path = Path(expert["_dir"]) / filename
+    if not file_path.exists() or not file_path.is_file():
+        return {"error": f"File {filename} not found"}
+    content = file_path.read_text(encoding="utf-8")
+    return {"content": content, "filename": filename}
+
+
+@router.get("/{expert_id}/outputs")
+async def get_expert_outputs(expert_id: str) -> dict[str, Any]:
+    """List all run output folders for an agent."""
+    expert = expert_manager.get(expert_id)
+    if not expert:
+        return {"error": f"Expert {expert_id} not found", "runs": []}
+    runs = expert_artifacts.list_runs(expert.get("name", expert_id))
+    return {"runs": runs, "total": len(runs)}
+
+
+@router.get("/{expert_id}/outputs/{run_ts}/{filename:path}")
+async def get_output_file_content(expert_id: str, run_ts: str, filename: str) -> dict[str, Any]:
+    """Read content of a specific file from an agent's run output folder."""
+    expert = expert_manager.get(expert_id)
+    if not expert:
+        return {"error": f"Expert {expert_id} not found"}
+    content = expert_artifacts.get_file_content(expert.get("name", expert_id), run_ts, filename)
+    if content is None:
+        return {"error": f"File {filename} not found in run {run_ts}"}
+    return {"content": content, "filename": filename, "runTs": run_ts}
 
 
 @router.delete("/{expert_id}")

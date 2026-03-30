@@ -5,12 +5,13 @@ import { motion, AnimatePresence } from 'framer-motion';
 import dynamic from 'next/dynamic';
 import {
   X, Save, Settings, FileText, BarChart2, Server,
-  Loader2, History, Eye, EyeOff, Pencil,
+  Loader2, History, Eye, EyeOff, Pencil, FolderOpen, Code2,
 } from 'lucide-react';
 import { useExpertFiles } from '@/lib/hooks/useApi';
 import { ROLE_META } from '@/lib/constants';
 import type { Expert, ExpertRole } from '@/lib/types';
 import VersionHistoryPanel from './VersionHistoryPanel';
+import OutputDialog from './OutputDialog';
 
 const MonacoEditor = dynamic(() => import('@monaco-editor/react'), { ssr: false });
 
@@ -79,6 +80,10 @@ const MONACO_OPTIONS = {
   overviewRulerLanes: 0,
   renderLineHighlight: 'none' as const,
   folding: false,
+  wordBasedSuggestions: 'off' as const,
+  quickSuggestions: false,
+  suggestOnTriggerCharacters: false,
+  acceptSuggestionOnCommitCharacter: false,
 };
 
 export default function ExpertEditDialog({ expert, open, onClose, onSaved }: ExpertEditDialogProps) {
@@ -105,6 +110,12 @@ export default function ExpertEditDialog({ expert, open, onClose, onSaved }: Exp
   const [showUserPreview, setShowUserPreview] = useState(false);
   const [systemVersions, setSystemVersions] = useState<LocalPromptVersion[]>([]);
   const [userVersions, setUserVersions] = useState<LocalPromptVersion[]>([]);
+
+  // File content viewer state
+  const [fileViewMode, setFileViewMode] = useState(false);
+  const [fileContents, setFileContents] = useState<Record<string, string>>({});
+  const [loadingFileContent, setLoadingFileContent] = useState<string | null>(null);
+  const [showOutputDialog, setShowOutputDialog] = useState(false);
 
   const { files, mutate: mutateFiles } = useExpertFiles(open ? expert?.id ?? null : null);
 
@@ -259,6 +270,7 @@ export default function ExpertEditDialog({ expert, open, onClose, onSaved }: Exp
   const roleMeta = ROLE_META[role] || ROLE_META.custom;
 
   return (
+    <>
     <AnimatePresence>
       {open && (
           <motion.div
@@ -315,16 +327,33 @@ export default function ExpertEditDialog({ expert, open, onClose, onSaved }: Exp
                   </span>
                 </div>
               </div>
-              <button
-                onClick={onClose}
-                style={{
-                  width: 32, height: 32, borderRadius: 8, border: '1px solid var(--border-md)',
-                  background: 'transparent', cursor: 'pointer',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                }}
-              >
-                <X size={16} color="var(--text-3)" />
-              </button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <button
+                  onClick={() => setShowOutputDialog(true)}
+                  title="View Outputs"
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 5,
+                    padding: '6px 12px', borderRadius: 8,
+                    border: '1px solid #D9770640',
+                    background: '#D9770608', cursor: 'pointer',
+                    fontSize: 12, fontWeight: 600, color: '#D97706',
+                    transition: 'all 0.15s',
+                  }}
+                >
+                  <FolderOpen size={13} />
+                  Outputs
+                </button>
+                <button
+                  onClick={onClose}
+                  style={{
+                    width: 32, height: 32, borderRadius: 8, border: '1px solid var(--border-md)',
+                    background: 'transparent', cursor: 'pointer',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  }}
+                >
+                  <X size={16} color="var(--text-3)" />
+                </button>
+              </div>
             </div>
 
             {/* Tab bar */}
@@ -614,6 +643,21 @@ export default function ExpertEditDialog({ expert, open, onClose, onSaved }: Exp
                       Agent Files
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <button
+                        onClick={() => setFileViewMode(v => !v)}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: 5,
+                          padding: '4px 10px', borderRadius: 6, cursor: 'pointer',
+                          border: fileViewMode ? '1.5px solid #D97706' : '1px solid var(--border)',
+                          background: fileViewMode ? '#D9770610' : 'transparent',
+                          fontSize: 11, fontWeight: fileViewMode ? 700 : 400,
+                          color: fileViewMode ? '#D97706' : 'var(--text-3)',
+                          transition: 'all 0.15s',
+                        }}
+                      >
+                        <Code2 size={11} />
+                        {fileViewMode ? 'Editor View' : 'Editor View'}
+                      </button>
                       <label style={{ fontSize: 12, color: 'var(--text-3)' }}>Max Versions:</label>
                       <input
                         type="number"
@@ -635,39 +679,91 @@ export default function ExpertEditDialog({ expert, open, onClose, onSaved }: Exp
                     </div>
                   ) : (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                      {files.map((f: { name: string; size: number; modified?: string }) => (
-                        <button
-                          key={f.name}
-                          onClick={() => setSelectedFile(selectedFile === f.name ? null : f.name)}
-                          style={{
-                            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                            padding: '10px 14px', borderRadius: 8, cursor: 'pointer',
-                            border: selectedFile === f.name
-                              ? '1.5px solid #D97706'
-                              : '1px solid var(--border)',
-                            background: selectedFile === f.name ? '#D9770608' : 'var(--bg-elevated)',
-                            transition: 'all 0.15s',
-                          }}
-                        >
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                            <FileText size={14} color="var(--text-3)" />
-                            <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-1)' }}>
-                              {f.name}
-                            </span>
+                      {files.map((f: { name: string; size: number; modified?: string }) => {
+                        const isSelected = selectedFile === f.name;
+                        const content = fileContents[f.name];
+                        const isLoading = loadingFileContent === f.name;
+                        const isTextFile = /\.(md|json|txt|py|sh|js|ts|yaml|yml|toml|xml|html|css)$/.test(f.name);
+                        const monacoLang = f.name.endsWith('.json') ? 'json'
+                          : f.name.endsWith('.py') ? 'python'
+                          : f.name.endsWith('.sh') ? 'shell'
+                          : f.name.endsWith('.js') ? 'javascript'
+                          : f.name.endsWith('.ts') ? 'typescript'
+                          : f.name.endsWith('.yaml') || f.name.endsWith('.yml') ? 'yaml'
+                          : f.name.endsWith('.html') ? 'html'
+                          : f.name.endsWith('.css') ? 'css'
+                          : 'markdown';
+                        return (
+                          <div key={f.name}>
+                            <button
+                              onClick={() => {
+                                setSelectedFile(isSelected ? null : f.name);
+                                // In editor view, fetch content on click
+                                if (fileViewMode && !isSelected && isTextFile && !content && expert) {
+                                  setLoadingFileContent(f.name);
+                                  fetch(`/api/experts/file-content?expertId=${expert.id}&filename=${encodeURIComponent(f.name)}`)
+                                    .then(r => r.json())
+                                    .then(data => {
+                                      if (data.content != null) {
+                                        setFileContents(prev => ({ ...prev, [f.name]: data.content }));
+                                      }
+                                    })
+                                    .catch(() => {})
+                                    .finally(() => setLoadingFileContent(null));
+                                }
+                              }}
+                              style={{
+                                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                                padding: '10px 14px', borderRadius: 8, cursor: 'pointer',
+                                border: isSelected
+                                  ? '1.5px solid #D97706'
+                                  : '1px solid var(--border)',
+                                background: isSelected ? '#D9770608' : 'var(--bg-elevated)',
+                                transition: 'all 0.15s',
+                                width: '100%',
+                              }}
+                            >
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                <FileText size={14} color="var(--text-3)" />
+                                <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-1)' }}>
+                                  {f.name}
+                                </span>
+                                {isLoading && <Loader2 size={12} className="spin" color="var(--text-4)" />}
+                              </div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                                <span style={{ fontSize: 11, color: 'var(--text-4)' }}>
+                                  {f.size > 1024 ? `${(f.size / 1024).toFixed(1)}KB` : `${f.size}B`}
+                                </span>
+                                {fileViewMode
+                                  ? <Code2 size={12} color={isSelected ? '#D97706' : 'var(--text-4)'} />
+                                  : <History size={12} color={isSelected ? '#D97706' : 'var(--text-4)'} />
+                                }
+                              </div>
+                            </button>
+
+                            {/* Monaco editor view */}
+                            {isSelected && fileViewMode && content != null && (
+                              <div style={{
+                                margin: '4px 0', borderRadius: 8, overflow: 'hidden',
+                                border: '1px solid var(--border)',
+                              }}>
+                                <MonacoEditor
+                                  height={Math.min(300, Math.max(120, content.split('\n').length * 18))}
+                                  language={monacoLang}
+                                  value={content}
+                                  theme="vs-dark"
+                                  options={{ ...MONACO_OPTIONS, readOnly: true }}
+                                />
+                              </div>
+                            )}
                           </div>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                            <span style={{ fontSize: 11, color: 'var(--text-4)' }}>
-                              {f.size > 1024 ? `${(f.size / 1024).toFixed(1)}KB` : `${f.size}B`}
-                            </span>
-                            <History size={12} color={selectedFile === f.name ? '#D97706' : 'var(--text-4)'} />
-                          </div>
-                        </button>
-                      ))}
+                        );
+                      })}
                     </div>
                   )}
 
-                  {/* Version history panel for selected file */}
-                  {selectedFile && expert && (
+                  {/* Version history panel for selected file (non-editor mode) */}
+                  {selectedFile && expert && !fileViewMode && (
                     <VersionHistoryPanel
                       expertId={expert.id}
                       filename={selectedFile}
@@ -755,6 +851,17 @@ export default function ExpertEditDialog({ expert, open, onClose, onSaved }: Exp
           </motion.div>
       )}
     </AnimatePresence>
+
+    {/* Output Dialog */}
+    {expert && (
+      <OutputDialog
+        expertId={expert.id}
+        expertName={expert.name}
+        open={showOutputDialog}
+        onClose={() => setShowOutputDialog(false)}
+      />
+    )}
+    </>
   );
 }
 
