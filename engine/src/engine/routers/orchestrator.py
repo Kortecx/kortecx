@@ -75,6 +75,7 @@ class ExecuteRequest(BaseModel):
     goalFileUrl: str
     inputFileUrls: list[str] = []
     steps: list[StepConfigModel]
+    masterAgentId: str | None = None
 
 
 class ExecuteResponse(BaseModel):
@@ -99,6 +100,7 @@ async def execute_workflow(req: ExecuteRequest, bg: BackgroundTasks) -> ExecuteR
         name=req.name,
         goal_file_url=req.goalFileUrl,
         input_file_urls=req.inputFileUrls,
+        master_agent_id=req.masterAgentId,
         steps=[
             StepConfig(
                 step_id=s.stepId,
@@ -496,3 +498,19 @@ async def get_workflow_output_file(workflow_name: str, run_id: str, filename: st
     if content is None:
         return {"error": f"File {filename} not found in run {run_id}"}
     return {"content": content, "filename": filename, "runId": run_id}
+
+
+class SaveConfigRequest(BaseModel):
+    workflowName: str
+    config: dict[str, Any]
+    maxVersions: int = 3
+
+
+@router.post("/save-config")
+async def save_workflow_config(req: SaveConfigRequest) -> dict[str, Any]:
+    """Save workflow configuration and plan to disk with versioning."""
+    return workflow_artifacts.save_workflow_config(
+        workflow_name=req.workflowName,
+        config=req.config,
+        max_versions=req.maxVersions,
+    )

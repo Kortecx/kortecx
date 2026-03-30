@@ -297,4 +297,75 @@ class WorkflowArtifacts:
         return artifacts
 
 
+    # ── Config persistence with versioning ────────────────────────────────
+
+    def save_workflow_config(
+        self,
+        workflow_name: str,
+        config: dict[str, Any],
+        max_versions: int = 3,
+    ) -> dict[str, Any]:
+        """Save workflow config.json + plan.md with versioning."""
+        import time as _time
+
+        wf_slug = _slugify(workflow_name)
+        wf_dir = OUTPUTS_ROOT / wf_slug
+        wf_dir.mkdir(parents=True, exist_ok=True)
+        versions_dir = wf_dir / ".versions"
+        versions_dir.mkdir(exist_ok=True)
+
+        ts = int(_time.time() * 1000)
+
+        # Version existing files before overwriting
+        config_path = wf_dir / "config.json"
+        plan_path = wf_dir / "plan.md"
+
+        if config_path.exists():
+            (versions_dir / f"config.json.v{ts}").write_text(config_path.read_text(encoding="utf-8"), encoding="utf-8")
+        if plan_path.exists():
+            (versions_dir / f"plan.md.v{ts}").write_text(plan_path.read_text(encoding="utf-8"), encoding="utf-8")
+
+        # Prune old versions
+        for prefix in ("config.json.v", "plan.md.v"):
+            vfiles = sorted(
+                (f for f in versions_dir.iterdir() if f.name.startswith(prefix)),
+                key=lambda f: int(f.name.split(".v")[-1]),
+                reverse=True,
+            )
+            for old in vfiles[max_versions:]:
+                try:
+                    old.unlink()
+                except OSError:
+                    pass
+
+        # Write config.json
+        config["maxVersions"] = max_versions
+        config_path.write_text(json.dumps(config, indent=2), encoding="utf-8")
+
+        # Generate plan.md
+        steps = config.get("steps", [])
+        plan_lines = [
+            f"# Workflow Plan: {workflow_name}",
+            f"\n**Description:** {config.get('description', '')}",
+            f"\n**Master Agent:** {config.get('masterAgent', {}).get('name', 'None') if config.get('masterAgent') else 'None'}",
+            f"\n**Total Steps:** {len(steps)}",
+            "\n---\n",
+        ]
+        for i, step in enumerate(steps):
+            conn = step.get("connectionType", "sequential")
+            plan_lines.append(f"## Step {i + 1}: {step.get('name', 'Unnamed')}")
+            plan_lines.append(f"- **Type:** {step.get('stepType', 'agent')}")
+            plan_lines.append(f"- **Execution:** {conn}")
+            plan_lines.append(f"- **Model:** {step.get('localModelConfig', {}).get('modelName', 'N/A')}")
+            plan_lines.append(f"- **Engine:** {step.get('localModelConfig', {}).get('engine', 'N/A')}")
+            if step.get("taskDescription"):
+                plan_lines.append(f"- **Task:** {step['taskDescription'][:200]}")
+            plan_lines.append("")
+
+        plan_path.write_text("\n".join(plan_lines), encoding="utf-8")
+
+        logger.info("Workflow config saved: %s (max_versions=%d)", wf_slug, max_versions)
+        return {"saved": True, "workflowSlug": wf_slug, "configPath": str(config_path), "planPath": str(plan_path)}
+
+
 workflow_artifacts = WorkflowArtifacts()

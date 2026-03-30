@@ -85,6 +85,7 @@ class WorkflowRequest:
     goal_file_url: str
     input_file_urls: list[str]
     steps: list[StepConfig]
+    master_agent_id: str | None = None
 
 
 @dataclass
@@ -314,6 +315,51 @@ class AgentOrchestrator:
                         )
             except Exception:
                 logger.warning("Failed to save workflow artifacts for %s", run_id, exc_info=True)
+
+            # Master agent post-processing: collect all outputs and produce refined summary
+            if request.master_agent_id:
+                try:
+                    from engine.services.expert_manager import expert_manager
+
+                    master_expert = expert_manager.get(request.master_agent_id)
+                    if master_expert:
+                        master_system = expert_manager.get_prompt(request.master_agent_id, "system")
+                        agents_data = self._runs[run_id].get("agents", {})
+                        step_outputs = "\n\n---\n\n".join(
+                            f"## Step: {a.name}\n\n{a.output}" for a in agents_data.values() if a.output
+                        )
+                        master_prompt = (
+                            f"You are the master agent for workflow '{request.name}'.\n\n"
+                            f"Goal: {goal_content}\n\n"
+                            f"All step outputs are below. Synthesize, refine, and enhance them into a final output.\n\n"
+                            f"{step_outputs}"
+                        )
+                        master_model = (master_expert.get("localModelConfig") or {}).get("modelName", "llama3.2:3b")
+                        master_engine = (master_expert.get("localModelConfig") or {}).get("engine", "ollama")
+
+                        master_result = await inference_router.chat(
+                            engine=master_engine,
+                            model=master_model,
+                            messages=[
+                                {"role": "system", "content": master_system or "You are a master agent that synthesizes and refines outputs."},
+                                {"role": "user", "content": master_prompt},
+                            ],
+                            temperature=0.7,
+                            max_tokens=8192,
+                        )
+                        result = f"# Master Agent Output\n\n{master_result.text}\n\n---\n\n# Step Outputs\n\n{result}"
+                        workflow_artifacts.save_run_summary(
+                            workflow_name=request.name,
+                            workflow_id=request.workflow_id,
+                            run_id=run_id,
+                            output=master_result.text,
+                            goal=goal_content,
+                            status="completed",
+                            metadata={"masterAgentId": request.master_agent_id},
+                        )
+                        logger.info("Master agent processed outputs for run %s", run_id)
+                except Exception:
+                    logger.warning("Master agent post-processing failed for %s", run_id, exc_info=True)
 
             await ws_manager.broadcast(
                 channel,

@@ -75,8 +75,8 @@ function buildBreadcrumb(path: string): Array<{ label: string; href: string }> {
 
 export default function TopNavbar() {
   const pathname = usePathname();
-  const { sidebarCollapsed } = useApp();
-  const left = sidebarCollapsed ? 48 : 200;
+  const { sidebarCollapsed, sidebarWidth } = useApp();
+  const left = sidebarCollapsed ? 48 : sidebarWidth;
   const crumbs = buildBreadcrumb(pathname);
   const unackAlerts = ALERTS.filter(a => !a.acknowledgedAt).length;
   const [searchOpen, setSearchOpen] = useState(false);
