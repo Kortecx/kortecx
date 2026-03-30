@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Save } from 'lucide-react';
+import { X, Save, Sparkles, Loader2 } from 'lucide-react';
 import dynamic from 'next/dynamic';
 import type { StepNodeType } from './nodes/BaseStepNode';
 
@@ -47,6 +47,10 @@ const MONO_OPTIONS = {
   scrollbar: { verticalScrollbarSize: 6, horizontalScrollbarSize: 6 },
   renderLineHighlight: 'none' as const,
   folding: false,
+  wordBasedSuggestions: 'off' as const,
+  quickSuggestions: false,
+  suggestOnTriggerCharacters: false,
+  acceptSuggestionOnCommitCharacter: false,
 };
 
 export default function StepConfigDrawer({ open, nodeId, config, onClose, onSave }: StepConfigDrawerProps) {
@@ -226,43 +230,34 @@ export default function StepConfigDrawer({ open, nodeId, config, onClose, onSave
               </div>
             )}
 
-            {/* Executable: Runtime + Script */}
+            {/* Advanced Inference (placeholder) */}
+            {(form.stepType === 'agent' || form.stepType === 'cloud-model') && (
+              <div style={{ padding: '8px 10px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--bg-elevated)', opacity: 0.5 }}>
+                <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-4)', textTransform: 'uppercase', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 4 }}>
+                  Advanced Inference
+                  <span style={{ fontSize: 7, padding: '1px 4px', borderRadius: 3, background: '#f59e0b18', color: '#f59e0b', fontWeight: 700, marginLeft: 'auto' }}>COMING SOON</span>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+                  {[
+                    { label: 'KV Cache', options: ['Auto', 'Aggressive', 'Conservative'] },
+                    { label: 'Memory', options: ['Standard', '100x Boost'] },
+                    { label: 'Quantization', options: ['None', 'INT8', 'INT4'] },
+                    { label: 'SLM Mode', options: ['Standard', 'Enhanced'] },
+                  ].map(cfg => (
+                    <div key={cfg.label}>
+                      <div style={{ fontSize: 8, color: 'var(--text-4)', marginBottom: 2 }}>{cfg.label}</div>
+                      <select disabled style={{ ...inputStyle, fontSize: 10, padding: '4px 6px', cursor: 'not-allowed', opacity: 0.6 }}>
+                        {cfg.options.map(o => <option key={o}>{o}</option>)}
+                      </select>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Executable: Runtime + Existing selector + Script + Generate */}
             {form.stepType === 'executable' && (
-              <>
-                <div>
-                  <div style={labelStyle}>Runtime</div>
-                  <div style={{ display: 'flex', gap: 6 }}>
-                    {(['python', 'typescript'] as const).map(rt => (
-                      <button
-                        key={rt}
-                        onClick={() => update('runtime', rt)}
-                        style={{
-                          flex: 1, padding: '8px 0', borderRadius: 7, fontSize: 12, fontWeight: 600,
-                          border: form.runtime === rt ? `1.5px solid ${SECTION_COLOR}` : '1px solid var(--border)',
-                          background: form.runtime === rt ? `${SECTION_COLOR}12` : 'var(--bg-elevated)',
-                          color: form.runtime === rt ? SECTION_COLOR : 'var(--text-3)',
-                          cursor: 'pointer',
-                        }}
-                      >
-                        {rt === 'python' ? 'Python' : 'TypeScript'}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <div>
-                  <div style={labelStyle}>Script</div>
-                  <div style={{ border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
-                    <MonacoEditor
-                      height={200}
-                      language={form.runtime === 'typescript' ? 'typescript' : 'python'}
-                      value={form.scriptContent ?? ''}
-                      onChange={v => update('scriptContent', v ?? '')}
-                      theme="vs-dark"
-                      options={MONO_OPTIONS}
-                    />
-                  </div>
-                </div>
-              </>
+              <ExecutableSection form={form} update={update} inputStyle={inputStyle} labelStyle={labelStyle} />
             )}
 
             {/* MCP Server: Server selector */}
@@ -366,6 +361,115 @@ export default function StepConfigDrawer({ open, nodeId, config, onClose, onSave
         </motion.div>
       )}
     </AnimatePresence>
+  );
+}
+
+/* ── Executable Section with dropdown + generate ──── */
+function ExecutableSection({ form, update, inputStyle, labelStyle }: {
+  form: StepConfig;
+  update: (key: keyof StepConfig, value: unknown) => void;
+  inputStyle: React.CSSProperties;
+  labelStyle: React.CSSProperties;
+}) {
+  const [executables, setExecutables] = useState<Array<{ name: string; language: string }>>([]);
+  const [generating, setGenerating] = useState(false);
+
+  useEffect(() => {
+    fetch('/api/orchestrator/artifacts/_all/_all')
+      .then(r => r.ok ? r.json() : { artifacts: [] })
+      .then(d => setExecutables((d.artifacts ?? []).filter((a: Record<string, unknown>) =>
+        typeof a.name === 'string' && /\.(py|ts|js|sh)$/.test(a.name as string)
+      ).map((a: Record<string, unknown>) => ({ name: a.name as string, language: (a.name as string).endsWith('.py') ? 'python' : 'typescript' }))))
+      .catch(() => {});
+  }, []);
+
+  const handleGenerate = async () => {
+    if (!form.taskDescription?.trim()) return;
+    setGenerating(true);
+    try {
+      const lang = form.runtime === 'typescript' ? 'TypeScript' : 'Python';
+      const res = await fetch('/api/mcp/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt: `Write a ${lang} script that: ${form.taskDescription}. Output only the code, no explanations.`,
+          language: form.runtime || 'python',
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.code) update('scriptContent', data.code);
+      }
+    } catch { /* ignore */ }
+    setGenerating(false);
+  };
+
+  return (
+    <>
+      <div>
+        <div style={labelStyle}>Runtime</div>
+        <div style={{ display: 'flex', gap: 6 }}>
+          {(['python', 'typescript'] as const).map(rt => (
+            <button key={rt} onClick={() => update('runtime', rt)} style={{
+              flex: 1, padding: '8px 0', borderRadius: 7, fontSize: 12, fontWeight: 600,
+              border: form.runtime === rt ? `1.5px solid ${SECTION_COLOR}` : '1px solid var(--border)',
+              background: form.runtime === rt ? `${SECTION_COLOR}12` : 'var(--bg-elevated)',
+              color: form.runtime === rt ? SECTION_COLOR : 'var(--text-3)', cursor: 'pointer',
+            }}>
+              {rt === 'python' ? 'Python' : 'TypeScript'}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Existing executables dropdown */}
+      {executables.length > 0 && (
+        <div>
+          <div style={labelStyle}>Use Existing</div>
+          <select
+            value=""
+            onChange={e => {
+              const sel = executables.find(ex => ex.name === e.target.value);
+              if (sel) {
+                update('runtime', sel.language === 'python' ? 'python' : 'typescript');
+                update('label', sel.name.replace(/\.[^.]+$/, ''));
+              }
+            }}
+            style={{ ...inputStyle, cursor: 'pointer' }}
+          >
+            <option value="">Select existing executable...</option>
+            {executables.map(ex => (
+              <option key={ex.name} value={ex.name}>{ex.name} ({ex.language})</option>
+            ))}
+          </select>
+        </div>
+      )}
+
+      <div>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={labelStyle}>Script</div>
+          <button onClick={handleGenerate} disabled={generating || !form.taskDescription?.trim()} style={{
+            display: 'flex', alignItems: 'center', gap: 4, padding: '3px 8px', borderRadius: 5,
+            fontSize: 10, fontWeight: 600, cursor: generating ? 'wait' : 'pointer',
+            border: `1px solid ${SECTION_COLOR}40`, background: `${SECTION_COLOR}08`, color: SECTION_COLOR,
+            opacity: (generating || !form.taskDescription?.trim()) ? 0.5 : 1,
+          }}>
+            {generating ? <Loader2 size={10} className="spin" /> : <Sparkles size={10} />}
+            {generating ? 'Generating...' : 'Generate'}
+          </button>
+        </div>
+        <div style={{ border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden', marginTop: 4 }}>
+          <MonacoEditor
+            height={200}
+            language={form.runtime === 'typescript' ? 'typescript' : 'python'}
+            value={form.scriptContent ?? ''}
+            onChange={v => update('scriptContent', v ?? '')}
+            theme="vs-dark"
+            options={MONO_OPTIONS}
+          />
+        </div>
+      </div>
+    </>
   );
 }
 

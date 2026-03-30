@@ -171,6 +171,16 @@ export const experts = pgTable('experts', {
   updatedAt:     timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 });
 
+/* ─── Agent Groups ──────────────────────────────────── */
+export const agentGroups = pgTable('agent_groups', {
+  id:          text('id').primaryKey(),
+  name:        text('name').notNull(),
+  description: text('description'),
+  agentIds:    text('agent_ids').array(),
+  createdAt:   timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt:   timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
 /* ─── Plans (DAG execution blueprints) ───────────────── */
 export const plans = pgTable('plans', {
   id:              text('id').primaryKey(),

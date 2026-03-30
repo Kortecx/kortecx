@@ -76,6 +76,8 @@ class StepConfig:
     condition: dict[str, str] | None = None  # e.g. {"type": "contains", "value": "APPROVED"}
     step_type: str = "agent"  # "agent" | "action"
     action_config: dict[str, Any] | None = None
+    max_retries: int = 0
+    retry_delay_sec: int = 2
 
 
 @dataclass
@@ -86,6 +88,8 @@ class WorkflowRequest:
     input_file_urls: list[str]
     steps: list[StepConfig]
     master_agent_id: str | None = None
+    connected_agent_ids: list[str] = field(default_factory=list)
+    fail_fast: bool = False
 
 
 @dataclass
@@ -278,7 +282,7 @@ class AgentOrchestrator:
             # Save structured outputs to outputs/workflows/
             total_tokens_out, total_dur_out, succ_out, fail_out = self._compute_run_stats(run_id)
             agents_data = self._runs[run_id].get("agents", {})
-            expert_chain_out = [a.name for a in agents_data.values()] if agents_data else []
+            expert_chain_out = [a.step_id for a in agents_data.values()] if agents_data else []
             try:
                 workflow_artifacts.save_run_summary(
                     workflow_name=request.name,
@@ -835,22 +839,36 @@ class AgentOrchestrator:
                 # Start live metrics broadcasting
                 _metrics_task = asyncio.create_task(self._broadcast_live_metrics(run_id, agent_id, step.step_id, channel))
 
-                # Execute inference — race against cancellation event
-                cancel_evt = self._cancellation_events.get(run_id)
-                if cancel_evt:
-                    infer_task = asyncio.create_task(self._infer(step, system_prompt, user_prompt))
-                    cancel_wait = asyncio.create_task(cancel_evt.wait())
-                    done, pending = await asyncio.wait(
-                        {infer_task, cancel_wait},
-                        return_when=asyncio.FIRST_COMPLETED,
-                    )
-                    for p in pending:
-                        p.cancel()
-                    if cancel_wait in done:
-                        raise asyncio.CancelledError(f"Workflow {run_id} cancelled by user")
-                    result = infer_task.result()
-                else:
-                    result = await self._infer(step, system_prompt, user_prompt)
+                # Execute inference with retry — race against cancellation event
+                max_attempts = 1 + getattr(step, "max_retries", 0)
+                retry_delay = getattr(step, "retry_delay_sec", 2)
+                result = None
+                for attempt in range(max_attempts):
+                    try:
+                        cancel_evt = self._cancellation_events.get(run_id)
+                        if cancel_evt:
+                            infer_task = asyncio.create_task(self._infer(step, system_prompt, user_prompt))
+                            cancel_wait = asyncio.create_task(cancel_evt.wait())
+                            done, pending = await asyncio.wait(
+                                {infer_task, cancel_wait},
+                                return_when=asyncio.FIRST_COMPLETED,
+                            )
+                            for p in pending:
+                                p.cancel()
+                            if cancel_wait in done:
+                                raise asyncio.CancelledError(f"Workflow {run_id} cancelled by user")
+                            result = infer_task.result()
+                        else:
+                            result = await self._infer(step, system_prompt, user_prompt)
+                        break  # success
+                    except asyncio.CancelledError:
+                        raise  # don't retry cancellations
+                    except Exception as retry_err:  # noqa: F841
+                        if attempt < max_attempts - 1:
+                            logger.warning("Step %s attempt %d failed, retrying in %ds: %s", step.step_id, attempt + 1, retry_delay, retry_err)
+                            await asyncio.sleep(retry_delay * (2 ** attempt))  # exponential backoff
+                        else:
+                            raise  # final attempt, let outer handler catch
 
                 # Stop live metrics broadcasting
                 _metrics_task.cancel()

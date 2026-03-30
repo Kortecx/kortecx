@@ -80,6 +80,10 @@ const MONACO_OPTIONS = {
   overviewRulerLanes: 0,
   renderLineHighlight: 'none' as const,
   folding: false,
+  wordBasedSuggestions: 'off' as const,
+  quickSuggestions: false,
+  suggestOnTriggerCharacters: false,
+  acceptSuggestionOnCommitCharacter: false,
 };
 
 export default function ExpertEditDialog({ expert, open, onClose, onSaved }: ExpertEditDialogProps) {

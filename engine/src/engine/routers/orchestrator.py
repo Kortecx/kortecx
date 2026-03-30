@@ -76,6 +76,8 @@ class ExecuteRequest(BaseModel):
     inputFileUrls: list[str] = []
     steps: list[StepConfigModel]
     masterAgentId: str | None = None
+    connectedAgentIds: list[str] = []
+    failFast: bool = False
 
 
 class ExecuteResponse(BaseModel):
@@ -101,6 +103,8 @@ async def execute_workflow(req: ExecuteRequest, bg: BackgroundTasks) -> ExecuteR
         goal_file_url=req.goalFileUrl,
         input_file_urls=req.inputFileUrls,
         master_agent_id=req.masterAgentId,
+        connected_agent_ids=req.connectedAgentIds,
+        fail_fast=req.failFast,
         steps=[
             StepConfig(
                 step_id=s.stepId,
