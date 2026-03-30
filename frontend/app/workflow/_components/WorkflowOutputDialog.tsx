@@ -83,9 +83,12 @@ export default function WorkflowOutputDialog({ workflowName, open, onClose }: Wo
     setLoadingFile(null);
   };
 
+  // Version labels (newest = highest version)
+  const versionedRuns = runs.map((r, i) => ({ ...r, version: runs.length - i }));
+
   const filteredRuns = filterRunId
-    ? runs.filter(r => r.runId.toLowerCase().includes(filterRunId.toLowerCase()))
-    : runs;
+    ? versionedRuns.filter(r => r.runId.toLowerCase().includes(filterRunId.toLowerCase()) || `v${r.version}` === filterRunId.toLowerCase())
+    : versionedRuns.slice(0, 10);
 
   if (!open) return null;
 
@@ -139,24 +142,26 @@ export default function WorkflowOutputDialog({ workflowName, open, onClose }: Wo
               </button>
             </div>
 
-            {/* Filter bar */}
-            {runs.length > 1 && (
-              <div style={{ padding: '10px 24px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 8 }}>
-                <Filter size={12} color="var(--text-4)" />
-                <input
+            {/* Version selector + filter */}
+            {runs.length > 0 && (
+              <div style={{ padding: '8px 24px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 8 }}>
+                <select
                   value={filterRunId}
                   onChange={e => setFilterRunId(e.target.value)}
-                  placeholder="Filter by run ID..."
                   style={{
-                    border: 'none', outline: 'none', background: 'transparent',
-                    fontSize: 12, color: 'var(--text-1)', flex: 1,
+                    padding: '4px 8px', borderRadius: 6, fontSize: 11, fontWeight: 500,
+                    border: '1px solid var(--border)', background: 'var(--bg-elevated)',
+                    color: 'var(--text-1)', cursor: 'pointer', minWidth: 180,
                   }}
-                />
-                {filterRunId && (
-                  <span style={{ fontSize: 11, color: 'var(--text-4)' }}>
-                    {filteredRuns.length} of {runs.length}
-                  </span>
-                )}
+                >
+                  <option value="">Latest 10 runs</option>
+                  {versionedRuns.map(r => (
+                    <option key={r.runId} value={r.runId}>v{r.version} — {r.runId.slice(0, 30)}</option>
+                  ))}
+                </select>
+                <span style={{ fontSize: 10, color: 'var(--text-4)' }}>
+                  {filteredRuns.length} of {runs.length} runs
+                </span>
               </div>
             )}
 
@@ -192,8 +197,9 @@ export default function WorkflowOutputDialog({ workflowName, open, onClose }: Wo
                     >
                       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                         <StatusIcon size={13} color={si.color} className={run.status === 'running' ? 'spin' : ''} />
-                        <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-1)', fontFamily: 'monospace' }}>
-                          {run.runId}
+                        <span style={{ fontSize: 10, fontWeight: 700, color: SECTION_COLOR, padding: '1px 5px', borderRadius: 3, background: `${SECTION_COLOR}15` }}>v{run.version}</span>
+                        <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-1)', fontFamily: 'monospace' }}>
+                          {run.runId.slice(0, 28)}
                         </span>
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>

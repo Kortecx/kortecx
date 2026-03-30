@@ -508,7 +508,7 @@ function WorkflowBuilderInner() {
       {lastTestRunId && (
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', marginBottom: 4, flexShrink: 0 }}>
           <a
-            href={`/workflow/history?runId=${lastTestRunId}`}
+            href={`/monitoring/runs?runId=${lastTestRunId}`}
             target="_blank"
             rel="noopener noreferrer"
             style={{

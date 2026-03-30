@@ -1280,7 +1280,7 @@ function ExpertsPage() {
   }, [mpRoleFilter, mpSearch, mpSortBy]);
 
   return (
-    <div style={{ padding: 28, maxWidth: 1200 }}>
+    <div style={{ padding: 20, maxWidth: 1200 }}>
       {/* Delete Confirmation Dialog */}
       <AnimatePresence>
         {deleteTarget && (
@@ -1374,29 +1374,24 @@ function ExpertsPage() {
         transition={{ duration: 0.3 }}
         style={{
           display: 'flex', alignItems: 'center',
-          justifyContent: 'space-between', marginBottom: 20,
+          justifyContent: 'space-between', marginBottom: 12,
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <div style={{
-            width: 38, height: 38, borderRadius: 9,
+            width: 32, height: 32, borderRadius: 8,
             background: `${SECTION_COLOR}15`,
             border: `1.5px solid ${SECTION_COLOR}30`,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
           }}>
-            <Star size={19} color={SECTION_COLOR} strokeWidth={2} />
+            <Star size={16} color={SECTION_COLOR} strokeWidth={2} />
           </div>
           <div>
-            <h1 style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-1)', lineHeight: 1, margin: 0 }}>
+            <h1 style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-1)', lineHeight: 1, margin: 0 }}>
               Agents
             </h1>
-            <p style={{ fontSize: 10, color: 'var(--text-4)', marginTop: 3, margin: '3px 0 0', letterSpacing: '0.5px', textTransform: 'uppercase' }}>
-              Autonomous AI Specialists
-            </p>
-            <p style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 4, margin: '4px 0 0', maxWidth: 420 }}>
-              Build autonomous AI specialists — chain reasoning, code generation,
-              and domain expertise into intelligent agents that collaborate, learn,
-              and evolve with every run.
+            <p style={{ fontSize: 9, color: 'var(--text-4)', margin: '2px 0 0', letterSpacing: '0.5px', textTransform: 'uppercase' }}>
+              Autonomous AI Specialists — Build, deploy, and orchestrate intelligent agents
             </p>
           </div>
         </div>
@@ -1420,7 +1415,7 @@ function ExpertsPage() {
 
       {/* ── Tabs ── */}
       <div style={{
-        display: 'flex', gap: 0, marginBottom: 24,
+        display: 'flex', gap: 0, marginBottom: 14,
         borderBottom: '1px solid var(--border)',
       }}>
         {([
@@ -1515,7 +1510,7 @@ function ExpertsPage() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             transition={{ delay: 0.13 }}
-            style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 20 }}
+            style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 12 }}
           >
             {/* Search */}
             <div style={{

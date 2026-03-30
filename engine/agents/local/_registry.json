@@ -24,6 +24,14 @@
       "role": "coordinator",
       "category": "custom",
       "version": "1.0.0"
+    },
+    {
+      "id": "local-project-orchestrator",
+      "dir": "project-orchestrator",
+      "name": "Project Orchestrator",
+      "role": "coordinator",
+      "category": "custom",
+      "version": "1.0.0"
     }
   ]
 }

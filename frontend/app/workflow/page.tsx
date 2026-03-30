@@ -1486,31 +1486,26 @@ export default function WorkflowsPage() {
   };
 
   return (
-    <div style={{ padding: 24, maxWidth: 1400, margin: '0 auto' }}>
+    <div style={{ padding: 18, maxWidth: 1400, margin: '0 auto' }}>
       {/* Header */}
       <motion.div
         initial={{ opacity: 0, y: -8 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.3 }}
-        style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}
+        style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <div style={{
-            width: 36, height: 36, borderRadius: 8,
+            width: 30, height: 30, borderRadius: 7,
             background: `${SECTION_COLOR}15`, border: `1.5px solid ${SECTION_COLOR}30`,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
           }}>
-            <Workflow size={18} color={SECTION_COLOR} />
+            <Workflow size={15} color={SECTION_COLOR} />
           </div>
           <div>
-            <h1 style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-1)', margin: 0 }}>Workflows</h1>
-            <p style={{ fontSize: 10, color: 'var(--text-4)', marginTop: 3, margin: '3px 0 0', letterSpacing: '0.5px', textTransform: 'uppercase' }}>
-              Wiring &middot; Orchestration &middot; Routing &middot; Knowledge &middot; Flow
-            </p>
-            <p style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 4, margin: '4px 0 0', maxWidth: 420 }}>
-              Build autonomous agent pipelines — orchestrate multi-step reasoning,
-              code generation, and domain tasks into workflows that execute,
-              monitor, and scale automatically.
+            <h1 style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-1)', margin: 0 }}>Workflows</h1>
+            <p style={{ fontSize: 9, color: 'var(--text-4)', margin: '2px 0 0', letterSpacing: '0.5px', textTransform: 'uppercase' }}>
+              Orchestration &middot; Routing &middot; Multi-agent pipelines that execute and scale
             </p>
           </div>
         </div>

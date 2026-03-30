@@ -6,7 +6,7 @@ import {
   Zap, Activity, TrendingUp, Clock, AlertCircle,
   Search, ChevronDown, ChevronRight,
   CheckCircle2, XCircle, Loader2, RotateCcw,
-  Ban, Trash2, FileText, X,
+  Ban, Trash2, FileText, X, FolderOpen,
 } from 'lucide-react';
 import { fadeUp, stagger, hoverLift, filterTab, rowEntrance, emptyState } from '@/lib/motion';
 import { useExpertRuns, useWorkflowRuns, useSynthesisJobs } from '@/lib/hooks/useApi';
@@ -192,6 +192,10 @@ export default function RunsPage() {
   const [expandedRun, setExpandedRun] = useState<string | null>(null);
   const [runTypeFilter, setRunTypeFilter] = useState<RunTypeFilter>('all');
   const [selectedRun, setSelectedRun] = useState<UnifiedRun | null>(null);
+  const [outputRun, setOutputRun] = useState<UnifiedRun | null>(null);
+  const [outputFiles, setOutputFiles] = useState<Array<{ fileName: string; sizeBytes: number }>>([]);
+  const [outputContent, setOutputContent] = useState<Record<string, string>>({});
+  const [outputExpanded, setOutputExpanded] = useState<string | null>(null);
 
   const { runs: expertRuns, isLoading: erLoading, mutate: mutateER } = useExpertRuns();
   const { runs: workflowRuns, isLoading: wrLoading, mutate: mutateWR } = useWorkflowRuns();
@@ -566,7 +570,22 @@ export default function RunsPage() {
                 </div>
 
                 {/* Action buttons */}
-                <div style={{ width: 90, display: 'flex', gap: 4, justifyContent: 'flex-end' }} onClick={e => e.stopPropagation()}>
+                <div style={{ width: 120, display: 'flex', gap: 4, justifyContent: 'flex-end' }} onClick={e => e.stopPropagation()}>
+                  {/* Output */}
+                  {run.status === 'completed' && (
+                    <button
+                      onClick={() => setOutputRun(run)}
+                      title="View Output"
+                      style={{
+                        width: 26, height: 26, borderRadius: 6,
+                        border: '1px solid #D9770640', background: '#D9770608',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        cursor: 'pointer', color: '#D97706', transition: 'all 0.15s',
+                      }}
+                    >
+                      <FolderOpen size={11} />
+                    </button>
+                  )}
                   {/* Details */}
                   <button
                     onClick={() => setSelectedRun(run)}
@@ -652,6 +671,91 @@ export default function RunsPage() {
         open={!!selectedRun}
         onClose={() => setSelectedRun(null)}
       />
+
+      {/* Output Dialog */}
+      <AnimatePresence>
+        {outputRun && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            style={{ position: 'fixed', inset: 0, zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(4px)' }}
+            onClick={() => { setOutputRun(null); setOutputFiles([]); setOutputContent({}); setOutputExpanded(null); }}>
+            <motion.div initial={{ opacity: 0, scale: 0.96, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.96, y: 20 }}
+              onClick={e => e.stopPropagation()}
+              style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 14, width: '90vw', maxWidth: 600, maxHeight: '80vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 20px', borderBottom: '1px solid var(--border)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <FolderOpen size={16} color="#D97706" />
+                  <div>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-1)' }}>Run Output</div>
+                    <div style={{ fontSize: 10, color: 'var(--text-4)', fontFamily: 'monospace' }}>{outputRun.id}</div>
+                  </div>
+                </div>
+                <button onClick={() => { setOutputRun(null); setOutputFiles([]); setOutputContent({}); setOutputExpanded(null); }} style={{ width: 28, height: 28, borderRadius: 7, border: '1px solid var(--border)', background: 'transparent', cursor: 'pointer', color: 'var(--text-3)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <X size={13} />
+                </button>
+              </div>
+              <OutputFileList runName={outputRun.name} runId={outputRun.id} runType={outputRun.type} />
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+/* ── Output File List (fetches + displays files for a run) ── */
+function OutputFileList({ runName, runId, runType }: { runName: string; runId: string; runType: string }) {
+  const [files, setFiles] = useState<Array<{ fileName: string; sizeBytes: number }>>([]);
+  const [loading, setLoading] = useState(true);
+  const [content, setContent] = useState<Record<string, string>>({});
+  const [expanded, setExpanded] = useState<string | null>(null);
+
+  useEffect(() => {
+    const slug = runName.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    const url = runType === 'workflow'
+      ? `/api/workflows/outputs?workflowName=${encodeURIComponent(slug)}`
+      : `/api/experts/outputs?expertId=${encodeURIComponent(runId)}`;
+    fetch(url).then(r => r.json()).then(d => {
+      const runs = d.runs ?? [];
+      const match = runs.find((r: Record<string, unknown>) => r.runId === runId || r.runTs === runId);
+      setFiles(match?.files ?? runs[0]?.files ?? []);
+    }).catch(() => {}).finally(() => setLoading(false));
+  }, [runName, runId, runType]);
+
+  const handleView = async (fileName: string) => {
+    if (expanded === fileName) { setExpanded(null); return; }
+    setExpanded(fileName);
+    if (content[fileName]) return;
+    const slug = runName.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    try {
+      const res = await fetch(`/api/workflows/outputs/file?workflowName=${encodeURIComponent(slug)}&runId=${encodeURIComponent(runId)}&filename=${encodeURIComponent(fileName)}`);
+      const d = await res.json();
+      if (d.content) setContent(prev => ({ ...prev, [fileName]: d.content }));
+    } catch { /* ignore */ }
+  };
+
+  return (
+    <div style={{ flex: 1, overflow: 'auto', padding: '12px 20px' }}>
+      {loading && <div style={{ textAlign: 'center', padding: 20, color: 'var(--text-4)' }}><Loader2 size={16} className="spin" /></div>}
+      {!loading && files.length === 0 && <div style={{ textAlign: 'center', padding: 20, color: 'var(--text-4)', fontSize: 12 }}>No output files found</div>}
+      {files.map(f => (
+        <div key={f.fileName} style={{ marginBottom: 4 }}>
+          <button onClick={() => handleView(f.fileName)} style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%',
+            padding: '6px 10px', borderRadius: 6, cursor: 'pointer',
+            border: expanded === f.fileName ? '1px solid #D9770640' : '1px solid var(--border)',
+            background: expanded === f.fileName ? '#D9770606' : 'var(--bg-elevated)',
+            transition: 'all 0.12s',
+          }}>
+            <span style={{ fontSize: 11, fontWeight: 500, color: 'var(--text-2)' }}>{f.fileName}</span>
+            <span style={{ fontSize: 9, color: 'var(--text-4)' }}>{f.sizeBytes > 1024 ? `${(f.sizeBytes/1024).toFixed(1)}KB` : `${f.sizeBytes}B`}</span>
+          </button>
+          {expanded === f.fileName && content[f.fileName] && (
+            <div style={{ margin: '3px 0 3px 16px', padding: '8px 12px', borderRadius: 6, background: 'var(--bg-elevated)', border: '1px solid var(--border)', maxHeight: 250, overflow: 'auto' }}>
+              <pre style={{ margin: 0, fontSize: 10, lineHeight: 1.5, color: 'var(--text-2)', fontFamily: 'monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{content[f.fileName]}</pre>
+            </div>
+          )}
+        </div>
+      ))}
     </div>
   );
 }
