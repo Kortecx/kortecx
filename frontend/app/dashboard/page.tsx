@@ -226,6 +226,7 @@ function TaskRow({ task, index }: { task: QueuedTask; index: number }) {
 function RunRow({ run, index }: { run: WorkflowRun; index: number }) {
   const isRunning = run.status === 'running';
   const statusColor = run.status === 'completed' ? '#10b981' : run.status === 'failed' ? '#ef4444' : isRunning ? '#3b82f6' : '#6b7280';
+  // eslint-disable-next-line react-hooks/purity -- Date.now() needed for live elapsed time
   const durationSec = run.durationSec ?? (run.startedAt ? Math.floor((Date.now() - new Date(run.startedAt).getTime()) / 1000) : 0);
   const fmtDur = durationSec < 60 ? `${durationSec}s` : `${Math.floor(durationSec / 60)}m ${durationSec % 60}s`;
 

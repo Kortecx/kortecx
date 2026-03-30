@@ -53,6 +53,7 @@ export default function OutputDialog({ expertId, expertName, open, onClose }: Ou
   const [loadingFile, setLoadingFile] = useState<string | null>(null);
   const [expandedFile, setExpandedFile] = useState<string | null>(null);
 
+  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     if (!open || !expertId) return;
     setLoading(true);
@@ -63,6 +64,7 @@ export default function OutputDialog({ expertId, expertName, open, onClose }: Ou
       .finally(() => setLoading(false));
     return () => { setRuns([]); setExpandedRun(null); setFileContent({}); setExpandedFile(null); };
   }, [open, expertId]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   const handleViewFile = async (run: RunFolder, fileName: string) => {
     const key = `${run.runTs}/${fileName}`;

@@ -30,11 +30,27 @@ OUTPUTS_ROOT = Path(__file__).resolve().parents[3] / "outputs" / "workflows"
 LOCAL_ROOT = Path(__file__).resolve().parents[3] / "workflows" / "local"
 
 _EXT_MAP: dict[str, str] = {
-    "python": ".py", "py": ".py", "bash": ".sh", "sh": ".sh", "shell": ".sh",
-    "zsh": ".sh", "javascript": ".js", "js": ".js", "node": ".js",
-    "typescript": ".ts", "ts": ".ts", "go": ".go", "golang": ".go",
-    "sql": ".sql", "json": ".json", "yaml": ".yaml", "yml": ".yaml",
-    "toml": ".toml", "xml": ".xml", "html": ".html", "css": ".css",
+    "python": ".py",
+    "py": ".py",
+    "bash": ".sh",
+    "sh": ".sh",
+    "shell": ".sh",
+    "zsh": ".sh",
+    "javascript": ".js",
+    "js": ".js",
+    "node": ".js",
+    "typescript": ".ts",
+    "ts": ".ts",
+    "go": ".go",
+    "golang": ".go",
+    "sql": ".sql",
+    "json": ".json",
+    "yaml": ".yaml",
+    "yml": ".yaml",
+    "toml": ".toml",
+    "xml": ".xml",
+    "html": ".html",
+    "css": ".css",
 }
 
 
@@ -196,8 +212,7 @@ class WorkflowArtifacts:
         cf.write_text(json.dumps(ctx, indent=2), encoding="utf-8")
         saved.append(self._file_info(cf, "context", run_id))
 
-        logger.info("Step output saved: %s/%s/step_%02d_%s (%d files)",
-                     _slugify(workflow_name), run_id, step_number, _slugify(step_name), len(saved))
+        logger.info("Step output saved: %s/%s/step_%02d_%s (%d files)", _slugify(workflow_name), run_id, step_number, _slugify(step_name), len(saved))
         return {"stepName": step_name, "stepNumber": step_number, "files": saved}
 
     # ── Listing ──────────────────────────────────────────────────────────────
@@ -223,19 +238,21 @@ class WorkflowArtifacts:
                     ctx_data = json.loads(ctx_path.read_text(encoding="utf-8"))
                 except Exception:
                     pass
-            runs.append({
-                "runId": run_dir.name,
-                "workflowSlug": wf_slug,
-                "workflowName": workflow_name,
-                "artifactDir": str(run_dir),
-                "fileCount": len(files),
-                "totalSize": total_size,
-                "status": ctx_data.get("status", "unknown"),
-                "totalTokens": ctx_data.get("totalTokens", 0),
-                "durationSec": ctx_data.get("durationSec", 0),
-                "timestamp": ctx_data.get("timestamp", ""),
-                "files": files,
-            })
+            runs.append(
+                {
+                    "runId": run_dir.name,
+                    "workflowSlug": wf_slug,
+                    "workflowName": workflow_name,
+                    "artifactDir": str(run_dir),
+                    "fileCount": len(files),
+                    "totalSize": total_size,
+                    "status": ctx_data.get("status", "unknown"),
+                    "totalTokens": ctx_data.get("totalTokens", 0),
+                    "durationSec": ctx_data.get("durationSec", 0),
+                    "timestamp": ctx_data.get("timestamp", ""),
+                    "files": files,
+                }
+            )
         return runs
 
     def get_file_content(self, workflow_name: str, run_id: str, filename: str) -> str | None:
@@ -285,18 +302,19 @@ class WorkflowArtifacts:
                 try:
                     stat = f.stat()
                     rel = f.relative_to(directory)
-                    artifacts.append({
-                        "fileName": str(rel),
-                        "filePath": str(f),
-                        "sizeBytes": stat.st_size,
-                        "mimeType": _detect_mime(f),
-                        "runId": run_id,
-                        "createdAt": datetime.fromtimestamp(stat.st_ctime, tz=UTC).isoformat(),
-                    })
+                    artifacts.append(
+                        {
+                            "fileName": str(rel),
+                            "filePath": str(f),
+                            "sizeBytes": stat.st_size,
+                            "mimeType": _detect_mime(f),
+                            "runId": run_id,
+                            "createdAt": datetime.fromtimestamp(stat.st_ctime, tz=UTC).isoformat(),
+                        }
+                    )
                 except OSError:
                     continue
         return artifacts
-
 
     # ── Config persistence with versioning ────────────────────────────────
 
@@ -367,7 +385,6 @@ class WorkflowArtifacts:
 
         logger.info("Workflow config saved: %s (max_versions=%d)", wf_slug, max_versions)
         return {"saved": True, "workflowSlug": wf_slug, "configPath": str(config_path), "planPath": str(plan_path)}
-
 
     # ── Local persistence with versioning ──────────────────────────────────
 
@@ -454,11 +471,14 @@ class WorkflowArtifacts:
         versions = []
         for ts in sorted(timestamps, reverse=True):
             from datetime import UTC, datetime
-            versions.append({
-                "timestamp": ts,
-                "date": datetime.fromtimestamp(ts / 1000, tz=UTC).isoformat(),
-                "files": [f.name for f in versions_dir.iterdir() if f.name.endswith(f".v{ts}")],
-            })
+
+            versions.append(
+                {
+                    "timestamp": ts,
+                    "date": datetime.fromtimestamp(ts / 1000, tz=UTC).isoformat(),
+                    "files": [f.name for f in versions_dir.iterdir() if f.name.endswith(f".v{ts}")],
+                }
+            )
         return versions
 
     def load_local_version(self, workflow_name: str, timestamp: int) -> dict[str, Any] | None:

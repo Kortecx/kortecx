@@ -56,6 +56,7 @@ export default function WorkflowOutputDialog({ workflowName, open, onClose }: Wo
   const [expandedFile, setExpandedFile] = useState<string | null>(null);
   const [filterRunId, setFilterRunId] = useState('');
 
+  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     if (!open || !workflowName) return;
     setLoading(true);
@@ -66,6 +67,7 @@ export default function WorkflowOutputDialog({ workflowName, open, onClose }: Wo
       .finally(() => setLoading(false));
     return () => { setRuns([]); setExpandedRun(null); setFileContent({}); setExpandedFile(null); };
   }, [open, workflowName]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   const handleViewFile = async (run: RunFolder, fileName: string) => {
     const key = `${run.runId}/${fileName}`;

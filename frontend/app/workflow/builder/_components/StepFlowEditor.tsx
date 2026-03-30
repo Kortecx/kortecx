@@ -39,7 +39,9 @@ interface StepFlowEditorProps {
   onDeleteNode: (nodeId: string) => void;
   nodes: Node[];
   edges: Edge[];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   onNodesChange: (changes: any) => void;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   onEdgesChange: (changes: any) => void;
   onConnect: (connection: Connection) => void;
 }

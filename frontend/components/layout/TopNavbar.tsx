@@ -94,6 +94,7 @@ export default function TopNavbar() {
   const settingsRef = useRef<HTMLButtonElement>(null);
   const [settingsRect, setSettingsRect] = useState<DOMRect | null>(null);
 
+  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     setMonRect(monHovered && monRef.current ? monRef.current.getBoundingClientRect() : null);
   }, [monHovered]);
@@ -103,6 +104,7 @@ export default function TopNavbar() {
   useEffect(() => {
     setSettingsRect(settingsHovered && settingsRef.current ? settingsRef.current.getBoundingClientRect() : null);
   }, [settingsHovered]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   // Global ⌘K / Ctrl+K shortcut
   const handleGlobalKey = useCallback((e: KeyboardEvent) => {

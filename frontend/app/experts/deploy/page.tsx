@@ -218,9 +218,11 @@ function CustomRoleDialog({ open, onSave, onClose, initialName, initialDescripti
   const [roleName, setRoleName] = useState(initialName);
   const [roleDesc, setRoleDesc] = useState(initialDescription);
 
+  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     if (open) { setRoleName(initialName); setRoleDesc(initialDescription); }
   }, [open, initialName, initialDescription]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   if (!open) return null;
 
@@ -385,7 +387,7 @@ function ModelSearchDropdown({
     return () => document.removeEventListener('mousedown', handler);
   }, [open]);
 
-  useEffect(() => { setHighlightIdx(0); }, [search]);
+  useEffect(() => { setHighlightIdx(0); }, [search]); // eslint-disable-line react-hooks/set-state-in-effect -- reset on search change
 
   useEffect(() => {
     if (!open || !listRef.current) return;

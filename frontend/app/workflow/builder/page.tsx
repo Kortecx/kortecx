@@ -50,11 +50,13 @@ function ExpertPickerModal({ open, onClose, onSelect }: {
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState('');
 
+  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     if (!open) return;
     setLoading(true);
     fetch('/api/experts').then(r => r.json()).then(d => setExperts(d.experts ?? [])).catch(() => {}).finally(() => setLoading(false));
   }, [open]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   if (!open) return null;
   const filtered = search ? experts.filter(e => ((e.name as string) ?? '').toLowerCase().includes(search.toLowerCase())) : experts;
@@ -106,7 +108,9 @@ function PromptDialog({ open, onClose, prompt, description, onSave, attachments,
   const [desc, setDesc] = useState(description);
   const [preview, setPreview] = useState(false);
 
+  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => { if (open) { setValue(prompt); setDesc(description); setPreview(false); } }, [open, prompt, description]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   return (
     <AnimatePresence>

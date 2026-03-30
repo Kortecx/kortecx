@@ -329,9 +329,7 @@ class AgentOrchestrator:
                     if master_expert:
                         master_system = expert_manager.get_prompt(request.master_agent_id, "system")
                         agents_data = self._runs[run_id].get("agents", {})
-                        step_outputs = "\n\n---\n\n".join(
-                            f"## Step: {a.name}\n\n{a.output}" for a in agents_data.values() if a.output
-                        )
+                        step_outputs = "\n\n---\n\n".join(f"## Step: {a.name}\n\n{a.output}" for a in agents_data.values() if a.output)
                         master_prompt = (
                             f"You are the master agent for workflow '{request.name}'.\n\n"
                             f"Goal: {goal_content}\n\n"
@@ -866,7 +864,7 @@ class AgentOrchestrator:
                     except Exception as retry_err:  # noqa: F841
                         if attempt < max_attempts - 1:
                             logger.warning("Step %s attempt %d failed, retrying in %ds: %s", step.step_id, attempt + 1, retry_delay, retry_err)
-                            await asyncio.sleep(retry_delay * (2 ** attempt))  # exponential backoff
+                            await asyncio.sleep(retry_delay * (2**attempt))  # exponential backoff
                         else:
                             raise  # final attempt, let outer handler catch
 

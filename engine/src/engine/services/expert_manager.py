@@ -86,9 +86,7 @@ class ExpertManager:
 
         # Check agents/local directory for existing agent with same name
         if expert_dir.exists():
-            raise ValueError(
-                f"Agent '{name}' already exists in agents/local. Please use a different name."
-            )
+            raise ValueError(f"Agent '{name}' already exists in agents/local. Please use a different name.")
 
         expert_dir.mkdir(parents=True, exist_ok=True)
 

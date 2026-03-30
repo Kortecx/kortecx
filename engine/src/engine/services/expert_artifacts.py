@@ -237,15 +237,17 @@ class ExpertArtifacts:
                 continue
             files = self._scan_dir(run_dir, expert_slug, run_dir.name)
             total_size = sum(f["sizeBytes"] for f in files)
-            runs.append({
-                "runTs": run_dir.name,
-                "expertSlug": expert_slug,
-                "expertName": expert_name,
-                "artifactDir": str(run_dir),
-                "fileCount": len(files),
-                "totalSize": total_size,
-                "files": files,
-            })
+            runs.append(
+                {
+                    "runTs": run_dir.name,
+                    "expertSlug": expert_slug,
+                    "expertName": expert_name,
+                    "artifactDir": str(run_dir),
+                    "fileCount": len(files),
+                    "totalSize": total_size,
+                    "files": files,
+                }
+            )
         return runs
 
     def list_artifacts(self, expert_name: str | None = None, date: str | None = None) -> list[dict[str, Any]]:

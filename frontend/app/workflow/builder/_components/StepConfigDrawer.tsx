@@ -56,10 +56,12 @@ const MONO_OPTIONS = {
 export default function StepConfigDrawer({ open, nodeId, config, onClose, onSave }: StepConfigDrawerProps) {
   const [form, setForm] = useState<StepConfig | null>(null);
 
+  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     if (config) setForm({ ...config });
     else setForm(null);
   }, [config, nodeId]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   if (!open || !form || !nodeId) return null;
 
