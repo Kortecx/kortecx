@@ -394,12 +394,11 @@ class TestExpertManagerEdgeCases:
         assert not any(e.get("_dir", "").endswith("empty-dir") for e in experts)
 
     def test_create_duplicate_name(self, temp_experts):
-        """Creating two experts with same name should not crash."""
+        """Creating two experts with same name should raise ValueError."""
         mgr, _, _ = temp_experts
-        e1 = mgr.create_local("Same Name", "coder", {})
-        e2 = mgr.create_local("Same Name", "writer", {})
-        # Second one overwrites or coexists
-        assert e1["id"] == e2["id"]  # Same slug
+        mgr.create_local("Same Name", "coder", {})
+        with pytest.raises(ValueError, match="already exists"):
+            mgr.create_local("Same Name", "writer", {})
 
     def test_update_nonexistent_expert(self, temp_experts):
         """Updating a nonexistent expert should raise."""

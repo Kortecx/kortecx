@@ -1,4 +1,4 @@
-"""Tests for expert artifacts — date-based disk persistence and script extraction."""
+"""Tests for expert artifacts — per-run disk persistence and script extraction."""
 
 from __future__ import annotations
 
@@ -12,25 +12,23 @@ import engine.services.expert_artifacts as ea
 
 @pytest.fixture
 def temp_artifacts(tmp_path, monkeypatch):
-    monkeypatch.setattr(ea, "EXPERTS_ROOT", tmp_path)
+    monkeypatch.setattr(ea, "OUTPUTS_ROOT", tmp_path)
     return ea.ExpertArtifacts()
 
 
 class TestExpertArtifacts:
-    def test_get_artifact_dir_creates_date_directory(self, temp_artifacts, tmp_path):
+    def test_make_run_dir_creates_directory(self, temp_artifacts, tmp_path):
         artifacts = temp_artifacts
-        d = artifacts.get_artifact_dir("Research Analyst", "2026-03-22")
+        d = artifacts._make_run_dir("Research Analyst", "20260322_143000")
         assert d.exists()
-        assert "2026-03-22" in str(d)
         assert "research-analyst" in str(d)
+        assert "20260322_143000" in str(d)
 
-    def test_get_artifact_dir_defaults_to_today(self, temp_artifacts):
+    def test_make_run_dir_creates_slug_directory(self, temp_artifacts):
         artifacts = temp_artifacts
-        d = artifacts.get_artifact_dir("Test Expert")
+        d = artifacts._make_run_dir("Test Expert", "20260322_120000")
         assert d.exists()
-        # Should contain a date-like directory
-        parts = d.parts
-        assert any(len(p) == 10 and p.count("-") == 2 for p in parts)
+        assert "test-expert" in str(d)
 
     def test_save_response_creates_all_files(self, temp_artifacts, tmp_path):
         artifacts = temp_artifacts
@@ -49,7 +47,7 @@ class TestExpertArtifacts:
 
         assert "files" in result
         assert "runId" in result
-        assert "date" in result
+        assert "runTs" in result
         assert len(result["files"]) >= 4  # response, context, prompt, system
 
         # Verify response file
@@ -97,7 +95,7 @@ class TestExpertArtifacts:
         script_files = [f for f in result["files"] if f["category"] == "script"]
         assert len(script_files) == 2
 
-    def test_date_based_directory_structure(self, temp_artifacts, tmp_path):
+    def test_run_directory_structure(self, temp_artifacts, tmp_path):
         artifacts = temp_artifacts
         result = artifacts.save_response(
             expert_id="exp-1",
@@ -105,10 +103,8 @@ class TestExpertArtifacts:
             response="test",
         )
         artifact_dir = Path(result["artifactDir"])
-        # Verify date directory is a parent
-        date = result["date"]
-        assert date in str(artifact_dir)
         assert "my-expert" in str(artifact_dir)
+        assert artifact_dir.exists()
 
     def test_file_info_includes_metadata(self, temp_artifacts):
         artifacts = temp_artifacts
@@ -122,43 +118,66 @@ class TestExpertArtifacts:
             assert "filePath" in f
             assert "sizeBytes" in f
             assert "mimeType" in f
-            assert "fileType" in f
-            assert "date" in f
-            assert "expertName" in f
+            assert "category" in f
+            assert "runTs" in f
 
 
 class TestScriptExtraction:
-    def test_extracts_python_script(self, temp_artifacts):
+    def test_extracts_python_script(self, temp_artifacts, tmp_path):
         artifacts = temp_artifacts
-        scripts = artifacts.extract_and_save_scripts("Test", "```python\nprint('hello')\n```", "2026-03-22")
+        run_dir = tmp_path / "test" / "run1"
+        run_dir.mkdir(parents=True)
+        scripts = artifacts._extract_scripts(run_dir, "```python\nprint('hello')\n```")
         assert len(scripts) == 1
         assert scripts[0].suffix == ".py"
         assert "print('hello')" in scripts[0].read_text()
 
-    def test_extracts_multiple_languages(self, temp_artifacts):
+    def test_extracts_multiple_languages(self, temp_artifacts, tmp_path):
         artifacts = temp_artifacts
+        run_dir = tmp_path / "test" / "run2"
+        run_dir.mkdir(parents=True)
         response = "```python\nx = 1\n```\n\n```bash\necho hi\n```\n\n```sql\nSELECT 1;\n```"
-        scripts = artifacts.extract_and_save_scripts("Test", response, "2026-03-22")
+        scripts = artifacts._extract_scripts(run_dir, response)
         assert len(scripts) == 3
         exts = {s.suffix for s in scripts}
         assert ".py" in exts
         assert ".sh" in exts
         assert ".sql" in exts
 
-    def test_no_scripts_in_plain_text(self, temp_artifacts):
+    def test_no_scripts_in_plain_text(self, temp_artifacts, tmp_path):
         artifacts = temp_artifacts
-        scripts = artifacts.extract_and_save_scripts("Test", "Just plain text.", "2026-03-22")
+        run_dir = tmp_path / "test" / "run3"
+        run_dir.mkdir(parents=True)
+        scripts = artifacts._extract_scripts(run_dir, "Just plain text.")
         assert len(scripts) == 0
 
-    def test_scripts_in_scripts_subdir(self, temp_artifacts):
+    def test_scripts_in_scripts_subdir(self, temp_artifacts, tmp_path):
         artifacts = temp_artifacts
-        scripts = artifacts.extract_and_save_scripts("Test", "```python\nx=1\n```", "2026-03-22")
+        run_dir = tmp_path / "test" / "run4"
+        run_dir.mkdir(parents=True)
+        scripts = artifacts._extract_scripts(run_dir, "```python\nx=1\n```")
         assert "scripts" in str(scripts[0].parent)
 
-    def test_executable_bits(self, temp_artifacts):
+    def test_executable_bits(self, temp_artifacts, tmp_path):
         artifacts = temp_artifacts
-        scripts = artifacts.extract_and_save_scripts("Test", "```bash\necho hi\n```", "2026-03-22")
+        run_dir = tmp_path / "test" / "run5"
+        run_dir.mkdir(parents=True)
+        scripts = artifacts._extract_scripts(run_dir, "```bash\necho hi\n```")
         assert scripts[0].stat().st_mode & 0o100  # executable
+
+
+class TestListRuns:
+    def test_list_runs(self, temp_artifacts, tmp_path):
+        artifacts = temp_artifacts
+        artifacts.save_response(expert_id="e1", expert_name="Expert A", response="resp1")
+        artifacts.save_response(expert_id="e1", expert_name="Expert A", response="resp2")
+        runs = artifacts.list_runs("Expert A")
+        assert len(runs) >= 1  # At least 1 run (may be 1 if same timestamp)
+
+    def test_list_runs_empty(self, temp_artifacts):
+        artifacts = temp_artifacts
+        runs = artifacts.list_runs("Nonexistent")
+        assert runs == []
 
 
 class TestListArtifacts:
@@ -175,17 +194,6 @@ class TestListArtifacts:
         artifacts.save_response(expert_id="e2", expert_name="Beta Expert", response="resp2")
         alpha_artifacts = artifacts.list_artifacts(expert_name="Alpha Expert")
         assert len(alpha_artifacts) >= 2
-        assert all("alpha-expert" in a["fileName"] or "alpha" in a.get("expertName", "").lower() for a in alpha_artifacts)
-
-    def test_list_by_date(self, temp_artifacts, tmp_path):
-        artifacts = temp_artifacts
-        # Manually create a dated directory
-        date_dir = tmp_path / "2026-01-15" / "test-expert"
-        date_dir.mkdir(parents=True)
-        (date_dir / "test.md").write_text("content")
-
-        result = artifacts.list_artifacts(date="2026-01-15")
-        assert len(result) == 1
 
     def test_list_empty(self, temp_artifacts):
         artifacts = temp_artifacts
@@ -196,19 +204,19 @@ class TestListArtifacts:
 class TestSaveArbitrary:
     def test_save_text_artifact(self, temp_artifacts):
         artifacts = temp_artifacts
-        path = artifacts.save_artifact("Test Expert", "output.txt", "content here", "2026-03-22")
+        path = artifacts.save_artifact("Test Expert", "output.txt", "content here", "20260322_120000")
         assert path.exists()
         assert path.read_text() == "content here"
 
     def test_save_binary_artifact(self, temp_artifacts):
         artifacts = temp_artifacts
-        path = artifacts.save_artifact("Test Expert", "data.bin", b"\x00\x01\x02", "2026-03-22")
+        path = artifacts.save_artifact("Test Expert", "data.bin", b"\x00\x01\x02", "20260322_120000")
         assert path.exists()
         assert path.read_bytes() == b"\x00\x01\x02"
 
     def test_save_nested_artifact(self, temp_artifacts):
         artifacts = temp_artifacts
-        path = artifacts.save_artifact("Test Expert", "subdir/nested.txt", "nested content", "2026-03-22")
+        path = artifacts.save_artifact("Test Expert", "subdir/nested.txt", "nested content", "20260322_120000")
         assert path.exists()
         assert "subdir" in str(path)
 
