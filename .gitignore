@@ -124,3 +124,5 @@ STRATEGY.md
 FEATURES/
 cache_dir
 CLAUDE.md
+local
+local/_registry.json

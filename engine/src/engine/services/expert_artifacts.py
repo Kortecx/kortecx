@@ -1,4 +1,15 @@
-"""Expert artifacts — persists expert run outputs, scripts, and context to disk."""
+"""Expert artifacts — persists expert run outputs, scripts, and context to disk.
+
+Storage structure:
+  outputs/agents/{agent_slug}/{YYYYMMDD_HHMMSS}/
+    response.md      — full model response with YAML frontmatter
+    context.json     — run metadata (model, tokens, duration, etc.)
+    prompt.md        — user prompt sent (if any)
+    system.md        — system prompt used (if any)
+    scripts/         — code blocks extracted from response
+      script_1.py
+      script_2.sh
+"""
 
 from __future__ import annotations
 
@@ -14,7 +25,7 @@ from typing import Any
 
 logger = logging.getLogger("engine.expert_artifacts")
 
-EXPERTS_ROOT = Path(__file__).resolve().parents[3] / "agents" / "local"
+OUTPUTS_ROOT = Path(__file__).resolve().parents[3] / "outputs" / "agents"
 
 # Extension to language mapping for script extraction
 _EXT_MAP: dict[str, str] = {
@@ -71,18 +82,21 @@ def _detect_file_type(ext: str) -> str:
 
 
 class ExpertArtifacts:
-    """Manages expert execution artifacts on disk with date-based organization."""
+    """Manages expert execution artifacts on disk.
+
+    Structure: outputs/agents/{agent_slug}/{YYYYMMDD_HHMMSS}/
+    Each run gets its own timestamped folder so artifacts never mix.
+    """
 
     def __init__(self) -> None:
-        EXPERTS_ROOT.mkdir(parents=True, exist_ok=True)
+        OUTPUTS_ROOT.mkdir(parents=True, exist_ok=True)
 
-    def get_artifact_dir(self, expert_name: str, date: str | None = None) -> Path:
-        """Get or create the directory for an expert's artifacts on a given date."""
-        date = date or datetime.now(UTC).strftime("%Y-%m-%d")
+    def _make_run_dir(self, expert_name: str, run_ts: str) -> Path:
+        """Create and return the directory for a single run."""
         expert_slug = _slugify(expert_name)
-        artifact_dir = EXPERTS_ROOT / date / expert_slug
-        artifact_dir.mkdir(parents=True, exist_ok=True)
-        return artifact_dir
+        run_dir = OUTPUTS_ROOT / expert_slug / run_ts
+        run_dir.mkdir(parents=True, exist_ok=True)
+        return run_dir
 
     def save_response(
         self,
@@ -100,10 +114,10 @@ class ExpertArtifacts:
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Save full expert run output to disk. Returns dict of saved file paths with sizes."""
-        date = datetime.now(UTC).strftime("%Y-%m-%d")
-        artifact_dir = self.get_artifact_dir(expert_name, date)
-        ts = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
-        run_id = f"run-{ts}-{int(time.time() * 1000) % 100000}"
+        run_ts = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
+        run_id = f"run-{run_ts}-{int(time.time() * 1000) % 100000}"
+        expert_slug = _slugify(expert_name)
+        run_dir = self._make_run_dir(expert_name, run_ts)
 
         saved_files: list[dict[str, Any]] = []
 
@@ -116,9 +130,9 @@ class ExpertArtifacts:
             f"run_id: {run_id}\n"
             f"tags: [{', '.join(tags or [])}]\n---\n\n"
         )
-        response_file = artifact_dir / f"response_{ts}.md"
+        response_file = run_dir / "response.md"
         response_file.write_text(frontmatter + response, encoding="utf-8")
-        saved_files.append(self._file_info(response_file, "response", expert_name, date))
+        saved_files.append(self._file_info(response_file, "response", expert_slug, run_ts))
 
         # Save context JSON
         context = {
@@ -135,52 +149,50 @@ class ExpertArtifacts:
             "tags": tags or [],
             **(metadata or {}),
         }
-        context_file = artifact_dir / f"context_{ts}.json"
+        context_file = run_dir / "context.json"
         context_file.write_text(json.dumps(context, indent=2), encoding="utf-8")
-        saved_files.append(self._file_info(context_file, "context", expert_name, date))
+        saved_files.append(self._file_info(context_file, "context", expert_slug, run_ts))
 
         # Save prompts
         if prompt:
-            prompt_file = artifact_dir / f"prompt_{ts}.md"
+            prompt_file = run_dir / "prompt.md"
             prompt_file.write_text(prompt, encoding="utf-8")
-            saved_files.append(self._file_info(prompt_file, "prompt", expert_name, date))
+            saved_files.append(self._file_info(prompt_file, "prompt", expert_slug, run_ts))
 
         if system_prompt:
-            system_file = artifact_dir / f"system_{ts}.md"
+            system_file = run_dir / "system.md"
             system_file.write_text(system_prompt, encoding="utf-8")
-            saved_files.append(self._file_info(system_file, "system_prompt", expert_name, date))
+            saved_files.append(self._file_info(system_file, "system_prompt", expert_slug, run_ts))
 
-        # Extract and save scripts
-        script_files = self.extract_and_save_scripts(expert_name, response, date)
+        # Extract and save scripts into this run's folder
+        script_files = self._extract_scripts(run_dir, response)
         for sf in script_files:
-            saved_files.append(self._file_info(sf, "script", expert_name, date))
+            saved_files.append(self._file_info(sf, "script", expert_slug, run_ts))
 
         logger.info(
             "Expert artifacts saved: %s/%s (%d files, %d bytes response)",
-            date,
-            _slugify(expert_name),
+            expert_slug,
+            run_ts,
             len(saved_files),
             len(response),
         )
 
         return {
             "runId": run_id,
-            "date": date,
-            "expertSlug": _slugify(expert_name),
-            "artifactDir": str(artifact_dir),
+            "runTs": run_ts,
+            "expertSlug": expert_slug,
+            "artifactDir": str(run_dir),
             "files": saved_files,
         }
 
-    def extract_and_save_scripts(self, expert_name: str, response: str, date: str | None = None) -> list[Path]:
+    def _extract_scripts(self, run_dir: Path, response: str) -> list[Path]:
         """Extract code blocks from response and save as script files."""
-        artifact_dir = self.get_artifact_dir(expert_name, date)
-        scripts_dir = artifact_dir / "scripts"
-
         pattern = r"```(\w+)?\n(.*?)```"
         matches = re.findall(pattern, response, re.DOTALL)
         if not matches:
             return []
 
+        scripts_dir = run_dir / "scripts"
         scripts_dir.mkdir(exist_ok=True)
         scripts: list[Path] = []
 
@@ -198,10 +210,11 @@ class ExpertArtifacts:
 
         return scripts
 
-    def save_artifact(self, expert_name: str, filename: str, content: str | bytes, date: str | None = None) -> Path:
-        """Save an arbitrary artifact file."""
-        artifact_dir = self.get_artifact_dir(expert_name, date)
-        artifact_path = artifact_dir / filename
+    def save_artifact(self, expert_name: str, filename: str, content: str | bytes, run_ts: str | None = None) -> Path:
+        """Save an arbitrary artifact file into a run folder."""
+        run_ts = run_ts or datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
+        run_dir = self._make_run_dir(expert_name, run_ts)
+        artifact_path = run_dir / filename
         artifact_path.parent.mkdir(parents=True, exist_ok=True)
         if isinstance(content, bytes):
             artifact_path.write_bytes(content)
@@ -209,49 +222,74 @@ class ExpertArtifacts:
             artifact_path.write_text(content, encoding="utf-8")
         return artifact_path
 
-    def list_artifacts(self, expert_name: str | None = None, date: str | None = None) -> list[dict[str, Any]]:
-        """List artifacts for a specific expert and/or date."""
-        artifacts: list[dict[str, Any]] = []
+    # ── Listing ──────────────────────────────────────────────────────────────
 
-        if date and expert_name:
-            # Specific expert on specific date
-            artifact_dir = EXPERTS_ROOT / date / _slugify(expert_name)
-            if artifact_dir.exists():
-                artifacts.extend(self._scan_dir(artifact_dir, expert_name, date))
-        elif date:
-            # All experts on a specific date
-            date_dir = EXPERTS_ROOT / date
-            if date_dir.exists():
-                for expert_dir in sorted(date_dir.iterdir()):
-                    if expert_dir.is_dir():
-                        artifacts.extend(self._scan_dir(expert_dir, expert_dir.name, date))
-        elif expert_name:
-            # Specific expert across all dates
-            slug = _slugify(expert_name)
-            for date_dir in sorted(EXPERTS_ROOT.iterdir()):
-                if date_dir.is_dir() and re.match(r"\d{4}-\d{2}-\d{2}", date_dir.name):
-                    expert_dir = date_dir / slug
-                    if expert_dir.exists():
-                        artifacts.extend(self._scan_dir(expert_dir, expert_name, date_dir.name))
-        else:
-            # Everything
-            artifacts = self.list_all_artifacts()
+    def list_runs(self, expert_name: str) -> list[dict[str, Any]]:
+        """List all run folders for an agent, newest first."""
+        expert_slug = _slugify(expert_name)
+        agent_dir = OUTPUTS_ROOT / expert_slug
+        if not agent_dir.exists():
+            return []
 
-        return artifacts
-
-    def list_all_artifacts(self) -> list[dict[str, Any]]:
-        """Scan all date directories and return a flat list of all expert artifacts."""
-        artifacts: list[dict[str, Any]] = []
-
-        for date_dir in sorted(EXPERTS_ROOT.iterdir()):
-            if not date_dir.is_dir() or not re.match(r"\d{4}-\d{2}-\d{2}", date_dir.name):
+        runs: list[dict[str, Any]] = []
+        for run_dir in sorted(agent_dir.iterdir(), reverse=True):
+            if not run_dir.is_dir() or run_dir.name.startswith(("_", ".")):
                 continue
-            date = date_dir.name
-            for expert_dir in sorted(date_dir.iterdir()):
-                if expert_dir.is_dir():
-                    artifacts.extend(self._scan_dir(expert_dir, expert_dir.name, date))
+            files = self._scan_dir(run_dir, expert_slug, run_dir.name)
+            total_size = sum(f["sizeBytes"] for f in files)
+            runs.append({
+                "runTs": run_dir.name,
+                "expertSlug": expert_slug,
+                "expertName": expert_name,
+                "artifactDir": str(run_dir),
+                "fileCount": len(files),
+                "totalSize": total_size,
+                "files": files,
+            })
+        return runs
+
+    def list_artifacts(self, expert_name: str | None = None, date: str | None = None) -> list[dict[str, Any]]:
+        """List artifacts. Filters by expert_name and/or date prefix on run_ts."""
+        artifacts: list[dict[str, Any]] = []
+
+        if expert_name:
+            slug = _slugify(expert_name)
+            agent_dir = OUTPUTS_ROOT / slug
+            if agent_dir.exists():
+                for run_dir in sorted(agent_dir.iterdir(), reverse=True):
+                    if not run_dir.is_dir() or run_dir.name.startswith(("_", ".")):
+                        continue
+                    if date and not run_dir.name.startswith(date.replace("-", "")):
+                        continue
+                    artifacts.extend(self._scan_dir(run_dir, slug, run_dir.name))
+        else:
+            artifacts = self.list_all_artifacts(date_filter=date)
 
         return artifacts
+
+    def list_all_artifacts(self, date_filter: str | None = None) -> list[dict[str, Any]]:
+        """Scan all agent directories and return a flat list of all artifacts."""
+        artifacts: list[dict[str, Any]] = []
+
+        for agent_dir in sorted(OUTPUTS_ROOT.iterdir()):
+            if not agent_dir.is_dir() or agent_dir.name.startswith(("_", ".")):
+                continue
+            for run_dir in sorted(agent_dir.iterdir(), reverse=True):
+                if not run_dir.is_dir() or run_dir.name.startswith(("_", ".")):
+                    continue
+                if date_filter and not run_dir.name.startswith(date_filter.replace("-", "")):
+                    continue
+                artifacts.extend(self._scan_dir(run_dir, agent_dir.name, run_dir.name))
+
+        return artifacts
+
+    def get_file_content(self, expert_name: str, run_ts: str, filename: str) -> str | None:
+        """Read content of a specific file in a run folder."""
+        expert_slug = _slugify(expert_name)
+        file_path = OUTPUTS_ROOT / expert_slug / run_ts / filename
+        if file_path.exists() and file_path.is_file():
+            return file_path.read_text(encoding="utf-8")
+        return None
 
     def cleanup(self, max_age_days: int = 30, max_total_mb: int = 500) -> dict[str, Any]:
         """Remove stale artifacts to enforce retention policy."""
@@ -263,10 +301,10 @@ class ExpertArtifacts:
         bytes_freed = 0
 
         all_files: list[tuple[Path, os.stat_result]] = []
-        for date_dir in EXPERTS_ROOT.iterdir():
-            if not date_dir.is_dir() or not re.match(r"\d{4}-\d{2}-\d{2}", date_dir.name):
+        for agent_dir in OUTPUTS_ROOT.iterdir():
+            if not agent_dir.is_dir() or agent_dir.name.startswith(("_", ".")):
                 continue
-            for f in date_dir.rglob("*"):
+            for f in agent_dir.rglob("*"):
                 if f.is_file():
                     all_files.append((f, f.stat()))
 
@@ -299,7 +337,7 @@ class ExpertArtifacts:
                     logger.warning("Failed to remove %s: %s", f, exc)
 
         # Clean up empty directories
-        for d in sorted(EXPERTS_ROOT.rglob("*"), reverse=True):
+        for d in sorted(OUTPUTS_ROOT.rglob("*"), reverse=True):
             if d.is_dir() and not any(d.iterdir()):
                 try:
                     d.rmdir()
@@ -311,7 +349,7 @@ class ExpertArtifacts:
 
     # ── Internal helpers ──────────────────────────────────────────────────────
 
-    def _file_info(self, path: Path, category: str, expert_name: str, date: str) -> dict[str, Any]:
+    def _file_info(self, path: Path, category: str, expert_slug: str, run_ts: str) -> dict[str, Any]:
         """Build a file descriptor dict for a saved artifact."""
         stat = path.stat()
         return {
@@ -321,13 +359,12 @@ class ExpertArtifacts:
             "mimeType": _detect_mime(path),
             "fileType": _detect_file_type(path.suffix),
             "category": category,
-            "expertName": expert_name,
-            "expertSlug": _slugify(expert_name),
-            "date": date,
+            "expertSlug": expert_slug,
+            "runTs": run_ts,
             "createdAt": datetime.fromtimestamp(stat.st_ctime, tz=UTC).isoformat(),
         }
 
-    def _scan_dir(self, directory: Path, expert_name: str, date: str) -> list[dict[str, Any]]:
+    def _scan_dir(self, directory: Path, expert_slug: str, run_ts: str) -> list[dict[str, Any]]:
         """Scan a directory and return file info dicts for all files."""
         artifacts: list[dict[str, Any]] = []
         for f in sorted(directory.rglob("*")):
@@ -342,8 +379,8 @@ class ExpertArtifacts:
                             "sizeBytes": stat.st_size,
                             "mimeType": _detect_mime(f),
                             "fileType": _detect_file_type(f.suffix),
-                            "expertName": expert_name,
-                            "date": date,
+                            "expertSlug": expert_slug,
+                            "runTs": run_ts,
                             "createdAt": datetime.fromtimestamp(stat.st_ctime, tz=UTC).isoformat(),
                             "modified": datetime.fromtimestamp(stat.st_mtime, tz=UTC).isoformat(),
                         }

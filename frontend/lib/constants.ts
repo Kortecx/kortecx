@@ -311,6 +311,26 @@ export const ROLE_META: Record<ExpertRole, { label: string; emoji: string; color
   custom:          { label: 'Custom',        emoji: '⚙️', color: '#1a1a1a', dimColor: 'rgba(13,13,13,0.07)' },
 };
 
+/* ─── Role Descriptions (for tooltips) ────────────────── */
+export const ROLE_DESCRIPTIONS: Record<string, string> = {
+  researcher:      'Investigates topics, gathers evidence, and synthesizes findings',
+  analyst:         'Examines data patterns, trends, and provides structured insights',
+  writer:          'Creates content — blog posts, documentation, marketing copy',
+  coder:           'Generates, reviews, and refactors code across languages',
+  reviewer:        'Evaluates quality, identifies issues, and suggests improvements',
+  planner:         'Breaks down goals into actionable steps and timelines',
+  synthesizer:     'Merges information from multiple sources into unified outputs',
+  critic:          'Challenges assumptions and identifies weaknesses in reasoning',
+  legal:           'Analyses contracts, compliance requirements, and regulations',
+  financial:       'Models financials, forecasts, and evaluates business metrics',
+  medical:         'Processes medical literature and health-related information',
+  coordinator:     'Orchestrates tasks across teams and manages workflows',
+  'data-engineer': 'Designs pipelines, schemas, and data transformations',
+  creative:        'Generates creative concepts, designs, and artistic content',
+  translator:      'Converts content between languages preserving meaning and tone',
+  custom:          'A user-defined role with custom capabilities',
+};
+
 /* ─── Empty data arrays (populated from database) ────── */
 export const EXPERTS: Expert[] = [];
 export const WORKFLOWS: Workflow[] = [];

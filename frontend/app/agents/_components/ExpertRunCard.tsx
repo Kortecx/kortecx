@@ -3,7 +3,7 @@
 import { motion } from 'framer-motion';
 import {
   Zap, Clock, Loader2, CheckCircle2, FileText,
-  Server, AlertCircle,
+  Server, AlertCircle, FolderOpen,
 } from 'lucide-react';
 
 const SECTION_COLOR = '#D97706';
@@ -55,9 +55,10 @@ export interface ExpertRun {
 interface ExpertRunCardProps {
   run: ExpertRun;
   onClick: () => void;
+  onOutput?: () => void;
 }
 
-export default function ExpertRunCard({ run, onClick }: ExpertRunCardProps) {
+export default function ExpertRunCard({ run, onClick, onOutput }: ExpertRunCardProps) {
   const statusCfg = STATUS_CONFIG[run.status] ?? STATUS_CONFIG.running;
   const StatusIcon = statusCfg.icon;
   const isRunning = run.status === 'running';
@@ -152,10 +153,29 @@ export default function ExpertRunCard({ run, onClick }: ExpertRunCardProps) {
         </div>
       )}
 
-      {/* Timestamps */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'var(--text-4)' }}>
-        <span>Started {run.startedAt ? elapsed(run.startedAt) : elapsed(run.createdAt)}</span>
-        {run.completedAt && <span>Completed {elapsed(run.completedAt)}</span>}
+      {/* Timestamps + Output button */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 10, color: 'var(--text-4)' }}>
+        <div>
+          <span>Started {run.startedAt ? elapsed(run.startedAt) : elapsed(run.createdAt)}</span>
+          {run.completedAt && <span> · Completed {elapsed(run.completedAt)}</span>}
+        </div>
+        {onOutput && run.status === 'completed' && run.artifactCount > 0 && (
+          <button
+            onClick={e => { e.stopPropagation(); onOutput(); }}
+            title="View Outputs"
+            style={{
+              display: 'flex', alignItems: 'center', gap: 4,
+              padding: '4px 10px', borderRadius: 6, cursor: 'pointer',
+              border: `1px solid ${SECTION_COLOR}40`,
+              background: `${SECTION_COLOR}08`,
+              color: SECTION_COLOR, fontSize: 10, fontWeight: 600,
+              transition: 'all 0.15s',
+            }}
+          >
+            <FolderOpen size={10} />
+            Output
+          </button>
+        )}
       </div>
     </motion.div>
   );

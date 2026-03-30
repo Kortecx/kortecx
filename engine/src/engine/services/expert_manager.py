@@ -83,6 +83,13 @@ class ExpertManager:
         slug = "".join(c for c in slug if c.isalnum() or c == "-")
         expert_id = f"local-{slug}"
         expert_dir = LOCAL_DIR / slug
+
+        # Check agents/local directory for existing agent with same name
+        if expert_dir.exists():
+            raise ValueError(
+                f"Agent '{name}' already exists in agents/local. Please use a different name."
+            )
+
         expert_dir.mkdir(parents=True, exist_ok=True)
 
         # Create expert.json
@@ -104,6 +111,7 @@ class ExpertManager:
             "isPublic": config.get("isPublic", False),
             "category": config.get("category", "custom"),
             "complexityLevel": config.get("complexityLevel", 3),
+            "customRoleDescription": config.get("customRoleDescription", ""),
             "createdAt": datetime.now(UTC).isoformat(),
             "updatedAt": datetime.now(UTC).isoformat(),
         }
