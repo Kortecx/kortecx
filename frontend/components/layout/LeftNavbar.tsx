@@ -308,6 +308,17 @@ function NewButton({ collapsed }: { collapsed: boolean }) {
 export default function LeftNavbar() {
   const pathname = usePathname();
   const { sidebarCollapsed, toggleSidebar, sidebarWidth, setSidebarWidth } = useApp();
+  const [dashHovered, setDashHovered] = useState(false);
+  const dashRef = useRef<HTMLAnchorElement>(null);
+  const [dashRect, setDashRect] = useState<DOMRect | null>(null);
+
+  useEffect(() => {
+    if (dashHovered && sidebarCollapsed && dashRef.current) {
+      setDashRect(dashRef.current.getBoundingClientRect());
+    } else {
+      setDashRect(null);
+    }
+  }, [dashHovered, sidebarCollapsed]);
 
   /* Track query string client-side only to avoid SSR hydration mismatch */
   const [clientSearch, setClientSearch] = useState('');
@@ -419,19 +430,28 @@ export default function LeftNavbar() {
 
       {/* New Button + Dashboard */}
       <NewButton collapsed={sidebarCollapsed} />
-      <Link href="/dashboard" style={{
-        display: 'flex', alignItems: 'center', gap: 8,
-        padding: sidebarCollapsed ? '6px 0' : '6px 10px 6px 12px',
-        justifyContent: sidebarCollapsed ? 'center' : 'flex-start',
-        margin: '1px 5px 2px', width: 'calc(100% - 10px)', borderRadius: 5,
-        textDecoration: 'none', fontSize: 13, fontWeight: pathname === '/dashboard' ? 650 : 520,
-        color: pathname === '/dashboard' ? '#F04500' : 'var(--text-2)',
-        background: pathname === '/dashboard' ? 'rgba(240,69,0,0.08)' : 'transparent',
-        transition: 'background 0.12s, color 0.12s',
-      }}>
+      <Link
+        ref={dashRef}
+        href="/dashboard"
+        onMouseEnter={() => setDashHovered(true)}
+        onMouseLeave={() => setDashHovered(false)}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 8,
+          padding: sidebarCollapsed ? '6px 0' : '6px 10px 6px 12px',
+          justifyContent: sidebarCollapsed ? 'center' : 'flex-start',
+          margin: '1px 5px 2px', width: 'calc(100% - 10px)', borderRadius: 5,
+          textDecoration: 'none', fontSize: 13, fontWeight: pathname === '/dashboard' ? 650 : 520,
+          color: pathname === '/dashboard' ? '#F04500' : 'var(--text-2)',
+          background: pathname === '/dashboard' ? 'rgba(240,69,0,0.08)' : 'transparent',
+          transition: 'background 0.12s, color 0.12s',
+        }}
+      >
         <LayoutDashboard size={15} strokeWidth={pathname === '/dashboard' ? 2.2 : 1.8} />
         {!sidebarCollapsed && <span>Dashboard</span>}
       </Link>
+      {sidebarCollapsed && dashHovered && (
+        <NavTooltip label="Dashboard" anchorRect={dashRect} />
+      )}
 
       {/* Nav Sections */}
       <div style={{ flex: 1, overflowY: 'auto', overflowX: 'visible', padding: '4px 0' }}>
