@@ -39,6 +39,12 @@ fn main() {
         .define("GGML_CUDA", "OFF")
         // BLAS optional; disable to keep the build dep-light.
         .define("GGML_BLAS", "OFF")
+        // OpenMP off: avoids the libgomp link-time requirement on Linux
+        // (rust-lld doesn't auto-link it). ggml-cpu falls back to its own
+        // thread-pool. Slight CPU perf cost; acceptable for OSS single-compute
+        // scope per D28. Cloud-side serving uses vLLM / SGLang (P5.1 / P5.1.5)
+        // which handle their own batching + threading.
+        .define("GGML_OPENMP", "OFF")
         // Position-independent code for downstream static linking.
         .define("CMAKE_POSITION_INDEPENDENT_CODE", "ON")
         // Use Release optimization for the C++ build to keep runtime perf.
