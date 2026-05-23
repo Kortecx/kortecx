@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["kx-mote", "kx-content", "kx-journal"]
+members = ["kx-mote", "kx-content", "kx-journal", "kx-projection"]
 exclude = ["kx-cloud"]
 
 [workspace.package]
@@ -25,6 +25,7 @@ rkyv               = "0.8"
 rusqlite           = { version = "0.32", features = ["bundled"] }
 kx-mote            = { path = "kx-mote" }
 kx-content         = { path = "kx-content" }
+kx-journal         = { path = "kx-journal" }
 
 [profile.release]
 strip         = "symbols"
