@@ -6,15 +6,19 @@ rust-version = { workspace = true }
 license      = { workspace = true }
 authors      = { workspace = true }
 repository   = { workspace = true }
-description  = "kortecx Mote — the atomic execution unit (P1.2 will fill this in)."
+description  = "kortecx Mote — the atomic execution unit: types, lifecycle, idempotency identity."
 
 [lib]
 path = "src/lib.rs"
 
 [dependencies]
-# Real dependencies (blake3, smallvec, serde, bincode, thiserror) land at P1.2
-# when the Mote type, lifecycle, idempotency identity, and ND-tag are implemented.
+bincode   = { workspace = true }
+blake3    = { workspace = true }
+serde     = { workspace = true }
+smallvec  = { workspace = true }
+thiserror = { workspace = true }
 
 [dev-dependencies]
+proptest           = { workspace = true }
 tracing            = { workspace = true }
 tracing-subscriber = { workspace = true }

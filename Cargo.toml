@@ -14,11 +14,12 @@ repository   = "https://github.com/Kortecx/kortecx"
 tracing            = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 thiserror          = "1"
-bincode            = "2"
+bincode            = { version = "2", features = ["serde"] }
 blake3             = "1"
 bytes              = "1"
-smallvec           = "1"
+smallvec           = { version = "1", features = ["serde"] }
 serde              = { version = "1", features = ["derive"] }
+proptest           = "1"
 
 [profile.release]
 strip         = "symbols"
