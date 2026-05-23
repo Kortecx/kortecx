@@ -297,11 +297,14 @@ mod tests {
     fn load_nonexistent_model_returns_load_failed() {
         let backend = LlamaBackend::new().unwrap();
         let result = Model::load(&backend, "/nonexistent/path/to.gguf");
+        // `Model` wraps a raw pointer and does not derive `Debug`; match the Err
+        // variant directly rather than relying on Debug formatting.
         match result {
             Err(LlamaError::LoadFailed { path }) => {
                 assert_eq!(path, std::path::PathBuf::from("/nonexistent/path/to.gguf"));
             }
-            other => panic!("expected LoadFailed, got: {other:?}"),
+            Err(other) => panic!("expected LoadFailed, got error: {other}"),
+            Ok(_) => panic!("expected LoadFailed, got an unexpected Ok(Model)"),
         }
     }
 
