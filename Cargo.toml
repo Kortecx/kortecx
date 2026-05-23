@@ -1,0 +1,36 @@
+[workspace]
+resolver = "2"
+members = ["kx-mote"]
+exclude = ["kx-cloud"]
+
+[workspace.package]
+edition      = "2021"
+rust-version = "1.94.0"
+license      = "Apache-2.0"
+authors      = ["kortecx contributors"]
+repository   = "https://github.com/Kortecx/kortecx"
+
+[workspace.dependencies]
+tracing            = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+thiserror          = "1"
+bincode            = "2"
+blake3             = "1"
+bytes              = "1"
+smallvec           = "1"
+serde              = { version = "1", features = ["derive"] }
+
+[profile.release]
+strip         = "symbols"
+debug         = false
+lto           = "fat"
+codegen-units = 1
+incremental   = false
+panic         = "abort"
+
+[profile.dev]
+incremental = false
+
+[workspace.metadata.deb]
+# Placeholder. Real cargo-deb packaging lands at P1.13 (kx-runtime binary).
+# Convention noted here so future contributors find it in the expected place.

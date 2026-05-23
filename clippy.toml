@@ -1,0 +1,10 @@
+# Workspace-wide clippy configuration.
+# Lint-level enforcement (deny unwrap/expect in library code) is done at the crate root
+# via `#![deny(clippy::unwrap_used, clippy::expect_used)]` once each crate lands.
+# Tests are exempted from these denies via `#![cfg_attr(test, allow(...))]`.
+
+# Cognitive complexity threshold (default 25 is generous; we err strict for clarity).
+cognitive-complexity-threshold = 20
+
+# Documentation discipline (CLAUDE.md: "Public API documented with `///`").
+missing-docs-in-crate-items = true

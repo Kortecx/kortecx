@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: "1"
+
+jobs:
+  ci:
+    name: just ci
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # rust-toolchain.toml in the workspace root pins the exact version.
+      # rustup auto-detects and installs it on first cargo invocation.
+      - name: Install Rust toolchain (from rust-toolchain.toml)
+        run: |
+          rustup show active-toolchain
+          rustc --version
+          cargo --version
+
+      - name: Install just
+        uses: extractions/setup-just@v2
+
+      - name: Cache Cargo registry + target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ runner.os }}-${{ hashFiles('**/Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: |
+            cargo-${{ runner.os }}-
+
+      # I1 — Path-stripping for cross-machine reproducibility (added on top of
+      # workspace-local rustflags from .cargo/config.toml).
+      - name: Configure RUSTFLAGS for path-stripping
+        run: |
+          echo "RUSTFLAGS=--remap-path-prefix=${GITHUB_WORKSPACE}= -Cmetadata=kortecx-v0" >> $GITHUB_ENV
+
+      - name: just ci
+        run: just ci
