@@ -4,6 +4,10 @@
 #![allow(missing_docs)]
 #![allow(non_camel_case_types, non_snake_case, non_upper_case_globals)]
 #![allow(clippy::all)]
+// The bindgen-generated bindings include doc comments lifted from llama.h that
+// contain bare URLs (linking to upstream PRs / issues). Suppress rustdoc lints
+// on the generated file rather than post-processing every release.
+#![allow(rustdoc::all)]
 
 //! # kx-llamacpp-sys — raw FFI to llama.cpp's C API
 //!
