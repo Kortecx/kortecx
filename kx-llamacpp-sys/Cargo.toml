@@ -1,0 +1,24 @@
+[package]
+name         = "kx-llamacpp-sys"
+version      = "0.0.1"
+edition      = { workspace = true }
+rust-version = { workspace = true }
+license      = { workspace = true }
+authors      = { workspace = true }
+repository   = { workspace = true }
+description  = "Raw FFI bindings to llama.cpp's C API. The single unsafe-heavy crate. Nothing but kx-llamacpp may import this."
+
+# Tells Cargo a downstream C library (llama) will be linked at the kx-llamacpp
+# crate level (P1.7). Today (P1.6, bindings-only) we ship forward declarations
+# only — no linking is performed and no -sys library is produced by this crate
+# directly. The `links` key is reserved for the P1.7 wiring; commented out so
+# `cargo build` stays happy in P1.6's bindings-only scope.
+# links = "llama"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+# Intentionally none. This crate is forward declarations only and must not
+# carry any Rust dependencies beyond what `extern "C"` requires (i.e., nothing).
+# The FFI boundary stays narrow.
