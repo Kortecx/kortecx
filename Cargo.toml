@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["kx-mote", "kx-content"]
+members = ["kx-mote", "kx-content", "kx-journal"]
 exclude = ["kx-cloud"]
 
 [workspace.package]
@@ -22,7 +22,9 @@ serde              = { version = "1", features = ["derive"] }
 proptest           = "1"
 tempfile           = "3"
 rkyv               = "0.8"
+rusqlite           = { version = "0.32", features = ["bundled"] }
 kx-mote            = { path = "kx-mote" }
+kx-content         = { path = "kx-content" }
 
 [profile.release]
 strip         = "symbols"
