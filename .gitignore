@@ -14,6 +14,9 @@
 *.gcda
 *.gcno
 
+# proptest failure-persistence artifacts (auto-generated cache; not stable across runs)
+**/*.proptest-regressions
+
 # ---- Editor / OS ----
 .DS_Store
 *.swp
