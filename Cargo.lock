@@ -377,6 +377,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "kx-llamacpp-sys"
+version = "0.0.1"
+
+[[package]]
 name = "kx-mote"
 version = "0.0.1"
 dependencies = [

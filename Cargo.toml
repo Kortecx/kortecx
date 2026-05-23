@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["kx-mote", "kx-content", "kx-journal", "kx-projection"]
+members = ["kx-mote", "kx-content", "kx-journal", "kx-projection", "kx-llamacpp-sys"]
 exclude = ["kx-cloud"]
 
 [workspace.package]
