@@ -1,0 +1,21 @@
+[package]
+name         = "kx-llamacpp"
+version      = "0.0.1"
+edition      = { workspace = true }
+rust-version = { workspace = true }
+license      = { workspace = true }
+authors      = { workspace = true }
+repository   = { workspace = true }
+description  = "Safe Rust wrapper over kx-llamacpp-sys. Contains all unsafe behind a safe public API."
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+kx-llamacpp-sys = { workspace = true }
+thiserror       = { workspace = true }
+tracing         = { workspace = true }
+
+[dev-dependencies]
+tempfile           = { workspace = true }
+tracing-subscriber = { workspace = true }
