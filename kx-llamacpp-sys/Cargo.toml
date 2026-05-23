@@ -7,18 +7,18 @@ license      = { workspace = true }
 authors      = { workspace = true }
 repository   = { workspace = true }
 description  = "Raw FFI bindings to llama.cpp's C API. The single unsafe-heavy crate. Nothing but kx-llamacpp may import this."
-
-# Tells Cargo a downstream C library (llama) will be linked at the kx-llamacpp
-# crate level (P1.7). Today (P1.6, bindings-only) we ship forward declarations
-# only — no linking is performed and no -sys library is produced by this crate
-# directly. The `links` key is reserved for the P1.7 wiring; commented out so
-# `cargo build` stays happy in P1.6's bindings-only scope.
-# links = "llama"
+# `links = "llama"` declares that this crate, when built, produces a native library
+# named `llama` (via the build script's CMake invocation). Tells Cargo this crate
+# can be linked at most once per build graph — prevents duplicate-symbol surprises.
+links        = "llama"
+build        = "build.rs"
 
 [lib]
 path = "src/lib.rs"
 
 [dependencies]
-# Intentionally none. This crate is forward declarations only and must not
-# carry any Rust dependencies beyond what `extern "C"` requires (i.e., nothing).
-# The FFI boundary stays narrow.
+# Intentionally none. Pure FFI: only what `extern "C"` needs (nothing).
+
+[build-dependencies]
+bindgen = { workspace = true }
+cmake   = { workspace = true }

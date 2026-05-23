@@ -15,8 +15,10 @@ jobs:
     name: just ci
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout (with submodules for kx-llamacpp-sys/llama.cpp)
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       # rust-toolchain.toml in the workspace root pins the exact version.
       # rustup auto-detects and installs it on first cargo invocation.
@@ -29,6 +31,13 @@ jobs:
       - name: Install just
         uses: extractions/setup-just@v2
 
+      # bindgen needs libclang; the kx-llamacpp-sys CMake build needs cmake + a
+      # C++ toolchain (already present on ubuntu-latest via build-essential).
+      - name: Install bindgen + CMake build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libclang-dev clang cmake build-essential
+
       - name: Cache Cargo registry + target
         uses: actions/cache@v4
         with:
@@ -36,7 +45,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: cargo-${{ runner.os }}-${{ hashFiles('**/Cargo.lock', 'rust-toolchain.toml') }}
+          key: cargo-${{ runner.os }}-${{ hashFiles('**/Cargo.lock', 'rust-toolchain.toml', '.gitmodules') }}
           restore-keys: |
             cargo-${{ runner.os }}-
 

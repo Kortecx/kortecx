@@ -1,0 +1,4 @@
+[submodule "kx-llamacpp-sys/llama.cpp"]
+	path = kx-llamacpp-sys/llama.cpp
+	url = https://github.com/ggerganov/llama.cpp.git
+	branch = master

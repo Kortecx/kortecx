@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["kx-mote", "kx-content", "kx-journal", "kx-projection", "kx-llamacpp-sys"]
+members = ["kx-mote", "kx-content", "kx-journal", "kx-projection", "kx-llamacpp-sys", "kx-llamacpp"]
 exclude = ["kx-cloud"]
 
 [workspace.package]
@@ -26,6 +26,9 @@ rusqlite           = { version = "0.32", features = ["bundled"] }
 kx-mote            = { path = "kx-mote" }
 kx-content         = { path = "kx-content" }
 kx-journal         = { path = "kx-journal" }
+kx-llamacpp-sys    = { path = "kx-llamacpp-sys" }
+bindgen            = "0.70"
+cmake              = "0.1"
 
 [profile.release]
 strip         = "symbols"
