@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["kx-mote"]
+members = ["kx-mote", "kx-content"]
 exclude = ["kx-cloud"]
 
 [workspace.package]
@@ -20,6 +20,9 @@ bytes              = "1"
 smallvec           = { version = "1", features = ["serde"] }
 serde              = { version = "1", features = ["derive"] }
 proptest           = "1"
+tempfile           = "3"
+rkyv               = "0.8"
+kx-mote            = { path = "kx-mote" }
 
 [profile.release]
 strip         = "symbols"
