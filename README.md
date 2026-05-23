@@ -34,24 +34,30 @@ fast without leaving correctness behind.
 
 ## Installation
 
-### Requirements
+Add kortecx to your Rust project:
 
-- [Rust](https://www.rust-lang.org/) (1.94.0 — `rustup` auto-installs the pinned version via
-  `rust-toolchain.toml` on first build)
-- [just](https://github.com/casey/just) — command runner
+```toml
+[dependencies]
+kortecx = { git = "https://github.com/Kortecx/kortecx" }
+```
 
-### Build from source
+Then use the standard Rust workflow:
+
+```bash
+cargo build
+cargo test
+```
+
+Rust 1.94.0+ is required.
+
+### Or build from source
 
 ```bash
 git clone https://github.com/Kortecx/kortecx.git
 cd kortecx
-
-just ci      # full check: format, lint, build, test, docs, reproducibility
-just test    # run the test suite
-just build   # build the workspace
+cargo build --workspace
+cargo test --workspace
 ```
-
-That's it. The workspace builds and the tests pass on a clean checkout.
 
 ## Contributing
 
