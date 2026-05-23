@@ -33,30 +33,17 @@
 # kx-cloud contents to the OSS repo.
 kx-cloud/
 
-# ---- Planning & design docs (currently present) ----
-# Ignored from version control but still read/used by Claude while working.
-/00-vision-and-principles.md
-/01-build-sequence.md
-/02-crate-specs.md
-/03-ffi-and-inference.md
-/04-testing-and-gates.md
-/05-progress-tracker.md
-/06-language-and-sdk-strategy.md
+# ---- Internal docs (kept out of the public OSS repo) ----
+# These live in the working tree but never land in `Kortecx/kortecx`. Wildcards
+# auto-cover future additions so a new design / suggestion doc doesn't leak by
+# accident.
+/00-*.md
+/01-*.md
+/02-*.md
+/03-*.md
+/04-*.md
+/05-*.md
+/06-*.md
 /CLAUDE.md
-/docs/design/content-store.md
-/docs/design/control-edge-cascade-default.md
-/docs/design/decisions.md
-/docs/design/idempotency.md
-/docs/design/journal-entry.md
-/docs/design/journal-txn.md
-/docs/design/mote.md
-/docs/design/projection.md
-/docs/design/repudiation.md
-/docs/design/stuck-vs-dead.md
-/docs/design/topology.md
-/docs/design/validate-then-commit.md
-/docs/design/verification.md
-/docs/suggestions/01-alternatives-considered.md
-/docs/suggestions/02-improvement-areas.md
-/docs/suggestions/03-future-ideas.md
-/docs/suggestions/README.md
+/docs/design/*.md
+/docs/suggestions/*.md
