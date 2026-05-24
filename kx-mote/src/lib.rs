@@ -1,5 +1,20 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
+#![warn(clippy::pedantic)]
+#![allow(
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
+    clippy::module_name_repetitions,
+    clippy::must_use_candidate,
+    clippy::doc_markdown,
+    clippy::return_self_not_must_use,
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss,
+    clippy::cast_lossless,
+    clippy::unnested_or_patterns,
+    clippy::redundant_closure_for_method_calls
+)]
 
 //! # kx-mote — the atomic execution unit
 //!
@@ -54,6 +69,21 @@ type Hash32 = [u8; 32];
 /// consumes, and its position in the DAG — never from clock, host, PID, or
 /// attempt number. Two workers attempting the same logical work derive the
 /// same `MoteId`; the journal dedupes them to one committed fact.
+///
+/// # Examples
+///
+/// ```
+/// use kx_mote::MoteId;
+///
+/// let a = MoteId::from_bytes([0xaa; 32]);
+/// let b = MoteId::from_bytes([0xaa; 32]);
+/// assert_eq!(a, b, "MoteId equality is by-bytes");
+/// assert_eq!(a.as_bytes(), &[0xaa; 32]);
+///
+/// // Display + Debug both render the 64-char lowercase hex form.
+/// let hex = format!("{}", a);
+/// assert_eq!(hex.len(), 64);
+/// ```
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct MoteId(pub Hash32);
 
@@ -285,6 +315,17 @@ pub struct GraphPosition(pub Vec<u8>);
 /// Stable u8 representations are used in journal entry headers (PURE=0,
 /// READ-ONLY-NONDET=1, WORLD-MUTATING=2) — these MUST NOT change without
 /// a journal `schema_version` bump.
+///
+/// # Examples
+///
+/// ```
+/// use kx_mote::NdClass;
+///
+/// // Stable u8 discriminants for journal-entry headers.
+/// assert_eq!(NdClass::Pure.as_u8(), 0);
+/// assert_eq!(NdClass::ReadOnlyNondet.as_u8(), 1);
+/// assert_eq!(NdClass::WorldMutating.as_u8(), 2);
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum NdClass {
@@ -327,6 +368,20 @@ impl NdClass {
 /// WORLD-MUTATING Mote without an idempotency mechanism AND without a critic
 /// is refused at submission. The field is REQUIRED (not `Option`); workflow
 /// authors must declare a pattern explicitly.
+///
+/// # Examples
+///
+/// ```
+/// use kx_mote::EffectPattern;
+///
+/// // The three patterns are mutually exclusive; a Mote picks exactly one.
+/// let payment = EffectPattern::IdempotentByConstruction; // Stripe-style
+/// let llm_output = EffectPattern::StageThenCommit;       // payload IS the effect
+/// let critical_write = EffectPattern::ValidateThenCommit;// gated by a critic
+///
+/// assert_ne!(payment, llm_output);
+/// assert_ne!(llm_output, critical_write);
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum EffectPattern {
     /// The effect carries an idempotency mechanism the external system honors
@@ -720,6 +775,27 @@ pub struct IllegalTransition {
 /// This function is the single source of truth for the transition rules.
 /// `kx-executor` (P1.9) and `kx-coordinator` (P2.2) call it before writing
 /// any journal entry that would advance an attempt's state.
+///
+/// # Examples
+///
+/// ```
+/// use kx_mote::{transition, AttemptState};
+///
+/// // Legal: Pending → Scheduled
+/// assert_eq!(
+///     transition(AttemptState::Pending, AttemptState::Scheduled).unwrap(),
+///     AttemptState::Scheduled
+/// );
+///
+/// // Illegal: Pending → Running (must go through Scheduled first)
+/// assert!(transition(AttemptState::Pending, AttemptState::Running).is_err());
+///
+/// // Illegal: Committed → Failed (Committed only transitions to Repudiated)
+/// assert!(transition(AttemptState::Committed, AttemptState::Failed).is_err());
+///
+/// // Illegal: same-state self-loop
+/// assert!(transition(AttemptState::Running, AttemptState::Running).is_err());
+/// ```
 pub fn transition(from: AttemptState, to: AttemptState) -> Result<AttemptState, IllegalTransition> {
     use AttemptState::{Committed, Failed, Pending, Repudiated, Running, Scheduled};
     let legal = matches!(
