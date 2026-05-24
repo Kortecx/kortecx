@@ -609,6 +609,7 @@ dependencies = [
  "blake3",
  "bytes",
  "kx-mote",
+ "proptest",
  "rkyv",
  "serde",
  "tempfile",

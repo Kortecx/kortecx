@@ -24,6 +24,24 @@ use crate::{ContentRef, ContentStore, NotFound, StoreError};
 
 /// An ephemeral, process-local [`ContentStore`]. Backed by a [`HashMap<ContentRef, Bytes>`]
 /// under a [`RwLock`]; supports multiple readers and one writer.
+///
+/// # Examples
+///
+/// ```
+/// use kx_content::{ContentStore, InMemoryContentStore};
+///
+/// let store = InMemoryContentStore::new();
+/// assert!(store.is_empty());
+///
+/// let r = store.put(b"first").unwrap();
+/// assert_eq!(store.len(), 1);
+/// assert!(store.contains(&r));
+///
+/// // Duplicate put: idempotent — does not grow the store.
+/// let r2 = store.put(b"first").unwrap();
+/// assert_eq!(r, r2);
+/// assert_eq!(store.len(), 1);
+/// ```
 #[derive(Debug, Default)]
 pub struct InMemoryContentStore {
     objects: RwLock<HashMap<ContentRef, Bytes>>,

@@ -1,5 +1,14 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
+#![warn(clippy::pedantic)]
+#![allow(
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
+    clippy::module_name_repetitions,
+    clippy::must_use_candidate,
+    clippy::doc_markdown,
+    clippy::return_self_not_must_use
+)]
 
 //! # kx-content — content-addressed payload store
 //!
@@ -65,6 +74,22 @@ mod local_fs;
 /// compare them as 32-byte tokens; they do not parse subfields, derive paths, or assume any
 /// prefix structure. Sharding by hash prefix is a backend-internal optimization, never a
 /// caller concern.
+///
+/// # Examples
+///
+/// ```
+/// use kx_content::ContentRef;
+///
+/// let a = ContentRef::of(b"hello world");
+/// let b = ContentRef::of(b"hello world");
+/// assert_eq!(a, b, "content-addressed: same bytes → same ref");
+///
+/// let c = ContentRef::of(b"different");
+/// assert_ne!(a, c);
+///
+/// // 64-character lowercase hex, suitable for filesystem-safe names.
+/// assert_eq!(a.to_hex().len(), 64);
+/// ```
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct ContentRef(pub [u8; 32]);
 
@@ -167,6 +192,24 @@ pub enum StoreError {
 ///   refs whose backing object was evicted (by tiering or by GC). Callers MUST be ready to
 ///   handle the same `NotFound` either way.
 /// - [`ContentStore::delete`] is idempotent: deleting a non-existent ref is a no-op success.
+///
+/// # Examples
+///
+/// Put → get round-trip via the in-memory backend (zero filesystem state):
+///
+/// ```
+/// use kx_content::{ContentStore, InMemoryContentStore};
+///
+/// let store = InMemoryContentStore::new();
+/// let r = store.put(b"some payload").unwrap();
+/// let got = store.get(&r).unwrap();
+/// assert_eq!(&*got, b"some payload");
+///
+/// // Idempotent: second put with same bytes returns the same ref.
+/// let r2 = store.put(b"some payload").unwrap();
+/// assert_eq!(r, r2);
+/// assert_eq!(store.len(), 1);
+/// ```
 pub trait ContentStore {
     /// The owned-or-borrowed bytes type returned by [`ContentStore::get`]. Implementors
     /// choose; callers see only the `Deref<Target = [u8]>` view.
