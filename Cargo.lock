@@ -659,6 +659,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "kx-model-validator"
+version = "0.0.1"
+dependencies = [
+ "kx-mote",
+ "proptest",
+ "serde",
+ "thiserror",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "kx-mote"
 version = "0.0.1"
 dependencies = [
