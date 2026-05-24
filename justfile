@@ -54,6 +54,13 @@ check-reproducible:
     diff /tmp/kortecx-build-1.norm /tmp/kortecx-build-2.norm
     echo "I1.c byte-determinism: PASS"
 
+# Run the kx-llamacpp model-smoke-test feature: downloads a ~1.2 MB GGUF and
+# runs the full safe-wrapper inference pipeline (load → tokenize → decode →
+# sample → detokenize). Gated separately so the default `just ci` doesn't
+# need network access.
+smoke-test-with-model:
+    cargo test -p kx-llamacpp --features model-smoke-test -- --nocapture
+
 # Wipe all build artifacts.
 clean:
     cargo clean

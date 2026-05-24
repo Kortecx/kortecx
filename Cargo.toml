@@ -27,8 +27,11 @@ kx-mote            = { path = "kx-mote" }
 kx-content         = { path = "kx-content" }
 kx-journal         = { path = "kx-journal" }
 kx-llamacpp-sys    = { path = "kx-llamacpp-sys" }
+kx-llamacpp        = { path = "kx-llamacpp" }
 bindgen            = "0.70"
 cmake              = "0.1"
+ureq               = { version = "2", default-features = false, features = ["tls"] }
+sha2               = "0.10"
 
 [profile.release]
 strip         = "symbols"

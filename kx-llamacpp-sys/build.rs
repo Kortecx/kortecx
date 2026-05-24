@@ -45,6 +45,10 @@ fn main() {
         // scope per D28. Cloud-side serving uses vLLM / SGLang (P5.1 / P5.1.5)
         // which handle their own batching + threading.
         .define("GGML_OPENMP", "OFF")
+        // Embed Metal shader library directly into the static archive on
+        // Apple targets so downstream binaries don't need to ship a separate
+        // `default.metallib` next to the executable. No effect on non-Apple.
+        .define("GGML_METAL_EMBED_LIBRARY", "ON")
         // Position-independent code for downstream static linking.
         .define("CMAKE_POSITION_INDEPENDENT_CODE", "ON")
         // Use Release optimization for the C++ build to keep runtime perf.
@@ -69,6 +73,8 @@ fn main() {
     // expects on Apple Silicon. On Linux, link libstdc++.
     let target = env::var("TARGET").unwrap_or_default();
     if target.contains("apple") {
+        // Metal backend (only built on Apple targets by cmake).
+        println!("cargo:rustc-link-lib=static=ggml-metal");
         println!("cargo:rustc-link-lib=framework=Foundation");
         println!("cargo:rustc-link-lib=framework=Accelerate");
         println!("cargo:rustc-link-lib=framework=Metal");
