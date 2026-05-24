@@ -13,6 +13,16 @@ use crate::model::Model;
 ///
 /// Mirrors `llama_pooling_type`. For text-only generation, leave at
 /// [`Self::Unspecified`] (llama.cpp picks per-model).
+///
+/// # Examples
+///
+/// ```
+/// use kx_llamacpp::{ContextParams, PoolingType};
+///
+/// let _params = ContextParams::new()
+///     .with_embeddings(true)
+///     .with_pooling_type(PoolingType::Mean);
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(i32)]
 pub enum PoolingType {
@@ -140,8 +150,12 @@ pub struct PerfData {
 /// RAII handle to an inference context for a model.
 pub struct Context<'m, 'b: 'm> {
     pub(crate) ptr: NonNull<sys::llama_context>,
-    n_vocab: i32,
-    n_embd: i32,
+    /// `n_vocab` cached as `usize` so logits-slice bounds are correctly
+    /// typed without per-call casts. Set at construction from the model's
+    /// vocab; never changes during the context's lifetime.
+    n_vocab: usize,
+    /// `n_embd` cached as `usize` for embedding-slice bounds.
+    n_embd: usize,
     _model: std::marker::PhantomData<&'m Model<'b>>,
 }
 
@@ -162,10 +176,13 @@ impl<'m, 'b: 'm> Context<'m, 'b> {
         model: &'m Model<'b>,
         params: &ContextParams,
     ) -> Result<Self, LlamaError> {
-        // Cache n_vocab + n_embd so logits/embeddings slices are properly bounded.
+        // Cache n_vocab + n_embd as usize so logits/embeddings slices are
+        // properly bounded without per-call casts.
         let vocab = model.vocab();
-        let n_vocab = vocab.n_tokens();
-        let n_embd = model.n_embd();
+        let n_vocab =
+            usize::try_from(vocab.n_tokens()).map_err(|_| LlamaError::ContextCreationFailed)?;
+        let n_embd =
+            usize::try_from(model.n_embd()).map_err(|_| LlamaError::ContextCreationFailed)?;
 
         // SAFETY: llama_init_from_model returns a raw pointer (null on failure).
         let ctx_ptr = unsafe { sys::llama_init_from_model(model.ptr.as_ptr(), params.inner) };
@@ -240,7 +257,7 @@ impl<'m, 'b: 'm> Context<'m, 'b> {
         } else {
             // SAFETY: llama.cpp guarantees the returned pointer addresses
             // `n_vocab` contiguous floats.
-            Some(unsafe { core::slice::from_raw_parts(ptr, self.n_vocab as usize) })
+            Some(unsafe { core::slice::from_raw_parts(ptr, self.n_vocab) })
         }
     }
 
@@ -256,7 +273,7 @@ impl<'m, 'b: 'm> Context<'m, 'b> {
         if ptr.is_null() {
             None
         } else {
-            Some(unsafe { core::slice::from_raw_parts(ptr, self.n_embd as usize) })
+            Some(unsafe { core::slice::from_raw_parts(ptr, self.n_embd) })
         }
     }
 
@@ -274,7 +291,7 @@ impl<'m, 'b: 'm> Context<'m, 'b> {
             ))
         } else {
             // SAFETY: pooled vector is `n_embd` floats.
-            Ok(unsafe { core::slice::from_raw_parts(ptr, self.n_embd as usize) })
+            Ok(unsafe { core::slice::from_raw_parts(ptr, self.n_embd) })
         }
     }
 
@@ -393,7 +410,11 @@ impl<'m, 'b: 'm> Context<'m, 'b> {
             // Upstream contract: llama_state_seq_get_data should write
             // exactly `state_seq_get_size` bytes. Anything less means the
             // pinned llama.cpp version is misbehaving.
-            return Err(LlamaError::DecodeFailed(-1));
+            return Err(LlamaError::StateOpFailed {
+                op: "save",
+                expected: size,
+                got: written,
+            });
         }
         Ok(buf)
     }
@@ -420,7 +441,11 @@ impl<'m, 'b: 'm> Context<'m, 'b> {
             )
         };
         if read == 0 {
-            Err(LlamaError::DecodeFailed(-2))
+            Err(LlamaError::StateOpFailed {
+                op: "restore",
+                expected: state.len(),
+                got: 0,
+            })
         } else {
             Ok(())
         }

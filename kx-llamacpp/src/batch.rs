@@ -16,7 +16,22 @@ use crate::vocab::Token;
 /// RAII wrapper over `llama_batch`.
 ///
 /// Construct via [`Self::with_capacity`] or [`Self::with_embeddings`]; populate
-/// via [`Self::add`]; submit to `Context::decode`.
+/// via [`Self::add`] (single) or [`Self::add_many`] (bulk); submit to
+/// `Context::decode`.
+///
+/// # Examples
+///
+/// ```
+/// use kx_llamacpp::{Batch, Token};
+///
+/// // Token-mode batch with capacity for 8 tokens, 1 sequence id per token.
+/// let mut batch = Batch::with_capacity(8, 1);
+/// batch.add(Token(101), 0, &[0], false);
+/// batch.add(Token(202), 1, &[0], true); // last token gets logits
+/// assert_eq!(batch.n_tokens(), 2);
+/// batch.clear();
+/// assert_eq!(batch.n_tokens(), 0);
+/// ```
 pub struct Batch {
     inner: sys::llama_batch,
     capacity: i32,
@@ -58,6 +73,45 @@ impl Batch {
     /// internal buffers are reused.
     pub fn clear(&mut self) {
         self.inner.n_tokens = 0;
+    }
+
+    /// Bulk-append a slice of tokens belonging to a single sequence, starting
+    /// at `start_pos`. Only the last token (per the canonical decode pattern)
+    /// has `compute_logits=true`; the rest do not.
+    ///
+    /// Single bounds check + tight loop — faster than calling [`Self::add`]
+    /// per token in the hot prompt-fill path.
+    ///
+    /// # Panics
+    /// Panics if `tokens.len()` would overflow the batch's remaining capacity.
+    pub fn add_many(&mut self, tokens: &[Token], start_pos: i32, seq_id: i32) {
+        let n = tokens.len();
+        assert!(
+            self.inner.n_tokens + (n as i32) <= self.capacity,
+            "Batch overflow: have {}, want to add {}, capacity {}",
+            self.inner.n_tokens,
+            n,
+            self.capacity
+        );
+        let base = self.inner.n_tokens as usize;
+        // SAFETY: we just verified base + n <= capacity; all four arrays are
+        // sized to at least capacity. seq_id[i] is an array of size >= 1
+        // (caller asked for at least one seq id), so writing one entry at
+        // offset 0 is safe.
+        unsafe {
+            for (i, &t) in tokens.iter().enumerate() {
+                let idx = base + i;
+                *self.inner.token.add(idx) = t.0;
+                *self.inner.pos.add(idx) = start_pos + (i as i32);
+                *self.inner.n_seq_id.add(idx) = 1;
+                let seq_ptr = *self.inner.seq_id.add(idx);
+                *seq_ptr = seq_id;
+                // Only the last position gets logits; matches the canonical
+                // "decode the prompt, sample from the last position" pattern.
+                *self.inner.logits.add(idx) = i8::from(i + 1 == n);
+            }
+        }
+        self.inner.n_tokens += n as i32;
     }
 
     /// Append a token at `pos` (position in its sequence), belonging to

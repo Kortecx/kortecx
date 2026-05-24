@@ -21,6 +21,33 @@ use crate::error::LlamaError;
 use crate::vocab::Token;
 
 /// RAII handle to a `llama_sampler` chain.
+///
+/// # Examples
+///
+/// Build a greedy sampler:
+///
+/// ```
+/// use kx_llamacpp::{LlamaBackend, Sampler};
+///
+/// let backend = LlamaBackend::new().unwrap();
+/// let _greedy = Sampler::greedy(&backend).unwrap();
+/// ```
+///
+/// Build a typical (top-k + top-p + temp + dist) chain:
+///
+/// ```
+/// use kx_llamacpp::{LlamaBackend, Sampler};
+///
+/// let backend = LlamaBackend::new().unwrap();
+/// let _typical = Sampler::typical(
+///     &backend,
+///     /* temp     */ 0.7,
+///     /* top_k    */ 40,
+///     /* top_p    */ 0.95,
+///     /* seed     */ 42,
+/// )
+/// .unwrap();
+/// ```
 pub struct Sampler<'b> {
     ptr: NonNull<sys::llama_sampler>,
     _backend: std::marker::PhantomData<&'b LlamaBackend>,

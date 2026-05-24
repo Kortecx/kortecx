@@ -75,6 +75,26 @@ pub enum LlamaError {
     #[error("embeddings unavailable: {0}")]
     EmbeddingsUnavailable(&'static str),
 
+    /// KV-cache state serialization produced fewer bytes than the size getter
+    /// promised, OR restoration read 0 bytes (the C-API's "load failed"
+    /// signal). Upstream `llama_state_seq_get_data` / `llama_state_seq_set_data`
+    /// contract violation.
+    #[error("KV-cache state {op}: expected {expected} bytes, got {got}")]
+    StateOpFailed {
+        /// "save" or "restore".
+        op: &'static str,
+        /// Bytes expected from the size getter (or expected to read).
+        expected: usize,
+        /// Bytes actually written / read.
+        got: usize,
+    },
+
+    /// `llama_chat_apply_template` returned a non-positive status. Typical
+    /// cause: the template string is malformed or references unknown
+    /// variables.
+    #[error("chat-template apply failed (rc = {0})")]
+    ChatTemplateFailed(i32),
+
     /// An underlying I/O error while reading metadata before passing to llama.cpp.
     #[error(transparent)]
     Io(#[from] std::io::Error),

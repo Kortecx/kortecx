@@ -17,6 +17,17 @@ use crate::error::LlamaError;
 /// final Drop. **Must outlive every [`crate::Model`], [`crate::Context`], and
 /// [`crate::Sampler`]** — llama.cpp's backend state is shared global state
 /// required by all subsequent calls.
+///
+/// # Examples
+///
+/// ```
+/// use kx_llamacpp::LlamaBackend;
+///
+/// // Backends are RAII; init on `new`, free on the final `drop`. The
+/// // internal ref count makes nested construction safe.
+/// let backend = LlamaBackend::new().unwrap();
+/// drop(backend);
+/// ```
 pub struct LlamaBackend {
     _marker: std::marker::PhantomData<*const ()>,
 }

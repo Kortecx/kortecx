@@ -21,6 +21,23 @@ use crate::model::Model;
 ///
 /// Convenience methods ([`Self::is_eog`], [`Self::to_piece`]) mirror the
 /// `Vocab` API so token-centric code can call them on the token directly.
+///
+/// # Examples
+///
+/// ```
+/// use kx_llamacpp::Token;
+///
+/// let t = Token(42);
+/// assert_eq!(t.id(), 42);
+/// assert_eq!(t.0, 42);
+/// assert_eq!(i32::from(t), 42);
+///
+/// // Hash + Eq let Token be used as a key.
+/// use std::collections::HashSet;
+/// let mut seen: HashSet<Token> = HashSet::new();
+/// seen.insert(t);
+/// assert!(seen.contains(&Token(42)));
+/// ```
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Token(pub i32);
 
@@ -128,13 +145,13 @@ impl<'m, 'b: 'm> Vocab<'m, 'b> {
         add_special: bool,
         parse_special: bool,
     ) -> Result<Vec<Token>, LlamaError> {
-        // First pass with a small buffer; if llama returns -n (would need n
-        // tokens), resize and retry once. That matches the upstream pattern.
-        // Token is #[repr(transparent)] over i32 in practice (single i32 field
-        // with `#[derive(Copy)]`), so the FFI-side `*mut llama_token` (= i32)
-        // is layout-compatible — we point llama at the inner i32s directly.
+        // First pass with a tight upper-bound estimate: BPE tokenizers produce
+        // at most `bytes.len()` tokens (each token covers >= 1 byte), plus 2
+        // for BOS + safety. This eliminates the second call for the typical
+        // case (prompts > 7 bytes); the resize-and-retry path remains for the
+        // rare case the estimate is wrong.
         let bytes = text.as_bytes();
-        let mut capacity = bytes.len().max(8) + 1;
+        let mut capacity = bytes.len() + 2;
         let mut out: Vec<i32> = vec![0; capacity];
 
         // SAFETY: vocab ptr is valid; text+len define a byte slice; out provides
@@ -193,62 +210,84 @@ impl<'m, 'b: 'm> Vocab<'m, 'b> {
         lstrip: i32,
         special: bool,
     ) -> Result<Vec<u8>, LlamaError> {
-        // First pass with a small buffer; resize if llama signals more needed.
-        let mut buf = vec![0i8; 32];
+        let mut buf: Vec<u8> = Vec::with_capacity(32);
+        self.token_to_piece_into(token, lstrip, special, &mut buf)?;
+        Ok(buf)
+    }
+
+    /// Append the bytes for `token` directly to `out` (zero per-call alloc when
+    /// `out` already has capacity). Used by [`Self::detokenize`] to avoid
+    /// allocating a fresh `Vec<u8>` per token in the generation hot loop.
+    ///
+    /// # Errors
+    /// [`LlamaError::DetokenizeFailed`] on a non-recoverable C-side failure.
+    pub fn token_to_piece_into(
+        &self,
+        token: Token,
+        lstrip: i32,
+        special: bool,
+        out: &mut Vec<u8>,
+    ) -> Result<usize, LlamaError> {
+        // Try the existing tail of `out` (whatever spare capacity it has) up
+        // to 32 bytes — most tokens fit there. If not, grow once.
+        let start = out.len();
+        let mut tail = 32usize.max(out.capacity().saturating_sub(start));
+        out.resize(start + tail, 0);
+
         let rc = unsafe {
             sys::llama_token_to_piece(
                 self.ptr.as_ptr(),
                 token.0,
-                buf.as_mut_ptr().cast::<core::ffi::c_char>(),
-                buf.len() as i32,
+                out[start..].as_mut_ptr().cast::<core::ffi::c_char>(),
+                tail as i32,
                 lstrip,
                 special,
             )
         };
 
-        let written: i32 = if rc < 0 {
-            let need = (-rc) as usize;
-            buf.resize(need, 0);
+        let written = if rc < 0 {
+            tail = (-rc) as usize;
+            out.resize(start + tail, 0);
             let rc2 = unsafe {
                 sys::llama_token_to_piece(
                     self.ptr.as_ptr(),
                     token.0,
-                    buf.as_mut_ptr().cast::<core::ffi::c_char>(),
-                    buf.len() as i32,
+                    out[start..].as_mut_ptr().cast::<core::ffi::c_char>(),
+                    tail as i32,
                     lstrip,
                     special,
                 )
             };
             if rc2 < 0 {
+                out.truncate(start);
                 return Err(LlamaError::DetokenizeFailed {
                     token: token.0,
                     rc: rc2,
                 });
             }
-            rc2
+            rc2 as usize
         } else {
-            rc
+            rc as usize
         };
 
-        buf.truncate(written.max(0) as usize);
-        // Convert the i8 buffer into a u8 buffer without copying — same layout.
-        let bytes: Vec<u8> = buf.into_iter().map(|c| c as u8).collect();
-        Ok(bytes)
+        out.truncate(start + written);
+        Ok(written)
     }
 
     /// Convenience: detokenize a slice of tokens into a UTF-8 String.
     ///
     /// Lossy conversion: invalid UTF-8 bytes are replaced with U+FFFD.
-    /// For raw byte access use [`Self::token_to_piece`] in a loop.
+    /// Uses a single growing byte buffer; no per-token allocation.
+    /// For raw byte access use [`Self::token_to_piece_into`] in a loop.
     ///
     /// # Errors
     /// Propagates the first [`LlamaError::DetokenizeFailed`] from
-    /// [`Self::token_to_piece`].
+    /// [`Self::token_to_piece_into`].
     pub fn detokenize(&self, tokens: &[Token], special: bool) -> Result<String, LlamaError> {
+        // Heuristic capacity: average 4 bytes per token (varies by tokenizer).
         let mut out: Vec<u8> = Vec::with_capacity(tokens.len() * 4);
         for &t in tokens {
-            let piece = self.token_to_piece(t, 0, special)?;
-            out.extend_from_slice(&piece);
+            self.token_to_piece_into(t, 0, special, &mut out)?;
         }
         Ok(String::from_utf8_lossy(&out).into_owned())
     }

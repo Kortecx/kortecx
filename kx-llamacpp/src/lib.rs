@@ -1,4 +1,26 @@
 #![warn(missing_docs)]
+// SN-4 v2: tighten the lint surface. `pedantic` catches subtle issues
+// (needless clones, manual let-else, by-value when &-ref would do).
+// The allowed lints below are noise for an FFI-heavy crate where C/Rust
+// integer width juggling and panic-doc bloat would be a treadmill.
+#![warn(clippy::pedantic)]
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss,
+    clippy::cast_lossless,
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
+    clippy::module_name_repetitions,
+    clippy::must_use_candidate,
+    clippy::doc_markdown,
+    clippy::elidable_lifetime_names,
+    clippy::items_after_statements,
+    clippy::pub_underscore_fields,
+    clippy::needless_pass_by_value,
+    clippy::range_plus_one,
+    clippy::return_self_not_must_use
+)]
 
 //! # kx-llamacpp — safe wrapper over llama.cpp's C API
 //!
