@@ -639,6 +639,7 @@ name = "kx-llamacpp"
 version = "0.0.1"
 dependencies = [
  "kx-llamacpp-sys",
+ "proptest",
  "sha2",
  "tempfile",
  "thiserror",
