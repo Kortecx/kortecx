@@ -20,19 +20,14 @@
 //!  - The context's `n_ctx` is exhausted (returns `None`).
 //!  - A decode call returns an error (yielded as `Some(Err(...))`, then `None`).
 //!
-//! ## Cross-backend symmetry (HF "for agents" vision)
+//! ## Cross-backend symmetry
 //!
-//! The shape of `Generator` is the contract every backend will mirror:
-//!
-//!  - OSS in-process (this crate): `Generator` over `Context`.
-//!  - Cloud vLLM (P5.1, `kx-cloud-inference-vllm`): same `Iterator<Item =
-//!    Result<Token, _>>` shape over a streamed HTTP response.
-//!  - Cloud SGLang (P5.1.5, `kx-cloud-inference-sglang`): same shape; the
-//!    backend exploits prefix reuse internally but the iterator surface
-//!    looks identical to the caller.
-//!
-//! Adding a fourth backend is "implement this iterator." That's the
-//! "Transformers for agents" property: one mental model across engines.
+//! The shape of `Generator` is the contract every future `InferenceBackend`
+//! adapter is intended to mirror: an `Iterator<Item = Result<Token, _>>` over
+//! a token stream, regardless of whether the underlying engine runs in
+//! process or over the network, and regardless of whether the engine
+//! exploits batching, prefix reuse, or speculative decoding under the hood.
+//! Adding a new backend amounts to "implement this iterator."
 
 use crate::batch::Batch;
 use crate::context::Context;

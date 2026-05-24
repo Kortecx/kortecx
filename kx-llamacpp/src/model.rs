@@ -180,9 +180,9 @@ impl<'b> Model<'b> {
     /// finer control over pooling, construct a [`Context`] manually with
     /// the desired `ContextParams`.
     ///
-    /// Per the cross-backend symmetry contract (P5.1 / P5.1.5), this is the
-    /// **same shape** `kx-cloud-inference-vllm` and `kx-cloud-inference-sglang`
-    /// will expose: `embed(text) -> Vec<f32>`.
+    /// This is the same call shape every future `InferenceBackend` adapter
+    /// is intended to expose: `embed(text) -> Vec<f32>`. Adapters can target
+    /// in-process or out-of-process engines without changing the caller.
     ///
     /// # Errors
     /// - [`LlamaError::TokenizeFailed`] if tokenization fails.

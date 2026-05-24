@@ -14,10 +14,9 @@
 //! (Llama-2's `[INST] ... [/INST]`, ChatML's `<|im_start|>...<|im_end|>`,
 //! etc.) — brittle and tightly coupled to the model.
 //!
-//! Per the cross-backend symmetry contract, the same `ChatMessage` type +
-//! `apply_chat_template` shape will be implemented by
-//! `kx-cloud-inference-vllm` (P5.1) and `kx-cloud-inference-sglang` (P5.1.5)
-//! so agent code is portable across backends.
+//! The same `ChatMessage` type + `apply_chat_template` shape is intended to
+//! be implemented by every future `InferenceBackend` adapter so agent code is
+//! portable across in-process and out-of-process inference engines.
 
 use std::ffi::CString;
 
