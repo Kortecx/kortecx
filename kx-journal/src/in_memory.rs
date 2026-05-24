@@ -26,6 +26,20 @@ struct State {
 }
 
 /// An in-memory [`Journal`] backed by a `Vec<JournalEntry>` under an `RwLock`.
+///
+/// Not durable across process restarts. Used as a trait-seam proof (the
+/// `Journal` trait carries no in-process or filesystem assumption) AND as a
+/// cheap deterministic fixture for downstream test suites.
+///
+/// # Examples
+///
+/// ```
+/// use kx_journal::{InMemoryJournal, Journal};
+///
+/// let j = InMemoryJournal::new();
+/// assert_eq!(j.count_entries().unwrap(), 0);
+/// assert_eq!(j.current_seq().unwrap(), 0);
+/// ```
 #[derive(Default)]
 pub struct InMemoryJournal {
     state: RwLock<State>,

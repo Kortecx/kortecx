@@ -60,6 +60,36 @@ const METADATA_SCHEMA_VERSION_KEY: &str = "schema_version";
 ///
 /// One journal database == one workflow run (per `journal-txn.md` §6). Open the same
 /// path on restart to resume; open a fresh path to start a new run.
+///
+/// # Examples
+///
+/// In-memory mode (used by tests + downstream fixtures):
+///
+/// ```
+/// use kx_journal::{Journal, SqliteJournal};
+///
+/// let j = SqliteJournal::open_in_memory().unwrap();
+/// assert_eq!(j.count_entries().unwrap(), 0);
+/// assert_eq!(j.current_seq().unwrap(), 0);
+/// ```
+///
+/// On-disk mode (the production shape):
+///
+/// ```
+/// use kx_journal::{Journal, SqliteJournal};
+/// use tempfile::TempDir;
+///
+/// let tmp = TempDir::new().unwrap();
+/// let path = tmp.path().join("run-001.kxjournal");
+/// let j = SqliteJournal::open(&path).unwrap();
+/// assert_eq!(j.current_seq().unwrap(), 0);
+///
+/// // Re-opening the same path resumes the same run (the schema_version
+/// // check happens here; mismatch refuses loudly).
+/// drop(j);
+/// let resumed = SqliteJournal::open(&path).unwrap();
+/// assert_eq!(resumed.current_seq().unwrap(), 0);
+/// ```
 pub struct SqliteJournal {
     conn: std::sync::Mutex<Connection>,
 }

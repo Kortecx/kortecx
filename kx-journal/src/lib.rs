@@ -1,5 +1,21 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
+#![warn(clippy::pedantic)]
+#![allow(
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
+    clippy::module_name_repetitions,
+    clippy::must_use_candidate,
+    clippy::doc_markdown,
+    clippy::return_self_not_must_use,
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss,
+    clippy::cast_lossless,
+    clippy::too_many_lines,
+    clippy::match_same_arms,
+    clippy::range_plus_one
+)]
 
 //! # kx-journal — the spine
 //!
@@ -135,6 +151,27 @@ pub enum JournalError {
 /// Implementors choose their persistence substrate (SQLite for OSS; replicated
 /// log for cloud). The trait surface is intentionally narrow; the contract
 /// is in `journal-txn.md` (P0.3) + `journal-entry.md` (P0.11).
+///
+/// # Examples
+///
+/// Append a Failed entry to an in-memory journal and read it back:
+///
+/// ```
+/// use kx_journal::{FailureReason, InMemoryJournal, Journal, JournalEntry};
+/// use kx_mote::MoteId;
+///
+/// let journal = InMemoryJournal::new();
+/// let entry = JournalEntry::Failed {
+///     mote_id: MoteId::from_bytes([1u8; 32]),
+///     idempotency_key: [0xaa; 32],
+///     seq: 0, // assigned by the journal at append time
+///     reason_class: FailureReason::TimedOut,
+///     reporter_id: 42,
+/// };
+/// let stored = journal.append(entry).unwrap();
+/// assert_eq!(stored.seq(), 1); // first entry → seq 1
+/// assert_eq!(journal.current_seq().unwrap(), 1);
+/// ```
 pub trait Journal {
     /// Append an entry. **The atomic write boundary.**
     ///
