@@ -17,7 +17,9 @@
 
 #![cfg(feature = "model-smoke-test")]
 
-use kx_llamacpp::{Batch, Context, ContextParams, LlamaBackend, Model, ModelParams, Sampler};
+use kx_llamacpp::{
+    Batch, Context, ContextParams, LlamaBackend, Model, ModelParams, PoolingType, Sampler,
+};
 
 const MODEL_PATH: &str = env!(
     "KX_LLAMACPP_SMOKE_TEST_MODEL",
@@ -243,4 +245,207 @@ fn smoke_vocab_special_tokens() {
     assert!(eos >= 0 && eos < n, "eos {eos} out of range [0, {n})");
     assert!(vocab.is_eog(eos), "eos must be an end-of-generation marker");
     eprintln!("bos={bos} eos={eos} nl={} n_tokens={n}", vocab.nl());
+}
+
+// ---------------------------------------------------------------------------
+// Tightenings per the rigorous-testing mandate (SN-4): determinism assertions,
+// full-surface coverage, integration plumbing tests. The next three tests
+// move P1.7-b from "happy-path smoke" to "actually airtight at the wrapper
+// layer" by exercising guarantees that downstream code is going to rely on:
+// - greedy determinism (same prompt → same tokens, twice, end-to-end)
+// - embedding-mode plumbing (with_embeddings actually reaches llama.cpp)
+// - sampler-seed determinism (the seed actually plumbs through the chain)
+// ---------------------------------------------------------------------------
+
+/// Greedy pipeline must be deterministic end-to-end.
+///
+/// Two independent runs (separate backend, model, context, sampler) of the
+/// same prompt under greedy sampling must produce **byte-identical** token
+/// sequences. This is a wrapper-level guarantee: if a future llama.cpp bump
+/// changes determinism (e.g. introduces nondeterministic reduction order in
+/// a Metal/CPU kernel) this test catches it at the FFI boundary rather than
+/// surfacing it as flakiness in downstream replay.
+#[test]
+fn smoke_determinism_greedy_pipeline() {
+    fn run() -> Vec<i32> {
+        let backend = LlamaBackend::new().expect("backend init");
+        let model = Model::load(&backend, MODEL_PATH).expect("load");
+        let vocab = model.vocab();
+        let tokens = vocab
+            .tokenize("Once upon a time", true, false)
+            .expect("tokenize");
+
+        let mut ctx = Context::new_with_params(
+            &model,
+            &ContextParams::new().with_n_ctx(128).with_n_seq_max(1),
+        )
+        .expect("context");
+
+        let mut batch = Batch::with_capacity(tokens.len() as i32, 1);
+        for (i, &t) in tokens.iter().enumerate() {
+            let is_last = i + 1 == tokens.len();
+            batch.add(t, i as i32, &[0], is_last);
+        }
+        ctx.decode(&batch).expect("decode prompt");
+
+        let mut sampler = Sampler::greedy(&backend).expect("greedy");
+        let mut out = Vec::with_capacity(8);
+        let mut next = sampler.sample(&mut ctx, -1);
+        out.push(next);
+
+        for step in 0..6 {
+            if vocab.is_eog(next) {
+                break;
+            }
+            let mut step_batch = Batch::with_capacity(1, 1);
+            step_batch.add(next, (tokens.len() + step) as i32, &[0], true);
+            ctx.decode(&step_batch).expect("decode step");
+            next = sampler.sample(&mut ctx, -1);
+            out.push(next);
+        }
+        out
+    }
+
+    let a = run();
+    let b = run();
+    eprintln!("greedy run A: {a:?}");
+    eprintln!("greedy run B: {b:?}");
+    assert_eq!(
+        a, b,
+        "greedy + identical prompt + identical model must produce identical token sequences across runs"
+    );
+    assert!(a.len() >= 2, "expected at least 2 generated tokens");
+}
+
+/// Embedding-mode plumbing: `with_embeddings(true)` + decode + per-token
+/// embedding readout returns an `n_embd`-length vector containing at least
+/// one non-zero float.
+///
+/// This proves three things end-to-end:
+/// 1. The `embeddings` flag on `ContextParams` actually reaches the C side.
+/// 2. The cached `n_embd` on `Context` matches what the model produces.
+/// 3. `embeddings_ith` returns valid memory bounded correctly.
+///
+/// Per-token readout (`embeddings_ith`) rather than pooled (`embeddings_seq`)
+/// is used here because stories260K is a tiny generative model where pooling
+/// configuration depends on model metadata that may not be set. Per-token
+/// embeddings are universally available for any decoder-only model.
+#[test]
+fn smoke_embedding_mode() {
+    let backend = LlamaBackend::new().expect("backend init");
+    let model = Model::load(&backend, MODEL_PATH).expect("load");
+    let vocab = model.vocab();
+
+    let tokens = vocab.tokenize("hello", true, false).expect("tokenize");
+    assert!(!tokens.is_empty());
+
+    // Embedding-mode context: pooling = None (per-token), embeddings = on.
+    let ctx_params = ContextParams::new()
+        .with_n_ctx(64)
+        .with_n_batch(16)
+        .with_n_ubatch(16)
+        .with_n_seq_max(1)
+        .with_embeddings(true)
+        .with_pooling_type(PoolingType::None);
+    let mut ctx = Context::new_with_params(&model, &ctx_params).expect("context");
+
+    // Need compute_logits = true on positions we want embeddings for.
+    let mut batch = Batch::with_capacity(tokens.len() as i32, 1);
+    for (i, &t) in tokens.iter().enumerate() {
+        batch.add(t, i as i32, &[0], true);
+    }
+    ctx.decode(&batch).expect("decode in embedding mode");
+
+    // Read embeddings for the last token. Returns Some(&[f32; n_embd]).
+    let last = (tokens.len() - 1) as i32;
+    let emb = ctx.embeddings_ith(last).expect(
+        "embeddings_ith returned None — with_embeddings(true) is not plumbing through to llama.cpp",
+    );
+    assert_eq!(
+        emb.len() as i32,
+        model.n_embd(),
+        "embedding slice must be exactly n_embd floats (cached bound mismatch)"
+    );
+    let any_nonzero = emb.iter().any(|x| x.abs() > 1e-9);
+    assert!(
+        any_nonzero,
+        "embedding vector is all zeros — model didn't produce hidden states"
+    );
+
+    let l2: f32 = emb.iter().map(|x| x * x).sum::<f32>().sqrt();
+    eprintln!(
+        "embedding[{last}] L2 = {l2:.6}, len = {} (n_embd = {})",
+        emb.len(),
+        model.n_embd()
+    );
+    assert!(
+        l2.is_finite() && l2 > 0.0,
+        "embedding L2 norm must be finite and positive (got {l2})"
+    );
+}
+
+/// Sampler-chain plumbing: a `typical` sampler constructed with a fixed seed
+/// must produce identical token sequences across runs (proves the seed value
+/// actually reaches the `dist` stage at the end of the chain).
+///
+/// This complements `smoke_determinism_greedy_pipeline` by asserting the
+/// stochastic path. Without a seed-determinism assertion, a future change
+/// that drops `seed` on the way through `SamplerChainBuilder::add_dist`
+/// would silently still produce *some* output and the test would pass —
+/// this test catches that regression class.
+#[test]
+fn smoke_sampler_seed_determinism() {
+    fn run(seed: u32) -> Vec<i32> {
+        let backend = LlamaBackend::new().expect("backend init");
+        let model = Model::load(&backend, MODEL_PATH).expect("load");
+        let vocab = model.vocab();
+        let tokens = vocab
+            .tokenize("Once upon a time", true, false)
+            .expect("tokenize");
+
+        let mut ctx = Context::new_with_params(
+            &model,
+            &ContextParams::new().with_n_ctx(128).with_n_seq_max(1),
+        )
+        .expect("context");
+
+        let mut batch = Batch::with_capacity(tokens.len() as i32, 1);
+        for (i, &t) in tokens.iter().enumerate() {
+            let is_last = i + 1 == tokens.len();
+            batch.add(t, i as i32, &[0], is_last);
+        }
+        ctx.decode(&batch).expect("decode prompt");
+
+        // Stochastic chain. seed → dist → final token.
+        let mut sampler = Sampler::typical(
+            &backend, /* temp */ 0.8, /* top_k */ 40, /* top_p */ 0.95, seed,
+        )
+        .expect("typical sampler");
+
+        let mut out = Vec::with_capacity(6);
+        let mut next = sampler.sample(&mut ctx, -1);
+        out.push(next);
+        for step in 0..5 {
+            if vocab.is_eog(next) {
+                break;
+            }
+            let mut step_batch = Batch::with_capacity(1, 1);
+            step_batch.add(next, (tokens.len() + step) as i32, &[0], true);
+            ctx.decode(&step_batch).expect("decode step");
+            next = sampler.sample(&mut ctx, -1);
+            out.push(next);
+        }
+        out
+    }
+
+    let a = run(42);
+    let b = run(42);
+    eprintln!("typical seed=42 run A: {a:?}");
+    eprintln!("typical seed=42 run B: {b:?}");
+    assert_eq!(
+        a, b,
+        "typical(seed=42) must produce identical sequences across runs — \
+         the seed is not plumbing through to llama_sampler_init_dist"
+    );
+    assert!(a.len() >= 2, "expected at least 2 generated tokens");
 }
