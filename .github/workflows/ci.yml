@@ -57,3 +57,46 @@ jobs:
 
       - name: just ci
         run: just ci
+
+  smoke-test-with-model:
+    name: smoke-test-with-model (kx-llamacpp E2E inference)
+    runs-on: ubuntu-latest
+    needs: ci
+    steps:
+      - name: Checkout (with submodules for kx-llamacpp-sys/llama.cpp)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Rust toolchain (from rust-toolchain.toml)
+        run: |
+          rustup show active-toolchain
+          rustc --version
+          cargo --version
+
+      - name: Install just
+        uses: extractions/setup-just@v2
+
+      - name: Install bindgen + CMake build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libclang-dev clang cmake build-essential
+
+      - name: Cache Cargo registry + target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-smoke-${{ runner.os }}-${{ hashFiles('**/Cargo.lock', 'rust-toolchain.toml', '.gitmodules') }}
+          restore-keys: |
+            cargo-smoke-${{ runner.os }}-
+            cargo-${{ runner.os }}-
+
+      - name: Configure RUSTFLAGS for path-stripping
+        run: |
+          echo "RUSTFLAGS=--remap-path-prefix=${GITHUB_WORKSPACE}= -Cmetadata=kortecx-v0" >> $GITHUB_ENV
+
+      - name: just smoke-test-with-model
+        run: just smoke-test-with-model
