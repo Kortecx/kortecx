@@ -28,6 +28,23 @@ use crate::{ContentRef, ContentStore, NotFound, StoreError};
 ///
 /// Construction creates the root directory if it doesn't exist; failures bubble up via
 /// [`StoreError::Io`].
+///
+/// # Examples
+///
+/// ```
+/// use kx_content::{ContentStore, LocalFsContentStore};
+/// use tempfile::TempDir;
+///
+/// let tmp = TempDir::new().unwrap();
+/// let store = LocalFsContentStore::open(tmp.path()).unwrap();
+///
+/// let r = store.put(b"payload bytes").unwrap();
+/// assert!(store.contains(&r));
+/// assert_eq!(&*store.get(&r).unwrap(), b"payload bytes");
+///
+/// store.delete(&r).unwrap();
+/// assert!(!store.contains(&r));
+/// ```
 #[derive(Debug, Clone)]
 pub struct LocalFsContentStore {
     root: PathBuf,
@@ -45,7 +62,7 @@ impl LocalFsContentStore {
         if !metadata.is_dir() {
             return Err(StoreError::Io(std::io::Error::new(
                 std::io::ErrorKind::NotADirectory,
-                format!("content store root {root:?} is not a directory"),
+                format!("content store root {} is not a directory", root.display()),
             )));
         }
         Ok(Self { root })
@@ -122,9 +139,8 @@ impl ContentStore for LocalFsContentStore {
     }
 
     fn list_refs<'a>(&'a self) -> Box<dyn Iterator<Item = ContentRef> + 'a> {
-        let read_dir = match fs::read_dir(&self.root) {
-            Ok(rd) => rd,
-            Err(_) => return Box::new(std::iter::empty()),
+        let Ok(read_dir) = fs::read_dir(&self.root) else {
+            return Box::new(std::iter::empty());
         };
         let iter = read_dir.filter_map(|entry| {
             let entry = entry.ok()?;
