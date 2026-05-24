@@ -24,8 +24,8 @@
 
 use kx_model_validator::{
     check, DegradationReason, InMemoryModelRegistry, License, LicenseConstraint, MissingCapability,
-    Modality, ProvidedCapabilities, Quantization, RankingPolicy, Recommender,
-    RequiredCapabilities, ValidatorOutcome,
+    Modality, ProvidedCapabilities, Quantization, RankingPolicy, Recommender, RequiredCapabilities,
+    ValidatorOutcome,
 };
 use kx_mote::ModelId;
 use proptest::prelude::*;
