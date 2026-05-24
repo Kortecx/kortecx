@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["kx-mote", "kx-content", "kx-journal", "kx-projection", "kx-llamacpp-sys", "kx-llamacpp", "kx-model-validator", "kx-warrant"]
+members = ["kx-mote", "kx-content", "kx-journal", "kx-projection", "kx-llamacpp-sys", "kx-llamacpp", "kx-model-validator", "kx-warrant", "kx-tool-registry"]
 exclude = ["kx-cloud"]
 
 [workspace.package]
@@ -30,6 +30,7 @@ kx-llamacpp-sys    = { path = "kx-llamacpp-sys" }
 kx-llamacpp        = { path = "kx-llamacpp" }
 kx-model-validator = { path = "kx-model-validator" }
 kx-warrant         = { path = "kx-warrant" }
+kx-tool-registry   = { path = "kx-tool-registry" }
 bindgen            = "0.70"
 cmake              = "0.1"
 ureq               = { version = "2", default-features = false, features = ["tls"] }
