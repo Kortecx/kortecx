@@ -679,6 +679,7 @@ dependencies = [
  "kx-content",
  "kx-journal",
  "kx-mote",
+ "proptest",
  "smallvec",
  "tempfile",
  "thiserror",
