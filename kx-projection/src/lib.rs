@@ -1,5 +1,20 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
+#![warn(clippy::pedantic)]
+#![allow(
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
+    clippy::module_name_repetitions,
+    clippy::must_use_candidate,
+    clippy::doc_markdown,
+    clippy::return_self_not_must_use,
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss,
+    clippy::cast_lossless,
+    clippy::range_plus_one,
+    clippy::elidable_lifetime_names
+)]
 
 //! # kx-projection — the log's read-side fold
 //!
@@ -279,6 +294,36 @@ impl State {
 /// [`Projection::fold`] each journal entry in `seq` order; query via the 7-method
 /// read API. [`Projection::snapshot`] returns an immutable point-in-time view that
 /// implements the same read API with stable snapshot semantics.
+///
+/// # Examples
+///
+/// Fold a Committed entry and inspect the resulting state:
+///
+/// ```
+/// use kx_journal::JournalEntry;
+/// use kx_mote::{MoteDefHash, MoteId, NdClass};
+/// use kx_projection::{MoteState, Projection};
+/// use kx_content::ContentRef;
+/// use smallvec::SmallVec;
+///
+/// let mut p = Projection::new();
+/// assert!(p.is_empty());
+///
+/// let entry = JournalEntry::Committed {
+///     mote_id: MoteId::from_bytes([1u8; 32]),
+///     idempotency_key: [1u8; 32],
+///     seq: 1,
+///     nondeterminism: NdClass::Pure,
+///     result_ref: ContentRef::from_bytes([7u8; 32]),
+///     parents: SmallVec::new(),
+///     mote_def_hash: MoteDefHash::from_bytes([1u8; 32]),
+/// };
+/// p.fold(&entry).unwrap();
+///
+/// assert_eq!(p.current_seq(), 1);
+/// assert_eq!(p.state_of(&MoteId::from_bytes([1u8; 32])), MoteState::Committed);
+/// assert_eq!(p.committed_count(), 1);
+/// ```
 #[derive(Debug, Default)]
 pub struct Projection {
     state: State,
@@ -516,6 +561,78 @@ impl Projection {
             .get(mote_id)
             .and_then(|i| i.committed.as_ref().map(|c| c.seq))
     }
+
+    /// Apply a sequence of journal entries in order. Convenience over calling
+    /// [`Self::fold`] in a loop. Stops on the first error and returns it; the
+    /// projection's state at that point reflects every entry applied up to
+    /// (but not including) the failing one.
+    ///
+    /// # Errors
+    /// First [`ProjectionError`] from any contained entry (typically a
+    /// duplicate-Committed surfaced by [`Self::fold`]).
+    pub fn fold_many<I>(&mut self, entries: I) -> Result<u64, ProjectionError>
+    where
+        I: IntoIterator<Item = JournalEntry>,
+    {
+        let mut last = self.state.last_seq;
+        for entry in entries {
+            self.fold(&entry)?;
+            last = self.state.last_seq;
+        }
+        Ok(last)
+    }
+
+    /// Iterate every known Mote with its current state. Iteration order is by
+    /// `MoteId` ascending (stable via the underlying `BTreeMap`).
+    ///
+    /// Used by the executor (P1.9) to enumerate the workflow's status; used by
+    /// debugging tools to dump the projection. Allocates nothing per item.
+    pub fn iter_motes(&self) -> impl Iterator<Item = (MoteId, MoteState)> + '_ {
+        self.state
+            .motes
+            .keys()
+            .map(move |id| (*id, self.state.state_of_id(id)))
+    }
+
+    /// Iterate every Mote currently in `state`. Iteration order is by `MoteId`
+    /// ascending.
+    pub fn iter_motes_in_state(&self, state: MoteState) -> impl Iterator<Item = MoteId> + '_ {
+        self.state
+            .motes
+            .keys()
+            .filter(move |id| self.state.state_of_id(id) == state)
+            .copied()
+    }
+
+    /// Count of Motes currently in `MoteState::Committed`.
+    #[must_use]
+    pub fn committed_count(&self) -> usize {
+        self.iter_motes_in_state(MoteState::Committed).count()
+    }
+
+    /// Count of Motes currently in `MoteState::Repudiated`.
+    #[must_use]
+    pub fn repudiated_count(&self) -> usize {
+        self.iter_motes_in_state(MoteState::Repudiated).count()
+    }
+
+    /// Count of Motes currently in `MoteState::Pending`.
+    #[must_use]
+    pub fn pending_count(&self) -> usize {
+        self.iter_motes_in_state(MoteState::Pending).count()
+    }
+
+    /// Count of Motes currently in `MoteState::Failed`.
+    #[must_use]
+    pub fn failed_count(&self) -> usize {
+        self.iter_motes_in_state(MoteState::Failed).count()
+    }
+
+    /// Count of Motes currently in `MoteState::Scheduled`.
+    #[must_use]
+    pub fn scheduled_count(&self) -> usize {
+        self.iter_motes_in_state(MoteState::Scheduled).count()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -527,6 +644,46 @@ impl Projection {
 /// Returned by [`Projection::snapshot`]. Subsequent folds against the source
 /// projection do not affect this snapshot — the snapshot-isolation contract from
 /// D16 / `projection.md` §6 is provided by cloning the underlying state.
+///
+/// # Examples
+///
+/// A snapshot remains stable while the projection mutates underneath:
+///
+/// ```
+/// use kx_journal::{FailureReason, JournalEntry, RepudiationReason};
+/// use kx_mote::{MoteDefHash, MoteId, NdClass};
+/// use kx_projection::{MoteState, Projection};
+/// use kx_content::ContentRef;
+/// use smallvec::SmallVec;
+///
+/// let mut p = Projection::new();
+/// p.fold(&JournalEntry::Committed {
+///     mote_id: MoteId::from_bytes([1u8; 32]),
+///     idempotency_key: [1u8; 32],
+///     seq: 1,
+///     nondeterminism: NdClass::Pure,
+///     result_ref: ContentRef::from_bytes([7u8; 32]),
+///     parents: SmallVec::new(),
+///     mote_def_hash: MoteDefHash::from_bytes([1u8; 32]),
+/// }).unwrap();
+///
+/// let snap = p.snapshot();
+/// assert_eq!(snap.state_of(&MoteId::from_bytes([1u8; 32])), MoteState::Committed);
+/// assert_eq!(snap.seq(), 1);
+///
+/// // Mutate the projection; snapshot stays at seq 1.
+/// p.fold(&JournalEntry::Repudiated {
+///     target_mote_id: MoteId::from_bytes([1u8; 32]),
+///     idempotency_key: [9u8; 32],
+///     seq: 2,
+///     target_committed_seq: 1,
+///     reason_class: RepudiationReason::OperatorAction,
+///     repudiator_id: 0,
+/// }).unwrap();
+///
+/// assert_eq!(snap.state_of(&MoteId::from_bytes([1u8; 32])), MoteState::Committed);
+/// assert_eq!(p.state_of(&MoteId::from_bytes([1u8; 32])), MoteState::Repudiated);
+/// ```
 #[derive(Debug, Clone)]
 pub struct Snapshot {
     state: State,
@@ -607,6 +764,53 @@ impl Snapshot {
     #[must_use]
     pub fn is_repudiated(&self, mote_id: &MoteId) -> bool {
         matches!(self.state_of(mote_id), MoteState::Repudiated)
+    }
+
+    /// Iterate every Mote known at snapshot time with its state.
+    pub fn iter_motes(&self) -> impl Iterator<Item = (MoteId, MoteState)> + '_ {
+        self.state
+            .motes
+            .keys()
+            .map(move |id| (*id, self.state.state_of_id(id)))
+    }
+
+    /// Iterate every Mote currently in `state` at snapshot time.
+    pub fn iter_motes_in_state(&self, state: MoteState) -> impl Iterator<Item = MoteId> + '_ {
+        self.state
+            .motes
+            .keys()
+            .filter(move |id| self.state.state_of_id(id) == state)
+            .copied()
+    }
+
+    /// Count of Motes in `MoteState::Committed` at snapshot time.
+    #[must_use]
+    pub fn committed_count(&self) -> usize {
+        self.iter_motes_in_state(MoteState::Committed).count()
+    }
+
+    /// Count of Motes in `MoteState::Repudiated` at snapshot time.
+    #[must_use]
+    pub fn repudiated_count(&self) -> usize {
+        self.iter_motes_in_state(MoteState::Repudiated).count()
+    }
+
+    /// Count of Motes in `MoteState::Pending` at snapshot time.
+    #[must_use]
+    pub fn pending_count(&self) -> usize {
+        self.iter_motes_in_state(MoteState::Pending).count()
+    }
+
+    /// Count of Motes in `MoteState::Failed` at snapshot time.
+    #[must_use]
+    pub fn failed_count(&self) -> usize {
+        self.iter_motes_in_state(MoteState::Failed).count()
+    }
+
+    /// Count of Motes in `MoteState::Scheduled` at snapshot time.
+    #[must_use]
+    pub fn scheduled_count(&self) -> usize {
+        self.iter_motes_in_state(MoteState::Scheduled).count()
     }
 }
 
