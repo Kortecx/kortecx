@@ -7,6 +7,8 @@ use std::ptr::NonNull;
 use kx_llamacpp_sys as sys;
 
 use crate::backend::LlamaBackend;
+use crate::batch::Batch;
+use crate::context::{Context, ContextParams, PoolingType};
 use crate::error::LlamaError;
 use crate::vocab::Vocab;
 
@@ -91,6 +93,7 @@ impl<'b> Model<'b> {
     ///
     /// # Errors
     /// Same as [`Self::load`].
+    #[tracing::instrument(level = "info", skip(_backend, params), fields(path = %path.as_ref().display()))]
     pub fn load_with_params(
         _backend: &'b LlamaBackend,
         path: impl AsRef<Path>,
@@ -108,6 +111,12 @@ impl<'b> Model<'b> {
         let ptr = NonNull::new(model_ptr).ok_or_else(|| LlamaError::LoadFailed {
             path: path_ref.to_owned(),
         })?;
+
+        tracing::debug!(
+            n_params = unsafe { sys::llama_model_n_params(ptr.as_ptr()) },
+            size_bytes = unsafe { sys::llama_model_size(ptr.as_ptr()) },
+            "model loaded"
+        );
 
         Ok(Self {
             ptr,
@@ -161,6 +170,61 @@ impl<'b> Model<'b> {
     /// On-disk model size in bytes.
     pub fn size(&self) -> u64 {
         unsafe { sys::llama_model_size(self.ptr.as_ptr()) }
+    }
+
+    /// One-shot **HF-shaped embedding**: tokenize `text`, decode in an
+    /// embedding-mode context, return the mean-pooled embedding vector.
+    ///
+    /// This is the unit-level mirror of HuggingFace Transformers'
+    /// `model.encode(text)` — three lines instead of forty. For batching or
+    /// finer control over pooling, construct a [`Context`] manually with
+    /// the desired `ContextParams`.
+    ///
+    /// Per the cross-backend symmetry contract (P5.1 / P5.1.5), this is the
+    /// **same shape** `kx-cloud-inference-vllm` and `kx-cloud-inference-sglang`
+    /// will expose: `embed(text) -> Vec<f32>`.
+    ///
+    /// # Errors
+    /// - [`LlamaError::TokenizeFailed`] if tokenization fails.
+    /// - [`LlamaError::ContextCreationFailed`] if a fresh context cannot be
+    ///   allocated.
+    /// - [`LlamaError::DecodeFailed`] if the decode pass fails.
+    /// - [`LlamaError::EmbeddingsUnavailable`] if pooling didn't produce a
+    ///   vector (model lacks the necessary metadata).
+    ///
+    /// # Determinism
+    /// `embed(x)` is deterministic for fixed `x` and fixed model — proved by
+    /// `smoke_embed_one_shot_determinism` in `tests/smoke.rs`.
+    #[tracing::instrument(level = "info", skip(self), fields(text_len = text.len()))]
+    pub fn embed(&self, text: &str) -> Result<Vec<f32>, LlamaError> {
+        let vocab = self.vocab();
+        let tokens = vocab.tokenize(text, /* add_special */ true, false)?;
+        if tokens.is_empty() {
+            return Err(LlamaError::TokenizeFailed(0));
+        }
+
+        // Embedding-mode context, mean-pool across the sequence.
+        let params = ContextParams::new()
+            .with_n_ctx(tokens.len().max(8) as u32 * 2)
+            .with_n_batch(tokens.len() as u32)
+            .with_n_ubatch(tokens.len() as u32)
+            .with_n_seq_max(1)
+            .with_embeddings(true)
+            .with_pooling_type(PoolingType::Mean);
+        let mut ctx = Context::new_with_params(self, &params)?;
+
+        // Decode the prompt; mean-pool reads from all positions, so every
+        // position needs compute_logits = true.
+        let mut batch = Batch::with_capacity(tokens.len() as i32, 1);
+        for (i, &t) in tokens.iter().enumerate() {
+            batch.add(t, i as i32, &[0], true);
+        }
+        ctx.decode(&batch)?;
+
+        // Read the pooled vector. Mean pooling produces one vector per
+        // sequence; we own seq 0.
+        let pooled = ctx.embeddings_seq(0)?;
+        Ok(pooled.to_vec())
     }
 
     /// Human-readable model description (e.g. "llama 7B Q4_0").

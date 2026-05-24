@@ -201,6 +201,7 @@ impl<'m, 'b: 'm> Context<'m, 'b> {
     ///
     /// # Errors
     /// [`LlamaError::DecodeFailed`] for any non-zero return code.
+    #[tracing::instrument(level = "trace", skip(self, batch), fields(n_tokens = batch.n_tokens()))]
     pub fn decode(&mut self, batch: &Batch) -> Result<(), LlamaError> {
         // SAFETY: ctx is live; batch.as_raw exposes valid arrays for the
         // duration of this call.
@@ -345,6 +346,84 @@ impl<'m, 'b: 'm> Context<'m, 'b> {
     /// Reset performance counters to zero.
     pub fn perf_reset(&mut self) {
         unsafe { sys::llama_perf_context_reset(self.ptr.as_ptr()) }
+    }
+
+    // -- KV-cache state save / load ------------------------------------------
+    //
+    // The wrapper-tier integration point for the runtime's **exactly-once /
+    // durable replay** promise. A Mote that decodes a long prompt can persist
+    // its KV state to the content store; on replay the executor restores it
+    // instead of re-decoding. Save/load are scoped to a single sequence id —
+    // the dominant case (one Mote == one logical sequence).
+    //
+    // The on-disk format is opaque (llama.cpp's binary state blob); callers
+    // should pin the llama.cpp version + GGUF identity together with the
+    // state blob to ensure restore-compatibility.
+
+    /// Size in bytes of the serialized KV state for sequence `seq_id`.
+    ///
+    /// Use this to pre-allocate the buffer for [`Self::save_state_seq`].
+    pub fn state_seq_size(&self, seq_id: i32) -> usize {
+        // SAFETY: ctx is live. The C API takes `*mut llama_context` even
+        // though the call is read-only.
+        unsafe { sys::llama_state_seq_get_size(self.ptr.as_ptr(), seq_id) }
+    }
+
+    /// Serialize the KV state for sequence `seq_id` into an owned `Vec<u8>`.
+    ///
+    /// Convenience wrapper that sizes the buffer correctly. For zero-copy
+    /// streaming into an already-allocated buffer, use the size + raw form
+    /// via the (currently internal) FFI.
+    ///
+    /// # Errors
+    /// Returns [`LlamaError::DecodeFailed`] re-purposed as "state serialize
+    /// failed" if llama.cpp writes fewer bytes than the size getter
+    /// promised — surfaces a real upstream contract violation.
+    #[tracing::instrument(level = "debug", skip(self), fields(state_size_bytes))]
+    pub fn save_state_seq(&self, seq_id: i32) -> Result<Vec<u8>, LlamaError> {
+        let size = self.state_seq_size(seq_id);
+        tracing::Span::current().record("state_size_bytes", size);
+        let mut buf = vec![0u8; size];
+        // SAFETY: buf has exactly `size` bytes; the C API will write at most
+        // `size` and return how many were actually written.
+        let written = unsafe {
+            sys::llama_state_seq_get_data(self.ptr.as_ptr(), buf.as_mut_ptr(), size, seq_id)
+        };
+        if written != size {
+            // Upstream contract: llama_state_seq_get_data should write
+            // exactly `state_seq_get_size` bytes. Anything less means the
+            // pinned llama.cpp version is misbehaving.
+            return Err(LlamaError::DecodeFailed(-1));
+        }
+        Ok(buf)
+    }
+
+    /// Restore a serialized KV state into sequence `dest_seq_id`.
+    ///
+    /// The destination sequence's existing KV state is replaced. The state
+    /// blob must have been produced by [`Self::save_state_seq`] on a
+    /// **compatible** context (same model + same llama.cpp version).
+    ///
+    /// # Errors
+    /// [`LlamaError::DecodeFailed`] if the C API returns 0 (per upstream:
+    /// "Returns: Positive Ok, Zero Failed to load").
+    #[tracing::instrument(level = "debug", skip(self, state), fields(state_size_bytes = state.len()))]
+    pub fn restore_state_seq(&mut self, state: &[u8], dest_seq_id: i32) -> Result<(), LlamaError> {
+        // SAFETY: state is borrowed for the call's duration; src ptr is valid
+        // for `state.len()` readable bytes.
+        let read = unsafe {
+            sys::llama_state_seq_set_data(
+                self.ptr.as_ptr(),
+                state.as_ptr(),
+                state.len(),
+                dest_seq_id,
+            )
+        };
+        if read == 0 {
+            Err(LlamaError::DecodeFailed(-2))
+        } else {
+            Ok(())
+        }
     }
 
     /// Underlying context pointer for the sampler — used by [`crate::Sampler`]

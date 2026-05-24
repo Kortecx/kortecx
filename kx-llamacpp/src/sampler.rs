@@ -61,15 +61,16 @@ impl<'b> Sampler<'b> {
 
     /// Sample the next token using the i-th set of logits in the last decoded
     /// batch. Use `-1` to sample from the last position.
+    #[tracing::instrument(level = "trace", skip(self, ctx))]
     pub fn sample(&mut self, ctx: &mut Context<'_, '_>, idx: i32) -> Token {
         // SAFETY: sampler + ctx are live; the sampler reads logits via ctx.
-        unsafe { sys::llama_sampler_sample(self.ptr.as_ptr(), ctx.raw_mut(), idx) }
+        Token(unsafe { sys::llama_sampler_sample(self.ptr.as_ptr(), ctx.raw_mut(), idx) })
     }
 
     /// Inform the sampler that `token` was accepted (so stateful samplers like
     /// repetition penalties / mirostat can update their history).
     pub fn accept(&mut self, token: Token) {
-        unsafe { sys::llama_sampler_accept(self.ptr.as_ptr(), token) }
+        unsafe { sys::llama_sampler_accept(self.ptr.as_ptr(), token.0) }
     }
 
     /// Reset internal sampler state (clears repetition history, mirostat
