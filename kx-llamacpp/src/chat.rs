@@ -30,6 +30,19 @@ use crate::model::Model;
 /// `role` is the speaker tag the template expects ("system", "user",
 /// "assistant", "tool", etc. — model-specific). `content` is the message
 /// body.
+///
+/// # Examples
+///
+/// ```
+/// use kx_llamacpp::ChatMessage;
+///
+/// let m = ChatMessage::user("Hello, world");
+/// assert_eq!(m.role, "user");
+/// assert_eq!(m.content, "Hello, world");
+///
+/// let custom = ChatMessage::new("tool", "{\"result\": 42}");
+/// assert_eq!(custom.role, "tool");
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChatMessage {
     /// Speaker tag (e.g. "system", "user", "assistant").
@@ -96,10 +109,10 @@ impl<'b> Model<'b> {
     ///   call).
     ///
     /// # Errors
-    /// - [`LlamaError::DecodeFailed`] re-purposed as "template apply failed"
-    ///   if llama.cpp returns a negative status. The model lacks the
-    ///   template entirely if `chat_template(None)` returns `None` — call
-    ///   that first to check.
+    /// - [`LlamaError::ChatTemplateFailed`] if llama.cpp returns a negative
+    ///   status (malformed template, unknown variable, etc.). The model
+    ///   lacks the template entirely if `chat_template(None)` returns
+    ///   `None` — call that first to check.
     #[tracing::instrument(level = "debug", skip(self, messages), fields(n_msg = messages.len()))]
     pub fn apply_chat_template(
         &self,
@@ -172,11 +185,11 @@ impl<'b> Model<'b> {
                 )
             };
             if n2 < 0 {
-                return Err(LlamaError::DecodeFailed(n2));
+                return Err(LlamaError::ChatTemplateFailed(n2));
             }
             n2
         } else if n < 0 {
-            return Err(LlamaError::DecodeFailed(n));
+            return Err(LlamaError::ChatTemplateFailed(n));
         } else {
             n
         };
