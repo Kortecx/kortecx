@@ -59,16 +59,20 @@
 
 pub mod backend;
 pub mod batch;
+pub mod chat;
 pub mod context;
 pub mod error;
+pub mod generator;
 pub mod model;
 pub mod sampler;
 pub mod vocab;
 
 pub use backend::LlamaBackend;
 pub use batch::Batch;
+pub use chat::ChatMessage;
 pub use context::{Context, ContextParams, PerfData, PoolingType};
 pub use error::LlamaError;
+pub use generator::Generator;
 pub use model::{Model, ModelParams};
 pub use sampler::{Sampler, SamplerChainBuilder};
 pub use vocab::{Token, Vocab};
@@ -172,8 +176,8 @@ mod tests {
         let mut batch = Batch::with_capacity(8, 1);
         assert_eq!(batch.n_tokens(), 0);
         assert_eq!(batch.capacity(), 8);
-        batch.add(101, 0, &[0], true);
-        batch.add(202, 1, &[0], false);
+        batch.add(Token(101), 0, &[0], true);
+        batch.add(Token(202), 1, &[0], false);
         assert_eq!(batch.n_tokens(), 2);
         batch.clear();
         assert_eq!(batch.n_tokens(), 0);
@@ -183,10 +187,10 @@ mod tests {
     #[should_panic(expected = "Batch is full")]
     fn batch_overflow_panics() {
         let mut batch = Batch::with_capacity(2, 1);
-        batch.add(1, 0, &[0], false);
-        batch.add(2, 1, &[0], false);
+        batch.add(Token(1), 0, &[0], false);
+        batch.add(Token(2), 1, &[0], false);
         // This third add must panic.
-        batch.add(3, 2, &[0], false);
+        batch.add(Token(3), 2, &[0], false);
     }
 
     #[test]
@@ -198,5 +202,29 @@ mod tests {
             .with_use_mmap(true)
             .with_use_mlock(false)
             .with_check_tensors(false);
+    }
+
+    /// SN-4 reachability: `Sampler::accept` is a no-op for stateless samplers
+    /// (greedy / dist) but must not crash. Wrapper-level proof that the FFI
+    /// call links and is safe to invoke unconditionally.
+    #[test]
+    fn sampler_accept_does_not_crash() {
+        let backend = LlamaBackend::new().unwrap();
+        let mut sampler = Sampler::greedy(&backend).unwrap();
+        sampler.accept(Token(42));
+        sampler.accept(Token(100));
+        sampler.accept(Token(0));
+    }
+
+    /// SN-4 reachability: `Sampler::reset` is meaningful for stateful samplers
+    /// (penalties, mirostat) but valid for stateless chains too. Proves the
+    /// FFI call links.
+    #[test]
+    fn sampler_reset_does_not_crash() {
+        let backend = LlamaBackend::new().unwrap();
+        let mut sampler = Sampler::typical(&backend, 0.7, 40, 0.95, 1234).unwrap();
+        sampler.reset();
+        sampler.accept(Token(5));
+        sampler.reset();
     }
 }

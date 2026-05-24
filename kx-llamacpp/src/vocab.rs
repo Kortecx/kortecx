@@ -3,6 +3,7 @@
 //! The vocab is owned by [`crate::Model`]; this type is a lifetime-tied borrow
 //! that exposes tokenization, detokenization, and special-token queries.
 
+use std::fmt;
 use std::ptr::NonNull;
 
 use kx_llamacpp_sys as sys;
@@ -10,8 +11,67 @@ use kx_llamacpp_sys as sys;
 use crate::error::LlamaError;
 use crate::model::Model;
 
-/// A token id (int32). Bare type alias keeps the type ergonomic for indexing.
-pub type Token = i32;
+/// A token id wrapping `i32`.
+///
+/// Newtype rather than a bare alias so the compiler distinguishes tokens from
+/// positions / sequence ids (which are also `i32` on the C side). Construct
+/// via `Token(id)`, `Token::from(id)`, or directly out of [`Vocab`] /
+/// [`crate::Sampler`] calls. Extract the raw id via `.0`, `.id()`, or
+/// `i32::from(token)`.
+///
+/// Convenience methods ([`Self::is_eog`], [`Self::to_piece`]) mirror the
+/// `Vocab` API so token-centric code can call them on the token directly.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Token(pub i32);
+
+impl Token {
+    /// The raw token id (alias for `.0`).
+    #[inline]
+    pub fn id(&self) -> i32 {
+        self.0
+    }
+
+    /// True if this token is an end-of-generation marker for `vocab`.
+    /// Convenience for [`Vocab::is_eog`].
+    pub fn is_eog(&self, vocab: &Vocab<'_, '_>) -> bool {
+        vocab.is_eog(*self)
+    }
+
+    /// Convert this token to its UTF-8 piece (bytes) via `vocab`.
+    /// Convenience for [`Vocab::token_to_piece`] with `lstrip = 0`, `special = false`.
+    ///
+    /// # Errors
+    /// See [`Vocab::token_to_piece`].
+    pub fn to_piece(&self, vocab: &Vocab<'_, '_>) -> Result<Vec<u8>, LlamaError> {
+        vocab.token_to_piece(*self, 0, false)
+    }
+}
+
+impl fmt::Debug for Token {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Token({})", self.0)
+    }
+}
+
+impl fmt::Display for Token {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl From<i32> for Token {
+    #[inline]
+    fn from(id: i32) -> Self {
+        Token(id)
+    }
+}
+
+impl From<Token> for i32 {
+    #[inline]
+    fn from(t: Token) -> Self {
+        t.0
+    }
+}
 
 /// Borrowed handle to a model's vocabulary.
 pub struct Vocab<'m, 'b: 'm> {
@@ -35,22 +95,22 @@ impl<'m, 'b: 'm> Vocab<'m, 'b> {
 
     /// Beginning-of-sentence token (or -1 / sentinel if the vocab has none).
     pub fn bos(&self) -> Token {
-        unsafe { sys::llama_vocab_bos(self.ptr.as_ptr()) }
+        Token(unsafe { sys::llama_vocab_bos(self.ptr.as_ptr()) })
     }
 
     /// End-of-sentence token.
     pub fn eos(&self) -> Token {
-        unsafe { sys::llama_vocab_eos(self.ptr.as_ptr()) }
+        Token(unsafe { sys::llama_vocab_eos(self.ptr.as_ptr()) })
     }
 
     /// Newline token.
     pub fn nl(&self) -> Token {
-        unsafe { sys::llama_vocab_nl(self.ptr.as_ptr()) }
+        Token(unsafe { sys::llama_vocab_nl(self.ptr.as_ptr()) })
     }
 
     /// Is this token an end-of-generation marker? (EOS, EOT, EOM — varies by model.)
     pub fn is_eog(&self, token: Token) -> bool {
-        unsafe { sys::llama_vocab_is_eog(self.ptr.as_ptr(), token) }
+        unsafe { sys::llama_vocab_is_eog(self.ptr.as_ptr(), token.0) }
     }
 
     /// Tokenize `text` into a vector of token ids.
@@ -70,12 +130,15 @@ impl<'m, 'b: 'm> Vocab<'m, 'b> {
     ) -> Result<Vec<Token>, LlamaError> {
         // First pass with a small buffer; if llama returns -n (would need n
         // tokens), resize and retry once. That matches the upstream pattern.
+        // Token is #[repr(transparent)] over i32 in practice (single i32 field
+        // with `#[derive(Copy)]`), so the FFI-side `*mut llama_token` (= i32)
+        // is layout-compatible — we point llama at the inner i32s directly.
         let bytes = text.as_bytes();
         let mut capacity = bytes.len().max(8) + 1;
-        let mut out = vec![0 as Token; capacity];
+        let mut out: Vec<i32> = vec![0; capacity];
 
         // SAFETY: vocab ptr is valid; text+len define a byte slice; out provides
-        // a writable buffer of `capacity` Token slots.
+        // a writable buffer of `capacity` i32 slots.
         let rc = unsafe {
             sys::llama_tokenize(
                 self.ptr.as_ptr(),
@@ -88,10 +151,9 @@ impl<'m, 'b: 'm> Vocab<'m, 'b> {
             )
         };
 
-        if rc < 0 {
-            // Need -rc tokens.
+        let written = if rc < 0 {
             capacity = (-rc) as usize;
-            out = vec![0 as Token; capacity];
+            out = vec![0; capacity];
             let rc2 = unsafe {
                 sys::llama_tokenize(
                     self.ptr.as_ptr(),
@@ -106,12 +168,13 @@ impl<'m, 'b: 'm> Vocab<'m, 'b> {
             if rc2 < 0 {
                 return Err(LlamaError::TokenizeFailed(rc2));
             }
-            out.truncate(rc2 as usize);
-            Ok(out)
+            rc2
         } else {
-            out.truncate(rc as usize);
-            Ok(out)
-        }
+            rc
+        };
+
+        out.truncate(written.max(0) as usize);
+        Ok(out.into_iter().map(Token).collect())
     }
 
     /// Convert a single token to its UTF-8 piece (bytes, since some tokens
@@ -135,7 +198,7 @@ impl<'m, 'b: 'm> Vocab<'m, 'b> {
         let rc = unsafe {
             sys::llama_token_to_piece(
                 self.ptr.as_ptr(),
-                token,
+                token.0,
                 buf.as_mut_ptr().cast::<core::ffi::c_char>(),
                 buf.len() as i32,
                 lstrip,
@@ -149,7 +212,7 @@ impl<'m, 'b: 'm> Vocab<'m, 'b> {
             let rc2 = unsafe {
                 sys::llama_token_to_piece(
                     self.ptr.as_ptr(),
-                    token,
+                    token.0,
                     buf.as_mut_ptr().cast::<core::ffi::c_char>(),
                     buf.len() as i32,
                     lstrip,
@@ -157,7 +220,10 @@ impl<'m, 'b: 'm> Vocab<'m, 'b> {
                 )
             };
             if rc2 < 0 {
-                return Err(LlamaError::DetokenizeFailed { token, rc: rc2 });
+                return Err(LlamaError::DetokenizeFailed {
+                    token: token.0,
+                    rc: rc2,
+                });
             }
             rc2
         } else {

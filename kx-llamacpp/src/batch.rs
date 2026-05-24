@@ -77,7 +77,7 @@ impl Batch {
         // checked the bound. seq_id is an array-of-arrays; the j-th inner array
         // is sized to n_seq_max (asserted via the construction-time guarantee).
         unsafe {
-            *self.inner.token.add(i) = token;
+            *self.inner.token.add(i) = token.0;
             *self.inner.pos.add(i) = pos;
             *self.inner.n_seq_id.add(i) = seq_ids.len() as i32;
             let seq_ptr = *self.inner.seq_id.add(i);

@@ -42,15 +42,31 @@ pub enum LlamaError {
     DecodeFailed(i32),
 
     /// `llama_encode` returned a non-zero status (encoder-decoder models only).
+    ///
+    /// **Reachability (SN-4 #4):** the test fixture (`stories260K.gguf`) is a
+    /// decoder-only model so `Context::encode` cannot be exercised at the
+    /// wrapper layer today. This variant is asserted to be reachable in the
+    /// `kx-inference` integration tests at P1.8 once an encoder-decoder model
+    /// is part of the test corpus.
     #[error("llama_encode returned non-zero status {0}")]
     EncodeFailed(i32),
 
-    /// Sampler chain construction failed (e.g. llama_sampler_chain_init returned NULL,
-    /// which would only happen under OOM).
+    /// Sampler chain construction failed (e.g. `llama_sampler_chain_init`
+    /// returned NULL).
+    ///
+    /// **Reachability (SN-4 #4):** llama.cpp's `llama_sampler_chain_init` is
+    /// documented to fail only under host-OOM, which cannot be reliably
+    /// induced in a test. The variant is kept for API completeness; if it
+    /// ever fires in production it indicates the runtime is in an
+    /// unrecoverable allocator state.
     #[error("failed to construct sampler chain")]
     SamplerChainFailed,
 
     /// A constructor for a particular sampler returned NULL.
+    ///
+    /// **Reachability (SN-4 #4):** like [`Self::SamplerChainFailed`], NULL
+    /// from `llama_sampler_init_*` only occurs under host-OOM. Kept for API
+    /// completeness; not testable without a fault-injection harness.
     #[error("failed to construct sampler: {0}")]
     SamplerInitFailed(&'static str),
 

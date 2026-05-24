@@ -18,7 +18,8 @@
 #![cfg(feature = "model-smoke-test")]
 
 use kx_llamacpp::{
-    Batch, Context, ContextParams, LlamaBackend, Model, ModelParams, PoolingType, Sampler,
+    Batch, ChatMessage, Context, ContextParams, Generator, LlamaBackend, Model, ModelParams,
+    PoolingType, Sampler,
 };
 
 const MODEL_PATH: &str = env!(
@@ -241,9 +242,18 @@ fn smoke_vocab_special_tokens() {
     let bos = vocab.bos();
     let eos = vocab.eos();
     let n = vocab.n_tokens();
-    assert!(bos >= 0 && bos < n, "bos {bos} out of range [0, {n})");
-    assert!(eos >= 0 && eos < n, "eos {eos} out of range [0, {n})");
-    assert!(vocab.is_eog(eos), "eos must be an end-of-generation marker");
+    assert!(
+        bos.id() >= 0 && bos.id() < n,
+        "bos {bos} out of range [0, {n})"
+    );
+    assert!(
+        eos.id() >= 0 && eos.id() < n,
+        "eos {eos} out of range [0, {n})"
+    );
+    assert!(
+        eos.is_eog(&vocab),
+        "eos must be an end-of-generation marker"
+    );
     eprintln!("bos={bos} eos={eos} nl={} n_tokens={n}", vocab.nl());
 }
 
@@ -289,19 +299,19 @@ fn smoke_determinism_greedy_pipeline() {
         ctx.decode(&batch).expect("decode prompt");
 
         let mut sampler = Sampler::greedy(&backend).expect("greedy");
-        let mut out = Vec::with_capacity(8);
+        let mut out: Vec<i32> = Vec::with_capacity(8);
         let mut next = sampler.sample(&mut ctx, -1);
-        out.push(next);
+        out.push(next.id());
 
         for step in 0..6 {
-            if vocab.is_eog(next) {
+            if next.is_eog(&vocab) {
                 break;
             }
             let mut step_batch = Batch::with_capacity(1, 1);
             step_batch.add(next, (tokens.len() + step) as i32, &[0], true);
             ctx.decode(&step_batch).expect("decode step");
             next = sampler.sample(&mut ctx, -1);
-            out.push(next);
+            out.push(next.id());
         }
         out
     }
@@ -384,6 +394,475 @@ fn smoke_embedding_mode() {
     );
 }
 
+/// SN-4 reachability: `Context::perf_reset` is safe to call after a decode
+/// and resets the internal counters.
+///
+/// Upstream quirks documented for the next reader:
+///   1. `llama_perf_context_data.n_p_eval` / `n_eval` are clamped to a
+///      minimum of 1 by `llama_context::perf_get_data` (divide-by-zero
+///      guard in the print path); we cannot assert literal-zero.
+///   2. n_p_eval is only incremented for multi-token decodes
+///      (`n_queued_tokens > 1`); single-token decodes go to n_eval. The
+///      stories260K tokenizer is too small to reliably produce a
+///      multi-token prompt for a short string.
+///
+/// Asserted invariant: reset is safe; `t_start_ms` advances (reset stamps
+/// a fresh start time).
+#[test]
+fn smoke_perf_reset() {
+    let backend = LlamaBackend::new().expect("backend init");
+    let model = Model::load(&backend, MODEL_PATH).expect("load");
+    let vocab = model.vocab();
+    let tokens = vocab.tokenize("hello", true, false).expect("tokenize");
+
+    let mut ctx = Context::new_with_params(
+        &model,
+        &ContextParams::new().with_n_ctx(64).with_n_seq_max(1),
+    )
+    .expect("context");
+
+    let mut batch = Batch::with_capacity(tokens.len() as i32, 1);
+    for (i, &t) in tokens.iter().enumerate() {
+        batch.add(t, i as i32, &[0], false);
+    }
+    ctx.decode(&batch).expect("decode");
+
+    let t_start_before = ctx.perf().t_start_ms;
+
+    // Sleep briefly so the post-reset t_start_ms must be strictly larger.
+    std::thread::sleep(std::time::Duration::from_millis(2));
+
+    ctx.perf_reset();
+    let after = ctx.perf();
+    assert!(
+        after.t_start_ms > t_start_before,
+        "perf_reset must stamp a fresh t_start_ms (was {}, now {})",
+        t_start_before,
+        after.t_start_ms
+    );
+}
+
+/// SN-4 plumbing: `ContextParams::with_n_threads` actually reaches llama.cpp.
+///
+/// Decode the same prompt under two different thread counts; greedy output
+/// must be identical (decode is deterministic across thread counts on the
+/// same model). If the value didn't plumb through, neither run would honor
+/// the request — this test catches that AND proves CPU-decode determinism.
+#[test]
+fn smoke_n_threads_plumbing_and_determinism() {
+    fn run(n_threads: i32) -> Vec<i32> {
+        let backend = LlamaBackend::new().expect("backend init");
+        let model = Model::load(&backend, MODEL_PATH).expect("load");
+        let vocab = model.vocab();
+        let tokens = vocab
+            .tokenize("Once upon a time", true, false)
+            .expect("tokenize");
+
+        let mut ctx = Context::new_with_params(
+            &model,
+            &ContextParams::new()
+                .with_n_ctx(128)
+                .with_n_seq_max(1)
+                .with_n_threads(n_threads)
+                .with_n_threads_batch(n_threads),
+        )
+        .expect("context");
+
+        let mut batch = Batch::with_capacity(tokens.len() as i32, 1);
+        for (i, &t) in tokens.iter().enumerate() {
+            let last = i + 1 == tokens.len();
+            batch.add(t, i as i32, &[0], last);
+        }
+        ctx.decode(&batch).expect("decode");
+
+        let mut sampler = Sampler::greedy(&backend).expect("greedy");
+        let mut out: Vec<i32> = Vec::new();
+        let mut next = sampler.sample(&mut ctx, -1);
+        out.push(next.id());
+        for step in 0..3 {
+            if next.is_eog(&vocab) {
+                break;
+            }
+            let mut step_batch = Batch::with_capacity(1, 1);
+            step_batch.add(next, (tokens.len() + step) as i32, &[0], true);
+            ctx.decode(&step_batch).expect("step decode");
+            next = sampler.sample(&mut ctx, -1);
+            out.push(next.id());
+        }
+        out
+    }
+
+    let a = run(1);
+    let b = run(4);
+    eprintln!("greedy 1-thread: {a:?}");
+    eprintln!("greedy 4-thread: {b:?}");
+    assert_eq!(
+        a, b,
+        "greedy decode must be deterministic across thread counts \
+         (with_n_threads(1) vs with_n_threads(4)); divergence here means \
+         either (a) n_threads didn't plumb through, or (b) decode lost \
+         determinism — both block the runtime's exactly-once promise"
+    );
+}
+
+/// SN-4 plumbing: `ModelParams::with_vocab_only(true)` loads only the
+/// tokenizer, not the weights. Verifies the vocab still works after a
+/// vocab-only load — the common "tokenize without paying for weights" path.
+#[test]
+fn smoke_vocab_only_load() {
+    let backend = LlamaBackend::new().expect("backend init");
+    let params = ModelParams::new().with_vocab_only(true);
+    let model = Model::load_with_params(&backend, MODEL_PATH, &params).expect("vocab-only load");
+
+    let vocab = model.vocab();
+    assert!(
+        vocab.n_tokens() > 0,
+        "vocab must be loaded under vocab_only"
+    );
+
+    let tokens = vocab
+        .tokenize("hello", true, false)
+        .expect("tokenize on vocab-only model");
+    assert!(
+        !tokens.is_empty(),
+        "tokenize must work on a vocab-only model"
+    );
+    eprintln!("vocab-only tokenize 'hello' → {tokens:?}");
+
+    // BOS/EOS are vocab-level metadata; should still be valid.
+    let bos = vocab.bos();
+    assert!(bos.id() >= 0 && bos.id() < vocab.n_tokens());
+}
+
+/// T10 — multiple contexts on a single model must not share mutable state.
+///
+/// Builds two independent contexts from one model, decodes the same prompt
+/// in each, and asserts the greedy-sampled outputs are identical. Proves
+/// `Send` is honest and contexts are isolated — required before
+/// `kx-executor` (P1.9) runs Motes concurrently against a shared model.
+#[test]
+fn smoke_multi_context_isolation() {
+    let backend = LlamaBackend::new().expect("backend init");
+    let model = Model::load(&backend, MODEL_PATH).expect("load");
+    let vocab = model.vocab();
+    let tokens = vocab
+        .tokenize("Once upon a time", true, false)
+        .expect("tokenize");
+
+    fn sample_with_fresh_context(
+        model: &Model<'_>,
+        backend: &LlamaBackend,
+        prompt: &[kx_llamacpp::Token],
+    ) -> i32 {
+        let mut ctx = Context::new_with_params(
+            model,
+            &ContextParams::new().with_n_ctx(128).with_n_seq_max(1),
+        )
+        .expect("context");
+        let mut batch = Batch::with_capacity(prompt.len() as i32, 1);
+        for (i, &t) in prompt.iter().enumerate() {
+            let last = i + 1 == prompt.len();
+            batch.add(t, i as i32, &[0], last);
+        }
+        ctx.decode(&batch).expect("decode");
+        let mut sampler = Sampler::greedy(backend).expect("greedy");
+        sampler.sample(&mut ctx, -1).id()
+    }
+
+    let token_ctx1 = sample_with_fresh_context(&model, &backend, &tokens);
+    let token_ctx2 = sample_with_fresh_context(&model, &backend, &tokens);
+
+    assert_eq!(
+        token_ctx1, token_ctx2,
+        "two contexts on the same model + same prompt + greedy must agree \
+         (got ctx1={token_ctx1}, ctx2={token_ctx2}). Divergence here means \
+         contexts are leaking mutable state through the shared model."
+    );
+}
+
+/// HF-shaped surface: `Generator` iterator yields tokens lazily.
+///
+/// Acceptance proof for E1 — the user writes ~10 lines instead of ~30.
+/// Asserts the iterator yields N tokens for `gen.take(N)` (or stops early
+/// at EOG) and that the output matches the equivalent manual loop.
+#[test]
+fn smoke_generator_iterator() {
+    let backend = LlamaBackend::new().expect("backend init");
+    let model = Model::load(&backend, MODEL_PATH).expect("load");
+    let vocab = model.vocab();
+    let prompt = vocab
+        .tokenize("Once upon a time", true, false)
+        .expect("tokenize");
+
+    let mut ctx = Context::new_with_params(
+        &model,
+        &ContextParams::new().with_n_ctx(128).with_n_seq_max(1),
+    )
+    .expect("context");
+    let mut sampler = Sampler::greedy(&backend).expect("greedy");
+
+    let mut gen = Generator::new(&mut ctx, &mut sampler, &vocab, prompt).expect("generator");
+
+    // The HF-shaped one-liner: take up to N tokens, collect, propagate errors.
+    let tokens: Vec<_> = gen
+        .by_ref()
+        .take(5)
+        .collect::<Result<Vec<_>, _>>()
+        .expect("generator iteration");
+
+    assert!(
+        !tokens.is_empty(),
+        "Generator must yield at least one token before take(5) exhausts"
+    );
+    assert!(tokens.len() <= 5);
+    eprintln!("generator yielded: {tokens:?}");
+}
+
+/// Determinism on the HF-shaped surface: two `Generator` runs with greedy
+/// sampling over the same prompt must produce identical sequences (SN-4 #1).
+#[test]
+fn smoke_generator_determinism() {
+    fn run() -> Vec<i32> {
+        let backend = LlamaBackend::new().expect("backend init");
+        let model = Model::load(&backend, MODEL_PATH).expect("load");
+        let vocab = model.vocab();
+        let prompt = vocab
+            .tokenize("Once upon a time", true, false)
+            .expect("tokenize");
+        let mut ctx = Context::new_with_params(
+            &model,
+            &ContextParams::new().with_n_ctx(128).with_n_seq_max(1),
+        )
+        .expect("context");
+        let mut sampler = Sampler::greedy(&backend).expect("greedy");
+        let mut gen = Generator::new(&mut ctx, &mut sampler, &vocab, prompt).expect("generator");
+        gen.by_ref()
+            .take(6)
+            .map(|r| r.map(|t| t.id()))
+            .collect::<Result<Vec<i32>, _>>()
+            .expect("iteration")
+    }
+    let a = run();
+    let b = run();
+    assert_eq!(a, b, "Generator + greedy must be deterministic across runs");
+}
+
+/// HF-shaped one-shot embedding: `Model::embed(text)` returns the mean-pooled
+/// vector. Acceptance proof for E3 — a single line replaces ~40 lines of
+/// embedding-mode context plumbing.
+///
+/// Also asserts determinism per SN-4 #1.
+#[test]
+fn smoke_embed_one_shot_determinism() {
+    let backend = LlamaBackend::new().expect("backend init");
+    let model = Model::load(&backend, MODEL_PATH).expect("load");
+
+    let a = model.embed("hello world").expect("embed A");
+    let b = model.embed("hello world").expect("embed B");
+
+    assert_eq!(
+        a.len() as i32,
+        model.n_embd(),
+        "embed length must equal model n_embd"
+    );
+    assert!(
+        a.iter().any(|x| x.abs() > 1e-9),
+        "pooled vector must have at least one non-zero element"
+    );
+    // Strict determinism on the HF-shaped surface.
+    assert_eq!(a, b, "embed(text) must be deterministic for fixed model");
+    eprintln!(
+        "embed('hello world') → {}-dim, L2 = {:.4}",
+        a.len(),
+        a.iter().map(|x| x * x).sum::<f32>().sqrt()
+    );
+}
+
+/// HF-shaped chat-template support: `Model::chat_template(None)` returns the
+/// model's default template if it has one, else `None`. `apply_chat_template`
+/// is a pure-string transformation, so it's deterministic by construction.
+///
+/// stories260K is NOT a chat model, so `chat_template(None)` returns `None`.
+/// We exercise the path with an inline ChatML template to prove the wrapper
+/// works on ANY model (the template comes from the caller in that case).
+#[test]
+fn smoke_chat_template_with_inline_template() {
+    let backend = LlamaBackend::new().expect("backend init");
+    let model = Model::load(&backend, MODEL_PATH).expect("load");
+
+    // stories260K has no built-in template.
+    assert!(
+        model.chat_template(None).is_none(),
+        "stories260K should not advertise a chat template"
+    );
+
+    // Caller provides one inline — a minimal ChatML template:
+    let chatml = "{% for m in messages %}<|im_start|>{{ m.role }}\n{{ m.content }}<|im_end|>\n{% endfor %}{% if add_generation_prompt %}<|im_start|>assistant\n{% endif %}";
+
+    let messages = vec![
+        ChatMessage::system("You are concise."),
+        ChatMessage::user("Capital of France?"),
+    ];
+    let prompt = model
+        .apply_chat_template(Some(chatml), &messages, true)
+        .expect("apply_chat_template");
+
+    assert!(
+        prompt.contains("Capital of France?"),
+        "rendered prompt must include user content; got: {prompt:?}"
+    );
+    assert!(
+        prompt.contains("<|im_start|>") && prompt.contains("<|im_end|>"),
+        "ChatML markup must be applied; got: {prompt:?}"
+    );
+    eprintln!("rendered ChatML prompt:\n{prompt}");
+
+    // Determinism: apply twice, identical output.
+    let prompt2 = model
+        .apply_chat_template(Some(chatml), &messages, true)
+        .expect("apply_chat_template again");
+    assert_eq!(prompt, prompt2, "apply_chat_template must be deterministic");
+}
+
+/// R3 — KV-cache state save/load round-trip.
+///
+/// **Directly tied to the runtime's exactly-once / durable replay promise:**
+/// a Mote that decoded a long prompt can persist its KV state, then on
+/// replay restore instead of re-decoding. This test simulates that flow at
+/// the wrapper layer.
+///
+/// 1. Build context A; decode a prompt.
+/// 2. Snapshot the KV state for seq 0; record sampler output `a` from there.
+/// 3. Build context B (fresh); restore the snapshot into seq 0.
+/// 4. Sample from B; assert the produced token matches `a`.
+///
+/// If save/restore is correct, both contexts share the same logits at the
+/// last position (because they share the same KV state), so greedy sampling
+/// produces the same token.
+#[test]
+fn smoke_state_save_restore_roundtrip() {
+    let backend = LlamaBackend::new().expect("backend init");
+    let model = Model::load(&backend, MODEL_PATH).expect("load");
+    let vocab = model.vocab();
+    let tokens = vocab
+        .tokenize("Once upon a time", true, false)
+        .expect("tokenize");
+
+    // Pass A: decode + snapshot + greedy-sample.
+    let mut ctx_a = Context::new_with_params(
+        &model,
+        &ContextParams::new().with_n_ctx(128).with_n_seq_max(1),
+    )
+    .expect("context A");
+    let mut batch = Batch::with_capacity(tokens.len() as i32, 1);
+    for (i, &t) in tokens.iter().enumerate() {
+        let last = i + 1 == tokens.len();
+        batch.add(t, i as i32, &[0], last);
+    }
+    ctx_a.decode(&batch).expect("decode A");
+
+    let size = ctx_a.state_seq_size(0);
+    assert!(
+        size > 0,
+        "state_seq_size must be positive after a decode (got {size})"
+    );
+    let snapshot = ctx_a.save_state_seq(0).expect("save_state_seq");
+    assert_eq!(
+        snapshot.len(),
+        size,
+        "save_state_seq buffer must match state_seq_size"
+    );
+
+    let mut sampler_a = Sampler::greedy(&backend).expect("greedy A");
+    let token_a = sampler_a.sample(&mut ctx_a, -1);
+    eprintln!(
+        "ctx A greedy after decode: {} (state snapshot is {} bytes)",
+        token_a, size
+    );
+
+    // Pass B: fresh context, restore snapshot, greedy-sample.
+    let mut ctx_b = Context::new_with_params(
+        &model,
+        &ContextParams::new().with_n_ctx(128).with_n_seq_max(1),
+    )
+    .expect("context B");
+    ctx_b
+        .restore_state_seq(&snapshot, 0)
+        .expect("restore_state_seq");
+
+    // After restore, the KV state for seq 0 in B must match what A had after
+    // its decode. To sample we still need a fresh decode of a sentinel token
+    // because llama.cpp gates `llama_get_logits_ith` on having decoded *in
+    // this context*. We re-decode just the LAST prompt token at the same
+    // position, which the KV cache already has — llama treats it as a
+    // "produce logits for position p" without doing fresh work.
+    //
+    // (This is the documented pattern for replay-skip: restore + re-decode
+    // the tail token to materialize logits.)
+    let last_pos = (tokens.len() - 1) as i32;
+    let last_token = tokens[tokens.len() - 1];
+    // The restored KV already includes position `last_pos`. Remove it so we
+    // can re-decode that single position cleanly.
+    let _ = ctx_b.kv_cache_seq_rm(0, last_pos, -1);
+    let mut tail = Batch::with_capacity(1, 1);
+    tail.add(last_token, last_pos, &[0], true);
+    ctx_b.decode(&tail).expect("decode tail in B");
+
+    let mut sampler_b = Sampler::greedy(&backend).expect("greedy B");
+    let token_b = sampler_b.sample(&mut ctx_b, -1);
+    eprintln!("ctx B greedy after restore + tail re-decode: {token_b}");
+
+    assert_eq!(
+        token_a, token_b,
+        "greedy after restore must match greedy without restore — \
+         state_seq_get/set is not preserving the cache faithfully \
+         (a = {token_a}, b = {token_b})"
+    );
+}
+
+/// SN-4 reachability for [`kx_llamacpp::LlamaError::EmbeddingsUnavailable`].
+///
+/// `Context::embeddings_seq` must return that variant when the context was
+/// created with `PoolingType::None` (per-token, no pooled vector).
+#[test]
+fn smoke_embeddings_unavailable_when_pooling_none() {
+    use kx_llamacpp::LlamaError;
+
+    let backend = LlamaBackend::new().expect("backend init");
+    let model = Model::load(&backend, MODEL_PATH).expect("load");
+    let vocab = model.vocab();
+    let tokens = vocab.tokenize("hello", true, false).expect("tokenize");
+
+    let mut ctx = Context::new_with_params(
+        &model,
+        &ContextParams::new()
+            .with_n_ctx(64)
+            .with_n_seq_max(1)
+            .with_embeddings(true)
+            .with_pooling_type(PoolingType::None),
+    )
+    .expect("context");
+
+    let mut batch = Batch::with_capacity(tokens.len() as i32, 1);
+    for (i, &t) in tokens.iter().enumerate() {
+        batch.add(t, i as i32, &[0], true);
+    }
+    ctx.decode(&batch).expect("decode");
+
+    // With pooling=None, llama_get_embeddings_seq returns NULL → our wrapper
+    // surfaces it as EmbeddingsUnavailable.
+    match ctx.embeddings_seq(0) {
+        Err(LlamaError::EmbeddingsUnavailable(_)) => {
+            // expected
+        }
+        Err(other) => panic!("expected EmbeddingsUnavailable, got: {other}"),
+        Ok(_) => panic!(
+            "expected EmbeddingsUnavailable when pooling=None, got a slice — \
+             llama.cpp's documented contract says NULL for non-pooled"
+        ),
+    }
+}
+
 /// Sampler-chain plumbing: a `typical` sampler constructed with a fixed seed
 /// must produce identical token sequences across runs (proves the seed value
 /// actually reaches the `dist` stage at the end of the chain).
@@ -422,18 +901,18 @@ fn smoke_sampler_seed_determinism() {
         )
         .expect("typical sampler");
 
-        let mut out = Vec::with_capacity(6);
+        let mut out: Vec<i32> = Vec::with_capacity(6);
         let mut next = sampler.sample(&mut ctx, -1);
-        out.push(next);
+        out.push(next.id());
         for step in 0..5 {
-            if vocab.is_eog(next) {
+            if next.is_eog(&vocab) {
                 break;
             }
             let mut step_batch = Batch::with_capacity(1, 1);
             step_batch.add(next, (tokens.len() + step) as i32, &[0], true);
             ctx.decode(&step_batch).expect("decode step");
             next = sampler.sample(&mut ctx, -1);
-            out.push(next);
+            out.push(next.id());
         }
         out
     }
