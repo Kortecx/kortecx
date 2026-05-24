@@ -626,6 +626,7 @@ dependencies = [
  "blake3",
  "kx-content",
  "kx-mote",
+ "proptest",
  "rusqlite",
  "serde",
  "smallvec",

@@ -463,6 +463,26 @@ pub enum EncodeError {
 
 /// Encode a `JournalEntry` to its canonical on-disk byte representation
 /// (`journal-entry.md` §3-7).
+///
+/// # Examples
+///
+/// Round-trip a Failed entry through encode + decode:
+///
+/// ```
+/// use kx_journal::{decode_entry, encode_entry, FailureReason, JournalEntry};
+/// use kx_mote::MoteId;
+///
+/// let entry = JournalEntry::Failed {
+///     mote_id: MoteId::from_bytes([7u8; 32]),
+///     idempotency_key: [0xbb; 32],
+///     seq: 5,
+///     reason_class: FailureReason::WorkerCrashed,
+///     reporter_id: 0xdead_beef,
+/// };
+/// let bytes = encode_entry(&entry).unwrap();
+/// let decoded = decode_entry(&bytes).unwrap();
+/// assert_eq!(decoded, entry);
+/// ```
 pub fn encode_entry(entry: &JournalEntry) -> Result<Vec<u8>, EncodeError> {
     // Reserve worst-case Committed-with-128-parents.
     let mut out = Vec::with_capacity(MAX_ENTRY_LEN);
