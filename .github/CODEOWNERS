@@ -1,0 +1,44 @@
+# Code ownership for the OSS public repo.
+#
+# The maintainer is the single owner today. CODEOWNERS rules become
+# meaningful once additional collaborators are added; until then they
+# serve as a "this file is critical — change it deliberately" signal.
+#
+# Patterns under which any change must be reviewed by the listed owner(s)
+# (admin-bypass is allowed per the branch-protection rules but the rule
+# still surfaces these files in the PR reviewers list automatically).
+
+# ----- Identity-bearing crates (do not change MoteDef shape lightly) -----
+
+/kx-mote/                              @kortecx
+
+# ----- FFI boundary (unsafe-heavy; CMake/bindgen pipeline) ---------------
+
+/kx-llamacpp-sys/                      @kortecx
+/kx-llamacpp/                          @kortecx
+
+# ----- Storage layer (content-addressed; atomic-per-object) --------------
+
+/kx-content/                           @kortecx
+
+# ----- Journal (the synchronization substrate) ---------------------------
+
+/kx-journal/                           @kortecx
+
+# ----- Projection (read-side fold over journal) --------------------------
+
+/kx-projection/                        @kortecx
+
+# ----- CI + governance --------------------------------------------------
+
+/.github/workflows/                    @kortecx
+/.github/CODEOWNERS                    @kortecx
+/.github/pull_request_template.md      @kortecx
+
+# ----- Build orchestration ----------------------------------------------
+
+/justfile                              @kortecx
+/Cargo.toml                            @kortecx
+/Cargo.lock                            @kortecx
+/rust-toolchain.toml                   @kortecx
+/clippy.toml                           @kortecx
