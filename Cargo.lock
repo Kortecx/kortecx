@@ -700,6 +700,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "kx-tool-registry"
+version = "0.0.1"
+dependencies = [
+ "bincode",
+ "blake3",
+ "kx-content",
+ "kx-mote",
+ "kx-warrant",
+ "proptest",
+ "serde",
+ "thiserror",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "kx-warrant"
 version = "0.0.1"
 dependencies = [
