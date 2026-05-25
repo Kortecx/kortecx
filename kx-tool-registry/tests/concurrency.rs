@@ -14,9 +14,9 @@ use std::thread;
 use kx_content::ContentRef;
 use kx_mote::{ModelId, MoteId, ToolName, ToolVersion};
 use kx_tool_registry::{
-    registration_token_of, InMemoryToolRegistry, McpEndpointId, RegistrationError,
-    RegistrationStatus, RegistrationToken, ResolutionError, ResolvedTool, ReviewerId, ToolDef,
-    ToolKind, ToolProvenance, ToolRegistry, ToolResolutionEvent,
+    registration_token_of, IdempotencyClass, InMemoryToolRegistry, McpEndpointId,
+    RegistrationError, RegistrationStatus, RegistrationToken, ResolutionError, ResolvedTool,
+    ReviewerId, ToolDef, ToolKind, ToolProvenance, ToolRegistry, ToolResolutionEvent,
 };
 use kx_warrant::{
     ExecutorClass, FsMode, FsScope, Host, ModelRoute, MoteClass, NetScope, ResourceCeiling,
@@ -37,6 +37,7 @@ fn public_types_are_send_and_sync() {
     assert_send_sync::<RegistrationToken>();
 
     // Spec types
+    assert_send_sync::<IdempotencyClass>(); // NEW per PR 4.6 (D38 §2)
     assert_send_sync::<ToolKind>();
     assert_send_sync::<ToolDef>();
     assert_send_sync::<ToolProvenance>();
@@ -109,6 +110,7 @@ fn resolve_is_thread_independent() {
             },
         },
         description: "thread test".into(),
+        idempotency_class: IdempotencyClass::Token,
     };
     let _ = reg
         .register(
@@ -173,6 +175,7 @@ fn registration_token_of_is_thread_independent() {
             },
         },
         description: "test".into(),
+        idempotency_class: IdempotencyClass::Token,
     };
     let prov = ToolProvenance::SelfGenerated {
         generating_lineage_warrant: permissive_warrant(),

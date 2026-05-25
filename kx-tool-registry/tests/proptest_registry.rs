@@ -25,8 +25,9 @@ use std::path::PathBuf;
 use kx_content::ContentRef;
 use kx_mote::{ModelId, MoteId, ToolName, ToolVersion};
 use kx_tool_registry::{
-    registration_token_of, InMemoryToolRegistry, McpEndpointId, RegistrationError, ResolutionError,
-    ReviewerId, ToolDef, ToolKind, ToolProvenance, ToolRegistry, ToolResolutionEvent,
+    registration_token_of, IdempotencyClass, InMemoryToolRegistry, McpEndpointId,
+    RegistrationError, ResolutionError, ReviewerId, ToolDef, ToolKind, ToolProvenance,
+    ToolRegistry, ToolResolutionEvent,
 };
 use kx_warrant::{
     ExecutorClass, FsMode, FsScope, Host, ModelRoute, MoteClass, NetScope, ResourceCeiling,
@@ -123,12 +124,26 @@ fn permissive_warrant() -> WarrantSpec {
     }
 }
 
+/// Strategy enumerating ALL `IdempotencyClass` variants. **MUST be updated
+/// when a variant is added** — this strategy is the test surface's gate
+/// against silent variant addition (per `journal-txn.md` STEP 6.2 + the
+/// canonical-classifier-cannot-drift contract).
+fn arb_idempotency_class() -> impl Strategy<Value = IdempotencyClass> {
+    prop_oneof![
+        Just(IdempotencyClass::Token),
+        Just(IdempotencyClass::Readback),
+        Just(IdempotencyClass::Staged),
+        Just(IdempotencyClass::AtLeastOnce),
+    ]
+}
+
 prop_compose! {
     fn arb_def()(
         name in arb_tool_name(),
         version in arb_tool_version(),
         kind in arb_tool_kind(),
         mem_req in arb_mem_ceiling(),
+        idempotency_class in arb_idempotency_class(),
     ) -> ToolDef {
         let mut req = permissive_req();
         req.min_resource_ceiling.mem_bytes = mem_req;
@@ -138,6 +153,7 @@ prop_compose! {
             kind,
             required_capability: req,
             description: "arb tool".into(),
+            idempotency_class,
         }
     }
 }
@@ -230,6 +246,7 @@ proptest! {
             kind: ToolKind::Builtin,
             required_capability: permissive_req(),
             description: "needs lots of memory".into(),
+            idempotency_class: IdempotencyClass::Token,
         };
         def.required_capability.min_resource_ceiling.mem_bytes = mem_req;
         let mut reg = InMemoryToolRegistry::new();
@@ -279,6 +296,7 @@ proptest! {
             kind: ToolKind::Builtin,
             required_capability: permissive_req(),
             description: "subset-check parity".into(),
+            idempotency_class: IdempotencyClass::Token,
         };
         def.required_capability.min_resource_ceiling.mem_bytes = mem_req;
         let warrant = permissive_warrant();
@@ -329,6 +347,7 @@ fn self_gen_lifecycle_smoke() {
         kind: ToolKind::Builtin,
         required_capability: permissive_req(),
         description: "self-emitted".into(),
+        idempotency_class: IdempotencyClass::Token,
     };
     let token = reg
         .register(
