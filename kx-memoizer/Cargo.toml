@@ -1,0 +1,26 @@
+[package]
+name         = "kx-memoizer"
+version      = "0.0.1"
+edition      = { workspace = true }
+rust-version = { workspace = true }
+license      = { workspace = true }
+authors      = { workspace = true }
+repository   = { workspace = true }
+description  = "kortecx memoizer — pure lookup over projection state. EXACT cryptographic equality only; no similarity operator (SN-8). Returns CacheHit variants honoring the per-NdClass effect-once vs inference-once separation (validate-then-commit.md §10.5)."
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+kx-content    = { workspace = true }
+kx-mote       = { workspace = true }
+kx-projection = { workspace = true }
+serde         = { workspace = true }
+thiserror     = { workspace = true }
+tracing       = { workspace = true }
+
+[dev-dependencies]
+kx-journal         = { workspace = true }
+proptest           = { workspace = true }
+smallvec           = { workspace = true }
+tracing-subscriber = { workspace = true }
