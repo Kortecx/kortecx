@@ -78,6 +78,68 @@
 //! `Batch` and `LlamaBackend` have no inbound lifetime: they're free-standing.
 //! Every other type encodes its dependency through a generic lifetime so the
 //! borrow checker rejects use-after-free at compile time.
+//!
+//! ## Safety invariants (the FFI audit trail)
+//!
+//! Every `unsafe` block in this crate upholds one or more of the invariants
+//! below. These are the load-bearing safety facts a reviewer should verify
+//! when auditing the crate or advancing the `llama.cpp` submodule pin.
+//!
+//! 1. **Ownership chain enforced by lifetimes.** The type system rejects
+//!    using a handle after its parent is dropped:
+//!    - `Sampler<'b>` borrows from `LlamaBackend<'b>`
+//!    - `Model<'b>` borrows from `LlamaBackend<'b>`
+//!    - `Vocab<'m, 'b>` borrows from `Model<'b>` (with `'b: 'm`)
+//!    - `Context<'m, 'b: 'm>` borrows from `Model<'b>` and is bounded by
+//!      `'b: 'm` so the backend outlives both model and context.
+//!
+//!    Use-after-free of a llama.cpp resource is therefore a **compile
+//!    error**, not a runtime UAF. If a future submodule advance changes
+//!    ownership semantics (a function that "borrows from" becoming "owns")
+//!    these bounds must be re-audited.
+//!
+//! 2. **Send is implemented where the handle is exclusively owned; Sync is
+//!    NOT implemented anywhere.** `Model`, `Context`, `Sampler`, and
+//!    `Batch` impl `Send` (a handle can be moved across threads) but do
+//!    NOT impl `Sync` (the underlying llama.cpp resource is not safe for
+//!    concurrent calls from multiple threads — pinning this in the type
+//!    system means the borrow checker rejects accidental sharing). If a
+//!    future caller wants concurrent inference, the answer is a
+//!    `Mutex<Context>` or a per-thread `Context`, never a `&Context` from
+//!    two threads.
+//!
+//! 3. **Each FFI handle has exactly one matching `Drop` impl calling the
+//!    correct `*_free` function.** The audit table:
+//!
+//!    | Type | FFI alloc | FFI free | Drop location |
+//!    |---|---|---|---|
+//!    | `LlamaBackend` | `llama_backend_init` | `llama_backend_free` | [`backend`] |
+//!    | `Model` | `llama_model_load_from_file` | `llama_model_free` | [`model`] |
+//!    | `Context` | `llama_init_from_model` | `llama_free` | [`context`] |
+//!    | `Sampler` | `llama_sampler_chain_init` | `llama_sampler_free` | [`sampler`] |
+//!    | `Batch` | `llama_batch_init` | `llama_batch_free` | [`batch`] |
+//!
+//!    `Drop` runs exactly once. Each `*_free` is called with a `ptr` that
+//!    is non-null (enforced by `NonNull` storage) and that the FFI assigned
+//!    at construction time.
+//!
+//! 4. **Pointers from llama.cpp are wrapped in `NonNull<T>` immediately and
+//!    checked at construction.** Construction returns a `Result` whose
+//!    `Err` variant carries the load-failure context; the `Ok` variant
+//!    holds a `NonNull`. No `*mut T` flows further than the construction
+//!    site.
+//!
+//! ## ABI pin
+//!
+//! The `llama.cpp` source is a **pinned git submodule** at a specific
+//! commit. The pin SHA + upgrade procedure are documented in
+//! [`kx-llamacpp-sys/PIN.md`](../kx-llamacpp-sys/PIN.md). The build script
+//! emits a `cargo:warning=` line containing the current pin SHA on every
+//! build so drift is detectable from CI logs and developer terminals.
+//! Advancing the pin without running the documented audit is **not safe**
+//! — llama.cpp's FFI surface is unstable; an unaudited bump may change
+//! function signatures, struct layouts, or pointer-ownership semantics in
+//! ways that compile but corrupt memory under specific call patterns.
 
 pub mod backend;
 pub mod batch;

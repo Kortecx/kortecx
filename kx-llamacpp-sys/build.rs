@@ -26,6 +26,60 @@ fn main() {
     println!("cargo:rerun-if-changed=build.rs");
 
     // ------------------------------------------------------------------
+    // Pin echo — surface the llama.cpp submodule SHA at build time so CI
+    // logs and local developer terminals show drift detectably. The pin
+    // documentation + upgrade procedure lives at `PIN.md` next to this
+    // file; any unaudited submodule advance changes this echo and a
+    // grep over CI logs surfaces it.
+    //
+    // Failure to read the submodule's HEAD is a soft-warn — the build
+    // continues (don't block builds on a missing `.git`), but the warning
+    // makes the drift visible.
+    // ------------------------------------------------------------------
+    if let Ok(output) = std::process::Command::new("git")
+        .arg("-C")
+        .arg(&llama_cpp_dir)
+        .arg("rev-parse")
+        .arg("HEAD")
+        .output()
+    {
+        if output.status.success() {
+            let sha = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            // Capture the short version-tag-derived name for human readability.
+            let describe = std::process::Command::new("git")
+                .arg("-C")
+                .arg(&llama_cpp_dir)
+                .arg("describe")
+                .arg("--tags")
+                .arg("--always")
+                .output()
+                .ok()
+                .and_then(|o| {
+                    if o.status.success() {
+                        Some(String::from_utf8_lossy(&o.stdout).trim().to_string())
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or_else(|| "unknown".to_string());
+            println!(
+                "cargo:warning=kx-llamacpp-sys: linking against llama.cpp pin {sha} ({describe}); \
+                 see kx-llamacpp-sys/PIN.md for the audit procedure"
+            );
+        } else {
+            println!(
+                "cargo:warning=kx-llamacpp-sys: could not read llama.cpp submodule HEAD \
+                 (git rev-parse failed); pin drift will not be surfaced this build"
+            );
+        }
+    } else {
+        println!(
+            "cargo:warning=kx-llamacpp-sys: git not on PATH; llama.cpp pin SHA \
+             not echoed (this is fine in vendored builds but means pin drift is invisible)"
+        );
+    }
+
+    // ------------------------------------------------------------------
     // 1. Build llama.cpp via CMake.
     // ------------------------------------------------------------------
     let dst = cmake::Config::new(&llama_cpp_dir)
