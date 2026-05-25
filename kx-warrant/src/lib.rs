@@ -60,6 +60,12 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 #![warn(clippy::pedantic)]
+// TODO(workspace.lints cleanup): kx-warrant uses `.expect()` on
+// canonical-bincode encode (documented infallible) for `warrant_ref_of`.
+// Follow-up cleanup PR migrates to typed error or extracts the encode
+// call to a shared helper that returns Result. Until then, the documented
+// `expect(...)` is the audit trail.
+#![allow(clippy::expect_used)]
 #![allow(
     clippy::missing_errors_doc,
     clippy::missing_panics_doc,
@@ -69,6 +75,9 @@
     clippy::return_self_not_must_use,
     clippy::needless_pass_by_value
 )]
+// Inline test modules are exempted from the workspace deny on `unwrap_used` /
+// `expect_used`. Integration tests under tests/*.rs carry per-file allows.
+#![cfg_attr(test, allow(clippy::unwrap_used))]
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;

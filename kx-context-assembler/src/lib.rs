@@ -85,6 +85,9 @@
     // reading them in pairs is the point. Allow at crate root for test code.
     clippy::similar_names
 )]
+// Inline test modules are exempted from the workspace deny on `unwrap_used` /
+// `expect_used`. Integration tests under tests/*.rs carry per-file allows.
+#![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
 use bytes::Bytes;
 use kx_content::{ContentRef, ContentStore};

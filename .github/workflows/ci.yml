@@ -10,9 +10,53 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: "1"
 
+# ============================================================================
+# The CI gate is SPLIT into parallel jobs so a single failure isolates the
+# affected gate cleanly and developers don't wait for unrelated checks.
+#
+#   fmt         — cargo fmt --all -- --check
+#   clippy      — cargo clippy --workspace --all-targets -- -D warnings
+#   test        — cargo test --workspace
+#   deny        — cargo deny check (advisories + licenses + bans + sources)
+#   doc         — RUSTDOCFLAGS=-D warnings cargo doc --workspace --no-deps
+#   ffi-link    — explicit C++ FFI link path; CACHE OMITS target/ so a
+#                 broken native link cannot hide behind a cache hit. This is
+#                 the load-bearing gate against "a green Rust build masks a
+#                 broken native build" (see Item 6 of the baseline-config
+#                 sweep). The kx-llamacpp-sys build script runs CMake every
+#                 invocation here.
+#   reproducible — workspace-wide byte-determinism check (I1.c).
+#
+# `smoke-test-with-model` depends on `test` + `ffi-link` (the FFI must build
+# before the E2E inference smoke test can run).
+# ============================================================================
+
 jobs:
-  ci:
-    name: just ci
+  # ---------------------------------------------------------------------------
+  # fmt — cheap, no compilation needed; runs first and fastest.
+  # ---------------------------------------------------------------------------
+  fmt:
+    name: fmt-check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        # No submodules — fmt-check doesn't need llama.cpp.
+
+      - name: Install Rust toolchain (from rust-toolchain.toml)
+        run: |
+          rustup show active-toolchain
+          rustc --version
+          cargo --version
+
+      - name: cargo fmt --all -- --check
+        run: cargo fmt --all -- --check
+
+  # ---------------------------------------------------------------------------
+  # clippy — needs the full build graph (build scripts + bindgen output).
+  # ---------------------------------------------------------------------------
+  clippy:
+    name: clippy
     runs-on: ubuntu-latest
     steps:
       - name: Checkout (with submodules for kx-llamacpp-sys/llama.cpp)
@@ -20,19 +64,12 @@ jobs:
         with:
           submodules: recursive
 
-      # rust-toolchain.toml in the workspace root pins the exact version.
-      # rustup auto-detects and installs it on first cargo invocation.
       - name: Install Rust toolchain (from rust-toolchain.toml)
         run: |
           rustup show active-toolchain
           rustc --version
           cargo --version
 
-      - name: Install just
-        uses: extractions/setup-just@v4
-
-      # bindgen needs libclang; the kx-llamacpp-sys CMake build needs cmake + a
-      # C++ toolchain (already present on ubuntu-latest via build-essential).
       - name: Install bindgen + CMake build dependencies
         run: |
           sudo apt-get update
@@ -45,23 +82,24 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: cargo-${{ runner.os }}-${{ hashFiles('**/Cargo.lock', 'rust-toolchain.toml', '.gitmodules') }}
+          key: cargo-clippy-${{ runner.os }}-${{ hashFiles('**/Cargo.lock', 'rust-toolchain.toml', '.gitmodules') }}
           restore-keys: |
+            cargo-clippy-${{ runner.os }}-
             cargo-${{ runner.os }}-
 
-      # I1 — Path-stripping for cross-machine reproducibility (added on top of
-      # workspace-local rustflags from .cargo/config.toml).
       - name: Configure RUSTFLAGS for path-stripping
         run: |
           echo "RUSTFLAGS=--remap-path-prefix=${GITHUB_WORKSPACE}= -Cmetadata=kortecx-v0" >> $GITHUB_ENV
 
-      - name: just ci
-        run: just ci
+      - name: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets -- -D warnings
 
-  smoke-test-with-model:
-    name: smoke-test-with-model (kx-llamacpp E2E inference)
+  # ---------------------------------------------------------------------------
+  # test — full workspace test pass.
+  # ---------------------------------------------------------------------------
+  test:
+    name: test
     runs-on: ubuntu-latest
-    needs: ci
     steps:
       - name: Checkout (with submodules for kx-llamacpp-sys/llama.cpp)
         uses: actions/checkout@v6
@@ -73,6 +111,232 @@ jobs:
           rustup show active-toolchain
           rustc --version
           cargo --version
+
+      - name: Install bindgen + CMake build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libclang-dev clang cmake build-essential
+
+      - name: Cache Cargo registry + target
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-test-${{ runner.os }}-${{ hashFiles('**/Cargo.lock', 'rust-toolchain.toml', '.gitmodules') }}
+          restore-keys: |
+            cargo-test-${{ runner.os }}-
+            cargo-${{ runner.os }}-
+
+      - name: Configure RUSTFLAGS for path-stripping
+        run: |
+          echo "RUSTFLAGS=--remap-path-prefix=${GITHUB_WORKSPACE}= -Cmetadata=kortecx-v0" >> $GITHUB_ENV
+
+      - name: cargo test --workspace
+        run: cargo test --workspace -- --nocapture
+
+  # ---------------------------------------------------------------------------
+  # deny — RustSec advisories + license allowlist + bans + sources.
+  # No native build needed; deny works off Cargo.lock alone.
+  # ---------------------------------------------------------------------------
+  deny:
+    name: cargo-deny
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        # No submodules — cargo deny works off Cargo.lock + deny.toml.
+
+      - name: Install Rust toolchain (from rust-toolchain.toml)
+        run: |
+          rustup show active-toolchain
+
+      - name: Install cargo-deny (precompiled binary)
+        # Use the precompiled binary action for fast install (~5s) vs.
+        # `cargo install` (~1min). Pinning the action to a major version is
+        # the conventional GitHub Actions discipline.
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny
+
+      - name: cargo deny check
+        run: cargo deny check
+
+  # ---------------------------------------------------------------------------
+  # doc — workspace-wide rustdoc with -D warnings (catches broken intra-doc
+  # links + missing docs at the workspace policy level).
+  # ---------------------------------------------------------------------------
+  doc:
+    name: doc
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (with submodules for kx-llamacpp-sys/llama.cpp)
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Install Rust toolchain (from rust-toolchain.toml)
+        run: |
+          rustup show active-toolchain
+
+      - name: Install bindgen + CMake build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libclang-dev clang cmake build-essential
+
+      - name: Cache Cargo registry + target
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-doc-${{ runner.os }}-${{ hashFiles('**/Cargo.lock', 'rust-toolchain.toml', '.gitmodules') }}
+          restore-keys: |
+            cargo-doc-${{ runner.os }}-
+            cargo-${{ runner.os }}-
+
+      - name: Configure RUSTFLAGS for path-stripping
+        run: |
+          echo "RUSTFLAGS=--remap-path-prefix=${GITHUB_WORKSPACE}= -Cmetadata=kortecx-v0" >> $GITHUB_ENV
+
+      - name: cargo doc --workspace --no-deps
+        run: RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
+
+  # ---------------------------------------------------------------------------
+  # ffi-link — the LOAD-BEARING C++ FFI link gate.
+  #
+  # Why a separate job: a green `cargo build --workspace` can mask a broken
+  # native link if the target/ cache hits and the kx-llamacpp-sys build
+  # script never re-runs CMake. This job DEFEATS that masking by:
+  #
+  #   - Caching ONLY ~/.cargo/registry (download cache). target/ is NOT
+  #     cached, so kx-llamacpp-sys's build.rs runs CMake against the
+  #     vendored llama.cpp submodule on every CI run.
+  #   - Building `kx-llamacpp-sys` (the FFI bindings + cmake build) and
+  #     `kx-llamacpp` (the safe wrapper that LINKS against the static
+  #     archives) explicitly, in --release for production link semantics.
+  #   - Printing static-archive sizes at the end so a regression in
+  #     CMake build flags (e.g., a feature flag flip that removes Metal
+  #     support) surfaces visibly in the job log.
+  #
+  # C++ dep strategy (settled): git submodule at kx-llamacpp-sys/llama.cpp,
+  # pinned via SHA in the workspace tree. See `kx-llamacpp-sys/PIN.md` for
+  # the upgrade-audit ritual. The build.rs pin echo (`cargo:warning=...`)
+  # surfaces the pinned SHA in this job's log.
+  # ---------------------------------------------------------------------------
+  ffi-link:
+    name: C++ FFI link (kx-llamacpp-sys → kx-llamacpp)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (with submodules for kx-llamacpp-sys/llama.cpp)
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Install Rust toolchain (from rust-toolchain.toml)
+        run: |
+          rustup show active-toolchain
+
+      - name: Install bindgen + CMake build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libclang-dev clang cmake build-essential
+
+      # CRITICAL: do NOT cache target/. Caching the bindgen output + static
+      # archives would hide a broken native build. We still cache the
+      # registry (download cache) — those are deterministic.
+      - name: Cache Cargo download registry only (NOT target/)
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: cargo-ffi-link-registry-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            cargo-ffi-link-registry-${{ runner.os }}-
+
+      - name: Configure RUSTFLAGS for path-stripping
+        run: |
+          echo "RUSTFLAGS=--remap-path-prefix=${GITHUB_WORKSPACE}= -Cmetadata=kortecx-v0" >> $GITHUB_ENV
+
+      - name: Build kx-llamacpp-sys (runs CMake on the submodule)
+        run: cargo build -p kx-llamacpp-sys --release
+
+      - name: Build kx-llamacpp (links against the static archives)
+        run: cargo build -p kx-llamacpp --release
+
+      - name: Print produced static archive sizes (regression signal)
+        run: |
+          set -euo pipefail
+          echo "Static archives produced by the CMake build:"
+          find target/release/build -name "libllama*.a" -o -name "libggml*.a" \
+            | sort | xargs -I {} sh -c 'printf "%10s  %s\n" "$(stat -c%s "{}")" "{}"'
+
+  # ---------------------------------------------------------------------------
+  # reproducible — byte-determinism check (I1.c). Runs `just check-reproducible`
+  # which performs two clean release builds and diffs the output. Expensive
+  # (~6+ minutes) but the load-bearing reproducibility gate.
+  # ---------------------------------------------------------------------------
+  reproducible:
+    name: byte-determinism (I1.c)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (with submodules for kx-llamacpp-sys/llama.cpp)
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Install Rust toolchain (from rust-toolchain.toml)
+        run: |
+          rustup show active-toolchain
+
+      - name: Install just
+        uses: extractions/setup-just@v4
+
+      - name: Install bindgen + CMake build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libclang-dev clang cmake build-essential
+
+      # No target/ cache — the reproducibility check ALREADY does `cargo clean`
+      # between its two builds; caching would be wasted.
+      - name: Cache Cargo download registry only
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: cargo-reproducible-registry-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            cargo-reproducible-registry-${{ runner.os }}-
+
+      - name: Configure RUSTFLAGS for path-stripping
+        run: |
+          echo "RUSTFLAGS=--remap-path-prefix=${GITHUB_WORKSPACE}= -Cmetadata=kortecx-v0" >> $GITHUB_ENV
+
+      - name: just check-reproducible
+        run: just check-reproducible
+
+  # ---------------------------------------------------------------------------
+  # smoke-test-with-model — full E2E inference smoke. Needs both the test
+  # suite green AND the FFI link verified, since this exercises the full
+  # `load model → tokenize → decode → sample → detokenize` chain.
+  # ---------------------------------------------------------------------------
+  smoke-test-with-model:
+    name: smoke-test-with-model (kx-llamacpp E2E inference)
+    runs-on: ubuntu-latest
+    needs: [test, ffi-link]
+    steps:
+      - name: Checkout (with submodules for kx-llamacpp-sys/llama.cpp)
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Install Rust toolchain (from rust-toolchain.toml)
+        run: |
+          rustup show active-toolchain
 
       - name: Install just
         uses: extractions/setup-just@v4

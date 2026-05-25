@@ -14,6 +14,9 @@
     clippy::cast_lossless,
     clippy::match_same_arms
 )]
+// Inline test modules are exempted from the workspace deny on `unwrap_used` /
+// `expect_used`. Integration tests under tests/*.rs carry per-file allows.
+#![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
 //! # kx-model-validator — static bind-time fitness type check
 //!

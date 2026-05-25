@@ -12,6 +12,22 @@
 //!    that limits the surface to `llama_*` symbols.
 //! 3. Emits the cargo directives so the downstream rlib links the produced library.
 
+// TODO(workspace.lints cleanup): the [workspace.lints] policy in the root
+// Cargo.toml turns on `unwrap_used`, `expect_used`, and the `pedantic` group
+// for every compilation unit — including build scripts. This script reads
+// build-time env vars (CARGO_MANIFEST_DIR, OUT_DIR) where panic-on-missing is
+// the appropriate behavior (a missing env var means the cargo invocation is
+// malformed; build scripts SHOULD panic loudly). A future cleanup PR will
+// migrate these to `expect("CARGO_MANIFEST_DIR set by cargo")` style with
+// the workspace policy migrating to `deny`. For now, allow at the
+// build-script level so the workspace baseline doesn't break the build.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::items_after_statements,
+    clippy::doc_markdown
+)]
+
 use std::env;
 use std::path::PathBuf;
 

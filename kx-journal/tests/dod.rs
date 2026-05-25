@@ -1,3 +1,10 @@
+// Integration-test file: compiled as a separate crate from the host lib;
+// inherits workspace `[lints]` deny on `unwrap_used` / `expect_used` but tests
+// legitimately use `.unwrap()` for fixture construction. The `pedantic` group
+// is also allowed here — tests routinely do things pedantic flags (small-int
+// casts on byte seeds, helper-fn definitions after let-bindings, etc.) that
+// would be needless friction to refactor.
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
 //! P1.4 Definition-of-Done tests.
 //!
 //! Combines journal-txn.md §12 obligations 1–10 with journal-entry.md §12 obligations 11–19

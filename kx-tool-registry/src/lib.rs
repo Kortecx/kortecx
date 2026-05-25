@@ -76,6 +76,13 @@
     // (most tools are HumanAuthored).
     clippy::large_enum_variant
 )]
+// Inline test modules are exempted from the workspace deny on `unwrap_used` /
+// `expect_used`. Integration tests under tests/*.rs carry per-file allows.
+// TODO(workspace.lints cleanup): canonical-bincode encode on RegistrationToken
+// + ToolResolutionEvent are documented infallible (no floats; closed enum).
+// Follow-up cleanup PR migrates to shared helper or typed error.
+#![allow(clippy::expect_used)]
+#![cfg_attr(test, allow(clippy::unwrap_used))]
 
 use std::collections::BTreeMap;
 

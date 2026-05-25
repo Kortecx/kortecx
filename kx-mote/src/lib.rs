@@ -15,6 +15,21 @@
     clippy::unnested_or_patterns,
     clippy::redundant_closure_for_method_calls
 )]
+// `.expect()` on canonical-bincode encode of types without floats and without
+// non-encodable variants IS infallible. Each site below carries an inline
+// message naming the precondition; the lint allow at the crate level
+// suppresses the workspace `clippy::expect_used = "deny"` policy specifically
+// for these legitimate documented uses.
+//   - MoteDef::hash (line ~594): MoteDef has no floats / no non-encodable
+//     fields; canonical_config is a frozen bincode config.
+//   - TopologyDecision::hash (line ~1008): same — pure struct of plain types.
+#![allow(clippy::expect_used)]
+// Inline test modules (`#[cfg(test)] mod tests { ... }`) are exempted from
+// the workspace `unwrap_used` deny policy. `expect_used` is already allowed
+// unconditionally above (production-code documented uses); `unwrap_used` is
+// allowed only under cfg(test). Integration tests under `tests/*.rs`
+// compile as separate crates and carry their own per-file allows.
+#![cfg_attr(test, allow(clippy::unwrap_used))]
 
 //! # kx-mote — the atomic execution unit
 //!

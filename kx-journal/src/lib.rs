@@ -1,6 +1,17 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 #![warn(clippy::pedantic)]
+// TODO(workspace.lints cleanup): the encoder/decoder in `entry.rs` uses
+// `.try_into().expect("N bytes")` on slices guarded by explicit-length
+// checks earlier in the function (the entry-format spec pins exact byte
+// budgets per kind). The lock-acquisition paths in `in_memory.rs` and
+// `sqlite.rs` use the canonical `.read().expect("poisoned lock")` /
+// `.write().expect("poisoned lock")` Rust idiom — poisoned locks
+// indicate a panic occurred while another thread held the lock, the
+// correct response is to propagate. A follow-up cleanup PR may migrate
+// to typed errors; until then, the documented `expect(...)` messages
+// are the audit trail.
+#![allow(clippy::expect_used)]
 #![allow(
     clippy::missing_errors_doc,
     clippy::missing_panics_doc,
@@ -16,6 +27,9 @@
     clippy::match_same_arms,
     clippy::range_plus_one
 )]
+// Inline test modules are exempted from the workspace deny on `unwrap_used` /
+// `expect_used`. Integration tests under tests/*.rs carry per-file allows.
+#![cfg_attr(test, allow(clippy::unwrap_used))]
 
 //! # kx-journal — the spine
 //!

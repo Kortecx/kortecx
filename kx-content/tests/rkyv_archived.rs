@@ -1,3 +1,10 @@
+// Integration-test file: compiled as a separate crate from the host lib;
+// inherits workspace `[lints]` deny on `unwrap_used` / `expect_used` but tests
+// legitimately use `.unwrap()` for fixture construction. The `pedantic` group
+// is also allowed here — tests routinely do things pedantic flags (small-int
+// casts on byte seeds, helper-fn definitions after let-bindings, etc.) that
+// would be needless friction to refactor.
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
 //! P1.3 exit gate: "rkyv archived access works on a large payload."
 //!
 //! `content-store.md` §4 + §10 obligation 9 are explicit that rkyv is NOT in the trait

@@ -1,3 +1,31 @@
+# ============================================================================
+# rustfmt configuration for kortecx — stable Rust only.
+#
+# Most rustfmt defaults are already deterministic and idiomatic; the settings
+# below are the few that are LOAD-BEARING for the workspace:
+#
+#   edition       — pinned to 2021 to match `[workspace.package].edition`.
+#                   rustfmt's edition-specific rules (e.g., disjoint closure
+#                   captures) depend on this matching the build edition.
+#   max_width     — 100 columns. Wider than the 80-default for richer test
+#                   fixture lines + the workspace idiom of fully-qualified
+#                   `JournalEntry::Committed { … }` literals. Tighter than
+#                   120 for readability on side-by-side diffs.
+#   hard_tabs     — false. The repo (.editorconfig) uses spaces uniformly.
+#                   Mixing tabs + spaces in Rust output would diverge from
+#                   the rest of the tree.
+#   tab_spaces    — 4. Matches .editorconfig [*.rs].
+#   newline_style — Unix. LF on every platform — matches .editorconfig
+#                   `end_of_line = lf` + CI on ubuntu-latest.
+#   use_field_init_shorthand / use_try_shorthand — idiomatic; reduce visual
+#                   noise without changing semantics.
+#
+# Deliberately ABSENT: unstable rustfmt options (`format_strings`,
+# `imports_granularity`, `group_imports`, `wrap_comments`, etc.) require
+# nightly. The workspace pins stable Rust per rust-toolchain.toml; using
+# unstable rustfmt would diverge dev-format from CI-format.
+# ============================================================================
+
 edition       = "2021"
 max_width     = 100
 hard_tabs     = false

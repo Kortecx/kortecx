@@ -1,3 +1,8 @@
+// Example binary: compiled as a separate crate; carries its own allow for
+// ergonomic .unwrap()/.expect() in demo code. Production library code is
+// held to the workspace deny policy.
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 //! HF-shaped generate recipe — the smallest one-shot generation in kortecx.
 //!
 //! Usage:

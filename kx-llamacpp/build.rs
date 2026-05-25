@@ -11,6 +11,17 @@
 //! The file is cached in `OUT_DIR` across builds; subsequent invocations
 //! reuse the on-disk copy as long as the SHA matches.
 
+// TODO(workspace.lints cleanup): see same-named TODO in kx-llamacpp-sys/build.rs.
+// Build-time env-var unwraps are the appropriate failure mode for malformed
+// cargo invocations; the workspace policy migrates this to `deny` with proper
+// `expect(...)` messages in a follow-up.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::items_after_statements,
+    clippy::doc_markdown
+)]
+
 use std::env;
 use std::fs;
 use std::io::{Read, Write};

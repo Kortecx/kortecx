@@ -9,6 +9,21 @@
     clippy::doc_markdown,
     clippy::return_self_not_must_use
 )]
+// TODO(workspace.lints cleanup): the `InMemoryContentStore` backend uses
+// the canonical Rust idiom `.read().expect("poisoned lock")` / `.write().
+// expect("poisoned lock")` at every lock-acquisition site (6 sites in
+// `in_memory.rs`). Poisoned locks indicate a panic occurred while
+// another thread held the lock — the runtime's correct response is to
+// propagate that panic to the caller (every higher layer ALSO operates
+// under "single-writer-per-run"; a poisoned lock means catastrophic state).
+// A follow-up may migrate these to typed `PoisonError` returns; until
+// then, the documented `expect("poisoned lock")` is intentional.
+#![allow(clippy::expect_used)]
+// Inline test modules are exempted from the workspace deny on `unwrap_used`.
+// `expect_used` is already allowed unconditionally above. Integration tests
+// under tests/*.rs compile as separate crates and carry their own per-file
+// allows.
+#![cfg_attr(test, allow(clippy::unwrap_used))]
 
 //! # kx-content — content-addressed payload store
 //!

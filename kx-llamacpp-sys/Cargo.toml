@@ -22,3 +22,6 @@ path = "src/lib.rs"
 [build-dependencies]
 bindgen = { workspace = true }
 cmake   = { workspace = true }
+
+[lints]
+workspace = true

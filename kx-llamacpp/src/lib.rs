@@ -21,6 +21,24 @@
     clippy::range_plus_one,
     clippy::return_self_not_must_use
 )]
+// TODO(workspace.lints cleanup — undocumented_unsafe_blocks): the H-3 FFI
+// hardening sweep (PR 4.7) added module-level safety documentation +
+// alloc/free pairing tables. A follow-up audit will add per-block
+// `// SAFETY:` comments to each individual `unsafe { ... }` block (~80
+// sites in this crate), at which point this allow can be removed. Until
+// then, the per-block SAFETY documentation is in the crate-level docs +
+// the lifetime parameter chain enforces the load-bearing invariants at
+// compile time. Allowed at the crate level so the workspace policy
+// doesn't block kx-llamacpp.
+#![allow(clippy::undocumented_unsafe_blocks)]
+// Same TODO: kx-llamacpp's FFI wrapper uses `.expect()` on construction-
+// time pointer NonNull checks where the FFI contract guarantees non-null
+// in the success path. Documented inline per call site. A follow-up
+// migrates these to typed errors / Option chains. The unconditional
+// `#![allow]` covers both production and test code; no `cfg_attr(test)`
+// needed (the cleanup PR will swap this for `cfg_attr(test, ...)` once
+// production sites migrate).
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 
 //! # kx-llamacpp — safe wrapper over llama.cpp's C API
 //!

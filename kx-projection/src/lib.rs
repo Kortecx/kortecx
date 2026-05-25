@@ -15,6 +15,9 @@
     clippy::range_plus_one,
     clippy::elidable_lifetime_names
 )]
+// Inline test modules are exempted from the workspace deny on `unwrap_used` /
+// `expect_used`. Integration tests under tests/*.rs carry per-file allows.
+#![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
 //! # kx-projection — the log's read-side fold
 //!

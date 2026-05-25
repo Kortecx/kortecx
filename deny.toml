@@ -1,0 +1,170 @@
+# ============================================================================
+# cargo-deny configuration for kortecx.
+#
+# Run via `just deny` (locally) or the cargo-deny CI job (Item 6 of the
+# repo-baseline config sweep). Tool docs: https://embarkstudios.github.io/cargo-deny/
+#
+# The four gates this file enforces:
+#   1. [advisories] — RustSec vulnerability scan over the dep tree.
+#   2. [licenses]   — Permissive-only allowlist. Fails on copyleft (GPL/AGPL/LGPL).
+#   3. [bans]       — Multiple-version detection (warn), wildcard versions (deny),
+#                     per-crate deny list (empty initially).
+#   4. [sources]    — Only crates.io. No unknown registries, no git deps.
+# ============================================================================
+
+[graph]
+# Check the full dependency closure under every feature flag combination
+# the workspace can produce. Catches "feature X pulls in a banned crate"
+# situations that a default-only build hides.
+all-features = true
+
+# ----------------------------------------------------------------------------
+# [advisories] — RustSec advisory database
+# ----------------------------------------------------------------------------
+# Schema version 2 (modern cargo-deny >= 0.14). The fields below were named
+# `vulnerability` / `unmaintained` / etc. in v1 and were consolidated into
+# the default "deny everything by default, override case-by-case via `ignore`"
+# model in v2. Keep `version = 2` so the file is forward-compatible.
+[advisories]
+version = 2
+db-path = "~/.cargo/advisory-db"
+db-urls = ["https://github.com/rustsec/advisory-db"]
+# Yanked crates (removed from crates.io after publish) are denied — they
+# represent an explicit author signal that the version is broken or unsafe.
+yanked = "deny"
+# Per-advisory ignores. Each entry MUST carry a rationale + an expiry date
+# so they don't accumulate indefinitely.
+ignore = [
+    # ----------------------------------------------------------------------
+    # RUSTSEC-2025-0141 — bincode unmaintained
+    # ----------------------------------------------------------------------
+    # The bincode maintainer team ceased development in 2025 ("due to a
+    # doxxing and harassment incident"). bincode 2.0.x is considered
+    # feature-complete by upstream; no safe upgrade path within the
+    # bincode crate itself. Alternatives suggested by RUSTSEC: wincode,
+    # postcard, bitcode, rkyv.
+    #
+    # Why kortecx CANNOT migrate this session:
+    #   bincode is the workspace's canonical content-addressing encoder.
+    #   `kx_mote::canonical_config()` configures bincode with frozen flags
+    #   (little-endian + fixed-int) so `hash()` methods on MoteDef,
+    #   TopologyDecision, WarrantSpec, ToolDef, ToolResolutionEvent (etc.)
+    #   produce stable 32-byte BLAKE3 hashes across machines + replays.
+    #   ANY encoder change is a canonical-bytes shift that would
+    #   invalidate every committed Mote's identity hash. Migration is a
+    #   substantial multi-PR effort with cross-platform reproducibility
+    #   verification.
+    #
+    # Migration plan (separate from this baseline-config sweep):
+    #   1. Survey the alternatives' little-endian + fixed-int support
+    #      (postcard is varint by default; rkyv is zero-copy archive,
+    #      not byte-for-byte equivalent; bitcode is bit-packed; wincode
+    #      is the most direct fork).
+    #   2. Build a reproducibility test that proves the migration produces
+    #      bit-identical bytes for every workspace `hash()` method against
+    #      a frozen test corpus.
+    #   3. Land the migration in a single PR with the canonical-bytes-shift
+    #      audit (mirror of PR 4.6's content-ref pin-site survey).
+    #
+    # Expires 2026-08-31 — forces a re-evaluation before P1.13 (the runtime
+    # binary + reproducibility-discipline final check).
+    { id = "RUSTSEC-2025-0141", reason = "bincode unmaintained; migration requires canonical-bytes-shift audit (see HANDOFF §1.8 follow-ups); expires 2026-08-31" },
+]
+
+# ----------------------------------------------------------------------------
+# [licenses] — the OSS-core license gate (LOAD-BEARING)
+# ----------------------------------------------------------------------------
+# kortecx publishes Apache-2.0 (see workspace.package.license). Every
+# dependency MUST use a license whose obligations are compatible with
+# Apache-2.0 redistribution and do NOT impose additional copyleft
+# requirements on the workspace.
+#
+# The allowlist below is deliberately permissive-only.
+#
+# ★ DELIBERATELY ABSENT — copyleft licenses (the OSS-core gate enforcement):
+#   - GPL-2.0 / GPL-3.0 (any variant). Viral copyleft; forces source release of
+#     anything linked against. Apache-2.0 kortecx CANNOT consume GPL deps.
+#   - AGPL-3.0. Network-effect copyleft (worse for distributed runtimes).
+#   - LGPL-2.1 / LGPL-3.0. Per-file copyleft; intended for dynamic linking,
+#     but kortecx ships static binaries.
+#   - MPL-2.0. File-level copyleft; technically Apache-2.0 redistributable
+#     but introduces reciprocity. Excluded so introducing a MPL-2.0 dep
+#     requires a tracked `exceptions` entry below.
+#
+# If a desirable crate has a license outside this allowlist, prefer a
+# rationale-tagged `exceptions` entry over relaxing the workspace gate.
+[licenses]
+version = 2
+allow = [
+    # ----------- workspace's own license -----------
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    # ----------- classic permissive licenses -----------
+    "MIT",
+    "MIT-0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    # ----------- Unicode data licenses -----------
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    # ----------- public-domain equivalents -----------
+    "CC0-1.0",
+    # ----------- permissive data licenses -----------
+    "CDLA-Permissive-2.0",
+]
+# SPDX-expression confidence threshold for fuzzy-matched license strings.
+# Default 0.8 is too permissive; 0.93 still catches all the SPDX-canonical
+# entries we see in the current dep tree.
+confidence-threshold = 0.93
+
+# Per-crate license exceptions. Add with rationale when a desirable crate
+# carries a license outside the allowlist above.
+#
+# Format:
+#   { allow = ["<spdx>"], name = "<crate>", version = "<semver>", reason = "<why>" }
+exceptions = []
+
+# ----------------------------------------------------------------------------
+# [bans] — multiple-version detection, wildcards, per-crate denylist
+# ----------------------------------------------------------------------------
+[bans]
+# Workspaces with 200+ transitive deps routinely have multiple versions of
+# common crates (hashbrown, getrandom, windows-sys, etc.). Surface as warn
+# so duplication doesn't grow silently, but don't break builds on it. Flip
+# to "deny" if a specific duplication becomes a maintenance problem and
+# add the safe-to-duplicate crates to `skip` below.
+multiple-versions = "warn"
+# Wildcard version specs (`version = "*"`) defeat the workspace pin and the
+# Cargo.lock contract. Always a smell.
+wildcards = "deny"
+# Highlight all duplicate-version paths so the warn output is actionable.
+highlight = "all"
+
+# Deliberate per-crate bans. Empty initially; add with rationale + a
+# replacement pointer when a crate is rejected (e.g., ban an unmaintained
+# crate and point at its successor).
+#
+# Format:
+#   { name = "<crate>", version = "<semver>", reason = "<why>; use <alternative>" }
+deny = []
+
+# Skip lists for the multiple-versions check (crates known safe to duplicate).
+# Empty initially; populate with rationale when adding a safe-to-duplicate
+# entry. Prefer fixing the duplication over skipping the check.
+skip = []
+skip-tree = []
+
+# ----------------------------------------------------------------------------
+# [sources] — only crates.io + the workspace; no unknown registries, no git deps
+# ----------------------------------------------------------------------------
+# Every dep must come from crates.io. Git-dependencies are denied so a
+# rebase / fork swap can't silently change the dep tree. The vendored
+# llama.cpp lives as a git SUBMODULE (not a Cargo git dep) and is outside
+# cargo-deny's view — see `kx-llamacpp-sys/PIN.md` for that audit ritual.
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

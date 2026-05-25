@@ -1,0 +1,92 @@
+# ============================================================================
+# .editorconfig — top-of-tree formatting baseline for non-Rust files.
+#
+# Rust files (.rs) are formatted by rustfmt — see `rustfmt.toml`. This file
+# applies to TOML / YAML / Markdown / JSON / shell / justfile, plus baseline
+# charset + EOL settings every editor honors.
+#
+# Reference: https://editorconfig.org/
+# ============================================================================
+
+root = true
+
+# ---------------------------------------------------------------------------
+# Default — applies to every file unless overridden below.
+# ---------------------------------------------------------------------------
+[*]
+charset                  = utf-8
+end_of_line              = lf
+insert_final_newline     = true
+trim_trailing_whitespace = true
+
+# ---------------------------------------------------------------------------
+# Rust — rustfmt owns Rust formatting. The settings below are the
+# non-rustfmt-controlled properties (charset, EOL, final-newline) so editors
+# don't fight rustfmt on save. `indent_*` and `max_line_length` mirror
+# rustfmt.toml so non-rustfmt-aware editors still produce compatible output
+# on first-save (rustfmt's pass on commit will normalize anything missed).
+# ---------------------------------------------------------------------------
+[*.rs]
+indent_style    = space
+indent_size     = 4
+max_line_length = 100
+
+# ---------------------------------------------------------------------------
+# TOML — Cargo.toml, rust-toolchain.toml, rustfmt.toml, deny.toml, clippy.toml,
+# .cargo/config.toml, every per-crate Cargo.toml. 4-space indent matches the
+# Rust idiom (TOML spec doesn't mandate; we standardize for visual parity
+# with .rs files).
+# ---------------------------------------------------------------------------
+[*.toml]
+indent_style = space
+indent_size  = 4
+
+# ---------------------------------------------------------------------------
+# YAML — GitHub Actions workflows + any future Kubernetes / Helm manifests.
+# 2-space indent is the YAML community standard; differing from TOML here is
+# intentional (YAML's whitespace-significant grammar makes deeper indents
+# more visually noisy).
+# ---------------------------------------------------------------------------
+[*.{yml,yaml}]
+indent_style = space
+indent_size  = 2
+
+# ---------------------------------------------------------------------------
+# JSON
+# ---------------------------------------------------------------------------
+[*.json]
+indent_style = space
+indent_size  = 2
+
+# ---------------------------------------------------------------------------
+# Markdown — trailing whitespace is SEMANTICALLY MEANINGFUL in Markdown
+# (a line ending in two spaces is a hard line break). Disable the trim
+# globally for .md so docs aren't silently broken on save. Authors who
+# want hard line breaks can rely on the trailing-double-space idiom.
+# ---------------------------------------------------------------------------
+[*.md]
+indent_style             = space
+indent_size              = 2
+trim_trailing_whitespace = false
+
+# ---------------------------------------------------------------------------
+# Shell scripts + justfile recipes. Just's syntax requires either tabs OR
+# consistent space-indents in a recipe body; the workspace's justfile uses
+# 4-space indents. Keep them.
+# ---------------------------------------------------------------------------
+[*.{sh,bash}]
+indent_style = space
+indent_size  = 2
+
+[justfile]
+indent_style = space
+indent_size  = 4
+
+# ---------------------------------------------------------------------------
+# Cargo.lock / *.lock — generated files. Don't touch them by hand; editor
+# autoformatters should leave them alone so they round-trip through cargo
+# bit-identically.
+# ---------------------------------------------------------------------------
+[*.lock]
+trim_trailing_whitespace = false
+insert_final_newline     = true
