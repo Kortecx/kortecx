@@ -47,11 +47,19 @@ fn arb_mote_class() -> impl Strategy<Value = MoteClass> {
     ]
 }
 
+// MUST update on new `ExecutorClass` variant. Canonical-classifier-cannot-drift
+// pattern (PR 6 / kx-normalizer; STEP 6.2 of PR 4.5). The match in
+// `kx_warrant::intersect`'s `executor_class` branch is exhaustive at the source
+// level; this strategy enumerates ALL variants so any new addition that doesn't
+// update this list is caught at the test surface. The exhaustive-match-at-source
+// + ALL-variants-in-strategy combination makes silent variant addition
+// impossible.
 fn arb_executor_class() -> impl Strategy<Value = ExecutorClass> {
     prop_oneof![
         Just(ExecutorClass::Bwrap),
         Just(ExecutorClass::OciDaemon),
         Just(ExecutorClass::CloudMicroVm),
+        Just(ExecutorClass::MacOsSandbox),
     ]
 }
 
