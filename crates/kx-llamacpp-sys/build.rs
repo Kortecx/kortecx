@@ -80,7 +80,7 @@ fn main() {
                 .unwrap_or_else(|| "unknown".to_string());
             println!(
                 "cargo:warning=kx-llamacpp-sys: linking against llama.cpp pin {sha} ({describe}); \
-                 see kx-llamacpp-sys/PIN.md for the audit procedure"
+                 see crates/kx-llamacpp-sys/PIN.md for the audit procedure"
             );
         } else {
             println!(

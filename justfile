@@ -173,15 +173,15 @@ doctor:
 
     echo ""
     echo "C++ FFI submodule (llama.cpp):"
-    check "kx-llamacpp-sys/llama.cpp/ checked out (CMakeLists.txt present)" \
-        "test -f kx-llamacpp-sys/llama.cpp/CMakeLists.txt"
+    check "crates/kx-llamacpp-sys/llama.cpp/ checked out (CMakeLists.txt present)" \
+        "test -f crates/kx-llamacpp-sys/llama.cpp/CMakeLists.txt"
     check "submodule HEAD readable" \
-        "git -C kx-llamacpp-sys/llama.cpp rev-parse HEAD"
+        "git -C crates/kx-llamacpp-sys/llama.cpp rev-parse HEAD"
 
-    if [ -f kx-llamacpp-sys/PIN.md ] && command -v git >/dev/null 2>&1; then
-        pinned=$(git -C kx-llamacpp-sys/llama.cpp rev-parse HEAD 2>/dev/null || echo "unknown")
+    if [ -f crates/kx-llamacpp-sys/PIN.md ] && command -v git >/dev/null 2>&1; then
+        pinned=$(git -C crates/kx-llamacpp-sys/llama.cpp rev-parse HEAD 2>/dev/null || echo "unknown")
         echo "   note: submodule HEAD = ${pinned}"
-        echo "         see kx-llamacpp-sys/PIN.md for the audit ritual on advancing the pin."
+        echo "         see crates/kx-llamacpp-sys/PIN.md for the audit ritual on advancing the pin."
     fi
 
     echo ""

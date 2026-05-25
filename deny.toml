@@ -162,7 +162,7 @@ skip-tree = []
 # Every dep must come from crates.io. Git-dependencies are denied so a
 # rebase / fork swap can't silently change the dep tree. The vendored
 # llama.cpp lives as a git SUBMODULE (not a Cargo git dep) and is outside
-# cargo-deny's view — see `kx-llamacpp-sys/PIN.md` for that audit ritual.
+# cargo-deny's view — see `crates/kx-llamacpp-sys/PIN.md` for that audit ritual.
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"

@@ -1,6 +1,24 @@
 [workspace]
 resolver = "2"
-members = ["kx-mote", "kx-content", "kx-journal", "kx-projection", "kx-llamacpp-sys", "kx-llamacpp", "kx-model-validator", "kx-warrant", "kx-tool-registry", "kx-context-assembler", "kx-memoizer", "kx-normalizer"]
+# All workspace member crates live under `crates/`. The parent-folder
+# convention (vs. crates at the workspace root) keeps the repo root clean —
+# `docs/`, `bindings/`, `scripts/`, and future top-level dirs sit alongside
+# `crates/` without ambiguity. Cargo abstracts crate placement entirely;
+# `use kx_mote::...` etc. are by name, not path.
+members = [
+    "crates/kx-mote",
+    "crates/kx-content",
+    "crates/kx-journal",
+    "crates/kx-projection",
+    "crates/kx-llamacpp-sys",
+    "crates/kx-llamacpp",
+    "crates/kx-model-validator",
+    "crates/kx-warrant",
+    "crates/kx-tool-registry",
+    "crates/kx-context-assembler",
+    "crates/kx-memoizer",
+    "crates/kx-normalizer",
+]
 exclude = [
     "kx-cloud",
     # Language bindings — out-of-workspace per Item 8 of the repo-baseline
@@ -36,19 +54,20 @@ rusqlite           = { version = "0.32", features = ["bundled"] }
 # each member's `[package].version`. Without it, cargo-deny flags path-only
 # deps as wildcards (the version constraint is unconstrained). The version
 # field also takes effect on `cargo publish` — replacing the path during
-# publish with the version requirement here.
-kx-mote              = { path = "kx-mote",              version = "0.0.1" }
-kx-content           = { path = "kx-content",           version = "0.0.1" }
-kx-journal           = { path = "kx-journal",           version = "0.0.1" }
-kx-projection        = { path = "kx-projection",        version = "0.0.1" }
-kx-llamacpp-sys      = { path = "kx-llamacpp-sys",      version = "0.0.1" }
-kx-llamacpp          = { path = "kx-llamacpp",          version = "0.0.1" }
-kx-model-validator   = { path = "kx-model-validator",   version = "0.0.1" }
-kx-warrant           = { path = "kx-warrant",           version = "0.0.1" }
-kx-tool-registry     = { path = "kx-tool-registry",     version = "0.0.1" }
-kx-context-assembler = { path = "kx-context-assembler", version = "0.0.1" }
-kx-memoizer          = { path = "kx-memoizer",          version = "0.0.1" }
-kx-normalizer        = { path = "kx-normalizer",        version = "0.0.1" }
+# publish with the version requirement here. All paths point under
+# `crates/` per the workspace's parent-folder layout convention.
+kx-mote              = { path = "crates/kx-mote",              version = "0.0.1" }
+kx-content           = { path = "crates/kx-content",           version = "0.0.1" }
+kx-journal           = { path = "crates/kx-journal",           version = "0.0.1" }
+kx-projection        = { path = "crates/kx-projection",        version = "0.0.1" }
+kx-llamacpp-sys      = { path = "crates/kx-llamacpp-sys",      version = "0.0.1" }
+kx-llamacpp          = { path = "crates/kx-llamacpp",          version = "0.0.1" }
+kx-model-validator   = { path = "crates/kx-model-validator",   version = "0.0.1" }
+kx-warrant           = { path = "crates/kx-warrant",           version = "0.0.1" }
+kx-tool-registry     = { path = "crates/kx-tool-registry",     version = "0.0.1" }
+kx-context-assembler = { path = "crates/kx-context-assembler", version = "0.0.1" }
+kx-memoizer          = { path = "crates/kx-memoizer",          version = "0.0.1" }
+kx-normalizer        = { path = "crates/kx-normalizer",        version = "0.0.1" }
 bindgen            = "0.70"
 cmake              = "0.1"
 ureq               = { version = "2", default-features = false, features = ["tls"] }

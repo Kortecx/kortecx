@@ -52,8 +52,8 @@ The rule keeps core's surface honest:
 - Each binding has its own `Cargo.toml` / `package.json` / `pyproject.toml`
   declaring kortecx core as a **`path = "../../"`** dependency (during dev)
   or as a published crate (post-`cargo publish`).
-- Core code (every `kx-*/src/**.rs`) must compile and pass tests with NO
-  `bindings/*` files present. Verifiable: `git rm -rf bindings/` then
+- Core code (every `crates/kx-*/src/**.rs`) must compile and pass tests with
+  NO `bindings/*` files present. Verifiable: `git rm -rf bindings/` then
   `cargo test --workspace` still passes.
 - Core's `Cargo.toml` MUST NEVER list `pyo3`, `maturin`, `napi-rs`, or any
   binding-specific dep in `[workspace.dependencies]`. Those live exclusively

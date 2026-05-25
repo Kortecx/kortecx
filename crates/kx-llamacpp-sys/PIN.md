@@ -11,7 +11,7 @@ against.
 
 | Field | Value |
 |---|---|
-| Submodule path | `kx-llamacpp-sys/llama.cpp` |
+| Submodule path | `crates/kx-llamacpp-sys/llama.cpp` |
 | Upstream URL | `https://github.com/ggerganov/llama.cpp` |
 | Tracking branch | `master` (advisory only — the SHA is what builds) |
 | **Pinned commit** | `1a03cf47f67be591699d1f0f7ca28e1ed6eb8c7e` |
@@ -50,7 +50,7 @@ of this audit.
 ### 1. Capture the prospective new pin
 
 ```bash
-cd kx-llamacpp-sys/llama.cpp
+cd crates/kx-llamacpp-sys/llama.cpp
 git fetch origin master
 git log --oneline HEAD..origin/master | wc -l   # commits since current pin
 git log --oneline HEAD..origin/master | head -20  # eyeball the recent commit subjects
@@ -61,7 +61,7 @@ NEW_NAME=$(git describe --tags origin/master)
 ### 2. Diff the FFI surface
 
 ```bash
-git -C kx-llamacpp-sys/llama.cpp diff HEAD origin/master -- 'include/llama.h' 'ggml/include/'
+git -C crates/kx-llamacpp-sys/llama.cpp diff HEAD origin/master -- 'include/llama.h' 'ggml/include/'
 ```
 
 Reading the header diff is the load-bearing audit step. Look for:
@@ -74,7 +74,7 @@ Reading the header diff is the load-bearing audit step. Look for:
 ### 3. Build + run the full workspace test suite
 
 ```bash
-git -C kx-llamacpp-sys/llama.cpp checkout $NEW_SHA
+git -C crates/kx-llamacpp-sys/llama.cpp checkout $NEW_SHA
 cargo build --workspace 2>&1 | tee /tmp/build.log
 cargo test --workspace 2>&1 | tee /tmp/test.log
 cargo test -p kx-llamacpp --test smoke
@@ -103,7 +103,7 @@ When the audit passes:
 
 ```bash
 # Commit the submodule advance in the parent repo
-git add kx-llamacpp-sys/llama.cpp
+git add crates/kx-llamacpp-sys/llama.cpp
 git commit -m "kx-llamacpp-sys: advance llama.cpp pin to $NEW_NAME ($NEW_SHA)"
 ```
 

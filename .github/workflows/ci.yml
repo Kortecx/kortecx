@@ -59,7 +59,7 @@ jobs:
     name: clippy
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout (with submodules for kx-llamacpp-sys/llama.cpp)
+      - name: Checkout (with submodules for crates/kx-llamacpp-sys/llama.cpp)
         uses: actions/checkout@v6
         with:
           submodules: recursive
@@ -101,7 +101,7 @@ jobs:
     name: test
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout (with submodules for kx-llamacpp-sys/llama.cpp)
+      - name: Checkout (with submodules for crates/kx-llamacpp-sys/llama.cpp)
         uses: actions/checkout@v6
         with:
           submodules: recursive
@@ -171,7 +171,7 @@ jobs:
     name: doc
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout (with submodules for kx-llamacpp-sys/llama.cpp)
+      - name: Checkout (with submodules for crates/kx-llamacpp-sys/llama.cpp)
         uses: actions/checkout@v6
         with:
           submodules: recursive
@@ -221,8 +221,8 @@ jobs:
   #     CMake build flags (e.g., a feature flag flip that removes Metal
   #     support) surfaces visibly in the job log.
   #
-  # C++ dep strategy (settled): git submodule at kx-llamacpp-sys/llama.cpp,
-  # pinned via SHA in the workspace tree. See `kx-llamacpp-sys/PIN.md` for
+  # C++ dep strategy (settled): git submodule at crates/kx-llamacpp-sys/llama.cpp,
+  # pinned via SHA in the workspace tree. See `crates/kx-llamacpp-sys/PIN.md` for
   # the upgrade-audit ritual. The build.rs pin echo (`cargo:warning=...`)
   # surfaces the pinned SHA in this job's log.
   # ---------------------------------------------------------------------------
@@ -230,7 +230,7 @@ jobs:
     name: C++ FFI link (kx-llamacpp-sys → kx-llamacpp)
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout (with submodules for kx-llamacpp-sys/llama.cpp)
+      - name: Checkout (with submodules for crates/kx-llamacpp-sys/llama.cpp)
         uses: actions/checkout@v6
         with:
           submodules: recursive
@@ -283,7 +283,7 @@ jobs:
     name: byte-determinism (I1.c)
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout (with submodules for kx-llamacpp-sys/llama.cpp)
+      - name: Checkout (with submodules for crates/kx-llamacpp-sys/llama.cpp)
         uses: actions/checkout@v6
         with:
           submodules: recursive
@@ -329,7 +329,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [test, ffi-link]
     steps:
-      - name: Checkout (with submodules for kx-llamacpp-sys/llama.cpp)
+      - name: Checkout (with submodules for crates/kx-llamacpp-sys/llama.cpp)
         uses: actions/checkout@v6
         with:
           submodules: recursive

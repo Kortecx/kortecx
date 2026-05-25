@@ -88,11 +88,11 @@ The inward-only rule is verifiable mechanically. From the workspace root:
 
 ```bash
 # A: core crates' Cargo.toml MUST NOT mention pyo3 / maturin.
-grep -rE "pyo3|maturin" kx-*/Cargo.toml && echo "RULE VIOLATED" || echo "ok"
+grep -rE "pyo3|maturin" crates/kx-*/Cargo.toml && echo "RULE VIOLATED" || echo "ok"
 
 # B: core code MUST NOT contain #[pyclass] / #[pyfunction] / #[pymethods] /
 #    #[pymodule] / #[pyo3] attributes anywhere in src/.
-grep -rE "#\[py(class|function|methods|module|o3)" kx-*/src/ && echo "RULE VIOLATED" || echo "ok"
+grep -rE "#\[py(class|function|methods|module|o3)" crates/kx-*/src/ && echo "RULE VIOLATED" || echo "ok"
 
 # C: `cargo test --workspace` MUST pass with bindings/ removed.
 mv bindings /tmp/bindings.bak && cargo test --workspace && mv /tmp/bindings.bak bindings

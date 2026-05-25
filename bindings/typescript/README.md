@@ -91,10 +91,10 @@ The inward-only rule is verifiable mechanically. From the workspace root:
 
 ```bash
 # A: core crates' Cargo.toml MUST NOT mention napi.
-grep -rE "napi" kx-*/Cargo.toml && echo "RULE VIOLATED" || echo "ok"
+grep -rE "napi" crates/kx-*/Cargo.toml && echo "RULE VIOLATED" || echo "ok"
 
 # B: core code MUST NOT contain #[napi(...)] attributes anywhere in src/.
-grep -rE "#\[napi" kx-*/src/ && echo "RULE VIOLATED" || echo "ok"
+grep -rE "#\[napi" crates/kx-*/src/ && echo "RULE VIOLATED" || echo "ok"
 
 # C: `cargo test --workspace` MUST pass with bindings/ removed.
 mv bindings /tmp/bindings.bak && cargo test --workspace && mv /tmp/bindings.bak bindings
