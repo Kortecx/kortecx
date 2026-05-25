@@ -834,6 +834,184 @@ pub fn is_legal_transition(from: AttemptState, to: AttemptState) -> bool {
 }
 
 // ---------------------------------------------------------------------------
+// D37 Seam A enforcement: TopologyDecision + ChildDescriptor + RoleId
+// ---------------------------------------------------------------------------
+
+/// Identifier for a `Role` (the RBAC template per D30; `kx_warrant::Role`).
+///
+/// Lives in `kx-mote` as a simple newtype to keep the foundation crate
+/// dependency-free from `kx-warrant` (which sits a layer above and
+/// depends on `kx-mote`). A `RoleId` is an opaque string the workflow
+/// author chose; the registry layer (downstream) maps `RoleId` →
+/// `kx_warrant::Role` at materialization time.
+///
+/// # Examples
+///
+/// ```
+/// use kx_mote::RoleId;
+///
+/// let r = RoleId("critic".into());
+/// assert_eq!(&r.0, "critic");
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct RoleId(pub String);
+
+/// **D37 Seam A enforcement primitive — per-child descriptor.**
+///
+/// One entry in a [`TopologyDecision`]'s `children` vector. Declarative
+/// shape only — describes what the shaper *wants* spawned; the runtime
+/// materializes the concrete child `MoteDef` + `Mote` at recovery /
+/// dispatch time by combining this descriptor with the parent's commit
+/// graph.
+///
+/// **Does NOT carry `shaper_mote_id`** per D37: the shaper is implicitly
+/// identified by the `result_ref` that points to the enclosing
+/// [`TopologyDecision`]. Embedding `shaper_mote_id` here would create
+/// divergence-on-replay risk — the descriptor's content-address would
+/// depend on the shaper's MoteId, which depends on the shaper's
+/// `mote_def_hash`, which depends on the shaper's `MoteDef` shape; a
+/// chain that's circular and fragile under replay.
+///
+/// **Closed payload**: the four fields below are the workflow author's
+/// declarative intent for the child. The runtime derives:
+///
+/// - `parents` from the shaper's committed graph (the shaper's own
+///   committed parents form the child's data lineage)
+/// - `input_data_id` from those parents' `result_ref`s
+/// - `mote_def_hash` from `MoteDef(logic_ref, nd_class, effect_pattern,
+///   role-derived warrant axes, …)`
+/// - `graph_position` from the shaper's `graph_position` + the
+///   descriptor's index in the `children` vector
+/// - `mote_id` from [`derive_mote_id`] over the above
+///
+/// # Examples
+///
+/// ```
+/// use kx_mote::{ChildDescriptor, EffectPattern, LogicRef, NdClass, RoleId};
+///
+/// let c = ChildDescriptor {
+///     role_id: RoleId("critic".into()),
+///     logic_ref: LogicRef([0u8; 32]),
+///     nd_class: NdClass::Pure,
+///     effect_pattern: EffectPattern::IdempotentByConstruction,
+/// };
+/// assert_eq!(&c.role_id.0, "critic");
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ChildDescriptor {
+    /// The Role the child takes — the registry maps `role_id` to a
+    /// `kx_warrant::Role` at materialization. The child's warrant is
+    /// `intersect(parent.warrant, role.warrant)` per D30.
+    pub role_id: RoleId,
+    /// `MoteDef.logic_ref` for the child — what the child executes.
+    pub logic_ref: LogicRef,
+    /// `MoteDef.nd_class` for the child. Drives recovery semantics +
+    /// scheduling priority.
+    pub nd_class: NdClass,
+    /// `MoteDef.effect_pattern` for the child. Determines whether the
+    /// child's `ready_set` gates downstream consumers on a critic verdict
+    /// (3c only).
+    pub effect_pattern: EffectPattern,
+}
+
+/// **D37 Seam A enforcement primitive — the closed topology payload.**
+///
+/// The payload a topology-shaper Mote commits as its `result_ref`. The
+/// shaper does NOT spawn imperatively; it commits this declarative
+/// payload and the runtime materializes children deterministically.
+///
+/// **Single-source-of-truth principle (D37)**: child identity derives
+/// from the shaper's committed `result_ref` (i.e., from
+/// `ContentRef::of(canonical_bincode(self))`). `TopologyDecision` does
+/// NOT carry `shaper_mote_id` for this reason — the shaper is
+/// implicitly the Mote whose `result_ref` points to THIS payload.
+///
+/// **Refusal predicate R-8b** (per `validate-then-commit.md` §7,
+/// PR 4.5): the executor refuses any imperative-spawn attempt at
+/// submission time. Shapers MUST commit a `TopologyDecision`.
+///
+/// **Materialization** (P1.11): the projection reads
+/// `shaper.result_ref`, deserializes the `TopologyDecision`, and
+/// materializes one child `Mote` per [`ChildDescriptor`] in `children`.
+/// Materialization is deterministic — replay produces bit-identical
+/// child `MoteId`s without coordination.
+///
+/// # Examples
+///
+/// ```
+/// use kx_mote::{
+///     ChildDescriptor, EffectPattern, LogicRef, NdClass, RoleId,
+///     TopologyDecision,
+/// };
+///
+/// let td = TopologyDecision {
+///     children: vec![
+///         ChildDescriptor {
+///             role_id: RoleId("critic".into()),
+///             logic_ref: LogicRef([0u8; 32]),
+///             nd_class: NdClass::Pure,
+///             effect_pattern: EffectPattern::IdempotentByConstruction,
+///         },
+///         ChildDescriptor {
+///             role_id: RoleId("worker".into()),
+///             logic_ref: LogicRef([1u8; 32]),
+///             nd_class: NdClass::WorldMutating,
+///             effect_pattern: EffectPattern::StageThenCommit,
+///         },
+///     ],
+/// };
+///
+/// // Content-addressable: identical TopologyDecision → identical hash.
+/// let h1 = td.hash();
+/// let h2 = td.hash();
+/// assert_eq!(h1, h2);
+/// assert_eq!(h1.len(), 32);
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct TopologyDecision {
+    /// The child Motes this shaper declares, in workflow-author intent
+    /// order. Replay materializes children in this exact order; the
+    /// descriptor index becomes the suffix of the child's
+    /// `graph_position`, so order is identity-bearing.
+    pub children: Vec<ChildDescriptor>,
+}
+
+impl TopologyDecision {
+    /// Content-address of this `TopologyDecision`.
+    ///
+    /// `blake3(canonical_bincode(self))` using the workspace-canonical
+    /// configuration via [`canonical_config`]. **Deterministic + pure** —
+    /// two calls on the same value produce identical bytes; two callers
+    /// constructing the same `TopologyDecision` on different machines
+    /// compute identical hashes.
+    ///
+    /// The shaper's `Committed` entry has `result_ref = ContentRef::of(
+    /// canonical_bincode(td))` — i.e., the `result_ref` field on the
+    /// shaper's journal entry equals `td.hash()`. The projection's
+    /// materializer reads this `result_ref`, fetches the payload bytes
+    /// from the content store, deserializes back to `TopologyDecision`,
+    /// and materializes children.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use kx_mote::TopologyDecision;
+    ///
+    /// let td = TopologyDecision { children: vec![] };
+    /// let h = td.hash();
+    /// assert_eq!(h.len(), 32);
+    /// // Empty TopologyDecision has a stable, deterministic hash.
+    /// assert_eq!(td.hash(), td.hash());
+    /// ```
+    #[must_use]
+    pub fn hash(&self) -> [u8; 32] {
+        let bytes = bincode::serde::encode_to_vec(self, canonical_config())
+            .expect("TopologyDecision canonical bincode encodes infallibly");
+        *blake3::hash(&bytes).as_bytes()
+    }
+}
+
+// ---------------------------------------------------------------------------
 // MoteGraph — workflow-author-side container
 // ---------------------------------------------------------------------------
 

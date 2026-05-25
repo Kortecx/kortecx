@@ -17,10 +17,10 @@ use std::collections::BTreeMap;
 use std::thread;
 
 use kx_mote::{
-    canonical_config, derive_mote_id, AttemptState, ConfigKey, ConfigVal, EdgeKind, EdgeMeta,
-    EffectPattern, GraphPosition, InputDataId, LogicRef, ModelId, Mote, MoteDef, MoteDefHash,
-    MoteGraph, MoteId, NdClass, ParentRef, PromptTemplateHash, ToolName, ToolVersion,
-    MOTE_DEF_SCHEMA_VERSION,
+    canonical_config, derive_mote_id, AttemptState, ChildDescriptor, ConfigKey, ConfigVal,
+    EdgeKind, EdgeMeta, EffectPattern, GraphPosition, InputDataId, LogicRef, ModelId, Mote,
+    MoteDef, MoteDefHash, MoteGraph, MoteId, NdClass, ParentRef, PromptTemplateHash, RoleId,
+    ToolName, ToolVersion, TopologyDecision, MOTE_DEF_SCHEMA_VERSION,
 };
 
 /// Compile-time `Send + Sync` assertions for every public type. If any future
@@ -59,6 +59,11 @@ fn all_public_types_are_send_and_sync() {
     assert_send_sync::<MoteDef>();
     assert_send_sync::<Mote>();
     assert_send_sync::<MoteGraph>();
+
+    // D37 Seam A primitives (NEW in PR 7.5).
+    assert_send_sync::<RoleId>();
+    assert_send_sync::<ChildDescriptor>();
+    assert_send_sync::<TopologyDecision>();
 
     // Standalone `Send` / `Sync` sanity (every type also satisfies these
     // individually — this is technically redundant given Send+Sync above
