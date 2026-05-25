@@ -1,0 +1,28 @@
+[package]
+name         = "kx-capability"
+version      = "0.0.1"
+edition      = { workspace = true }
+rust-version = { workspace = true }
+license      = { workspace = true }
+authors      = { workspace = true }
+repository   = { workspace = true }
+description  = "kortecx capability-broker seam (D24) — the executor's sole route to workflow-declared effects. Trivial in-process pass-through impl for P1; hardened bubblewrap+seccomp+multi-tenant impl ships in kx-cloud at P5 behind the same trait. Token plumbing for IdempotencyClass::Token (D38 §1); deterministic readback probe for IdempotencyClass::Readback (D38 §2a). Independent of journal/projection (recovery-state independence)."
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+kx-mote    = { workspace = true }
+kx-content = { workspace = true }
+kx-warrant = { workspace = true }
+serde      = { workspace = true }
+thiserror  = { workspace = true }
+tracing    = { workspace = true }
+
+[dev-dependencies]
+proptest           = { workspace = true }
+smallvec           = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[lints]
+workspace = true
