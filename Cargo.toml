@@ -18,6 +18,7 @@ members = [
     "crates/kx-context-assembler",
     "crates/kx-memoizer",
     "crates/kx-normalizer",
+    "crates/kx-inference",
 ]
 exclude = [
     "kx-cloud",
@@ -68,6 +69,7 @@ kx-tool-registry     = { path = "crates/kx-tool-registry",     version = "0.0.1"
 kx-context-assembler = { path = "crates/kx-context-assembler", version = "0.0.1" }
 kx-memoizer          = { path = "crates/kx-memoizer",          version = "0.0.1" }
 kx-normalizer        = { path = "crates/kx-normalizer",        version = "0.0.1" }
+kx-inference         = { path = "crates/kx-inference",         version = "0.0.1" }
 bindgen            = "0.70"
 cmake              = "0.1"
 ureq               = { version = "2", default-features = false, features = ["tls"] }

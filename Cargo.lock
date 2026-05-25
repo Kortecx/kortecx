@@ -644,6 +644,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "kx-inference"
+version = "0.0.1"
+dependencies = [
+ "bytes",
+ "kx-content",
+ "kx-context-assembler",
+ "kx-journal",
+ "kx-llamacpp",
+ "kx-memoizer",
+ "kx-model-validator",
+ "kx-mote",
+ "kx-projection",
+ "kx-tool-registry",
+ "kx-warrant",
+ "proptest",
+ "serde",
+ "smallvec",
+ "tempfile",
+ "thiserror",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "kx-journal"
 version = "0.0.1"
 dependencies = [
