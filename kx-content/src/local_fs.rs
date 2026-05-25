@@ -181,3 +181,230 @@ fn hex_nibble(c: u8) -> Option<u8> {
         _ => None,
     }
 }
+
+// ---------------------------------------------------------------------------
+// D39 Test A — store atomicity seam (test-only)
+//
+// Production `put` writes a NamedTempFile then atomic-renames it into place. The
+// guarantee this seam exists to PROVE is: a worker that dies AFTER sync_all but
+// BEFORE the atomic rename leaves no observable object at the canonical ref. The
+// existing `obligation_3` test asserts that a non-persisted tempfile is not
+// observable (via NamedTempFile's Drop auto-cleanup); that proves the happy
+// path, not the crash path. This seam simulates the crash path by allowing the
+// test to short-circuit BEFORE persist AND intentionally LEAK the temp file (so
+// Drop does not clean up — modeling a process that died mid-flight).
+//
+// The seam is `pub(crate)` and gated `#[cfg(test)]` — invisible outside test
+// builds and outside the crate. Production callers see only the trait surface.
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+impl LocalFsContentStore {
+    /// Test-only seam: run `put`'s prefix (compute ref, write temp, sync_all),
+    /// then call `interrupt`. If `interrupt` returns `true`, the function
+    /// returns BEFORE calling `persist` AND keeps the temp file on disk via
+    /// `TempPath::keep()` (suppressing Drop) — modeling a worker that died
+    /// after sync_all but before the atomic rename. If `interrupt` returns
+    /// `false`, `persist` runs and the call completes normally.
+    ///
+    /// Returns `(ContentRef, persisted)` where `persisted` is `true` iff the
+    /// atomic rename happened. **Contract verified**: when `persisted == false`,
+    /// the canonical ref is invisible through every read method (`get`,
+    /// `contains`, `list_refs`) — the temp file is on disk but at a name that
+    /// is not the canonical hash, and `list_refs` filters it because the temp
+    /// filename does not decode as 64-character lowercase hex.
+    pub(crate) fn put_with_interrupt_hook<F>(
+        &self,
+        bytes: &[u8],
+        interrupt: F,
+    ) -> Result<(ContentRef, bool), StoreError>
+    where
+        F: FnOnce() -> bool,
+    {
+        let r = ContentRef::of(bytes);
+        let final_path = self.path_for(&r);
+
+        if final_path.exists() {
+            return Ok((r, true));
+        }
+
+        let mut temp = tempfile::NamedTempFile::new_in(&self.root)?;
+        temp.write_all(bytes)?;
+        temp.as_file_mut().sync_all()?;
+
+        if interrupt() {
+            // Suppress Drop: the temp file persists on disk at its random name,
+            // modeling an orphan from a crashed worker.
+            let _path = temp
+                .into_temp_path()
+                .keep()
+                .map_err(|e| StoreError::Io(std::io::Error::other(e)))?;
+            return Ok((r, false));
+        }
+
+        match temp.persist(&final_path) {
+            Ok(_) => Ok((r, true)),
+            Err(persist_err) => {
+                if final_path.exists() {
+                    Ok((r, true))
+                } else {
+                    Err(StoreError::Io(persist_err.error))
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod atomicity_seam_tests {
+    use super::{ContentRef, ContentStore, LocalFsContentStore, NotFound};
+    use tempfile::TempDir;
+
+    /// D39 Test A — primary obligation.
+    ///
+    /// After an interrupt between sync_all and persist:
+    /// (a) `get(ref) → NotFound`
+    /// (b) `contains(ref) == false`
+    /// (c) `list_refs()` does NOT include the canonical ref
+    /// (d) the orphan temp file IS still on disk (proves the seam genuinely
+    ///     skipped Drop — not relying on `NamedTempFile` cleanup to pass)
+    #[test]
+    fn put_interrupted_between_sync_and_persist_leaves_no_observable_canonical_ref() {
+        let tmp = TempDir::new().expect("tempdir");
+        let store = LocalFsContentStore::open(tmp.path()).expect("open");
+        let payload = b"interrupted-payload-d39-test-a";
+
+        let (r, persisted) = store
+            .put_with_interrupt_hook(payload, || true)
+            .expect("seam returns Ok even when interrupt fires");
+
+        assert!(!persisted, "interrupt must prevent persist");
+
+        // (a) get() returns NotFound at the canonical ref.
+        assert!(
+            matches!(store.get(&r), Err(NotFound)),
+            "get(canonical_ref) MUST be NotFound after interrupt"
+        );
+
+        // (b) contains() returns false.
+        assert!(
+            !store.contains(&r),
+            "contains(canonical_ref) MUST be false after interrupt"
+        );
+
+        // (c) list_refs() does NOT include the canonical ref. The orphan
+        //     tempfile is present on disk but at a non-hex filename, so
+        //     decode_hex_hash filters it out — list_refs is empty.
+        let listed: Vec<ContentRef> = store.list_refs().collect();
+        assert!(
+            !listed.contains(&r),
+            "list_refs() MUST NOT include canonical_ref after interrupt"
+        );
+        assert!(
+            listed.is_empty(),
+            "list_refs() MUST be empty (orphan temp must not parse as a canonical hex name)"
+        );
+
+        // (d) the orphan temp file IS still on disk — proves the seam suppressed
+        //     Drop (modeling a real crash), not just relied on auto-cleanup to
+        //     pass the test.
+        let dir_entries: Vec<_> = std::fs::read_dir(tmp.path())
+            .expect("read_dir")
+            .filter_map(Result::ok)
+            .collect();
+        assert_eq!(
+            dir_entries.len(),
+            1,
+            "exactly one orphan file MUST remain on disk after interrupt \
+             (proves Drop was suppressed; if 0, the seam isn't modeling a real crash)"
+        );
+
+        // The orphan's filename must NOT be the canonical hex (would have meant
+        // persist ran somehow).
+        let orphan_name = dir_entries[0].file_name();
+        let orphan_str = orphan_name.to_string_lossy();
+        assert_ne!(
+            orphan_str.as_ref(),
+            r.to_hex(),
+            "orphan filename MUST NOT be the canonical hex (would mean persist ran)"
+        );
+    }
+
+    /// The seam is a controlled switch: when `interrupt` returns `false`, the
+    /// path is identical to production `put` and the canonical ref is observable.
+    /// Guards against the seam itself silently breaking the happy path.
+    #[test]
+    fn put_with_interrupt_hook_proceeds_normally_when_hook_returns_false() {
+        let tmp = TempDir::new().expect("tempdir");
+        let store = LocalFsContentStore::open(tmp.path()).expect("open");
+        let payload = b"normal-payload-no-interrupt";
+
+        let (r, persisted) = store
+            .put_with_interrupt_hook(payload, || false)
+            .expect("ok");
+
+        assert!(persisted, "no interrupt → persist must run");
+        assert!(store.contains(&r));
+        assert_eq!(&*store.get(&r).expect("present"), payload);
+    }
+
+    /// Recovery: after an interrupted attempt, a subsequent normal `put` with
+    /// identical bytes MUST succeed and place the canonical file. Proves that
+    /// an interrupt does not permanently poison the store for that ref — the
+    /// orphan temp does not block recovery (uniqueness is per-attempt because
+    /// `NamedTempFile` generates a fresh random name each call).
+    #[test]
+    fn put_after_interrupt_can_recover_via_subsequent_normal_put() {
+        let tmp = TempDir::new().expect("tempdir");
+        let store = LocalFsContentStore::open(tmp.path()).expect("open");
+        let payload = b"recovery-payload-d39-test-a";
+
+        let (r1, persisted1) = store
+            .put_with_interrupt_hook(payload, || true)
+            .expect("first attempt seam runs");
+        assert!(!persisted1, "first attempt was interrupted");
+        assert!(!store.contains(&r1), "canonical ref absent after interrupt");
+
+        // Recovery: normal put with same bytes. Same canonical ref derives;
+        // the temp orphan from attempt 1 is still on disk but at a different
+        // random name, so it does not block this put.
+        let r2 = store.put(payload).expect("recovery put succeeds");
+        assert_eq!(
+            r1, r2,
+            "ref derivation is bytes-pure; recovery returns same ref"
+        );
+        assert!(store.contains(&r2), "canonical ref present after recovery");
+        assert_eq!(
+            &*store.get(&r2).expect("present"),
+            payload,
+            "recovered bytes match"
+        );
+    }
+
+    /// Idempotence under repeated interrupts: two interrupted attempts in a
+    /// row, then a successful normal put. Proves multiple orphans do not
+    /// accumulate at the canonical name (they accumulate as separate temp
+    /// files; canonical name is occupied exactly once after the eventual
+    /// successful put).
+    #[test]
+    fn repeated_interrupts_then_recovery_yields_exactly_one_canonical_object() {
+        let tmp = TempDir::new().expect("tempdir");
+        let store = LocalFsContentStore::open(tmp.path()).expect("open");
+        let payload = b"repeated-interrupt-payload";
+
+        let (r, p1) = store.put_with_interrupt_hook(payload, || true).expect("ok");
+        assert!(!p1);
+        let (_, p2) = store.put_with_interrupt_hook(payload, || true).expect("ok");
+        assert!(!p2);
+        let r3 = store.put(payload).expect("recovery");
+        assert_eq!(r, r3);
+
+        // The canonical file exists exactly once.
+        assert!(store.contains(&r));
+        let canonical = store.list_refs().filter(|x| *x == r).count();
+        assert_eq!(
+            canonical, 1,
+            "exactly one object at canonical_ref after recovery"
+        );
+    }
+}
