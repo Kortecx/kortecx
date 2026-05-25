@@ -684,6 +684,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "kx-memoizer"
+version = "0.0.1"
+dependencies = [
+ "kx-content",
+ "kx-journal",
+ "kx-mote",
+ "kx-projection",
+ "proptest",
+ "serde",
+ "smallvec",
+ "thiserror",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "kx-model-validator"
 version = "0.0.1"
 dependencies = [
