@@ -43,6 +43,7 @@ fn arb_proposed(mote_id_seed: u8, seq: u64) -> JournalEntry {
         seq,
         nondeterminism: NdClass::Pure,
         placement_hint: 0,
+        warrant_ref: ContentRef::from_bytes([0xaa; 32]),
     }
 }
 
@@ -54,6 +55,7 @@ fn arb_committed(mote_id_seed: u8, seq: u64, nd: NdClass) -> JournalEntry {
         nondeterminism: nd,
         result_ref: ContentRef::from_bytes([mote_id_seed; 32]),
         parents: SmallVec::new(),
+        warrant_ref: ContentRef::from_bytes([0xaa; 32]),
         mote_def_hash: MoteDefHash::from_bytes([mote_id_seed; 32]),
     }
 }
@@ -436,4 +438,198 @@ fn fold_many_stops_on_first_error_and_state_reflects_applied_entries() {
     assert!(!p
         .iter_motes()
         .any(|(id, _)| id == MoteId::from_bytes([4; 32])));
+}
+
+// ---------------------------------------------------------------------------
+// **PR 7 — STEP 5.2 + STEP 6 properties (load-bearing recovery contract).**
+//
+// These properties pin the prefix-monotonicity-of-refusal contract: once
+// `can_redispatch_world_effect` returns `false` at a log prefix, it returns
+// `false` at every longer prefix (refusal is monotonic; once terminal,
+// always terminal). They also enforce the canonical-classifier-cannot-drift
+// contract via class-covering proptests over the full `FailureReason` enum
+// (mirror of STEP 6.2 from PR 4.5).
+// ---------------------------------------------------------------------------
+
+use kx_journal::is_pre_commit_crash;
+
+/// Strategy: an arbitrary `FailureReason` variant. MUST be updated when a
+/// new variant lands — canonical-classifier-cannot-drift TEST-level gate.
+/// The single source of class truth (pre-commit-crash vs terminal) is
+/// `kx_journal::is_pre_commit_crash`; both prod code and tests call it.
+fn arbitrary_failure_reason() -> impl Strategy<Value = FailureReason> {
+    prop_oneof![
+        Just(FailureReason::TimedOut),
+        Just(FailureReason::ExecutorRefused),
+        Just(FailureReason::ValidatorRejected),
+        Just(FailureReason::WorkerCrashed),
+        Just(FailureReason::UpstreamRepudiated),
+        Just(FailureReason::UnsafeWorldMutatingConstruction),
+    ]
+}
+
+fn arb_mote_id_strategy() -> impl Strategy<Value = MoteId> {
+    (1u8..=200).prop_map(|s| MoteId::from_bytes([s; 32]))
+}
+
+fn effect_staged_for(mid: MoteId) -> JournalEntry {
+    JournalEntry::EffectStaged {
+        mote_id: mid,
+        idempotency_key: mid.0,
+        seq: 0,
+    }
+}
+
+fn failed_for(mid: MoteId, reason: FailureReason) -> JournalEntry {
+    JournalEntry::Failed {
+        mote_id: mid,
+        idempotency_key: mid.0,
+        seq: 0,
+        reason_class: reason,
+        reporter_id: 0,
+    }
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig {
+        cases: 64,
+        .. ProptestConfig::default()
+    })]
+
+    /// **STEP 5.2 — Prefix-monotonicity of refusal.** Once
+    /// `can_redispatch_world_effect(mote)` returns `false` at some prefix of
+    /// the log, it returns `false` at every longer prefix. Equivalently:
+    /// refusal can only stabilize toward "more refusal," never less.
+    ///
+    /// This is the property that closes cell 5 of the 9-cell cross-product
+    /// against future regression: any fold-branch edit that resets
+    /// `terminal_failure_observed` or `inconsistent` would fail this proptest.
+    #[test]
+    fn prop_terminal_refusal_is_prefix_monotonic(
+        mid in arb_mote_id_strategy(),
+        reason in arbitrary_failure_reason(),
+        n_extra in 1usize..=5,
+    ) {
+        // Build a log that gets the Mote into a refusal state, then appends
+        // extra entries on top. Refusal must hold across every prefix from
+        // the point it first becomes true.
+        let mut p = Projection::new();
+        p.fold(&effect_staged_for(mid)).unwrap();
+        p.fold(&failed_for(mid, reason)).unwrap();
+
+        let mut prev_refused = false;
+        // Test at each prefix length 0..=n_extra additional entries.
+        for i in 0..n_extra {
+            let refused = !p.can_redispatch_world_effect(&mid);
+            if prev_refused {
+                prop_assert!(
+                    refused,
+                    "refusal MUST be prefix-monotonic — became false again at extra-prefix {i}"
+                );
+            }
+            prev_refused = prev_refused || refused;
+            // Append another arbitrary entry (a Proposed — chosen because
+            // Proposed resets `failed_pending_reattempt` but MUST NOT
+            // reset `terminal_failure_observed` or `inconsistent` per
+            // STEP 5.2 + STEP 5.3 prefix-monotonic-true contract).
+            p.fold(&JournalEntry::Proposed {
+                mote_id: mid,
+                idempotency_key: mid.0,
+                seq: 0,
+                nondeterminism: NdClass::Pure,
+                placement_hint: 0,
+                warrant_ref: ContentRef::from_bytes([0xaa; 32]),
+            }).unwrap();
+        }
+    }
+
+    /// **STEP 6.2 — class-covering: terminal under EffectStaged forbids
+    /// redispatch.** For every `FailureReason` classified as terminal by
+    /// `is_pre_commit_crash`, a journal `[EffectStaged, Failed(reason)]`
+    /// folds to `can_redispatch_world_effect == false`.
+    ///
+    /// **The proptest gates via `is_pre_commit_crash` directly** so the
+    /// production classifier and the test surface share the same function;
+    /// no risk of drift if a future variant lands.
+    #[test]
+    fn prop_terminal_failure_under_effect_staged_refuses_redispatch(
+        reason in arbitrary_failure_reason(),
+        mid in arb_mote_id_strategy(),
+    ) {
+        prop_assume!(!is_pre_commit_crash(reason));
+        let mut p = Projection::new();
+        p.fold(&effect_staged_for(mid)).unwrap();
+        p.fold(&failed_for(mid, reason)).unwrap();
+        prop_assert!(
+            !p.can_redispatch_world_effect(&mid),
+            "terminal {reason:?} under EffectStaged MUST refuse redispatch"
+        );
+        prop_assert_eq!(p.state_of(&mid), MoteState::Failed);
+    }
+
+    /// **STEP 6.2 — class-covering: pre-commit-crash under EffectStaged
+    /// permits redispatch.** Sister property to the above; pre-commit-crash
+    /// failures (TimedOut, WorkerCrashed) under EffectStaged → redispatch
+    /// permitted (cell 3).
+    #[test]
+    fn prop_precommit_failure_under_effect_staged_permits_redispatch(
+        reason in arbitrary_failure_reason(),
+        mid in arb_mote_id_strategy(),
+    ) {
+        prop_assume!(is_pre_commit_crash(reason));
+        let mut p = Projection::new();
+        p.fold(&effect_staged_for(mid)).unwrap();
+        p.fold(&failed_for(mid, reason)).unwrap();
+        prop_assert!(
+            p.can_redispatch_world_effect(&mid),
+            "pre-commit-crash {reason:?} under EffectStaged MUST permit redispatch (cell 3)"
+        );
+        // state_of_id falls through to Pending (in-flight) since
+        // terminal_failure_observed is false.
+        prop_assert_eq!(p.state_of(&mid), MoteState::Pending);
+    }
+
+    /// **STEP 6.1 — `inconsistent` flag is prefix-monotonic-true.** Once a
+    /// Mote enters `MoteState::Inconsistent`, it stays Inconsistent across
+    /// every longer log prefix. Mirror of STEP 5.2 for the cell-8 anomaly.
+    #[test]
+    fn prop_inconsistent_is_monotonic_true(
+        mid in arb_mote_id_strategy(),
+        n_extra in 1usize..=5,
+    ) {
+        let mut p = Projection::new();
+        // Set up cell-8: EffectStaged then Repudiated, no Committed in
+        // between. Sets info.inconsistent = true.
+        p.fold(&effect_staged_for(mid)).unwrap();
+        p.fold(&JournalEntry::Repudiated {
+            target_mote_id: mid,
+            idempotency_key: kx_journal::repudiation_idempotency_key(&mid, 0),
+            seq: 0,
+            target_committed_seq: 0,
+            reason_class: RepudiationReason::OperatorAction,
+            repudiator_id: 0,
+        }).unwrap();
+
+        prop_assert_eq!(p.state_of(&mid), MoteState::Inconsistent);
+
+        // Now append extra entries. Inconsistent MUST hold across every
+        // longer prefix — no fold branch may reset `info.inconsistent`.
+        for _ in 0..n_extra {
+            // Mix in a Proposed (the only branch that resets any flag).
+            p.fold(&JournalEntry::Proposed {
+                mote_id: mid,
+                idempotency_key: mid.0,
+                seq: 0,
+                nondeterminism: NdClass::Pure,
+                placement_hint: 0,
+                warrant_ref: ContentRef::from_bytes([0xaa; 32]),
+            }).unwrap();
+            prop_assert_eq!(
+                p.state_of(&mid),
+                MoteState::Inconsistent,
+                "inconsistent MUST be prefix-monotonic-true even after subsequent Proposed"
+            );
+            prop_assert!(!p.can_redispatch_world_effect(&mid));
+        }
+    }
 }

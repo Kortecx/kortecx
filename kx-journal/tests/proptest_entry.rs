@@ -103,15 +103,17 @@ fn arb_proposed() -> impl Strategy<Value = JournalEntry> {
         any::<u64>(),
         arb_nd_class(),
         any::<u128>(),
+        arb_byte_array_32(),
     )
         .prop_map(
-            |(mote_id, idempotency_key, seq, nondeterminism, placement_hint)| {
+            |(mote_id, idempotency_key, seq, nondeterminism, placement_hint, warrant_ref_bytes)| {
                 JournalEntry::Proposed {
                     mote_id,
                     idempotency_key,
                     seq,
                     nondeterminism,
                     placement_hint,
+                    warrant_ref: ContentRef::from_bytes(warrant_ref_bytes),
                 }
             },
         )
@@ -126,9 +128,19 @@ fn arb_committed() -> impl Strategy<Value = JournalEntry> {
         arb_byte_array_32(),
         arb_parents(),
         arb_byte_array_32(),
+        arb_byte_array_32(),
     )
         .prop_map(
-            |(mote_id, idempotency_key, seq, nondeterminism, ref_bytes, parents, def_hash)| {
+            |(
+                mote_id,
+                idempotency_key,
+                seq,
+                nondeterminism,
+                ref_bytes,
+                parents,
+                warrant_ref_bytes,
+                def_hash,
+            )| {
                 JournalEntry::Committed {
                     mote_id,
                     idempotency_key,
@@ -136,10 +148,22 @@ fn arb_committed() -> impl Strategy<Value = JournalEntry> {
                     nondeterminism,
                     result_ref: ContentRef::from_bytes(ref_bytes),
                     parents,
+                    warrant_ref: ContentRef::from_bytes(warrant_ref_bytes),
                     mote_def_hash: MoteDefHash::from_bytes(def_hash),
                 }
             },
         )
+}
+
+/// **v2 (PR 7): EffectStaged strategy.** Header-only; no body fields.
+fn arb_effect_staged() -> impl Strategy<Value = JournalEntry> {
+    (arb_mote_id(), arb_byte_array_32(), any::<u64>()).prop_map(
+        |(mote_id, idempotency_key, seq)| JournalEntry::EffectStaged {
+            mote_id,
+            idempotency_key,
+            seq,
+        },
+    )
 }
 
 fn arb_repudiated() -> impl Strategy<Value = JournalEntry> {
@@ -223,6 +247,25 @@ proptest! {
         let bytes = encode_entry(&entry).expect("encode");
         let decoded = decode_entry(&bytes).expect("decode");
         prop_assert_eq!(decoded, entry);
+    }
+
+    // **v2 (PR 7)** — encode/decode round-trip for EffectStaged entries
+    // (header-only body per D38 §2b).
+    #[test]
+    fn prop_effect_staged_round_trip(entry in arb_effect_staged()) {
+        let bytes = encode_entry(&entry).expect("encode");
+        // EffectStaged is header-only — bytes.len() MUST equal HEADER_LEN.
+        prop_assert_eq!(bytes.len(), kx_journal::HEADER_LEN);
+        let decoded = decode_entry(&bytes).expect("decode");
+        prop_assert_eq!(decoded, entry);
+    }
+
+    // **v2 (PR 7)** — encoding determinism for EffectStaged.
+    #[test]
+    fn prop_encoding_is_deterministic_effect_staged(entry in arb_effect_staged()) {
+        let a = encode_entry(&entry).expect("encode a");
+        let b = encode_entry(&entry).expect("encode b");
+        prop_assert_eq!(a, b);
     }
 
     // Property 1 — encode/decode round-trip for Committed entries via

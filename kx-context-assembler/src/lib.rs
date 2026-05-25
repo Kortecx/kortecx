@@ -487,6 +487,7 @@ mod tests {
             nondeterminism: NdClass::Pure,
             result_ref,
             parents,
+            warrant_ref: ContentRef::from_bytes([0xaa; 32]),
             mote_def_hash: empty_def_hash(),
         }
     }
