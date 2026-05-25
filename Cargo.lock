@@ -726,6 +726,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "kx-normalizer"
+version = "0.0.1"
+dependencies = [
+ "bytes",
+ "kx-mote",
+ "proptest",
+ "serde",
+ "thiserror",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "kx-projection"
 version = "0.0.1"
 dependencies = [

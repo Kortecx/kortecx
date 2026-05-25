@@ -1,0 +1,23 @@
+[package]
+name         = "kx-normalizer"
+version      = "0.0.1"
+edition      = { workspace = true }
+rust-version = { workspace = true }
+license      = { workspace = true }
+authors      = { workspace = true }
+repository   = { workspace = true }
+description  = "kortecx normalizer — deterministic canonicalization BEFORE fingerprinting (D33 + context-assembly.md §4). The fix is NOT fuzzy matching (forbidden by SN-8). Conservative: when unsure, keep distinct. v0.1 ships ONE rule set: CommandLineIntent v1."
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+bytes     = { workspace = true }
+kx-mote   = { workspace = true }
+serde     = { workspace = true }
+thiserror = { workspace = true }
+tracing   = { workspace = true }
+
+[dev-dependencies]
+proptest           = { workspace = true }
+tracing-subscriber = { workspace = true }
