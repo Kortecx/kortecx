@@ -603,10 +603,7 @@ impl<S: ContentStore + Send + Sync> LocalCapabilityBroker<S> {
         };
 
         // (2) capability supports the requested pattern
-        if !capability
-            .supported_patterns()
-            .contains(&request.pattern)
-        {
+        if !capability.supported_patterns().contains(&request.pattern) {
             return Err(BrokerError::UnsupportedPattern {
                 capability: capability_name.clone(),
                 requested: request.pattern,
@@ -745,9 +742,9 @@ impl<S: ContentStore + Send + Sync> CapabilityBroker for LocalCapabilityBroker<S
 // 2. The trait surface admits a future hosted impl: the trait is
 //    object-safe and `Send + Sync`; no signature carries an
 //    in-process-only type (e.g., no `Arc<Mutex<...>>` over an
-//    in-process queue). A `kx-cloud-broker-hardened` (D24 + D28) can
-//    implement `CapabilityBroker` with a remote dispatch protocol and
-//    the executor code is unchanged.
+//    in-process queue). A future hardened cloud-side broker can
+//    implement `CapabilityBroker` with a remote dispatch protocol
+//    behind the same trait, and the executor code is unchanged.
 // 3. Every `BrokerError` variant is test-reachable: `UnknownCapability`
 //    (CAP-2 fixture), `UnsupportedPattern` (CAP-3 fixture),
 //    `CapabilityExceedsWarrant` (CAP-6/7 fixtures on three axes),
