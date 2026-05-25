@@ -81,6 +81,12 @@ use smallvec::SmallVec;
 
 /// Per-Mote state, derived from the log via the precedence rules in `projection.md`
 /// §4. A Mote registered but with no journal entry yet is [`MoteState::Pending`].
+///
+/// **v2 (PR 7) adds [`MoteState::Inconsistent`]** — the cell-8 anomaly state for
+/// `EffectStaged` + `Repudiated` without an intervening `Committed`. Per STEP 5.3
+/// of PR 4.5: the fold does NOT abort on this anomaly; it quarantines the affected
+/// Mote and surfaces it via [`Projection::anomaly_motes`] so an operator decides
+/// recovery.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum MoteState {
     /// Workflow-declared but no journal entry yet.
@@ -90,9 +96,35 @@ pub enum MoteState {
     /// A `Committed` entry exists and has not been Repudiated.
     Committed,
     /// At least one `Failed` entry exists; no later `Proposed`, no `Committed`.
+    /// In v2, this includes the **terminal failure** case (a `Failed` whose
+    /// `reason_class` is NOT pre-commit-crash, paired with an `EffectStaged` —
+    /// cell 5 of the 9-cell cross-product). Terminal failures forbid
+    /// re-dispatch; consult [`Projection::can_redispatch_world_effect`].
     Failed,
     /// A `Committed` entry exists AND a `Repudiated` entry targeting it has landed.
     Repudiated,
+    /// **v2 (PR 7): cell-8 anomaly.** An `EffectStaged` entry exists for the Mote
+    /// AND a `Repudiated` entry references it WITHOUT an intervening `Committed`.
+    /// Repudiated normally targets a Committed; an EffectStaged-then-Repudiated-
+    /// without-Committed sequence is a journal-consistency error per STEP 5.3.
+    /// Surfaced via [`Projection::anomaly_motes`]; never re-dispatched.
+    Inconsistent,
+}
+
+/// Categorical anomaly kind surfaced by [`Projection::anomaly_motes`].
+///
+/// **v2 (PR 7).** Extensible-by-additive-variants: when a new fold cell anomaly
+/// becomes possible (e.g., from a fifth journal kind), it extends this enum rather
+/// than adding another `MoteState` variant — keeps state semantically minimal
+/// while diagnostics remain expressive.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum AnomalyKind {
+    /// **Cell 8** of the 9-cell cross-product (`journal-txn.md` §"Recovery fold
+    /// semantics"): an `EffectStaged` entry was folded for this Mote, then a
+    /// `Repudiated` entry referencing it was folded, but no `Committed` was ever
+    /// folded in between. Repudiated targets a Committed that doesn't exist; the
+    /// fold quarantines the Mote (sets `info.inconsistent`) rather than aborting.
+    EffectStagedThenRepudiatedNoCommitted,
 }
 
 /// 3c (validate-then-commit) promotion state, per D18 + D20.
@@ -169,6 +201,13 @@ struct CommittedInfo {
     result_ref: ContentRef,
     nondeterminism: NdClass,
     parents_in_entry: SmallVec<[ParentEntry; 4]>,
+    /// The warrant under which this commit was performed. NEW in v2 (D36).
+    /// Stored so consumers (executor recovery, audit log walkers) can read
+    /// it via the projection's API without re-decoding the journal entry.
+    /// Not yet read in P1.5; will be consumed by P1.9's submission-time
+    /// refusal predicates.
+    #[allow(dead_code)]
+    warrant_ref: ContentRef,
     /// Retained for the D22 `list_committed_by_mote_def_hash`-driven cascade
     /// (operator-level definition repudiation surfaces the def_hash; consumers
     /// reach for it here when constructing cascade sets). Not yet read in P1.5;
@@ -179,6 +218,14 @@ struct CommittedInfo {
     repudiated: bool,
 }
 
+// MoteInfo has 5 bools because the 9-cell recovery cross-product needs each
+// flag's semantics distinct: `has_proposed` + `failed_pending_reattempt` are
+// non-monotonic per-attempt markers; `effect_staged_observed` +
+// `terminal_failure_observed` + `inconsistent` are prefix-monotonic-true
+// recovery-contract flags. Consolidating to a bitfield or enum would obscure
+// the per-flag invariants the fold + state_of_id depend on. Each flag's
+// reset/no-reset semantics is named at its field-level doc comment.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone, Default)]
 struct MoteInfo {
     /// Workflow-author-declared properties (when registered).
@@ -189,8 +236,26 @@ struct MoteInfo {
     has_proposed: bool,
     /// `true` if at least one `Failed` entry has been folded with no later `Proposed`.
     /// We track this directly because `Failed → Proposed` is a valid sequence
-    /// (`mote.md` §7 + `journal-entry.md` §7.5).
+    /// (`mote.md` §7 + `journal-entry.md` §7.5). **NOT prefix-monotonic** —
+    /// reset to `false` by a subsequent `Proposed`. Distinct from
+    /// `terminal_failure_observed` below.
     failed_pending_reattempt: bool,
+    /// **v2 (PR 7).** `true` if at least one `EffectStaged` entry has been
+    /// folded for this MoteId. **Prefix-monotonic-true** — never reset by any
+    /// fold branch. Set in the `EffectStaged` arm.
+    effect_staged_observed: bool,
+    /// **v2 (PR 7).** `true` if at least one `Failed` entry has been folded
+    /// with a terminal `reason_class` (i.e., NOT pre-commit-crash per
+    /// [`kx_journal::is_pre_commit_crash`]). **Prefix-monotonic-true** — never
+    /// reset. This is the LOAD-BEARING flag that closes the cell-5 WM
+    /// double-effect hazard per STEP 5.2 of PR 4.5.
+    terminal_failure_observed: bool,
+    /// **v2 (PR 7).** `true` if the cell-8 anomaly was observed: a
+    /// `Repudiated` entry referenced this Mote while an `EffectStaged` had
+    /// been folded but no `Committed` was ever folded in between.
+    /// **Prefix-monotonic-true** — never reset. Quarantines the Mote per
+    /// STEP 5.3.
+    inconsistent: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -224,17 +289,55 @@ impl State {
         self.motes.entry(*id).or_default()
     }
 
-    /// Compute the per-identity state per `projection.md` §4.
+    /// Compute the per-identity state per `projection.md` §4 (v2 derivation
+    /// per STEP 5.1 of PR 4.5).
+    ///
+    /// **Terminal-before-Staged ordering invariant (LOAD-BEARING).** Per STEP
+    /// 5.1: `terminal_failure_observed` MUST be checked BEFORE
+    /// `effect_staged_observed`. Swapping reopens the WM double-effect window
+    /// (cell 5 flips from "Failed-terminal — do NOT redispatch" to
+    /// "Pending-in-flight — OK to redispatch"). Reordering is a recovery-
+    /// correctness regression and is forbidden. Regression test:
+    /// `kx-projection/tests/cross_product.rs::
+    /// cell_5_terminal_failure_under_effect_staged_no_redispatch`.
+    ///
+    /// **v2 derivation order**:
+    /// 1. `info.inconsistent` → `Inconsistent` (highest priority; cell-8 anomaly)
+    /// 2. `committed.is_some() && repudiated` → `Repudiated`
+    /// 3. `committed.is_some()` → `Committed`
+    /// 4. `info.terminal_failure_observed` → `Failed` ← MUST precede branch 5
+    /// 5. `info.effect_staged_observed` → `Pending` (in-flight; redispatch OK)
+    /// 6. `info.failed_pending_reattempt` → `Failed` (retry-allowed)
+    /// 7. `info.has_proposed` → `Scheduled`
+    /// 8. else → `Pending`
     fn state_of_id(&self, id: &MoteId) -> MoteState {
         match self.motes.get(id) {
             None => MoteState::Pending,
             Some(info) => {
-                if let Some(c) = &info.committed {
+                // 1. Anomaly takes priority over every other state (STEP 5.3).
+                if info.inconsistent {
+                    MoteState::Inconsistent
+                } else if let Some(c) = &info.committed {
                     if c.repudiated {
                         MoteState::Repudiated
                     } else {
                         MoteState::Committed
                     }
+                }
+                // INVARIANT: terminal_failure_observed MUST be checked BEFORE
+                // effect_staged_observed. Swapping reopens the WM double-effect
+                // window (see projection.md §"Terminal-before-Staged ordering
+                // invariant" and journal-txn.md fold cross-product cell 5).
+                // Regression test:
+                //   kx-projection/tests/cross_product.rs::
+                //   cell_5_terminal_failure_under_effect_staged_no_redispatch
+                else if info.terminal_failure_observed {
+                    MoteState::Failed
+                } else if info.effect_staged_observed {
+                    // Cells 2 + 3: EffectStaged with no Committed and no
+                    // terminal Failed → in-flight; redispatch permitted by
+                    // can_redispatch_world_effect().
+                    MoteState::Pending
                 } else if info.failed_pending_reattempt {
                     MoteState::Failed
                 } else if info.has_proposed {
@@ -244,6 +347,49 @@ impl State {
                 }
             }
         }
+    }
+
+    /// `can_redispatch_world_effect` predicate (v2 / STEP 5.3 / R-13).
+    ///
+    /// Returns `true` iff the executor's recovery-time re-dispatch is safe
+    /// for this Mote. Returns `false` for: `inconsistent` (cell 8 anomaly),
+    /// `terminal_failure_observed` (cell 5 — terminal failure under
+    /// EffectStaged), or `committed.is_some()` (cell 4 — done; never re-dispatch).
+    ///
+    /// **Returns `true` only when** an `EffectStaged` was observed AND no
+    /// terminal failure AND no inconsistency AND no Committed yet — the
+    /// in-flight case (cells 2 + 3) where the broker's tool-boundary
+    /// idempotency closes the window.
+    fn can_redispatch_world_effect_id(&self, id: &MoteId) -> bool {
+        match self.motes.get(id) {
+            None => false,
+            Some(info) => {
+                if info.inconsistent {
+                    return false;
+                }
+                if info.terminal_failure_observed {
+                    return false;
+                }
+                if info.committed.is_some() {
+                    return false;
+                }
+                info.effect_staged_observed
+            }
+        }
+    }
+
+    /// Enumerate every Mote currently flagged anomalous, with its anomaly kind.
+    fn anomaly_motes_iter(&self) -> Vec<(MoteId, AnomalyKind)> {
+        self.motes
+            .iter()
+            .filter_map(|(id, info)| {
+                if info.inconsistent {
+                    Some((*id, AnomalyKind::EffectStagedThenRepudiatedNoCommitted))
+                } else {
+                    None
+                }
+            })
+            .collect()
     }
 
     /// Return the declared-or-committed parent list for `id`. Declared takes
@@ -316,6 +462,7 @@ impl State {
 ///     nondeterminism: NdClass::Pure,
 ///     result_ref: ContentRef::from_bytes([7u8; 32]),
 ///     parents: SmallVec::new(),
+///     warrant_ref: ContentRef::from_bytes([0xaa; 32]),
 ///     mote_def_hash: MoteDefHash::from_bytes([1u8; 32]),
 /// };
 /// p.fold(&entry).unwrap();
@@ -389,6 +536,9 @@ impl Projection {
                 info.has_proposed = true;
                 // A new Proposed clears any prior pending-failure marker (failed→proposed
                 // is a valid sequence per mote.md §7).
+                // NOTE: `terminal_failure_observed` and `inconsistent` are
+                // **prefix-monotonic-true** per STEP 5.2 + STEP 5.3 of PR 4.5
+                // — they are NEVER reset, here or anywhere.
                 info.failed_pending_reattempt = false;
                 self.state.last_seq = self.state.last_seq.max(*seq);
             }
@@ -398,6 +548,7 @@ impl Projection {
                 nondeterminism,
                 result_ref,
                 parents,
+                warrant_ref,
                 mote_def_hash,
                 ..
             } => {
@@ -410,6 +561,7 @@ impl Projection {
                     result_ref: *result_ref,
                     nondeterminism: *nondeterminism,
                     parents_in_entry: parents.clone(),
+                    warrant_ref: *warrant_ref,
                     mote_def_hash: *mote_def_hash,
                     repudiated: false,
                 });
@@ -419,10 +571,24 @@ impl Projection {
                 // for a Mote that wasn't pre-registered).
                 self.state.rebuild_children_index();
             }
-            JournalEntry::Failed { mote_id, seq, .. } => {
+            JournalEntry::Failed {
+                mote_id,
+                seq,
+                reason_class,
+                ..
+            } => {
                 let info = self.state.moteinfo_mut(mote_id);
                 if info.committed.is_none() {
                     info.failed_pending_reattempt = true;
+                    // **v2 (STEP 5.2 + STEP 6.2).** Read reason_class to set
+                    // terminal_failure_observed. Prefix-monotonic-true: once
+                    // set, NEVER reset — even by a subsequent Proposed (the
+                    // monotonicity contract that closes cell 5 of the 9-cell
+                    // cross-product). The canonical classifier
+                    // `is_pre_commit_crash` is the single source of class truth.
+                    if !kx_journal::is_pre_commit_crash(*reason_class) {
+                        info.terminal_failure_observed = true;
+                    }
                 }
                 self.state.last_seq = self.state.last_seq.max(*seq);
             }
@@ -443,7 +609,27 @@ impl Projection {
                     if c.seq == *target_committed_seq {
                         c.repudiated = true;
                     }
+                } else if info.effect_staged_observed {
+                    // **v2 (STEP 5.3): cell-8 anomaly.** EffectStaged was
+                    // folded for this Mote, but a Repudiated arrived BEFORE
+                    // any Committed. Repudiated normally targets a Committed;
+                    // this is a journal-consistency error. We quarantine via
+                    // `info.inconsistent = true` (prefix-monotonic-true; never
+                    // reset) rather than aborting the fold. One anomalous Mote
+                    // must not take down the entire recovery; surface via
+                    // `anomaly_motes()` for operator review.
+                    info.inconsistent = true;
                 }
+                self.state.last_seq = self.state.last_seq.max(*seq);
+            }
+            JournalEntry::EffectStaged { mote_id, seq, .. } => {
+                // **v2 (D38 §2b): EffectStaged recovery hint.** Set the
+                // prefix-monotonic-true flag; the recovery fold combines this
+                // with subsequent Committed/Failed/Repudiated entries via
+                // `state_of_id` (Terminal-before-Staged ordering invariant)
+                // and `can_redispatch_world_effect_id`.
+                let info = self.state.moteinfo_mut(mote_id);
+                info.effect_staged_observed = true;
                 self.state.last_seq = self.state.last_seq.max(*seq);
             }
         }
@@ -562,6 +748,41 @@ impl Projection {
             .and_then(|i| i.committed.as_ref().map(|c| c.seq))
     }
 
+    /// **v2 (PR 7, STEP 5.3 + R-13).** Recovery-time predicate: can the
+    /// executor safely re-dispatch a WORLD-MUTATING effect for this Mote?
+    ///
+    /// Returns `true` iff: `info.effect_staged_observed` AND NOT
+    /// `info.terminal_failure_observed` AND NOT `info.inconsistent` AND
+    /// `info.committed.is_none()`. This is the in-flight case (cells 2 + 3
+    /// of the 9-cell cross-product) where the broker's tool-boundary
+    /// idempotency closes the window.
+    ///
+    /// Returns `false` for `inconsistent` (cell 8 anomaly),
+    /// `terminal_failure_observed` (cell 5 — terminal failure under
+    /// EffectStaged; the WM double-effect hazard), `committed.is_some()`
+    /// (cells 4 + 6 — done; never re-dispatch), and for Motes with no
+    /// `EffectStaged` observed (no in-flight effect to re-dispatch).
+    ///
+    /// **Prefix-monotonic refusal** (STEP 5.2): once this returns `false`
+    /// for a given Mote, it returns `false` at every longer log prefix.
+    /// Proven by `prop_terminal_refusal_is_prefix_monotonic`.
+    #[must_use]
+    pub fn can_redispatch_world_effect(&self, mote_id: &MoteId) -> bool {
+        self.state.can_redispatch_world_effect_id(mote_id)
+    }
+
+    /// **v2 (PR 7, STEP 5.3).** Enumerate every Mote currently flagged
+    /// anomalous, with its anomaly kind. Operator-facing diagnostic API;
+    /// NOT on any hot recovery path.
+    ///
+    /// Today returns only [`AnomalyKind::EffectStagedThenRepudiatedNoCommitted`]
+    /// (cell 8). Future fold-cell anomalies extend [`AnomalyKind`] via
+    /// additive variants.
+    #[must_use]
+    pub fn anomaly_motes(&self) -> Vec<(MoteId, AnomalyKind)> {
+        self.state.anomaly_motes_iter()
+    }
+
     /// Apply a sequence of journal entries in order. Convenience over calling
     /// [`Self::fold`] in a loop. Stops on the first error and returns it; the
     /// projection's state at that point reflects every entry applied up to
@@ -664,6 +885,7 @@ impl Projection {
 ///     nondeterminism: NdClass::Pure,
 ///     result_ref: ContentRef::from_bytes([7u8; 32]),
 ///     parents: SmallVec::new(),
+///     warrant_ref: ContentRef::from_bytes([0xaa; 32]),
 ///     mote_def_hash: MoteDefHash::from_bytes([1u8; 32]),
 /// }).unwrap();
 ///
@@ -764,6 +986,19 @@ impl Snapshot {
     #[must_use]
     pub fn is_repudiated(&self, mote_id: &MoteId) -> bool {
         matches!(self.state_of(mote_id), MoteState::Repudiated)
+    }
+
+    /// **v2 (PR 7, STEP 5.3 + R-13).** Snapshot mirror of
+    /// [`Projection::can_redispatch_world_effect`].
+    #[must_use]
+    pub fn can_redispatch_world_effect(&self, mote_id: &MoteId) -> bool {
+        self.state.can_redispatch_world_effect_id(mote_id)
+    }
+
+    /// **v2 (PR 7, STEP 5.3).** Snapshot mirror of [`Projection::anomaly_motes`].
+    #[must_use]
+    pub fn anomaly_motes(&self) -> Vec<(MoteId, AnomalyKind)> {
+        self.state.anomaly_motes_iter()
     }
 
     /// Iterate every Mote known at snapshot time with its state.
@@ -924,6 +1159,7 @@ mod tests {
             seq,
             nondeterminism: NdClass::Pure,
             placement_hint: 0,
+            warrant_ref: ContentRef::from_bytes([0xaa; 32]),
         }
     }
 
@@ -935,6 +1171,7 @@ mod tests {
             nondeterminism: nd,
             result_ref: cref(mote_byte),
             parents: SmallVec::new(),
+            warrant_ref: ContentRef::from_bytes([0xaa; 32]),
             mote_def_hash: dh(mote_byte),
         }
     }

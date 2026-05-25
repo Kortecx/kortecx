@@ -54,6 +54,7 @@ fn commit(p: &mut Projection, mote_byte: u8, seq: u64, nd: NdClass) {
         nondeterminism: nd,
         result_ref: cref(mote_byte),
         parents: SmallVec::new(),
+        warrant_ref: ContentRef::from_bytes([0xaa; 32]),
         mote_def_hash: dh(mote_byte),
     })
     .unwrap();
@@ -66,6 +67,7 @@ fn propose(p: &mut Projection, mote_byte: u8, seq: u64) {
         seq,
         nondeterminism: NdClass::Pure,
         placement_hint: 0,
+        warrant_ref: ContentRef::from_bytes([0xaa; 32]),
     })
     .unwrap();
 }
@@ -239,6 +241,7 @@ fn obligation_5_projection_does_not_depend_on_journal_mut_surface() {
         nondeterminism: NdClass::Pure,
         result_ref: cref(b'a'),
         parents: SmallVec::new(),
+        warrant_ref: ContentRef::from_bytes([0xaa; 32]),
         mote_def_hash: dh(b'a'),
     });
     let _ = Projection::from_journal(&j).unwrap();
@@ -374,6 +377,7 @@ fn obligation_9_cycle_in_control_edges_does_not_loop() {
         nondeterminism: NdClass::Pure,
         result_ref: cref(b'a'),
         parents: SmallVec::new(),
+        warrant_ref: ContentRef::from_bytes([0xaa; 32]),
         mote_def_hash: dh(b'a'),
     })
     .unwrap();
@@ -392,6 +396,7 @@ fn obligation_9_cycle_in_control_edges_does_not_loop() {
         nondeterminism: NdClass::Pure,
         result_ref: cref(b'b'),
         parents: b_parents,
+        warrant_ref: ContentRef::from_bytes([0xaa; 32]),
         mote_def_hash: dh(b'b'),
     })
     .unwrap();
@@ -444,6 +449,7 @@ fn exercise_from_journal<J: Journal>(j: &J) {
         nondeterminism: NdClass::Pure,
         result_ref: cref(b'a'),
         parents: SmallVec::new(),
+        warrant_ref: ContentRef::from_bytes([0xaa; 32]),
         mote_def_hash: dh(b'a'),
     });
     let p = Projection::from_journal(j).unwrap();
@@ -503,6 +509,7 @@ fn sample_log() -> Vec<JournalEntry> {
             seq: 1,
             nondeterminism: NdClass::Pure,
             placement_hint: 0,
+            warrant_ref: ContentRef::from_bytes([0xaa; 32]),
         },
         JournalEntry::Committed {
             mote_id: mid(b'a'),
@@ -511,6 +518,7 @@ fn sample_log() -> Vec<JournalEntry> {
             nondeterminism: NdClass::Pure,
             result_ref: cref(b'a'),
             parents: SmallVec::new(),
+            warrant_ref: ContentRef::from_bytes([0xaa; 32]),
             mote_def_hash: dh(b'a'),
         },
         JournalEntry::Proposed {
@@ -519,6 +527,7 @@ fn sample_log() -> Vec<JournalEntry> {
             seq: 3,
             nondeterminism: NdClass::Pure,
             placement_hint: 0,
+            warrant_ref: ContentRef::from_bytes([0xaa; 32]),
         },
         JournalEntry::Committed {
             mote_id: mid(b'b'),
@@ -527,6 +536,7 @@ fn sample_log() -> Vec<JournalEntry> {
             nondeterminism: NdClass::Pure,
             result_ref: cref(b'b'),
             parents: parent_entries(&[(b'a', EdgeKind::Data, false)]),
+            warrant_ref: ContentRef::from_bytes([0xaa; 32]),
             mote_def_hash: dh(b'b'),
         },
         JournalEntry::Committed {
@@ -536,6 +546,7 @@ fn sample_log() -> Vec<JournalEntry> {
             nondeterminism: NdClass::Pure,
             result_ref: cref(b'c'),
             parents: parent_entries(&[(b'a', EdgeKind::Data, false)]),
+            warrant_ref: ContentRef::from_bytes([0xaa; 32]),
             mote_def_hash: dh(b'c'),
         },
     ]

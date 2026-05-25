@@ -50,7 +50,7 @@ use rusqlite::{params, Connection, OpenFlags, OptionalExtension, TransactionBeha
 
 use crate::entry::{
     decode_entry_with_def_hash, encode_entry, repudiation_idempotency_key, JournalEntry,
-    JOURNAL_SCHEMA_VERSION, KIND_COMMITTED, KIND_REPUDIATED, MAX_ENTRY_LEN,
+    JOURNAL_SCHEMA_VERSION, KIND_COMMITTED, KIND_EFFECT_STAGED, KIND_REPUDIATED, MAX_ENTRY_LEN,
 };
 use crate::{Journal, JournalError};
 
@@ -164,7 +164,7 @@ impl SqliteJournal {
              );
              CREATE INDEX IF NOT EXISTS idx_entries_mote_id ON entries (mote_id);
              CREATE UNIQUE INDEX IF NOT EXISTS idx_entries_dedupe
-                 ON entries (idempotency_key, kind) WHERE kind IN (1, 2);
+                 ON entries (idempotency_key, kind) WHERE kind IN (1, 2, 4);
              CREATE INDEX IF NOT EXISTS idx_entries_def_hash
                  ON entries (mote_def_hash) WHERE kind = 1;",
         )?;
@@ -218,9 +218,10 @@ impl Journal for SqliteJournal {
         let mut conn = self.conn.lock().expect("poisoned mutex");
         let txn = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
 
-        // Dedupe-by-key for Committed + Repudiated only.
+        // v2 (D38 §2b): dedupe-by-key index expands from {1, 2} to {1, 2, 4}.
+        // EffectStaged participates; Failed is intentionally out.
         let kind = entry.kind();
-        if kind == KIND_COMMITTED || kind == KIND_REPUDIATED {
+        if kind == KIND_COMMITTED || kind == KIND_REPUDIATED || kind == KIND_EFFECT_STAGED {
             let key = *entry.idempotency_key();
             let existing = txn
                 .query_row(
@@ -430,7 +431,8 @@ fn set_seq(entry: &mut JournalEntry, new_seq: u64) {
         JournalEntry::Proposed { seq, .. }
         | JournalEntry::Committed { seq, .. }
         | JournalEntry::Repudiated { seq, .. }
-        | JournalEntry::Failed { seq, .. } => *seq = new_seq,
+        | JournalEntry::Failed { seq, .. }
+        | JournalEntry::EffectStaged { seq, .. } => *seq = new_seq,
     }
 }
 

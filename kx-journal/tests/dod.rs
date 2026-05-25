@@ -28,6 +28,7 @@ fn proposed(mote_id_byte: u8, key_byte: u8) -> JournalEntry {
         seq: 0, // ignored on append
         nondeterminism: NdClass::Pure,
         placement_hint: 0,
+        warrant_ref: ContentRef::from_bytes([0xaa; 32]),
     }
 }
 
@@ -39,6 +40,7 @@ fn committed(mote_id_byte: u8, key_byte: u8, def_hash_byte: u8) -> JournalEntry 
         nondeterminism: NdClass::ReadOnlyNondet,
         result_ref: ContentRef::from_bytes([mote_id_byte ^ 0xa5; 32]),
         parents: SmallVec::new(),
+        warrant_ref: ContentRef::from_bytes([0xaa; 32]),
         mote_def_hash: MoteDefHash::from_bytes([def_hash_byte; 32]),
     }
 }
@@ -207,9 +209,12 @@ fn obligation_9_list_committed_refs() {
 fn obligation_10_no_inline_payload_bytes() {
     let entry = committed(0x11, 0x22, 0x33);
     let bytes = encode_entry(&entry).unwrap();
-    // For a committed entry with 0 parents: 74-byte header + 32 (result_ref) + 2 (count) = 108 bytes.
-    // The result_ref is a 32-byte hash, NOT the payload. Confirmed by size.
-    assert_eq!(bytes.len(), 108);
+    // **v2 (D36)**: For a committed entry with 0 parents — 74-byte header +
+    // 32 (result_ref) + 32 (warrant_ref) + 2 (parents count) = 140 bytes.
+    // The result_ref and warrant_ref are both 32-byte hashes, NOT inline
+    // payloads. Confirmed by size: even with both content-refs present, the
+    // entry is far below MAX_ENTRY_LEN (4500 in v2).
+    assert_eq!(bytes.len(), 140);
     assert!(bytes.len() < MAX_ENTRY_LEN);
 }
 
@@ -242,7 +247,8 @@ fn set_seq(entry: &mut JournalEntry, new_seq: u64) {
         JournalEntry::Proposed { seq, .. }
         | JournalEntry::Committed { seq, .. }
         | JournalEntry::Repudiated { seq, .. }
-        | JournalEntry::Failed { seq, .. } => *seq = new_seq,
+        | JournalEntry::Failed { seq, .. }
+        | JournalEntry::EffectStaged { seq, .. } => *seq = new_seq,
     }
 }
 
@@ -534,6 +540,7 @@ fn topology_decision_atomicity_committed_with_parents() {
         nondeterminism: NdClass::ReadOnlyNondet,
         result_ref: ContentRef::from_bytes([0xCC; 32]),
         parents,
+        warrant_ref: ContentRef::from_bytes([0xaa; 32]),
         mote_def_hash: MoteDefHash::from_bytes([0xDD; 32]),
     };
 

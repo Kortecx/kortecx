@@ -73,10 +73,10 @@
 //! - gRPC and the coordinator/worker split — P2.
 
 pub use crate::entry::{
-    decode_entry, decode_entry_with_def_hash, encode_entry, repudiation_idempotency_key,
-    DecodeError, EncodeError, FailureReason, JournalEntry, ParentEntry, RepudiationReason,
-    HEADER_LEN, JOURNAL_SCHEMA_VERSION, KIND_COMMITTED, KIND_FAILED, KIND_PROPOSED,
-    KIND_REPUDIATED, MAX_ENTRY_LEN, MAX_PARENTS,
+    decode_entry, decode_entry_with_def_hash, encode_entry, is_pre_commit_crash,
+    repudiation_idempotency_key, DecodeError, EncodeError, FailureReason, JournalEntry,
+    ParentEntry, RepudiationReason, HEADER_LEN, JOURNAL_SCHEMA_VERSION, KIND_COMMITTED,
+    KIND_EFFECT_STAGED, KIND_FAILED, KIND_PROPOSED, KIND_REPUDIATED, MAX_ENTRY_LEN, MAX_PARENTS,
 };
 pub use crate::in_memory::InMemoryJournal;
 pub use crate::sqlite::SqliteJournal;

@@ -61,6 +61,7 @@ fn build_committed(mote_id: MoteId, result_ref: ContentRef, nd: NdClass) -> Jour
         nondeterminism: nd,
         result_ref,
         parents: SmallVec::new(),
+        warrant_ref: ContentRef::from_bytes([0xaa; 32]),
         mote_def_hash: MoteDefHash([0; 32]),
     }
 }

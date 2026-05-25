@@ -63,6 +63,7 @@ fn build_committed(mote_id: MoteId, result_ref: ContentRef) -> JournalEntry {
         nondeterminism: NdClass::Pure,
         result_ref,
         parents: SmallVec::new(),
+        warrant_ref: ContentRef::from_bytes([0xaa; 32]),
         mote_def_hash: MoteDefHash([0; 32]),
     }
 }

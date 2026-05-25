@@ -16,7 +16,9 @@ use std::sync::RwLock;
 use kx_content::ContentRef;
 use kx_mote::{MoteDefHash, MoteId};
 
-use crate::entry::{repudiation_idempotency_key, JournalEntry, KIND_COMMITTED, KIND_REPUDIATED};
+use crate::entry::{
+    repudiation_idempotency_key, JournalEntry, KIND_COMMITTED, KIND_EFFECT_STAGED, KIND_REPUDIATED,
+};
 use crate::{Journal, JournalError};
 
 #[derive(Default)]
@@ -78,8 +80,11 @@ impl Journal for InMemoryJournal {
         let mut state = self.state.write().expect("poisoned lock");
         let kind = entry.kind();
 
-        // Dedupe-by-key for Committed + Repudiated only.
-        if kind == KIND_COMMITTED || kind == KIND_REPUDIATED {
+        // v2 (D38 §2b): dedupe-by-key index expands from {1, 2} to {1, 2, 4}.
+        // EffectStaged participates — second-write of the same staged-intent
+        // is a no-op success. Failed is INTENTIONALLY OUT (each retry is its
+        // own attempt-fact; collapsing would lose attempt history).
+        if kind == KIND_COMMITTED || kind == KIND_REPUDIATED || kind == KIND_EFFECT_STAGED {
             let key = *entry.idempotency_key();
             if let Some(existing) = state
                 .entries
@@ -173,6 +178,7 @@ fn set_seq(entry: &mut JournalEntry, new_seq: u64) {
         JournalEntry::Proposed { seq, .. }
         | JournalEntry::Committed { seq, .. }
         | JournalEntry::Repudiated { seq, .. }
-        | JournalEntry::Failed { seq, .. } => *seq = new_seq,
+        | JournalEntry::Failed { seq, .. }
+        | JournalEntry::EffectStaged { seq, .. } => *seq = new_seq,
     }
 }

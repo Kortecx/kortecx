@@ -47,23 +47,33 @@ use smallvec::SmallVec;
 
 /// Canonical journal-file schema version. Bumped per `journal-entry.md` §10 when the
 /// entry encoding changes. Readers refuse loudly on mismatch.
-pub const JOURNAL_SCHEMA_VERSION: u16 = 1;
+///
+/// **v2 (PR 7) changes** vs v1:
+/// - `warrant_ref: [u8; 32]` added to `Proposed` and `Committed` bodies (D36).
+/// - New `EffectStaged` entry kind (=4); dedup-by-key index expands to
+///   `{1, 2, 4}` (D38 §2b).
+/// - `MAX_ENTRY_LEN` raised 4460 → 4500 (40-byte headroom for `warrant_ref`).
+///
+/// v2 readers refuse v1 files loudly (no in-place evolution; no production v1
+/// journals exist per the corpus, acceptable).
+pub const JOURNAL_SCHEMA_VERSION: u16 = 2;
 
 /// Fixed entry-header length in bytes (`journal-entry.md` §3).
 pub const HEADER_LEN: usize = 74;
 
 /// Absolute per-entry size cap.
 ///
-/// **Arithmetic correction note:** `journal-entry.md` §8 quotes `4304` but the stated
-/// inputs (128 parents × 34 bytes + 32-byte result_ref + 2-byte u16 length prefix +
-/// 74-byte header) sum to `4460`. Two ways to reconcile: lower `MAX_PARENTS` to ~123
-/// to preserve the 4304 number, or update the cap to 4460 to preserve the
-/// "128 parents" promise (referenced in §5). The 128-parent promise is the
-/// load-bearing claim (it bounds the worst-case write path); the 4304 number was a
-/// stated arithmetic conclusion. We match the arithmetic. The spec correction lands
-/// in `journal-entry.md` on the next private-corpus sync — recorded as a deviation
-/// per SN-1.
-pub const MAX_ENTRY_LEN: usize = 4460;
+/// **Arithmetic correction note (v1):** `journal-entry.md` §8 originally quoted
+/// `4304` but the stated inputs (128 parents × 34 bytes + 32-byte result_ref +
+/// 2-byte u16 length prefix + 74-byte header) summed to `4460`. The
+/// 128-parent promise was load-bearing; we matched the arithmetic.
+///
+/// **v2 (PR 7) raises this to 4500** for 40-byte headroom — `warrant_ref` adds
+/// 32 bytes to Proposed and Committed bodies (D36). The corrected v2 inputs:
+/// 128 parents × 34 + 32 result_ref + 32 warrant_ref + 2 parents-count + 74
+/// header = 4492 bytes; the 8-byte buffer leaves room for a future per-body
+/// addition without another cap bump.
+pub const MAX_ENTRY_LEN: usize = 4500;
 
 /// Maximum number of parents per Committed entry (per the size cap).
 pub const MAX_PARENTS: usize = 128;
@@ -80,6 +90,16 @@ pub const KIND_COMMITTED: u8 = 1;
 pub const KIND_REPUDIATED: u8 = 2;
 /// `Failed` entry-kind byte.
 pub const KIND_FAILED: u8 = 3;
+/// `EffectStaged` entry-kind byte (NEW in v2; D38 §2b).
+///
+/// `EffectStaged` is the recovery hint that closes the WORLD-MUTATING
+/// double-effect window: an effect was staged (intent durably recorded) but
+/// not yet committed. On recovery, the projection's fold combines
+/// `EffectStaged` with subsequent entries to decide whether re-dispatch is
+/// safe (see the 9-cell cross-product in `journal-txn.md`). Body is
+/// **header-only** (no payload bytes); dedup-by-key participates per the
+/// expanded `{1, 2, 4}` index.
+pub const KIND_EFFECT_STAGED: u8 = 4;
 
 // ---------------------------------------------------------------------------
 // Closed reason enums (D19; `journal-entry.md` §6.2 + §7.2)
@@ -180,6 +200,52 @@ impl FailureReason {
     }
 }
 
+/// Canonical terminality classifier for `FailureReason`.
+///
+/// Returns `true` iff the failure represents a **pre-commit crash** — a
+/// liveness-driven death of the worker between attempt-start and commit.
+/// In the 9-cell recovery cross-product (`journal-txn.md` §"Recovery fold
+/// semantics"), pre-commit-crash failures paired with an `EffectStaged`
+/// entry **permit re-dispatch** (the executor's worker died, the broker's
+/// tool-boundary idempotency closes the window).
+///
+/// Returns `false` for **terminal** failures (deliberate refusals, critic
+/// rejections, cascade poisons, anti-pattern refusals). Terminal failures
+/// paired with an `EffectStaged` entry **forbid re-dispatch** — the
+/// executor declared a definite failure verdict; re-running a WM effect
+/// would be the double-effect the seam exists to prevent.
+///
+/// **Single source of class truth.** Both production code (kx-projection's
+/// fold; kx-executor's recovery predicate) AND tests (proptest sweeps via
+/// `arbitrary_failure_reason`) call this function. No hardcoded list
+/// anywhere. A new `FailureReason` variant must be classified here once,
+/// and every consumer picks up the new behavior automatically.
+///
+/// Per STEP 5.2 + STEP 6.2 of PR 4.5.
+///
+/// # Examples
+///
+/// ```
+/// use kx_journal::{is_pre_commit_crash, FailureReason};
+///
+/// // Pre-commit-crash class: liveness-driven, safe to re-dispatch.
+/// assert!(is_pre_commit_crash(FailureReason::TimedOut));
+/// assert!(is_pre_commit_crash(FailureReason::WorkerCrashed));
+///
+/// // Terminal class: deliberate, do NOT re-dispatch.
+/// assert!(!is_pre_commit_crash(FailureReason::ExecutorRefused));
+/// assert!(!is_pre_commit_crash(FailureReason::ValidatorRejected));
+/// assert!(!is_pre_commit_crash(FailureReason::UpstreamRepudiated));
+/// assert!(!is_pre_commit_crash(FailureReason::UnsafeWorldMutatingConstruction));
+/// ```
+#[must_use]
+pub const fn is_pre_commit_crash(reason: FailureReason) -> bool {
+    matches!(
+        reason,
+        FailureReason::TimedOut | FailureReason::WorkerCrashed
+    )
+}
+
 // ---------------------------------------------------------------------------
 // ParentEntry (the on-disk per-parent shape, D19 / journal-entry.md §5)
 // ---------------------------------------------------------------------------
@@ -269,6 +335,11 @@ pub enum JournalEntry {
         /// Opaque placement metadata (worker id, locality hint, etc.). Semantic
         /// interpretation is the coordinator's; the journal pins only the byte budget.
         placement_hint: u128,
+        /// The `warrant_ref` (`blake3(canonical_bincode(WarrantSpec))`) of the
+        /// warrant this attempt is being dispatched under. NEW in v2 (D36).
+        /// Replay re-derives the warrant bit-for-bit from this ref + the content
+        /// store; required for the executor's submission-time refusal predicates.
+        warrant_ref: ContentRef,
     },
 
     /// A Mote attempt landed durably. The runtime treats this entry as truth for all
@@ -287,6 +358,10 @@ pub enum JournalEntry {
         result_ref: ContentRef,
         /// Declared parents with edge metadata. SmallVec inline up to 4; heap for 5+.
         parents: SmallVec<[ParentEntry; 4]>,
+        /// The `warrant_ref` (`blake3(canonical_bincode(WarrantSpec))`) of the
+        /// warrant this commit was performed under. NEW in v2 (D36). The
+        /// durable fact carries the warrant identity; replay re-derives bit-for-bit.
+        warrant_ref: ContentRef,
         /// **Non-canonical metadata** (NOT in the on-disk body bytes per
         /// `journal-entry.md` §4.2). The Mote's `mote_def_hash` — used by the
         /// `list_committed_by_mote_def_hash` query (`repudiation.md` §6, D22). The
@@ -330,6 +405,40 @@ pub enum JournalEntry {
         /// UUID-shaped identifier of the worker / coordinator reporting the failure.
         reporter_id: u128,
     },
+
+    /// A WORLD-MUTATING effect was staged (intent durably recorded) but not yet
+    /// committed. NEW in v2 (D38 §2b). The recovery-hint kind that closes the
+    /// WM double-effect window.
+    ///
+    /// **Body is header-only** — no payload bytes. The MoteId, idempotency_key,
+    /// and seq in the header are the full carrying information; downstream
+    /// consumers (kx-projection's fold) read presence to set
+    /// `effect_staged_observed` on `MoteInfo`.
+    ///
+    /// **Dedup-by-key participates**: `(idempotency_key, kind = 4)` in the
+    /// expanded dedup index `{1, 2, 4}`. Second-write of the same staged-intent
+    /// is a no-op success.
+    ///
+    /// **Recovery-fold semantics**: see the 9-cell cross-product table in
+    /// `journal-txn.md`. The interesting cells:
+    /// - `EffectStaged` + `Committed` → done (cell 4); never re-dispatch.
+    /// - `EffectStaged` + `Failed`(`is_pre_commit_crash`) → re-dispatch permitted
+    ///   (cell 3); tool-boundary idempotency closes the window.
+    /// - `EffectStaged` + `Failed`(terminal) → **terminal failure** (cell 5); do
+    ///   NOT re-dispatch. The executor recorded a definite failure verdict;
+    ///   re-running a WM effect here is the double-effect the seam exists to
+    ///   prevent.
+    /// - `EffectStaged` + `Repudiated` (no `Committed`) → **anomaly** (cell 8);
+    ///   quarantine via `MoteState::Inconsistent`.
+    EffectStaged {
+        /// The Mote's identity.
+        mote_id: MoteId,
+        /// The Mote's identity key per `idempotency.md`. Participates in the
+        /// expanded dedup index `{1, 2, 4}`.
+        idempotency_key: [u8; 32],
+        /// Per-run monotonic sequence number assigned by the journal at append time.
+        seq: u64,
+    },
 }
 
 impl JournalEntry {
@@ -340,7 +449,8 @@ impl JournalEntry {
             Self::Proposed { seq, .. }
             | Self::Committed { seq, .. }
             | Self::Repudiated { seq, .. }
-            | Self::Failed { seq, .. } => *seq,
+            | Self::Failed { seq, .. }
+            | Self::EffectStaged { seq, .. } => *seq,
         }
     }
 
@@ -359,6 +469,9 @@ impl JournalEntry {
             }
             | Self::Failed {
                 idempotency_key, ..
+            }
+            | Self::EffectStaged {
+                idempotency_key, ..
             } => idempotency_key,
         }
     }
@@ -370,7 +483,8 @@ impl JournalEntry {
         match self {
             Self::Proposed { mote_id, .. }
             | Self::Committed { mote_id, .. }
-            | Self::Failed { mote_id, .. } => *mote_id,
+            | Self::Failed { mote_id, .. }
+            | Self::EffectStaged { mote_id, .. } => *mote_id,
             Self::Repudiated { target_mote_id, .. } => *target_mote_id,
         }
     }
@@ -383,6 +497,7 @@ impl JournalEntry {
             Self::Committed { .. } => KIND_COMMITTED,
             Self::Repudiated { .. } => KIND_REPUDIATED,
             Self::Failed { .. } => KIND_FAILED,
+            Self::EffectStaged { .. } => KIND_EFFECT_STAGED,
         }
     }
 }
@@ -516,6 +631,11 @@ pub fn encode_entry(entry: &JournalEntry) -> Result<Vec<u8>, EncodeError> {
             idempotency_key,
             seq,
             ..
+        }
+        | JournalEntry::EffectStaged {
+            mote_id,
+            idempotency_key,
+            seq,
         } => (*mote_id, *idempotency_key, *seq, 0),
     };
     out.extend_from_slice(mote_id_for_header.as_bytes());
@@ -526,18 +646,29 @@ pub fn encode_entry(entry: &JournalEntry) -> Result<Vec<u8>, EncodeError> {
 
     // -------------------- BODY (per kind) --------------------
     match entry {
-        JournalEntry::Proposed { placement_hint, .. } => {
+        JournalEntry::Proposed {
+            placement_hint,
+            warrant_ref,
+            ..
+        } => {
+            // v2 (D36): Proposed body is 16 bytes (placement_hint u128) + 32
+            // bytes (warrant_ref ContentRef) = 48 bytes.
             out.extend_from_slice(&placement_hint.to_le_bytes());
+            out.extend_from_slice(warrant_ref.as_bytes());
         }
         JournalEntry::Committed {
             result_ref,
             parents,
+            warrant_ref,
             ..
         } => {
             if parents.len() > MAX_PARENTS {
                 return Err(EncodeError::TooManyParents { got: parents.len() });
             }
+            // v2 (D36): Committed body is 32 bytes (result_ref) + 32 bytes
+            // (warrant_ref) + 2 bytes (parents count u16) + N * 34 bytes.
             out.extend_from_slice(result_ref.as_bytes());
+            out.extend_from_slice(warrant_ref.as_bytes());
             let count = u16::try_from(parents.len()).expect("checked above");
             out.extend_from_slice(&count.to_le_bytes());
             for p in parents {
@@ -569,6 +700,12 @@ pub fn encode_entry(entry: &JournalEntry) -> Result<Vec<u8>, EncodeError> {
         } => {
             out.push(reason_class.as_u8());
             out.extend_from_slice(&reporter_id.to_le_bytes());
+        }
+        JournalEntry::EffectStaged { .. } => {
+            // v2 (D38 §2b): EffectStaged body is HEADER-ONLY. No body bytes.
+            // The full carrying information (mote_id + idempotency_key + seq)
+            // is in the 74-byte header; the recovery fold reads presence to
+            // set `effect_staged_observed` on `MoteInfo`.
         }
     }
 
@@ -623,17 +760,21 @@ pub fn decode_entry_with_def_hash(
     // -------------------- Body, by kind --------------------
     match kind {
         KIND_PROPOSED => {
-            if body.len() < 16 {
+            // v2 (D36): Proposed body is 48 bytes (16 placement_hint + 32 warrant_ref).
+            if body.len() < 48 {
                 return Err(DecodeError::BodyTooShort {
                     kind,
                     got: body.len(),
-                    expected: 16,
+                    expected: 48,
                 });
             }
             let nondeterminism = nd_class_from_byte(nd_byte)?;
             let placement_hint = u128::from_le_bytes(body[..16].try_into().expect("16 bytes"));
-            if body.len() > 16 {
-                return Err(DecodeError::TrailingBytes(body.len() - 16));
+            let mut warrant_ref_bytes = [0u8; 32];
+            warrant_ref_bytes.copy_from_slice(&body[16..48]);
+            let warrant_ref = ContentRef::from_bytes(warrant_ref_bytes);
+            if body.len() > 48 {
+                return Err(DecodeError::TrailingBytes(body.len() - 48));
             }
             Ok(JournalEntry::Proposed {
                 mote_id,
@@ -641,22 +782,29 @@ pub fn decode_entry_with_def_hash(
                 seq,
                 nondeterminism,
                 placement_hint,
+                warrant_ref,
             })
         }
         KIND_COMMITTED => {
-            if body.len() < 34 {
+            // v2 (D36): Committed body is 32 (result_ref) + 32 (warrant_ref)
+            // + 2 (parents count) + N * 34 bytes. Fixed prefix is 66 bytes.
+            const COMMITTED_PREFIX_LEN: usize = 66;
+            if body.len() < COMMITTED_PREFIX_LEN {
                 return Err(DecodeError::BodyTooShort {
                     kind,
                     got: body.len(),
-                    expected: 34,
+                    expected: COMMITTED_PREFIX_LEN,
                 });
             }
             let nondeterminism = nd_class_from_byte(nd_byte)?;
             let mut result_ref_bytes = [0u8; 32];
             result_ref_bytes.copy_from_slice(&body[..32]);
             let result_ref = ContentRef::from_bytes(result_ref_bytes);
-            let n = u16::from_le_bytes(body[32..34].try_into().expect("2 bytes")) as usize;
-            let expected_parents_len = 34 + n * ParentEntry::ENCODED_LEN;
+            let mut warrant_ref_bytes = [0u8; 32];
+            warrant_ref_bytes.copy_from_slice(&body[32..64]);
+            let warrant_ref = ContentRef::from_bytes(warrant_ref_bytes);
+            let n = u16::from_le_bytes(body[64..66].try_into().expect("2 bytes")) as usize;
+            let expected_parents_len = COMMITTED_PREFIX_LEN + n * ParentEntry::ENCODED_LEN;
             if body.len() < expected_parents_len {
                 return Err(DecodeError::BodyTooShort {
                     kind,
@@ -671,7 +819,7 @@ pub fn decode_entry_with_def_hash(
             }
             let mut parents: SmallVec<[ParentEntry; 4]> = SmallVec::with_capacity(n);
             for i in 0..n {
-                let base = 34 + i * ParentEntry::ENCODED_LEN;
+                let base = COMMITTED_PREFIX_LEN + i * ParentEntry::ENCODED_LEN;
                 let mut pid = [0u8; 32];
                 pid.copy_from_slice(&body[base..base + 32]);
                 let edge_kind = body[base + 32];
@@ -698,6 +846,7 @@ pub fn decode_entry_with_def_hash(
                 nondeterminism,
                 result_ref,
                 parents,
+                warrant_ref,
                 mote_def_hash,
             })
         }
@@ -749,6 +898,18 @@ pub fn decode_entry_with_def_hash(
                 reporter_id,
             })
         }
+        KIND_EFFECT_STAGED => {
+            // v2 (D38 §2b): EffectStaged body is HEADER-ONLY. Any body bytes
+            // are a decoder-side error (trailing bytes per §2 no-trailing-data).
+            if !body.is_empty() {
+                return Err(DecodeError::TrailingBytes(body.len()));
+            }
+            Ok(JournalEntry::EffectStaged {
+                mote_id,
+                idempotency_key,
+                seq,
+            })
+        }
         other => Err(DecodeError::UnknownKind(other)),
     }
 }
@@ -797,6 +958,7 @@ mod tests {
             nondeterminism: NdClass::ReadOnlyNondet,
             result_ref: ContentRef::from_bytes([9u8; 32]),
             parents: SmallVec::new(),
+            warrant_ref: ContentRef::from_bytes([0xaa; 32]),
             mote_def_hash: MoteDefHash::from_bytes([10u8; 32]),
         }
     }
@@ -810,6 +972,7 @@ mod tests {
                 seq: 0,
                 nondeterminism: NdClass::Pure,
                 placement_hint: 0,
+                warrant_ref: ContentRef::from_bytes([0xaa; 32]),
             },
             sample_committed(),
             JournalEntry::Repudiated {
@@ -827,6 +990,12 @@ mod tests {
                 reason_class: FailureReason::TimedOut,
                 reporter_id: 0,
             },
+            // v2 (D38 §2b): EffectStaged. Header-only; body is empty.
+            JournalEntry::EffectStaged {
+                mote_id: MoteId::from_bytes([1u8; 32]),
+                idempotency_key: [2u8; 32],
+                seq: 0,
+            },
         ];
         for e in &kinds {
             let bytes = encode_entry(e).unwrap();
@@ -837,25 +1006,30 @@ mod tests {
     }
 
     #[test]
-    fn proposed_total_length_is_90() {
+    fn proposed_total_length_is_122() {
+        // v2 (D36): 74 header + 16 placement_hint + 32 warrant_ref = 122 bytes.
         let e = JournalEntry::Proposed {
             mote_id: MoteId::from_bytes([1u8; 32]),
             idempotency_key: [2u8; 32],
             seq: 0,
             nondeterminism: NdClass::Pure,
             placement_hint: 0,
+            warrant_ref: ContentRef::from_bytes([0xaa; 32]),
         };
-        assert_eq!(encode_entry(&e).unwrap().len(), 90);
+        assert_eq!(encode_entry(&e).unwrap().len(), 122);
     }
 
     #[test]
-    fn committed_zero_parents_is_108() {
+    fn committed_zero_parents_is_140() {
+        // v2 (D36): 74 header + 32 result_ref + 32 warrant_ref + 2 parents-count
+        // + 0 parents = 140 bytes.
         let bytes = encode_entry(&sample_committed()).unwrap();
-        assert_eq!(bytes.len(), 108);
+        assert_eq!(bytes.len(), 140);
     }
 
     #[test]
-    fn committed_four_parents_is_244() {
+    fn committed_four_parents_is_276() {
+        // v2 (D36): 140 (zero-parents baseline) + 4 * 34 = 276 bytes.
         let parents: SmallVec<[ParentEntry; 4]> = (0..4u8)
             .map(|i| ParentEntry {
                 parent_id: MoteId::from_bytes([i; 32]),
@@ -870,13 +1044,16 @@ mod tests {
             nondeterminism: NdClass::ReadOnlyNondet,
             result_ref: ContentRef::from_bytes([9u8; 32]),
             parents,
+            warrant_ref: ContentRef::from_bytes([0xaa; 32]),
             mote_def_hash: MoteDefHash::from_bytes([10u8; 32]),
         };
-        assert_eq!(encode_entry(&e).unwrap().len(), 244);
+        assert_eq!(encode_entry(&e).unwrap().len(), 276);
     }
 
     #[test]
     fn repudiated_total_length_is_131() {
+        // Unchanged in v2 — Repudiated body has no warrant_ref (the Repudiated
+        // references a Committed which already carries its own warrant_ref).
         let e = JournalEntry::Repudiated {
             target_mote_id: MoteId::from_bytes([1u8; 32]),
             idempotency_key: [2u8; 32],
@@ -890,6 +1067,8 @@ mod tests {
 
     #[test]
     fn failed_total_length_is_91() {
+        // Unchanged in v2 — Failed body has no warrant_ref (the per-attempt
+        // failure references the prior Proposed which carries warrant_ref).
         let e = JournalEntry::Failed {
             mote_id: MoteId::from_bytes([1u8; 32]),
             idempotency_key: [2u8; 32],
@@ -901,8 +1080,22 @@ mod tests {
     }
 
     #[test]
-    fn absolute_cap_is_4304() {
-        // 128 parents at 34 bytes/parent + body fixed (34) + header (74) = 4304.
+    fn effect_staged_total_length_is_header_only_74() {
+        // v2 (D38 §2b): EffectStaged is header-only.
+        let e = JournalEntry::EffectStaged {
+            mote_id: MoteId::from_bytes([1u8; 32]),
+            idempotency_key: [2u8; 32],
+            seq: 0,
+        };
+        assert_eq!(encode_entry(&e).unwrap().len(), HEADER_LEN);
+        assert_eq!(encode_entry(&e).unwrap().len(), 74);
+    }
+
+    #[test]
+    fn absolute_cap_at_max_parents_is_4492() {
+        // v2 (D36): 74 header + 32 result_ref + 32 warrant_ref + 2 parents-count
+        // + 128 * 34 parent bytes = 4492 bytes. MAX_ENTRY_LEN is 4500, leaving
+        // 8 bytes of headroom for a future per-body addition.
         let parents: SmallVec<[ParentEntry; 4]> = (0..MAX_PARENTS as u32)
             .map(|i| ParentEntry {
                 parent_id: MoteId::from_bytes([(i & 0xff) as u8; 32]),
@@ -917,10 +1110,12 @@ mod tests {
             nondeterminism: NdClass::ReadOnlyNondet,
             result_ref: ContentRef::from_bytes([0u8; 32]),
             parents,
+            warrant_ref: ContentRef::from_bytes([0u8; 32]),
             mote_def_hash: MoteDefHash::from_bytes([0u8; 32]),
         };
         let bytes = encode_entry(&e).unwrap();
-        assert_eq!(bytes.len(), MAX_ENTRY_LEN);
+        assert_eq!(bytes.len(), 4492);
+        assert!(bytes.len() <= MAX_ENTRY_LEN);
     }
 
     #[test]
@@ -939,6 +1134,7 @@ mod tests {
             nondeterminism: NdClass::ReadOnlyNondet,
             result_ref: ContentRef::from_bytes([0u8; 32]),
             parents,
+            warrant_ref: ContentRef::from_bytes([0u8; 32]),
             mote_def_hash: MoteDefHash::from_bytes([0u8; 32]),
         };
         assert!(matches!(
@@ -961,6 +1157,7 @@ mod tests {
             nondeterminism: NdClass::ReadOnlyNondet,
             result_ref: ContentRef::from_bytes([0u8; 32]),
             parents,
+            warrant_ref: ContentRef::from_bytes([0u8; 32]),
             mote_def_hash: MoteDefHash::from_bytes([0u8; 32]),
         };
         assert_eq!(encode_entry(&e), Err(EncodeError::DataEdgeNonCascade));
@@ -986,6 +1183,7 @@ mod tests {
             seq: 7,
             nondeterminism: NdClass::WorldMutating,
             placement_hint: 0xDEAD_BEEF_CAFE_BABE,
+            warrant_ref: ContentRef::from_bytes([0xbb; 32]),
         };
         assert_eq!(decode_entry(&encode_entry(&p).unwrap()).unwrap(), p);
 
@@ -1009,6 +1207,28 @@ mod tests {
             reporter_id: 0xABCD,
         };
         assert_eq!(decode_entry(&encode_entry(&f).unwrap()).unwrap(), f);
+
+        // v2 (D38 §2b): EffectStaged
+        let es = JournalEntry::EffectStaged {
+            mote_id: MoteId::from_bytes([12u8; 32]),
+            idempotency_key: [13u8; 32],
+            seq: 200,
+        };
+        assert_eq!(decode_entry(&encode_entry(&es).unwrap()).unwrap(), es);
+    }
+
+    #[test]
+    fn is_pre_commit_crash_classifies_canonically() {
+        // Pre-commit-crash class (re-dispatch permitted under EffectStaged).
+        assert!(is_pre_commit_crash(FailureReason::TimedOut));
+        assert!(is_pre_commit_crash(FailureReason::WorkerCrashed));
+        // Terminal class (re-dispatch FORBIDDEN under EffectStaged — cell 5).
+        assert!(!is_pre_commit_crash(FailureReason::ExecutorRefused));
+        assert!(!is_pre_commit_crash(FailureReason::ValidatorRejected));
+        assert!(!is_pre_commit_crash(FailureReason::UpstreamRepudiated));
+        assert!(!is_pre_commit_crash(
+            FailureReason::UnsafeWorldMutatingConstruction
+        ));
     }
 
     #[test]
