@@ -606,6 +606,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "kx-capability"
+version = "0.0.1"
+dependencies = [
+ "kx-content",
+ "kx-mote",
+ "kx-warrant",
+ "proptest",
+ "serde",
+ "smallvec",
+ "thiserror",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "kx-content"
 version = "0.0.1"
 dependencies = [
