@@ -556,6 +556,7 @@ mod tests {
             kind: ToolKind::Builtin,
             required_capability: permissive_req(),
             description: "reads files".into(),
+            idempotency_class: kx_tool_registry::IdempotencyClass::Readback,
         };
         let _ = registry
             .register(

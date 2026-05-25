@@ -159,6 +159,71 @@ pub enum ToolKind {
 // ToolDef — the spec the registry stores
 // ---------------------------------------------------------------------------
 
+/// Per-tool declared idempotency mechanism (D38 §2). Drives the executor's
+/// dispatch protocol selection for WORLD-MUTATING tools. The tool author
+/// declares this at registration; the executor reads it at dispatch.
+///
+/// **No `Default` impl** — the field is required on every `ToolDef`. A
+/// silent default is exactly how a token-less WM tool ends up mis-classified
+/// as something safer, which is the failure D38 §2c exists to prevent. Every
+/// tool MUST declare its class explicitly.
+///
+/// # Variant scopes
+///
+/// - [`Token`](Self::Token) — the tool accepts idempotency tokens (D38 §1).
+///   The broker sets `EffectRequest.idempotency_key = mote.id.to_hex()`; the
+///   remote API's idempotency contract backstops the effect→commit window.
+/// - [`Readback`](Self::Readback) — the tool supports deterministic
+///   read-back (D38 §2a). The executor probes world state keyed on `MoteId`
+///   before dispatch; skips if already applied. Probe is deterministic;
+///   never a model call. Naturally suits **read-only tools** where the
+///   dispatch IS the probe.
+/// - [`Staged`](Self::Staged) — the tool requires staged-intent journaling
+///   (D38 §2b). **DECLARED HERE BUT NOT ENFORCED UNTIL PR 7 (kx-journal
+///   v1→v2 adds the `EffectStaged` kind) + PR 9 (kx-executor wires the
+///   protocol).** The variant exists for tool authors to declare the
+///   contract their tool requires; the runtime check that honors it lands
+///   later. A tool registered as `Staged` will resolve correctly today, but
+///   the executor's recovery-time re-dispatch refusal (R-13 per
+///   `validate-then-commit.md` §7) only fires once PR 7 + PR 9 ship.
+/// - [`AtLeastOnce`](Self::AtLeastOnce) — the tool has no closing mechanism
+///   (D38 §2c). The executor refuses to dispatch it unless the workflow
+///   submission context's `accept_at_least_once` is `true` (per
+///   `docs/design/workflow-submission.md` — submission-spec, NOT warrant).
+///
+/// # Example
+///
+/// ```
+/// use kx_tool_registry::IdempotencyClass;
+/// // All four variants exist and are inequal — the field is enum-shaped
+/// // to make mis-classification a compile-time / serialization error.
+/// assert_ne!(IdempotencyClass::Token, IdempotencyClass::Readback);
+/// assert_ne!(IdempotencyClass::Staged, IdempotencyClass::AtLeastOnce);
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum IdempotencyClass {
+    /// The tool accepts idempotency tokens (D38 §1). Broker sets
+    /// `EffectRequest.idempotency_key = mote.id.to_hex()`; remote API's
+    /// idempotency contract backstops the effect→commit window.
+    Token,
+    /// The tool supports deterministic read-back (D38 §2a). Executor
+    /// probes world state keyed on `MoteId`; skips dispatch if already
+    /// applied. Probe is deterministic; never a model call.
+    Readback,
+    /// The tool requires staged-intent journaling (D38 §2b).
+    /// **DECLARED but NOT YET ENFORCED** — the runtime contract lands at
+    /// PR 7 (kx-journal v1→v2 adds the `EffectStaged` kind) + PR 9
+    /// (kx-executor wires the protocol). Tool authors may declare this
+    /// today; the resolver returns the resolved tool correctly, but the
+    /// executor's recovery-time re-dispatch refusal that honors `Staged`
+    /// semantics only fires once PR 7 + PR 9 ship.
+    Staged,
+    /// The tool has no closing mechanism (D38 §2c). The executor refuses to
+    /// dispatch it unless the workflow submission context's
+    /// `accept_at_least_once` is `true`.
+    AtLeastOnce,
+}
+
 /// A tool's full specification, content-addressed by its
 /// [`canonical_bincode`][canonical_config] bytes.
 ///
@@ -166,6 +231,25 @@ pub enum ToolKind {
 /// tool_version)`; the registry resolves to a `ToolDef`. The `description`
 /// field is free-form human prose and is **NEVER parsed for enforcement** —
 /// it's there for operator-readable inspection only.
+///
+/// # Canonical-bytes shift (PR 4.6 / D38 §2)
+///
+/// PR 4.6 added the required `idempotency_class` field. **This is a
+/// canonical-bytes-shifting change**: `RegistrationToken` (the dedup primary
+/// key) and `ToolResolutionEvent.resolved_def_hash` (the journaled
+/// resolution event) for any given `ToolDef` now differ from what the
+/// pre-PR-4.6 `ToolDef` would have produced. No production state exists at
+/// either pin site at the time of the shift, so the canonical-bytes change
+/// is bounded entirely to in-test fixtures + the built-ins computed at
+/// `with_builtins()` time.
+///
+/// # No `Default` impl on this struct
+///
+/// The `idempotency_class` field is **required**, with no `#[serde(default)]`
+/// fallback. Every tool MUST declare its class explicitly. The cost of this
+/// (fixture rebase when adding the field) is the price of the safety: a
+/// silent default would let a token-less WM tool be mis-classified as
+/// something safer.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ToolDef {
     /// Tool name (the workflow's reference key, paired with `tool_version`).
@@ -181,6 +265,9 @@ pub struct ToolDef {
     pub required_capability: ToolRequirement,
     /// Free-form human description. NEVER parsed for enforcement.
     pub description: String,
+    /// Per-tool declared idempotency mechanism (D38 §2). Required field;
+    /// no default. See [`IdempotencyClass`] for variant semantics.
+    pub idempotency_class: IdempotencyClass,
 }
 
 // ---------------------------------------------------------------------------
@@ -385,7 +472,7 @@ pub enum RegistrationError {
 ///
 /// ```
 /// use kx_tool_registry::{
-///     registration_token_of, ToolDef, ToolKind, ToolProvenance,
+///     registration_token_of, IdempotencyClass, ToolDef, ToolKind, ToolProvenance,
 /// };
 /// use kx_mote::{ToolName, ToolVersion};
 /// use kx_content::ContentRef;
@@ -405,6 +492,7 @@ pub enum RegistrationError {
 ///         },
 ///     },
 ///     description: String::new(),
+///     idempotency_class: IdempotencyClass::Token,
 /// };
 /// let prov = ToolProvenance::HumanAuthored { author: "ops".into() };
 ///
@@ -531,8 +619,8 @@ pub trait ToolRegistry: Send + Sync {
     ///
     /// ```
     /// use kx_tool_registry::{
-    ///     InMemoryToolRegistry, ResolutionError, ReviewerId, ToolDef,
-    ///     ToolKind, ToolProvenance, ToolRegistry,
+    ///     IdempotencyClass, InMemoryToolRegistry, ResolutionError, ReviewerId,
+    ///     ToolDef, ToolKind, ToolProvenance, ToolRegistry,
     /// };
     /// use kx_mote::{ModelId, MoteId, ToolName, ToolVersion};
     /// use kx_warrant::{
@@ -573,6 +661,7 @@ pub trait ToolRegistry: Send + Sync {
     ///         },
     ///     },
     ///     description: String::new(),
+    ///     idempotency_class: IdempotencyClass::Token,
     /// };
     /// let token = reg.register(
     ///     def.clone(),
@@ -620,7 +709,8 @@ struct RegistrationRecord {
 ///
 /// ```
 /// use kx_tool_registry::{
-///     InMemoryToolRegistry, ToolDef, ToolKind, ToolProvenance, ToolRegistry,
+///     IdempotencyClass, InMemoryToolRegistry, ToolDef, ToolKind,
+///     ToolProvenance, ToolRegistry,
 /// };
 /// use kx_mote::{ToolName, ToolVersion};
 /// use kx_content::ContentRef;
@@ -642,6 +732,7 @@ struct RegistrationRecord {
 ///         },
 ///     },
 ///     description: "Read files from /input".into(),
+///     idempotency_class: IdempotencyClass::Readback,
 /// };
 ///
 /// let token = reg.register(
@@ -685,7 +776,10 @@ impl InMemoryToolRegistry {
             disk_bytes: 0,
         };
 
-        // fs-read: reads from /input (under the warrant's fs_scope).
+        // fs-read: reads bytes from a path declared in the warrant's fs_scope.
+        // Read-only operation; naturally idempotent. IdempotencyClass::Readback
+        // is the natural fit — the dispatch IS the probe; re-dispatch is safe
+        // because reads don't mutate state.
         let _ = reg.register(
             ToolDef {
                 tool_id: ToolName("fs-read".into()),
@@ -697,14 +791,36 @@ impl InMemoryToolRegistry {
                     syscall_profile_ref: ContentRef::from_bytes([0; 32]),
                     min_resource_ceiling: empty_ceiling,
                 },
-                description: "Read bytes from a path declared in the warrant's fs_scope.".into(),
+                description: "Read bytes from a path declared in the warrant's fs_scope. Read-only; naturally idempotent.".into(),
+                idempotency_class: IdempotencyClass::Readback,
             },
             ToolProvenance::HumanAuthored {
                 author: author.clone(),
             },
         );
 
-        // fs-write: writes to /output.
+        // fs-write: writes bytes to a path declared in the warrant's fs_scope.
+        //
+        // SEMANTICS LOCKED TO OVERWRITE-ONLY, FULL-CONTENT writes. The tool
+        // accepts the COMPLETE intended file content and replaces the file at
+        // the target path atomically (open-write-rename). It DOES NOT support
+        // append mode or any partial-write semantics. This is the precondition
+        // that makes IdempotencyClass::Staged safe: re-dispatch after a
+        // pre-commit crash writes the same complete bytes to the same path,
+        // producing the same final state — idempotent.
+        //
+        // If a future workflow needs append semantics, the answer is a
+        // separate tool (e.g., `fs-append`) with `IdempotencyClass::Readback`
+        // (probe the file's current length/contents before deciding to write)
+        // or `IdempotencyClass::AtLeastOnce` (explicit author ack required).
+        // Append-mode under `Staged` would double-write on re-dispatch.
+        //
+        // The `Staged` class itself is DECLARED HERE BUT NOT YET ENFORCED at
+        // runtime — see IdempotencyClass::Staged docs. PR 7 (kx-journal v1→v2
+        // adds the EffectStaged kind) + PR 9 (kx-executor wires the protocol)
+        // close the runtime contract. Today's resolver returns the resolved
+        // tool correctly; only the recovery-time re-dispatch refusal is
+        // pending.
         let _ = reg.register(
             ToolDef {
                 tool_id: ToolName("fs-write".into()),
@@ -716,14 +832,21 @@ impl InMemoryToolRegistry {
                     syscall_profile_ref: ContentRef::from_bytes([0; 32]),
                     min_resource_ceiling: empty_ceiling,
                 },
-                description: "Write bytes to a path declared in the warrant's fs_scope.".into(),
+                description: "Write the complete intended file content to a path declared in the warrant's fs_scope (overwrite-only; no append; staged-intent dispatch).".into(),
+                idempotency_class: IdempotencyClass::Staged,
             },
             ToolProvenance::HumanAuthored {
                 author: author.clone(),
             },
         );
 
-        // text-summarize: deterministic text transformation.
+        // text-summarize: pure transformation (input bytes → summarized
+        // string). IdempotencyClass::Readback fits — for a deterministic
+        // pure-transformation tool, "probe + skip if applied" collapses to
+        // "the journal already has a Committed result_ref for this Mote",
+        // which the executor's memoizer (P1.7.9) handles via the same cache
+        // lookup path; the tool's idempotency-class declaration is the
+        // dispatch-protocol signal, not a separate cache.
         let _ = reg.register(
             ToolDef {
                 tool_id: ToolName("text-summarize".into()),
@@ -735,7 +858,8 @@ impl InMemoryToolRegistry {
                     syscall_profile_ref: ContentRef::from_bytes([0; 32]),
                     min_resource_ceiling: empty_ceiling,
                 },
-                description: "Deterministic text summarization heuristic.".into(),
+                description: "Deterministic text summarization heuristic. Pure transformation; naturally idempotent.".into(),
+                idempotency_class: IdempotencyClass::Readback,
             },
             ToolProvenance::HumanAuthored { author },
         );
@@ -933,12 +1057,18 @@ mod tests {
     }
 
     fn sample_def(id: &str, version: &str, kind: ToolKind, req: ToolRequirement) -> ToolDef {
+        // Default test-fixture class is `Token` (most permissive WM dispatch
+        // path; any of the 4 variants would work for unit tests not exercising
+        // the executor's protocol-selection branches — those tests live in
+        // kx-executor at PR 9). Tests that DO want to exercise a specific
+        // class construct ToolDef literally rather than via this helper.
         ToolDef {
             tool_id: ToolName(id.into()),
             tool_version: ToolVersion(version.into()),
             kind,
             required_capability: req,
             description: format!("test tool {id}@{version}"),
+            idempotency_class: IdempotencyClass::Token,
         }
     }
 
