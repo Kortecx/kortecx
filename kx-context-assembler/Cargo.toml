@@ -1,0 +1,32 @@
+[package]
+name         = "kx-context-assembler"
+version      = "0.0.1"
+edition      = { workspace = true }
+rust-version = { workspace = true }
+license      = { workspace = true }
+authors      = { workspace = true }
+repository   = { workspace = true }
+description  = "kortecx deterministic context assembler (D33 first part) — pure assemble(mote, warrant, snapshot, store, registry, window) → AssembledContext. Resolves content-addressed hashes into ACTUAL CONTENT; the model reasons over resolved content only. Same input hashes → byte-identical output."
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+kx-mote          = { workspace = true }
+kx-content       = { workspace = true }
+kx-projection    = { workspace = true }
+kx-warrant       = { workspace = true }
+kx-tool-registry = { workspace = true }
+bincode          = { workspace = true }
+blake3           = { workspace = true }
+bytes            = { workspace = true }
+serde            = { workspace = true }
+smallvec         = { workspace = true }
+thiserror        = { workspace = true }
+tracing          = { workspace = true }
+
+[dev-dependencies]
+kx-journal         = { workspace = true }
+proptest           = { workspace = true }
+tempfile           = { workspace = true }
+tracing-subscriber = { workspace = true }

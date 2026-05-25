@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["kx-mote", "kx-content", "kx-journal", "kx-projection", "kx-llamacpp-sys", "kx-llamacpp", "kx-model-validator", "kx-warrant", "kx-tool-registry"]
+members = ["kx-mote", "kx-content", "kx-journal", "kx-projection", "kx-llamacpp-sys", "kx-llamacpp", "kx-model-validator", "kx-warrant", "kx-tool-registry", "kx-context-assembler"]
 exclude = ["kx-cloud"]
 
 [workspace.package]
@@ -16,7 +16,7 @@ tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 thiserror          = "1"
 bincode            = { version = "2", features = ["serde"] }
 blake3             = "1"
-bytes              = "1"
+bytes              = { version = "1", features = ["serde"] }
 smallvec           = { version = "1", features = ["serde"] }
 serde              = { version = "1", features = ["derive"] }
 proptest           = "1"
@@ -26,11 +26,13 @@ rusqlite           = { version = "0.32", features = ["bundled"] }
 kx-mote            = { path = "kx-mote" }
 kx-content         = { path = "kx-content" }
 kx-journal         = { path = "kx-journal" }
+kx-projection      = { path = "kx-projection" }
 kx-llamacpp-sys    = { path = "kx-llamacpp-sys" }
 kx-llamacpp        = { path = "kx-llamacpp" }
 kx-model-validator = { path = "kx-model-validator" }
 kx-warrant         = { path = "kx-warrant" }
 kx-tool-registry   = { path = "kx-tool-registry" }
+kx-context-assembler = { path = "kx-context-assembler" }
 bindgen            = "0.70"
 cmake              = "0.1"
 ureq               = { version = "2", default-features = false, features = ["tls"] }
