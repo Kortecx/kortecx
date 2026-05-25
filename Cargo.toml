@@ -1,7 +1,34 @@
 [workspace]
 resolver = "2"
-members = ["kx-mote", "kx-content", "kx-journal", "kx-projection", "kx-llamacpp-sys", "kx-llamacpp", "kx-model-validator", "kx-warrant", "kx-tool-registry", "kx-context-assembler", "kx-memoizer", "kx-normalizer"]
-exclude = ["kx-cloud"]
+# All workspace member crates live under `crates/`. The parent-folder
+# convention (vs. crates at the workspace root) keeps the repo root clean —
+# `docs/`, `bindings/`, `scripts/`, and future top-level dirs sit alongside
+# `crates/` without ambiguity. Cargo abstracts crate placement entirely;
+# `use kx_mote::...` etc. are by name, not path.
+members = [
+    "crates/kx-mote",
+    "crates/kx-content",
+    "crates/kx-journal",
+    "crates/kx-projection",
+    "crates/kx-llamacpp-sys",
+    "crates/kx-llamacpp",
+    "crates/kx-model-validator",
+    "crates/kx-warrant",
+    "crates/kx-tool-registry",
+    "crates/kx-context-assembler",
+    "crates/kx-memoizer",
+    "crates/kx-normalizer",
+]
+exclude = [
+    "kx-cloud",
+    # Language bindings — out-of-workspace per Item 8 of the repo-baseline
+    # config sweep. Each binding has its own Cargo workspace (or
+    # language-native build system) and depends on kortecx core via path /
+    # published-version deps. Bindings depend on core; core NEVER depends
+    # on a binding. See `bindings/README.md` for the inward-only rule.
+    "bindings/python",
+    "bindings/typescript",
+]
 
 [workspace.package]
 edition      = "2021"
@@ -23,18 +50,24 @@ proptest           = "1"
 tempfile           = "3"
 rkyv               = "0.8"
 rusqlite           = { version = "0.32", features = ["bundled"] }
-kx-mote            = { path = "kx-mote" }
-kx-content         = { path = "kx-content" }
-kx-journal         = { path = "kx-journal" }
-kx-projection      = { path = "kx-projection" }
-kx-llamacpp-sys    = { path = "kx-llamacpp-sys" }
-kx-llamacpp        = { path = "kx-llamacpp" }
-kx-model-validator = { path = "kx-model-validator" }
-kx-warrant         = { path = "kx-warrant" }
-kx-tool-registry   = { path = "kx-tool-registry" }
-kx-context-assembler = { path = "kx-context-assembler" }
-kx-memoizer        = { path = "kx-memoizer" }
-kx-normalizer      = { path = "kx-normalizer" }
+# Workspace member path-deps carry an explicit `version = "0.0.1"` matching
+# each member's `[package].version`. Without it, cargo-deny flags path-only
+# deps as wildcards (the version constraint is unconstrained). The version
+# field also takes effect on `cargo publish` — replacing the path during
+# publish with the version requirement here. All paths point under
+# `crates/` per the workspace's parent-folder layout convention.
+kx-mote              = { path = "crates/kx-mote",              version = "0.0.1" }
+kx-content           = { path = "crates/kx-content",           version = "0.0.1" }
+kx-journal           = { path = "crates/kx-journal",           version = "0.0.1" }
+kx-projection        = { path = "crates/kx-projection",        version = "0.0.1" }
+kx-llamacpp-sys      = { path = "crates/kx-llamacpp-sys",      version = "0.0.1" }
+kx-llamacpp          = { path = "crates/kx-llamacpp",          version = "0.0.1" }
+kx-model-validator   = { path = "crates/kx-model-validator",   version = "0.0.1" }
+kx-warrant           = { path = "crates/kx-warrant",           version = "0.0.1" }
+kx-tool-registry     = { path = "crates/kx-tool-registry",     version = "0.0.1" }
+kx-context-assembler = { path = "crates/kx-context-assembler", version = "0.0.1" }
+kx-memoizer          = { path = "crates/kx-memoizer",          version = "0.0.1" }
+kx-normalizer        = { path = "crates/kx-normalizer",        version = "0.0.1" }
 bindgen            = "0.70"
 cmake              = "0.1"
 ureq               = { version = "2", default-features = false, features = ["tls"] }
@@ -50,6 +83,73 @@ panic         = "abort"
 
 [profile.dev]
 incremental = false
+
+# ---------------------------------------------------------------------------
+# Workspace lint policy (Item 3 of the repo-baseline config sweep).
+#
+# Encodes the workspace's safety + style golden rules at the policy layer.
+# Member crates inherit via `[lints] workspace = true` in their Cargo.toml;
+# NEW crates pick up the policy without copy-paste.
+#
+# Policy model — "deny outside tests, allow in tests":
+#   - Library code (src/, excluding `#[cfg(test)]` modules) is held to the
+#     deny rules. Documented-infallible production uses carry a TARGETED
+#     `#![allow(clippy::expect_used)]` with a comment naming the
+#     infallibility precondition.
+#   - Inline test modules (`#[cfg(test)] mod tests { ... }`) are exempted
+#     via `#![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]`
+#     in each src/lib.rs.
+#   - Integration tests under `tests/*.rs` compile as separate crates and
+#     don't see `#[cfg(test)]` from the host lib. Each test file carries
+#     its own `#![allow(...)]` (the per-test-file allow is the "test
+#     exemption" mechanism for integration tests).
+#   - Build scripts (build.rs) carry their own allows for env-var
+#     unwrap/expect patterns where panic-on-missing is the correct
+#     build-time behavior.
+#   - `undocumented_unsafe_blocks` is deny everywhere; the PR 4.7 H-3 FFI
+#     hardening sweep audited `unsafe` blocks in kx-llamacpp. The bindgen-
+#     generated `kx-llamacpp-sys` crate carries a single crate-level allow
+#     since the generator emits unsafe blocks mechanically.
+#
+# Per-crate violation counts at the time of this commit (used as the
+# follow-up log for HANDOFF.md §1.8):
+#   kx-journal: 56     kx-content: 34          kx-llamacpp: 31
+#   kx-tool-registry: 27  kx-context-assembler: 27
+#   kx-projection: 19  kx-warrant: 11          kx-mote: 3
+#   kx-normalizer: 2   kx-memoizer: 1
+# The cleanup-PR sequence migrates these to `?` / typed errors one crate
+# at a time; the targeted allows added by this commit are tagged with
+# `TODO(workspace.lints cleanup)` to make the migration sites grep-able.
+# ---------------------------------------------------------------------------
+
+[workspace.lints.rust]
+missing_docs           = "warn"   # public API must be documented (target: deny via cleanup)
+unsafe_op_in_unsafe_fn = "deny"   # every op in an `unsafe fn` must still wrap in `unsafe { }`
+unreachable_pub        = "warn"   # surface accidentally-public items
+unused_must_use        = "deny"   # `Result`s + `#[must_use]` values must be handled
+
+[workspace.lints.clippy]
+# Safety golden rules — DENY in library code. Tests exempt via
+# `#![cfg_attr(test, allow(...))]` in each src/lib.rs; integration tests
+# in `tests/*.rs` files carry their own `#![allow(...)]` (per-file because
+# they compile as separate crates). Build scripts (build.rs) carry their
+# own allows for env-var unwrap/expect patterns where panic-on-missing is
+# the correct behavior. Legitimate documented-infallible production uses
+# carry a TARGETED `#![allow(clippy::expect_used)]` with a `// SAFETY:`-
+# style comment naming the infallibility (e.g., canonical bincode encode
+# over a type with no floats / no non-encodable variants).
+unwrap_used                = "deny"
+expect_used                = "deny"
+undocumented_unsafe_blocks = "deny"   # every `unsafe { ... }` block needs `// SAFETY:`
+
+# Discipline — warn (signal but don't auto-break).
+todo          = "warn"
+unimplemented = "warn"
+
+# Style — workspace-wide pedantic baseline. Mirrors per-crate `#![warn(clippy::pedantic)]`
+# preludes; new crates pick this up without copy-paste. `priority = -1` so any
+# individual deny/allow above takes precedence.
+pedantic = { level = "warn", priority = -1 }
 
 [workspace.metadata.deb]
 # Placeholder. Real cargo-deb packaging lands at P1.13 (kx-runtime binary).

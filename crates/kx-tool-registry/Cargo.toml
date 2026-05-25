@@ -1,0 +1,29 @@
+[package]
+name         = "kx-tool-registry"
+version      = "0.0.1"
+edition      = { workspace = true }
+rust-version = { workspace = true }
+license      = { workspace = true }
+authors      = { workspace = true }
+repository   = { workspace = true }
+description  = "kortecx tool layer (D32) — per-workflow file with typed front-matter + shared registry. Tool grants are REFERENCES into the registry. MCP tools are EGRESS (monotonic). Self-generated tools INERT until human review with capability ⊆ generating lineage."
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+kx-mote    = { workspace = true }
+kx-content = { workspace = true }
+kx-warrant = { workspace = true }
+bincode    = { workspace = true }
+blake3     = { workspace = true }
+serde      = { workspace = true }
+thiserror  = { workspace = true }
+tracing    = { workspace = true }
+
+[dev-dependencies]
+proptest           = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[lints]
+workspace = true

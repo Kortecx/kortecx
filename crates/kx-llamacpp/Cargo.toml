@@ -1,0 +1,41 @@
+[package]
+name         = "kx-llamacpp"
+version      = "0.0.1"
+edition      = { workspace = true }
+rust-version = { workspace = true }
+license      = { workspace = true }
+authors      = { workspace = true }
+repository   = { workspace = true }
+description  = "Safe Rust wrapper over kx-llamacpp-sys. Contains all unsafe behind a safe public API."
+build        = "build.rs"
+
+[lib]
+path = "src/lib.rs"
+
+[features]
+# Default: no model is downloaded; only API-shape unit tests run.
+default = []
+
+# Enable to make `build.rs` download the stories260K GGUF and the
+# `tests/smoke.rs` integration test exercise the full inference pipeline
+# (load → tokenize → decode → sample → detokenize). Used in CI's
+# `smoke-test-with-model` job. Local devs can opt in with
+# `cargo test -p kx-llamacpp --features model-smoke-test`.
+model-smoke-test = []
+
+[dependencies]
+kx-llamacpp-sys = { workspace = true }
+thiserror       = { workspace = true }
+tracing         = { workspace = true }
+
+[build-dependencies]
+ureq = { workspace = true }
+sha2 = { workspace = true }
+
+[dev-dependencies]
+tempfile           = { workspace = true }
+tracing-subscriber = { workspace = true }
+proptest           = { workspace = true }
+
+[lints]
+workspace = true

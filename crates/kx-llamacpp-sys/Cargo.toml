@@ -1,0 +1,27 @@
+[package]
+name         = "kx-llamacpp-sys"
+version      = "0.0.1"
+edition      = { workspace = true }
+rust-version = { workspace = true }
+license      = { workspace = true }
+authors      = { workspace = true }
+repository   = { workspace = true }
+description  = "Raw FFI bindings to llama.cpp's C API. The single unsafe-heavy crate. Nothing but kx-llamacpp may import this."
+# `links = "llama"` declares that this crate, when built, produces a native library
+# named `llama` (via the build script's CMake invocation). Tells Cargo this crate
+# can be linked at most once per build graph — prevents duplicate-symbol surprises.
+links        = "llama"
+build        = "build.rs"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+# Intentionally none. Pure FFI: only what `extern "C"` needs (nothing).
+
+[build-dependencies]
+bindgen = { workspace = true }
+cmake   = { workspace = true }
+
+[lints]
+workspace = true
