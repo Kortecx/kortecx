@@ -14,6 +14,7 @@
 //! Linux machines without bwrap.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use kx_mote::Mote;
 use kx_warrant::{ExecutorClass, WarrantSpec};
@@ -21,10 +22,12 @@ use kx_warrant::{ExecutorClass, WarrantSpec};
 #[cfg(target_os = "linux")]
 use kx_warrant::{FsMode, NetScope};
 
+use crate::body_resolver::BodyResolver;
+
 use crate::executor_trait::{MoteExecutionResult, MoteExecutor, MoteExecutorError, Rootfs};
 
 /// Bubblewrap-based sandbox executor (Linux default per D41).
-#[derive(Debug, Default, Clone)]
+#[derive(Default, Clone)]
 #[allow(clippy::struct_field_names)] // each *_path field carries distinct semantics
 pub struct BwrapExecutor {
     /// Absolute path to the body binary the spawned child will execvp into
@@ -41,6 +44,25 @@ pub struct BwrapExecutor {
     /// via `PATH`); production callers can override.
     #[allow(dead_code)] // read only on target_os = "linux" via `run_linux`
     bwrap_path: PathBuf,
+    /// Optional `BodyResolver` (PR 9a-hardening-5). When set + `body_path`
+    /// is None, the executor resolves `mote.def.logic_ref` via the
+    /// resolver at run time + materializes to a tempfile.
+    #[allow(dead_code)] // read only on target_os = "linux" via `run_linux`
+    body_resolver: Option<Arc<dyn BodyResolver>>,
+}
+
+impl std::fmt::Debug for BwrapExecutor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BwrapExecutor")
+            .field("body_path", &self.body_path)
+            .field("input_path", &self.input_path)
+            .field("bwrap_path", &self.bwrap_path)
+            .field(
+                "body_resolver",
+                &self.body_resolver.as_ref().map(|_| "<dyn BodyResolver>"),
+            )
+            .finish()
+    }
 }
 
 impl BwrapExecutor {
@@ -53,6 +75,7 @@ impl BwrapExecutor {
             body_path: None,
             input_path: None,
             bwrap_path: PathBuf::from("bwrap"),
+            body_resolver: None,
         }
     }
 
@@ -65,7 +88,19 @@ impl BwrapExecutor {
             body_path: Some(body_path),
             input_path: None,
             bwrap_path: PathBuf::from("bwrap"),
+            body_resolver: None,
         }
+    }
+
+    /// Configure the executor with a `BodyResolver` (PR 9a-hardening-5).
+    /// At run time, the executor resolves `mote.def.logic_ref` via the
+    /// resolver, materializes the body bytes to a tempfile, chmods +x,
+    /// and feeds the tempfile path to bwrap. The `body_path` constructor
+    /// argument is ignored when a resolver is set.
+    #[must_use]
+    pub fn with_body_resolver(mut self, resolver: Arc<dyn BodyResolver>) -> Self {
+        self.body_resolver = Some(resolver);
+        self
     }
 
     /// Set the input file path passed as the body's `argv[1]`.
@@ -120,18 +155,36 @@ impl BwrapExecutor {
     /// result_ref, returns `MoteExecutionResult`.
     fn run_linux(
         &self,
-        _mote: &Mote,
+        mote: &Mote,
         warrant: &WarrantSpec,
         _env: Option<&Rootfs>,
     ) -> Result<MoteExecutionResult, MoteExecutorError> {
-        let body_path = self
-            .body_path
-            .as_ref()
-            .ok_or(MoteExecutorError::BackendUnsupported {
-                class: ExecutorClass::Bwrap,
-                reason: "no body_path configured — construct via BwrapExecutor::with_body(path)"
-                    .into(),
-            })?;
+        // Resolve the body path: prefer `body_resolver` over `body_path`.
+        // The MaterializedBody guard is held alive until end-of-run_linux;
+        // its Drop removes the tempfile.
+        let materialized = if let Some(resolver) = &self.body_resolver {
+            Some(resolver.resolve(&mote.def.logic_ref).map_err(|e| {
+                MoteExecutorError::Internal {
+                    reason: format!("body_resolver: {e}"),
+                }
+            })?)
+        } else {
+            None
+        };
+        let body_path_owned: PathBuf = if let Some(m) = &materialized {
+            m.path().to_path_buf()
+        } else {
+            self.body_path
+                .as_ref()
+                .ok_or(MoteExecutorError::BackendUnsupported {
+                    class: ExecutorClass::Bwrap,
+                    reason:
+                        "no body source configured — construct via BwrapExecutor::with_body(path) or .with_body_resolver(resolver)"
+                            .into(),
+                })?
+                .clone()
+        };
+        let body_path = &body_path_owned;
         let input_path = self
             .input_path
             .as_ref()

@@ -270,6 +270,7 @@
 )]
 
 pub mod backends;
+pub mod body_resolver;
 pub mod executor_trait;
 pub mod fact_zero;
 pub mod factory;
@@ -284,6 +285,9 @@ pub mod resource_manager;
 pub(crate) mod spawn;
 
 // Re-exports — the executor's stable public API.
+pub use body_resolver::{
+    BodyResolver, BodyResolverError, ContentStoreBodyResolver, MaterializedBody,
+};
 pub use executor_trait::{MoteExecutionResult, MoteExecutor, MoteExecutorError, Rootfs};
 pub use fact_zero::{
     seed_idempotency_key, seed_mote_id, write_fact_zero, FactZeroError, SeedPayload,

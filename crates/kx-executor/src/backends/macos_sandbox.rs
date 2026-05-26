@@ -10,6 +10,7 @@
 //! workspace's `kx-executor-pure-body` example binary.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 #[cfg(target_os = "macos")]
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -17,11 +18,13 @@ use kx_content::ContentRef;
 use kx_mote::Mote;
 use kx_warrant::{ExecutorClass, WarrantSpec};
 
+use crate::body_resolver::BodyResolver;
+
 use crate::executor_trait::{MoteExecutionResult, MoteExecutor, MoteExecutorError, Rootfs};
 
 /// macOS sandbox-exec / Seatbelt-based sandbox executor (macOS default per
 /// D41).
-#[derive(Debug, Default, Clone)]
+#[derive(Default, Clone)]
 pub struct MacOsSandboxExecutor {
     /// Absolute path to the body binary the spawned child will execvp into.
     /// When `None`, `run()` returns `BackendUnsupported` (the PR 9a
@@ -42,6 +45,27 @@ pub struct MacOsSandboxExecutor {
     /// `MoteDef.config_subset` in a future hardening sweep.
     #[allow(dead_code)] // read only on target_os = "macos" via `run_macos`
     extra_args: Vec<String>,
+    /// Optional `BodyResolver` (PR 9a-hardening-5). When set + `body_path`
+    /// is None, the executor resolves `mote.def.logic_ref` via the
+    /// resolver at run time, materializes the bytes to a tempfile, chmods
+    /// +x, and execvps the tempfile. The MaterializedBody guard is
+    /// held alive for the spawn's duration; `Drop` removes the tempfile.
+    #[allow(dead_code)] // read only on target_os = "macos" via `run_macos`
+    body_resolver: Option<Arc<dyn BodyResolver>>,
+}
+
+impl std::fmt::Debug for MacOsSandboxExecutor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MacOsSandboxExecutor")
+            .field("body_path", &self.body_path)
+            .field("input_path", &self.input_path)
+            .field("extra_args", &self.extra_args)
+            .field(
+                "body_resolver",
+                &self.body_resolver.as_ref().map(|_| "<dyn BodyResolver>"),
+            )
+            .finish()
+    }
 }
 
 impl MacOsSandboxExecutor {
@@ -53,6 +77,7 @@ impl MacOsSandboxExecutor {
             body_path: None,
             input_path: None,
             extra_args: Vec::new(),
+            body_resolver: None,
         }
     }
 
@@ -65,7 +90,22 @@ impl MacOsSandboxExecutor {
             body_path: Some(body_path),
             input_path: None,
             extra_args: Vec::new(),
+            body_resolver: None,
         }
+    }
+
+    /// Configure the executor with a `BodyResolver` (PR 9a-hardening-5).
+    /// At run time, the executor resolves `mote.def.logic_ref` via the
+    /// resolver, materializes the body bytes to a tempfile, chmods +x,
+    /// and execvps the tempfile path. The `body_path` constructor argument
+    /// is ignored when a resolver is set; production callers typically
+    /// configure either `with_body(path)` (static path; tests) OR
+    /// `with_body_resolver(resolver)` (production; per-Mote dynamic
+    /// resolution from `logic_ref`).
+    #[must_use]
+    pub fn with_body_resolver(mut self, resolver: Arc<dyn BodyResolver>) -> Self {
+        self.body_resolver = Some(resolver);
+        self
     }
 
     /// Set the input file path passed as the body's `argv[1]`. Production
@@ -124,19 +164,37 @@ impl MacOsSandboxExecutor {
     /// waitpids, returns the result.
     fn run_macos(
         &self,
-        _mote: &Mote,
+        mote: &Mote,
         warrant: &WarrantSpec,
         _env: Option<&Rootfs>,
     ) -> Result<MoteExecutionResult, MoteExecutorError> {
-        let body_path = self
-            .body_path
-            .as_ref()
-            .ok_or(MoteExecutorError::BackendUnsupported {
-                class: ExecutorClass::MacOsSandbox,
-                reason:
-                    "no body_path configured — construct via MacOsSandboxExecutor::with_body(path)"
-                        .into(),
-            })?;
+        // Resolve the body path: prefer `body_resolver` (production) over
+        // `body_path` (tests / static configuration). The MaterializedBody
+        // guard is held alive until the end of `run_macos`; its Drop
+        // removes the tempfile.
+        let materialized = if let Some(resolver) = &self.body_resolver {
+            Some(resolver.resolve(&mote.def.logic_ref).map_err(|e| {
+                MoteExecutorError::Internal {
+                    reason: format!("body_resolver: {e}"),
+                }
+            })?)
+        } else {
+            None
+        };
+        let body_path_owned: PathBuf = if let Some(m) = &materialized {
+            m.path().to_path_buf()
+        } else {
+            self.body_path
+                .as_ref()
+                .ok_or(MoteExecutorError::BackendUnsupported {
+                    class: ExecutorClass::MacOsSandbox,
+                    reason:
+                        "no body source configured — construct via MacOsSandboxExecutor::with_body(path) or .with_body_resolver(resolver)"
+                            .into(),
+                })?
+                .clone()
+        };
+        let body_path = &body_path_owned;
         let input_path = self
             .input_path
             .as_ref()
