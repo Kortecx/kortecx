@@ -299,7 +299,10 @@ pub use fact_zero::{
     seed_idempotency_key, seed_mote_id, write_fact_zero, FactZeroError, SeedPayload,
 };
 pub use factory::{default_executor, executor_for_class};
-pub use lifecycle::{run_pure_mote, LifecycleCommit, LifecycleError, TestMoteExecutor};
+pub use lifecycle::{
+    run_pure_mote, run_wm_mote, LifecycleCommit, LifecycleError, TestMoteExecutor,
+    WmLifecycleCommit,
+};
 pub use refusal::{
     refusal_from_narrowing, validate_submission, validate_submission_with_idempotency,
     SubmissionRefusal, WorkflowSubmission,
