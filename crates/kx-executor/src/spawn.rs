@@ -199,32 +199,27 @@ pub(crate) fn spawn_body(
     }
 }
 
+/// Read the current thread's errno value. The libc symbol differs by
+/// platform: macOS exposes `__error`; Linux exposes `__errno_location`.
+/// Both return a pointer to a thread-local int.
 fn errno() -> i32 {
-    // SAFETY: `__error()` / `__errno_location()` are wrapped by libc::__errno
-    // on supported targets; this is the canonical way to read errno from Rust.
-    // We immediately deref the returned pointer; both libc constants live in
-    // thread-local storage and are valid for the lifetime of the thread.
-    unsafe { *libc::__error() }
-}
-
-#[cfg(target_os = "linux")]
-fn errno_linux() -> i32 {
-    // On Linux the symbol is `__errno_location`. Wrap so callers don't
-    // have to cfg-switch.
-    // SAFETY: same rationale as `errno()` above.
-    unsafe { *libc::__errno_location() }
-}
-
-#[cfg(target_os = "linux")]
-#[allow(dead_code)]
-pub(crate) fn errno_for_log() -> i32 {
-    errno_linux()
-}
-
-#[cfg(target_os = "macos")]
-#[allow(dead_code)]
-pub(crate) fn errno_for_log() -> i32 {
-    errno()
+    #[cfg(target_os = "macos")]
+    {
+        // SAFETY: `__error` returns a pointer to thread-local errno storage
+        // valid for the lifetime of the calling thread.
+        unsafe { *libc::__error() }
+    }
+    #[cfg(target_os = "linux")]
+    {
+        // SAFETY: `__errno_location` is the Linux equivalent; same safety
+        // contract.
+        unsafe { *libc::__errno_location() }
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        // Other Unix targets: best-effort fallback via nix.
+        nix::errno::Errno::last_raw()
+    }
 }
 
 // ============================================================================
