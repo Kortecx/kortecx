@@ -187,7 +187,13 @@ fn resource_ceiling_does_not_appear_in_sbpl_profile() {
 fn deny_default_template_is_present_in_every_profile() {
     let w = permissive_warrant_with(FsScope::empty(), NetScope::None);
     let text = profile_text(&w);
-    assert!(text.starts_with("(version 1)\n(deny default)\n"));
+    // Template imports Apple's system.sb baseline (so Rust-runtime startup
+    // mmap calls succeed) before the deny-default + per-axis allows. See
+    // `DENY_DEFAULT_TEMPLATE` in `backends/macos_sandbox.rs` for the
+    // rationale.
+    assert!(text.starts_with("(version 1)\n"));
+    assert!(text.contains("(import \"system.sb\")"));
+    assert!(text.contains("(deny default)"));
 }
 
 #[test]

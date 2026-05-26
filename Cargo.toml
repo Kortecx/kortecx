@@ -78,6 +78,11 @@ bindgen            = "0.70"
 cmake              = "0.1"
 ureq               = { version = "2", default-features = false, features = ["tls"] }
 sha2               = "0.10"
+# Unix-only deps used by kx-executor's hardened spawn paths (fork+execvp +
+# sandbox_init via libc + setrlimit). Both crates are well-audited pure-Rust
+# shims; no extra C deps land.
+libc               = "0.2"
+nix                = { version = "0.29", features = ["process", "signal", "resource", "fs"] }
 
 [profile.release]
 strip         = "symbols"

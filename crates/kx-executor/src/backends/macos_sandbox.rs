@@ -1,53 +1,205 @@
 //! `MacOsSandboxExecutor` — macOS sandbox-exec / Seatbelt sibling of
-//! `BwrapExecutor`. **PR 9a skeleton**: structure + `supports()` are real;
-//! `run()` returns `BackendUnsupported`. The real `posix_spawn` +
-//! `sandbox_init`-equivalent + SBPL profile generation lands in the PR 9a-
-//! hardening follow-up.
+//! `BwrapExecutor`. **PR 9a-hardening-2** wires the real
+//! fork + `sandbox_init` + `execvp` path through `crate::spawn::spawn_body`.
 //!
-//! Per D46 (`docs/design/macos-sandbox-profile.md` P0.14), the runtime
-//! generates an `SbplProfile` from a `WarrantSpec` via the pure
-//! `profile_from_warrant` function. PR 9a ships a placeholder
-//! `profile_from_warrant` that returns the deny-default template only (no
-//! per-axis allows); the per-axis mapping ships in the PR 9a-hardening
-//! follow-up.
+//! The executor either has a configured `body_path` (the binary the spawned
+//! child will execvp into) or returns `BackendUnsupported`. Production
+//! consumers configure `body_path` from the workflow's `logic_ref` resolved
+//! at the runtime layer (P1.13+); integration tests construct
+//! `MacOsSandboxExecutor::with_body(path)` directly against the
+//! workspace's `kx-executor-pure-body` example binary.
 
+use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use kx_content::ContentRef;
 use kx_mote::Mote;
 use kx_warrant::{ExecutorClass, WarrantSpec};
 
 use crate::executor_trait::{MoteExecutionResult, MoteExecutor, MoteExecutorError, Rootfs};
 
 /// macOS sandbox-exec / Seatbelt-based sandbox executor (macOS default per
-/// D41). PR 9a skeleton.
-#[derive(Debug, Default, Clone, Copy)]
+/// D41).
+#[derive(Debug, Default, Clone)]
 pub struct MacOsSandboxExecutor {
-    _private: (),
+    /// Absolute path to the body binary the spawned child will execvp into.
+    /// When `None`, `run()` returns `BackendUnsupported` (the PR 9a
+    /// skeleton shape preserved for back-compat with `default_executor()`).
+    body_path: Option<PathBuf>,
+    /// Absolute path to a file the body will read as its input (passed as
+    /// `argv[1]`). When `None`, the integration test wires this per-Mote
+    /// via `with_input_file`; production code derives it from the Mote's
+    /// committed parents.
+    input_path: Option<PathBuf>,
 }
 
 impl MacOsSandboxExecutor {
-    /// Construct a new `MacOsSandboxExecutor`. No side effects in PR 9a.
+    /// Construct a new `MacOsSandboxExecutor` with no configured body
+    /// (preserves the PR 9a `BackendUnsupported`-on-run shape).
     #[must_use]
     pub const fn new() -> Self {
-        Self { _private: () }
+        Self {
+            body_path: None,
+            input_path: None,
+        }
+    }
+
+    /// Construct a `MacOsSandboxExecutor` with a configured body binary.
+    /// The spawned child execvps into `body_path` after fork +
+    /// `sandbox_init`.
+    #[must_use]
+    pub fn with_body(body_path: PathBuf) -> Self {
+        Self {
+            body_path: Some(body_path),
+            input_path: None,
+        }
+    }
+
+    /// Set the input file path passed as the body's `argv[1]`. Production
+    /// code derives this from the Mote's committed parents; integration
+    /// tests use this directly.
+    #[must_use]
+    pub fn with_input_file(mut self, input_path: PathBuf) -> Self {
+        self.input_path = Some(input_path);
+        self
     }
 }
 
 impl MoteExecutor for MacOsSandboxExecutor {
     fn run(
         &self,
-        _mote: &Mote,
-        _warrant: &WarrantSpec,
-        _env: Option<Rootfs>,
+        mote: &Mote,
+        warrant: &WarrantSpec,
+        env: Option<Rootfs>,
     ) -> Result<MoteExecutionResult, MoteExecutorError> {
-        Err(MoteExecutorError::BackendUnsupported {
-            class: ExecutorClass::MacOsSandbox,
-            reason:
-                "skeleton — real posix_spawn + sandbox_init lands in the PR 9a-hardening follow-up"
-                    .into(),
-        })
+        #[cfg(target_os = "macos")]
+        {
+            self.run_macos(mote, warrant, env.as_ref())
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = (mote, warrant, env);
+            Err(MoteExecutorError::BackendUnsupported {
+                class: ExecutorClass::MacOsSandbox,
+                reason: "MacOsSandbox backend only runs on target_os = \"macos\"".into(),
+            })
+        }
     }
 
     fn supports(&self, executor_class: ExecutorClass) -> bool {
         cfg!(target_os = "macos") && executor_class == ExecutorClass::MacOsSandbox
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl MacOsSandboxExecutor {
+    /// Real macOS spawn path. Builds the SBPL profile from the warrant,
+    /// forks, loads the profile in the child via `sandbox_init`, execvps
+    /// the body, reads stdout (the body's result_ref as 64 hex chars),
+    /// waitpids, returns the result.
+    fn run_macos(
+        &self,
+        _mote: &Mote,
+        warrant: &WarrantSpec,
+        _env: Option<&Rootfs>,
+    ) -> Result<MoteExecutionResult, MoteExecutorError> {
+        let body_path = self
+            .body_path
+            .as_ref()
+            .ok_or(MoteExecutorError::BackendUnsupported {
+                class: ExecutorClass::MacOsSandbox,
+                reason:
+                    "no body_path configured — construct via MacOsSandboxExecutor::with_body(path)"
+                        .into(),
+            })?;
+        let input_path = self
+            .input_path
+            .as_ref()
+            .ok_or(MoteExecutorError::Internal {
+                reason: "no input_path configured — call .with_input_file(path) on the executor"
+                    .into(),
+            })?;
+
+        // 1. Build the SBPL profile.
+        let profile = profile_from_warrant(warrant);
+        let profile_bytes = profile.as_bytes().to_vec();
+
+        // 2. Body argv (argv[0] = body name, argv[1] = input file path).
+        let body_path_str = body_path.to_string_lossy().into_owned();
+        let input_path_str = input_path.to_string_lossy().into_owned();
+        let argv = vec![body_path_str.clone(), input_path_str];
+
+        // 3. Spawn — fork + pre-exec(sandbox_init) + execvp.
+        let started_at_epoch_ms = now_epoch_ms();
+        let outcome = crate::spawn::spawn_body(
+            &body_path_str,
+            &argv,
+            Box::new(move || crate::spawn::load_profile(&profile_bytes)),
+        )?;
+        let finished_at_epoch_ms = now_epoch_ms();
+
+        // 4. Parse the body's stdout: 64 hex chars → 32-byte ContentRef.
+        if outcome.exit_code != 0 {
+            return Err(MoteExecutorError::BodyExited {
+                code: outcome.exit_code,
+            });
+        }
+        let result_ref =
+            parse_hex_ref(&outcome.stdout).map_err(|e| MoteExecutorError::Internal {
+                reason: format!("body stdout parse: {e}"),
+            })?;
+
+        Ok(MoteExecutionResult {
+            result_ref,
+            started_at_epoch_ms,
+            finished_at_epoch_ms,
+        })
+    }
+}
+
+fn now_epoch_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| {
+            #[allow(clippy::cast_possible_truncation)]
+            let ms = d.as_millis() as u64;
+            ms
+        })
+        .unwrap_or(0)
+}
+
+/// Parse 64 lowercase-hex bytes (the body's stdout shape) into a
+/// `ContentRef`. Trailing whitespace is tolerated (some bodies emit a
+/// trailing newline despite the contract).
+fn parse_hex_ref(bytes: &[u8]) -> Result<ContentRef, String> {
+    // Skip trailing whitespace.
+    let mut end = bytes.len();
+    while end > 0 && bytes[end - 1].is_ascii_whitespace() {
+        end -= 1;
+    }
+    let trimmed = &bytes[..end];
+    if trimmed.len() != 64 {
+        return Err(format!(
+            "expected 64 hex chars, got {} bytes: {:?}",
+            trimmed.len(),
+            String::from_utf8_lossy(trimmed)
+        ));
+    }
+    let mut out = [0u8; 32];
+    for (i, chunk) in trimmed.chunks_exact(2).enumerate() {
+        let hi = hex_nibble(chunk[0])?;
+        let lo = hex_nibble(chunk[1])?;
+        out[i] = (hi << 4) | lo;
+    }
+    Ok(ContentRef::from_bytes(out))
+}
+
+fn hex_nibble(b: u8) -> Result<u8, String> {
+    match b {
+        b'0'..=b'9' => Ok(b - b'0'),
+        b'a'..=b'f' => Ok(b - b'a' + 10),
+        b'A'..=b'F' => Ok(b - b'A' + 10),
+        _ => Err(format!("non-hex byte {b}")),
     }
 }
 
@@ -78,11 +230,21 @@ impl SbplProfile {
     }
 }
 
-/// The compile-time-embedded deny-default template (D46 §5). PR 9a-hardening
-/// will replace this with an `include_str!` of
-/// `crates/kx-executor/src/backends/macos_sandbox_template.sb`. The placeholder
-/// here is a minimal deny-default SBPL stub that demonstrates the shape.
-const DENY_DEFAULT_TEMPLATE: &[u8] = b"(version 1)\n(deny default)\n";
+/// The compile-time-embedded deny-default template (D46 §5).
+///
+/// Imports Apple's baseline `system.sb` so Rust-runtime startup work
+/// (stack-guard-page mmap, mach-lookup of `com.apple.dyld`, etc.) can run
+/// before the per-axis allowlists narrow the permitted surface. Without
+/// `system.sb` the body crashes at thread startup with SIGABRT inside
+/// `mmap(PROT_NONE)` for the stack guard page.
+///
+/// `system.sb` lives at `/System/Library/Sandbox/Profiles/system.sb` on
+/// macOS 10.5+; `sandbox_init` resolves the relative reference. If a future
+/// macOS removes the import (Apple has been deprecating `sandbox-exec`
+/// piecemeal), `sandbox_init` returns an error and the executor surfaces
+/// `MoteExecutorError::SandboxLoadFailed` — the correct corpus-aligned
+/// failure mode.
+const DENY_DEFAULT_TEMPLATE: &[u8] = b"(version 1)\n(import \"system.sb\")\n(deny default)\n";
 
 /// Pure / total / deterministic mapping from a `WarrantSpec` to an
 /// `SbplProfile` per D46.
