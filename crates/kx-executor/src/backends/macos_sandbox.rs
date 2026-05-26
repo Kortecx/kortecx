@@ -25,11 +25,15 @@ pub struct MacOsSandboxExecutor {
     /// Absolute path to the body binary the spawned child will execvp into.
     /// When `None`, `run()` returns `BackendUnsupported` (the PR 9a
     /// skeleton shape preserved for back-compat with `default_executor()`).
+    /// On non-macOS targets the field is stored but never read; the run path
+    /// returns `BackendUnsupported` regardless.
+    #[allow(dead_code)] // read only on target_os = "macos" via `run_macos`
     body_path: Option<PathBuf>,
     /// Absolute path to a file the body will read as its input (passed as
     /// `argv[1]`). When `None`, the integration test wires this per-Mote
     /// via `with_input_file`; production code derives it from the Mote's
     /// committed parents.
+    #[allow(dead_code)] // read only on target_os = "macos" via `run_macos`
     input_path: Option<PathBuf>,
 }
 
@@ -157,6 +161,7 @@ impl MacOsSandboxExecutor {
     }
 }
 
+#[cfg(target_os = "macos")]
 fn now_epoch_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -171,6 +176,7 @@ fn now_epoch_ms() -> u64 {
 /// Parse 64 lowercase-hex bytes (the body's stdout shape) into a
 /// `ContentRef`. Trailing whitespace is tolerated (some bodies emit a
 /// trailing newline despite the contract).
+#[cfg(target_os = "macos")]
 fn parse_hex_ref(bytes: &[u8]) -> Result<ContentRef, String> {
     // Skip trailing whitespace.
     let mut end = bytes.len();
@@ -194,6 +200,7 @@ fn parse_hex_ref(bytes: &[u8]) -> Result<ContentRef, String> {
     Ok(ContentRef::from_bytes(out))
 }
 
+#[cfg(target_os = "macos")]
 fn hex_nibble(b: u8) -> Result<u8, String> {
     match b {
         b'0'..=b'9' => Ok(b - b'0'),
