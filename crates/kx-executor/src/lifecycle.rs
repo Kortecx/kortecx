@@ -18,15 +18,18 @@
 //! `kx-memoizer` / `kx-context-assembler` / `kx-inference` / `kx-capability`
 //! integration is reserved for PR 9b (the commit-protocol PR).
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use kx_capability::EffectRequest;
 use kx_content::ContentRef;
 use kx_journal::{Journal, JournalEntry};
-use kx_mote::{Mote, MoteId, NdClass};
+use kx_mote::{Mote, MoteId, NdClass, ToolName};
 use kx_warrant::WarrantSpec;
 use smallvec::SmallVec;
 use thiserror::Error;
 
+use crate::commit_protocol::{CommitInput, CommitProtocol, CommitProtocolError};
 use crate::executor_trait::{MoteExecutionResult, MoteExecutor, MoteExecutorError, Rootfs};
 use crate::refusal::SubmissionRefusal;
 use crate::resource_manager::{ResourceError, ResourceManager};
@@ -55,9 +58,21 @@ pub enum LifecycleError {
     #[error("journal append: {0}")]
     JournalAppend(String),
 
+    /// Commit-protocol returned a typed error (R-11 / R-13 / broker /
+    /// content-store / journal failures during the commit step). New in
+    /// PR 9b-6; surfaces the commit-protocol vocabulary up to the caller.
+    #[error("commit protocol: {0:?}")]
+    CommitProtocol(CommitProtocolError),
+
     /// Catch-all internal error.
     #[error("lifecycle internal: {0}")]
     Internal(String),
+}
+
+impl From<CommitProtocolError> for LifecycleError {
+    fn from(err: CommitProtocolError) -> Self {
+        Self::CommitProtocol(err)
+    }
 }
 
 /// Successful PURE-Mote lifecycle result.
@@ -69,6 +84,30 @@ pub struct LifecycleCommit {
     pub result_ref: ContentRef,
     /// The Mote's identity.
     pub mote_id: MoteId,
+}
+
+/// Successful WORLD-MUTATING Mote lifecycle result. Extends
+/// `LifecycleCommit` with the optional `critic_proposed_seq` field that
+/// PR 9b-6's `run_wm_mote` populates when the producer's
+/// `EffectPattern::ValidateThenCommit` triggers critic-Mote child
+/// scheduling.
+///
+/// **PR 9b-6 scope**: this slice writes the critic's `Proposed` entry
+/// to the journal (the scheduling intent is durably recorded). The
+/// scheduler (PR 10) dispatches the critic to a worker; the recovery
+/// fold reads the Proposed entry to know the critic was queued.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WmLifecycleCommit {
+    /// The producer Mote's `Committed` entry seq.
+    pub committed_seq: u64,
+    /// The producer's `result_ref` (the broker's staged response).
+    pub result_ref: ContentRef,
+    /// The producer Mote's identity.
+    pub mote_id: MoteId,
+    /// For `ValidateThenCommit` producers with a sibling critic Mote in
+    /// the submission, the critic's `Proposed` entry seq. `None` for
+    /// `IdempotentByConstruction` / `StageThenCommit` paths (no critic).
+    pub critic_proposed_seq: Option<u64>,
 }
 
 /// Run a single PURE Mote end-to-end. PR 9a's contract:
@@ -164,6 +203,174 @@ where
         committed_seq,
         result_ref,
         mote_id: mote.id,
+    })
+}
+
+/// Run a single WORLD-MUTATING Mote end-to-end via the commit_protocol.
+/// **PR 9b-6 scope**: ships the lifecycle's invocation of
+/// `CommitProtocol::commit` for non-PURE Motes + critic-Mote child
+/// scheduling for `ValidateThenCommit` producers.
+///
+/// Steps:
+/// 1. Refuse if `mote.nd_class() == NdClass::Pure` (caller uses
+///    `run_pure_mote` for PURE Motes).
+/// 2. `ResourceManager::acquire` under `warrant.resource_ceiling`.
+/// 3. Append `Proposed` for the producer.
+/// 4. Invoke `commit_protocol.commit(CommitInput { ... })`. The protocol
+///    routes per `mote.def.effect_pattern`:
+///    - `IdempotentByConstruction` → `broker.dispatch → R-11 → Committed`.
+///    - `StageThenCommit` → `EffectStaged → broker.dispatch → R-11 →
+///      Committed`.
+///    - `ValidateThenCommit` → `broker.dispatch → R-11 → Committed`.
+/// 5. For `ValidateThenCommit` producers: if `submission_motes` contains
+///    a sibling Mote with `critic_for == Some(producer.id)`, append a
+///    `Proposed` entry for the critic so the scheduler (PR 10) can pick
+///    it up. The critic's `nd_class` is recorded in the Proposed entry's
+///    `nondeterminism` field per `journal-entry.md`.
+/// 6. `ResourceManager::release`.
+///
+/// **The producer's `result_ref` carried in the returned
+/// `WmLifecycleCommit` is the broker's staged response ref** — what the
+/// commit_protocol got back from `broker.dispatch`. The producer's body
+/// is not executed via `MoteExecutor::run` in PR 9b-6 (the broker is the
+/// dispatch primitive for WM Motes); body-via-executor wiring is the
+/// shape-of-future-PRs question for richer Mote bodies that prepare the
+/// EffectRequest payload from sandboxed compute. For PR 9b-6's scope,
+/// the caller supplies the `EffectRequest` directly.
+///
+/// # Errors
+///
+/// See [`LifecycleError`] variants. Commit-protocol failures (R-11 / R-13
+/// / broker / journal) surface as `LifecycleError::CommitProtocol`. The
+/// caller must write a `Failed` journal entry when
+/// `LifecycleError::Refused` is returned (this module does not).
+#[allow(clippy::too_many_arguments)] // PR 9b-6 explicit-args design; SDK ergonomics land at P4
+pub fn run_wm_mote<J, R, CP>(
+    mote: &Mote,
+    warrant: &WarrantSpec,
+    capability: ToolName,
+    effect_request: EffectRequest,
+    submission_motes: &BTreeMap<MoteId, Mote>,
+    journal: &J,
+    resource_manager: &R,
+    commit_protocol: &CP,
+) -> Result<WmLifecycleCommit, LifecycleError>
+where
+    J: Journal + ?Sized,
+    R: ResourceManager + ?Sized,
+    CP: CommitProtocol + ?Sized,
+{
+    if mote.nd_class() == NdClass::Pure {
+        return Err(LifecycleError::Internal(format!(
+            "run_wm_mote handles WM/ReadOnlyNondet only; got Pure mote {:?}; caller must use run_pure_mote",
+            mote.id
+        )));
+    }
+
+    // Step 2: acquire resource slot.
+    let slot = resource_manager.acquire(&warrant.resource_ceiling)?;
+
+    let warrant_ref = kx_warrant::warrant_ref_of(warrant);
+    let mote_def_hash = mote.def.hash();
+    let idempotency_key = *mote.id.as_bytes();
+
+    // Step 3: Proposed entry for the producer. Carries the warrant_ref +
+    // nd_class per D36.
+    let proposed = JournalEntry::Proposed {
+        mote_id: mote.id,
+        idempotency_key,
+        seq: 0, // journal-assigned
+        nondeterminism: mote.def.nd_class,
+        placement_hint: 0,
+        warrant_ref,
+    };
+    if let Err(e) = journal.append(proposed) {
+        let _ = resource_manager.release(slot);
+        return Err(LifecycleError::JournalAppend(format!(
+            "WM producer Proposed: {e:?}"
+        )));
+    }
+
+    // Step 4: commit_protocol routes per effect_pattern.
+    let commit_input = CommitInput {
+        mote,
+        warrant,
+        capability,
+        effect_request,
+        warrant_ref,
+        mote_def_hash,
+        idempotency_key,
+        parents: SmallVec::new(),
+        diagnostic_context: "lifecycle::run_wm_mote",
+    };
+    let committed_seq = match commit_protocol.commit(commit_input) {
+        Ok(seq) => seq,
+        Err(e) => {
+            let _ = resource_manager.release(slot);
+            return Err(LifecycleError::CommitProtocol(e));
+        }
+    };
+
+    // Step 5: critic-Mote child scheduling for ValidateThenCommit.
+    // The submission's sibling map is the source of truth — R-2 ensured
+    // a critic exists at submission time (or refused the submission).
+    let critic_proposed_seq =
+        if mote.def.effect_pattern == kx_mote::EffectPattern::ValidateThenCommit {
+            let critic = submission_motes
+                .values()
+                .find(|sibling| sibling.def.critic_for == Some(mote.id));
+            match critic {
+                Some(critic_mote) => {
+                    let critic_proposed = JournalEntry::Proposed {
+                        mote_id: critic_mote.id,
+                        idempotency_key: *critic_mote.id.as_bytes(),
+                        seq: 0, // journal-assigned
+                        nondeterminism: critic_mote.def.nd_class,
+                        placement_hint: 0,
+                        warrant_ref,
+                    };
+                    match journal.append(critic_proposed) {
+                        Ok(entry) => Some(entry.seq()),
+                        Err(e) => {
+                            let _ = resource_manager.release(slot);
+                            return Err(LifecycleError::JournalAppend(format!(
+                                "critic Proposed: {e:?}"
+                            )));
+                        }
+                    }
+                }
+                None => None,
+            }
+        } else {
+            None
+        };
+
+    // The producer's result_ref is the broker's staged response. Recover
+    // it by reading the Committed entry the protocol just wrote. (We
+    // can't read it back cheaply without journal lookups; for the
+    // PR 9b-6 scope we record committed_seq + signal completion. Callers
+    // who need result_ref read it from the journal.)
+    let result_ref = journal
+        .read_committed(&mote.id)
+        .map_err(|e| LifecycleError::JournalAppend(format!("read Committed: {e:?}")))?
+        .and_then(|e| match e {
+            JournalEntry::Committed { result_ref, .. } => Some(result_ref),
+            _ => None,
+        })
+        .ok_or_else(|| {
+            LifecycleError::Internal(format!(
+                "commit_protocol returned Ok({committed_seq}) but no Committed entry visible"
+            ))
+        })?;
+
+    // Step 6: release the slot.
+    resource_manager.release(slot)?;
+
+    Ok(WmLifecycleCommit {
+        committed_seq,
+        result_ref,
+        mote_id: mote.id,
+        critic_proposed_seq,
     })
 }
 
