@@ -5,16 +5,25 @@
 //! (R-11 / R-12 / R-13 per `docs/design/validate-then-commit.md` §7 + D38
 //! §2b + D39 §a/§c/§d) plus the `CommitProtocol` trait scaffolding.
 //!
-//! **PR 9b-3** (this PR) ships `StandardCommitProtocol<S, J, B>` — the
+//! **PR 9b-3** shipped `StandardCommitProtocol<S, J, B>` — the
 //! per-`EffectPattern` impl for the `IdempotentByConstruction` path:
 //! `broker.dispatch → R-11 verify → journal.append(Committed)` (per D39
-//! §a/§c). The `StageThenCommit` and `ValidateThenCommit` paths are
-//! intentionally unimplemented in this slice (return
-//! `CommitProtocolError::Internal { reason }`); they ship in PR 9b-4 and
+//! §a/§c).
+//!
+//! **PR 9b-4** (this PR) extends `StandardCommitProtocol` with the
+//! `StageThenCommit` path (per D38 §2b):
+//! `journal.append(EffectStaged) → broker.dispatch → R-11 verify →
+//! journal.append(Committed)`. The `EffectStaged` entry is the recovery
+//! hint that closes the WORLD-MUTATING double-effect window; it MUST be
+//! appended BEFORE `broker.dispatch` so the recovery fold sees the
+//! dispatch intent durably recorded. Adds the
+//! `JournalAppendEffectStagedFailed` variant to `CommitProtocolError`.
+//! `ValidateThenCommit` remains an `Internal { reason }` stub until
 //! PR 9b-5.
 //!
-//! **PR 9b-4+ scope** (NOT in this PR): the remaining `EffectPattern`
-//! bodies, lifecycle wiring, 9-cell recovery cross-product, Test A/B,
+//! **PR 9b-5+ scope** (NOT in this PR): the `ValidateThenCommit` body
+//! (broker.dispatch → R-11 → Committed + critic-Mote child scheduling per
+//! D20), lifecycle wiring, 9-cell recovery cross-product, Test A/B,
 //! and WORLD-MUTATING Mote E2E.
 //!
 //! # Why a separate error type from `SubmissionRefusal` and `MoteExecutorError`
@@ -149,6 +158,27 @@ pub enum CommitProtocolError {
         reason: String,
     },
 
+    /// The journal's `append(EffectStaged)` call returned an error
+    /// BEFORE `broker.dispatch` ran. The recovery hint was not durably
+    /// recorded; the commit protocol short-circuits + propagates this
+    /// error so the lifecycle layer surfaces a `Failed` entry. Because
+    /// the broker has not yet dispatched, there is no WM effect to
+    /// reconcile — recovery sees no `EffectStaged` entry and treats this
+    /// as a normal pre-commit crash (cell 1 / cell 2 of the 9-cell
+    /// cross-product per `journal-txn.md`).
+    ///
+    /// Symmetric with [`Self::JournalAppendCommittedFailed`]; needed
+    /// because PR 9b-4's `StageThenCommit` path appends `EffectStaged`
+    /// BEFORE `broker.dispatch` (per D38 §2b), so the failure mode is
+    /// distinct from the post-dispatch `Committed`-append failure.
+    #[error("journal append(EffectStaged) failed for Mote {mote_id:?}: {reason}")]
+    JournalAppendEffectStagedFailed {
+        /// The Mote whose EffectStaged append failed.
+        mote_id: MoteId,
+        /// Diagnostic from the journal.
+        reason: String,
+    },
+
     /// Anything else — fail-closed catch-all. Operator-facing diagnostic
     /// surfaces the root cause.
     #[error("commit protocol internal error for Mote {mote_id:?}: {reason}")]
@@ -187,6 +217,7 @@ impl CommitProtocolError {
             | Self::BrokerDispatchFailed { mote_id, .. }
             | Self::ContentStorePutFailed { mote_id, .. }
             | Self::JournalAppendCommittedFailed { mote_id, .. }
+            | Self::JournalAppendEffectStagedFailed { mote_id, .. }
             | Self::Internal { mote_id, .. } => *mote_id,
         }
     }
@@ -365,10 +396,7 @@ where
         let pattern = input.mote.def.effect_pattern;
         match pattern {
             EffectPattern::IdempotentByConstruction => self.commit_idempotent(input),
-            EffectPattern::StageThenCommit => Err(CommitProtocolError::Internal {
-                mote_id: input.mote.id,
-                reason: "StageThenCommit path lands in PR 9b-4 (journal.append(EffectStaged) → broker.dispatch → put → append(Committed))".into(),
-            }),
+            EffectPattern::StageThenCommit => self.commit_stage_then_commit(input),
             EffectPattern::ValidateThenCommit => Err(CommitProtocolError::Internal {
                 mote_id: input.mote.id,
                 reason: "ValidateThenCommit path lands in PR 9b-5 (broker.dispatch → put → append(Committed) + critic-Mote child scheduling per D20)".into(),
@@ -424,6 +452,94 @@ where
         // Step 3: Journal append Committed. The journal assigns the
         // monotonic `seq` and dedup-by-`idempotency_key` enforces at-most-
         // one Committed per identity.
+        let entry = JournalEntry::Committed {
+            mote_id,
+            idempotency_key: input.idempotency_key,
+            seq: 0, // journal-assigned
+            nondeterminism: input.mote.def.nd_class,
+            result_ref,
+            parents: input.parents,
+            warrant_ref: input.warrant_ref,
+            mote_def_hash: input.mote_def_hash,
+        };
+        let written = self.journal.append(entry).map_err(|e| {
+            CommitProtocolError::JournalAppendCommittedFailed {
+                mote_id,
+                reason: format!("{e:?}"),
+            }
+        })?;
+
+        Ok(written.seq())
+    }
+
+    /// `StageThenCommit` path (D38 §2b):
+    /// `journal.append(EffectStaged) → broker.dispatch → R-11 verify →
+    /// journal.append(Committed)`.
+    ///
+    /// The `EffectStaged` entry is the recovery hint that closes the
+    /// WORLD-MUTATING double-effect window. It MUST be appended BEFORE
+    /// `broker.dispatch` so the recovery fold (per `journal-txn.md`
+    /// 9-cell cross-product) sees the dispatch intent durably recorded:
+    ///
+    /// - `EffectStaged` + `Committed` (cell 4) → done; never re-dispatch.
+    /// - `EffectStaged` + `Failed(pre_commit_crash)` (cell 3) → re-dispatch
+    ///   permitted; tool-boundary idempotency closes the window.
+    /// - `EffectStaged` + `Failed(terminal)` (cell 5) → terminal failure;
+    ///   R-13 refuses re-dispatch.
+    /// - `EffectStaged` + `Repudiated` (no Committed; cell 8) → anomaly;
+    ///   quarantine via `MoteState::Inconsistent`.
+    ///
+    /// **PR 9b-4 scope**: ships the happy stage→dispatch→commit path +
+    /// the EffectStaged-append failure surface. Recovery wiring
+    /// (`can_redispatch_world_effect` consultation per R-13) + lifecycle
+    /// integration land in PR 9b-6+.
+    fn commit_stage_then_commit(&self, input: CommitInput<'_>) -> Result<u64, CommitProtocolError> {
+        let mote_id = input.mote.id;
+
+        // Step 1: append EffectStaged BEFORE broker.dispatch. The recovery
+        // fold reads presence to set `effect_staged_observed` on MoteInfo.
+        // If the broker subsequently fails / the executor crashes, the
+        // EffectStaged entry is the durable signal that "an effect may
+        // have happened" — recovery uses this to decide re-dispatch
+        // safety.
+        let staged = JournalEntry::EffectStaged {
+            mote_id,
+            idempotency_key: input.idempotency_key,
+            seq: 0, // journal-assigned
+        };
+        self.journal.append(staged).map_err(|e| {
+            CommitProtocolError::JournalAppendEffectStagedFailed {
+                mote_id,
+                reason: format!("{e:?}"),
+            }
+        })?;
+
+        // Step 2: broker dispatch. Same per-call contract as
+        // IdempotentByConstruction; the broker enforces capability ∈
+        // tool_contract, supported pattern, capability ∈ warrant.tool_grants,
+        // request scopes ⊆ warrant scopes.
+        let handle = self
+            .broker
+            .dispatch(
+                input.mote,
+                input.warrant,
+                &input.capability,
+                input.effect_request,
+            )
+            .map_err(|e| CommitProtocolError::BrokerDispatchFailed {
+                mote_id,
+                reason: format!("{e:?}"),
+            })?;
+        let result_ref = handle.staged_ref;
+
+        // Step 3: R-11 verify. Same enforcement as IdempotentByConstruction
+        // (shared `enforce_r11` helper).
+        enforce_r11(&*self.store, mote_id, &result_ref)?;
+
+        // Step 4: append Committed. The journal's dedup-by-key index sees
+        // both the EffectStaged and the Committed sharing the same
+        // `idempotency_key`; per the v2 dedup index `{1, 2, 4}` they are
+        // distinct entry kinds, so both land.
         let entry = JournalEntry::Committed {
             mote_id,
             idempotency_key: input.idempotency_key,

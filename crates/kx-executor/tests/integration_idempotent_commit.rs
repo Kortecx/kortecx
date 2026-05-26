@@ -277,7 +277,10 @@ fn broker_dispatch_error_wraps_as_broker_dispatch_failed() {
 // StageThenCommit returns Internal { reason: "PR 9b-4 ..." } stub.
 // ============================================================================
 
+// Note: the StageThenCommit path now ships in PR 9b-4; this stub-shape
+// test is superseded by `tests/integration_stage_then_commit.rs`.
 #[test]
+#[ignore = "superseded by integration_stage_then_commit::stage_then_commit_path_commits_correctly (PR 9b-4 ships the path)"]
 fn stage_then_commit_returns_internal_pr_9b_4_placeholder() {
     let store = Arc::new(InMemoryContentStore::new());
     let journal = Arc::new(InMemoryJournal::new());

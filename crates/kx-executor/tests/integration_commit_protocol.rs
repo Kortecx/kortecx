@@ -152,6 +152,17 @@ fn journal_append_committed_failed_variant_constructs() {
 }
 
 #[test]
+fn journal_append_effect_staged_failed_variant_constructs() {
+    let err = CommitProtocolError::JournalAppendEffectStagedFailed {
+        mote_id: sample_mote_id(),
+        reason: "sqlite busy".into(),
+    };
+    assert!(err
+        .to_string()
+        .contains("journal append(EffectStaged) failed"));
+}
+
+#[test]
 fn internal_variant_constructs() {
     let err = CommitProtocolError::Internal {
         mote_id: sample_mote_id(),
@@ -236,6 +247,10 @@ fn is_recovery_refusal_identifies_r13_only() {
             reason: "r".into(),
         },
         CommitProtocolError::JournalAppendCommittedFailed {
+            mote_id: mid,
+            reason: "r".into(),
+        },
+        CommitProtocolError::JournalAppendEffectStagedFailed {
             mote_id: mid,
             reason: "r".into(),
         },
