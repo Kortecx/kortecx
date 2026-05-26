@@ -10,6 +10,7 @@
 //! workspace's `kx-executor-pure-body` example binary.
 
 use std::path::PathBuf;
+#[cfg(target_os = "macos")]
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use kx_content::ContentRef;
