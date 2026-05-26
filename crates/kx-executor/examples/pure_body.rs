@@ -1,8 +1,12 @@
 //! `kx-executor-pure-body` — the example Mote body binary exercised by
-//! PR 9a-hardening-2's integration tests. **NOT a production binary.**
+//! PR 9a-hardening-2+'s integration tests. **NOT a production binary.**
 //!
 //! Contract:
 //! - Reads input bytes from the file path passed in `argv[1]`.
+//! - If `argv[2] == "--sleep"`, sleeps for `argv[3]` milliseconds AFTER
+//!   reading the input + BEFORE writing the result. The PR 9a-hardening-4
+//!   wall-clock integration test uses this to verify the parent-side
+//!   `wall_clock_ms` watcher SIGKILLs the child after the budget elapses.
 //! - Computes the `result_ref` as `BLAKE3("kx-executor-pure-body-result" || input_bytes)`.
 //! - Writes the `result_ref` hex (64 ASCII chars, lowercase, no trailing newline)
 //!   to stdout.
@@ -19,6 +23,8 @@ use std::env;
 use std::fs;
 use std::io::Write;
 use std::process::ExitCode;
+use std::thread;
+use std::time::Duration;
 
 const NIBBLES: &[u8; 16] = b"0123456789abcdef";
 
@@ -37,6 +43,15 @@ fn main() -> ExitCode {
             return ExitCode::from(1);
         }
     };
+
+    // Optional --sleep <ms> for wall-clock budget testing.
+    if args.len() >= 4 && args[2] == "--sleep" {
+        let Ok(sleep_ms) = args[3].parse::<u64>() else {
+            eprintln!("pure_body: --sleep value must be a non-negative integer");
+            return ExitCode::from(2);
+        };
+        thread::sleep(Duration::from_millis(sleep_ms));
+    }
 
     // Result derivation — content-addressed: same input → same hex.
     let mut hasher = blake3::Hasher::new();
