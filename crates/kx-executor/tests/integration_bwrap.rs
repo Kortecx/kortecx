@@ -66,6 +66,7 @@ fn bwrap_executor_with_body_path_override_carries_the_path() {
 // ============================================================================
 
 #[cfg(target_os = "linux")]
+#[allow(clippy::disallowed_methods, clippy::disallowed_types)]
 mod linux {
     use std::collections::{BTreeMap, BTreeSet};
     use std::io::Write;
