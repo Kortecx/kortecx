@@ -47,11 +47,21 @@ pub enum LinuxCgroupV2Error {
     /// typically need root, `CAP_SYS_ADMIN`, or a systemd-delegated
     /// subtree.
     #[error("cgroup parent {path:?} is not writable: {reason}")]
-    NotWritable { path: PathBuf, reason: String },
+    NotWritable {
+        /// Path that was probed.
+        path: PathBuf,
+        /// Underlying filesystem error rendered as a string.
+        reason: String,
+    },
     /// cgroup v2 is not the active controller hierarchy (the system uses
     /// cgroup v1 or `/sys/fs/cgroup/cgroup.controllers` is missing).
     #[error("cgroup v2 not available at {path:?}: {reason}")]
-    NotV2 { path: PathBuf, reason: String },
+    NotV2 {
+        /// Path that was probed.
+        path: PathBuf,
+        /// Diagnostic string explaining why cgroup v2 isn't available.
+        reason: String,
+    },
     /// File I/O during acquire/release failed.
     #[error("cgroup file I/O: {0}")]
     Io(String),
@@ -164,7 +174,9 @@ impl ResourceManager for LinuxCgroupV2ResourceManager {
         };
         let dir = self.cgroup_dir_for_slot(slot);
         std::fs::create_dir(&dir)
-            .map_err(|e| LinuxCgroupV2Error::Io(format!("create cgroup dir {dir:?}: {e}")))?;
+            .map_err(|e| {
+                LinuxCgroupV2Error::Io(format!("create cgroup dir {}: {e}", dir.display()))
+            })?;
 
         // Write the ceilings to the cgroup v2 control files.
         // - cpu.max: "<max-microseconds> <period-microseconds>" or "max"
@@ -207,7 +219,9 @@ impl ResourceManager for LinuxCgroupV2ResourceManager {
         // removed when empty (no procs attached); the child should have
         // exited by the time release is called.
         if let Err(e) = std::fs::remove_dir(&dir) {
-            return Err(LinuxCgroupV2Error::Io(format!("remove cgroup dir {dir:?}: {e}")).into());
+            return Err(
+                LinuxCgroupV2Error::Io(format!("remove cgroup dir {}: {e}", dir.display())).into(),
+            );
         }
         Ok(())
     }
