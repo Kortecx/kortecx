@@ -153,10 +153,16 @@ impl BwrapExecutor {
         // + capability drops).
         let started_at_epoch_ms = now_epoch_ms();
         let ceiling = warrant.resource_ceiling;
+        let wall_clock_ms = if warrant.resource_ceiling.wall_clock_ms > 0 {
+            Some(warrant.resource_ceiling.wall_clock_ms)
+        } else {
+            None
+        };
         let outcome = crate::spawn::spawn_body(
             &bwrap_path_str,
             &argv,
             Box::new(move || crate::spawn::apply_rlimits(&ceiling)),
+            wall_clock_ms,
         )?;
         let finished_at_epoch_ms = now_epoch_ms();
 

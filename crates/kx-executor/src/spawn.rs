@@ -15,7 +15,12 @@
 
 use std::ffi::CString;
 use std::os::fd::IntoRawFd;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::thread;
+use std::time::Duration;
 
+use nix::sys::signal::{kill, Signal};
 use nix::sys::wait::{waitpid, WaitStatus};
 use nix::unistd::{fork, pipe, ForkResult};
 
@@ -43,9 +48,12 @@ pub(crate) type PreExecHook = Box<dyn FnOnce() -> Result<(), i32> + Send>;
 /// `body_path` is the absolute path to the Mote body binary. `argv` is the
 /// argv to pass to execvp (argv\[0\] is conventionally the body's basename).
 /// `pre_exec` runs in the child after fork, before execvp — typically loads
-/// the sandbox profile (macOS) or applies setrlimit. `body_input` is the
-/// bytes piped to the child's stdin (so the body can read its input without
-/// touching the FS).
+/// the sandbox profile (macOS) or applies setrlimit. `wall_clock_ms` is the
+/// per-Mote wall-clock budget: when `Some(ms)`, a watcher thread spawned in
+/// the parent SIGKILLs the child after `ms` if it hasn't exited; the spawn
+/// returns `MoteExecutorError::WallClockTimedOut { budget_ms }` in that case.
+/// When `None` or `0`, no wall-clock enforcement is applied (the child runs
+/// indefinitely subject only to its other resource ceilings via setrlimit).
 ///
 /// # Safety
 ///
@@ -56,10 +64,15 @@ pub(crate) type PreExecHook = Box<dyn FnOnce() -> Result<(), i32> + Send>;
 /// safe; allocating Rust types in the child is NOT. This module enforces
 /// the discipline by calling `_exit` (NOT `std::process::exit` or `panic!`)
 /// from the child path on any error.
+// The fork/parent/child paths each have multiple unsafe-but-documented
+// segments; splitting into helpers would obscure the SAFETY-comment
+// adjacency that the kx-llamacpp precedent requires for unsafe FFI.
+#[allow(clippy::too_many_lines)]
 pub(crate) fn spawn_body(
     body_path: &str,
     argv: &[String],
     pre_exec: PreExecHook,
+    wall_clock_ms: Option<u64>,
 ) -> Result<BodyOutcome, MoteExecutorError> {
     // Pipe for the child's stdout → parent. We take ownership of both fd
     // ends via OwnedFd, then convert to RawFd so we can manually `libc::close`
@@ -139,13 +152,47 @@ pub(crate) fn spawn_body(
             unsafe { libc::_exit(71) };
         }
         ForkResult::Parent { child } => {
-            // Parent path: close the write end of the pipe, read child's
-            // stdout to EOF, then waitpid.
+            // Parent path: close the write end of the pipe, optionally
+            // spawn a wall-clock watcher that SIGKILLs after the budget,
+            // read child's stdout to EOF, then waitpid.
             // SAFETY: stdout_write is the parent's pipe-write fd; we no
             // longer need it (the child has its own duplicate).
             unsafe {
                 libc::close(stdout_write);
             }
+
+            // Wall-clock watcher: spawn a detached thread that sleeps for
+            // wall_clock_ms then SIGKILLs the child if it's still running.
+            // - `disarm` is set by the parent after waitpid reaps the child;
+            //   the watcher checks it on wake-up + exits without signaling
+            //   (closes the PID-reuse race).
+            // - `kill_fired` is set by the watcher iff it actually sent
+            //   SIGKILL; the parent reads it after waitpid to distinguish
+            //   "wall-clock timeout" from "body was SIGKILLed for some
+            //   other reason".
+            // The thread is NOT joined — joining would block until the
+            // sleep completes regardless of when the body actually exits,
+            // breaking the fast-body happy path. The thread either fires
+            // SIGKILL + records kill_fired or wakes up post-disarm + exits.
+            let disarm = Arc::new(AtomicBool::new(false));
+            let kill_fired = Arc::new(AtomicBool::new(false));
+            if let Some(budget_ms) = wall_clock_ms {
+                if budget_ms > 0 {
+                    let disarm_for_thread = Arc::clone(&disarm);
+                    let kill_fired_for_thread = Arc::clone(&kill_fired);
+                    let child_pid = child;
+                    thread::spawn(move || {
+                        thread::sleep(Duration::from_millis(budget_ms));
+                        if disarm_for_thread.load(Ordering::SeqCst) {
+                            return;
+                        }
+                        // Best-effort SIGKILL; ignore ESRCH (already exited).
+                        let _ = kill(child_pid, Signal::SIGKILL);
+                        kill_fired_for_thread.store(true, Ordering::SeqCst);
+                    });
+                }
+            }
+
             let read_fd = stdout_read;
             let mut stdout_bytes = Vec::with_capacity(64);
             let mut buf = [0u8; 4096];
@@ -181,8 +228,25 @@ pub(crate) fn spawn_body(
             let status = waitpid(child, None).map_err(|e| MoteExecutorError::Internal {
                 reason: format!("waitpid: {e}"),
             })?;
+
+            // Disarm the watcher: child has been reaped. The watcher's
+            // post-disarm thread.sleep wakes up + sees the flag + exits
+            // without sending SIGKILL (closes the PID-reuse race).
+            disarm.store(true, Ordering::SeqCst);
+            // Read whether the watcher already fired SIGKILL before we
+            // got here (informs the WallClockTimedOut branch below).
+            let watcher_killed = kill_fired.load(Ordering::SeqCst);
+
+            // Decide the outcome class.
             let exit_code = match status {
                 WaitStatus::Exited(_, code) => code,
+                WaitStatus::Signaled(_, Signal::SIGKILL, _) if watcher_killed => {
+                    // The watcher fired SIGKILL because wall_clock_ms
+                    // elapsed. Surface as the typed timeout error rather
+                    // than `BodyExited { code: 128+9 }`.
+                    let budget_ms = wall_clock_ms.unwrap_or(0);
+                    return Err(MoteExecutorError::WallClockTimedOut { budget_ms });
+                }
                 WaitStatus::Signaled(_, sig, _) => 128 + (sig as i32),
                 other => {
                     return Err(MoteExecutorError::Internal {

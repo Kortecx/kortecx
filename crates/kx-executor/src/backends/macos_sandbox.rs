@@ -36,6 +36,12 @@ pub struct MacOsSandboxExecutor {
     /// committed parents.
     #[allow(dead_code)] // read only on target_os = "macos" via `run_macos`
     input_path: Option<PathBuf>,
+    /// Additional argv tokens appended after `argv[0]` (body) + `argv[1]`
+    /// (input_file). Used by integration tests (e.g., `--sleep <ms>` for
+    /// the wall-clock watcher). Production callers compose argv via
+    /// `MoteDef.config_subset` in a future hardening sweep.
+    #[allow(dead_code)] // read only on target_os = "macos" via `run_macos`
+    extra_args: Vec<String>,
 }
 
 impl MacOsSandboxExecutor {
@@ -46,6 +52,7 @@ impl MacOsSandboxExecutor {
         Self {
             body_path: None,
             input_path: None,
+            extra_args: Vec::new(),
         }
     }
 
@@ -57,6 +64,7 @@ impl MacOsSandboxExecutor {
         Self {
             body_path: Some(body_path),
             input_path: None,
+            extra_args: Vec::new(),
         }
     }
 
@@ -66,6 +74,18 @@ impl MacOsSandboxExecutor {
     #[must_use]
     pub fn with_input_file(mut self, input_path: PathBuf) -> Self {
         self.input_path = Some(input_path);
+        self
+    }
+
+    /// Append extra argv tokens to the spawned body's command line (after
+    /// `argv[0]` = body and `argv[1]` = input_file). The wall-clock
+    /// integration test uses `with_extra_args(vec!["--sleep", "60000"])`
+    /// to exercise the parent-side watcher's SIGKILL path. Production
+    /// production callers compose their argv via the workflow's
+    /// `MoteDef.config_subset` (a future hardening sweep wires this).
+    #[must_use]
+    pub fn with_extra_args(mut self, extra: Vec<String>) -> Self {
+        self.extra_args = extra;
         self
     }
 }
@@ -129,10 +149,13 @@ impl MacOsSandboxExecutor {
         let profile = profile_from_warrant(warrant);
         let profile_bytes = profile.as_bytes().to_vec();
 
-        // 2. Body argv (argv[0] = body name, argv[1] = input file path).
+        // 2. Body argv (argv[0] = body, argv[1] = input_file, ...extra_args).
         let body_path_str = body_path.to_string_lossy().into_owned();
         let input_path_str = input_path.to_string_lossy().into_owned();
-        let argv = vec![body_path_str.clone(), input_path_str];
+        let mut argv = Vec::with_capacity(2 + self.extra_args.len());
+        argv.push(body_path_str.clone());
+        argv.push(input_path_str);
+        argv.extend(self.extra_args.iter().cloned());
 
         // 3. Spawn — fork + pre-exec(sandbox_init + setrlimit) + execvp.
         // The pre-exec hook runs in the child between fork and execvp:
@@ -145,6 +168,11 @@ impl MacOsSandboxExecutor {
         // syscalls would fail the latter — system.sb covers this).
         let started_at_epoch_ms = now_epoch_ms();
         let ceiling = warrant.resource_ceiling;
+        let wall_clock_ms = if warrant.resource_ceiling.wall_clock_ms > 0 {
+            Some(warrant.resource_ceiling.wall_clock_ms)
+        } else {
+            None
+        };
         let outcome = crate::spawn::spawn_body(
             &body_path_str,
             &argv,
@@ -152,6 +180,7 @@ impl MacOsSandboxExecutor {
                 crate::spawn::load_profile(&profile_bytes)?;
                 crate::spawn::apply_rlimits(&ceiling)
             }),
+            wall_clock_ms,
         )?;
         let finished_at_epoch_ms = now_epoch_ms();
 
