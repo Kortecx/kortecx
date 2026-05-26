@@ -1,0 +1,437 @@
+//! [`Projection`] — the live in-memory state. Apply [`Projection::register_mote`]
+//! for workflow-declared Motes, then [`Projection::fold`] each journal entry
+//! in `seq` order; query via the 7-method read API.
+
+use kx_content::ContentRef;
+use kx_journal::{Journal, JournalEntry};
+use kx_mote::{EdgeMeta, MoteId};
+use smallvec::SmallVec;
+
+use crate::enums::{AnomalyKind, MoteState, PromotionState};
+use crate::errors::ProjectionError;
+use crate::helpers::{promotion_state_impl, ready_set_impl, transitive_consumers_impl};
+use crate::register::RegisterMote;
+use crate::snapshot::Snapshot;
+use crate::state::{CommittedInfo, DeclaredInfo, State};
+
+/// The journal's read-side projection.
+///
+/// Apply [`Projection::register_mote`] for workflow-declared Motes, then
+/// [`Projection::fold`] each journal entry in `seq` order; query via the 7-method
+/// read API. [`Projection::snapshot`] returns an immutable point-in-time view that
+/// implements the same read API with stable snapshot semantics.
+///
+/// # Examples
+///
+/// Fold a Committed entry and inspect the resulting state:
+///
+/// ```
+/// use kx_journal::JournalEntry;
+/// use kx_mote::{MoteDefHash, MoteId, NdClass};
+/// use kx_projection::{MoteState, Projection};
+/// use kx_content::ContentRef;
+/// use smallvec::SmallVec;
+///
+/// let mut p = Projection::new();
+/// assert!(p.is_empty());
+///
+/// let entry = JournalEntry::Committed {
+///     mote_id: MoteId::from_bytes([1u8; 32]),
+///     idempotency_key: [1u8; 32],
+///     seq: 1,
+///     nondeterminism: NdClass::Pure,
+///     result_ref: ContentRef::from_bytes([7u8; 32]),
+///     parents: SmallVec::new(),
+///     warrant_ref: ContentRef::from_bytes([0xaa; 32]),
+///     mote_def_hash: MoteDefHash::from_bytes([1u8; 32]),
+/// };
+/// p.fold(&entry).unwrap();
+///
+/// assert_eq!(p.current_seq(), 1);
+/// assert_eq!(p.state_of(&MoteId::from_bytes([1u8; 32])), MoteState::Committed);
+/// assert_eq!(p.committed_count(), 1);
+/// ```
+#[derive(Debug, Default)]
+pub struct Projection {
+    state: State,
+}
+
+impl Projection {
+    /// Construct an empty projection.
+    #[inline]
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Build a projection by reading every entry from `journal` in `seq` order.
+    ///
+    /// Convenience for tests and for cold-start replay. Production callers
+    /// typically construct an empty projection, [`Projection::register_mote`] for
+    /// each workflow-declared Mote, and [`Projection::fold`] incrementally as new
+    /// journal entries land.
+    pub fn from_journal<J: Journal>(journal: &J) -> Result<Self, ProjectionError> {
+        let mut p = Self::new();
+        let max_seq = journal.current_seq()?;
+        // current_seq returns 0 for empty; use saturating range.
+        let entries = journal.read_entries_by_seq(0..(max_seq + 1))?;
+        for entry in entries {
+            p.fold(&entry)?;
+        }
+        Ok(p)
+    }
+
+    /// Register a workflow-declared Mote.
+    ///
+    /// Adds the Mote to the projection's expected set; its state becomes
+    /// [`MoteState::Pending`] until the first journal entry lands. Re-registration
+    /// of the same `MoteId` is permitted and overwrites the declared info (the
+    /// workflow author may update parents before submission; the journal-side
+    /// dedupe-by-key path is the authoritative arbiter for identity equality).
+    pub fn register_mote(&mut self, reg: RegisterMote) {
+        let info = self.state.moteinfo_mut(&reg.mote_id);
+        info.declared = Some(DeclaredInfo {
+            nd_class: reg.nd_class,
+            effect_pattern: reg.effect_pattern,
+            critic_for: reg.critic_for,
+            is_topology_shaper: reg.is_topology_shaper,
+            parents: reg.parents,
+        });
+        self.state.rebuild_children_index();
+    }
+
+    /// Apply one journal entry. **Caller must invoke in `seq` order**; the fold is
+    /// `seq`-order-dependent for correctness (per `projection.md` §3 — the
+    /// determinism contract assumes log-order folding).
+    ///
+    /// Returns the previous `last_seq` for diagnostics; callers may ignore the
+    /// return value. A duplicate `Committed` for the same `MoteId` surfaces
+    /// [`ProjectionError::DuplicateCommitted`] — that is a journal-impl bug per
+    /// `projection.md` §4.
+    pub fn fold(&mut self, entry: &JournalEntry) -> Result<u64, ProjectionError> {
+        let prev = self.state.last_seq;
+        match entry {
+            JournalEntry::Proposed { mote_id, seq, .. } => {
+                let info = self.state.moteinfo_mut(mote_id);
+                info.has_proposed = true;
+                // A new Proposed clears any prior pending-failure marker (failed→proposed
+                // is a valid sequence per mote.md §7).
+                // NOTE: `terminal_failure_observed` and `inconsistent` are
+                // **prefix-monotonic-true** per STEP 5.2 + STEP 5.3 of PR 4.5
+                // — they are NEVER reset, here or anywhere.
+                info.failed_pending_reattempt = false;
+                self.state.last_seq = self.state.last_seq.max(*seq);
+            }
+            JournalEntry::Committed {
+                mote_id,
+                seq,
+                nondeterminism,
+                result_ref,
+                parents,
+                warrant_ref,
+                mote_def_hash,
+                ..
+            } => {
+                let info = self.state.moteinfo_mut(mote_id);
+                if info.committed.is_some() {
+                    return Err(ProjectionError::DuplicateCommitted(*mote_id));
+                }
+                info.committed = Some(CommittedInfo {
+                    seq: *seq,
+                    result_ref: *result_ref,
+                    nondeterminism: *nondeterminism,
+                    parents_in_entry: parents.clone(),
+                    warrant_ref: *warrant_ref,
+                    mote_def_hash: *mote_def_hash,
+                    repudiated: false,
+                });
+                self.state.last_seq = self.state.last_seq.max(*seq);
+                // Rebuild children index since this Committed entry may introduce
+                // parent→child edges not previously visible (e.g., entry written
+                // for a Mote that wasn't pre-registered).
+                self.state.rebuild_children_index();
+            }
+            JournalEntry::Failed {
+                mote_id,
+                seq,
+                reason_class,
+                ..
+            } => {
+                let info = self.state.moteinfo_mut(mote_id);
+                if info.committed.is_none() {
+                    info.failed_pending_reattempt = true;
+                    // **v2 (STEP 5.2 + STEP 6.2).** Read reason_class to set
+                    // terminal_failure_observed. Prefix-monotonic-true: once
+                    // set, NEVER reset — even by a subsequent Proposed (the
+                    // monotonicity contract that closes cell 5 of the 9-cell
+                    // cross-product). The canonical classifier
+                    // `is_pre_commit_crash` is the single source of class truth.
+                    if !kx_journal::is_pre_commit_crash(*reason_class) {
+                        info.terminal_failure_observed = true;
+                    }
+                }
+                self.state.last_seq = self.state.last_seq.max(*seq);
+            }
+            JournalEntry::Repudiated {
+                target_mote_id,
+                seq,
+                target_committed_seq,
+                ..
+            } => {
+                let info = self.state.moteinfo_mut(target_mote_id);
+                // Only flip the repudiated flag if the target Committed entry is
+                // actually present in the projection AND its seq matches. Per
+                // `projection.md` §5, a Repudiated naming a non-existent target is
+                // recorded as a fact (the cascade walker can list repudiation
+                // entries from the journal directly) but does NOT create a phantom
+                // marker in `state_of` — keeps `state_of` semantics clean.
+                if let Some(c) = info.committed.as_mut() {
+                    if c.seq == *target_committed_seq {
+                        c.repudiated = true;
+                    }
+                } else if info.effect_staged_observed {
+                    // **v2 (STEP 5.3): cell-8 anomaly.** EffectStaged was
+                    // folded for this Mote, but a Repudiated arrived BEFORE
+                    // any Committed. Repudiated normally targets a Committed;
+                    // this is a journal-consistency error. We quarantine via
+                    // `info.inconsistent = true` (prefix-monotonic-true; never
+                    // reset) rather than aborting the fold. One anomalous Mote
+                    // must not take down the entire recovery; surface via
+                    // `anomaly_motes()` for operator review.
+                    info.inconsistent = true;
+                }
+                self.state.last_seq = self.state.last_seq.max(*seq);
+            }
+            JournalEntry::EffectStaged { mote_id, seq, .. } => {
+                // **v2 (D38 §2b): EffectStaged recovery hint.** Set the
+                // prefix-monotonic-true flag; the recovery fold combines this
+                // with subsequent Committed/Failed/Repudiated entries via
+                // `state_of_id` (Terminal-before-Staged ordering invariant)
+                // and `can_redispatch_world_effect_id`.
+                let info = self.state.moteinfo_mut(mote_id);
+                info.effect_staged_observed = true;
+                self.state.last_seq = self.state.last_seq.max(*seq);
+            }
+        }
+        Ok(prev)
+    }
+
+    /// The largest `seq` applied so far. `0` for an empty projection.
+    #[inline]
+    #[must_use]
+    pub fn current_seq(&self) -> u64 {
+        self.state.last_seq
+    }
+
+    /// Number of Motes the projection knows about (registered + entry-introduced).
+    #[inline]
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.state.motes.len()
+    }
+
+    /// `true` when the projection has no registered or entry-introduced Motes.
+    #[inline]
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.state.motes.is_empty()
+    }
+
+    /// Capture an immutable point-in-time view. Subsequent folds against the
+    /// `Projection` do not affect the returned `Snapshot` — this is the
+    /// snapshot-isolation contract per D16 / `projection.md` §6.
+    #[must_use]
+    pub fn snapshot(&self) -> Snapshot {
+        Snapshot {
+            state: self.state.clone(),
+        }
+    }
+
+    // ----- Read API (delegates to State; same surface as Snapshot) -----
+
+    /// The per-identity state per `projection.md` §4.
+    #[must_use]
+    pub fn state_of(&self, mote_id: &MoteId) -> MoteState {
+        self.state.state_of_id(mote_id)
+    }
+
+    /// Direct parents with edge metadata.
+    #[must_use]
+    pub fn parents_of(&self, mote_id: &MoteId) -> SmallVec<[(MoteId, EdgeMeta); 4]> {
+        self.state.parents_of_id(mote_id)
+    }
+
+    /// Direct children with edge metadata.
+    #[must_use]
+    pub fn children_of(&self, mote_id: &MoteId) -> Vec<(MoteId, EdgeMeta)> {
+        self.state
+            .children
+            .get(mote_id)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// The transitive closure of downstream consumers reachable via data edges
+    /// (always) and non-opted-out control edges (per `control-edge-cascade-default.md`).
+    /// BFS with visited-set termination — cycle-safe.
+    #[must_use]
+    pub fn transitive_consumers(&self, mote_id: &MoteId) -> Vec<MoteId> {
+        transitive_consumers_impl(&self.state, mote_id)
+    }
+
+    /// The Mote's committed `result_ref`, if any.
+    #[must_use]
+    pub fn result_ref_of(&self, mote_id: &MoteId) -> Option<ContentRef> {
+        self.state
+            .motes
+            .get(mote_id)
+            .and_then(|i| i.committed.as_ref().map(|c| c.result_ref))
+    }
+
+    /// Motes whose parents are all `Committed-and-not-Repudiated` AND whose
+    /// WORLD-MUTATING parents have promotion_state ∈ {NotApplicable, Promoted} AND
+    /// that are themselves in `Pending` state.
+    ///
+    /// The WORLD-MUTATING promotion filter is in the contract here, not in the
+    /// caller — per `projection.md` §7. (In P1 the filter is a no-op because
+    /// promotion_state always returns NotApplicable; the filter activates once
+    /// P1.9 wires the MoteDef registry.)
+    #[must_use]
+    pub fn ready_set(&self) -> Vec<MoteId> {
+        ready_set_impl(&self.state)
+    }
+
+    /// 3c promotion state for the producer.
+    ///
+    /// **P1 default**: returns `NotApplicable` for every Mote (per D18). Full 3c
+    /// semantics activate when the executor (P1.9) wires a `MoteDef` lookup that
+    /// lets the projection observe critic-of-producer relationships.
+    #[must_use]
+    pub fn promotion_state(&self, mote_id: &MoteId) -> PromotionState {
+        promotion_state_impl(&self.state, mote_id)
+    }
+
+    /// `true` when a Repudiated entry targeting this Mote's committed entry has
+    /// been folded.
+    #[must_use]
+    pub fn is_repudiated(&self, mote_id: &MoteId) -> bool {
+        matches!(self.state_of(mote_id), MoteState::Repudiated)
+    }
+
+    /// The `seq` of the Mote's `Committed` entry, if present. Useful for callers
+    /// constructing a `Repudiated` entry that needs to reference the target.
+    #[must_use]
+    pub fn committed_seq_of(&self, mote_id: &MoteId) -> Option<u64> {
+        self.state
+            .motes
+            .get(mote_id)
+            .and_then(|i| i.committed.as_ref().map(|c| c.seq))
+    }
+
+    /// **v2 (PR 7, STEP 5.3 + R-13).** Recovery-time predicate: can the
+    /// executor safely re-dispatch a WORLD-MUTATING effect for this Mote?
+    ///
+    /// Returns `true` iff: `info.effect_staged_observed` AND NOT
+    /// `info.terminal_failure_observed` AND NOT `info.inconsistent` AND
+    /// `info.committed.is_none()`. This is the in-flight case (cells 2 + 3
+    /// of the 9-cell cross-product) where the broker's tool-boundary
+    /// idempotency closes the window.
+    ///
+    /// Returns `false` for `inconsistent` (cell 8 anomaly),
+    /// `terminal_failure_observed` (cell 5 — terminal failure under
+    /// EffectStaged; the WM double-effect hazard), `committed.is_some()`
+    /// (cells 4 + 6 — done; never re-dispatch), and for Motes with no
+    /// `EffectStaged` observed (no in-flight effect to re-dispatch).
+    ///
+    /// **Prefix-monotonic refusal** (STEP 5.2): once this returns `false`
+    /// for a given Mote, it returns `false` at every longer log prefix.
+    /// Proven by `prop_terminal_refusal_is_prefix_monotonic`.
+    #[must_use]
+    pub fn can_redispatch_world_effect(&self, mote_id: &MoteId) -> bool {
+        self.state.can_redispatch_world_effect_id(mote_id)
+    }
+
+    /// **v2 (PR 7, STEP 5.3).** Enumerate every Mote currently flagged
+    /// anomalous, with its anomaly kind. Operator-facing diagnostic API;
+    /// NOT on any hot recovery path.
+    ///
+    /// Today returns only [`AnomalyKind::EffectStagedThenRepudiatedNoCommitted`]
+    /// (cell 8). Future fold-cell anomalies extend [`AnomalyKind`] via
+    /// additive variants.
+    #[must_use]
+    pub fn anomaly_motes(&self) -> Vec<(MoteId, AnomalyKind)> {
+        self.state.anomaly_motes_iter()
+    }
+
+    /// Apply a sequence of journal entries in order. Convenience over calling
+    /// [`Self::fold`] in a loop. Stops on the first error and returns it; the
+    /// projection's state at that point reflects every entry applied up to
+    /// (but not including) the failing one.
+    ///
+    /// # Errors
+    /// First [`ProjectionError`] from any contained entry (typically a
+    /// duplicate-Committed surfaced by [`Self::fold`]).
+    pub fn fold_many<I>(&mut self, entries: I) -> Result<u64, ProjectionError>
+    where
+        I: IntoIterator<Item = JournalEntry>,
+    {
+        let mut last = self.state.last_seq;
+        for entry in entries {
+            self.fold(&entry)?;
+            last = self.state.last_seq;
+        }
+        Ok(last)
+    }
+
+    /// Iterate every known Mote with its current state. Iteration order is by
+    /// `MoteId` ascending (stable via the underlying `BTreeMap`).
+    ///
+    /// Used by the executor (P1.9) to enumerate the workflow's status; used by
+    /// debugging tools to dump the projection. Allocates nothing per item.
+    pub fn iter_motes(&self) -> impl Iterator<Item = (MoteId, MoteState)> + '_ {
+        self.state
+            .motes
+            .keys()
+            .map(move |id| (*id, self.state.state_of_id(id)))
+    }
+
+    /// Iterate every Mote currently in `state`. Iteration order is by `MoteId`
+    /// ascending.
+    pub fn iter_motes_in_state(&self, state: MoteState) -> impl Iterator<Item = MoteId> + '_ {
+        self.state
+            .motes
+            .keys()
+            .filter(move |id| self.state.state_of_id(id) == state)
+            .copied()
+    }
+
+    /// Count of Motes currently in `MoteState::Committed`.
+    #[must_use]
+    pub fn committed_count(&self) -> usize {
+        self.iter_motes_in_state(MoteState::Committed).count()
+    }
+
+    /// Count of Motes currently in `MoteState::Repudiated`.
+    #[must_use]
+    pub fn repudiated_count(&self) -> usize {
+        self.iter_motes_in_state(MoteState::Repudiated).count()
+    }
+
+    /// Count of Motes currently in `MoteState::Pending`.
+    #[must_use]
+    pub fn pending_count(&self) -> usize {
+        self.iter_motes_in_state(MoteState::Pending).count()
+    }
+
+    /// Count of Motes currently in `MoteState::Failed`.
+    #[must_use]
+    pub fn failed_count(&self) -> usize {
+        self.iter_motes_in_state(MoteState::Failed).count()
+    }
+
+    /// Count of Motes currently in `MoteState::Scheduled`.
+    #[must_use]
+    pub fn scheduled_count(&self) -> usize {
+        self.iter_motes_in_state(MoteState::Scheduled).count()
+    }
+}
