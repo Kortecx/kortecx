@@ -210,11 +210,12 @@ pub struct WorkflowSubmission {
 /// `SubmissionRefusal::ValidatorTypeError` / `SubmissionRefusal::AttemptedWiden`
 /// before emitting the `Failed` entry.
 ///
-/// R-10 is enforced by [`validate_submission_with_idempotency`], not this
-/// function. R-10 requires resolved tool idempotency classes which the
-/// caller (the lifecycle layer) materializes via `kx_tool_registry`. PR 9a
-/// callers may keep calling `validate_submission`; PR 9b consumers gated on
-/// R-10 enforcement upgrade to `validate_submission_with_idempotency`.
+/// R-10 (D38 §2c) is enforced by [`validate_submission_with_idempotency`],
+/// not this function. R-10 requires resolved tool idempotency classes which
+/// the caller (the lifecycle layer) materializes via `kx_tool_registry`.
+/// PR 9a callers may keep calling `validate_submission`; PR 9b consumers
+/// gated on R-10 enforcement upgrade to
+/// `validate_submission_with_idempotency`.
 ///
 /// # Errors
 ///
