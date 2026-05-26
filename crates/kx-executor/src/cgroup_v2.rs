@@ -173,10 +173,9 @@ impl ResourceManager for LinuxCgroupV2ResourceManager {
             id: self.next_slot_id.fetch_add(1, Ordering::SeqCst),
         };
         let dir = self.cgroup_dir_for_slot(slot);
-        std::fs::create_dir(&dir)
-            .map_err(|e| {
-                LinuxCgroupV2Error::Io(format!("create cgroup dir {}: {e}", dir.display()))
-            })?;
+        std::fs::create_dir(&dir).map_err(|e| {
+            LinuxCgroupV2Error::Io(format!("create cgroup dir {}: {e}", dir.display()))
+        })?;
 
         // Write the ceilings to the cgroup v2 control files.
         // - cpu.max: "<max-microseconds> <period-microseconds>" or "max"
@@ -219,9 +218,11 @@ impl ResourceManager for LinuxCgroupV2ResourceManager {
         // removed when empty (no procs attached); the child should have
         // exited by the time release is called.
         if let Err(e) = std::fs::remove_dir(&dir) {
-            return Err(
-                LinuxCgroupV2Error::Io(format!("remove cgroup dir {}: {e}", dir.display())).into(),
-            );
+            return Err(LinuxCgroupV2Error::Io(format!(
+                "remove cgroup dir {}: {e}",
+                dir.display()
+            ))
+            .into());
         }
         Ok(())
     }
@@ -254,7 +255,7 @@ fn cgroup_attach_async_signal_safe(path_c: &std::ffi::CStr) -> Result<(), i32> {
     // SAFETY: closing a valid fd is always safe; the return value indicates
     // whether outstanding I/O was flushed.
     let _ = unsafe { libc::close(fd) };
-    if written < 0 || (written as usize) < n {
+    if written < 0 || (written.cast_unsigned()) < n {
         return Err(91);
     }
     Ok(())
@@ -281,14 +282,14 @@ fn int_to_ascii(mut value: i32, buf: &mut [u8]) -> usize {
     // Write digits in reverse, then reverse the slice in-place.
     let mut tmp = [0u8; 16];
     let mut i = 0;
-    let mut v = value as u32;
+    let mut v = value.cast_unsigned();
     while v > 0 && i < tmp.len() {
         tmp[i] = b'0' + (v % 10) as u8;
         v /= 10;
         i += 1;
     }
 
-    let total = i + if negative { 1 } else { 0 } + 1; // digits + sign + \n
+    let total = i + usize::from(negative) + 1; // digits + sign + \n
     if buf.len() < total {
         return 0;
     }
