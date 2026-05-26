@@ -165,10 +165,170 @@ mod macos {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+// ============================================================================
+// Linux wall-clock variant — PR 9a-hardening-6
+// ============================================================================
+//
+// Mirrors `macos::body_exceeding_wall_clock_ms_is_sigkilled_by_watcher` at
+// the `BwrapExecutor` layer. The watcher thread + SIGKILL path are
+// cross-platform; the only Linux-specific bit is the `bwrap` invocation.
+// Test runtime-skips if `bwrap` is not installed on the runner.
+
+#[cfg(target_os = "linux")]
+#[allow(clippy::disallowed_methods, clippy::disallowed_types)]
+mod linux {
+    use std::collections::{BTreeMap, BTreeSet};
+    use std::io::Write;
+    use std::path::PathBuf;
+    use std::process::Command;
+    use std::time::Instant;
+
+    use kx_content::ContentRef;
+    use kx_executor::{BwrapExecutor, MoteExecutor, MoteExecutorError};
+    use kx_mote::{
+        EffectPattern, GraphPosition, InputDataId, LogicRef, ModelId, Mote, MoteDef, NdClass,
+        PromptTemplateHash, MOTE_DEF_SCHEMA_VERSION,
+    };
+    use kx_warrant::{
+        ExecutorClass, FsMode, FsScope, ModelRoute, MoteClass, NetScope, ResourceCeiling,
+        WarrantSpec,
+    };
+    use smallvec::SmallVec;
+
+    fn which_bwrap() -> Option<PathBuf> {
+        let output = Command::new("which").arg("bwrap").output().ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        let path_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if path_str.is_empty() {
+            None
+        } else {
+            Some(PathBuf::from(path_str))
+        }
+    }
+
+    fn pure_body_binary_path() -> Option<PathBuf> {
+        let manifest_dir = std::env::var_os("CARGO_MANIFEST_DIR")?;
+        let manifest_path = PathBuf::from(&manifest_dir);
+        let workspace_root = manifest_path.parent()?.parent()?;
+        for profile in ["debug", "release"] {
+            let candidate = workspace_root
+                .join("target")
+                .join(profile)
+                .join("examples")
+                .join("pure_body");
+            if candidate.exists() {
+                return Some(candidate);
+            }
+        }
+        None
+    }
+
+    fn warrant_with_wall_clock(
+        body_dir: &std::path::Path,
+        input_dir: &std::path::Path,
+        wall_clock_ms: u64,
+    ) -> WarrantSpec {
+        let mut mounts: BTreeMap<PathBuf, FsMode> = BTreeMap::new();
+        mounts.insert(body_dir.to_path_buf(), FsMode::ReadOnly);
+        mounts.insert(input_dir.to_path_buf(), FsMode::ReadOnly);
+        WarrantSpec {
+            mote_class: MoteClass::Pure,
+            nd_class: MoteClass::Pure,
+            fs_scope: FsScope { mounts },
+            net_scope: NetScope::None,
+            syscall_profile_ref: ContentRef::from_bytes([0; 32]),
+            tool_grants: BTreeSet::new(),
+            model_route: ModelRoute {
+                model_id: ModelId("local".into()),
+                max_input_tokens: 0,
+                max_output_tokens: 0,
+                max_calls: 0,
+            },
+            resource_ceiling: ResourceCeiling {
+                cpu_milli: 0,
+                mem_bytes: 0,
+                wall_clock_ms,
+                fd_count: 0,
+                disk_bytes: 0,
+            },
+            environment_ref: None,
+            executor_class: ExecutorClass::Bwrap,
+        }
+    }
+
+    fn build_pure_mote() -> Mote {
+        let def = MoteDef {
+            logic_ref: LogicRef::from_bytes([1; 32]),
+            model_id: ModelId("local".into()),
+            prompt_template_hash: PromptTemplateHash::from_bytes([2; 32]),
+            tool_contract: BTreeMap::new(),
+            nd_class: NdClass::Pure,
+            config_subset: BTreeMap::new(),
+            effect_pattern: EffectPattern::IdempotentByConstruction,
+            critic_for: None,
+            is_topology_shaper: false,
+            schema_version: MOTE_DEF_SCHEMA_VERSION,
+        };
+        Mote::new(
+            def,
+            InputDataId::from_bytes([0; 32]),
+            GraphPosition(b"root".to_vec()),
+            SmallVec::new(),
+        )
+    }
+
+    #[test]
+    #[ignore = "real fork+execvp(bwrap)+spawn with --sleep + wall-clock watcher; runtime-skips if bwrap absent; opt in with `cargo test -- --ignored`"]
+    fn body_exceeding_wall_clock_ms_is_sigkilled_by_watcher_under_bwrap() {
+        let Some(bwrap_path) = which_bwrap() else {
+            eprintln!("skipping: bwrap not installed on this runner");
+            return;
+        };
+        let Some(body_path) = pure_body_binary_path() else {
+            panic!(
+                "pure_body example not built — run `cargo build --example pure_body -p kx-executor`"
+            );
+        };
+        let body_dir = body_path.parent().expect("body parent dir").to_path_buf();
+
+        let mut input_file = tempfile::NamedTempFile::new().expect("tempfile");
+        input_file.write_all(b"input").expect("write");
+        input_file.flush().expect("flush");
+        let input_path = input_file.path().to_path_buf();
+        let input_dir = input_path.parent().expect("input parent dir").to_path_buf();
+
+        let warrant = warrant_with_wall_clock(&body_dir, &input_dir, 500);
+        let mote = build_pure_mote();
+        let executor = BwrapExecutor::with_body(body_path.clone())
+            .with_input_file(input_path)
+            .with_bwrap_path(bwrap_path)
+            .with_extra_args(vec!["--sleep".into(), "60000".into()]);
+
+        let started = Instant::now();
+        let result = executor.run(&mote, &warrant, None);
+        let elapsed = started.elapsed();
+
+        // The watcher fires at 500ms; the parent reaps the SIGKILLed
+        // child + returns WallClockTimedOut. Accept up to 5s for system
+        // noise + bwrap setup overhead.
+        assert!(
+            elapsed.as_secs() < 5,
+            "wall-clock test should complete in <5s; observed {elapsed:?}"
+        );
+        match result {
+            Err(MoteExecutorError::WallClockTimedOut { budget_ms }) => {
+                assert_eq!(budget_ms, 500);
+            }
+            other => panic!("expected WallClockTimedOut, got {other:?}"),
+        }
+    }
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 #[test]
-fn integration_wall_clock_macos_only_placeholder() {
-    // The Linux wall-clock test ships in PR 9a-hardening-4+ (Linux real-spawn
-    // already shipped at hardening-3 — adding the wall-clock variant to the
-    // Linux integration test is a small follow-up).
+fn integration_wall_clock_unix_only_placeholder() {
+    // Wall-clock SIGKILL via nix::sys::signal::kill is Unix-only;
+    // non-Unix targets compile this file as a no-op.
 }
