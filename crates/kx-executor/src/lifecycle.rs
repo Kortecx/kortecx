@@ -206,6 +206,182 @@ where
     })
 }
 
+/// Recovery-time oracle consulted by [`redispatch_wm_mote`] before any
+/// re-dispatch of a WORLD-MUTATING tool effect. Returns `true` iff the
+/// re-dispatch is safe (D38 §2b + STEP 5.2 + STEP 5.4 + R-13).
+///
+/// **Returns `false` for**: `inconsistent` (cell 8 anomaly),
+/// `terminal_failure_observed` (cell 5 — terminal failure under
+/// EffectStaged), `committed.is_some()` (cells 4 + 6 — done; never
+/// re-dispatch), and Motes with no observed EffectStaged (nothing to
+/// re-dispatch).
+///
+/// `kx_projection::Projection` implements this trait directly; tests
+/// stub it.
+pub trait WmRedispatchOracle: Send + Sync {
+    /// Returns `true` iff re-dispatch of `mote_id`'s WM effect is safe.
+    fn can_redispatch_world_effect(&self, mote_id: &MoteId) -> bool;
+}
+
+impl WmRedispatchOracle for kx_projection::Projection {
+    fn can_redispatch_world_effect(&self, mote_id: &MoteId) -> bool {
+        kx_projection::Projection::can_redispatch_world_effect(self, mote_id)
+    }
+}
+
+/// Recovery-time WORLD-MUTATING Mote re-dispatch path. **PR 9b-7
+/// scope**: consults a [`WmRedispatchOracle`] BEFORE invoking
+/// `commit_protocol.commit()` and refuses re-dispatch with
+/// `LifecycleError::CommitProtocol(CommitProtocolError::R13WmReDispatchRefused
+/// { ... })` when the oracle returns `false`.
+///
+/// Two semantic differences from [`run_wm_mote`]:
+/// 1. The oracle's veto fires R-13 BEFORE the broker is consulted.
+///    The lifecycle does not append a fresh `Proposed` entry on
+///    refusal (the journal already carries the previous attempt's
+///    Proposed; this is a recovery scenario, not fresh dispatch).
+/// 2. On Ok-path (oracle approves), the journal already has the
+///    previous attempt's `Proposed` + `EffectStaged` entries. This
+///    function does NOT re-append Proposed; the broker's
+///    tool-boundary idempotency (D38 §1 token-class) closes the
+///    double-dispatch window — the remote API dedupes on
+///    `idempotency_key`. `commit_protocol.commit()` proceeds to call
+///    `broker.dispatch`, verify R-11, and append `Committed`.
+///
+/// # Errors
+///
+/// - `LifecycleError::CommitProtocol(R13WmReDispatchRefused)` when the
+///   oracle returns `false`.
+/// - `LifecycleError::ResourceAcquire(_)` if `acquire` fails.
+/// - `LifecycleError::CommitProtocol(_)` for downstream commit-protocol
+///   failures.
+/// - `LifecycleError::JournalAppend(_)` for critic-Proposed write failures.
+/// - `LifecycleError::Internal(_)` for PURE Motes (caller bug) or
+///   missing Committed-readback after the protocol returned Ok.
+#[allow(clippy::too_many_arguments)]
+pub fn redispatch_wm_mote<J, R, CP, O>(
+    mote: &Mote,
+    warrant: &WarrantSpec,
+    capability: ToolName,
+    effect_request: EffectRequest,
+    submission_motes: &BTreeMap<MoteId, Mote>,
+    journal: &J,
+    resource_manager: &R,
+    commit_protocol: &CP,
+    oracle: &O,
+) -> Result<WmLifecycleCommit, LifecycleError>
+where
+    J: Journal + ?Sized,
+    R: ResourceManager + ?Sized,
+    CP: CommitProtocol + ?Sized,
+    O: WmRedispatchOracle + ?Sized,
+{
+    if mote.nd_class() == NdClass::Pure {
+        return Err(LifecycleError::Internal(format!(
+            "redispatch_wm_mote handles WM/ReadOnlyNondet only; got Pure mote {:?}",
+            mote.id
+        )));
+    }
+
+    // Step 0 (NEW in 9b-7): R-13 recovery consultation. If the oracle
+    // refuses, propagate without touching journal/broker/resource.
+    if !oracle.can_redispatch_world_effect(&mote.id) {
+        return Err(LifecycleError::CommitProtocol(
+            CommitProtocolError::R13WmReDispatchRefused {
+                mote_id: mote.id,
+                reason: "WmRedispatchOracle returned false (terminal_failure_observed / inconsistent / already committed / no effect_staged_observed)".into(),
+            },
+        ));
+    }
+
+    // Step 2: acquire resource slot.
+    let slot = resource_manager.acquire(&warrant.resource_ceiling)?;
+
+    let warrant_ref = kx_warrant::warrant_ref_of(warrant);
+    let mote_def_hash = mote.def.hash();
+    let idempotency_key = *mote.id.as_bytes();
+
+    // Note: NO fresh Proposed entry on the recovery path. The previous
+    // attempt's Proposed (+ optionally EffectStaged) is already in the
+    // journal — appending another would double-record the dispatch
+    // intent. The broker's idempotency_key dedup is the load-bearing
+    // safety here.
+
+    // Step 4: commit_protocol routes per effect_pattern.
+    let commit_input = CommitInput {
+        mote,
+        warrant,
+        capability,
+        effect_request,
+        warrant_ref,
+        mote_def_hash,
+        idempotency_key,
+        parents: SmallVec::new(),
+        diagnostic_context: "lifecycle::redispatch_wm_mote",
+    };
+    let committed_seq = match commit_protocol.commit(commit_input) {
+        Ok(seq) => seq,
+        Err(e) => {
+            let _ = resource_manager.release(slot);
+            return Err(LifecycleError::CommitProtocol(e));
+        }
+    };
+
+    // Step 5: critic-Mote child scheduling (same as run_wm_mote).
+    let critic_proposed_seq =
+        if mote.def.effect_pattern == kx_mote::EffectPattern::ValidateThenCommit {
+            let critic = submission_motes
+                .values()
+                .find(|sibling| sibling.def.critic_for == Some(mote.id));
+            match critic {
+                Some(critic_mote) => {
+                    let critic_proposed = JournalEntry::Proposed {
+                        mote_id: critic_mote.id,
+                        idempotency_key: *critic_mote.id.as_bytes(),
+                        seq: 0,
+                        nondeterminism: critic_mote.def.nd_class,
+                        placement_hint: 0,
+                        warrant_ref,
+                    };
+                    match journal.append(critic_proposed) {
+                        Ok(entry) => Some(entry.seq()),
+                        Err(e) => {
+                            let _ = resource_manager.release(slot);
+                            return Err(LifecycleError::JournalAppend(format!(
+                                "critic Proposed (recovery): {e:?}"
+                            )));
+                        }
+                    }
+                }
+                None => None,
+            }
+        } else {
+            None
+        };
+
+    let result_ref = journal
+        .read_committed(&mote.id)
+        .map_err(|e| LifecycleError::JournalAppend(format!("read Committed: {e:?}")))?
+        .and_then(|e| match e {
+            JournalEntry::Committed { result_ref, .. } => Some(result_ref),
+            _ => None,
+        })
+        .ok_or_else(|| {
+            LifecycleError::Internal(format!(
+                "commit_protocol returned Ok({committed_seq}) but no Committed entry visible"
+            ))
+        })?;
+
+    resource_manager.release(slot)?;
+
+    Ok(WmLifecycleCommit {
+        committed_seq,
+        result_ref,
+        mote_id: mote.id,
+        critic_proposed_seq,
+    })
+}
+
 /// Run a single WORLD-MUTATING Mote end-to-end via the commit_protocol.
 /// **PR 9b-6 scope**: ships the lifecycle's invocation of
 /// `CommitProtocol::commit` for non-PURE Motes + critic-Mote child
