@@ -291,7 +291,9 @@ pub(crate) mod spawn;
 pub use body_resolver::{
     BodyResolver, BodyResolverError, ContentStoreBodyResolver, MaterializedBody,
 };
-pub use commit_protocol::{CommitInput, CommitProtocol, CommitProtocolError};
+pub use commit_protocol::{
+    CommitInput, CommitProtocol, CommitProtocolError, StandardCommitProtocol,
+};
 pub use executor_trait::{MoteExecutionResult, MoteExecutor, MoteExecutorError, Rootfs};
 pub use fact_zero::{
     seed_idempotency_key, seed_mote_id, write_fact_zero, FactZeroError, SeedPayload,

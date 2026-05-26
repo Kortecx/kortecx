@@ -8,11 +8,20 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
+use kx_capability::EffectRequest;
 use kx_content::ContentRef;
 use kx_executor::{CommitInput, CommitProtocol, CommitProtocolError};
-use kx_mote::MoteId;
+use kx_mote::{
+    EffectPattern, GraphPosition, InputDataId, LogicRef, ModelId, Mote, MoteDef, MoteDefHash,
+    MoteId, NdClass, PromptTemplateHash, MOTE_DEF_SCHEMA_VERSION,
+};
+use kx_warrant::{
+    ExecutorClass, FsScope, ModelRoute, MoteClass, NetScope, ResourceCeiling, WarrantSpec,
+};
+use smallvec::SmallVec;
 
 fn sample_mote_id() -> MoteId {
     MoteId::from_bytes([0xAB; 32])
@@ -20,6 +29,63 @@ fn sample_mote_id() -> MoteId {
 
 fn sample_content_ref() -> ContentRef {
     ContentRef::from_bytes([0xCD; 32])
+}
+
+fn pure_warrant() -> WarrantSpec {
+    WarrantSpec {
+        mote_class: MoteClass::Pure,
+        nd_class: MoteClass::Pure,
+        fs_scope: FsScope::empty(),
+        net_scope: NetScope::None,
+        syscall_profile_ref: ContentRef::from_bytes([0; 32]),
+        tool_grants: BTreeSet::new(),
+        model_route: ModelRoute {
+            model_id: ModelId("local".into()),
+            max_input_tokens: 0,
+            max_output_tokens: 0,
+            max_calls: 0,
+        },
+        resource_ceiling: ResourceCeiling {
+            cpu_milli: 0,
+            mem_bytes: 0,
+            wall_clock_ms: 0,
+            fd_count: 0,
+            disk_bytes: 0,
+        },
+        environment_ref: None,
+        executor_class: ExecutorClass::Bwrap,
+    }
+}
+
+fn build_idempotent_mote(seed: u8) -> Mote {
+    let def = MoteDef {
+        logic_ref: LogicRef::from_bytes([1; 32]),
+        model_id: ModelId("local".into()),
+        prompt_template_hash: PromptTemplateHash::from_bytes([2; 32]),
+        tool_contract: BTreeMap::new(),
+        nd_class: NdClass::WorldMutating,
+        config_subset: BTreeMap::new(),
+        effect_pattern: EffectPattern::IdempotentByConstruction,
+        critic_for: None,
+        is_topology_shaper: false,
+        schema_version: MOTE_DEF_SCHEMA_VERSION,
+    };
+    Mote::new(
+        def,
+        InputDataId::from_bytes([0; 32]),
+        GraphPosition(vec![seed]),
+        SmallVec::new(),
+    )
+}
+
+fn empty_effect_request() -> EffectRequest {
+    EffectRequest {
+        payload: Vec::new(),
+        pattern: EffectPattern::IdempotentByConstruction,
+        idempotency_key: None,
+        net_scope: NetScope::None,
+        fs_scope: FsScope::empty(),
+    }
 }
 
 // ============================================================================
@@ -206,13 +272,21 @@ fn commit_protocol_error_is_clone_and_eq() {
 
 #[test]
 fn commit_input_constructs_with_required_fields() {
+    let mote = build_idempotent_mote(0xAB);
+    let warrant = pure_warrant();
+    let mote_def_hash = MoteDefHash::from_bytes([3; 32]);
     let input = CommitInput {
-        mote_id: sample_mote_id(),
-        result_ref: sample_content_ref(),
+        mote: &mote,
+        warrant: &warrant,
+        capability: kx_mote::ToolName("publish".into()),
+        effect_request: empty_effect_request(),
+        warrant_ref: ContentRef::from_bytes([4; 32]),
+        mote_def_hash,
+        idempotency_key: [5; 32],
+        parents: SmallVec::new(),
         diagnostic_context: "test",
     };
-    assert_eq!(input.mote_id, sample_mote_id());
-    assert_eq!(input.result_ref, sample_content_ref());
+    assert_eq!(input.mote.id, mote.id);
     assert_eq!(input.diagnostic_context, "test");
 }
 
@@ -226,10 +300,9 @@ struct StubCommitProtocol;
 
 impl CommitProtocol for StubCommitProtocol {
     fn commit(&self, input: CommitInput<'_>) -> Result<u64, CommitProtocolError> {
-        // PR 9b-2: stub returns Internal — the per-pattern impl lands at 9b-3.
         Err(CommitProtocolError::Internal {
-            mote_id: input.mote_id,
-            reason: "stub — per-pattern impl lands in PR 9b-3".into(),
+            mote_id: input.mote.id,
+            reason: "stub for object-safety test".into(),
         })
     }
 }
@@ -238,14 +311,20 @@ fn assert_send_sync<T: Send + Sync>() {}
 
 #[test]
 fn commit_protocol_is_object_safe_send_sync() {
-    // Compile-time test: Arc<dyn CommitProtocol> requires object safety +
-    // Send + Sync. If the trait drops those constraints, this fails to compile.
     let dyn_protocol: Arc<dyn CommitProtocol> = Arc::new(StubCommitProtocol);
     assert_send_sync::<Arc<dyn CommitProtocol>>();
-    let mid = sample_mote_id();
+    let mote = build_idempotent_mote(0xAB);
+    let warrant = pure_warrant();
+    let mid = mote.id;
     let input = CommitInput {
-        mote_id: mid,
-        result_ref: sample_content_ref(),
+        mote: &mote,
+        warrant: &warrant,
+        capability: kx_mote::ToolName("publish".into()),
+        effect_request: empty_effect_request(),
+        warrant_ref: ContentRef::from_bytes([4; 32]),
+        mote_def_hash: MoteDefHash::from_bytes([3; 32]),
+        idempotency_key: [5; 32],
+        parents: SmallVec::new(),
         diagnostic_context: "stub-test",
     };
     let r = dyn_protocol.commit(input);
