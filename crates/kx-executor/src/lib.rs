@@ -273,6 +273,7 @@ pub mod backends;
 pub mod body_resolver;
 #[cfg(target_os = "linux")]
 pub mod cgroup_v2;
+pub mod commit_protocol;
 pub mod executor_trait;
 pub mod fact_zero;
 pub mod factory;
@@ -290,6 +291,7 @@ pub(crate) mod spawn;
 pub use body_resolver::{
     BodyResolver, BodyResolverError, ContentStoreBodyResolver, MaterializedBody,
 };
+pub use commit_protocol::{CommitInput, CommitProtocol, CommitProtocolError};
 pub use executor_trait::{MoteExecutionResult, MoteExecutor, MoteExecutorError, Rootfs};
 pub use fact_zero::{
     seed_idempotency_key, seed_mote_id, write_fact_zero, FactZeroError, SeedPayload,
