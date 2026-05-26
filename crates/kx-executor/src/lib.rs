@@ -300,8 +300,8 @@ pub use fact_zero::{
 };
 pub use factory::{default_executor, executor_for_class};
 pub use lifecycle::{
-    run_pure_mote, run_wm_mote, LifecycleCommit, LifecycleError, TestMoteExecutor,
-    WmLifecycleCommit,
+    redispatch_wm_mote, run_pure_mote, run_wm_mote, LifecycleCommit, LifecycleError,
+    TestMoteExecutor, WmLifecycleCommit, WmRedispatchOracle,
 };
 pub use refusal::{
     refusal_from_narrowing, validate_submission, validate_submission_with_idempotency,
