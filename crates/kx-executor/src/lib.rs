@@ -297,7 +297,8 @@ pub use fact_zero::{
 pub use factory::{default_executor, executor_for_class};
 pub use lifecycle::{run_pure_mote, LifecycleCommit, LifecycleError, TestMoteExecutor};
 pub use refusal::{
-    refusal_from_narrowing, validate_submission, SubmissionRefusal, WorkflowSubmission,
+    refusal_from_narrowing, validate_submission, validate_submission_with_idempotency,
+    SubmissionRefusal, WorkflowSubmission,
 };
 pub use resource_manager::{LocalResourceManager, ResourceError, ResourceManager, Slot};
 

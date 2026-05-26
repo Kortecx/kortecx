@@ -154,6 +154,23 @@ pub enum SubmissionRefusal {
         /// The underlying `NarrowingError` from `kx_warrant::intersect`.
         narrowing_error: String,
     },
+
+    /// **R-10** (D38 §2c). A `WORLD_MUTATING` Mote whose resolved
+    /// `tool_contract` contains a tool with `IdempotencyClass::AtLeastOnce`
+    /// AND the workflow submission's `accept_at_least_once[mote_id]` is not
+    /// `true` (default: `false`).
+    ///
+    /// `AtLeastOnce` tools have no closing mechanism (no token, no readback,
+    /// no staged-intent journal entry). The executor refuses to dispatch them
+    /// unless the workflow author has explicitly opted in by setting
+    /// `accept_at_least_once[mote_id] = true` in the submission. This closes
+    /// the WM double-effect window for tools whose semantics do not admit
+    /// runtime-owned dedup.
+    #[error("R-10: WORLD-MUTATING Mote {mote_id:?} resolves to an AtLeastOnce tool but accept_at_least_once was not set to true (D38 §2c)")]
+    R10AtLeastOnceWithoutAccept {
+        /// The offending Mote.
+        mote_id: MoteId,
+    },
 }
 
 /// A workflow submission — the shape `validate_submission` reasons over.
@@ -192,6 +209,12 @@ pub struct WorkflowSubmission {
 /// `kx_warrant::intersect` calls. The caller maps those errors to
 /// `SubmissionRefusal::ValidatorTypeError` / `SubmissionRefusal::AttemptedWiden`
 /// before emitting the `Failed` entry.
+///
+/// R-10 is enforced by [`validate_submission_with_idempotency`], not this
+/// function. R-10 requires resolved tool idempotency classes which the
+/// caller (the lifecycle layer) materializes via `kx_tool_registry`. PR 9a
+/// callers may keep calling `validate_submission`; PR 9b consumers gated on
+/// R-10 enforcement upgrade to `validate_submission_with_idempotency`.
 ///
 /// # Errors
 ///
@@ -233,6 +256,85 @@ pub fn validate_submission(submission: &WorkflowSubmission) -> Result<(), Submis
         check_r9(mote, &submission.motes)?;
     }
 
+    Ok(())
+}
+
+/// Validate a workflow submission against R-1..R-9 + R-8b + **R-10** (the
+/// last requires per-Mote resolved tool idempotency classes). Returns
+/// `Ok(())` on a safe submission; the first refusal hit returns
+/// `Err(refusal)`.
+///
+/// `resolved_idempotency_classes` is a per-Mote map from `MoteId` to the
+/// resolved `IdempotencyClass` of each tool in that Mote's `tool_contract`.
+/// The lifecycle layer materializes this map by resolving each
+/// `(tool_id, tool_version)` pair against `kx_tool_registry` BEFORE calling
+/// this function. A Mote with no entry in the map is treated as if it has
+/// no tool contract for R-10 purposes (R-10 only fires when an entry exists
+/// AND the resolved class is `AtLeastOnce`).
+///
+/// **Check ordering**: this function runs the existing R-1..R-9 + R-8b
+/// predicates first (delegated to [`validate_submission`]), then R-10. A
+/// submission that fails an earlier predicate never reaches R-10.
+///
+/// # Errors
+///
+/// Returns the first `SubmissionRefusal` variant that applies. A safe
+/// submission returns `Ok(())`.
+///
+/// # Example
+///
+/// ```
+/// use std::collections::{BTreeMap, BTreeSet};
+/// use kx_executor::{validate_submission_with_idempotency, WorkflowSubmission};
+/// use kx_content::ContentRef;
+/// use kx_mote::{ModelId, MoteId};
+/// use kx_tool_registry::IdempotencyClass;
+/// use kx_warrant::{
+///     ExecutorClass, FsScope, ModelRoute, MoteClass, NetScope, ResourceCeiling, WarrantSpec,
+/// };
+///
+/// // A submission with no Motes is trivially safe — R-10 has no per-Mote
+/// // map entries to consult.
+/// let warrant = WarrantSpec {
+///     mote_class: MoteClass::Pure,
+///     nd_class: MoteClass::Pure,
+///     fs_scope: FsScope::empty(),
+///     net_scope: NetScope::None,
+///     syscall_profile_ref: ContentRef::from_bytes([0; 32]),
+///     tool_grants: BTreeSet::new(),
+///     model_route: ModelRoute {
+///         model_id: ModelId("local".into()),
+///         max_input_tokens: 0,
+///         max_output_tokens: 0,
+///         max_calls: 0,
+///     },
+///     resource_ceiling: ResourceCeiling {
+///         cpu_milli: 0,
+///         mem_bytes: 0,
+///         wall_clock_ms: 0,
+///         fd_count: 0,
+///         disk_bytes: 0,
+///     },
+///     environment_ref: None,
+///     executor_class: ExecutorClass::Bwrap,
+/// };
+/// let submission = WorkflowSubmission {
+///     run_id: [0u8; 32],
+///     master_warrant: warrant,
+///     motes: BTreeMap::new(),
+///     accept_at_least_once: BTreeMap::new(),
+/// };
+/// let resolved: BTreeMap<MoteId, Vec<IdempotencyClass>> = BTreeMap::new();
+/// assert!(validate_submission_with_idempotency(&submission, &resolved).is_ok());
+/// ```
+pub fn validate_submission_with_idempotency(
+    submission: &WorkflowSubmission,
+    resolved_idempotency_classes: &BTreeMap<MoteId, Vec<IdempotencyClass>>,
+) -> Result<(), SubmissionRefusal> {
+    validate_submission(submission)?;
+    for mote in submission.motes.values() {
+        check_r10(mote, submission, resolved_idempotency_classes)?;
+    }
     Ok(())
 }
 
@@ -418,6 +520,29 @@ fn check_r9(mote: &Mote, motes: &BTreeMap<MoteId, Mote>) -> Result<(), Submissio
         }
     }
     Err(SubmissionRefusal::R9CriticChainNotTerminating { mote_id: mote.id })
+}
+
+fn check_r10(
+    mote: &Mote,
+    submission: &WorkflowSubmission,
+    resolved_idempotency_classes: &BTreeMap<MoteId, Vec<IdempotencyClass>>,
+) -> Result<(), SubmissionRefusal> {
+    if mote.def.nd_class != NdClass::WorldMutating {
+        return Ok(());
+    }
+    let Some(classes) = resolved_idempotency_classes.get(&mote.id) else {
+        return Ok(());
+    };
+    let has_at_least_once = classes
+        .iter()
+        .any(|c| matches!(c, IdempotencyClass::AtLeastOnce));
+    if !has_at_least_once {
+        return Ok(());
+    }
+    if submission.accept_at_least_once.get(&mote.id).copied() == Some(true) {
+        return Ok(());
+    }
+    Err(SubmissionRefusal::R10AtLeastOnceWithoutAccept { mote_id: mote.id })
 }
 
 #[allow(dead_code)] // PR 9a placeholder for the R-1 lifecycle integration

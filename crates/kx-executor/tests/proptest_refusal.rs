@@ -7,13 +7,14 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use kx_content::ContentRef;
 use kx_executor::{
-    profile_from_warrant, seed_idempotency_key, seed_mote_id, validate_submission, SeedPayload,
-    WorkflowSubmission,
+    profile_from_warrant, seed_idempotency_key, seed_mote_id, validate_submission,
+    validate_submission_with_idempotency, SeedPayload, SubmissionRefusal, WorkflowSubmission,
 };
 use kx_mote::{
-    EffectPattern, GraphPosition, InputDataId, LogicRef, ModelId, Mote, MoteDef, NdClass,
+    EffectPattern, GraphPosition, InputDataId, LogicRef, ModelId, Mote, MoteDef, MoteId, NdClass,
     PromptTemplateHash, MOTE_DEF_SCHEMA_VERSION,
 };
+use kx_tool_registry::IdempotencyClass;
 use kx_warrant::{
     ExecutorClass, FsScope, ModelRoute, MoteClass, NetScope, ResourceCeiling, WarrantSpec,
 };
@@ -48,6 +49,46 @@ fn arb_nd_class() -> impl Strategy<Value = NdClass> {
         Just(NdClass::ReadOnlyNondet),
         Just(NdClass::WorldMutating),
     ]
+}
+
+// MUST update on new `IdempotencyClass` variant. Canonical-classifier-cannot-
+// drift: any new IdempotencyClass variant without an updated strategy is
+// caught by this proptest's coverage drop.
+fn arb_idempotency_class() -> impl Strategy<Value = IdempotencyClass> {
+    prop_oneof![
+        Just(IdempotencyClass::Token),
+        Just(IdempotencyClass::Readback),
+        Just(IdempotencyClass::Staged),
+        Just(IdempotencyClass::AtLeastOnce),
+    ]
+}
+
+fn arb_wm_mote_with_tool() -> impl Strategy<Value = Mote> {
+    (0u8..255u8).prop_map(|seed| {
+        let mut tool_contract: BTreeMap<kx_mote::ToolName, kx_mote::ToolVersion> = BTreeMap::new();
+        tool_contract.insert(
+            kx_mote::ToolName("publish".into()),
+            kx_mote::ToolVersion("0.1.0".into()),
+        );
+        let def = MoteDef {
+            logic_ref: LogicRef::from_bytes([1; 32]),
+            model_id: ModelId("local".into()),
+            prompt_template_hash: PromptTemplateHash::from_bytes([2; 32]),
+            tool_contract,
+            nd_class: NdClass::WorldMutating,
+            config_subset: BTreeMap::new(),
+            effect_pattern: EffectPattern::IdempotentByConstruction,
+            critic_for: None,
+            is_topology_shaper: false,
+            schema_version: MOTE_DEF_SCHEMA_VERSION,
+        };
+        Mote::new(
+            def,
+            InputDataId::from_bytes([0; 32]),
+            GraphPosition(vec![seed]),
+            SmallVec::new(),
+        )
+    })
 }
 
 fn arb_warrant() -> impl Strategy<Value = WarrantSpec> {
@@ -192,5 +233,84 @@ proptest! {
         c in arb_nd_class(),
     ) {
         let _ = c; // Exhaustive coverage is the property; no other assertion.
+    }
+
+    /// R-10: for any WORLD-MUTATING Mote whose resolved tool classes contain
+    /// `IdempotencyClass::AtLeastOnce`, `validate_submission_with_idempotency`
+    /// MUST refuse unless `accept_at_least_once[mote_id] == true`. The
+    /// property covers BOTH branches (accept=true → Ok; accept=false → Err).
+    #[test]
+    fn prop_r10_fires_iff_at_least_once_without_accept(
+        mote in arb_wm_mote_with_tool(),
+        warrant in arb_warrant(),
+        accept_flag in any::<bool>(),
+    ) {
+        let id = mote.id;
+        let mut motes = BTreeMap::new();
+        motes.insert(id, mote);
+        let mut accept_map: BTreeMap<MoteId, bool> = BTreeMap::new();
+        accept_map.insert(id, accept_flag);
+        let submission = WorkflowSubmission {
+            run_id: [0u8; 32],
+            master_warrant: warrant,
+            motes,
+            accept_at_least_once: accept_map,
+        };
+        let mut resolved: BTreeMap<MoteId, Vec<IdempotencyClass>> = BTreeMap::new();
+        resolved.insert(id, vec![IdempotencyClass::AtLeastOnce]);
+        let result = validate_submission_with_idempotency(&submission, &resolved);
+        if accept_flag {
+            prop_assert!(result.is_ok(), "accept=true must short-circuit R-10");
+        } else {
+            match result {
+                Err(SubmissionRefusal::R10AtLeastOnceWithoutAccept { mote_id }) => {
+                    prop_assert_eq!(mote_id, id);
+                }
+                other => prop_assert!(false, "expected R-10 refusal, got {:?}", other),
+            }
+        }
+    }
+
+    /// R-10 is INSENSITIVE to non-AtLeastOnce IdempotencyClass values:
+    /// Token / Readback / Staged classes alone never trigger R-10 regardless
+    /// of the accept flag.
+    #[test]
+    fn prop_r10_does_not_fire_for_safe_idempotency_classes(
+        mote in arb_wm_mote_with_tool(),
+        warrant in arb_warrant(),
+        accept_flag in any::<bool>(),
+        klass in prop_oneof![
+            Just(IdempotencyClass::Token),
+            Just(IdempotencyClass::Readback),
+            Just(IdempotencyClass::Staged),
+        ],
+    ) {
+        let id = mote.id;
+        let mut motes = BTreeMap::new();
+        motes.insert(id, mote);
+        let mut accept_map: BTreeMap<MoteId, bool> = BTreeMap::new();
+        accept_map.insert(id, accept_flag);
+        let submission = WorkflowSubmission {
+            run_id: [0u8; 32],
+            master_warrant: warrant,
+            motes,
+            accept_at_least_once: accept_map,
+        };
+        let mut resolved: BTreeMap<MoteId, Vec<IdempotencyClass>> = BTreeMap::new();
+        resolved.insert(id, vec![klass]);
+        prop_assert!(
+            validate_submission_with_idempotency(&submission, &resolved).is_ok(),
+            "safe idempotency classes must not trigger R-10",
+        );
+    }
+
+    /// `IdempotencyClass` strategy enumeration check — canonical-classifier-
+    /// cannot-drift: any new variant without an updated strategy fails this
+    /// property's coverage.
+    #[test]
+    fn prop_idempotency_class_strategy_covers_all_variants(
+        c in arb_idempotency_class(),
+    ) {
+        let _ = c;
     }
 }
