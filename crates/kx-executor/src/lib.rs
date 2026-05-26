@@ -230,7 +230,15 @@
 //! let _cloud = executor_for_class(ExecutorClass::CloudMicroVm);
 //! ```
 
-#![forbid(unsafe_code)]
+// PR 9a-hardening-2 lifts the previous `#![forbid(unsafe_code)]` to a
+// per-block discipline (matching the kx-llamacpp precedent): the `spawn`
+// submodule contains the post-fork pre-exec systems calls (sandbox_init,
+// execvp, dup2, _exit) — each unsafe block carries a `// SAFETY:` comment
+// naming the invariant it relies on; the rest of the crate stays
+// unsafe-free at the source level. `unsafe_op_in_unsafe_fn` is denied so
+// every unsafe operation inside an `unsafe fn` still requires its own
+// `unsafe { }` block (clippy-belt-and-suspenders).
+#![deny(unsafe_op_in_unsafe_fn)]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::pedantic))]
 // PR 9a documented-infallible production sites (mirrors kx-mote / kx-warrant /
 // kx-tool-registry / kx-capability `#![allow(clippy::expect_used)]` precedent):
@@ -268,6 +276,12 @@ pub mod factory;
 pub mod lifecycle;
 pub mod refusal;
 pub mod resource_manager;
+// The spawn module currently has only a macOS consumer (`MacOsSandboxExecutor`);
+// the Linux `BwrapExecutor` real-spawn path lands in PR 9a-hardening-3. Gating
+// to macOS today keeps clippy's `unused_item` check from firing on Linux. The
+// gate widens to `cfg(unix)` in PR 9a-hardening-3.
+#[cfg(target_os = "macos")]
+pub(crate) mod spawn;
 
 // Re-exports — the executor's stable public API.
 pub use executor_trait::{MoteExecutionResult, MoteExecutor, MoteExecutorError, Rootfs};

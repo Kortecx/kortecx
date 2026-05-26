@@ -31,6 +31,18 @@ smallvec             = { workspace = true }
 thiserror            = { workspace = true }
 tracing              = { workspace = true }
 
+# Unix-only spawn primitives. The Linux path forks + execvps `bwrap` from
+# the warrant-derived argv. The macOS path forks + calls `sandbox_init` +
+# execvps the Mote body. NEVER `std::process::Command` (refused by the
+# crate-local clippy.toml `disallowed-methods` list from PR 9a-hardening-1).
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
+nix  = { workspace = true }
+
+[[example]]
+name = "pure_body"
+path = "examples/pure_body.rs"
+
 [dev-dependencies]
 proptest           = { workspace = true }
 tempfile           = { workspace = true }
