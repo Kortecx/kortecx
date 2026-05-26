@@ -8,7 +8,7 @@ use smallvec::SmallVec;
 ///
 /// Submitted at workflow-compile time by the executor (P1.9) or directly by tests.
 /// Adds the Mote to the projection's "expected" set so it appears as
-/// [`MoteState::Pending`] in `state_of` and is eligible for `ready_set` once its
+/// [`crate::MoteState::Pending`] in `state_of` and is eligible for `ready_set` once its
 /// parents commit.
 #[derive(Debug, Clone)]
 pub struct RegisterMote {

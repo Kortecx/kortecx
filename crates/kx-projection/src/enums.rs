@@ -1,12 +1,12 @@
 //! Public state and outcome enums for projection queries.
 
 /// Per-Mote state, derived from the log via the precedence rules in `projection.md`
-/// §4. A Mote registered but with no journal entry yet is [`MoteState::Pending`].
+/// §4. A Mote registered but with no journal entry yet is [`crate::MoteState::Pending`].
 ///
-/// **v2 (PR 7) adds [`MoteState::Inconsistent`]** — the cell-8 anomaly state for
+/// **v2 (PR 7) adds [`crate::MoteState::Inconsistent`]** — the cell-8 anomaly state for
 /// `EffectStaged` + `Repudiated` without an intervening `Committed`. Per STEP 5.3
 /// of PR 4.5: the fold does NOT abort on this anomaly; it quarantines the affected
-/// Mote and surfaces it via [`Projection::anomaly_motes`] so an operator decides
+/// Mote and surfaces it via [`crate::Projection::anomaly_motes`] so an operator decides
 /// recovery.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum MoteState {
@@ -20,7 +20,7 @@ pub enum MoteState {
     /// In v2, this includes the **terminal failure** case (a `Failed` whose
     /// `reason_class` is NOT pre-commit-crash, paired with an `EffectStaged` —
     /// cell 5 of the 9-cell cross-product). Terminal failures forbid
-    /// re-dispatch; consult [`Projection::can_redispatch_world_effect`].
+    /// re-dispatch; consult [`crate::Projection::can_redispatch_world_effect`].
     Failed,
     /// A `Committed` entry exists AND a `Repudiated` entry targeting it has landed.
     Repudiated,
@@ -28,11 +28,11 @@ pub enum MoteState {
     /// AND a `Repudiated` entry references it WITHOUT an intervening `Committed`.
     /// Repudiated normally targets a Committed; an EffectStaged-then-Repudiated-
     /// without-Committed sequence is a journal-consistency error per STEP 5.3.
-    /// Surfaced via [`Projection::anomaly_motes`]; never re-dispatched.
+    /// Surfaced via [`crate::Projection::anomaly_motes`]; never re-dispatched.
     Inconsistent,
 }
 
-/// Categorical anomaly kind surfaced by [`Projection::anomaly_motes`].
+/// Categorical anomaly kind surfaced by [`crate::Projection::anomaly_motes`].
 ///
 /// **v2 (PR 7).** Extensible-by-additive-variants: when a new fold cell anomaly
 /// becomes possible (e.g., from a fifth journal kind), it extends this enum rather

@@ -10,9 +10,9 @@ use crate::enums::{AnomalyKind, MoteState, PromotionState};
 use crate::helpers::{promotion_state_impl, ready_set_impl, transitive_consumers_impl};
 use crate::state::State;
 
-/// An immutable point-in-time view of a [`Projection`].
+/// An immutable point-in-time view of a [`crate::Projection`].
 ///
-/// Returned by [`Projection::snapshot`]. Subsequent folds against the source
+/// Returned by [`crate::Projection::snapshot`]. Subsequent folds against the source
 /// projection do not affect this snapshot — the snapshot-isolation contract from
 /// D16 / `projection.md` §6 is provided by cloning the underlying state.
 ///
@@ -82,19 +82,19 @@ impl Snapshot {
         self.state.motes.is_empty()
     }
 
-    /// Per-identity state. See [`Projection::state_of`].
+    /// Per-identity state. See [`crate::Projection::state_of`].
     #[must_use]
     pub fn state_of(&self, mote_id: &MoteId) -> MoteState {
         self.state.state_of_id(mote_id)
     }
 
-    /// Direct parents. See [`Projection::parents_of`].
+    /// Direct parents. See [`crate::Projection::parents_of`].
     #[must_use]
     pub fn parents_of(&self, mote_id: &MoteId) -> SmallVec<[(MoteId, EdgeMeta); 4]> {
         self.state.parents_of_id(mote_id)
     }
 
-    /// Direct children. See [`Projection::children_of`].
+    /// Direct children. See [`crate::Projection::children_of`].
     #[must_use]
     pub fn children_of(&self, mote_id: &MoteId) -> Vec<(MoteId, EdgeMeta)> {
         self.state
@@ -110,7 +110,7 @@ impl Snapshot {
         transitive_consumers_impl(&self.state, mote_id)
     }
 
-    /// Committed result_ref. See [`Projection::result_ref_of`].
+    /// Committed result_ref. See [`crate::Projection::result_ref_of`].
     #[must_use]
     pub fn result_ref_of(&self, mote_id: &MoteId) -> Option<ContentRef> {
         self.state
@@ -138,13 +138,13 @@ impl Snapshot {
     }
 
     /// **v2 (PR 7, STEP 5.3 + R-13).** Snapshot mirror of
-    /// [`Projection::can_redispatch_world_effect`].
+    /// [`crate::Projection::can_redispatch_world_effect`].
     #[must_use]
     pub fn can_redispatch_world_effect(&self, mote_id: &MoteId) -> bool {
         self.state.can_redispatch_world_effect_id(mote_id)
     }
 
-    /// **v2 (PR 7, STEP 5.3).** Snapshot mirror of [`Projection::anomaly_motes`].
+    /// **v2 (PR 7, STEP 5.3).** Snapshot mirror of [`crate::Projection::anomaly_motes`].
     #[must_use]
     pub fn anomaly_motes(&self) -> Vec<(MoteId, AnomalyKind)> {
         self.state.anomaly_motes_iter()

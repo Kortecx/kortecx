@@ -2,7 +2,7 @@
 
 use kx_mote::MoteId;
 
-/// Errors raised by [`Projection`] operations.
+/// Errors raised by [`crate::Projection`] operations.
 #[derive(Debug, thiserror::Error)]
 pub enum ProjectionError {
     /// The fold detected two `Committed` entries for the same `MoteId` — this is
