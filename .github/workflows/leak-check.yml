@@ -27,6 +27,7 @@ name: Private-content leak check (SN-2)
 on:
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read

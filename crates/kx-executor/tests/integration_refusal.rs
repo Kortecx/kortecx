@@ -8,12 +8,14 @@
 use std::collections::BTreeMap;
 
 use kx_executor::{
-    refusal_from_narrowing, validate_submission, SubmissionRefusal, WorkflowSubmission,
+    refusal_from_narrowing, validate_submission, validate_submission_with_idempotency,
+    SubmissionRefusal, WorkflowSubmission,
 };
 use kx_mote::{
     EffectPattern, GraphPosition, InputDataId, LogicRef, ModelId, Mote, MoteDef, MoteId, NdClass,
     PromptTemplateHash, MOTE_DEF_SCHEMA_VERSION,
 };
+use kx_tool_registry::IdempotencyClass;
 use kx_warrant::NarrowingError;
 use smallvec::SmallVec;
 
@@ -395,6 +397,124 @@ fn attempted_widen_maps_from_narrowing_error() {
         }
         other => panic!("expected AttemptedWiden, got {other:?}"),
     }
+}
+
+// ============================================================================
+// R-10: WORLD-MUTATING + resolved tool has IdempotencyClass::AtLeastOnce +
+// `accept_at_least_once[mote_id]` is not `true` (D38 §2c).
+// ============================================================================
+
+fn build_wm_mote_with_tool(seed: u8) -> Mote {
+    let mut tool_contract: BTreeMap<kx_mote::ToolName, kx_mote::ToolVersion> = BTreeMap::new();
+    tool_contract.insert(
+        kx_mote::ToolName("publish".into()),
+        kx_mote::ToolVersion("0.1.0".into()),
+    );
+    build_mote(
+        seed,
+        NdClass::WorldMutating,
+        EffectPattern::IdempotentByConstruction,
+        None,
+        false,
+        tool_contract,
+    )
+}
+
+#[test]
+fn r10_refuses_at_least_once_without_accept_flag() {
+    let m = build_wm_mote_with_tool(20);
+    let id = m.id;
+    let submission = submit(vec![m]);
+    let mut resolved: BTreeMap<MoteId, Vec<IdempotencyClass>> = BTreeMap::new();
+    resolved.insert(id, vec![IdempotencyClass::AtLeastOnce]);
+    let err = validate_submission_with_idempotency(&submission, &resolved).unwrap_err();
+    assert!(matches!(
+        err,
+        SubmissionRefusal::R10AtLeastOnceWithoutAccept { mote_id } if mote_id == id
+    ));
+}
+
+#[test]
+fn r10_accepts_at_least_once_when_accept_flag_is_true() {
+    let m = build_wm_mote_with_tool(21);
+    let id = m.id;
+    let mut submission = submit(vec![m]);
+    submission.accept_at_least_once.insert(id, true);
+    let mut resolved: BTreeMap<MoteId, Vec<IdempotencyClass>> = BTreeMap::new();
+    resolved.insert(id, vec![IdempotencyClass::AtLeastOnce]);
+    assert!(validate_submission_with_idempotency(&submission, &resolved).is_ok());
+}
+
+#[test]
+fn r10_does_not_fire_on_token_class_tool() {
+    let m = build_wm_mote_with_tool(22);
+    let id = m.id;
+    let submission = submit(vec![m]);
+    let mut resolved: BTreeMap<MoteId, Vec<IdempotencyClass>> = BTreeMap::new();
+    resolved.insert(id, vec![IdempotencyClass::Token]);
+    assert!(validate_submission_with_idempotency(&submission, &resolved).is_ok());
+}
+
+#[test]
+fn r10_does_not_fire_on_pure_mote_even_with_at_least_once_class() {
+    // R-10 only applies to WORLD-MUTATING Motes. A Pure Mote with an
+    // AtLeastOnce class in resolved_tools (anomalous; Pure tool_contract
+    // should not realistically include AtLeastOnce classes) should still
+    // pass.
+    let m = build_mote(
+        23,
+        NdClass::Pure,
+        EffectPattern::IdempotentByConstruction,
+        None,
+        false,
+        BTreeMap::new(),
+    );
+    let id = m.id;
+    let submission = submit(vec![m]);
+    let mut resolved: BTreeMap<MoteId, Vec<IdempotencyClass>> = BTreeMap::new();
+    resolved.insert(id, vec![IdempotencyClass::AtLeastOnce]);
+    assert!(validate_submission_with_idempotency(&submission, &resolved).is_ok());
+}
+
+#[test]
+fn r10_fires_when_any_tool_in_contract_is_at_least_once() {
+    // Mixed tool contract: Token + AtLeastOnce. R-10 fires because at least
+    // one tool is unsafe — the workflow author must opt in to accept the
+    // double-effect window.
+    let m = build_wm_mote_with_tool(24);
+    let id = m.id;
+    let submission = submit(vec![m]);
+    let mut resolved: BTreeMap<MoteId, Vec<IdempotencyClass>> = BTreeMap::new();
+    resolved.insert(
+        id,
+        vec![IdempotencyClass::Token, IdempotencyClass::AtLeastOnce],
+    );
+    let err = validate_submission_with_idempotency(&submission, &resolved).unwrap_err();
+    assert!(matches!(
+        err,
+        SubmissionRefusal::R10AtLeastOnceWithoutAccept { .. }
+    ));
+}
+
+#[test]
+fn r10_check_runs_after_earlier_predicates() {
+    // A Mote that fails R-1 (WM IdempotentByConstruction with empty
+    // tool_contract) must surface R-1, not R-10 — earlier predicates fire
+    // first in the canonical order.
+    let m = build_mote(
+        25,
+        NdClass::WorldMutating,
+        EffectPattern::IdempotentByConstruction,
+        None,
+        false,
+        BTreeMap::new(),
+    );
+    let id = m.id;
+    let submission = submit(vec![m]);
+    let mut resolved: BTreeMap<MoteId, Vec<IdempotencyClass>> = BTreeMap::new();
+    resolved.insert(id, vec![IdempotencyClass::AtLeastOnce]);
+    let err = validate_submission_with_idempotency(&submission, &resolved).unwrap_err();
+    assert!(matches!(err, SubmissionRefusal::R1NoIdempotentTool { .. }));
 }
 
 // ============================================================================
