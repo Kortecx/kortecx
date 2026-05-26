@@ -46,6 +46,9 @@ fn arb_commit_protocol_error() -> impl Strategy<Value = CommitProtocolError> {
         (arb_mote_id(), "[a-z]{0,16}").prop_map(|(mote_id, reason)| {
             CommitProtocolError::JournalAppendCommittedFailed { mote_id, reason }
         }),
+        (arb_mote_id(), "[a-z]{0,16}").prop_map(|(mote_id, reason)| {
+            CommitProtocolError::JournalAppendEffectStagedFailed { mote_id, reason }
+        }),
         (arb_mote_id(), "[a-z]{0,16}")
             .prop_map(|(mote_id, reason)| { CommitProtocolError::Internal { mote_id, reason } }),
     ]
