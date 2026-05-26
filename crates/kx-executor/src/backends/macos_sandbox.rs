@@ -173,6 +173,7 @@ impl MacOsSandboxExecutor {
     }
 }
 
+#[cfg(target_os = "macos")]
 fn now_epoch_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
