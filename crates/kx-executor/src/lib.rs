@@ -271,6 +271,8 @@
 
 pub mod backends;
 pub mod body_resolver;
+#[cfg(target_os = "linux")]
+pub mod cgroup_v2;
 pub mod executor_trait;
 pub mod fact_zero;
 pub mod factory;

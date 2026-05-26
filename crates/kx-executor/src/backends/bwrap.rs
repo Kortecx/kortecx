@@ -49,6 +49,12 @@ pub struct BwrapExecutor {
     /// resolver at run time + materializes to a tempfile.
     #[allow(dead_code)] // read only on target_os = "linux" via `run_linux`
     body_resolver: Option<Arc<dyn BodyResolver>>,
+    /// Additional argv tokens appended after `body_path input_path` in
+    /// the bwrap argv. PR 9a-hardening-6 adds this to support the Linux
+    /// wall-clock integration variant (which spawns
+    /// `pure_body --sleep 60000`).
+    #[allow(dead_code)] // read only on target_os = "linux" via `run_linux`
+    extra_args: Vec<String>,
 }
 
 impl std::fmt::Debug for BwrapExecutor {
@@ -61,6 +67,7 @@ impl std::fmt::Debug for BwrapExecutor {
                 "body_resolver",
                 &self.body_resolver.as_ref().map(|_| "<dyn BodyResolver>"),
             )
+            .field("extra_args", &self.extra_args)
             .finish()
     }
 }
@@ -76,6 +83,7 @@ impl BwrapExecutor {
             input_path: None,
             bwrap_path: PathBuf::from("bwrap"),
             body_resolver: None,
+            extra_args: Vec::new(),
         }
     }
 
@@ -89,6 +97,7 @@ impl BwrapExecutor {
             input_path: None,
             bwrap_path: PathBuf::from("bwrap"),
             body_resolver: None,
+            extra_args: Vec::new(),
         }
     }
 
@@ -115,6 +124,17 @@ impl BwrapExecutor {
     #[must_use]
     pub fn with_bwrap_path(mut self, bwrap_path: PathBuf) -> Self {
         self.bwrap_path = bwrap_path;
+        self
+    }
+
+    /// Append extra argv tokens after `body_path input_path` in the bwrap
+    /// argv. Mirrors `MacOsSandboxExecutor::with_extra_args`. The
+    /// Linux wall-clock integration test uses `with_extra_args(vec!
+    /// ["--sleep", "60000"])` to construct a body that sleeps 60s; the
+    /// watcher fires at the configured `wall_clock_ms` budget.
+    #[must_use]
+    pub fn with_extra_args(mut self, extra: Vec<String>) -> Self {
+        self.extra_args = extra;
         self
     }
 }
@@ -197,8 +217,13 @@ impl BwrapExecutor {
         let bwrap_path_str = self.bwrap_path.to_string_lossy().into_owned();
         let body_path_str = body_path.to_string_lossy().into_owned();
         let input_path_str = input_path.to_string_lossy().into_owned();
-        let argv =
-            bwrap_argv_from_warrant(&bwrap_path_str, warrant, &body_path_str, &input_path_str);
+        let argv = bwrap_argv_from_warrant(
+            &bwrap_path_str,
+            warrant,
+            &body_path_str,
+            &input_path_str,
+            &self.extra_args,
+        );
 
         // 2. Spawn — fork + pre-exec(setrlimit) + execvp(bwrap).
         // bwrap itself applies the sandbox (no need for a sandbox_init-
@@ -283,6 +308,7 @@ pub(crate) fn bwrap_argv_from_warrant(
     warrant: &WarrantSpec,
     body_path: &str,
     input_path: &str,
+    extra_args: &[String],
 ) -> Vec<String> {
     let mut argv: Vec<String> = Vec::with_capacity(32);
     argv.push(bwrap_path.to_string());
@@ -332,9 +358,10 @@ pub(crate) fn bwrap_argv_from_warrant(
 
     // End-of-bwrap-flags marker.
     argv.push("--".into());
-    // Body binary + its argv.
+    // Body binary + its argv (argv[1] = input file; extra_args follow).
     argv.push(body_path.to_string());
     argv.push(input_path.to_string());
+    argv.extend(extra_args.iter().cloned());
 
     argv
 }
