@@ -1,0 +1,40 @@
+[package]
+name         = "kx-executor"
+version      = "0.0.1"
+edition      = { workspace = true }
+rust-version = { workspace = true }
+license      = { workspace = true }
+authors      = { workspace = true }
+repository   = { workspace = true }
+description  = "kortecx executor (P1.9a skeleton). MoteExecutor trait + four backend skeletons (BwrapExecutor / MacOsSandboxExecutor / OciDaemonExecutor / CloudMicroVmExecutor) + LocalResourceManager skeleton + REAL submission-time refusal predicates (R-1..R-9 + R-8b + ValidatorTypeError + AttemptedWiden) + REAL fact-zero protocol (D34). Real sandboxing primitives (bwrap argv / SBPL profile / posix_spawn / cgroup v2) ship in the PR 9a-hardening follow-up; the commit protocol (D38 §2b EffectStaged-then-Commit + R-10..R-13 + 9-cell recovery) ships in PR 9b."
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+kx-mote              = { workspace = true }
+kx-content           = { workspace = true }
+kx-journal           = { workspace = true }
+kx-projection        = { workspace = true }
+kx-warrant           = { workspace = true }
+kx-tool-registry     = { workspace = true }
+kx-context-assembler = { workspace = true }
+kx-memoizer          = { workspace = true }
+kx-inference         = { workspace = true }
+kx-capability        = { workspace = true }
+kx-model-validator   = { workspace = true }
+bincode              = { workspace = true }
+blake3               = { workspace = true }
+bytes                = { workspace = true }
+serde                = { workspace = true }
+smallvec             = { workspace = true }
+thiserror            = { workspace = true }
+tracing              = { workspace = true }
+
+[dev-dependencies]
+proptest           = { workspace = true }
+tempfile           = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[lints]
+workspace = true

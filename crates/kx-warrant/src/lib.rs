@@ -153,14 +153,21 @@ impl MoteClass {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum ExecutorClass {
     /// Bubblewrap over an extracted, content-addressed OCI rootfs. Daemonless;
-    /// ms-spawn; least-privilege. The OSS default.
+    /// ms-spawn; least-privilege. The default on Linux.
     Bwrap = 0,
     /// Container runtime (Podman/runc preferred over Docker). Warrant-declared
     /// opt-in for narrow cases.
     OciDaemon = 1,
-    /// Cloud-side microVM (firecracker / kata). Stub in OSS; impl in
-    /// `kx-cloud-executor-microvm` per D28.
+    /// Cloud-side microVM (firecracker / kata). Stub in OSS; concrete impl
+    /// lives behind the cloud feature flag.
     CloudMicroVm = 2,
+    /// macOS sandbox-exec / Seatbelt sibling of `Bwrap`. The default on macOS
+    /// (the platform-conditional `default_executor()` factory picks this on
+    /// `target_os = "macos"`). Compiles a `WarrantSpec` into an SBPL profile +
+    /// spawns the Mote body via `posix_spawn` under `sandbox_init`-equivalent
+    /// enforcement. Additive variant; existing warrant_refs are preserved
+    /// because the discriminant is appended (variant 3, not interleaved).
+    MacOsSandbox = 3,
 }
 
 /// Filesystem access mode for a mount in [`FsScope`].
@@ -549,12 +556,18 @@ pub struct ToolDenied {
 ///         fd_count: 256, disk_bytes: 1 << 30,
 ///     },
 ///     environment_ref: None,
+///     // The `executor_class` axis is set by the child's role (per-axis
+///     // narrowing inherits the AXES, not the VALUES); the macOS sibling
+///     // variant `MacOsSandbox` is a sibling default on macOS hosts.
 ///     executor_class: ExecutorClass::Bwrap,
 /// };
 ///
-/// // A child role that strictly tightens (max_calls 10 → 5).
+/// // A child role that strictly tightens (max_calls 10 → 5) AND selects
+/// // the macOS sandbox backend (per-axis: executor_class is child-set, not
+/// // intersected — workers MAY be tighter than master on this axis).
 /// let mut child_spec = parent.clone();
 /// child_spec.model_route.max_calls = 5;
+/// child_spec.executor_class = ExecutorClass::MacOsSandbox;
 /// let role = Role {
 ///     name: "tighter-child".into(),
 ///     version: 1,
@@ -562,9 +575,10 @@ pub struct ToolDenied {
 ///     description: String::new(),
 /// };
 ///
-/// // Intersection returns Ok with the tighter ceiling.
+/// // Intersection returns Ok with the tighter ceiling + the child-set backend.
 /// let child_warrant = intersect(&parent, &role).expect("tightening is allowed");
 /// assert_eq!(child_warrant.model_route.max_calls, 5);
+/// assert_eq!(child_warrant.executor_class, ExecutorClass::MacOsSandbox);
 /// ```
 #[tracing::instrument(level = "debug", skip_all, fields(role_name = %role.name, role_version = role.version))]
 pub fn intersect(parent: &WarrantSpec, role: &Role) -> Result<WarrantSpec, NarrowingError> {

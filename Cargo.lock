@@ -659,6 +659,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "kx-executor"
+version = "0.0.1"
+dependencies = [
+ "bincode",
+ "blake3",
+ "bytes",
+ "kx-capability",
+ "kx-content",
+ "kx-context-assembler",
+ "kx-inference",
+ "kx-journal",
+ "kx-memoizer",
+ "kx-model-validator",
+ "kx-mote",
+ "kx-projection",
+ "kx-tool-registry",
+ "kx-warrant",
+ "proptest",
+ "serde",
+ "smallvec",
+ "tempfile",
+ "thiserror",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "kx-inference"
 version = "0.0.1"
 dependencies = [
