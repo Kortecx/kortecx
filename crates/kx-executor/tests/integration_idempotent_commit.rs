@@ -319,7 +319,10 @@ fn stage_then_commit_returns_internal_pr_9b_4_placeholder() {
 // ValidateThenCommit returns Internal { reason: "PR 9b-5 ..." } stub.
 // ============================================================================
 
+// Note: the ValidateThenCommit path now ships in PR 9b-5; this stub-shape
+// test is superseded by `tests/integration_validate_then_commit.rs`.
 #[test]
+#[ignore = "superseded by integration_validate_then_commit::validate_then_commit_path_commits_correctly (PR 9b-5 ships the path)"]
 fn validate_then_commit_returns_internal_pr_9b_5_placeholder() {
     let store = Arc::new(InMemoryContentStore::new());
     let journal = Arc::new(InMemoryJournal::new());

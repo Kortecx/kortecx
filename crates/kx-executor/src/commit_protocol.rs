@@ -10,21 +10,33 @@
 //! `broker.dispatch → R-11 verify → journal.append(Committed)` (per D39
 //! §a/§c).
 //!
-//! **PR 9b-4** (this PR) extends `StandardCommitProtocol` with the
+//! **PR 9b-4** extended `StandardCommitProtocol` with the
 //! `StageThenCommit` path (per D38 §2b):
 //! `journal.append(EffectStaged) → broker.dispatch → R-11 verify →
-//! journal.append(Committed)`. The `EffectStaged` entry is the recovery
-//! hint that closes the WORLD-MUTATING double-effect window; it MUST be
-//! appended BEFORE `broker.dispatch` so the recovery fold sees the
-//! dispatch intent durably recorded. Adds the
-//! `JournalAppendEffectStagedFailed` variant to `CommitProtocolError`.
-//! `ValidateThenCommit` remains an `Internal { reason }` stub until
-//! PR 9b-5.
+//! journal.append(Committed)`. Added the
+//! `JournalAppendEffectStagedFailed` variant.
 //!
-//! **PR 9b-5+ scope** (NOT in this PR): the `ValidateThenCommit` body
-//! (broker.dispatch → R-11 → Committed + critic-Mote child scheduling per
-//! D20), lifecycle wiring, 9-cell recovery cross-product, Test A/B,
-//! and WORLD-MUTATING Mote E2E.
+//! **PR 9b-5** (this PR) extends `StandardCommitProtocol` with the
+//! `ValidateThenCommit` path (per D39 §a/§c + D20):
+//! `broker.dispatch → R-11 verify → journal.append(Committed)`. **The
+//! commit-step semantics are identical to IdempotentByConstruction**; the
+//! distinction is at scheduling: a ValidateThenCommit producer Mote
+//! requires a sibling **critic Mote** (R-2 enforces this at submission
+//! time) whose own commit (or repudiation) gates downstream consumers
+//! from acting on the producer's `Committed` entry per D20.
+//!
+//! **Critic-Mote child scheduling is the lifecycle layer's
+//! responsibility** — `commit_protocol` returns `Ok(seq)` when the
+//! producer's `Committed` entry lands, and the lifecycle reads the
+//! producer's Mote shape (`critic_for` references inverted via the
+//! submission map) to schedule the critic. PR 9b-6+ wires this; PR 9a's
+//! refusal predicates (R-2 / R-4 / R-5 / R-6 / R-7 / R-9) already
+//! enforce the critic-shape invariants at submission time.
+//!
+//! **PR 9b-6+ scope** (NOT in this PR): lifecycle wiring (including
+//! critic-Mote scheduling), 9-cell recovery cross-product at the
+//! executor layer, Test A re-use + Test B (executor commit-protocol
+//! trust), WORLD-MUTATING Mote crash-recovery E2E.
 //!
 //! # Why a separate error type from `SubmissionRefusal` and `MoteExecutorError`
 //!
@@ -397,10 +409,7 @@ where
         match pattern {
             EffectPattern::IdempotentByConstruction => self.commit_idempotent(input),
             EffectPattern::StageThenCommit => self.commit_stage_then_commit(input),
-            EffectPattern::ValidateThenCommit => Err(CommitProtocolError::Internal {
-                mote_id: input.mote.id,
-                reason: "ValidateThenCommit path lands in PR 9b-5 (broker.dispatch → put → append(Committed) + critic-Mote child scheduling per D20)".into(),
-            }),
+            EffectPattern::ValidateThenCommit => self.commit_validate_then_commit(input),
         }
     }
 }
@@ -540,6 +549,86 @@ where
         // both the EffectStaged and the Committed sharing the same
         // `idempotency_key`; per the v2 dedup index `{1, 2, 4}` they are
         // distinct entry kinds, so both land.
+        let entry = JournalEntry::Committed {
+            mote_id,
+            idempotency_key: input.idempotency_key,
+            seq: 0, // journal-assigned
+            nondeterminism: input.mote.def.nd_class,
+            result_ref,
+            parents: input.parents,
+            warrant_ref: input.warrant_ref,
+            mote_def_hash: input.mote_def_hash,
+        };
+        let written = self.journal.append(entry).map_err(|e| {
+            CommitProtocolError::JournalAppendCommittedFailed {
+                mote_id,
+                reason: format!("{e:?}"),
+            }
+        })?;
+
+        Ok(written.seq())
+    }
+
+    /// `ValidateThenCommit` path (D39 §a/§c + D20):
+    /// `broker.dispatch → R-11 verify → journal.append(Committed)`.
+    ///
+    /// **Commit-step semantics are identical to
+    /// `IdempotentByConstruction`** — the producer Mote's `Committed`
+    /// entry lands the same way. The distinction is at scheduling: the
+    /// producer Mote has a sibling **critic Mote** (R-2 enforces this
+    /// at submission time) whose own commit (or repudiation) gates
+    /// downstream consumers from acting on the producer's `Committed`
+    /// entry per D20.
+    ///
+    /// **Critic-Mote child scheduling is the lifecycle layer's
+    /// responsibility**, not the commit protocol's. PR 9b-6+ wires the
+    /// runtime scheduling that reads the producer Mote's
+    /// submission-map sibling references and dispatches the critic
+    /// after this method returns `Ok(seq)`. PR 9a's submission-time
+    /// refusal predicates (R-2 + R-4 + R-5 + R-6 + R-7 + R-9) already
+    /// enforce the critic-shape invariants (sibling critic exists, the
+    /// critic targets a WORLD-MUTATING producer, no multi-critic, the
+    /// critic chain terminates at a Pure critic).
+    ///
+    /// **No `EffectStaged` entry** — unlike `StageThenCommit`, the
+    /// `ValidateThenCommit` pattern does not pre-record the dispatch
+    /// intent in the journal. The dispatch is structurally observable
+    /// via the sibling-critic relationship: if the producer's
+    /// `Committed` entry exists but the critic has not yet committed,
+    /// downstream consumers MUST treat the producer's result as
+    /// `MoteState::ValidationPending` (lifecycle responsibility).
+    fn commit_validate_then_commit(
+        &self,
+        input: CommitInput<'_>,
+    ) -> Result<u64, CommitProtocolError> {
+        let mote_id = input.mote.id;
+
+        // Step 1: broker dispatch. The broker enforces the per-call
+        // contract: capability ∈ tool_contract, supported pattern,
+        // capability ∈ warrant.tool_grants, request scopes ⊆ warrant
+        // scopes. The broker stages the response payload to the content
+        // store and returns the staged ref.
+        let handle = self
+            .broker
+            .dispatch(
+                input.mote,
+                input.warrant,
+                &input.capability,
+                input.effect_request,
+            )
+            .map_err(|e| CommitProtocolError::BrokerDispatchFailed {
+                mote_id,
+                reason: format!("{e:?}"),
+            })?;
+        let result_ref = handle.staged_ref;
+
+        // Step 2: R-11 verify. Same enforcement as the other paths
+        // (shared `enforce_r11` helper).
+        enforce_r11(&*self.store, mote_id, &result_ref)?;
+
+        // Step 3: append Committed. The journal's dedup-by-key index
+        // enforces at-most-one Committed per `idempotency_key`. Critic
+        // scheduling is deferred to the lifecycle layer (PR 9b-6+).
         let entry = JournalEntry::Committed {
             mote_id,
             idempotency_key: input.idempotency_key,
