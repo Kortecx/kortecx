@@ -276,11 +276,11 @@ pub mod factory;
 pub mod lifecycle;
 pub mod refusal;
 pub mod resource_manager;
-// The spawn module currently has only a macOS consumer (`MacOsSandboxExecutor`);
-// the Linux `BwrapExecutor` real-spawn path lands in PR 9a-hardening-3. Gating
-// to macOS today keeps clippy's `unused_item` check from firing on Linux. The
-// gate widens to `cfg(unix)` in PR 9a-hardening-3.
-#[cfg(target_os = "macos")]
+// The spawn module ships shared Unix primitives (fork + pipe + dup2 +
+// execvp + waitpid + setrlimit pre-exec hook). Linux's `BwrapExecutor`
+// (PR 9a-hardening-3) and macOS's `MacOsSandboxExecutor` (PR 9a-hardening-2)
+// both consume it.
+#[cfg(unix)]
 pub(crate) mod spawn;
 
 // Re-exports — the executor's stable public API.

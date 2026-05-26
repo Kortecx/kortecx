@@ -286,3 +286,85 @@ mod macos {
 
 #[cfg(target_os = "macos")]
 pub(crate) use macos::load_profile;
+
+// ============================================================================
+// Cross-platform: setrlimit pre-exec helper (PR 9a-hardening-3)
+// ============================================================================
+
+/// Apply a `ResourceCeiling` as `setrlimit` calls in the calling process.
+/// **MUST be called from the post-fork child between fork and execvp** —
+/// `setrlimit` is async-signal-safe per POSIX and the child inherits the
+/// limits across the subsequent execvp.
+///
+/// Maps:
+/// - `mem_bytes` → `RLIMIT_AS` (virtual-memory limit; closest portable
+///   approximation to "RSS cap" without diving into platform-specific
+///   `RLIMIT_RSS`).
+/// - `fd_count` → `RLIMIT_NOFILE` (max open file descriptors).
+/// - `disk_bytes` → `RLIMIT_FSIZE` (max file size the process can create).
+/// - `cpu_milli` → `RLIMIT_CPU` (CPU-seconds, NOT wall-clock; converted by
+///   rounding up to whole seconds — sub-second precision is unavailable
+///   on POSIX `setrlimit`).
+/// - `wall_clock_ms` → NOT enforced here. Wall-clock enforcement requires
+///   either a parent-side `setitimer` + `SIGALRM` or a timer thread that
+///   `kill`s the child after the budget. Ships in PR 9a-hardening-4.
+///
+/// Zero values are treated as "no ceiling on this axis" (do not call
+/// `setrlimit` for that resource). Recovery / replay never sets zero
+/// implicitly — the workflow author either declares a non-zero limit or
+/// explicitly accepts the no-ceiling shape.
+///
+/// # Errors
+///
+/// Returns marker exit codes the caller passes to `_exit` in the child:
+/// 80 = mem_bytes setrlimit failed, 81 = fd_count, 82 = disk_bytes,
+/// 83 = cpu_milli.
+#[cfg(unix)]
+pub(crate) fn apply_rlimits(ceiling: &kx_warrant::ResourceCeiling) -> Result<(), i32> {
+    if ceiling.mem_bytes > 0 {
+        let rlim = libc::rlimit {
+            rlim_cur: ceiling.mem_bytes,
+            rlim_max: ceiling.mem_bytes,
+        };
+        // SAFETY: setrlimit is async-signal-safe per POSIX; rlim is a
+        // valid stack-allocated struct.
+        if unsafe { libc::setrlimit(libc::RLIMIT_AS, &raw const rlim) } != 0 {
+            return Err(80);
+        }
+    }
+    if ceiling.fd_count > 0 {
+        let rlim = libc::rlimit {
+            rlim_cur: u64::from(ceiling.fd_count),
+            rlim_max: u64::from(ceiling.fd_count),
+        };
+        // SAFETY: as above.
+        if unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &raw const rlim) } != 0 {
+            return Err(81);
+        }
+    }
+    if ceiling.disk_bytes > 0 {
+        let rlim = libc::rlimit {
+            rlim_cur: ceiling.disk_bytes,
+            rlim_max: ceiling.disk_bytes,
+        };
+        // SAFETY: as above.
+        if unsafe { libc::setrlimit(libc::RLIMIT_FSIZE, &raw const rlim) } != 0 {
+            return Err(82);
+        }
+    }
+    if ceiling.cpu_milli > 0 {
+        // RLIMIT_CPU is CPU-seconds. Round up so a 500-ms budget translates
+        // to "1 second of CPU time" rather than "0 seconds = kill on first
+        // tick."
+        let cpu_seconds = u64::from(ceiling.cpu_milli).div_ceil(1000);
+        let rlim = libc::rlimit {
+            rlim_cur: cpu_seconds,
+            rlim_max: cpu_seconds,
+        };
+        // SAFETY: as above.
+        if unsafe { libc::setrlimit(libc::RLIMIT_CPU, &raw const rlim) } != 0 {
+            return Err(83);
+        }
+    }
+    Ok(())
+}
