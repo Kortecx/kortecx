@@ -13,7 +13,6 @@ use std::path::PathBuf;
 #[cfg(target_os = "macos")]
 use std::time::{SystemTime, UNIX_EPOCH};
 
-#[cfg(target_os = "macos")]
 use kx_content::ContentRef;
 use kx_mote::Mote;
 use kx_warrant::{ExecutorClass, WarrantSpec};
@@ -135,12 +134,24 @@ impl MacOsSandboxExecutor {
         let input_path_str = input_path.to_string_lossy().into_owned();
         let argv = vec![body_path_str.clone(), input_path_str];
 
-        // 3. Spawn — fork + pre-exec(sandbox_init) + execvp.
+        // 3. Spawn — fork + pre-exec(sandbox_init + setrlimit) + execvp.
+        // The pre-exec hook runs in the child between fork and execvp:
+        // (a) load the SBPL profile via sandbox_init (D46);
+        // (b) apply setrlimit ceilings (RLIMIT_AS / RLIMIT_NOFILE /
+        //     RLIMIT_FSIZE / RLIMIT_CPU per `ResourceCeiling`).
+        // Both calls are async-signal-safe per POSIX; the order matters
+        // only insofar as load_profile must succeed before setrlimit
+        // (an over-restrictive profile that denies setrlimit-related
+        // syscalls would fail the latter — system.sb covers this).
         let started_at_epoch_ms = now_epoch_ms();
+        let ceiling = warrant.resource_ceiling;
         let outcome = crate::spawn::spawn_body(
             &body_path_str,
             &argv,
-            Box::new(move || crate::spawn::load_profile(&profile_bytes)),
+            Box::new(move || {
+                crate::spawn::load_profile(&profile_bytes)?;
+                crate::spawn::apply_rlimits(&ceiling)
+            }),
         )?;
         let finished_at_epoch_ms = now_epoch_ms();
 
@@ -177,9 +188,11 @@ fn now_epoch_ms() -> u64 {
 
 /// Parse 64 lowercase-hex bytes (the body's stdout shape) into a
 /// `ContentRef`. Trailing whitespace is tolerated (some bodies emit a
-/// trailing newline despite the contract).
-#[cfg(target_os = "macos")]
-fn parse_hex_ref(bytes: &[u8]) -> Result<ContentRef, String> {
+/// trailing newline despite the contract). Shared across the Linux
+/// `BwrapExecutor` (PR 9a-hardening-3) and the macOS `MacOsSandboxExecutor`
+/// (PR 9a-hardening-2) — both backends spawn a body that follows the
+/// 64-hex-char-stdout contract.
+pub(crate) fn parse_hex_ref(bytes: &[u8]) -> Result<ContentRef, String> {
     // Skip trailing whitespace.
     let mut end = bytes.len();
     while end > 0 && bytes[end - 1].is_ascii_whitespace() {
@@ -202,7 +215,6 @@ fn parse_hex_ref(bytes: &[u8]) -> Result<ContentRef, String> {
     Ok(ContentRef::from_bytes(out))
 }
 
-#[cfg(target_os = "macos")]
 fn hex_nibble(b: u8) -> Result<u8, String> {
     match b {
         b'0'..=b'9' => Ok(b - b'0'),
