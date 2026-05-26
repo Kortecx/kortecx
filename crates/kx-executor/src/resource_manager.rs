@@ -17,8 +17,8 @@ use std::sync::{Arc, Mutex};
 use kx_warrant::ResourceCeiling;
 use thiserror::Error;
 
-/// Self-management seam. P1 OSS impl is `LocalResourceManager`; cloud impls
-/// live in `kx-cloud-resource-multitenant` per D28 (out of OSS workspace).
+/// Self-management seam. P1 OSS impl is `LocalResourceManager`; future
+/// cloud-side impls live behind the same trait per D28 (out of OSS workspace).
 pub trait ResourceManager: Send + Sync {
     /// Reserve a slot meeting `ceiling`. Returns an opaque `Slot` that the
     /// caller MUST eventually pass to `release` (bracket discipline; verified
