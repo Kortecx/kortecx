@@ -33,6 +33,7 @@ use kx_mote::Mote;
 ///     effect_pattern: EffectPattern::IdempotentByConstruction,
 ///     critic_for: None,
 ///     is_topology_shaper: false,
+///     inference_params: kx_mote::InferenceParams::default(),
 ///     schema_version: 3,
 /// };
 /// let mote = Mote::new(

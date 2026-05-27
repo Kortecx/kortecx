@@ -18,6 +18,7 @@ fn sample_def() -> MoteDef {
         effect_pattern: EffectPattern::IdempotentByConstruction,
         critic_for: None,
         is_topology_shaper: false,
+        inference_params: InferenceParams::default(),
         schema_version: MOTE_DEF_SCHEMA_VERSION,
     }
 }
@@ -69,9 +70,9 @@ fn mote_def_hash_is_deterministic_across_calls() {
 }
 
 #[test]
-fn schema_version_is_v3() {
-    assert_eq!(MOTE_DEF_SCHEMA_VERSION, 3);
-    assert_eq!(sample_def().schema_version, 3);
+fn schema_version_is_v4() {
+    assert_eq!(MOTE_DEF_SCHEMA_VERSION, 4);
+    assert_eq!(sample_def().schema_version, 4);
 }
 
 #[test]

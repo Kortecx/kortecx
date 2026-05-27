@@ -102,6 +102,7 @@ fn four_thread_pure_mote_thread_independence() {
                 effect_pattern: EffectPattern::IdempotentByConstruction,
                 critic_for: None,
                 is_topology_shaper: false,
+                inference_params: kx_mote::InferenceParams::default(),
                 schema_version: MOTE_DEF_SCHEMA_VERSION,
             };
             let mote = Mote::new(

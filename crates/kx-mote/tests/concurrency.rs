@@ -94,6 +94,7 @@ fn identity_is_thread_independent_under_real_move() {
             effect_pattern: EffectPattern::StageThenCommit,
             critic_for: None,
             is_topology_shaper: false,
+            inference_params: kx_mote::InferenceParams::default(),
             schema_version: MOTE_DEF_SCHEMA_VERSION,
         }
     }
@@ -134,6 +135,7 @@ fn canonical_config_bytes_are_thread_independent() {
             effect_pattern: EffectPattern::IdempotentByConstruction,
             critic_for: None,
             is_topology_shaper: false,
+            inference_params: kx_mote::InferenceParams::default(),
             schema_version: MOTE_DEF_SCHEMA_VERSION,
         }
     }

@@ -53,6 +53,7 @@ pub trait MoteDefRegistry: Send + Sync {
 ///     effect_pattern: EffectPattern::IdempotentByConstruction,
 ///     critic_for: None,
 ///     is_topology_shaper: false,
+///     inference_params: kx_mote::InferenceParams::default(),
 ///     schema_version: kx_mote::MOTE_DEF_SCHEMA_VERSION,
 /// };
 /// let hash = def.hash();
@@ -131,6 +132,7 @@ mod tests {
             effect_pattern: EffectPattern::IdempotentByConstruction,
             critic_for: None,
             is_topology_shaper: false,
+            inference_params: kx_mote::InferenceParams::default(),
             schema_version: MOTE_DEF_SCHEMA_VERSION,
         }
     }

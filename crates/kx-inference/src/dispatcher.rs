@@ -27,7 +27,7 @@ use kx_projection::Snapshot;
 use kx_warrant::WarrantSpec;
 
 use crate::backend::InferenceBackend;
-use crate::types::{InferenceError, InferenceInput, InferenceOutput, InferenceParams};
+use crate::types::{inference_params_from_mote, InferenceError, InferenceInput, InferenceOutput};
 
 /// What `Dispatcher::dispatch_mote` returns when it succeeds.
 ///
@@ -173,7 +173,13 @@ impl Dispatcher {
 
         // ---- 3. Fresh dispatch --------------------------------------------
         let input = InferenceInput::Text(serialize_context(context));
-        let params = InferenceParams::from_warrant(warrant);
+        // D50: decoding params come from mote.def.inference_params (identity-bearing);
+        // max_output_tokens is bounded by the warrant ceiling. `inference_params_from_mote`
+        // is the SOLE permitted constructor of dispatch-bound InferenceParams — see the
+        // function's doc comment. No runtime tripwire is shipped; the structural
+        // invariant (sole constructor, sources every field from the identity substrate)
+        // is what guarantees memoizer correctness post-D50.
+        let params = inference_params_from_mote(mote, warrant)?;
 
         let backend = self
             .backends

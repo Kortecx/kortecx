@@ -52,6 +52,7 @@ fn make_mote_with_nd(mote_id: MoteId, parents: SmallVec<[ParentRef; 4]>, nd: NdC
             effect_pattern: EffectPattern::IdempotentByConstruction,
             critic_for: None,
             is_topology_shaper: false,
+            inference_params: kx_mote::InferenceParams::default(),
             schema_version: kx_mote::MOTE_DEF_SCHEMA_VERSION,
         },
         input_data_id: InputDataId([0; 32]),

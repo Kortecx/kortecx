@@ -63,6 +63,7 @@ fn wm_mote(seed: u8, pattern: EffectPattern) -> Mote {
         effect_pattern: pattern,
         critic_for: None,
         is_topology_shaper: false,
+        inference_params: kx_mote::InferenceParams::default(),
         schema_version: MOTE_DEF_SCHEMA_VERSION,
     };
     Mote::new(
@@ -336,6 +337,7 @@ fn redispatch_validate_then_commit_schedules_critic_proposed() {
         effect_pattern: EffectPattern::IdempotentByConstruction,
         critic_for: Some(producer.id),
         is_topology_shaper: false,
+        inference_params: kx_mote::InferenceParams::default(),
         schema_version: MOTE_DEF_SCHEMA_VERSION,
     };
     let critic = Mote::new(

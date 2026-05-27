@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::effect::EffectPattern;
 use crate::id::{InputDataId, LogicRef, MoteDefHash, MoteId, PromptTemplateHash};
+use crate::inference_params::InferenceParams;
 use crate::ndclass::NdClass;
 use crate::strings::{ConfigKey, ConfigVal, GraphPosition, ModelId, ToolName, ToolVersion};
 
@@ -17,12 +18,18 @@ use crate::strings::{ConfigKey, ConfigVal, GraphPosition, ModelId, ToolName, Too
 
 /// The current `MoteDef::schema_version`.
 ///
-/// Bumped to **3** after the P0.6 addition of `is_topology_shaper`
-/// (and the prior P0.8 addition of `effect_pattern` + `critic_for` to v2).
-/// The schema version is the explicit forward-evolution mechanism: old-shape
-/// MoteDefs continue to hash and dedupe normally under their own
-/// schema_version; new-shape MoteDefs at v3 incorporate all fields.
-pub const MOTE_DEF_SCHEMA_VERSION: u16 = 3;
+/// Bumped to **4** at D50 to add the `inference_params` field — decoding
+/// parameters (`temperature_bps`, `top_p_bps`, `top_k`, `seed`,
+/// `stop_tokens`, `grammar`, `max_output_tokens`) now participate in
+/// `mote_def_hash` so two MoteDefs differing only in decoding params
+/// produce different `MoteId`s (closes the pre-D50 memoizer-collision
+/// latent bug). Prior bumps: **3** at the P0.6 addition of
+/// `is_topology_shaper`; **2** at the P0.8 addition of `effect_pattern`
+/// and `critic_for`. The schema version is the explicit forward-evolution
+/// mechanism: old-shape MoteDefs continue to hash and dedupe normally
+/// under their own schema_version; new-shape MoteDefs at v4 incorporate
+/// all fields.
+pub const MOTE_DEF_SCHEMA_VERSION: u16 = 4;
 
 /// The closed set of behavior-determining inputs that defines a Mote's *kind
 /// of work* (`idempotency.md` §"mote_def_hash", D4).
@@ -82,6 +89,15 @@ pub struct MoteDef {
     /// that the projection materializes children from on commit (D23).
     /// Mutually exclusive with `critic_for == Some(_)` (executor refusal R-8).
     pub is_topology_shaper: bool,
+
+    /// Decoding parameters — added at D50 so that two MoteDefs differing
+    /// only in `temperature_bps`, `seed`, etc. produce different
+    /// `mote_def_hash` and different `MoteId` (closes the pre-D50
+    /// memoizer-collision latent bug). The dispatcher reads these via
+    /// `kx_inference::inference_params_from_mote` — the SOLE permitted
+    /// constructor of dispatch-bound `InferenceParams`. Defaults to
+    /// greedy (see [`InferenceParams::default`]).
+    pub inference_params: InferenceParams,
 
     /// Schema version of the `MoteDef` itself. Bumped on any change to the
     /// struct shape; see [`MOTE_DEF_SCHEMA_VERSION`].

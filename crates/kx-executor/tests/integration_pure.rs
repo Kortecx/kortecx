@@ -61,6 +61,7 @@ fn pure_mote(seed_id_byte: u8) -> Mote {
         effect_pattern: EffectPattern::IdempotentByConstruction,
         critic_for: None,
         is_topology_shaper: false,
+        inference_params: kx_mote::InferenceParams::default(),
         schema_version: MOTE_DEF_SCHEMA_VERSION,
     };
     Mote::new(

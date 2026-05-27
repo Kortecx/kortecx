@@ -62,6 +62,7 @@ fn mote(seed: u8, pattern: EffectPattern, nd: NdClass, critic_for: Option<MoteId
         effect_pattern: pattern,
         critic_for,
         is_topology_shaper: false,
+        inference_params: kx_mote::InferenceParams::default(),
         schema_version: MOTE_DEF_SCHEMA_VERSION,
     };
     Mote::new(

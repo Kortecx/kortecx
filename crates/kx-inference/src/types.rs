@@ -7,11 +7,17 @@
 // Both return `InferenceError::Unsupported` when used against the OSS
 // `LlamaInferenceBackend` — the seam is exercised by tests so the
 // `Err(Unsupported)` path is documented, not merely declarative.
+//
+// `InferenceParams` and `Grammar` live in `kx-mote` after D50 because
+// `MoteDef.inference_params` makes them identity-bearing (D4 — identity-
+// bearing types live with the substrate). Re-exported here for API stability.
 
 use std::time::Duration;
 
 use kx_content::ContentRef;
-use kx_mote::ModelId;
+pub use kx_mote::{Grammar, InferenceParams};
+use kx_mote::{ModelId, Mote};
+use kx_warrant::WarrantSpec;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 
@@ -73,132 +79,64 @@ impl InferenceInput {
     }
 }
 
-/// Reserved opaque grammar specification for constrained generation.
+/// Construct an [`InferenceParams`] from a [`Mote`] and its [`WarrantSpec`].
 ///
-/// Future backends interpret the payload (GBNF for llama.cpp, JSON
-/// schema for cloud APIs). OSS v0.1 backends MUST return
-/// `Err(Unsupported)` if `InferenceParams.grammar` is `Some(_)`.
+/// D50 makes `mote.def.inference_params` the identity-bearing source for
+/// decoding parameters (per D4 — identity-bearing types live with the
+/// substrate; closes the pre-D50 memoizer-collision latent bug).
 ///
-/// # Examples
+/// **This is the SOLE permitted constructor of dispatch-bound
+/// `InferenceParams` in the OSS runtime.** Any future code path that
+/// produces an `InferenceParams` value the dispatcher hands to a backend
+/// MUST route through this function. The structural invariant — only
+/// `from_mote` materialises dispatch-bound params, sourcing every
+/// decoding field from `mote.def.inference_params` (which is identity-
+/// bearing via `MoteDef::hash`) — is what guarantees memoizer
+/// correctness post-D50. No runtime tripwire is shipped; reviewers of
+/// any PR that introduces a second constructor MUST explain why the
+/// substitute path preserves the same source-of-truth.
 ///
-/// ```
-/// use kx_inference::Grammar;
+/// Returns the decoding fields verbatim from `mote.def.inference_params`
+/// and refuses with [`InferenceError::ScopeViolation`] if the mote
+/// declares a `max_output_tokens` above the warrant's ceiling.
 ///
-/// let g = Grammar::new(r#"{"type":"object"}"#);
-/// assert_eq!(g.raw, r#"{"type":"object"}"#);
-/// ```
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Grammar {
-    /// Opaque serialized grammar payload. Encoding chosen by the
-    /// backend that will consume it (GBNF / JSON schema / etc).
-    pub raw: String,
+/// # Errors
+///
+/// - [`InferenceError::ScopeViolation`] when
+///   `mote.def.inference_params.max_output_tokens > warrant.model_route.max_output_tokens`.
+pub fn inference_params_from_mote(
+    mote: &Mote,
+    warrant: &WarrantSpec,
+) -> Result<InferenceParams, InferenceError> {
+    let declared = &mote.def.inference_params;
+    if declared.max_output_tokens > warrant.model_route.max_output_tokens {
+        return Err(InferenceError::ScopeViolation {
+            field: "max_output_tokens",
+            requested: u64::from(declared.max_output_tokens),
+            ceiling: u64::from(warrant.model_route.max_output_tokens),
+        });
+    }
+    Ok(declared.clone())
 }
 
-impl Grammar {
-    /// Construct a grammar from any string-like value. The payload is
-    /// opaque to this crate; backends interpret.
-    pub fn new(raw: impl Into<String>) -> Self {
-        Self { raw: raw.into() }
-    }
-}
-
-/// Per-dispatch generation parameters.
+/// Check that `params.max_output_tokens` does not exceed the warrant's
+/// `model_route.max_output_tokens` ceiling. Returns
+/// [`InferenceError::ScopeViolation`] on widen.
 ///
-/// Defaults are **greedy + deterministic** because the runtime's
-/// content-addressed identity relies on inference outputs being
-/// reproducible across attempts. If a workflow author wants stochastic
-/// sampling, they widen these explicitly — at the cost of attempt
-/// reproducibility on retry.
-///
-/// # Examples
-///
-/// ```
-/// use kx_inference::InferenceParams;
-///
-/// // Defaults are greedy (temperature_bps == 0); grammar is reserved
-/// // for future PRs and defaults to None.
-/// let p = InferenceParams::default();
-/// assert_eq!(p.temperature_bps, 0);
-/// assert!(p.grammar.is_none());
-/// ```
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct InferenceParams {
-    /// Maximum output tokens. Derived from
-    /// `warrant.model_route.max_output_tokens` when constructed via
-    /// `from_warrant`.
-    pub max_output_tokens: u32,
-
-    /// Sampling temperature in basis points (×10 000). Defaults to 0 —
-    /// greedy decoding, deterministic. Integer-encoded so this struct
-    /// is `Eq`-comparable and serializes to canonical bytes for
-    /// idempotency-key derivation.
-    pub temperature_bps: u32,
-
-    /// Top-p (nucleus) in basis points. Defaults to 10 000 (= 1.0); only
-    /// active when `temperature_bps > 0`.
-    pub top_p_bps: u32,
-
-    /// Top-k. 0 disables top-k. Active only when `temperature_bps > 0`.
-    pub top_k: u32,
-
-    /// Sampler seed. Locked at construction; same seed + same params +
-    /// same model = bit-identical output even when temperature > 0.
-    pub seed: u32,
-
-    /// Stop tokens / stop sequences. Empty = no stop.
-    pub stop_tokens: SmallVec<[String; 4]>,
-
-    /// **Reserved**: opaque grammar specification for constrained
-    /// generation (GBNF / JSON-schema). OSS v0.1 backends MUST return
-    /// `Err(Unsupported)` on `Some(_)`. The field exists ahead of
-    /// implementation so the trait stays additive when grammar support
-    /// lands.
-    pub grammar: Option<Grammar>,
-}
-
-impl Default for InferenceParams {
-    fn default() -> Self {
-        Self {
-            max_output_tokens: 512,
-            temperature_bps: 0,
-            top_p_bps: 10_000,
-            top_k: 0,
-            seed: 0,
-            stop_tokens: SmallVec::new(),
-            grammar: None,
-        }
+/// Backends call this from their `dispatch` impl to enforce D30's
+/// monotonic-narrowing rule on a quantitative axis.
+pub(crate) fn check_within(
+    params: &InferenceParams,
+    warrant: &WarrantSpec,
+) -> Result<(), InferenceError> {
+    if params.max_output_tokens > warrant.model_route.max_output_tokens {
+        return Err(InferenceError::ScopeViolation {
+            field: "max_output_tokens",
+            requested: u64::from(params.max_output_tokens),
+            ceiling: u64::from(warrant.model_route.max_output_tokens),
+        });
     }
-}
-
-impl InferenceParams {
-    /// Construct params with limits derived from the warrant.
-    ///
-    /// The warrant's `max_output_tokens` is the ceiling; downstream
-    /// authors can tighten further but not widen (the dispatcher
-    /// enforces this).
-    #[must_use]
-    pub fn from_warrant(warrant: &kx_warrant::WarrantSpec) -> Self {
-        Self {
-            max_output_tokens: warrant.model_route.max_output_tokens,
-            ..Self::default()
-        }
-    }
-
-    /// Check whether requested params stay within the warrant's
-    /// quantitative limits. Returns `Err(ScopeViolation)` on widen.
-    pub(crate) fn check_within(
-        &self,
-        warrant: &kx_warrant::WarrantSpec,
-    ) -> Result<(), InferenceError> {
-        if self.max_output_tokens > warrant.model_route.max_output_tokens {
-            return Err(InferenceError::ScopeViolation {
-                field: "max_output_tokens",
-                requested: u64::from(self.max_output_tokens),
-                ceiling: u64::from(warrant.model_route.max_output_tokens),
-            });
-        }
-        Ok(())
-    }
+    Ok(())
 }
 
 /// Result of a single inference dispatch.
