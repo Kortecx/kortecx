@@ -62,6 +62,7 @@ pub trait ChildResolver: Send + Sync {
 ///     effect_pattern: EffectPattern::IdempotentByConstruction,
 ///     critic_for: None,
 ///     is_topology_shaper: true,
+///     inference_params: kx_mote::InferenceParams::default(),
 ///     schema_version: kx_mote::MOTE_DEF_SCHEMA_VERSION,
 /// };
 /// let descriptor = ChildDescriptor {
@@ -87,11 +88,12 @@ pub struct InheritFromShaperResolver;
 impl ChildResolver for InheritFromShaperResolver {
     fn resolve(&self, shaper: &MoteDef, d: &ChildDescriptor) -> MoteDef {
         MoteDef {
-            // Inherited from shaper (the heavy axes).
+            // Inherited from shaper (the heavy axes — D48 + D50).
             model_id: shaper.model_id.clone(),
             prompt_template_hash: shaper.prompt_template_hash,
             tool_contract: shaper.tool_contract.clone(),
             config_subset: shaper.config_subset.clone(),
+            inference_params: shaper.inference_params.clone(),
             // Hardcoded for materialized children — see D48 anti-patterns.
             critic_for: None,
             is_topology_shaper: false,
@@ -132,6 +134,7 @@ mod tests {
             effect_pattern: EffectPattern::IdempotentByConstruction,
             critic_for: None,
             is_topology_shaper: true,
+            inference_params: kx_mote::InferenceParams::default(),
             schema_version: MOTE_DEF_SCHEMA_VERSION,
         }
     }

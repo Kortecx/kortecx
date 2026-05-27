@@ -28,7 +28,9 @@ use kx_mote::ModelId;
 use kx_warrant::WarrantSpec;
 
 use crate::backend::InferenceBackend;
-use crate::types::{InferenceError, InferenceInput, InferenceOutput, InferenceParams};
+use crate::types::{
+    check_within, InferenceError, InferenceInput, InferenceOutput, InferenceParams,
+};
 
 /// Backend name reported in `InferenceOutput.backend_name`.
 const BACKEND_NAME: &str = "kx-llamacpp";
@@ -165,7 +167,7 @@ impl InferenceBackend for LlamaInferenceBackend {
                 route: warrant.model_route.model_id.0.clone(),
             });
         }
-        params.check_within(warrant)?;
+        check_within(params, warrant)?;
 
         // ---- Resolve registered path --------------------------------------
         let path = self

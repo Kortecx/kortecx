@@ -108,6 +108,7 @@ fn make_mote(mote_id: MoteId, parents: SmallVec<[ParentRef; 4]>, position: Graph
             effect_pattern: EffectPattern::IdempotentByConstruction,
             critic_for: None,
             is_topology_shaper: false,
+            inference_params: kx_mote::InferenceParams::default(),
             schema_version: kx_mote::MOTE_DEF_SCHEMA_VERSION,
         },
         input_data_id: InputDataId([0; 32]),

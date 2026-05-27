@@ -117,6 +117,7 @@ pub(crate) fn pure_mote(position: &[u8], parents: SmallVec<[ParentRef; 4]>) -> M
         effect_pattern: EffectPattern::IdempotentByConstruction,
         critic_for: None,
         is_topology_shaper: false,
+        inference_params: kx_mote::InferenceParams::default(),
         schema_version: 3,
     };
     let mut input_data = [0u8; 32];

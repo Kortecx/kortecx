@@ -110,6 +110,7 @@ fn mote_with_tool_and_position(name: &ToolName, version: &ToolVersion, pos: Vec<
         effect_pattern: EffectPattern::StageThenCommit,
         critic_for: None,
         is_topology_shaper: false,
+        inference_params: kx_mote::InferenceParams::default(),
         schema_version: 3,
     };
     Mote::new(

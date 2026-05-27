@@ -64,6 +64,7 @@ fn build_mote(
         effect_pattern,
         critic_for,
         is_topology_shaper,
+        inference_params: kx_mote::InferenceParams::default(),
         schema_version: MOTE_DEF_SCHEMA_VERSION,
     };
     Mote::new(

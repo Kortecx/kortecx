@@ -46,4 +46,7 @@ mod types;
 pub use backend::{BatchItem, InferenceBackend};
 pub use dispatcher::{DispatchOutcome, Dispatcher, DispatcherConfig};
 pub use llama::LlamaInferenceBackend;
-pub use types::{Grammar, InferenceError, InferenceInput, InferenceOutput, InferenceParams};
+pub use types::{
+    inference_params_from_mote, Grammar, InferenceError, InferenceInput, InferenceOutput,
+    InferenceParams,
+};
