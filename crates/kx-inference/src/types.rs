@@ -8,9 +8,9 @@
 // `LlamaInferenceBackend` — the seam is exercised by tests so the
 // `Err(Unsupported)` path is documented, not merely declarative.
 //
-// `InferenceParams` and `Grammar` live in `kx-mote` after D50
-// (citation-admissibility freeze §2.51) because `MoteDef.inference_params`
-// makes them identity-bearing. Re-exported here for API stability.
+// `InferenceParams` and `Grammar` live in `kx-mote` after D50 because
+// `MoteDef.inference_params` makes them identity-bearing (D4 — identity-
+// bearing types live with the substrate). Re-exported here for API stability.
 
 use std::time::Duration;
 
@@ -81,8 +81,9 @@ impl InferenceInput {
 
 /// Construct an [`InferenceParams`] from a [`Mote`] and its [`WarrantSpec`].
 ///
-/// D50 (citation-admissibility freeze §2.51) makes `mote.def.inference_params`
-/// the identity-bearing source for decoding parameters.
+/// D50 makes `mote.def.inference_params` the identity-bearing source for
+/// decoding parameters (per D4 — identity-bearing types live with the
+/// substrate; closes the pre-D50 memoizer-collision latent bug).
 ///
 /// **This is the SOLE permitted constructor of dispatch-bound
 /// `InferenceParams` in the OSS runtime.** Any future code path that

@@ -1,6 +1,6 @@
 // Integration-test file: compiled as a separate crate from the host lib.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
-//! D50 (citation-admissibility freeze §2.51) — memoizer-collision-closed test.
+//! D50 — memoizer-collision-closed test.
 //!
 //! Pre-D50 the memoizer would return a `CacheHit` for a NONDET Mote whose
 //! `inference_params.temperature_bps` differed from a previously-committed

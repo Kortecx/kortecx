@@ -2,8 +2,7 @@
 // inherits workspace `[lints]` deny on `unwrap_used` / `expect_used` but tests
 // legitimately use `.unwrap()` for fixture construction.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
-//! D50 (citation-admissibility freeze §2.51) — identity-distinguishing
-//! tests for `MoteDef.inference_params`.
+//! D50 — identity-distinguishing tests for `MoteDef.inference_params`.
 //!
 //! The pre-D50 latent bug: `MoteDef::hash` excluded decoding parameters,
 //! so two NONDET Motes differing only in `temperature_bps` (or any
@@ -12,9 +11,10 @@
 //! cache hit could serve greedy output to a temp=0.7 caller.
 //!
 //! D50 fixes this by making `inference_params` a first-class
-//! identity-bearing field of `MoteDef`. These tests assert the fix at
-//! the identity layer; `kx-memoizer/tests/d50_decoding_params_partition.rs`
-//! exercises the downstream memoizer behaviour.
+//! identity-bearing field of `MoteDef` (per D4 — identity-bearing types
+//! live with the substrate). These tests assert the fix at the identity
+//! layer; `kx-memoizer/tests/d50_decoding_params_partition.rs` exercises
+//! the downstream memoizer behaviour.
 
 use std::collections::BTreeMap;
 

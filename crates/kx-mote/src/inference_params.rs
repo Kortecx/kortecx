@@ -1,13 +1,14 @@
 //! [`crate::InferenceParams`] — per-dispatch generation parameters; identity-bearing
-//! after D50 (citation-admissibility freeze §2.51) since [`crate::MoteDef`] now
-//! carries an `inference_params` field that participates in `mote_def_hash`.
+//! after D50 since [`crate::MoteDef`] now carries an `inference_params` field
+//! that participates in `mote_def_hash`.
 //!
 //! These types live here (not in `kx-inference`) because they're part of the
-//! identity substrate — two MoteDefs differing only in decoding params MUST
-//! produce different `mote_def_hash`/`MoteId`, and the cleanest way to make
-//! that structural is to put the type next to the rest of the identity-bearing
-//! `MoteDef` shape. The dispatcher-side bridge fns (`inference_params_from_mote`,
-//! `check_within`) stay in `kx-inference` since they reference `WarrantSpec`.
+//! identity substrate per D4 — two MoteDefs differing only in decoding params
+//! MUST produce different `mote_def_hash`/`MoteId`, and the cleanest way to
+//! make that structural is to put the type next to the rest of the
+//! identity-bearing `MoteDef` shape. The dispatcher-side bridge fns
+//! (`inference_params_from_mote`, `check_within`) stay in `kx-inference`
+//! since they reference `WarrantSpec`.
 //!
 //! Two forward-compat hooks reserved per the PR 8 strategy plan:
 //!   - [`crate::Grammar`] — opaque constrained-generation payload.
@@ -53,15 +54,15 @@ impl Grammar {
 /// sampling, they widen these explicitly — at the cost of attempt
 /// reproducibility on retry.
 ///
-/// **D50 identity invariant (citation-admissibility freeze §2.51)**:
-/// these fields participate in `MoteDef::hash` because
-/// [`crate::MoteDef`] carries an `inference_params: InferenceParams` field.
-/// Two MoteDefs differing only in `temperature_bps` (or any other
-/// decoding field) produce DIFFERENT `mote_def_hash` and DIFFERENT
-/// `MoteId`. The dispatcher's bridge fn `inference_params_from_mote`
-/// (in `kx-inference`) is the only blessed path to construct params
-/// for execution; R-X refuses any params that differ from
-/// `mote.def.inference_params`.
+/// **D50 identity invariant**: these fields participate in
+/// `MoteDef::hash` because [`crate::MoteDef`] carries an
+/// `inference_params: InferenceParams` field. Two MoteDefs differing
+/// only in `temperature_bps` (or any other decoding field) produce
+/// DIFFERENT `mote_def_hash` and DIFFERENT `MoteId`. The dispatcher's
+/// bridge fn `inference_params_from_mote` (in `kx-inference`) is the
+/// only blessed path to construct dispatch-bound params; the structural
+/// invariant — sole constructor sourcing every field from the identity
+/// substrate — is what guarantees memoizer correctness.
 ///
 /// # Examples
 ///

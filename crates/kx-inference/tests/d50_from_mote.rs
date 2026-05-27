@@ -1,7 +1,6 @@
 // Integration-test file.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
-//! D50 (citation-admissibility freeze §2.51) — dispatcher-side conversion tests
-//! for `inference_params_from_mote`.
+//! D50 — dispatcher-side conversion tests for `inference_params_from_mote`.
 //!
 //! Pre-D50 `InferenceParams::from_warrant(&WarrantSpec)` took decoding params
 //! from greedy defaults (ignoring the Mote). Post-D50,
