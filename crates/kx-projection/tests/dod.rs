@@ -50,6 +50,7 @@ fn register(p: &mut Projection, mote_byte: u8, nd: NdClass, parents: &[(u8, Edge
         critic_for: None,
         is_topology_shaper: false,
         parents,
+        warrant_ref: ContentRef::from_bytes([0xaa; 32]),
     });
 }
 

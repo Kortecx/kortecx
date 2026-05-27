@@ -28,8 +28,12 @@ use kx_projection::{
     DefaultTopologyMaterializer, InMemoryMoteDefRegistry, InheritFromShaperResolver, MoteState,
     Projection,
 };
+use kx_warrant::{
+    ExecutorClass, FsScope, InMemoryRoleRegistry, ModelRoute, MoteClass, NetScope, ResourceCeiling,
+    Role, WarrantSpec,
+};
 use smallvec::SmallVec;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 fn planner_def() -> MoteDef {
     let mut tools = BTreeMap::new();
@@ -91,6 +95,55 @@ fn stage(store: &InMemoryContentStore, td: &TopologyDecision) -> ContentRef {
     store.put(&bytes).expect("put succeeds")
 }
 
+fn permissive_warrant() -> WarrantSpec {
+    WarrantSpec {
+        mote_class: MoteClass::Pure,
+        nd_class: MoteClass::Pure,
+        fs_scope: FsScope::empty(),
+        net_scope: NetScope::None,
+        syscall_profile_ref: ContentRef::from_bytes([0; 32]),
+        tool_grants: BTreeSet::new(),
+        model_route: ModelRoute {
+            model_id: ModelId("test-model".into()),
+            max_input_tokens: 1024,
+            max_output_tokens: 1024,
+            max_calls: 8,
+        },
+        resource_ceiling: ResourceCeiling {
+            cpu_milli: 1000,
+            mem_bytes: 1 << 20,
+            wall_clock_ms: 60_000,
+            fd_count: 64,
+            disk_bytes: 1 << 20,
+        },
+        environment_ref: None,
+        executor_class: ExecutorClass::Bwrap,
+    }
+}
+
+fn stage_warrant(store: &InMemoryContentStore) -> ContentRef {
+    let bytes = bincode::serde::encode_to_vec(permissive_warrant(), canonical_config())
+        .expect("WarrantSpec canonical bincode encodes infallibly");
+    store.put(&bytes).expect("put succeeds")
+}
+
+fn build_role_registry(td: &TopologyDecision) -> Arc<InMemoryRoleRegistry> {
+    let registry = Arc::new(InMemoryRoleRegistry::new());
+    let role = Role {
+        name: "test-default".into(),
+        version: 1,
+        spec: permissive_warrant(),
+        description: String::new(),
+    };
+    // Register the same permissive role under every descriptor's RoleId
+    // (this E2E doesn't exercise per-role narrowing — `kg1_close_*`
+    // tests in `integration_topology_classes.rs` cover that).
+    for d in &td.children {
+        registry.register(d.role_id.clone(), role.clone());
+    }
+    registry
+}
+
 #[test]
 fn planner_worker_shaper_end_to_end_demonstrates_seam_a() {
     let planner = planner_def();
@@ -99,10 +152,12 @@ fn planner_worker_shaper_end_to_end_demonstrates_seam_a() {
 
     // 1. Stage the planner's mocked TopologyDecision to the content store.
     let store = Arc::new(InMemoryContentStore::new());
-    let registry = Arc::new(InMemoryMoteDefRegistry::new());
-    registry.register(planner.clone());
+    let def_registry = Arc::new(InMemoryMoteDefRegistry::new());
+    def_registry.register(planner.clone());
     let td = mocked_planner_output();
     let td_ref = stage(&store, &td);
+    let role_registry = build_role_registry(&td);
+    let planner_warrant_ref = stage_warrant(&store);
 
     // 2. Build the journal with the planner's Committed entry.
     let journal = InMemoryJournal::new();
@@ -113,7 +168,7 @@ fn planner_worker_shaper_end_to_end_demonstrates_seam_a() {
         nondeterminism: NdClass::ReadOnlyNondet,
         result_ref: td_ref,
         parents: SmallVec::new(),
-        warrant_ref: ContentRef::from_bytes([0xaa; 32]),
+        warrant_ref: planner_warrant_ref,
         mote_def_hash: planner_hash,
     };
     journal.append(planner_committed).unwrap();
@@ -121,7 +176,8 @@ fn planner_worker_shaper_end_to_end_demonstrates_seam_a() {
     // 3. Cold-fold from the journal with the materializer wired.
     let materializer = Box::new(DefaultTopologyMaterializer::new(
         Arc::clone(&store),
-        Arc::clone(&registry),
+        Arc::clone(&def_registry),
+        Arc::clone(&role_registry),
         InheritFromShaperResolver,
     ));
     let mut projection =
@@ -153,7 +209,7 @@ fn planner_worker_shaper_end_to_end_demonstrates_seam_a() {
             nondeterminism: NdClass::Pure,
             result_ref: ContentRef::from_bytes([(0x10 + i as u8); 32]),
             parents: SmallVec::new(),
-            warrant_ref: ContentRef::from_bytes([0xaa; 32]),
+            warrant_ref: planner_warrant_ref,
             mote_def_hash: kx_mote::MoteDefHash::from_bytes([(0x20 + i as u8); 32]),
         };
         journal.append(worker_committed.clone()).unwrap();
@@ -173,7 +229,8 @@ fn planner_worker_shaper_end_to_end_demonstrates_seam_a() {
     //    (R49 — replay faithfulness end-to-end).
     let materializer_2 = Box::new(DefaultTopologyMaterializer::new(
         Arc::clone(&store),
-        Arc::clone(&registry),
+        Arc::clone(&def_registry),
+        Arc::clone(&role_registry),
         InheritFromShaperResolver,
     ));
     let re_projection =

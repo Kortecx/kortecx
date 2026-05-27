@@ -85,6 +85,7 @@ mod errors;
 mod fields;
 mod narrow;
 mod refs;
+mod registry;
 mod scope;
 mod spec;
 
@@ -94,6 +95,7 @@ pub use errors::{NarrowingError, ToolDenied};
 pub use fields::{Host, WarrantField};
 pub use narrow::{intersect, narrow};
 pub use refs::{role_id_of, warrant_ref_of};
+pub use registry::{InMemoryRoleRegistry, RoleRegistry};
 pub use scope::{FsScope, NetScope};
 pub use spec::{ModelRoute, ResourceCeiling, Role, ToolGrant, ToolRequirement, WarrantSpec};
 

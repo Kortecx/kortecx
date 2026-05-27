@@ -1,6 +1,7 @@
 //! [`RegisterMote`] — workflow-author declaration of a Mote before any
 //! journal entry exists for it.
 
+use kx_content::ContentRef;
 use kx_mote::{EffectPattern, MoteId, NdClass, ParentRef};
 use smallvec::SmallVec;
 
@@ -25,4 +26,11 @@ pub struct RegisterMote {
     pub is_topology_shaper: bool,
     /// The Mote's declared parents with edge metadata. Up to 4 inline; spill heap.
     pub parents: SmallVec<[ParentRef; 4]>,
+    /// **PR 11.5 / KG-1-close.** The warrant the Mote will execute under,
+    /// content-addressed via [`kx_warrant::warrant_ref_of`]. Workflow-author
+    /// submissions populate this with `warrant_ref_of(&submitted_warrant)`.
+    /// Shaper-materialized children (D48 + D49) populate this with
+    /// `warrant_ref_of(&intersect(shaper.warrant, role.spec))` — the
+    /// closing of `topology.md` §13 KG-1's verbatim-inheritance gap.
+    pub warrant_ref: ContentRef,
 }

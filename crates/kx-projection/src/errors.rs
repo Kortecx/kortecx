@@ -1,7 +1,7 @@
 //! [`ProjectionError`] — errors raised by [`crate::Projection`] operations.
 
 use kx_content::ContentRef;
-use kx_mote::MoteId;
+use kx_mote::{MoteId, RoleId};
 
 /// Errors raised by [`crate::Projection`] operations.
 #[derive(Debug, thiserror::Error)]
@@ -41,6 +41,58 @@ pub enum ProjectionError {
         /// The result_ref whose bytes failed to decode.
         result_ref: ContentRef,
         /// Underlying bincode error formatted as a string.
+        details: String,
+    },
+
+    /// **PR 11.5 / KG-1-close.** The topology materializer tried to fetch a
+    /// shaper's [`kx_warrant::WarrantSpec`] from the content store (so it
+    /// could compute child warrants via D30's `intersect`) and the fetch
+    /// failed. The shaper's warrant_ref MUST resolve to its WarrantSpec
+    /// at fold time — workflow author / executor MUST `put` the spec
+    /// before the shaper commits.
+    #[error("warrant store fetch failed for shaper warrant_ref {warrant_ref:?}: {details}")]
+    WarrantStoreFetch {
+        /// The warrant_ref whose payload could not be retrieved.
+        warrant_ref: ContentRef,
+        /// Underlying error formatted as a string.
+        details: String,
+    },
+
+    /// **PR 11.5 / KG-1-close.** The materializer fetched a payload but
+    /// bincode-canonical deserialization as `WarrantSpec` failed. The
+    /// content store is corrupt or the wrong bytes were written under
+    /// the warrant_ref.
+    #[error("failed to deserialize WarrantSpec from warrant_ref {warrant_ref:?}: {details}")]
+    WarrantDecodeFailed {
+        /// The warrant_ref whose bytes failed to decode.
+        warrant_ref: ContentRef,
+        /// Underlying bincode error formatted as a string.
+        details: String,
+    },
+
+    /// **PR 11.5 / KG-1-close.** A child descriptor named a `RoleId` that
+    /// the [`kx_warrant::RoleRegistry`] does not know. The materializer
+    /// refuses to silently widen — the workflow author MUST register
+    /// every role referenced by any descriptor before submitting the
+    /// shaper.
+    #[error("role {role_id:?} (descriptor index {descriptor_index}) is not registered in the role registry")]
+    RoleNotRegistered {
+        /// The unresolved descriptor-side handle.
+        role_id: RoleId,
+        /// Index of the descriptor in `TopologyDecision.children`.
+        descriptor_index: usize,
+    },
+
+    /// **PR 11.5 / KG-1-close.** D30 `intersect(shaper.warrant,
+    /// role.spec)` returned a typed [`kx_warrant::NarrowingError`] —
+    /// the proposed role attempts to widen the shaper's warrant on
+    /// some axis. Surfaced as a fold error so the workflow author /
+    /// operator sees the offending descriptor + axis.
+    #[error("warrant narrowing failed for descriptor index {descriptor_index}: {details}")]
+    NarrowingFailed {
+        /// Index of the descriptor in `TopologyDecision.children`.
+        descriptor_index: usize,
+        /// The underlying [`kx_warrant::NarrowingError`] formatted as a string.
         details: String,
     },
 }
