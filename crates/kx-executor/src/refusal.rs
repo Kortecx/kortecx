@@ -171,6 +171,24 @@ pub enum SubmissionRefusal {
         /// The offending Mote.
         mote_id: MoteId,
     },
+
+    /// **R-14** (D48 + D49 / P1.11). A `MoteDef` with
+    /// `is_topology_shaper == true` AND `nd_class == NdClass::WorldMutating`.
+    ///
+    /// Shapers MUST be PURE or READ-ONLY-NONDET — emitting a topology
+    /// decision is a nondet-read of the world, not a mutation. WORLD-
+    /// MUTATING shapers create real recovery-correctness complexity
+    /// (the WM-shaper × `EffectStaged` × terminal-failure cross-product
+    /// would otherwise need its own test surface; R-14 closes the
+    /// loophole structurally so the existing 9-cell cross-product
+    /// requires no extension).
+    ///
+    /// Spec: `topology.md` §9 (private corpus). Lock: D48 + D49.
+    #[error("R-14: Mote {mote_id:?} is a topology shaper but nd_class is WORLD-MUTATING; shapers MUST be PURE or READ-ONLY-NONDET (D48 + D49 / topology.md §9)")]
+    R14WorldMutatingShaper {
+        /// The offending Mote.
+        mote_id: MoteId,
+    },
 }
 
 /// A workflow submission — the shape `validate_submission` reasons over.
@@ -246,10 +264,11 @@ pub fn validate_submission(submission: &WorkflowSubmission) -> Result<(), Submis
     // R-6 — multi-critic detection (workflow-level, not per-Mote).
     check_r6(&submission.motes)?;
 
-    // R-8 + R-8b — shaper constructions.
+    // R-8 + R-8b + R-14 — shaper constructions.
     for mote in submission.motes.values() {
         check_r8(mote)?;
         check_r8b(mote, &submission.motes);
+        check_r14(mote)?;
     }
 
     // R-9 — critic chain terminates at a Pure critic.
@@ -478,6 +497,16 @@ fn check_r8b(mote: &Mote, _motes: &BTreeMap<MoteId, Mote>) {
     // body-side check (in 9a-hardening) has a place to land without a new
     // refusal variant landing in code months after the corpus lock.
     let _ = mote.def.is_topology_shaper; // keep the field consulted for future check
+}
+
+/// **R-14** (D48 + D49 / P1.11). Refuse a shaper Mote whose `nd_class` is
+/// `WorldMutating` — shapers MUST be `Pure` or `ReadOnlyNondet`. See
+/// `SubmissionRefusal::R14WorldMutatingShaper` for the rationale.
+fn check_r14(mote: &Mote) -> Result<(), SubmissionRefusal> {
+    if mote.def.is_topology_shaper && mote.def.nd_class == NdClass::WorldMutating {
+        return Err(SubmissionRefusal::R14WorldMutatingShaper { mote_id: mote.id });
+    }
+    Ok(())
 }
 
 fn check_r9(mote: &Mote, motes: &BTreeMap<MoteId, Mote>) -> Result<(), SubmissionRefusal> {

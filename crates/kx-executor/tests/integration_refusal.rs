@@ -532,3 +532,91 @@ fn happy_path_pure_mote_accepts() {
     );
     assert!(validate_submission(&submit(vec![m])).is_ok());
 }
+
+// ============================================================================
+// R-14 (D48 + D49 / P1.11): WORLD-MUTATING shaper.
+// ============================================================================
+//
+// Spec: `topology.md` §9 (private corpus). A Mote with
+// `is_topology_shaper == true AND nd_class == WorldMutating` is refused at
+// submission. Shapers MUST be PURE or READ-ONLY-NONDET — emitting a
+// topology decision is a nondet-read of the world, not a mutation.
+//
+// This refusal closes the WM-shaper recovery loophole structurally:
+// without R-14, the D38 §2b 9-cell cross-product would need to cover the
+// WM-shaper × EffectStaged × terminal-failure combinations. R-14 makes
+// those cells unreachable from any journal that passed validation.
+
+#[test]
+fn r14_refuses_world_mutating_shaper() {
+    let bad_shaper = build_mote(
+        50,
+        NdClass::WorldMutating, // ← violates R-14
+        EffectPattern::StageThenCommit,
+        None,
+        true, // ← shaper
+        BTreeMap::new(),
+    );
+    let r = validate_submission(&submit(vec![bad_shaper])).unwrap_err();
+    assert!(
+        matches!(r, SubmissionRefusal::R14WorldMutatingShaper { .. }),
+        "expected R14WorldMutatingShaper, got {r:?}"
+    );
+}
+
+#[test]
+fn r14_accepts_pure_shaper() {
+    let pure_shaper = build_mote(
+        51,
+        NdClass::Pure, // PURE shaper is permitted
+        EffectPattern::IdempotentByConstruction,
+        None,
+        true,
+        BTreeMap::new(),
+    );
+    assert!(validate_submission(&submit(vec![pure_shaper])).is_ok());
+}
+
+#[test]
+fn r14_accepts_read_only_nondet_shaper() {
+    let nondet_shaper = build_mote(
+        52,
+        NdClass::ReadOnlyNondet, // READ-ONLY-NONDET shaper is permitted (the common case)
+        EffectPattern::IdempotentByConstruction,
+        None,
+        true,
+        BTreeMap::new(),
+    );
+    assert!(validate_submission(&submit(vec![nondet_shaper])).is_ok());
+}
+
+#[test]
+fn r14_does_not_apply_to_non_shaper_world_mutating_motes() {
+    // A WM Mote that is NOT a shaper is unaffected by R-14.
+    let wm_non_shaper = build_mote(
+        53,
+        NdClass::WorldMutating,
+        EffectPattern::StageThenCommit,
+        None,
+        false, // not a shaper
+        {
+            let mut tc = BTreeMap::new();
+            tc.insert(
+                kx_mote::ToolName("dummy".into()),
+                kx_mote::ToolVersion("1.0".into()),
+            );
+            tc
+        },
+    );
+    // (Note: this Mote will pass R-14 specifically; other refusals like R-5
+    // for ND-class/effect-pattern combinations may apply or not depending on
+    // workflow shape. We assert specifically that R-14 isn't the refusal if
+    // one is raised.)
+    let result = validate_submission(&submit(vec![wm_non_shaper]));
+    if let Err(r) = result {
+        assert!(
+            !matches!(r, SubmissionRefusal::R14WorldMutatingShaper { .. }),
+            "R-14 incorrectly fired on a non-shaper WM Mote: {r:?}"
+        );
+    }
+}

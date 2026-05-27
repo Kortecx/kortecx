@@ -816,6 +816,8 @@ dependencies = [
 name = "kx-projection"
 version = "0.0.1"
 dependencies = [
+ "bincode",
+ "blake3",
  "kx-content",
  "kx-journal",
  "kx-mote",

@@ -12,6 +12,8 @@ description  = "kortecx projection — the read-side fold of the journal log; se
 path = "src/lib.rs"
 
 [dependencies]
+bincode    = { workspace = true }
+blake3     = { workspace = true }
 kx-content = { workspace = true }
 kx-journal = { workspace = true }
 kx-mote    = { workspace = true }

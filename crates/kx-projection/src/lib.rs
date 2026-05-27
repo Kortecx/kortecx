@@ -40,14 +40,29 @@
 //! - **Cycle tolerant.** Cycles in the dependency graph do not crash, hang, or
 //!   corrupt the fold. Traversals (`transitive_consumers`) use visited-sets.
 //!
-//! ## Topology-shaper materialization is deferred to P1.11
+//! ## Topology-shaper materialization (P1.11 / D48 + D49)
 //!
-//! `projection.md` §5 specifies that the projection materializes shaper-declared
-//! children when a `Committed` entry's Mote has `is_topology_shaper == true`. This
-//! requires decoding a `TopologyDecision` payload from the content store. P1.5 lays
-//! the framework (the `MoteInfo` carries metadata about each Mote; new children can be
-//! added to the graph mid-fold); P1.11 wires the content-store-side decoder and the
-//! child-edge materialization algorithm.
+//! `projection.md` §5/§6/§7 (post-D48/D49 amendment) specify that the projection
+//! materializes shaper-declared children when a `Committed` entry's Mote has
+//! `is_topology_shaper == true`. P1.11 wires this via the [`TopologyMaterializer`]
+//! seam: callers pass a materializer to [`Projection::with_materializer`] and the
+//! fold invokes it on every `Committed` entry. The materializer (typically
+//! [`DefaultTopologyMaterializer`]) holds a [`kx_content::ContentStore`] + a
+//! [`MoteDefRegistry`] + a [`ChildResolver`]; it reads the shaper's
+//! `TopologyDecision` payload, resolves each child's full `MoteDef`
+//! ([`InheritFromShaperResolver`] is the OSS default), derives identity per D49
+//! (`shaper.MoteId.bytes ‖ child_index_u32_le`), and yields a [`RegisterMote`]
+//! per child for the projection to register.
+//!
+//! Projections constructed via [`Projection::new`] have NO materializer and
+//! silently skip shaper materialization — this preserves the existing test
+//! surface where no topology is exercised. Production callers MUST construct
+//! via [`Projection::with_materializer`].
+//!
+//! The R49 cold-re-fold property (every child `MoteId` is a deterministic
+//! function of the shaper's committed entry + the child's index in
+//! `TopologyDecision.children`) is **test-pinned, not prose-pinned** — see
+//! `tests/cold_refold_topology.rs` for the P1+P2+P3+P4 verification.
 //!
 //! ## 3c promotion state — P1 default
 //!
@@ -71,16 +86,22 @@
 //! - The 7-method read API surface (`state_of`, `parents_of`, `children_of`,
 //!   `transitive_consumers`, `result_ref_of`, `ready_set`, `promotion_state`).
 
+mod child_resolver;
 mod enums;
 mod errors;
 mod helpers;
+mod materializer;
+mod mote_def_registry;
 mod projection;
 mod register;
 mod snapshot;
 mod state;
 
+pub use child_resolver::{ChildResolver, InheritFromShaperResolver};
 pub use enums::{AnomalyKind, MoteState, PromotionState};
 pub use errors::ProjectionError;
+pub use materializer::{derive_child_identity, DefaultTopologyMaterializer, TopologyMaterializer};
+pub use mote_def_registry::{InMemoryMoteDefRegistry, MoteDefRegistry};
 pub use projection::Projection;
 pub use register::RegisterMote;
 pub use snapshot::Snapshot;
