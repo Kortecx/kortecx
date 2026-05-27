@@ -828,6 +828,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "kx-scheduler"
+version = "0.0.1"
+dependencies = [
+ "kx-content",
+ "kx-executor",
+ "kx-journal",
+ "kx-mote",
+ "kx-projection",
+ "kx-warrant",
+ "proptest",
+ "smallvec",
+ "thiserror",
+ "tracing",
+]
+
+[[package]]
 name = "kx-tool-registry"
 version = "0.0.1"
 dependencies = [

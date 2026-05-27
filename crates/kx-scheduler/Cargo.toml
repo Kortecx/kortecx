@@ -1,0 +1,29 @@
+[package]
+name         = "kx-scheduler"
+version      = "0.0.1"
+edition      = { workspace = true }
+rust-version = { workspace = true }
+license      = { workspace = true }
+authors      = { workspace = true }
+repository   = { workspace = true }
+description  = "kortecx P1.10 scheduler — decides what is ready and hands it to the executor, reading only the projection. Placement is a trait seam (LocalPlacement + RoundRobinPlacement); the scheduler does no execution, never writes the journal, and never reads the journal directly. kx-journal is a dev-dependency only, which structurally enforces the no-write-journal invariant in production code."
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+kx-mote       = { workspace = true }
+kx-projection = { workspace = true }
+kx-executor   = { workspace = true }
+kx-warrant    = { workspace = true }
+thiserror     = { workspace = true }
+tracing       = { workspace = true }
+smallvec      = { workspace = true }
+
+[dev-dependencies]
+kx-journal = { workspace = true }
+kx-content = { workspace = true }
+proptest   = { workspace = true }
+
+[lints]
+workspace = true
