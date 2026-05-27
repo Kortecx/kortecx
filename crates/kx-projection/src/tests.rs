@@ -133,6 +133,7 @@ fn register_mote_makes_it_pending() {
         critic_for: None,
         is_topology_shaper: false,
         parents: SmallVec::new(),
+        warrant_ref: kx_content::ContentRef::from_bytes([0xaa; 32]),
     });
     assert_eq!(p.state_of(&mid(1)), MoteState::Pending);
 }

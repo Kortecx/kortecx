@@ -36,8 +36,12 @@ use kx_projection::{
     derive_child_identity, DefaultTopologyMaterializer, InMemoryMoteDefRegistry,
     InheritFromShaperResolver, MoteState, Projection,
 };
+use kx_warrant::{
+    warrant_ref_of, ExecutorClass, FsScope, ModelRoute, MoteClass, NetScope, ResourceCeiling, Role,
+    RoleRegistry, WarrantSpec,
+};
 use smallvec::SmallVec;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 // ---------------------------------------------------------------------------
 // Fixture helpers
@@ -84,29 +88,96 @@ fn encode_topology(td: &TopologyDecision) -> Vec<u8> {
         .expect("TopologyDecision canonical bincode encodes infallibly")
 }
 
+/// Test-local [`RoleRegistry`] that returns the same [`Role`] for any
+/// `RoleId`. R49 cold-refold tests don't exercise per-role warrant
+/// narrowing — they just need a registry that doesn't fail. KG-1-close
+/// narrowing semantics are tested separately in
+/// `integration_topology_classes.rs`.
+struct PermissiveAnyRoleRegistry {
+    role: Role,
+}
+
+impl RoleRegistry for PermissiveAnyRoleRegistry {
+    fn resolve(&self, _role_id: &RoleId) -> Option<Role> {
+        Some(self.role.clone())
+    }
+}
+
+/// Build a permissive [`WarrantSpec`] suitable as the shaper's warrant
+/// and as every child role's spec (so [`kx_warrant::intersect`] succeeds
+/// with no widening). Same shape as the K-G-1 close tests' baseline.
+fn permissive_warrant() -> WarrantSpec {
+    WarrantSpec {
+        mote_class: MoteClass::Pure,
+        nd_class: MoteClass::Pure,
+        fs_scope: FsScope::empty(),
+        net_scope: NetScope::None,
+        syscall_profile_ref: ContentRef::from_bytes([0; 32]),
+        tool_grants: BTreeSet::new(),
+        model_route: ModelRoute {
+            model_id: ModelId("test-model".into()),
+            max_input_tokens: 1024,
+            max_output_tokens: 1024,
+            max_calls: 8,
+        },
+        resource_ceiling: ResourceCeiling {
+            cpu_milli: 1000,
+            mem_bytes: 1 << 20,
+            wall_clock_ms: 60_000,
+            fd_count: 64,
+            disk_bytes: 1 << 20,
+        },
+        environment_ref: None,
+        executor_class: ExecutorClass::Bwrap,
+    }
+}
+
 type TestMaterializer = DefaultTopologyMaterializer<
     InMemoryContentStore,
     InMemoryMoteDefRegistry,
+    PermissiveAnyRoleRegistry,
     InheritFromShaperResolver,
 >;
 
-/// Build the materializer wiring used by every test in this file.
+/// Build the materializer wiring used by every R49 test in this file.
+///
+/// Returns the staged content store, the def registry, the shaper's
+/// `warrant_ref` (used on the Committed entry), and the boxed
+/// materializer. The shaper's `WarrantSpec` is staged in the content
+/// store at the returned `warrant_ref` so the materializer can fetch +
+/// decode it during `try_materialize` (PR 11.5 / KG-1-close path).
 fn build_materializer(
     shaper_def_value: &MoteDef,
 ) -> (
     Arc<InMemoryContentStore>,
     Arc<InMemoryMoteDefRegistry>,
+    ContentRef,
     Box<TestMaterializer>,
 ) {
     let store = Arc::new(InMemoryContentStore::new());
-    let registry = Arc::new(InMemoryMoteDefRegistry::new());
-    registry.register(shaper_def_value.clone());
+    let def_registry = Arc::new(InMemoryMoteDefRegistry::new());
+    def_registry.register(shaper_def_value.clone());
+    let warrant = permissive_warrant();
+    let warrant_bytes = bincode::serde::encode_to_vec(&warrant, canonical_config())
+        .expect("WarrantSpec canonical bincode encodes infallibly");
+    let shaper_warrant_ref = store.put(&warrant_bytes).expect("put succeeds");
+    // Sanity: the put-derived ref matches warrant_ref_of (same canonical
+    // bincode + blake3 chain). If this ever diverges, KG-1-close is wrong.
+    assert_eq!(shaper_warrant_ref, warrant_ref_of(&warrant));
+    let role = Role {
+        name: "test-default".into(),
+        version: 1,
+        spec: warrant,
+        description: String::new(),
+    };
+    let role_registry = Arc::new(PermissiveAnyRoleRegistry { role });
     let materializer = Box::new(DefaultTopologyMaterializer::new(
         Arc::clone(&store),
-        Arc::clone(&registry),
+        Arc::clone(&def_registry),
+        role_registry,
         InheritFromShaperResolver,
     ));
-    (store, registry, materializer)
+    (store, def_registry, shaper_warrant_ref, materializer)
 }
 
 /// Stage the `TopologyDecision` payload to the content store; return its `ContentRef`.
@@ -115,11 +186,14 @@ fn stage_topology(store: &InMemoryContentStore, td: &TopologyDecision) -> Conten
     store.put(&bytes).expect("put succeeds")
 }
 
-/// Build a Committed entry for the shaper that points at the topology payload.
+/// Build a Committed entry for the shaper that points at the topology
+/// payload AND carries the staged warrant_ref (PR 11.5 KG-1-close: the
+/// materializer fetches the WarrantSpec at this ref).
 fn shaper_committed_entry(
     shaper_id: MoteId,
     shaper_def_hash: MoteDefHash,
     topology_ref: ContentRef,
+    shaper_warrant_ref: ContentRef,
     seq: u64,
 ) -> JournalEntry {
     JournalEntry::Committed {
@@ -129,7 +203,7 @@ fn shaper_committed_entry(
         nondeterminism: NdClass::ReadOnlyNondet,
         result_ref: topology_ref,
         parents: SmallVec::new(),
-        warrant_ref: ContentRef::from_bytes([0xaa; 32]),
+        warrant_ref: shaper_warrant_ref,
         mote_def_hash: shaper_def_hash,
     }
 }
@@ -157,21 +231,21 @@ fn p1_cold_refold_rebuilds_identical_children_and_edges() {
     };
 
     // Live fold path: build projection with materializer, fold shaper commit.
-    let (store_live, _reg_live, materializer_live) = build_materializer(&shaper);
+    let (store_live, _reg_live, w_ref, materializer_live) = build_materializer(&shaper);
     let td_ref_live = stage_topology(&store_live, &td);
     let mut live = Projection::with_materializer(materializer_live);
-    let entry_live = shaper_committed_entry(shaper_id, shaper_hash, td_ref_live, 1);
+    let entry_live = shaper_committed_entry(shaper_id, shaper_hash, td_ref_live, w_ref, 1);
     live.fold(&entry_live).unwrap();
 
     // Cold re-fold path: write entry to a journal, then from_journal_with_materializer.
-    let (store_cold, _reg_cold, materializer_cold) = build_materializer(&shaper);
+    let (store_cold, _reg_cold, w_ref, materializer_cold) = build_materializer(&shaper);
     let td_ref_cold = stage_topology(&store_cold, &td);
     assert_eq!(
         td_ref_live, td_ref_cold,
         "content-addressed staging yields identical refs"
     );
     let journal = InMemoryJournal::new();
-    let entry_cold = shaper_committed_entry(shaper_id, shaper_hash, td_ref_cold, 1);
+    let entry_cold = shaper_committed_entry(shaper_id, shaper_hash, td_ref_cold, w_ref, 1);
     journal.append(entry_cold).unwrap();
     let cold = Projection::from_journal_with_materializer(&journal, materializer_cold).unwrap();
 
@@ -286,6 +360,7 @@ fn p2_no_graph_position_on_register_mote() {
         critic_for: None,
         is_topology_shaper: false,
         parents: SmallVec::new(),
+        warrant_ref: ContentRef::from_bytes([0xaa; 32]),
     };
 }
 
@@ -516,16 +591,16 @@ fn p3_full_materializer_path_one_byte_descriptor_change_changes_child_ids() {
         )],
     };
 
-    let (store_a, _reg_a, materializer_a) = build_materializer(&shaper);
+    let (store_a, _reg_a, w_ref, materializer_a) = build_materializer(&shaper);
     let ref_a = stage_topology(&store_a, &td_a);
     let mut proj_a = Projection::with_materializer(materializer_a);
-    let entry_a = shaper_committed_entry(shaper_id, shaper_hash, ref_a, 1);
+    let entry_a = shaper_committed_entry(shaper_id, shaper_hash, ref_a, w_ref, 1);
     proj_a.fold(&entry_a).unwrap();
 
-    let (store_b, _reg_b, materializer_b) = build_materializer(&shaper);
+    let (store_b, _reg_b, w_ref, materializer_b) = build_materializer(&shaper);
     let ref_b = stage_topology(&store_b, &td_b);
     let mut proj_b = Projection::with_materializer(materializer_b);
-    let entry_b = shaper_committed_entry(shaper_id, shaper_hash, ref_b, 1);
+    let entry_b = shaper_committed_entry(shaper_id, shaper_hash, ref_b, w_ref, 1);
     proj_b.fold(&entry_b).unwrap();
 
     // Each projection has exactly one materialized child + the shaper = 2 Motes.
@@ -580,18 +655,30 @@ fn p4_different_topology_decisions_produce_different_child_sets() {
     };
     assert_ne!(td_a.hash(), td_b.hash());
 
-    let (store_a, _reg_a, materializer_a) = build_materializer(&shaper);
+    let (store_a, _reg_a, w_ref, materializer_a) = build_materializer(&shaper);
     let ref_a = stage_topology(&store_a, &td_a);
     let mut proj_a = Projection::with_materializer(materializer_a);
     proj_a
-        .fold(&shaper_committed_entry(shaper_id, shaper_hash, ref_a, 1))
+        .fold(&shaper_committed_entry(
+            shaper_id,
+            shaper_hash,
+            ref_a,
+            w_ref,
+            1,
+        ))
         .unwrap();
 
-    let (store_b, _reg_b, materializer_b) = build_materializer(&shaper);
+    let (store_b, _reg_b, w_ref, materializer_b) = build_materializer(&shaper);
     let ref_b = stage_topology(&store_b, &td_b);
     let mut proj_b = Projection::with_materializer(materializer_b);
     proj_b
-        .fold(&shaper_committed_entry(shaper_id, shaper_hash, ref_b, 1))
+        .fold(&shaper_committed_entry(
+            shaper_id,
+            shaper_hash,
+            ref_b,
+            w_ref,
+            1,
+        ))
         .unwrap();
 
     // Each projection has shaper + 2 children = 3 Motes.
@@ -645,19 +732,31 @@ fn p4_only_surviving_shaper_committed_materializes_children() {
         )],
     };
 
-    let (store, _reg, materializer) = build_materializer(&shaper);
+    let (store, _reg, w_ref, materializer) = build_materializer(&shaper);
     let ref_a = stage_topology(&store, &td_a);
     let ref_b = stage_topology(&store, &td_b);
     let mut proj = Projection::with_materializer(materializer);
 
-    proj.fold(&shaper_committed_entry(shaper_id, shaper_hash, ref_a, 1))
-        .unwrap();
+    proj.fold(&shaper_committed_entry(
+        shaper_id,
+        shaper_hash,
+        ref_a,
+        w_ref,
+        1,
+    ))
+    .unwrap();
     let len_after_a = proj.len();
     assert_eq!(len_after_a, 2, "shaper + 1 child after A");
 
     // Second Committed for same shaper_id: rejected with DuplicateCommitted.
     let err = proj
-        .fold(&shaper_committed_entry(shaper_id, shaper_hash, ref_b, 2))
+        .fold(&shaper_committed_entry(
+            shaper_id,
+            shaper_hash,
+            ref_b,
+            w_ref,
+            2,
+        ))
         .unwrap_err();
     assert!(
         matches!(err, kx_projection::ProjectionError::DuplicateCommitted(_)),
@@ -679,11 +778,17 @@ fn empty_topology_decision_materializes_zero_children() {
     let shaper_hash = shaper.hash();
     let td = TopologyDecision { children: vec![] };
 
-    let (store, _reg, materializer) = build_materializer(&shaper);
+    let (store, _reg, w_ref, materializer) = build_materializer(&shaper);
     let td_ref = stage_topology(&store, &td);
     let mut proj = Projection::with_materializer(materializer);
-    proj.fold(&shaper_committed_entry(shaper_id, shaper_hash, td_ref, 1))
-        .unwrap();
+    proj.fold(&shaper_committed_entry(
+        shaper_id,
+        shaper_hash,
+        td_ref,
+        w_ref,
+        1,
+    ))
+    .unwrap();
     assert_eq!(proj.len(), 1, "shaper only; no children");
     assert_eq!(proj.state_of(&shaper_id), MoteState::Committed);
 }
@@ -700,12 +805,23 @@ fn materializer_skips_when_shaper_def_not_registered() {
     let shaper_hash = shaper.hash();
 
     // Build materializer with EMPTY registry (do NOT call build_materializer
-    // which registers the shaper def).
+    // which registers the shaper def). The role registry is irrelevant —
+    // the materializer early-skips before touching it when the def is
+    // missing — but the materializer constructor needs one.
     let store = Arc::new(InMemoryContentStore::new());
     let registry = Arc::new(InMemoryMoteDefRegistry::new());
+    let role_registry = Arc::new(PermissiveAnyRoleRegistry {
+        role: Role {
+            name: "irrelevant".into(),
+            version: 1,
+            spec: permissive_warrant(),
+            description: String::new(),
+        },
+    });
     let materializer = Box::new(DefaultTopologyMaterializer::new(
         Arc::clone(&store),
         Arc::clone(&registry),
+        role_registry,
         InheritFromShaperResolver,
     ));
     let td = TopologyDecision {
@@ -716,9 +832,21 @@ fn materializer_skips_when_shaper_def_not_registered() {
         )],
     };
     let td_ref = stage_topology(&store, &td);
+    // Stage a permissive WarrantSpec so the entry carries a valid
+    // warrant_ref (though the materializer will early-skip before
+    // touching it).
+    let warrant_bytes = bincode::serde::encode_to_vec(permissive_warrant(), canonical_config())
+        .expect("WarrantSpec canonical bincode encodes infallibly");
+    let w_ref = store.put(&warrant_bytes).expect("put");
     let mut proj = Projection::with_materializer(materializer);
-    proj.fold(&shaper_committed_entry(shaper_id, shaper_hash, td_ref, 1))
-        .unwrap();
+    proj.fold(&shaper_committed_entry(
+        shaper_id,
+        shaper_hash,
+        td_ref,
+        w_ref,
+        1,
+    ))
+    .unwrap();
     assert_eq!(
         proj.len(),
         1,
@@ -736,7 +864,7 @@ fn materialization_propagates_content_store_get_failure() {
     let shaper_id = shaper_mote_id(&shaper);
     let shaper_hash = shaper.hash();
 
-    let (_store, _reg, materializer) = build_materializer(&shaper);
+    let (_store, _reg, w_ref, materializer) = build_materializer(&shaper);
     // Use a result_ref that was NEVER staged → content store fetch fails.
     let unstaged_ref = ContentRef::from_bytes([0xff; 32]);
     let mut proj = Projection::with_materializer(materializer);
@@ -745,6 +873,7 @@ fn materialization_propagates_content_store_get_failure() {
             shaper_id,
             shaper_hash,
             unstaged_ref,
+            w_ref,
             1,
         ))
         .unwrap_err();
@@ -767,7 +896,7 @@ fn materialization_propagates_topology_decode_failure() {
     let shaper_id = shaper_mote_id(&shaper);
     let shaper_hash = shaper.hash();
 
-    let (store, _reg, materializer) = build_materializer(&shaper);
+    let (store, _reg, w_ref, materializer) = build_materializer(&shaper);
     // Stage garbage that won't decode as a TopologyDecision. 4 bytes is
     // below the minimum 8-byte fixed-int length prefix, so bincode
     // rejects with UnexpectedEnd rather than attempting to allocate a
@@ -777,7 +906,13 @@ fn materialization_propagates_topology_decode_failure() {
 
     let mut proj = Projection::with_materializer(materializer);
     let err = proj
-        .fold(&shaper_committed_entry(shaper_id, shaper_hash, bad_ref, 1))
+        .fold(&shaper_committed_entry(
+            shaper_id,
+            shaper_hash,
+            bad_ref,
+            w_ref,
+            1,
+        ))
         .unwrap_err();
     assert!(
         matches!(

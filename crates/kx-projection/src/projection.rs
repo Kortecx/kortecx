@@ -167,6 +167,7 @@ impl Projection {
             critic_for: reg.critic_for,
             is_topology_shaper: reg.is_topology_shaper,
             parents: reg.parents,
+            warrant_ref: reg.warrant_ref,
         });
         self.state.rebuild_children_index();
     }
@@ -222,24 +223,25 @@ impl Projection {
                 // for a Mote that wasn't pre-registered).
                 self.state.rebuild_children_index();
 
-                // **P1.11 / D48 + D49.** Topology materializer hook. If a
-                // materializer is wired AND the Mote is a shaper, fetch +
-                // decode the TopologyDecision payload from the content
-                // store and register every materialized child. R49
-                // requires this to be deterministic across replay; the
-                // materializer's purity guarantee delivers that.
+                // **P1.11 / D48 + D49 + PR 11.5 KG-1-close.** Topology
+                // materializer hook. If a materializer is wired AND the
+                // Mote is a shaper, fetch + decode the TopologyDecision
+                // payload + the shaper's WarrantSpec from the content
+                // store, narrow each child's warrant per D30
+                // intersect(shaper.warrant, role.spec), and register
+                // every materialized child with its per-role-narrowed
+                // warrant_ref. R49 requires this to be deterministic
+                // across replay; the materializer's purity guarantee
+                // delivers that (registry lookups are stable per the
+                // RoleRegistry contract).
                 let materialized = match self.materializer.as_ref() {
-                    Some(m) => m.try_materialize(*mote_id, *mote_def_hash, *result_ref)?,
+                    Some(m) => {
+                        m.try_materialize(*mote_id, *mote_def_hash, *result_ref, *warrant_ref)?
+                    }
                     None => None,
                 };
                 if let Some(children) = materialized {
                     for reg in children {
-                        // KG-1 safe-default: the materializer's RegisterMote
-                        // doesn't carry a warrant_ref; the child inherits the
-                        // shaper's warrant verbatim. Recovery / dispatch reads
-                        // the shaper's CommittedInfo.warrant_ref directly via
-                        // the projection's read API (kx-executor lifecycle).
-                        // KG-1-close (PR 11.5) will wire per-role narrowing.
                         self.register_mote(reg);
                     }
                 }
@@ -409,6 +411,28 @@ impl Projection {
     #[must_use]
     pub fn is_repudiated(&self, mote_id: &MoteId) -> bool {
         matches!(self.state_of(mote_id), MoteState::Repudiated)
+    }
+
+    /// The Mote's [`ContentRef`]-keyed warrant ref.
+    ///
+    /// **PR 11.5 / KG-1-close.** Returns the declared `warrant_ref` if the
+    /// Mote was registered (via [`Projection::register_mote`] or the
+    /// topology materializer's child registration), else the committed
+    /// entry's `warrant_ref` if any, else `None`.
+    ///
+    /// The dispatch path (executor, P1.9+) reads this to look up the
+    /// per-Mote [`kx_warrant::WarrantSpec`] from the content store. For
+    /// shaper-materialized children, this ref points at the *narrowed*
+    /// warrant computed via D30's `intersect(shaper.warrant, role.spec)`
+    /// — closing `topology.md` §13 KG-1's verbatim-inheritance gap.
+    #[must_use]
+    pub fn warrant_ref_of(&self, mote_id: &MoteId) -> Option<ContentRef> {
+        self.state.motes.get(mote_id).and_then(|i| {
+            i.declared
+                .as_ref()
+                .map(|d| d.warrant_ref)
+                .or_else(|| i.committed.as_ref().map(|c| c.warrant_ref))
+        })
     }
 
     /// The `seq` of the Mote's `Committed` entry, if present. Useful for callers

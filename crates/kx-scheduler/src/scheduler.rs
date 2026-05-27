@@ -16,7 +16,7 @@ use std::collections::BTreeMap;
 use kx_executor::{MoteExecutionResult, MoteExecutor, MoteExecutorError};
 use kx_mote::{Mote, MoteId};
 use kx_projection::{Projection, RegisterMote};
-use kx_warrant::WarrantSpec;
+use kx_warrant::{warrant_ref_of, WarrantSpec};
 
 use crate::errors::SchedulerError;
 use crate::placement::Placement;
@@ -136,6 +136,7 @@ impl<P: Placement> Scheduler<P> {
         if self.pending.contains_key(&mote.id) {
             return Err(SchedulerError::DuplicateSubmission(mote.id));
         }
+        let warrant_ref = warrant_ref_of(&warrant);
         projection.register_mote(RegisterMote {
             mote_id: mote.id,
             nd_class: mote.def.nd_class,
@@ -143,6 +144,7 @@ impl<P: Placement> Scheduler<P> {
             critic_for: mote.def.critic_for,
             is_topology_shaper: mote.def.is_topology_shaper,
             parents: mote.parents.clone(),
+            warrant_ref,
         });
         self.pending.insert(mote.id, (mote, warrant));
         Ok(())

@@ -78,16 +78,19 @@ pub(crate) struct MoteInfo {
 
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
-// `nd_class`, `effect_pattern`, `critic_for`, `is_topology_shaper` are stored at
-// registration but unread in P1.5. P1.9 (the executor) consumes them via a MoteDef
-// registry lookup to compute the full 3c promotion behavior + the topology-shaper
-// materialization at P1.11.
+// `nd_class`, `effect_pattern`, `critic_for`, `is_topology_shaper`,
+// `warrant_ref` are stored at registration but unread in P1.5. P1.9 (the
+// executor) consumes them via a MoteDef registry lookup to compute the full
+// 3c promotion behavior + the topology-shaper materialization at P1.11.
+// `warrant_ref` is the PR-11.5 KG-1-close payload — the per-child narrowed
+// warrant ref the executor will dispatch under.
 pub(crate) struct DeclaredInfo {
     pub(crate) nd_class: NdClass,
     pub(crate) effect_pattern: EffectPattern,
     pub(crate) critic_for: Option<MoteId>,
     pub(crate) is_topology_shaper: bool,
     pub(crate) parents: SmallVec<[ParentRef; 4]>,
+    pub(crate) warrant_ref: ContentRef,
 }
 
 #[derive(Debug, Clone, Default)]

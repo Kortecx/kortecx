@@ -821,6 +821,7 @@ dependencies = [
  "kx-content",
  "kx-journal",
  "kx-mote",
+ "kx-warrant",
  "proptest",
  "smallvec",
  "tempfile",

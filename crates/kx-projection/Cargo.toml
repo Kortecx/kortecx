@@ -17,6 +17,7 @@ blake3     = { workspace = true }
 kx-content = { workspace = true }
 kx-journal = { workspace = true }
 kx-mote    = { workspace = true }
+kx-warrant = { workspace = true }
 smallvec   = { workspace = true }
 thiserror  = { workspace = true }
 tracing    = { workspace = true }

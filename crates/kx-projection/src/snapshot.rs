@@ -119,6 +119,18 @@ impl Snapshot {
             .and_then(|i| i.committed.as_ref().map(|c| c.result_ref))
     }
 
+    /// Declared-or-committed warrant_ref for the Mote. See
+    /// [`crate::Projection::warrant_ref_of`].
+    #[must_use]
+    pub fn warrant_ref_of(&self, mote_id: &MoteId) -> Option<ContentRef> {
+        self.state.motes.get(mote_id).and_then(|i| {
+            i.declared
+                .as_ref()
+                .map(|d| d.warrant_ref)
+                .or_else(|| i.committed.as_ref().map(|c| c.warrant_ref))
+        })
+    }
+
     /// The ready set at the snapshot's `seq`.
     #[must_use]
     pub fn ready_set(&self) -> Vec<MoteId> {
