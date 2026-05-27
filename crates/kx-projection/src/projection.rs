@@ -10,6 +10,7 @@ use smallvec::SmallVec;
 use crate::enums::{AnomalyKind, MoteState, PromotionState};
 use crate::errors::ProjectionError;
 use crate::helpers::{promotion_state_impl, ready_set_impl, transitive_consumers_impl};
+use crate::materializer::TopologyMaterializer;
 use crate::register::RegisterMote;
 use crate::snapshot::Snapshot;
 use crate::state::{CommittedInfo, DeclaredInfo, State};
@@ -51,17 +52,67 @@ use crate::state::{CommittedInfo, DeclaredInfo, State};
 /// assert_eq!(p.state_of(&MoteId::from_bytes([1u8; 32])), MoteState::Committed);
 /// assert_eq!(p.committed_count(), 1);
 /// ```
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct Projection {
     state: State,
+    /// **P1.11 / D48 + D49.** Optional topology materializer invoked on
+    /// every `Committed` journal entry. If `Some`, the fold invokes
+    /// `try_materialize` to decode any shaper's `TopologyDecision`
+    /// payload and register the materialized children. If `None`, shaper
+    /// commits fold as ordinary Committed entries with no child
+    /// materialization (the legacy / test path).
+    ///
+    /// Production callers MUST set this via
+    /// [`Projection::with_materializer`]. Tests that don't exercise
+    /// topology may use [`Projection::new`].
+    materializer: Option<Box<dyn TopologyMaterializer>>,
+}
+
+// Manual Debug so we don't require `Debug` on the materializer trait
+// (which would foreclose blanket `Box<dyn Fn ...>`-style impls).
+impl std::fmt::Debug for Projection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Projection")
+            .field("state", &self.state)
+            .field(
+                "materializer",
+                &self.materializer.as_ref().map(|_| "<materializer>"),
+            )
+            .finish()
+    }
 }
 
 impl Projection {
-    /// Construct an empty projection.
+    /// Construct an empty projection with NO topology materializer.
+    ///
+    /// Shaper commits fold without materializing children. Suitable for
+    /// tests that don't exercise topology and for the legacy code path
+    /// pre-PR-11. Production callers — especially those that may see
+    /// shaper-committed entries on cold re-fold — MUST use
+    /// [`Projection::with_materializer`].
     #[inline]
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Construct an empty projection wired with a topology materializer
+    /// (D48 + D49 / P1.11).
+    ///
+    /// On every `Committed` journal entry the fold invokes
+    /// `materializer.try_materialize(...)`. If the materializer
+    /// determines the entry is a shaper commit, the resolved children
+    /// are immediately registered via [`Projection::register_mote`].
+    /// Replay-faithfulness (R49) — re-folding the same log produces
+    /// bit-identical children — is the materializer's responsibility;
+    /// see `docs/design/decisions.md` §D49 (private corpus) and the
+    /// `tests/cold_refold_topology.rs` P1+P2+P3+P4 proof.
+    #[must_use]
+    pub fn with_materializer(materializer: Box<dyn TopologyMaterializer>) -> Self {
+        Self {
+            state: State::default(),
+            materializer: Some(materializer),
+        }
     }
 
     /// Build a projection by reading every entry from `journal` in `seq` order.
@@ -74,6 +125,26 @@ impl Projection {
         let mut p = Self::new();
         let max_seq = journal.current_seq()?;
         // current_seq returns 0 for empty; use saturating range.
+        let entries = journal.read_entries_by_seq(0..(max_seq + 1))?;
+        for entry in entries {
+            p.fold(&entry)?;
+        }
+        Ok(p)
+    }
+
+    /// Build a projection by reading every entry from `journal` in `seq` order,
+    /// wired with a topology materializer (D48 + D49 / P1.11).
+    ///
+    /// The cold-re-fold equivalent of [`Projection::with_materializer`] +
+    /// [`Projection::fold_many`]. **Load-bearing for replay-faithfulness**: a
+    /// re-fold from journal must produce bit-identical children to a live fold;
+    /// the R49 proof (`tests/cold_refold_topology.rs`) anchors this.
+    pub fn from_journal_with_materializer<J: Journal>(
+        journal: &J,
+        materializer: Box<dyn TopologyMaterializer>,
+    ) -> Result<Self, ProjectionError> {
+        let mut p = Self::with_materializer(materializer);
+        let max_seq = journal.current_seq()?;
         let entries = journal.read_entries_by_seq(0..(max_seq + 1))?;
         for entry in entries {
             p.fold(&entry)?;
@@ -150,6 +221,28 @@ impl Projection {
                 // parent→child edges not previously visible (e.g., entry written
                 // for a Mote that wasn't pre-registered).
                 self.state.rebuild_children_index();
+
+                // **P1.11 / D48 + D49.** Topology materializer hook. If a
+                // materializer is wired AND the Mote is a shaper, fetch +
+                // decode the TopologyDecision payload from the content
+                // store and register every materialized child. R49
+                // requires this to be deterministic across replay; the
+                // materializer's purity guarantee delivers that.
+                let materialized = match self.materializer.as_ref() {
+                    Some(m) => m.try_materialize(*mote_id, *mote_def_hash, *result_ref)?,
+                    None => None,
+                };
+                if let Some(children) = materialized {
+                    for reg in children {
+                        // KG-1 safe-default: the materializer's RegisterMote
+                        // doesn't carry a warrant_ref; the child inherits the
+                        // shaper's warrant verbatim. Recovery / dispatch reads
+                        // the shaper's CommittedInfo.warrant_ref directly via
+                        // the projection's read API (kx-executor lifecycle).
+                        // KG-1-close (PR 11.5) will wire per-role narrowing.
+                        self.register_mote(reg);
+                    }
+                }
             }
             JournalEntry::Failed {
                 mote_id,
