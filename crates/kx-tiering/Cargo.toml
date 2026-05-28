@@ -1,0 +1,26 @@
+[package]
+name         = "kx-tiering"
+version      = "0.0.1"
+edition      = { workspace = true }
+rust-version = { workspace = true }
+license      = { workspace = true }
+authors      = { workspace = true }
+repository   = { workspace = true }
+description  = "kortecx tag-driven storage tiering (P1.12) — evicts PURE (droppable + recomputable) payloads under simulated memory pressure; READ-ONLY-NONDET + WORLD-MUTATING are never evicted. The content store stays tag-blind; the tiering pass joins the projection's per-Mote NdClass with the store's refs and shares the idempotent delete() primitive with orphan-GC."
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+kx-content    = { workspace = true }
+kx-mote       = { workspace = true }
+kx-projection = { workspace = true }
+thiserror     = { workspace = true }
+tracing       = { workspace = true }
+
+[dev-dependencies]
+kx-journal = { workspace = true }
+smallvec   = { workspace = true }
+
+[lints]
+workspace = true

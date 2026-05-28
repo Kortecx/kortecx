@@ -3,7 +3,7 @@
 //! semantics.
 
 use kx_content::ContentRef;
-use kx_mote::{EdgeMeta, MoteId};
+use kx_mote::{EdgeMeta, MoteId, NdClass};
 use smallvec::SmallVec;
 
 use crate::enums::{AnomalyKind, MoteState, PromotionState};
@@ -117,6 +117,25 @@ impl Snapshot {
             .motes
             .get(mote_id)
             .and_then(|i| i.committed.as_ref().map(|c| c.result_ref))
+    }
+
+    /// Committed non-determinism tag. See
+    /// [`crate::Projection::nondeterminism_of`].
+    #[must_use]
+    pub fn nondeterminism_of(&self, mote_id: &MoteId) -> Option<NdClass> {
+        self.state
+            .motes
+            .get(mote_id)
+            .and_then(|i| i.committed.as_ref().map(|c| c.nondeterminism))
+    }
+
+    /// Committed-entry `seq`. See [`crate::Projection::committed_seq_of`].
+    #[must_use]
+    pub fn committed_seq_of(&self, mote_id: &MoteId) -> Option<u64> {
+        self.state
+            .motes
+            .get(mote_id)
+            .and_then(|i| i.committed.as_ref().map(|c| c.seq))
     }
 
     /// Declared-or-committed warrant_ref for the Mote. See

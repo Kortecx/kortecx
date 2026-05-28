@@ -4,7 +4,7 @@
 
 use kx_content::ContentRef;
 use kx_journal::{Journal, JournalEntry};
-use kx_mote::{EdgeMeta, MoteId};
+use kx_mote::{EdgeMeta, MoteId, NdClass};
 use smallvec::SmallVec;
 
 use crate::enums::{AnomalyKind, MoteState, PromotionState};
@@ -381,6 +381,21 @@ impl Projection {
             .motes
             .get(mote_id)
             .and_then(|i| i.committed.as_ref().map(|c| c.result_ref))
+    }
+
+    /// The Mote's committed non-determinism tag ([`NdClass`]), if it has a
+    /// `Committed` entry; `None` otherwise.
+    ///
+    /// Mirrors [`Projection::result_ref_of`]. The tag drives P1.12 tag-driven
+    /// storage tiering: `kx-tiering` joins this with `result_ref_of` to decide
+    /// evictability (PURE payloads are droppable + recomputable; READ-ONLY-NONDET
+    /// and WORLD-MUTATING are always persisted) without exposing `CommittedInfo`.
+    #[must_use]
+    pub fn nondeterminism_of(&self, mote_id: &MoteId) -> Option<NdClass> {
+        self.state
+            .motes
+            .get(mote_id)
+            .and_then(|i| i.committed.as_ref().map(|c| c.nondeterminism))
     }
 
     /// Motes whose parents are all `Committed-and-not-Repudiated` AND whose

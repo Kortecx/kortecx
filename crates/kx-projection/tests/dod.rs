@@ -463,6 +463,17 @@ fn exercise_from_journal<J: Journal>(j: &J) {
     let p = Projection::from_journal(j).unwrap();
     assert_eq!(p.state_of(&mid(b'a')), MoteState::Committed);
     assert_eq!(p.result_ref_of(&mid(b'a')), Some(cref(b'a')));
+
+    // P1.12 tiering tag source: nondeterminism_of mirrors result_ref_of and
+    // returns the committed NdClass; None for an unknown / uncommitted Mote.
+    assert_eq!(p.nondeterminism_of(&mid(b'a')), Some(NdClass::Pure));
+    assert_eq!(p.nondeterminism_of(&mid(b'z')), None);
+    // The snapshot mirror agrees.
+    assert_eq!(
+        p.snapshot().nondeterminism_of(&mid(b'a')),
+        Some(NdClass::Pure)
+    );
+    assert_eq!(p.snapshot().nondeterminism_of(&mid(b'z')), None);
 }
 
 #[test]
