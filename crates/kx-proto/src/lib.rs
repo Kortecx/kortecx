@@ -1,0 +1,58 @@
+#![forbid(unsafe_code)]
+#![warn(missing_docs)]
+#![warn(clippy::pedantic)]
+#![allow(
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
+    clippy::module_name_repetitions,
+    clippy::must_use_candidate,
+    clippy::doc_markdown,
+    clippy::return_self_not_must_use
+)]
+#![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
+
+//! # kx-proto — kortecx P2.1 gRPC schema (the distribution boundary)
+//!
+//! tonic/prost gRPC schema for the coordinator/worker control plane: **submit
+//! Mote**, **report commit**, **heartbeat**, **register worker**. This is the
+//! first step of P2 (coordinator/worker distribution) and the **cross-language
+//! contract** — `protoc`/`buf` generate native Rust, Python, and TypeScript
+//! types from the same `proto/kortecx/v1/coordinator.proto`.
+//!
+//! ## Mirrored fields, Rust-side identity
+//!
+//! The schema mirrors the domain types as real protobuf messages (not opaque
+//! bincode blobs) so non-Rust clients can build them with generated types. The
+//! load-bearing correctness rule:
+//!
+//! > `MoteId`, `warrant_ref`, and content refs are computed **Rust-side** from
+//! > the *reconstructed canonical* form ([`kx_mote::canonical_config`] bincode).
+//! > Protobuf wire bytes are **never** hashed; clients **never** compute a
+//! > `MoteId`.
+//!
+//! Protobuf carries field *values*; the typed `TryFrom`/`From` conversions (on
+//! the generated [`proto`] types) rebuild the exact canonical Rust struct, and
+//! the round-trip identity test pins the mapping so the schema cannot silently
+//! drift from the domain types. A failed decode surfaces as a [`ConvertError`].
+
+/// Generated gRPC message + service types (tonic/prost codegen from
+/// `proto/kortecx/v1/coordinator.proto`). Includes the `Coordinator` service
+/// server (`coordinator_server`) and client (`coordinator_client`).
+pub mod proto {
+    // Generated code is exempt from the workspace lint policy: documentation and
+    // style live in the `.proto`, not in the machine-generated Rust.
+    #![allow(
+        missing_docs,
+        unreachable_pub,
+        clippy::all,
+        clippy::pedantic,
+        clippy::nursery
+    )]
+    #![allow(rustdoc::all)]
+    tonic::include_proto!("kortecx.v1");
+}
+
+mod convert;
+mod error;
+
+pub use error::ConvertError;

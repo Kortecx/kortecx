@@ -1,0 +1,282 @@
+syntax = "proto3";
+
+// ===========================================================================
+// kortecx P2.1 — coordinator/worker gRPC schema.
+//
+// This .proto is the SINGLE cross-language contract: protoc/buf generate native
+// Rust, Python, and TypeScript types from it. Design is MIRRORED FIELDS (not an
+// opaque bincode envelope) so non-Rust clients construct messages with their
+// generated types.
+//
+// IDENTITY INVARIANT (load-bearing). MoteId / warrant_ref / content refs are
+// computed Rust-side, by the coordinator, from the RECONSTRUCTED canonical
+// (bincode) form of the domain type. Protobuf wire bytes are NEVER hashed and
+// clients NEVER compute a MoteId. Protobuf carries field VALUES only. A
+// round-trip identity test in kx-proto pins the proto<->Rust mapping.
+//
+// Every enum carries an explicit *_UNSPECIFIED = 0 sentinel: proto3's
+// zero-default must NOT silently denote a real class (e.g. an unset nd_class
+// must not mean Pure, which would mis-recover a WorldMutating Mote). The Rust
+// TryFrom boundary REJECTS UNSPECIFIED. Domain discriminants are therefore
+// shifted by +1 on the wire.
+//
+// 32-byte BLAKE3 hashes are `bytes`; the Rust boundary validates length == 32.
+// `map<>` fields reconstruct into BTreeMap / BTreeSet so canonical order (and
+// thus the identity hash) is independent of protobuf wire order.
+// ===========================================================================
+
+package kortecx.v1;
+
+// ---------------------------------------------------------------------------
+// Enums (mirror the domain enums; +1-shifted to reserve 0 = UNSPECIFIED)
+// ---------------------------------------------------------------------------
+
+// Mirrors kx_mote::NdClass (Pure / ReadOnlyNondet / WorldMutating).
+enum NdClass {
+  ND_CLASS_UNSPECIFIED = 0;
+  ND_CLASS_PURE = 1;
+  ND_CLASS_READ_ONLY_NONDET = 2;
+  ND_CLASS_WORLD_MUTATING = 3;
+}
+
+// Mirrors kx_mote::EffectPattern.
+enum EffectPattern {
+  EFFECT_PATTERN_UNSPECIFIED = 0;
+  EFFECT_PATTERN_IDEMPOTENT_BY_CONSTRUCTION = 1;
+  EFFECT_PATTERN_STAGE_THEN_COMMIT = 2;
+  EFFECT_PATTERN_VALIDATE_THEN_COMMIT = 3;
+}
+
+// Mirrors kx_mote::EdgeKind.
+enum EdgeKind {
+  EDGE_KIND_UNSPECIFIED = 0;
+  EDGE_KIND_DATA = 1;
+  EDGE_KIND_CONTROL = 2;
+}
+
+// Mirrors kx_warrant::MoteClass (warrant-side non-determinism axis).
+enum MoteClass {
+  MOTE_CLASS_UNSPECIFIED = 0;
+  MOTE_CLASS_PURE = 1;
+  MOTE_CLASS_READ_ONLY_NONDET = 2;
+  MOTE_CLASS_WORLD_MUTATING = 3;
+}
+
+// Mirrors kx_warrant::FsMode.
+enum FsMode {
+  FS_MODE_UNSPECIFIED = 0;
+  FS_MODE_READ_ONLY = 1;
+  FS_MODE_READ_WRITE = 2;
+  FS_MODE_EXEC_ONLY = 3;
+}
+
+// Mirrors kx_warrant::ExecutorClass.
+enum ExecutorClass {
+  EXECUTOR_CLASS_UNSPECIFIED = 0;
+  EXECUTOR_CLASS_BWRAP = 1;
+  EXECUTOR_CLASS_OCI_DAEMON = 2;
+  EXECUTOR_CLASS_CLOUD_MICRO_VM = 3;
+  EXECUTOR_CLASS_MACOS_SANDBOX = 4;
+}
+
+// ---------------------------------------------------------------------------
+// Mote value messages (mirror kx_mote)
+// ---------------------------------------------------------------------------
+
+// Mirrors kx_mote::InferenceParams (D50 decoding params; identity-bearing).
+message InferenceParams {
+  uint32 max_output_tokens = 1;
+  uint32 temperature_bps = 2;
+  uint32 top_p_bps = 3;
+  uint32 top_k = 4;
+  uint32 seed = 5;
+  repeated string stop_tokens = 6;
+  // Reserved (kx_mote::Grammar): opaque constrained-generation payload.
+  // Absent => None. OSS v0.1 backends reject Some(_).
+  optional string grammar = 7;
+}
+
+// Mirrors kx_mote::MoteDef (schema_version 4).
+message MoteDef {
+  bytes logic_ref = 1;                  // 32B
+  string model_id = 2;
+  bytes prompt_template_hash = 3;       // 32B
+  map<string, string> tool_contract = 4;
+  NdClass nd_class = 5;
+  map<string, bytes> config_subset = 6;
+  EffectPattern effect_pattern = 7;
+  optional bytes critic_for = 8;        // 32B MoteId when present
+  bool is_topology_shaper = 9;
+  InferenceParams inference_params = 10;
+  uint32 schema_version = 11;           // u16 domain; validated <= u16::MAX
+}
+
+// Mirrors kx_mote::ParentRef (parent_id + edge meta).
+message ParentRef {
+  bytes parent_id = 1;                  // 32B MoteId
+  EdgeKind edge_kind = 2;
+  bool non_cascade = 3;                 // only valid for CONTROL edges
+}
+
+// Mirrors kx_mote::Mote. `mote_id` is an advisory routing key; the coordinator
+// RE-DERIVES identity Rust-side from def + input_data_id + graph_position and
+// never trusts this field as authoritative on its own.
+message Mote {
+  bytes mote_id = 1;                    // 32B (advisory routing key)
+  MoteDef def = 2;
+  bytes input_data_id = 3;              // 32B
+  bytes graph_position = 4;             // opaque bytes
+  repeated ParentRef parents = 5;
+}
+
+// ---------------------------------------------------------------------------
+// Warrant value messages (mirror kx_warrant)
+// ---------------------------------------------------------------------------
+
+message ToolGrant {
+  string tool_id = 1;
+  string tool_version = 2;
+}
+
+message ModelRoute {
+  string model_id = 1;
+  uint32 max_input_tokens = 2;
+  uint32 max_output_tokens = 3;
+  uint32 max_calls = 4;
+}
+
+message ResourceCeiling {
+  uint32 cpu_milli = 1;
+  uint64 mem_bytes = 2;
+  uint64 wall_clock_ms = 3;
+  uint32 fd_count = 4;
+  uint64 disk_bytes = 5;
+}
+
+// One (path, mode) entry of an FsScope. Reconstructs into BTreeMap<PathBuf, FsMode>.
+message FsMount {
+  string path = 1;                      // PathBuf as UTF-8
+  FsMode mode = 2;
+}
+
+message FsScope {
+  repeated FsMount mounts = 1;
+}
+
+// kx_warrant::NetScope: None (no egress) or an exact host allowlist.
+message NetScope {
+  oneof scope {
+    NetScopeNone none = 1;
+    HostAllowlist allowlist = 2;
+  }
+}
+
+// Presence marker for NetScope::None (a message-typed oneof arm needs a type).
+message NetScopeNone {}
+
+message HostAllowlist {
+  repeated string hosts = 1;            // reconstructs into BTreeSet<Host>
+}
+
+// Mirrors kx_warrant::WarrantSpec (10 axes).
+message WarrantSpec {
+  MoteClass mote_class = 1;
+  MoteClass nd_class = 2;
+  FsScope fs_scope = 3;
+  NetScope net_scope = 4;
+  bytes syscall_profile_ref = 5;        // 32B
+  repeated ToolGrant tool_grants = 6;
+  ModelRoute model_route = 7;
+  ResourceCeiling resource_ceiling = 8;
+  optional bytes environment_ref = 9;   // 32B when present
+  ExecutorClass executor_class = 10;
+}
+
+// ---------------------------------------------------------------------------
+// RPC (1) — submit Mote
+// ---------------------------------------------------------------------------
+
+message SubmitMoteRequest {
+  Mote mote = 1;
+  WarrantSpec warrant = 2;
+}
+
+enum SubmitStatus {
+  SUBMIT_STATUS_UNSPECIFIED = 0;
+  SUBMIT_STATUS_ACCEPTED = 1;
+  SUBMIT_STATUS_DUPLICATE = 2;          // already known (idempotent resubmit)
+  SUBMIT_STATUS_REJECTED = 3;           // a refusal predicate fired
+}
+
+message SubmitMoteResponse {
+  bytes mote_id = 1;                    // 32B — coordinator-derived identity
+  SubmitStatus status = 2;
+  string detail = 3;                    // human-readable; empty on accept
+}
+
+// ---------------------------------------------------------------------------
+// RPC (2) — report commit. The worker PROPOSES; the coordinator is the SOLE
+// journal writer (D40). The coordinator assigns the committed seq.
+// ---------------------------------------------------------------------------
+
+message ReportCommitRequest {
+  bytes mote_id = 1;                    // 32B
+  bytes idempotency_key = 2;            // 32B
+  bytes result_ref = 3;                 // 32B
+  bytes warrant_ref = 4;                // 32B
+  bytes mote_def_hash = 5;              // 32B
+  NdClass nd_class = 6;
+  repeated ParentRef parents = 7;
+  uint64 worker_id = 8;                 // the proposing worker
+}
+
+enum CommitOutcome {
+  COMMIT_OUTCOME_UNSPECIFIED = 0;
+  COMMIT_OUTCOME_COMMITTED = 1;         // newly appended
+  COMMIT_OUTCOME_ALREADY_COMMITTED = 2; // dedup-by-key hit (first-wins)
+  COMMIT_OUTCOME_REJECTED = 3;
+}
+
+message ReportCommitResponse {
+  uint64 committed_seq = 1;             // journal seq assigned by the coordinator
+  CommitOutcome outcome = 2;
+  string detail = 3;
+}
+
+// ---------------------------------------------------------------------------
+// RPC (3) — heartbeat (worker liveness)
+// ---------------------------------------------------------------------------
+
+message HeartbeatRequest {
+  uint64 worker_id = 1;
+  uint64 timestamp_ms = 2;              // wall-clock; liveness only, NEVER hashed
+  uint32 in_flight = 3;                 // Motes currently executing on the worker
+}
+
+message HeartbeatResponse {
+  bool ack = 1;
+}
+
+// ---------------------------------------------------------------------------
+// RPC (4) — register worker
+// ---------------------------------------------------------------------------
+
+message RegisterWorkerRequest {
+  ExecutorClass executor_class = 1;     // backend the worker can run
+  string endpoint = 2;                  // how the coordinator reaches the worker
+}
+
+message RegisterWorkerResponse {
+  uint64 worker_id = 1;                 // coordinator-assigned
+}
+
+// ---------------------------------------------------------------------------
+// Service — hosted by the coordinator; workers are clients.
+// ---------------------------------------------------------------------------
+
+service Coordinator {
+  rpc RegisterWorker(RegisterWorkerRequest) returns (RegisterWorkerResponse);
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+  rpc SubmitMote(SubmitMoteRequest) returns (SubmitMoteResponse);
+  rpc ReportCommit(ReportCommitRequest) returns (ReportCommitResponse);
+}

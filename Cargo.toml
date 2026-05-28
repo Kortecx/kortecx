@@ -24,6 +24,7 @@ members = [
     "crates/kx-scheduler",
     "crates/kx-tiering",
     "crates/kx-runtime",
+    "crates/kx-proto",
 ]
 exclude = [
     "kx-cloud",
@@ -78,6 +79,7 @@ kx-inference         = { path = "crates/kx-inference",         version = "0.0.1"
 kx-capability        = { path = "crates/kx-capability",        version = "0.0.1" }
 kx-executor          = { path = "crates/kx-executor",          version = "0.0.1" }
 kx-scheduler         = { path = "crates/kx-scheduler",         version = "0.0.1" }
+kx-proto             = { path = "crates/kx-proto",             version = "0.0.1" }
 bindgen            = "0.70"
 cmake              = "0.1"
 ureq               = { version = "2", default-features = false, features = ["tls"] }
@@ -87,6 +89,17 @@ sha2               = "0.10"
 # shims; no extra C deps land.
 libc               = "0.2"
 nix                = { version = "0.29", features = ["process", "signal", "resource", "fs"] }
+# Distribution (P2) gRPC stack — kx-proto is the first async + network crate.
+# tonic default features (transport + codegen + prost) are kept; TLS is NOT
+# enabled (no `ring`/`rustls`) — P2 is plaintext Unix-socket / TCP, hardening is
+# a later step. tonic 0.12 pairs with prost 0.13 and the stable tonic-build API.
+# protoc is supplied build-time by the pinned `protoc-bin-vendored` binary (no
+# system protoc on CI or local; deterministic; ships linux-x86_64 + macos-aarch64).
+tonic              = "0.12"
+prost              = "0.13"
+tokio              = { version = "1", features = ["rt-multi-thread", "macros", "net"] }
+tonic-build        = "0.12"
+protoc-bin-vendored = "3"
 
 [profile.release]
 strip         = "symbols"
