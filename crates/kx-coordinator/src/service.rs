@@ -166,4 +166,32 @@ impl Coordinator for CoordinatorService {
             detail: String::new(),
         }))
     }
+
+    #[tracing::instrument(skip_all)]
+    async fn lease_work(
+        &self,
+        request: Request<proto::LeaseWorkRequest>,
+    ) -> Result<Response<proto::LeaseWorkResponse>, Status> {
+        let req = request.into_inner();
+        // Admission: only a registered worker may lease (mirrors report_commit).
+        let worker = WorkerId(req.worker_id);
+        if self.registry.get(worker).is_none() {
+            return Err(CoordinatorError::UnknownWorker(worker).into());
+        }
+        let proto_class = proto::ExecutorClass::try_from(req.executor_class).map_err(|_| {
+            Status::invalid_argument(format!("unknown executor_class {}", req.executor_class))
+        })?;
+        let executor_class =
+            kx_warrant::ExecutorClass::try_from(proto_class).map_err(CoordinatorError::from)?;
+        let max = usize::try_from(req.max_motes).unwrap_or(usize::MAX);
+        let work = self.core.lease_work(executor_class, max).await?;
+        let items = work
+            .into_iter()
+            .map(|(mote, warrant)| proto::WorkItem {
+                mote: Some(mote.into()),
+                warrant: Some(warrant.into()),
+            })
+            .collect();
+        Ok(Response::new(proto::LeaseWorkResponse { items }))
+    }
 }

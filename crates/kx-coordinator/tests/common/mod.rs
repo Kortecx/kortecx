@@ -221,3 +221,22 @@ pub async fn commit(
         .unwrap()
         .into_inner()
 }
+
+/// Lease ready PURE work for `worker_id` on `executor_class` through the service.
+pub async fn lease_work(
+    service: &CoordinatorService,
+    worker_id: u64,
+    executor_class: proto::ExecutorClass,
+    max_motes: u32,
+) -> Vec<proto::WorkItem> {
+    service
+        .lease_work(Request::new(proto::LeaseWorkRequest {
+            worker_id,
+            executor_class: executor_class as i32,
+            max_motes,
+        }))
+        .await
+        .unwrap()
+        .into_inner()
+        .items
+}

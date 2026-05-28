@@ -31,11 +31,13 @@
 //! projection, and scheduler live on one owner thread (see `state`), which keeps
 //! the gRPC service `Send + Sync` and makes single-writer structural.
 //!
-//! ## Scope (P2.2)
+//! ## Scope (P2.2 + P2.3 dispatch)
 //!
-//! Passive control plane: the four RPCs, the registry, and the sole-writer commit
-//! path. Active dispatch — pushing/pulling ready Motes to workers — is **P2.3**
-//! (`kx-worker`), and placement v2 is P2.5.
+//! The control plane: registration / heartbeat / admission, the sole-writer commit
+//! path, **and the `LeaseWork` dispatch surface** (P2.3) — a worker polls for ready
+//! PURE Motes runnable on its backend, runs them, and proposes the result via
+//! `ReportCommit`. Selection is trivial (ready ∩ PURE ∩ executor_class); placement
+//! v2 (locality / GPU-slot awareness) is P2.5, and worker provisioning is P3 (D47).
 
 pub use kx_projection::MoteState;
 pub use kx_proto::proto;

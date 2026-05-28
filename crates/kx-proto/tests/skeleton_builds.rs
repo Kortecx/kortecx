@@ -1,6 +1,6 @@
 //! Proves the tonic service **skeleton builds and serves**: a no-op
 //! `Coordinator` impl is hosted over a real TCP endpoint and a generated client
-//! reaches all four RPCs. This goes beyond "compiles" — it exercises the
+//! reaches every RPC. This goes beyond "compiles" — it exercises the
 //! generated server trait, the `CoordinatorServer`/`CoordinatorClient` types,
 //! and the transport. No coordinator *behavior* is implemented (that is P2.2/2.3).
 
@@ -14,9 +14,9 @@ use common::{sample_mote, sample_warrant};
 use kx_proto::proto::coordinator_client::CoordinatorClient;
 use kx_proto::proto::coordinator_server::{Coordinator, CoordinatorServer};
 use kx_proto::proto::{
-    CommitOutcome, ExecutorClass, HeartbeatRequest, HeartbeatResponse, RegisterWorkerRequest,
-    RegisterWorkerResponse, ReportCommitRequest, ReportCommitResponse, SubmitMoteRequest,
-    SubmitMoteResponse, SubmitStatus,
+    CommitOutcome, ExecutorClass, HeartbeatRequest, HeartbeatResponse, LeaseWorkRequest,
+    LeaseWorkResponse, RegisterWorkerRequest, RegisterWorkerResponse, ReportCommitRequest,
+    ReportCommitResponse, SubmitMoteRequest, SubmitMoteResponse, SubmitStatus, WorkItem,
 };
 use tonic::transport::Server;
 use tonic::{Request, Response, Status};
@@ -64,10 +64,26 @@ impl Coordinator for NoopCoordinator {
             detail: String::new(),
         }))
     }
+
+    async fn lease_work(
+        &self,
+        req: Request<LeaseWorkRequest>,
+    ) -> Result<Response<LeaseWorkResponse>, Status> {
+        // Echo one work item back so the test confirms the Mote + warrant
+        // payload round-trips through the new RPC. (Ready-set selection is
+        // implemented coordinator-side in P2.3; not here.)
+        let _ = req.into_inner();
+        Ok(Response::new(LeaseWorkResponse {
+            items: vec![WorkItem {
+                mote: Some(sample_mote().into()),
+                warrant: Some(sample_warrant().into()),
+            }],
+        }))
+    }
 }
 
 #[tokio::test]
-async fn coordinator_skeleton_serves_all_four_rpcs() {
+async fn coordinator_skeleton_serves_all_rpcs() {
     // Ephemeral port; serve in the background.
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -151,4 +167,23 @@ async fn coordinator_skeleton_serves_all_four_rpcs() {
         .into_inner();
     assert_eq!(commit.outcome, CommitOutcome::Committed as i32);
     assert_eq!(commit.committed_seq, 1);
+
+    // (5) lease work — a full Mote + warrant rides back over the new RPC.
+    let lease = client
+        .lease_work(LeaseWorkRequest {
+            worker_id: 7,
+            executor_class: ExecutorClass::Bwrap as i32,
+            max_motes: 8,
+        })
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(lease.items.len(), 1, "one work item leased");
+    let item = &lease.items[0];
+    assert_eq!(
+        item.mote.as_ref().unwrap().mote_id.len(),
+        32,
+        "leased mote_id round-tripped over the wire"
+    );
+    assert!(item.warrant.is_some(), "leased warrant present");
 }
