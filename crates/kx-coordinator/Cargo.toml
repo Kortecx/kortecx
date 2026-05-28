@@ -41,8 +41,14 @@ tracing = { workspace = true }
 # `time` is additive over the workspace tokio features — the e2e tests use a short
 # connect-retry sleep while the in-process server binds (the kx-proto pattern).
 tokio = { workspace = true, features = ["time"] }
-# Temp Sqlite file for the restart/recovery integration test.
+# Temp Sqlite file for the restart/recovery integration test + the on-disk bench.
 tempfile = { workspace = true }
+# Commit-path throughput benchmark (run with `cargo bench -p kx-coordinator`).
+criterion = { workspace = true }
+
+[[bench]]
+name = "commit_throughput"
+harness = false
 
 [lints]
 workspace = true
