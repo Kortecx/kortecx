@@ -831,6 +831,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "kx-runtime"
+version = "0.0.1"
+dependencies = [
+ "bincode",
+ "blake3",
+ "kx-capability",
+ "kx-content",
+ "kx-executor",
+ "kx-journal",
+ "kx-mote",
+ "kx-projection",
+ "kx-scheduler",
+ "kx-warrant",
+ "smallvec",
+ "tempfile",
+ "thiserror",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "kx-scheduler"
 version = "0.0.1"
 dependencies = [

@@ -1,0 +1,38 @@
+[package]
+name         = "kx-runtime"
+version      = "0.0.1"
+edition      = { workspace = true }
+rust-version = { workspace = true }
+license      = { workspace = true }
+authors      = { workspace = true }
+repository   = { workspace = true }
+description  = "kortecx single-node runtime (P1.13) — wires scheduler + executor + capability broker + resource manager + journal + content store into one process. The local dev runtime and the primary public proof of the novel claim: a committed non-deterministic, world-mutating step is a fact; recovery re-reads what it did, never re-runs it."
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "kx-runtime"
+path = "src/main.rs"
+
+[dependencies]
+kx-mote       = { workspace = true }
+kx-content    = { workspace = true }
+kx-journal    = { workspace = true }
+kx-projection = { workspace = true }
+kx-executor   = { workspace = true }
+kx-capability = { workspace = true }
+kx-warrant    = { workspace = true }
+kx-scheduler  = { workspace = true }
+bincode       = { workspace = true }
+blake3        = { workspace = true }
+smallvec      = { workspace = true }
+thiserror     = { workspace = true }
+tracing       = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[lints]
+workspace = true
