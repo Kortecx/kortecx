@@ -104,6 +104,56 @@ impl Journal for InMemoryJournal {
         Ok(entry)
     }
 
+    fn append_batch(&self, entries: Vec<JournalEntry>) -> Result<Vec<JournalEntry>, JournalError> {
+        if entries.is_empty() {
+            return Ok(Vec::new());
+        }
+        // Hold the write lock for the whole batch and stage all results before
+        // committing them to `state`, so the batch is atomic (all-or-nothing) and
+        // isolated from concurrent readers/writers. Within-batch duplicates dedupe
+        // against both the committed log and the staged entries.
+        let mut state = self.state.write().expect("poisoned lock");
+        let mut next_seq = state.next_seq;
+        let mut staged: Vec<JournalEntry> = Vec::new();
+        let mut durable = Vec::with_capacity(entries.len());
+
+        for mut entry in entries {
+            if let JournalEntry::Repudiated {
+                target_mote_id,
+                target_committed_seq,
+                ref mut idempotency_key,
+                ..
+            } = entry
+            {
+                *idempotency_key =
+                    repudiation_idempotency_key(&target_mote_id, target_committed_seq);
+            }
+
+            let kind = entry.kind();
+            if kind == KIND_COMMITTED || kind == KIND_REPUDIATED || kind == KIND_EFFECT_STAGED {
+                let key = *entry.idempotency_key();
+                if let Some(existing) = state
+                    .entries
+                    .iter()
+                    .chain(staged.iter())
+                    .find(|e| e.kind() == kind && *e.idempotency_key() == key)
+                {
+                    durable.push(existing.clone());
+                    continue;
+                }
+            }
+
+            next_seq += 1;
+            set_seq(&mut entry, next_seq);
+            staged.push(entry.clone());
+            durable.push(entry);
+        }
+
+        state.entries.extend(staged);
+        state.next_seq = next_seq;
+        Ok(durable)
+    }
+
     fn read_committed(&self, mote_id: &MoteId) -> Result<Option<JournalEntry>, JournalError> {
         let state = self.state.read().expect("poisoned lock");
         Ok(state

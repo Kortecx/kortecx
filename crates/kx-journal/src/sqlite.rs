@@ -202,95 +202,31 @@ impl SqliteJournal {
 }
 
 impl Journal for SqliteJournal {
-    fn append(&self, mut entry: JournalEntry) -> Result<JournalEntry, JournalError> {
-        // For Repudiated entries, derive the idempotency_key from the target before
-        // we touch the database — this is the dedupe-by-target rule from D15.
-        if let JournalEntry::Repudiated {
-            target_mote_id,
-            target_committed_seq,
-            ref mut idempotency_key,
-            ..
-        } = entry
-        {
-            *idempotency_key = repudiation_idempotency_key(&target_mote_id, target_committed_seq);
-        }
-
+    fn append(&self, entry: JournalEntry) -> Result<JournalEntry, JournalError> {
         let mut conn = self.conn.lock().expect("poisoned mutex");
         let txn = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-
-        // v2 (D38 §2b): dedupe-by-key index expands from {1, 2} to {1, 2, 4}.
-        // EffectStaged participates; Failed is intentionally out.
-        let kind = entry.kind();
-        if kind == KIND_COMMITTED || kind == KIND_REPUDIATED || kind == KIND_EFFECT_STAGED {
-            let key = *entry.idempotency_key();
-            let existing = txn
-                .query_row(
-                    "SELECT entry_bytes, mote_def_hash
-                       FROM entries
-                      WHERE idempotency_key = ?1 AND kind = ?2",
-                    params![&key[..], kind as i64],
-                    |r| {
-                        let bytes: Vec<u8> = r.get(0)?;
-                        let dh: Option<Vec<u8>> = r.get(1)?;
-                        Ok((bytes, dh))
-                    },
-                )
-                .optional()?;
-            if let Some((bytes, dh)) = existing {
-                let def_hash = vec_to_mote_def_hash(dh);
-                txn.commit()?;
-                return decode_entry_with_def_hash(&bytes, def_hash).map_err(Into::into);
-            }
-        }
-
-        // Assign next monotonic seq.
-        let next_seq: i64 =
-            txn.query_row("SELECT COALESCE(MAX(seq), 0) + 1 FROM entries", [], |r| {
-                r.get(0)
-            })?;
-        #[allow(clippy::cast_sign_loss)]
-        let next_seq_u64 = next_seq as u64;
-
-        // Inject the assigned seq into the entry before encoding.
-        set_seq(&mut entry, next_seq_u64);
-
-        let bytes = encode_entry(&entry)?;
-        if bytes.len() > MAX_ENTRY_LEN {
-            return Err(JournalError::EntryTooLarge { got: bytes.len() });
-        }
-
-        let mote_id_owned = entry.mote_id();
-        let mote_id_bytes: &[u8; 32] = mote_id_owned.as_bytes();
-        let idem_key: [u8; 32] = *entry.idempotency_key();
-        let nd_byte = match &entry {
-            JournalEntry::Proposed { nondeterminism, .. }
-            | JournalEntry::Committed { nondeterminism, .. } => nondeterminism.as_u8(),
-            _ => 0,
-        } as i64;
-        let def_hash_bytes: Option<Vec<u8>> = match &entry {
-            JournalEntry::Committed { mote_def_hash, .. } => {
-                Some(mote_def_hash.as_bytes().to_vec())
-            }
-            _ => None,
-        };
-
-        txn.execute(
-            "INSERT INTO entries
-                 (seq, kind, mote_id, idempotency_key, nondeterminism, mote_def_hash, entry_bytes)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![
-                next_seq,
-                kind as i64,
-                &mote_id_bytes[..],
-                &idem_key[..],
-                nd_byte,
-                def_hash_bytes,
-                &bytes[..],
-            ],
-        )?;
-
+        let durable = append_one(&txn, entry)?;
         txn.commit()?;
-        Ok(entry)
+        Ok(durable)
+    }
+
+    fn append_batch(&self, entries: Vec<JournalEntry>) -> Result<Vec<JournalEntry>, JournalError> {
+        if entries.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut conn = self.conn.lock().expect("poisoned mutex");
+        // One BEGIN IMMEDIATE transaction for the whole batch (group commit):
+        // every entry's dedupe SELECT + `seq` assignment + INSERT see the prior
+        // in-batch inserts (so within-batch duplicates dedupe and seqs stay
+        // contiguous), and the first error short-circuits before `commit`, so the
+        // `Transaction`'s Drop rolls the entire batch back — all-or-nothing.
+        let txn = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let mut durable = Vec::with_capacity(entries.len());
+        for entry in entries {
+            durable.push(append_one(&txn, entry)?);
+        }
+        txn.commit()?;
+        Ok(durable)
     }
 
     fn read_committed(&self, mote_id: &MoteId) -> Result<Option<JournalEntry>, JournalError> {
@@ -424,6 +360,103 @@ impl Journal for SqliteJournal {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/// Append one entry **within an already-open transaction** — the shared core of
+/// [`SqliteJournal::append`] and [`SqliteJournal::append_batch`]. Does NOT begin
+/// or commit the transaction (the caller owns those), so the same logic is atomic
+/// for a single append and for a whole batch.
+///
+/// Mirrors the per-entry contract: derive the `Repudiated` key (D15), dedupe by
+/// `(idempotency_key, kind)` for the deduped kinds (returning the pre-existing
+/// durable entry without consuming a `seq`), else assign `MAX(seq)+1`, size-check,
+/// and INSERT. Because the dedupe SELECT and the `MAX(seq)` query run inside the
+/// caller's transaction, they see earlier inserts from the same batch.
+fn append_one(
+    txn: &rusqlite::Transaction<'_>,
+    mut entry: JournalEntry,
+) -> Result<JournalEntry, JournalError> {
+    // For Repudiated entries, derive the idempotency_key from the target before
+    // we touch the database — this is the dedupe-by-target rule from D15.
+    if let JournalEntry::Repudiated {
+        target_mote_id,
+        target_committed_seq,
+        ref mut idempotency_key,
+        ..
+    } = entry
+    {
+        *idempotency_key = repudiation_idempotency_key(&target_mote_id, target_committed_seq);
+    }
+
+    // v2 (D38 §2b): dedupe-by-key index expands from {1, 2} to {1, 2, 4}.
+    // EffectStaged participates; Failed is intentionally out.
+    let kind = entry.kind();
+    if kind == KIND_COMMITTED || kind == KIND_REPUDIATED || kind == KIND_EFFECT_STAGED {
+        let key = *entry.idempotency_key();
+        let existing = txn
+            .query_row(
+                "SELECT entry_bytes, mote_def_hash
+                   FROM entries
+                  WHERE idempotency_key = ?1 AND kind = ?2",
+                params![&key[..], kind as i64],
+                |r| {
+                    let bytes: Vec<u8> = r.get(0)?;
+                    let dh: Option<Vec<u8>> = r.get(1)?;
+                    Ok((bytes, dh))
+                },
+            )
+            .optional()?;
+        if let Some((bytes, dh)) = existing {
+            let def_hash = vec_to_mote_def_hash(dh);
+            return decode_entry_with_def_hash(&bytes, def_hash).map_err(Into::into);
+        }
+    }
+
+    // Assign next monotonic seq.
+    let next_seq: i64 =
+        txn.query_row("SELECT COALESCE(MAX(seq), 0) + 1 FROM entries", [], |r| {
+            r.get(0)
+        })?;
+    #[allow(clippy::cast_sign_loss)]
+    let next_seq_u64 = next_seq as u64;
+
+    // Inject the assigned seq into the entry before encoding.
+    set_seq(&mut entry, next_seq_u64);
+
+    let bytes = encode_entry(&entry)?;
+    if bytes.len() > MAX_ENTRY_LEN {
+        return Err(JournalError::EntryTooLarge { got: bytes.len() });
+    }
+
+    let mote_id_owned = entry.mote_id();
+    let mote_id_bytes: &[u8; 32] = mote_id_owned.as_bytes();
+    let idem_key: [u8; 32] = *entry.idempotency_key();
+    let nd_byte = i64::from(match &entry {
+        JournalEntry::Proposed { nondeterminism, .. }
+        | JournalEntry::Committed { nondeterminism, .. } => nondeterminism.as_u8(),
+        _ => 0,
+    });
+    let def_hash_bytes: Option<Vec<u8>> = match &entry {
+        JournalEntry::Committed { mote_def_hash, .. } => Some(mote_def_hash.as_bytes().to_vec()),
+        _ => None,
+    };
+
+    txn.execute(
+        "INSERT INTO entries
+             (seq, kind, mote_id, idempotency_key, nondeterminism, mote_def_hash, entry_bytes)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![
+            next_seq,
+            kind as i64,
+            &mote_id_bytes[..],
+            &idem_key[..],
+            nd_byte,
+            def_hash_bytes,
+            &bytes[..],
+        ],
+    )?;
+
+    Ok(entry)
+}
 
 /// Inject an assigned `seq` into an entry just before encoding.
 fn set_seq(entry: &mut JournalEntry, new_seq: u64) {
