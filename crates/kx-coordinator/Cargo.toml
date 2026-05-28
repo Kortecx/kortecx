@@ -1,0 +1,48 @@
+[package]
+name = "kx-coordinator"
+version = "0.0.1"
+edition = { workspace = true }
+rust-version = { workspace = true }
+license = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+description = "kortecx P2.2 coordinator service — hosts the P1 scheduler verbatim, owns the worker registry (behind a trait), and is the sole journal writer per run. Implements the kx-proto gRPC Coordinator service (the distribution control plane)."
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+# The gRPC schema + generated server/client + the tested proto<->domain
+# conversions (identity re-derived Rust-side, D53).
+kx-proto = { workspace = true }
+# Hosted VERBATIM (P2 thesis test): registration routes through Scheduler::submit;
+# placement is the kx-scheduler trait.
+kx-scheduler = { workspace = true }
+# The coordinator is the SOLE journal writer per run (D13 / D40): it assembles the
+# Committed entry from a worker's ReportCommit proposal and appends it.
+kx-journal = { workspace = true }
+kx-projection = { workspace = true }
+kx-mote = { workspace = true }
+kx-content = { workspace = true }
+kx-warrant = { workspace = true }
+# `sync` (mpsc + oneshot) is additive over the workspace tokio features: the async
+# RPC handlers funnel commands to a single orchestration thread that owns the
+# journal + projection + scheduler. The Projection holds a non-`Send` trait object
+# (`Box<dyn TopologyMaterializer>`), so single-owner-thread + channel is how the
+# coordinator keeps a `Send + Sync` gRPC service without a kx-projection refactor —
+# and it makes the D40 sole-writer invariant structural (one thread owns the log).
+tonic = { workspace = true }
+tokio = { workspace = true, features = ["sync"] }
+smallvec = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+# `time` is additive over the workspace tokio features — the e2e tests use a short
+# connect-retry sleep while the in-process server binds (the kx-proto pattern).
+tokio = { workspace = true, features = ["time"] }
+# Temp Sqlite file for the restart/recovery integration test.
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

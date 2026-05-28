@@ -907,6 +907,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "kx-coordinator"
+version = "0.0.1"
+dependencies = [
+ "kx-content",
+ "kx-journal",
+ "kx-mote",
+ "kx-projection",
+ "kx-proto",
+ "kx-scheduler",
+ "kx-warrant",
+ "smallvec",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tonic",
+ "tracing",
+]
+
+[[package]]
 name = "kx-executor"
 version = "0.0.1"
 dependencies = [
