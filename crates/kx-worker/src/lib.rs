@@ -39,8 +39,12 @@
 //! PURE Motes only. A PURE Mote has no real-world effect, so running it on the
 //! worker and proposing its commit is sound. WORLD-MUTATING Motes need a durable
 //! staged-intent RPC (so the coordinator records the `EffectStaged` recovery hint
-//! before the effect fires) — deferred. Placement v2 (locality / GPU-slot) is P2.5;
-//! worker provisioning / liveness-driven scale is P3 (D47).
+//! before the effect fires) — deferred. Placement v2 (locality / GPU-slot) is P2.5.
+//!
+//! From **P3.1** the worker also runs a background **liveness heartbeat**
+//! ([`Worker::spawn_heartbeat`]) so an idle worker stays live in the coordinator's
+//! registry (worker-death detection is heartbeat-timeout based). Worker provisioning
+//! / liveness-driven scale-to-zero remains P3+ (D47).
 //!
 //! ## Thesis test
 //!
@@ -61,4 +65,4 @@ mod worker;
 
 pub use client::WorkerClient;
 pub use error::WorkerError;
-pub use worker::Worker;
+pub use worker::{Worker, DEFAULT_HEARTBEAT_CADENCE};

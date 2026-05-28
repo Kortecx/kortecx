@@ -28,14 +28,15 @@ kx-content = { workspace = true }
 tonic = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
+# The background liveness heartbeat (P3.1): a spawned task ticks on an interval so an
+# idle worker stays live in the coordinator's registry. `rt` (via the workspace
+# `rt-multi-thread`) + `time` are additive over the workspace tokio features.
+tokio = { workspace = true, features = ["time"] }
 
 [dev-dependencies]
 # The e2e test hosts a real CoordinatorService over an in-process gRPC server and
 # drives the full register -> lease -> run -> propose-commit loop against it.
 kx-coordinator = { workspace = true }
-# `time` is additive over the workspace tokio features — the e2e uses a short
-# connect-retry sleep while the in-process server binds (the kx-proto pattern).
-tokio = { workspace = true, features = ["time"] }
 smallvec = { workspace = true }
 # Shared on-disk content_root for the cross-node read e2e (worker A writes, the
 # coordinator verifies, peer B reads — all against one LocalFsContentStore root).
