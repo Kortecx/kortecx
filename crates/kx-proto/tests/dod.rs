@@ -123,6 +123,49 @@ fn obligation_1_lease_work_response_empty_round_trips() {
     roundtrip(&proto::LeaseWorkResponse { items: vec![] });
 }
 
+#[test]
+fn obligation_1_read_entries_request_round_trips() {
+    roundtrip(&proto::ReadEntriesRequest {
+        since_seq: 42,
+        max: 256,
+    });
+}
+
+#[test]
+fn obligation_1_read_entries_response_round_trips() {
+    let resp = proto::ReadEntriesResponse {
+        entries: vec![proto::JournalEntry {
+            seq: 7,
+            kind: Some(proto::journal_entry::Kind::Committed(
+                proto::CommittedEntry {
+                    mote_id: vec![1; 32],
+                    idempotency_key: vec![1; 32],
+                    seq: 7,
+                    nd_class: proto::NdClass::Pure as i32,
+                    result_ref: vec![2; 32],
+                    parents: vec![proto::ParentRef {
+                        parent_id: vec![6; 32],
+                        edge_kind: proto::EdgeKind::Data as i32,
+                        non_cascade: false,
+                    }],
+                    warrant_ref: vec![4; 32],
+                    mote_def_hash: vec![5; 32],
+                },
+            )),
+        }],
+        next_seq: 7,
+    };
+    roundtrip(&resp);
+}
+
+#[test]
+fn obligation_1_read_entries_response_empty_round_trips() {
+    roundtrip(&proto::ReadEntriesResponse {
+        entries: vec![],
+        next_seq: 0,
+    });
+}
+
 // --- Obligation 2: same-instance encode determinism ------------------------
 
 #[test]

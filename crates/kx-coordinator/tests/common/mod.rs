@@ -240,3 +240,26 @@ pub async fn lease_work(
         .into_inner()
         .items
 }
+
+/// Read committed journal entries after `since_seq` through the service.
+pub async fn read_entries(
+    service: &CoordinatorService,
+    since_seq: u64,
+    max: u32,
+) -> proto::ReadEntriesResponse {
+    service
+        .read_entries(Request::new(proto::ReadEntriesRequest { since_seq, max }))
+        .await
+        .unwrap()
+        .into_inner()
+}
+
+/// The `mote_id` + `result_ref` of a committed entry (test convenience).
+#[must_use]
+pub fn committed_view(entry: &proto::JournalEntry) -> (Vec<u8>, Vec<u8>, u64) {
+    match entry.kind.as_ref().unwrap() {
+        proto::journal_entry::Kind::Committed(c) => {
+            (c.mote_id.clone(), c.result_ref.clone(), c.seq)
+        }
+    }
+}

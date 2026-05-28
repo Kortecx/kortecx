@@ -297,6 +297,50 @@ message LeaseWorkResponse {
 }
 
 // ---------------------------------------------------------------------------
+// RPC (6) — read committed journal entries (distributed journal access, D55).
+// A peer PULLS committed-entry deltas from `since_seq` and folds a LOCAL read
+// model, instead of round-tripping the coordinator per result — the journal
+// stays single-writer-coordinator (D13), but READS scale horizontally (cursor
+// paging + lock-free; the coordinator is off the hot read path). Bytes are NOT
+// returned here: a committed entry carries the 32-byte `result_ref`, and the
+// payload is read from the shared content-addressed store (D17).
+// ---------------------------------------------------------------------------
+
+message ReadEntriesRequest {
+  uint64 since_seq = 1;                 // return committed entries with seq > since_seq (0 = from the start)
+  uint32 max = 2;                       // upper bound on entries returned this call (0 = coordinator default)
+}
+
+// Mirrors kx_journal::JournalEntry::Committed (field-for-field; the identity
+// substrate stays Rust-side per D53 — refs are bytes, never re-hashed here).
+message CommittedEntry {
+  bytes mote_id = 1;                    // 32B
+  bytes idempotency_key = 2;            // 32B
+  uint64 seq = 3;                       // coordinator-assigned journal seq
+  NdClass nd_class = 4;
+  bytes result_ref = 5;                 // 32B — the payload's address in the shared store
+  repeated ParentRef parents = 6;
+  bytes warrant_ref = 7;                // 32B
+  bytes mote_def_hash = 8;              // 32B
+}
+
+// One journal entry on the wire. EXTENSIBLE: P2.4 carries only `Committed`;
+// `proposed` / `effect_staged` / `repudiated` / `failed` slot into the oneof
+// (fields 3+) in P3 without a wire break, when peers need the full log to fold
+// a faithful projection (e.g. for fault tolerance / coordinator failover).
+message JournalEntry {
+  uint64 seq = 1;
+  oneof kind {
+    CommittedEntry committed = 2;
+  }
+}
+
+message ReadEntriesResponse {
+  repeated JournalEntry entries = 1;    // committed entries with seq in (since_seq, next_seq], in seq order
+  uint64 next_seq = 2;                  // cursor: pass as `since_seq` on the next poll
+}
+
+// ---------------------------------------------------------------------------
 // Service — hosted by the coordinator; workers are clients.
 // ---------------------------------------------------------------------------
 
@@ -306,4 +350,5 @@ service Coordinator {
   rpc SubmitMote(SubmitMoteRequest) returns (SubmitMoteResponse);
   rpc ReportCommit(ReportCommitRequest) returns (ReportCommitResponse);
   rpc LeaseWork(LeaseWorkRequest) returns (LeaseWorkResponse);
+  rpc ReadEntries(ReadEntriesRequest) returns (ReadEntriesResponse);
 }
