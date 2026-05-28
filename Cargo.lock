@@ -847,6 +847,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "kx-tiering"
+version = "0.0.1"
+dependencies = [
+ "kx-content",
+ "kx-journal",
+ "kx-mote",
+ "kx-projection",
+ "smallvec",
+ "thiserror",
+ "tracing",
+]
+
+[[package]]
 name = "kx-tool-registry"
 version = "0.0.1"
 dependencies = [
