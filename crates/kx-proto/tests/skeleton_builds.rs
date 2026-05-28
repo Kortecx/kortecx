@@ -1,0 +1,154 @@
+//! Proves the tonic service **skeleton builds and serves**: a no-op
+//! `Coordinator` impl is hosted over a real TCP endpoint and a generated client
+//! reaches all four RPCs. This goes beyond "compiles" — it exercises the
+//! generated server trait, the `CoordinatorServer`/`CoordinatorClient` types,
+//! and the transport. No coordinator *behavior* is implemented (that is P2.2/2.3).
+
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
+
+mod common;
+
+use std::time::Duration;
+
+use common::{sample_mote, sample_warrant};
+use kx_proto::proto::coordinator_client::CoordinatorClient;
+use kx_proto::proto::coordinator_server::{Coordinator, CoordinatorServer};
+use kx_proto::proto::{
+    CommitOutcome, ExecutorClass, HeartbeatRequest, HeartbeatResponse, RegisterWorkerRequest,
+    RegisterWorkerResponse, ReportCommitRequest, ReportCommitResponse, SubmitMoteRequest,
+    SubmitMoteResponse, SubmitStatus,
+};
+use tonic::transport::Server;
+use tonic::{Request, Response, Status};
+
+#[derive(Default)]
+struct NoopCoordinator;
+
+#[tonic::async_trait]
+impl Coordinator for NoopCoordinator {
+    async fn register_worker(
+        &self,
+        _req: Request<RegisterWorkerRequest>,
+    ) -> Result<Response<RegisterWorkerResponse>, Status> {
+        Ok(Response::new(RegisterWorkerResponse { worker_id: 7 }))
+    }
+
+    async fn heartbeat(
+        &self,
+        _req: Request<HeartbeatRequest>,
+    ) -> Result<Response<HeartbeatResponse>, Status> {
+        Ok(Response::new(HeartbeatResponse { ack: true }))
+    }
+
+    async fn submit_mote(
+        &self,
+        req: Request<SubmitMoteRequest>,
+    ) -> Result<Response<SubmitMoteResponse>, Status> {
+        // Echo back the wire mote_id so the test confirms the payload arrived
+        // intact. (Identity is re-derived coordinator-side in P2.2; not here.)
+        let mote_id = req.into_inner().mote.map(|m| m.mote_id).unwrap_or_default();
+        Ok(Response::new(SubmitMoteResponse {
+            mote_id,
+            status: SubmitStatus::Accepted as i32,
+            detail: String::new(),
+        }))
+    }
+
+    async fn report_commit(
+        &self,
+        _req: Request<ReportCommitRequest>,
+    ) -> Result<Response<ReportCommitResponse>, Status> {
+        Ok(Response::new(ReportCommitResponse {
+            committed_seq: 1,
+            outcome: CommitOutcome::Committed as i32,
+            detail: String::new(),
+        }))
+    }
+}
+
+#[tokio::test]
+async fn coordinator_skeleton_serves_all_four_rpcs() {
+    // Ephemeral port; serve in the background.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    drop(listener); // free it for tonic to re-bind
+
+    tokio::spawn(async move {
+        Server::builder()
+            .add_service(CoordinatorServer::new(NoopCoordinator))
+            .serve(addr)
+            .await
+            .unwrap();
+    });
+
+    // Connect with a brief retry while the server binds.
+    let endpoint = format!("http://{addr}");
+    let mut client = None;
+    for _ in 0..100 {
+        match CoordinatorClient::connect(endpoint.clone()).await {
+            Ok(c) => {
+                client = Some(c);
+                break;
+            }
+            Err(_) => tokio::time::sleep(Duration::from_millis(10)).await,
+        }
+    }
+    let mut client = client.expect("client connects to the skeleton server");
+
+    // (4) register worker
+    let reg = client
+        .register_worker(RegisterWorkerRequest {
+            executor_class: ExecutorClass::Bwrap as i32,
+            endpoint: "http://10.0.0.2:50051".into(),
+        })
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(reg.worker_id, 7);
+
+    // (3) heartbeat
+    let hb = client
+        .heartbeat(HeartbeatRequest {
+            worker_id: 7,
+            timestamp_ms: 1,
+            in_flight: 0,
+        })
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(hb.ack);
+
+    // (1) submit Mote — full domain Mote + warrant over the wire.
+    let submit = client
+        .submit_mote(SubmitMoteRequest {
+            mote: Some(sample_mote().into()),
+            warrant: Some(sample_warrant().into()),
+        })
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(submit.status, SubmitStatus::Accepted as i32);
+    assert_eq!(
+        submit.mote_id.len(),
+        32,
+        "mote_id round-tripped over the wire"
+    );
+
+    // (2) report commit
+    let commit = client
+        .report_commit(ReportCommitRequest {
+            mote_id: vec![1; 32],
+            idempotency_key: vec![2; 32],
+            result_ref: vec![3; 32],
+            warrant_ref: vec![4; 32],
+            mote_def_hash: vec![5; 32],
+            nd_class: kx_proto::proto::NdClass::ReadOnlyNondet as i32,
+            parents: vec![],
+            worker_id: 7,
+        })
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(commit.outcome, CommitOutcome::Committed as i32);
+    assert_eq!(commit.committed_seq, 1);
+}

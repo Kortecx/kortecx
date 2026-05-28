@@ -1,0 +1,40 @@
+[package]
+name = "kx-proto"
+version = "0.0.1"
+edition = { workspace = true }
+rust-version = { workspace = true }
+license = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+description = "kortecx P2.1 gRPC schema (tonic/prost) — the coordinator/worker distribution boundary and cross-language (Rust/Python/TypeScript) contract: submit Mote, report commit, heartbeat, register worker."
+build = "build.rs"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+tonic = { workspace = true }
+prost = { workspace = true }
+thiserror = { workspace = true }
+# Domain crates — kx-proto owns the single tested proto<->domain mapping +
+# the identity round-trip (MoteId / warrant_ref reconstructed Rust-side). It
+# does NOT depend on kx-journal: a commit proposal is decoded to kx-mote /
+# kx-content typed fields and assembled into a journal entry coordinator-side
+# (P2.2), where the seq is assigned.
+kx-mote = { workspace = true }
+kx-content = { workspace = true }
+kx-warrant = { workspace = true }
+smallvec = { workspace = true }
+
+[build-dependencies]
+tonic-build = { workspace = true }
+protoc-bin-vendored = { workspace = true }
+
+[dev-dependencies]
+# `time` is additive over the workspace tokio features — the skeleton test uses
+# a short connect-retry sleep while the in-process server binds.
+tokio = { workspace = true, features = ["time"] }
+proptest = { workspace = true }
+
+[lints]
+workspace = true
