@@ -45,6 +45,13 @@ pub enum CoordinatorError {
     #[error("unknown mote {0:?} (never submitted)")]
     UnknownMote(MoteId),
 
+    /// A `ReportCommit` proposed a `result_ref` whose bytes are not present in the
+    /// shared content store (D55 phantom-ref guard). When the coordinator is built
+    /// with a store handle, it verifies `store.contains(result_ref)` before
+    /// committing, so a worker cannot record a result it never published.
+    #[error("result_ref for mote {0:?} is absent from the content store")]
+    ResultRefAbsent(MoteId),
+
     /// A `ReportCommit` declared more parents than the journal encodes. Validated
     /// up front so a malformed proposal cannot poison a group-commit batch.
     #[error("commit declares {got} parents, exceeds the maximum {max}")]
@@ -96,6 +103,7 @@ impl From<CoordinatorError> for tonic::Status {
             | CoordinatorError::Convert(_)
             | CoordinatorError::UnknownWorker(_)
             | CoordinatorError::UnknownMote(_)
+            | CoordinatorError::ResultRefAbsent(_)
             | CoordinatorError::TooManyParents { .. }
             | CoordinatorError::DataEdgeNonCascade
             | CoordinatorError::Scheduler(_) => Self::invalid_argument(message),

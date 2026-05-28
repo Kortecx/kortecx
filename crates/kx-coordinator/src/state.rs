@@ -17,7 +17,9 @@
 //! single-node `kx-runtime` engine does — the scheduler source is unchanged.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
+use kx_content::{ContentStore, LocalFsContentStore};
 use kx_journal::{Journal, JournalEntry};
 use kx_mote::{Mote, MoteId, NdClass};
 use kx_projection::{MoteState, Projection};
@@ -95,10 +97,16 @@ pub(crate) struct CoreHandle {
 }
 
 impl CoreHandle {
-    /// Spawn the owner thread, taking sole ownership of `journal`.
-    pub(crate) fn spawn<J: Journal + Send + 'static>(journal: J) -> Self {
+    /// Spawn the owner thread, taking sole ownership of `journal`. When `store` is
+    /// `Some`, the core verifies `store.contains(result_ref)` before committing a
+    /// proposal (D55 phantom-ref guard); when `None`, commits are not content-checked
+    /// (the P2.2/P2.3 behavior).
+    pub(crate) fn spawn<J: Journal + Send + 'static>(
+        journal: J,
+        store: Option<Arc<LocalFsContentStore>>,
+    ) -> Self {
         let (commands, inbox) = mpsc::channel(COMMAND_BUFFER);
-        std::thread::spawn(move || core_loop(&journal, inbox));
+        std::thread::spawn(move || core_loop(&journal, store.as_deref(), inbox));
         Self { commands }
     }
 
@@ -295,7 +303,11 @@ fn read_committed_since<J: Journal>(
 
 /// The owner-thread loop. Recovers the projection from the journal, then services
 /// commands until every sender drops (the channel closes on coordinator shutdown).
-fn core_loop<J: Journal>(journal: &J, mut inbox: mpsc::Receiver<Command>) {
+fn core_loop<J: Journal>(
+    journal: &J,
+    store: Option<&LocalFsContentStore>,
+    mut inbox: mpsc::Receiver<Command>,
+) {
     let Some((mut projection, mut folded_through, mut submitted)) = recover(journal) else {
         return;
     };
@@ -337,6 +349,7 @@ fn core_loop<J: Journal>(journal: &J, mut inbox: mpsc::Receiver<Command>) {
             };
             flush_commits(
                 journal,
+                store,
                 &mut projection,
                 &mut folded_through,
                 &submitted,
@@ -392,6 +405,7 @@ fn core_loop<J: Journal>(journal: &J, mut inbox: mpsc::Receiver<Command>) {
         }
         flush_commits(
             journal,
+            store,
             &mut projection,
             &mut folded_through,
             &submitted,
@@ -424,9 +438,13 @@ fn committed_entry(proposal: CommitProposal) -> JournalEntry {
 /// Flush a run of queued commits as ONE group commit
 /// ([`Journal::append_batch`](kx_journal::Journal::append_batch) — a single journal
 /// transaction), then fold the new range once. Never-submitted Motes are rejected
-/// individually with no write; the admitted ones are appended atomically.
+/// individually with no write; the admitted ones are appended atomically. When
+/// `store` is `Some`, each proposal's `result_ref` must be present in the content
+/// store (D55 phantom-ref guard) — an absent ref is rejected individually, never
+/// blocking its batch-mates.
 fn flush_commits<J: Journal>(
     journal: &J,
+    store: Option<&LocalFsContentStore>,
     projection: &mut Projection,
     folded_through: &mut u64,
     submitted: &BTreeSet<MoteId>,
@@ -438,19 +456,22 @@ fn flush_commits<J: Journal>(
     }
     let batch = std::mem::take(pending);
 
-    // Admission guard per proposal: reject never-submitted Motes (no write) so one
+    // Per-proposal admission: reject never-submitted Motes and (when a store is
+    // configured) results whose bytes were never published — neither writes, so one
     // inadmissible commit never blocks its valid batch-mates.
     let mut entries: Vec<JournalEntry> = Vec::with_capacity(batch.len());
     let mut replies: Vec<oneshot::Sender<Result<CommitApplied, CoordinatorError>>> =
         Vec::with_capacity(batch.len());
     let mut committed_ids: Vec<MoteId> = Vec::with_capacity(batch.len());
     for (proposal, reply) in batch {
-        if submitted.contains(&proposal.mote_id) {
+        if !submitted.contains(&proposal.mote_id) {
+            let _ = reply.send(Err(CoordinatorError::UnknownMote(proposal.mote_id)));
+        } else if store.is_some_and(|s| !s.contains(&proposal.result_ref)) {
+            let _ = reply.send(Err(CoordinatorError::ResultRefAbsent(proposal.mote_id)));
+        } else {
             committed_ids.push(proposal.mote_id);
             entries.push(committed_entry(proposal));
             replies.push(reply);
-        } else {
-            let _ = reply.send(Err(CoordinatorError::UnknownMote(proposal.mote_id)));
         }
     }
     if entries.is_empty() {

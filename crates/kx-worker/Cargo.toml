@@ -37,6 +37,9 @@ kx-coordinator = { workspace = true }
 # connect-retry sleep while the in-process server binds (the kx-proto pattern).
 tokio = { workspace = true, features = ["time"] }
 smallvec = { workspace = true }
+# Shared on-disk content_root for the cross-node read e2e (worker A writes, the
+# coordinator verifies, peer B reads — all against one LocalFsContentStore root).
+tempfile = { workspace = true }
 
 [lints]
 workspace = true
