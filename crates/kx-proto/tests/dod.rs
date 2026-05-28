@@ -98,6 +98,31 @@ fn obligation_1_register_worker_round_trips() {
     roundtrip(&proto::RegisterWorkerResponse { worker_id: 7 });
 }
 
+#[test]
+fn obligation_1_lease_work_request_round_trips() {
+    roundtrip(&proto::LeaseWorkRequest {
+        worker_id: 7,
+        executor_class: proto::ExecutorClass::Bwrap as i32,
+        max_motes: 16,
+    });
+}
+
+#[test]
+fn obligation_1_lease_work_response_round_trips() {
+    let resp = proto::LeaseWorkResponse {
+        items: vec![proto::WorkItem {
+            mote: Some(sample_mote().into()),
+            warrant: Some(sample_warrant().into()),
+        }],
+    };
+    roundtrip(&resp);
+}
+
+#[test]
+fn obligation_1_lease_work_response_empty_round_trips() {
+    roundtrip(&proto::LeaseWorkResponse { items: vec![] });
+}
+
 // --- Obligation 2: same-instance encode determinism ------------------------
 
 #[test]
@@ -175,6 +200,43 @@ fn obligation_3_full_wire_pipeline_preserves_identity() {
         warrant_ref_of(&warrant),
         warrant_ref_of(&back_warrant),
         "warrant_ref survives the full pipeline"
+    );
+}
+
+#[test]
+fn obligation_3_work_item_preserves_identity() {
+    // The worker pulls a WorkItem and re-derives MoteId / warrant_ref from it to
+    // build a ReportCommit the coordinator will accept; the wire mapping must
+    // preserve both through encode + decode.
+    let mote = sample_mote();
+    let warrant = sample_warrant();
+    let resp = proto::LeaseWorkResponse {
+        items: vec![proto::WorkItem {
+            mote: Some(mote.clone().into()),
+            warrant: Some(warrant.clone().into()),
+        }],
+    };
+
+    let bytes = resp.encode_to_vec();
+    let decoded = proto::LeaseWorkResponse::decode(&bytes[..]).expect("decode");
+    let item = decoded.items.into_iter().next().expect("one item");
+
+    let back_mote: kx_mote::Mote = item
+        .mote
+        .expect("mote present")
+        .try_into()
+        .expect("convert");
+    let back_warrant: kx_warrant::WarrantSpec = item
+        .warrant
+        .expect("warrant present")
+        .try_into()
+        .expect("convert");
+
+    assert_eq!(mote.id, back_mote.id, "MoteId survives the lease pipeline");
+    assert_eq!(
+        warrant_ref_of(&warrant),
+        warrant_ref_of(&back_warrant),
+        "warrant_ref survives the lease pipeline"
     );
 }
 

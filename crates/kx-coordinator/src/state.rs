@@ -16,13 +16,13 @@
 //! Registration routes through [`kx_scheduler::Scheduler::submit`] exactly as the
 //! single-node `kx-runtime` engine does — the scheduler source is unchanged.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use kx_journal::{Journal, JournalEntry};
-use kx_mote::{Mote, MoteId};
+use kx_mote::{Mote, MoteId, NdClass};
 use kx_projection::{MoteState, Projection};
 use kx_scheduler::{LocalPlacement, Scheduler, SchedulerError};
-use kx_warrant::WarrantSpec;
+use kx_warrant::{ExecutorClass, WarrantSpec};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::commit::CommitProposal;
@@ -74,6 +74,11 @@ pub(crate) enum Command {
     },
     ReadySet {
         reply: oneshot::Sender<Vec<MoteId>>,
+    },
+    LeaseWork {
+        executor_class: ExecutorClass,
+        max: usize,
+        reply: oneshot::Sender<Vec<(Mote, WarrantSpec)>>,
     },
 }
 
@@ -148,6 +153,27 @@ impl CoreHandle {
             .map_err(|_| CoordinatorError::CoreUnavailable)
     }
 
+    /// Lease up to `max` ready PURE Motes runnable on `executor_class`, returning
+    /// each with the warrant it was submitted under (the dispatch surface the
+    /// worker pulls). No lease/lock is held: double execution is harmless under
+    /// the journal's dedupe-by-key, and provisioning is reserved for P3 (D47).
+    pub(crate) async fn lease_work(
+        &self,
+        executor_class: ExecutorClass,
+        max: usize,
+    ) -> Result<Vec<(Mote, WarrantSpec)>, CoordinatorError> {
+        let (reply, response) = oneshot::channel();
+        self.dispatch(Command::LeaseWork {
+            executor_class,
+            max,
+            reply,
+        })
+        .await?;
+        response
+            .await
+            .map_err(|_| CoordinatorError::CoreUnavailable)
+    }
+
     async fn dispatch(&self, command: Command) -> Result<(), CoordinatorError> {
         self.commands
             .send(command)
@@ -156,31 +182,73 @@ impl CoreHandle {
     }
 }
 
-/// The owner-thread loop. Recovers the projection from the journal, then services
-/// commands until every sender drops (the channel closes on coordinator shutdown).
-fn core_loop<J: Journal>(journal: &J, mut inbox: mpsc::Receiver<Command>) {
-    let mut projection = match Projection::from_journal(journal) {
+/// Recover the read-side from the durable journal at startup: fold the log into a
+/// projection, read the current seq watermark, and seed the admission set from the
+/// already-committed Motes (on recovery, committed Motes count as admitted). Returns
+/// `None` (after logging) on a durable-layer fault, which stops the core — the
+/// journal stays the truth and a restart re-folds from it.
+fn recover<J: Journal>(journal: &J) -> Option<(Projection, u64, BTreeSet<MoteId>)> {
+    let projection = match Projection::from_journal(journal) {
         Ok(projection) => projection,
         Err(error) => {
             tracing::error!(%error, "coordinator core failed to recover the projection");
-            return;
+            return None;
         }
     };
-    let mut folded_through = match journal.current_seq() {
+    let folded_through = match journal.current_seq() {
         Ok(seq) => seq,
         Err(error) => {
             tracing::error!(%error, "coordinator core failed to read the journal seq");
-            return;
+            return None;
         }
     };
-    let mut scheduler = Scheduler::new(LocalPlacement);
-    // Motes this coordinator has admitted (submitted). Seeds the `ReportCommit`
-    // admission guard; on recovery, already-committed Motes count as admitted.
-    let mut submitted: BTreeSet<MoteId> = projection
+    let submitted = projection
         .snapshot()
         .iter_motes()
         .map(|(id, _)| id)
         .collect();
+    Some((projection, folded_through, submitted))
+}
+
+/// Select up to `max` ready PURE Motes runnable on `executor_class`, each paired
+/// with the warrant it was submitted under (the dispatch surface a worker pulls).
+/// Ready = parents-all-committed (the dispatch precondition); PURE is the only
+/// class the worker executes-then-proposes in P2.3 (WM needs a durable staged-intent
+/// RPC, deferred); the warrant's executor_class must match the worker's backend.
+fn lease_ready(
+    projection: &Projection,
+    submitted_defs: &BTreeMap<MoteId, (Mote, WarrantSpec)>,
+    executor_class: ExecutorClass,
+    max: usize,
+) -> Vec<(Mote, WarrantSpec)> {
+    let mut items = Vec::new();
+    for mote_id in projection.ready_set() {
+        if items.len() >= max {
+            break;
+        }
+        if let Some((mote, warrant)) = submitted_defs.get(&mote_id) {
+            if mote.nd_class() == NdClass::Pure && warrant.executor_class == executor_class {
+                items.push((mote.clone(), warrant.clone()));
+            }
+        }
+    }
+    items
+}
+
+/// The owner-thread loop. Recovers the projection from the journal, then services
+/// commands until every sender drops (the channel closes on coordinator shutdown).
+fn core_loop<J: Journal>(journal: &J, mut inbox: mpsc::Receiver<Command>) {
+    let Some((mut projection, mut folded_through, mut submitted)) = recover(journal) else {
+        return;
+    };
+    let mut scheduler = Scheduler::new(LocalPlacement);
+    // Definitions of admitted-but-not-yet-committed Motes, kept so `LeaseWork` can
+    // hand a worker the Mote + warrant to run. (kx-scheduler consumes the Mote on
+    // submit and exposes no get-by-id accessor — and is frozen by the thesis test —
+    // so the coordinator retains its own copy.) Recovery does not repopulate this:
+    // committed Motes are never ready, and pending work lost to a crash is a P3
+    // concern.
+    let mut submitted_defs: BTreeMap<MoteId, (Mote, WarrantSpec)> = BTreeMap::new();
 
     while let Some(first) = inbox.blocking_recv() {
         // Drain everything immediately available (up to MAX_DRAIN) so consecutive
@@ -199,61 +267,61 @@ fn core_loop<J: Journal>(journal: &J, mut inbox: mpsc::Receiver<Command>) {
         // (a read or submit always observes the commits queued before it).
         let mut pending: Vec<PendingCommit> = Vec::new();
         for command in drained {
-            match command {
+            // `Commit`s accumulate into the pending run; every other command must
+            // observe the commits queued before it, so flush the run first (one
+            // group commit), then handle the command.
+            let command = match command {
                 Command::Commit { proposal, reply } => {
                     pending.push((*proposal, reply));
+                    continue;
                 }
+                other => other,
+            };
+            flush_commits(
+                journal,
+                &mut projection,
+                &mut folded_through,
+                &submitted,
+                &mut submitted_defs,
+                &mut pending,
+            );
+            match command {
+                Command::Commit { .. } => unreachable!("Commit is handled above"),
                 Command::Submit {
                     mote,
                     warrant,
                     reply,
                 } => {
-                    flush_commits(
-                        journal,
-                        &mut projection,
-                        &mut folded_through,
-                        &submitted,
-                        &mut pending,
-                    );
                     let mote_id = mote.id;
-                    let duplicate = match scheduler.submit(*mote, *warrant, &mut projection) {
-                        Ok(()) => {
-                            submitted.insert(mote_id);
-                            false
-                        }
-                        Err(SchedulerError::DuplicateSubmission(_)) => true,
-                    };
+                    let mote = *mote;
+                    let warrant = *warrant;
+                    let duplicate =
+                        match scheduler.submit(mote.clone(), warrant.clone(), &mut projection) {
+                            Ok(()) => {
+                                submitted.insert(mote_id);
+                                submitted_defs.insert(mote_id, (mote, warrant));
+                                false
+                            }
+                            Err(SchedulerError::DuplicateSubmission(_)) => true,
+                        };
                     let _ = reply.send(SubmitOutcome { mote_id, duplicate });
                 }
                 Command::StateOf { mote_id, reply } => {
-                    flush_commits(
-                        journal,
-                        &mut projection,
-                        &mut folded_through,
-                        &submitted,
-                        &mut pending,
-                    );
                     let _ = reply.send(projection.state_of(&mote_id));
                 }
                 Command::CommittedCount { reply } => {
-                    flush_commits(
-                        journal,
-                        &mut projection,
-                        &mut folded_through,
-                        &submitted,
-                        &mut pending,
-                    );
                     let _ = reply.send(projection.snapshot().committed_count());
                 }
                 Command::ReadySet { reply } => {
-                    flush_commits(
-                        journal,
-                        &mut projection,
-                        &mut folded_through,
-                        &submitted,
-                        &mut pending,
-                    );
                     let _ = reply.send(projection.ready_set());
+                }
+                Command::LeaseWork {
+                    executor_class,
+                    max,
+                    reply,
+                } => {
+                    let items = lease_ready(&projection, &submitted_defs, executor_class, max);
+                    let _ = reply.send(items);
                 }
             }
         }
@@ -262,6 +330,7 @@ fn core_loop<J: Journal>(journal: &J, mut inbox: mpsc::Receiver<Command>) {
             &mut projection,
             &mut folded_through,
             &submitted,
+            &mut submitted_defs,
             &mut pending,
         );
     }
@@ -296,6 +365,7 @@ fn flush_commits<J: Journal>(
     projection: &mut Projection,
     folded_through: &mut u64,
     submitted: &BTreeSet<MoteId>,
+    submitted_defs: &mut BTreeMap<MoteId, (Mote, WarrantSpec)>,
     pending: &mut Vec<PendingCommit>,
 ) {
     if pending.is_empty() {
@@ -308,8 +378,10 @@ fn flush_commits<J: Journal>(
     let mut entries: Vec<JournalEntry> = Vec::with_capacity(batch.len());
     let mut replies: Vec<oneshot::Sender<Result<CommitApplied, CoordinatorError>>> =
         Vec::with_capacity(batch.len());
+    let mut committed_ids: Vec<MoteId> = Vec::with_capacity(batch.len());
     for (proposal, reply) in batch {
         if submitted.contains(&proposal.mote_id) {
+            committed_ids.push(proposal.mote_id);
             entries.push(committed_entry(proposal));
             replies.push(reply);
         } else {
@@ -322,6 +394,12 @@ fn flush_commits<J: Journal>(
 
     match apply_batch(journal, projection, folded_through, entries) {
         Ok(applied) => {
+            // The defs are no longer leasable once committed (a committed Mote is
+            // never in the ready-set); free them to keep the map bounded by
+            // in-flight work, not total submissions.
+            for id in &committed_ids {
+                submitted_defs.remove(id);
+            }
             for (reply, applied) in replies.into_iter().zip(applied) {
                 let _ = reply.send(Ok(applied));
             }

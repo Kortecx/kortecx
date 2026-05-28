@@ -271,6 +271,32 @@ message RegisterWorkerResponse {
 }
 
 // ---------------------------------------------------------------------------
+// RPC (5) — lease work. The worker PULLS ready Motes to execute. This is a
+// poll (the worker asks); the coordinator returns Motes whose parents are all
+// committed (projection ready-set) that match the worker's executor_class. No
+// lease/lock is held — double execution is harmless under journal
+// dedupe-by-key, and worker provisioning is reserved for P3 (D47). The
+// returned WorkItem reuses the Mote + WarrantSpec value messages; the worker
+// re-runs the executor verbatim and PROPOSES the result via ReportCommit.
+// ---------------------------------------------------------------------------
+
+message LeaseWorkRequest {
+  uint64 worker_id = 1;                 // the requesting worker (from RegisterWorker)
+  ExecutorClass executor_class = 2;     // only Motes runnable on this backend
+  uint32 max_motes = 3;                 // upper bound on items returned this call
+}
+
+// One unit of work: the Mote to run plus the warrant it runs under.
+message WorkItem {
+  Mote mote = 1;
+  WarrantSpec warrant = 2;
+}
+
+message LeaseWorkResponse {
+  repeated WorkItem items = 1;          // empty when no ready work matches
+}
+
+// ---------------------------------------------------------------------------
 // Service — hosted by the coordinator; workers are clients.
 // ---------------------------------------------------------------------------
 
@@ -279,4 +305,5 @@ service Coordinator {
   rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
   rpc SubmitMote(SubmitMoteRequest) returns (SubmitMoteResponse);
   rpc ReportCommit(ReportCommitRequest) returns (ReportCommitResponse);
+  rpc LeaseWork(LeaseWorkRequest) returns (LeaseWorkResponse);
 }
