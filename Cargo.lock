@@ -1339,6 +1339,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "kx-worker"
+version = "0.0.1"
+dependencies = [
+ "kx-content",
+ "kx-coordinator",
+ "kx-executor",
+ "kx-journal",
+ "kx-mote",
+ "kx-proto",
+ "kx-warrant",
+ "smallvec",
+ "thiserror",
+ "tokio",
+ "tonic",
+ "tracing",
+]
+
+[[package]]
 name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
