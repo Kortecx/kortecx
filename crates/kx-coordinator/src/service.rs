@@ -73,6 +73,7 @@ impl CoordinatorService {
 
 #[tonic::async_trait]
 impl Coordinator for CoordinatorService {
+    #[tracing::instrument(skip_all)]
     async fn register_worker(
         &self,
         request: Request<proto::RegisterWorkerRequest>,
@@ -84,11 +85,13 @@ impl Coordinator for CoordinatorService {
         let executor_class =
             kx_warrant::ExecutorClass::try_from(proto_class).map_err(CoordinatorError::from)?;
         let id = self.registry.register(executor_class, req.endpoint);
+        tracing::info!(worker_id = id.0, ?executor_class, "worker registered");
         Ok(Response::new(proto::RegisterWorkerResponse {
             worker_id: id.0,
         }))
     }
 
+    #[tracing::instrument(skip_all)]
     async fn heartbeat(
         &self,
         request: Request<proto::HeartbeatRequest>,
@@ -102,6 +105,7 @@ impl Coordinator for CoordinatorService {
         Ok(Response::new(proto::HeartbeatResponse { ack: true }))
     }
 
+    #[tracing::instrument(skip_all)]
     async fn submit_mote(
         &self,
         request: Request<proto::SubmitMoteRequest>,
@@ -133,6 +137,7 @@ impl Coordinator for CoordinatorService {
         }))
     }
 
+    #[tracing::instrument(skip_all)]
     async fn report_commit(
         &self,
         request: Request<proto::ReportCommitRequest>,
@@ -150,6 +155,11 @@ impl Coordinator for CoordinatorService {
         } else {
             proto::CommitOutcome::Committed
         };
+        tracing::info!(
+            seq = applied.committed_seq,
+            already_committed = applied.already_committed,
+            "commit recorded"
+        );
         Ok(Response::new(proto::ReportCommitResponse {
             committed_seq: applied.committed_seq,
             outcome: outcome as i32,

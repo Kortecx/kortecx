@@ -28,6 +28,11 @@ use tokio::sync::{mpsc, oneshot};
 use crate::commit::CommitProposal;
 use crate::error::CoordinatorError;
 
+/// Bound on in-flight commands queued to the orchestration core. A bounded
+/// channel applies backpressure: when the core is saturated, `dispatch` awaits
+/// instead of letting an unbounded queue grow without limit under a flood of RPCs.
+const COMMAND_BUFFER: usize = 1024;
+
 /// Outcome of a `SubmitMote`: the canonically re-derived id and whether it was a
 /// duplicate (idempotent re-submit before commit).
 #[derive(Debug, Clone, Copy)]
@@ -71,13 +76,13 @@ pub(crate) enum Command {
 /// channel sender), so the gRPC service that holds it is too.
 #[derive(Clone)]
 pub(crate) struct CoreHandle {
-    commands: mpsc::UnboundedSender<Command>,
+    commands: mpsc::Sender<Command>,
 }
 
 impl CoreHandle {
     /// Spawn the owner thread, taking sole ownership of `journal`.
     pub(crate) fn spawn<J: Journal + Send + 'static>(journal: J) -> Self {
-        let (commands, inbox) = mpsc::unbounded_channel();
+        let (commands, inbox) = mpsc::channel(COMMAND_BUFFER);
         std::thread::spawn(move || core_loop(&journal, inbox));
         Self { commands }
     }
@@ -92,7 +97,8 @@ impl CoreHandle {
             mote: Box::new(mote),
             warrant: Box::new(warrant),
             reply,
-        })?;
+        })
+        .await?;
         response
             .await
             .map_err(|_| CoordinatorError::CoreUnavailable)
@@ -106,7 +112,8 @@ impl CoreHandle {
         self.dispatch(Command::Commit {
             proposal: Box::new(proposal),
             reply,
-        })?;
+        })
+        .await?;
         response
             .await
             .map_err(|_| CoordinatorError::CoreUnavailable)?
@@ -114,7 +121,7 @@ impl CoreHandle {
 
     pub(crate) async fn state_of(&self, mote_id: MoteId) -> Result<MoteState, CoordinatorError> {
         let (reply, response) = oneshot::channel();
-        self.dispatch(Command::StateOf { mote_id, reply })?;
+        self.dispatch(Command::StateOf { mote_id, reply }).await?;
         response
             .await
             .map_err(|_| CoordinatorError::CoreUnavailable)
@@ -122,7 +129,7 @@ impl CoreHandle {
 
     pub(crate) async fn committed_count(&self) -> Result<usize, CoordinatorError> {
         let (reply, response) = oneshot::channel();
-        self.dispatch(Command::CommittedCount { reply })?;
+        self.dispatch(Command::CommittedCount { reply }).await?;
         response
             .await
             .map_err(|_| CoordinatorError::CoreUnavailable)
@@ -130,22 +137,23 @@ impl CoreHandle {
 
     pub(crate) async fn ready_set(&self) -> Result<Vec<MoteId>, CoordinatorError> {
         let (reply, response) = oneshot::channel();
-        self.dispatch(Command::ReadySet { reply })?;
+        self.dispatch(Command::ReadySet { reply }).await?;
         response
             .await
             .map_err(|_| CoordinatorError::CoreUnavailable)
     }
 
-    fn dispatch(&self, command: Command) -> Result<(), CoordinatorError> {
+    async fn dispatch(&self, command: Command) -> Result<(), CoordinatorError> {
         self.commands
             .send(command)
+            .await
             .map_err(|_| CoordinatorError::CoreUnavailable)
     }
 }
 
 /// The owner-thread loop. Recovers the projection from the journal, then services
 /// commands until every sender drops (the channel closes on coordinator shutdown).
-fn core_loop<J: Journal>(journal: &J, mut inbox: mpsc::UnboundedReceiver<Command>) {
+fn core_loop<J: Journal>(journal: &J, mut inbox: mpsc::Receiver<Command>) {
     let mut projection = match Projection::from_journal(journal) {
         Ok(projection) => projection,
         Err(error) => {
@@ -210,8 +218,14 @@ fn core_loop<J: Journal>(journal: &J, mut inbox: mpsc::UnboundedReceiver<Command
 }
 
 /// Assemble + append the `Committed` entry (the sole-writer step), then fold it
-/// into the projection. Refuses commits for never-submitted Motes; dedupes by
-/// returning the existing seq when a `Committed` already exists for the id.
+/// into the projection. Refuses commits for never-submitted Motes.
+///
+/// Dedup is delegated to the journal's own dedup-by-key contract (the single
+/// source of truth): `append` is a no-op that returns the pre-existing entry on a
+/// duplicate. We detect that — without a second lookup — by comparing the returned
+/// seq against the seq captured before the append: a fresh write advances the seq,
+/// a dedup hit returns an older one. On a dedup hit we skip the fold (the entry is
+/// already folded; re-folding would trip `DuplicateCommitted`).
 fn apply_commit<J: Journal>(
     journal: &J,
     projection: &mut Projection,
@@ -222,13 +236,8 @@ fn apply_commit<J: Journal>(
     if !submitted.contains(&proposal.mote_id) {
         return Err(CoordinatorError::UnknownMote(proposal.mote_id));
     }
-    if let Some(JournalEntry::Committed { seq, .. }) = journal.read_committed(&proposal.mote_id)? {
-        return Ok(CommitApplied {
-            committed_seq: seq,
-            already_committed: true,
-        });
-    }
 
+    let seq_before = journal.current_seq()?;
     let durable = journal.append(JournalEntry::Committed {
         mote_id: proposal.mote_id,
         idempotency_key: proposal.idempotency_key,
@@ -246,10 +255,13 @@ fn apply_commit<J: Journal>(
         _ => 0,
     };
 
-    fold_new(journal, projection, folded_through)?;
+    let already_committed = committed_seq <= seq_before;
+    if !already_committed {
+        fold_new(journal, projection, folded_through)?;
+    }
     Ok(CommitApplied {
         committed_seq,
-        already_committed: false,
+        already_committed,
     })
 }
 
