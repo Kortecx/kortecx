@@ -59,6 +59,14 @@ pub trait WorkerRegistry: Send + Sync {
     fn is_empty(&self) -> bool {
         self.len() == 0
     }
+
+    /// A point-in-time copy of every registered worker's record — the input a
+    /// placement policy ranks over (P2.5, D56). Default returns empty so existing
+    /// implementors stay valid; the in-memory registry overrides it. Implementors
+    /// MUST clone-and-release (never hold an internal lock across the returned data).
+    fn snapshot(&self) -> Vec<WorkerRecord> {
+        Vec::new()
+    }
 }
 
 /// In-memory [`WorkerRegistry`] — the OSS default.
@@ -125,5 +133,14 @@ impl WorkerRegistry for InMemoryWorkerRegistry {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .len()
+    }
+
+    fn snapshot(&self) -> Vec<WorkerRecord> {
+        self.workers
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .values()
+            .cloned()
+            .collect()
     }
 }

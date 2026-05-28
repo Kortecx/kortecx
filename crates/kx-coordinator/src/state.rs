@@ -23,12 +23,14 @@ use kx_content::{ContentStore, LocalFsContentStore};
 use kx_journal::{Journal, JournalEntry};
 use kx_mote::{Mote, MoteId, NdClass};
 use kx_projection::{MoteState, Projection};
-use kx_scheduler::{LocalPlacement, Scheduler, SchedulerError};
+use kx_scheduler::{LocalPlacement, Placement, Scheduler, SchedulerError, WorkerId};
 use kx_warrant::{ExecutorClass, WarrantSpec};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::commit::CommitProposal;
 use crate::error::CoordinatorError;
+use crate::placement::LoadAwarePlacement;
+use crate::registry::WorkerRegistry;
 
 /// Bound on in-flight commands queued to the orchestration core. A bounded
 /// channel applies backpressure: when the core is saturated, `dispatch` awaits
@@ -78,6 +80,7 @@ pub(crate) enum Command {
         reply: oneshot::Sender<Vec<MoteId>>,
     },
     LeaseWork {
+        worker: WorkerId,
         executor_class: ExecutorClass,
         max: usize,
         reply: oneshot::Sender<Vec<(Mote, WarrantSpec)>>,
@@ -100,13 +103,15 @@ impl CoreHandle {
     /// Spawn the owner thread, taking sole ownership of `journal`. When `store` is
     /// `Some`, the core verifies `store.contains(result_ref)` before committing a
     /// proposal (D55 phantom-ref guard); when `None`, commits are not content-checked
-    /// (the P2.2/P2.3 behavior).
+    /// (the P2.2/P2.3 behavior). `registry` is the live worker view the lease-time
+    /// placement policy ranks over (D56).
     pub(crate) fn spawn<J: Journal + Send + 'static>(
         journal: J,
         store: Option<Arc<LocalFsContentStore>>,
+        registry: Arc<dyn WorkerRegistry>,
     ) -> Self {
         let (commands, inbox) = mpsc::channel(COMMAND_BUFFER);
-        std::thread::spawn(move || core_loop(&journal, store.as_deref(), inbox));
+        std::thread::spawn(move || core_loop(&journal, store.as_deref(), &*registry, inbox));
         Self { commands }
     }
 
@@ -167,16 +172,20 @@ impl CoreHandle {
     }
 
     /// Lease up to `max` ready PURE Motes runnable on `executor_class`, returning
-    /// each with the warrant it was submitted under (the dispatch surface the
-    /// worker pulls). No lease/lock is held: double execution is harmless under
-    /// the journal's dedupe-by-key, and provisioning is reserved for P3 (D47).
+    /// each with the warrant it was submitted under (the dispatch surface the worker
+    /// pulls). Placement v2 (D56) prefers Motes the load-aware policy routes to
+    /// `worker`, then fills to `max` with the rest so a live poller never idles while
+    /// ready work exists. No lease/lock is held: double execution is harmless under
+    /// the journal's dedupe-by-key, and worker-death reschedule is reserved for P3.
     pub(crate) async fn lease_work(
         &self,
+        worker: WorkerId,
         executor_class: ExecutorClass,
         max: usize,
     ) -> Result<Vec<(Mote, WarrantSpec)>, CoordinatorError> {
         let (reply, response) = oneshot::channel();
         self.dispatch(Command::LeaseWork {
+            worker,
             executor_class,
             max,
             reply,
@@ -244,29 +253,41 @@ fn recover<J: Journal>(journal: &J) -> Option<(Projection, u64, BTreeSet<MoteId>
     Some((projection, folded_through, submitted))
 }
 
-/// Select up to `max` ready PURE Motes runnable on `executor_class`, each paired
-/// with the warrant it was submitted under (the dispatch surface a worker pulls).
-/// Ready = parents-all-committed (the dispatch precondition); PURE is the only
-/// class the worker executes-then-proposes in P2.3 (WM needs a durable staged-intent
-/// RPC, deferred); the warrant's executor_class must match the worker's backend.
+/// Select up to `max` ready PURE Motes for `worker` to run. Candidates are
+/// ready (parents-all-committed) ∩ PURE (the only class executed-then-proposed in
+/// P2.x; WM is deferred) ∩ matching the worker's backend (`executor_class`). Placement
+/// v2 (D56) then orders them: Motes the load-aware policy routes to `worker` come
+/// **first**, the rest **fill to `max`** — so work balances across workers by load
+/// (shard-by-mote on ties) while a live poller never idles when ready work exists
+/// (starvation-free; double execution stays harmless under dedup, D54).
 fn lease_ready(
     projection: &Projection,
     submitted_defs: &BTreeMap<MoteId, (Mote, WarrantSpec)>,
+    registry: &dyn WorkerRegistry,
+    worker: WorkerId,
     executor_class: ExecutorClass,
     max: usize,
 ) -> Vec<(Mote, WarrantSpec)> {
-    let mut items = Vec::new();
+    let placement = LoadAwarePlacement::new(registry, executor_class);
+    let mut preferred: Vec<MoteId> = Vec::new();
+    let mut rest: Vec<MoteId> = Vec::new();
     for mote_id in projection.ready_set() {
-        if items.len() >= max {
-            break;
-        }
         if let Some((mote, warrant)) = submitted_defs.get(&mote_id) {
             if mote.nd_class() == NdClass::Pure && warrant.executor_class == executor_class {
-                items.push((mote.clone(), warrant.clone()));
+                if placement.place(&mote_id) == worker {
+                    preferred.push(mote_id);
+                } else {
+                    rest.push(mote_id);
+                }
             }
         }
     }
-    items
+    preferred
+        .into_iter()
+        .chain(rest)
+        .take(max)
+        .filter_map(|id| submitted_defs.get(&id).cloned())
+        .collect()
 }
 
 /// Read up to `max` `Committed` entries with seq in `(since_seq, current_seq]`, in
@@ -306,6 +327,7 @@ fn read_committed_since<J: Journal>(
 fn core_loop<J: Journal>(
     journal: &J,
     store: Option<&LocalFsContentStore>,
+    registry: &dyn WorkerRegistry,
     mut inbox: mpsc::Receiver<Command>,
 ) {
     let Some((mut projection, mut folded_through, mut submitted)) = recover(journal) else {
@@ -387,11 +409,19 @@ fn core_loop<J: Journal>(
                     let _ = reply.send(projection.ready_set());
                 }
                 Command::LeaseWork {
+                    worker,
                     executor_class,
                     max,
                     reply,
                 } => {
-                    let items = lease_ready(&projection, &submitted_defs, executor_class, max);
+                    let items = lease_ready(
+                        &projection,
+                        &submitted_defs,
+                        registry,
+                        worker,
+                        executor_class,
+                        max,
+                    );
                     let _ = reply.send(items);
                 }
                 Command::ReadEntries {
