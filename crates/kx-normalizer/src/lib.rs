@@ -15,75 +15,32 @@
 
 //! # kx-normalizer — deterministic canonicalization BEFORE fingerprinting
 //!
-//! The normalizer is the controlled escape hatch for "two inputs that mean
-//! the same thing but aren't bit-identical" — exactly the situation where a
-//! lesser system would reach for fuzzy matching. **The fix is NOT fuzzy
-//! matching.** Per SN-8 ("model proposes, runtime enforces") and D33, the
-//! runtime serves cache hits only on EXACT cryptographic equality. Two
-//! Motes match iff their derived `MoteId`s match bit-for-bit. There is NO
-//! similarity operator anywhere on the identity path.
+//! The controlled escape hatch for "two inputs that mean the same thing but aren't
+//! bit-identical" — the situation a lesser system answers with fuzzy matching. The
+//! fix is NOT fuzzy matching: per SN-8 and D33 the runtime serves cache hits only on
+//! EXACT cryptographic `MoteId` equality, with no similarity operator on the identity
+//! path. Instead [`normalize_deterministic`] canonicalizes inputs **before** they feed
+//! `MoteId` derivation, so equivalent inputs (`"ls   -la"` vs `"ls -la"`) become
+//! bit-identical and the memoizer's exact-equality hit fires for free; the fingerprint
+//! is computed over the canonical form. (The fingerprint itself is
+//! [`kx_mote::derive_mote_id`], not this crate.)
 //!
-//! The normalizer reconciles this with the workflow author's reasonable
-//! expectation that `"ls   -la"` and `"ls -la"` should refer to the same
-//! command. It does so by **canonicalizing inputs BEFORE they feed into
-//! `MoteId` derivation** — the two inputs become bit-identical after the
-//! rule applies, and the memoizer's exact-equality hit then fires for
-//! free. The fingerprint is computed over the canonical form.
+//! Two kinds (D33):
+//! - [`NormalizerKind::DeterministicRule`] — a versioned [`RuleSet`] applied purely,
+//!   bit-identical across machines + replays per `(rule_set, version)`. v0.1 ships one:
+//!   [`RuleSet::CommandLineIntent`] v1 (trim + collapse internal whitespace runs only —
+//!   no flag-reorder, path, or quoting normalization).
+//! - [`NormalizerKind::ModelAsMote`] — the model-as-Mote seam for fuzzy residue a rule
+//!   can't encode; the model's canonicalization is committed as a durable fact (the
+//!   journal-write side is the executor's, P1.9).
 //!
-//! ## Two normalizer kinds (D33)
-//!
-//! - [`NormalizerKind::DeterministicRule`] — a versioned rule set, applied
-//!   purely. Bit-identical across machines + replays per `(rule_set,
-//!   version)`. **v0.1 ships ONE rule set**: [`RuleSet::CommandLineIntent`]
-//!   v1, which canonicalizes whitespace (trim + collapse internal
-//!   whitespace runs to a single ASCII space). Conservative — does NOT
-//!   reorder flags, does NOT resolve paths, does NOT canonicalize
-//!   quoting. **When the rule is unsure, it keeps inputs distinct.**
-//!
-//! - [`NormalizerKind::ModelAsMote`] — the model-as-Mote seam for fuzzy
-//!   residue. The normalizer IS itself a Mote whose canonical output is
-//!   content-addressed and replayed. This is the escape hatch when a
-//!   deterministic rule cannot encode the intent; the model's
-//!   canonicalization is frozen as a durable fact.
-//!
-//! ## Why "conservative" matters
-//!
-//! A normalizer that merges things it shouldn't is far worse than one that
-//! keeps too many things distinct. Merging silently routes cache hits to
-//! the wrong upstream — a correctness bug that surfaces only under
-//! workflow author surprise. Keeping things distinct surfaces as "the
-//! cache didn't fire" — diagnosable, addressable, never silently wrong.
-//!
-//! v0.1's `CommandLineIntent` v1 is intentionally tiny: trim + whitespace
-//! collapse only. No flag-reordering (would silently change `cp src dst`
-//! into `cp dst src` if applied naively). No path normalization (changes
-//! semantics under symlinks). No quoting normalization (requires shell
-//! parser). Each of these is a **deliberate future-rule slot** — when
-//! added, they bump the rule version, never silently change v1's
-//! behavior.
-//!
-//! ## Versioning
-//!
-//! `(rule_set, version)` is the dispatch key. Two callers with the same
-//! `(rule_set, version)` get bit-identical canonical bytes; replay
-//! reproduces verbatim. **Future rule additions MUST bump the version**
-//! — silently changing v1's canonical output would break replay for
-//! every MoteId derived from a v1-normalized input.
-//!
-//! ## What lives here
-//!
-//! - [`RuleSet`] — the versioned rule-set identifier enum.
-//! - [`NormalizerKind`] — the per-call dispatch discriminant.
-//! - [`NormalizerError`] — typed failures.
-//! - [`normalize_deterministic`] — apply a rule set + version to raw bytes.
-//!
-//! ## What does NOT live here
-//!
-//! - The fingerprint computation itself (that's `kx_mote::derive_mote_id`).
-//! - The journal-write side of "ModelAsMote" normalizers (the executor at
-//!   P1.9 commits the model's canonical output as a Mote).
-//! - Any similarity operator. **Forbidden by SN-8** anywhere on the
-//!   identity path.
+//! **Conservative by mandate:** when a rule is unsure it keeps inputs *distinct*.
+//! Merging things it shouldn't silently routes a cache hit to the wrong upstream (a
+//! correctness bug surfacing only under author surprise); keeping them distinct merely
+//! misses a hit (diagnosable, never silently wrong). **Adding or changing a rule MUST
+//! bump the version** — silently changing v1's canonical bytes would break replay for
+//! every MoteId derived from a v1-normalized input. Rationale + the deliberate
+//! future-rule slots (flag-reorder, path, quoting): corpus `decisions.md` D33.
 
 use bytes::Bytes;
 use kx_mote::MoteId;

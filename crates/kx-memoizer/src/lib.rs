@@ -13,72 +13,28 @@
 // `expect_used`. Integration tests under tests/*.rs carry per-file allows.
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
-//! # kx-memoizer — pure lookup over projection state
+//! # kx-memoizer — pure cache-hit lookup over projection state
 //!
-//! The memoizer answers a single question, with cryptographic precision:
+//! [`lookup`] answers one question as a **pure, total, deterministic** function of a
+//! candidate [`Mote`] and a read-only [`Snapshot`]: *"is this exact `MoteId` already
+//! committed and safe to serve as a cache hit?"* Matching is **EXACT cryptographic
+//! equality only**, never similarity (SN-8) — two Motes match iff their derived
+//! `MoteId`s are bit-identical. [`kx_mote::derive_mote_id`] is the single identity
+//! truth; canonicalize fuzzy-similar inputs with the normalizer (P1.7.10) *before*
+//! fingerprinting.
 //!
-//! > "Have we already committed for this exact `MoteId`, and is the
-//! > commitment safe to serve as a cache hit?"
+//! It returns a [`CacheHit`] (variant mirroring the candidate's [`NdClass`]) iff the
+//! projection reports the Mote `Committed`, no **Data-edge** parent is `Repudiated`
+//! (a repudiated parent poisons the lineage; Control edges sequence-only, never
+//! taint), and a `result_ref` is present. Read-side only: it never dispatches,
+//! re-dispatches, runs inference, or mutates — the executor (P1.9) acts on the hit,
+//! and the journal-write side goes through the executor's commit protocol.
 //!
-//! [`lookup`] is a **pure, total, deterministic** function over a candidate
-//! [`Mote`] and a read-only [`Snapshot`]. It performs **EXACT cryptographic
-//! equality only** — there is no similarity operator anywhere on the identity
-//! path, by SN-8 mandate. Two Motes match iff their derived `MoteId`s match
-//! bit-for-bit (which implies their `MoteDef`, `input_data_id`, and
-//! `graph_position` all match by BLAKE3 collision resistance).
-//!
-//! ## What the memoizer does (and doesn't)
-//!
-//! - **Does**: cross-reference the candidate Mote against the projection
-//!   snapshot. If the projection reports the Mote as `Committed` AND no
-//!   Data-edge parent is `Repudiated` AND a `result_ref` is present, returns
-//!   a [`CacheHit`] variant whose discriminant mirrors the candidate's
-//!   declared [`NdClass`].
-//! - **Doesn't**: dispatch effects, re-dispatch effects, run inference, or
-//!   mutate state. The executor (P1.9) is what acts on the hit.
-//!
-//! ## Effect-once vs inference-once (per `validate-then-commit.md` §10.5)
-//!
-//! These are SEPARATE primitives. The memoizer is the inference-once
-//! primitive: it caches the model's decision. The broker (P1.8.5) is the
-//! effect-once primitive: it deduplicates side effects against the
-//! warrant-scoped world.
-//!
-//! On a [`CacheHit::WorldMutating`], the executor MUST re-dispatch the
-//! broker effect against the cached `result_ref` — the cache supplies the
-//! decision, but the effect goes through the broker per attempt. The
-//! `redispatch_effect: true` field exists to make this constraint loud at
-//! every match site.
-//!
-//! ## Repudiation cascade
-//!
-//! A `Repudiated` Data-edge parent poisons the cache: the upstream lineage
-//! is invalid, so any cached result downstream is stale. Control-edge
-//! parents are sync-only and do **not** taint cache eligibility (they carry
-//! no data semantics — they sequence, they do not feed).
-//!
-//! ## NO similarity, NO fuzzy match — by design
-//!
-//! If two Motes "look similar" but have different `MoteId`s, they are
-//! distinct facts. The runtime serves cache hits only on exact match. The
-//! [`kx_mote::derive_mote_id`] function is the single source of identity
-//! truth; the memoizer trusts it by construction. The escape hatch for
-//! fuzzy-similar-but-not-identical inputs is the normalizer (P1.7.10):
-//! deterministic canonicalization BEFORE fingerprinting. Fuzzy residue lives
-//! behind a model-as-Mote seam whose canonical output is committed as a
-//! durable fact.
-//!
-//! ## What lives here
-//!
-//! - [`CacheHit`] — the three-variant enum mirroring [`NdClass`].
-//! - [`lookup`] — the pure cross-reference function.
-//!
-//! ## What does NOT live here
-//!
-//! - The executor's dispatch decision tree (P1.9).
-//! - The broker's effect-once primitive (P1.8.5 / capability-broker).
-//! - The journal-write side of memoization (memoization is a READ-side
-//!   primitive; writes go through the executor's commit protocol).
+//! **Effect-once ≠ inference-once.** The memoizer is *inference*-once (it caches the
+//! model's decision); the broker (P1.8.5) is *effect*-once (it dedups side effects).
+//! So [`CacheHit::WorldMutating`] carries `redispatch_effect: true`: the cache
+//! supplies the decision, but the effect still goes through the broker per attempt.
+//! Rationale: design corpus `validate-then-commit.md` §10.5.
 
 use kx_content::ContentRef;
 use kx_mote::{EdgeKind, Mote, NdClass};
