@@ -336,56 +336,44 @@ fn flush_commits<J: Journal>(
     }
 }
 
-/// Append a pre-validated, pre-admitted batch in one transaction, fold the new
-/// range once, and derive each entry's [`CommitApplied`].
+/// Append a pre-validated, pre-admitted batch in one transaction, fold the newly
+/// appended entries **in-hand**, and derive each entry's [`CommitApplied`].
 ///
-/// Per-entry dedup detection (no extra lookup): `append_batch` returns each
-/// entry's durable form. A commit is **newly committed** iff its returned seq is
-/// past the pre-batch watermark AND is the first occurrence of that seq in this
-/// batch — a re-report (across batches → older seq; within the batch → an
-/// already-seen seq) is `already_committed`. Returns a stringified error (so it can
-/// be relayed to every waiter) only on a catastrophic journal/projection fault;
-/// the batch is atomic, so on error nothing was durably written.
+/// `append_batch` returns each entry's durable form, so we fold those directly
+/// instead of re-reading the new range back from the journal (one fewer query +
+/// decode per batch). A commit is **newly committed** iff its returned seq is past
+/// the pre-batch watermark AND is the first occurrence of that seq in this batch —
+/// a re-report (across batches → older seq; within the batch → an already-seen seq)
+/// is `already_committed` and is NOT re-folded (re-folding a `Committed` would trip
+/// `DuplicateCommitted`). The newly appended entries arrive in ascending-seq order,
+/// so the watermark advances monotonically as we fold. Returns a stringified error
+/// (relayable to every waiter) only on a catastrophic journal/projection fault; the
+/// batch is atomic, so on error nothing was durably written.
 fn apply_batch<J: Journal>(
     journal: &J,
     projection: &mut Projection,
     folded_through: &mut u64,
     entries: Vec<JournalEntry>,
 ) -> Result<Vec<CommitApplied>, String> {
-    let seq_before = journal.current_seq().map_err(|e| e.to_string())?;
+    // The watermark equals the journal's current seq by invariant (everything
+    // <= `folded_through` is folded), so use it directly as the pre-batch boundary
+    // — no extra `current_seq()` query.
+    let seq_before = *folded_through;
     let durable = journal.append_batch(entries).map_err(|e| e.to_string())?;
-    fold_new(journal, projection, folded_through).map_err(|e| e.to_string())?;
 
     let mut new_seqs = BTreeSet::new();
-    let applied = durable
-        .into_iter()
-        .map(|entry| {
-            let seq = entry.seq();
-            let already_committed = !(seq > seq_before && new_seqs.insert(seq));
-            CommitApplied {
-                committed_seq: seq,
-                already_committed,
-            }
-        })
-        .collect();
+    let mut applied = Vec::with_capacity(durable.len());
+    for entry in &durable {
+        let seq = entry.seq();
+        let is_new = seq > seq_before && new_seqs.insert(seq);
+        if is_new {
+            projection.fold(entry).map_err(|e| e.to_string())?;
+            *folded_through = seq; // ascending-seq → monotonic advance
+        }
+        applied.push(CommitApplied {
+            committed_seq: seq,
+            already_committed: !is_new,
+        });
+    }
     Ok(applied)
-}
-
-/// Fold journal entries appended since `folded_through` into `projection`,
-/// advancing the watermark. Incremental (bounded range), mirroring the single-node
-/// engine's fold so re-scans never go O(n²).
-fn fold_new<J: Journal>(
-    journal: &J,
-    projection: &mut Projection,
-    folded_through: &mut u64,
-) -> Result<(), CoordinatorError> {
-    let current = journal.current_seq()?;
-    if current <= *folded_through {
-        return Ok(());
-    }
-    for entry in journal.read_entries_by_seq((*folded_through + 1)..(current + 1))? {
-        projection.fold(&entry)?;
-    }
-    *folded_through = current;
-    Ok(())
 }
