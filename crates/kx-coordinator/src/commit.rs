@@ -8,7 +8,7 @@
 //! job (`crate::state`), where the seq is assigned.
 
 use kx_content::ContentRef;
-use kx_journal::ParentEntry;
+use kx_journal::{ParentEntry, MAX_PARENTS};
 use kx_mote::{MoteDefHash, MoteId, NdClass, ParentRef};
 use kx_proto::proto;
 use kx_proto::ConvertError;
@@ -64,6 +64,22 @@ pub(crate) fn assemble(
         .into_iter()
         .map(|p| ParentRef::try_from(p).map(|pr| ParentEntry::from_parent_ref(&pr)))
         .collect::<Result<_, ConvertError>>()?;
+
+    // Validate the journal's encoder invariants up front so a malformed proposal is
+    // rejected individually (INVALID_ARGUMENT) and can never fail — and thereby
+    // roll back — an entire group-commit batch downstream.
+    if parents.len() > MAX_PARENTS {
+        return Err(CoordinatorError::TooManyParents {
+            got: parents.len(),
+            max: MAX_PARENTS,
+        });
+    }
+    if parents
+        .iter()
+        .any(|p| p.edge_kind == 0 && p.non_cascade != 0)
+    {
+        return Err(CoordinatorError::DataEdgeNonCascade);
+    }
 
     Ok(CommitProposal {
         mote_id,
