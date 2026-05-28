@@ -201,6 +201,25 @@ pub trait Journal {
     ///   the original `seq`. The second call is a no-op.
     fn append(&self, entry: JournalEntry) -> Result<JournalEntry, JournalError>;
 
+    /// Append many entries as **one atomic unit** (the group-commit primitive).
+    ///
+    /// Either every entry is durably appended — each assigned the next monotonic
+    /// `seq`, in input order — or none is. Per-entry dedup-by-key applies exactly
+    /// as in [`append`](Journal::append): a duplicate (by `idempotency_key`, for the
+    /// deduped kinds `Committed`/`Repudiated`/`EffectStaged`) yields its pre-existing
+    /// durable form and consumes no new `seq`; duplicates *within the same batch*
+    /// dedupe against earlier entries in that batch. Returns the durable form of
+    /// each input entry, in input order (so the result length always equals the
+    /// input length). An empty batch is a no-op that returns an empty vector.
+    ///
+    /// Backends that can amortize the commit (e.g. one transaction over N entries)
+    /// override this. **The default loops [`append`](Journal::append) and is
+    /// therefore NOT atomic across entries** — a backend that needs batch atomicity
+    /// MUST override it (both shipped backends do).
+    fn append_batch(&self, entries: Vec<JournalEntry>) -> Result<Vec<JournalEntry>, JournalError> {
+        entries.into_iter().map(|e| self.append(e)).collect()
+    }
+
     /// Look up the (at most one) `Committed` entry for a Mote identity.
     ///
     /// Returns `None` if no Committed entry exists for the Mote yet. Used by the
