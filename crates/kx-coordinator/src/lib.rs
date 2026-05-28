@@ -45,6 +45,7 @@ pub use kx_scheduler::WorkerId;
 
 mod commit;
 mod error;
+mod placement;
 mod registry;
 mod service;
 mod state;

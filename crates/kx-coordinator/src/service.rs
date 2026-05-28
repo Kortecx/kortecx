@@ -66,7 +66,7 @@ impl CoordinatorService {
         store: Option<Arc<LocalFsContentStore>>,
     ) -> Self {
         Self {
-            core: CoreHandle::spawn(journal, store),
+            core: CoreHandle::spawn(journal, store, registry.clone()),
             registry,
         }
     }
@@ -208,7 +208,7 @@ impl Coordinator for CoordinatorService {
         let executor_class =
             kx_warrant::ExecutorClass::try_from(proto_class).map_err(CoordinatorError::from)?;
         let max = usize::try_from(req.max_motes).unwrap_or(usize::MAX);
-        let work = self.core.lease_work(executor_class, max).await?;
+        let work = self.core.lease_work(worker, executor_class, max).await?;
         let items = work
             .into_iter()
             .map(|(mote, warrant)| proto::WorkItem {

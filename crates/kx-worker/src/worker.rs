@@ -100,6 +100,14 @@ impl Worker {
             .lease_work(self.id, self.executor_class, self.max_lease)
             .await?;
 
+        // Report load so the coordinator's placement (D56) can balance across workers:
+        // `in_flight` = the batch we're about to run, reset to 0 when it drains.
+        // Best-effort — a heartbeat hiccup must never abort real execution.
+        let in_flight = u32::try_from(items.len()).unwrap_or(u32::MAX);
+        if in_flight > 0 {
+            let _ = self.client.heartbeat(self.id, now_ms(), in_flight).await;
+        }
+
         let mut committed = 0usize;
         for item in items {
             let mote: Mote = item
@@ -129,6 +137,9 @@ impl Worker {
                 }
                 _ => return Err(WorkerError::CommitRejected(response.detail)),
             }
+        }
+        if in_flight > 0 {
+            let _ = self.client.heartbeat(self.id, now_ms(), 0).await;
         }
         Ok(committed)
     }

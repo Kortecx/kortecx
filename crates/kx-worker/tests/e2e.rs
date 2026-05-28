@@ -1,13 +1,17 @@
-//! End-to-end P2.4 exit-gate witness: a result committed via one worker is
-//! **readable by the coordinator and by another worker**, over real gRPC + a
-//! shared content-addressed store.
+//! End-to-end distributed witnesses over real gRPC + a shared content-addressed store.
 //!
-//! Topology: one in-process `CoordinatorService` built `with_store` (so it
-//! VERIFIES each committed `result_ref` against the shared store — D55) on
-//! loopback; worker A runs PURE Motes through a **storing** executor (real bytes
-//! land in the shared store before it proposes); worker B is a peer that only
-//! reads. The store is one `LocalFsContentStore` root all three share (single
-//! host now; the S3 backend is the cross-host impl at P5.5).
+//! - **P2.4** (`committed_result_is_readable_by_coordinator_and_peer`): a result
+//!   committed via one worker is readable by the coordinator and by another worker;
+//!   plus `phantom_result_ref_is_rejected` (D55 store verification).
+//! - **P2.5 / P2 EXIT GATE** (`two_workers_share_the_workload_via_placement`): two
+//!   workers of the same class run a workflow distributed, placement v2 (D56) balances
+//!   the Motes across them, all commit exactly once.
+//!
+//! Topology: one in-process `CoordinatorService` built `with_store` (so it VERIFIES each
+//! committed `result_ref` against the shared store — D55) on loopback; workers run PURE
+//! Motes through a **storing** executor (real bytes land in the shared store before they
+//! propose). The store is one `LocalFsContentStore` root all nodes share (single host
+//! now; the S3 backend is the cross-host impl at P5.5).
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
 
@@ -18,7 +22,7 @@ use std::time::Duration;
 
 use kx_content::{ContentRef, ContentStore, LocalFsContentStore};
 use kx_coordinator::proto::coordinator_server::{Coordinator, CoordinatorServer};
-use kx_coordinator::{CoordinatorService, MoteState};
+use kx_coordinator::{CoordinatorService, MoteState, WorkerId};
 use kx_executor::{LocalResourceManager, MoteExecutor, TestMoteExecutor};
 use kx_journal::InMemoryJournal;
 use kx_mote::Mote;
@@ -208,5 +212,85 @@ async fn phantom_result_ref_is_rejected() {
         svc.committed_count().await.unwrap(),
         0,
         "the phantom commit was not recorded"
+    );
+}
+
+/// P2 EXIT GATE: a two-node (coordinator + ≥2 worker) setup runs the workflow
+/// distributed — placement v2 (D56) balances ready Motes across workers of the same
+/// class, all commit exactly once, and the executor/inference/scheduler crates are
+/// unchanged (thesis test, asserted by the CI diff job, not here).
+#[tokio::test]
+async fn two_workers_share_the_workload_via_placement() {
+    let dir = TempDir::new().unwrap();
+    let store = Arc::new(LocalFsContentStore::open(dir.path()).unwrap());
+    let (svc, endpoint) = spawn_coordinator(store.clone()).await;
+
+    // Eight independent ready PURE Motes.
+    let warrant = common::pure_warrant();
+    let motes: Vec<Mote> = (10u8..18).map(|s| common::pure_mote(s, &[])).collect();
+    for m in &motes {
+        submit(&svc, m, &warrant).await;
+    }
+
+    // Two workers of the same class, each leasing small batches.
+    let register = |ep: String, tag: &'static str| {
+        let store = store.clone();
+        async move {
+            Worker::register(
+                connect(&ep).await,
+                common::WORKER_CLASS,
+                tag,
+                storing_executor(store.clone()),
+                LocalResourceManager::dev_defaults(),
+                store,
+                2,
+            )
+            .await
+            .unwrap()
+        }
+    };
+    let mut worker_a = register(endpoint.clone(), "inproc://a").await;
+    let mut worker_b = register(endpoint.clone(), "inproc://b").await;
+
+    // Interleave bounded polls until the DAG drains. Placement routes each worker its
+    // sharded Motes first; fill-to-max keeps a poller busy if its shard is empty, so
+    // neither starves and both make progress.
+    let mut a_total = 0usize;
+    let mut b_total = 0usize;
+    for _ in 0..16 {
+        a_total += worker_a.run_once().await.unwrap();
+        b_total += worker_b.run_once().await.unwrap();
+        if svc.committed_count().await.unwrap() >= motes.len() {
+            break;
+        }
+    }
+
+    assert_eq!(
+        svc.committed_count().await.unwrap(),
+        motes.len(),
+        "every Mote committed exactly once across the two workers"
+    );
+    assert!(
+        a_total > 0 && b_total > 0,
+        "placement shared work across both workers (a={a_total}, b={b_total})"
+    );
+    assert_eq!(
+        a_total + b_total,
+        motes.len(),
+        "no Mote double-committed (dedup holds)"
+    );
+
+    // Load reporting reached the coordinator (run_once heartbeats in_flight).
+    let rec_a = svc.registry().get(WorkerId(worker_a.worker_id())).unwrap();
+    let rec_b = svc.registry().get(WorkerId(worker_b.worker_id())).unwrap();
+    assert!(
+        rec_a.last_heartbeat_ms > 0 || rec_b.last_heartbeat_ms > 0,
+        "at least one worker reported load via heartbeat during run"
+    );
+
+    // Cross-worker read still holds (P2.4): B reads a result regardless of who ran it.
+    assert_eq!(
+        worker_b.peer_read(motes[0].id).await.unwrap(),
+        result_bytes(&motes[0]),
     );
 }
