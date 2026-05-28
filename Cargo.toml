@@ -25,6 +25,7 @@ members = [
     "crates/kx-tiering",
     "crates/kx-runtime",
     "crates/kx-proto",
+    "crates/kx-coordinator",
 ]
 exclude = [
     "kx-cloud",
@@ -80,6 +81,7 @@ kx-capability        = { path = "crates/kx-capability",        version = "0.0.1"
 kx-executor          = { path = "crates/kx-executor",          version = "0.0.1" }
 kx-scheduler         = { path = "crates/kx-scheduler",         version = "0.0.1" }
 kx-proto             = { path = "crates/kx-proto",             version = "0.0.1" }
+kx-coordinator       = { path = "crates/kx-coordinator",       version = "0.0.1" }
 bindgen            = "0.70"
 cmake              = "0.1"
 ureq               = { version = "2", default-features = false, features = ["tls"] }
