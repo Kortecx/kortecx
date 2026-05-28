@@ -22,7 +22,7 @@ use std::time::Duration;
 
 use kx_content::{ContentRef, ContentStore, LocalFsContentStore};
 use kx_coordinator::proto::coordinator_server::{Coordinator, CoordinatorServer};
-use kx_coordinator::{CoordinatorService, MoteState, WorkerId};
+use kx_coordinator::{CoordinatorService, MoteState, WorkerId, WorkerStatus};
 use kx_executor::{LocalResourceManager, MoteExecutor, TestMoteExecutor};
 use kx_journal::InMemoryJournal;
 use kx_mote::Mote;
@@ -292,5 +292,55 @@ async fn two_workers_share_the_workload_via_placement() {
     assert_eq!(
         worker_b.peer_read(motes[0].id).await.unwrap(),
         result_bytes(&motes[0]),
+    );
+}
+
+/// P3.1: an **idle** worker (leasing no work) stays live in the coordinator's
+/// registry because its background heartbeat keeps reporting in. Without it, an idle
+/// worker would send nothing and be falsely declared dead.
+#[tokio::test]
+async fn background_heartbeat_keeps_an_idle_worker_live() {
+    let dir = TempDir::new().unwrap();
+    let store = Arc::new(LocalFsContentStore::open(dir.path()).unwrap());
+    let (svc, endpoint) = spawn_coordinator(store.clone()).await;
+
+    // Register a worker but never lease/run anything — it is purely idle.
+    let worker = Worker::register(
+        connect(&endpoint).await,
+        common::WORKER_CLASS,
+        "inproc://idle",
+        storing_executor(store.clone()),
+        LocalResourceManager::dev_defaults(),
+        store.clone(),
+        16,
+    )
+    .await
+    .unwrap();
+    let id = worker.worker_id();
+
+    // At registration the worker has not heartbeated yet (advisory timestamp == 0).
+    assert_eq!(
+        svc.registry().get(WorkerId(id)).unwrap().last_heartbeat_ms,
+        0,
+        "no heartbeat before the background task starts"
+    );
+
+    // Start the background heartbeat at a short cadence; let it tick several times.
+    let hb = worker.spawn_heartbeat(Duration::from_millis(20));
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    hb.abort();
+
+    // The idle worker reached the coordinator on its own (advisory timestamp now set
+    // by the background loop — the only heartbeat source, since nothing was leased)
+    // and is still live.
+    let rec = svc.registry().get(WorkerId(id)).unwrap();
+    assert!(
+        rec.last_heartbeat_ms > 0,
+        "the background heartbeat reached the coordinator while idle"
+    );
+    assert_eq!(
+        svc.registry().status(WorkerId(id)),
+        Some(WorkerStatus::Live),
+        "the idle worker is kept live by its background heartbeat"
     );
 }

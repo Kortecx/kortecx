@@ -43,6 +43,7 @@ pub use kx_projection::MoteState;
 pub use kx_proto::proto;
 pub use kx_scheduler::WorkerId;
 
+mod clock;
 mod commit;
 mod error;
 mod placement;
@@ -50,6 +51,10 @@ mod registry;
 mod service;
 mod state;
 
+pub use clock::{Clock, SystemClock};
 pub use error::CoordinatorError;
-pub use registry::{InMemoryWorkerRegistry, RegistryError, WorkerRecord, WorkerRegistry};
+pub use registry::{
+    is_live, InMemoryWorkerRegistry, RegistryError, WorkerRecord, WorkerRegistry, WorkerStatus,
+    DEFAULT_LIVENESS_TIMEOUT,
+};
 pub use service::CoordinatorService;

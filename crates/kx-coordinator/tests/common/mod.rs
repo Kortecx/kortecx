@@ -193,6 +193,25 @@ pub async fn register(service: &CoordinatorService, endpoint: &str) -> u64 {
         .worker_id
 }
 
+/// Send a heartbeat for `worker_id` through the service (liveness tests).
+pub async fn heartbeat(
+    service: &CoordinatorService,
+    worker_id: u64,
+    timestamp_ms: u64,
+    in_flight: u32,
+) -> bool {
+    service
+        .heartbeat(Request::new(proto::HeartbeatRequest {
+            worker_id,
+            timestamp_ms,
+            in_flight,
+        }))
+        .await
+        .unwrap()
+        .into_inner()
+        .ack
+}
+
 /// Submit a Mote + warrant through the service.
 pub async fn submit(
     service: &CoordinatorService,

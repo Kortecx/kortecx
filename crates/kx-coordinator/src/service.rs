@@ -60,6 +60,18 @@ impl CoordinatorService {
         )
     }
 
+    /// Build a coordinator with **both** a caller-supplied worker registry and the
+    /// shared content store (the `with_registry` + `with_store` combination). Used
+    /// where a test needs a clock-injected registry (worker-death detection, P3.1)
+    /// *and* the store's phantom-ref guard.
+    pub fn with_store_and_registry<J: Journal + Send + 'static>(
+        journal: J,
+        store: Arc<LocalFsContentStore>,
+        registry: Arc<dyn WorkerRegistry>,
+    ) -> Self {
+        Self::build(journal, registry, Some(store))
+    }
+
     fn build<J: Journal + Send + 'static>(
         journal: J,
         registry: Arc<dyn WorkerRegistry>,
