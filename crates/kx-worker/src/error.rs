@@ -34,6 +34,14 @@ pub enum WorkerError {
     /// The coordinator accepted the request but rejected the commit proposal.
     #[error("coordinator rejected the commit: {0}")]
     CommitRejected(String),
+
+    /// A peer read asked for a Mote that is not committed in the coordinator's log.
+    #[error("mote {0:?} is not committed")]
+    NotCommitted(kx_mote::MoteId),
+
+    /// A committed result's bytes are absent from the shared content store.
+    #[error("content {0:?} is missing from the shared store")]
+    ContentMissing(kx_content::ContentRef),
 }
 
 impl From<tonic::transport::Error> for WorkerError {

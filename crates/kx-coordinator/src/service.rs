@@ -7,6 +7,7 @@
 
 use std::sync::Arc;
 
+use kx_content::LocalFsContentStore;
 use kx_journal::{Journal, JournalEntry};
 use kx_mote::{Mote, MoteId};
 use kx_projection::MoteState;
@@ -33,7 +34,7 @@ impl CoordinatorService {
     /// Build a coordinator over `journal` with the default in-memory worker
     /// registry. Takes sole ownership of the journal (the single-writer handle).
     pub fn new<J: Journal + Send + 'static>(journal: J) -> Self {
-        Self::with_registry(journal, Arc::new(InMemoryWorkerRegistry::new()))
+        Self::build(journal, Arc::new(InMemoryWorkerRegistry::new()), None)
     }
 
     /// Build a coordinator over `journal` with a caller-supplied worker registry.
@@ -41,8 +42,31 @@ impl CoordinatorService {
         journal: J,
         registry: Arc<dyn WorkerRegistry>,
     ) -> Self {
+        Self::build(journal, registry, None)
+    }
+
+    /// Build a coordinator that shares the content data plane with its workers:
+    /// it **verifies each committed `result_ref` against `store`** before recording
+    /// the commit (D55 phantom-ref guard — a worker cannot record a result it never
+    /// published), and the same content-addressed store is where peers read results.
+    pub fn with_store<J: Journal + Send + 'static>(
+        journal: J,
+        store: Arc<LocalFsContentStore>,
+    ) -> Self {
+        Self::build(
+            journal,
+            Arc::new(InMemoryWorkerRegistry::new()),
+            Some(store),
+        )
+    }
+
+    fn build<J: Journal + Send + 'static>(
+        journal: J,
+        registry: Arc<dyn WorkerRegistry>,
+        store: Option<Arc<LocalFsContentStore>>,
+    ) -> Self {
         Self {
-            core: CoreHandle::spawn(journal),
+            core: CoreHandle::spawn(journal, store),
             registry,
         }
     }

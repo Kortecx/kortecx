@@ -1350,6 +1350,7 @@ dependencies = [
  "kx-proto",
  "kx-warrant",
  "smallvec",
+ "tempfile",
  "thiserror",
  "tokio",
  "tonic",

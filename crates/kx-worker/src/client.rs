@@ -97,4 +97,19 @@ impl WorkerClient {
     ) -> Result<proto::ReportCommitResponse, WorkerError> {
         Ok(self.inner.report_commit(request).await?.into_inner())
     }
+
+    /// Read up to `max` committed journal entries after `since_seq`. Returns the
+    /// entries + the `next_seq` cursor to resume from (D55 distributed-read).
+    pub async fn read_entries(
+        &mut self,
+        since_seq: u64,
+        max: u32,
+    ) -> Result<(Vec<proto::JournalEntry>, u64), WorkerError> {
+        let resp = self
+            .inner
+            .read_entries(proto::ReadEntriesRequest { since_seq, max })
+            .await?
+            .into_inner();
+        Ok((resp.entries, resp.next_seq))
+    }
 }

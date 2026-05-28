@@ -55,6 +55,7 @@ pub use kx_proto::proto;
 mod client;
 mod commit_builder;
 mod error;
+mod read_model;
 mod run;
 mod worker;
 
