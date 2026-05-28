@@ -48,6 +48,7 @@ mod commit;
 mod error;
 mod placement;
 mod registry;
+mod reschedule;
 mod service;
 mod state;
 
