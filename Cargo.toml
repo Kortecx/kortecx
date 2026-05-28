@@ -23,6 +23,7 @@ members = [
     "crates/kx-executor",
     "crates/kx-scheduler",
     "crates/kx-tiering",
+    "crates/kx-runtime",
 ]
 exclude = [
     "kx-cloud",
