@@ -20,7 +20,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use kx_content::{ContentStore, LocalFsContentStore};
-use kx_journal::{Journal, JournalEntry};
+use kx_journal::{FailureReason, Journal, JournalEntry};
 use kx_mote::{Mote, MoteId, NdClass};
 use kx_projection::{MoteState, Projection};
 use kx_scheduler::{LocalPlacement, Placement, Scheduler, SchedulerError, WorkerId};
@@ -30,7 +30,13 @@ use tokio::sync::{mpsc, oneshot};
 use crate::commit::CommitProposal;
 use crate::error::CoordinatorError;
 use crate::placement::LoadAwarePlacement;
-use crate::registry::WorkerRegistry;
+use crate::registry::{WorkerRegistry, WorkerStatus};
+use crate::reschedule::{LeaseTracker, PURE_RETRY_BUDGET};
+
+/// Reporter id stamped on a coordinator-written `Failed{WorkerCrashed}` entry (D57 §3
+/// / D21 §6). The coordinator is the reporter when it observes a worker's death, as
+/// distinct from a worker self-reporting; `0` is the reserved coordinator id.
+const COORDINATOR_REPORTER_ID: u128 = 0;
 
 /// Bound on in-flight commands queued to the orchestration core. A bounded
 /// channel applies backpressure: when the core is saturated, `dispatch` awaits
@@ -253,6 +259,47 @@ fn recover<J: Journal>(journal: &J) -> Option<(Projection, u64, BTreeSet<MoteId>
     Some((projection, folded_through, submitted))
 }
 
+/// A `LeaseWork` request's parameters, bundled so [`serve_lease`] stays within the
+/// argument-count budget.
+struct LeaseReq {
+    worker: WorkerId,
+    executor_class: ExecutorClass,
+    max: usize,
+}
+
+/// Serve one `LeaseWork` poll (D57): reap dead workers first so their in-flight Motes
+/// re-enter the candidate set for *this* poll, select up to `req.max` runnable Motes
+/// (ready ∪ rescheduleable), and record the new lease assignments for the next reap.
+fn serve_lease<J: Journal>(
+    journal: &J,
+    projection: &mut Projection,
+    folded_through: &mut u64,
+    registry: &dyn WorkerRegistry,
+    dispatch: &mut Dispatch,
+    req: &LeaseReq,
+) -> Vec<(Mote, WarrantSpec)> {
+    reap_dead_workers(
+        journal,
+        projection,
+        folded_through,
+        registry,
+        &mut dispatch.tracker,
+    );
+    let items = lease_ready(
+        projection,
+        &dispatch.defs,
+        registry,
+        dispatch.tracker.rescheduleable(),
+        req.worker,
+        req.executor_class,
+        req.max,
+    );
+    dispatch
+        .tracker
+        .record_lease(req.worker, items.iter().map(|(mote, _)| mote.id));
+    items
+}
+
 /// Select up to `max` ready PURE Motes for `worker` to run. Candidates are
 /// ready (parents-all-committed) ∩ PURE (the only class executed-then-proposed in
 /// P2.x; WM is deferred) ∩ matching the worker's backend (`executor_class`). Placement
@@ -264,6 +311,7 @@ fn lease_ready(
     projection: &Projection,
     submitted_defs: &BTreeMap<MoteId, (Mote, WarrantSpec)>,
     registry: &dyn WorkerRegistry,
+    rescheduleable: &BTreeSet<MoteId>,
     worker: WorkerId,
     executor_class: ExecutorClass,
     max: usize,
@@ -271,7 +319,23 @@ fn lease_ready(
     let placement = LoadAwarePlacement::new(registry, executor_class);
     let mut preferred: Vec<MoteId> = Vec::new();
     let mut rest: Vec<MoteId> = Vec::new();
-    for mote_id in projection.ready_set() {
+    let mut seen: BTreeSet<MoteId> = BTreeSet::new();
+    // Candidates = the projection's ready-set (Pending, parents committed) ∪ the
+    // crash-failed-but-rescheduleable set (D57 §2): a crash-failed Mote is `Failed` in
+    // the projection so it left the ready-set, but its parents are still committed
+    // (commits are permanent) so it is genuinely re-runnable. A Mote already committed
+    // since being crash-failed is skipped (first-wins resolved it).
+    for mote_id in projection
+        .ready_set()
+        .into_iter()
+        .chain(rescheduleable.iter().copied())
+    {
+        if !seen.insert(mote_id) {
+            continue;
+        }
+        if projection.state_of(&mote_id) == MoteState::Committed {
+            continue;
+        }
         if let Some((mote, warrant)) = submitted_defs.get(&mote_id) {
             if mote.nd_class() == NdClass::Pure && warrant.executor_class == executor_class {
                 if placement.place(&mote_id) == worker {
@@ -288,6 +352,60 @@ fn lease_ready(
         .take(max)
         .filter_map(|id| submitted_defs.get(&id).cloned())
         .collect()
+}
+
+/// Reap dead workers (D57 §3). For each registered worker the registry now reports
+/// [`WorkerStatus::Dead`] that still holds outstanding leases, write a
+/// `Failed{WorkerCrashed}` for each of its unresolved Motes (the mandated death fact —
+/// D21 §11, *no off-journal facts*), fold it, and — if the Mote is still under its retry
+/// budget — re-add it to the rescheduleable set so the next poller picks it up. A Mote
+/// that committed before the reap (raced ahead) is simply resolved, never crash-failed.
+///
+/// Runs at the head of every `LeaseWork`, so reschedule is driven by the same poll that
+/// will service it — no background reaper, no owner-thread timer (matching P3.1's derived
+/// liveness). Writes go through the owner thread, preserving the D40 sole-writer invariant.
+fn reap_dead_workers<J: Journal>(
+    journal: &J,
+    projection: &mut Projection,
+    folded_through: &mut u64,
+    registry: &dyn WorkerRegistry,
+    tracker: &mut LeaseTracker,
+) {
+    for worker in tracker.leasing_workers() {
+        if registry.status(worker) != Some(WorkerStatus::Dead) {
+            continue;
+        }
+        for mote_id in tracker.take_leases(worker) {
+            if projection.state_of(&mote_id) == MoteState::Committed {
+                tracker.resolve_committed(mote_id);
+                continue;
+            }
+            match journal.append(failed_worker_crashed_entry(mote_id)) {
+                Ok(durable) => {
+                    let seq = durable.seq();
+                    if seq > *folded_through && projection.fold(&durable).is_ok() {
+                        *folded_through = seq;
+                    }
+                    tracker.record_crash(mote_id, PURE_RETRY_BUDGET);
+                }
+                Err(error) => {
+                    tracing::error!(%error, ?mote_id, "failed to record worker-crash death");
+                }
+            }
+        }
+    }
+}
+
+/// Build the `Failed{WorkerCrashed}` entry for a Mote whose leasing worker died. The
+/// `idempotency_key` is the Mote's identity (`idempotency.md`: key == derived `MoteId`).
+fn failed_worker_crashed_entry(mote_id: MoteId) -> JournalEntry {
+    JournalEntry::Failed {
+        mote_id,
+        idempotency_key: *mote_id.as_bytes(),
+        seq: 0,
+        reason_class: FailureReason::WorkerCrashed,
+        reporter_id: COORDINATOR_REPORTER_ID,
+    }
 }
 
 /// Read up to `max` `Committed` entries with seq in `(since_seq, current_seq]`, in
@@ -322,6 +440,25 @@ fn read_committed_since<J: Journal>(
     Ok((entries, next_seq))
 }
 
+/// The coordinator's dispatch bookkeeping, grouped so the lease/commit helpers take one
+/// `&mut` rather than a long argument list:
+/// - `submitted` — every admitted Mote id (commit admission: only a submitted Mote may
+///   commit; recovery seeds it from the already-committed set);
+/// - `defs` — admitted-but-not-yet-committed Motes, kept so `LeaseWork` can hand a worker
+///   the Mote + warrant to run (kx-scheduler consumes the Mote on submit, exposes no
+///   get-by-id accessor, and is frozen by the thesis test — so the coordinator retains
+///   its own copy); freed on commit, so the map is bounded by in-flight work;
+/// - `tracker` — the D57 reschedule bookkeeping (leases, crash-failed, retry counts).
+///
+/// Recovery does not repopulate `defs`/`tracker`: committed Motes are never ready, and a
+/// leased-but-uncommitted Mote lost to a coordinator restart is re-leased afresh (still
+/// `Pending`), the journal dedupe keeping any double-commit first-wins.
+struct Dispatch {
+    submitted: BTreeSet<MoteId>,
+    defs: BTreeMap<MoteId, (Mote, WarrantSpec)>,
+    tracker: LeaseTracker,
+}
+
 /// The owner-thread loop. Recovers the projection from the journal, then services
 /// commands until every sender drops (the channel closes on coordinator shutdown).
 fn core_loop<J: Journal>(
@@ -330,17 +467,15 @@ fn core_loop<J: Journal>(
     registry: &dyn WorkerRegistry,
     mut inbox: mpsc::Receiver<Command>,
 ) {
-    let Some((mut projection, mut folded_through, mut submitted)) = recover(journal) else {
+    let Some((mut projection, mut folded_through, submitted)) = recover(journal) else {
         return;
     };
     let mut scheduler = Scheduler::new(LocalPlacement);
-    // Definitions of admitted-but-not-yet-committed Motes, kept so `LeaseWork` can
-    // hand a worker the Mote + warrant to run. (kx-scheduler consumes the Mote on
-    // submit and exposes no get-by-id accessor — and is frozen by the thesis test —
-    // so the coordinator retains its own copy.) Recovery does not repopulate this:
-    // committed Motes are never ready, and pending work lost to a crash is a P3
-    // concern.
-    let mut submitted_defs: BTreeMap<MoteId, (Mote, WarrantSpec)> = BTreeMap::new();
+    let mut dispatch = Dispatch {
+        submitted,
+        defs: BTreeMap::new(),
+        tracker: LeaseTracker::default(),
+    };
 
     while let Some(first) = inbox.blocking_recv() {
         // Drain everything immediately available (up to MAX_DRAIN) so consecutive
@@ -374,8 +509,7 @@ fn core_loop<J: Journal>(
                 store,
                 &mut projection,
                 &mut folded_through,
-                &submitted,
-                &mut submitted_defs,
+                &mut dispatch,
                 &mut pending,
             );
             match command {
@@ -385,19 +519,14 @@ fn core_loop<J: Journal>(
                     warrant,
                     reply,
                 } => {
-                    let mote_id = mote.id;
-                    let mote = *mote;
-                    let warrant = *warrant;
-                    let duplicate =
-                        match scheduler.submit(mote.clone(), warrant.clone(), &mut projection) {
-                            Ok(()) => {
-                                submitted.insert(mote_id);
-                                submitted_defs.insert(mote_id, (mote, warrant));
-                                false
-                            }
-                            Err(SchedulerError::DuplicateSubmission(_)) => true,
-                        };
-                    let _ = reply.send(SubmitOutcome { mote_id, duplicate });
+                    let outcome = handle_submit(
+                        &mut scheduler,
+                        &mut projection,
+                        &mut dispatch,
+                        *mote,
+                        *warrant,
+                    );
+                    let _ = reply.send(outcome);
                 }
                 Command::StateOf { mote_id, reply } => {
                     let _ = reply.send(projection.state_of(&mote_id));
@@ -414,13 +543,17 @@ fn core_loop<J: Journal>(
                     max,
                     reply,
                 } => {
-                    let items = lease_ready(
-                        &projection,
-                        &submitted_defs,
+                    let items = serve_lease(
+                        journal,
+                        &mut projection,
+                        &mut folded_through,
                         registry,
-                        worker,
-                        executor_class,
-                        max,
+                        &mut dispatch,
+                        &LeaseReq {
+                            worker,
+                            executor_class,
+                            max,
+                        },
                     );
                     let _ = reply.send(items);
                 }
@@ -438,11 +571,32 @@ fn core_loop<J: Journal>(
             store,
             &mut projection,
             &mut folded_through,
-            &submitted,
-            &mut submitted_defs,
+            &mut dispatch,
             &mut pending,
         );
     }
+}
+
+/// Register a submitted Mote through the hosted scheduler (verbatim, thesis test) and
+/// retain its def for `LeaseWork`. Returns the canonical id + whether it was an
+/// idempotent re-submit (already admitted before commit).
+fn handle_submit(
+    scheduler: &mut Scheduler<LocalPlacement>,
+    projection: &mut Projection,
+    dispatch: &mut Dispatch,
+    mote: Mote,
+    warrant: WarrantSpec,
+) -> SubmitOutcome {
+    let mote_id = mote.id;
+    let duplicate = match scheduler.submit(mote.clone(), warrant.clone(), projection) {
+        Ok(()) => {
+            dispatch.submitted.insert(mote_id);
+            dispatch.defs.insert(mote_id, (mote, warrant));
+            false
+        }
+        Err(SchedulerError::DuplicateSubmission(_)) => true,
+    };
+    SubmitOutcome { mote_id, duplicate }
 }
 
 /// One queued `ReportCommit`: its validated proposal + the reply channel.
@@ -477,8 +631,7 @@ fn flush_commits<J: Journal>(
     store: Option<&LocalFsContentStore>,
     projection: &mut Projection,
     folded_through: &mut u64,
-    submitted: &BTreeSet<MoteId>,
-    submitted_defs: &mut BTreeMap<MoteId, (Mote, WarrantSpec)>,
+    dispatch: &mut Dispatch,
     pending: &mut Vec<PendingCommit>,
 ) {
     if pending.is_empty() {
@@ -494,7 +647,7 @@ fn flush_commits<J: Journal>(
         Vec::with_capacity(batch.len());
     let mut committed_ids: Vec<MoteId> = Vec::with_capacity(batch.len());
     for (proposal, reply) in batch {
-        if !submitted.contains(&proposal.mote_id) {
+        if !dispatch.submitted.contains(&proposal.mote_id) {
             let _ = reply.send(Err(CoordinatorError::UnknownMote(proposal.mote_id)));
         } else if store.is_some_and(|s| !s.contains(&proposal.result_ref)) {
             let _ = reply.send(Err(CoordinatorError::ResultRefAbsent(proposal.mote_id)));
@@ -512,9 +665,12 @@ fn flush_commits<J: Journal>(
         Ok(applied) => {
             // The defs are no longer leasable once committed (a committed Mote is
             // never in the ready-set); free them to keep the map bounded by
-            // in-flight work, not total submissions.
+            // in-flight work, not total submissions. Resolving the commit in the
+            // reschedule tracker (D57) clears every outstanding lease + crash-failed
+            // entry for the Mote — first-wins resolves all concurrent attempts at once.
             for id in &committed_ids {
-                submitted_defs.remove(id);
+                dispatch.defs.remove(id);
+                dispatch.tracker.resolve_committed(*id);
             }
             for (reply, applied) in replies.into_iter().zip(applied) {
                 let _ = reply.send(Ok(applied));
