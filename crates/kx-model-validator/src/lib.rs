@@ -20,58 +20,28 @@
 
 //! # kx-model-validator — static bind-time fitness type check
 //!
-//! Model fitness as a **type check over capability sets**.
+//! Model fitness as a **type check over capability sets**: a task declares
+//! [`RequiredCapabilities`] (the signature it expects), a model exposes
+//! [`ProvidedCapabilities`] (its actual type), and [`check`] performs structural
+//! subtyping — the model binds iff `provided ⊇ required`. Runs at **bind time**
+//! (model load / before scheduling a Mote that needs it), never as a mid-execution
+//! discovery: find the wrong model at load time, not three Motes into a workflow.
 //!
-//! - A task declares a [`RequiredCapabilities`] — the type signature it expects.
-//! - A model exposes a [`ProvidedCapabilities`] — its actual type.
-//! - [`check`] performs structural subtyping: the model is a valid binding iff
-//!   its provided capabilities satisfy (are a superset of) the task's required
-//!   ones.
+//! Three outcomes ([`ValidatorOutcome`]): `TypeOk` (`provided ⊇ required`, clean
+//! bind), `DegradedSubtype` (binds, but a soft capability is missing or emulated —
+//! e.g. tool-calling via prompting — recorded so the formatter adapter compensates),
+//! and `TypeError` (a REQUIRED capability is missing — refuses to bind, names the gap).
 //!
-//! Runs at **bind time** — when a model is loaded, or before a Mote needing
-//! that model is scheduled. It is a **static** check, never a mid-execution
-//! discovery. The whole value: find the wrong model at load time, not three
-//! Motes into a workflow.
-//!
-//! ## Three outcomes ([`ValidatorOutcome`])
-//!
-//! - [`ValidatorOutcome::TypeOk`] — `provided ⊇ required` — clean bind.
-//! - [`ValidatorOutcome::DegradedSubtype`] — binds, but an optional/soft
-//!   capability is missing or emulated (e.g. tool-calling done via prompting
-//!   instead of native). Records the degraded mode for downstream callers
-//!   (the formatter adapter compensates).
-//! - [`ValidatorOutcome::TypeError`] — a REQUIRED capability is missing —
-//!   refuses to bind, names the missing member and why.
-//!
-//! ## Hard boundary: interface, NOT quality
-//!
-//! The validator type-checks the model's **interface (signature)**, never its
-//! output **quality (behavior)**. Capability is statically checkable; quality
-//! is not — that's the workflow / eval / critic layer's job (orchestration vs
-//! semantic correctness).
-//!
-//! The validator's smaller, honest claim ("I prove your model HAS the required
-//! capabilities; I do not claim it'll be GOOD at them") is the source of its
-//! credibility. Do not let it drift into a quality oracle.
-//!
-//! ## Soundness boundary: v1 → v2
-//!
-//! - **v1 (this crate)** — the validator type-checks against the model's
-//!   **declared** [`ProvidedCapabilities`]. Declarations can lie. v1's guarantee
-//!   is *"the model CLAIMS to satisfy the signature."* All v1 language uses
-//!   "declared." `TypeOk` is more precisely "TypeOk-as-declared."
-//! - **v2 (deferred)** — a capability probe will verify each declaration via a
-//!   one-time deterministic test, result cached. v2 language will use "verified"
-//!   and "guaranteed."
-//! - In v1, the capability broker (P1.8.5) remains the runtime backstop that
-//!   catches false declarations at execution.
-//!
-//! ## House model competes on equal merit
-//!
-//! The validator does **not** know which model is the house model. There is
-//! no field, no flag, no boost. The type-theoretic framing makes the
-//! no-favoritism property structural rather than aspirational. See
-//! [`Recommender`] for the ranking discipline.
+//! **Interface, not quality.** It type-checks the model's *signature*, never its
+//! output *behavior* — quality is the workflow / eval / critic layer's job. The
+//! honest, smaller claim ("the model HAS the required capabilities; not that it'll be
+//! GOOD at them") is the source of its credibility; do not let it drift into a quality
+//! oracle. **v1 checks the model's *declared* capabilities** (declarations can lie, so
+//! `TypeOk` is precisely "TypeOk-as-declared"; the capability broker P1.8.5 is the
+//! runtime backstop that catches false declarations at execution). **v2 (deferred)**
+//! verifies each declaration via a cached one-time deterministic probe ("declared" →
+//! "verified"). The validator has no notion of a house model — no field, no boost; the
+//! type-theoretic framing makes no-favoritism structural (see [`Recommender`]).
 
 mod capabilities;
 mod check;
