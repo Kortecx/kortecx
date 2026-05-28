@@ -44,6 +44,11 @@ kx-cloud/
 /04-*.md
 /05-*.md
 /06-*.md
+/07-*.md
 /CLAUDE.md
 /docs/design/*.md
 /docs/suggestions/*.md
+# Plan files are private-only (SN-5: plans NEVER land in the public OSS repo).
+/docs/plans/
+# Internal warning/debug log — kept in the private kortecx-core repo only.
+/WARNINGS.md
