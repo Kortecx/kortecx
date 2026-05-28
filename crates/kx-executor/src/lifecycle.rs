@@ -110,6 +110,32 @@ pub struct WmLifecycleCommit {
     pub critic_proposed_seq: Option<u64>,
 }
 
+/// The **P0.4 hard gate** (P3.3): if `mote_id` is already `Committed` in the journal,
+/// return its committed `(seq, result_ref)` so the caller serves the committed fact and
+/// **never re-runs the Mote's logic**. For a non-deterministic Mote (ReadOnlyNondet /
+/// WorldMutating) this is a *correctness* invariant — re-running would re-sample a
+/// different observation or fire a second world effect, breaking exactly-once; for PURE
+/// it is a harmless-but-wasteful re-run avoided. The committed entry is the source of
+/// truth (`vision §`: "a non-deterministic step is never recomputed once committed;
+/// recovery reads what it did"). Repudiation supersession of a committed result is the
+/// cascade's concern (P3.5); the single-node engine already excludes committed +
+/// repudiated Motes from dispatch, so this gate is the executor-level defense-in-depth
+/// that makes the guarantee hold for *any* caller (engine, worker, future SDK).
+fn serve_if_committed<J: Journal + ?Sized>(
+    journal: &J,
+    mote_id: &MoteId,
+) -> Result<Option<(u64, ContentRef)>, LifecycleError> {
+    match journal
+        .read_committed(mote_id)
+        .map_err(|e| LifecycleError::JournalAppend(format!("read Committed (P0.4 gate): {e:?}")))?
+    {
+        Some(JournalEntry::Committed {
+            seq, result_ref, ..
+        }) => Ok(Some((seq, result_ref))),
+        _ => Ok(None),
+    }
+}
+
 /// Run a single PURE Mote end-to-end. PR 9a's contract:
 /// - The Mote MUST have `nd_class = Pure`. Non-PURE Motes return
 ///   `LifecycleError::Internal` because the broker / commit-protocol path
@@ -125,6 +151,11 @@ pub struct WmLifecycleCommit {
 ///
 /// See [`LifecycleError`] variants. The caller must write a `Failed` journal
 /// entry when `LifecycleError::Refused` is returned (this module does not).
+///
+/// **P0.4 hard gate (P3.3):** before running, if `mote` is already `Committed` in the
+/// journal, recovery READS the committed `result_ref` and the Mote's logic is **never
+/// re-run**. For PURE this is a free optimization; the gate is shared with
+/// [`run_wm_mote`], where it is a correctness invariant.
 pub fn run_pure_mote<J, R, E>(
     mote: &Mote,
     warrant: &WarrantSpec,
@@ -142,6 +173,16 @@ where
             "PR 9a lifecycle handles PURE Motes only; got {:?}",
             mote.nd_class()
         )));
+    }
+
+    // P0.4 hard gate (P3.3): already committed → serve the committed result, never re-run.
+    if let Some((committed_seq, result_ref)) = serve_if_committed(journal, &mote.id)? {
+        tracing::debug!(mote = ?mote.id, committed_seq, "P0.4 gate: already committed — serving result, not re-running");
+        return Ok(LifecycleCommit {
+            committed_seq,
+            result_ref,
+            mote_id: mote.id,
+        });
     }
 
     // Step 2: acquire resource slot.
@@ -441,6 +482,22 @@ where
             "run_wm_mote handles WM/ReadOnlyNondet only; got Pure mote {:?}; caller must use run_pure_mote",
             mote.id
         )));
+    }
+
+    // P0.4 hard gate (P3.3): a committed non-deterministic Mote is NEVER re-run — serve
+    // the committed result. Re-running would re-sample a different ReadOnlyNondet
+    // observation, or fire a SECOND world effect for a WorldMutating Mote whose effect is
+    // already done + recorded (exactly-once). No Proposed is appended, the broker /
+    // commit-protocol is not invoked. (The EffectStaged-but-not-committed recovery path is
+    // `redispatch_wm_mote`, gated by the oracle; here the Mote is already Committed.)
+    if let Some((committed_seq, result_ref)) = serve_if_committed(journal, &mote.id)? {
+        tracing::debug!(mote = ?mote.id, committed_seq, "P0.4 gate: committed nondet Mote — serving result, not re-dispatching");
+        return Ok(WmLifecycleCommit {
+            committed_seq,
+            result_ref,
+            mote_id: mote.id,
+            critic_proposed_seq: None,
+        });
     }
 
     // Step 2: acquire resource slot.
