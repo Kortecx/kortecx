@@ -80,6 +80,11 @@ pub(crate) enum Command {
         max: usize,
         reply: oneshot::Sender<Vec<(Mote, WarrantSpec)>>,
     },
+    ReadEntries {
+        since_seq: u64,
+        max: usize,
+        reply: oneshot::Sender<Result<(Vec<JournalEntry>, u64), CoordinatorError>>,
+    },
 }
 
 /// Handle to the orchestration core. Cloneable + `Send + Sync` (it is just the
@@ -174,6 +179,27 @@ impl CoreHandle {
             .map_err(|_| CoordinatorError::CoreUnavailable)
     }
 
+    /// Read up to `max` committed journal entries with seq `> since_seq`, plus the
+    /// cursor (`next_seq`) to pass on the next poll. The distributed-read surface
+    /// (D55): peers pull committed-entry deltas and fold a local read model rather
+    /// than round-tripping per result.
+    pub(crate) async fn read_entries(
+        &self,
+        since_seq: u64,
+        max: usize,
+    ) -> Result<(Vec<JournalEntry>, u64), CoordinatorError> {
+        let (reply, response) = oneshot::channel();
+        self.dispatch(Command::ReadEntries {
+            since_seq,
+            max,
+            reply,
+        })
+        .await?;
+        response
+            .await
+            .map_err(|_| CoordinatorError::CoreUnavailable)?
+    }
+
     async fn dispatch(&self, command: Command) -> Result<(), CoordinatorError> {
         self.commands
             .send(command)
@@ -233,6 +259,38 @@ fn lease_ready(
         }
     }
     items
+}
+
+/// Read up to `max` `Committed` entries with seq in `(since_seq, current_seq]`, in
+/// seq order, plus the cursor to resume from. The cursor (`next_seq`) advances past
+/// everything scanned: it is `current_seq` when the whole range was scanned (the peer
+/// is caught up), or the last collected entry's seq when the `max` cap was hit (so the
+/// next poll resumes right after it — no entry is skipped or re-scanned). Non-committed
+/// entries (e.g. `Proposed`) are skipped but still advance the scan, so a peer that only
+/// wants committed results never re-reads them. The whole journal below `current_seq` is
+/// immutable + append-only, so this read is consistent without locking the writer.
+fn read_committed_since<J: Journal>(
+    journal: &J,
+    since_seq: u64,
+    max: usize,
+) -> Result<(Vec<JournalEntry>, u64), CoordinatorError> {
+    let current = journal.current_seq()?;
+    if since_seq >= current || max == 0 {
+        return Ok((Vec::new(), current));
+    }
+    let mut entries = Vec::new();
+    let mut next_seq = current;
+    for entry in journal.read_entries_by_seq((since_seq + 1)..(current + 1))? {
+        if matches!(entry, JournalEntry::Committed { .. }) {
+            if entries.len() == max {
+                // Cap hit: stop one short and resume after the last collected entry.
+                next_seq = entries.last().map_or(since_seq, JournalEntry::seq);
+                break;
+            }
+            entries.push(entry);
+        }
+    }
+    Ok((entries, next_seq))
 }
 
 /// The owner-thread loop. Recovers the projection from the journal, then services
@@ -322,6 +380,13 @@ fn core_loop<J: Journal>(journal: &J, mut inbox: mpsc::Receiver<Command>) {
                 } => {
                     let items = lease_ready(&projection, &submitted_defs, executor_class, max);
                     let _ = reply.send(items);
+                }
+                Command::ReadEntries {
+                    since_seq,
+                    max,
+                    reply,
+                } => {
+                    let _ = reply.send(read_committed_since(journal, since_seq, max));
                 }
             }
         }

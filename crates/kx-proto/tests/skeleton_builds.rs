@@ -14,9 +14,11 @@ use common::{sample_mote, sample_warrant};
 use kx_proto::proto::coordinator_client::CoordinatorClient;
 use kx_proto::proto::coordinator_server::{Coordinator, CoordinatorServer};
 use kx_proto::proto::{
-    CommitOutcome, ExecutorClass, HeartbeatRequest, HeartbeatResponse, LeaseWorkRequest,
-    LeaseWorkResponse, RegisterWorkerRequest, RegisterWorkerResponse, ReportCommitRequest,
-    ReportCommitResponse, SubmitMoteRequest, SubmitMoteResponse, SubmitStatus, WorkItem,
+    journal_entry, CommitOutcome, CommittedEntry, ExecutorClass, HeartbeatRequest,
+    HeartbeatResponse, JournalEntry, LeaseWorkRequest, LeaseWorkResponse, NdClass,
+    ReadEntriesRequest, ReadEntriesResponse, RegisterWorkerRequest, RegisterWorkerResponse,
+    ReportCommitRequest, ReportCommitResponse, SubmitMoteRequest, SubmitMoteResponse, SubmitStatus,
+    WorkItem,
 };
 use tonic::transport::Server;
 use tonic::{Request, Response, Status};
@@ -78,6 +80,31 @@ impl Coordinator for NoopCoordinator {
                 mote: Some(sample_mote().into()),
                 warrant: Some(sample_warrant().into()),
             }],
+        }))
+    }
+
+    async fn read_entries(
+        &self,
+        req: Request<ReadEntriesRequest>,
+    ) -> Result<Response<ReadEntriesResponse>, Status> {
+        // Echo one committed entry back so the test confirms it rides the new
+        // RPC. (Real serving from the journal is coordinator-side in P2.4.)
+        let _ = req.into_inner();
+        Ok(Response::new(ReadEntriesResponse {
+            entries: vec![JournalEntry {
+                seq: 1,
+                kind: Some(journal_entry::Kind::Committed(CommittedEntry {
+                    mote_id: vec![1; 32],
+                    idempotency_key: vec![1; 32],
+                    seq: 1,
+                    nd_class: NdClass::Pure as i32,
+                    result_ref: vec![2; 32],
+                    parents: vec![],
+                    warrant_ref: vec![4; 32],
+                    mote_def_hash: vec![5; 32],
+                })),
+            }],
+            next_seq: 1,
         }))
     }
 }
@@ -186,4 +213,21 @@ async fn coordinator_skeleton_serves_all_rpcs() {
         "leased mote_id round-tripped over the wire"
     );
     assert!(item.warrant.is_some(), "leased warrant present");
+
+    // (6) read entries — a committed entry rides back over the new RPC.
+    let read = client
+        .read_entries(ReadEntriesRequest {
+            since_seq: 0,
+            max: 16,
+        })
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(read.entries.len(), 1, "one committed entry read");
+    assert_eq!(read.next_seq, 1);
+    match read.entries[0].kind.as_ref().unwrap() {
+        journal_entry::Kind::Committed(c) => {
+            assert_eq!(c.result_ref.len(), 32, "committed result_ref round-tripped");
+        }
+    }
 }

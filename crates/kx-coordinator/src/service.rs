@@ -7,7 +7,7 @@
 
 use std::sync::Arc;
 
-use kx_journal::Journal;
+use kx_journal::{Journal, JournalEntry};
 use kx_mote::{Mote, MoteId};
 use kx_projection::MoteState;
 use kx_proto::proto;
@@ -193,5 +193,70 @@ impl Coordinator for CoordinatorService {
             })
             .collect();
         Ok(Response::new(proto::LeaseWorkResponse { items }))
+    }
+
+    #[tracing::instrument(skip_all)]
+    async fn read_entries(
+        &self,
+        request: Request<proto::ReadEntriesRequest>,
+    ) -> Result<Response<proto::ReadEntriesResponse>, Status> {
+        let req = request.into_inner();
+        // Cap the page so one poll cannot ask for an unbounded response; `0` means
+        // "coordinator default". The journal-read itself is bounded by current_seq.
+        let max = match usize::try_from(req.max).unwrap_or(READ_ENTRIES_MAX) {
+            0 => READ_ENTRIES_DEFAULT,
+            n => n.min(READ_ENTRIES_MAX),
+        };
+        let (entries, next_seq) = self.core.read_entries(req.since_seq, max).await?;
+        let entries = entries.into_iter().filter_map(committed_to_proto).collect();
+        Ok(Response::new(proto::ReadEntriesResponse {
+            entries,
+            next_seq,
+        }))
+    }
+}
+
+/// Default page size when a client passes `max = 0`.
+const READ_ENTRIES_DEFAULT: usize = 256;
+/// Hard ceiling on a single `ReadEntries` page (bounds response size).
+const READ_ENTRIES_MAX: usize = 4096;
+
+/// Map a `Committed` journal entry to its wire form. Returns `None` for any other
+/// entry kind (the core already filters to `Committed`, so this is just an
+/// exhaustiveness guard) — the wire `JournalEntry.oneof` carries only `Committed`
+/// in P2.4 (D55; other kinds are reserved for P3).
+fn committed_to_proto(entry: JournalEntry) -> Option<proto::JournalEntry> {
+    match entry {
+        JournalEntry::Committed {
+            mote_id,
+            idempotency_key,
+            seq,
+            nondeterminism,
+            result_ref,
+            parents,
+            warrant_ref,
+            mote_def_hash,
+        } => {
+            let parents = parents
+                .into_iter()
+                .filter_map(|p| p.to_parent_ref().map(proto::ParentRef::from))
+                .collect();
+            Some(proto::JournalEntry {
+                seq,
+                kind: Some(proto::journal_entry::Kind::Committed(
+                    proto::CommittedEntry {
+                        mote_id: mote_id.as_bytes().to_vec(),
+                        idempotency_key: idempotency_key.to_vec(),
+                        seq,
+                        nd_class: proto::NdClass::from(nondeterminism) as i32,
+                        result_ref: result_ref.as_bytes().to_vec(),
+                        parents,
+                        warrant_ref: warrant_ref.as_bytes().to_vec(),
+                        mote_def_hash: mote_def_hash.as_bytes().to_vec(),
+                    },
+                )),
+            })
+        }
+        _ => None,
     }
 }
