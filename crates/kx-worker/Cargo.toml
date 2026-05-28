@@ -1,0 +1,42 @@
+[package]
+name = "kx-worker"
+version = "0.0.1"
+edition = { workspace = true }
+rust-version = { workspace = true }
+license = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+description = "kortecx P2.3 worker — a gRPC client of the coordinator that hosts the P1 executor (and, transitively, inference) verbatim: it registers, pulls ready PURE Motes (LeaseWork), runs them, and PROPOSES commits via ReportCommit (the coordinator is the sole journal writer, D40)."
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+# The gRPC schema + generated client + the tested proto<->domain conversions.
+kx-proto = { workspace = true }
+# Hosted VERBATIM (P2 thesis test): the worker runs Motes through `run_pure_mote`;
+# kx-executor transitively hosts kx-inference (its backends). Neither crate's
+# source changes — distribution is wiring, not a rewrite.
+kx-executor = { workspace = true }
+# A THROWAWAY in-memory journal: the executor's commit protocol needs a `Journal`
+# to append to, but a worker never writes the coordinator's journal (D40). Only the
+# result_ref crosses back, to be PROPOSED via ReportCommit.
+kx-journal = { workspace = true }
+kx-mote = { workspace = true }
+kx-warrant = { workspace = true }
+kx-content = { workspace = true }
+tonic = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+# The e2e test hosts a real CoordinatorService over an in-process gRPC server and
+# drives the full register -> lease -> run -> propose-commit loop against it.
+kx-coordinator = { workspace = true }
+# `time` is additive over the workspace tokio features — the e2e uses a short
+# connect-retry sleep while the in-process server binds (the kx-proto pattern).
+tokio = { workspace = true, features = ["time"] }
+smallvec = { workspace = true }
+
+[lints]
+workspace = true
