@@ -196,3 +196,33 @@ async fn report_commit_unknown_mote_with_nondefault_nd_class() {
     assert_eq!(err.code(), Code::InvalidArgument);
     assert_eq!(svc.committed_count().await.unwrap(), 0);
 }
+
+#[tokio::test]
+async fn too_many_parents_rejected_no_write() {
+    // > 128 parents would fail the journal encoder — validated up front so it
+    // can't poison a group-commit batch. Rejected individually, no write.
+    let (svc, worker, mote) = ready_to_report().await;
+    let mut bad = common::report_commit_request(&mote, worker);
+    bad.parents = (0..129u32)
+        .map(|i| proto::ParentRef {
+            parent_id: vec![u8::try_from(i % 256).unwrap(); 32],
+            edge_kind: proto::EdgeKind::Data as i32,
+            non_cascade: false,
+        })
+        .collect();
+    assert_commit_rejected(&svc, bad).await;
+}
+
+#[tokio::test]
+async fn data_edge_non_cascade_rejected_no_write() {
+    // A Data edge marked non_cascade is forbidden by the encoder; validated up
+    // front so it can't poison a group-commit batch.
+    let (svc, worker, mote) = ready_to_report().await;
+    let mut bad = common::report_commit_request(&mote, worker);
+    bad.parents = vec![proto::ParentRef {
+        parent_id: vec![1u8; 32],
+        edge_kind: proto::EdgeKind::Data as i32,
+        non_cascade: true,
+    }];
+    assert_commit_rejected(&svc, bad).await;
+}

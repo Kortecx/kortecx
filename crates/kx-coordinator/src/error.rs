@@ -45,6 +45,22 @@ pub enum CoordinatorError {
     #[error("unknown mote {0:?} (never submitted)")]
     UnknownMote(MoteId),
 
+    /// A `ReportCommit` declared more parents than the journal encodes. Validated
+    /// up front so a malformed proposal cannot poison a group-commit batch.
+    #[error("commit declares {got} parents, exceeds the maximum {max}")]
+    TooManyParents {
+        /// Parents declared by the request.
+        got: usize,
+        /// The journal's per-entry maximum.
+        max: usize,
+    },
+
+    /// A `ReportCommit` carried a `Data` edge marked `non_cascade` — forbidden by
+    /// `journal-entry.md` §11 (the encoder would reject it). Validated up front so a
+    /// malformed proposal cannot poison a group-commit batch.
+    #[error("commit has a Data-edge parent marked non_cascade (forbidden)")]
+    DataEdgeNonCascade,
+
     /// Hosted-scheduler bookkeeping failure (e.g. duplicate submission).
     #[error(transparent)]
     Scheduler(#[from] SchedulerError),
@@ -62,6 +78,13 @@ pub enum CoordinatorError {
     /// re-folds from it.
     #[error("coordinator orchestration core is unavailable")]
     CoreUnavailable,
+
+    /// A group-commit batch failed at the durable layer (journal/projection). The
+    /// batch is atomic, so nothing was written; every waiter in the batch receives
+    /// this so it can retry. Carries the underlying error's message (the source
+    /// error is not `Clone`, so it is stringified to fan out to all waiters).
+    #[error("group commit failed: {0}")]
+    CommitFailed(String),
 }
 
 impl From<CoordinatorError> for tonic::Status {
@@ -73,10 +96,12 @@ impl From<CoordinatorError> for tonic::Status {
             | CoordinatorError::Convert(_)
             | CoordinatorError::UnknownWorker(_)
             | CoordinatorError::UnknownMote(_)
+            | CoordinatorError::TooManyParents { .. }
+            | CoordinatorError::DataEdgeNonCascade
             | CoordinatorError::Scheduler(_) => Self::invalid_argument(message),
-            CoordinatorError::Journal(_) | CoordinatorError::Projection(_) => {
-                Self::internal(message)
-            }
+            CoordinatorError::Journal(_)
+            | CoordinatorError::Projection(_)
+            | CoordinatorError::CommitFailed(_) => Self::internal(message),
             CoordinatorError::CoreUnavailable => Self::unavailable(message),
         }
     }

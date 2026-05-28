@@ -33,6 +33,11 @@ use crate::error::CoordinatorError;
 /// instead of letting an unbounded queue grow without limit under a flood of RPCs.
 const COMMAND_BUFFER: usize = 1024;
 
+/// Max commands the core drains per wake. Consecutive `Commit`s within a drain
+/// coalesce into one journal transaction (group commit); this bounds the size of
+/// that transaction.
+const MAX_DRAIN: usize = 256;
+
 /// Outcome of a `SubmitMote`: the canonically re-derived id and whether it was a
 /// duplicate (idempotent re-submit before commit).
 #[derive(Debug, Clone, Copy)]
@@ -177,68 +182,100 @@ fn core_loop<J: Journal>(journal: &J, mut inbox: mpsc::Receiver<Command>) {
         .map(|(id, _)| id)
         .collect();
 
-    while let Some(command) = inbox.blocking_recv() {
-        match command {
-            Command::Submit {
-                mote,
-                warrant,
-                reply,
-            } => {
-                let mote_id = mote.id;
-                let duplicate = match scheduler.submit(*mote, *warrant, &mut projection) {
-                    Ok(()) => {
-                        submitted.insert(mote_id);
-                        false
-                    }
-                    Err(SchedulerError::DuplicateSubmission(_)) => true,
-                };
-                let _ = reply.send(SubmitOutcome { mote_id, duplicate });
-            }
-            Command::Commit { proposal, reply } => {
-                let result = apply_commit(
-                    journal,
-                    &mut projection,
-                    &mut folded_through,
-                    &submitted,
-                    *proposal,
-                );
-                let _ = reply.send(result);
-            }
-            Command::StateOf { mote_id, reply } => {
-                let _ = reply.send(projection.state_of(&mote_id));
-            }
-            Command::CommittedCount { reply } => {
-                let _ = reply.send(projection.snapshot().committed_count());
-            }
-            Command::ReadySet { reply } => {
-                let _ = reply.send(projection.ready_set());
+    while let Some(first) = inbox.blocking_recv() {
+        // Drain everything immediately available (up to MAX_DRAIN) so consecutive
+        // ReportCommits coalesce into one journal transaction (group commit).
+        let mut drained = vec![first];
+        while drained.len() < MAX_DRAIN {
+            match inbox.try_recv() {
+                Ok(command) => drained.push(command),
+                Err(_) => break,
             }
         }
+
+        // Process in arrival order, accumulating a run of consecutive `Commit`s and
+        // flushing it (as one group commit) whenever a non-`Commit` command is
+        // reached — so `Submit`s and reads keep their exact in-order semantics
+        // (a read or submit always observes the commits queued before it).
+        let mut pending: Vec<PendingCommit> = Vec::new();
+        for command in drained {
+            match command {
+                Command::Commit { proposal, reply } => {
+                    pending.push((*proposal, reply));
+                }
+                Command::Submit {
+                    mote,
+                    warrant,
+                    reply,
+                } => {
+                    flush_commits(
+                        journal,
+                        &mut projection,
+                        &mut folded_through,
+                        &submitted,
+                        &mut pending,
+                    );
+                    let mote_id = mote.id;
+                    let duplicate = match scheduler.submit(*mote, *warrant, &mut projection) {
+                        Ok(()) => {
+                            submitted.insert(mote_id);
+                            false
+                        }
+                        Err(SchedulerError::DuplicateSubmission(_)) => true,
+                    };
+                    let _ = reply.send(SubmitOutcome { mote_id, duplicate });
+                }
+                Command::StateOf { mote_id, reply } => {
+                    flush_commits(
+                        journal,
+                        &mut projection,
+                        &mut folded_through,
+                        &submitted,
+                        &mut pending,
+                    );
+                    let _ = reply.send(projection.state_of(&mote_id));
+                }
+                Command::CommittedCount { reply } => {
+                    flush_commits(
+                        journal,
+                        &mut projection,
+                        &mut folded_through,
+                        &submitted,
+                        &mut pending,
+                    );
+                    let _ = reply.send(projection.snapshot().committed_count());
+                }
+                Command::ReadySet { reply } => {
+                    flush_commits(
+                        journal,
+                        &mut projection,
+                        &mut folded_through,
+                        &submitted,
+                        &mut pending,
+                    );
+                    let _ = reply.send(projection.ready_set());
+                }
+            }
+        }
+        flush_commits(
+            journal,
+            &mut projection,
+            &mut folded_through,
+            &submitted,
+            &mut pending,
+        );
     }
 }
 
-/// Assemble + append the `Committed` entry (the sole-writer step), then fold it
-/// into the projection. Refuses commits for never-submitted Motes.
-///
-/// Dedup is delegated to the journal's own dedup-by-key contract (the single
-/// source of truth): `append` is a no-op that returns the pre-existing entry on a
-/// duplicate. We detect that — without a second lookup — by comparing the returned
-/// seq against the seq captured before the append: a fresh write advances the seq,
-/// a dedup hit returns an older one. On a dedup hit we skip the fold (the entry is
-/// already folded; re-folding would trip `DuplicateCommitted`).
-fn apply_commit<J: Journal>(
-    journal: &J,
-    projection: &mut Projection,
-    folded_through: &mut u64,
-    submitted: &BTreeSet<MoteId>,
-    proposal: CommitProposal,
-) -> Result<CommitApplied, CoordinatorError> {
-    if !submitted.contains(&proposal.mote_id) {
-        return Err(CoordinatorError::UnknownMote(proposal.mote_id));
-    }
+/// One queued `ReportCommit`: its validated proposal + the reply channel.
+type PendingCommit = (
+    CommitProposal,
+    oneshot::Sender<Result<CommitApplied, CoordinatorError>>,
+);
 
-    let seq_before = journal.current_seq()?;
-    let durable = journal.append(JournalEntry::Committed {
+/// Build the durable `Committed` entry from a validated proposal.
+fn committed_entry(proposal: CommitProposal) -> JournalEntry {
+    JournalEntry::Committed {
         mote_id: proposal.mote_id,
         idempotency_key: proposal.idempotency_key,
         seq: 0,
@@ -247,22 +284,91 @@ fn apply_commit<J: Journal>(
         parents: proposal.parents,
         warrant_ref: proposal.warrant_ref,
         mote_def_hash: proposal.mote_def_hash,
-    })?;
-    // `append` of a `Committed` always returns a `Committed`; the other arm is
-    // unreachable by construction.
-    let committed_seq = match durable {
-        JournalEntry::Committed { seq, .. } => seq,
-        _ => 0,
-    };
-
-    let already_committed = committed_seq <= seq_before;
-    if !already_committed {
-        fold_new(journal, projection, folded_through)?;
     }
-    Ok(CommitApplied {
-        committed_seq,
-        already_committed,
-    })
+}
+
+/// Flush a run of queued commits as ONE group commit
+/// ([`Journal::append_batch`](kx_journal::Journal::append_batch) — a single journal
+/// transaction), then fold the new range once. Never-submitted Motes are rejected
+/// individually with no write; the admitted ones are appended atomically.
+fn flush_commits<J: Journal>(
+    journal: &J,
+    projection: &mut Projection,
+    folded_through: &mut u64,
+    submitted: &BTreeSet<MoteId>,
+    pending: &mut Vec<PendingCommit>,
+) {
+    if pending.is_empty() {
+        return;
+    }
+    let batch = std::mem::take(pending);
+
+    // Admission guard per proposal: reject never-submitted Motes (no write) so one
+    // inadmissible commit never blocks its valid batch-mates.
+    let mut entries: Vec<JournalEntry> = Vec::with_capacity(batch.len());
+    let mut replies: Vec<oneshot::Sender<Result<CommitApplied, CoordinatorError>>> =
+        Vec::with_capacity(batch.len());
+    for (proposal, reply) in batch {
+        if submitted.contains(&proposal.mote_id) {
+            entries.push(committed_entry(proposal));
+            replies.push(reply);
+        } else {
+            let _ = reply.send(Err(CoordinatorError::UnknownMote(proposal.mote_id)));
+        }
+    }
+    if entries.is_empty() {
+        return;
+    }
+
+    match apply_batch(journal, projection, folded_through, entries) {
+        Ok(applied) => {
+            for (reply, applied) in replies.into_iter().zip(applied) {
+                let _ = reply.send(Ok(applied));
+            }
+        }
+        Err(message) => {
+            // The batch is atomic, so on failure nothing was durably written; report
+            // the same fault to every waiter (they may retry).
+            for reply in replies {
+                let _ = reply.send(Err(CoordinatorError::CommitFailed(message.clone())));
+            }
+        }
+    }
+}
+
+/// Append a pre-validated, pre-admitted batch in one transaction, fold the new
+/// range once, and derive each entry's [`CommitApplied`].
+///
+/// Per-entry dedup detection (no extra lookup): `append_batch` returns each
+/// entry's durable form. A commit is **newly committed** iff its returned seq is
+/// past the pre-batch watermark AND is the first occurrence of that seq in this
+/// batch — a re-report (across batches → older seq; within the batch → an
+/// already-seen seq) is `already_committed`. Returns a stringified error (so it can
+/// be relayed to every waiter) only on a catastrophic journal/projection fault;
+/// the batch is atomic, so on error nothing was durably written.
+fn apply_batch<J: Journal>(
+    journal: &J,
+    projection: &mut Projection,
+    folded_through: &mut u64,
+    entries: Vec<JournalEntry>,
+) -> Result<Vec<CommitApplied>, String> {
+    let seq_before = journal.current_seq().map_err(|e| e.to_string())?;
+    let durable = journal.append_batch(entries).map_err(|e| e.to_string())?;
+    fold_new(journal, projection, folded_through).map_err(|e| e.to_string())?;
+
+    let mut new_seqs = BTreeSet::new();
+    let applied = durable
+        .into_iter()
+        .map(|entry| {
+            let seq = entry.seq();
+            let already_committed = !(seq > seq_before && new_seqs.insert(seq));
+            CommitApplied {
+                committed_seq: seq,
+                already_committed,
+            }
+        })
+        .collect();
+    Ok(applied)
 }
 
 /// Fold journal entries appended since `folded_through` into `projection`,
