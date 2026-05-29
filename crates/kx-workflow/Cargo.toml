@@ -30,6 +30,16 @@ thiserror  = { workspace = true }
 [dev-dependencies]
 # Property-based determinism sweep over random valid DAGs.
 proptest = { workspace = true }
+# End-to-end: drive a compiled PURE workflow through the real single-node runtime
+# primitives to Committed, and reuse the production topology child derivation to
+# prove deterministic shaper unroll. DEV-ONLY — kx-workflow keeps NO production
+# dependency on the scheduler/executor/projection (the thesis test).
+kx-runtime    = { workspace = true }
+kx-scheduler  = { workspace = true }
+kx-projection = { workspace = true }
+kx-journal    = { workspace = true }
+kx-executor   = { workspace = true }
+kx-content    = { workspace = true }
 
 [lints]
 workspace = true
