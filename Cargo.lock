@@ -1093,6 +1093,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "kx-dataset"
+version = "0.0.1"
+dependencies = [
+ "blake3",
+ "kx-content",
+ "kx-mote",
+ "serde",
+ "smallvec",
+ "thiserror",
+]
+
+[[package]]
 name = "kx-executor"
 version = "0.0.1"
 dependencies = [

@@ -1,0 +1,28 @@
+[package]
+name         = "kx-dataset"
+version      = "0.0.1"
+edition      = { workspace = true }
+rust-version = { workspace = true }
+license      = { workspace = true }
+authors      = { workspace = true }
+repository   = { workspace = true }
+description  = "kortecx data-management seam (P4.1c) — a pluggable, JOURNAL-AUTHORITATIVE data layer for the Morphic engine. Types committed content (tensor / vector / blob / multi-modal) behind a DataStore/Dataset/RetrievalIndex trait surface; the layer is a reconstructible, queryable projection/cache of committed content — never a second source of truth (lose it → rebuild by replay). Similarity (RetrievalIndex) is confined to the ReadOnlyNondet retrieval boundary (SN-8: never on the identity/commit path). In-memory impls ship now; a Lance backend (vectors+tensors+blobs+Delta versioning) is a later gated step behind the same traits."
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+# Content-addressed identity the typed records + datasets are keyed by.
+kx-content = { workspace = true }
+# MoteId — dataset lineage (which Motes produced the corpus).
+kx-mote    = { workspace = true }
+# Tensor shape / dataset rows stack-inline storage.
+smallvec   = { workspace = true }
+# Content-addressed Dataset identity + typed-ref hashing.
+blake3     = { workspace = true }
+# Persistence-friendly derives on the schema / typed-ref / dataset types.
+serde      = { workspace = true }
+thiserror  = { workspace = true }
+
+[lints]
+workspace = true
