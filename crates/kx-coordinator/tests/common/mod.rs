@@ -92,6 +92,21 @@ pub fn mote(seed: u8, nd_class: NdClass, parent_ids: &[MoteId]) -> Mote {
     )
 }
 
+/// A parentless WORLD-MUTATING Mote with an explicit effect pattern (so a test can build a
+/// `ValidateThenCommit` / `IdempotentByConstruction` producer that — per D58 — never writes
+/// `EffectStaged`). Made unique by `seed`.
+#[must_use]
+pub fn wm_mote(seed: u8, effect_pattern: EffectPattern) -> Mote {
+    let mut def = mote_def(NdClass::WorldMutating);
+    def.effect_pattern = effect_pattern;
+    Mote::new(
+        def,
+        InputDataId::from_bytes([seed; 32]),
+        GraphPosition(vec![seed]),
+        SmallVec::new(),
+    )
+}
+
 /// The canonical parentless PURE root Mote.
 #[must_use]
 pub fn pure_root_mote() -> Mote {
@@ -239,6 +254,27 @@ pub async fn commit(
         .await
         .unwrap()
         .into_inner()
+}
+
+/// Record a WORLD-MUTATING Mote's staged-intent (`ReportEffectStaged`) for `worker_id` through
+/// the service — the durable `EffectStaged` hint the recovery oracle keys on. `idempotency_key
+/// == mote_id` (identity invariant). Returns the staged seq.
+pub async fn report_effect_staged(
+    service: &CoordinatorService,
+    mote: &Mote,
+    worker_id: u64,
+) -> u64 {
+    let id = mote.id.as_bytes().to_vec();
+    service
+        .report_effect_staged(Request::new(proto::ReportEffectStagedRequest {
+            mote_id: id.clone(),
+            idempotency_key: id,
+            worker_id,
+        }))
+        .await
+        .unwrap()
+        .into_inner()
+        .staged_seq
 }
 
 /// Lease ready PURE work for `worker_id` on `executor_class` through the service.
