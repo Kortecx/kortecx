@@ -21,7 +21,7 @@ use std::sync::Arc;
 
 use kx_content::{ContentStore, LocalFsContentStore};
 use kx_journal::{FailureReason, Journal, JournalEntry, RepudiationReason};
-use kx_mote::{Mote, MoteId, NdClass};
+use kx_mote::{Mote, MoteId};
 use kx_projection::{MoteState, Projection};
 use kx_scheduler::{LocalPlacement, Placement, Scheduler, SchedulerError, WorkerId};
 use kx_warrant::{ExecutorClass, WarrantSpec};
@@ -104,6 +104,11 @@ pub(crate) enum Command {
         reason: RepudiationReason,
         repudiator_id: u128,
         reply: oneshot::Sender<Result<RepudiationOutcome, RepudiationError>>,
+    },
+    ReportEffectStaged {
+        mote_id: MoteId,
+        idempotency_key: [u8; 32],
+        reply: oneshot::Sender<Result<u64, CoordinatorError>>,
     },
 }
 
@@ -255,6 +260,27 @@ impl CoreHandle {
             .map_err(|_| RepudiationError::CoreUnavailable)?
     }
 
+    /// Record a WORLD-MUTATING Mote's staged-intent (D58): append an `EffectStaged`
+    /// entry through the sole writer and return its seq. The worker calls this BEFORE
+    /// firing the effect, so on worker death the coordinator's projection has the
+    /// recovery hint. Dedupes by key (D15) — a re-stage on recovery returns the seq.
+    pub(crate) async fn report_effect_staged(
+        &self,
+        mote_id: MoteId,
+        idempotency_key: [u8; 32],
+    ) -> Result<u64, CoordinatorError> {
+        let (reply, response) = oneshot::channel();
+        self.dispatch(Command::ReportEffectStaged {
+            mote_id,
+            idempotency_key,
+            reply,
+        })
+        .await?;
+        response
+            .await
+            .map_err(|_| CoordinatorError::CoreUnavailable)?
+    }
+
     async fn dispatch(&self, command: Command) -> Result<(), CoordinatorError> {
         self.commands
             .send(command)
@@ -332,12 +358,14 @@ fn serve_lease<J: Journal>(
     items
 }
 
-/// Select up to `max` ready PURE Motes for `worker` to run. Candidates are
-/// ready (parents-all-committed) ∩ PURE (the only class executed-then-proposed in
-/// P2.x; WM is deferred) ∩ matching the worker's backend (`executor_class`). Placement
-/// v2 (D56) then orders them: Motes the load-aware policy routes to `worker` come
-/// **first**, the rest **fill to `max`** — so work balances across workers by load
-/// (shard-by-mote on ties) while a live poller never idles when ready work exists
+/// Select up to `max` ready Motes for `worker` to run. Candidates are ready
+/// (parents-all-committed) ∩ matching the worker's backend (`executor_class`). **D58
+/// (P3.6) lifts the PURE-only restriction**: WORLD-MUTATING + READ-ONLY-NONDET Motes are
+/// now leasable (the worker stages its intent via `ReportEffectStaged` before firing,
+/// then proposes the commit). Submission-time refusals (R-1/R-2/R-10, P0.8) already gated
+/// admissibility at `SubmitMote`; the executor's R-11/R-13 + the coordinator's D55
+/// phantom-ref guard backstop the dispatch. Placement v2 (D56) then orders them:
+/// `worker`'s placement-preferred Motes come **first**, the rest **fill to `max`**
 /// (starvation-free; double execution stays harmless under dedup, D54).
 fn lease_ready(
     projection: &Projection,
@@ -368,8 +396,8 @@ fn lease_ready(
         if projection.state_of(&mote_id) == MoteState::Committed {
             continue;
         }
-        if let Some((mote, warrant)) = submitted_defs.get(&mote_id) {
-            if mote.nd_class() == NdClass::Pure && warrant.executor_class == executor_class {
+        if let Some((_mote, warrant)) = submitted_defs.get(&mote_id) {
+            if warrant.executor_class == executor_class {
                 if placement.place(&mote_id) == worker {
                     preferred.push(mote_id);
                 } else {
@@ -680,7 +708,48 @@ fn handle_command<J: Journal>(
             );
             let _ = reply.send(outcome);
         }
+        Command::ReportEffectStaged {
+            mote_id,
+            idempotency_key,
+            reply,
+        } => {
+            let seq = stage_effect(
+                journal,
+                projection,
+                folded_through,
+                mote_id,
+                idempotency_key,
+            );
+            let _ = reply.send(seq);
+        }
     }
+}
+
+/// Append a WORLD-MUTATING Mote's `EffectStaged` entry through the sole writer (D58 —
+/// the durable staged-intent the worker records before firing) and fold it, returning
+/// the assigned seq. Dedupes by key (D15): a re-stage on recovery returns the existing
+/// seq and folds nothing new. This is what gives the coordinator's projection the
+/// `effect_staged_observed` recovery hint, so a worker death between stage and commit is
+/// safely re-dispatchable (the oracle permits it; the tool's idempotency dedupes the effect).
+fn stage_effect<J: Journal>(
+    journal: &J,
+    projection: &mut Projection,
+    folded_through: &mut u64,
+    mote_id: MoteId,
+    idempotency_key: [u8; 32],
+) -> Result<u64, CoordinatorError> {
+    let entry = JournalEntry::EffectStaged {
+        mote_id,
+        idempotency_key,
+        seq: 0,
+    };
+    let durable = journal.append(entry)?;
+    let seq = durable.seq();
+    if seq > *folded_through {
+        projection.fold(&durable)?;
+        *folded_through = seq;
+    }
+    Ok(seq)
 }
 
 /// Register a submitted Mote through the hosted scheduler (verbatim, thesis test) and

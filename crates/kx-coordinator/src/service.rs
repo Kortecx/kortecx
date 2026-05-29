@@ -219,6 +219,39 @@ impl Coordinator for CoordinatorService {
     }
 
     #[tracing::instrument(skip_all)]
+    async fn report_effect_staged(
+        &self,
+        request: Request<proto::ReportEffectStagedRequest>,
+    ) -> Result<Response<proto::ReportEffectStagedResponse>, Status> {
+        let req = request.into_inner();
+        // D40 admission: only a registered worker may stage an effect (mirrors report_commit).
+        let worker = WorkerId(req.worker_id);
+        if self.registry.get(worker).is_none() {
+            return Err(CoordinatorError::UnknownWorker(worker).into());
+        }
+        let mote_id_bytes: [u8; 32] = req
+            .mote_id
+            .as_slice()
+            .try_into()
+            .map_err(|_| Status::invalid_argument("mote_id must be 32 bytes"))?;
+        let idempotency_key: [u8; 32] = req
+            .idempotency_key
+            .as_slice()
+            .try_into()
+            .map_err(|_| Status::invalid_argument("idempotency_key must be 32 bytes"))?;
+        let mote_id = MoteId::from_bytes(mote_id_bytes);
+        let staged_seq = self
+            .core
+            .report_effect_staged(mote_id, idempotency_key)
+            .await?;
+        tracing::info!(seq = staged_seq, ?mote_id, "effect staged");
+        Ok(Response::new(proto::ReportEffectStagedResponse {
+            staged_seq,
+            ack: true,
+        }))
+    }
+
+    #[tracing::instrument(skip_all)]
     async fn lease_work(
         &self,
         request: Request<proto::LeaseWorkRequest>,

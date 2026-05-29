@@ -17,8 +17,8 @@ use kx_proto::proto::{
     journal_entry, CommitOutcome, CommittedEntry, ExecutorClass, HeartbeatRequest,
     HeartbeatResponse, JournalEntry, LeaseWorkRequest, LeaseWorkResponse, NdClass,
     ReadEntriesRequest, ReadEntriesResponse, RegisterWorkerRequest, RegisterWorkerResponse,
-    ReportCommitRequest, ReportCommitResponse, SubmitMoteRequest, SubmitMoteResponse, SubmitStatus,
-    WorkItem,
+    ReportCommitRequest, ReportCommitResponse, ReportEffectStagedRequest,
+    ReportEffectStagedResponse, SubmitMoteRequest, SubmitMoteResponse, SubmitStatus, WorkItem,
 };
 use tonic::transport::Server;
 use tonic::{Request, Response, Status};
@@ -64,6 +64,17 @@ impl Coordinator for NoopCoordinator {
             committed_seq: 1,
             outcome: CommitOutcome::Committed as i32,
             detail: String::new(),
+        }))
+    }
+
+    async fn report_effect_staged(
+        &self,
+        req: Request<ReportEffectStagedRequest>,
+    ) -> Result<Response<ReportEffectStagedResponse>, Status> {
+        let _ = req.into_inner();
+        Ok(Response::new(ReportEffectStagedResponse {
+            staged_seq: 1,
+            ack: true,
         }))
     }
 

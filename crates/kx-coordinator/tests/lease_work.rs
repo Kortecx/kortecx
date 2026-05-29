@@ -72,22 +72,25 @@ async fn leases_the_ready_root_then_advances_as_parents_commit() {
 }
 
 #[tokio::test]
-async fn does_not_lease_non_pure_motes() {
+async fn leases_world_mutating_motes_since_p3_6() {
     let svc = coordinator();
     let warrant = common::sample_warrant();
     let worker = common::register(&svc, "w").await;
 
-    // A ready (parentless) WORLD-MUTATING Mote: in the ready-set, but the PURE
-    // gate must keep it out of the lease.
+    // A ready (parentless) WORLD-MUTATING Mote. P2.3 kept it out of the lease (PURE-only);
+    // D58 (P3.6) lifts that — WM is now leasable (the worker stages its intent via
+    // ReportEffectStaged before firing). It still respects executor_class.
     let wm = common::mote(7, NdClass::WorldMutating, &[]);
     common::submit(&svc, &wm, &warrant).await;
 
-    assert!(
-        common::lease_work(&svc, worker, ExecutorClass::MacosSandbox, 16)
-            .await
-            .is_empty(),
-        "WORLD-MUTATING Motes are not leased in P2.3"
+    let leased = common::lease_work(&svc, worker, ExecutorClass::MacosSandbox, 16).await;
+    assert_eq!(
+        leased.len(),
+        1,
+        "WORLD-MUTATING Motes are leasable since P3.6 (D58)"
     );
+    let leased_mote: kx_mote::Mote = leased[0].mote.clone().unwrap().try_into().unwrap();
+    assert_eq!(leased_mote.id, wm.id);
 }
 
 #[tokio::test]
