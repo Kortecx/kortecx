@@ -1,0 +1,47 @@
+[package]
+name         = "kx-chaos"
+version      = "0.0.1"
+edition      = { workspace = true }
+rust-version = { workspace = true }
+license      = { workspace = true }
+authors      = { workspace = true }
+repository   = { workspace = true }
+description  = "kortecx chaos / failure-injection harness (P3.7 — the P3 exit gate). A seed-deterministic worker-death engine that kills workers mid-Mote across a seed sweep and proves, every time: exactly-once world effects (no double mutation), no orphaned/duplicated topology children after a shaper death, and correct repudiation cascades."
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+# The distributed orchestration core under test: CoordinatorService (hosts the frozen
+# kx-scheduler), the worker registry + injectable Clock (P3.1 liveness), reschedule +
+# the P3.6c re-dispatch oracle gate, and repudiate (P3.5 cascade).
+kx-coordinator = { workspace = true }
+# The domain types the workflows are built from + the real topology child derivation
+# (`derive_child_motes`) the shaper scenario checks for determinism under death.
+kx-mote     = { workspace = true }
+kx-warrant  = { workspace = true }
+kx-runtime  = { workspace = true }
+# The capability seam the world-mutating dispatch fires through (idempotency token +
+# EffectRequest); the chaos broker counts net effects at this boundary.
+kx-capability = { workspace = true }
+# The in-memory single-writer journal the per-seed coordinator runs over (no fs, no
+# phantom-ref guard — fully deterministic).
+kx-journal = { workspace = true }
+# `ContentRef` — the broker's staged-effect handle + the deterministic result refs the
+# harness commits (no content store is wired, so any deterministic 32-byte ref is fine).
+kx-content = { workspace = true }
+# The coordinator's `Coordinator` RPC trait takes `tonic::Request`; the harness calls it
+# in-process (no server, no transport) — same shape the coordinator's own tests use.
+tonic     = { workspace = true }
+smallvec  = { workspace = true }
+blake3    = { workspace = true }
+thiserror = { workspace = true }
+tracing   = { workspace = true }
+
+[dev-dependencies]
+# The exit-gate sweeps drive the async CoordinatorService RPCs; the macro runtime is
+# enough (the harness spawns no tasks of its own — determinism by construction).
+tokio = { workspace = true, features = ["macros", "rt"] }
+
+[lints]
+workspace = true
