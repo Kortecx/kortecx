@@ -18,6 +18,7 @@ use std::sync::Mutex;
 
 use kx_content::ContentRef;
 use kx_mote::MoteId;
+use serde::{Deserialize, Serialize};
 
 use crate::error::DataError;
 use crate::schema::{ContentSchema, TypedRef};
@@ -47,7 +48,7 @@ pub trait DataStore {
 }
 
 /// A 32-byte content-addressed identity of a [`Dataset`].
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct DatasetId(pub [u8; 32]);
 
 impl DatasetId {
