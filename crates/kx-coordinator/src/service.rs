@@ -105,6 +105,21 @@ impl CoordinatorService {
     pub fn registry(&self) -> &dyn WorkerRegistry {
         self.registry.as_ref()
     }
+
+    /// Repudiate `target` and cascade the poison-invalidation to its committed downstream
+    /// consumers (D22 / P0.7): one `Repudiated` entry per Mote (the target with `reason`,
+    /// the cascade with `UpstreamCascade`), written atomically through the sole writer, so
+    /// the next `LeaseWork` no longer offers any of them. Returns how many downstream Motes
+    /// the cascade repudiated. The operator-facing RPC / CLI is P4.5; this is the in-process
+    /// mechanism (the "distributed cascade mechanics" P0.7 deferred to P3.5).
+    pub async fn repudiate(
+        &self,
+        target: MoteId,
+        reason: crate::RepudiationReason,
+        repudiator_id: u128,
+    ) -> Result<crate::RepudiationOutcome, crate::RepudiationError> {
+        self.core.repudiate(target, reason, repudiator_id).await
+    }
 }
 
 #[tonic::async_trait]
