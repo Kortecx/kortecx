@@ -21,7 +21,7 @@ use std::sync::Arc;
 
 use kx_content::{ContentStore, LocalFsContentStore};
 use kx_journal::{FailureReason, Journal, JournalEntry, RepudiationReason};
-use kx_mote::{Mote, MoteId};
+use kx_mote::{Mote, MoteId, NdClass};
 use kx_projection::{MoteState, Projection};
 use kx_scheduler::{LocalPlacement, Placement, Scheduler, SchedulerError, WorkerId};
 use kx_warrant::{ExecutorClass, WarrantSpec};
@@ -362,9 +362,13 @@ fn serve_lease<J: Journal>(
 /// (parents-all-committed) ∩ matching the worker's backend (`executor_class`). **D58
 /// (P3.6) lifts the PURE-only restriction**: WORLD-MUTATING + READ-ONLY-NONDET Motes are
 /// now leasable (the worker stages its intent via `ReportEffectStaged` before firing,
-/// then proposes the commit). Submission-time refusals (R-1/R-2/R-10, P0.8) already gated
-/// admissibility at `SubmitMote`; the executor's R-11/R-13 + the coordinator's D55
-/// phantom-ref guard backstop the dispatch. Placement v2 (D56) then orders them:
+/// then proposes the commit). **R-13 under distribution (P3.6c):** a crash-failed *re-offer*
+/// of a non-PURE Mote is gated on the recovery oracle (`redispatch_admissible`) — without a
+/// durable `EffectStaged` hint the coordinator refuses to re-lease it (the effect may have
+/// fired; re-dispatch would double it), exactly as single-node `pick_next` / the executor's
+/// R-13 refuse. The executor's R-13 is single-node only, so the coordinator MUST enforce it
+/// itself on the distributed re-dispatch path. Fresh `ready_set` Motes (first dispatch) are
+/// ungated. The D55 phantom-ref guard backstops the commit. Placement v2 (D56) then orders them:
 /// `worker`'s placement-preferred Motes come **first**, the rest **fill to `max`**
 /// (starvation-free; double execution stays harmless under dedup, D54).
 fn lease_ready(
@@ -385,11 +389,19 @@ fn lease_ready(
     // the projection so it left the ready-set, but its parents are still committed
     // (commits are permanent) so it is genuinely re-runnable. A Mote already committed
     // since being crash-failed is skipped (first-wins resolved it).
-    for mote_id in projection
-        .ready_set()
-        .into_iter()
-        .chain(rescheduleable.iter().copied())
-    {
+    //
+    // The rescheduleable (re-offer) half is gated by `redispatch_admissible` (R-13, P3.6c):
+    // a non-PURE Mote with no `EffectStaged` hint may have fired its effect before crashing,
+    // so re-dispatch would risk a double effect — it is left stuck (operator-recoverable),
+    // never re-leased. The ready-set half is NOT gated (those are first dispatches; a
+    // StageThenCommit Mote that staged-then-crashed is `Pending`/in the ready-set with the
+    // hint present, so it is still offered there).
+    for mote_id in projection.ready_set().into_iter().chain(
+        rescheduleable
+            .iter()
+            .copied()
+            .filter(|id| redispatch_admissible(submitted_defs, projection, id)),
+    ) {
         if !seen.insert(mote_id) {
             continue;
         }
@@ -412,6 +424,31 @@ fn lease_ready(
         .take(max)
         .filter_map(|id| submitted_defs.get(&id).cloned())
         .collect()
+}
+
+/// R-13 under distribution (P3.6c): whether a **crash-failed** Mote is safe to *re-dispatch*.
+///
+/// PURE is always recomputable. A non-PURE (WORLD-MUTATING / READ-ONLY-NONDET) Mote is only
+/// re-dispatchable when the recovery oracle says so — i.e. a durable `EffectStaged` hint was
+/// recorded before the effect fired (`Projection::can_redispatch_world_effect`), so the broker's
+/// tool-boundary idempotency dedupes the re-fire. Without the hint the effect *may already have
+/// fired* (D58 lets `ValidateThenCommit` / `IdempotentByConstruction` dispatch without staging),
+/// and re-dispatch would risk a double world-effect — which is unrecoverable
+/// (`validate-then-commit.md`). So the coordinator refuses to re-lease it; the Mote is left
+/// stuck and operator-recoverable (repudiation), mirroring single-node `pick_next`
+/// (`kx-runtime`) + the executor R-13 gate (`kx-executor::redispatch_wm_mote`), whose checks are
+/// single-node only. Unknown defs are never re-offered.
+fn redispatch_admissible(
+    submitted_defs: &BTreeMap<MoteId, (Mote, WarrantSpec)>,
+    projection: &Projection,
+    id: &MoteId,
+) -> bool {
+    match submitted_defs.get(id) {
+        Some((mote, _)) => {
+            mote.nd_class() == NdClass::Pure || projection.can_redispatch_world_effect(id)
+        }
+        None => false,
+    }
 }
 
 /// Reap dead workers (D57 §3). For each registered worker the registry now reports
