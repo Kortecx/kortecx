@@ -48,14 +48,17 @@ mod commit;
 mod error;
 mod placement;
 mod registry;
+mod repudiation;
 mod reschedule;
 mod service;
 mod state;
 
 pub use clock::{Clock, SystemClock};
 pub use error::CoordinatorError;
+pub use kx_journal::RepudiationReason;
 pub use registry::{
     is_live, InMemoryWorkerRegistry, RegistryError, WorkerRecord, WorkerRegistry, WorkerStatus,
     DEFAULT_LIVENESS_TIMEOUT,
 };
+pub use repudiation::{RepudiationError, RepudiationOutcome};
 pub use service::CoordinatorService;

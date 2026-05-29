@@ -20,7 +20,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use kx_content::{ContentStore, LocalFsContentStore};
-use kx_journal::{FailureReason, Journal, JournalEntry};
+use kx_journal::{FailureReason, Journal, JournalEntry, RepudiationReason};
 use kx_mote::{Mote, MoteId, NdClass};
 use kx_projection::{MoteState, Projection};
 use kx_scheduler::{LocalPlacement, Placement, Scheduler, SchedulerError, WorkerId};
@@ -31,6 +31,9 @@ use crate::commit::CommitProposal;
 use crate::error::CoordinatorError;
 use crate::placement::LoadAwarePlacement;
 use crate::registry::{WorkerRegistry, WorkerStatus};
+use crate::repudiation::{
+    cascade_repudiation_entries, RepudiationError, RepudiationOutcome, DEFAULT_CASCADE_CEILING,
+};
 use crate::reschedule::{LeaseTracker, PURE_RETRY_BUDGET};
 
 /// Reporter id stamped on a coordinator-written `Failed{WorkerCrashed}` entry (D57 §3
@@ -95,6 +98,12 @@ pub(crate) enum Command {
         since_seq: u64,
         max: usize,
         reply: oneshot::Sender<Result<(Vec<JournalEntry>, u64), CoordinatorError>>,
+    },
+    Repudiate {
+        target: MoteId,
+        reason: RepudiationReason,
+        repudiator_id: u128,
+        reply: oneshot::Sender<Result<RepudiationOutcome, RepudiationError>>,
     },
 }
 
@@ -221,6 +230,29 @@ impl CoreHandle {
         response
             .await
             .map_err(|_| CoordinatorError::CoreUnavailable)?
+    }
+
+    /// Repudiate `target` and cascade the poison-invalidation to its committed downstream
+    /// consumers (D22 / P0.7). Runs on the sole-writer thread: it computes the cascade
+    /// against the live projection and appends the `Repudiated` batch atomically.
+    pub(crate) async fn repudiate(
+        &self,
+        target: MoteId,
+        reason: RepudiationReason,
+        repudiator_id: u128,
+    ) -> Result<RepudiationOutcome, RepudiationError> {
+        let (reply, response) = oneshot::channel();
+        self.dispatch(Command::Repudiate {
+            target,
+            reason,
+            repudiator_id,
+            reply,
+        })
+        .await
+        .map_err(|_| RepudiationError::CoreUnavailable)?;
+        response
+            .await
+            .map_err(|_| RepudiationError::CoreUnavailable)?
     }
 
     async fn dispatch(&self, command: Command) -> Result<(), CoordinatorError> {
@@ -396,6 +428,47 @@ fn reap_dead_workers<J: Journal>(
     }
 }
 
+/// Repudiate `target` and cascade to its committed downstream consumers (D22 / P0.7).
+/// Computes the `Repudiated` batch against the live projection, appends it atomically
+/// through the sole writer (group commit), and folds the new entries — so the very next
+/// `lease_ready` / `ready_set` excludes the repudiated set (the distributed cascade is
+/// observed by workers through the coordinator's lease gate; no off-journal facts).
+/// Re-repudiating an already-repudiated set dedupes (D15) and folds nothing new.
+fn repudiate_cascade<J: Journal>(
+    journal: &J,
+    projection: &mut Projection,
+    folded_through: &mut u64,
+    target: MoteId,
+    reason: RepudiationReason,
+    repudiator_id: u128,
+) -> Result<RepudiationOutcome, RepudiationError> {
+    let entries = cascade_repudiation_entries(
+        &*projection,
+        target,
+        reason,
+        repudiator_id,
+        DEFAULT_CASCADE_CEILING,
+    )?;
+    // entry 0 is the target; the remainder is the downstream cascade.
+    let cascade_size = entries.len().saturating_sub(1);
+    let durable = journal
+        .append_batch(entries)
+        .map_err(|e| RepudiationError::Append(e.to_string()))?;
+    for entry in &durable {
+        let seq = entry.seq();
+        if seq > *folded_through {
+            projection
+                .fold(entry)
+                .map_err(|e| RepudiationError::Append(e.to_string()))?;
+            *folded_through = seq;
+        }
+    }
+    Ok(RepudiationOutcome {
+        target,
+        cascade_size,
+    })
+}
+
 /// Build the `Failed{WorkerCrashed}` entry for a Mote whose leasing worker died. The
 /// `idempotency_key` is the Mote's identity (`idempotency.md`: key == derived `MoteId`).
 fn failed_worker_crashed_entry(mote_id: MoteId) -> JournalEntry {
@@ -512,59 +585,15 @@ fn core_loop<J: Journal>(
                 &mut dispatch,
                 &mut pending,
             );
-            match command {
-                Command::Commit { .. } => unreachable!("Commit is handled above"),
-                Command::Submit {
-                    mote,
-                    warrant,
-                    reply,
-                } => {
-                    let outcome = handle_submit(
-                        &mut scheduler,
-                        &mut projection,
-                        &mut dispatch,
-                        *mote,
-                        *warrant,
-                    );
-                    let _ = reply.send(outcome);
-                }
-                Command::StateOf { mote_id, reply } => {
-                    let _ = reply.send(projection.state_of(&mote_id));
-                }
-                Command::CommittedCount { reply } => {
-                    let _ = reply.send(projection.snapshot().committed_count());
-                }
-                Command::ReadySet { reply } => {
-                    let _ = reply.send(projection.ready_set());
-                }
-                Command::LeaseWork {
-                    worker,
-                    executor_class,
-                    max,
-                    reply,
-                } => {
-                    let items = serve_lease(
-                        journal,
-                        &mut projection,
-                        &mut folded_through,
-                        registry,
-                        &mut dispatch,
-                        &LeaseReq {
-                            worker,
-                            executor_class,
-                            max,
-                        },
-                    );
-                    let _ = reply.send(items);
-                }
-                Command::ReadEntries {
-                    since_seq,
-                    max,
-                    reply,
-                } => {
-                    let _ = reply.send(read_committed_since(journal, since_seq, max));
-                }
-            }
+            handle_command(
+                journal,
+                &mut projection,
+                &mut folded_through,
+                registry,
+                &mut dispatch,
+                &mut scheduler,
+                command,
+            );
         }
         flush_commits(
             journal,
@@ -574,6 +603,83 @@ fn core_loop<J: Journal>(
             &mut dispatch,
             &mut pending,
         );
+    }
+}
+
+/// Service one non-`Commit` command against the owner-thread state (Commits are
+/// coalesced into group commits before this is reached, so the `Commit` arm is
+/// unreachable). Each arm sends its `oneshot` reply; a dropped receiver is ignored.
+fn handle_command<J: Journal>(
+    journal: &J,
+    projection: &mut Projection,
+    folded_through: &mut u64,
+    registry: &dyn WorkerRegistry,
+    dispatch: &mut Dispatch,
+    scheduler: &mut Scheduler<LocalPlacement>,
+    command: Command,
+) {
+    match command {
+        Command::Commit { .. } => unreachable!("Commit is handled above"),
+        Command::Submit {
+            mote,
+            warrant,
+            reply,
+        } => {
+            let outcome = handle_submit(scheduler, projection, dispatch, *mote, *warrant);
+            let _ = reply.send(outcome);
+        }
+        Command::StateOf { mote_id, reply } => {
+            let _ = reply.send(projection.state_of(&mote_id));
+        }
+        Command::CommittedCount { reply } => {
+            let _ = reply.send(projection.snapshot().committed_count());
+        }
+        Command::ReadySet { reply } => {
+            let _ = reply.send(projection.ready_set());
+        }
+        Command::LeaseWork {
+            worker,
+            executor_class,
+            max,
+            reply,
+        } => {
+            let items = serve_lease(
+                journal,
+                projection,
+                folded_through,
+                registry,
+                dispatch,
+                &LeaseReq {
+                    worker,
+                    executor_class,
+                    max,
+                },
+            );
+            let _ = reply.send(items);
+        }
+        Command::ReadEntries {
+            since_seq,
+            max,
+            reply,
+        } => {
+            let _ = reply.send(read_committed_since(journal, since_seq, max));
+        }
+        Command::Repudiate {
+            target,
+            reason,
+            repudiator_id,
+            reply,
+        } => {
+            let outcome = repudiate_cascade(
+                journal,
+                projection,
+                folded_through,
+                target,
+                reason,
+                repudiator_id,
+            );
+            let _ = reply.send(outcome);
+        }
     }
 }
 
