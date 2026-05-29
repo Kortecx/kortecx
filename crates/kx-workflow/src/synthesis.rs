@@ -59,7 +59,7 @@ pub fn permissive_warrant(model_id: ModelId) -> WarrantSpec {
 /// Build a [`StepDef`] for the given role with sensible defaults (zeroed prompt
 /// template, empty tool contract + config, greedy inference params). Callers
 /// override any public field on the result as needed.
-fn step(
+pub(crate) fn step(
     logic_ref: LogicRef,
     model_id: ModelId,
     nd_class: NdClass,

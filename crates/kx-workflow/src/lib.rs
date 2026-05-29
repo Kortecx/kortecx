@@ -52,11 +52,13 @@
 mod compile;
 mod def;
 mod error;
+mod retrieval;
 mod synthesis;
 
 pub use compile::compile;
 pub use def::{CompiledMote, CompiledWorkflow, StepDef, StepEdge, StepRef, StepRole, WorkflowDef};
 pub use error::CompileError;
+pub use retrieval::{encode_retrieval_fact, retrieval, retrieval_result_ref};
 pub use synthesis::{
     critic, generator, permissive_warrant, synthesis_pipeline, topology_shaper, transform,
 };
