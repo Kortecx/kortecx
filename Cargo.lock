@@ -1383,7 +1383,12 @@ version = "0.0.1"
 dependencies = [
  "blake3",
  "kx-content",
+ "kx-executor",
+ "kx-journal",
  "kx-mote",
+ "kx-projection",
+ "kx-runtime",
+ "kx-scheduler",
  "kx-warrant",
  "proptest",
  "smallvec",
