@@ -1,0 +1,35 @@
+[package]
+name         = "kx-workflow"
+version      = "0.0.1"
+edition      = { workspace = true }
+rust-version = { workspace = true }
+license      = { workspace = true }
+authors      = { workspace = true }
+repository   = { workspace = true }
+description  = "kortecx workflow engine (codename Morphic) — P4.1. Compiles a declarative multi-agent workflow definition into a deterministic Mote DAG. Sits ABOVE the scheduler and only emits Motes (kx-mote) + warrants (kx-warrant); the execution graph morphs at runtime via topology shapers. Compilation is a pure/total function: the same WorkflowDef yields byte-identical MoteIds across runs, processes, and machines."
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+# The identity substrate the engine emits: MoteDef / Mote / MoteId / NdClass /
+# EffectPattern / GraphPosition / InputDataId / MoteGraph / edges.
+kx-mote    = { workspace = true }
+# The capability layer carried through to submission (WarrantSpec) + the
+# permissive convenience warrant builder for getting started.
+kx-warrant = { workspace = true }
+# ContentRef — a WarrantSpec field type (syscall_profile_ref / environment_ref);
+# needed to construct the convenience warrant.
+kx-content = { workspace = true }
+# Parent-edge storage matches kx-mote's `SmallVec<[ParentRef; 4]>`.
+smallvec   = { workspace = true }
+# Deterministic compile-time InputDataId derivation (entrypoint seed / child lineage).
+blake3     = { workspace = true }
+thiserror  = { workspace = true }
+
+[dev-dependencies]
+# Property-based determinism sweep over random valid DAGs.
+proptest = { workspace = true }
+
+[lints]
+workspace = true
