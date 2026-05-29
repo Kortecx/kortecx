@@ -4,9 +4,10 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use kx_capability::CapabilityBroker;
 use kx_content::{ContentStore, LocalFsContentStore};
 use kx_executor::{LocalResourceManager, MoteExecutor};
-use kx_mote::{Mote, MoteId};
+use kx_mote::{Mote, MoteId, NdClass};
 use kx_proto::proto;
 use kx_warrant::{ExecutorClass, WarrantSpec};
 use tokio::task::JoinHandle;
@@ -14,7 +15,7 @@ use tokio::task::JoinHandle;
 use crate::client::WorkerClient;
 use crate::error::WorkerError;
 use crate::read_model::ReadModel;
-use crate::{commit_builder, run};
+use crate::{commit_builder, run, run_wm};
 
 /// `ReadEntries` page size when folding the local read model.
 const READ_PAGE: u32 = 256;
@@ -39,6 +40,11 @@ pub struct Worker {
     executor: Arc<dyn MoteExecutor>,
     resource_manager: LocalResourceManager,
     store: Arc<LocalFsContentStore>,
+    /// Fires WORLD-MUTATING / READ-ONLY-NONDET effects (P3.6b, D58): staging the
+    /// response bytes into the shared `store` (data plane). PURE Motes never touch it.
+    /// One worker can run both classes, so the field is always present even on a
+    /// PURE-only worker (it simply has no capabilities registered).
+    broker: Arc<dyn CapabilityBroker>,
     read_model: ReadModel,
     max_lease: u32,
     /// The worker's live in-flight Mote count — the single source of truth for the
@@ -53,8 +59,14 @@ impl Worker {
     /// reachable at `endpoint`, and return a ready worker. `executor` +
     /// `resource_manager` host the P1 execution stack verbatim; `store` is the shared
     /// content-addressed store (the worker's executor publishes results to it and the
-    /// worker reads peer results from it); `max_lease` bounds how many Motes a single
-    /// [`run_once`](Self::run_once) pulls.
+    /// worker reads peer results from it); `broker` fires WORLD-MUTATING effects,
+    /// staging their bytes into that same `store` (P3.6b, D58); `max_lease` bounds how
+    /// many Motes a single [`run_once`](Self::run_once) pulls.
+    // A wide constructor that injects the worker's full dependency set in one place
+    // (transport, backend, resources, data plane, effect surface). Bundling these into a
+    // config struct would be churn for no clarity gain (Rule 1) — the args are distinct,
+    // named, and set exactly once at registration.
+    #[allow(clippy::too_many_arguments)]
     pub async fn register(
         mut client: WorkerClient,
         executor_class: ExecutorClass,
@@ -62,6 +74,7 @@ impl Worker {
         executor: Arc<dyn MoteExecutor>,
         resource_manager: LocalResourceManager,
         store: Arc<LocalFsContentStore>,
+        broker: Arc<dyn CapabilityBroker>,
         max_lease: u32,
     ) -> Result<Self, WorkerError> {
         let id = client.register_worker(executor_class, endpoint).await?;
@@ -72,6 +85,7 @@ impl Worker {
             executor,
             resource_manager,
             store,
+            broker,
             read_model: ReadModel::new(),
             max_lease,
             in_flight: Arc::new(AtomicU32::new(0)),
@@ -108,9 +122,10 @@ impl Worker {
         }
     }
 
-    /// Lease one batch of ready PURE Motes, run each through the hosted executor,
-    /// and propose its commit. Returns the number of commits the coordinator
-    /// accepted this round (0 when no ready work matches).
+    /// Lease one batch of ready Motes, dispatch each (PURE recomputes through the
+    /// hosted executor; non-PURE stages-then-fires via the broker, P3.6b/D58), and
+    /// propose its commit. Returns the number of commits the coordinator accepted
+    /// this round (0 when no ready work matches).
     pub async fn run_once(&mut self) -> Result<usize, WorkerError> {
         let items = self
             .client
@@ -139,8 +154,16 @@ impl Worker {
                 .ok_or(WorkerError::MissingField("warrant"))?
                 .try_into()?;
 
-            let result_ref =
-                run::run_pure(&mote, &warrant, &*self.executor, &self.resource_manager)?;
+            // PURE recomputes locally through the hosted executor (verbatim, D40 — a
+            // throwaway journal). Non-PURE (WORLD-MUTATING / READ-ONLY-NONDET) drives
+            // stage→fire→commit via RPCs + the broker (P3.6b, D58 §4): the worker is not
+            // the journal writer, so it cannot run `run_wm_mote`. Either path yields the
+            // `result_ref` (= the broker's `staged_ref` for non-PURE) the worker PROPOSES.
+            let result_ref = if mote.nd_class() == NdClass::Pure {
+                run::run_pure(&mote, &warrant, &*self.executor, &self.resource_manager)?
+            } else {
+                run_wm::run_wm(&mut self.client, &*self.broker, &mote, &warrant, self.id).await?
+            };
             let request =
                 commit_builder::report_commit_request(&mote, &warrant, result_ref, self.id);
             let response = self.client.report_commit(request).await?;

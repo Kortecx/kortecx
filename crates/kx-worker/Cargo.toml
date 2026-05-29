@@ -25,6 +25,12 @@ kx-journal = { workspace = true }
 kx-mote = { workspace = true }
 kx-warrant = { workspace = true }
 kx-content = { workspace = true }
+# The capability broker (P3.6b WORLD-MUTATING dispatch): the worker holds an
+# `Arc<dyn CapabilityBroker>` and FIRES the effect itself (staging the response bytes
+# into the shared content store), driving stage->fire->commit via RPCs since it is not
+# the journal writer (D40). The broker NEVER writes the journal (D14) — so this is glue,
+# not an engine fork (the P2 thesis test holds).
+kx-capability = { workspace = true }
 tonic = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
