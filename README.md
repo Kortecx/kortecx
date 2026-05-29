@@ -11,105 +11,116 @@
 [![MSRV](https://img.shields.io/badge/MSRV-1.94.0-orange.svg)](rust-toolchain.toml)
 [![Rust Edition](https://img.shields.io/badge/Rust-2021-orange.svg)](https://doc.rust-lang.org/edition-guide/rust-2021/index.html)
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS-blue.svg)](#)
-[![Status](https://img.shields.io/badge/status-pre--alpha-yellow.svg)](#whats-in-this-repo-today)
+[![Status](https://img.shields.io/badge/status-early%20development-yellow.svg)](#where-we-are)
 
 ---
 
 ## The gap we're closing
 
 AI agents work in the demo and fall over in production. The gap is **reliable orchestration** —
-dispatching tasks across workers, retrying on failure, guaranteeing delivery, surviving the
-messy reality of model calls and external APIs.
+dispatching tasks across workers, retrying on failure, surviving crashes, and never re-running a
+step that already touched the outside world.
 
-kortecx is being built to close that gap: an execution kernel that turns clever agent scripts
-into production software you can trust with real work.
+kortecx is an execution kernel that turns clever agent scripts into production software you can
+trust with real work. Not a model. Not a database. Not a chat app. A runtime — the execution
+kernel beneath them.
 
-Not a model. Not a database. Not a chat app. A runtime — the execution kernel beneath them.
+## What makes it different
 
-## What kortecx will guarantee (the goal)
+Most tools help you *write* an agent. The hard part was never writing it — it's trusting it to
+run unattended, at scale, against the real world, and deliver the same outcome every time. That's
+an infrastructure problem, and it's the one keeping agents stuck in demos. It's the problem
+kortecx exists to solve.
 
-These are the guarantees the runtime is being built around. They are the design contract, not
-a description of what runs today (see the next section for that).
+Agents are non-deterministic and they act on the world — they call models, hit APIs, move money,
+change state. Run that at scale and the failure modes compound: a retry double-charges a customer,
+a crash loses half a job, a redistributed task silently runs twice. Today every team rebuilds the
+same fragile glue to cope, and most never get past the demo. kortecx makes reliability a property
+of the runtime instead of something each team reinvents:
 
-- **Exactly-once orchestration of non-deterministic, world-mutating steps under failure.** When
-  an agent calls a model or mutates the world, the runtime ensures the step's outcome is a
-  durable fact that downstream work reads — never a recomputation that drifts.
-- **Replay-from-journal recovery.** If the process dies mid-workflow, restart re-reads what
-  committed steps did rather than re-running them. A side-effecting step is never re-effected.
-- **One runtime, three deployment shapes.** Same APIs and same guarantees from laptop to
-  cluster to hosted.
-- **Observable by design.** Every step a durable record. No invisible agent loops.
+- **Trustable.** A step that touches the world takes effect exactly once. Crashes, retries, and
+  redistribution never double-apply or silently drop work — so you can hand an agent real
+  responsibility and step away.
+- **Scales without a rewrite.** The same workflow runs on a laptop or across a fleet, with the
+  same guarantees. Scale is a deployment choice, not a re-architecture.
+- **Always delivers.** Workflows survive process death and pick up exactly where they left off,
+  resuming committed work rather than starting over or stalling.
+- **No infrastructure tax.** Durability, recovery, and coordination are built in, so teams ship
+  agents instead of the plumbing beneath them.
 
-## What's in this repo today
+This is the missing layer between a clever agent script and production software — the foundation
+that makes putting agents in charge of real, consequential work a reasonable thing to do, and
+turns agentic automation from a demo into something organizations can adopt at scale.
 
-kortecx is in early development. The public repo currently ships the **foundations**, not the
-full runtime:
+## Correctness
 
-- **`kx-mote`** — pure types for the atomic execution unit: Mote identity, lifecycle state
-  machine, three-way non-determinism tag.
-- **`kx-content`** — content-addressed payload storage (BLAKE3) with atomic-per-object writes;
-  local-FS and in-memory backends behind a single trait.
-- **`kx-journal`** — append-only journal (SQLite-backed, `BEGIN IMMEDIATE`, dedupe-by-key,
-  WAL + `synchronous=FULL`) plus an in-memory backend for fixtures.
-- **`kx-projection`** — pure read-side fold over the journal; cycle-tolerant BFS traversal;
-  snapshot isolation for the scheduler.
-- **`kx-llamacpp-sys`** + **`kx-llamacpp`** — the in-process llama.cpp safe wrapper (RAII,
-  lifetime-tied; no unsafe outside the FFI boundary). Generate, embed, chat: three calls.
-- Reproducible, byte-deterministic release builds, verified in CI on every push.
-- Structured tracing wired across the workspace.
+The core guarantee — a step that changes the world takes effect exactly once, even across crashes
+and retries — is something you can verify for yourself. The [Try it](#try-it) demo below crashes a
+workflow mid-run and shows it recover to an identical result.
 
-### Testing discipline
+Beyond that, every change to the project is gated by an automated test suite that exercises the
+runtime under simulated failures, including crashes during live workflows, and checks that no work
+is ever lost, duplicated, or double-applied. The suite runs on every commit, and a change cannot
+merge until it passes.
 
-Every foundation crate is gated by the same minimum bar before it can be built upon:
+## Try it
 
-- **Functionality + determinism** — every API has unit + integration tests; every operation
-  that promises determinism asserts it (run twice, identical output).
-- **Property tests** (`proptest`) — every function that accepts user-supplied input has at
-  least one property pinned across the input space, not just hand-picked cases.
-- **Concurrency tests** — every type that claims `Send` is exercised under ≥ 2 real threads.
-- **Doctests** — every non-trivial public method has a runnable doctest.
-- **Real-GGUF end-to-end smoke** — the inference wrapper's full pipeline (load → tokenize →
-  decode → sample → detokenize → KV-cache save/restore) is exercised against a real model in
-  CI on every push.
-- **Cross-platform** — Linux x86_64 in GitHub Actions CI; macOS Apple Silicon (Metal) verified
-  locally on every PR.
-
-The journal, executor, scheduler, capability broker, inference router, and runtime binary are
-**under active development** in the open. Until they land, `cargo build` produces foundational
-types — not yet a runnable agent runtime. The roadmap is to land them one crate at a time,
-each gated on the contract above.
-
-## Installation
-
-Add kortecx to your Rust project:
-
-```toml
-[dependencies]
-kortecx = { git = "https://github.com/Kortecx/kortecx" }
-```
-
-Then use the standard Rust workflow:
+The runtime ships a small binary that demonstrates the core guarantee directly. Build the
+workspace, then drive the canonical workflow, crash it mid-commit, and replay:
 
 ```bash
-cargo build
-cargo test
+# 1. Run the demo workflow to completion, capturing its deterministic digest.
+cargo run -p kx-runtime -- run    --journal /tmp/kx.db --content /tmp/kx-content
+#    -> <digest> (N/N committed)
+
+# 2. Start fresh, but hard-abort right after a side effect commits.
+rm -f /tmp/kx.db; rm -rf /tmp/kx-content
+cargo run -p kx-runtime -- run    --journal /tmp/kx.db --content /tmp/kx-content --crash-at post-commit-vtc
+
+# 3. Recover from the journal and finish the run.
+cargo run -p kx-runtime -- replay --journal /tmp/kx.db --content /tmp/kx-content
+#    -> same <digest> — the crashed step was re-read, not re-run.
 ```
 
-Rust 1.94.0+ is required.
+Same digest across the clean run and the crash-then-replay run is the exactly-once property,
+demonstrated end to end.
 
-### Or build from source
+Want to see inference on its own? Point the examples at any GGUF model:
+
+```bash
+cargo run -p kx-llamacpp --example generate -- /path/to/model.gguf "Once upon a time"
+cargo run -p kx-llamacpp --example chat     -- /path/to/model.gguf
+cargo run -p kx-llamacpp --example embed    -- /path/to/model.gguf "embed this"
+```
+
+## Where we are
+
+kortecx is in **early development**, built in the open.
+
+Today it offers a working runtime core: agent steps run with exactly-once guarantees and survive
+crashes by replaying from the journal — on a single node or distributed across workers.
+
+We're headed toward stable public APIs, higher-level authoring surfaces, and a hosted platform.
+The internals are real and tested, but interfaces will change before 1.0 — pin a commit if you
+build on it now.
+
+## Build from source
 
 ```bash
 git clone https://github.com/Kortecx/kortecx.git
 cd kortecx
 cargo build --workspace
-cargo test --workspace
+cargo test  --workspace
 ```
+
+Rust **1.94.0+** is required. The full pre-merge gate (format, clippy `-D warnings`, workspace
+tests, dependency audit, docs, FFI link, byte-determinism, and the real-GGUF inference smoke) runs
+on Linux x86_64 in CI; macOS Apple Silicon (Metal) is verified locally on every change.
 
 ## Contributing
 
-Contributions are welcome. Please open an issue to discuss substantial changes before sending
-a pull request.
+Contributions are welcome. Please open an issue to discuss substantial changes before sending a
+pull request.
 
 ## License
 
@@ -119,5 +130,7 @@ Licensed under the [Apache License, Version 2.0](LICENSE).
 
 - **Website:** [kortecx.com](https://kortecx.com)
 - **Issues:** [github.com/Kortecx/kortecx/issues](https://github.com/Kortecx/kortecx/issues)
-- **CI:** [Actions tab](https://github.com/Kortecx/kortecx/actions) — both `just ci` and the
+- **CI:** [Actions tab](https://github.com/Kortecx/kortecx/actions) — both the full gate and the
   real-GGUF smoke job must pass on every PR.
+</content>
+</invoke>
