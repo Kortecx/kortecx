@@ -244,6 +244,27 @@ message ReportCommitResponse {
 }
 
 // ---------------------------------------------------------------------------
+// RPC (7) — report effect staged (D58, P3.6). For a WORLD-MUTATING Mote, the
+// worker durably records its INTENT to fire BEFORE calling the broker: the
+// coordinator (sole writer, D40) appends an EffectStaged entry and acks. The
+// worker MUST NOT fire the effect until the ack — so on worker death the
+// coordinator's projection has the staged hint and recovery may re-dispatch
+// (the tool's idempotency closes the double-effect window). EffectStaged dedupes
+// by key (D15), so a re-stage on recovery is a no-op success.
+// ---------------------------------------------------------------------------
+
+message ReportEffectStagedRequest {
+  bytes mote_id = 1;                    // 32B — the WM Mote about to fire
+  bytes idempotency_key = 2;            // 32B — == mote_id (idempotency.md)
+  uint64 worker_id = 3;                 // the staging worker (admission gate)
+}
+
+message ReportEffectStagedResponse {
+  uint64 staged_seq = 1;                // journal seq of the EffectStaged entry (or dedup hit)
+  bool ack = 2;                         // true once durable — the worker fires only after this
+}
+
+// ---------------------------------------------------------------------------
 // RPC (3) — heartbeat (worker liveness)
 // ---------------------------------------------------------------------------
 
@@ -351,4 +372,5 @@ service Coordinator {
   rpc ReportCommit(ReportCommitRequest) returns (ReportCommitResponse);
   rpc LeaseWork(LeaseWorkRequest) returns (LeaseWorkResponse);
   rpc ReadEntries(ReadEntriesRequest) returns (ReadEntriesResponse);
+  rpc ReportEffectStaged(ReportEffectStagedRequest) returns (ReportEffectStagedResponse);
 }
