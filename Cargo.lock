@@ -1404,6 +1404,7 @@ dependencies = [
  "kx-scheduler",
  "kx-warrant",
  "proptest",
+ "serde",
  "smallvec",
  "thiserror",
 ]

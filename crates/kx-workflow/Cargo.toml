@@ -28,6 +28,9 @@ kx-dataset = { workspace = true }
 smallvec   = { workspace = true }
 # Deterministic compile-time InputDataId derivation (entrypoint seed / child lineage).
 blake3     = { workspace = true }
+# Serde derives on the shareable Manifest (recipe-as-product) — transport codec
+# is chosen by the P5 sharing layer.
+serde      = { workspace = true }
 thiserror  = { workspace = true }
 
 [dev-dependencies]
