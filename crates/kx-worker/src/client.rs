@@ -9,8 +9,8 @@ use tonic::transport::Channel;
 
 use crate::error::WorkerError;
 
-/// A worker's connection to the coordinator (the four worker-facing RPCs:
-/// register / heartbeat / lease / report-commit).
+/// A worker's connection to the coordinator (the worker-facing RPCs:
+/// register / heartbeat / lease / report-effect-staged / report-commit / read-entries).
 #[derive(Clone)]
 pub struct WorkerClient {
     inner: CoordinatorClient<Channel>,
@@ -87,6 +87,37 @@ impl WorkerClient {
             .await?
             .into_inner();
         Ok(resp.items)
+    }
+
+    /// Record the **intent to fire** a WORLD-MUTATING effect, durably, before the
+    /// effect fires (D58 §2). The worker is not the journal writer (D40), so it asks
+    /// the coordinator (sole writer) to append the `EffectStaged` recovery hint; only
+    /// after the ack may the worker call `broker.dispatch`. `idempotency_key == mote_id`
+    /// (identity invariant) so a re-stage on recovery dedupes (D15) to the same seq.
+    /// Returns the `EffectStaged` seq; errors with [`WorkerError::EffectStagedRejected`]
+    /// if the coordinator declines to ack (the worker MUST NOT then fire).
+    pub async fn report_effect_staged(
+        &mut self,
+        mote_id: [u8; 32],
+        idempotency_key: [u8; 32],
+        worker_id: u64,
+    ) -> Result<u64, WorkerError> {
+        let resp = self
+            .inner
+            .report_effect_staged(proto::ReportEffectStagedRequest {
+                mote_id: mote_id.to_vec(),
+                idempotency_key: idempotency_key.to_vec(),
+                worker_id,
+            })
+            .await?
+            .into_inner();
+        if resp.ack {
+            Ok(resp.staged_seq)
+        } else {
+            Err(WorkerError::EffectStagedRejected(
+                kx_mote::MoteId::from_bytes(mote_id),
+            ))
+        }
     }
 
     /// Propose a commit. The coordinator validates + appends (sole writer, D40) and

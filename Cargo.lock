@@ -1342,6 +1342,7 @@ dependencies = [
 name = "kx-worker"
 version = "0.0.1"
 dependencies = [
+ "kx-capability",
  "kx-content",
  "kx-coordinator",
  "kx-executor",

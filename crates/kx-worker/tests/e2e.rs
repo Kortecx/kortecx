@@ -109,6 +109,7 @@ async fn committed_result_is_readable_by_coordinator_and_peer() {
         storing_executor(store.clone()),
         LocalResourceManager::dev_defaults(),
         store.clone(),
+        common::noop_broker(),
         16,
     )
     .await
@@ -155,6 +156,7 @@ async fn committed_result_is_readable_by_coordinator_and_peer() {
         storing_executor(store.clone()), // unused by B; B only reads
         LocalResourceManager::dev_defaults(),
         store.clone(),
+        common::noop_broker(),
         16,
     )
     .await
@@ -243,6 +245,7 @@ async fn two_workers_share_the_workload_via_placement() {
                 storing_executor(store.clone()),
                 LocalResourceManager::dev_defaults(),
                 store,
+                common::noop_broker(),
                 2,
             )
             .await
@@ -312,6 +315,7 @@ async fn background_heartbeat_keeps_an_idle_worker_live() {
         storing_executor(store.clone()),
         LocalResourceManager::dev_defaults(),
         store.clone(),
+        common::noop_broker(),
         16,
     )
     .await

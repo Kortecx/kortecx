@@ -42,6 +42,29 @@ pub enum WorkerError {
     /// A committed result's bytes are absent from the shared content store.
     #[error("content {0:?} is missing from the shared store")]
     ContentMissing(kx_content::ContentRef),
+
+    /// The coordinator did NOT ack a `ReportEffectStaged` (`ack == false`). The
+    /// worker MUST NOT fire the effect without the durable staged-intent record
+    /// (D58 §2) — firing first would re-fire on recovery with no staged hint (the
+    /// double-effect hazard). The dispatch is aborted; the Mote stays leasable.
+    #[error("coordinator did not ack EffectStaged for mote {0:?}")]
+    EffectStagedRejected(kx_mote::MoteId),
+
+    /// Firing a WORLD-MUTATING effect through the capability broker failed (boxed:
+    /// `BrokerError` is large, and an un-boxed variant would bloat every `Result`).
+    #[error("broker dispatch failed: {0}")]
+    Dispatch(Box<kx_capability::BrokerError>),
+
+    /// A non-PURE Mote's `tool_contract` named no capability to dispatch under, so
+    /// the worker cannot resolve which effect to fire.
+    #[error("cannot resolve a capability from the tool_contract of mote {0:?}")]
+    CapabilityResolution(kx_mote::MoteId),
+}
+
+impl From<kx_capability::BrokerError> for WorkerError {
+    fn from(error: kx_capability::BrokerError) -> Self {
+        Self::Dispatch(Box::new(error))
+    }
 }
 
 impl From<tonic::transport::Error> for WorkerError {

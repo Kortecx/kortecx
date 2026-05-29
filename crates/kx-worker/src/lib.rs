@@ -11,16 +11,18 @@
 )]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
-//! # kx-worker — the kortecx P2.3 worker (the `CoordinatorClient`)
+//! # kx-worker — the kortecx worker (the `CoordinatorClient`)
 //!
 //! A worker is a gRPC **client** of the coordinator. It:
 //!
 //! 1. **registers** with the coordinator ([`Worker::register`] → `RegisterWorker`),
 //!    declaring the executor backend it can run;
 //! 2. **pulls** ready work ([`Worker::run_once`] → `LeaseWork`) — the coordinator
-//!    returns ready PURE Motes runnable on this backend, each with its warrant;
-//! 3. **runs** each Mote through the **hosted P1 executor** ([`kx_executor`],
-//!    verbatim — which transitively hosts `kx-inference`);
+//!    returns ready Motes runnable on this backend, each with its warrant;
+//! 3. **dispatches** each Mote: PURE recomputes through the **hosted P1 executor**
+//!    ([`kx_executor`], verbatim — which transitively hosts `kx-inference`);
+//!    WORLD-MUTATING / READ-ONLY-NONDET stages-then-fires through the capability
+//!    broker (P3.6b, D58 — see `run_wm`);
 //! 4. **proposes** the result back (`ReportCommit`); the coordinator is the SOLE
 //!    journal writer (D13 / D40) and assigns the committed seq.
 //!
@@ -34,12 +36,17 @@
 //! uses) — not read back from the throwaway journal, which would lose the Mote's
 //! parents and flatten its nd_class.
 //!
-//! ## Scope (P2.3)
+//! ## Scope
 //!
-//! PURE Motes only. A PURE Mote has no real-world effect, so running it on the
-//! worker and proposing its commit is sound. WORLD-MUTATING Motes need a durable
-//! staged-intent RPC (so the coordinator records the `EffectStaged` recovery hint
-//! before the effect fires) — deferred. Placement v2 (locality / GPU-slot) is P2.5.
+//! PURE recomputes locally and proposes its commit (sound: no real-world effect).
+//! **P3.6b (D58)** adds WORLD-MUTATING / READ-ONLY-NONDET dispatch: the worker holds
+//! an `Arc<dyn CapabilityBroker>` and drives **stage→fire→commit** — for
+//! `StageThenCommit`, `ReportEffectStaged` records the `EffectStaged` recovery hint
+//! through the sole writer (D40) before the broker fires, then `ReportCommit` proposes
+//! the staged ref. Worker-death after stage re-leases (D57) and the tool-boundary
+//! idempotency key makes the re-dispatch a no-op (exactly-once, D58 §7). The VTC
+//! critic is an ordinary DAG Mote the coordinator leases once the producer commits —
+//! the worker does not schedule it (§6). Placement v2 (locality / GPU-slot) is P2.5.
 //!
 //! From **P3.1** the worker also runs a background **liveness heartbeat**
 //! ([`Worker::spawn_heartbeat`]) so an idle worker stays live in the coordinator's
@@ -50,7 +57,10 @@
 //!
 //! `kx-scheduler` / `kx-executor` / `kx-inference` source is **unchanged** —
 //! distribution is wiring. kx-worker is a new leaf crate; it adds the client and
-//! the propose-don't-write glue, nothing more.
+//! the propose-don't-write glue, nothing more. The P3.6b WORLD-MUTATING path holds an
+//! `Arc<dyn CapabilityBroker>` and re-implements the stage→fire→commit ORDERING via
+//! RPCs, but never calls `run_wm_mote` / `StandardCommitProtocol` (those write a
+//! journal the worker doesn't own) — so the engine is still not forked.
 
 /// The gRPC schema + generated client (re-exported for callers that build wire
 /// types directly, e.g. tests).
@@ -61,6 +71,7 @@ mod commit_builder;
 mod error;
 mod read_model;
 mod run;
+mod run_wm;
 mod worker;
 
 pub use client::WorkerClient;

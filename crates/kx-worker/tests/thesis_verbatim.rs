@@ -7,6 +7,11 @@
 //! source is unchanged is the PR diff (`git diff <merge-base> -- crates/kx-scheduler
 //! crates/kx-executor crates/kx-inference` is empty) — this test just pins the
 //! dependency direction so the hosting cannot silently drift.
+//!
+//! P3.6b note: the worker now also holds an `Arc<dyn CapabilityBroker>` and drives the
+//! WORLD-MUTATING stage→fire→commit ORDERING via RPCs (see `run_wm`), but it never calls
+//! `run_wm_mote` / `StandardCommitProtocol` — those write a journal the worker does not
+//! own (D40). So the engine is still hosted, not forked.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
 
