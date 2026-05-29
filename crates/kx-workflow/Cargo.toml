@@ -21,6 +21,9 @@ kx-warrant = { workspace = true }
 # ContentRef — a WarrantSpec field type (syscall_profile_ref / environment_ref);
 # needed to construct the convenience warrant.
 kx-content = { workspace = true }
+# The data-management seam: the graph-RAG retrieval Mote consumes
+# `kx_dataset::RetrievalIndex` + commits a content-addressed result over `Hit`s.
+kx-dataset = { workspace = true }
 # Parent-edge storage matches kx-mote's `SmallVec<[ParentRef; 4]>`.
 smallvec   = { workspace = true }
 # Deterministic compile-time InputDataId derivation (entrypoint seed / child lineage).
