@@ -22,6 +22,14 @@ pub enum CrashPoint {
     /// Recovery RE-READS the committed `result_ref` — the headline novel
     /// claim: a committed world-mutating step is a fact, never re-run.
     PostCommitVtc,
+    /// Abort when the topology shaper has committed its `TopologyDecision` and
+    /// every *declared* Mote has committed, but its **materialized children**
+    /// have not yet run (children are appended last). The hardest recovery path
+    /// (P0.6 / P3.4): a fresh process must **replay the committed decision** —
+    /// re-materialize the SAME children from the shaper's committed `result_ref`
+    /// and run them — never re-run the shaper to re-decide (which would orphan or
+    /// duplicate children).
+    ShaperChildrenPending,
 }
 
 impl CrashPoint {
@@ -31,6 +39,7 @@ impl CrashPoint {
         match self {
             CrashPoint::PreCommitStc => "pre-commit-stc",
             CrashPoint::PostCommitVtc => "post-commit-vtc",
+            CrashPoint::ShaperChildrenPending => "shaper-children-pending",
         }
     }
 
@@ -54,8 +63,9 @@ impl FromStr for CrashPoint {
         match s {
             "pre-commit-stc" => Ok(CrashPoint::PreCommitStc),
             "post-commit-vtc" => Ok(CrashPoint::PostCommitVtc),
+            "shaper-children-pending" => Ok(CrashPoint::ShaperChildrenPending),
             other => Err(format!(
-                "unknown crash point {other:?} (expected `pre-commit-stc` or `post-commit-vtc`)"
+                "unknown crash point {other:?} (expected `pre-commit-stc`, `post-commit-vtc`, or `shaper-children-pending`)"
             )),
         }
     }
@@ -67,7 +77,11 @@ mod tests {
 
     #[test]
     fn crash_point_roundtrips_through_str() {
-        for cp in [CrashPoint::PreCommitStc, CrashPoint::PostCommitVtc] {
+        for cp in [
+            CrashPoint::PreCommitStc,
+            CrashPoint::PostCommitVtc,
+            CrashPoint::ShaperChildrenPending,
+        ] {
             assert_eq!(CrashPoint::from_str(cp.as_str()), Ok(cp));
         }
     }

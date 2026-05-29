@@ -87,10 +87,16 @@ fn clean_reference_digest() -> String {
 }
 
 /// Count `Committed` entries per Mote in the on-disk journal — assertion (b).
+///
+/// The range end is `current_seq + 1`, NOT `u64::MAX`: SQLite binds `u64::MAX` to `-1`
+/// (i64), which silently returns **zero rows** (the bind quirk recorded in HANDOFF
+/// §2.55). Reading the real watermark makes every caller's count meaningful — without
+/// this, `assert_exactly_once` would pass vacuously over an empty map.
 fn committed_counts(journal_path: &Path) -> BTreeMap<MoteId, usize> {
     let journal = SqliteJournal::open(journal_path).unwrap();
+    let end = journal.current_seq().unwrap().saturating_add(1);
     let mut counts: BTreeMap<MoteId, usize> = BTreeMap::new();
-    for entry in journal.read_entries_by_seq(0..u64::MAX).unwrap() {
+    for entry in journal.read_entries_by_seq(0..end).unwrap() {
         if let JournalEntry::Committed { mote_id, .. } = entry {
             *counts.entry(mote_id).or_insert(0) += 1;
         }
@@ -180,6 +186,63 @@ fn scenario_2_validate_then_commit_post_commit_crash_rereads_not_reruns() {
     assert_exactly_once(&p.journal);
     let fresh = digest_of(&invoke("digest", &p, None));
     assert_eq!(fresh, reference, "(c) cross-process replay digest");
+}
+
+/// Scenario 3 — `shaper-children-pending` (P0.6 / P3.4, the hardest path): crash the
+/// instant the topology shaper has committed its `TopologyDecision` and every *declared*
+/// Mote is committed, but the **materialized children** have not yet run. Recovery must
+/// REPLAY the committed decision — re-materialize the SAME children (D49, identity from
+/// journal facts) and run them — NEVER re-run the shaper to re-decide (which would orphan
+/// or duplicate children). Without re-deriving the committed shaper's children before the
+/// drive loop can stop, a fresh process would break with the children orphaned.
+#[test]
+fn scenario_3_shaper_commits_then_crash_replays_decision_not_re_decided() {
+    let reference = clean_reference_digest();
+    let p = paths();
+
+    // Crash after the shaper + every declared Mote committed, before the children run.
+    let crashed = invoke("run", &p, Some("shaper-children-pending"));
+    assert_aborted(&crashed);
+
+    // At crash time: only the declared Motes are committed (exactly once each); the two
+    // materialized children have NOT committed yet.
+    let mid = committed_counts(&p.journal);
+    assert!(
+        mid.values().all(|&c| c == 1),
+        "every committed Mote appears exactly once at crash time"
+    );
+    let committed_at_crash = mid.len();
+    assert_eq!(
+        committed_at_crash, 6,
+        "the 6 declared Motes (incl. the shaper) committed; the 2 children are pending"
+    );
+
+    // Restart: recovery re-folds the committed shaper, re-materializes the SAME children,
+    // and runs them — the shaper is never re-run (its committed decision is a fact).
+    let replay = invoke("replay", &p, None);
+    let replay_digest = digest_of(&replay);
+
+    // (a) bit-identical committed set: the replayed decision yields the same children +
+    //     the same final committed set as a clean run.
+    assert_eq!(
+        replay_digest, reference,
+        "(a) recovery replays the committed decision: bit-identical committed set"
+    );
+    // (b) no Mote (shaper or child) committed more than once — the shaper did not
+    //     re-decide, the children were not duplicated.
+    assert_exactly_once(&p.journal);
+    // (c) cross-process replay digest.
+    let fresh = digest_of(&invoke("digest", &p, None));
+    assert_eq!(fresh, reference, "(c) cross-process replay digest");
+
+    // The previously-pending children DID materialize + commit on recovery (8 total now,
+    // up from 6 at crash) — they were not orphaned.
+    let after = committed_counts(&p.journal);
+    assert_eq!(
+        after.len(),
+        8,
+        "recovery ran the 2 previously-pending materialized children (6 → 8 committed)"
+    );
 }
 
 #[test]
