@@ -28,6 +28,7 @@ members = [
     "crates/kx-coordinator",
     "crates/kx-worker",
     "crates/kx-chaos",
+    "crates/kx-workflow",
 ]
 exclude = [
     "kx-cloud",
@@ -92,6 +93,9 @@ kx-worker            = { path = "crates/kx-worker",            version = "0.0.1"
 # The single-node engine — kx-chaos reuses its topology helpers (`derive_child_motes`,
 # `demo_topology_decision`) to check child-identity determinism under a shaper death.
 kx-runtime           = { path = "crates/kx-runtime",           version = "0.0.1" }
+# The workflow engine (codename Morphic, P4.1) — compiles a WorkflowDef to a
+# Mote DAG. Sits above the scheduler; emits kx-mote + kx-warrant types only.
+kx-workflow          = { path = "crates/kx-workflow",          version = "0.0.1" }
 bindgen            = "0.70"
 cmake              = "0.1"
 ureq               = { version = "2", default-features = false, features = ["tls"] }
