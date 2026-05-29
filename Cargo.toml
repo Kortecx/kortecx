@@ -29,6 +29,7 @@ members = [
     "crates/kx-worker",
     "crates/kx-chaos",
     "crates/kx-workflow",
+    "crates/kx-dataset",
 ]
 exclude = [
     "kx-cloud",
@@ -96,6 +97,9 @@ kx-runtime           = { path = "crates/kx-runtime",           version = "0.0.1"
 # The workflow engine (codename Morphic, P4.1) — compiles a WorkflowDef to a
 # Mote DAG. Sits above the scheduler; emits kx-mote + kx-warrant types only.
 kx-workflow          = { path = "crates/kx-workflow",          version = "0.0.1" }
+# The data-management seam (P4.1c) — typed (tensor/vector/blob/multi-modal)
+# DataStore/Dataset/RetrievalIndex over committed content; journal-authoritative.
+kx-dataset           = { path = "crates/kx-dataset",           version = "0.0.1" }
 bindgen            = "0.70"
 cmake              = "0.1"
 ureq               = { version = "2", default-features = false, features = ["tls"] }
