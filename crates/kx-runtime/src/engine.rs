@@ -20,7 +20,7 @@ use kx_executor::{
     TestMoteExecutor,
 };
 use kx_journal::{Journal, SqliteJournal};
-use kx_mote::{MoteId, NdClass};
+use kx_mote::{MoteId, NdClass, TopologyDecision};
 use kx_projection::{MoteState, Projection};
 use kx_scheduler::{LocalPlacement, Scheduler};
 use kx_warrant::{FsScope, NetScope};
@@ -124,14 +124,33 @@ pub fn run(config: &RuntimeConfig) -> Result<RunOutcome, RuntimeError> {
     // engine re-derives into runnable Motes, identity-matched to the projection).
     let mut runnable: Vec<WorkflowMote> = workflow.motes.clone();
     let mut children_derived = false;
+    let mut child_ids: Vec<MoteId> = Vec::new();
 
     // The drive loop.
     loop {
+        // Re-derive the committed shaper's materialized children into the runnable
+        // set **before** deciding whether to stop (P0.6 / P3.4 — the hardest path):
+        // on recovery the shaper's `Committed` is already folded, so a fresh process
+        // re-materializes the SAME children and runs them, never re-running the shaper
+        // to re-decide. Doing this after `pick_next` would let a recovery where only
+        // the children remain break first, orphaning the shaper's decision.
+        if !children_derived {
+            children_derived = derive_shaper_children(
+                &workflow,
+                &shaper_wm,
+                &topology_decision,
+                &projection,
+                &mut runnable,
+                &mut child_ids,
+            );
+        }
+
         let Some(action) = pick_next(&runnable, &projection) else {
             break;
         };
         match action {
             Action::RunPure(w) => {
+                crash_if_children_pending(config, &child_ids, w.mote.id);
                 run_pure_mote(&w.mote, &w.warrant, &*journal, &rm, &executor)?;
             }
             Action::RunWm { wm, recover } => {
@@ -176,23 +195,6 @@ pub fn run(config: &RuntimeConfig) -> Result<RunOutcome, RuntimeError> {
             }
         }
         fold_new(&journal, &mut projection, &mut folded_through)?;
-
-        // Once the shaper commits, re-derive its children as runnable Motes
-        // (identity-matched to the materializer's registrations) so they
-        // actually execute rather than merely materialize.
-        if !children_derived && projection.state_of(&workflow.shaper_id) == MoteState::Committed {
-            if let Some(shaper_result_ref) = projection.result_ref_of(&workflow.shaper_id) {
-                let children = topology::derive_child_motes(
-                    &shaper_wm.mote,
-                    shaper_result_ref,
-                    &topology_decision,
-                    &shaper_wm.warrant,
-                    &shaper_wm.capability,
-                );
-                runnable.extend(children);
-                children_derived = true;
-            }
-        }
     }
 
     let outcome = outcome(&runnable, &projection);
@@ -230,6 +232,48 @@ fn fold_new(
 
 /// Choose the next Mote to act on, in submission order: a `Pending` Mote whose
 /// parents are committed (fresh run), or an in-flight Mote to recover.
+/// Scenario-3 crash injection (P0.6 / P3.4): a hard kill the instant the first
+/// materialized child is about to run — the shaper's decision + every declared Mote are
+/// committed, the children are pending. Recovery must REPLAY the committed decision
+/// (re-materialize + run the same children), never re-run the shaper to re-decide.
+/// No-op unless that crash point is configured.
+fn crash_if_children_pending(config: &RuntimeConfig, child_ids: &[MoteId], mote_id: MoteId) {
+    if config.crash_at == Some(CrashPoint::ShaperChildrenPending) && child_ids.contains(&mote_id) {
+        CrashPoint::ShaperChildrenPending.abort_now();
+    }
+}
+
+/// If the shaper has committed, re-derive its materialized children (D49 — identity
+/// from journal facts only) into `runnable` + `child_ids`, returning `true`. Pure
+/// function of the committed shaper entry: a fresh recovery process derives the SAME
+/// children (P0.6 / P3.4 — replay the decision, never re-decide). Returns `false` while
+/// the shaper is uncommitted.
+fn derive_shaper_children(
+    workflow: &DemoWorkflow,
+    shaper_wm: &WorkflowMote,
+    topology_decision: &TopologyDecision,
+    projection: &Projection,
+    runnable: &mut Vec<WorkflowMote>,
+    child_ids: &mut Vec<MoteId>,
+) -> bool {
+    if projection.state_of(&workflow.shaper_id) != MoteState::Committed {
+        return false;
+    }
+    let Some(shaper_result_ref) = projection.result_ref_of(&workflow.shaper_id) else {
+        return false;
+    };
+    let children = topology::derive_child_motes(
+        &shaper_wm.mote,
+        shaper_result_ref,
+        topology_decision,
+        &shaper_wm.warrant,
+        &shaper_wm.capability,
+    );
+    child_ids.extend(children.iter().map(|c| c.mote.id));
+    runnable.extend(children);
+    true
+}
+
 fn pick_next(runnable: &[WorkflowMote], projection: &Projection) -> Option<Action> {
     let ready = projection.ready_set();
     for w in runnable {
