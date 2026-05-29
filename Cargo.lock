@@ -1016,6 +1016,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "kx-chaos"
+version = "0.0.1"
+dependencies = [
+ "blake3",
+ "kx-capability",
+ "kx-content",
+ "kx-coordinator",
+ "kx-journal",
+ "kx-mote",
+ "kx-runtime",
+ "kx-warrant",
+ "smallvec",
+ "thiserror",
+ "tokio",
+ "tonic",
+ "tracing",
+]
+
+[[package]]
 name = "kx-content"
 version = "0.0.1"
 dependencies = [

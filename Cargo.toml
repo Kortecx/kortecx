@@ -27,6 +27,7 @@ members = [
     "crates/kx-proto",
     "crates/kx-coordinator",
     "crates/kx-worker",
+    "crates/kx-chaos",
 ]
 exclude = [
     "kx-cloud",
@@ -88,6 +89,9 @@ kx-scheduler         = { path = "crates/kx-scheduler",         version = "0.0.1"
 kx-proto             = { path = "crates/kx-proto",             version = "0.0.1" }
 kx-coordinator       = { path = "crates/kx-coordinator",       version = "0.0.1" }
 kx-worker            = { path = "crates/kx-worker",            version = "0.0.1" }
+# The single-node engine — kx-chaos reuses its topology helpers (`derive_child_motes`,
+# `demo_topology_decision`) to check child-identity determinism under a shaper death.
+kx-runtime           = { path = "crates/kx-runtime",           version = "0.0.1" }
 bindgen            = "0.70"
 cmake              = "0.1"
 ureq               = { version = "2", default-features = false, features = ["tls"] }
