@@ -16,12 +16,12 @@ use std::sync::Arc;
 use kx_capability::EffectRequest;
 use kx_content::{ContentStore, LocalFsContentStore};
 use kx_executor::{
-    redispatch_wm_mote, run_pure_mote, run_wm_mote, LocalResourceManager, StandardCommitProtocol,
-    TestMoteExecutor,
+    redispatch_wm_mote, run_native_critic_mote, run_pure_mote, run_wm_mote, LocalResourceManager,
+    StandardCommitProtocol, TestMoteExecutor,
 };
 use kx_journal::{Journal, SqliteJournal};
 use kx_mote::{MoteId, NdClass, TopologyDecision};
-use kx_projection::{MoteState, Projection};
+use kx_projection::{ContentStoreVerdicts, MoteState, Projection, VerdictLookup};
 use kx_scheduler::{LocalPlacement, Scheduler};
 use kx_warrant::{FsScope, NetScope};
 
@@ -55,8 +55,15 @@ impl RunOutcome {
 /// What to do with the next actionable Mote. Owned (a cheap `WorkflowMote`
 /// clone) so the runnable set can be extended with materialized shaper children
 /// within the same loop iteration without a borrow conflict.
+// The shared `Run` prefix is intentional — every variant is a dispatch action.
+#[allow(clippy::enum_variant_names)]
 enum Action {
     RunPure(WorkflowMote),
+    /// A native deterministic-critic Mote (`critic_check = Some`): evaluate the
+    /// declared check in-process against the producer's committed bytes and
+    /// commit a `CriticVerdict` (P4.2-2). Routed ahead of `RunPure` even though
+    /// a critic is PURE, because its body is the check, not an executor spawn.
+    RunNativeCritic(WorkflowMote),
     RunWm {
         wm: WorkflowMote,
         /// `true` ⇒ recover an in-flight WM Mote (re-dispatch); `false` ⇒ fresh.
@@ -66,10 +73,14 @@ enum Action {
 
 /// Run (or replay) the demo workflow per `config`. Returns the final outcome,
 /// or aborts the process at the configured crash point (which never returns).
+#[allow(clippy::too_many_lines)]
 pub fn run(config: &RuntimeConfig) -> Result<RunOutcome, RuntimeError> {
     let workflow = DemoWorkflow::canonical();
 
     let store = Arc::new(LocalFsContentStore::open(&config.content_root)?);
+    // Reads committed `CriticVerdict`s by content-address for the P4.2-3
+    // promotion gate (shares the one store via Arc).
+    let verdicts = ContentStoreVerdicts::new(store.clone());
     let journal = Arc::new(SqliteJournal::open(&config.journal_path)?);
     let rm = LocalResourceManager::dev_defaults();
     let executor = TestMoteExecutor::deterministic();
@@ -145,13 +156,19 @@ pub fn run(config: &RuntimeConfig) -> Result<RunOutcome, RuntimeError> {
             );
         }
 
-        let Some(action) = pick_next(&runnable, &projection) else {
+        let Some(action) = pick_next(&runnable, &projection, &verdicts) else {
             break;
         };
         match action {
             Action::RunPure(w) => {
                 crash_if_children_pending(config, &child_ids, w.mote.id);
                 run_pure_mote(&w.mote, &w.warrant, &*journal, &rm, &executor)?;
+            }
+            Action::RunNativeCritic(w) => {
+                // Evaluate the declared check in-process against the producer's
+                // committed bytes and commit a CriticVerdict (P4.2-2). The
+                // verdict drives the P4.2-3 promotion gate on the next fold.
+                run_native_critic_mote(&w.mote, &w.warrant, &*journal, &*store)?;
             }
             Action::RunWm { wm, recover } => {
                 let request = effect_request_for(&wm);
@@ -274,8 +291,16 @@ fn derive_shaper_children(
     true
 }
 
-fn pick_next(runnable: &[WorkflowMote], projection: &Projection) -> Option<Action> {
-    let ready = projection.ready_set();
+fn pick_next(
+    runnable: &[WorkflowMote],
+    projection: &Projection,
+    verdicts: &dyn VerdictLookup,
+) -> Option<Action> {
+    // The P4.2-3 exit gate: a WORLD-MUTATING producer's consumers are withheld
+    // until its deterministic critic commits a `Valid` verdict. For workflows
+    // without deterministic critics (e.g. the canonical demo) every producer is
+    // `NotApplicable`, so this is byte-identical to the un-gated `ready_set()`.
+    let ready = projection.ready_set_promoted(verdicts);
     for w in runnable {
         let id = w.mote.id;
         let state = projection.state_of(&id);
@@ -285,7 +310,13 @@ fn pick_next(runnable: &[WorkflowMote], projection: &Projection) -> Option<Actio
         let in_ready = ready.contains(&id);
         let scheduled = state == MoteState::Scheduled;
 
-        if w.mote.nd_class() == NdClass::Pure {
+        if w.mote.def.critic_check.is_some() {
+            // A native deterministic critic — PURE, but its body is the
+            // in-process check, not an executor spawn (P4.2-2).
+            if in_ready || scheduled {
+                return Some(Action::RunNativeCritic(w.clone()));
+            }
+        } else if w.mote.nd_class() == NdClass::Pure {
             // PURE is recomputable: run when ready, or re-run if it was left
             // in-flight by a crash (or proposed as a critic by the VTC path).
             if in_ready || scheduled {
