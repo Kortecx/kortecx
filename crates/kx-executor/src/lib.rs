@@ -280,6 +280,7 @@ pub mod executor_trait;
 pub mod fact_zero;
 pub mod factory;
 pub mod lifecycle;
+pub mod native_critic;
 pub mod refusal;
 pub mod resource_manager;
 pub mod verify;
@@ -306,6 +307,7 @@ pub use lifecycle::{
     redispatch_wm_mote, run_pure_mote, run_wm_mote, LifecycleCommit, LifecycleError,
     TestMoteExecutor, WmLifecycleCommit, WmRedispatchOracle,
 };
+pub use native_critic::run_native_critic_mote;
 pub use refusal::{
     refusal_from_narrowing, validate_submission, validate_submission_with_idempotency,
     SubmissionRefusal, WorkflowSubmission,

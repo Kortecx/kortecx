@@ -1141,6 +1141,8 @@ dependencies = [
  "kx-capability",
  "kx-content",
  "kx-context-assembler",
+ "kx-critic",
+ "kx-critic-types",
  "kx-inference",
  "kx-journal",
  "kx-memoizer",
@@ -1425,6 +1427,7 @@ version = "0.0.1"
 dependencies = [
  "blake3",
  "kx-content",
+ "kx-critic-types",
  "kx-dataset",
  "kx-executor",
  "kx-journal",

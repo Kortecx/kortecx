@@ -189,6 +189,20 @@ pub enum SubmissionRefusal {
         /// The offending Mote.
         mote_id: MoteId,
     },
+
+    /// **R-15** (D60 / P4.2-2). A `MoteDef` carrying a `critic_check` (a native
+    /// deterministic-critic Mote) whose shape is illegal: a native check is
+    /// evaluated in-process against a producer's committed bytes, so the Mote
+    /// MUST be `Pure` (no nondet/world-mutation), MUST declare `critic_for`
+    /// (the producer it gates), and MUST NOT be a topology shaper. Refusing
+    /// these at submission keeps the executor's native-check path
+    /// (`run_native_critic_mote`) total and the deterministic gate decorrelated
+    /// from the model that produced the output (D60).
+    #[error("R-15: Mote {mote_id:?} carries a critic_check but is not a well-formed native critic (must be Pure + critic_for=Some + !is_topology_shaper) (D60 / P4.2-2)")]
+    R15NativeCheckShape {
+        /// The offending Mote.
+        mote_id: MoteId,
+    },
 }
 
 /// A workflow submission — the shape `validate_submission` reasons over.
@@ -264,11 +278,12 @@ pub fn validate_submission(submission: &WorkflowSubmission) -> Result<(), Submis
     // R-6 — multi-critic detection (workflow-level, not per-Mote).
     check_r6(&submission.motes)?;
 
-    // R-8 + R-8b + R-14 — shaper constructions.
+    // R-8 + R-8b + R-14 + R-15 — shaper + native-critic constructions.
     for mote in submission.motes.values() {
         check_r8(mote)?;
         check_r8b(mote, &submission.motes);
         check_r14(mote)?;
+        check_r15(mote)?;
     }
 
     // R-9 — critic chain terminates at a Pure critic.
@@ -505,6 +520,21 @@ fn check_r8b(mote: &Mote, _motes: &BTreeMap<MoteId, Mote>) {
 fn check_r14(mote: &Mote) -> Result<(), SubmissionRefusal> {
     if mote.def.is_topology_shaper && mote.def.nd_class == NdClass::WorldMutating {
         return Err(SubmissionRefusal::R14WorldMutatingShaper { mote_id: mote.id });
+    }
+    Ok(())
+}
+
+/// **R-15** (D60 / P4.2-2). Refuse a `critic_check`-bearing Mote that is not a
+/// well-formed native critic. See `SubmissionRefusal::R15NativeCheckShape`.
+fn check_r15(mote: &Mote) -> Result<(), SubmissionRefusal> {
+    if mote.def.critic_check.is_none() {
+        return Ok(());
+    }
+    if mote.def.nd_class != NdClass::Pure
+        || mote.def.critic_for.is_none()
+        || mote.def.is_topology_shaper
+    {
+        return Err(SubmissionRefusal::R15NativeCheckShape { mote_id: mote.id });
     }
     Ok(())
 }

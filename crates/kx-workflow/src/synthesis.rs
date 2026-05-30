@@ -11,6 +11,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use kx_content::ContentRef;
+use kx_critic_types::CheckSpec;
 use kx_mote::{
     EdgeMeta, EffectPattern, InferenceParams, LogicRef, ModelId, NdClass, PromptTemplateHash,
     ToolName,
@@ -141,6 +142,35 @@ pub fn critic(
         NdClass::Pure,
         EffectPattern::IdempotentByConstruction,
         StepRole::Critic { producer },
+        warrant,
+        capability,
+    )
+}
+
+/// A **deterministic critic** validating `producer` (D60 / P4.2-2): a PURE,
+/// `IdempotentByConstruction` step carrying a [`CheckSpec`] (schema / dedup /
+/// stat-bounds / PII-leakage). The check folds into the critic's `MoteId`, and
+/// at runtime the executor evaluates it in-process against the producer's
+/// committed bytes (`kx_executor::run_native_critic_mote`) and commits a
+/// `CriticVerdict` — no model, decorrelated from the producer. Declare a
+/// dependency edge from `producer` to this step so the producer precedes it in
+/// the DAG. The compiled `MoteDef` satisfies executor refusal R-15 by
+/// construction (PURE + `critic_for=Some` + `!is_topology_shaper`).
+#[must_use]
+pub fn deterministic_critic(
+    producer: StepRef,
+    check: CheckSpec,
+    logic_ref: LogicRef,
+    model_id: ModelId,
+    warrant: WarrantSpec,
+    capability: ToolName,
+) -> StepDef {
+    step(
+        logic_ref,
+        model_id,
+        NdClass::Pure,
+        EffectPattern::IdempotentByConstruction,
+        StepRole::DeterministicCritic { producer, check },
         warrant,
         capability,
     )

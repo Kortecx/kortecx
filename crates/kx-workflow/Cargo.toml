@@ -24,6 +24,9 @@ kx-content = { workspace = true }
 # The data-management seam: the graph-RAG retrieval Mote consumes
 # `kx_dataset::RetrievalIndex` + commits a content-addressed result over `Hit`s.
 kx-dataset = { workspace = true }
+# The deterministic-critic vocabulary: a `deterministic_critic` step carries a
+# `CheckSpec` that compiles into `MoteDef.critic_check` (folded into identity).
+kx-critic-types = { workspace = true }
 # Parent-edge storage matches kx-mote's `SmallVec<[ParentRef; 4]>`.
 smallvec   = { workspace = true }
 # Deterministic compile-time InputDataId derivation (entrypoint seed / child lineage).

@@ -9,6 +9,7 @@
 
 use std::collections::BTreeMap;
 
+use kx_critic_types::CheckSpec;
 use kx_mote::{
     ConfigKey, ConfigVal, EdgeMeta, EffectPattern, InferenceParams, LogicRef, ModelId, Mote,
     MoteGraph, NdClass, PromptTemplateHash, ToolName, ToolVersion,
@@ -58,6 +59,23 @@ pub enum StepRole {
     /// deterministically (D23/D37). Here the step is only marked as a shaper;
     /// the dynamic unroll is exercised against the runtime materializer.
     TopologyShaper,
+    /// A **deterministic critic** for `producer` (D60 / P4.2-2). Compiles to a
+    /// PURE `MoteDef` with `critic_for = producer's MoteId` AND
+    /// `critic_check = Some(check)` — the declared check is folded into the
+    /// critic's identity. At runtime the executor evaluates `check` in-process
+    /// against the producer's committed bytes (`run_native_critic_mote`) and
+    /// commits a `CriticVerdict`; the projection's promotion gate reads it.
+    /// The producer MUST precede this step in the DAG (declare a dependency
+    /// edge), or compilation fails with [`crate::CompileError::InvalidCritic`].
+    /// Unlike [`StepRole::Critic`] (a model-validated `ValidateThenCommit`
+    /// critic), this carries no model and is decorrelated from the producer.
+    DeterministicCritic {
+        /// The step this critic validates.
+        producer: StepRef,
+        /// The declarative check evaluated in-process against the producer's
+        /// committed output bytes.
+        check: CheckSpec,
+    },
 }
 
 /// One authored step (agent): everything needed to build its

@@ -119,7 +119,13 @@ fn build_adjacency(def: &WorkflowDef, n: usize) -> Result<Adjacency, CompileErro
     }
 
     for s in &def.steps {
-        if let StepRole::Critic { producer } = s.role {
+        let producer = match &s.role {
+            StepRole::Critic { producer } | StepRole::DeterministicCritic { producer, .. } => {
+                Some(*producer)
+            }
+            _ => None,
+        };
+        if let Some(producer) = producer {
             if producer.index() >= n {
                 return Err(CompileError::StepIndexOutOfRange(producer.index()));
             }
@@ -169,14 +175,16 @@ fn resolve_critic(
     step_idx: usize,
     mote_ids: &[Option<MoteId>],
 ) -> Result<Option<MoteId>, CompileError> {
-    match s.role {
-        StepRole::Critic { producer } => match mote_ids[producer.index()] {
-            Some(id) => Ok(Some(id)),
-            None => Err(CompileError::InvalidCritic {
-                critic: step_idx,
-                producer: producer.index(),
-            }),
-        },
+    match &s.role {
+        StepRole::Critic { producer } | StepRole::DeterministicCritic { producer, .. } => {
+            match mote_ids[producer.index()] {
+                Some(id) => Ok(Some(id)),
+                None => Err(CompileError::InvalidCritic {
+                    critic: step_idx,
+                    producer: producer.index(),
+                }),
+            }
+        }
         _ => Ok(None),
     }
 }
@@ -206,8 +214,12 @@ fn resolve_parents(
 
 /// Assemble the step's [`MoteDef`] at the current schema version.
 fn mote_def_for(s: &StepDef, critic_for: Option<MoteId>) -> MoteDef {
+    let critic_check = match &s.role {
+        StepRole::DeterministicCritic { check, .. } => Some(check.clone()),
+        _ => None,
+    };
     MoteDef {
-        critic_check: None,
+        critic_check,
         logic_ref: s.logic_ref,
         model_id: s.model_id.clone(),
         prompt_template_hash: s.prompt_template_hash,

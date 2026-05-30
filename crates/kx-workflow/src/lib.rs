@@ -62,7 +62,8 @@ pub use error::CompileError;
 pub use retrieval::{encode_retrieval_fact, retrieval, retrieval_result_ref};
 pub use share::{Manifest, ManifestId};
 pub use synthesis::{
-    critic, generator, permissive_warrant, synthesis_pipeline, topology_shaper, transform,
+    critic, deterministic_critic, generator, permissive_warrant, synthesis_pipeline,
+    topology_shaper, transform,
 };
 
 #[cfg(test)]
