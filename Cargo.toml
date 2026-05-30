@@ -32,6 +32,7 @@ members = [
     "crates/kx-dataset",
     "crates/kx-critic-types",
     "crates/kx-critic",
+    "crates/kx-capture",
 ]
 exclude = [
     "kx-cloud",
@@ -115,6 +116,9 @@ kx-critic-types      = { path = "crates/kx-critic-types",      version = "0.0.1"
 # Deterministic-critic evaluator (P4.2) — the pure/total evaluate(spec, bytes) ->
 # CriticVerdict over the four checks (schema / dedup / stat-bounds / PII-leakage).
 kx-critic            = { path = "crates/kx-critic",            version = "0.0.1" }
+# Step-capture projection (P4.2 pivot) — opt-in, off-truth-path per-Mote capture of
+# input/output/reasoning/thinking in blob storage; reuse the action, never the thinking.
+kx-capture           = { path = "crates/kx-capture",           version = "0.0.1" }
 bindgen            = "0.70"
 cmake              = "0.1"
 ureq               = { version = "2", default-features = false, features = ["tls"] }

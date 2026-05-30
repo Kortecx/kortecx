@@ -1,0 +1,24 @@
+[package]
+name         = "kx-capture"
+version      = "0.0.1"
+edition      = { workspace = true }
+rust-version = { workspace = true }
+license      = { workspace = true }
+authors      = { workspace = true }
+repository   = { workspace = true }
+description  = "kortecx step-capture projection (P4.2 pivot) — the OPT-IN, OFF-TRUTH-PATH record of an atomic Mote's (agent's) step: input / output / reasoning / thinking, all content-addressed in blob storage. A disposable, rebuildable projection joined back to truth by hash — NEVER journaled, NEVER an identity input, NEVER gates execution. The runtime always reuses the ACTION (the committed Mote result); step-level capture of conversation/thinking is opt-in (CaptureScope::Full) and exists only for the user's own analysis/reuse. Integer-only metadata (no float on any identity path; SN-8). The wall is the dependency direction (guarantee-path crates do not depend on this crate)."
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+# Identity join key (the atomic Mote = the agent) + the content-addressed blob
+# refs the captured payloads live under in the content store.
+kx-mote    = { workspace = true }
+kx-content = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+
+[lints]
+workspace = true

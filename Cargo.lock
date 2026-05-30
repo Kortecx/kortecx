@@ -1016,6 +1016,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "kx-capture"
+version = "0.0.1"
+dependencies = [
+ "kx-content",
+ "kx-mote",
+ "proptest",
+]
+
+[[package]]
 name = "kx-chaos"
 version = "0.0.1"
 dependencies = [
