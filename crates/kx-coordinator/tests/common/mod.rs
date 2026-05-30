@@ -32,6 +32,12 @@ use kx_warrant::{
 };
 use smallvec::SmallVec;
 
+/// The executor class registered workers run under in the stress/distributed
+/// harnesses. `WorkerClient::register_worker` takes the domain `ExecutorClass`
+/// (it converts to the proto enum internally); this matches the local Apple-
+/// Silicon sandbox class used by the `lease_work` / `reschedule` tests.
+pub const WORKER_CLASS: ExecutorClass = ExecutorClass::MacOsSandbox;
+
 #[must_use]
 pub fn sample_inference_params() -> InferenceParams {
     InferenceParams {

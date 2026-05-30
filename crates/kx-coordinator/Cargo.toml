@@ -45,6 +45,11 @@ tokio = { workspace = true, features = ["time"] }
 tempfile = { workspace = true }
 # Commit-path throughput benchmark (run with `cargo bench -p kx-coordinator`).
 criterion = { workspace = true }
+# Distributed scaling stress harness (`stress_distributed.rs`): real gRPC
+# `WorkerClient`s commit over loopback TCP. Dev-only — `kx-worker` dev-depends on
+# `kx-coordinator` in turn, which Cargo permits (dev-dependency cycles don't enter
+# the build graph); neither crate production-depends on the other.
+kx-worker = { workspace = true }
 
 [[bench]]
 name = "commit_throughput"
