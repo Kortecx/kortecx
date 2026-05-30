@@ -411,6 +411,32 @@ impl Projection {
         ready_set_impl(&self.state)
     }
 
+    /// The ready set with the **P4.2-3 deterministic-critic promotion gate**
+    /// active: a WORLD-MUTATING producer's consumers are withheld until a
+    /// committed critic (declared `critic_for = producer`) returns a `Valid`
+    /// [`kx_critic_types::CriticVerdict`], read by content-address through
+    /// `verdicts`. This is the **P4 EXIT GATE** — a deterministic critic gating
+    /// a world-mutating step. Additive to [`Self::ready_set`] (which keeps the
+    /// P1 `NotApplicable` default).
+    #[must_use]
+    pub fn ready_set_promoted(&self, verdicts: &dyn crate::promotion::VerdictLookup) -> Vec<MoteId> {
+        crate::helpers::ready_set_impl_with(&self.state, &|s, id| {
+            crate::promotion::promotion_state_with(s, id, verdicts)
+        })
+    }
+
+    /// The verdict-resolved promotion state of `producer_id` (P4.2-3). Unlike
+    /// [`Self::promotion_state`] (the P1 `NotApplicable` stub), this reads
+    /// committed critic verdicts via `verdicts`.
+    #[must_use]
+    pub fn promotion_state_resolved(
+        &self,
+        producer_id: &MoteId,
+        verdicts: &dyn crate::promotion::VerdictLookup,
+    ) -> PromotionState {
+        crate::promotion::promotion_state_with(&self.state, producer_id, verdicts)
+    }
+
     /// 3c promotion state for the producer.
     ///
     /// **P1 default**: returns `NotApplicable` for every Mote (per D18). Full 3c

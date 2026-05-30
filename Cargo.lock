@@ -1289,6 +1289,7 @@ dependencies = [
  "bincode",
  "blake3",
  "kx-content",
+ "kx-critic-types",
  "kx-journal",
  "kx-mote",
  "kx-warrant",
