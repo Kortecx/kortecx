@@ -1,0 +1,31 @@
+[package]
+name         = "kx-critic-types"
+version      = "0.0.1"
+edition      = { workspace = true }
+rust-version = { workspace = true }
+license      = { workspace = true }
+authors      = { workspace = true }
+repository   = { workspace = true }
+description  = "kortecx deterministic-critic VOCABULARY (P4.2) — the pure, parser-free type surface a critic Mote commits: CriticVerdict (the content-addressed trust FACT, SN-8: exact crypto-equality only), CriticReason (closed failure vocabulary, integer-scaled evidence — no floats on the identity/commit path), and CheckSpec (the four declarative deterministic checks: schema / dedup / stat-bounds / PII-leakage). Held separate from the kx-critic evaluator so kx-mote can carry a CheckSpec in MoteDef without inheriting parser deps (regex/serde_json) — and dataset-free (a self-contained SchemaTag mirror) so it sits below kx-dataset without a dependency cycle."
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+# Canonical content-addressed encoding of the committed verdict (frozen
+# bincode v2, little-endian + fixed-int — byte-identical to
+# `kx_mote::canonical_config`, replicated here to keep this crate kx-mote-free).
+bincode   = { workspace = true }
+# CriticVerdict::content_ref_bytes — the verdict's content-addressed identity.
+blake3    = { workspace = true }
+# CheckSpec::hash_into stack-inline tensor shape (mirrors kx_dataset shape storage).
+smallvec  = { workspace = true }
+# Persistence-friendly derives on the spec / verdict / reason types.
+serde     = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+proptest  = { workspace = true }
+
+[lints]
+workspace = true

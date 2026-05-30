@@ -30,6 +30,8 @@ members = [
     "crates/kx-chaos",
     "crates/kx-workflow",
     "crates/kx-dataset",
+    "crates/kx-critic-types",
+    "crates/kx-critic",
 ]
 exclude = [
     "kx-cloud",
@@ -58,6 +60,12 @@ blake3             = "1"
 bytes              = { version = "1", features = ["serde"] }
 smallvec           = { version = "1", features = ["serde"] }
 serde              = { version = "1", features = ["derive"] }
+# JSON well-formedness for the kx-critic `Json` schema check (validation-only —
+# values are never decoded to floats, so no NaN/float-ordering on any path).
+serde_json         = "1"
+# Deterministic PII-class scanners (kx-critic). The regex engine is leftmost-first
+# and fully deterministic; patterns are compiled once via LazyLock.
+regex              = "1"
 proptest           = "1"
 tempfile           = "3"
 # Benchmark harness (dev-only). default-features off drops the html_reports
@@ -100,6 +108,13 @@ kx-workflow          = { path = "crates/kx-workflow",          version = "0.0.1"
 # The data-management seam (P4.1c) — typed (tensor/vector/blob/multi-modal)
 # DataStore/Dataset/RetrievalIndex over committed content; journal-authoritative.
 kx-dataset           = { path = "crates/kx-dataset",           version = "0.0.1" }
+# Deterministic-critic vocabulary (P4.2) — CriticVerdict / CriticReason / CheckSpec.
+# Parser-free + dataset-free so kx-mote can embed a CheckSpec in MoteDef without a
+# dependency cycle or inheriting regex/serde_json.
+kx-critic-types      = { path = "crates/kx-critic-types",      version = "0.0.1" }
+# Deterministic-critic evaluator (P4.2) — the pure/total evaluate(spec, bytes) ->
+# CriticVerdict over the four checks (schema / dedup / stat-bounds / PII-leakage).
+kx-critic            = { path = "crates/kx-critic",            version = "0.0.1" }
 bindgen            = "0.70"
 cmake              = "0.1"
 ureq               = { version = "2", default-features = false, features = ["tls"] }
