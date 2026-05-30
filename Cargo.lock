@@ -1084,6 +1084,7 @@ dependencies = [
  "kx-proto",
  "kx-scheduler",
  "kx-warrant",
+ "kx-worker",
  "smallvec",
  "tempfile",
  "thiserror",
