@@ -51,4 +51,13 @@ pub enum ConvertError {
         /// The out-of-range value.
         value: u64,
     },
+
+    /// A `bytes` field carrying a canonical-bincode payload (e.g.
+    /// `MoteDef.critic_check` = a `CheckSpec`) failed to decode. The boundary is
+    /// untrusted: malformed payload bytes are rejected, never silently dropped.
+    #[error("field `{field}`: malformed canonical payload")]
+    MalformedPayload {
+        /// The offending field's dotted name (e.g. `MoteDef.critic_check`).
+        field: &'static str,
+    },
 }

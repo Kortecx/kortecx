@@ -9,6 +9,7 @@ use super::*;
 
 fn sample_def() -> MoteDef {
     MoteDef {
+        critic_check: None,
         logic_ref: LogicRef::from_bytes([1u8; 32]),
         model_id: ModelId("test-model:v1:q4".into()),
         prompt_template_hash: PromptTemplateHash::from_bytes([2u8; 32]),
@@ -70,9 +71,9 @@ fn mote_def_hash_is_deterministic_across_calls() {
 }
 
 #[test]
-fn schema_version_is_v4() {
-    assert_eq!(MOTE_DEF_SCHEMA_VERSION, 4);
-    assert_eq!(sample_def().schema_version, 4);
+fn schema_version_is_v5() {
+    assert_eq!(MOTE_DEF_SCHEMA_VERSION, 5);
+    assert_eq!(sample_def().schema_version, 5);
 }
 
 #[test]

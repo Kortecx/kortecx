@@ -33,6 +33,7 @@ use proptest::prelude::*;
 
 fn base_def() -> MoteDef {
     MoteDef {
+        critic_check: None,
         logic_ref: LogicRef::from_bytes([0xaa; 32]),
         model_id: ModelId("claude-opus-4-7:1m".into()),
         prompt_template_hash: PromptTemplateHash::from_bytes([0xbb; 32]),

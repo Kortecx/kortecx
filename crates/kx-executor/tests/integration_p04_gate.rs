@@ -55,6 +55,7 @@ fn warrant(class: MoteClass) -> WarrantSpec {
 
 fn mote(seed: u8, nd: NdClass) -> Mote {
     let def = MoteDef {
+        critic_check: None,
         logic_ref: LogicRef::from_bytes([1; 32]),
         model_id: ModelId("local".into()),
         prompt_template_hash: PromptTemplateHash::from_bytes([2; 32]),

@@ -28,6 +28,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 fn shaper_def() -> MoteDef {
     MoteDef {
+        critic_check: None,
         logic_ref: LogicRef([1u8; 32]),
         model_id: ModelId("planner-v1".into()),
         prompt_template_hash: PromptTemplateHash([3u8; 32]),

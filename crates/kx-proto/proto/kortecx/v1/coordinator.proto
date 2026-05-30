@@ -96,7 +96,7 @@ message InferenceParams {
   optional string grammar = 7;
 }
 
-// Mirrors kx_mote::MoteDef (schema_version 4).
+// Mirrors kx_mote::MoteDef (schema_version 5).
 message MoteDef {
   bytes logic_ref = 1;                  // 32B
   string model_id = 2;
@@ -109,6 +109,7 @@ message MoteDef {
   bool is_topology_shaper = 9;
   InferenceParams inference_params = 10;
   uint32 schema_version = 11;           // u16 domain; validated <= u16::MAX
+  optional bytes critic_check = 12;     // canonical-bincode CheckSpec when present (kx-critic-types)
 }
 
 // Mirrors kx_mote::ParentRef (parent_id + edge meta).

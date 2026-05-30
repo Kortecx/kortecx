@@ -34,7 +34,8 @@ use kx_mote::Mote;
 ///     critic_for: None,
 ///     is_topology_shaper: false,
 ///     inference_params: kx_mote::InferenceParams::default(),
-///     schema_version: 3,
+///     critic_check: None,
+///     schema_version: kx_mote::MOTE_DEF_SCHEMA_VERSION,
 /// };
 /// let mote = Mote::new(
 ///     def,

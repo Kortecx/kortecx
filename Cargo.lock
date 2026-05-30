@@ -1258,6 +1258,7 @@ version = "0.0.1"
 dependencies = [
  "bincode",
  "blake3",
+ "kx-critic-types",
  "proptest",
  "serde",
  "smallvec",
@@ -1301,7 +1302,9 @@ dependencies = [
 name = "kx-proto"
 version = "0.0.1"
 dependencies = [
+ "bincode",
  "kx-content",
+ "kx-critic-types",
  "kx-mote",
  "kx-warrant",
  "proptest",

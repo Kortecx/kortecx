@@ -207,6 +207,7 @@ fn resolve_parents(
 /// Assemble the step's [`MoteDef`] at the current schema version.
 fn mote_def_for(s: &StepDef, critic_for: Option<MoteId>) -> MoteDef {
     MoteDef {
+        critic_check: None,
         logic_ref: s.logic_ref,
         model_id: s.model_id.clone(),
         prompt_template_hash: s.prompt_template_hash,

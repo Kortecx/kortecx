@@ -85,6 +85,7 @@ fn all_public_types_are_send_and_sync() {
 fn identity_is_thread_independent_under_real_move() {
     fn make_def() -> MoteDef {
         MoteDef {
+            critic_check: None,
             logic_ref: LogicRef::from_bytes([0xaa; 32]),
             model_id: ModelId("claude-opus-4-7:1m".into()),
             prompt_template_hash: PromptTemplateHash::from_bytes([0xbb; 32]),
@@ -126,6 +127,7 @@ fn identity_is_thread_independent_under_real_move() {
 fn canonical_config_bytes_are_thread_independent() {
     fn make_def() -> MoteDef {
         MoteDef {
+            critic_check: None,
             logic_ref: LogicRef::from_bytes([0x11; 32]),
             model_id: ModelId("test".into()),
             prompt_template_hash: PromptTemplateHash::from_bytes([0x22; 32]),

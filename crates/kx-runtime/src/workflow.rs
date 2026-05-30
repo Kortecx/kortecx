@@ -188,6 +188,7 @@ fn mote_def(
     critic_for: Option<MoteId>,
 ) -> MoteDef {
     MoteDef {
+        critic_check: None,
         logic_ref: LogicRef::from_bytes([seed; 32]),
         model_id: ModelId("local".into()),
         prompt_template_hash: PromptTemplateHash::from_bytes([seed; 32]),
@@ -256,6 +257,7 @@ fn nondet_mote(
 /// nondet read of workflow state, not an external mutation).
 fn shaper_mote(seed: u8, parents: &[ParentRef]) -> Mote {
     let def = MoteDef {
+        critic_check: None,
         logic_ref: LogicRef::from_bytes([seed; 32]),
         model_id: ModelId("local".into()),
         prompt_template_hash: PromptTemplateHash::from_bytes([seed; 32]),

@@ -46,6 +46,7 @@ pub fn world_tool_version() -> ToolVersion {
 
 fn pure_def() -> MoteDef {
     MoteDef {
+        critic_check: None,
         logic_ref: LogicRef::from_bytes([7u8; 32]),
         model_id: ModelId("llama-3.1-8b-instruct-q4_k_m".into()),
         prompt_template_hash: PromptTemplateHash::from_bytes([9u8; 32]),
@@ -124,6 +125,7 @@ fn wm_def(pattern: EffectPattern, critic_for: Option<MoteId>) -> MoteDef {
         NdClass::WorldMutating
     };
     MoteDef {
+        critic_check: None,
         logic_ref: LogicRef::from_bytes([7u8; 32]),
         model_id: ModelId("llama-3.1-8b-instruct-q4_k_m".into()),
         prompt_template_hash: PromptTemplateHash::from_bytes([9u8; 32]),

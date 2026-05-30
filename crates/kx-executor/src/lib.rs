@@ -181,6 +181,7 @@
 //!     critic_for: None,
 //!     is_topology_shaper: false,
 //!     inference_params: kx_mote::InferenceParams::default(),
+//!     critic_check: None,
 //!     schema_version: MOTE_DEF_SCHEMA_VERSION,
 //! };
 //! let mote = Mote::new(

@@ -54,6 +54,7 @@ fn warrant() -> WarrantSpec {
 
 fn wm_mote(seed: u8, pattern: EffectPattern) -> Mote {
     let def = MoteDef {
+        critic_check: None,
         logic_ref: LogicRef::from_bytes([1; 32]),
         model_id: ModelId("local".into()),
         prompt_template_hash: PromptTemplateHash::from_bytes([2; 32]),
@@ -328,6 +329,7 @@ fn redispatch_validate_then_commit_schedules_critic_proposed() {
     let producer = wm_mote(0x04, EffectPattern::ValidateThenCommit);
     // Critic Mote with critic_for = producer.id, Pure-class per R-9.
     let critic_def = MoteDef {
+        critic_check: None,
         logic_ref: LogicRef::from_bytes([1; 32]),
         model_id: ModelId("local".into()),
         prompt_template_hash: PromptTemplateHash::from_bytes([2; 32]),

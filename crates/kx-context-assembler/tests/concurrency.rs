@@ -81,6 +81,7 @@ fn make_mote(parents: SmallVec<[ParentRef; 4]>) -> Mote {
     Mote {
         id: MoteId([99; 32]),
         def: MoteDef {
+            critic_check: None,
             logic_ref: LogicRef([0; 32]),
             model_id: ModelId("m".into()),
             prompt_template_hash: PromptTemplateHash([0; 32]),

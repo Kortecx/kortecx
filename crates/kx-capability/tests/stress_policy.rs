@@ -114,6 +114,7 @@ fn mote_with_tool(name: &ToolName, version: &ToolVersion, pos: Vec<u8>) -> Mote 
     let mut tool_contract = BTreeMap::new();
     tool_contract.insert(name.clone(), version.clone());
     let def = MoteDef {
+        critic_check: None,
         logic_ref: LogicRef::from_bytes([0u8; 32]),
         model_id: ModelId("m".into()),
         prompt_template_hash: PromptTemplateHash::from_bytes([0u8; 32]),

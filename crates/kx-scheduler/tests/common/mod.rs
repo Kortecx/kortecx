@@ -108,6 +108,7 @@ pub(crate) fn permissive_warrant() -> WarrantSpec {
 /// yield distinct `MoteId`s without ceremony.
 pub(crate) fn pure_mote(position: &[u8], parents: SmallVec<[ParentRef; 4]>) -> Mote {
     let def = MoteDef {
+        critic_check: None,
         logic_ref: LogicRef::from_bytes([0u8; 32]),
         model_id: ModelId("test".into()),
         prompt_template_hash: PromptTemplateHash::from_bytes([0u8; 32]),

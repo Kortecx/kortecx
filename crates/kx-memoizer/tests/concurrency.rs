@@ -45,6 +45,7 @@ fn make_pure_mote(mote_id: MoteId) -> Mote {
     Mote {
         id: mote_id,
         def: MoteDef {
+            critic_check: None,
             logic_ref: LogicRef([0; 32]),
             model_id: ModelId("m".into()),
             prompt_template_hash: PromptTemplateHash([0; 32]),

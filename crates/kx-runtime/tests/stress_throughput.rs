@@ -54,6 +54,7 @@ enum Shape {
 
 fn mote_def() -> MoteDef {
     MoteDef {
+        critic_check: None,
         logic_ref: LogicRef::from_bytes([7u8; 32]),
         model_id: ModelId("local".into()),
         prompt_template_hash: PromptTemplateHash::from_bytes([9u8; 32]),

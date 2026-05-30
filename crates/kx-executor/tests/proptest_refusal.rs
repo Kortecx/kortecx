@@ -71,6 +71,7 @@ fn arb_wm_mote_with_tool() -> impl Strategy<Value = Mote> {
             kx_mote::ToolVersion("0.1.0".into()),
         );
         let def = MoteDef {
+            critic_check: None,
             logic_ref: LogicRef::from_bytes([1; 32]),
             model_id: ModelId("local".into()),
             prompt_template_hash: PromptTemplateHash::from_bytes([2; 32]),
@@ -121,6 +122,7 @@ fn arb_warrant() -> impl Strategy<Value = WarrantSpec> {
 fn arb_pure_mote() -> impl Strategy<Value = Mote> {
     (0u8..255u8, arb_effect_pattern()).prop_map(|(seed, ep)| {
         let def = MoteDef {
+            critic_check: None,
             logic_ref: LogicRef::from_bytes([1; 32]),
             model_id: ModelId("local".into()),
             prompt_template_hash: PromptTemplateHash::from_bytes([2; 32]),

@@ -174,6 +174,7 @@ mod macos {
 
     fn build_pure_mote(logic_ref: LogicRef) -> Mote {
         let def = MoteDef {
+            critic_check: None,
             logic_ref,
             model_id: ModelId("local".into()),
             prompt_template_hash: PromptTemplateHash::from_bytes([2; 32]),

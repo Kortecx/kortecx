@@ -30,6 +30,7 @@ fn worker_runs_motes_through_the_real_executor_entry_point() {
     let scratch = InMemoryJournal::new();
 
     let def = MoteDef {
+        critic_check: None,
         nd_class: NdClass::Pure,
         ..sample_pure_def()
     };
@@ -63,6 +64,7 @@ fn sample_pure_def() -> MoteDef {
         MOTE_DEF_SCHEMA_VERSION,
     };
     MoteDef {
+        critic_check: None,
         logic_ref: LogicRef::from_bytes([7u8; 32]),
         model_id: ModelId("m".into()),
         prompt_template_hash: PromptTemplateHash::from_bytes([9u8; 32]),

@@ -25,6 +25,7 @@ use smallvec::SmallVec;
 
 fn nondet_def(params: InferenceParams) -> MoteDef {
     MoteDef {
+        critic_check: None,
         logic_ref: LogicRef::from_bytes([0x11; 32]),
         model_id: ModelId("llama-3-8b:q4".into()),
         prompt_template_hash: PromptTemplateHash::from_bytes([0x22; 32]),
