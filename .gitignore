@@ -46,6 +46,8 @@ kx-cloud/
 /06-*.md
 /07-*.md
 /CLAUDE.md
+# Local Claude Code agent state (plans, transcripts, settings) — never committed.
+/.claude/
 /docs/design/*.md
 /docs/suggestions/*.md
 # Plan files are private-only (SN-5: plans NEVER land in the public OSS repo).

@@ -1,0 +1,39 @@
+[package]
+name         = "kx-critic"
+version      = "0.0.1"
+edition      = { workspace = true }
+rust-version = { workspace = true }
+license      = { workspace = true }
+authors      = { workspace = true }
+repository   = { workspace = true }
+description  = "kortecx deterministic-critic EVALUATOR (P4.2) — the pure, total, deterministic evaluate(&CheckSpec, &[u8]) -> CriticVerdict over the four checks the corpus calls out: schema (ContentSchema conformance), dedup (duplicate records under a declared framing+key), stat-bounds (an aggregate within inclusive integer bounds), and PII-leakage (forbidden detector classes). Returns a verdict for ALL inputs — adversarial, truncated, empty, non-UTF-8 — and NEVER panics; identical (spec, input) yields a byte-identical verdict on every run / process / machine. SN-8: a verdict is a content-addressed FACT compared by exact equality, never similarity. The verdict + spec TYPES live in kx-critic-types (parser-free, so kx-mote can embed a CheckSpec without inheriting regex/serde_json); this crate adds the evaluation logic."
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+# The verdict / spec vocabulary this crate evaluates over.
+kx-critic-types = { workspace = true }
+# Typed ContentSchema -> SchemaTag ergonomic conversion (authoring convenience).
+# kx-critic sits ABOVE kx-dataset (which depends on kx-mote), so this is cycle-free.
+kx-dataset      = { workspace = true }
+# JSON well-formedness for the `Json` schema check (validation-only; no float decode).
+serde_json      = { workspace = true }
+# serde::de::IgnoredAny — validates JSON structure WITHOUT materializing numbers
+# (so no f64/NaN is ever constructed on any path).
+serde           = { workspace = true }
+# Deterministic PII-class scanners; patterns compiled once via std LazyLock.
+regex           = { workspace = true }
+# Stack-inline scratch in the record framers.
+smallvec        = { workspace = true }
+
+[dev-dependencies]
+proptest        = { workspace = true }
+criterion       = { workspace = true }
+
+[[bench]]
+name    = "evaluate"
+harness = false
+
+[lints]
+workspace = true

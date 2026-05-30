@@ -1094,6 +1094,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "kx-critic"
+version = "0.0.1"
+dependencies = [
+ "criterion",
+ "kx-critic-types",
+ "kx-dataset",
+ "proptest",
+ "regex",
+ "serde",
+ "serde_json",
+ "smallvec",
+]
+
+[[package]]
+name = "kx-critic-types"
+version = "0.0.1"
+dependencies = [
+ "bincode",
+ "blake3",
+ "proptest",
+ "serde",
+ "smallvec",
+ "thiserror",
+]
+
+[[package]]
 name = "kx-dataset"
 version = "0.0.1"
 dependencies = [
