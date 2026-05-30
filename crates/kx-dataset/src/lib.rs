@@ -25,6 +25,12 @@
 //!   similarity seam. **Used ONLY inside ReadOnlyNondet retrieval Motes** — the
 //!   runtime matches by exact cryptographic equality (SN-8); similarity never
 //!   touches the identity / commit / memoization path.
+//! - [`AnnotationStore`] + [`Annotation`] — an advisory, mutable, rebuildable
+//!   curation projection keyed by content ref (usefulness / yes-no / reviewer /
+//!   notes). **Off the truth path**: never journaled, never on the identity path,
+//!   never gates execution. It lives here precisely because the guarantee-path
+//!   crates do not depend on `kx-dataset` — the dependency graph is the wall
+//!   (see [`annotation`]).
 
 #![forbid(unsafe_code)]
 #![allow(
@@ -36,11 +42,13 @@
 )]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
+pub mod annotation;
 mod error;
 mod index;
 mod schema;
 mod store;
 
+pub use annotation::{Annotation, AnnotationStore};
 pub use error::DataError;
 pub use index::{Hit, InMemoryRetrievalIndex, RetrievalIndex};
 pub use schema::{ContentSchema, TensorDType, TypedRef};

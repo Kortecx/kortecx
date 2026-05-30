@@ -281,6 +281,7 @@ pub mod factory;
 pub mod lifecycle;
 pub mod refusal;
 pub mod resource_manager;
+pub mod verify;
 // The spawn module ships shared Unix primitives (fork + pipe + dup2 +
 // execvp + waitpid + setrlimit pre-exec hook). Linux's `BwrapExecutor`
 // (PR 9a-hardening-3) and macOS's `MacOsSandboxExecutor` (PR 9a-hardening-2)
@@ -309,6 +310,7 @@ pub use refusal::{
     SubmissionRefusal, WorkflowSubmission,
 };
 pub use resource_manager::{LocalResourceManager, ResourceError, ResourceManager, Slot};
+pub use verify::{verify_pure_rerun, VerifyError, VerifyOutcome};
 
 // Backend re-exports — callers may select a specific backend explicitly.
 pub use backends::bwrap::BwrapExecutor;
