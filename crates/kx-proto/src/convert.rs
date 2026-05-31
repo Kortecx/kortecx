@@ -22,6 +22,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use kx_content::ContentRef;
+use kx_critic_types::CheckSpec;
 use kx_mote::{
     ConfigKey, ConfigVal, EdgeKind, EdgeMeta, EffectPattern, Grammar, GraphPosition,
     InferenceParams, InputDataId, LogicRef, ModelId, Mote, MoteDef, MoteId, NdClass, ParentRef,
@@ -263,8 +264,40 @@ impl From<MoteDef> for proto::MoteDef {
             is_topology_shaper: d.is_topology_shaper,
             inference_params: Some(d.inference_params.into()),
             schema_version: u32::from(d.schema_version),
+            critic_check: d.critic_check.as_ref().map(encode_check_spec),
         }
     }
+}
+
+/// Encode a [`CheckSpec`] to canonical bincode bytes for the wire. Byte-identical
+/// to the embedding used in `kx_mote::MoteDef::hash`, so a round-tripped critic
+/// Mote re-derives the same `MoteId` (SN-8). Infallible: `CheckSpec` is
+/// integer-only with no non-encodable types.
+// SAFETY (expect): CheckSpec is integer-only with no non-encodable types, so
+// canonical bincode encoding is infallible — mirrors the documented-infallible
+// `kx_mote::MoteDef::hash` / `kx_critic_types::CriticVerdict::encode` sites.
+#[allow(clippy::expect_used)]
+fn encode_check_spec(spec: &CheckSpec) -> Vec<u8> {
+    bincode::serde::encode_to_vec(spec, kx_critic_types::canonical_config())
+        .expect("CheckSpec canonical encoding is infallible (no floats, no non-encodable types)")
+}
+
+/// Decode a [`CheckSpec`] from canonical bincode bytes received on the (untrusted)
+/// wire. Rejects malformed or trailing-garbage payloads — never silently drops.
+fn decode_check_spec(bytes: &[u8]) -> Result<CheckSpec, ConvertError> {
+    let (spec, consumed) = bincode::serde::decode_from_slice::<CheckSpec, _>(
+        bytes,
+        kx_critic_types::canonical_config(),
+    )
+    .map_err(|_| ConvertError::MalformedPayload {
+        field: "MoteDef.critic_check",
+    })?;
+    if consumed != bytes.len() {
+        return Err(ConvertError::MalformedPayload {
+            field: "MoteDef.critic_check",
+        });
+    }
+    Ok(spec)
 }
 
 impl TryFrom<proto::MoteDef> for MoteDef {
@@ -311,6 +344,11 @@ impl TryFrom<proto::MoteDef> for MoteDef {
             is_topology_shaper: p.is_topology_shaper,
             inference_params,
             schema_version,
+            critic_check: p
+                .critic_check
+                .as_deref()
+                .map(decode_check_spec)
+                .transpose()?,
         })
     }
 }

@@ -12,11 +12,12 @@ description  = "kortecx Mote — the atomic execution unit: types, lifecycle, id
 path = "src/lib.rs"
 
 [dependencies]
-bincode   = { workspace = true }
-blake3    = { workspace = true }
-serde     = { workspace = true }
-smallvec  = { workspace = true }
-thiserror = { workspace = true }
+bincode         = { workspace = true }
+blake3          = { workspace = true }
+kx-critic-types = { workspace = true }
+serde           = { workspace = true }
+smallvec        = { workspace = true }
+thiserror       = { workspace = true }
 
 [dev-dependencies]
 proptest           = { workspace = true }

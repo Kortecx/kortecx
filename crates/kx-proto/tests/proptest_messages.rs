@@ -116,6 +116,7 @@ fn arb_mote_def() -> impl Strategy<Value = MoteDef> {
     )
         .prop_map(
             |((logic, pth, critic), model, tools, nd, cfg, eff, shaper, inf)| MoteDef {
+                critic_check: None,
                 logic_ref: LogicRef::from_bytes(logic),
                 model_id: ModelId(model),
                 prompt_template_hash: PromptTemplateHash::from_bytes(pth),

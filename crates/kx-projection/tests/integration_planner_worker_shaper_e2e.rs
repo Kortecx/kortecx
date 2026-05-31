@@ -42,6 +42,7 @@ fn planner_def() -> MoteDef {
         kx_mote::ToolVersion("1.0".into()),
     );
     MoteDef {
+        critic_check: None,
         logic_ref: LogicRef([1u8; 32]),
         model_id: ModelId("planner-7b".into()),
         prompt_template_hash: PromptTemplateHash([3u8; 32]),

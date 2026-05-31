@@ -54,6 +54,7 @@ pub trait MoteDefRegistry: Send + Sync {
 ///     critic_for: None,
 ///     is_topology_shaper: false,
 ///     inference_params: kx_mote::InferenceParams::default(),
+///     critic_check: None,
 ///     schema_version: kx_mote::MOTE_DEF_SCHEMA_VERSION,
 /// };
 /// let hash = def.hash();
@@ -123,6 +124,7 @@ mod tests {
 
     fn def(seed: u8) -> MoteDef {
         MoteDef {
+            critic_check: None,
             logic_ref: LogicRef([seed; 32]),
             model_id: kx_mote::ModelId(format!("m-{seed}")),
             prompt_template_hash: PromptTemplateHash([seed.wrapping_add(1); 32]),

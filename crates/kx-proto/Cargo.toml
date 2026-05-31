@@ -24,6 +24,8 @@ thiserror = { workspace = true }
 kx-mote = { workspace = true }
 kx-content = { workspace = true }
 kx-warrant = { workspace = true }
+kx-critic-types = { workspace = true }
+bincode = { workspace = true }
 smallvec = { workspace = true }
 
 [build-dependencies]

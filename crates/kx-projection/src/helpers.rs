@@ -38,6 +38,19 @@ pub(crate) fn transitive_consumers_impl(state: &State, root: &MoteId) -> Vec<Mot
 }
 
 pub(crate) fn ready_set_impl(state: &State) -> Vec<MoteId> {
+    // The pure default: promotion always NotApplicable (the P1 contract). The
+    // verdict-aware path is `ready_set_impl_with` (P4.2-3).
+    ready_set_impl_with(state, &|s, id| promotion_state_impl(s, id))
+}
+
+/// `ready_set_impl` parameterized by the WORLD-MUTATING promotion oracle. The
+/// pure `ready_set_impl` passes the `NotApplicable` stub; the P4.2-3 exit gate
+/// passes a verdict-reading closure
+/// (`crate::promotion::promotion_state_with`).
+pub(crate) fn ready_set_impl_with(
+    state: &State,
+    promotion: &dyn Fn(&State, &MoteId) -> PromotionState,
+) -> Vec<MoteId> {
     let mut out: Vec<MoteId> = Vec::new();
     for (id, info) in &state.motes {
         if state.state_of_id(id) != MoteState::Pending {
@@ -63,7 +76,7 @@ pub(crate) fn ready_set_impl(state: &State) -> Vec<MoteId> {
             if let Some(pinfo) = state.motes.get(&p.parent_id) {
                 if let Some(committed) = &pinfo.committed {
                     if committed.nondeterminism == NdClass::WorldMutating {
-                        match promotion_state_impl(state, &p.parent_id) {
+                        match promotion(state, &p.parent_id) {
                             PromotionState::Promoted | PromotionState::NotApplicable => {}
                             PromotionState::Unpromoted => {
                                 all_wm_parents_promoted = false;

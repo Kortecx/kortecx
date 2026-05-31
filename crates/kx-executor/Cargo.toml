@@ -23,6 +23,8 @@ kx-memoizer          = { workspace = true }
 kx-inference         = { workspace = true }
 kx-capability        = { workspace = true }
 kx-model-validator   = { workspace = true }
+kx-critic-types      = { workspace = true }
+kx-critic            = { workspace = true }
 bincode              = { workspace = true }
 blake3               = { workspace = true }
 bytes                = { workspace = true }

@@ -66,6 +66,8 @@ pub mod workflow;
 pub use config::{Mode, RuntimeConfig};
 pub use crash::CrashPoint;
 pub use digest::{digest_journal, digest_projection, ProjectionDigest};
-pub use engine::{canonical_mote_ids, canonical_targets, digest_only, run, RunOutcome};
+pub use engine::{
+    canonical_mote_ids, canonical_targets, digest_only, run, run_with_seams, RunOutcome,
+};
 pub use error::RuntimeError;
 pub use workflow::DemoWorkflow;

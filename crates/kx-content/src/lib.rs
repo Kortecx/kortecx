@@ -257,3 +257,32 @@ pub trait ContentStore {
     /// that lets the backend skip materializing the payload.
     fn contains(&self, r: &ContentRef) -> bool;
 }
+
+/// Blanket impl so a shared `Arc<S>` is itself a [`ContentStore`] (delegating to
+/// the inner store). Lets components hold an `Arc`-wrapped store directly —
+/// e.g. the projection's verdict resolver and the topology materializer share
+/// one store without each needing a bespoke wrapper. Purely additive; no
+/// behavior change for the inner store.
+impl<S: ContentStore + ?Sized> ContentStore for std::sync::Arc<S> {
+    type Payload = S::Payload;
+
+    fn put(&self, bytes: &[u8]) -> Result<ContentRef, StoreError> {
+        (**self).put(bytes)
+    }
+
+    fn get(&self, r: &ContentRef) -> Result<Self::Payload, NotFound> {
+        (**self).get(r)
+    }
+
+    fn delete(&self, r: &ContentRef) -> Result<(), StoreError> {
+        (**self).delete(r)
+    }
+
+    fn list_refs<'a>(&'a self) -> Box<dyn Iterator<Item = ContentRef> + 'a> {
+        (**self).list_refs()
+    }
+
+    fn contains(&self, r: &ContentRef) -> bool {
+        (**self).contains(r)
+    }
+}

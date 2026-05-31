@@ -63,6 +63,7 @@ pub trait ChildResolver: Send + Sync {
 ///     critic_for: None,
 ///     is_topology_shaper: true,
 ///     inference_params: kx_mote::InferenceParams::default(),
+///     critic_check: None,
 ///     schema_version: kx_mote::MOTE_DEF_SCHEMA_VERSION,
 /// };
 /// let descriptor = ChildDescriptor {
@@ -88,6 +89,7 @@ pub struct InheritFromShaperResolver;
 impl ChildResolver for InheritFromShaperResolver {
     fn resolve(&self, shaper: &MoteDef, d: &ChildDescriptor) -> MoteDef {
         MoteDef {
+            critic_check: None,
             // Inherited from shaper (the heavy axes — D48 + D50).
             model_id: shaper.model_id.clone(),
             prompt_template_hash: shaper.prompt_template_hash,
@@ -125,6 +127,7 @@ mod tests {
             kx_mote::ConfigVal("0.0".into()),
         );
         MoteDef {
+            critic_check: None,
             logic_ref: LogicRef([1u8; 32]),
             model_id: kx_mote::ModelId("planner-v1".into()),
             prompt_template_hash: PromptTemplateHash([3u8; 32]),

@@ -1016,6 +1016,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "kx-capture"
+version = "0.0.1"
+dependencies = [
+ "kx-content",
+ "kx-mote",
+ "proptest",
+]
+
+[[package]]
 name = "kx-chaos"
 version = "0.0.1"
 dependencies = [
@@ -1141,6 +1150,8 @@ dependencies = [
  "kx-capability",
  "kx-content",
  "kx-context-assembler",
+ "kx-critic",
+ "kx-critic-types",
  "kx-inference",
  "kx-journal",
  "kx-memoizer",
@@ -1241,6 +1252,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "kx-model-harness"
+version = "0.0.1"
+dependencies = [
+ "blake3",
+ "kx-capability",
+ "kx-capture",
+ "kx-content",
+ "kx-critic",
+ "kx-critic-types",
+ "kx-dataset",
+ "kx-executor",
+ "kx-inference",
+ "kx-journal",
+ "kx-memoizer",
+ "kx-mote",
+ "kx-projection",
+ "kx-runtime",
+ "kx-warrant",
+ "kx-workflow",
+ "serde",
+ "serde_json",
+ "sha2",
+ "smallvec",
+ "tempfile",
+ "tracing",
+ "ureq",
+]
+
+[[package]]
 name = "kx-model-validator"
 version = "0.0.1"
 dependencies = [
@@ -1258,6 +1298,7 @@ version = "0.0.1"
 dependencies = [
  "bincode",
  "blake3",
+ "kx-critic-types",
  "proptest",
  "serde",
  "smallvec",
@@ -1286,6 +1327,7 @@ dependencies = [
  "bincode",
  "blake3",
  "kx-content",
+ "kx-critic-types",
  "kx-journal",
  "kx-mote",
  "kx-warrant",
@@ -1301,7 +1343,9 @@ dependencies = [
 name = "kx-proto"
 version = "0.0.1"
 dependencies = [
+ "bincode",
  "kx-content",
+ "kx-critic-types",
  "kx-mote",
  "kx-warrant",
  "proptest",
@@ -1422,6 +1466,7 @@ version = "0.0.1"
 dependencies = [
  "blake3",
  "kx-content",
+ "kx-critic-types",
  "kx-dataset",
  "kx-executor",
  "kx-journal",

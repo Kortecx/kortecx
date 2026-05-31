@@ -75,6 +75,7 @@ fn mote(index: u64) -> Mote {
     let mut input = [0u8; 32];
     input[..8].copy_from_slice(&index.to_le_bytes());
     let def = MoteDef {
+        critic_check: None,
         logic_ref: LogicRef::from_bytes([7u8; 32]),
         model_id: ModelId("m".into()),
         prompt_template_hash: PromptTemplateHash::from_bytes([9u8; 32]),

@@ -71,7 +71,7 @@ The proof is a **projection digest**: BLAKE3 over the committed-result set
 [`reference-digest.txt`](./reference-digest.txt):
 
 ```
-f3051fd593a95c2de06903845baa91dffe885dd09cdf34b65488757d91db5b9f
+a6b5c67939f14bfcbd125f7461b2bd0e481f6ee2fc98c1ab638730e2d2ace2e9
 ```
 
 The exit gate is three assertions, all checked by the test:

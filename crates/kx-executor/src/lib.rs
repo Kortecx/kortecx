@@ -181,6 +181,7 @@
 //!     critic_for: None,
 //!     is_topology_shaper: false,
 //!     inference_params: kx_mote::InferenceParams::default(),
+//!     critic_check: None,
 //!     schema_version: MOTE_DEF_SCHEMA_VERSION,
 //! };
 //! let mote = Mote::new(
@@ -279,8 +280,10 @@ pub mod executor_trait;
 pub mod fact_zero;
 pub mod factory;
 pub mod lifecycle;
+pub mod native_critic;
 pub mod refusal;
 pub mod resource_manager;
+pub mod verify;
 // The spawn module ships shared Unix primitives (fork + pipe + dup2 +
 // execvp + waitpid + setrlimit pre-exec hook). Linux's `BwrapExecutor`
 // (PR 9a-hardening-3) and macOS's `MacOsSandboxExecutor` (PR 9a-hardening-2)
@@ -304,11 +307,13 @@ pub use lifecycle::{
     redispatch_wm_mote, run_pure_mote, run_wm_mote, LifecycleCommit, LifecycleError,
     TestMoteExecutor, WmLifecycleCommit, WmRedispatchOracle,
 };
+pub use native_critic::run_native_critic_mote;
 pub use refusal::{
     refusal_from_narrowing, validate_submission, validate_submission_with_idempotency,
     SubmissionRefusal, WorkflowSubmission,
 };
 pub use resource_manager::{LocalResourceManager, ResourceError, ResourceManager, Slot};
+pub use verify::{verify_pure_rerun, VerifyError, VerifyOutcome};
 
 // Backend re-exports — callers may select a specific backend explicitly.
 pub use backends::bwrap::BwrapExecutor;

@@ -60,6 +60,7 @@ pub fn mote_def(nd_class: NdClass) -> MoteDef {
         NdClass::Pure | NdClass::ReadOnlyNondet => EffectPattern::IdempotentByConstruction,
     };
     MoteDef {
+        critic_check: None,
         logic_ref: LogicRef::from_bytes([7u8; 32]),
         model_id: ModelId("llama-3.1-8b-instruct-q4_k_m".into()),
         prompt_template_hash: PromptTemplateHash::from_bytes([9u8; 32]),

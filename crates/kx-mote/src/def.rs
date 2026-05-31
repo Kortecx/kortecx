@@ -4,6 +4,7 @@
 
 use std::collections::BTreeMap;
 
+use kx_critic_types::CheckSpec;
 use serde::{Deserialize, Serialize};
 
 use crate::effect::EffectPattern;
@@ -18,18 +19,22 @@ use crate::strings::{ConfigKey, ConfigVal, GraphPosition, ModelId, ToolName, Too
 
 /// The current `MoteDef::schema_version`.
 ///
-/// Bumped to **4** at D50 to add the `inference_params` field — decoding
-/// parameters (`temperature_bps`, `top_p_bps`, `top_k`, `seed`,
-/// `stop_tokens`, `grammar`, `max_output_tokens`) now participate in
-/// `mote_def_hash` so two MoteDefs differing only in decoding params
-/// produce different `MoteId`s (closes the pre-D50 memoizer-collision
-/// latent bug). Prior bumps: **3** at the P0.6 addition of
-/// `is_topology_shaper`; **2** at the P0.8 addition of `effect_pattern`
-/// and `critic_for`. The schema version is the explicit forward-evolution
-/// mechanism: old-shape MoteDefs continue to hash and dedupe normally
-/// under their own schema_version; new-shape MoteDefs at v4 incorporate
-/// all fields.
-pub const MOTE_DEF_SCHEMA_VERSION: u16 = 4;
+/// Bumped to **5** at P4.2-2 to add the `critic_check` field — a critic Mote's
+/// declarative [`CheckSpec`] now participates in `mote_def_hash` so a critic's
+/// check is part of its identity (changing the declared check changes the
+/// `MoteId`; reproducible-by-construction). The embedded `CheckSpec` is carried
+/// via the same canonical bincode used for every other field — and it is
+/// **integer-only by construction** (`kx_critic_types` enforces no float on the
+/// identity path), so folding it preserves the no-float canonical-hash
+/// precondition (SN-8). Prior bumps: **4** at D50 (`inference_params` — decoding
+/// parameters `temperature_bps`/`top_p_bps`/`top_k`/`seed`/`stop_tokens`/
+/// `grammar`/`max_output_tokens`); **3** at the P0.6 addition of
+/// `is_topology_shaper`; **2** at the P0.8 addition of `effect_pattern` and
+/// `critic_for`. The schema version is the explicit forward-evolution
+/// mechanism: old-shape MoteDefs continue to hash and dedupe normally under
+/// their own schema_version (their `MoteId` is a stored journal fact, never
+/// re-derived on fold); new-shape MoteDefs at v5 incorporate all fields.
+pub const MOTE_DEF_SCHEMA_VERSION: u16 = 5;
 
 /// The closed set of behavior-determining inputs that defines a Mote's *kind
 /// of work* (`idempotency.md` §"mote_def_hash", D4).
@@ -98,6 +103,17 @@ pub struct MoteDef {
     /// constructor of dispatch-bound `InferenceParams`. Defaults to
     /// greedy (see [`InferenceParams::default`]).
     pub inference_params: InferenceParams,
+
+    /// If `Some(spec)`, this Mote is a **deterministic critic**: the executor
+    /// evaluates `spec` against its producer's committed output bytes in-process
+    /// (`kx_critic::evaluate`, no `execvp`) and commits the resulting
+    /// `CriticVerdict` as this Mote's `result_ref`. Carried in the identity so
+    /// the declared check is part of the critic's `MoteId` (changing the check
+    /// changes the Mote — reproducible by construction). The spec is
+    /// integer-only (no float on the identity path; SN-8). A native-check Mote
+    /// MUST be `Pure` with `critic_for = Some(_)` and `!is_topology_shaper`
+    /// (executor refusal R-15). `None` for every non-critic Mote.
+    pub critic_check: Option<CheckSpec>,
 
     /// Schema version of the `MoteDef` itself. Bumped on any change to the
     /// struct shape; see [`MOTE_DEF_SCHEMA_VERSION`].

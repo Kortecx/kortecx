@@ -16,12 +16,12 @@ use std::sync::Arc;
 use kx_capability::EffectRequest;
 use kx_content::{ContentStore, LocalFsContentStore};
 use kx_executor::{
-    redispatch_wm_mote, run_pure_mote, run_wm_mote, LocalResourceManager, StandardCommitProtocol,
-    TestMoteExecutor,
+    redispatch_wm_mote, run_native_critic_mote, run_pure_mote, run_wm_mote, CommitProtocol,
+    LocalResourceManager, MoteExecutor, StandardCommitProtocol, TestMoteExecutor,
 };
 use kx_journal::{Journal, SqliteJournal};
 use kx_mote::{MoteId, NdClass, TopologyDecision};
-use kx_projection::{MoteState, Projection};
+use kx_projection::{ContentStoreVerdicts, MoteState, Projection, VerdictLookup};
 use kx_scheduler::{LocalPlacement, Scheduler};
 use kx_warrant::{FsScope, NetScope};
 
@@ -55,8 +55,15 @@ impl RunOutcome {
 /// What to do with the next actionable Mote. Owned (a cheap `WorkflowMote`
 /// clone) so the runnable set can be extended with materialized shaper children
 /// within the same loop iteration without a borrow conflict.
+// The shared `Run` prefix is intentional — every variant is a dispatch action.
+#[allow(clippy::enum_variant_names)]
 enum Action {
     RunPure(WorkflowMote),
+    /// A native deterministic-critic Mote (`critic_check = Some`): evaluate the
+    /// declared check in-process against the producer's committed bytes and
+    /// commit a `CriticVerdict` (P4.2-2). Routed ahead of `RunPure` even though
+    /// a critic is PURE, because its body is the check, not an executor spawn.
+    RunNativeCritic(WorkflowMote),
     RunWm {
         wm: WorkflowMote,
         /// `true` ⇒ recover an in-flight WM Mote (re-dispatch); `false` ⇒ fresh.
@@ -64,8 +71,15 @@ enum Action {
     },
 }
 
-/// Run (or replay) the demo workflow per `config`. Returns the final outcome,
-/// or aborts the process at the configured crash point (which never returns).
+/// Run (or replay) the canonical demo workflow per `config`. Returns the final
+/// outcome, or aborts the process at the configured crash point (which never
+/// returns).
+///
+/// This is the thin demo-defaults wrapper over [`run_with_seams`]: it wires the
+/// deterministic stub seams (`TestMoteExecutor::deterministic()` + `DemoBroker`)
+/// and the canonical topology shaper, then drives the real orchestrator. Its
+/// output is byte-identical to the pre-seam engine (digest `a6b5c679…`, 8/8) —
+/// the seam injects, it does not change, the truth path.
 pub fn run(config: &RuntimeConfig) -> Result<RunOutcome, RuntimeError> {
     let workflow = DemoWorkflow::canonical();
 
@@ -73,20 +87,16 @@ pub fn run(config: &RuntimeConfig) -> Result<RunOutcome, RuntimeError> {
     let journal = Arc::new(SqliteJournal::open(&config.journal_path)?);
     let rm = LocalResourceManager::dev_defaults();
     let executor = TestMoteExecutor::deterministic();
-    let submission_motes = workflow.submission_motes();
 
-    // The shaper's def + warrant drive topology materialization. Stage its
-    // warrant bytes BEFORE building the projection: on replay,
-    // `from_journal_with_materializer` folds the shaper's committed entry
-    // immediately and the materializer must be able to fetch the warrant to
-    // narrow each child (PR 11.5 / KG-1-close).
+    // The shaper's def + warrant drive topology materialization (resolved inside
+    // `run_with_seams`). Find it up front so the broker can stage the exact
+    // `TopologyDecision` bytes as the shaper's effect response.
     let shaper_wm = workflow
         .motes
         .iter()
         .find(|w| w.mote.id == workflow.shaper_id)
         .cloned()
         .ok_or_else(|| RuntimeError::Config("workflow is missing its shaper".into()))?;
-    store.put(&topology::encode_warrant(&shaper_wm.warrant)?)?;
 
     // The shaper's effect is its TopologyDecision: the broker stages those exact
     // canonical bytes, so the shaper's committed result_ref is the decision's
@@ -105,11 +115,77 @@ pub fn run(config: &RuntimeConfig) -> Result<RunOutcome, RuntimeError> {
     ));
     let protocol = StandardCommitProtocol::new(store.clone(), journal.clone(), broker.clone());
 
-    // Build the projection THROUGH the materializer so every fold of a shaper's
-    // Committed entry re-derives its children (deterministically, incl. replay).
-    let materializer =
-        topology::build_materializer(store.clone(), &shaper_wm.mote.def, &shaper_wm.warrant);
-    let mut projection = Projection::from_journal_with_materializer(&*journal, materializer)?;
+    run_with_seams(
+        config,
+        &workflow,
+        store,
+        journal,
+        &rm,
+        &executor,
+        &protocol,
+        Some((&shaper_wm, &topology_decision)),
+    )
+}
+
+/// The real single-process orchestrator, parameterized over the injected seams.
+///
+/// `run()` calls this with the demo stubs + canonical shaper; the `kx-model-harness`
+/// crate calls it with a real `InferenceBackend`-backed [`MoteExecutor`] + a
+/// model/tool `CapabilityBroker` and its own (shaperless) workflows. The body —
+/// projection fold, `pick_next`, the PURE / native-critic / WM / re-dispatch
+/// routing, the P4.2-3 `ready_set_promoted` exit gate, exactly-once via
+/// `serve_if_committed`, the crash-injection windows — is the SAME code on every
+/// run; only the executor + commit protocol (broker) + workflow vary. This is the
+/// thesis-test seam: distribution / real-model is wiring, not a rewrite.
+///
+/// `shaper` carries the topology shaper + its decision when the workflow has one
+/// (the canonical demo); pass `None` for a flat DAG (the harness's A–J workflows),
+/// in which case the topology materializer + child re-derivation are skipped.
+// `store` / `journal` are taken by value: the orchestrator owns these `Arc`
+// handles for the run (cloning them into the verdict lookup + materializer +
+// commit calls), so `needless_pass_by_value` is intentional here — the caller
+// hands off cheap `Arc` clones and keeps its own (matches `kx-executor`'s
+// crate-level allow of the same lint).
+#[allow(
+    clippy::too_many_arguments,
+    clippy::too_many_lines,
+    clippy::needless_pass_by_value
+)]
+pub fn run_with_seams<S, E, CP>(
+    config: &RuntimeConfig,
+    workflow: &DemoWorkflow,
+    store: Arc<S>,
+    journal: Arc<SqliteJournal>,
+    rm: &LocalResourceManager,
+    executor: &E,
+    protocol: &CP,
+    shaper: Option<(&WorkflowMote, &TopologyDecision)>,
+) -> Result<RunOutcome, RuntimeError>
+where
+    S: ContentStore + Send + Sync + 'static,
+    E: MoteExecutor + ?Sized,
+    CP: CommitProtocol + ?Sized,
+{
+    // Reads committed `CriticVerdict`s by content-address for the P4.2-3
+    // promotion gate (shares the one store via Arc).
+    let verdicts = ContentStoreVerdicts::new(store.clone());
+    let submission_motes = workflow.submission_motes();
+
+    // Build the projection. With a shaper, stage its warrant bytes BEFORE
+    // building the projection (on replay `from_journal_with_materializer` folds
+    // the shaper's committed entry immediately and the materializer must fetch
+    // the warrant to narrow each child — PR 11.5 / KG-1-close), then fold
+    // through the materializer so every fold of a shaper's Committed entry
+    // re-derives its children deterministically (incl. replay). Without a
+    // shaper (flat DAG), a plain journal fold suffices.
+    let mut projection = if let Some((shaper_wm, _)) = shaper {
+        store.put(&topology::encode_warrant(&shaper_wm.warrant)?)?;
+        let materializer =
+            topology::build_materializer(store.clone(), &shaper_wm.mote.def, &shaper_wm.warrant);
+        Projection::from_journal_with_materializer(&*journal, materializer)?
+    } else {
+        Projection::from_journal(&*journal)?
+    };
     // `from_journal_*` already folded the existing journal; record how far so the
     // incremental fold doesn't re-apply (and trip `DuplicateCommitted`).
     let mut folded_through: u64 = journal.current_seq()?;
@@ -123,7 +199,8 @@ pub fn run(config: &RuntimeConfig) -> Result<RunOutcome, RuntimeError> {
     // The runnable set grows when the shaper materializes children (which the
     // engine re-derives into runnable Motes, identity-matched to the projection).
     let mut runnable: Vec<WorkflowMote> = workflow.motes.clone();
-    let mut children_derived = false;
+    // A shaperless workflow never derives children — start "done".
+    let mut children_derived = shaper.is_none();
     let mut child_ids: Vec<MoteId> = Vec::new();
 
     // The drive loop.
@@ -135,23 +212,31 @@ pub fn run(config: &RuntimeConfig) -> Result<RunOutcome, RuntimeError> {
         // to re-decide. Doing this after `pick_next` would let a recovery where only
         // the children remain break first, orphaning the shaper's decision.
         if !children_derived {
-            children_derived = derive_shaper_children(
-                &workflow,
-                &shaper_wm,
-                &topology_decision,
-                &projection,
-                &mut runnable,
-                &mut child_ids,
-            );
+            if let Some((shaper_wm, topology_decision)) = shaper {
+                children_derived = derive_shaper_children(
+                    workflow,
+                    shaper_wm,
+                    topology_decision,
+                    &projection,
+                    &mut runnable,
+                    &mut child_ids,
+                );
+            }
         }
 
-        let Some(action) = pick_next(&runnable, &projection) else {
+        let Some(action) = pick_next(&runnable, &projection, &verdicts) else {
             break;
         };
         match action {
             Action::RunPure(w) => {
                 crash_if_children_pending(config, &child_ids, w.mote.id);
-                run_pure_mote(&w.mote, &w.warrant, &*journal, &rm, &executor)?;
+                run_pure_mote(&w.mote, &w.warrant, &*journal, rm, executor)?;
+            }
+            Action::RunNativeCritic(w) => {
+                // Evaluate the declared check in-process against the producer's
+                // committed bytes and commit a CriticVerdict (P4.2-2). The
+                // verdict drives the P4.2-3 promotion gate on the next fold.
+                run_native_critic_mote(&w.mote, &w.warrant, &*journal, &*store)?;
             }
             Action::RunWm { wm, recover } => {
                 let request = effect_request_for(&wm);
@@ -163,8 +248,8 @@ pub fn run(config: &RuntimeConfig) -> Result<RunOutcome, RuntimeError> {
                         request,
                         &submission_motes,
                         &*journal,
-                        &rm,
-                        &protocol,
+                        rm,
+                        protocol,
                         &projection,
                     )?;
                 } else {
@@ -175,15 +260,15 @@ pub fn run(config: &RuntimeConfig) -> Result<RunOutcome, RuntimeError> {
                         request,
                         &submission_motes,
                         &*journal,
-                        &rm,
-                        &protocol,
+                        rm,
+                        protocol,
                     )?;
                 }
 
-                // Scenario-2 injection: a hard kill the instant M3's Committed
-                // is durable (and the critic's Proposed has been recorded),
-                // before the run finishes. Recovery must RE-READ M3, never
-                // re-run its world effect.
+                // Scenario-2 injection: a hard kill the instant the VTC Mote's
+                // Committed is durable (and the critic's Proposed has been
+                // recorded), before the run finishes. Recovery must RE-READ it,
+                // never re-run its world effect.
                 if config.crash_at == Some(CrashPoint::PostCommitVtc)
                     && wm.mote.id == workflow.vtc_crash_target
                 {
@@ -274,8 +359,16 @@ fn derive_shaper_children(
     true
 }
 
-fn pick_next(runnable: &[WorkflowMote], projection: &Projection) -> Option<Action> {
-    let ready = projection.ready_set();
+fn pick_next(
+    runnable: &[WorkflowMote],
+    projection: &Projection,
+    verdicts: &dyn VerdictLookup,
+) -> Option<Action> {
+    // The P4.2-3 exit gate: a WORLD-MUTATING producer's consumers are withheld
+    // until its deterministic critic commits a `Valid` verdict. For workflows
+    // without deterministic critics (e.g. the canonical demo) every producer is
+    // `NotApplicable`, so this is byte-identical to the un-gated `ready_set()`.
+    let ready = projection.ready_set_promoted(verdicts);
     for w in runnable {
         let id = w.mote.id;
         let state = projection.state_of(&id);
@@ -285,7 +378,13 @@ fn pick_next(runnable: &[WorkflowMote], projection: &Projection) -> Option<Actio
         let in_ready = ready.contains(&id);
         let scheduled = state == MoteState::Scheduled;
 
-        if w.mote.nd_class() == NdClass::Pure {
+        if w.mote.def.critic_check.is_some() {
+            // A native deterministic critic — PURE, but its body is the
+            // in-process check, not an executor spawn (P4.2-2).
+            if in_ready || scheduled {
+                return Some(Action::RunNativeCritic(w.clone()));
+            }
+        } else if w.mote.nd_class() == NdClass::Pure {
             // PURE is recomputable: run when ready, or re-run if it was left
             // in-flight by a crash (or proposed as a critic by the VTC path).
             if in_ready || scheduled {

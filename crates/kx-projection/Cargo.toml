@@ -15,6 +15,7 @@ path = "src/lib.rs"
 bincode    = { workspace = true }
 blake3     = { workspace = true }
 kx-content = { workspace = true }
+kx-critic-types = { workspace = true }
 kx-journal = { workspace = true }
 kx-mote    = { workspace = true }
 kx-warrant = { workspace = true }
