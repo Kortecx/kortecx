@@ -363,6 +363,25 @@ message ReadEntriesResponse {
 }
 
 // ---------------------------------------------------------------------------
+// RPC (8) — register a run (M1.1, D63/D64). The client establishes a run BEFORE
+// submitting any Mote: the coordinator assigns a fresh, journaled, immutable
+// `instance_id` (the registered run identity + cross-boundary idempotency-token
+// root, D64) and appends a `RunRegistered` entry at seq=1. The client supplies a
+// `recipe_fingerprint` (the recipe's def/content hash, e.g. a ManifestId) for
+// discovery/dedup — it is NEVER the run identity. Calling twice on the same run
+// returns the existing `instance_id` (idempotent retry). The instance_id is
+// coordinator-assigned; clients NEVER compute it (D53 identity invariant).
+// ---------------------------------------------------------------------------
+
+message RegisterRunRequest {
+  bytes recipe_fingerprint = 1;         // 32B — recipe def/content hash (discovery/dedup only)
+}
+
+message RegisterRunResponse {
+  bytes instance_id = 1;                // 16B — coordinator-assigned registered run identity
+}
+
+// ---------------------------------------------------------------------------
 // Service — hosted by the coordinator; workers are clients.
 // ---------------------------------------------------------------------------
 
@@ -374,4 +393,5 @@ service Coordinator {
   rpc LeaseWork(LeaseWorkRequest) returns (LeaseWorkResponse);
   rpc ReadEntries(ReadEntriesRequest) returns (ReadEntriesResponse);
   rpc ReportEffectStaged(ReportEffectStagedRequest) returns (ReportEffectStagedResponse);
+  rpc RegisterRun(RegisterRunRequest) returns (RegisterRunResponse);
 }

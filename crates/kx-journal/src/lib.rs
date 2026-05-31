@@ -66,9 +66,10 @@
 //!
 //! ## What lives here
 //!
-//! - [`JournalEntry`] — the four-kind union (Proposed / Committed / Repudiated / Failed)
-//!   with hand-rolled canonical byte encoding matching `journal-entry.md` §3-7
-//!   byte-for-byte (no bincode varint surprises; the `parents` length is u16 per spec).
+//! - [`JournalEntry`] — the kind union (Proposed / Committed / Repudiated / Failed /
+//!   EffectStaged / RunRegistered) with hand-rolled canonical byte encoding matching
+//!   `journal-entry.md` §3-7 byte-for-byte (no bincode varint surprises; the `parents`
+//!   length is u16 per spec).
 //! - [`Journal`] — the backend-agnostic trait.
 //! - [`SqliteJournal`] — the OSS local backend using `rusqlite` with `BEGIN IMMEDIATE`
 //!   txns, a single `entries` table with a partial unique index for dedupe-by-key on
@@ -88,9 +89,10 @@
 
 pub use crate::entry::{
     decode_entry, decode_entry_with_def_hash, encode_entry, is_pre_commit_crash,
-    repudiation_idempotency_key, DecodeError, EncodeError, FailureReason, JournalEntry,
-    ParentEntry, RepudiationReason, HEADER_LEN, JOURNAL_SCHEMA_VERSION, KIND_COMMITTED,
-    KIND_EFFECT_STAGED, KIND_FAILED, KIND_PROPOSED, KIND_REPUDIATED, MAX_ENTRY_LEN, MAX_PARENTS,
+    repudiation_idempotency_key, run_root_id, DecodeError, EncodeError, FailureReason,
+    JournalEntry, ParentEntry, RepudiationReason, HEADER_LEN, INSTANCE_ID_LEN,
+    JOURNAL_SCHEMA_VERSION, KIND_COMMITTED, KIND_EFFECT_STAGED, KIND_FAILED, KIND_PROPOSED,
+    KIND_REPUDIATED, KIND_RUN_REGISTERED, MAX_ENTRY_LEN, MAX_PARENTS,
 };
 pub use crate::in_memory::InMemoryJournal;
 pub use crate::sqlite::SqliteJournal;

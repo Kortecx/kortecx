@@ -9,7 +9,8 @@
 //!
 //! ```text
 //! header (74 bytes, common to all kinds):
-//!     kind             u8     (Proposed=0, Committed=1, Repudiated=2, Failed=3)
+//!     kind             u8     (Proposed=0, Committed=1, Repudiated=2, Failed=3,
+//!                              EffectStaged=4, RunRegistered=5)
 //!     mote_id          [u8;32]
 //!     idempotency_key  [u8;32]
 //!     seq              u64 LE
@@ -34,6 +35,13 @@
 //!     reason_class     u8
 //!     reporter_id      u128 LE
 //!
+//!   EffectStaged (0 bytes): header-only (v2, D38 §2b)
+//!
+//!   RunRegistered (56 bytes) (v3, M1.1, D63/D64):
+//!     instance_id        [u8;16]
+//!     recipe_fingerprint [u8;32]
+//!     ts                 u64 LE   (audit-only; excluded from every hash)
+//!
 //! ParentEntry (34 bytes):
 //!     parent_id        [u8;32]
 //!     edge_kind        u8 (Data=0, Control=1)
@@ -56,7 +64,20 @@ use smallvec::SmallVec;
 ///
 /// v2 readers refuse v1 files loudly (no in-place evolution; no production v1
 /// journals exist per the corpus, acceptable).
-pub const JOURNAL_SCHEMA_VERSION: u16 = 2;
+///
+/// **v3 (M1.1, D63/D64) changes** vs v2:
+/// - New `RunRegistered` entry kind (=5) — the append-only, immutable
+///   run-registration fact (the first entry of a run). Establishes the run's
+///   identity root: a journaled `instance_id` (the cross-boundary
+///   idempotency-token root) plus a `recipe_fingerprint` retained for
+///   discovery/dedup only (NOT identity).
+/// - `RunRegistered` does NOT participate in dedup-by-key (one run registers
+///   exactly once by construction — one journal per run), so the dedup index
+///   stays `{1, 2, 4}`. Strictly additive; `MAX_ENTRY_LEN` is unchanged.
+///
+/// v3 readers refuse v2 files loudly (no in-place evolution; no production v2
+/// journals are retained across the bump per the corpus, acceptable).
+pub const JOURNAL_SCHEMA_VERSION: u16 = 3;
 
 /// Fixed entry-header length in bytes (`journal-entry.md` §3).
 pub const HEADER_LEN: usize = 74;
@@ -100,6 +121,23 @@ pub const KIND_FAILED: u8 = 3;
 /// **header-only** (no payload bytes); dedup-by-key participates per the
 /// expanded `{1, 2, 4}` index.
 pub const KIND_EFFECT_STAGED: u8 = 4;
+/// `RunRegistered` entry-kind byte (NEW in v3; M1.1, D63/D64).
+///
+/// `RunRegistered` is the append-only, immutable run-registration fact — the
+/// FIRST entry of every run (`seq = 1` for a fresh run). It establishes the
+/// run's identity root (`instance_id`, read on replay and never recomputed) and
+/// carries the `recipe_fingerprint` for discovery/dedup only. Body layout:
+/// `instance_id(16) ‖ recipe_fingerprint(32) ‖ ts(u64 LE)` = 56 bytes. Does NOT
+/// participate in dedup-by-key (the dedup index stays `{1, 2, 4}`); the header
+/// `idempotency_key` slot is the all-zero sentinel and the `mote_id` slot
+/// carries the synthetic [`run_root_id`].
+pub const KIND_RUN_REGISTERED: u8 = 5;
+
+/// Length in bytes of a run's `instance_id` (the registered run nonce).
+pub const INSTANCE_ID_LEN: usize = 16;
+
+/// `RunRegistered` body length: `instance_id(16) + recipe_fingerprint(32) + ts(8)`.
+const RUN_REGISTERED_BODY_LEN: usize = INSTANCE_ID_LEN + 32 + 8;
 
 // ---------------------------------------------------------------------------
 // Closed reason enums (D19; `journal-entry.md` §6.2 + §7.2)
@@ -439,6 +477,52 @@ pub enum JournalEntry {
         /// Per-run monotonic sequence number assigned by the journal at append time.
         seq: u64,
     },
+
+    /// The append-only, immutable run-registration fact (v3, M1.1, D63/D64) —
+    /// the FIRST entry of every run (`seq = 1` for a fresh run). Establishes the
+    /// run's identity root.
+    ///
+    /// `instance_id` is the run's registered identity and the cross-boundary
+    /// idempotency-token **root** (token derivation is wired in M1.2 — no
+    /// `run_scoped_token` exists yet); it is **read on replay, never
+    /// recomputed**. `recipe_fingerprint` is the
+    /// content/def hash of the run's recipe, retained for **discovery/dedup
+    /// only** — never an identity input. `ts` is audit-only and excluded from
+    /// every hash.
+    ///
+    /// Does NOT participate in dedup-by-key: each run registers exactly once by
+    /// construction (one journal per run). The header `mote_id` slot carries the
+    /// synthetic [`run_root_id`]; the header `idempotency_key` slot is the
+    /// all-zero sentinel (kind 5 is excluded from the dedup gate).
+    RunRegistered {
+        /// The per-run nonce — the registered run identity (and token root).
+        instance_id: [u8; INSTANCE_ID_LEN],
+        /// The recipe fingerprint (discovery/dedup only; never identity).
+        recipe_fingerprint: [u8; 32],
+        /// Wall-clock submission time (ms). Audit-only; excluded from every hash.
+        ts: u64,
+        /// Journal-assigned sequence (0 until appended). `= 1` for a fresh run.
+        seq: u64,
+    },
+}
+
+/// The all-zero sentinel returned as the dedupe key of a `RunRegistered` entry,
+/// which does not participate in dedup-by-key. A `static` so
+/// [`JournalEntry::idempotency_key`] can hand back a `&[u8; 32]` uniformly.
+static ZERO_IDEMPOTENCY_KEY: [u8; 32] = [0u8; 32];
+
+/// Derive the synthetic 32-byte "run root" id that occupies a `RunRegistered`
+/// entry's header `mote_id` slot, from the run's `instance_id`.
+///
+/// Domain-separated (`"kx-run-root"`) from real Mote ids so it can never collide
+/// with one. Derived locally in `kx-journal` (no `kx-executor` dependency — the
+/// journal must not depend on the executor).
+#[must_use]
+pub fn run_root_id(instance_id: &[u8; INSTANCE_ID_LEN]) -> MoteId {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"kx-run-root");
+    hasher.update(instance_id);
+    MoteId::from_bytes(*hasher.finalize().as_bytes())
 }
 
 impl JournalEntry {
@@ -450,7 +534,8 @@ impl JournalEntry {
             | Self::Committed { seq, .. }
             | Self::Repudiated { seq, .. }
             | Self::Failed { seq, .. }
-            | Self::EffectStaged { seq, .. } => *seq,
+            | Self::EffectStaged { seq, .. }
+            | Self::RunRegistered { seq, .. } => *seq,
         }
     }
 
@@ -473,11 +558,16 @@ impl JournalEntry {
             | Self::EffectStaged {
                 idempotency_key, ..
             } => idempotency_key,
+            // RunRegistered does not dedup; return the all-zero sentinel (kind 5
+            // is excluded from the dedup gate).
+            Self::RunRegistered { .. } => &ZERO_IDEMPOTENCY_KEY,
         }
     }
 
     /// The entry's primary `mote_id`. For `Repudiated` entries this is the
-    /// `target_mote_id` (matches the header's `mote_id` per `journal-entry.md` §6).
+    /// `target_mote_id` (matches the header's `mote_id` per `journal-entry.md` §6);
+    /// for `RunRegistered` (which names no Mote) this is the synthetic
+    /// [`run_root_id`] derived from the run's `instance_id`.
     #[must_use]
     pub fn mote_id(&self) -> MoteId {
         match self {
@@ -486,6 +576,7 @@ impl JournalEntry {
             | Self::Failed { mote_id, .. }
             | Self::EffectStaged { mote_id, .. } => *mote_id,
             Self::Repudiated { target_mote_id, .. } => *target_mote_id,
+            Self::RunRegistered { instance_id, .. } => run_root_id(instance_id),
         }
     }
 
@@ -498,6 +589,7 @@ impl JournalEntry {
             Self::Repudiated { .. } => KIND_REPUDIATED,
             Self::Failed { .. } => KIND_FAILED,
             Self::EffectStaged { .. } => KIND_EFFECT_STAGED,
+            Self::RunRegistered { .. } => KIND_RUN_REGISTERED,
         }
     }
 }
@@ -531,7 +623,8 @@ pub enum DecodeError {
         /// Bytes actually present.
         got: usize,
     },
-    /// The kind discriminant byte is not one of the four known values.
+    /// The kind discriminant byte is not one of the known values
+    /// (Proposed=0 .. RunRegistered=5).
     #[error("unknown kind discriminant: {0}")]
     UnknownKind(u8),
     /// The `nondeterminism` discriminant byte is not one of the three known values.
@@ -555,6 +648,11 @@ pub enum DecodeError {
     /// (`journal-entry.md` §6 + test #17).
     #[error("Repudiated body-header mote_id mismatch")]
     RepudiatedHeaderMismatch,
+    /// A `RunRegistered` entry's header `mote_id` slot does not equal
+    /// `run_root_id(instance_id)` (v3 body-header consistency; mirrors
+    /// [`Self::RepudiatedHeaderMismatch`]).
+    #[error("RunRegistered body-header run_root_id mismatch")]
+    RunRegisteredHeaderMismatch,
     /// Trailing bytes after a complete entry (§2 no-trailing-data rule).
     #[error("trailing bytes after entry: {0} extra")]
     TrailingBytes(usize),
@@ -637,6 +735,12 @@ pub fn encode_entry(entry: &JournalEntry) -> Result<Vec<u8>, EncodeError> {
             idempotency_key,
             seq,
         } => (*mote_id, *idempotency_key, *seq, 0),
+        // v3 (M1.1): the header `mote_id` slot carries the synthetic run-root id;
+        // the `idempotency_key` slot is the all-zero sentinel (kind 5 does not
+        // dedup); `nondeterminism` is the 0 sentinel (a run is not a Mote).
+        JournalEntry::RunRegistered {
+            instance_id, seq, ..
+        } => (run_root_id(instance_id), ZERO_IDEMPOTENCY_KEY, *seq, 0),
     };
     out.extend_from_slice(mote_id_for_header.as_bytes());
     out.extend_from_slice(&idempotency_key);
@@ -706,6 +810,17 @@ pub fn encode_entry(entry: &JournalEntry) -> Result<Vec<u8>, EncodeError> {
             // The full carrying information (mote_id + idempotency_key + seq)
             // is in the 74-byte header; the recovery fold reads presence to
             // set `effect_staged_observed` on `MoteInfo`.
+        }
+        JournalEntry::RunRegistered {
+            instance_id,
+            recipe_fingerprint,
+            ts,
+            ..
+        } => {
+            // v3 (M1.1): body = instance_id(16) ‖ recipe_fingerprint(32) ‖ ts(u64 LE).
+            out.extend_from_slice(instance_id);
+            out.extend_from_slice(recipe_fingerprint);
+            out.extend_from_slice(&ts.to_le_bytes());
         }
     }
 
@@ -910,6 +1025,39 @@ pub fn decode_entry_with_def_hash(
                 seq,
             })
         }
+        KIND_RUN_REGISTERED => {
+            // v3 (M1.1): body = instance_id(16) ‖ recipe_fingerprint(32) ‖ ts(u64 LE).
+            // Exact-length (mirrors Repudiated's `!= 57`): over-length surfaces as
+            // BodyTooShort rather than a separate TrailingBytes path.
+            if body.len() != RUN_REGISTERED_BODY_LEN {
+                return Err(DecodeError::BodyTooShort {
+                    kind,
+                    got: body.len(),
+                    expected: RUN_REGISTERED_BODY_LEN,
+                });
+            }
+            let mut instance_id = [0u8; INSTANCE_ID_LEN];
+            instance_id.copy_from_slice(&body[..INSTANCE_ID_LEN]);
+            // Body-header consistency: the header `mote_id` slot MUST be the
+            // synthetic run-root id derived from this `instance_id` (mirrors the
+            // Repudiated body-vs-header check).
+            if mote_id != run_root_id(&instance_id) {
+                return Err(DecodeError::RunRegisteredHeaderMismatch);
+            }
+            let mut recipe_fingerprint = [0u8; 32];
+            recipe_fingerprint.copy_from_slice(&body[INSTANCE_ID_LEN..INSTANCE_ID_LEN + 32]);
+            let ts = u64::from_le_bytes(
+                body[INSTANCE_ID_LEN + 32..RUN_REGISTERED_BODY_LEN]
+                    .try_into()
+                    .expect("8 bytes"),
+            );
+            Ok(JournalEntry::RunRegistered {
+                instance_id,
+                recipe_fingerprint,
+                ts,
+                seq,
+            })
+        }
         other => Err(DecodeError::UnknownKind(other)),
     }
 }
@@ -994,6 +1142,13 @@ mod tests {
             JournalEntry::EffectStaged {
                 mote_id: MoteId::from_bytes([1u8; 32]),
                 idempotency_key: [2u8; 32],
+                seq: 0,
+            },
+            // v3 (M1.1): RunRegistered. Header carries the synthetic run-root id.
+            JournalEntry::RunRegistered {
+                instance_id: [3u8; INSTANCE_ID_LEN],
+                recipe_fingerprint: [4u8; 32],
+                ts: 0,
                 seq: 0,
             },
         ];
@@ -1215,6 +1370,120 @@ mod tests {
             seq: 200,
         };
         assert_eq!(decode_entry(&encode_entry(&es).unwrap()).unwrap(), es);
+
+        // v3 (M1.1): RunRegistered
+        let rr = JournalEntry::RunRegistered {
+            instance_id: [0x5a; INSTANCE_ID_LEN],
+            recipe_fingerprint: [0x6b; 32],
+            ts: 0x0123_4567_89ab_cdef,
+            seq: 300,
+        };
+        assert_eq!(decode_entry(&encode_entry(&rr).unwrap()).unwrap(), rr);
+    }
+
+    #[test]
+    fn run_registered_total_length_is_130() {
+        // v3 (M1.1): 74 header + 56 body (16 instance_id + 32 recipe_fingerprint
+        // + 8 ts) = 130 bytes.
+        let e = JournalEntry::RunRegistered {
+            instance_id: [9u8; INSTANCE_ID_LEN],
+            recipe_fingerprint: [8u8; 32],
+            ts: 42,
+            seq: 1,
+        };
+        assert_eq!(encode_entry(&e).unwrap().len(), 130);
+    }
+
+    #[test]
+    fn run_registered_header_carries_run_root_id_and_zero_idempotency_key() {
+        let instance_id = [0x11u8; INSTANCE_ID_LEN];
+        let e = JournalEntry::RunRegistered {
+            instance_id,
+            recipe_fingerprint: [0x22; 32],
+            ts: 7,
+            seq: 1,
+        };
+        let bytes = encode_entry(&e).unwrap();
+        // Header mote_id slot = run_root_id(instance_id).
+        assert_eq!(&bytes[1..33], run_root_id(&instance_id).as_bytes());
+        // Header idempotency_key slot = the all-zero sentinel (kind 5 doesn't dedup).
+        assert_eq!(&bytes[33..65], &[0u8; 32]);
+        // The accessor agrees.
+        assert_eq!(e.idempotency_key(), &[0u8; 32]);
+        assert_eq!(e.mote_id(), run_root_id(&instance_id));
+        assert_eq!(e.kind(), KIND_RUN_REGISTERED);
+    }
+
+    #[test]
+    fn decode_rejects_run_registered_body_too_short() {
+        let e = JournalEntry::RunRegistered {
+            instance_id: [1u8; INSTANCE_ID_LEN],
+            recipe_fingerprint: [2u8; 32],
+            ts: 3,
+            seq: 1,
+        };
+        let mut bytes = encode_entry(&e).unwrap();
+        bytes.pop(); // drop one body byte
+        assert!(matches!(
+            decode_entry(&bytes),
+            Err(DecodeError::BodyTooShort {
+                kind: KIND_RUN_REGISTERED,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn decode_rejects_run_registered_trailing_bytes() {
+        let e = JournalEntry::RunRegistered {
+            instance_id: [1u8; INSTANCE_ID_LEN],
+            recipe_fingerprint: [2u8; 32],
+            ts: 3,
+            seq: 1,
+        };
+        let mut bytes = encode_entry(&e).unwrap();
+        bytes.push(0xff); // over-length body
+                          // Exact-length check (mirrors Repudiated `!= 57`) surfaces as BodyTooShort.
+        assert!(matches!(
+            decode_entry(&bytes),
+            Err(DecodeError::BodyTooShort {
+                kind: KIND_RUN_REGISTERED,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn decode_rejects_run_registered_header_body_mismatch() {
+        let e = JournalEntry::RunRegistered {
+            instance_id: [0x33u8; INSTANCE_ID_LEN],
+            recipe_fingerprint: [0x44; 32],
+            ts: 5,
+            seq: 1,
+        };
+        let mut bytes = encode_entry(&e).unwrap();
+        // Corrupt the header mote_id slot so it no longer equals
+        // run_root_id(instance_id).
+        bytes[1] ^= 0xff;
+        assert_eq!(
+            decode_entry(&bytes).unwrap_err(),
+            DecodeError::RunRegisteredHeaderMismatch
+        );
+    }
+
+    #[test]
+    fn run_root_id_is_deterministic_and_domain_separated() {
+        let a = [0xaau8; INSTANCE_ID_LEN];
+        let b = [0xbbu8; INSTANCE_ID_LEN];
+        // Deterministic.
+        assert_eq!(run_root_id(&a), run_root_id(&a));
+        // Distinct instances → distinct roots.
+        assert_ne!(run_root_id(&a), run_root_id(&b));
+        // Domain-separated: NOT a bare blake3 of the instance_id (the "kx-run-root"
+        // tag must participate), so a run-root id can never collide with any other
+        // blake3-of-16-bytes identity.
+        let bare = MoteId::from_bytes(*blake3::hash(&a).as_bytes());
+        assert_ne!(run_root_id(&a), bare);
     }
 
     #[test]

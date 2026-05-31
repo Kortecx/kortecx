@@ -88,6 +88,15 @@ impl Snapshot {
         self.state.state_of_id(mote_id)
     }
 
+    /// The registered run identity (D64). See
+    /// [`crate::Projection::run_registration`].
+    #[must_use]
+    pub fn run_registration(&self) -> Option<([u8; kx_journal::INSTANCE_ID_LEN], [u8; 32])> {
+        self.state
+            .run_registration
+            .map(|r| (r.instance_id, r.recipe_fingerprint))
+    }
+
     /// Direct parents. See [`crate::Projection::parents_of`].
     #[must_use]
     pub fn parents_of(&self, mote_id: &MoteId) -> SmallVec<[(MoteId, EdgeMeta); 4]> {

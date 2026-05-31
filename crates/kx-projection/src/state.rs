@@ -93,6 +93,18 @@ pub(crate) struct DeclaredInfo {
     pub(crate) warrant_ref: ContentRef,
 }
 
+/// The registered, journaled run identity (v3, M1.1, D63/D64). Established when
+/// the `RunRegistered` entry (seq=1) is folded; **read on replay, never
+/// recomputed**. Off the Mote-DAG — folding it touches no Mote and never
+/// rebuilds the children index.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct RunRegistration {
+    /// The per-run nonce — the registered run identity (and token root).
+    pub(crate) instance_id: [u8; kx_journal::INSTANCE_ID_LEN],
+    /// The recipe fingerprint (discovery/dedup only; never identity).
+    pub(crate) recipe_fingerprint: [u8; 32],
+}
+
 #[derive(Debug, Clone, Default)]
 pub(crate) struct State {
     /// Per-MoteId info — declared, committed, and any in-flight state.
@@ -103,6 +115,9 @@ pub(crate) struct State {
     pub(crate) children: BTreeMap<MoteId, Vec<(MoteId, EdgeMeta)>>,
     /// The largest `seq` value applied so far.
     pub(crate) last_seq: u64,
+    /// The registered run identity (D64), or `None` until a `RunRegistered`
+    /// entry is folded. Off-DAG; O(1) to set and read.
+    pub(crate) run_registration: Option<RunRegistration>,
 }
 
 impl State {

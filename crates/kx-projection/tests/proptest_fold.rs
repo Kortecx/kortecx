@@ -210,6 +210,37 @@ proptest! {
         }
     }
 
+    // **v3 (M1.1)** — prepending a RunRegistered entry to any trace leaves the
+    // committed-set signature unchanged (it registers no Mote) and sets the run
+    // identity. Folding it never touches the Mote-DAG; the committed digest the
+    // runtime hashes is therefore invariant under run registration.
+    #[test]
+    fn prop_run_registered_is_off_dag_for_any_trace(trace in arb_trace()) {
+        let entries = materialize(&trace);
+
+        let mut without_reg = Projection::new();
+        for e in &entries {
+            without_reg.fold(e).expect("fold without reg");
+        }
+
+        let mut with_reg = Projection::new();
+        with_reg.fold(&run_registered(0x99, 0xee, 0)).expect("fold reg");
+        for e in &entries {
+            with_reg.fold(e).expect("fold with reg");
+        }
+
+        // RunRegistered adds no Mote → identical Mote set + per-state counts.
+        prop_assert_eq!(with_reg.len(), without_reg.len());
+        prop_assert_eq!(with_reg.committed_count(), without_reg.committed_count());
+        prop_assert_eq!(with_reg.repudiated_count(), without_reg.repudiated_count());
+        prop_assert_eq!(with_reg.failed_count(), without_reg.failed_count());
+        prop_assert!(with_reg.run_registration().is_some());
+        prop_assert!(without_reg.run_registration().is_none());
+        for (id, state) in without_reg.iter_motes() {
+            prop_assert_eq!(with_reg.state_of(&id), state);
+        }
+    }
+
     // Property 2 — `fold_many` matches a `fold` loop.
     #[test]
     fn prop_fold_many_matches_fold_loop(trace in arb_trace()) {
@@ -418,6 +449,85 @@ fn per_state_counts_sum_to_len() {
     assert_eq!(p.committed_count(), 2);
     assert_eq!(p.failed_count(), 1);
     assert_eq!(p.scheduled_count(), 1);
+}
+
+// ---------------------------------------------------------------------------
+// **v3 (M1.1, D63/D64) — RunRegistered fold is off the Mote-DAG (O(1)).**
+//
+// RunRegistered names no Mote: folding it MUST register no MoteInfo, leave the
+// children index empty, advance current_seq, set run_registration(), and never
+// touch any Mote's per-state classification. These pin that the run-registration
+// fact is a pure off-DAG marker — the scalability guarantee (no O(n²) index
+// rebuild, no phantom Mote) and the determinism guarantee (the digest, computed
+// over committed Motes only, is unaffected).
+// ---------------------------------------------------------------------------
+
+fn run_registered(instance_seed: u8, recipe_seed: u8, seq: u64) -> JournalEntry {
+    JournalEntry::RunRegistered {
+        instance_id: [instance_seed; kx_journal::INSTANCE_ID_LEN],
+        recipe_fingerprint: [recipe_seed; 32],
+        ts: 0,
+        seq,
+    }
+}
+
+#[test]
+fn run_registered_fold_is_off_dag() {
+    let mut p = Projection::new();
+    p.fold(&run_registered(0xa1, 0xb2, 1)).unwrap();
+    // No Mote registered, all per-state counts zero.
+    assert_eq!(p.len(), 0);
+    assert!(p.is_empty());
+    assert_eq!(p.committed_count(), 0);
+    assert_eq!(p.iter_motes().count(), 0);
+    // current_seq advanced; run identity is queryable.
+    assert_eq!(p.current_seq(), 1);
+    assert_eq!(
+        p.run_registration(),
+        Some(([0xa1; kx_journal::INSTANCE_ID_LEN], [0xb2; 32]))
+    );
+}
+
+#[test]
+fn run_registered_fold_is_idempotent_on_replay() {
+    // Replaying the seq=1 RunRegistered (recovery re-folds the same bytes) sets
+    // the same run identity and adds no Mote — instance_id read, never recomputed.
+    let mut p = Projection::new();
+    p.fold(&run_registered(0x5a, 0x6b, 1)).unwrap();
+    let first = p.run_registration();
+    p.fold(&run_registered(0x5a, 0x6b, 1)).unwrap();
+    assert_eq!(p.run_registration(), first);
+    assert_eq!(p.len(), 0);
+}
+
+#[test]
+fn run_registered_before_motes_does_not_change_committed_set() {
+    // Run with registration prepended (seq=1), then Motes.
+    let mut with_reg = Projection::new();
+    with_reg.fold(&run_registered(0x11, 0x22, 1)).unwrap();
+    with_reg.fold(&arb_committed(1, 2, NdClass::Pure)).unwrap();
+    with_reg
+        .fold(&arb_committed(2, 3, NdClass::WorldMutating))
+        .unwrap();
+
+    // Same Motes, no registration.
+    let mut without_reg = Projection::new();
+    without_reg
+        .fold(&arb_committed(1, 1, NdClass::Pure))
+        .unwrap();
+    without_reg
+        .fold(&arb_committed(2, 2, NdClass::WorldMutating))
+        .unwrap();
+
+    // The committed SET is identical (RunRegistered adds no Mote) — this is what
+    // the runtime digest (committed Motes only) hashes, so it is unchanged.
+    assert_eq!(with_reg.committed_count(), without_reg.committed_count());
+    assert_eq!(with_reg.len(), without_reg.len());
+    assert!(with_reg.run_registration().is_some());
+    assert_eq!(without_reg.run_registration(), None);
+    for (id, state) in without_reg.iter_motes() {
+        assert_eq!(with_reg.state_of(&id), state);
+    }
 }
 
 #[test]

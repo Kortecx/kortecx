@@ -16,9 +16,10 @@ use kx_proto::proto::coordinator_server::{Coordinator, CoordinatorServer};
 use kx_proto::proto::{
     journal_entry, CommitOutcome, CommittedEntry, ExecutorClass, HeartbeatRequest,
     HeartbeatResponse, JournalEntry, LeaseWorkRequest, LeaseWorkResponse, NdClass,
-    ReadEntriesRequest, ReadEntriesResponse, RegisterWorkerRequest, RegisterWorkerResponse,
-    ReportCommitRequest, ReportCommitResponse, ReportEffectStagedRequest,
-    ReportEffectStagedResponse, SubmitMoteRequest, SubmitMoteResponse, SubmitStatus, WorkItem,
+    ReadEntriesRequest, ReadEntriesResponse, RegisterRunRequest, RegisterRunResponse,
+    RegisterWorkerRequest, RegisterWorkerResponse, ReportCommitRequest, ReportCommitResponse,
+    ReportEffectStagedRequest, ReportEffectStagedResponse, SubmitMoteRequest, SubmitMoteResponse,
+    SubmitStatus, WorkItem,
 };
 use tonic::transport::Server;
 use tonic::{Request, Response, Status};
@@ -91,6 +92,19 @@ impl Coordinator for NoopCoordinator {
                 mote: Some(sample_mote().into()),
                 warrant: Some(sample_warrant().into()),
             }],
+        }))
+    }
+
+    async fn register_run(
+        &self,
+        req: Request<RegisterRunRequest>,
+    ) -> Result<Response<RegisterRunResponse>, Status> {
+        // Echo back a fixed 16-byte instance_id so the test confirms the RPC
+        // round-trips. (Real nonce generation + journaling is coordinator-side
+        // in M1.1; not here.)
+        let _ = req.into_inner();
+        Ok(Response::new(RegisterRunResponse {
+            instance_id: vec![9; 16],
         }))
     }
 
@@ -241,4 +255,18 @@ async fn coordinator_skeleton_serves_all_rpcs() {
             assert_eq!(c.result_ref.len(), 32, "committed result_ref round-tripped");
         }
     }
+
+    // (8) register run — recipe_fingerprint goes up, instance_id comes back.
+    let run = client
+        .register_run(RegisterRunRequest {
+            recipe_fingerprint: vec![7; 32],
+        })
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(
+        run.instance_id.len(),
+        16,
+        "instance_id round-tripped over the wire"
+    );
 }

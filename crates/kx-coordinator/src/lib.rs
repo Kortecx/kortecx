@@ -46,6 +46,7 @@ pub use kx_scheduler::WorkerId;
 mod clock;
 mod commit;
 mod error;
+mod nonce;
 mod placement;
 mod registry;
 mod repudiation;
@@ -56,6 +57,7 @@ mod state;
 pub use clock::{Clock, SystemClock};
 pub use error::CoordinatorError;
 pub use kx_journal::RepudiationReason;
+pub use nonce::{OsRandomNonce, RunNonceSource};
 pub use registry::{
     is_live, InMemoryWorkerRegistry, RegistryError, WorkerRecord, WorkerRegistry, WorkerStatus,
     DEFAULT_LIVENESS_TIMEOUT,

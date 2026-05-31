@@ -376,6 +376,12 @@ impl Coordinator for RecordingCoordinator {
     ) -> Result<Response<kx_coordinator::proto::ReadEntriesResponse>, Status> {
         self.inner.read_entries(request).await
     }
+    async fn register_run(
+        &self,
+        request: Request<kx_coordinator::proto::RegisterRunRequest>,
+    ) -> Result<Response<kx_coordinator::proto::RegisterRunResponse>, Status> {
+        self.inner.register_run(request).await
+    }
 }
 
 #[tokio::test]

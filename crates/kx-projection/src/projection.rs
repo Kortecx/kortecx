@@ -307,6 +307,25 @@ impl Projection {
                 info.effect_staged_observed = true;
                 self.state.last_seq = self.state.last_seq.max(*seq);
             }
+            JournalEntry::RunRegistered {
+                instance_id,
+                recipe_fingerprint,
+                seq,
+                ..
+            } => {
+                // **v3 (M1.1, D63/D64): run registration.** Off the Mote-DAG —
+                // names no Mote, so this fold registers NO MoteInfo and does NOT
+                // call `rebuild_children_index` (the per-mutation O(n²) path).
+                // It records the run's identity root as an O(1) field. Idempotent
+                // on replay: the seq=1 entry replays the same bytes, so re-folding
+                // sets the same `RunRegistration`. `ts` is audit-only and ignored
+                // here (never an input to any scheduling/identity decision).
+                self.state.run_registration = Some(crate::state::RunRegistration {
+                    instance_id: *instance_id,
+                    recipe_fingerprint: *recipe_fingerprint,
+                });
+                self.state.last_seq = self.state.last_seq.max(*seq);
+            }
         }
         Ok(prev)
     }
@@ -570,6 +589,20 @@ impl Projection {
     #[must_use]
     pub fn committed_count(&self) -> usize {
         self.iter_motes_in_state(MoteState::Committed).count()
+    }
+
+    /// The registered run identity (D64) as `(instance_id, recipe_fingerprint)`,
+    /// or `None` if no `RunRegistered` entry has been folded.
+    ///
+    /// Set when the run's seq=1 `RunRegistered` entry is folded; read on replay,
+    /// never recomputed. Off the Mote-DAG (does not gate scheduling); for M1.1
+    /// it is a queryable run-identity marker (M1.2 metadata + the catalog build
+    /// on it).
+    #[must_use]
+    pub fn run_registration(&self) -> Option<([u8; kx_journal::INSTANCE_ID_LEN], [u8; 32])> {
+        self.state
+            .run_registration
+            .map(|r| (r.instance_id, r.recipe_fingerprint))
     }
 
     /// Count of Motes currently in `MoteState::Repudiated`.
