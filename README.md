@@ -28,9 +28,12 @@ kernel beneath them.
 ## What makes it different
 
 Most tools help you *write* an agent. The hard part was never writing it — it's trusting it to
-run unattended, at scale, against the real world, and deliver the same outcome every time. That's
-an infrastructure problem, and it's the one keeping agents stuck in demos. It's the problem
+run unattended, at scale, against the real world, and to recover cleanly when a step fails partway.
+That's an infrastructure problem, and it's the one keeping agents stuck in demos. It's the problem
 kortecx exists to solve.
+
+The division of labor is clean: **the model plans and manages, Motes take the action, your data
+comes from wherever it lives, and the runtime captures everything and guarantees it runs reliably.**
 
 Agents are non-deterministic and they act on the world — they call models, hit APIs, move money,
 change state. Run that at scale and the failure modes compound: a retry double-charges a customer,
@@ -47,6 +50,11 @@ of the runtime instead of something each team reinvents:
   resuming committed work rather than starting over or stalling.
 - **No infrastructure tax.** Durability, recovery, and coordination are built in, so teams ship
   agents instead of the plumbing beneath them.
+- **Bring your own data + tools.** Read from any store, call any API or MCP tool — the runtime
+  records what happened, captures the result, and serves it durably. You own data legitimacy; we
+  own the durability.
+- **Reusable, not rebuilt.** Actions, workflows, tools, and context live in a sharable catalog:
+  publish a guaranteed action once, reuse it with new parameters, share it with your team.
 
 This is the missing layer between a clever agent script and production software — the foundation
 that makes putting agents in charge of real, consequential work a reasonable thing to do, and
