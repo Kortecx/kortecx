@@ -30,6 +30,12 @@ kx-warrant = { workspace = true }
 # is a NEW dep edge but does NOT touch the frozen trio
 # (kx-scheduler/kx-executor/kx-inference) — the P2 thesis test holds.
 kx-tool-registry = { workspace = true }
+# Submission-refusal predicates at SubmitMote (M1.3): R-1/R-7/R-8/R-14/R-15 +
+# R-10 + the D66 fail-closed-on-resolution-miss gate. A dependency-LIGHT leaf
+# (kx-mote/kx-tool-registry/kx-warrant only) — deliberately NOT kx-executor, so
+# the control-plane coordinator never links the inference/llama.cpp stack (the
+# seam discipline: distribution is wiring, not a rewrite).
+kx-refusal = { workspace = true }
 # `sync` (mpsc + oneshot) is additive over the workspace tokio features: the async
 # RPC handlers funnel commands to a single orchestration thread that owns the
 # journal + projection + scheduler. The Projection holds a non-`Send` trait object

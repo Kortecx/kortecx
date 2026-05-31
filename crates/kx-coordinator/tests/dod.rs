@@ -65,6 +65,17 @@ fn register_req(endpoint: &str) -> RegisterWorkerRequest {
     }
 }
 
+/// Register the run through the gRPC client so subsequent `submit_mote` calls
+/// pass the M1.3 registration-before-submit gate (idempotent — call once).
+async fn register_run(client: &mut CoordinatorClient<Channel>) {
+    client
+        .register_run(proto::RegisterRunRequest {
+            recipe_fingerprint: vec![0x5au8; 32],
+        })
+        .await
+        .unwrap();
+}
+
 #[tokio::test]
 async fn o1_coordinator_is_sole_journal_writer() {
     let service = CoordinatorService::new(InMemoryJournal::new());
@@ -76,12 +87,14 @@ async fn o1_coordinator_is_sole_journal_writer() {
         .unwrap()
         .into_inner();
 
+    register_run(&mut client).await;
     let mote = common::pure_root_mote();
     let expected_id = mote.id;
     let submit = client
         .submit_mote(SubmitMoteRequest {
             mote: Some(mote.clone().into()),
             warrant: Some(common::sample_warrant().into()),
+            accept_at_least_once: false,
         })
         .await
         .unwrap()
@@ -217,6 +230,7 @@ async fn o3_mote_id_rederived_server_side() {
     let service = CoordinatorService::new(InMemoryJournal::new());
     let mut client = start(service).await;
 
+    register_run(&mut client).await;
     let mote = common::pure_root_mote();
     let expected_id = mote.id;
     let mut wire: proto::Mote = mote.into();
@@ -226,6 +240,7 @@ async fn o3_mote_id_rederived_server_side() {
         .submit_mote(SubmitMoteRequest {
             mote: Some(wire),
             warrant: Some(common::sample_warrant().into()),
+            accept_at_least_once: false,
         })
         .await
         .unwrap()
@@ -243,11 +258,13 @@ async fn o4_unknown_worker_rejected_no_write() {
     let mut client = start(service.clone()).await;
 
     // Mote is known (submitted) but no worker registered.
+    register_run(&mut client).await;
     let mote = common::pure_root_mote();
     client
         .submit_mote(SubmitMoteRequest {
             mote: Some(mote.clone().into()),
             warrant: Some(common::sample_warrant().into()),
+            accept_at_least_once: false,
         })
         .await
         .unwrap();
@@ -291,11 +308,13 @@ async fn o4_bad_hash_length_rejected_no_write() {
         .await
         .unwrap()
         .into_inner();
+    register_run(&mut client).await;
     let mote = common::pure_root_mote();
     client
         .submit_mote(SubmitMoteRequest {
             mote: Some(mote.clone().into()),
             warrant: Some(common::sample_warrant().into()),
+            accept_at_least_once: false,
         })
         .await
         .unwrap();
@@ -317,11 +336,13 @@ async fn o4_unspecified_nd_class_rejected_no_write() {
         .await
         .unwrap()
         .into_inner();
+    register_run(&mut client).await;
     let mote = common::pure_root_mote();
     client
         .submit_mote(SubmitMoteRequest {
             mote: Some(mote.clone().into()),
             warrant: Some(common::sample_warrant().into()),
+            accept_at_least_once: false,
         })
         .await
         .unwrap();

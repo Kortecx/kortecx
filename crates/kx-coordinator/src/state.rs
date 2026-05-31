@@ -26,8 +26,9 @@ use kx_journal::{
 };
 use kx_mote::{Mote, MoteId, NdClass};
 use kx_projection::{MoteState, Projection};
+use kx_refusal::{validate_mote_submission, ToolResolution};
 use kx_scheduler::{LocalPlacement, Placement, Scheduler, SchedulerError, WorkerId};
-use kx_tool_registry::{resolve_run_versions, ToolKind, ToolRegistry};
+use kx_tool_registry::{IdempotencyClass, ToolKind, ToolRegistry, ToolResolutionEvent};
 use kx_warrant::{warrant_ref_of, ExecutorClass, WarrantSpec};
 use tokio::sync::{mpsc, oneshot};
 
@@ -87,7 +88,11 @@ pub(crate) enum Command {
     Submit {
         mote: Box<Mote>,
         warrant: Box<WarrantSpec>,
-        reply: oneshot::Sender<SubmitOutcome>,
+        // M1.3/D38 §2c: the per-Mote opt-in to dispatch an AtLeastOnce WM tool.
+        accept_at_least_once: bool,
+        // M1.3: the submit is now fallible — registration-before-submit + the
+        // submission-refusal predicates can reject before anything is written.
+        reply: oneshot::Sender<Result<SubmitOutcome, CoordinatorError>>,
     },
     Commit {
         proposal: Box<CommitProposal>,
@@ -179,17 +184,19 @@ impl CoreHandle {
         &self,
         mote: Mote,
         warrant: WarrantSpec,
+        accept_at_least_once: bool,
     ) -> Result<SubmitOutcome, CoordinatorError> {
         let (reply, response) = oneshot::channel();
         self.dispatch(Command::Submit {
             mote: Box::new(mote),
             warrant: Box::new(warrant),
+            accept_at_least_once,
             reply,
         })
         .await?;
         response
             .await
-            .map_err(|_| CoordinatorError::CoreUnavailable)
+            .map_err(|_| CoordinatorError::CoreUnavailable)?
     }
 
     pub(crate) async fn commit(
@@ -794,6 +801,7 @@ fn handle_command<J: Journal>(
         Command::Submit {
             mote,
             warrant,
+            accept_at_least_once,
             reply,
         } => {
             let outcome = submit_and_capture(
@@ -805,6 +813,7 @@ fn handle_command<J: Journal>(
                 scheduler,
                 *mote,
                 *warrant,
+                accept_at_least_once,
             );
             let _ = reply.send(outcome);
         }
@@ -985,28 +994,79 @@ fn submit_and_capture<J: Journal>(
     scheduler: &mut Scheduler<LocalPlacement>,
     mote: Mote,
     warrant: WarrantSpec,
-) -> SubmitOutcome {
+    accept_at_least_once: bool,
+) -> Result<SubmitOutcome, CoordinatorError> {
+    // GATE 1 — registration-before-submit (M1.3, D64/D98). An unregistered run
+    // has no journaled identity to anchor capture (M1.2) or the run-scoped
+    // idempotency token, so submit is refused BEFORE the scheduler/journal is
+    // touched. The seq=1 RunRegistered fact is read on replay, never recomputed.
+    let Some((instance_id, _)) = projection.run_registration() else {
+        return Err(CoordinatorError::RunNotRegistered);
+    };
+
+    // GATE 2 — resolve the warrant's tool grants ONCE, then run the single-Mote
+    // submission-refusal predicate (M1.3). A WORLD-MUTATING Mote with
+    // unresolvable tools (D66 fail-closed) or an AtLeastOnce-without-accept tool
+    // (R-10) — or any sibling-independent unsafe construction (R-1/R-7/R-8/R-14/
+    // R-15) — is refused with NOTHING written. A PURE/READ-ONLY-NONDET Mote is
+    // never refused on resolution grounds (no double-fire hazard).
+    let (resolution, events) = resolve_for_submit(tool_registry, &warrant);
+    validate_mote_submission(&mote, accept_at_least_once, &resolution)
+        .map_err(CoordinatorError::SubmissionRefused)?;
+
+    // Admit through the hosted scheduler (verbatim — the P2 thesis test).
     let warrant_for_capture = warrant.clone();
     let mut outcome = handle_submit(scheduler, projection, dispatch, mote, warrant);
-    // M1.2 (D79): on a FRESH (non-duplicate) submit of a REGISTERED run, capture
-    // the resolved tool/model/warrant versions as off-DAG run metadata and
-    // surface the run's instance_id. An unregistered run captures nothing (no
-    // instance_id to attach to) and gets `None` — forcing registration before
-    // submit is M1.3.
+
+    // M1.2 (D79): on a FRESH (non-duplicate) submit, surface the run's
+    // instance_id and — when the tools resolved cleanly — capture the resolved
+    // tool/model/warrant versions as off-DAG run metadata. Registration is now
+    // guaranteed (Gate 1), so every fresh submit anchors to a real instance_id.
+    // A WM Unresolved submit never reaches here (refused at Gate 2); a PURE/ROND
+    // Unresolved submit reaches here and skips capture (the M1.2 behavior).
     if !outcome.duplicate {
-        if let Some((instance_id, _)) = projection.run_registration() {
-            outcome.instance_id = Some(instance_id);
+        outcome.instance_id = Some(instance_id);
+        if let ToolResolution::Resolved(_) = resolution {
             capture_run_versions(
                 journal,
                 projection,
                 folded_through,
-                tool_registry,
                 instance_id,
                 &warrant_for_capture,
+                events,
             );
         }
     }
-    outcome
+    Ok(outcome)
+}
+
+/// Resolve the warrant's tool grants ONCE per fresh submit (canonical
+/// `(tool_id, tool_version)` order) — feeding BOTH the M1.3 refusal predicate
+/// and the M1.2 metadata capture from a single pass over
+/// [`ToolRegistry::resolve`](kx_tool_registry::ToolRegistry::resolve).
+///
+/// Returns the per-submit [`ToolResolution`] (the resolved
+/// [`IdempotencyClass`]es, or `Unresolved` on a miss) plus the resolved
+/// [`ToolResolutionEvent`]s (for capture). On ANY resolution miss (`NotFound` /
+/// `CapabilityExceedsWarrant` / `PendingHumanReview` / `McpUnreachable`) returns
+/// `(Unresolved, vec![])`: a WM Mote is then refused fail-closed (D66), a
+/// PURE/ROND Mote is admitted with capture skipped.
+fn resolve_for_submit(
+    tool_registry: &dyn ToolRegistry,
+    warrant: &WarrantSpec,
+) -> (ToolResolution, Vec<ToolResolutionEvent>) {
+    let mut classes: Vec<IdempotencyClass> = Vec::with_capacity(warrant.tool_grants.len());
+    let mut events: Vec<ToolResolutionEvent> = Vec::with_capacity(warrant.tool_grants.len());
+    for grant in &warrant.tool_grants {
+        match tool_registry.resolve(grant, warrant) {
+            Ok(resolved) => {
+                classes.push(resolved.def.idempotency_class);
+                events.push(resolved.event);
+            }
+            Err(_) => return (ToolResolution::Unresolved, Vec::new()),
+        }
+    }
+    (ToolResolution::Resolved(classes), events)
 }
 
 /// Register a submitted Mote through the hosted scheduler (verbatim, thesis test) and
@@ -1038,34 +1098,25 @@ fn handle_submit(
 }
 
 /// Capture the resolved tool/model/warrant versions of a fresh submit as off-DAG
-/// run **metadata** (M1.2, D79): resolve the warrant's `tool_grants` and append
-/// one `RunVersionsResolved` fact per resolved capability (a zero-grant warrant
-/// gets one fact with no capability), each anchored to the run's `instance_id`.
-/// **Metadata, never identity** — never folded into `MoteId`. O(1) per append,
-/// off the Mote-DAG.
+/// run **metadata** (M1.2, D79): append one `RunVersionsResolved` fact per
+/// resolved capability (a zero-grant warrant gets one fact with no capability),
+/// each anchored to the run's `instance_id`. **Metadata, never identity** —
+/// never folded into `MoteId`. O(1) per append, off the Mote-DAG.
 ///
-/// Fail-CLOSED on a resolution miss: if any grant does not resolve cleanly
-/// (`NotFound` / `CapabilityExceedsWarrant` / pending review), NOTHING is
-/// journaled — no partial or over-privileged tuple is ever recorded. The submit
-/// still succeeds (M1.2 only captures; refusing such a submit is M1.3).
+/// `events` are the already-resolved [`ToolResolutionEvent`]s from
+/// [`resolve_for_submit`] (resolved once per submit, shared with the M1.3 refusal
+/// predicate). This is only called once resolution SUCCEEDED — a resolution miss
+/// is handled upstream in [`submit_and_capture`] (a WM Mote is refused, D66; a
+/// non-WM Mote is admitted and this capture is skipped), so no partial or
+/// over-privileged tuple is ever recorded.
 fn capture_run_versions<J: Journal>(
     journal: &J,
     projection: &mut Projection,
     folded_through: &mut u64,
-    tool_registry: &dyn ToolRegistry,
     instance_id: [u8; INSTANCE_ID_LEN],
     warrant: &WarrantSpec,
+    events: Vec<ToolResolutionEvent>,
 ) {
-    let events = match resolve_run_versions(tool_registry, warrant) {
-        Ok(events) => events,
-        Err(reason) => {
-            tracing::warn!(
-                ?reason,
-                "M1.2 resolved-version capture skipped: a tool grant did not resolve (M1.3 will refuse the submit)"
-            );
-            return;
-        }
-    };
     let warrant_ref = warrant_ref_of(warrant);
     let model_id = warrant.model_route.model_id.0.clone();
     if events.is_empty() {

@@ -51,9 +51,17 @@ fn storing_executor(store: Arc<LocalFsContentStore>) -> Arc<dyn MoteExecutor> {
 }
 
 async fn submit(svc: &CoordinatorService, mote: &Mote, warrant: &kx_warrant::WarrantSpec) {
+    // M1.3: register the run (idempotent) so the submit passes the
+    // registration-before-submit gate.
+    let _ = svc
+        .register_run(Request::new(kx_coordinator::proto::RegisterRunRequest {
+            recipe_fingerprint: vec![0x5au8; 32],
+        }))
+        .await;
     svc.submit_mote(Request::new(kx_coordinator::proto::SubmitMoteRequest {
         mote: Some(mote.clone().into()),
         warrant: Some(warrant.clone().into()),
+        accept_at_least_once: false,
     }))
     .await
     .unwrap();

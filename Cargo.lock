@@ -1093,6 +1093,7 @@ dependencies = [
  "kx-mote",
  "kx-projection",
  "kx-proto",
+ "kx-refusal",
  "kx-scheduler",
  "kx-tool-registry",
  "kx-warrant",
@@ -1161,6 +1162,7 @@ dependencies = [
  "kx-model-validator",
  "kx-mote",
  "kx-projection",
+ "kx-refusal",
  "kx-tool-registry",
  "kx-warrant",
  "libc",
@@ -1359,6 +1361,19 @@ dependencies = [
  "tokio",
  "tonic",
  "tonic-build",
+]
+
+[[package]]
+name = "kx-refusal"
+version = "0.0.1"
+dependencies = [
+ "kx-content",
+ "kx-mote",
+ "kx-tool-registry",
+ "kx-warrant",
+ "proptest",
+ "smallvec",
+ "thiserror",
 ]
 
 [[package]]

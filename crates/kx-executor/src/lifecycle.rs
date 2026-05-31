@@ -29,9 +29,10 @@ use kx_warrant::WarrantSpec;
 use smallvec::SmallVec;
 use thiserror::Error;
 
+use kx_refusal::SubmissionRefusal;
+
 use crate::commit_protocol::{CommitInput, CommitProtocol, CommitProtocolError};
 use crate::executor_trait::{MoteExecutionResult, MoteExecutor, MoteExecutorError, Rootfs};
-use crate::refusal::SubmissionRefusal;
 use crate::resource_manager::{ResourceError, ResourceManager};
 
 /// Top-level lifecycle errors. The PURE-Mote happy path returns `Ok(commit)`;

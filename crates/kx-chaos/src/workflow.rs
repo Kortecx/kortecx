@@ -30,8 +30,11 @@ use crate::plan::WmPattern;
 pub(crate) const WORKER_CLASS: ExecutorClass = ExecutorClass::MacOsSandbox;
 
 /// The capability a WORLD-MUTATING Mote names in its `tool_contract`. The chaos broker
-/// ignores the contract (it is not the real `LocalCapabilityBroker`), and the
-/// coordinator's `SubmitMote` runs no refusal predicates, so no warrant grant is needed.
+/// ignores the contract (it is not the real `LocalCapabilityBroker`). M1.3: the
+/// coordinator's `SubmitMote` now runs refusal predicates, but a non-empty
+/// `tool_contract` satisfies R-1, and the chaos warrants carry empty `tool_grants`
+/// (→ resolution `Resolved([])`, so neither D66 nor R-10 fires) — so the chaos Motes
+/// are admitted without granting this (broker-ignored) tool in the warrant.
 pub(crate) fn world_tool() -> ToolName {
     ToolName("kx-chaos-effect".into())
 }

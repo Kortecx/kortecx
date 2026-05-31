@@ -193,6 +193,7 @@ async fn coordinator_skeleton_serves_all_rpcs() {
         .submit_mote(SubmitMoteRequest {
             mote: Some(sample_mote().into()),
             warrant: Some(sample_warrant().into()),
+            accept_at_least_once: false,
         })
         .await
         .unwrap()

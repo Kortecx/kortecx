@@ -31,7 +31,7 @@ use kx_warrant::{
     ToolGrant, ToolRequirement, WarrantSpec,
 };
 use tempfile::tempdir;
-use tonic::Request;
+use tonic::{Code, Request};
 
 // --- seams (mirror run_registration.rs) ---------------------------------------
 
@@ -211,23 +211,32 @@ async fn submit_response_surfaces_instance_id() {
 }
 
 #[tokio::test]
-async fn unregistered_run_captures_nothing_and_no_instance_id() {
-    // Back-compat (M1.1 `submit_without_register_still_works`): submitting without
-    // a prior RegisterRun still succeeds; M1.2 captures no metadata (no instance_id
-    // to anchor to) and the response instance_id is empty. Forcing registration
-    // before submit is M1.3.
+async fn unregistered_submit_is_refused() {
+    // M1.3 (was M1.1/M1.2 `unregistered_run_captures_nothing`): submit-before-register
+    // is now REFUSED (failed_precondition). An unregistered run has no journaled
+    // identity to anchor capture or the run-scoped idempotency token (D64/D98 —
+    // identity is the explicit RegisterRun, never lazy-on-submit), so NOTHING is
+    // written: no Mote, no metadata, no registration.
     let svc = coordinator(InMemoryJournal::new(), [0xd4u8; 16]);
     let mote = common::mote(3, NdClass::Pure, &[]);
     let warrant = warrant_granting(&[("fs-read", "1")], "m");
-    let resp = common::submit(&svc, &mote, &warrant).await;
-    assert_eq!(resp.status, proto::SubmitStatus::Accepted as i32);
-    assert!(
-        resp.instance_id.is_empty(),
-        "unregistered run → no instance_id"
+    let err = common::submit_unregistered(&svc, &mote, &warrant)
+        .await
+        .expect_err("submit before RegisterRun must be refused (M1.3)");
+    assert_eq!(err.code(), Code::FailedPrecondition);
+    assert_eq!(
+        svc.committed_count().await.unwrap(),
+        0,
+        "a refused submit writes nothing"
     );
     assert!(
         svc.run_resolved_versions().await.unwrap().is_empty(),
-        "no metadata captured for an unregistered run"
+        "no metadata captured for a refused submit"
+    );
+    assert_eq!(
+        svc.run_registration().await.unwrap(),
+        None,
+        "the run is still unregistered"
     );
 }
 
@@ -312,9 +321,10 @@ async fn resolved_model_version_is_independent_of_mote_identity() {
 #[tokio::test]
 async fn capability_exceeds_warrant_skips_capture() {
     // A tool whose required net egress is NOT in the warrant fails to resolve →
-    // resolve_run_versions errors → NOTHING is journaled (no over-privileged or
-    // partial tuple is ever recorded). The submit still succeeds (M1.2 captures
-    // only; refusing such a submit is M1.3).
+    // resolution is Unresolved → NOTHING is journaled (no over-privileged or partial
+    // tuple is ever recorded). The mote here is PURE, so M1.3's D66 fail-closed
+    // refusal does NOT fire (D66 is WORLD-MUTATING-only — a non-mutating Mote has no
+    // double-fire hazard); the submit still succeeds and capture is skipped.
     let mut tools = InMemoryToolRegistry::new();
     tools
         .register(

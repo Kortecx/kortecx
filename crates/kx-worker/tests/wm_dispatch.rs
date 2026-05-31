@@ -26,7 +26,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use kx_capability::{
-    idempotency_token_for, BrokerError, BrokerHandle, CapabilityBroker, EffectRequest,
+    idempotency_token_for, run_scoped_token, BrokerError, BrokerHandle, CapabilityBroker,
+    EffectRequest, INSTANCE_ID_LEN,
 };
 use kx_content::{ContentRef, ContentStore, LocalFsContentStore};
 use kx_coordinator::proto::coordinator_server::{Coordinator, CoordinatorServer};
@@ -218,9 +219,17 @@ async fn connect(endpoint: &str) -> WorkerClient {
 }
 
 async fn submit(svc: &CoordinatorService, mote: &Mote, warrant: &WarrantSpec) {
+    // M1.3: register the run (idempotent) so the submit passes the
+    // registration-before-submit gate.
+    let _ = svc
+        .register_run(Request::new(kx_coordinator::proto::RegisterRunRequest {
+            recipe_fingerprint: vec![0x5au8; 32],
+        }))
+        .await;
     svc.submit_mote(Request::new(kx_coordinator::proto::SubmitMoteRequest {
         mote: Some(mote.clone().into()),
         warrant: Some(warrant.clone().into()),
+        accept_at_least_once: false,
     }))
     .await
     .unwrap();
@@ -445,11 +454,19 @@ async fn w3_worker_death_after_stage_is_exactly_once() {
         .register_worker(common::WORKER_CLASS, "dying")
         .await
         .unwrap();
-    let (leased, _instance_id) = dying
+    let (leased, instance_id) = dying
         .lease_work(dying_id, common::WORKER_CLASS, 16)
         .await
         .unwrap();
     assert_eq!(leased.len(), 1, "dying worker leased the WM Mote");
+    // M1.3: the run is registered, so the live worker derives a RUN-SCOPED
+    // idempotency token from the leased `instance_id` (`run_scoped_token`). The
+    // dying worker's manual fire must use the SAME token, or the broker won't
+    // dedupe the re-fire and the world effect would happen twice.
+    let iid: [u8; INSTANCE_ID_LEN] = instance_id
+        .as_slice()
+        .try_into()
+        .expect("a registered run surfaces a 16-byte instance_id on lease");
     let id = *wm.id.as_bytes();
     dying.report_effect_staged(id, id, dying_id).await.unwrap();
     // It fired the effect (net effect #1) before crashing — the exact stage→fire→{die}
@@ -458,7 +475,7 @@ async fn w3_worker_death_after_stage_is_exactly_once() {
     let req = EffectRequest {
         payload: Vec::new(),
         pattern: wm.effect_pattern(),
-        idempotency_key: Some(idempotency_token_for(&wm)),
+        idempotency_key: Some(run_scoped_token(&iid, &wm)),
         net_scope: kx_warrant::NetScope::None,
         fs_scope: kx_warrant::FsScope::empty(),
     };

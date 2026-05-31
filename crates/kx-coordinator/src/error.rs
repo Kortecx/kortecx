@@ -52,6 +52,25 @@ pub enum CoordinatorError {
     #[error("run already started without registration; RegisterRun must be the first fact")]
     RunAlreadyStarted,
 
+    /// `SubmitMote` was called before the run was registered (no seq=1
+    /// `RunRegistered` fact). M1.3 forces registration-before-submit (D64/D98:
+    /// run identity is the explicit `RegisterRun` RPC, never lazy-on-submit) so
+    /// every admitted Mote anchors to a real `instance_id` (the resume key + the
+    /// run-scoped idempotency-token root). An ordering precondition failure, not
+    /// a refusal of the construction.
+    #[error("run not registered; call RegisterRun before submitting any Mote (M1.3)")]
+    RunNotRegistered,
+
+    /// A `SubmitMote` was REFUSED by a submission-time predicate (M1.3): R-1 /
+    /// R-7 / R-8 / R-14 / R-15 / R-10, or the D66 fail-closed-on-tool-resolution
+    /// gate. The request was well-formed; the *construction* is unsafe. The
+    /// service maps this to a `SUBMIT_STATUS_REJECTED` response (carrying the
+    /// refusal detail), not a transport error — so it never reaches the `Status`
+    /// conversion on the success path; the defensive mapping below classifies it
+    /// as a precondition failure.
+    #[error("submission refused: {0}")]
+    SubmissionRefused(#[from] kx_refusal::SubmissionRefusal),
+
     /// A `ReportCommit` proposed a `result_ref` whose bytes are not present in the
     /// shared content store (D55 phantom-ref guard). When the coordinator is built
     /// with a store handle, it verifies `store.contains(result_ref)` before
@@ -116,7 +135,14 @@ impl From<CoordinatorError> for tonic::Status {
             | CoordinatorError::Scheduler(_) => Self::invalid_argument(message),
             // The run is not in a state that allows registration (it already
             // began) — the gRPC-canonical code for a state precondition failure.
-            CoordinatorError::RunAlreadyStarted => Self::failed_precondition(message),
+            // Submit-before-register is the same class of ordering violation.
+            CoordinatorError::RunAlreadyStarted | CoordinatorError::RunNotRegistered => {
+                Self::failed_precondition(message)
+            }
+            // A refusal is a precondition failure on the construction; on the
+            // success path the service consumes it into a REJECTED response
+            // before this conversion, so this arm is defensive.
+            CoordinatorError::SubmissionRefused(_) => Self::failed_precondition(message),
             CoordinatorError::Journal(_)
             | CoordinatorError::Projection(_)
             | CoordinatorError::CommitFailed(_) => Self::internal(message),

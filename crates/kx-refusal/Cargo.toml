@@ -1,0 +1,32 @@
+[package]
+name         = "kx-refusal"
+version      = "0.0.1"
+edition      = { workspace = true }
+rust-version = { workspace = true }
+license      = { workspace = true }
+authors      = { workspace = true }
+repository   = { workspace = true }
+description  = "kortecx submission-time refusal VOCABULARY + predicates (R-1..R-15 + D66) — the pure, total, dependency-light gate a Mote submission is checked against before any dispatch. SubmissionRefusal (the closed refusal vocabulary), WorkflowSubmission (the full-graph shape), ToolResolution (the per-submit tool-resolution outcome), validate_submission / validate_submission_with_idempotency (full-graph) + validate_mote_submission (the single-Mote SubmitMote-boundary subset). Held in a leaf crate so the control-plane kx-coordinator can enforce refusals WITHOUT depending on kx-executor's inference/llama.cpp stack (the seam discipline: distribution is wiring)."
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+# Mote / MoteDef / MoteId / NdClass — the submission shape the predicates reason over.
+kx-mote          = { workspace = true }
+# IdempotencyClass (R-10 / D66) + ToolDef (the dead-code lifecycle placeholders).
+kx-tool-registry = { workspace = true }
+# WarrantSpec (the master warrant) + NarrowingError (the AttemptedWiden mapping).
+kx-warrant       = { workspace = true }
+thiserror        = { workspace = true }
+
+[dev-dependencies]
+# ContentRef for building test warrants (syscall_profile_ref / environment_ref).
+kx-content = { workspace = true }
+# SmallVec parents when building test Motes via Mote::new.
+smallvec   = { workspace = true }
+# Property tests: validate_mote_submission is pure/total over arbitrary inputs.
+proptest   = { workspace = true }
+
+[lints]
+workspace = true

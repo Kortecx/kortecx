@@ -33,6 +33,7 @@ members = [
     "crates/kx-critic-types",
     "crates/kx-critic",
     "crates/kx-capture",
+    "crates/kx-refusal",
     "crates/kx-model-harness",
 ]
 exclude = [
@@ -120,6 +121,11 @@ kx-critic            = { path = "crates/kx-critic",            version = "0.0.1"
 # Step-capture projection (P4.2 pivot) — opt-in, off-truth-path per-Mote capture of
 # input/output/reasoning/thinking in blob storage; reuse the action, never the thinking.
 kx-capture           = { path = "crates/kx-capture",           version = "0.0.1" }
+# Submission-time refusal vocabulary + predicates (M1.3) — a dependency-light LEAF
+# (kx-mote / kx-tool-registry / kx-warrant only) so the control-plane kx-coordinator
+# can enforce R-1..R-15 + D66 at SubmitMote WITHOUT linking kx-executor's inference
+# stack. kx-executor re-exports it for back-compat.
+kx-refusal           = { path = "crates/kx-refusal",           version = "0.0.1" }
 bindgen            = "0.70"
 cmake              = "0.1"
 ureq               = { version = "2", default-features = false, features = ["tls"] }
