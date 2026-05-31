@@ -33,6 +33,7 @@ members = [
     "crates/kx-critic-types",
     "crates/kx-critic",
     "crates/kx-capture",
+    "crates/kx-model-harness",
 ]
 exclude = [
     "kx-cloud",

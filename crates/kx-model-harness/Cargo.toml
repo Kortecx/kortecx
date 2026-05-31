@@ -1,0 +1,53 @@
+[package]
+name = "kx-model-harness"
+version = "0.0.1"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Real-model validation seam: runs an InferenceBackend-backed GGUF model through the kx-runtime orchestrator (via run_with_seams) to prove the runtime guarantees hold under a non-deterministic model."
+
+[dependencies]
+kx-mote.workspace = true
+kx-content.workspace = true
+kx-journal.workspace = true
+kx-projection.workspace = true
+kx-executor.workspace = true
+kx-capability.workspace = true
+kx-warrant.workspace = true
+kx-inference.workspace = true
+kx-memoizer.workspace = true
+kx-runtime.workspace = true
+kx-workflow.workspace = true
+kx-dataset.workspace = true
+kx-critic-types.workspace = true
+kx-capture.workspace = true
+blake3.workspace = true
+smallvec.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+
+[build-dependencies]
+ureq.workspace = true
+sha2.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+# The deterministic-critic evaluator — used by tests to independently re-derive a
+# verdict over a producer's bytes and confirm byte-identity with the committed one.
+kx-critic.workspace = true
+
+[features]
+# Gates the GGUF download (build.rs) + the real-model integration tests. Off by
+# default so `cargo test --workspace` stays network-free and green; the campaign
+# runs `--features with-model`.
+with-model = []
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "kx-model-harness"
+path = "src/bin/harness.rs"

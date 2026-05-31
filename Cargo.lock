@@ -1252,6 +1252,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "kx-model-harness"
+version = "0.0.1"
+dependencies = [
+ "blake3",
+ "kx-capability",
+ "kx-capture",
+ "kx-content",
+ "kx-critic",
+ "kx-critic-types",
+ "kx-dataset",
+ "kx-executor",
+ "kx-inference",
+ "kx-journal",
+ "kx-memoizer",
+ "kx-mote",
+ "kx-projection",
+ "kx-runtime",
+ "kx-warrant",
+ "kx-workflow",
+ "serde",
+ "serde_json",
+ "sha2",
+ "smallvec",
+ "tempfile",
+ "tracing",
+ "ureq",
+]
+
+[[package]]
 name = "kx-model-validator"
 version = "0.0.1"
 dependencies = [
