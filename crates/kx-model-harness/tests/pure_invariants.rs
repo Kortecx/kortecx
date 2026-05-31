@@ -15,8 +15,8 @@
 use kx_capture::{CaptureConsent, InMemoryCaptureStore, StepRecord};
 use kx_content::ContentRef;
 use kx_dataset::Hit;
-use kx_mote::{ModelId, NdClass};
 use kx_model_harness::{harness_warrant, workflows};
+use kx_mote::{ModelId, NdClass};
 use kx_workflow::{encode_retrieval_fact, retrieval_result_ref};
 
 fn model_id() -> ModelId {
@@ -43,8 +43,13 @@ fn changed_temperature_yields_new_mote_id() {
     let w = harness_warrant(&m, 64, 60_000);
     let greedy = workflows::model_chain(&m, &w, "p", workflows::greedy(32), NdClass::Pure);
     // Same everything except the integer temperature_bps (greedy 0 vs sampled).
-    let sampled =
-        workflows::model_chain(&m, &w, "p", workflows::sampled(32, 0), NdClass::ReadOnlyNondet);
+    let sampled = workflows::model_chain(
+        &m,
+        &w,
+        "p",
+        workflows::sampled(32, 0),
+        NdClass::ReadOnlyNondet,
+    );
     assert_ne!(
         greedy.motes[0].mote.id, sampled.motes[0].mote.id,
         "a different (integer) temperature_bps ⇒ a different MoteId (D50; no float on identity)"
@@ -130,9 +135,19 @@ fn capture_full_retains_reasoning_actions_only_strips() {
 
 #[test]
 fn retrieval_fact_excludes_scores() {
-    let ids = [ContentRef::of(b"doc-1"), ContentRef::of(b"doc-2"), ContentRef::of(b"doc-3")];
-    let high = ids.iter().map(|&id| Hit { id, score: 0.99 }).collect::<Vec<_>>();
-    let low = ids.iter().map(|&id| Hit { id, score: 0.01 }).collect::<Vec<_>>();
+    let ids = [
+        ContentRef::of(b"doc-1"),
+        ContentRef::of(b"doc-2"),
+        ContentRef::of(b"doc-3"),
+    ];
+    let high = ids
+        .iter()
+        .map(|&id| Hit { id, score: 0.99 })
+        .collect::<Vec<_>>();
+    let low = ids
+        .iter()
+        .map(|&id| Hit { id, score: 0.01 })
+        .collect::<Vec<_>>();
 
     assert_eq!(
         encode_retrieval_fact(&high),
@@ -147,6 +162,12 @@ fn retrieval_fact_excludes_scores() {
 
     // A different neighbour set DOES change the fact (the ids are what matter).
     let other = [ContentRef::of(b"doc-9")];
-    let other_hits = other.iter().map(|&id| Hit { id, score: 0.99 }).collect::<Vec<_>>();
-    assert_ne!(retrieval_result_ref(&high), retrieval_result_ref(&other_hits));
+    let other_hits = other
+        .iter()
+        .map(|&id| Hit { id, score: 0.99 })
+        .collect::<Vec<_>>();
+    assert_ne!(
+        retrieval_result_ref(&high),
+        retrieval_result_ref(&other_hits)
+    );
 }

@@ -22,21 +22,32 @@ use std::process::{Command, Output};
 
 use kx_content::LocalFsContentStore;
 use kx_journal::{Journal, JournalEntry, SqliteJournal};
-use kx_mote::MoteId;
 use kx_model_harness::{evidence::Evidence, harness_warrant, model_id_for, workflow_for_row};
+use kx_mote::MoteId;
 use kx_projection::{MoteState, Projection};
 
 const SEED: u32 = 7;
 
 fn gguf() -> String {
-    kx_model_harness::default_gguf_path().to_string_lossy().into_owned()
+    kx_model_harness::default_gguf_path()
+        .to_string_lossy()
+        .into_owned()
 }
 
 fn invoke(mode: &str, journal: &str, content: &str, row: &str, crash_at: Option<&str>) -> Output {
     let mut c = Command::new(env!("CARGO_BIN_EXE_kx-model-harness"));
     c.args([
-        mode, "--journal", journal, "--content", content, "--gguf", &gguf(), "--row", row,
-        "--seed", "7",
+        mode,
+        "--journal",
+        journal,
+        "--content",
+        content,
+        "--gguf",
+        &gguf(),
+        "--row",
+        row,
+        "--seed",
+        "7",
     ]);
     if let Some(ca) = crash_at {
         c.args(["--crash-at", ca]);
@@ -134,7 +145,9 @@ fn c_serve_not_resample_under_crash() {
 
     // After replay: producer's committed result_ref is byte-identical, still once.
     let (p_post, j_post) = fold(j, c);
-    let ref_post = p_post.result_ref_of(&producer).expect("producer result_ref");
+    let ref_post = p_post
+        .result_ref_of(&producer)
+        .expect("producer result_ref");
     assert_eq!(
         ref_pre, ref_post,
         "the served result_ref is byte-identical across the crash (not re-sampled)"

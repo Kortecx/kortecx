@@ -419,7 +419,10 @@ impl Projection {
     /// a world-mutating step. Additive to [`Self::ready_set`] (which keeps the
     /// P1 `NotApplicable` default).
     #[must_use]
-    pub fn ready_set_promoted(&self, verdicts: &dyn crate::promotion::VerdictLookup) -> Vec<MoteId> {
+    pub fn ready_set_promoted(
+        &self,
+        verdicts: &dyn crate::promotion::VerdictLookup,
+    ) -> Vec<MoteId> {
         crate::helpers::ready_set_impl_with(&self.state, &|s, id| {
             crate::promotion::promotion_state_with(s, id, verdicts)
         })

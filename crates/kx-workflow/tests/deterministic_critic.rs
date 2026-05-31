@@ -67,7 +67,10 @@ fn deterministic_critic_recipe_is_reproducible() {
     let b = compile(&build()).unwrap();
     let ids_a: Vec<_> = a.motes.iter().map(|m| m.mote.id).collect();
     let ids_b: Vec<_> = b.motes.iter().map(|m| m.mote.id).collect();
-    assert_eq!(ids_a, ids_b, "same recipe => byte-identical MoteIds (the check folds into identity)");
+    assert_eq!(
+        ids_a, ids_b,
+        "same recipe => byte-identical MoteIds (the check folds into identity)"
+    );
 }
 
 #[test]
@@ -80,8 +83,20 @@ fn changing_the_check_changes_the_critic_identity() {
 
     let mk = |check: CheckSpec| {
         let mut wf = WorkflowDef::new(7);
-        let p = wf.add_step(transform(LogicRef::from_bytes([1; 32]), model.clone(), warrant.clone(), cap.clone()));
-        let c = wf.add_step(deterministic_critic(p, check, LogicRef::from_bytes([2; 32]), model.clone(), warrant.clone(), cap.clone()));
+        let p = wf.add_step(transform(
+            LogicRef::from_bytes([1; 32]),
+            model.clone(),
+            warrant.clone(),
+            cap.clone(),
+        ));
+        let c = wf.add_step(deterministic_critic(
+            p,
+            check,
+            LogicRef::from_bytes([2; 32]),
+            model.clone(),
+            warrant.clone(),
+            cap.clone(),
+        ));
         wf.add_edge(p, c, EdgeMeta::data()).unwrap();
         let compiled = compile(&wf).unwrap();
         compiled
@@ -94,6 +109,8 @@ fn changing_the_check_changes_the_critic_identity() {
     };
 
     let json = mk(json_check());
-    let text = mk(CheckSpec::Schema(SchemaSpec { expected: SchemaTag::Text }));
+    let text = mk(CheckSpec::Schema(SchemaSpec {
+        expected: SchemaTag::Text,
+    }));
     assert_ne!(json, text, "different check => different critic MoteId");
 }

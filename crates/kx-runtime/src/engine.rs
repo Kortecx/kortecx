@@ -131,7 +131,7 @@ pub fn run(config: &RuntimeConfig) -> Result<RunOutcome, RuntimeError> {
 ///
 /// `run()` calls this with the demo stubs + canonical shaper; the `kx-model-harness`
 /// crate calls it with a real `InferenceBackend`-backed [`MoteExecutor`] + a
-/// model/tool [`CapabilityBroker`] and its own (shaperless) workflows. The body —
+/// model/tool `CapabilityBroker` and its own (shaperless) workflows. The body —
 /// projection fold, `pick_next`, the PURE / native-critic / WM / re-dispatch
 /// routing, the P4.2-3 `ready_set_promoted` exit gate, exactly-once via
 /// `serve_if_committed`, the crash-injection windows — is the SAME code on every

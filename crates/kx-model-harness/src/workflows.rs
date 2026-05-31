@@ -90,7 +90,10 @@ fn mote(
         def,
         InputDataId::from_bytes([seed; 32]),
         GraphPosition(vec![seed]),
-        parents.iter().copied().collect::<SmallVec<[ParentRef; 4]>>(),
+        parents
+            .iter()
+            .copied()
+            .collect::<SmallVec<[ParentRef; 4]>>(),
     )
 }
 

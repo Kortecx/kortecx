@@ -90,14 +90,20 @@ pub fn model_id_for(gguf_path: &Path) -> std::io::Result<ModelId> {
         hasher.update(&buf[..n]);
     }
     let hex = hasher.finalize().to_hex();
-    Ok(ModelId(format!("qwen2.5-0.5b-instruct:{MODEL_QUANT}:{hex}")))
+    Ok(ModelId(format!(
+        "qwen2.5-0.5b-instruct:{MODEL_QUANT}:{hex}"
+    )))
 }
 
 /// A permissive warrant for harness Motes. Unlike the demo's `permissive_warrant`
 /// it sets a **positive** `wall_clock_ms` (a `0` budget makes `LlamaInferenceBackend`
 /// time out immediately) and routes `model_route.model_id` to `model_id` (the
 /// backend refuses a model the warrant did not authorise, D35).
-pub fn harness_warrant(model_id: &ModelId, max_output_tokens: u32, wall_clock_ms: u64) -> WarrantSpec {
+pub fn harness_warrant(
+    model_id: &ModelId,
+    max_output_tokens: u32,
+    wall_clock_ms: u64,
+) -> WarrantSpec {
     WarrantSpec {
         mote_class: MoteClass::WorldMutating,
         nd_class: MoteClass::WorldMutating,

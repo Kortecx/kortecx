@@ -24,8 +24,8 @@ use std::sync::Arc;
 use kx_content::{ContentStore, LocalFsContentStore};
 use kx_critic_types::{CheckSpec, SchemaSpec, SchemaTag};
 use kx_journal::SqliteJournal;
-use kx_mote::NdClass;
 use kx_model_harness::{evidence::Evidence, harness_warrant, model_id_for, workflows, Harness};
+use kx_mote::NdClass;
 use kx_projection::{ContentStoreVerdicts, MoteState, Projection, VerdictLookup};
 use kx_runtime::config::Mode;
 use kx_runtime::{RuntimeConfig, RuntimeError};
@@ -45,7 +45,11 @@ fn config(dir: &Path) -> RuntimeConfig {
 
 fn evidence() -> Option<Evidence> {
     let stamp = std::env::var("KX_RUNSTAMP").ok()?;
-    Evidence::open(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target"), &stamp).ok()
+    Evidence::open(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target"),
+        &stamp,
+    )
+    .ok()
 }
 
 /// Re-open the journal + store after a drive for inspection.
@@ -69,21 +73,43 @@ fn a_exit_gate_valid_promotes_consumer() {
     let model_id = model_id_for(&gguf()).unwrap();
     let warrant = harness_warrant(&model_id, 64, 60_000);
     // Schema(Text): any UTF-8 model output conforms ⇒ Valid.
-    let wf = workflows::exit_gate(&model_id, &warrant, kx_model_harness::ROW_PROMPT, schema(SchemaTag::Text));
-    let (producer, critic, consumer) =
-        (wf.motes[0].mote.id, wf.motes[1].mote.id, wf.motes[2].mote.id);
+    let wf = workflows::exit_gate(
+        &model_id,
+        &warrant,
+        kx_model_harness::ROW_PROMPT,
+        schema(SchemaTag::Text),
+    );
+    let (producer, critic, consumer) = (
+        wf.motes[0].mote.id,
+        wf.motes[1].mote.id,
+        wf.motes[2].mote.id,
+    );
 
     let harness = Harness::open(&cfg, &gguf(), model_id).unwrap();
     let outcome = harness.drive(&cfg, &wf).unwrap();
-    assert!(outcome.is_complete(), "Valid verdict ⇒ all 3 commit (producer+critic+consumer)");
+    assert!(
+        outcome.is_complete(),
+        "Valid verdict ⇒ all 3 commit (producer+critic+consumer)"
+    );
 
     let (p, store) = reopen(&cfg);
     let verdicts = ContentStoreVerdicts::new(store.clone());
     let verdict = p.result_ref_of(&critic).and_then(|r| verdicts.verdict(&r));
-    let model_text = String::from_utf8_lossy(&store.get(&p.result_ref_of(&producer).unwrap()).unwrap()).into_owned();
+    let model_text =
+        String::from_utf8_lossy(&store.get(&p.result_ref_of(&producer).unwrap()).unwrap())
+            .into_owned();
 
-    assert!(verdict.as_ref().is_some_and(kx_critic_types::CriticVerdict::is_valid), "critic Valid");
-    assert_eq!(p.state_of(&consumer), MoteState::Committed, "consumer promoted + ran");
+    assert!(
+        verdict
+            .as_ref()
+            .is_some_and(kx_critic_types::CriticVerdict::is_valid),
+        "critic Valid"
+    );
+    assert_eq!(
+        p.state_of(&consumer),
+        MoteState::Committed,
+        "consumer promoted + ran"
+    );
 
     if let Some(ev) = evidence() {
         let _ = ev.write_str("A_exit_gate", "valid.txt", &format!(
@@ -99,9 +125,17 @@ fn a_exit_gate_invalid_withholds_consumer() {
     let model_id = model_id_for(&gguf()).unwrap();
     let warrant = harness_warrant(&model_id, 64, 60_000);
     // Schema(Json) over a (non-JSON) sentence ⇒ Invalid ⇒ consumer withheld.
-    let wf = workflows::exit_gate(&model_id, &warrant, kx_model_harness::ROW_PROMPT, schema(SchemaTag::Json));
-    let (producer, critic, consumer) =
-        (wf.motes[0].mote.id, wf.motes[1].mote.id, wf.motes[2].mote.id);
+    let wf = workflows::exit_gate(
+        &model_id,
+        &warrant,
+        kx_model_harness::ROW_PROMPT,
+        schema(SchemaTag::Json),
+    );
+    let (producer, critic, consumer) = (
+        wf.motes[0].mote.id,
+        wf.motes[1].mote.id,
+        wf.motes[2].mote.id,
+    );
 
     let harness = Harness::open(&cfg, &gguf(), model_id).unwrap();
     // Fail-closed: the withheld consumer means the run does not complete.
@@ -114,12 +148,24 @@ fn a_exit_gate_invalid_withholds_consumer() {
     let (p, store) = reopen(&cfg);
     let verdicts = ContentStoreVerdicts::new(store.clone());
     let verdict = p.result_ref_of(&critic).and_then(|r| verdicts.verdict(&r));
-    let model_text = String::from_utf8_lossy(&store.get(&p.result_ref_of(&producer).unwrap()).unwrap()).into_owned();
+    let model_text =
+        String::from_utf8_lossy(&store.get(&p.result_ref_of(&producer).unwrap()).unwrap())
+            .into_owned();
     let ready = p.ready_set_promoted(&verdicts);
 
-    assert!(verdict.is_some() && !verdict.as_ref().unwrap().is_valid(), "critic Invalid");
-    assert_eq!(p.state_of(&consumer), MoteState::Pending, "consumer NOT committed (withheld)");
-    assert!(!ready.contains(&consumer), "consumer is NOT in the promoted ready set (fail-closed)");
+    assert!(
+        verdict.is_some() && !verdict.as_ref().unwrap().is_valid(),
+        "critic Invalid"
+    );
+    assert_eq!(
+        p.state_of(&consumer),
+        MoteState::Pending,
+        "consumer NOT committed (withheld)"
+    );
+    assert!(
+        !ready.contains(&consumer),
+        "consumer is NOT in the promoted ready set (fail-closed)"
+    );
 
     if let Some(ev) = evidence() {
         let _ = ev.write_str("A_exit_gate", "invalid.txt", &format!(
@@ -135,7 +181,12 @@ fn b_critic_decorrelated_and_deterministic() {
     let cfg = config(dir.path());
     let model_id = model_id_for(&gguf()).unwrap();
     let warrant = harness_warrant(&model_id, 64, 60_000);
-    let wf = workflows::exit_gate(&model_id, &warrant, kx_model_harness::ROW_PROMPT, schema(SchemaTag::Json));
+    let wf = workflows::exit_gate(
+        &model_id,
+        &warrant,
+        kx_model_harness::ROW_PROMPT,
+        schema(SchemaTag::Json),
+    );
     let producer = wf.motes[0].mote.id;
     let critic = wf.motes[1].mote.id;
 
@@ -144,12 +195,19 @@ fn b_critic_decorrelated_and_deterministic() {
 
     // Decorrelation: the model was called exactly once (the producer); the native
     // critic added ZERO model calls.
-    assert_eq!(harness.backend.calls(), 1, "decorrelated: critic adds 0 model calls (D60)");
+    assert_eq!(
+        harness.backend.calls(),
+        1,
+        "decorrelated: critic adds 0 model calls (D60)"
+    );
 
     // Determinism over input: independently re-evaluate the check over the
     // producer's committed bytes ⇒ byte-identical verdict ref to the committed one.
     let (p, store) = reopen(&cfg);
-    let producer_bytes = store.get(&p.result_ref_of(&producer).unwrap()).unwrap().to_vec();
+    let producer_bytes = store
+        .get(&p.result_ref_of(&producer).unwrap())
+        .unwrap()
+        .to_vec();
     let committed_verdict_ref = p.result_ref_of(&critic).unwrap();
     let re_eval = kx_critic::evaluate(&schema(SchemaTag::Json), &producer_bytes);
     assert_eq!(
@@ -183,21 +241,36 @@ fn d_greedy_reproducible_sampled_diverges() {
     let run_greedy = || {
         let dir = tempfile::tempdir().unwrap();
         let cfg = config(dir.path());
-        let wf = workflows::model_chain(&model_id, &warrant, kx_model_harness::ROW_PROMPT, workflows::greedy(32), NdClass::Pure);
+        let wf = workflows::model_chain(
+            &model_id,
+            &warrant,
+            kx_model_harness::ROW_PROMPT,
+            workflows::greedy(32),
+            NdClass::Pure,
+        );
         let h = Harness::open(&cfg, &gguf(), model_id.clone()).unwrap();
         let o = h.drive(&cfg, &wf).unwrap();
         (o.digest.to_hex(), o.committed, o.total)
     };
     let (g1, c1, t1) = run_greedy();
     let (g2, _, _) = run_greedy();
-    assert_eq!(g1, g2, "greedy decode ⇒ byte-identical projection digest across runs");
+    assert_eq!(
+        g1, g2,
+        "greedy decode ⇒ byte-identical projection digest across runs"
+    );
     assert_eq!((c1, t1), (2, 2));
 
     // Sampled: two different seeds ⇒ different digests (still exactly-once).
     let run_sampled = |seed: u32| {
         let dir = tempfile::tempdir().unwrap();
         let cfg = config(dir.path());
-        let wf = workflows::model_chain(&model_id, &warrant, kx_model_harness::ROW_PROMPT, workflows::sampled(32, seed), NdClass::ReadOnlyNondet);
+        let wf = workflows::model_chain(
+            &model_id,
+            &warrant,
+            kx_model_harness::ROW_PROMPT,
+            workflows::sampled(32, seed),
+            NdClass::ReadOnlyNondet,
+        );
         let h = Harness::open(&cfg, &gguf(), model_id.clone()).unwrap();
         let o = h.drive(&cfg, &wf).unwrap();
         (o.digest.to_hex(), o.committed, o.total)
@@ -224,7 +297,13 @@ fn e_redrive_serves_committed_no_remodel() {
     let cfg = config(dir.path());
     let model_id = model_id_for(&gguf()).unwrap();
     let warrant = harness_warrant(&model_id, 64, 60_000);
-    let wf = workflows::model_chain(&model_id, &warrant, kx_model_harness::ROW_PROMPT, workflows::greedy(32), NdClass::Pure);
+    let wf = workflows::model_chain(
+        &model_id,
+        &warrant,
+        kx_model_harness::ROW_PROMPT,
+        workflows::greedy(32),
+        NdClass::Pure,
+    );
 
     // First drive: the model is called once (the producer).
     let h1 = Harness::open(&cfg, &gguf(), model_id.clone()).unwrap();
@@ -236,7 +315,11 @@ fn e_redrive_serves_committed_no_remodel() {
     // committed facts are served; the model is NOT re-called.
     let h2 = Harness::open(&cfg, &gguf(), model_id).unwrap();
     let o2 = h2.drive(&cfg, &wf).unwrap();
-    assert_eq!(o1.digest.to_hex(), o2.digest.to_hex(), "same committed facts");
+    assert_eq!(
+        o1.digest.to_hex(),
+        o2.digest.to_hex(),
+        "same committed facts"
+    );
     assert_eq!(
         h2.backend.calls(),
         0,

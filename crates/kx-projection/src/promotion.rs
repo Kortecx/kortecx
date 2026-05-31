@@ -24,7 +24,7 @@ use crate::state::State;
 
 /// Resolves a committed critic's `result_ref` to its [`CriticVerdict`].
 ///
-/// Abstracts the content-store read so [`promotion_state_with`] stays a pure
+/// Abstracts the content-store read so `promotion_state_with` stays a pure
 /// decision over `State` + verdict lookups (testable without a real store).
 pub trait VerdictLookup {
     /// The committed [`CriticVerdict`] at `critic_result_ref`, or `None` if the

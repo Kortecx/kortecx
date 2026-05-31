@@ -12,7 +12,9 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use kx_inference::{InferenceBackend, InferenceError, InferenceInput, InferenceOutput, InferenceParams};
+use kx_inference::{
+    InferenceBackend, InferenceError, InferenceInput, InferenceOutput, InferenceParams,
+};
 use kx_mote::ModelId;
 use kx_warrant::WarrantSpec;
 

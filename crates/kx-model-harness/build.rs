@@ -73,13 +73,14 @@ fn resolve_path() -> PathBuf {
         return PathBuf::from(p);
     }
     let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
-    manifest
-        .join("../../target/models")
-        .join(MODEL_FILENAME)
+    manifest.join("../../target/models").join(MODEL_FILENAME)
 }
 
 fn download_and_verify(url: &str, dest: &PathBuf, expected_sha: &str) {
-    eprintln!("kx-model-harness build.rs: downloading {url} → {}", dest.display());
+    eprintln!(
+        "kx-model-harness build.rs: downloading {url} → {}",
+        dest.display()
+    );
     let agent = ureq::AgentBuilder::new()
         .timeout_connect(std::time::Duration::from_secs(30))
         .timeout(std::time::Duration::from_secs(600))
@@ -111,8 +112,13 @@ fn download_and_verify(url: &str, dest: &PathBuf, expected_sha: &str) {
             .unwrap_or_else(|e| panic!("failed to write {}: {e}", tmp.display()));
         f.sync_all().ok();
     }
-    fs::rename(&tmp, dest)
-        .unwrap_or_else(|e| panic!("failed to rename {} → {}: {e}", tmp.display(), dest.display()));
+    fs::rename(&tmp, dest).unwrap_or_else(|e| {
+        panic!(
+            "failed to rename {} → {}: {e}",
+            tmp.display(),
+            dest.display()
+        )
+    });
 }
 
 fn verify_sha(path: &PathBuf, expected: &str) -> Result<(), String> {

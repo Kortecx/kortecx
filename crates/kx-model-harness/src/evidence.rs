@@ -46,7 +46,10 @@ impl Evidence {
     pub fn append_evidence_md(&self, line: &str) -> io::Result<()> {
         use std::io::Write;
         let path = self.root.join("EVIDENCE.md");
-        let mut f = fs::OpenOptions::new().create(true).append(true).open(path)?;
+        let mut f = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)?;
         writeln!(f, "{line}")
     }
 }

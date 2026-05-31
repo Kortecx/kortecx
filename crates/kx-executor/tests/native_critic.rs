@@ -12,7 +12,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use kx_content::{ContentRef, ContentStore, InMemoryContentStore};
 use kx_critic_types::{CheckSpec, CriticVerdict, SchemaSpec, SchemaTag};
-use kx_executor::{run_native_critic_mote, validate_submission, SubmissionRefusal, WorkflowSubmission};
+use kx_executor::{
+    run_native_critic_mote, validate_submission, SubmissionRefusal, WorkflowSubmission,
+};
 use kx_journal::{InMemoryJournal, Journal, JournalEntry};
 use kx_mote::{
     EffectPattern, GraphPosition, InputDataId, LogicRef, ModelId, Mote, MoteDef, MoteId, NdClass,
@@ -107,7 +109,12 @@ fn critic_mote(producer: MoteId, check: CheckSpec) -> Mote {
 }
 
 /// Commit `bytes` as `producer`'s committed result_ref in `journal` + `store`.
-fn commit_producer(journal: &InMemoryJournal, store: &InMemoryContentStore, producer: &Mote, bytes: &[u8]) {
+fn commit_producer(
+    journal: &InMemoryJournal,
+    store: &InMemoryContentStore,
+    producer: &Mote,
+    bytes: &[u8],
+) {
     let result_ref = store.put(bytes).unwrap();
     journal
         .append(JournalEntry::Committed {
@@ -130,8 +137,13 @@ fn json_check() -> CheckSpec {
 }
 
 /// Read the committed verdict for `critic` from the journal + store.
-fn committed_verdict(journal: &InMemoryJournal, store: &InMemoryContentStore, critic: &Mote) -> CriticVerdict {
-    let Some(JournalEntry::Committed { result_ref, .. }) = journal.read_committed(&critic.id).unwrap()
+fn committed_verdict(
+    journal: &InMemoryJournal,
+    store: &InMemoryContentStore,
+    critic: &Mote,
+) -> CriticVerdict {
+    let Some(JournalEntry::Committed { result_ref, .. }) =
+        journal.read_committed(&critic.id).unwrap()
     else {
         panic!("critic not committed");
     };
@@ -188,7 +200,11 @@ fn verdict_is_byte_identical_across_independent_runs() {
             .unwrap()
             .result_ref
     };
-    assert_eq!(run(), run(), "same producer bytes + check => byte-identical verdict ref");
+    assert_eq!(
+        run(),
+        run(),
+        "same producer bytes + check => byte-identical verdict ref"
+    );
 }
 
 #[test]
@@ -201,7 +217,10 @@ fn p04_gate_serves_committed_verdict_without_reevaluating() {
 
     let first = run_native_critic_mote(&critic, &warrant(), &journal, &store).unwrap();
     let second = run_native_critic_mote(&critic, &warrant(), &journal, &store).unwrap();
-    assert_eq!(first.committed_seq, second.committed_seq, "P0.4 gate serves the same commit");
+    assert_eq!(
+        first.committed_seq, second.committed_seq,
+        "P0.4 gate serves the same commit"
+    );
     assert_eq!(first.result_ref, second.result_ref);
     // Exactly one Committed entry for the critic.
     assert!(matches!(
@@ -217,13 +236,21 @@ fn r15_refuses_native_critic_without_critic_for() {
     let producer = producer_mote();
     let mut def = critic_mote(producer.id, json_check()).def.clone();
     def.critic_for = None; // critic_check present but no producer => R-15
-    let bad = Mote::new(def, InputDataId::from_bytes([20; 32]), GraphPosition("/critic".into()), SmallVec::new());
+    let bad = Mote::new(
+        def,
+        InputDataId::from_bytes([20; 32]),
+        GraphPosition("/critic".into()),
+        SmallVec::new(),
+    );
 
     let mut motes = BTreeMap::new();
     motes.insert(bad.id, bad.clone());
     let submission = submission(motes);
     let err = validate_submission(&submission).unwrap_err();
-    assert!(matches!(err, SubmissionRefusal::R15NativeCheckShape { .. }), "expected R-15, got {err:?}");
+    assert!(
+        matches!(err, SubmissionRefusal::R15NativeCheckShape { .. }),
+        "expected R-15, got {err:?}"
+    );
 }
 
 #[test]
@@ -238,7 +265,12 @@ fn run_native_critic_rejects_non_pure_mote() {
 
     let mut def = critic_mote(producer.id, json_check()).def.clone();
     def.nd_class = NdClass::WorldMutating; // illegal native-critic shape
-    let bad = Mote::new(def, InputDataId::from_bytes([20; 32]), GraphPosition("/critic".into()), SmallVec::new());
+    let bad = Mote::new(
+        def,
+        InputDataId::from_bytes([20; 32]),
+        GraphPosition("/critic".into()),
+        SmallVec::new(),
+    );
 
     assert!(
         run_native_critic_mote(&bad, &warrant(), &journal, &store).is_err(),
