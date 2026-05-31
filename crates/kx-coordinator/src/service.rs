@@ -17,8 +17,10 @@ use kx_scheduler::WorkerId;
 use kx_warrant::WarrantSpec;
 use tonic::{Request, Response, Status};
 
+use crate::clock::{Clock, SystemClock};
 use crate::commit;
 use crate::error::CoordinatorError;
+use crate::nonce::{OsRandomNonce, RunNonceSource};
 use crate::registry::{InMemoryWorkerRegistry, RegistryError, WorkerRegistry};
 use crate::state::CoreHandle;
 
@@ -72,15 +74,36 @@ impl CoordinatorService {
         Self::build(journal, registry, Some(store))
     }
 
+    /// Build a coordinator with **injected run-registration seams** (M1.1, D64):
+    /// the run-id nonce source + the wall clock that stamps the `RunRegistered`
+    /// timestamp. Tests inject a fixed nonce + clock so the registered run
+    /// identity is deterministic; production uses [`OsRandomNonce`] +
+    /// [`SystemClock`] via the other constructors.
+    pub fn with_seams<J: Journal + Send + 'static>(
+        journal: J,
+        registry: Arc<dyn WorkerRegistry>,
+        store: Option<Arc<LocalFsContentStore>>,
+        clock: Arc<dyn Clock>,
+        nonce: Arc<dyn RunNonceSource>,
+    ) -> Self {
+        Self {
+            core: CoreHandle::spawn(journal, store, registry.clone(), clock, nonce),
+            registry,
+        }
+    }
+
     fn build<J: Journal + Send + 'static>(
         journal: J,
         registry: Arc<dyn WorkerRegistry>,
         store: Option<Arc<LocalFsContentStore>>,
     ) -> Self {
-        Self {
-            core: CoreHandle::spawn(journal, store, registry.clone()),
+        Self::with_seams(
+            journal,
             registry,
-        }
+            store,
+            Arc::new(SystemClock),
+            Arc::new(OsRandomNonce),
+        )
     }
 
     /// Read-side accessor: the current [`MoteState`] of `mote_id` in the
@@ -104,6 +127,14 @@ impl CoordinatorService {
     #[must_use]
     pub fn registry(&self) -> &dyn WorkerRegistry {
         self.registry.as_ref()
+    }
+
+    /// Read-side accessor: the registered run identity (D64) as
+    /// `(instance_id, recipe_fingerprint)`, or `None` if the run has not been
+    /// registered. Read from the folded projection — on recovery this returns the
+    /// journaled fact, never a recomputed value (the run-resume handle M2 builds on).
+    pub async fn run_registration(&self) -> Result<Option<([u8; 16], [u8; 32])>, CoordinatorError> {
+        self.core.run_registration().await
     }
 
     /// Repudiate `target` and cascade the poison-invalidation to its committed downstream
@@ -296,6 +327,27 @@ impl Coordinator for CoordinatorService {
         Ok(Response::new(proto::ReadEntriesResponse {
             entries,
             next_seq,
+        }))
+    }
+
+    #[tracing::instrument(skip_all)]
+    async fn register_run(
+        &self,
+        request: Request<proto::RegisterRunRequest>,
+    ) -> Result<Response<proto::RegisterRunResponse>, Status> {
+        let req = request.into_inner();
+        // The recipe_fingerprint is a client-supplied 32-byte hash (discovery/dedup
+        // only — never identity, so the client MAY compute it, unlike a MoteId).
+        let recipe_fingerprint: [u8; 32] = req
+            .recipe_fingerprint
+            .as_slice()
+            .try_into()
+            .map_err(|_| Status::invalid_argument("recipe_fingerprint must be 32 bytes"))?;
+        // The coordinator assigns the instance_id (D53: identity is server-side).
+        let instance_id = self.core.register_run(recipe_fingerprint).await?;
+        tracing::info!("run registered");
+        Ok(Response::new(proto::RegisterRunResponse {
+            instance_id: instance_id.to_vec(),
         }))
     }
 }

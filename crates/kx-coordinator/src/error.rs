@@ -45,6 +45,13 @@ pub enum CoordinatorError {
     #[error("unknown mote {0:?} (never submitted)")]
     UnknownMote(MoteId),
 
+    /// `RegisterRun` was called on a run whose journal already has entries but no
+    /// `RunRegistered` fact at seq=1 (a run started without registration). Run
+    /// registration must be the FIRST journal fact (M1.1, D64); registering after
+    /// the run has begun would violate the seq=1 / once-per-run invariant.
+    #[error("run already started without registration; RegisterRun must be the first fact")]
+    RunAlreadyStarted,
+
     /// A `ReportCommit` proposed a `result_ref` whose bytes are not present in the
     /// shared content store (D55 phantom-ref guard). When the coordinator is built
     /// with a store handle, it verifies `store.contains(result_ref)` before
@@ -107,6 +114,9 @@ impl From<CoordinatorError> for tonic::Status {
             | CoordinatorError::TooManyParents { .. }
             | CoordinatorError::DataEdgeNonCascade
             | CoordinatorError::Scheduler(_) => Self::invalid_argument(message),
+            // The run is not in a state that allows registration (it already
+            // began) — the gRPC-canonical code for a state precondition failure.
+            CoordinatorError::RunAlreadyStarted => Self::failed_precondition(message),
             CoordinatorError::Journal(_)
             | CoordinatorError::Projection(_)
             | CoordinatorError::CommitFailed(_) => Self::internal(message),

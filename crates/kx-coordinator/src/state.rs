@@ -20,15 +20,17 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use kx_content::{ContentStore, LocalFsContentStore};
-use kx_journal::{FailureReason, Journal, JournalEntry, RepudiationReason};
+use kx_journal::{FailureReason, Journal, JournalEntry, RepudiationReason, INSTANCE_ID_LEN};
 use kx_mote::{Mote, MoteId, NdClass};
 use kx_projection::{MoteState, Projection};
 use kx_scheduler::{LocalPlacement, Placement, Scheduler, SchedulerError, WorkerId};
 use kx_warrant::{ExecutorClass, WarrantSpec};
 use tokio::sync::{mpsc, oneshot};
 
+use crate::clock::Clock;
 use crate::commit::CommitProposal;
 use crate::error::CoordinatorError;
+use crate::nonce::RunNonceSource;
 use crate::placement::LoadAwarePlacement;
 use crate::registry::{WorkerRegistry, WorkerStatus};
 use crate::repudiation::{
@@ -110,6 +112,13 @@ pub(crate) enum Command {
         idempotency_key: [u8; 32],
         reply: oneshot::Sender<Result<u64, CoordinatorError>>,
     },
+    RegisterRun {
+        recipe_fingerprint: [u8; 32],
+        reply: oneshot::Sender<Result<[u8; INSTANCE_ID_LEN], CoordinatorError>>,
+    },
+    RunRegistration {
+        reply: oneshot::Sender<Option<([u8; INSTANCE_ID_LEN], [u8; 32])>>,
+    },
 }
 
 /// Handle to the orchestration core. Cloneable + `Send + Sync` (it is just the
@@ -129,9 +138,20 @@ impl CoreHandle {
         journal: J,
         store: Option<Arc<LocalFsContentStore>>,
         registry: Arc<dyn WorkerRegistry>,
+        clock: Arc<dyn Clock>,
+        nonce: Arc<dyn RunNonceSource>,
     ) -> Self {
         let (commands, inbox) = mpsc::channel(COMMAND_BUFFER);
-        std::thread::spawn(move || core_loop(&journal, store.as_deref(), &*registry, inbox));
+        std::thread::spawn(move || {
+            core_loop(
+                &journal,
+                store.as_deref(),
+                &*registry,
+                &*clock,
+                &*nonce,
+                inbox,
+            );
+        });
         Self { commands }
     }
 
@@ -279,6 +299,39 @@ impl CoreHandle {
         response
             .await
             .map_err(|_| CoordinatorError::CoreUnavailable)?
+    }
+
+    /// Register the run (M1.1, D64): assign a fresh, journaled, immutable
+    /// `instance_id` and append the seq=1 `RunRegistered` fact. The client calls
+    /// this once before submitting any Mote. Idempotent — a second call on the
+    /// same run returns the existing `instance_id`. Errors with `RunAlreadyStarted`
+    /// if the run has already begun without registration.
+    pub(crate) async fn register_run(
+        &self,
+        recipe_fingerprint: [u8; 32],
+    ) -> Result<[u8; INSTANCE_ID_LEN], CoordinatorError> {
+        let (reply, response) = oneshot::channel();
+        self.dispatch(Command::RegisterRun {
+            recipe_fingerprint,
+            reply,
+        })
+        .await?;
+        response
+            .await
+            .map_err(|_| CoordinatorError::CoreUnavailable)?
+    }
+
+    /// The registered run identity (D64) as `(instance_id, recipe_fingerprint)`,
+    /// or `None` if the run has not been registered. Read from the folded
+    /// projection — on recovery this is the journaled fact, never recomputed.
+    pub(crate) async fn run_registration(
+        &self,
+    ) -> Result<Option<([u8; INSTANCE_ID_LEN], [u8; 32])>, CoordinatorError> {
+        let (reply, response) = oneshot::channel();
+        self.dispatch(Command::RunRegistration { reply }).await?;
+        response
+            .await
+            .map_err(|_| CoordinatorError::CoreUnavailable)
     }
 
     async fn dispatch(&self, command: Command) -> Result<(), CoordinatorError> {
@@ -603,6 +656,8 @@ fn core_loop<J: Journal>(
     journal: &J,
     store: Option<&LocalFsContentStore>,
     registry: &dyn WorkerRegistry,
+    clock: &dyn Clock,
+    nonce: &dyn RunNonceSource,
     mut inbox: mpsc::Receiver<Command>,
 ) {
     let Some((mut projection, mut folded_through, submitted)) = recover(journal) else {
@@ -655,6 +710,8 @@ fn core_loop<J: Journal>(
                 &mut projection,
                 &mut folded_through,
                 registry,
+                clock,
+                nonce,
                 &mut dispatch,
                 &mut scheduler,
                 command,
@@ -674,11 +731,14 @@ fn core_loop<J: Journal>(
 /// Service one non-`Commit` command against the owner-thread state (Commits are
 /// coalesced into group commits before this is reached, so the `Commit` arm is
 /// unreachable). Each arm sends its `oneshot` reply; a dropped receiver is ignored.
+#[allow(clippy::too_many_arguments)]
 fn handle_command<J: Journal>(
     journal: &J,
     projection: &mut Projection,
     folded_through: &mut u64,
     registry: &dyn WorkerRegistry,
+    clock: &dyn Clock,
+    nonce: &dyn RunNonceSource,
     dispatch: &mut Dispatch,
     scheduler: &mut Scheduler<LocalPlacement>,
     command: Command,
@@ -759,6 +819,23 @@ fn handle_command<J: Journal>(
             );
             let _ = reply.send(seq);
         }
+        Command::RegisterRun {
+            recipe_fingerprint,
+            reply,
+        } => {
+            let result = register_run(
+                journal,
+                projection,
+                folded_through,
+                clock,
+                nonce,
+                recipe_fingerprint,
+            );
+            let _ = reply.send(result);
+        }
+        Command::RunRegistration { reply } => {
+            let _ = reply.send(projection.run_registration());
+        }
     }
 }
 
@@ -787,6 +864,54 @@ fn stage_effect<J: Journal>(
         *folded_through = seq;
     }
     Ok(seq)
+}
+
+/// Register the run (M1.1, D63/D64): append the seq=1 `RunRegistered` fact —
+/// the run's registered, journaled, immutable `instance_id` (a fresh OS-entropy
+/// nonce) plus the client's `recipe_fingerprint` (discovery/dedup only) and an
+/// audit timestamp — then fold it (O(1), off the Mote-DAG) and return the id.
+///
+/// **Idempotent:** if the run is already registered (its seq=1 fact folded into
+/// the projection), the existing `instance_id` is returned and nothing is written
+/// — `instance_id` is read on replay, never recomputed. **Once-per-run, seq=1:**
+/// if the journal already has entries but no registration (a run that began
+/// without it), registration is refused (`RunAlreadyStarted`) so the fact can
+/// never land mid-run.
+fn register_run<J: Journal>(
+    journal: &J,
+    projection: &mut Projection,
+    folded_through: &mut u64,
+    clock: &dyn Clock,
+    nonce: &dyn RunNonceSource,
+    recipe_fingerprint: [u8; 32],
+) -> Result<[u8; INSTANCE_ID_LEN], CoordinatorError> {
+    // Idempotent: a registered run returns its existing identity (read on replay,
+    // never recomputed). The fingerprint argument is ignored on re-registration —
+    // the journaled fact is immutable.
+    if let Some((instance_id, _)) = projection.run_registration() {
+        return Ok(instance_id);
+    }
+    // Registration must be the FIRST journal fact (seq=1). A non-empty journal with
+    // no registration means the run already began without it — refuse rather than
+    // append a registration fact in the middle of a run.
+    if *folded_through != 0 {
+        return Err(CoordinatorError::RunAlreadyStarted);
+    }
+    let instance_id = nonce.fresh_instance_id();
+    let entry = JournalEntry::RunRegistered {
+        instance_id,
+        recipe_fingerprint,
+        // Audit-only; never hashed, never on the identity/scheduling path (SN-8).
+        ts: clock.now_ms(),
+        seq: 0,
+    };
+    let durable = journal.append(entry)?;
+    let seq = durable.seq();
+    if seq > *folded_through {
+        projection.fold(&durable)?;
+        *folded_through = seq;
+    }
+    Ok(instance_id)
 }
 
 /// Register a submitted Mote through the hosted scheduler (verbatim, thesis test) and

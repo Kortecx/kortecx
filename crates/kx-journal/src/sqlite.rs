@@ -11,7 +11,7 @@
 //!
 //! CREATE TABLE entries (
 //!     seq             INTEGER  PRIMARY KEY,   -- per-run monotonic u64
-//!     kind            INTEGER  NOT NULL,      -- u8 (Proposed=0, Committed=1, Repudiated=2, Failed=3)
+//!     kind            INTEGER  NOT NULL,      -- u8 (Proposed=0, Committed=1, Repudiated=2, Failed=3, EffectStaged=4, RunRegistered=5)
 //!     mote_id         BLOB     NOT NULL,      -- 32 bytes
 //!     idempotency_key BLOB     NOT NULL,      -- 32 bytes
 //!     nondeterminism  INTEGER  NOT NULL DEFAULT 0,
@@ -20,7 +20,8 @@
 //! );
 //!
 //! CREATE INDEX idx_entries_mote_id ON entries (mote_id);
-//! CREATE UNIQUE INDEX idx_entries_dedupe ON entries (idempotency_key, kind) WHERE kind IN (1, 2);
+//! CREATE UNIQUE INDEX idx_entries_dedupe ON entries (idempotency_key, kind) WHERE kind IN (1, 2, 4);
+//! -- RunRegistered (kind 5) is NOT in the dedupe set: one run registers exactly once by construction.
 //! CREATE INDEX idx_entries_def_hash ON entries (mote_def_hash) WHERE kind = 1;
 //! ```
 //!
@@ -465,7 +466,8 @@ fn set_seq(entry: &mut JournalEntry, new_seq: u64) {
         | JournalEntry::Committed { seq, .. }
         | JournalEntry::Repudiated { seq, .. }
         | JournalEntry::Failed { seq, .. }
-        | JournalEntry::EffectStaged { seq, .. } => *seq = new_seq,
+        | JournalEntry::EffectStaged { seq, .. }
+        | JournalEntry::RunRegistered { seq, .. } => *seq = new_seq,
     }
 }
 

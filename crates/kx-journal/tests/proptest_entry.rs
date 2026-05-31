@@ -29,8 +29,8 @@
 use kx_content::ContentRef;
 use kx_journal::{
     decode_entry, decode_entry_with_def_hash, encode_entry, FailureReason, InMemoryJournal,
-    Journal, JournalEntry, ParentEntry, RepudiationReason, SqliteJournal, MAX_ENTRY_LEN,
-    MAX_PARENTS,
+    Journal, JournalEntry, ParentEntry, RepudiationReason, SqliteJournal, INSTANCE_ID_LEN,
+    MAX_ENTRY_LEN, MAX_PARENTS,
 };
 use kx_mote::{MoteDefHash, MoteId, NdClass};
 use proptest::prelude::*;
@@ -162,6 +162,28 @@ fn arb_committed() -> impl Strategy<Value = JournalEntry> {
         )
 }
 
+/// **v3 (M1.1): RunRegistered strategy.** `instance_id` is the 16-byte run nonce;
+/// `recipe_fingerprint` is a 32-byte discovery/dedup hash; `ts` is audit-only.
+fn arb_run_registered() -> impl Strategy<Value = JournalEntry> {
+    (
+        proptest::array::uniform16(any::<u8>()),
+        arb_byte_array_32(),
+        any::<u64>(),
+        any::<u64>(),
+    )
+        .prop_map(|(instance_id, recipe_fingerprint, ts, seq)| {
+            // The strategy already produces a 16-byte array; pin it to
+            // INSTANCE_ID_LEN so a future length change fails to compile here.
+            let _: [u8; INSTANCE_ID_LEN] = instance_id;
+            JournalEntry::RunRegistered {
+                instance_id,
+                recipe_fingerprint,
+                ts,
+                seq,
+            }
+        })
+}
+
 /// **v2 (PR 7): EffectStaged strategy.** Header-only; no body fields.
 fn arb_effect_staged() -> impl Strategy<Value = JournalEntry> {
     (arb_mote_id(), arb_byte_array_32(), any::<u64>()).prop_map(
@@ -273,6 +295,36 @@ proptest! {
         let a = encode_entry(&entry).expect("encode a");
         let b = encode_entry(&entry).expect("encode b");
         prop_assert_eq!(a, b);
+    }
+
+    // **v3 (M1.1)** — encode/decode round-trip for RunRegistered entries.
+    // Fixed 130-byte size (74 header + 56 body).
+    #[test]
+    fn prop_run_registered_round_trip(entry in arb_run_registered()) {
+        let bytes = encode_entry(&entry).expect("encode");
+        prop_assert_eq!(bytes.len(), 130);
+        let decoded = decode_entry(&bytes).expect("decode");
+        prop_assert_eq!(decoded, entry);
+    }
+
+    // **v3 (M1.1)** — encoding determinism for RunRegistered.
+    #[test]
+    fn prop_encoding_is_deterministic_run_registered(entry in arb_run_registered()) {
+        let a = encode_entry(&entry).expect("encode a");
+        let b = encode_entry(&entry).expect("encode b");
+        prop_assert_eq!(a, b);
+    }
+
+    // **v3 (M1.1)** — size cap holds for RunRegistered.
+    #[test]
+    fn prop_size_cap_run_registered(entry in arb_run_registered()) {
+        let bytes = encode_entry(&entry).expect("encode");
+        prop_assert!(
+            bytes.len() <= MAX_ENTRY_LEN,
+            "RunRegistered encoded to {} bytes; cap is {}",
+            bytes.len(),
+            MAX_ENTRY_LEN
+        );
     }
 
     // Property 1 — encode/decode round-trip for Committed entries via
