@@ -107,6 +107,7 @@ pub use projection::Projection;
 pub use promotion::{ContentStoreVerdicts, VerdictLookup};
 pub use register::RegisterMote;
 pub use snapshot::Snapshot;
+pub use state::RunResolvedVersions;
 
 #[cfg(test)]
 mod tests;

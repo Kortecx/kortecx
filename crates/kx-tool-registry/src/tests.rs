@@ -166,6 +166,61 @@ fn resolve_event_is_deterministic() {
 }
 
 // -----------------------------------------------------------------
+// resolve_run_versions (M1.2, D79)
+// -----------------------------------------------------------------
+
+#[test]
+fn resolve_run_versions_orders_by_grant_and_is_empty_for_zero_grants() {
+    let mut reg = InMemoryToolRegistry::new();
+    for id in ["beta", "alpha"] {
+        reg.register(
+            sample_def(id, "1", ToolKind::Builtin, permissive_req()),
+            ToolProvenance::HumanAuthored {
+                author: "ops".into(),
+            },
+        )
+        .unwrap();
+    }
+    let mut warrant = permissive_warrant();
+    warrant.tool_grants = BTreeSet::from([
+        ToolGrant {
+            tool_id: ToolName("beta".into()),
+            tool_version: ToolVersion("1".into()),
+        },
+        ToolGrant {
+            tool_id: ToolName("alpha".into()),
+            tool_version: ToolVersion("1".into()),
+        },
+    ]);
+    let events = resolve_run_versions(&reg, &warrant).unwrap();
+    // BTreeSet iteration is canonical (tool_id, tool_version) order → alpha, beta.
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[0].tool_id.0, "alpha");
+    assert_eq!(events[1].tool_id.0, "beta");
+
+    // Zero-grant warrant → empty Vec (no metadata to capture).
+    let mut empty = permissive_warrant();
+    empty.tool_grants = BTreeSet::new();
+    assert!(resolve_run_versions(&reg, &empty).unwrap().is_empty());
+}
+
+#[test]
+fn resolve_run_versions_propagates_resolution_error() {
+    // A grant for a tool that does not resolve cleanly fails the whole capture
+    // (fail-closed: no partial/over-privileged metadata is ever journaled).
+    let reg = InMemoryToolRegistry::new();
+    let mut warrant = permissive_warrant();
+    warrant.tool_grants = BTreeSet::from([ToolGrant {
+        tool_id: ToolName("missing".into()),
+        tool_version: ToolVersion("1".into()),
+    }]);
+    assert!(matches!(
+        resolve_run_versions(&reg, &warrant),
+        Err(ResolutionError::NotFound { .. })
+    ));
+}
+
+// -----------------------------------------------------------------
 // resolve — refusals
 // -----------------------------------------------------------------
 

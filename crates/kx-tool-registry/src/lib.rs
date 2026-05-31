@@ -16,9 +16,14 @@
 //! # Resolution path (D32 §5)
 //!
 //! `local → registry → MCP`. Invisible to the capability model — the warrant
-//! sees only the `(ToolName, ToolVersion)` reference. BUT the resolved tier is
-//! **journaled** via a content-addressed [`ToolResolutionEvent`] so replay
-//! resolves identically. At resolution time, [`check_tool_requirement`]
+//! sees only the `(ToolName, ToolVersion)` reference. The resolved tier is
+//! **content-addressed** by a [`ToolResolutionEvent`] (the event struct is a
+//! pure resolution artifact — NOT itself a journal entry). In M1.2 (D79) the
+//! coordinator captures the resolved `(tool_id, tool_version, resolved_kind,
+//! resolved_def_hash)` of every grant — via [`resolve_run_versions`] — as
+//! off-DAG run **metadata** (a journaled `RunVersionsResolved` fact attached to
+//! the run's `instance_id`); these versions are audit/lineage metadata, never
+//! folded into identity. At resolution time, [`check_tool_requirement`]
 //! enforces `tool.required_capability ⊆ warrant`; the broker (P1.8.5) never
 //! sees a tool whose capability exceeds the warrant.
 //!
@@ -97,7 +102,7 @@ pub use errors::{RegistrationError, ResolutionError};
 pub use idempotency_class::IdempotencyClass;
 pub use ids::{McpEndpointId, RegistrationToken, ReviewerId};
 pub use provenance::{RegistrationStatus, ToolProvenance};
-pub use registry::{InMemoryToolRegistry, ToolRegistry};
+pub use registry::{resolve_run_versions, InMemoryToolRegistry, ToolRegistry};
 pub use token::registration_token_of;
 pub use tool_def::{ResolvedTool, ToolDef, ToolResolutionEvent};
 pub use tool_kind::ToolKind;

@@ -20,11 +20,15 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use kx_content::{ContentStore, LocalFsContentStore};
-use kx_journal::{FailureReason, Journal, JournalEntry, RepudiationReason, INSTANCE_ID_LEN};
+use kx_journal::{
+    FailureReason, Journal, JournalEntry, RepudiationReason, ResolvedCapabilityRecord,
+    ResolvedKindTag, INSTANCE_ID_LEN,
+};
 use kx_mote::{Mote, MoteId, NdClass};
 use kx_projection::{MoteState, Projection};
 use kx_scheduler::{LocalPlacement, Placement, Scheduler, SchedulerError, WorkerId};
-use kx_warrant::{ExecutorClass, WarrantSpec};
+use kx_tool_registry::{resolve_run_versions, ToolKind, ToolRegistry};
+use kx_warrant::{warrant_ref_of, ExecutorClass, WarrantSpec};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::clock::Clock;
@@ -53,13 +57,22 @@ const COMMAND_BUFFER: usize = 1024;
 /// that transaction.
 const MAX_DRAIN: usize = 256;
 
-/// Outcome of a `SubmitMote`: the canonically re-derived id and whether it was a
-/// duplicate (idempotent re-submit before commit).
+/// Outcome of a `SubmitMote`: the canonically re-derived id, whether it was a
+/// duplicate (idempotent re-submit before commit), and the registered run's
+/// `instance_id` if the run was registered (M1.2/D64 — the resume key surfaced
+/// on the wire; `None` for an unregistered run, where M1.2 captures no metadata
+/// and the worker falls back to the MoteId-only token).
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct SubmitOutcome {
     pub(crate) mote_id: MoteId,
     pub(crate) duplicate: bool,
+    pub(crate) instance_id: Option<[u8; INSTANCE_ID_LEN]>,
 }
+
+/// Leased work plus the run's `instance_id` (if registered) — the `LeaseWork`
+/// reply shape (M1.2): the worker derives the run-scoped idempotency token from
+/// the `instance_id`.
+type LeasedWork = (Vec<(Mote, WarrantSpec)>, Option<[u8; INSTANCE_ID_LEN]>);
 
 /// Outcome of a `ReportCommit`: the journal-assigned seq and whether the commit
 /// was newly appended or a dedup-by-key hit (first-wins).
@@ -94,7 +107,9 @@ pub(crate) enum Command {
         worker: WorkerId,
         executor_class: ExecutorClass,
         max: usize,
-        reply: oneshot::Sender<Vec<(Mote, WarrantSpec)>>,
+        // M1.2: the leased work PLUS the run's `instance_id` (if registered), so
+        // the worker can derive the run-scoped cross-boundary idempotency token.
+        reply: oneshot::Sender<LeasedWork>,
     },
     ReadEntries {
         since_seq: u64,
@@ -119,6 +134,9 @@ pub(crate) enum Command {
     RunRegistration {
         reply: oneshot::Sender<Option<([u8; INSTANCE_ID_LEN], [u8; 32])>>,
     },
+    RunResolvedVersions {
+        reply: oneshot::Sender<Vec<kx_projection::RunResolvedVersions>>,
+    },
 }
 
 /// Handle to the orchestration core. Cloneable + `Send + Sync` (it is just the
@@ -140,6 +158,7 @@ impl CoreHandle {
         registry: Arc<dyn WorkerRegistry>,
         clock: Arc<dyn Clock>,
         nonce: Arc<dyn RunNonceSource>,
+        tool_registry: Arc<dyn ToolRegistry>,
     ) -> Self {
         let (commands, inbox) = mpsc::channel(COMMAND_BUFFER);
         std::thread::spawn(move || {
@@ -149,6 +168,7 @@ impl CoreHandle {
                 &*registry,
                 &*clock,
                 &*nonce,
+                &*tool_registry,
                 inbox,
             );
         });
@@ -222,7 +242,7 @@ impl CoreHandle {
         worker: WorkerId,
         executor_class: ExecutorClass,
         max: usize,
-    ) -> Result<Vec<(Mote, WarrantSpec)>, CoordinatorError> {
+    ) -> Result<LeasedWork, CoordinatorError> {
         let (reply, response) = oneshot::channel();
         self.dispatch(Command::LeaseWork {
             worker,
@@ -334,6 +354,20 @@ impl CoreHandle {
             .map_err(|_| CoordinatorError::CoreUnavailable)
     }
 
+    /// The resolved-version run metadata captured so far (M1.2, D79) — one record
+    /// per resolved capability. Read from the folded projection; off the truth
+    /// path (never gates anything).
+    pub(crate) async fn run_resolved_versions(
+        &self,
+    ) -> Result<Vec<kx_projection::RunResolvedVersions>, CoordinatorError> {
+        let (reply, response) = oneshot::channel();
+        self.dispatch(Command::RunResolvedVersions { reply })
+            .await?;
+        response
+            .await
+            .map_err(|_| CoordinatorError::CoreUnavailable)
+    }
+
     async fn dispatch(&self, command: Command) -> Result<(), CoordinatorError> {
         self.commands
             .send(command)
@@ -381,6 +415,8 @@ struct LeaseReq {
 /// Serve one `LeaseWork` poll (D57): reap dead workers first so their in-flight Motes
 /// re-enter the candidate set for *this* poll, select up to `req.max` runnable Motes
 /// (ready ∪ rescheduleable), and record the new lease assignments for the next reap.
+/// Returns the leased work plus the run's `instance_id` (M1.2: the worker derives
+/// the run-scoped idempotency token from it; `None` for an unregistered run).
 fn serve_lease<J: Journal>(
     journal: &J,
     projection: &mut Projection,
@@ -388,7 +424,7 @@ fn serve_lease<J: Journal>(
     registry: &dyn WorkerRegistry,
     dispatch: &mut Dispatch,
     req: &LeaseReq,
-) -> Vec<(Mote, WarrantSpec)> {
+) -> LeasedWork {
     reap_dead_workers(
         journal,
         projection,
@@ -408,7 +444,9 @@ fn serve_lease<J: Journal>(
     dispatch
         .tracker
         .record_lease(req.worker, items.iter().map(|(mote, _)| mote.id));
-    items
+    // M1.2 (O(1) off-DAG read): the run the leased work belongs to.
+    let instance_id = projection.run_registration().map(|(id, _)| id);
+    (items, instance_id)
 }
 
 /// Select up to `max` ready Motes for `worker` to run. Candidates are ready
@@ -658,6 +696,7 @@ fn core_loop<J: Journal>(
     registry: &dyn WorkerRegistry,
     clock: &dyn Clock,
     nonce: &dyn RunNonceSource,
+    tool_registry: &dyn ToolRegistry,
     mut inbox: mpsc::Receiver<Command>,
 ) {
     let Some((mut projection, mut folded_through, submitted)) = recover(journal) else {
@@ -712,6 +751,7 @@ fn core_loop<J: Journal>(
                 registry,
                 clock,
                 nonce,
+                tool_registry,
                 &mut dispatch,
                 &mut scheduler,
                 command,
@@ -731,7 +771,12 @@ fn core_loop<J: Journal>(
 /// Service one non-`Commit` command against the owner-thread state (Commits are
 /// coalesced into group commits before this is reached, so the `Commit` arm is
 /// unreachable). Each arm sends its `oneshot` reply; a dropped receiver is ignored.
-#[allow(clippy::too_many_arguments)]
+///
+/// `too_many_lines` is allowed: this is a flat one-arm-per-`Command` dispatch
+/// match (each arm a thin delegation to a named helper). The length is the
+/// command count, not cognitive complexity; splitting the match into
+/// sub-dispatchers would be artificial.
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn handle_command<J: Journal>(
     journal: &J,
     projection: &mut Projection,
@@ -739,6 +784,7 @@ fn handle_command<J: Journal>(
     registry: &dyn WorkerRegistry,
     clock: &dyn Clock,
     nonce: &dyn RunNonceSource,
+    tool_registry: &dyn ToolRegistry,
     dispatch: &mut Dispatch,
     scheduler: &mut Scheduler<LocalPlacement>,
     command: Command,
@@ -750,7 +796,16 @@ fn handle_command<J: Journal>(
             warrant,
             reply,
         } => {
-            let outcome = handle_submit(scheduler, projection, dispatch, *mote, *warrant);
+            let outcome = submit_and_capture(
+                journal,
+                projection,
+                folded_through,
+                tool_registry,
+                dispatch,
+                scheduler,
+                *mote,
+                *warrant,
+            );
             let _ = reply.send(outcome);
         }
         Command::StateOf { mote_id, reply } => {
@@ -768,7 +823,7 @@ fn handle_command<J: Journal>(
             max,
             reply,
         } => {
-            let items = serve_lease(
+            let leased = serve_lease(
                 journal,
                 projection,
                 folded_through,
@@ -780,7 +835,7 @@ fn handle_command<J: Journal>(
                     max,
                 },
             );
-            let _ = reply.send(items);
+            let _ = reply.send(leased);
         }
         Command::ReadEntries {
             since_seq,
@@ -835,6 +890,9 @@ fn handle_command<J: Journal>(
         }
         Command::RunRegistration { reply } => {
             let _ = reply.send(projection.run_registration());
+        }
+        Command::RunResolvedVersions { reply } => {
+            let _ = reply.send(projection.run_resolved_versions().to_vec());
         }
     }
 }
@@ -914,6 +972,43 @@ fn register_run<J: Journal>(
     Ok(instance_id)
 }
 
+/// Submit a Mote and, on a fresh submit of a registered run, capture its
+/// resolved versions (M1.2). Extracted from `handle_command`'s Submit arm to
+/// keep that function within the line budget.
+#[allow(clippy::too_many_arguments)]
+fn submit_and_capture<J: Journal>(
+    journal: &J,
+    projection: &mut Projection,
+    folded_through: &mut u64,
+    tool_registry: &dyn ToolRegistry,
+    dispatch: &mut Dispatch,
+    scheduler: &mut Scheduler<LocalPlacement>,
+    mote: Mote,
+    warrant: WarrantSpec,
+) -> SubmitOutcome {
+    let warrant_for_capture = warrant.clone();
+    let mut outcome = handle_submit(scheduler, projection, dispatch, mote, warrant);
+    // M1.2 (D79): on a FRESH (non-duplicate) submit of a REGISTERED run, capture
+    // the resolved tool/model/warrant versions as off-DAG run metadata and
+    // surface the run's instance_id. An unregistered run captures nothing (no
+    // instance_id to attach to) and gets `None` — forcing registration before
+    // submit is M1.3.
+    if !outcome.duplicate {
+        if let Some((instance_id, _)) = projection.run_registration() {
+            outcome.instance_id = Some(instance_id);
+            capture_run_versions(
+                journal,
+                projection,
+                folded_through,
+                tool_registry,
+                instance_id,
+                &warrant_for_capture,
+            );
+        }
+    }
+    outcome
+}
+
 /// Register a submitted Mote through the hosted scheduler (verbatim, thesis test) and
 /// retain its def for `LeaseWork`. Returns the canonical id + whether it was an
 /// idempotent re-submit (already admitted before commit).
@@ -933,7 +1028,124 @@ fn handle_submit(
         }
         Err(SchedulerError::DuplicateSubmission(_)) => true,
     };
-    SubmitOutcome { mote_id, duplicate }
+    // `instance_id` is filled by the caller (the Submit arm) after this returns —
+    // only for a fresh submit of a registered run (M1.2).
+    SubmitOutcome {
+        mote_id,
+        duplicate,
+        instance_id: None,
+    }
+}
+
+/// Capture the resolved tool/model/warrant versions of a fresh submit as off-DAG
+/// run **metadata** (M1.2, D79): resolve the warrant's `tool_grants` and append
+/// one `RunVersionsResolved` fact per resolved capability (a zero-grant warrant
+/// gets one fact with no capability), each anchored to the run's `instance_id`.
+/// **Metadata, never identity** — never folded into `MoteId`. O(1) per append,
+/// off the Mote-DAG.
+///
+/// Fail-CLOSED on a resolution miss: if any grant does not resolve cleanly
+/// (`NotFound` / `CapabilityExceedsWarrant` / pending review), NOTHING is
+/// journaled — no partial or over-privileged tuple is ever recorded. The submit
+/// still succeeds (M1.2 only captures; refusing such a submit is M1.3).
+fn capture_run_versions<J: Journal>(
+    journal: &J,
+    projection: &mut Projection,
+    folded_through: &mut u64,
+    tool_registry: &dyn ToolRegistry,
+    instance_id: [u8; INSTANCE_ID_LEN],
+    warrant: &WarrantSpec,
+) {
+    let events = match resolve_run_versions(tool_registry, warrant) {
+        Ok(events) => events,
+        Err(reason) => {
+            tracing::warn!(
+                ?reason,
+                "M1.2 resolved-version capture skipped: a tool grant did not resolve (M1.3 will refuse the submit)"
+            );
+            return;
+        }
+    };
+    let warrant_ref = warrant_ref_of(warrant);
+    let model_id = warrant.model_route.model_id.0.clone();
+    if events.is_empty() {
+        // Zero-grant warrant: still capture model + warrant as one metadata fact.
+        append_run_versions(
+            journal,
+            projection,
+            folded_through,
+            instance_id,
+            warrant_ref,
+            &model_id,
+            None,
+        );
+        return;
+    }
+    for event in events {
+        let capability = ResolvedCapabilityRecord {
+            tool_id: event.tool_id.0,
+            tool_version: event.tool_version.0,
+            resolved_kind: tool_kind_tag(&event.resolved_kind),
+            resolved_def_hash: event.resolved_def_hash,
+        };
+        append_run_versions(
+            journal,
+            projection,
+            folded_through,
+            instance_id,
+            warrant_ref,
+            &model_id,
+            Some(capability),
+        );
+    }
+}
+
+/// Append one `RunVersionsResolved` metadata fact through the sole writer and
+/// fold it (O(1), off the Mote-DAG). A journal append failure is logged and
+/// swallowed — capture is best-effort metadata, never on the truth path.
+fn append_run_versions<J: Journal>(
+    journal: &J,
+    projection: &mut Projection,
+    folded_through: &mut u64,
+    instance_id: [u8; INSTANCE_ID_LEN],
+    warrant_ref: kx_content::ContentRef,
+    model_id: &str,
+    capability: Option<ResolvedCapabilityRecord>,
+) {
+    let entry = JournalEntry::RunVersionsResolved {
+        instance_id,
+        warrant_ref,
+        model_id: model_id.to_owned(),
+        capability,
+        seq: 0,
+    };
+    match journal.append(entry) {
+        Ok(durable) => {
+            let seq = durable.seq();
+            if seq > *folded_through {
+                if let Err(err) = projection.fold(&durable) {
+                    tracing::warn!(?err, "fold of RunVersionsResolved metadata failed");
+                } else {
+                    *folded_through = seq;
+                }
+            }
+        }
+        Err(err) => {
+            tracing::warn!(?err, "append of RunVersionsResolved metadata failed");
+        }
+    }
+}
+
+/// Map a resolved [`ToolKind`] to its journal [`ResolvedKindTag`] (the closed
+/// mirror kept in `kx-journal` so the journal stays dependency-clean).
+fn tool_kind_tag(kind: &ToolKind) -> ResolvedKindTag {
+    match kind {
+        ToolKind::Builtin => ResolvedKindTag::Builtin,
+        ToolKind::LocalScript { .. } => ResolvedKindTag::LocalScript,
+        ToolKind::External { .. } => ResolvedKindTag::External,
+        ToolKind::Mcp { .. } => ResolvedKindTag::Mcp,
+        ToolKind::SelfGenerated { .. } => ResolvedKindTag::SelfGenerated,
+    }
 }
 
 /// One queued `ReportCommit`: its validated proposal + the reply channel.

@@ -90,9 +90,10 @@
 pub use crate::entry::{
     decode_entry, decode_entry_with_def_hash, encode_entry, is_pre_commit_crash,
     repudiation_idempotency_key, run_root_id, DecodeError, EncodeError, FailureReason,
-    JournalEntry, ParentEntry, RepudiationReason, HEADER_LEN, INSTANCE_ID_LEN,
-    JOURNAL_SCHEMA_VERSION, KIND_COMMITTED, KIND_EFFECT_STAGED, KIND_FAILED, KIND_PROPOSED,
-    KIND_REPUDIATED, KIND_RUN_REGISTERED, MAX_ENTRY_LEN, MAX_PARENTS,
+    JournalEntry, ParentEntry, RepudiationReason, ResolvedCapabilityRecord, ResolvedKindTag,
+    HEADER_LEN, INSTANCE_ID_LEN, JOURNAL_SCHEMA_VERSION, KIND_COMMITTED, KIND_EFFECT_STAGED,
+    KIND_FAILED, KIND_PROPOSED, KIND_REPUDIATED, KIND_RUN_REGISTERED, KIND_RUN_VERSIONS_RESOLVED,
+    MAX_ENTRY_LEN, MAX_PARENTS,
 };
 pub use crate::in_memory::InMemoryJournal;
 pub use crate::sqlite::SqliteJournal;

@@ -213,6 +213,7 @@ message SubmitMoteResponse {
   bytes mote_id = 1;                    // 32B — coordinator-derived identity
   SubmitStatus status = 2;
   string detail = 3;                    // human-readable; empty on accept
+  bytes instance_id = 4;                // 16B — the registered run this Mote was admitted under (M1.2/D64; the resume key clients hand back to M2)
 }
 
 // ---------------------------------------------------------------------------
@@ -316,6 +317,7 @@ message WorkItem {
 
 message LeaseWorkResponse {
   repeated WorkItem items = 1;          // empty when no ready work matches
+  bytes instance_id = 2;                // 16B — the registered run; the worker derives the cross-boundary idempotency token from it (M1.2/D64). Empty if the run is unregistered.
 }
 
 // ---------------------------------------------------------------------------

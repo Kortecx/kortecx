@@ -191,6 +191,35 @@ pub trait ToolRegistry: Send + Sync {
     ) -> Result<(), RegistrationError>;
 }
 
+/// Resolve every tool a warrant grants, in canonical `(tool_id, tool_version)`
+/// order, returning the content-addressed [`ToolResolutionEvent`] for each
+/// (M1.2, D79). Pure over the registry state — reuses [`ToolRegistry::resolve`]
+/// per grant (so the same subset checks + content-addressing apply).
+///
+/// The caller (the coordinator, at submit) captures these events as off-DAG
+/// run **metadata** (a journaled `RunVersionsResolved` fact) — never identity.
+/// A zero-grant warrant yields an empty `Vec`.
+///
+/// # Errors
+///
+/// Propagates the first [`ResolutionError`] (`NotFound`,
+/// `CapabilityExceedsWarrant`, `PendingHumanReview`) — so a tool that does not
+/// resolve cleanly is surfaced before any metadata is journaled (fail-closed on
+/// the capture path; no over-privileged or phantom tuple is ever recorded).
+pub fn resolve_run_versions(
+    registry: &dyn ToolRegistry,
+    warrant: &WarrantSpec,
+) -> Result<Vec<ToolResolutionEvent>, ResolutionError> {
+    // `tool_grants` is a `BTreeSet<ToolGrant>` — iteration is already in
+    // canonical (tool_id, tool_version) order, so the captured order is
+    // deterministic across runs.
+    warrant
+        .tool_grants
+        .iter()
+        .map(|grant| registry.resolve(grant, warrant).map(|r| r.event))
+        .collect()
+}
+
 /// Internal per-registration record.
 #[derive(Debug, Clone)]
 struct RegistrationRecord {

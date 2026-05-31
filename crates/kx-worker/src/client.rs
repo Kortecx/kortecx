@@ -70,13 +70,16 @@ impl WorkerClient {
         Ok(resp.ack)
     }
 
-    /// Pull up to `max_motes` ready PURE Motes runnable on `executor_class`.
+    /// Pull up to `max_motes` ready Motes runnable on `executor_class`, plus the
+    /// registered run's `instance_id` (M1.2/D64) — the worker derives the
+    /// run-scoped cross-boundary idempotency token from it. The `instance_id` is
+    /// empty for an unregistered run (the worker then falls back to MoteId-only).
     pub async fn lease_work(
         &mut self,
         worker_id: u64,
         executor_class: ExecutorClass,
         max_motes: u32,
-    ) -> Result<Vec<proto::WorkItem>, WorkerError> {
+    ) -> Result<(Vec<proto::WorkItem>, Vec<u8>), WorkerError> {
         let resp = self
             .inner
             .lease_work(proto::LeaseWorkRequest {
@@ -86,7 +89,7 @@ impl WorkerClient {
             })
             .await?
             .into_inner();
-        Ok(resp.items)
+        Ok((resp.items, resp.instance_id))
     }
 
     /// Record the **intent to fire** a WORLD-MUTATING effect, durably, before the

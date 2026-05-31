@@ -97,6 +97,13 @@ impl Snapshot {
             .map(|r| (r.instance_id, r.recipe_fingerprint))
     }
 
+    /// Resolved-version run metadata (D79). See
+    /// [`crate::Projection::run_resolved_versions`].
+    #[must_use]
+    pub fn run_resolved_versions(&self) -> &[crate::state::RunResolvedVersions] {
+        &self.state.run_resolved_versions
+    }
+
     /// Direct parents. See [`crate::Projection::parents_of`].
     #[must_use]
     pub fn parents_of(&self, mote_id: &MoteId) -> SmallVec<[(MoteId, EdgeMeta); 4]> {

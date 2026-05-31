@@ -14,6 +14,7 @@ use kx_projection::MoteState;
 use kx_proto::proto;
 use kx_proto::proto::coordinator_server::Coordinator;
 use kx_scheduler::WorkerId;
+use kx_tool_registry::{InMemoryToolRegistry, ToolRegistry};
 use kx_warrant::WarrantSpec;
 use tonic::{Request, Response, Status};
 
@@ -86,8 +87,43 @@ impl CoordinatorService {
         clock: Arc<dyn Clock>,
         nonce: Arc<dyn RunNonceSource>,
     ) -> Self {
+        // Default tool registry = the OSS built-ins (M1.2 resolve-at-submit
+        // capture, D79). Use [`with_tool_registry_and_seams`] to inject a custom
+        // registry (e.g. a test that registers its own tools to assert capture).
+        Self::with_tool_registry_and_seams(
+            journal,
+            registry,
+            store,
+            clock,
+            nonce,
+            Arc::new(InMemoryToolRegistry::with_builtins()),
+        )
+    }
+
+    /// As [`with_seams`], but injects the [`ToolRegistry`] the coordinator
+    /// resolves the warrant's `tool_grants` against at submit (M1.2/D79). The
+    /// resolved versions are captured as off-DAG run metadata (a
+    /// `RunVersionsResolved` journal fact). Tests inject a custom registry to
+    /// assert the captured tuples; production uses the built-ins default.
+    ///
+    /// [`with_seams`]: CoordinatorService::with_seams
+    pub fn with_tool_registry_and_seams<J: Journal + Send + 'static>(
+        journal: J,
+        registry: Arc<dyn WorkerRegistry>,
+        store: Option<Arc<LocalFsContentStore>>,
+        clock: Arc<dyn Clock>,
+        nonce: Arc<dyn RunNonceSource>,
+        tool_registry: Arc<dyn ToolRegistry>,
+    ) -> Self {
         Self {
-            core: CoreHandle::spawn(journal, store, registry.clone(), clock, nonce),
+            core: CoreHandle::spawn(
+                journal,
+                store,
+                registry.clone(),
+                clock,
+                nonce,
+                tool_registry,
+            ),
             registry,
         }
     }
@@ -135,6 +171,18 @@ impl CoordinatorService {
     /// journaled fact, never a recomputed value (the run-resume handle M2 builds on).
     pub async fn run_registration(&self) -> Result<Option<([u8; 16], [u8; 32])>, CoordinatorError> {
         self.core.run_registration().await
+    }
+
+    /// Read-side accessor: the resolved-version run metadata captured at submit
+    /// (M1.2, D79) — one [`RunResolvedVersions`] record per resolved capability
+    /// (a zero-grant warrant contributes one with no capability). Audit/lineage
+    /// only; off the truth path. (The observability query M11 builds on this.)
+    ///
+    /// [`RunResolvedVersions`]: kx_projection::RunResolvedVersions
+    pub async fn run_resolved_versions(
+        &self,
+    ) -> Result<Vec<kx_projection::RunResolvedVersions>, CoordinatorError> {
+        self.core.run_resolved_versions().await
     }
 
     /// Repudiate `target` and cascade the poison-invalidation to its committed downstream
@@ -216,6 +264,13 @@ impl Coordinator for CoordinatorService {
             mote_id: outcome.mote_id.as_bytes().to_vec(),
             status: status as i32,
             detail: String::new(),
+            // M1.2/D64: the registered run this Mote was admitted under (the
+            // resume key). Empty for an unregistered run (registration before
+            // submit is enforced in M1.3).
+            instance_id: outcome
+                .instance_id
+                .map(|id| id.to_vec())
+                .unwrap_or_default(),
         }))
     }
 
@@ -299,7 +354,7 @@ impl Coordinator for CoordinatorService {
         let executor_class =
             kx_warrant::ExecutorClass::try_from(proto_class).map_err(CoordinatorError::from)?;
         let max = usize::try_from(req.max_motes).unwrap_or(usize::MAX);
-        let work = self.core.lease_work(worker, executor_class, max).await?;
+        let (work, instance_id) = self.core.lease_work(worker, executor_class, max).await?;
         let items = work
             .into_iter()
             .map(|(mote, warrant)| proto::WorkItem {
@@ -307,7 +362,12 @@ impl Coordinator for CoordinatorService {
                 warrant: Some(warrant.into()),
             })
             .collect();
-        Ok(Response::new(proto::LeaseWorkResponse { items }))
+        Ok(Response::new(proto::LeaseWorkResponse {
+            items,
+            // M1.2/D64: the run the leased work belongs to, so the worker derives
+            // the run-scoped idempotency token. Empty for an unregistered run.
+            instance_id: instance_id.map(|id| id.to_vec()).unwrap_or_default(),
+        }))
     }
 
     #[tracing::instrument(skip_all)]

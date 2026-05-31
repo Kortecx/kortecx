@@ -307,27 +307,60 @@ impl Projection {
                 info.effect_staged_observed = true;
                 self.state.last_seq = self.state.last_seq.max(*seq);
             }
+            // Off-DAG run-metadata facts (extracted to keep `fold` under the
+            // line budget): both record an O(1) field and NEVER touch
+            // `rebuild_children_index` (the per-mutation O(n²) D92 path).
+            JournalEntry::RunRegistered { .. } | JournalEntry::RunVersionsResolved { .. } => {
+                self.fold_run_metadata(entry);
+            }
+        }
+        Ok(prev)
+    }
+
+    /// Fold an off-DAG run-metadata fact (`RunRegistered` / `RunVersionsResolved`).
+    ///
+    /// Both name no Mote, so this registers NO `MoteInfo` and does NOT call
+    /// `rebuild_children_index` — O(1), off the Mote-DAG. The data is **metadata,
+    /// never identity**: no scheduling/identity/digest decision reads it.
+    fn fold_run_metadata(&mut self, entry: &JournalEntry) {
+        match entry {
             JournalEntry::RunRegistered {
                 instance_id,
                 recipe_fingerprint,
                 seq,
                 ..
             } => {
-                // **v3 (M1.1, D63/D64): run registration.** Off the Mote-DAG —
-                // names no Mote, so this fold registers NO MoteInfo and does NOT
-                // call `rebuild_children_index` (the per-mutation O(n²) path).
-                // It records the run's identity root as an O(1) field. Idempotent
-                // on replay: the seq=1 entry replays the same bytes, so re-folding
-                // sets the same `RunRegistration`. `ts` is audit-only and ignored
-                // here (never an input to any scheduling/identity decision).
+                // v3 (M1.1, D63/D64). Idempotent on replay: the seq=1 entry
+                // replays the same bytes, so re-folding sets the same value.
+                // `ts` is audit-only and ignored here.
                 self.state.run_registration = Some(crate::state::RunRegistration {
                     instance_id: *instance_id,
                     recipe_fingerprint: *recipe_fingerprint,
                 });
                 self.state.last_seq = self.state.last_seq.max(*seq);
             }
+            JournalEntry::RunVersionsResolved {
+                instance_id,
+                warrant_ref,
+                model_id,
+                capability,
+                seq,
+            } => {
+                // v4 (M1.2, D79). Append-many: a run accrues one record per
+                // resolved capability. Replay rebuilds the same Vec from scratch
+                // (each journaled entry folds exactly once).
+                self.state
+                    .run_resolved_versions
+                    .push(crate::state::RunResolvedVersions {
+                        instance_id: *instance_id,
+                        warrant_ref: *warrant_ref,
+                        model_id: model_id.clone(),
+                        capability: capability.clone(),
+                    });
+                self.state.last_seq = self.state.last_seq.max(*seq);
+            }
+            _ => unreachable!("fold_run_metadata called with a non-run-metadata kind"),
         }
-        Ok(prev)
     }
 
     /// The largest `seq` applied so far. `0` for an empty projection.
@@ -603,6 +636,18 @@ impl Projection {
         self.state
             .run_registration
             .map(|r| (r.instance_id, r.recipe_fingerprint))
+    }
+
+    /// The resolved-version run metadata (D79) folded so far — one record per
+    /// `RunVersionsResolved` entry (one per resolved capability; a zero-grant
+    /// warrant contributes one with `capability == None`).
+    ///
+    /// **Audit/lineage metadata, never identity.** Off the Mote-DAG: no
+    /// scheduling/identity/digest decision reads it, so it can never move the
+    /// projection digest. Reconstructed verbatim on replay.
+    #[must_use]
+    pub fn run_resolved_versions(&self) -> &[crate::state::RunResolvedVersions] {
+        &self.state.run_resolved_versions
     }
 
     /// Count of Motes currently in `MoteState::Repudiated`.

@@ -530,6 +530,111 @@ fn run_registered_before_motes_does_not_change_committed_set() {
     }
 }
 
+// ---------------------------------------------------------------------------
+// **v4 (M1.2, D79) — RunVersionsResolved fold is off the Mote-DAG (O(1)).**
+//
+// Like RunRegistered, it names no Mote: folding registers no MoteInfo, leaves
+// the children index empty, advances current_seq, and appends a metadata record
+// the runtime digest (committed Motes only) can never see.
+// ---------------------------------------------------------------------------
+
+fn run_versions_resolved(
+    instance_seed: u8,
+    model_id: &str,
+    capability: Option<kx_journal::ResolvedCapabilityRecord>,
+    seq: u64,
+) -> JournalEntry {
+    JournalEntry::RunVersionsResolved {
+        instance_id: [instance_seed; kx_journal::INSTANCE_ID_LEN],
+        warrant_ref: ContentRef::from_bytes([0xcd; 32]),
+        model_id: model_id.to_owned(),
+        capability,
+        seq,
+    }
+}
+
+fn sample_cap_record() -> kx_journal::ResolvedCapabilityRecord {
+    kx_journal::ResolvedCapabilityRecord {
+        tool_id: "fs-read".to_owned(),
+        tool_version: "1.0.0".to_owned(),
+        resolved_kind: kx_journal::ResolvedKindTag::Builtin,
+        resolved_def_hash: ContentRef::from_bytes([0x42; 32]),
+    }
+}
+
+#[test]
+fn run_versions_resolved_fold_is_off_dag_and_appends_metadata() {
+    let mut p = Projection::new();
+    p.fold(&run_registered(0xa1, 0xb2, 1)).unwrap();
+    p.fold(&run_versions_resolved(
+        0xa1,
+        "qwen",
+        Some(sample_cap_record()),
+        2,
+    ))
+    .unwrap();
+    p.fold(&run_versions_resolved(0xa1, "qwen", None, 3))
+        .unwrap();
+    // No Mote registered; current_seq advanced; both records appended in order.
+    assert_eq!(p.len(), 0);
+    assert_eq!(p.committed_count(), 0);
+    assert_eq!(p.current_seq(), 3);
+    let recs = p.run_resolved_versions();
+    assert_eq!(recs.len(), 2);
+    assert_eq!(recs[0].model_id, "qwen");
+    assert_eq!(recs[0].capability.as_ref().unwrap().tool_id, "fs-read");
+    assert!(recs[1].capability.is_none());
+}
+
+/// **Scale (D95):** folding a large run-metadata log stays O(1) **off the
+/// Mote-DAG** — N `RunVersionsResolved` entries register NO Mote and never
+/// rebuild the children index (the D92 O(n²) wall), so the committed digest the
+/// runtime hashes (over committed Motes only) is untouched at any N. Run with
+/// `cargo test -p kx-projection --release -- --ignored run_versions_fold_scale`.
+#[test]
+#[ignore = "scale: run with --release --ignored"]
+fn run_versions_fold_scale_is_off_dag() {
+    const N: u64 = 10_000;
+    let mut p = Projection::new();
+    p.fold(&run_registered(0x01, 0x02, 1)).unwrap();
+    for seq in 2..=(N + 1) {
+        let cap = if seq % 3 == 0 {
+            Some(sample_cap_record())
+        } else {
+            None
+        };
+        p.fold(&run_versions_resolved(0x01, "model", cap, seq))
+            .unwrap();
+    }
+    // Off-DAG: NO Mote registered, NO committed fact → the digest is unmoved.
+    assert_eq!(p.len(), 0, "no Mote registered at any N");
+    assert_eq!(p.committed_count(), 0);
+    assert_eq!(p.iter_motes().count(), 0);
+    // All N metadata records accrued; current_seq tracks the log.
+    assert_eq!(p.run_resolved_versions().len() as u64, N);
+    assert_eq!(p.current_seq(), N + 1);
+}
+
+#[test]
+fn run_versions_resolved_replays_identically_from_scratch() {
+    // Each journaled entry folds exactly once on replay → the accrued metadata
+    // Vec is byte-identical when a fresh projection re-folds the same trace.
+    let entries = vec![
+        run_registered(0x5a, 0x6b, 1),
+        run_versions_resolved(0x5a, "m1", Some(sample_cap_record()), 2),
+        run_versions_resolved(0x5a, "m1", None, 3),
+    ];
+    let mut a = Projection::new();
+    let mut b = Projection::new();
+    for e in &entries {
+        a.fold(e).unwrap();
+    }
+    for e in &entries {
+        b.fold(e).unwrap();
+    }
+    assert_eq!(a.run_resolved_versions(), b.run_resolved_versions());
+}
+
 #[test]
 fn fold_many_stops_on_first_error_and_state_reflects_applied_entries() {
     let mut p = Projection::new();

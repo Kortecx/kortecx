@@ -25,6 +25,11 @@ kx-projection = { workspace = true }
 kx-mote = { workspace = true }
 kx-content = { workspace = true }
 kx-warrant = { workspace = true }
+# Resolve-at-submit (M1.2, D79): the coordinator resolves the warrant's
+# tool_grants and captures the resolved versions as off-DAG run metadata. This
+# is a NEW dep edge but does NOT touch the frozen trio
+# (kx-scheduler/kx-executor/kx-inference) — the P2 thesis test holds.
+kx-tool-registry = { workspace = true }
 # `sync` (mpsc + oneshot) is additive over the workspace tokio features: the async
 # RPC handlers funnel commands to a single orchestration thread that owns the
 # journal + projection + scheduler. The Projection holds a non-`Send` trait object
