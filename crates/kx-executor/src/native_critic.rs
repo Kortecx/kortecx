@@ -26,8 +26,8 @@ use crate::lifecycle::{LifecycleCommit, LifecycleError};
 /// Run a native deterministic-critic Mote to commit.
 ///
 /// Steps:
-/// 1. Run-time R-15 guard (defense-in-depth; the submission predicate
-///    `crate::refusal::check_r15` is the primary enforcement).
+/// 1. Run-time R-15 guard (defense-in-depth; the submission-time R-15 predicate
+///    in `kx_refusal` is the primary enforcement).
 /// 2. **P0.4 hard gate** — if this critic is already committed, serve the
 ///    committed verdict ref, never re-evaluate.
 /// 3. Read the producer's committed output bytes (the critic has a Data edge to

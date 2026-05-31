@@ -147,10 +147,17 @@ fn setup(
             .unwrap()
             .into_inner()
             .worker_id;
+        // M1.3: register the run before submitting (registration-before-submit gate).
+        svc.register_run(Request::new(proto::RegisterRunRequest {
+            recipe_fingerprint: vec![0x5au8; 32],
+        }))
+        .await
+        .unwrap();
         for m in &motes {
             svc.submit_mote(Request::new(proto::SubmitMoteRequest {
                 mote: Some(m.clone().into()),
                 warrant: Some(w.clone().into()),
+                accept_at_least_once: false,
             }))
             .await
             .unwrap();

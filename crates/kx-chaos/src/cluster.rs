@@ -106,12 +106,24 @@ impl Cluster {
         Ok(resp.into_inner().worker_id)
     }
 
-    /// Submit a Mote + warrant (registers it with the hosted scheduler).
+    /// Submit a Mote + warrant (registers it with the hosted scheduler). M1.3:
+    /// the run is registered first (idempotent) so the submit passes the
+    /// registration-before-submit gate; the chaos warrants carry empty
+    /// `tool_grants` (→ resolution `Resolved([])`, no D66/R-10) and the WM Mote's
+    /// `tool_contract` is non-empty (→ R-1 passes), so the gate admits every
+    /// chaos Mote.
     pub(crate) async fn submit(&self, mote: &Mote, warrant: &WarrantSpec) -> StepResult<()> {
+        self.svc
+            .register_run(Request::new(proto::RegisterRunRequest {
+                recipe_fingerprint: [0x5au8; 32].to_vec(),
+            }))
+            .await
+            .map_err(|s| format!("register_run: {s}"))?;
         self.svc
             .submit_mote(Request::new(proto::SubmitMoteRequest {
                 mote: Some(mote.clone().into()),
                 warrant: Some(warrant.clone().into()),
+                accept_at_least_once: false,
             }))
             .await
             .map_err(|s| format!("submit_mote: {s}"))?;

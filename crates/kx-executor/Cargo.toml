@@ -25,6 +25,11 @@ kx-capability        = { workspace = true }
 kx-model-validator   = { workspace = true }
 kx-critic-types      = { workspace = true }
 kx-critic            = { workspace = true }
+# Submission-time refusal vocabulary + predicates (M1.3) — extracted to a leaf
+# crate so the control-plane kx-coordinator can enforce refusals without linking
+# kx-executor's inference stack. Re-exported here for back-compat (lifecycle +
+# the existing refusal tests consume the same names).
+kx-refusal           = { workspace = true }
 bincode              = { workspace = true }
 blake3               = { workspace = true }
 bytes                = { workspace = true }

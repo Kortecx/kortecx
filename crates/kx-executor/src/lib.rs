@@ -281,7 +281,6 @@ pub mod fact_zero;
 pub mod factory;
 pub mod lifecycle;
 pub mod native_critic;
-pub mod refusal;
 pub mod resource_manager;
 pub mod verify;
 // The spawn module ships shared Unix primitives (fork + pipe + dup2 +
@@ -308,9 +307,14 @@ pub use lifecycle::{
     TestMoteExecutor, WmLifecycleCommit, WmRedispatchOracle,
 };
 pub use native_critic::run_native_critic_mote;
-pub use refusal::{
-    refusal_from_narrowing, validate_submission, validate_submission_with_idempotency,
-    SubmissionRefusal, WorkflowSubmission,
+// Submission-time refusal vocabulary + predicates. Extracted to the `kx-refusal`
+// leaf crate (M1.3) so the control-plane `kx-coordinator` can enforce refusals
+// without linking this crate's inference stack; re-exported here so existing
+// callers (`kx_executor::validate_submission`, etc.) and the lifecycle path are
+// unchanged.
+pub use kx_refusal::{
+    refusal_from_narrowing, validate_mote_submission, validate_submission,
+    validate_submission_with_idempotency, SubmissionRefusal, ToolResolution, WorkflowSubmission,
 };
 pub use resource_manager::{LocalResourceManager, ResourceError, ResourceManager, Slot};
 pub use verify::{verify_pure_rerun, VerifyError, VerifyOutcome};

@@ -19,7 +19,7 @@ use kx_content::ContentRef;
 use kx_coordinator::proto;
 use kx_coordinator::proto::coordinator_server::Coordinator;
 use kx_coordinator::CoordinatorService;
-use tonic::Request;
+use tonic::{Request, Status};
 
 use kx_mote::{
     ConfigKey, ConfigVal, EdgeMeta, EffectPattern, GraphPosition, InferenceParams, InputDataId,
@@ -106,6 +106,13 @@ pub fn mote(seed: u8, nd_class: NdClass, parent_ids: &[MoteId]) -> Mote {
 pub fn wm_mote(seed: u8, effect_pattern: EffectPattern) -> Mote {
     let mut def = mote_def(NdClass::WorldMutating);
     def.effect_pattern = effect_pattern;
+    // M1.3 R-1: a WORLD-MUTATING `IdempotentByConstruction` Mote with an EMPTY
+    // tool_contract is refused at submit (no idempotency-supporting tool to dedup
+    // against). Declare the `fs-write` builtin so every `wm_mote` — regardless of
+    // pattern — passes the R-1 structural check. (R-10/D66 resolve the WARRANT's
+    // grants, not this contract, so this does not affect those predicates.)
+    def.tool_contract
+        .insert(ToolName("fs-write".into()), ToolVersion("1".into()));
     Mote::new(
         def,
         InputDataId::from_bytes([seed; 32]),
@@ -144,10 +151,15 @@ pub fn sample_warrant() -> WarrantSpec {
     let mut hosts = BTreeSet::new();
     hosts.insert(Host("api.example.com:443".into()));
 
+    // M1.3: the grant must RESOLVE against the OSS built-ins (`fs-read@1`,
+    // IdempotencyClass::Readback) so a WORLD-MUTATING Mote submitted under this
+    // warrant passes the D66 fail-closed gate (a resolvable, non-AtLeastOnce
+    // tool). `fs-read@1` requires `syscall_profile_ref == [0; 32]` (exact match),
+    // so the warrant carries that value.
     let mut tool_grants = BTreeSet::new();
     tool_grants.insert(ToolGrant {
         tool_id: ToolName("fs-read".into()),
-        tool_version: ToolVersion("1.2.0".into()),
+        tool_version: ToolVersion("1".into()),
     });
 
     WarrantSpec {
@@ -155,7 +167,7 @@ pub fn sample_warrant() -> WarrantSpec {
         nd_class: MoteClass::Pure,
         fs_scope: FsScope { mounts },
         net_scope: NetScope::EgressAllowlist(hosts),
-        syscall_profile_ref: ContentRef::from_bytes([4u8; 32]),
+        syscall_profile_ref: ContentRef::from_bytes([0u8; 32]),
         tool_grants,
         model_route: ModelRoute {
             model_id: ModelId("llama-3.1-8b-instruct-q4_k_m".into()),
@@ -234,20 +246,86 @@ pub async fn heartbeat(
         .ack
 }
 
-/// Submit a Mote + warrant through the service.
+/// A fixed recipe fingerprint for the test helpers' auto-registration. The
+/// fingerprint is discovery-only metadata (never identity, D64/D79), so a
+/// constant is fine — the per-run `instance_id` still comes from the service's
+/// nonce source (random under `new`, fixed under the seam constructors).
+pub const TEST_RECIPE_FINGERPRINT: [u8; 32] = [0x5au8; 32];
+
+/// Register the run through the service (M1.1/D64), returning its `instance_id`.
+/// Idempotent: the first call writes the seq=1 `RunRegistered` fact; a later call
+/// returns the existing id and writes nothing. Call once before submitting (the
+/// M1.3 registration-before-submit gate) — or rely on [`submit`], which does.
+pub async fn register_run(service: &CoordinatorService, fingerprint: [u8; 32]) -> Vec<u8> {
+    service
+        .register_run(Request::new(proto::RegisterRunRequest {
+            recipe_fingerprint: fingerprint.to_vec(),
+        }))
+        .await
+        .unwrap()
+        .into_inner()
+        .instance_id
+}
+
+/// Submit a Mote + warrant through the service, **auto-registering the run first**
+/// (M1.3 forces registration-before-submit). The registration is idempotent, so a
+/// test that submits many Motes registers exactly once (seq=1). `accept_at_least_once`
+/// defaults `false` — an AtLeastOnce WM tool is fail-closed; use [`submit_accepting`]
+/// to opt in. Tests that exercise the un-registered path use [`submit_unregistered`].
 pub async fn submit(
     service: &CoordinatorService,
     mote: &Mote,
     warrant: &WarrantSpec,
 ) -> proto::SubmitMoteResponse {
+    let _ = register_run(service, TEST_RECIPE_FINGERPRINT).await;
     service
         .submit_mote(Request::new(proto::SubmitMoteRequest {
             mote: Some(mote.clone().into()),
             warrant: Some(warrant.clone().into()),
+            accept_at_least_once: false,
         }))
         .await
         .unwrap()
         .into_inner()
+}
+
+/// As [`submit`], but sets `accept_at_least_once = true` (M1.3/D38 §2c — the
+/// operator opt-in to dispatch a resolved `AtLeastOnce` WORLD-MUTATING tool).
+pub async fn submit_accepting(
+    service: &CoordinatorService,
+    mote: &Mote,
+    warrant: &WarrantSpec,
+) -> proto::SubmitMoteResponse {
+    let _ = register_run(service, TEST_RECIPE_FINGERPRINT).await;
+    service
+        .submit_mote(Request::new(proto::SubmitMoteRequest {
+            mote: Some(mote.clone().into()),
+            warrant: Some(warrant.clone().into()),
+            accept_at_least_once: true,
+        }))
+        .await
+        .unwrap()
+        .into_inner()
+}
+
+/// Submit a Mote + warrant through the service WITHOUT registering the run first
+/// and WITHOUT unwrapping — for tests that exercise the M1.3
+/// registration-before-submit gate (an un-registered submit is refused with
+/// `failed_precondition`). Returns the raw `Result` so the caller asserts the
+/// `tonic::Status` (or the REJECTED response).
+pub async fn submit_unregistered(
+    service: &CoordinatorService,
+    mote: &Mote,
+    warrant: &WarrantSpec,
+) -> Result<proto::SubmitMoteResponse, Status> {
+    service
+        .submit_mote(Request::new(proto::SubmitMoteRequest {
+            mote: Some(mote.clone().into()),
+            warrant: Some(warrant.clone().into()),
+            accept_at_least_once: false,
+        }))
+        .await
+        .map(tonic::Response::into_inner)
 }
 
 /// Report a commit for `mote` by `worker_id` through the service.

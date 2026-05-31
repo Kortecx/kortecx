@@ -38,6 +38,7 @@ fn obligation_1_submit_mote_request_round_trips() {
     let req = proto::SubmitMoteRequest {
         mote: Some(sample_mote().into()),
         warrant: Some(sample_warrant().into()),
+        accept_at_least_once: false,
     };
     roundtrip(&req);
 }
@@ -178,6 +179,7 @@ fn obligation_2_encoding_same_value_is_stable() {
     let req = proto::SubmitMoteRequest {
         mote: Some(sample_mote().into()),
         warrant: Some(sample_warrant().into()),
+        accept_at_least_once: false,
     };
     assert_eq!(req.encode_to_vec(), req.encode_to_vec());
 }
@@ -226,6 +228,7 @@ fn obligation_3_full_wire_pipeline_preserves_identity() {
     let req = proto::SubmitMoteRequest {
         mote: Some(mote.clone().into()),
         warrant: Some(warrant.clone().into()),
+        accept_at_least_once: false,
     };
 
     // Through the actual gRPC wire bytes and back.

@@ -200,6 +200,7 @@ message WarrantSpec {
 message SubmitMoteRequest {
   Mote mote = 1;
   WarrantSpec warrant = 2;
+  bool accept_at_least_once = 3;        // M1.3/D38 §2c: opt-in to dispatch an AtLeastOnce WM tool (default false = fail-closed under R-10)
 }
 
 enum SubmitStatus {

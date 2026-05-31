@@ -241,6 +241,8 @@ impl Coordinator for CoordinatorService {
         request: Request<proto::SubmitMoteRequest>,
     ) -> Result<Response<proto::SubmitMoteResponse>, Status> {
         let req = request.into_inner();
+        // M1.3/D38 §2c: per-Mote opt-in to dispatch an AtLeastOnce WM tool.
+        let accept_at_least_once = req.accept_at_least_once;
         // IDENTITY INVARIANT (D53): `TryFrom<proto::Mote>` re-derives the MoteId
         // Rust-side; the wire `mote_id` is advisory and never trusted.
         let mote: Mote = req
@@ -253,25 +255,47 @@ impl Coordinator for CoordinatorService {
             .ok_or_else(|| Status::invalid_argument("SubmitMote.warrant is required"))?
             .try_into()
             .map_err(CoordinatorError::from)?;
+        // The coordinator-derived identity (D53) — captured before the move so
+        // it can ride a REJECTED response when the submit is refused (M1.3).
+        let mote_id = mote.id.as_bytes().to_vec();
 
-        let outcome = self.core.submit(mote, warrant).await?;
-        let status = if outcome.duplicate {
-            proto::SubmitStatus::Duplicate
-        } else {
-            proto::SubmitStatus::Accepted
-        };
-        Ok(Response::new(proto::SubmitMoteResponse {
-            mote_id: outcome.mote_id.as_bytes().to_vec(),
-            status: status as i32,
-            detail: String::new(),
-            // M1.2/D64: the registered run this Mote was admitted under (the
-            // resume key). Empty for an unregistered run (registration before
-            // submit is enforced in M1.3).
-            instance_id: outcome
-                .instance_id
-                .map(|id| id.to_vec())
-                .unwrap_or_default(),
-        }))
+        match self.core.submit(mote, warrant, accept_at_least_once).await {
+            Ok(outcome) => {
+                let status = if outcome.duplicate {
+                    proto::SubmitStatus::Duplicate
+                } else {
+                    proto::SubmitStatus::Accepted
+                };
+                Ok(Response::new(proto::SubmitMoteResponse {
+                    mote_id: outcome.mote_id.as_bytes().to_vec(),
+                    status: status as i32,
+                    detail: String::new(),
+                    // M1.2/D64: the registered run this Mote was admitted under
+                    // (the resume key). M1.3 forces registration-before-submit,
+                    // so an accepted Mote always carries a real instance_id.
+                    instance_id: outcome
+                        .instance_id
+                        .map(|id| id.to_vec())
+                        .unwrap_or_default(),
+                }))
+            }
+            // M1.3: a submission-refusal predicate fired on a WELL-FORMED request
+            // (R-1/R-7/R-8/R-14/R-15/R-10/D66). The proto contract is a structured
+            // SUBMIT_STATUS_REJECTED response carrying the refusal detail — not a
+            // transport error. instance_id is empty (nothing was admitted/written).
+            Err(CoordinatorError::SubmissionRefused(refusal)) => {
+                Ok(Response::new(proto::SubmitMoteResponse {
+                    mote_id,
+                    status: proto::SubmitStatus::Rejected as i32,
+                    detail: refusal.to_string(),
+                    instance_id: Vec::new(),
+                }))
+            }
+            // RunNotRegistered → failed_precondition (an ordering violation, sibling
+            // of RunAlreadyStarted); CoreUnavailable → unavailable; durable faults →
+            // internal — all via the CoordinatorError → Status mapping.
+            Err(other) => Err(other.into()),
+        }
     }
 
     #[tracing::instrument(skip_all)]

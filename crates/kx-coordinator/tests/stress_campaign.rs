@@ -116,6 +116,16 @@ async fn stress_large_layered_dag_commits_exactly_once() {
         commit_elapsed.as_secs() < 60,
         "committing {total} Motes layer-by-layer should stay linear; took {commit_elapsed:?}"
     );
+    // M1.3 scale guard: the submit path now does, per FRESH submit, an idempotent
+    // run registration (O(1) after the first), an O(grants) warrant resolution, and
+    // the M1.2 off-DAG metadata capture (O(grants) append + O(1) fold). With the
+    // single-grant `sample_warrant`, that is O(1) per submit → O(total) overall.
+    // A super-linear blow-up (e.g. re-resolving or re-folding per submit) trips here.
+    assert!(
+        submit_elapsed.as_secs() < 60,
+        "submitting {total} Motes (register-once + per-submit O(grants) resolve + \
+         capture + admit) should stay linear; took {submit_elapsed:?}"
+    );
 }
 
 /// PARALLEL SATURATION — N distinct Motes, each committed by TWO concurrent

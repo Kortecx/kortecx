@@ -14,7 +14,7 @@ use std::sync::Arc;
 use kx_coordinator::proto;
 use kx_coordinator::proto::coordinator_server::Coordinator;
 use kx_coordinator::{
-    Clock, CoordinatorService, InMemoryWorkerRegistry, MoteState, RunNonceSource, WorkerRegistry,
+    Clock, CoordinatorService, InMemoryWorkerRegistry, RunNonceSource, WorkerRegistry,
 };
 use kx_journal::{InMemoryJournal, Journal, JournalEntry, SqliteJournal};
 use tempfile::tempdir;
@@ -207,37 +207,43 @@ async fn recover_reads_instance_id_not_recomputed() {
 }
 
 #[tokio::test]
-async fn submit_without_register_still_works() {
-    // Back-compat (M1.1 is additive): a run that never calls RegisterRun submits +
-    // commits exactly as before; run_registration() is simply None.
+async fn submit_without_register_is_refused() {
+    // M1.3 (was the M1.1 back-compat `submit_without_register_still_works`): a run
+    // that never calls RegisterRun is now REFUSED at submit (FAILED_PRECONDITION) —
+    // a run can never start un-registered (D64/D98: identity is the explicit
+    // RegisterRun, never lazy-on-submit). Nothing is committed; identity stays None.
     let svc = CoordinatorService::new(InMemoryJournal::new());
     let warrant = common::sample_warrant();
     let mote = common::pure_root_mote();
 
-    let worker = common::register(&svc, "w").await;
-    common::submit(&svc, &mote, &warrant).await;
-    common::commit(&svc, &mote, worker).await;
+    let _worker = common::register(&svc, "w").await;
+    let err = common::submit_unregistered(&svc, &mote, &warrant)
+        .await
+        .expect_err("submit before RegisterRun must be refused (M1.3)");
+    assert_eq!(err.code(), Code::FailedPrecondition);
 
-    assert_eq!(svc.committed_count().await.unwrap(), 1);
-    assert_eq!(svc.state_of(mote.id).await.unwrap(), MoteState::Committed);
+    assert_eq!(svc.committed_count().await.unwrap(), 0);
     assert_eq!(
         svc.run_registration().await.unwrap(),
         None,
-        "no registration → no run identity (submit path unaffected)"
+        "no registration → no run identity (submit refused)"
     );
 }
 
 #[tokio::test]
 async fn register_run_refused_after_run_started() {
-    // Registration must be the FIRST fact (seq=1). If a run begins without it,
-    // RegisterRun is refused (FAILED_PRECONDITION) — the fact can never land mid-run.
+    // Registration must be the FIRST fact (seq=1). M1.3 forces registration before
+    // SUBMIT, so the normal path can no longer start a run un-registered — but a
+    // worker can still stage an effect (ReportEffectStaged), which appends a journal
+    // entry. If a run ever produces an entry without a RunRegistered fact, RegisterRun
+    // is refused (FAILED_PRECONDITION); the seq=1 fact can never land mid-run
+    // (defense-in-depth — the RunAlreadyStarted guard).
     let svc = CoordinatorService::new(InMemoryJournal::new());
-    let warrant = common::sample_warrant();
-    let mote = common::pure_root_mote();
-
     let worker = common::register(&svc, "w").await;
-    common::submit(&svc, &mote, &warrant).await;
-    common::commit(&svc, &mote, worker).await;
+
+    // Stage an effect → a journal entry at seq=1 with NO RunRegistered fact.
+    let mote = common::pure_root_mote();
+    common::report_effect_staged(&svc, &mote, worker).await;
 
     let err = svc
         .register_run(Request::new(proto::RegisterRunRequest {

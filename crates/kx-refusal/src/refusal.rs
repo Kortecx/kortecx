@@ -1,10 +1,10 @@
-//! Submission-time refusal predicates (R-1..R-9 + R-8b + ValidatorTypeError +
-//! AttemptedWiden) per `docs/design/validate-then-commit.md` §7. **PR 9a
-//! scope**; R-10..R-13 reserved for PR 9b.
+//! Submission-time refusal predicates (R-1..R-9 + R-8b + R-10 + R-14 + R-15 +
+//! D66 + `ValidatorTypeError` + `AttemptedWiden`) per
+//! `docs/design/validate-then-commit.md` §7 + the D66 fail-closed gate (M1.3).
 //!
 //! Each refusal results in a single `Failed::UnsafeWorldMutatingConstruction`
 //! journal entry; no broker dispatch, no inference call, no commit beyond the
-//! `Failed` entry. The fact-zero protocol (`crate::fact_zero`) is the
+//! `Failed` entry. The fact-zero protocol (`kx_executor::write_fact_zero`) is the
 //! caller's responsibility to invoke before any Mote dispatch.
 
 use std::collections::BTreeMap;
@@ -64,7 +64,7 @@ pub enum SubmissionRefusal {
         mote_id: MoteId,
         /// The producer being critiqued.
         target: MoteId,
-        /// The producer's actual nd_class.
+        /// The producer's actual `nd_class`.
         target_class: NdClass,
     },
 
@@ -203,6 +203,26 @@ pub enum SubmissionRefusal {
         /// The offending Mote.
         mote_id: MoteId,
     },
+
+    /// **D66** (M1.3). A `WORLD_MUTATING` Mote whose tool grants could NOT be
+    /// resolved at the submit boundary (a `NotFound` / `CapabilityExceedsWarrant`
+    /// / `PendingHumanReview` miss). `StageThenCommit` is the #1 no-double-fire
+    /// seam (D66): the runtime cannot vouch for the exactly-once dispatch of a
+    /// tool it cannot resolve to an [`IdempotencyClass`], so a WM Mote with
+    /// unresolvable tools is refused **fail-closed**. PURE / READ-ONLY-NONDET
+    /// Motes are unaffected — they carry no double-fire hazard, so an
+    /// unresolvable grant on a non-WM Mote is not a refusal (it keeps M1.2's
+    /// capture-skip behavior).
+    ///
+    /// This closes the historical fail-OPEN: the full-graph `check_r10` returns
+    /// `Ok(())` for a Mote with no resolved-class entry (a legitimate no-tool
+    /// PURE Mote), which the single-Mote boundary path must NOT do for a WM Mote
+    /// whose tools simply failed to resolve.
+    #[error("D66: WORLD-MUTATING Mote {mote_id:?} has unresolvable tool grants; the runtime cannot guarantee exactly-once dispatch of a tool it cannot resolve (StageThenCommit fail-closed)")]
+    D66UnresolvableWorldMutatingTools {
+        /// The offending Mote.
+        mote_id: MoteId,
+    },
 }
 
 /// A workflow submission — the shape `validate_submission` reasons over.
@@ -227,6 +247,26 @@ pub struct WorkflowSubmission {
     pub accept_at_least_once: BTreeMap<MoteId, bool>,
 }
 
+/// The tool-resolution outcome for a single Mote at the coordinator's
+/// `SubmitMote` boundary (M1.3 / D66). The coordinator resolves the Mote's
+/// warrant grants against the [`ToolRegistry`](kx_tool_registry::ToolRegistry)
+/// once per fresh submit and hands the result to [`validate_mote_submission`].
+///
+/// - `Resolved(classes)` — every grant resolved cleanly; `classes` are the
+///   resolved [`IdempotencyClass`]es (canonical grant order). R-10 reasons over
+///   these.
+/// - `Unresolved` — at least one grant did not resolve (`NotFound` /
+///   `CapabilityExceedsWarrant` / `PendingHumanReview`). For a WORLD-MUTATING
+///   Mote this is a fail-closed refusal ([`SubmissionRefusal::D66UnresolvableWorldMutatingTools`]);
+///   for a PURE / READ-ONLY-NONDET Mote it is harmless (no double-fire hazard).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ToolResolution {
+    /// Every warrant grant resolved; the resolved idempotency classes.
+    Resolved(Vec<IdempotencyClass>),
+    /// At least one warrant grant did not resolve cleanly.
+    Unresolved,
+}
+
 /// Validate a workflow submission against R-1..R-9 + R-8b. Returns `Ok(())`
 /// on a safe submission; the first refusal hit returns `Err(refusal)`.
 ///
@@ -236,7 +276,7 @@ pub struct WorkflowSubmission {
 /// R-8b, R-9). PR 9b may expand the function to collect a `Vec<SubmissionRefusal>`
 /// if reviewer feedback wants all hits at once.
 ///
-/// ValidatorTypeError + AttemptedWiden are not surfaced by this function
+/// `ValidatorTypeError` + `AttemptedWiden` are not surfaced by this function
 /// — they ride the lifecycle path's `kx_model_validator::check` +
 /// `kx_warrant::intersect` calls. The caller maps those errors to
 /// `SubmissionRefusal::ValidatorTypeError` / `SubmissionRefusal::AttemptedWiden`
@@ -320,7 +360,7 @@ pub fn validate_submission(submission: &WorkflowSubmission) -> Result<(), Submis
 ///
 /// ```
 /// use std::collections::{BTreeMap, BTreeSet};
-/// use kx_executor::{validate_submission_with_idempotency, WorkflowSubmission};
+/// use kx_refusal::{validate_submission_with_idempotency, WorkflowSubmission};
 /// use kx_content::ContentRef;
 /// use kx_mote::{ModelId, MoteId};
 /// use kx_tool_registry::IdempotencyClass;
@@ -370,6 +410,50 @@ pub fn validate_submission_with_idempotency(
     for mote in submission.motes.values() {
         check_r10(mote, submission, resolved_idempotency_classes)?;
     }
+    Ok(())
+}
+
+/// Validate a SINGLE Mote at the coordinator's `SubmitMote` boundary (M1.3).
+///
+/// `SubmitMote` admits one Mote at a time, so the SIBLING-DEPENDENT predicates
+/// (R-2 needs a sibling critic; R-4 / R-5 need the target Mote; R-6 needs all
+/// critics; R-9 walks the critic chain) cannot run here without false-refusing a
+/// valid producer whose critic is submitted under a separate call. This function
+/// runs ONLY the sibling-INDEPENDENT predicates — R-1, R-7 (self), R-8, R-14,
+/// R-15 — plus R-10 with a **fail-closed** [`ToolResolution`] (the D66 miss). The
+/// sibling-graph predicates ride the future full-graph SDK path via
+/// [`validate_submission`], which is left untouched.
+///
+/// `accept_at_least_once` is the per-Mote opt-in from the `SubmitMote` request
+/// (`false` = fail-closed). `resolution` is the coordinator's per-submit
+/// resolution of the Mote's warrant grants.
+///
+/// # Errors
+///
+/// Returns the first applicable [`SubmissionRefusal`] (declared order: R-1, R-7,
+/// R-8, R-14, R-15, R-10/D66); `Ok(())` for a safe Mote.
+pub fn validate_mote_submission(
+    mote: &Mote,
+    accept_at_least_once: bool,
+    resolution: &ToolResolution,
+) -> Result<(), SubmissionRefusal> {
+    // R-3 is structurally unreachable (effect_pattern is a required field); the
+    // call documents the position in the predicate sequence (mirrors
+    // `validate_submission`).
+    check_r3(mote);
+    // R-1 — WORLD-MUTATING IdempotentByConstruction with no idempotent tool.
+    check_r1(mote)?;
+    // R-7 (self) — a critic Mote that is itself WORLD-MUTATING. The R-4 / R-5
+    // halves of `check_r4_r5_r7` need the critic's target sibling, so they are
+    // NOT run on the single-Mote path; `check_r7_self` is the self-only slice.
+    check_r7_self(mote)?;
+    // R-8 + R-8b + R-14 + R-15 — shaper + native-critic constructions (self-only).
+    check_r8(mote)?;
+    check_r8b(mote, &BTreeMap::new());
+    check_r14(mote)?;
+    check_r15(mote)?;
+    // R-10 + D66 — the idempotency gate over the resolved (or unresolved) tools.
+    check_r10_resolved(mote, accept_at_least_once, resolution)?;
     Ok(())
 }
 
@@ -603,6 +687,57 @@ fn check_r10(
         return Ok(());
     }
     Err(SubmissionRefusal::R10AtLeastOnceWithoutAccept { mote_id: mote.id })
+}
+
+/// **R-7 (self-only).** Refuse a critic Mote (`critic_for == Some(_)`) whose own
+/// `nd_class` is WORLD-MUTATING. This is the sibling-INDEPENDENT slice of
+/// `check_r4_r5_r7` — it consults only the Mote's own fields, so it is safe on
+/// the single-Mote [`validate_mote_submission`] path (R-4 / R-5, which need the
+/// critic's target sibling, are not run there).
+fn check_r7_self(mote: &Mote) -> Result<(), SubmissionRefusal> {
+    if mote.def.critic_for.is_some() && mote.def.nd_class == NdClass::WorldMutating {
+        return Err(SubmissionRefusal::R7WorldMutatingCritic { mote_id: mote.id });
+    }
+    Ok(())
+}
+
+/// **R-10 + D66 (fail-closed).** The single-Mote idempotency gate. Constrains
+/// WORLD-MUTATING Motes only (R-10 / D66 have no meaning for a non-mutating
+/// Mote): a non-WM Mote returns `Ok(())` regardless of `resolution`, preserving
+/// M1.2's capture-skip behavior for a PURE / READ-ONLY-NONDET Mote with an
+/// unresolvable grant.
+///
+/// For a WM Mote:
+/// - `ToolResolution::Unresolved` → fail-closed
+///   [`SubmissionRefusal::D66UnresolvableWorldMutatingTools`] (the runtime cannot
+///   vouch for exactly-once dispatch of a tool it cannot resolve).
+/// - `ToolResolution::Resolved(classes)` with any `AtLeastOnce` class and
+///   `accept_at_least_once == false` → [`SubmissionRefusal::R10AtLeastOnceWithoutAccept`].
+///
+/// Unlike the full-graph [`check_r10`] (which fail-OPENs on a missing resolved
+/// entry — correct there, since a no-tool PURE Mote legitimately has none), this
+/// boundary check fail-CLOSEs on an unresolved WM Mote.
+fn check_r10_resolved(
+    mote: &Mote,
+    accept_at_least_once: bool,
+    resolution: &ToolResolution,
+) -> Result<(), SubmissionRefusal> {
+    if mote.def.nd_class != NdClass::WorldMutating {
+        return Ok(());
+    }
+    let classes = match resolution {
+        ToolResolution::Unresolved => {
+            return Err(SubmissionRefusal::D66UnresolvableWorldMutatingTools { mote_id: mote.id });
+        }
+        ToolResolution::Resolved(classes) => classes,
+    };
+    let has_at_least_once = classes
+        .iter()
+        .any(|c| matches!(c, IdempotencyClass::AtLeastOnce));
+    if has_at_least_once && !accept_at_least_once {
+        return Err(SubmissionRefusal::R10AtLeastOnceWithoutAccept { mote_id: mote.id });
+    }
+    Ok(())
 }
 
 #[allow(dead_code)] // PR 9a placeholder for the R-1 lifecycle integration
