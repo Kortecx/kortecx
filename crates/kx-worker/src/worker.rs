@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use kx_capability::CapabilityBroker;
+use kx_capability::{CapabilityBroker, INSTANCE_ID_LEN};
 use kx_content::{ContentStore, LocalFsContentStore};
 use kx_executor::{LocalResourceManager, MoteExecutor};
 use kx_mote::{Mote, MoteId, NdClass};
@@ -127,10 +127,14 @@ impl Worker {
     /// propose its commit. Returns the number of commits the coordinator accepted
     /// this round (0 when no ready work matches).
     pub async fn run_once(&mut self) -> Result<usize, WorkerError> {
-        let items = self
+        let (items, instance_id_bytes) = self
             .client
             .lease_work(self.id, self.executor_class, self.max_lease)
             .await?;
+        // M1.2/D64: the registered run this batch belongs to. A 16-byte id ⇒ the
+        // worker derives a run-scoped cross-boundary token; empty (unregistered
+        // run) ⇒ fall back to the MoteId-only token.
+        let instance_id: Option<[u8; INSTANCE_ID_LEN]> = instance_id_bytes.try_into().ok();
 
         // Report load so the coordinator's placement (D56) can balance across workers:
         // `in_flight` = the batch we're about to run, reset to 0 when it drains.
@@ -162,7 +166,15 @@ impl Worker {
             let result_ref = if mote.nd_class() == NdClass::Pure {
                 run::run_pure(&mote, &warrant, &*self.executor, &self.resource_manager)?
             } else {
-                run_wm::run_wm(&mut self.client, &*self.broker, &mote, &warrant, self.id).await?
+                run_wm::run_wm(
+                    &mut self.client,
+                    &*self.broker,
+                    &mote,
+                    &warrant,
+                    self.id,
+                    instance_id,
+                )
+                .await?
             };
             let request =
                 commit_builder::report_commit_request(&mote, &warrant, result_ref, self.id);

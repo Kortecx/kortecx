@@ -1004,6 +1004,7 @@ dependencies = [
 name = "kx-capability"
 version = "0.0.1"
 dependencies = [
+ "blake3",
  "kx-content",
  "kx-mote",
  "kx-warrant",
@@ -1093,6 +1094,7 @@ dependencies = [
  "kx-projection",
  "kx-proto",
  "kx-scheduler",
+ "kx-tool-registry",
  "kx-warrant",
  "kx-worker",
  "smallvec",

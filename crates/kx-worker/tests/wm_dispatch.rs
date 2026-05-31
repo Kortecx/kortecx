@@ -445,7 +445,7 @@ async fn w3_worker_death_after_stage_is_exactly_once() {
         .register_worker(common::WORKER_CLASS, "dying")
         .await
         .unwrap();
-    let leased = dying
+    let (leased, _instance_id) = dying
         .lease_work(dying_id, common::WORKER_CLASS, 16)
         .await
         .unwrap();

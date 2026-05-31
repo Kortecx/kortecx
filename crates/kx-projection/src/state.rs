@@ -105,6 +105,22 @@ pub(crate) struct RunRegistration {
     pub(crate) recipe_fingerprint: [u8; 32],
 }
 
+/// One resolved-version run-metadata record (v4, M1.2, D79), folded from a
+/// `RunVersionsResolved` entry. **Audit/lineage metadata, never identity** — no
+/// scheduling/identity/digest decision reads it. Off the Mote-DAG. Surfaced by
+/// [`crate::Projection::run_resolved_versions`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunResolvedVersions {
+    /// The run this metadata is attached to.
+    pub instance_id: [u8; kx_journal::INSTANCE_ID_LEN],
+    /// The warrant resolved under (`blake3(canonical_bincode(WarrantSpec))`).
+    pub warrant_ref: ContentRef,
+    /// The resolved model id (opaque audit identifier).
+    pub model_id: String,
+    /// The resolved capability, or `None` for a zero-grant warrant.
+    pub capability: Option<kx_journal::ResolvedCapabilityRecord>,
+}
+
 #[derive(Debug, Clone, Default)]
 pub(crate) struct State {
     /// Per-MoteId info — declared, committed, and any in-flight state.
@@ -118,6 +134,10 @@ pub(crate) struct State {
     /// The registered run identity (D64), or `None` until a `RunRegistered`
     /// entry is folded. Off-DAG; O(1) to set and read.
     pub(crate) run_registration: Option<RunRegistration>,
+    /// Resolved-version run metadata (D79), appended as each `RunVersionsResolved`
+    /// entry folds (one per resolved capability). Off-DAG; O(1) per append.
+    /// Audit/lineage only — never an identity/scheduling/digest input.
+    pub(crate) run_resolved_versions: Vec<RunResolvedVersions>,
 }
 
 impl State {

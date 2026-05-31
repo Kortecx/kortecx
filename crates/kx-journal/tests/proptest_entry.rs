@@ -184,6 +184,55 @@ fn arb_run_registered() -> impl Strategy<Value = JournalEntry> {
         })
 }
 
+/// **v4 (M1.2): ResolvedKindTag strategy** — one of the five closed variants.
+fn arb_resolved_kind() -> impl Strategy<Value = kx_journal::ResolvedKindTag> {
+    use kx_journal::ResolvedKindTag::{Builtin, External, LocalScript, Mcp, SelfGenerated};
+    prop_oneof![
+        Just(Builtin),
+        Just(LocalScript),
+        Just(External),
+        Just(Mcp),
+        Just(SelfGenerated),
+    ]
+}
+
+/// **v4 (M1.2): RunVersionsResolved strategy.** `instance_id` is the 16-byte run
+/// nonce; `model_id`/`tool_id`/`tool_version` are bounded UTF-8 ids; the
+/// capability is present or absent (zero-grant warrant).
+fn arb_run_versions_resolved() -> impl Strategy<Value = JournalEntry> {
+    let arb_cap = (
+        "[a-z0-9._-]{0,40}",
+        "[a-z0-9._-]{0,16}",
+        arb_resolved_kind(),
+        arb_byte_array_32(),
+    )
+        .prop_map(|(tool_id, tool_version, resolved_kind, def_hash)| {
+            kx_journal::ResolvedCapabilityRecord {
+                tool_id,
+                tool_version,
+                resolved_kind,
+                resolved_def_hash: ContentRef::from_bytes(def_hash),
+            }
+        });
+    (
+        proptest::array::uniform16(any::<u8>()),
+        arb_byte_array_32(),
+        "[a-z0-9._-]{0,40}",
+        proptest::option::of(arb_cap),
+        any::<u64>(),
+    )
+        .prop_map(|(instance_id, warrant_ref, model_id, capability, seq)| {
+            let _: [u8; INSTANCE_ID_LEN] = instance_id;
+            JournalEntry::RunVersionsResolved {
+                instance_id,
+                warrant_ref: ContentRef::from_bytes(warrant_ref),
+                model_id,
+                capability,
+                seq,
+            }
+        })
+}
+
 /// **v2 (PR 7): EffectStaged strategy.** Header-only; no body fields.
 fn arb_effect_staged() -> impl Strategy<Value = JournalEntry> {
     (arb_mote_id(), arb_byte_array_32(), any::<u64>()).prop_map(
@@ -325,6 +374,24 @@ proptest! {
             bytes.len(),
             MAX_ENTRY_LEN
         );
+    }
+
+    // **v4 (M1.2)** — encode/decode round-trip for RunVersionsResolved entries
+    // (variable-length body; capability present or absent).
+    #[test]
+    fn prop_run_versions_round_trip(entry in arb_run_versions_resolved()) {
+        let bytes = encode_entry(&entry).expect("encode");
+        let decoded = decode_entry(&bytes).expect("decode");
+        prop_assert_eq!(decoded, entry);
+    }
+
+    // **v4 (M1.2)** — encoding determinism + size cap for RunVersionsResolved.
+    #[test]
+    fn prop_run_versions_deterministic_and_capped(entry in arb_run_versions_resolved()) {
+        let a = encode_entry(&entry).expect("encode a");
+        let b = encode_entry(&entry).expect("encode b");
+        prop_assert_eq!(&a, &b);
+        prop_assert!(a.len() <= MAX_ENTRY_LEN);
     }
 
     // Property 1 — encode/decode round-trip for Committed entries via

@@ -39,7 +39,7 @@
 //! `ReportCommit`. Selection is trivial (ready ∩ PURE ∩ executor_class); placement
 //! v2 (locality / GPU-slot awareness) is P2.5, and worker provisioning is P3 (D47).
 
-pub use kx_projection::MoteState;
+pub use kx_projection::{MoteState, RunResolvedVersions};
 pub use kx_proto::proto;
 pub use kx_scheduler::WorkerId;
 

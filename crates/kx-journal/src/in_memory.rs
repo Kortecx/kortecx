@@ -230,6 +230,7 @@ fn set_seq(entry: &mut JournalEntry, new_seq: u64) {
         | JournalEntry::Repudiated { seq, .. }
         | JournalEntry::Failed { seq, .. }
         | JournalEntry::EffectStaged { seq, .. }
-        | JournalEntry::RunRegistered { seq, .. } => *seq = new_seq,
+        | JournalEntry::RunRegistered { seq, .. }
+        | JournalEntry::RunVersionsResolved { seq, .. } => *seq = new_seq,
     }
 }

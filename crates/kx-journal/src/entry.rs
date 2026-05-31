@@ -10,7 +10,8 @@
 //! ```text
 //! header (74 bytes, common to all kinds):
 //!     kind             u8     (Proposed=0, Committed=1, Repudiated=2, Failed=3,
-//!                              EffectStaged=4, RunRegistered=5)
+//!                              EffectStaged=4, RunRegistered=5,
+//!                              RunVersionsResolved=6)
 //!     mote_id          [u8;32]
 //!     idempotency_key  [u8;32]
 //!     seq              u64 LE
@@ -41,6 +42,21 @@
 //!     instance_id        [u8;16]
 //!     recipe_fingerprint [u8;32]
 //!     ts                 u64 LE   (audit-only; excluded from every hash)
+//!
+//!   RunVersionsResolved (variable) (v4, M1.2, D79): one entry per resolved
+//!   capability (append-many; a zero-grant warrant emits one with has_cap=0):
+//!     instance_id        [u8;16]
+//!     warrant_ref        [u8;32]
+//!     model_id_len       u16 LE
+//!     model_id           [u8; model_id_len]  (UTF-8)
+//!     has_cap            u8 (0 or 1)
+//!     -- if has_cap == 1:
+//!     tool_id_len        u16 LE
+//!     tool_id            [u8; tool_id_len]   (UTF-8)
+//!     tool_version_len   u16 LE
+//!     tool_version       [u8; tool_version_len] (UTF-8)
+//!     resolved_kind_tag  u8 (Builtin=0 .. SelfGenerated=4)
+//!     resolved_def_hash  [u8;32]
 //!
 //! ParentEntry (34 bytes):
 //!     parent_id        [u8;32]
@@ -77,7 +93,21 @@ use smallvec::SmallVec;
 ///
 /// v3 readers refuse v2 files loudly (no in-place evolution; no production v2
 /// journals are retained across the bump per the corpus, acceptable).
-pub const JOURNAL_SCHEMA_VERSION: u16 = 3;
+///
+/// **v4 (M1.2, D79) changes** vs v3:
+/// - New `RunVersionsResolved` entry kind (=6) — an append-only, off-DAG
+///   run-metadata fact capturing the resolved `(tool_id, tool_version,
+///   resolved_kind, resolved_def_hash)` of a capability plus the run's
+///   `warrant_ref` and resolved `model_id`. Audit/lineage **metadata, never
+///   identity** (never folded into `MoteId`/`input_data_id`/any digest).
+/// - One entry per resolved capability (append-many); a zero-grant warrant
+///   emits one entry with no capability. Does NOT participate in dedup-by-key
+///   (the dedup index stays `{1, 2, 4}`). Strictly additive; `MAX_ENTRY_LEN`
+///   is unchanged (a single-capability body is small).
+///
+/// v4 readers refuse v3 files loudly (no in-place evolution; no production v3
+/// journals are retained across the bump per the corpus, acceptable).
+pub const JOURNAL_SCHEMA_VERSION: u16 = 4;
 
 /// Fixed entry-header length in bytes (`journal-entry.md` §3).
 pub const HEADER_LEN: usize = 74;
@@ -133,11 +163,80 @@ pub const KIND_EFFECT_STAGED: u8 = 4;
 /// carries the synthetic [`run_root_id`].
 pub const KIND_RUN_REGISTERED: u8 = 5;
 
+/// `RunVersionsResolved` entry-kind byte (NEW in v4; M1.2, D79).
+///
+/// An append-only, **off-DAG run-metadata** fact: the resolved `(tool_id,
+/// tool_version, resolved_kind, resolved_def_hash)` of one capability plus the
+/// run's `warrant_ref` and resolved `model_id`. These are audit/lineage
+/// **metadata, never identity** (never folded into `MoteId`/`input_data_id`/any
+/// content-addressed digest, per D64/D79/D70). One entry per resolved
+/// capability (append-many); a zero-grant warrant emits a single entry with no
+/// capability. Does NOT participate in dedup-by-key (the dedup index stays
+/// `{1, 2, 4}`); the header `idempotency_key` slot is the all-zero sentinel and
+/// the `mote_id` slot carries the run's synthetic [`run_root_id`].
+pub const KIND_RUN_VERSIONS_RESOLVED: u8 = 6;
+
 /// Length in bytes of a run's `instance_id` (the registered run nonce).
 pub const INSTANCE_ID_LEN: usize = 16;
 
 /// `RunRegistered` body length: `instance_id(16) + recipe_fingerprint(32) + ts(8)`.
 const RUN_REGISTERED_BODY_LEN: usize = INSTANCE_ID_LEN + 32 + 8;
+
+/// The kind of tool a capability resolved as, mirrored as a closed `u8`-tagged
+/// enum so `kx-journal` need not depend on `kx-tool-registry` (the journal must
+/// stay dependency-clean). Tags MUST mirror `kx_tool_registry::ToolKind`'s
+/// variant order (Builtin=0, LocalScript=1, External=2, Mcp=3,
+/// SelfGenerated=4); the coordinator maps `ToolKind → ResolvedKindTag` when
+/// building the entry. Adding a variant is a `schema_version` bump.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[repr(u8)]
+pub enum ResolvedKindTag {
+    /// A built-in OSS tool (`kx_tool_registry::ToolKind::Builtin`).
+    Builtin = 0,
+    /// A registered local script (`kx_tool_registry::ToolKind::LocalScript`).
+    LocalScript = 1,
+    /// An external/URL-sourced tool (`kx_tool_registry::ToolKind::External`).
+    External = 2,
+    /// An MCP-exposed tool (`kx_tool_registry::ToolKind::Mcp`).
+    Mcp = 3,
+    /// A self-generated tool (`kx_tool_registry::ToolKind::SelfGenerated`).
+    SelfGenerated = 4,
+}
+
+impl ResolvedKindTag {
+    /// The tag's discriminant byte.
+    #[must_use]
+    pub fn as_u8(self) -> u8 {
+        self as u8
+    }
+
+    /// Parse a tag byte; `None` for an unknown discriminant (decoder rejects).
+    #[must_use]
+    pub fn from_u8(b: u8) -> Option<Self> {
+        match b {
+            0 => Some(Self::Builtin),
+            1 => Some(Self::LocalScript),
+            2 => Some(Self::External),
+            3 => Some(Self::Mcp),
+            4 => Some(Self::SelfGenerated),
+            _ => None,
+        }
+    }
+}
+
+/// One resolved capability captured in a [`JournalEntry::RunVersionsResolved`]
+/// fact (M1.2, D79). Audit/lineage metadata — never an identity input.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ResolvedCapabilityRecord {
+    /// The resolved tool's name (opaque identifier).
+    pub tool_id: String,
+    /// The resolved tool's pinned version.
+    pub tool_version: String,
+    /// Which tier served the resolution.
+    pub resolved_kind: ResolvedKindTag,
+    /// `blake3(canonical_bincode(ToolDef))` — pins the exact resolved `ToolDef`.
+    pub resolved_def_hash: ContentRef,
+}
 
 // ---------------------------------------------------------------------------
 // Closed reason enums (D19; `journal-entry.md` §6.2 + §7.2)
@@ -504,6 +603,29 @@ pub enum JournalEntry {
         /// Journal-assigned sequence (0 until appended). `= 1` for a fresh run.
         seq: u64,
     },
+
+    /// An append-only, off-DAG **run-metadata** fact (v4, M1.2, D79): the
+    /// resolved versions of a capability invoked under a run, captured at
+    /// submit. **Metadata, never identity** — never folded into
+    /// `MoteId`/`input_data_id`/any content-addressed digest (D64/D79/D70).
+    ///
+    /// One entry per resolved capability (append-many); a zero-grant warrant
+    /// emits one entry with `capability == None`. Does NOT participate in
+    /// dedup-by-key (the dedup index stays `{1, 2, 4}`). The header `mote_id`
+    /// slot carries the run's synthetic [`run_root_id`]; the `idempotency_key`
+    /// slot is the all-zero sentinel (kind 6 is excluded from the dedup gate).
+    RunVersionsResolved {
+        /// The run this metadata is attached to (its registered identity).
+        instance_id: [u8; INSTANCE_ID_LEN],
+        /// `blake3(canonical_bincode(WarrantSpec))` of the warrant resolved under.
+        warrant_ref: ContentRef,
+        /// The resolved model id (opaque identifier; audit metadata).
+        model_id: String,
+        /// The resolved capability, or `None` for a zero-grant warrant.
+        capability: Option<ResolvedCapabilityRecord>,
+        /// Journal-assigned sequence (0 until appended).
+        seq: u64,
+    },
 }
 
 /// The all-zero sentinel returned as the dedupe key of a `RunRegistered` entry,
@@ -535,7 +657,8 @@ impl JournalEntry {
             | Self::Repudiated { seq, .. }
             | Self::Failed { seq, .. }
             | Self::EffectStaged { seq, .. }
-            | Self::RunRegistered { seq, .. } => *seq,
+            | Self::RunRegistered { seq, .. }
+            | Self::RunVersionsResolved { seq, .. } => *seq,
         }
     }
 
@@ -558,9 +681,9 @@ impl JournalEntry {
             | Self::EffectStaged {
                 idempotency_key, ..
             } => idempotency_key,
-            // RunRegistered does not dedup; return the all-zero sentinel (kind 5
-            // is excluded from the dedup gate).
-            Self::RunRegistered { .. } => &ZERO_IDEMPOTENCY_KEY,
+            // RunRegistered / RunVersionsResolved do not dedup; return the
+            // all-zero sentinel (kinds 5 and 6 are excluded from the dedup gate).
+            Self::RunRegistered { .. } | Self::RunVersionsResolved { .. } => &ZERO_IDEMPOTENCY_KEY,
         }
     }
 
@@ -576,7 +699,8 @@ impl JournalEntry {
             | Self::Failed { mote_id, .. }
             | Self::EffectStaged { mote_id, .. } => *mote_id,
             Self::Repudiated { target_mote_id, .. } => *target_mote_id,
-            Self::RunRegistered { instance_id, .. } => run_root_id(instance_id),
+            Self::RunRegistered { instance_id, .. }
+            | Self::RunVersionsResolved { instance_id, .. } => run_root_id(instance_id),
         }
     }
 
@@ -590,6 +714,7 @@ impl JournalEntry {
             Self::Failed { .. } => KIND_FAILED,
             Self::EffectStaged { .. } => KIND_EFFECT_STAGED,
             Self::RunRegistered { .. } => KIND_RUN_REGISTERED,
+            Self::RunVersionsResolved { .. } => KIND_RUN_VERSIONS_RESOLVED,
         }
     }
 }
@@ -624,7 +749,7 @@ pub enum DecodeError {
         got: usize,
     },
     /// The kind discriminant byte is not one of the known values
-    /// (Proposed=0 .. RunRegistered=5).
+    /// (Proposed=0 .. RunVersionsResolved=6).
     #[error("unknown kind discriminant: {0}")]
     UnknownKind(u8),
     /// The `nondeterminism` discriminant byte is not one of the three known values.
@@ -653,6 +778,21 @@ pub enum DecodeError {
     /// [`Self::RepudiatedHeaderMismatch`]).
     #[error("RunRegistered body-header run_root_id mismatch")]
     RunRegisteredHeaderMismatch,
+    /// A `RunVersionsResolved` entry's header `mote_id` slot does not equal
+    /// `run_root_id(instance_id)` (v4 body-header consistency; mirrors
+    /// [`Self::RunRegisteredHeaderMismatch`]).
+    #[error("RunVersionsResolved body-header run_root_id mismatch")]
+    RunVersionsHeaderMismatch,
+    /// A `RunVersionsResolved` entry's `resolved_kind_tag` byte is not one of the
+    /// five known [`ResolvedKindTag`] values.
+    #[error("unknown resolved_kind tag: {0}")]
+    UnknownResolvedKind(u8),
+    /// A `RunVersionsResolved` entry's `has_cap` flag is neither 0 nor 1.
+    #[error("has_cap flag is not boolean: {0}")]
+    NonBooleanHasCap(u8),
+    /// A `RunVersionsResolved` entry's UTF-8 string field is not valid UTF-8.
+    #[error("RunVersionsResolved string field is not valid UTF-8")]
+    RunVersionsInvalidUtf8,
     /// Trailing bytes after a complete entry (§2 no-trailing-data rule).
     #[error("trailing bytes after entry: {0} extra")]
     TrailingBytes(usize),
@@ -672,6 +812,23 @@ pub enum EncodeError {
     /// silently coercing (`journal-entry.md` §11).
     #[error("non_cascade flag set on Data edge (anti-pattern §11)")]
     DataEdgeNonCascade,
+    /// A `RunVersionsResolved` string field exceeds the `u16` length prefix
+    /// (65535 bytes) — far beyond any real tool/model id.
+    #[error("RunVersionsResolved field exceeds u16 length prefix: {got} bytes")]
+    RunVersionsFieldTooLong {
+        /// The over-long field's byte length.
+        got: usize,
+    },
+    /// A `RunVersionsResolved` entry would exceed the absolute size cap
+    /// ([`MAX_ENTRY_LEN`]) — a pathologically large model/tool id.
+    #[error(
+        "RunVersionsResolved entry exceeds size cap: {got} bytes > {} max",
+        MAX_ENTRY_LEN
+    )]
+    RunVersionsTooLarge {
+        /// The encoded entry's byte length.
+        got: usize,
+    },
 }
 
 /// Encode a `JournalEntry` to its canonical on-disk byte representation
@@ -739,6 +896,11 @@ pub fn encode_entry(entry: &JournalEntry) -> Result<Vec<u8>, EncodeError> {
         // the `idempotency_key` slot is the all-zero sentinel (kind 5 does not
         // dedup); `nondeterminism` is the 0 sentinel (a run is not a Mote).
         JournalEntry::RunRegistered {
+            instance_id, seq, ..
+        } => (run_root_id(instance_id), ZERO_IDEMPOTENCY_KEY, *seq, 0),
+        // v4 (M1.2): same anchoring as RunRegistered — run-root id in the
+        // mote_id slot, all-zero idempotency key (kind 6 does not dedup), 0 nd.
+        JournalEntry::RunVersionsResolved {
             instance_id, seq, ..
         } => (run_root_id(instance_id), ZERO_IDEMPOTENCY_KEY, *seq, 0),
     };
@@ -821,6 +983,35 @@ pub fn encode_entry(entry: &JournalEntry) -> Result<Vec<u8>, EncodeError> {
             out.extend_from_slice(instance_id);
             out.extend_from_slice(recipe_fingerprint);
             out.extend_from_slice(&ts.to_le_bytes());
+        }
+        JournalEntry::RunVersionsResolved {
+            instance_id,
+            warrant_ref,
+            model_id,
+            capability,
+            ..
+        } => {
+            // v4 (M1.2): body = instance_id(16) ‖ warrant_ref(32) ‖
+            // u16-prefixed model_id ‖ has_cap(u8) ‖ [if has_cap: u16-prefixed
+            // tool_id ‖ u16-prefixed tool_version ‖ kind_tag(u8) ‖ def_hash(32)].
+            out.extend_from_slice(instance_id);
+            out.extend_from_slice(warrant_ref.as_bytes());
+            push_len_prefixed_str(&mut out, model_id)?;
+            match capability {
+                None => out.push(0u8),
+                Some(cap) => {
+                    out.push(1u8);
+                    push_len_prefixed_str(&mut out, &cap.tool_id)?;
+                    push_len_prefixed_str(&mut out, &cap.tool_version)?;
+                    out.push(cap.resolved_kind.as_u8());
+                    out.extend_from_slice(cap.resolved_def_hash.as_bytes());
+                }
+            }
+            // Pathological-id guard (real-id bodies are ~100 B). Mirrors the
+            // Committed TooManyParents bound — refuse rather than over-cap.
+            if out.len() > MAX_ENTRY_LEN {
+                return Err(EncodeError::RunVersionsTooLarge { got: out.len() });
+            }
         }
     }
 
@@ -1058,8 +1249,126 @@ pub fn decode_entry_with_def_hash(
                 seq,
             })
         }
+        KIND_RUN_VERSIONS_RESOLVED => {
+            // v4 (M1.2): variable-length body. Cursor-based parse with strict
+            // bounds at every read; reject trailing bytes at the end.
+            const PREFIX_LEN: usize = INSTANCE_ID_LEN + 32; // instance_id ‖ warrant_ref
+            if body.len() < PREFIX_LEN + 2 + 1 {
+                // PREFIX + model_id_len(u16) + has_cap(u8)
+                return Err(DecodeError::BodyTooShort {
+                    kind,
+                    got: body.len(),
+                    expected: PREFIX_LEN + 2 + 1,
+                });
+            }
+            let mut instance_id = [0u8; INSTANCE_ID_LEN];
+            instance_id.copy_from_slice(&body[..INSTANCE_ID_LEN]);
+            // Body-header consistency (mirrors RunRegistered).
+            if mote_id != run_root_id(&instance_id) {
+                return Err(DecodeError::RunVersionsHeaderMismatch);
+            }
+            let mut warrant_ref_bytes = [0u8; 32];
+            warrant_ref_bytes.copy_from_slice(&body[INSTANCE_ID_LEN..PREFIX_LEN]);
+            let warrant_ref = ContentRef::from_bytes(warrant_ref_bytes);
+
+            let mut cursor = PREFIX_LEN;
+            let model_id = read_len_prefixed_str(body, &mut cursor, kind)?;
+            let has_cap = read_u8(body, &mut cursor, kind)?;
+            let capability = match has_cap {
+                0 => None,
+                1 => {
+                    let tool_id = read_len_prefixed_str(body, &mut cursor, kind)?;
+                    let tool_version = read_len_prefixed_str(body, &mut cursor, kind)?;
+                    let tag_byte = read_u8(body, &mut cursor, kind)?;
+                    let resolved_kind = ResolvedKindTag::from_u8(tag_byte)
+                        .ok_or(DecodeError::UnknownResolvedKind(tag_byte))?;
+                    let def_hash_bytes = read_array32(body, &mut cursor, kind)?;
+                    Some(ResolvedCapabilityRecord {
+                        tool_id,
+                        tool_version,
+                        resolved_kind,
+                        resolved_def_hash: ContentRef::from_bytes(def_hash_bytes),
+                    })
+                }
+                other => return Err(DecodeError::NonBooleanHasCap(other)),
+            };
+            if cursor != body.len() {
+                return Err(DecodeError::TrailingBytes(body.len() - cursor));
+            }
+            Ok(JournalEntry::RunVersionsResolved {
+                instance_id,
+                warrant_ref,
+                model_id,
+                capability,
+                seq,
+            })
+        }
         other => Err(DecodeError::UnknownKind(other)),
     }
+}
+
+/// Push a `u16`-length-prefixed UTF-8 string (v4 `RunVersionsResolved` bodies).
+fn push_len_prefixed_str(out: &mut Vec<u8>, s: &str) -> Result<(), EncodeError> {
+    let len = u16::try_from(s.len())
+        .map_err(|_| EncodeError::RunVersionsFieldTooLong { got: s.len() })?;
+    out.extend_from_slice(&len.to_le_bytes());
+    out.extend_from_slice(s.as_bytes());
+    Ok(())
+}
+
+/// Read a `u16`-length-prefixed UTF-8 string at `*cursor`, advancing it. Strict
+/// bounds + UTF-8 validation; total (never panics).
+fn read_len_prefixed_str(body: &[u8], cursor: &mut usize, kind: u8) -> Result<String, DecodeError> {
+    if body.len() < *cursor + 2 {
+        return Err(DecodeError::BodyTooShort {
+            kind,
+            got: body.len(),
+            expected: *cursor + 2,
+        });
+    }
+    let len = u16::from_le_bytes(body[*cursor..*cursor + 2].try_into().expect("2 bytes")) as usize;
+    *cursor += 2;
+    if body.len() < *cursor + len {
+        return Err(DecodeError::BodyTooShort {
+            kind,
+            got: body.len(),
+            expected: *cursor + len,
+        });
+    }
+    let s = std::str::from_utf8(&body[*cursor..*cursor + len])
+        .map_err(|_| DecodeError::RunVersionsInvalidUtf8)?
+        .to_owned();
+    *cursor += len;
+    Ok(s)
+}
+
+/// Read a single byte at `*cursor`, advancing it.
+fn read_u8(body: &[u8], cursor: &mut usize, kind: u8) -> Result<u8, DecodeError> {
+    if body.len() < *cursor + 1 {
+        return Err(DecodeError::BodyTooShort {
+            kind,
+            got: body.len(),
+            expected: *cursor + 1,
+        });
+    }
+    let b = body[*cursor];
+    *cursor += 1;
+    Ok(b)
+}
+
+/// Read a 32-byte array at `*cursor`, advancing it.
+fn read_array32(body: &[u8], cursor: &mut usize, kind: u8) -> Result<[u8; 32], DecodeError> {
+    if body.len() < *cursor + 32 {
+        return Err(DecodeError::BodyTooShort {
+            kind,
+            got: body.len(),
+            expected: *cursor + 32,
+        });
+    }
+    let mut buf = [0u8; 32];
+    buf.copy_from_slice(&body[*cursor..*cursor + 32]);
+    *cursor += 32;
+    Ok(buf)
 }
 
 fn nd_class_from_byte(b: u8) -> Result<NdClass, DecodeError> {
@@ -1484,6 +1793,130 @@ mod tests {
         // blake3-of-16-bytes identity.
         let bare = MoteId::from_bytes(*blake3::hash(&a).as_bytes());
         assert_ne!(run_root_id(&a), bare);
+    }
+
+    // -------------------- v4 (M1.2): RunVersionsResolved --------------------
+
+    fn sample_run_versions(capability: Option<ResolvedCapabilityRecord>) -> JournalEntry {
+        JournalEntry::RunVersionsResolved {
+            instance_id: [0x55u8; INSTANCE_ID_LEN],
+            warrant_ref: ContentRef::from_bytes([0x66; 32]),
+            model_id: "qwen2.5-0.5b".to_owned(),
+            capability,
+            seq: 7,
+        }
+    }
+
+    fn sample_capability() -> ResolvedCapabilityRecord {
+        ResolvedCapabilityRecord {
+            tool_id: "fs-read".to_owned(),
+            tool_version: "1.0.0".to_owned(),
+            resolved_kind: ResolvedKindTag::Builtin,
+            resolved_def_hash: ContentRef::from_bytes([0x77; 32]),
+        }
+    }
+
+    #[test]
+    fn run_versions_round_trips_with_and_without_capability() {
+        for cap in [None, Some(sample_capability())] {
+            let e = sample_run_versions(cap);
+            let bytes = encode_entry(&e).unwrap();
+            assert_eq!(decode_entry(&bytes).unwrap(), e);
+        }
+    }
+
+    #[test]
+    fn run_versions_header_carries_run_root_id_and_zero_idempotency_key() {
+        let e = sample_run_versions(Some(sample_capability()));
+        let instance_id = match &e {
+            JournalEntry::RunVersionsResolved { instance_id, .. } => *instance_id,
+            _ => unreachable!(),
+        };
+        let bytes = encode_entry(&e).unwrap();
+        assert_eq!(&bytes[1..33], run_root_id(&instance_id).as_bytes());
+        assert_eq!(&bytes[33..65], &[0u8; 32]);
+        assert_eq!(e.idempotency_key(), &[0u8; 32]);
+        assert_eq!(e.mote_id(), run_root_id(&instance_id));
+        assert_eq!(e.kind(), KIND_RUN_VERSIONS_RESOLVED);
+    }
+
+    #[test]
+    fn decode_rejects_run_versions_header_body_mismatch() {
+        let e = sample_run_versions(Some(sample_capability()));
+        let mut bytes = encode_entry(&e).unwrap();
+        bytes[1] ^= 0xff; // corrupt the run-root id in the header
+        assert_eq!(
+            decode_entry(&bytes).unwrap_err(),
+            DecodeError::RunVersionsHeaderMismatch
+        );
+    }
+
+    #[test]
+    fn decode_rejects_run_versions_trailing_bytes() {
+        let e = sample_run_versions(Some(sample_capability()));
+        let mut bytes = encode_entry(&e).unwrap();
+        bytes.push(0xff);
+        assert!(matches!(
+            decode_entry(&bytes),
+            Err(DecodeError::TrailingBytes(1))
+        ));
+    }
+
+    #[test]
+    fn decode_rejects_run_versions_body_too_short() {
+        let e = sample_run_versions(Some(sample_capability()));
+        let mut bytes = encode_entry(&e).unwrap();
+        bytes.pop(); // truncate the def_hash
+        assert!(matches!(
+            decode_entry(&bytes),
+            Err(DecodeError::BodyTooShort {
+                kind: KIND_RUN_VERSIONS_RESOLVED,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn decode_rejects_run_versions_unknown_kind_tag() {
+        let e = sample_run_versions(Some(sample_capability()));
+        let bytes = encode_entry(&e).unwrap();
+        // The kind tag byte sits just before the trailing 32-byte def_hash.
+        let tag_idx = bytes.len() - 33;
+        let mut corrupted = bytes.clone();
+        corrupted[tag_idx] = 0xff;
+        assert_eq!(
+            decode_entry(&corrupted).unwrap_err(),
+            DecodeError::UnknownResolvedKind(0xff)
+        );
+    }
+
+    #[test]
+    fn decode_rejects_run_versions_non_boolean_has_cap() {
+        // has_cap sits right after instance_id(16) ‖ warrant_ref(32) ‖
+        // u16-prefixed model_id, all inside the body (after the 74-byte header).
+        let e = sample_run_versions(None);
+        let bytes = encode_entry(&e).unwrap();
+        let has_cap_idx = bytes.len() - 1; // None body ends at has_cap
+        let mut corrupted = bytes.clone();
+        corrupted[has_cap_idx] = 2;
+        assert_eq!(
+            decode_entry(&corrupted).unwrap_err(),
+            DecodeError::NonBooleanHasCap(2)
+        );
+    }
+
+    #[test]
+    fn resolved_kind_tag_round_trips_and_rejects_unknown() {
+        for tag in [
+            ResolvedKindTag::Builtin,
+            ResolvedKindTag::LocalScript,
+            ResolvedKindTag::External,
+            ResolvedKindTag::Mcp,
+            ResolvedKindTag::SelfGenerated,
+        ] {
+            assert_eq!(ResolvedKindTag::from_u8(tag.as_u8()), Some(tag));
+        }
+        assert_eq!(ResolvedKindTag::from_u8(5), None);
     }
 
     #[test]

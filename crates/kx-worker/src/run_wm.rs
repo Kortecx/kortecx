@@ -24,7 +24,9 @@
 //! is glue over the broker trait, not an engine fork: `kx-executor` source is
 //! untouched (the P2 thesis test holds).
 
-use kx_capability::{idempotency_token_for, CapabilityBroker, EffectRequest};
+use kx_capability::{
+    idempotency_token_for, run_scoped_token, CapabilityBroker, EffectRequest, INSTANCE_ID_LEN,
+};
 use kx_content::ContentRef;
 use kx_mote::{EffectPattern, Mote, ToolName};
 use kx_warrant::{FsScope, NetScope, WarrantSpec};
@@ -35,15 +37,21 @@ use crate::error::WorkerError;
 /// Drive stage→fire for a non-PURE Mote and return the staged `result_ref` to
 /// PROPOSE via `ReportCommit`. Async because `ReportEffectStaged` is an RPC; the
 /// broker's `dispatch` is the trait's synchronous method.
+///
+/// `instance_id` is the registered run (M1.2/D64): when `Some`, the cross-boundary
+/// idempotency token is run-scoped (`run_scoped_token`), so the same Mote in a
+/// different run fires a distinct effect; when `None` (unregistered run), it falls
+/// back to the MoteId-only token.
 pub(crate) async fn run_wm(
     client: &mut WorkerClient,
     broker: &dyn CapabilityBroker,
     mote: &Mote,
     warrant: &WarrantSpec,
     worker_id: u64,
+    instance_id: Option<[u8; INSTANCE_ID_LEN]>,
 ) -> Result<ContentRef, WorkerError> {
     let capability = resolve_capability(mote)?;
-    let request = effect_request_for(mote);
+    let request = effect_request_for(mote, instance_id);
 
     // Stage the intent durably BEFORE firing (StageThenCommit only). Await the ack:
     // `report_effect_staged` returns `Err(EffectStagedRejected)` if the coordinator
@@ -74,16 +82,22 @@ fn resolve_capability(mote: &Mote) -> Result<ToolName, WorkerError> {
 /// Build the [`EffectRequest`] for a non-PURE Mote — mirrors the single-node
 /// `engine::effect_request_for` (empty payload, pattern from the def, empty scopes).
 ///
-/// Unlike the demo driver, the worker sets `idempotency_key =
-/// Some(idempotency_token_for(mote))`: it is the 32-byte tool-boundary key (D38 §1)
-/// that makes a re-dispatch after worker death a no-op at the world boundary
-/// (exactly-once, D58 §7), and it is required for token-class WM tools (executor
-/// predicate R-10). It is harmless for non-token capabilities.
-fn effect_request_for(mote: &Mote) -> EffectRequest {
+/// The worker sets the 32-byte tool-boundary key (D38 §1) that makes a re-dispatch
+/// after worker death a no-op at the world boundary (exactly-once, D58 §7), and
+/// that token-class WM tools require (executor predicate R-10). M1.2/D64: when the
+/// run is registered (`instance_id = Some`), the key is **run-scoped**
+/// (`run_scoped_token`) so the same Mote in a *fresh* run fires a *distinct*
+/// effect; an unregistered run falls back to the MoteId-only token. Harmless for
+/// non-token capabilities.
+fn effect_request_for(mote: &Mote, instance_id: Option<[u8; INSTANCE_ID_LEN]>) -> EffectRequest {
+    let idempotency_key = match instance_id {
+        Some(id) => run_scoped_token(&id, mote),
+        None => idempotency_token_for(mote),
+    };
     EffectRequest {
         payload: Vec::new(),
         pattern: mote.effect_pattern(),
-        idempotency_key: Some(idempotency_token_for(mote)),
+        idempotency_key: Some(idempotency_key),
         net_scope: NetScope::None,
         fs_scope: FsScope::empty(),
     }

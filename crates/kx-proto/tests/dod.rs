@@ -48,6 +48,7 @@ fn obligation_1_submit_mote_response_round_trips() {
         mote_id: vec![0xAB; 32],
         status: proto::SubmitStatus::Accepted as i32,
         detail: String::new(),
+        instance_id: vec![0xCD; 16],
     });
 }
 
@@ -114,13 +115,17 @@ fn obligation_1_lease_work_response_round_trips() {
             mote: Some(sample_mote().into()),
             warrant: Some(sample_warrant().into()),
         }],
+        instance_id: vec![0xEF; 16],
     };
     roundtrip(&resp);
 }
 
 #[test]
 fn obligation_1_lease_work_response_empty_round_trips() {
-    roundtrip(&proto::LeaseWorkResponse { items: vec![] });
+    roundtrip(&proto::LeaseWorkResponse {
+        items: vec![],
+        instance_id: vec![],
+    });
 }
 
 #[test]
@@ -258,6 +263,7 @@ fn obligation_3_work_item_preserves_identity() {
             mote: Some(mote.clone().into()),
             warrant: Some(warrant.clone().into()),
         }],
+        instance_id: vec![0x01; 16],
     };
 
     let bytes = resp.encode_to_vec();

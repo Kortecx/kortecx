@@ -54,6 +54,7 @@ impl Coordinator for NoopCoordinator {
             mote_id,
             status: SubmitStatus::Accepted as i32,
             detail: String::new(),
+            instance_id: vec![0u8; 16],
         }))
     }
 
@@ -92,6 +93,7 @@ impl Coordinator for NoopCoordinator {
                 mote: Some(sample_mote().into()),
                 warrant: Some(sample_warrant().into()),
             }],
+            instance_id: vec![0u8; 16],
         }))
     }
 

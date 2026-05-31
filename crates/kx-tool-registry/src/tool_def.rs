@@ -1,6 +1,8 @@
 //! [`ToolDef`] — the spec the registry stores. Plus the resolution-side
-//! [`ToolResolutionEvent`] (journaled at resolution time) and [`ResolvedTool`]
-//! (the rich return shape from [`crate::ToolRegistry::resolve`]).
+//! [`ToolResolutionEvent`] (content-addressed at resolution time; the resolved
+//! versions are captured into run metadata by the coordinator in M1.2, D79 —
+//! the event struct is not itself a journal entry) and [`ResolvedTool`] (the
+//! rich return shape from [`crate::ToolRegistry::resolve`]).
 
 use kx_content::ContentRef;
 use kx_mote::{canonical_config, ToolName, ToolVersion};
@@ -22,7 +24,7 @@ use crate::tool_kind::ToolKind;
 ///
 /// PR 4.6 added the required `idempotency_class` field. **This is a
 /// canonical-bytes-shifting change**: `RegistrationToken` (the dedup primary
-/// key) and `ToolResolutionEvent.resolved_def_hash` (the journaled
+/// key) and `ToolResolutionEvent.resolved_def_hash` (the content-addressed
 /// resolution event) for any given `ToolDef` now differ from what the
 /// pre-PR-4.6 `ToolDef` would have produced. No production state exists at
 /// either pin site at the time of the shift, so the canonical-bytes change
@@ -59,11 +61,15 @@ pub struct ToolDef {
 /// The content-addressed fact that "tool X version Y was resolved as kind Z
 /// from this registry at the resolution event corresponding to this `ContentRef`."
 ///
-/// Journaled by the executor at the registry-resolution event so replay
-/// resolves identically. **Identity excludes wall-clock time** — including time
-/// would break content-addressing (two runs would produce different refs for
-/// the same resolution). Time, if needed for audit, lives in the journal
-/// entry's header.
+/// A pure resolution artifact — **not itself a journal entry**. The coordinator
+/// captures the resolved `(tool_id, tool_version, resolved_kind,
+/// resolved_def_hash)` as off-DAG run **metadata** (a `RunVersionsResolved`
+/// journal fact, M1.2/D79); these versions are audit/lineage metadata, never an
+/// identity input, and the executor never journals this struct (the coordinator
+/// is the sole writer, D40). **Identity excludes wall-clock time** — including
+/// time would break content-addressing (two runs would produce different refs
+/// for the same resolution). Time, if needed for audit, lives in the
+/// `RunVersionsResolved` entry's header.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ToolResolutionEvent {
     /// The tool that was resolved.
