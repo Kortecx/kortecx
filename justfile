@@ -114,15 +114,16 @@ smoke-test-with-model:
 # a 25k+ Mote journal in RELEASE and assert (M2.1) the incremental children-index
 # re-fold stays ~linear, (M2.2) resume-from-`FoldCheckpoint` reproduces the full
 # fold exactly + its cost is bounded by live-state size under churn (not by journal
-# length), and (M2.2b) the SAME bound holds end-to-end through the live runtime over
-# a real disk-backed SQLite journal + on-disk sidecar. A super-linear resume is an
-# outage, and resume IS the product. `--release` is REQUIRED — in a debug build the
+# length), and (M2.2b) the SAME bound holds end-to-end over a real disk-backed
+# SQLite journal + an on-disk checkpoint sidecar. All cases live in `kx-projection`
+# (no `kx-llamacpp` C++ FFI in this lean job — the M2.2b SQLite case folds via
+# `kx-journal::SqliteJournal`, llamacpp-free). A super-linear resume is an outage,
+# and resume IS the product. `--release` is REQUIRED — in a debug build the
 # differential oracle re-imposes the O(n^2) full rebuild on every fold and the ratio
 # assertions are skipped.
 scale-smoke:
     cargo test -p kx-projection --release --test incremental_children_index -- --ignored --nocapture --test-threads=1
     cargo test -p kx-projection --release --test fold_checkpoint -- --ignored --nocapture --test-threads=1
-    cargo test -p kx-runtime --release --test checkpoint_scale -- --ignored --nocapture --test-threads=1
 
 # ============================================================================
 # Preflight diagnostic

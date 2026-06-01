@@ -18,7 +18,7 @@ use std::sync::{Arc, Mutex};
 use kx_content::ContentRef;
 use kx_journal::{
     repudiation_idempotency_key, FailureReason, InMemoryJournal, Journal, JournalEntry,
-    ParentEntry, RepudiationReason, INSTANCE_ID_LEN,
+    ParentEntry, RepudiationReason, SqliteJournal, INSTANCE_ID_LEN,
 };
 use kx_mote::{EdgeMeta, EffectPattern, MoteDefHash, MoteId, NdClass, ParentRef};
 use kx_projection::{
@@ -731,6 +731,122 @@ fn scale_resume_matches_full_fold_at_25k() {
     let resumed = Projection::from_journal_with_checkpoint(&journal, Some(&cp)).unwrap();
     assert_eq!(resumed.state_digest(), full.state_digest());
     assert_eq!(resumed.committed_count(), N as usize);
+}
+
+/// M2.2b — the SAME churn-bounded resume property, proven **end-to-end through a
+/// real disk-backed SQLite journal + an on-disk checkpoint sidecar** (not the
+/// in-memory journal double). A full fold reads + folds every SQLite row; a seeded
+/// resume reads one sidecar blob + decodes live state + folds an (empty) tail.
+///
+/// Lives here in `kx-projection` (not `kx-runtime`) on purpose: `kx-runtime`
+/// transitively links the `kx-llamacpp` C++ FFI, whose cmake build is not
+/// provisioned in the lean `scale-smoke` CI job; `kx-projection`'s tree
+/// (`kx-journal`/`rusqlite`, no llamacpp) is. The functional `checkpoint_io`
+/// atomic-sidecar wiring is covered by `kx-runtime`'s own test job.
+#[test]
+#[ignore = "scale: run --release --test fold_checkpoint -- --ignored --nocapture"]
+fn scale_resume_through_sqlite_is_bounded_by_live_state() {
+    use std::time::Instant;
+
+    const M: u32 = 5_000; // distinct Motes (live state)
+    const CHURN: u32 = 10; // Proposed+Failed(pre-commit) cycles before each commit
+    const BATCH: usize = 4_000; // group-commit chunk so setup stays fast
+
+    let dir = tempfile::tempdir().unwrap();
+    let jpath = dir.path().join("scale.sqlite");
+    {
+        let j = SqliteJournal::open(&jpath).unwrap();
+        let mut buf: Vec<JournalEntry> = Vec::with_capacity(BATCH);
+        let mut ctr = 0u64;
+        for i in 0..M {
+            for _ in 0..CHURN {
+                ctr += 2;
+                buf.push(JournalEntry::Proposed {
+                    mote_id: mid_n(i),
+                    idempotency_key: ukey(ctr),
+                    seq: 0,
+                    nondeterminism: NdClass::Pure,
+                    placement_hint: 0,
+                    warrant_ref: war(),
+                });
+                buf.push(JournalEntry::Failed {
+                    mote_id: mid_n(i),
+                    idempotency_key: ukey(ctr + 1),
+                    seq: 0,
+                    reason_class: FailureReason::TimedOut,
+                    reporter_id: 0,
+                });
+                if buf.len() >= BATCH {
+                    j.append_batch(std::mem::take(&mut buf)).unwrap();
+                }
+            }
+            let parents = if i >= 1 {
+                vec![pref(mid_n(i - 1), EdgeMeta::data())]
+            } else {
+                vec![]
+            };
+            let pe: SmallVec<[ParentEntry; 4]> =
+                parents.iter().map(ParentEntry::from_parent_ref).collect();
+            buf.push(JournalEntry::Committed {
+                mote_id: mid_n(i),
+                idempotency_key: *mid_n(i).as_bytes(),
+                seq: 0,
+                nondeterminism: NdClass::Pure,
+                result_ref: ContentRef::from_bytes([7u8; 32]),
+                parents: pe,
+                warrant_ref: war(),
+                mote_def_hash: MoteDefHash::from_bytes([1u8; 32]),
+            });
+            if buf.len() >= BATCH {
+                j.append_batch(std::mem::take(&mut buf)).unwrap();
+            }
+        }
+        if !buf.is_empty() {
+            j.append_batch(buf).unwrap();
+        }
+    }
+    let total = SqliteJournal::open(&jpath).unwrap().current_seq().unwrap();
+
+    // Capture the head checkpoint and persist it as an on-disk sidecar blob.
+    let full_for_cp = Projection::from_journal(&SqliteJournal::open(&jpath).unwrap()).unwrap();
+    let reference = full_for_cp.state_digest();
+    let sidecar = dir.path().join("scale.sqlite.ckpt");
+    std::fs::write(&sidecar, full_for_cp.fold_checkpoint().to_bytes()).unwrap();
+    drop(full_for_cp);
+
+    // Baseline: a full cold re-fold reading every row from a freshly-opened journal.
+    let t0 = Instant::now();
+    let full = Projection::from_journal(&SqliteJournal::open(&jpath).unwrap()).unwrap();
+    let full_us = t0.elapsed().as_secs_f64() * 1e6;
+    assert_eq!(full.state_digest(), reference);
+
+    // Seeded recovery: read the sidecar from disk + decode + fold the (empty) tail.
+    let t1 = Instant::now();
+    let cp = FoldCheckpoint::from_bytes(&std::fs::read(&sidecar).unwrap()).unwrap();
+    let seeded =
+        Projection::from_journal_with_checkpoint(&SqliteJournal::open(&jpath).unwrap(), Some(&cp))
+            .unwrap();
+    let seeded_us = t1.elapsed().as_secs_f64() * 1e6;
+    assert_eq!(
+        seeded.state_digest(),
+        reference,
+        "seeded recovery must reproduce the full fold exactly"
+    );
+
+    let speedup = full_us / seeded_us;
+    eprintln!(
+        "sqlite total_entries={total} live_motes={M} churn={CHURN}x  \
+         full_refold={:.2}ms  seeded_resume={:.2}ms  speedup={speedup:.1}x",
+        full_us / 1000.0,
+        seeded_us / 1000.0
+    );
+    // Conservative gate (matches the in-memory churn test) to catch a regression
+    // that re-couples resume to journal length without flaking on slow CI runners.
+    assert!(
+        speedup > 1.5,
+        "seeded recovery should be bounded by live state, not journal length; got \
+         {speedup:.1}x (full={full_us:.0}us, seeded={seeded_us:.0}us, total_entries={total})"
+    );
 }
 
 // A compile-time + smoke check that the public error type is matchable by
