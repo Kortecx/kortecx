@@ -127,8 +127,10 @@ on Linux x86_64 in CI; macOS Apple Silicon (Metal) is verified locally on every 
 
 ## Contributing
 
-Contributions are welcome. Please open an issue to discuss substantial changes before sending a
-pull request.
+Contributions are welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.md) for the build/test/gate
+path and where to begin, [ARCHITECTURE.md](ARCHITECTURE.md) for how the crates fit together, and
+[GLOSSARY.md](GLOSSARY.md) for the vocabulary. Please open an issue to discuss substantial changes
+before sending a pull request.
 
 ## License
 
