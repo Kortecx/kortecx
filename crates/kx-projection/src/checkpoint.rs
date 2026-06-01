@@ -1,0 +1,859 @@
+//! [`FoldCheckpoint`] — a **discardable** snapshot of the folded projection
+//! state (D92(b), M2.2).
+//!
+//! ## What it is
+//!
+//! A projection is a deterministic left-fold over the seq-ordered journal, so
+//! `fold(0,N] == fold(K,N] ∘ fold(0,K]`. A [`FoldCheckpoint`] stores `fold(0,K]`
+//! materialized (a canonical-bincode encoding of the private [`State`]) plus a
+//! `journal_offset = K` and an integrity `digest`. Cold recovery can then seed a
+//! [`crate::Projection`] from the checkpoint and fold only the tail
+//! `(K, current]` instead of re-folding `(0, current]` from scratch
+//! ([`crate::Projection::from_journal_with_checkpoint`]).
+//!
+//! ## Hard contract (do not weaken)
+//!
+//! - **Never authoritative.** The journal is the only source of truth. A
+//!   corrupt / stale / wrong-run checkpoint is **silently discarded** and the
+//!   full fold runs — recovery is correct with or without it. Every fallible
+//!   path in [`FoldCheckpoint::from_bytes`] returns `Err` (never panics), and
+//!   [`crate::Projection::from_journal_with_checkpoint`] treats any anomaly as
+//!   "fall back to the full fold".
+//! - **Never journaled, never an identity input, never gates.** The checkpoint
+//!   digest is a *full-state* integrity digest, **distinct** from the
+//!   committed-facts product digest (`kx-runtime`'s `digest_projection`, the
+//!   canonical `a6b5c679…`). It is exact-equality only (SN-8); no fuzzy match.
+//! - **Self-healing format.** [`CURRENT_FORMAT_VERSION`] + [`PAYLOAD_CODEC`] are
+//!   checked on decode; a future format / codec (e.g. an rkyv zero-copy payload)
+//!   bumps these and old checkpoints cleanly invalidate → full fold.
+//!
+//! ## Integrity vs unforgeability (honest scope)
+//!
+//! The digest proves **integrity against accidental corruption** (bit-rot, torn
+//! write, truncation), not unforgeability — a writer of the sidecar could craft
+//! a self-consistent blob. That is acceptable because a checkpoint lives in the
+//! **same trust domain as the journal** (the runtime's own state dir): anyone who
+//! can forge it can already forge the journal. A stronger end-to-end guarantee
+//! (verify the reconstructed [`crate::Projection::state_digest`] against a
+//! *journaled* digest seal) is the roadmap follow-on (M2.2c) and reuses the same
+//! digest function.
+
+use std::collections::BTreeMap;
+
+use kx_content::ContentRef;
+use kx_journal::{ParentEntry, ResolvedCapabilityRecord, INSTANCE_ID_LEN};
+use kx_mote::{EdgeMeta, EffectPattern, MoteDefHash, MoteId, NdClass, ParentRef};
+use serde::{Deserialize, Serialize};
+use smallvec::SmallVec;
+
+use crate::state::{
+    CommittedInfo, DeclaredInfo, MoteInfo, RunRegistration, RunResolvedVersions, State,
+};
+
+/// The on-disk format version. Bump on **any** change to the envelope layout or
+/// the `CheckpointState` payload encoding — old checkpoints then fail
+/// [`FoldCheckpoint::from_bytes`] and recovery falls back to a full fold (self-healing).
+pub const CURRENT_FORMAT_VERSION: u16 = 1;
+
+/// Payload codec tag. `0` = canonical-bincode (LE + fixed-int, the house
+/// [`kx_mote::canonical_config`]). Reserved for a future rkyv zero-copy payload
+/// (`1`, roadmap M2.2d) — an **additive** bump, never a breaking change.
+pub const PAYLOAD_CODEC: u8 = 0;
+
+/// Envelope header length: `version(2) ‖ codec(1) ‖ journal_offset(8) ‖ digest(32)`.
+const HEADER_LEN: usize = 2 + 1 + 8 + 32;
+
+// ---------------------------------------------------------------------------
+// FoldCheckpoint — the public, durable artifact
+// ---------------------------------------------------------------------------
+
+/// A discardable, byte-serializable snapshot of the folded projection state at a
+/// journal offset. See the module-level docs for the full contract.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FoldCheckpoint {
+    format_version: u16,
+    payload_codec: u8,
+    journal_offset: u64,
+    digest: [u8; 32],
+    payload: Vec<u8>,
+}
+
+impl FoldCheckpoint {
+    /// The journal `seq` this checkpoint folds **through** (inclusive). Recovery
+    /// seeds from here and folds `(journal_offset, current]`.
+    #[inline]
+    #[must_use]
+    pub fn journal_offset(&self) -> u64 {
+        self.journal_offset
+    }
+
+    /// The full-state integrity digest (blake3 over the envelope header +
+    /// payload). Exact-equality only.
+    #[inline]
+    #[must_use]
+    pub fn digest(&self) -> [u8; 32] {
+        self.digest
+    }
+
+    /// The payload codec tag ([`PAYLOAD_CODEC`] today).
+    #[inline]
+    #[must_use]
+    pub fn payload_codec(&self) -> u8 {
+        self.payload_codec
+    }
+
+    /// Build a checkpoint from a folded [`State`] (crate-internal; the public
+    /// entry point is [`crate::Projection::fold_checkpoint`]).
+    pub(crate) fn from_state(state: &State) -> Self {
+        let payload = encode_state(state);
+        let journal_offset = state.last_seq;
+        let digest = envelope_digest(
+            CURRENT_FORMAT_VERSION,
+            PAYLOAD_CODEC,
+            journal_offset,
+            &payload,
+        );
+        Self {
+            format_version: CURRENT_FORMAT_VERSION,
+            payload_codec: PAYLOAD_CODEC,
+            journal_offset,
+            digest,
+            payload,
+        }
+    }
+
+    /// Recompute the integrity digest over this checkpoint's envelope + payload
+    /// and compare it to the stored digest.
+    ///
+    /// Proves **internal integrity** (the bytes were not corrupted), not journal
+    /// provenance — see the module-level docs. Cheap; no payload decode.
+    #[must_use]
+    pub fn verify(&self) -> bool {
+        self.format_version == CURRENT_FORMAT_VERSION
+            && self.payload_codec == PAYLOAD_CODEC
+            && envelope_digest(
+                self.format_version,
+                self.payload_codec,
+                self.journal_offset,
+                &self.payload,
+            ) == self.digest
+    }
+
+    /// Serialize to a durable byte blob: `version_le ‖ codec ‖ offset_le ‖ digest ‖ payload`.
+    #[must_use]
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(HEADER_LEN + self.payload.len());
+        out.extend_from_slice(&self.format_version.to_le_bytes());
+        out.push(self.payload_codec);
+        out.extend_from_slice(&self.journal_offset.to_le_bytes());
+        out.extend_from_slice(&self.digest);
+        out.extend_from_slice(&self.payload);
+        out
+    }
+
+    /// Parse a durable byte blob. **Panic-free and fully validating**: every
+    /// failure (short buffer, unknown version/codec, digest mismatch) is an
+    /// [`CheckpointError`], so a malformed/truncated/hostile blob can only ever
+    /// be discarded, never trusted.
+    ///
+    /// # Errors
+    /// [`CheckpointError`] for any envelope or integrity failure.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, CheckpointError> {
+        // Length first — every field is read via `.get(..)` / `try_into`, never
+        // by panicking index-slice, so a short buffer is an Err not a panic.
+        if bytes.len() < HEADER_LEN {
+            return Err(CheckpointError::TooShort {
+                got: bytes.len(),
+                need: HEADER_LEN,
+            });
+        }
+        let version = u16::from_le_bytes(bytes.get(0..2).and_then(|s| s.try_into().ok()).ok_or(
+            CheckpointError::TooShort {
+                got: bytes.len(),
+                need: HEADER_LEN,
+            },
+        )?);
+        if version != CURRENT_FORMAT_VERSION {
+            return Err(CheckpointError::UnsupportedVersion { got: version });
+        }
+        let codec = *bytes.get(2).ok_or(CheckpointError::TooShort {
+            got: bytes.len(),
+            need: HEADER_LEN,
+        })?;
+        if codec != PAYLOAD_CODEC {
+            return Err(CheckpointError::UnsupportedCodec { got: codec });
+        }
+        let journal_offset =
+            u64::from_le_bytes(bytes.get(3..11).and_then(|s| s.try_into().ok()).ok_or(
+                CheckpointError::TooShort {
+                    got: bytes.len(),
+                    need: HEADER_LEN,
+                },
+            )?);
+        let digest: [u8; 32] =
+            bytes
+                .get(11..43)
+                .and_then(|s| s.try_into().ok())
+                .ok_or(CheckpointError::TooShort {
+                    got: bytes.len(),
+                    need: HEADER_LEN,
+                })?;
+        let payload = bytes
+            .get(HEADER_LEN..)
+            .ok_or(CheckpointError::TooShort {
+                got: bytes.len(),
+                need: HEADER_LEN,
+            })?
+            .to_vec();
+
+        if envelope_digest(version, codec, journal_offset, &payload) != digest {
+            return Err(CheckpointError::DigestMismatch);
+        }
+        Ok(Self {
+            format_version: version,
+            payload_codec: codec,
+            journal_offset,
+            digest,
+            payload,
+        })
+    }
+
+    /// Decode the payload into a folded [`State`]. Re-validates structural
+    /// invariants the encoder cannot (each parent edge via
+    /// [`ParentEntry::to_parent_ref`]). Lazy — called only on resume after the
+    /// envelope + digest checks pass.
+    ///
+    /// # Errors
+    /// [`CheckpointError::Decode`] on a bincode failure or trailing bytes;
+    /// [`CheckpointError::MalformedParent`] on an invalid parent edge.
+    pub(crate) fn decode_state(&self) -> Result<State, CheckpointError> {
+        let (dto, consumed): (CheckpointState, usize) =
+            bincode::serde::decode_from_slice(&self.payload, kx_mote::canonical_config())
+                .map_err(|e| CheckpointError::Decode(e.to_string()))?;
+        if consumed != self.payload.len() {
+            return Err(CheckpointError::Decode(format!(
+                "trailing bytes: consumed {consumed} of {}",
+                self.payload.len()
+            )));
+        }
+        State::try_from(dto)
+    }
+}
+
+/// Errors from decoding / validating a [`FoldCheckpoint`]. Every variant is a
+/// "discard the checkpoint and full-fold" signal — never fatal to recovery.
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+pub enum CheckpointError {
+    /// The blob is shorter than the fixed envelope header.
+    #[error("checkpoint too short: got {got} bytes, need at least {need}")]
+    TooShort {
+        /// Bytes available.
+        got: usize,
+        /// Bytes required for the header.
+        need: usize,
+    },
+    /// The blob's format version is not [`CURRENT_FORMAT_VERSION`].
+    #[error("unsupported checkpoint format version {got} (current is {CURRENT_FORMAT_VERSION})")]
+    UnsupportedVersion {
+        /// The version read from the blob.
+        got: u16,
+    },
+    /// The blob's payload codec is not [`PAYLOAD_CODEC`].
+    #[error("unsupported checkpoint payload codec {got} (current is {PAYLOAD_CODEC})")]
+    UnsupportedCodec {
+        /// The codec tag read from the blob.
+        got: u8,
+    },
+    /// The recomputed integrity digest does not match the stored digest.
+    #[error("checkpoint digest mismatch (corrupt or tampered)")]
+    DigestMismatch,
+    /// The payload failed bincode decode or carried trailing bytes.
+    #[error("checkpoint payload decode failed: {0}")]
+    Decode(String),
+    /// A decoded parent edge violates the [`ParentEntry`] invariant
+    /// (unknown `edge_kind`, or a Data edge with `non_cascade` set).
+    #[error("checkpoint payload has a malformed parent edge (kind={edge_kind}, non_cascade={non_cascade})")]
+    MalformedParent {
+        /// The offending `edge_kind` byte.
+        edge_kind: u8,
+        /// The offending `non_cascade` byte.
+        non_cascade: u8,
+    },
+}
+
+// ---------------------------------------------------------------------------
+// Canonical encoding helpers (shared by the checkpoint + the state digest)
+// ---------------------------------------------------------------------------
+
+/// Canonical-bincode encoding of the full folded state (the checkpoint payload).
+/// Infallible for [`CheckpointState`] (no custom `Serialize`); the `expect`
+/// mirrors the house pattern (`kx_mote::def`, `kx_critic_types::verdict`).
+// SAFETY (expect_used): `CheckpointState` has no `f32`/`f64`, no custom
+// `Serialize`, and no non-encodable variant; bincode encode over it cannot fail
+// (the only `EncodeError`s are I/O/size, neither reachable for an in-memory Vec
+// sink). Documented-infallible production use per the workspace lint policy.
+#[allow(clippy::expect_used)]
+pub(crate) fn encode_state(state: &State) -> Vec<u8> {
+    bincode::serde::encode_to_vec(CheckpointState::from(state), kx_mote::canonical_config())
+        .expect("canonical bincode encode of CheckpointState is infallible")
+}
+
+/// The canonical **full-state** digest: `blake3(encode_state(state))`. A pure
+/// function of the folded state content (includes `last_seq` + run registration,
+/// so it is self-anchoring). Reused by [`crate::Projection::state_digest`] and,
+/// in the roadmap, by the journaled digest seal (M2.2c). Distinct from the
+/// committed-facts product digest in `kx-runtime`.
+pub(crate) fn state_content_digest(state: &State) -> [u8; 32] {
+    *blake3::hash(&encode_state(state)).as_bytes()
+}
+
+/// The checkpoint envelope integrity digest:
+/// `blake3(version_le ‖ codec ‖ offset_le ‖ payload)`. Binds the format header
+/// to the payload so a header edit (e.g. a moved offset) is caught too.
+fn envelope_digest(version: u16, codec: u8, offset: u64, payload: &[u8]) -> [u8; 32] {
+    let mut h = blake3::Hasher::new();
+    h.update(&version.to_le_bytes());
+    h.update(&[codec]);
+    h.update(&offset.to_le_bytes());
+    h.update(payload);
+    *h.finalize().as_bytes()
+}
+
+// ---------------------------------------------------------------------------
+// CheckpointState — the crate-private serde DTO mirroring `State`
+// ---------------------------------------------------------------------------
+//
+// DTOs mirror the private `State` graph using only serde-friendly shapes (the
+// one non-serde type, `ParentEntry`, becomes a `(MoteId,u8,u8)` triple). The
+// `From`/`TryFrom` bodies DESTRUCTURE every source/target struct WITHOUT `..`,
+// so adding a field to `State`/`MoteInfo`/`CommittedInfo`/`DeclaredInfo`/
+// `RunRegistration`/`RunResolvedVersions` fails to COMPILE until the DTO is
+// updated — "losslessly mirrors State" is enforced by the compiler, not review.
+
+#[derive(Serialize, Deserialize)]
+struct CheckpointState {
+    motes: BTreeMap<MoteId, MoteInfoDto>,
+    children: BTreeMap<MoteId, Vec<(MoteId, EdgeMeta)>>,
+    last_seq: u64,
+    run_registration: Option<RunRegistrationDto>,
+    run_resolved_versions: Vec<RunResolvedVersionsDto>,
+}
+
+// Mirrors `MoteInfo`'s five flags 1:1 — same `struct_excessive_bools` allow.
+#[allow(clippy::struct_excessive_bools)]
+#[derive(Serialize, Deserialize)]
+struct MoteInfoDto {
+    declared: Option<DeclaredInfoDto>,
+    committed: Option<CommittedInfoDto>,
+    has_proposed: bool,
+    failed_pending_reattempt: bool,
+    effect_staged_observed: bool,
+    terminal_failure_observed: bool,
+    inconsistent: bool,
+}
+
+#[derive(Serialize, Deserialize)]
+struct DeclaredInfoDto {
+    nd_class: NdClass,
+    effect_pattern: EffectPattern,
+    critic_for: Option<MoteId>,
+    is_topology_shaper: bool,
+    parents: Vec<ParentRef>,
+    warrant_ref: ContentRef,
+}
+
+#[derive(Serialize, Deserialize)]
+struct CommittedInfoDto {
+    seq: u64,
+    result_ref: ContentRef,
+    nondeterminism: NdClass,
+    /// `ParentEntry` is not serde-derived (it controls its on-disk journal
+    /// width); mirror it as `(parent_id, edge_kind, non_cascade)`.
+    parents_in_entry: Vec<(MoteId, u8, u8)>,
+    warrant_ref: ContentRef,
+    mote_def_hash: MoteDefHash,
+    repudiated: bool,
+}
+
+#[derive(Serialize, Deserialize)]
+struct RunRegistrationDto {
+    instance_id: [u8; INSTANCE_ID_LEN],
+    recipe_fingerprint: [u8; 32],
+}
+
+#[derive(Serialize, Deserialize)]
+struct RunResolvedVersionsDto {
+    instance_id: [u8; INSTANCE_ID_LEN],
+    warrant_ref: ContentRef,
+    model_id: String,
+    capability: Option<ResolvedCapabilityRecord>,
+}
+
+// ----- State -> DTO (infallible; destructure-without-`..` drift guard) -----
+
+impl From<&State> for CheckpointState {
+    fn from(state: &State) -> Self {
+        // Destructure WITHOUT `..` — a new `State` field breaks this build.
+        let State {
+            motes,
+            children,
+            last_seq,
+            run_registration,
+            run_resolved_versions,
+        } = state;
+        Self {
+            motes: motes
+                .iter()
+                .map(|(id, mi)| (*id, MoteInfoDto::from(mi)))
+                .collect(),
+            children: children.clone(),
+            last_seq: *last_seq,
+            run_registration: run_registration.as_ref().map(RunRegistrationDto::from),
+            run_resolved_versions: run_resolved_versions
+                .iter()
+                .map(RunResolvedVersionsDto::from)
+                .collect(),
+        }
+    }
+}
+
+impl From<&MoteInfo> for MoteInfoDto {
+    fn from(mi: &MoteInfo) -> Self {
+        let MoteInfo {
+            declared,
+            committed,
+            has_proposed,
+            failed_pending_reattempt,
+            effect_staged_observed,
+            terminal_failure_observed,
+            inconsistent,
+        } = mi;
+        Self {
+            declared: declared.as_ref().map(DeclaredInfoDto::from),
+            committed: committed.as_ref().map(CommittedInfoDto::from),
+            has_proposed: *has_proposed,
+            failed_pending_reattempt: *failed_pending_reattempt,
+            effect_staged_observed: *effect_staged_observed,
+            terminal_failure_observed: *terminal_failure_observed,
+            inconsistent: *inconsistent,
+        }
+    }
+}
+
+impl From<&DeclaredInfo> for DeclaredInfoDto {
+    fn from(d: &DeclaredInfo) -> Self {
+        let DeclaredInfo {
+            nd_class,
+            effect_pattern,
+            critic_for,
+            is_topology_shaper,
+            parents,
+            warrant_ref,
+        } = d;
+        Self {
+            nd_class: *nd_class,
+            effect_pattern: *effect_pattern,
+            critic_for: *critic_for,
+            is_topology_shaper: *is_topology_shaper,
+            parents: parents.to_vec(),
+            warrant_ref: *warrant_ref,
+        }
+    }
+}
+
+impl From<&CommittedInfo> for CommittedInfoDto {
+    fn from(c: &CommittedInfo) -> Self {
+        let CommittedInfo {
+            seq,
+            result_ref,
+            nondeterminism,
+            parents_in_entry,
+            warrant_ref,
+            mote_def_hash,
+            repudiated,
+        } = c;
+        Self {
+            seq: *seq,
+            result_ref: *result_ref,
+            nondeterminism: *nondeterminism,
+            parents_in_entry: parents_in_entry
+                .iter()
+                .map(|p| (p.parent_id, p.edge_kind, p.non_cascade))
+                .collect(),
+            warrant_ref: *warrant_ref,
+            mote_def_hash: *mote_def_hash,
+            repudiated: *repudiated,
+        }
+    }
+}
+
+impl From<&RunRegistration> for RunRegistrationDto {
+    fn from(r: &RunRegistration) -> Self {
+        let RunRegistration {
+            instance_id,
+            recipe_fingerprint,
+        } = r;
+        Self {
+            instance_id: *instance_id,
+            recipe_fingerprint: *recipe_fingerprint,
+        }
+    }
+}
+
+impl From<&RunResolvedVersions> for RunResolvedVersionsDto {
+    fn from(r: &RunResolvedVersions) -> Self {
+        let RunResolvedVersions {
+            instance_id,
+            warrant_ref,
+            model_id,
+            capability,
+        } = r;
+        Self {
+            instance_id: *instance_id,
+            warrant_ref: *warrant_ref,
+            model_id: model_id.clone(),
+            capability: capability.clone(),
+        }
+    }
+}
+
+// ----- DTO -> State (fallible: revalidates each parent edge) -----
+
+impl TryFrom<CheckpointState> for State {
+    type Error = CheckpointError;
+
+    fn try_from(dto: CheckpointState) -> Result<Self, Self::Error> {
+        // Destructure WITHOUT `..` — a new `CheckpointState` field breaks this build.
+        let CheckpointState {
+            motes,
+            children,
+            last_seq,
+            run_registration,
+            run_resolved_versions,
+        } = dto;
+        let mut decoded_motes = BTreeMap::new();
+        for (id, mi) in motes {
+            decoded_motes.insert(id, MoteInfo::try_from(mi)?);
+        }
+        Ok(State {
+            motes: decoded_motes,
+            children,
+            last_seq,
+            run_registration: run_registration.map(RunRegistration::from),
+            run_resolved_versions: run_resolved_versions
+                .into_iter()
+                .map(RunResolvedVersions::from)
+                .collect(),
+        })
+    }
+}
+
+impl TryFrom<MoteInfoDto> for MoteInfo {
+    type Error = CheckpointError;
+
+    fn try_from(dto: MoteInfoDto) -> Result<Self, Self::Error> {
+        let MoteInfoDto {
+            declared,
+            committed,
+            has_proposed,
+            failed_pending_reattempt,
+            effect_staged_observed,
+            terminal_failure_observed,
+            inconsistent,
+        } = dto;
+        Ok(MoteInfo {
+            declared: declared.map(DeclaredInfo::from),
+            committed: committed.map(CommittedInfo::try_from).transpose()?,
+            has_proposed,
+            failed_pending_reattempt,
+            effect_staged_observed,
+            terminal_failure_observed,
+            inconsistent,
+        })
+    }
+}
+
+impl From<DeclaredInfoDto> for DeclaredInfo {
+    fn from(dto: DeclaredInfoDto) -> Self {
+        let DeclaredInfoDto {
+            nd_class,
+            effect_pattern,
+            critic_for,
+            is_topology_shaper,
+            parents,
+            warrant_ref,
+        } = dto;
+        DeclaredInfo {
+            nd_class,
+            effect_pattern,
+            critic_for,
+            is_topology_shaper,
+            parents: SmallVec::from_vec(parents),
+            warrant_ref,
+        }
+    }
+}
+
+impl TryFrom<CommittedInfoDto> for CommittedInfo {
+    type Error = CheckpointError;
+
+    fn try_from(dto: CommittedInfoDto) -> Result<Self, Self::Error> {
+        let CommittedInfoDto {
+            seq,
+            result_ref,
+            nondeterminism,
+            parents_in_entry,
+            warrant_ref,
+            mote_def_hash,
+            repudiated,
+        } = dto;
+        let mut parents: SmallVec<[ParentEntry; 4]> = SmallVec::new();
+        for (parent_id, edge_kind, non_cascade) in parents_in_entry {
+            let pe = ParentEntry {
+                parent_id,
+                edge_kind,
+                non_cascade,
+            };
+            // Re-validate the edge invariant the journal encoder enforces — a
+            // hostile/corrupt blob cannot smuggle an illegal edge into the index.
+            if pe.to_parent_ref().is_none() {
+                return Err(CheckpointError::MalformedParent {
+                    edge_kind,
+                    non_cascade,
+                });
+            }
+            parents.push(pe);
+        }
+        Ok(CommittedInfo {
+            seq,
+            result_ref,
+            nondeterminism,
+            parents_in_entry: parents,
+            warrant_ref,
+            mote_def_hash,
+            repudiated,
+        })
+    }
+}
+
+impl From<RunRegistrationDto> for RunRegistration {
+    fn from(dto: RunRegistrationDto) -> Self {
+        let RunRegistrationDto {
+            instance_id,
+            recipe_fingerprint,
+        } = dto;
+        RunRegistration {
+            instance_id,
+            recipe_fingerprint,
+        }
+    }
+}
+
+impl From<RunResolvedVersionsDto> for RunResolvedVersions {
+    fn from(dto: RunResolvedVersionsDto) -> Self {
+        let RunResolvedVersionsDto {
+            instance_id,
+            warrant_ref,
+            model_id,
+            capability,
+        } = dto;
+        RunResolvedVersions {
+            instance_id,
+            warrant_ref,
+            model_id,
+            capability,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn mid(b: u8) -> MoteId {
+        MoteId::from_bytes([b; 32])
+    }
+
+    /// A folded state exercising **every** DTO arm + **every** `MoteInfo` flag,
+    /// so the lossless round-trip is a comprehensive field-coverage oracle:
+    /// declared (with `critic_for` + a parent), committed (WORLD-MUTATING, a
+    /// control parent, `mote_def_hash`), `effect_staged_observed`, `has_proposed`,
+    /// `failed_pending_reattempt`, `terminal_failure_observed`, `inconsistent`,
+    /// committed+`repudiated`, run registration, and a resolved-versions record.
+    fn sample_state() -> State {
+        let mut s = State::default();
+        // declared child 10 with parent 1 (data edge) + a critic relationship
+        s.set_declared(
+            mid(10),
+            DeclaredInfo {
+                nd_class: NdClass::Pure,
+                effect_pattern: EffectPattern::IdempotentByConstruction,
+                critic_for: Some(mid(7)),
+                is_topology_shaper: false,
+                parents: SmallVec::from_vec(vec![ParentRef {
+                    parent_id: mid(1),
+                    edge: EdgeMeta::data(),
+                }]),
+                warrant_ref: ContentRef::from_bytes([0xaa; 32]),
+            },
+        );
+        // committed mote 1 with a control parent 2, plus effect_staged_observed
+        let info = s.moteinfo_mut(&mid(1));
+        info.committed = Some(CommittedInfo {
+            seq: 3,
+            result_ref: ContentRef::from_bytes([7; 32]),
+            nondeterminism: NdClass::WorldMutating,
+            parents_in_entry: SmallVec::from_vec(vec![ParentEntry {
+                parent_id: mid(2),
+                edge_kind: 1,
+                non_cascade: 0,
+            }]),
+            warrant_ref: ContentRef::from_bytes([0xbb; 32]),
+            mote_def_hash: MoteDefHash::from_bytes([9; 32]),
+            repudiated: false,
+        });
+        info.effect_staged_observed = true;
+        s.index_committed(mid(1), &[]);
+        // committed + repudiated
+        let r = s.moteinfo_mut(&mid(24));
+        r.committed = Some(CommittedInfo {
+            seq: 4,
+            result_ref: ContentRef::from_bytes([8; 32]),
+            nondeterminism: NdClass::Pure,
+            parents_in_entry: SmallVec::new(),
+            warrant_ref: ContentRef::from_bytes([0xcc; 32]),
+            mote_def_hash: MoteDefHash::from_bytes([1; 32]),
+            repudiated: true,
+        });
+        // the remaining per-flag motes
+        s.moteinfo_mut(&mid(20)).has_proposed = true;
+        s.moteinfo_mut(&mid(21)).failed_pending_reattempt = true;
+        s.moteinfo_mut(&mid(22)).terminal_failure_observed = true;
+        s.moteinfo_mut(&mid(23)).inconsistent = true;
+        s.last_seq = 4;
+        s.run_registration = Some(RunRegistration {
+            instance_id: [5; INSTANCE_ID_LEN],
+            recipe_fingerprint: [6; 32],
+        });
+        s.run_resolved_versions.push(RunResolvedVersions {
+            instance_id: [5; INSTANCE_ID_LEN],
+            warrant_ref: ContentRef::from_bytes([0xdd; 32]),
+            model_id: "qwen-0.5b".to_string(),
+            capability: None,
+        });
+        s
+    }
+
+    #[test]
+    fn roundtrip_state_is_lossless() {
+        let s = sample_state();
+        let cp = FoldCheckpoint::from_state(&s);
+        let decoded = cp.decode_state().expect("decode");
+        assert_eq!(
+            decoded, s,
+            "decoded State must equal the source bit-for-bit"
+        );
+        assert_eq!(cp.journal_offset(), 4);
+    }
+
+    #[test]
+    fn bytes_roundtrip_and_verify() {
+        let cp = FoldCheckpoint::from_state(&sample_state());
+        let bytes = cp.to_bytes();
+        let back = FoldCheckpoint::from_bytes(&bytes).expect("from_bytes");
+        assert_eq!(back, cp);
+        assert!(back.verify());
+    }
+
+    #[test]
+    fn from_bytes_rejects_short_buffers_without_panic() {
+        for len in [0usize, 1, HEADER_LEN - 1] {
+            let buf = vec![0u8; len];
+            assert!(matches!(
+                FoldCheckpoint::from_bytes(&buf),
+                Err(CheckpointError::TooShort { .. })
+            ));
+        }
+    }
+
+    #[test]
+    fn from_bytes_rejects_wrong_version() {
+        let mut bytes = FoldCheckpoint::from_state(&sample_state()).to_bytes();
+        bytes[0] = bytes[0].wrapping_add(1); // perturb version
+        assert!(matches!(
+            FoldCheckpoint::from_bytes(&bytes),
+            // version is part of the digest preimage, so this is caught as a
+            // version OR digest mismatch — both are fail-safe discards.
+            Err(CheckpointError::UnsupportedVersion { .. } | CheckpointError::DigestMismatch)
+        ));
+    }
+
+    #[test]
+    fn from_bytes_rejects_unknown_codec() {
+        let mut bytes = FoldCheckpoint::from_state(&sample_state()).to_bytes();
+        bytes[2] = 9; // unknown codec
+        assert!(matches!(
+            FoldCheckpoint::from_bytes(&bytes),
+            Err(CheckpointError::UnsupportedCodec { got: 9 } | CheckpointError::DigestMismatch)
+        ));
+    }
+
+    #[test]
+    fn from_bytes_detects_flipped_payload_byte() {
+        let bytes = FoldCheckpoint::from_state(&sample_state()).to_bytes();
+        let mut corrupt = bytes.clone();
+        let last = corrupt.len() - 1;
+        corrupt[last] ^= 0xff;
+        assert_eq!(
+            FoldCheckpoint::from_bytes(&corrupt),
+            Err(CheckpointError::DigestMismatch)
+        );
+    }
+
+    #[test]
+    fn verify_detects_mutated_digest_field() {
+        let mut cp = FoldCheckpoint::from_state(&sample_state());
+        cp.digest[0] ^= 0xff;
+        assert!(!cp.verify());
+    }
+
+    #[test]
+    fn decode_rejects_malformed_parent_edge() {
+        // Hand-build a state with an illegal Data edge that carries non_cascade=1
+        // (the journal encoder would reject this; the checkpoint decoder must too).
+        let mut s = State::default();
+        let info = s.moteinfo_mut(&mid(1));
+        info.committed = Some(CommittedInfo {
+            seq: 1,
+            result_ref: ContentRef::from_bytes([0; 32]),
+            nondeterminism: NdClass::Pure,
+            parents_in_entry: SmallVec::from_vec(vec![ParentEntry {
+                parent_id: mid(2),
+                edge_kind: 0,   // Data
+                non_cascade: 1, // illegal on a Data edge
+            }]),
+            warrant_ref: ContentRef::from_bytes([0; 32]),
+            mote_def_hash: MoteDefHash::from_bytes([0; 32]),
+            repudiated: false,
+        });
+        s.last_seq = 1;
+        let cp = FoldCheckpoint::from_state(&s);
+        assert!(matches!(
+            cp.decode_state(),
+            Err(CheckpointError::MalformedParent {
+                edge_kind: 0,
+                non_cascade: 1
+            })
+        ));
+    }
+
+    #[test]
+    fn state_digest_is_deterministic_and_content_sensitive() {
+        let a = state_content_digest(&sample_state());
+        let b = state_content_digest(&sample_state());
+        assert_eq!(a, b, "same state -> same digest");
+        let mut mutated = sample_state();
+        mutated.last_seq = 5; // any content change moves the digest
+        assert_ne!(a, state_content_digest(&mutated));
+    }
+}

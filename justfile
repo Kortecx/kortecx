@@ -110,13 +110,16 @@ smoke-test-with-model:
 # Scale / performance gate
 # ============================================================================
 
-# Scale smoke (M2.1 / D92 — the resume-availability invariant): fold a 25k+
-# Mote journal in RELEASE and assert the incremental children-index re-fold
-# stays ~linear (a super-linear resume is an outage, and resume IS the product).
+# Scale smoke (M2.1 + M2.2 / D92 — the resume-availability invariant): fold a
+# 25k+ Mote journal in RELEASE and assert (M2.1) the incremental children-index
+# re-fold stays ~linear, and (M2.2) resume-from-`FoldCheckpoint` reproduces the
+# full fold exactly + its cost is bounded by live-state size under churn (not by
+# journal length). A super-linear resume is an outage, and resume IS the product.
 # `--release` is REQUIRED — in a debug build the differential oracle re-imposes
-# the O(n^2) full rebuild on every fold and the ratio assertion is skipped.
+# the O(n^2) full rebuild on every fold and the ratio assertions are skipped.
 scale-smoke:
     cargo test -p kx-projection --release --test incremental_children_index -- --ignored --nocapture --test-threads=1
+    cargo test -p kx-projection --release --test fold_checkpoint -- --ignored --nocapture --test-threads=1
 
 # ============================================================================
 # Preflight diagnostic

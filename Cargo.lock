@@ -1338,6 +1338,7 @@ dependencies = [
  "kx-mote",
  "kx-warrant",
  "proptest",
+ "serde",
  "smallvec",
  "tempfile",
  "thiserror",

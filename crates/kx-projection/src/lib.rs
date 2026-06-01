@@ -110,9 +110,15 @@
 //!   before any journal entry exists for it.
 //! - [`Projection`] — the in-memory fold state; mutate via `register_mote` + `fold`.
 //! - [`Snapshot`] — an immutable point-in-time view of the projection.
+//! - [`FoldCheckpoint`] — a **discardable** durable snapshot of the folded state
+//!   (D92(b), M2.2). Lets cold recovery fold `(checkpoint_offset, current]`
+//!   instead of `(0, current]` via [`Projection::from_journal_with_checkpoint`].
+//!   Never authoritative — a corrupt/stale/wrong-run checkpoint is silently
+//!   discarded and the full fold runs.
 //! - The 7-method read API surface (`state_of`, `parents_of`, `children_of`,
 //!   `transitive_consumers`, `result_ref_of`, `ready_set`, `promotion_state`).
 
+mod checkpoint;
 mod child_resolver;
 mod enums;
 mod errors;
@@ -125,6 +131,7 @@ mod register;
 mod snapshot;
 mod state;
 
+pub use checkpoint::{CheckpointError, FoldCheckpoint, CURRENT_FORMAT_VERSION, PAYLOAD_CODEC};
 pub use child_resolver::{ChildResolver, InheritFromShaperResolver};
 pub use enums::{AnomalyKind, MoteState, PromotionState};
 pub use errors::ProjectionError;
