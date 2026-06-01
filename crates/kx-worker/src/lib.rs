@@ -13,6 +13,11 @@
 
 //! # kx-worker — the kortecx worker (the `CoordinatorClient`)
 //!
+//! > **Phase: distributed (P2/P3).** Part of the multi-node layer — wiring on the
+//! > same trait seams as the single-node core, *not* a rewrite of it. You do
+//! > **not** need this crate to build, run, or understand single-node kortecx
+//! > (`kx-runtime`). See `ARCHITECTURE.md` for the core-vs-distributed legend.
+//!
 //! A worker is a gRPC **client** of the coordinator. It:
 //!
 //! 1. **registers** with the coordinator ([`Worker::register`] → `RegisterWorker`),

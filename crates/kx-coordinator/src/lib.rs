@@ -13,6 +13,11 @@
 
 //! # kx-coordinator — the kortecx P2.2 coordinator service (the control plane)
 //!
+//! > **Phase: distributed (P2/P3).** The multi-node control plane — wiring on the
+//! > same trait seams as the single-node core, *not* a rewrite of it. You do
+//! > **not** need this crate to build, run, or understand single-node kortecx
+//! > (`kx-runtime`). See `ARCHITECTURE.md` for the core-vs-distributed legend.
+//!
 //! The coordinator is the hub of a distributed run. It:
 //!
 //! 1. **hosts the P1 scheduler verbatim** — submitted Motes are registered through
