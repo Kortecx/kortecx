@@ -40,6 +40,33 @@
 //! - **Cycle tolerant.** Cycles in the dependency graph do not crash, hang, or
 //!   corrupt the fold. Traversals (`transitive_consumers`) use visited-sets.
 //!
+//! ## Recovery: how the fold survives a crash mid-effect
+//!
+//! Recovery is just re-folding the log. The interesting case is a crash *inside*
+//! a world-mutating step. Under the `StageThenCommit` protocol the executor writes
+//! an `EffectStaged` fact **before** it touches the world and a `Committed` fact
+//! **after**; the gap between them is the crash window. On re-fold, the
+//! combination of facts observed for a Mote decides whether re-dispatch is safe —
+//! computed by `can_redispatch_world_effect` (see `state.rs`):
+//!
+//! | Observed on re-fold | Meaning | Recovery decision |
+//! |---|---|---|
+//! | `Committed` present | the effect landed durably | **done** — serve the result, NEVER re-dispatch |
+//! | `EffectStaged`, no `Committed`, `Failed` (timed-out / worker-crashed) | a *pre-commit* crash — the effect may not have landed | **re-dispatch** — the tool's idempotency closes the window |
+//! | `EffectStaged`, no `Committed`, `Failed` (terminal: refused / validator-rejected / …) | a *terminal* failure | **do NOT re-dispatch** — re-firing could double-apply |
+//! | `EffectStaged`, no `Committed`, nothing terminal | in-flight when the crash hit | **re-dispatch** permitted |
+//! | `EffectStaged` + `Repudiated`, no `Committed` | a fact-ordering anomaly | **quarantine** (`Inconsistent`) — surfaced for an operator |
+//! | no `EffectStaged`, no `Committed` | not yet attempted (or the effect carries its own idempotency) | ordinary scheduling |
+//!
+//! **Load-bearing ordering invariant:** a *terminal* failure is checked **before**
+//! the in-flight (`EffectStaged`) case. Swapping them would let a terminally-failed
+//! world effect be re-dispatched — re-opening the double-fire window. This ordering
+//! is enforced in `State::state_of_id` / `can_redispatch_world_effect_id` and pinned
+//! by the cross-product regression tests in `tests/cross_product.rs`. The flags it
+//! reads (`effect_staged_observed`, `terminal_failure_observed`, `inconsistent`)
+//! are **monotonic-true**: once set during a fold they are never reset, so a longer
+//! prefix can only narrow re-dispatch, never widen it.
+//!
 //! ## Topology-shaper materialization (P1.11 / D48 + D49)
 //!
 //! `projection.md` §5/§6/§7 (post-D48/D49 amendment) specify that the projection
