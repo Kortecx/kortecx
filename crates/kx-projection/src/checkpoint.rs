@@ -27,16 +27,22 @@
 //!   checked on decode; a future format / codec (e.g. an rkyv zero-copy payload)
 //!   bumps these and old checkpoints cleanly invalidate → full fold.
 //!
-//! ## Integrity vs unforgeability (honest scope)
+//! ## Integrity → unforgeability (M2.2c, D103.2)
 //!
-//! The digest proves **integrity against accidental corruption** (bit-rot, torn
-//! write, truncation), not unforgeability — a writer of the sidecar could craft
-//! a self-consistent blob. That is acceptable because a checkpoint lives in the
-//! **same trust domain as the journal** (the runtime's own state dir): anyone who
-//! can forge it can already forge the journal. A stronger end-to-end guarantee
-//! (verify the reconstructed [`crate::Projection::state_digest`] against a
-//! *journaled* digest seal) is the roadmap follow-on (M2.2c) and reuses the same
-//! digest function.
+//! The envelope `digest` alone proves **integrity against accidental corruption**
+//! (bit-rot, torn write, truncation), not unforgeability — a writer of the
+//! sidecar could craft a self-consistent blob seeding a *wrong* base state (the
+//! D103.1 residual). **M2.2c closes that gap:** the runtime co-commits a
+//! `DigestSealed{through_seq, state_digest}` entry _in the journal_ (the trust
+//! root) at each checkpoint frontier, and
+//! [`crate::Projection::from_journal_with_checkpoint`] trusts a seeded base only
+//! if its reconstructed [`crate::Projection::state_digest`] matches that journaled
+//! seal (gate 6 in `try_seed_state`; a missing/mismatched seal →
+//! [`FullFoldReason::SealMissing`] / [`FullFoldReason::SealMismatch`] → full
+//! fold). Forging a sidecar to seed a wrong state now requires forging the seal,
+//! which requires forging the journal — so the read path is **unforgeable** under
+//! the single-node trust model. (Distributed/untrusted-storage journals need
+//! *signed* seals — the deferred coordinator-parity follow-on.)
 
 use std::collections::BTreeMap;
 
@@ -93,6 +99,23 @@ impl FoldCheckpoint {
     #[must_use]
     pub fn digest(&self) -> [u8; 32] {
         self.digest
+    }
+
+    /// The **state-content digest** of this checkpoint — `blake3(payload)`.
+    ///
+    /// By construction the payload is the canonical `encode_state(state)` (see
+    /// [`Self::from_state`]), so this equals [`state_content_digest`] of the
+    /// decoded state AND equals the value the runtime journals in a
+    /// `DigestSealed` seal at this frontier (the runtime seals
+    /// `projection.state_digest()` == `blake3(encode_state(state))`). The M2.2c
+    /// recovery gate compares this against the journaled seal **without
+    /// re-encoding** the decoded state — and it is *stricter*: a non-canonical
+    /// payload (one that decodes to a state but is not its canonical encoding)
+    /// fails to match, so only a byte-exact canonical seed is ever trusted.
+    #[inline]
+    #[must_use]
+    pub(crate) fn payload_state_digest(&self) -> [u8; 32] {
+        *blake3::hash(&self.payload).as_bytes()
     }
 
     /// The payload codec tag ([`PAYLOAD_CODEC`] today).
@@ -330,6 +353,16 @@ pub enum FullFoldReason {
     OffsetMismatch,
     /// The checkpoint's run instance-id does not match the journal's (wrong run).
     WrongRun,
+    /// **M2.2c (D103.2).** No journaled `DigestSealed{through_seq == offset}` seal
+    /// was found to anchor the seeded state — the seed is un-anchored, so it is
+    /// discarded (a sidecar without a co-committed seal, e.g. the M2.2b world, or
+    /// a crash between the sidecar write and the seal append).
+    SealMissing,
+    /// **M2.2c (D103.2).** A journaled seal exists at the seed offset but its
+    /// `state_digest` does not match the seeded state's digest — the seed is
+    /// **forged or corrupt** (the D103.1 attack: a self-consistent sidecar seeding
+    /// a wrong base state). Discarded; recovery full-folds the trust root.
+    SealMismatch,
 }
 
 // ---------------------------------------------------------------------------
@@ -351,9 +384,10 @@ pub(crate) fn encode_state(state: &State) -> Vec<u8> {
 
 /// The canonical **full-state** digest: `blake3(encode_state(state))`. A pure
 /// function of the folded state content (includes `last_seq` + run registration,
-/// so it is self-anchoring). Reused by [`crate::Projection::state_digest`] and,
-/// in the roadmap, by the journaled digest seal (M2.2c). Distinct from the
-/// committed-facts product digest in `kx-runtime`.
+/// so it is self-anchoring). Reused by [`crate::Projection::state_digest`] and by
+/// the journaled digest seal (M2.2c) — the runtime seals this value at each
+/// checkpoint frontier and recovery anchors the seeded state against it.
+/// Distinct from the committed-facts product digest in `kx-runtime`.
 pub(crate) fn state_content_digest(state: &State) -> [u8; 32] {
     *blake3::hash(&encode_state(state)).as_bytes()
 }
