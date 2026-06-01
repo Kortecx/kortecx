@@ -268,8 +268,16 @@ impl State {
         SmallVec::new()
     }
 
-    /// Rebuild the child→parent reverse index from the declared-or-committed
-    /// adjacency. Cheap given typical workflow sizes; recomputed on graph mutation.
+    /// Rebuild the entire child→parent reverse index from scratch — O(n) over
+    /// every Mote. **No longer on the hot path** (D92, M2.1): `set_declared` and
+    /// the `Committed` fold now use the incremental [`Self::reindex_child_edges`]
+    /// helper, which touches only the edges of the Mote it introduces. This full
+    /// rebuild is retained as the **differential oracle** — the
+    /// `debug_assert!` in `reindex_child_edges` compares the incrementally-
+    /// maintained index against a fresh rebuild on every mutation, and the
+    /// inline unit + property tests assert byte-equality. Compiled only under
+    /// `test` / `debug_assertions`.
+    #[cfg(any(test, debug_assertions))]
     pub(crate) fn rebuild_children_index(&mut self) {
         let mut idx: BTreeMap<MoteId, Vec<(MoteId, EdgeMeta)>> = BTreeMap::new();
         let ids: Vec<MoteId> = self.motes.keys().copied().collect();
@@ -283,5 +291,242 @@ impl State {
             v.sort_by(|a, b| a.0.cmp(&b.0));
         }
         self.children = idx;
+    }
+
+    /// Insert one `(child, edge)` into `parent`'s adjacency list, preserving the
+    /// sort-by-child-`MoteId` order the cascade walk
+    /// ([`crate::helpers::transitive_consumers_impl`], the D22 poison-cascade)
+    /// depends on. `partition_point(<= child)` returns the index one past the
+    /// last entry whose child id is `<= child`, so the insert lands **after**
+    /// any existing equal-child entry — matching the *stable* `sort_by(child)`
+    /// in [`Self::rebuild_children_index`] byte-for-byte (the only source of
+    /// equal-child entries is a child that declares the SAME parent twice with
+    /// different `EdgeMeta`, e.g. a Data and a Control edge). Not idempotent on
+    /// its own; callers go through [`Self::reindex_child_edges`], which clears a
+    /// child's existing entries first.
+    fn insert_child_edge(&mut self, parent: MoteId, child: MoteId, edge: EdgeMeta) {
+        let v = self.children.entry(parent).or_default();
+        let pos = v.partition_point(|probe| probe.0 <= child);
+        v.insert(pos, (child, edge));
+    }
+
+    /// Remove every entry for `child` from `parent`'s adjacency list, dropping
+    /// the parent key entirely if its list becomes empty — a from-scratch
+    /// rebuild never leaves an empty-`Vec` key, so this keeps the map
+    /// byte-identical to one.
+    fn remove_child_entries(&mut self, parent: MoteId, child: MoteId) {
+        if let Some(v) = self.children.get_mut(&parent) {
+            v.retain(|(c, _)| *c != child);
+            if v.is_empty() {
+                self.children.remove(&parent);
+            }
+        }
+    }
+
+    /// Incrementally re-derive `child_id`'s outgoing edges in the reverse index
+    /// after a state change — the O(parents·k) replacement for the per-mutation
+    /// O(n) [`Self::rebuild_children_index`] (D92, M2.1).
+    ///
+    /// `old_effective` is [`Self::parents_of_id`] captured **before** the change
+    /// — the edges `child_id` currently contributes to the index. This method
+    /// removes exactly those, then inserts `child_id`'s NEW effective edges
+    /// (`parents_of_id` read after the change). Because a child's effective
+    /// parents change only via the declared-vs-committed precedence (a fresh
+    /// `set_declared`, or a `Committed` for a Mote with no declared info), the
+    /// before/after diff captures every edge transition the full rebuild would —
+    /// including the register-after-commit case where the source flips from
+    /// committed parents to declared parents. Inserts preserve parents-list
+    /// order (stable, matching the rebuild). A `debug_assert!` verifies the
+    /// result equals a full rebuild on every call (compiled out in release).
+    fn reindex_child_edges(&mut self, child_id: MoteId, old_effective: &[(MoteId, EdgeMeta)]) {
+        for (parent_id, _) in old_effective {
+            self.remove_child_entries(*parent_id, child_id);
+        }
+        for (parent_id, edge) in self.parents_of_id(&child_id) {
+            self.insert_child_edge(parent_id, child_id, edge);
+        }
+        #[cfg(debug_assertions)]
+        debug_assert!(
+            self.children_index_matches_full_rebuild(),
+            "M2.1 invariant: incremental children index diverged from full rebuild"
+        );
+    }
+
+    /// Set (overwrite) the declared info for `mote_id`, then incrementally update
+    /// the reverse index. Captures the child's CURRENT effective parents (which
+    /// may be declared- OR committed-derived) **before** the overwrite, so a
+    /// re-registration that drops/changes a parent — or a registration that
+    /// arrives after a committed-without-declare and flips the precedence to the
+    /// new declared set — removes the stale edges (the full rebuild handled this
+    /// implicitly).
+    pub(crate) fn set_declared(&mut self, mote_id: MoteId, declared: DeclaredInfo) {
+        let old_effective = self.parents_of_id(&mote_id);
+        self.moteinfo_mut(&mote_id).declared = Some(declared);
+        self.reindex_child_edges(mote_id, &old_effective);
+    }
+
+    /// Fold a `Committed` entry's edges into the reverse index incrementally.
+    /// `old_effective` is the child's effective parents captured **before**
+    /// `committed` was set. When the Mote was already declared, `parents_of_id`
+    /// keeps returning the declared set (precedence) so this is a no-op re-derive;
+    /// when it was committed-without-declare (pure `from_journal` recovery), the
+    /// effective set flips from empty to the committed parents and those edges
+    /// are inserted.
+    pub(crate) fn index_committed(
+        &mut self,
+        mote_id: MoteId,
+        old_effective: &[(MoteId, EdgeMeta)],
+    ) {
+        self.reindex_child_edges(mote_id, old_effective);
+    }
+
+    /// Differential oracle: does the incrementally-maintained `children` index
+    /// equal a from-scratch [`Self::rebuild_children_index`]? Used ONLY inside
+    /// the `debug_assert!` in [`Self::reindex_child_edges`] (compiled out in
+    /// release — the scale test + bench run `--release` and pay zero). Clones to
+    /// avoid mutating `self`. Compiled under `test` too so the inline + property
+    /// tests can use it as an explicit oracle even under `cargo test --release`.
+    #[cfg(any(test, debug_assertions))]
+    fn children_index_matches_full_rebuild(&self) -> bool {
+        let mut oracle = self.clone();
+        oracle.rebuild_children_index();
+        oracle.children == self.children
+    }
+}
+
+#[cfg(test)]
+mod incremental_index_tests {
+    use super::{
+        ContentRef, DeclaredInfo, EdgeMeta, EffectPattern, MoteId, NdClass, ParentRef, SmallVec,
+        State,
+    };
+
+    fn mid(b: u8) -> MoteId {
+        MoteId::from_bytes([b; 32])
+    }
+
+    fn parent(id: u8, edge: EdgeMeta) -> ParentRef {
+        ParentRef {
+            parent_id: mid(id),
+            edge,
+        }
+    }
+
+    fn declared_with(parents: SmallVec<[ParentRef; 4]>) -> DeclaredInfo {
+        DeclaredInfo {
+            nd_class: NdClass::Pure,
+            effect_pattern: EffectPattern::IdempotentByConstruction,
+            critic_for: None,
+            is_topology_shaper: false,
+            parents,
+            warrant_ref: ContentRef::from_bytes([0xaa; 32]),
+        }
+    }
+
+    fn parents(refs: &[ParentRef]) -> SmallVec<[ParentRef; 4]> {
+        refs.iter().copied().collect()
+    }
+
+    #[test]
+    fn insert_keeps_children_sorted_by_child_id() {
+        let mut s = State::default();
+        s.insert_child_edge(mid(1), mid(30), EdgeMeta::data());
+        s.insert_child_edge(mid(1), mid(10), EdgeMeta::data());
+        s.insert_child_edge(mid(1), mid(20), EdgeMeta::control());
+        let ids: Vec<u8> = s.children[&mid(1)]
+            .iter()
+            .map(|(c, _)| c.as_bytes()[0])
+            .collect();
+        assert_eq!(
+            ids,
+            vec![10, 20, 30],
+            "sorted by child MoteId regardless of insert order"
+        );
+    }
+
+    #[test]
+    fn insert_duplicate_child_appends_after_equal_stable() {
+        // The only equal-child case: the same parent declared twice with
+        // different edge meta (a Data and a Control edge to one parent).
+        let mut s = State::default();
+        s.insert_child_edge(mid(1), mid(10), EdgeMeta::data());
+        s.insert_child_edge(mid(1), mid(10), EdgeMeta::control());
+        assert_eq!(
+            s.children[&mid(1)],
+            vec![(mid(10), EdgeMeta::data()), (mid(10), EdgeMeta::control())],
+            "stable: first-inserted precedes second, matching rebuild's stable sort"
+        );
+    }
+
+    #[test]
+    fn remove_drops_all_matching_and_empties_key() {
+        let mut s = State::default();
+        s.insert_child_edge(mid(1), mid(10), EdgeMeta::data());
+        s.insert_child_edge(mid(1), mid(10), EdgeMeta::control());
+        s.insert_child_edge(mid(1), mid(20), EdgeMeta::data());
+        s.remove_child_entries(mid(1), mid(10));
+        assert_eq!(s.children[&mid(1)], vec![(mid(20), EdgeMeta::data())]);
+        s.remove_child_entries(mid(1), mid(20));
+        assert!(
+            !s.children.contains_key(&mid(1)),
+            "empty parent key dropped to stay byte-identical to a fresh rebuild"
+        );
+    }
+
+    #[test]
+    fn set_declared_matches_full_rebuild() {
+        let mut s = State::default();
+        s.set_declared(
+            mid(10),
+            declared_with(parents(&[
+                parent(1, EdgeMeta::data()),
+                parent(2, EdgeMeta::control()),
+            ])),
+        );
+        s.set_declared(
+            mid(20),
+            declared_with(parents(&[parent(1, EdgeMeta::data())])),
+        );
+        assert_eq!(
+            s.children[&mid(1)],
+            vec![(mid(10), EdgeMeta::data()), (mid(20), EdgeMeta::data())]
+        );
+        assert_eq!(s.children[&mid(2)], vec![(mid(10), EdgeMeta::control())]);
+        assert!(s.children_index_matches_full_rebuild());
+    }
+
+    #[test]
+    fn re_registration_with_changed_parents_removes_stale_edge() {
+        let mut s = State::default();
+        s.set_declared(
+            mid(10),
+            declared_with(parents(&[parent(1, EdgeMeta::data())])),
+        );
+        assert!(s.children.contains_key(&mid(1)));
+        // Re-register child 10 with a DIFFERENT parent (2 replaces 1).
+        s.set_declared(
+            mid(10),
+            declared_with(parents(&[parent(2, EdgeMeta::data())])),
+        );
+        assert!(
+            !s.children.contains_key(&mid(1)),
+            "stale edge under the dropped parent removed"
+        );
+        assert_eq!(s.children[&mid(2)], vec![(mid(10), EdgeMeta::data())]);
+        assert!(s.children_index_matches_full_rebuild());
+    }
+
+    #[test]
+    fn re_register_same_parents_is_idempotent() {
+        let mut s = State::default();
+        let p = parents(&[parent(1, EdgeMeta::data()), parent(2, EdgeMeta::control())]);
+        s.set_declared(mid(10), declared_with(p.clone()));
+        let before = s.children.clone();
+        s.set_declared(mid(10), declared_with(p));
+        assert_eq!(
+            s.children, before,
+            "re-registering identical parents is a no-op on the index"
+        );
+        assert!(s.children_index_matches_full_rebuild());
     }
 }

@@ -365,3 +365,45 @@ jobs:
 
       - name: just smoke-test-with-model
         run: just smoke-test-with-model
+
+  # ---------------------------------------------------------------------------
+  # scale-smoke — M2.1 / D92 resume-availability gate. Folds a 25k+ Mote
+  # journal in RELEASE and asserts the incremental children-index re-fold stays
+  # ~linear (a super-linear resume is an outage). ADVISORY for now: this is NOT
+  # yet a required status check — it is promoted to required via an explicitly-
+  # authorized branch-protection PATCH once it is green on a couple of runs
+  # (Golden Rule 4). Needs the test suite green first.
+  # ---------------------------------------------------------------------------
+  scale-smoke:
+    name: scale-smoke (M2.1 incremental children-index re-fold)
+    runs-on: ubuntu-latest
+    needs: [test]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Rust toolchain (from rust-toolchain.toml)
+        run: |
+          rustup show active-toolchain
+
+      - name: Install just
+        uses: extractions/setup-just@v4
+
+      - name: Cache Cargo registry + target
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-scale-${{ runner.os }}-${{ hashFiles('**/Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: |
+            cargo-scale-${{ runner.os }}-
+            cargo-${{ runner.os }}-
+
+      - name: Configure RUSTFLAGS for path-stripping
+        run: |
+          echo "RUSTFLAGS=--remap-path-prefix=${GITHUB_WORKSPACE}= -Cmetadata=kortecx-v0" >> $GITHUB_ENV
+
+      - name: just scale-smoke
+        run: just scale-smoke
