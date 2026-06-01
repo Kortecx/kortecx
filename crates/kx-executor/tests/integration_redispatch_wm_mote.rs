@@ -382,3 +382,180 @@ fn redispatch_validate_then_commit_schedules_critic_proposed() {
     assert!(matches!(&entries[0], JournalEntry::Committed { .. }));
     assert!(matches!(&entries[1], JournalEntry::Proposed { .. }));
 }
+
+// ============================================================================
+// M2.3a (D38 §2a / D65) — the readback probe in recovery. A Readback-class
+// capability's `probe_readback` decides the recovery action BEFORE re-dispatch:
+//   Some(applied) → commit-from-readback (NO dispatch); None → re-dispatch;
+//   Err → ProbeFailed (fail-closed, NO dispatch).
+// ============================================================================
+
+/// What the probe reports.
+enum ProbeMode {
+    /// The effect already landed — return a handle staging the probed bytes.
+    Applied,
+    /// The effect did not land — proceed to re-dispatch.
+    NotApplied,
+    /// The probe itself errored — world state is indeterminate.
+    Errored,
+}
+
+/// A broker whose `probe_readback` is configurable and whose `dispatch` records
+/// whether it was called. The probe stages DISTINCT bytes from dispatch so a
+/// test can prove the Committed `result_ref` came from the probe, not a dispatch.
+struct ProbeBroker {
+    store: Arc<InMemoryContentStore>,
+    mode: ProbeMode,
+    dispatched: AtomicBool,
+}
+impl std::fmt::Debug for ProbeBroker {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ProbeBroker").finish()
+    }
+}
+impl CapabilityBroker for ProbeBroker {
+    fn dispatch(
+        &self,
+        _mote: &Mote,
+        _warrant: &WarrantSpec,
+        _capability: &ToolName,
+        _request: EffectRequest,
+    ) -> Result<BrokerHandle, BrokerError> {
+        self.dispatched.store(true, Ordering::SeqCst);
+        let r = self.store.put(b"DISPATCH-resp").expect("put");
+        Ok(BrokerHandle {
+            staged_ref: r,
+            capability: ToolName("probe".into()),
+            capability_version: ToolVersion("0.1.0".into()),
+        })
+    }
+    fn probe_readback(
+        &self,
+        _mote: &Mote,
+        _warrant: &WarrantSpec,
+        capability: &ToolName,
+        _probe: EffectRequest,
+    ) -> Result<Option<BrokerHandle>, BrokerError> {
+        match self.mode {
+            ProbeMode::Applied => {
+                let r = self.store.put(b"PROBE-readback-resp").expect("put");
+                Ok(Some(BrokerHandle {
+                    staged_ref: r,
+                    capability: ToolName("probe".into()),
+                    capability_version: ToolVersion("0.1.0".into()),
+                }))
+            }
+            ProbeMode::NotApplied => Ok(None),
+            ProbeMode::Errored => Err(BrokerError::SandboxRefused {
+                capability: capability.clone(),
+                reason: "probe unavailable".into(),
+            }),
+        }
+    }
+}
+
+fn redispatch_with_probe(
+    mode: ProbeMode,
+) -> (
+    Arc<InMemoryJournal>,
+    Arc<InMemoryContentStore>,
+    Arc<ProbeBroker>,
+    Result<kx_executor::WmLifecycleCommit, LifecycleError>,
+) {
+    let store = Arc::new(InMemoryContentStore::new());
+    let journal = Arc::new(InMemoryJournal::new());
+    let broker = Arc::new(ProbeBroker {
+        store: store.clone(),
+        mode,
+        dispatched: AtomicBool::new(false),
+    });
+    let broker_ref = broker.clone();
+    let protocol = StandardCommitProtocol::new(store.clone(), journal.clone(), broker);
+    let rm = LocalResourceManager::dev_defaults();
+    // Oracle approves (cell 2/3: EffectStaged, no Committed, no terminal) — the
+    // probe is the NEW layer on top of the existing redispatch-allowed gate.
+    let oracle = StubOracle {
+        can_redispatch: true,
+        consulted: AtomicBool::new(false),
+    };
+    let mote = wm_mote(0x07, EffectPattern::StageThenCommit);
+    let submission_motes: BTreeMap<MoteId, Mote> =
+        std::iter::once((mote.id, mote.clone())).collect();
+    let out = redispatch_wm_mote(
+        &mote,
+        &warrant(),
+        ToolName("probe".into()),
+        empty_request(EffectPattern::StageThenCommit),
+        &submission_motes,
+        &*journal,
+        &rm,
+        &protocol,
+        &oracle,
+    );
+    (journal, store, broker_ref, out)
+}
+
+#[test]
+fn probe_says_applied_commits_from_readback_without_dispatch() {
+    let (journal, store, broker, out) = redispatch_with_probe(ProbeMode::Applied);
+    let commit = out.expect("commit-from-readback must succeed");
+
+    // The effect was NEVER re-dispatched — exactly-once.
+    assert!(
+        !broker.dispatched.load(Ordering::SeqCst),
+        "a positive probe must NOT re-dispatch the world effect"
+    );
+    // Exactly one Committed entry, carrying the PROBED bytes (not a dispatch's).
+    let entries: Vec<JournalEntry> = journal.read_entries_by_seq(0..u64::MAX).unwrap().collect();
+    assert_eq!(
+        entries.len(),
+        1,
+        "commit-from-readback appends Committed only"
+    );
+    match &entries[0] {
+        JournalEntry::Committed { result_ref, .. } => {
+            assert_eq!(*result_ref, commit.result_ref);
+            // The committed bytes are the PROBE's, proving no dispatch occurred.
+            let bytes = store.get(result_ref).expect("committed ref is durable");
+            assert_eq!(bytes.as_ref(), b"PROBE-readback-resp");
+        }
+        other => panic!("expected Committed, got {other:?}"),
+    }
+}
+
+#[test]
+fn probe_says_not_applied_falls_through_to_redispatch() {
+    let (journal, _store, broker, out) = redispatch_with_probe(ProbeMode::NotApplied);
+    out.expect("re-dispatch must succeed when the probe finds nothing");
+
+    // No readback → the existing re-dispatch path fired.
+    assert!(
+        broker.dispatched.load(Ordering::SeqCst),
+        "a None probe must fall through to re-dispatch"
+    );
+    let entries: Vec<JournalEntry> = journal.read_entries_by_seq(0..u64::MAX).unwrap().collect();
+    // StageThenCommit re-dispatch: EffectStaged + Committed.
+    assert!(entries
+        .iter()
+        .any(|e| matches!(e, JournalEntry::Committed { .. })));
+}
+
+#[test]
+fn probe_error_refuses_redispatch_fail_closed() {
+    let (journal, store, broker, out) = redispatch_with_probe(ProbeMode::Errored);
+    let err = out.expect_err("an errored probe must refuse re-dispatch");
+
+    match err {
+        LifecycleError::CommitProtocol(e @ CommitProtocolError::ProbeFailed { .. }) => {
+            assert!(e.is_recovery_refusal(), "ProbeFailed is a recovery refusal");
+        }
+        other => panic!("expected ProbeFailed, got {other:?}"),
+    }
+    // Fail-closed: no dispatch, no Committed — the Mote is left in-flight.
+    assert!(
+        !broker.dispatched.load(Ordering::SeqCst),
+        "an indeterminate probe must NOT re-dispatch (no double-fire)"
+    );
+    assert_eq!(journal.count_entries().unwrap(), 0);
+    assert_eq!(store.len(), 0);
+}

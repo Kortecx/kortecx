@@ -349,7 +349,18 @@ where
     // intent. The broker's idempotency_key dedup is the load-bearing
     // safety here.
 
-    // Step 4: commit_protocol routes per effect_pattern.
+    // Step 4: the recovery decision (M2.3a, D38 §2a / D65). For a
+    // staged-uncommitted WM Mote the recovery action is one of three outcomes,
+    // encoded by `try_commit_from_readback`'s `Result<Option<u64>>`:
+    //   • Ok(Some) = COMMIT-FROM-READBACK — the probe found the effect applied;
+    //     the protocol committed the probed result_ref WITHOUT re-dispatching
+    //     (exactly-once for Readback-class tools).
+    //   • Ok(None) = REDISPATCH — no readback support (default probe) or the
+    //     effect did not land → fall through to the normal re-dispatch.
+    //   • Err(ProbeFailed) = REFUSE — the probe errored; world state is
+    //     indeterminate, so re-dispatch is refused (fail-closed, no double-fire).
+    // (M2.3b extends this to a typed Compensate/Quarantine arm once the
+    // IdempotencyClass is durable.)
     let commit_input = CommitInput {
         mote,
         warrant,
@@ -361,9 +372,17 @@ where
         parents: SmallVec::new(),
         diagnostic_context: "lifecycle::redispatch_wm_mote",
     };
-    let committed_seq = match commit_protocol.commit(commit_input) {
-        Ok(seq) => seq,
+    let committed_seq = match commit_protocol.try_commit_from_readback(commit_input.clone()) {
+        Ok(Some(seq)) => seq, // probe: effect already applied → committed from readback
+        Ok(None) => match commit_protocol.commit(commit_input) {
+            Ok(seq) => seq,
+            Err(e) => {
+                let _ = resource_manager.release(slot);
+                return Err(LifecycleError::CommitProtocol(e));
+            }
+        },
         Err(e) => {
+            // ProbeFailed (fail-closed) — never re-dispatch on an indeterminate probe.
             let _ = resource_manager.release(slot);
             return Err(LifecycleError::CommitProtocol(e));
         }

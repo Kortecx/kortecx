@@ -67,4 +67,28 @@ pub trait Capability: Send + Sync {
         let _ = request;
         Ok(None)
     }
+
+    /// Compensate (undo) an effect that may have partially applied (D65 —
+    /// the recovery seam, M2.3). Default returns `Ok(None)` (capability does
+    /// not support compensation; recovery quarantines rather than risking a
+    /// double-fire).
+    ///
+    /// A capability whose effect cannot be made idempotent (no token, no
+    /// readback) and whose double-application is harmful overrides this to
+    /// reverse the effect deterministically, keyed on `MoteId`. `Ok(Some(bytes))`
+    /// proves the compensating action ran (the bytes are the undo's
+    /// externally-observable result); `Ok(None)` means "compensation
+    /// unsupported"; `Err` means the compensation itself failed.
+    ///
+    /// **Like [`probe`][Capability::probe] this is a deterministic action**,
+    /// **never a model call.** Reserved for the M2.3b class-aware
+    /// `Compensate`-vs-`Redispatch` recovery decision; the M2.3a probe path
+    /// does not invoke it.
+    fn compensate(
+        &self,
+        request: &EffectRequest,
+    ) -> Result<Option<Vec<u8>>, CapabilityFailureReason> {
+        let _ = request;
+        Ok(None)
+    }
 }
