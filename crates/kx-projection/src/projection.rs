@@ -7,7 +7,7 @@ use kx_journal::{Journal, JournalEntry};
 use kx_mote::{EdgeMeta, MoteId, NdClass};
 use smallvec::SmallVec;
 
-use crate::checkpoint::FoldCheckpoint;
+use crate::checkpoint::{CheckpointOutcome, FoldCheckpoint, FullFoldReason};
 use crate::enums::{AnomalyKind, MoteState, PromotionState};
 use crate::errors::ProjectionError;
 use crate::helpers::{promotion_state_impl, ready_set_impl, transitive_consumers_impl};
@@ -169,6 +169,18 @@ impl Projection {
         journal: &J,
         checkpoint: Option<&FoldCheckpoint>,
     ) -> Result<Self, ProjectionError> {
+        Self::build_from_journal(journal, checkpoint, None).map(|(p, _)| p)
+    }
+
+    /// As [`Self::from_journal_with_checkpoint`], but also returns a
+    /// [`CheckpointOutcome`] recording whether the checkpoint seeded the fold
+    /// (and the tail length) or was discarded (and why). The folded projection is
+    /// identical to the non-reported variant — the outcome is purely diagnostic,
+    /// for recovery observability and tests.
+    pub fn from_journal_with_checkpoint_reported<J: Journal>(
+        journal: &J,
+        checkpoint: Option<&FoldCheckpoint>,
+    ) -> Result<(Self, CheckpointOutcome), ProjectionError> {
         Self::build_from_journal(journal, checkpoint, None)
     }
 
@@ -185,24 +197,35 @@ impl Projection {
         materializer: Box<dyn TopologyMaterializer>,
         checkpoint: Option<&FoldCheckpoint>,
     ) -> Result<Self, ProjectionError> {
+        Self::build_from_journal(journal, checkpoint, Some(materializer)).map(|(p, _)| p)
+    }
+
+    /// As [`Self::from_journal_with_checkpoint_with_materializer`], but also returns
+    /// the [`CheckpointOutcome`] (see [`Self::from_journal_with_checkpoint_reported`]).
+    pub fn from_journal_with_checkpoint_with_materializer_reported<J: Journal>(
+        journal: &J,
+        materializer: Box<dyn TopologyMaterializer>,
+        checkpoint: Option<&FoldCheckpoint>,
+    ) -> Result<(Self, CheckpointOutcome), ProjectionError> {
         Self::build_from_journal(journal, checkpoint, Some(materializer))
     }
 
     /// Shared body for the checkpoint-aware cold-recovery entry points: try to
     /// seed from the checkpoint, then fold the remaining tail; fall back to a
-    /// full fold (`start_exclusive = 0`) when the checkpoint is unusable.
+    /// full fold (`start_exclusive = 0`) when the checkpoint is unusable. Also
+    /// returns the [`CheckpointOutcome`] (Seeded vs FullFold + reason).
     fn build_from_journal<J: Journal>(
         journal: &J,
         checkpoint: Option<&FoldCheckpoint>,
         materializer: Option<Box<dyn TopologyMaterializer>>,
-    ) -> Result<Self, ProjectionError> {
+    ) -> Result<(Self, CheckpointOutcome), ProjectionError> {
         let current = journal.current_seq()?;
         let seed = match checkpoint {
             Some(cp) => Self::try_seed_state(journal, cp, current)?,
-            None => None,
+            None => Err(FullFoldReason::NoCheckpoint),
         };
-        let (mut p, start_exclusive) = match seed {
-            Some(state) => {
+        let (mut p, start_exclusive, outcome) = match seed {
+            Ok(state) => {
                 let offset = state.last_seq;
                 (
                     Self {
@@ -210,55 +233,61 @@ impl Projection {
                         materializer,
                     },
                     offset,
+                    CheckpointOutcome::Seeded {
+                        offset,
+                        tail_entries: current.saturating_sub(offset),
+                    },
                 )
             }
-            None => (
+            Err(reason) => (
                 Self {
                     state: State::default(),
                     materializer,
                 },
                 0,
+                CheckpointOutcome::FullFold { reason },
             ),
         };
         for entry in journal.read_entries_by_seq((start_exclusive + 1)..(current + 1))? {
             p.fold(&entry)?;
         }
-        Ok(p)
+        Ok((p, outcome))
     }
 
     /// Validate a checkpoint against the journal and decode its seeded state, or
-    /// return `Ok(None)` to signal "discard and full-fold". Journal I/O errors
-    /// propagate; every *checkpoint* defect is a graceful `None`.
+    /// return `Ok(Err(reason))` to signal "discard and full-fold" (the reason
+    /// names the gate that rejected it). Journal I/O errors propagate; every
+    /// *checkpoint* defect is a graceful `Err(FullFoldReason)`.
     fn try_seed_state<J: Journal>(
         journal: &J,
         cp: &FoldCheckpoint,
         current: u64,
-    ) -> Result<Option<State>, ProjectionError> {
+    ) -> Result<Result<State, FullFoldReason>, ProjectionError> {
         // (1) integrity — the envelope digest must verify.
         if !cp.verify() {
-            return Ok(None);
+            return Ok(Err(FullFoldReason::IntegrityFailed));
         }
         // (2) the offset must not run past the journal head (stale / truncated log).
         if cp.journal_offset() > current {
-            return Ok(None);
+            return Ok(Err(FullFoldReason::OffsetAheadOfHead));
         }
         // (3) decode the payload; a malformed/hostile blob is discarded.
         let Ok(state) = cp.decode_state() else {
-            return Ok(None);
+            return Ok(Err(FullFoldReason::DecodeFailed));
         };
         // (4) the encoded frontier must equal the declared offset (consistency).
         if state.last_seq != cp.journal_offset() {
-            return Ok(None);
+            return Ok(Err(FullFoldReason::OffsetMismatch));
         }
         // (5) wrong-run guard (best effort): if both name a run, the ids must match.
         if let Some(reg) = state.run_registration {
             if let Some(journal_instance) = Self::journal_run_instance(journal)? {
                 if journal_instance != reg.instance_id {
-                    return Ok(None);
+                    return Ok(Err(FullFoldReason::WrongRun));
                 }
             }
         }
-        Ok(Some(state))
+        Ok(Ok(state))
     }
 
     /// The journal's registered run instance id, read from the `RunRegistered`

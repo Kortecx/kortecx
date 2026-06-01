@@ -11,7 +11,9 @@
 //! "scheduler/executor talk only through the log."
 
 use std::collections::BTreeMap;
+use std::path::Path;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use kx_capability::EffectRequest;
 use kx_content::{ContentStore, LocalFsContentStore};
@@ -21,11 +23,14 @@ use kx_executor::{
 };
 use kx_journal::{Journal, SqliteJournal};
 use kx_mote::{MoteId, NdClass, TopologyDecision};
-use kx_projection::{ContentStoreVerdicts, MoteState, Projection, VerdictLookup};
+use kx_projection::{
+    CheckpointOutcome, ContentStoreVerdicts, MoteState, Projection, VerdictLookup,
+};
 use kx_scheduler::{LocalPlacement, Scheduler};
 use kx_warrant::{FsScope, NetScope};
 
 use crate::broker::DemoBroker;
+use crate::checkpoint_io;
 use crate::config::{Mode, RuntimeConfig};
 use crate::crash::CrashPoint;
 use crate::digest::{digest_projection, ProjectionDigest};
@@ -178,17 +183,37 @@ where
     // through the materializer so every fold of a shaper's Committed entry
     // re-derives its children deterministically (incl. replay). Without a
     // shaper (flat DAG), a plain journal fold suffices.
-    let mut projection = if let Some((shaper_wm, _)) = shaper {
+    // M2.2b — discardable-checkpoint live recovery. Load any sidecar next to the
+    // journal and seed the cold fold from it (re-folding only the tail
+    // `(offset, head]`). The checkpoint is NEVER authoritative: a missing /
+    // corrupt / stale / wrong-run sidecar is silently discarded and the full
+    // fold runs, so recovery is bit-identical with or without it. The trust
+    // boundary: the sidecar lives in the journal's own data dir under the
+    // journal's permissions — anyone who can forge it can already forge the
+    // authoritative journal. The journaled digest seal (M2.2c) will anchor this
+    // to the journal for unforgeability.
+    let sidecar_path = checkpoint_io::sidecar_path(&config.journal_path);
+    let checkpoint = checkpoint_io::read_checkpoint(&sidecar_path);
+    let recovery_start = Instant::now();
+    let (mut projection, recovery_outcome) = if let Some((shaper_wm, _)) = shaper {
         store.put(&topology::encode_warrant(&shaper_wm.warrant)?)?;
         let materializer =
             topology::build_materializer(store.clone(), &shaper_wm.mote.def, &shaper_wm.warrant);
-        Projection::from_journal_with_materializer(&*journal, materializer)?
+        Projection::from_journal_with_checkpoint_with_materializer_reported(
+            &*journal,
+            materializer,
+            checkpoint.as_ref(),
+        )?
     } else {
-        Projection::from_journal(&*journal)?
+        Projection::from_journal_with_checkpoint_reported(&*journal, checkpoint.as_ref())?
     };
     // `from_journal_*` already folded the existing journal; record how far so the
     // incremental fold doesn't re-apply (and trip `DuplicateCommitted`).
     let mut folded_through: u64 = journal.current_seq()?;
+    log_recovery(recovery_outcome, folded_through, recovery_start.elapsed());
+    // Seed the cadence counter from the recovered frontier so the first
+    // post-recovery checkpoint fires after N *new* entries, not immediately.
+    let mut last_checkpoint_at = folded_through;
 
     // Register every declared workflow Mote (its edges) in the projection.
     let mut scheduler = Scheduler::new(LocalPlacement);
@@ -280,6 +305,24 @@ where
             }
         }
         fold_new(&journal, &mut projection, &mut folded_through)?;
+        // M2.2b cadence: persist a checkpoint every N folded entries. Fired ONLY
+        // here, at the contiguously-drained loop-bottom frontier `[1, folded_through]`
+        // (never at the inner fold_new in the crash window above), so the
+        // `fold_checkpoint` precondition holds. Non-fatal on write failure.
+        maybe_checkpoint(
+            config,
+            &projection,
+            &sidecar_path,
+            folded_through,
+            &mut last_checkpoint_at,
+        );
+    }
+
+    // Graceful-completion checkpoint: leave a fresh sidecar so a restart of a
+    // completed/drained run seeds the full final state and folds an empty tail.
+    // Skipped if the cadence already captured this exact frontier.
+    if config.checkpoint_every.is_some() && folded_through > last_checkpoint_at {
+        write_checkpoint(&projection, &sidecar_path, folded_through);
     }
 
     let outcome = outcome(&runnable, &projection);
@@ -313,6 +356,72 @@ fn fold_new(
     }
     *folded_through = current;
     Ok(())
+}
+
+/// Emit recovery observability (M2.2b): one structured event recording whether
+/// the discardable checkpoint seeded the fold (and the tail length) or the full
+/// log was folded (and why), plus the recovery duration. Purely diagnostic — the
+/// folded state is bit-identical either way.
+fn log_recovery(outcome: CheckpointOutcome, head: u64, elapsed: Duration) {
+    let elapsed_us = u64::try_from(elapsed.as_micros()).unwrap_or(u64::MAX);
+    match outcome {
+        CheckpointOutcome::Seeded {
+            offset,
+            tail_entries,
+        } => tracing::info!(
+            head,
+            seed_offset = offset,
+            tail_entries,
+            elapsed_us,
+            "recovery seeded from checkpoint",
+        ),
+        CheckpointOutcome::FullFold { reason } => tracing::info!(
+            head,
+            ?reason,
+            elapsed_us,
+            "recovery full-folded (no usable checkpoint)",
+        ),
+    }
+}
+
+/// Persist a checkpoint when the cadence is due (M2.2b). Fires iff checkpointing
+/// is enabled and at least `N` entries were folded since the last checkpoint.
+/// MUST be called only at a contiguously-drained frontier (the loop-bottom
+/// `fold_new`), so the captured `fold_checkpoint` reflects a clean prefix.
+fn maybe_checkpoint(
+    config: &RuntimeConfig,
+    projection: &Projection,
+    sidecar_path: &Path,
+    folded_through: u64,
+    last_checkpoint_at: &mut u64,
+) {
+    let Some(cadence) = config.checkpoint_every else {
+        return;
+    };
+    if folded_through == 0 || folded_through.saturating_sub(*last_checkpoint_at) < cadence {
+        return;
+    }
+    write_checkpoint(projection, sidecar_path, folded_through);
+    *last_checkpoint_at = folded_through;
+}
+
+/// Capture the projection's current `FoldCheckpoint` and persist it atomically.
+/// A write failure is **non-fatal** — the checkpoint is never authoritative, so a
+/// failed persist only means the next restart full-folds. Logged, never returned.
+fn write_checkpoint(projection: &Projection, sidecar_path: &Path, folded_through: u64) {
+    let bytes = projection.fold_checkpoint().to_bytes();
+    match checkpoint_io::write_atomic(sidecar_path, &bytes) {
+        Ok(()) => tracing::debug!(
+            through = folded_through,
+            bytes = bytes.len(),
+            "checkpoint persisted"
+        ),
+        Err(error) => tracing::warn!(
+            through = folded_through,
+            %error,
+            "checkpoint persist failed (continuing; recovery falls back to full fold)"
+        ),
+    }
 }
 
 /// Choose the next Mote to act on, in submission order: a `Pending` Mote whose
@@ -434,6 +543,12 @@ fn outcome(runnable: &[WorkflowMote], projection: &Projection) -> RunOutcome {
 
 /// Compute the digest of the on-disk journal in a fresh projection — the
 /// "different machine replays to a bit-identical projection" surface.
+///
+/// **M2.2b invariant:** this path MUST stay a pure full fold (`from_journal`,
+/// never `from_journal_with_checkpoint`). The product digest is the cross-process
+/// comparison surface — seeding it from a discardable sidecar would make the
+/// computed digest depend on whether a `.ckpt` happens to be present, even though
+/// the value is identical. Keep the canonical digest a pure function of the log.
 pub fn digest_only(config: &RuntimeConfig) -> Result<ProjectionDigest, RuntimeError> {
     let journal = SqliteJournal::open(&config.journal_path)?;
     crate::digest::digest_journal(&journal)

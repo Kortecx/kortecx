@@ -131,7 +131,10 @@ mod register;
 mod snapshot;
 mod state;
 
-pub use checkpoint::{CheckpointError, FoldCheckpoint, CURRENT_FORMAT_VERSION, PAYLOAD_CODEC};
+pub use checkpoint::{
+    CheckpointError, CheckpointOutcome, FoldCheckpoint, FullFoldReason, CURRENT_FORMAT_VERSION,
+    PAYLOAD_CODEC,
+};
 pub use child_resolver::{ChildResolver, InheritFromShaperResolver};
 pub use enums::{AnomalyKind, MoteState, PromotionState};
 pub use errors::ProjectionError;

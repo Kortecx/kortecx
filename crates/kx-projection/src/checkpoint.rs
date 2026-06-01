@@ -282,6 +282,57 @@ pub enum CheckpointError {
 }
 
 // ---------------------------------------------------------------------------
+// CheckpointOutcome — the structured, testable result of a checkpoint recovery
+// ---------------------------------------------------------------------------
+
+/// The outcome of a checkpoint-aware cold recovery — a structured record of
+/// whether the discardable [`FoldCheckpoint`] seeded the fold or was discarded
+/// (and which gate rejected it). Returned by
+/// [`crate::Projection::from_journal_with_checkpoint_reported`] so the live
+/// runtime can emit recovery observability and tests can assert on the reason
+/// (rather than parsing log lines).
+///
+/// **Purely diagnostic.** The outcome never affects the folded state, which is
+/// bit-identical to a full fold either way — it only reports *how much* of the
+/// log was re-folded, and why.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CheckpointOutcome {
+    /// The checkpoint was usable: the fold was seeded at `offset` and only the
+    /// tail `(offset, head]` — `tail_entries` entries — was re-folded.
+    Seeded {
+        /// The journal offset the checkpoint folded through (inclusive).
+        offset: u64,
+        /// The number of journal entries re-folded on top of the seed.
+        tail_entries: u64,
+    },
+    /// No usable checkpoint — the full log `(0, head]` was folded. `reason`
+    /// records why (none supplied, or which validation gate rejected it).
+    FullFold {
+        /// Why the full fold ran.
+        reason: FullFoldReason,
+    },
+}
+
+/// Why a checkpoint-aware recovery fell back to a full fold. Every non-`NoCheckpoint`
+/// variant corresponds to exactly one validation gate in the seed path; **all are
+/// safe** — recovery is bit-identical to a full fold regardless of which fires.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FullFoldReason {
+    /// No checkpoint was supplied (`None`) — an ordinary cold start.
+    NoCheckpoint,
+    /// The envelope integrity digest did not verify (corrupt / truncated / tampered).
+    IntegrityFailed,
+    /// The checkpoint offset runs past the journal head (stale / truncated log).
+    OffsetAheadOfHead,
+    /// The payload failed to decode (a malformed / hostile blob).
+    DecodeFailed,
+    /// The decoded `last_seq` disagrees with the declared offset (inconsistent).
+    OffsetMismatch,
+    /// The checkpoint's run instance-id does not match the journal's (wrong run).
+    WrongRun,
+}
+
+// ---------------------------------------------------------------------------
 // Canonical encoding helpers (shared by the checkpoint + the state digest)
 // ---------------------------------------------------------------------------
 

@@ -19,6 +19,12 @@ pub enum Mode {
     Digest,
 }
 
+/// Default checkpoint cadence: capture a [`kx_projection::FoldCheckpoint`] every
+/// 256 folded journal entries. Coarse by design so the `O(live-state)` encode +
+/// fsync stays off the hot path (M2.1's fold is ~0.5µs/Mote); the canonical demo
+/// (8 Motes) never checkpoints mid-run — only on graceful completion.
+pub const DEFAULT_CHECKPOINT_EVERY: u64 = 256;
+
 /// Resolved runtime configuration for one invocation.
 #[derive(Debug, Clone)]
 pub struct RuntimeConfig {
@@ -30,14 +36,21 @@ pub struct RuntimeConfig {
     pub mode: Mode,
     /// Optional deterministic crash injection (run mode only).
     pub crash_at: Option<CrashPoint>,
+    /// Persist a discardable `FoldCheckpoint` sidecar every N folded journal
+    /// entries (M2.2b). `None` disables checkpoint writing entirely (recovery
+    /// still *reads* any existing sidecar — the read path is always safe). The
+    /// sidecar only ever speeds up resume; it can never change the outcome.
+    pub checkpoint_every: Option<u64>,
 }
 
 impl RuntimeConfig {
     /// Parse `argv` (excluding the program name) into a [`RuntimeConfig`].
     ///
     /// Grammar: `<run|replay|digest> --journal <path> --content <dir>
-    /// [--crash-at <pre-commit-stc|post-commit-vtc>]`. `--crash-at` is honored
-    /// only in `run` mode (a crash point in replay/digest is a config error).
+    /// [--crash-at <pre-commit-stc|post-commit-vtc>] [--checkpoint-every <N>]`.
+    /// `--crash-at` is honored only in `run` mode (a crash point in replay/digest
+    /// is a config error). `--checkpoint-every 0` disables checkpoint writing;
+    /// omitting it uses [`DEFAULT_CHECKPOINT_EVERY`].
     pub fn from_args<I, S>(args: I) -> Result<Self, RuntimeError>
     where
         I: IntoIterator<Item = S>,
@@ -63,6 +76,7 @@ impl RuntimeConfig {
         let mut journal_path: Option<PathBuf> = None;
         let mut content_root: Option<PathBuf> = None;
         let mut crash_at: Option<CrashPoint> = None;
+        let mut checkpoint_every: Option<u64> = Some(DEFAULT_CHECKPOINT_EVERY);
 
         while let Some(flag) = args.next() {
             let mut take_value = |name: &str| -> Result<String, RuntimeError> {
@@ -75,6 +89,16 @@ impl RuntimeConfig {
                 "--crash-at" => {
                     let v = take_value("--crash-at")?;
                     crash_at = Some(v.parse::<CrashPoint>().map_err(RuntimeError::Config)?);
+                }
+                "--checkpoint-every" => {
+                    let v = take_value("--checkpoint-every")?;
+                    let n = v.parse::<u64>().map_err(|_| {
+                        RuntimeError::Config(format!(
+                            "--checkpoint-every expects a non-negative integer, got {v:?}"
+                        ))
+                    })?;
+                    // 0 == disabled; any positive N is the cadence.
+                    checkpoint_every = (n != 0).then_some(n);
                 }
                 other => {
                     return Err(RuntimeError::Config(format!("unknown flag {other:?}")));
@@ -98,6 +122,7 @@ impl RuntimeConfig {
             content_root,
             mode,
             crash_at,
+            checkpoint_every,
         })
     }
 }
@@ -122,6 +147,46 @@ mod tests {
         assert_eq!(c.journal_path, PathBuf::from("/tmp/j.sqlite"));
         assert_eq!(c.content_root, PathBuf::from("/tmp/c"));
         assert_eq!(c.crash_at, Some(CrashPoint::PostCommitVtc));
+        // Checkpointing is on by default at the coarse cadence.
+        assert_eq!(c.checkpoint_every, Some(DEFAULT_CHECKPOINT_EVERY));
+    }
+
+    #[test]
+    fn checkpoint_every_parses_and_zero_disables() {
+        let on = RuntimeConfig::from_args([
+            "run",
+            "--journal",
+            "/tmp/j",
+            "--content",
+            "/tmp/c",
+            "--checkpoint-every",
+            "2",
+        ])
+        .unwrap();
+        assert_eq!(on.checkpoint_every, Some(2));
+
+        let off = RuntimeConfig::from_args([
+            "replay",
+            "--journal",
+            "/tmp/j",
+            "--content",
+            "/tmp/c",
+            "--checkpoint-every",
+            "0",
+        ])
+        .unwrap();
+        assert_eq!(off.checkpoint_every, None);
+
+        let bad = RuntimeConfig::from_args([
+            "run",
+            "--journal",
+            "/tmp/j",
+            "--content",
+            "/tmp/c",
+            "--checkpoint-every",
+            "notanumber",
+        ]);
+        assert!(matches!(bad, Err(RuntimeError::Config(_))));
     }
 
     #[test]

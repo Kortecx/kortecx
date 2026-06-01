@@ -51,6 +51,17 @@ fn paths() -> Paths {
 }
 
 fn invoke(mode: &str, p: &Paths, crash_at: Option<&str>) -> Output {
+    invoke_ck(mode, p, crash_at, None)
+}
+
+/// As [`invoke`], but also sets `--checkpoint-every <N>` when `checkpoint_every`
+/// is `Some` (M2.2b). `None` leaves the binary default cadence.
+fn invoke_ck(
+    mode: &str,
+    p: &Paths,
+    crash_at: Option<&str>,
+    checkpoint_every: Option<u64>,
+) -> Output {
     let mut cmd = Command::new(BIN);
     cmd.arg(mode)
         .arg("--journal")
@@ -60,7 +71,17 @@ fn invoke(mode: &str, p: &Paths, crash_at: Option<&str>) -> Output {
     if let Some(c) = crash_at {
         cmd.arg("--crash-at").arg(c);
     }
+    if let Some(n) = checkpoint_every {
+        cmd.arg("--checkpoint-every").arg(n.to_string());
+    }
     cmd.output().expect("spawn kx-runtime")
+}
+
+/// The checkpoint sidecar path for a journal (mirrors `checkpoint_io::sidecar_path`).
+fn sidecar_path(journal: &Path) -> PathBuf {
+    let mut s = journal.as_os_str().to_owned();
+    s.push(".ckpt");
+    PathBuf::from(s)
 }
 
 /// The leading whitespace-delimited token of stdout is the hex digest (both
@@ -255,4 +276,120 @@ fn clean_run_via_binary_completes() {
         stdout.contains("(8/8 committed)"),
         "clean run must commit all 8 Motes (6 declared + 2 materialized workers); got: {stdout}"
     );
+}
+
+// ---------------------------------------------------------------------------
+// M2.2b — crash-and-recover WITH the discardable checkpoint live (--checkpoint-every 2)
+//
+// A small cadence forces a checkpoint to be written *before* the crash, so the
+// fresh recovery process SEEDS from the sidecar and folds only the tail. The
+// exit-gate properties must hold exactly as without the checkpoint, and the
+// recovery must remain bit-identical — proven by the delete-the-sidecar
+// differential (a full fold of the same journal yields the same digest).
+// ---------------------------------------------------------------------------
+
+/// The checkpoint is captured AFTER the workflow Motes are registered, so its
+/// payload carries declared-but-uncommitted Motes — a shape the projection-level
+/// proptests never produce. This is matrix test **T1 + T7**.
+#[test]
+fn scenario_1_with_checkpoint_seeds_recovery_and_stays_bit_identical() {
+    let reference = clean_reference_digest();
+    let p = paths();
+
+    // Crash mid StageThenCommit with checkpointing every 2 entries: by the time
+    // the STC Mote runs, the PURE Mote's Proposed+Committed have been folded, so
+    // a checkpoint (with declared Motes in its payload) is already on disk.
+    let crashed = invoke_ck("run", &p, Some("pre-commit-stc"), Some(2));
+    assert_aborted(&crashed);
+    assert!(
+        sidecar_path(&p.journal).exists(),
+        "a checkpoint sidecar must have been written before the crash (cadence 2)"
+    );
+
+    // Restart: recovery SEEDS from the sidecar, then folds the tail + re-dispatches.
+    let replay = invoke_ck("replay", &p, None, Some(2));
+    let replay_digest = digest_of(&replay);
+
+    // (a) bit-identical committed set; (b) exactly-once; (c) cross-process digest.
+    assert_eq!(replay_digest, reference, "(a) seeded recovery == clean run");
+    assert_exactly_once(&p.journal);
+    let fresh = digest_of(&invoke("digest", &p, None));
+    assert_eq!(fresh, reference, "(c) cross-process replay digest");
+
+    // The delete-the-sidecar differential: a full fold of the SAME journal (no
+    // sidecar) yields the identical digest — the checkpoint changed *how much*
+    // was re-folded, never the outcome.
+    std::fs::remove_file(sidecar_path(&p.journal)).unwrap();
+    let no_sidecar = digest_of(&invoke("digest", &p, None));
+    assert_eq!(
+        no_sidecar, reference,
+        "recovery is bit-identical with or without the sidecar"
+    );
+}
+
+/// **T10** — the materializer (topology-shaper) recovery path with a checkpoint.
+/// Crash after the shaper + declared Motes commit (children pending) with the
+/// cadence forcing a sidecar that already contains the committed shaper decision
+/// and any materialized children at `seq <= offset`; recovery seeds them without
+/// re-firing the materializer and runs the still-pending children.
+#[test]
+fn scenario_3_shaper_with_checkpoint_seeds_and_replays_decision() {
+    let reference = clean_reference_digest();
+    let p = paths();
+
+    let crashed = invoke_ck("run", &p, Some("shaper-children-pending"), Some(2));
+    assert_aborted(&crashed);
+    assert!(
+        sidecar_path(&p.journal).exists(),
+        "a checkpoint sidecar must exist after 6 commits at cadence 2"
+    );
+
+    let replay = invoke_ck("replay", &p, None, Some(2));
+    let replay_digest = digest_of(&replay);
+    assert_eq!(
+        replay_digest, reference,
+        "(a) seeded shaper recovery replays the committed decision == clean run"
+    );
+    assert_exactly_once(&p.journal);
+    let fresh = digest_of(&invoke("digest", &p, None));
+    assert_eq!(fresh, reference, "(c) cross-process replay digest");
+
+    // The 2 previously-pending children materialized + committed on recovery.
+    let after = committed_counts(&p.journal);
+    assert_eq!(
+        after.len(),
+        8,
+        "recovery ran the 2 pending children (6 -> 8) without re-deciding the shaper"
+    );
+
+    // Delete-the-sidecar differential.
+    std::fs::remove_file(sidecar_path(&p.journal)).unwrap();
+    let no_sidecar = digest_of(&invoke("digest", &p, None));
+    assert_eq!(no_sidecar, reference, "bit-identical without the sidecar");
+}
+
+/// A corrupt sidecar is safely ignored end-to-end: recovery falls back to a full
+/// fold and completes bit-identically (matrix **T2** at the process boundary).
+#[test]
+fn corrupt_sidecar_recovers_via_full_fold() {
+    let reference = clean_reference_digest();
+    let p = paths();
+
+    // Crash to leave a journal mid-run, with a real sidecar on disk.
+    let crashed = invoke_ck("run", &p, Some("pre-commit-stc"), Some(2));
+    assert_aborted(&crashed);
+    let sidecar = sidecar_path(&p.journal);
+    assert!(sidecar.exists());
+
+    // Corrupt the sidecar: overwrite with garbage (fails from_bytes -> discarded).
+    std::fs::write(&sidecar, b"not-a-valid-checkpoint-envelope").unwrap();
+
+    // Recovery must still complete bit-identically (full fold).
+    let replay = invoke_ck("replay", &p, None, Some(2));
+    assert_eq!(
+        digest_of(&replay),
+        reference,
+        "corrupt sidecar -> safe full-fold recovery"
+    );
+    assert_exactly_once(&p.journal);
 }
