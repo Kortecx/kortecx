@@ -142,6 +142,7 @@ seam for how a Mote body runs.)
 
 | You want to understand… | Read |
 |---|---|
+| **How to author + run a workflow** | `cargo run -p kx-workflow --example author_a_workflow` |
 | The unit of work + identity | `kx-mote/src/{mote,id,def,ndclass,edge}.rs` |
 | The log + its entry kinds | `kx-journal/src/{lib,entry}.rs` |
 | Live state / the fold / recovery | `kx-projection/src/{lib,projection,state}.rs` |

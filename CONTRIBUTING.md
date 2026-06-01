@@ -35,8 +35,15 @@ cargo build --workspace
 cargo test  --workspace
 ```
 
-To exercise the core guarantee end to end, run the crash-and-replay demo in the
-[README](README.md#try-it).
+To see the authoring path end to end — author a workflow → compile to a Mote DAG
+→ run → fold the journal — run the worked example:
+
+```bash
+cargo run -p kx-workflow --example author_a_workflow
+```
+
+To exercise the core *guarantee* (exactly-once across a crash), run the
+crash-and-replay demo in the [README](README.md#try-it).
 
 ## The pre-merge gate (run it before you push)
 
