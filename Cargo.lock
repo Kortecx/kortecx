@@ -1331,6 +1331,7 @@ version = "0.0.1"
 dependencies = [
  "bincode",
  "blake3",
+ "criterion",
  "kx-content",
  "kx-critic-types",
  "kx-journal",

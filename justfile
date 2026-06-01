@@ -21,7 +21,7 @@ check: fmt-check clippy test
 # Exact mirror of the CI workflow's gates (in dependency order). Runs every
 # job .github/workflows/ci.yml runs in parallel, here sequentially. Modify
 # this recipe in lock-step with ci.yml.
-ci: fmt-check clippy test deny doc ffi-link check-reproducible
+ci: fmt-check clippy test deny doc ffi-link check-reproducible scale-smoke
 
 # Verify code is formatted per rustfmt.toml. Fails on any drift.
 fmt-check:
@@ -97,6 +97,18 @@ check-reproducible:
 # need network access.
 smoke-test-with-model:
     cargo test -p kx-llamacpp --features model-smoke-test -- --nocapture
+
+# ============================================================================
+# Scale / performance gate
+# ============================================================================
+
+# Scale smoke (M2.1 / D92 — the resume-availability invariant): fold a 25k+
+# Mote journal in RELEASE and assert the incremental children-index re-fold
+# stays ~linear (a super-linear resume is an outage, and resume IS the product).
+# `--release` is REQUIRED — in a debug build the differential oracle re-imposes
+# the O(n^2) full rebuild on every fold and the ratio assertion is skipped.
+scale-smoke:
+    cargo test -p kx-projection --release --test incremental_children_index -- --ignored --nocapture --test-threads=1
 
 # ============================================================================
 # Preflight diagnostic

@@ -160,16 +160,19 @@ impl Projection {
     /// workflow author may update parents before submission; the journal-side
     /// dedupe-by-key path is the authoritative arbiter for identity equality).
     pub fn register_mote(&mut self, reg: RegisterMote) {
-        let info = self.state.moteinfo_mut(&reg.mote_id);
-        info.declared = Some(DeclaredInfo {
+        let declared = DeclaredInfo {
             nd_class: reg.nd_class,
             effect_pattern: reg.effect_pattern,
             critic_for: reg.critic_for,
             is_topology_shaper: reg.is_topology_shaper,
             parents: reg.parents,
             warrant_ref: reg.warrant_ref,
-        });
-        self.state.rebuild_children_index();
+        };
+        // D92 / M2.1: incremental children-index update (was a full O(n)
+        // `rebuild_children_index`). `set_declared` captures the prior declared
+        // parent set before overwrite so a re-registration that changes parents
+        // removes the stale edges.
+        self.state.set_declared(reg.mote_id, declared);
     }
 
     /// Apply one journal entry. **Caller must invoke in `seq` order**; the fold is
@@ -204,6 +207,14 @@ impl Projection {
                 mote_def_hash,
                 ..
             } => {
+                // D92 / M2.1: capture the child's CURRENT effective parents
+                // (the edges it contributes to the index now) BEFORE setting
+                // `committed`, so the incremental re-index can diff old→new. For
+                // a Mote already declared this is the declared set (a no-op
+                // re-derive, declared keeps precedence); for a committed-without-
+                // declare Mote (pure recovery) it is empty and the committed
+                // parents are inserted fresh.
+                let old_effective = self.state.parents_of_id(mote_id);
                 let info = self.state.moteinfo_mut(mote_id);
                 if info.committed.is_some() {
                     return Err(ProjectionError::DuplicateCommitted(*mote_id));
@@ -218,10 +229,12 @@ impl Projection {
                     repudiated: false,
                 });
                 self.state.last_seq = self.state.last_seq.max(*seq);
-                // Rebuild children index since this Committed entry may introduce
-                // parent→child edges not previously visible (e.g., entry written
-                // for a Mote that wasn't pre-registered).
-                self.state.rebuild_children_index();
+                // D92 / M2.1: incrementally fold THIS Mote's edges into the
+                // reverse index (was a full O(n) `rebuild_children_index` per
+                // commit — the resume-availability O(n²) wall). Reads parents via
+                // `parents_of_id` (declared precedence + the same `to_parent_ref`
+                // filter as the rebuild) and diffs against `old_effective`.
+                self.state.index_committed(*mote_id, &old_effective);
 
                 // **P1.11 / D48 + D49 + PR 11.5 KG-1-close.** Topology
                 // materializer hook. If a materializer is wired AND the
