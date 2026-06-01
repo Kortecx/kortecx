@@ -373,14 +373,26 @@ fn wrong_run_checkpoint_falls_back() {
 /// length, and the seeded projection equals the full fold.
 #[test]
 fn reported_happy_resume_is_seeded_with_tail_len() {
-    let journal = build_journal(&[
-        TraceOp::Commit(1),
-        TraceOp::Commit(2),
-        TraceOp::Commit(3),
-        TraceOp::Commit(4),
-        TraceOp::Commit(5),
-    ]);
-    // Seed at offset 2; the tail (2, 5] is three entries.
+    // Build a journal that interleaves the M2.2c digest seal at the checkpoint
+    // frontier (exactly as the live runtime does): Commit(1), Commit(2), then the
+    // seal anchoring frontier 2, then Commit(3..5). The seal lands at seq 3, so
+    // the tail (2, 6] is four entries (the seal + three commits).
+    let journal = InMemoryJournal::new();
+    journal.append(committed_entry(1, &[])).unwrap();
+    journal.append(committed_entry(2, &[])).unwrap();
+    let seed_digest = seed_through(&journal, 2).state_digest();
+    journal
+        .append(JournalEntry::DigestSealed {
+            through_seq: 2,
+            state_digest: seed_digest,
+            seq: 0,
+        })
+        .unwrap();
+    journal.append(committed_entry(3, &[])).unwrap();
+    journal.append(committed_entry(4, &[])).unwrap();
+    journal.append(committed_entry(5, &[])).unwrap();
+
+    // Seed at offset 2; the tail (2, 6] is four entries (seal + three commits).
     let cp = seed_through(&journal, 2).fold_checkpoint();
     assert_eq!(cp.journal_offset(), 2);
     let (resumed, outcome) =
@@ -389,7 +401,7 @@ fn reported_happy_resume_is_seeded_with_tail_len() {
         outcome,
         CheckpointOutcome::Seeded {
             offset: 2,
-            tail_entries: 3
+            tail_entries: 4
         }
     );
     let full = Projection::from_journal(&journal).unwrap();
@@ -515,10 +527,32 @@ fn stub(fired: &Arc<Mutex<Vec<MoteId>>>) -> Box<StubMaterializer> {
 
 #[test]
 fn checkpoint_resume_with_materializer_matches_full_and_does_not_refire() {
-    // Journal: shaper commits (seq 1) -> materializes 101, 102; then each child
-    // commits (seq 2, 3) carrying its Control edge back to the shaper.
+    // Journal: shaper commits (seq 1) -> materializes 101, 102; the M2.2c seal
+    // anchoring frontier 1 lands at seq 2; then each child commits (seq 3, 4)
+    // carrying its Control edge back to the shaper. The seal is interleaved at the
+    // checkpoint frontier exactly as the live runtime emits it.
     let journal = InMemoryJournal::new();
     journal.append(committed_entry(100, &[])).unwrap();
+
+    // Seed at offset 1 (after the shaper commit + its materialization) and capture
+    // the checkpoint BEFORE the seal/children land.
+    let seed_fired = Arc::new(Mutex::new(Vec::new()));
+    let mut seed = Projection::with_materializer(stub(&seed_fired));
+    for e in journal.read_entries_by_seq(0..2).unwrap() {
+        seed.fold(&e).unwrap();
+    }
+    let cp = FoldCheckpoint::from_bytes(&seed.fold_checkpoint().to_bytes()).unwrap();
+    assert_eq!(cp.journal_offset(), 1);
+
+    // M2.2c: co-commit the journaled seal anchoring the seeded digest at frontier 1,
+    // then the tail child commits.
+    journal
+        .append(JournalEntry::DigestSealed {
+            through_seq: 1,
+            state_digest: seed.state_digest(),
+            seq: 0,
+        })
+        .unwrap();
     journal
         .append(committed_entry(101, &[pref(mid(100), EdgeMeta::control())]))
         .unwrap();
@@ -526,7 +560,8 @@ fn checkpoint_resume_with_materializer_matches_full_and_does_not_refire() {
         .append(committed_entry(102, &[pref(mid(100), EdgeMeta::control())]))
         .unwrap();
 
-    // Full materializer fold (the comparison target).
+    // Full materializer fold (the comparison target). The seal folds as a no-op, so
+    // the shaper is still materialized exactly once.
     let full_fired = Arc::new(Mutex::new(Vec::new()));
     let full = Projection::from_journal_with_checkpoint_with_materializer(
         &journal,
@@ -539,15 +574,6 @@ fn checkpoint_resume_with_materializer_matches_full_and_does_not_refire() {
         vec![mid(100)],
         "full fold materializes the shaper exactly once"
     );
-
-    // Seed at offset 1 (after the shaper commit + its materialization).
-    let seed_fired = Arc::new(Mutex::new(Vec::new()));
-    let mut seed = Projection::with_materializer(stub(&seed_fired));
-    for e in journal.read_entries_by_seq(0..2).unwrap() {
-        seed.fold(&e).unwrap();
-    }
-    let cp = FoldCheckpoint::from_bytes(&seed.fold_checkpoint().to_bytes()).unwrap();
-    assert_eq!(cp.journal_offset(), 1);
 
     // Resume: the ≤offset shaper must NOT be re-materialized; the tail child
     // commits fold against the seeded (already-declared) children.
@@ -660,19 +686,39 @@ fn scale_resume_is_bounded_by_live_state_not_churn() {
     }
     let total = journal.current_seq().unwrap();
 
-    // Baseline: a full cold re-fold of the whole churned log.
+    // Capture the head checkpoint at frontier `total` (the digest the seal anchors).
+    let pre_seal = Projection::from_journal(&journal).unwrap();
+    assert_eq!(pre_seal.committed_count(), M as usize);
+    let seed_digest = pre_seal.state_digest();
+    let bytes = pre_seal.fold_checkpoint().to_bytes();
+    drop(pre_seal);
+
+    // M2.2c: co-commit the journaled seal at the checkpoint frontier (as the runtime
+    // does) so the resume can anchor + seed; without it recovery full-folds.
+    journal
+        .append(JournalEntry::DigestSealed {
+            through_seq: total,
+            state_digest: seed_digest,
+            seq: 0,
+        })
+        .unwrap();
+
+    // Baseline: a full cold re-fold of the whole churned log (now `total + 1` entries).
     let t0 = Instant::now();
     let full = Projection::from_journal(&journal).unwrap();
     let full_us = t0.elapsed().as_secs_f64() * 1e6;
-    assert_eq!(full.committed_count(), M as usize);
 
-    // Resume: read one sidecar blob + decode live state + fold an empty tail.
-    let bytes = full.fold_checkpoint().to_bytes();
+    // Resume: read one sidecar blob + decode live state + verify the seal + fold the
+    // (1-entry: the seal) tail.
     let t1 = Instant::now();
     let cp = FoldCheckpoint::from_bytes(&bytes).unwrap();
-    let resumed = Projection::from_journal_with_checkpoint(&journal, Some(&cp)).unwrap();
+    let (resumed, outcome) =
+        Projection::from_journal_with_checkpoint_reported(&journal, Some(&cp)).unwrap();
     let resume_us = t1.elapsed().as_secs_f64() * 1e6;
-
+    assert!(
+        matches!(outcome, CheckpointOutcome::Seeded { offset, .. } if offset == total),
+        "resume must anchor on the journaled seal; got {outcome:?}"
+    );
     assert_eq!(
         resumed.state_digest(),
         full.state_digest(),
@@ -807,26 +853,48 @@ fn scale_resume_through_sqlite_is_bounded_by_live_state() {
     }
     let total = SqliteJournal::open(&jpath).unwrap().current_seq().unwrap();
 
-    // Capture the head checkpoint and persist it as an on-disk sidecar blob.
-    let full_for_cp = Projection::from_journal(&SqliteJournal::open(&jpath).unwrap()).unwrap();
-    let reference = full_for_cp.state_digest();
+    // Capture the head checkpoint at frontier `total` and persist it as an on-disk
+    // sidecar blob (`seed_digest` is the digest the M2.2c seal will anchor).
+    let pre_seal = Projection::from_journal(&SqliteJournal::open(&jpath).unwrap()).unwrap();
+    let seed_digest = pre_seal.state_digest();
     let sidecar = dir.path().join("scale.sqlite.ckpt");
-    std::fs::write(&sidecar, full_for_cp.fold_checkpoint().to_bytes()).unwrap();
-    drop(full_for_cp);
+    std::fs::write(&sidecar, pre_seal.fold_checkpoint().to_bytes()).unwrap();
+    drop(pre_seal);
 
-    // Baseline: a full cold re-fold reading every row from a freshly-opened journal.
+    // M2.2c: co-commit the journaled digest seal at the checkpoint frontier (exactly
+    // as the live runtime does right after writing the sidecar). Without it, recovery
+    // refuses to seed (`SealMissing`) and full-folds — so this also guards the
+    // unforgeability-gate-vs-perf interaction: an anchored seed MUST stay bounded by
+    // live state, not journal length.
+    SqliteJournal::open(&jpath)
+        .unwrap()
+        .append(JournalEntry::DigestSealed {
+            through_seq: total,
+            state_digest: seed_digest,
+            seq: 0,
+        })
+        .unwrap();
+
+    // Baseline: a full cold re-fold reading every row (now `total + 1`, incl. the seal).
     let t0 = Instant::now();
     let full = Projection::from_journal(&SqliteJournal::open(&jpath).unwrap()).unwrap();
     let full_us = t0.elapsed().as_secs_f64() * 1e6;
-    assert_eq!(full.state_digest(), reference);
+    let reference = full.state_digest();
 
-    // Seeded recovery: read the sidecar from disk + decode + fold the (empty) tail.
+    // Seeded recovery: read the sidecar, verify it against the journaled seal, fold
+    // the (1-entry: the seal) tail. The seed MUST anchor on the seal (`Seeded`).
     let t1 = Instant::now();
     let cp = FoldCheckpoint::from_bytes(&std::fs::read(&sidecar).unwrap()).unwrap();
-    let seeded =
-        Projection::from_journal_with_checkpoint(&SqliteJournal::open(&jpath).unwrap(), Some(&cp))
-            .unwrap();
+    let (seeded, outcome) = Projection::from_journal_with_checkpoint_reported(
+        &SqliteJournal::open(&jpath).unwrap(),
+        Some(&cp),
+    )
+    .unwrap();
     let seeded_us = t1.elapsed().as_secs_f64() * 1e6;
+    assert!(
+        matches!(outcome, CheckpointOutcome::Seeded { offset, .. } if offset == total),
+        "seeded recovery must anchor on the journaled seal; got {outcome:?}"
+    );
     assert_eq!(
         seeded.state_digest(),
         reference,

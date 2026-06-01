@@ -107,7 +107,24 @@ use smallvec::SmallVec;
 ///
 /// v4 readers refuse v3 files loudly (no in-place evolution; no production v3
 /// journals are retained across the bump per the corpus, acceptable).
-pub const JOURNAL_SCHEMA_VERSION: u16 = 4;
+///
+/// **v5 (M2.2c, D104) changes** vs v4:
+/// - New `DigestSealed` entry kind (=7) — the journaled digest seal that anchors
+///   the post-recovery `state_digest()` to the trust root, upgrading the M2.2b
+///   checkpoint-sidecar trust model from integrity to **unforgeability** (D103.1
+///   residual retired). Body layout: `through_seq(u64 LE) ‖ state_digest(32)` =
+///   40 bytes (total entry 114 bytes). The header `mote_id` slot carries the
+///   synthetic [`seal_root_id`] (anchored to the seq frontier, NOT a run id — a
+///   single-node run has no `instance_id` in scope); the `idempotency_key` slot
+///   is the all-zero sentinel.
+/// - `DigestSealed` does NOT participate in dedup-by-key (the dedup index stays
+///   `{1, 2, 4}`); it is an off-DAG metadata fact, never an identity input, never
+///   folded into the run-identity product digest. Strictly additive;
+///   `MAX_ENTRY_LEN` is unchanged.
+///
+/// v5 readers refuse v4 files loudly (no in-place evolution; no production v4
+/// journals are retained across the bump per the corpus, acceptable).
+pub const JOURNAL_SCHEMA_VERSION: u16 = 5;
 
 /// Fixed entry-header length in bytes (`journal-entry.md` §3).
 pub const HEADER_LEN: usize = 74;
@@ -176,11 +193,31 @@ pub const KIND_RUN_REGISTERED: u8 = 5;
 /// the `mote_id` slot carries the run's synthetic [`run_root_id`].
 pub const KIND_RUN_VERSIONS_RESOLVED: u8 = 6;
 
+/// `DigestSealed` entry-kind byte (NEW in v5; M2.2c, D103.2/D104).
+///
+/// The journaled digest seal: a `through_seq(u64 LE) ‖ state_digest(32)` fact
+/// asserting that a faithful fold of the journal through `through_seq` yields a
+/// projection whose `state_digest()` equals `state_digest`. Committed *in* the
+/// journal (the trust root), it anchors checkpoint-seeded recovery — a
+/// forged-but-self-consistent sidecar (the M2.2b D103.1 residual) cannot seed a
+/// wrong base state, because the seeded digest would not match the journaled
+/// seal, and forging the seal requires forging the journal itself. This upgrades
+/// the checkpoint trust model from integrity to **unforgeability**. Does NOT
+/// participate in dedup-by-key (the dedup index stays `{1, 2, 4}`); the header
+/// `idempotency_key` slot is the all-zero sentinel and the `mote_id` slot carries
+/// the synthetic [`seal_root_id`]. Off-DAG metadata: never an identity input,
+/// never folded into the run-identity product digest, never gates.
+pub const KIND_DIGEST_SEALED: u8 = 7;
+
 /// Length in bytes of a run's `instance_id` (the registered run nonce).
 pub const INSTANCE_ID_LEN: usize = 16;
 
 /// `RunRegistered` body length: `instance_id(16) + recipe_fingerprint(32) + ts(8)`.
 const RUN_REGISTERED_BODY_LEN: usize = INSTANCE_ID_LEN + 32 + 8;
+
+/// `DigestSealed` body length: `through_seq(u64 LE, 8) + state_digest(32)` = 40
+/// bytes (total entry = `HEADER_LEN` + 40 = 114 bytes).
+const DIGEST_SEALED_BODY_LEN: usize = 8 + 32;
 
 /// The kind of tool a capability resolved as, mirrored as a closed `u8`-tagged
 /// enum so `kx-journal` need not depend on `kx-tool-registry` (the journal must
@@ -626,6 +663,39 @@ pub enum JournalEntry {
         /// Journal-assigned sequence (0 until appended).
         seq: u64,
     },
+
+    /// The journaled digest seal (v5, M2.2c, D103.2/D104) — an off-DAG metadata
+    /// fact anchoring the recovered `state_digest()` to the trust root.
+    ///
+    /// Asserts: a faithful fold of the journal through `through_seq` yields a
+    /// projection whose `kx_projection::Projection::state_digest()` equals
+    /// `state_digest`. The runtime appends one at each checkpoint frontier `S`
+    /// (single-writer ⇒ it lands at `seq = S + 1`), computed *before* the seal is
+    /// appended so the sealed digest is the digest at frontier `S`. On recovery a
+    /// checkpoint-seeded base at offset `S` is trusted only if the journaled seal
+    /// at `through_seq == S` matches the seed's digest; a missing/mismatched seal
+    /// discards the checkpoint and full-folds (fail-closed). Forging a sidecar to
+    /// seed a wrong base state now requires forging the seal too, which requires
+    /// forging the journal — the trust root. This is what upgrades the M2.2b
+    /// checkpoint trust model from integrity to **unforgeability** (D103.1).
+    ///
+    /// **Body** = `through_seq(u64 LE) ‖ state_digest(32)` = 40 bytes. The header
+    /// `mote_id` slot carries the synthetic [`seal_root_id`] (anchored to the seq
+    /// frontier — a single-node run has no `instance_id`); the `idempotency_key`
+    /// slot is the all-zero sentinel; `nondeterminism` is the 0 sentinel (a seal
+    /// is not a Mote). Does NOT participate in dedup-by-key (the dedup index stays
+    /// `{1, 2, 4}`). Never an identity input; never folded into the run-identity
+    /// product digest; the projection folds it as a `last_seq`-only no-op.
+    DigestSealed {
+        /// The journal frontier this seal anchors — a faithful fold of `(0,
+        /// through_seq]` has `state_digest()` equal to `state_digest`.
+        through_seq: u64,
+        /// `kx_projection::Projection::state_digest()` at frontier `through_seq`.
+        state_digest: [u8; 32],
+        /// Journal-assigned sequence (0 until appended); `= through_seq + 1` for a
+        /// fresh seal under the single-writer discipline.
+        seq: u64,
+    },
 }
 
 /// The all-zero sentinel returned as the dedupe key of a `RunRegistered` entry,
@@ -647,6 +717,23 @@ pub fn run_root_id(instance_id: &[u8; INSTANCE_ID_LEN]) -> MoteId {
     MoteId::from_bytes(*hasher.finalize().as_bytes())
 }
 
+/// Derive the synthetic 32-byte "seal root" id that occupies a `DigestSealed`
+/// entry's header `mote_id` slot, from the sealed `through_seq` frontier.
+///
+/// Domain-separated (`"kx-digest-seal-root"`) from real Mote ids AND from
+/// [`run_root_id`] so it can never collide with either. The seal anchors to the
+/// seq frontier (not a run identity) because a single-node run has no journaled
+/// `instance_id`; binding the header to `through_seq` gives the same body-header
+/// consistency property `RunRegistered` has (the decoder re-derives it and
+/// rejects a mismatch). Derived locally in `kx-journal` (no executor dependency).
+#[must_use]
+pub fn seal_root_id(through_seq: u64) -> MoteId {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"kx-digest-seal-root");
+    hasher.update(&through_seq.to_le_bytes());
+    MoteId::from_bytes(*hasher.finalize().as_bytes())
+}
+
 impl JournalEntry {
     /// The entry's `seq` value.
     #[must_use]
@@ -658,7 +745,8 @@ impl JournalEntry {
             | Self::Failed { seq, .. }
             | Self::EffectStaged { seq, .. }
             | Self::RunRegistered { seq, .. }
-            | Self::RunVersionsResolved { seq, .. } => *seq,
+            | Self::RunVersionsResolved { seq, .. }
+            | Self::DigestSealed { seq, .. } => *seq,
         }
     }
 
@@ -681,9 +769,12 @@ impl JournalEntry {
             | Self::EffectStaged {
                 idempotency_key, ..
             } => idempotency_key,
-            // RunRegistered / RunVersionsResolved do not dedup; return the
-            // all-zero sentinel (kinds 5 and 6 are excluded from the dedup gate).
-            Self::RunRegistered { .. } | Self::RunVersionsResolved { .. } => &ZERO_IDEMPOTENCY_KEY,
+            // RunRegistered / RunVersionsResolved / DigestSealed do not dedup;
+            // return the all-zero sentinel (kinds 5, 6, 7 are excluded from the
+            // dedup gate).
+            Self::RunRegistered { .. }
+            | Self::RunVersionsResolved { .. }
+            | Self::DigestSealed { .. } => &ZERO_IDEMPOTENCY_KEY,
         }
     }
 
@@ -701,6 +792,7 @@ impl JournalEntry {
             Self::Repudiated { target_mote_id, .. } => *target_mote_id,
             Self::RunRegistered { instance_id, .. }
             | Self::RunVersionsResolved { instance_id, .. } => run_root_id(instance_id),
+            Self::DigestSealed { through_seq, .. } => seal_root_id(*through_seq),
         }
     }
 
@@ -715,6 +807,7 @@ impl JournalEntry {
             Self::EffectStaged { .. } => KIND_EFFECT_STAGED,
             Self::RunRegistered { .. } => KIND_RUN_REGISTERED,
             Self::RunVersionsResolved { .. } => KIND_RUN_VERSIONS_RESOLVED,
+            Self::DigestSealed { .. } => KIND_DIGEST_SEALED,
         }
     }
 }
@@ -749,7 +842,7 @@ pub enum DecodeError {
         got: usize,
     },
     /// The kind discriminant byte is not one of the known values
-    /// (Proposed=0 .. RunVersionsResolved=6).
+    /// (Proposed=0 .. DigestSealed=7).
     #[error("unknown kind discriminant: {0}")]
     UnknownKind(u8),
     /// The `nondeterminism` discriminant byte is not one of the three known values.
@@ -783,6 +876,11 @@ pub enum DecodeError {
     /// [`Self::RunRegisteredHeaderMismatch`]).
     #[error("RunVersionsResolved body-header run_root_id mismatch")]
     RunVersionsHeaderMismatch,
+    /// A `DigestSealed` entry's header `mote_id` slot does not equal
+    /// `seal_root_id(through_seq)` (v5 body-header consistency; mirrors
+    /// [`Self::RunRegisteredHeaderMismatch`]).
+    #[error("DigestSealed body-header seal_root_id mismatch")]
+    DigestSealedHeaderMismatch,
     /// A `RunVersionsResolved` entry's `resolved_kind_tag` byte is not one of the
     /// five known [`ResolvedKindTag`] values.
     #[error("unknown resolved_kind tag: {0}")]
@@ -903,6 +1001,12 @@ pub fn encode_entry(entry: &JournalEntry) -> Result<Vec<u8>, EncodeError> {
         JournalEntry::RunVersionsResolved {
             instance_id, seq, ..
         } => (run_root_id(instance_id), ZERO_IDEMPOTENCY_KEY, *seq, 0),
+        // v5 (M2.2c): the header `mote_id` slot carries the synthetic seal-root
+        // id derived from `through_seq`; all-zero idempotency key (kind 7 does
+        // not dedup), 0 nd (a seal is not a Mote).
+        JournalEntry::DigestSealed {
+            through_seq, seq, ..
+        } => (seal_root_id(*through_seq), ZERO_IDEMPOTENCY_KEY, *seq, 0),
     };
     out.extend_from_slice(mote_id_for_header.as_bytes());
     out.extend_from_slice(&idempotency_key);
@@ -1012,6 +1116,15 @@ pub fn encode_entry(entry: &JournalEntry) -> Result<Vec<u8>, EncodeError> {
             if out.len() > MAX_ENTRY_LEN {
                 return Err(EncodeError::RunVersionsTooLarge { got: out.len() });
             }
+        }
+        JournalEntry::DigestSealed {
+            through_seq,
+            state_digest,
+            ..
+        } => {
+            // v5 (M2.2c): body = through_seq(u64 LE) ‖ state_digest(32) = 40 bytes.
+            out.extend_from_slice(&through_seq.to_le_bytes());
+            out.extend_from_slice(state_digest);
         }
     }
 
@@ -1303,6 +1416,34 @@ pub fn decode_entry_with_def_hash(
                 seq,
             })
         }
+        KIND_DIGEST_SEALED => {
+            // v5 (M2.2c): body = through_seq(u64 LE) ‖ state_digest(32) = 40 bytes.
+            // Exact-length (mirrors RunRegistered's `!= RUN_REGISTERED_BODY_LEN`):
+            // over-length surfaces as BodyTooShort rather than a separate
+            // TrailingBytes path. Panic-free: every read is bounds-checked.
+            if body.len() != DIGEST_SEALED_BODY_LEN {
+                return Err(DecodeError::BodyTooShort {
+                    kind,
+                    got: body.len(),
+                    expected: DIGEST_SEALED_BODY_LEN,
+                });
+            }
+            let through_seq = u64::from_le_bytes(body[..8].try_into().expect("8 bytes"));
+            // Body-header consistency: the header `mote_id` slot MUST be the
+            // synthetic seal-root id derived from this `through_seq` (mirrors the
+            // RunRegistered body-vs-header check). A mismatch is a tampered or
+            // malformed seal — reject loudly (fail-closed).
+            if mote_id != seal_root_id(through_seq) {
+                return Err(DecodeError::DigestSealedHeaderMismatch);
+            }
+            let mut state_digest = [0u8; 32];
+            state_digest.copy_from_slice(&body[8..DIGEST_SEALED_BODY_LEN]);
+            Ok(JournalEntry::DigestSealed {
+                through_seq,
+                state_digest,
+                seq,
+            })
+        }
         other => Err(DecodeError::UnknownKind(other)),
     }
 }
@@ -1458,6 +1599,12 @@ mod tests {
                 instance_id: [3u8; INSTANCE_ID_LEN],
                 recipe_fingerprint: [4u8; 32],
                 ts: 0,
+                seq: 0,
+            },
+            // v5 (M2.2c): DigestSealed. Header carries the synthetic seal-root id.
+            JournalEntry::DigestSealed {
+                through_seq: 0,
+                state_digest: [5u8; 32],
                 seq: 0,
             },
         ];
@@ -1793,6 +1940,123 @@ mod tests {
         // blake3-of-16-bytes identity.
         let bare = MoteId::from_bytes(*blake3::hash(&a).as_bytes());
         assert_ne!(run_root_id(&a), bare);
+    }
+
+    // -------------------- v5 (M2.2c): DigestSealed --------------------
+
+    fn sample_digest_sealed(through_seq: u64) -> JournalEntry {
+        JournalEntry::DigestSealed {
+            through_seq,
+            state_digest: [0x5au8; 32],
+            seq: through_seq + 1,
+        }
+    }
+
+    #[test]
+    fn digest_sealed_total_length_is_114() {
+        // v5 (M2.2c): 74 header + 40 body (8 through_seq + 32 state_digest) = 114 bytes.
+        assert_eq!(encode_entry(&sample_digest_sealed(256)).unwrap().len(), 114);
+    }
+
+    #[test]
+    fn digest_sealed_round_trips() {
+        let e = JournalEntry::DigestSealed {
+            through_seq: 0xdead_beef,
+            state_digest: [0xa7u8; 32],
+            seq: 0xdead_beef + 1,
+        };
+        let bytes = encode_entry(&e).unwrap();
+        assert_eq!(decode_entry(&bytes).unwrap(), e);
+    }
+
+    #[test]
+    fn digest_sealed_header_carries_seal_root_id_and_zero_idempotency_key() {
+        let through_seq = 4096u64;
+        let e = sample_digest_sealed(through_seq);
+        let bytes = encode_entry(&e).unwrap();
+        // Header mote_id slot = seal_root_id(through_seq).
+        assert_eq!(&bytes[1..33], seal_root_id(through_seq).as_bytes());
+        // Header idempotency_key slot = the all-zero sentinel (kind 7 doesn't dedup).
+        assert_eq!(&bytes[33..65], &[0u8; 32]);
+        // The nondeterminism slot is the 0 sentinel (a seal is not a Mote).
+        assert_eq!(bytes[73], 0);
+        // The accessors agree.
+        assert_eq!(e.idempotency_key(), &[0u8; 32]);
+        assert_eq!(e.mote_id(), seal_root_id(through_seq));
+        assert_eq!(e.kind(), KIND_DIGEST_SEALED);
+    }
+
+    #[test]
+    fn decode_rejects_digest_sealed_body_too_short() {
+        let mut bytes = encode_entry(&sample_digest_sealed(7)).unwrap();
+        bytes.pop(); // drop one body byte
+        assert!(matches!(
+            decode_entry(&bytes),
+            Err(DecodeError::BodyTooShort {
+                kind: KIND_DIGEST_SEALED,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn decode_rejects_digest_sealed_trailing_bytes() {
+        let mut bytes = encode_entry(&sample_digest_sealed(7)).unwrap();
+        bytes.push(0xff); // over-length body
+                          // Exact-length check (mirrors RunRegistered) surfaces as BodyTooShort.
+        assert!(matches!(
+            decode_entry(&bytes),
+            Err(DecodeError::BodyTooShort {
+                kind: KIND_DIGEST_SEALED,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn decode_rejects_digest_sealed_header_body_mismatch() {
+        let mut bytes = encode_entry(&sample_digest_sealed(99)).unwrap();
+        // Corrupt the header mote_id slot so it no longer equals
+        // seal_root_id(through_seq) — a tampered/forged seal must be rejected.
+        bytes[1] ^= 0xff;
+        assert_eq!(
+            decode_entry(&bytes).unwrap_err(),
+            DecodeError::DigestSealedHeaderMismatch
+        );
+    }
+
+    #[test]
+    fn decode_rejects_digest_sealed_inconsistent_through_seq() {
+        // A seal whose through_seq is rewritten in the BODY (not the header) so the
+        // header seal-root no longer matches → fail-closed. (Flipping the body's
+        // through_seq breaks the seal_root_id(through_seq) == header invariant.)
+        let mut bytes = encode_entry(&sample_digest_sealed(1234)).unwrap();
+        bytes[HEADER_LEN] ^= 0xff; // first body byte = low byte of through_seq
+        assert_eq!(
+            decode_entry(&bytes).unwrap_err(),
+            DecodeError::DigestSealedHeaderMismatch
+        );
+    }
+
+    #[test]
+    fn seal_root_id_is_deterministic_and_domain_separated() {
+        // Deterministic.
+        assert_eq!(seal_root_id(10), seal_root_id(10));
+        // Distinct frontiers → distinct roots.
+        assert_ne!(seal_root_id(10), seal_root_id(11));
+        // Domain-separated from a bare blake3 of the seq bytes.
+        let bare = MoteId::from_bytes(*blake3::hash(&10u64.to_le_bytes()).as_bytes());
+        assert_ne!(seal_root_id(10), bare);
+        // Domain-separated from run_root_id: a seal root can never collide with a
+        // run root even if the byte inputs coincided.
+        let inst = [0u8; INSTANCE_ID_LEN];
+        assert_ne!(seal_root_id(0), run_root_id(&inst));
+    }
+
+    #[test]
+    fn digest_sealed_encode_is_deterministic() {
+        let e = sample_digest_sealed(2048);
+        assert_eq!(encode_entry(&e).unwrap(), encode_entry(&e).unwrap());
     }
 
     // -------------------- v4 (M1.2): RunVersionsResolved --------------------

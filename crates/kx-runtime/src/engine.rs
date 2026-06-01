@@ -21,7 +21,7 @@ use kx_executor::{
     redispatch_wm_mote, run_native_critic_mote, run_pure_mote, run_wm_mote, CommitProtocol,
     LocalResourceManager, MoteExecutor, StandardCommitProtocol, TestMoteExecutor,
 };
-use kx_journal::{Journal, SqliteJournal};
+use kx_journal::{Journal, JournalEntry, SqliteJournal};
 use kx_mote::{MoteId, NdClass, TopologyDecision};
 use kx_projection::{
     CheckpointOutcome, ContentStoreVerdicts, MoteState, Projection, VerdictLookup,
@@ -312,17 +312,18 @@ where
         maybe_checkpoint(
             config,
             &projection,
+            &journal,
             &sidecar_path,
             folded_through,
             &mut last_checkpoint_at,
         );
     }
 
-    // Graceful-completion checkpoint: leave a fresh sidecar so a restart of a
-    // completed/drained run seeds the full final state and folds an empty tail.
-    // Skipped if the cadence already captured this exact frontier.
+    // Graceful-completion checkpoint: leave a fresh sidecar + seal so a restart of
+    // a completed/drained run seeds the full final state and folds the (1-entry:
+    // the seal) tail. Skipped if the cadence already captured this exact frontier.
     if config.checkpoint_every.is_some() && folded_through > last_checkpoint_at {
-        write_checkpoint(&projection, &sidecar_path, folded_through);
+        write_checkpoint(&projection, &journal, &sidecar_path, folded_through);
     }
 
     let outcome = outcome(&runnable, &projection);
@@ -391,6 +392,7 @@ fn log_recovery(outcome: CheckpointOutcome, head: u64, elapsed: Duration) {
 fn maybe_checkpoint(
     config: &RuntimeConfig,
     projection: &Projection,
+    journal: &SqliteJournal,
     sidecar_path: &Path,
     folded_through: u64,
     last_checkpoint_at: &mut u64,
@@ -401,14 +403,29 @@ fn maybe_checkpoint(
     if folded_through == 0 || folded_through.saturating_sub(*last_checkpoint_at) < cadence {
         return;
     }
-    write_checkpoint(projection, sidecar_path, folded_through);
+    write_checkpoint(projection, journal, sidecar_path, folded_through);
     *last_checkpoint_at = folded_through;
 }
 
-/// Capture the projection's current `FoldCheckpoint` and persist it atomically.
-/// A write failure is **non-fatal** — the checkpoint is never authoritative, so a
-/// failed persist only means the next restart full-folds. Logged, never returned.
-fn write_checkpoint(projection: &Projection, sidecar_path: &Path, folded_through: u64) {
+/// Capture the projection's current `FoldCheckpoint`, persist it atomically, then
+/// (M2.2c) co-commit a journaled `DigestSealed` seal at the same frontier.
+///
+/// **Order matters: sidecar first, then seal.** A crash between them leaves a
+/// sidecar with no anchoring seal → recovery discards it (`SealMissing`) and
+/// full-folds — never the reverse. Both writes are **non-fatal**: the checkpoint
+/// is never authoritative, and an orphan/absent seal only costs a slower restart.
+///
+/// The seal records `projection.state_digest()` (== `blake3(checkpoint payload)`)
+/// at frontier `folded_through`, committed *in* the journal (the trust root), so a
+/// forged-but-self-consistent sidecar cannot seed a wrong base state on restart
+/// (D103.1 → unforgeable; M2.2c). The single-writer discipline lands the seal at
+/// `seq = folded_through + 1`, where recovery's `journal_seal_at` looks for it.
+fn write_checkpoint(
+    projection: &Projection,
+    journal: &SqliteJournal,
+    sidecar_path: &Path,
+    folded_through: u64,
+) {
     let bytes = projection.fold_checkpoint().to_bytes();
     match checkpoint_io::write_atomic(sidecar_path, &bytes) {
         Ok(()) => tracing::debug!(
@@ -416,10 +433,32 @@ fn write_checkpoint(projection: &Projection, sidecar_path: &Path, folded_through
             bytes = bytes.len(),
             "checkpoint persisted"
         ),
+        Err(error) => {
+            tracing::warn!(
+                through = folded_through,
+                %error,
+                "checkpoint persist failed (continuing; recovery falls back to full fold)"
+            );
+            // No sidecar → a seal would anchor nothing. Skip it.
+            return;
+        }
+    }
+    // M2.2c: anchor the sidecar to the trust root.
+    let seal = JournalEntry::DigestSealed {
+        through_seq: folded_through,
+        state_digest: projection.state_digest(),
+        seq: 0,
+    };
+    match journal.append(seal) {
+        Ok(sealed) => tracing::debug!(
+            through = folded_through,
+            seq = sealed.seq(),
+            "digest seal committed"
+        ),
         Err(error) => tracing::warn!(
             through = folded_through,
             %error,
-            "checkpoint persist failed (continuing; recovery falls back to full fold)"
+            "digest seal append failed (continuing; recovery falls back to full fold)"
         ),
     }
 }

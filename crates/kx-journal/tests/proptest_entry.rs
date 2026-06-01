@@ -233,6 +233,20 @@ fn arb_run_versions_resolved() -> impl Strategy<Value = JournalEntry> {
         })
 }
 
+/// **v5 (M2.2c): DigestSealed strategy.** `through_seq` is the sealed frontier;
+/// `state_digest` is a 32-byte blake3 digest; `seq` is the journal-assigned seq
+/// (`= through_seq + 1` in practice, but the encoding is independent of that, so
+/// the strategy ranges freely to exercise the wire format).
+fn arb_digest_sealed() -> impl Strategy<Value = JournalEntry> {
+    (any::<u64>(), arb_byte_array_32(), any::<u64>()).prop_map(
+        |(through_seq, state_digest, seq)| JournalEntry::DigestSealed {
+            through_seq,
+            state_digest,
+            seq,
+        },
+    )
+}
+
 /// **v2 (PR 7): EffectStaged strategy.** Header-only; no body fields.
 fn arb_effect_staged() -> impl Strategy<Value = JournalEntry> {
     (arb_mote_id(), arb_byte_array_32(), any::<u64>()).prop_map(
@@ -374,6 +388,24 @@ proptest! {
             bytes.len(),
             MAX_ENTRY_LEN
         );
+    }
+
+    // **v5 (M2.2c)** — encode/decode round-trip for DigestSealed entries.
+    // Fixed 114-byte size (74 header + 40 body).
+    #[test]
+    fn prop_digest_sealed_round_trip(entry in arb_digest_sealed()) {
+        let bytes = encode_entry(&entry).expect("encode");
+        prop_assert_eq!(bytes.len(), 114);
+        let decoded = decode_entry(&bytes).expect("decode");
+        prop_assert_eq!(decoded, entry);
+    }
+
+    // **v5 (M2.2c)** — encoding determinism for DigestSealed (byte-determinism / I1.c).
+    #[test]
+    fn prop_encoding_is_deterministic_digest_sealed(entry in arb_digest_sealed()) {
+        let a = encode_entry(&entry).expect("encode a");
+        let b = encode_entry(&entry).expect("encode b");
+        prop_assert_eq!(a, b);
     }
 
     // **v4 (M1.2)** — encode/decode round-trip for RunVersionsResolved entries

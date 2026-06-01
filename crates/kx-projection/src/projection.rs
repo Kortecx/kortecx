@@ -160,11 +160,12 @@ impl Projection {
     /// **Fail-safe.** The checkpoint is *never authoritative* — on any anomaly
     /// (failed integrity check, unsupported version/codec, decode failure, an
     /// offset past the journal head, an encoded `last_seq` that disagrees with the
-    /// offset, or a run-id that does not match the journal's `RunRegistered`) this
-    /// silently **discards the checkpoint and runs the full fold**. Passing
-    /// `None` is always a full fold. The result is bit-identical to
-    /// [`Self::from_journal`] either way — the checkpoint only changes *how much*
-    /// is re-folded, never the outcome.
+    /// offset, a run-id that does not match the journal's `RunRegistered`, or —
+    /// M2.2c — a seeded digest that is not anchored by a matching journaled
+    /// `DigestSealed` seal) this silently **discards the checkpoint and runs the
+    /// full fold**. Passing `None` is always a full fold. The result is
+    /// bit-identical to [`Self::from_journal`] either way — the checkpoint only
+    /// changes *how much* is re-folded, never the outcome.
     pub fn from_journal_with_checkpoint<J: Journal>(
         journal: &J,
         checkpoint: Option<&FoldCheckpoint>,
@@ -287,7 +288,51 @@ impl Projection {
                 }
             }
         }
+        // (6) **M2.2c (D103.2) — unforgeability anchor.** The seeded state's
+        // digest MUST equal a `state_digest` journaled IN the trust root. The
+        // seed's digest at frontier `S = cp.journal_offset()` (== `state.last_seq`,
+        // gate 4) is `blake3(payload)` (`payload_state_digest`) — the canonical
+        // encoding the writer also sealed; no re-encode of the decoded state, and
+        // it is `last_seq`-correct because the payload was captured at frontier S.
+        // We compare it to the `DigestSealed{through_seq == S}` the writer
+        // co-committed at `S + 1`. A missing or mismatched seal discards the
+        // checkpoint and full-folds — a forged-but-self-consistent sidecar (the
+        // D103.1 residual) cannot seed a wrong base state, because forging the seal
+        // requires forging the journal. Fail-closed; recovery is bit-identical to
+        // a full fold either way.
+        let offset = cp.journal_offset();
+        match Self::journal_seal_at(journal, offset)? {
+            None => return Ok(Err(FullFoldReason::SealMissing)),
+            Some(sealed_digest) => {
+                if sealed_digest != cp.payload_state_digest() {
+                    return Ok(Err(FullFoldReason::SealMismatch));
+                }
+            }
+        }
         Ok(Ok(state))
+    }
+
+    /// The `state_digest` journaled by a `DigestSealed{through_seq == through}`
+    /// seal, if one is present at `seq = through + 1` (where the single-writer
+    /// runtime co-commits it with the checkpoint at frontier `through`). `None`
+    /// if no matching seal is there. Used by the M2.2c unforgeability gate.
+    fn journal_seal_at<J: Journal>(
+        journal: &J,
+        through: u64,
+    ) -> Result<Option<[u8; 32]>, ProjectionError> {
+        for entry in journal.read_entries_by_seq((through + 1)..(through + 2))? {
+            if let JournalEntry::DigestSealed {
+                through_seq,
+                state_digest,
+                ..
+            } = entry
+            {
+                if through_seq == through {
+                    return Ok(Some(state_digest));
+                }
+            }
+        }
+        Ok(None)
     }
 
     /// The journal's registered run instance id, read from the `RunRegistered`
@@ -473,20 +518,28 @@ impl Projection {
                 self.state.last_seq = self.state.last_seq.max(*seq);
             }
             // Off-DAG run-metadata facts (extracted to keep `fold` under the
-            // line budget): both record an O(1) field and NEVER touch
+            // line budget): each records an O(1) field and NEVER touches
             // `rebuild_children_index` (the per-mutation O(n²) D92 path).
-            JournalEntry::RunRegistered { .. } | JournalEntry::RunVersionsResolved { .. } => {
+            // `DigestSealed` (M2.2c) is a pure `last_seq`-only frontier advance —
+            // it names no Mote, registers no `MoteInfo`, and is verified at
+            // recovery (in `try_seed_state`), never materialized into state.
+            JournalEntry::RunRegistered { .. }
+            | JournalEntry::RunVersionsResolved { .. }
+            | JournalEntry::DigestSealed { .. } => {
                 self.fold_run_metadata(entry);
             }
         }
         Ok(prev)
     }
 
-    /// Fold an off-DAG run-metadata fact (`RunRegistered` / `RunVersionsResolved`).
+    /// Fold an off-DAG run-metadata fact (`RunRegistered` / `RunVersionsResolved`
+    /// / `DigestSealed`).
     ///
-    /// Both name no Mote, so this registers NO `MoteInfo` and does NOT call
-    /// `rebuild_children_index` — O(1), off the Mote-DAG. The data is **metadata,
-    /// never identity**: no scheduling/identity/digest decision reads it.
+    /// None of these name a Mote, so this registers NO `MoteInfo` and does NOT
+    /// call `rebuild_children_index` — O(1), off the Mote-DAG. The data is
+    /// **metadata, never identity**: no scheduling/identity/digest decision reads
+    /// it (`DigestSealed` in particular is invisible to the run-identity product
+    /// digest, which folds only `Committed` Motes).
     fn fold_run_metadata(&mut self, entry: &JournalEntry) {
         match entry {
             JournalEntry::RunRegistered {
@@ -522,6 +575,13 @@ impl Projection {
                         model_id: model_id.clone(),
                         capability: capability.clone(),
                     });
+                self.state.last_seq = self.state.last_seq.max(*seq);
+            }
+            JournalEntry::DigestSealed { seq, .. } => {
+                // v5 (M2.2c, D103.2). A pure frontier advance: the seal writes
+                // NOTHING into `State` (so it never enters `state_digest()` — that
+                // would be a chicken-and-egg cycle — and never the product digest).
+                // Its digest is verified at recovery in `try_seed_state`, not here.
                 self.state.last_seq = self.state.last_seq.max(*seq);
             }
             _ => unreachable!("fold_run_metadata called with a non-run-metadata kind"),

@@ -393,3 +393,83 @@ fn corrupt_sidecar_recovers_via_full_fold() {
     );
     assert_exactly_once(&p.journal);
 }
+
+/// **The D103.1 attack — caught by M2.2c journaled seals (process boundary).**
+///
+/// Unlike a *corrupt* sidecar (garbage that fails `from_bytes`), a *forged-but-
+/// self-consistent* sidecar is a VALID checkpoint envelope (passes `verify()` +
+/// `decode`) that seeds a **wrong base state** at the genuine frontier. Pre-M2.2c
+/// it slipped through all the seed gates and recovery diverged. Now the runtime
+/// has co-committed a `DigestSealed` anchoring the genuine state digest *in the
+/// journal*, so the forged seed fails the seal gate (`SealMismatch`) and recovery
+/// falls back to the trust root — bit-identical to the clean run.
+#[test]
+fn forged_sidecar_is_rejected_by_the_journaled_seal() {
+    use kx_content::ContentRef;
+    use kx_journal::InMemoryJournal;
+    use kx_mote::{MoteDefHash, NdClass};
+    use kx_projection::Projection;
+    use smallvec::SmallVec;
+
+    let reference = clean_reference_digest();
+    let p = paths();
+
+    // A clean, completed run leaves a genuine sidecar + a journaled seal anchoring
+    // the final frontier S (the seal sits at S + 1, the journal head).
+    let done = invoke_ck("run", &p, None, Some(2));
+    assert!(done.status.success(), "clean run must complete");
+    let genuine = kx_runtime::checkpoint_io::read_checkpoint(&sidecar_path(&p.journal))
+        .expect("a genuine sidecar after a completed run");
+    let offset = genuine.journal_offset();
+    assert!(offset >= 8, "the canonical run folds through ≥ 8 entries");
+
+    // Forge a self-consistent sidecar that decodes to a DIFFERENT state at the SAME
+    // frontier: S commits of unrelated, distinct motes → last_seq == S, valid
+    // envelope, no run-registration (so the wrong-run gate is skipped). Gates 1–5
+    // all pass; only the M2.2c seal gate (6) can catch it.
+    let wrong = InMemoryJournal::new();
+    for i in 0..offset {
+        let mut id = [0u8; 32];
+        id[..8].copy_from_slice(&i.to_le_bytes());
+        id[31] = 0xF0; // disjoint from any canonical mote id
+        let mote_id = MoteId::from_bytes(id);
+        wrong
+            .append(JournalEntry::Committed {
+                mote_id,
+                idempotency_key: id,
+                seq: 0,
+                nondeterminism: NdClass::Pure,
+                result_ref: ContentRef::from_bytes([0xEE; 32]),
+                parents: SmallVec::new(),
+                warrant_ref: ContentRef::from_bytes([0xaa; 32]),
+                mote_def_hash: MoteDefHash::from_bytes([1u8; 32]),
+            })
+            .unwrap();
+    }
+    let mut forged = Projection::new();
+    for e in wrong.read_entries_by_seq(0..(offset + 1)).unwrap() {
+        forged.fold(&e).unwrap();
+    }
+    let forged_cp = forged.fold_checkpoint();
+    assert_eq!(
+        forged_cp.journal_offset(),
+        offset,
+        "the forged frontier matches the genuine one (passes the offset gates)"
+    );
+    assert!(
+        forged_cp.verify(),
+        "the forged sidecar is internally self-consistent (a valid envelope)"
+    );
+
+    // Overwrite the genuine sidecar with the forgery; a seeding replay must reject
+    // it via the seal and full-fold to the genuine result.
+    std::fs::write(sidecar_path(&p.journal), forged_cp.to_bytes()).unwrap();
+    let replay = invoke_ck("replay", &p, None, Some(2));
+    assert_eq!(
+        digest_of(&replay),
+        reference,
+        "the forged sidecar is rejected by the journaled seal (SealMismatch) → \
+         recovery full-folds the trust root and reproduces the clean run"
+    );
+    assert_exactly_once(&p.journal);
+}

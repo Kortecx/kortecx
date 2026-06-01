@@ -257,7 +257,8 @@ fn set_seq(entry: &mut JournalEntry, new_seq: u64) {
         | JournalEntry::Failed { seq, .. }
         | JournalEntry::EffectStaged { seq, .. }
         | JournalEntry::RunRegistered { seq, .. }
-        | JournalEntry::RunVersionsResolved { seq, .. } => *seq = new_seq,
+        | JournalEntry::RunVersionsResolved { seq, .. }
+        | JournalEntry::DigestSealed { seq, .. } => *seq = new_seq,
     }
 }
 
@@ -299,12 +300,13 @@ fn obligation_13_schema_version_mismatch_loud_refusal() {
     }
 }
 
-/// M1.2 (D79): pin the schema version so the v3→v4 bump (the new
-/// `RunVersionsResolved` kind) is an intentional, reviewable change — a future
-/// edit that touches the entry encoding must bump this in lock-step.
+/// M2.2c (D103.2/D104): pin the schema version so the v4→v5 bump (the new
+/// `DigestSealed` kind) is an intentional, reviewable change — a future edit that
+/// touches the entry encoding must bump this in lock-step. (Prior bumps: v3→v4
+/// added `RunVersionsResolved`, M1.2/D79.)
 #[test]
-fn schema_version_is_v4() {
-    assert_eq!(JOURNAL_SCHEMA_VERSION, 4);
+fn schema_version_is_v5() {
+    assert_eq!(JOURNAL_SCHEMA_VERSION, 5);
 }
 
 // ---------------------------------------------------------------------------
