@@ -7,6 +7,7 @@ use kx_journal::{Journal, JournalEntry};
 use kx_mote::{EdgeMeta, MoteId, NdClass};
 use smallvec::SmallVec;
 
+use crate::checkpoint::FoldCheckpoint;
 use crate::enums::{AnomalyKind, MoteState, PromotionState};
 use crate::errors::ProjectionError;
 use crate::helpers::{promotion_state_impl, ready_set_impl, transitive_consumers_impl};
@@ -150,6 +151,128 @@ impl Projection {
             p.fold(&entry)?;
         }
         Ok(p)
+    }
+
+    /// Cold recovery that **resumes from a discardable [`FoldCheckpoint`]** when
+    /// one is usable (D92(b), M2.2): seed the folded state from the checkpoint and
+    /// fold only the tail `(checkpoint_offset, current]` instead of `(0, current]`.
+    ///
+    /// **Fail-safe.** The checkpoint is *never authoritative* — on any anomaly
+    /// (failed integrity check, unsupported version/codec, decode failure, an
+    /// offset past the journal head, an encoded `last_seq` that disagrees with the
+    /// offset, or a run-id that does not match the journal's `RunRegistered`) this
+    /// silently **discards the checkpoint and runs the full fold**. Passing
+    /// `None` is always a full fold. The result is bit-identical to
+    /// [`Self::from_journal`] either way — the checkpoint only changes *how much*
+    /// is re-folded, never the outcome.
+    pub fn from_journal_with_checkpoint<J: Journal>(
+        journal: &J,
+        checkpoint: Option<&FoldCheckpoint>,
+    ) -> Result<Self, ProjectionError> {
+        Self::build_from_journal(journal, checkpoint, None)
+    }
+
+    /// The materializer-wired counterpart of [`Self::from_journal_with_checkpoint`]
+    /// (the cold-re-fold equivalent of [`Self::from_journal_with_materializer`]).
+    ///
+    /// On a checkpoint hit the materialized children committed at `seq ≤ offset`
+    /// are restored from the seeded state; the materializer fires **only** for
+    /// shaper commits in the tail `(offset, current]`, so no child is
+    /// re-materialized. On any anomaly it falls back to a full
+    /// [`Self::from_journal_with_materializer`].
+    pub fn from_journal_with_checkpoint_with_materializer<J: Journal>(
+        journal: &J,
+        materializer: Box<dyn TopologyMaterializer>,
+        checkpoint: Option<&FoldCheckpoint>,
+    ) -> Result<Self, ProjectionError> {
+        Self::build_from_journal(journal, checkpoint, Some(materializer))
+    }
+
+    /// Shared body for the checkpoint-aware cold-recovery entry points: try to
+    /// seed from the checkpoint, then fold the remaining tail; fall back to a
+    /// full fold (`start_exclusive = 0`) when the checkpoint is unusable.
+    fn build_from_journal<J: Journal>(
+        journal: &J,
+        checkpoint: Option<&FoldCheckpoint>,
+        materializer: Option<Box<dyn TopologyMaterializer>>,
+    ) -> Result<Self, ProjectionError> {
+        let current = journal.current_seq()?;
+        let seed = match checkpoint {
+            Some(cp) => Self::try_seed_state(journal, cp, current)?,
+            None => None,
+        };
+        let (mut p, start_exclusive) = match seed {
+            Some(state) => {
+                let offset = state.last_seq;
+                (
+                    Self {
+                        state,
+                        materializer,
+                    },
+                    offset,
+                )
+            }
+            None => (
+                Self {
+                    state: State::default(),
+                    materializer,
+                },
+                0,
+            ),
+        };
+        for entry in journal.read_entries_by_seq((start_exclusive + 1)..(current + 1))? {
+            p.fold(&entry)?;
+        }
+        Ok(p)
+    }
+
+    /// Validate a checkpoint against the journal and decode its seeded state, or
+    /// return `Ok(None)` to signal "discard and full-fold". Journal I/O errors
+    /// propagate; every *checkpoint* defect is a graceful `None`.
+    fn try_seed_state<J: Journal>(
+        journal: &J,
+        cp: &FoldCheckpoint,
+        current: u64,
+    ) -> Result<Option<State>, ProjectionError> {
+        // (1) integrity — the envelope digest must verify.
+        if !cp.verify() {
+            return Ok(None);
+        }
+        // (2) the offset must not run past the journal head (stale / truncated log).
+        if cp.journal_offset() > current {
+            return Ok(None);
+        }
+        // (3) decode the payload; a malformed/hostile blob is discarded.
+        let Ok(state) = cp.decode_state() else {
+            return Ok(None);
+        };
+        // (4) the encoded frontier must equal the declared offset (consistency).
+        if state.last_seq != cp.journal_offset() {
+            return Ok(None);
+        }
+        // (5) wrong-run guard (best effort): if both name a run, the ids must match.
+        if let Some(reg) = state.run_registration {
+            if let Some(journal_instance) = Self::journal_run_instance(journal)? {
+                if journal_instance != reg.instance_id {
+                    return Ok(None);
+                }
+            }
+        }
+        Ok(Some(state))
+    }
+
+    /// The journal's registered run instance id, read from the `RunRegistered`
+    /// fact (M1.1 establishes it at `seq = 1`). `None` if the journal carries no
+    /// such fact (e.g. a test/legacy log) — then the wrong-run guard is skipped.
+    fn journal_run_instance<J: Journal>(
+        journal: &J,
+    ) -> Result<Option<[u8; kx_journal::INSTANCE_ID_LEN]>, ProjectionError> {
+        for entry in journal.read_entries_by_seq(1..2)? {
+            if let JournalEntry::RunRegistered { instance_id, .. } = entry {
+                return Ok(Some(instance_id));
+            }
+        }
+        Ok(None)
     }
 
     /// Register a workflow-declared Mote.
@@ -405,6 +528,41 @@ impl Projection {
         Snapshot {
             state: self.state.clone(),
         }
+    }
+
+    /// The canonical **full-state digest** of the current fold — a deterministic
+    /// blake3 over a canonical encoding of the entire projection state (every
+    /// Mote's declared/committed/flag fields, the children index, `last_seq`, and
+    /// the run metadata).
+    ///
+    /// This is the digest a [`FoldCheckpoint`] embeds, and the digest the roadmap
+    /// journaled seal (M2.2c) will store + verify recovery against. It is
+    /// **distinct** from `kx-runtime`'s committed-facts *product* digest (the
+    /// canonical run-identity `a6b5c679…`): this one covers the *whole* state for
+    /// recovery integrity, never run identity. Exact-equality only (SN-8).
+    #[must_use]
+    pub fn state_digest(&self) -> [u8; 32] {
+        crate::checkpoint::state_content_digest(&self.state)
+    }
+
+    /// Capture a discardable [`FoldCheckpoint`] of the current fold (D92(b), M2.2).
+    ///
+    /// **Caller invariant:** only checkpoint a projection that has been folded
+    /// **contiguously over `[1, last_seq]`** (no skipped `seq ≤ last_seq`, no entry
+    /// `seq > last_seq` applied). [`Self::from_journal`] /
+    /// [`Self::from_journal_with_materializer`] always satisfy this; an incremental
+    /// caller must checkpoint only at a drained frontier. The checkpoint's
+    /// `journal_offset` is `last_seq`; recovery folds `(offset, current]` on top.
+    #[must_use]
+    pub fn fold_checkpoint(&self) -> FoldCheckpoint {
+        let cp = FoldCheckpoint::from_state(&self.state);
+        // Capture-time oracle (compiled out in release): the checkpoint must
+        // decode back to this exact state.
+        debug_assert!(
+            matches!(cp.decode_state(), Ok(s) if s == self.state),
+            "fold_checkpoint round-trip diverged from the source State"
+        );
+        cp
     }
 
     // ----- Read API (delegates to State; same surface as Snapshot) -----

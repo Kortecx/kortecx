@@ -13,7 +13,7 @@ use smallvec::SmallVec;
 
 use crate::enums::{AnomalyKind, MoteState};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct CommittedInfo {
     pub(crate) seq: u64,
     pub(crate) result_ref: ContentRef,
@@ -44,7 +44,7 @@ pub(crate) struct CommittedInfo {
 // the per-flag invariants the fold + state_of_id depend on. Each flag's
 // reset/no-reset semantics is named at its field-level doc comment.
 #[allow(clippy::struct_excessive_bools)]
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct MoteInfo {
     /// Workflow-author-declared properties (when registered).
     pub(crate) declared: Option<DeclaredInfo>,
@@ -76,7 +76,7 @@ pub(crate) struct MoteInfo {
     pub(crate) inconsistent: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 #[allow(dead_code)]
 // `nd_class`, `effect_pattern`, `critic_for`, `is_topology_shaper`,
 // `warrant_ref` are stored at registration but unread in P1.5. P1.9 (the
@@ -121,7 +121,7 @@ pub struct RunResolvedVersions {
     pub capability: Option<kx_journal::ResolvedCapabilityRecord>,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct State {
     /// Per-MoteId info — declared, committed, and any in-flight state.
     pub(crate) motes: BTreeMap<MoteId, MoteInfo>,
