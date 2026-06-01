@@ -13,6 +13,11 @@
 
 //! # kx-proto — kortecx P2.1 gRPC schema (the distribution boundary)
 //!
+//! > **Phase: distributed (P2/P3).** The gRPC schema for the multi-node control
+//! > plane — wiring on the same trait seams as the single-node core, *not* a
+//! > rewrite of it. You do **not** need this crate to build, run, or understand
+//! > single-node kortecx (`kx-runtime`). See `ARCHITECTURE.md`.
+//!
 //! tonic/prost gRPC schema for the coordinator/worker control plane: **submit
 //! Mote**, **report commit**, **heartbeat**, **register worker**. This is the
 //! first step of P2 (coordinator/worker distribution) and the **cross-language
