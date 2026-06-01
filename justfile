@@ -77,6 +77,14 @@ ffi-link:
 check-reproducible:
     #!/usr/bin/env bash
     set -euo pipefail
+    # I1.c is path- + metadata-sensitive: without pinned crate metadata and a
+    # stripped absolute workspace path, two clean builds embed path-dependent
+    # bytes and differ. CI exports these in $GITHUB_ENV before calling this
+    # recipe; locally we DEFAULT them (only if unset) so `just ci` / `just
+    # check-reproducible` reproduce CI's result without a manual export. CI's
+    # own value (using $GITHUB_WORKSPACE) is preserved when already set.
+    : "${RUSTFLAGS:=--remap-path-prefix={{justfile_directory()}}= -Cmetadata=kortecx-v0}"
+    export RUSTFLAGS
     cargo clean
     cargo build --release --workspace
     find target/release -maxdepth 1 -type f \( -name "*.rlib" -o -name "*.a" \) -print0 \
