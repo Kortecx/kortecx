@@ -1,6 +1,16 @@
-//! Submission-time refusal predicates (R-1..R-9 + R-8b + R-10 + R-14 + R-15 +
-//! D66 + `ValidatorTypeError` + `AttemptedWiden`) per
-//! `docs/design/validate-then-commit.md` §7 + the D66 fail-closed gate (M1.3).
+//! Submission-time refusal predicates — the gate that refuses an UNSAFE
+//! world-mutating construction *before* anything dispatches.
+//!
+//! **Why refuse at submit:** a world-mutating step the runtime cannot make
+//! exactly-once is a step it cannot guarantee — so it is rejected up front rather
+//! than mid-run, after a partial effect. Each predicate guards one such hazard:
+//! a world-mutating step with no idempotency-supporting tool (`R1NoIdempotentTool`),
+//! no validating critic where one is required (`R2NoCritic`), an ill-formed
+//! critic/shaper relationship (`R4`–`R9`, `R8`/`R8b`/`R14`), an at-least-once tool
+//! used without explicit operator consent (`R10`), or an unresolvable /
+//! privilege-exceeding tool grant (`D66UnresolvableWorldMutatingTools`). The
+//! `#[error(...)]` message on each variant states the exact trigger and why it is
+//! unsafe.
 //!
 //! Each refusal results in a single `Failed::UnsafeWorldMutatingConstruction`
 //! journal entry; no broker dispatch, no inference call, no commit beyond the
