@@ -22,8 +22,8 @@ use kx_journal::{
 };
 use kx_mote::{EdgeMeta, EffectPattern, MoteDefHash, MoteId, NdClass, ParentRef};
 use kx_projection::{
-    CheckpointError, FoldCheckpoint, Projection, ProjectionError, RegisterMote,
-    TopologyMaterializer,
+    CheckpointError, CheckpointOutcome, FoldCheckpoint, FullFoldReason, Projection,
+    ProjectionError, RegisterMote, TopologyMaterializer,
 };
 use proptest::prelude::*;
 use smallvec::SmallVec;
@@ -360,6 +360,106 @@ fn wrong_run_checkpoint_falls_back() {
     let resumed = Projection::from_journal_with_checkpoint(&run_b, Some(&cp_a)).unwrap();
     let full_b = Projection::from_journal(&run_b).unwrap();
     assert_projection_eq(&resumed, &full_b, "wrong-run fallback");
+}
+
+// ---------------------------------------------------------------------------
+// CheckpointOutcome — the structured, testable recovery reason (M2.2b).
+// The folded state is bit-identical regardless; these pin the *reported reason*
+// so the runtime's recovery observability (and operators) can distinguish a
+// happy resume from each discard cause.
+// ---------------------------------------------------------------------------
+
+/// A happy resume reports `Seeded { offset, tail_entries }` with the exact tail
+/// length, and the seeded projection equals the full fold.
+#[test]
+fn reported_happy_resume_is_seeded_with_tail_len() {
+    let journal = build_journal(&[
+        TraceOp::Commit(1),
+        TraceOp::Commit(2),
+        TraceOp::Commit(3),
+        TraceOp::Commit(4),
+        TraceOp::Commit(5),
+    ]);
+    // Seed at offset 2; the tail (2, 5] is three entries.
+    let cp = seed_through(&journal, 2).fold_checkpoint();
+    assert_eq!(cp.journal_offset(), 2);
+    let (resumed, outcome) =
+        Projection::from_journal_with_checkpoint_reported(&journal, Some(&cp)).unwrap();
+    assert_eq!(
+        outcome,
+        CheckpointOutcome::Seeded {
+            offset: 2,
+            tail_entries: 3
+        }
+    );
+    let full = Projection::from_journal(&journal).unwrap();
+    assert_projection_eq(&resumed, &full, "reported seeded resume");
+}
+
+/// `None` reports `FullFold { NoCheckpoint }`.
+#[test]
+fn reported_none_is_full_fold_no_checkpoint() {
+    let journal = build_journal(&[TraceOp::Commit(1), TraceOp::Commit(2)]);
+    let (_p, outcome) = Projection::from_journal_with_checkpoint_reported(&journal, None).unwrap();
+    assert_eq!(
+        outcome,
+        CheckpointOutcome::FullFold {
+            reason: FullFoldReason::NoCheckpoint
+        }
+    );
+}
+
+/// A checkpoint whose offset is past the (shorter) journal head reports
+/// `FullFold { OffsetAheadOfHead }`.
+#[test]
+fn reported_stale_offset_is_offset_ahead() {
+    let long = build_journal(&[
+        TraceOp::Commit(1),
+        TraceOp::Commit(2),
+        TraceOp::Commit(3),
+        TraceOp::Commit(4),
+        TraceOp::Commit(5),
+    ]);
+    let cp = Projection::from_journal(&long).unwrap().fold_checkpoint();
+    let short = build_journal(&[TraceOp::Commit(1), TraceOp::Commit(2), TraceOp::Commit(3)]);
+    let (_p, outcome) =
+        Projection::from_journal_with_checkpoint_reported(&short, Some(&cp)).unwrap();
+    assert_eq!(
+        outcome,
+        CheckpointOutcome::FullFold {
+            reason: FullFoldReason::OffsetAheadOfHead
+        }
+    );
+}
+
+/// A checkpoint carrying run A's instance-id, used to seed run B, reports
+/// `FullFold { WrongRun }`.
+#[test]
+fn reported_wrong_run_is_wrong_run() {
+    fn run_journal(instance: u8) -> InMemoryJournal {
+        let j = InMemoryJournal::new();
+        j.append(JournalEntry::RunRegistered {
+            instance_id: [instance; INSTANCE_ID_LEN],
+            recipe_fingerprint: [0xab; 32],
+            ts: 0,
+            seq: 0,
+        })
+        .unwrap();
+        j.append(committed_entry(1, &[])).unwrap();
+        j
+    }
+    let cp_a = Projection::from_journal(&run_journal(0xAA))
+        .unwrap()
+        .fold_checkpoint();
+    let run_b = run_journal(0xBB);
+    let (_p, outcome) =
+        Projection::from_journal_with_checkpoint_reported(&run_b, Some(&cp_a)).unwrap();
+    assert_eq!(
+        outcome,
+        CheckpointOutcome::FullFold {
+            reason: FullFoldReason::WrongRun
+        }
+    );
 }
 
 // ---------------------------------------------------------------------------

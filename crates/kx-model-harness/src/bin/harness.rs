@@ -69,6 +69,8 @@ fn main() -> ExitCode {
         content_root: content,
         mode,
         crash_at,
+        // Mirror the production binary default (M2.2b live checkpointing on).
+        checkpoint_every: Some(kx_runtime::config::DEFAULT_CHECKPOINT_EVERY),
     };
 
     if mode == Mode::Digest {

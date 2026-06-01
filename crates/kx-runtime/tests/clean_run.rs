@@ -14,6 +14,10 @@ fn cfg(dir: &std::path::Path, mode: Mode) -> RuntimeConfig {
         content_root: dir.join("content"),
         mode,
         crash_at: None,
+        // Cadence 2 over the 8-Mote demo: the clean run writes real checkpoint
+        // sidecars, and the "replay is a no-op" case then exercises the
+        // seeded-recovery (happy) path — recovery stays bit-identical.
+        checkpoint_every: Some(2),
     }
 }
 

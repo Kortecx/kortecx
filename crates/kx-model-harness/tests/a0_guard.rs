@@ -20,6 +20,11 @@ fn seam_preserves_canonical_demo_digest() {
         content_root: dir.path().join("c"),
         mode: Mode::Run,
         crash_at: None,
+        // M2.2b: force checkpoint writing mid-run (cadence 2 over an 8-Mote
+        // demo) — the canonical product digest must be UNCHANGED with the
+        // discardable checkpoint live (the checkpoint never touches the truth
+        // path). This is test T9 of the M2.2b matrix.
+        checkpoint_every: Some(2),
     };
     let outcome = kx_runtime::run(&config).unwrap();
     assert_eq!(outcome.committed, 8, "committed count");
@@ -27,6 +32,7 @@ fn seam_preserves_canonical_demo_digest() {
     assert_eq!(
         outcome.digest.to_hex(),
         CONTROL_DIGEST,
-        "run_with_seams must preserve the canonical demo digest (default-preserving seam)"
+        "run_with_seams must preserve the canonical demo digest (default-preserving seam, \
+         checkpointing on)"
     );
 }

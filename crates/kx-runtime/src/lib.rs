@@ -55,6 +55,7 @@
 //! folding only the journal reconstructs a bit-identical projection.
 
 pub mod broker;
+pub mod checkpoint_io;
 pub mod config;
 pub mod crash;
 pub mod digest;
