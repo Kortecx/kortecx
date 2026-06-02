@@ -34,6 +34,7 @@ members = [
     "crates/kx-critic",
     "crates/kx-capture",
     "crates/kx-refusal",
+    "crates/kx-mcp",
     "crates/kx-model-harness",
 ]
 exclude = [
@@ -126,6 +127,10 @@ kx-capture           = { path = "crates/kx-capture",           version = "0.0.1"
 # can enforce R-1..R-15 + D66 at SubmitMote WITHOUT linking kx-executor's inference
 # stack. kx-executor re-exports it for back-compat.
 kx-refusal           = { path = "crates/kx-refusal",           version = "0.0.1" }
+# MCP adapter (M5.2, D80) — McpCapability, the first production Capability impl, the
+# concrete ToolKind::Mcp dispatch. A thin SYNC client (stdio now; ureq HTTP in M5.2b)
+# so the broker trait + kx-tool-registry stay dependency-clean (no tokio/rmcp).
+kx-mcp               = { path = "crates/kx-mcp",               version = "0.0.1" }
 bindgen            = "0.70"
 cmake              = "0.1"
 ureq               = { version = "2", default-features = false, features = ["tls"] }

@@ -1241,6 +1241,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "kx-mcp"
+version = "0.0.1"
+dependencies = [
+ "kx-capability",
+ "kx-content",
+ "kx-mote",
+ "kx-tool-registry",
+ "kx-warrant",
+ "proptest",
+ "serde",
+ "serde_json",
+ "smallvec",
+ "thiserror",
+ "tracing",
+]
+
+[[package]]
 name = "kx-memoizer"
 version = "0.0.1"
 dependencies = [
@@ -1271,6 +1288,7 @@ dependencies = [
  "kx-executor",
  "kx-inference",
  "kx-journal",
+ "kx-mcp",
  "kx-memoizer",
  "kx-mote",
  "kx-projection",

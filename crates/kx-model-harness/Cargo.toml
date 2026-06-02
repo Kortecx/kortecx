@@ -28,7 +28,9 @@ kx-capture.workspace = true
 blake3.workspace = true
 smallvec.workspace = true
 serde.workspace = true
-serde_json.workspace = true
+# `raw_value` carries a model-proposed tool call's args verbatim (opaque bytes,
+# never a dynamic `Value`/floats) in `toolcall::parse_tool_call` (M5.2, IMP-5).
+serde_json = { workspace = true, features = ["raw_value"] }
 tracing.workspace = true
 
 [build-dependencies]
@@ -40,6 +42,10 @@ tempfile.workspace = true
 # The deterministic-critic evaluator — used by tests to independently re-derive a
 # verdict over a producer's bytes and confirm byte-identity with the committed one.
 kx-critic.workspace = true
+# M5.2: the concrete McpCapability + StdioTransport the model-driven-tool-step tests
+# register on a LocalCapabilityBroker. A DEV-dependency only — the harness lib stays
+# decoupled from the MCP client (it routes through `dyn CapabilityBroker`).
+kx-mcp.workspace = true
 
 [features]
 # Gates the GGUF download (build.rs) + the real-model integration tests. Off by

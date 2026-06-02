@@ -281,3 +281,62 @@ pub fn tool_stage(model_id: &ModelId, warrant: &WarrantSpec) -> DemoWorkflow {
     let tool_id = tool.id;
     wrap(vec![tool], warrant, tool_id, sentinel_shaper())
 }
+
+/// **M5.2 — first model-driven tool step.** A single WorldMutating
+/// `StageThenCommit` *model* Mote that carries `prompt_text` AND declares the MCP
+/// tool `(tool_id, tool_version)` in its `tool_contract` (so the broker's precheck
+/// passes). Drive it through [`crate::Harness::drive_with_tool_broker`] with a
+/// broker holding an `McpCapability` registered under `tool_id`: the model runs,
+/// the runtime decodes its proposed tool call fail-closed, and dispatches it
+/// through the warrant gate to the MCP capability. The caller's `warrant` MUST
+/// grant `(tool_id, tool_version)`. `stc_crash_target = the Mote` so
+/// `--crash-at pre-commit-stc` exercises exactly-once-under-crash on the MCP path.
+#[must_use]
+pub fn model_tool_call(
+    model_id: &ModelId,
+    warrant: &WarrantSpec,
+    prompt_text: &str,
+    tool_id: &ToolName,
+    tool_version: &kx_mote::ToolVersion,
+) -> DemoWorkflow {
+    let mut config_subset = BTreeMap::new();
+    prompt::put_prompt(&mut config_subset, prompt_text);
+    let mut tool_contract = BTreeMap::new();
+    tool_contract.insert(tool_id.clone(), tool_version.clone());
+    let def = MoteDef {
+        critic_check: None,
+        logic_ref: LogicRef::from_bytes([0x50; 32]),
+        model_id: model_id.clone(),
+        prompt_template_hash: PromptTemplateHash::from_bytes([0x50; 32]),
+        tool_contract,
+        nd_class: NdClass::WorldMutating,
+        config_subset,
+        effect_pattern: EffectPattern::StageThenCommit,
+        critic_for: None,
+        is_topology_shaper: false,
+        inference_params: greedy(64),
+        schema_version: MOTE_DEF_SCHEMA_VERSION,
+    };
+    let m = Mote::new(
+        def,
+        InputDataId::from_bytes([0x50; 32]),
+        GraphPosition(vec![0x50]),
+        SmallVec::new(),
+    );
+    let m_id = m.id;
+    // The Mote dispatches under the MCP tool's own name (the capability the broker
+    // resolves), not the "kx-model" pseudo-capability — so the OUTER executor's
+    // EffectRequest names the MCP tool and the inner broker's tool_contract +
+    // tool_grants checks are coherent.
+    let motes = vec![WorkflowMote {
+        mote: m,
+        warrant: warrant.clone(),
+        capability: tool_id.clone(),
+    }];
+    DemoWorkflow {
+        motes,
+        stc_crash_target: m_id,
+        vtc_crash_target: sentinel_shaper(),
+        shaper_id: sentinel_shaper(),
+    }
+}
