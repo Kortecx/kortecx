@@ -1414,6 +1414,7 @@ dependencies = [
  "kx-projection",
  "kx-scheduler",
  "kx-warrant",
+ "rusqlite",
  "smallvec",
  "tempfile",
  "thiserror",

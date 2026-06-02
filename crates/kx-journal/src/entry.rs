@@ -141,8 +141,16 @@ use smallvec::SmallVec;
 ///   `QuarantinedAtLeastOnce`) record the recovery outcome for an at-most-once
 ///   effect. No `Failed`-body layout change (`reason_class` is already a u8).
 ///
-/// v6 readers refuse v5 files loudly (no in-place evolution; no production v5
-/// journals are retained across the bump per the corpus, acceptable).
+/// The strict [`crate::SqliteJournal::open`] refuses any file whose
+/// `schema_version` is not exactly v6 (the loud-refusal contract is unchanged).
+///
+/// **Migration (IMP-2, M2.x-E).** As of the schema-migration work, an older
+/// still-supported version is no longer a dead end: [`crate::migrate_entry`] /
+/// [`crate::ReplayJournal`] up-convert old entries to the current shape for
+/// replay/recovery, and [`crate::migrate_to`] rewrites an old journal into a fresh
+/// v6 one for resume-and-append. The product identity digest is invariant across
+/// migration; see [`crate::migrate_entry`] for the full contract and the
+/// supported version window ([`crate::MIN_SUPPORTED_SCHEMA_VERSION`]..=v6).
 pub const JOURNAL_SCHEMA_VERSION: u16 = 6;
 
 /// Fixed entry-header length in bytes (`journal-entry.md` §3).

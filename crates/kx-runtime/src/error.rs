@@ -41,4 +41,22 @@ pub enum RuntimeError {
     /// CLI / config error (bad argument, missing path).
     #[error("config: {0}")]
     Config(String),
+
+    /// A verified schema migration ([`crate::migrate_and_verify`]) rewrote the
+    /// journal but the result did not preserve the run's product identity — the
+    /// up-converted source and the migrated destination fold to different
+    /// committed-facts digests. Indicates a migration bug; the destination must
+    /// not be trusted.
+    #[error(
+        "migration verification failed (from schema v{from_version}): \
+         source digest {src_digest} != destination digest {dst_digest}"
+    )]
+    MigrationVerificationFailed {
+        /// The source journal's on-disk schema version.
+        from_version: u16,
+        /// Committed-facts digest of the up-converted source (hex).
+        src_digest: String,
+        /// Committed-facts digest of the migrated destination (hex).
+        dst_digest: String,
+    },
 }

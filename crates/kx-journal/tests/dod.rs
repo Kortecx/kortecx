@@ -19,6 +19,7 @@ use kx_journal::{
     decode_entry_with_def_hash, encode_entry, repudiation_idempotency_key, FailureReason,
     InMemoryJournal, Journal, JournalEntry, JournalError, ParentEntry, RepudiationReason,
     SqliteJournal, JOURNAL_SCHEMA_VERSION, KIND_COMMITTED, MAX_ENTRY_LEN,
+    MIN_SUPPORTED_SCHEMA_VERSION,
 };
 use kx_mote::{MoteDefHash, MoteId, NdClass};
 use rusqlite::Connection;
@@ -308,6 +309,16 @@ fn obligation_13_schema_version_mismatch_loud_refusal() {
 #[test]
 fn schema_version_is_v6() {
     assert_eq!(JOURNAL_SCHEMA_VERSION, 6);
+}
+
+/// IMP-2 (M2.x-E): pin the migration floor. The schema-migration ladder
+/// (`migrate_entry` / `ReplayJournal` / `migrate_to`) replays any on-disk version
+/// in `[MIN_SUPPORTED_SCHEMA_VERSION, JOURNAL_SCHEMA_VERSION]`; lowering the floor
+/// (supporting an older version) is an intentional, reviewable change that must
+/// ship its own frozen fixture + ladder link.
+#[test]
+fn min_supported_schema_version_is_v5() {
+    assert_eq!(MIN_SUPPORTED_SCHEMA_VERSION, 5);
 }
 
 // ---------------------------------------------------------------------------

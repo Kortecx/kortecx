@@ -61,6 +61,7 @@ pub mod crash;
 pub mod digest;
 pub mod engine;
 pub mod error;
+pub mod migrate;
 pub mod snapshot_sink;
 pub mod topology;
 pub mod workflow;
@@ -72,5 +73,6 @@ pub use engine::{
     canonical_mote_ids, canonical_targets, digest_only, run, run_with_seams, RunOutcome,
 };
 pub use error::RuntimeError;
+pub use migrate::migrate_and_verify;
 pub use snapshot_sink::SnapshotSink;
 pub use workflow::DemoWorkflow;
