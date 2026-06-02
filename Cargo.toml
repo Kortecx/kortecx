@@ -134,6 +134,10 @@ kx-mcp               = { path = "crates/kx-mcp",               version = "0.0.1"
 bindgen            = "0.70"
 cmake              = "0.1"
 ureq               = { version = "2", default-features = false, features = ["tls"] }
+# Endpoint URL parsing + host extraction for the M5.2b HttpTransport egress sandbox.
+# Already in the tree as a transitive dep of ureq (same locked 2.x) — promoting it to
+# a direct workspace dep adds no new crate.
+url                = "2"
 sha2               = "0.10"
 # Unix-only deps used by kx-executor's hardened spawn paths (fork+execvp +
 # sandbox_init via libc + setrlimit). Both crates are well-audited pure-Rust

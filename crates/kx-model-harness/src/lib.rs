@@ -264,6 +264,12 @@ impl Harness {
             sink.clone(),
             registry,
             tool_broker,
+            // The A–J demo grants no tools, so the tool-dispatch arm (the only user
+            // of instance_id, for the run-scoped remote idempotency key) is never
+            // entered — an all-zero sentinel is inert here. A real tool-firing run
+            // constructs `ModelBroker` directly with its registered instance_id
+            // (D64), as the M5.2 e2e tests do.
+            [0u8; kx_capability::INSTANCE_ID_LEN],
         ));
         let protocol =
             StandardCommitProtocol::new(self.store.clone(), self.journal.clone(), broker);

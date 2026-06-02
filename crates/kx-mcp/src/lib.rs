@@ -25,10 +25,14 @@
 //! `cargo-deny` + the minimalism rule. So this adapter hand-rolls a minimal MCP
 //! JSON-RPC client over the existing sync stack:
 //!
-//! - **M5.2a (this crate today):** a newline-delimited JSON-RPC `tools/call` over a
-//!   [`StdioTransport`] subprocess — no network, no TLS, CI-friendly.
-//! - **M5.2b (next):** an `ureq` streamable-HTTP [`McpTransport`] impl + the
-//!   `MacOsSandbox`/cloud-broker egress bracket (the OSS `bwrap`-egress gap, D94).
+//! - **M5.2a:** a newline-delimited JSON-RPC `tools/call` over a [`StdioTransport`]
+//!   subprocess — no network, no TLS, CI-friendly.
+//! - **M5.2b (this crate now):** an `ureq` HTTP [`HttpTransport`] + an
+//!   application-layer **egress sandbox** ([`EgressPolicy`]): host-allowlist binding,
+//!   an SSRF/DNS-rebind vetting resolver (refuses the `169.254.169.254` metadata IP +
+//!   private/loopback targets reached via a public name), `redirects(0)` refusal, and
+//!   a hard wall-clock watchdog. OS-level egress isolation (`bwrap`/nftables) stays a
+//!   `kx-cloud` concern (D94) — see [`EgressPolicy`] for the honest boundary.
 //!
 //! The transport is a trait ([`McpTransport`]) so the HTTP impl drops in without
 //! touching [`McpCapability`].
@@ -54,12 +58,16 @@
 mod capability;
 mod credential;
 mod decode;
+mod egress;
 mod errors;
+mod http_transport;
 mod jsonrpc;
 mod transport;
 
 pub use capability::McpCapability;
 pub use credential::CredentialRef;
 pub use decode::{decode_tool_result, MAX_TOOL_RESULT_BYTES_DEFAULT};
+pub use egress::{classify_ip, vet_resolved_addr, EgressDenied, EgressPolicy, IpClass};
 pub use errors::{DecodeError, TransportError};
+pub use http_transport::HttpTransport;
 pub use transport::{McpTransport, StdioTransport};

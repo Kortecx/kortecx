@@ -134,10 +134,14 @@ impl Capability for McpCapability {
         tracing::debug!(remote = %self.remote_name, "mcp tools/call dispatch");
 
         // Untrusted round-trip: bounded read + wall-clock watchdog in the transport.
+        // The run-scoped idempotency key (D38 §1) rides through so an HTTP transport
+        // can send a remote `Idempotency-Key` header (remote exactly-once on a
+        // crash-recovery re-dispatch); stdio ignores it.
         let response = self.transport.round_trip(
             &request_bytes,
             self.max_response_bytes,
             self.wall_clock_ms,
+            request.idempotency_key.as_ref(),
         )?;
 
         // Fail-closed inbound decode (IMP-5 / IMP-16). Returns the result object's
