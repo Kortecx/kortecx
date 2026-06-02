@@ -42,12 +42,16 @@ use kx_executor::{LocalResourceManager, StandardCommitProtocol};
 use kx_inference::LlamaInferenceBackend;
 use kx_journal::SqliteJournal;
 use kx_mote::{ModelId, NdClass};
-use kx_runtime::{run_with_seams, DemoWorkflow, RunOutcome, RuntimeConfig, RuntimeError};
+use kx_runtime::{
+    run_with_seams, DemoWorkflow, RunOutcome, RuntimeConfig, RuntimeError, SnapshotSink,
+};
+use kx_tool_registry::{InMemoryToolRegistry, ToolRegistry};
 use kx_warrant::{
     ExecutorClass, FsScope, ModelRoute, MoteClass, NetScope, ResourceCeiling, WarrantSpec,
 };
 
 pub mod broker;
+mod context;
 pub mod evidence;
 pub mod executor;
 pub mod metered;
@@ -213,13 +217,27 @@ impl Harness {
         workflow: &DemoWorkflow,
     ) -> Result<RunOutcome, RuntimeError> {
         let rm = LocalResourceManager::dev_defaults();
-        let executor = ModelExecutor::new(self.backend.clone(), self.store.clone());
+        // D78 context seams: one snapshot sink shared with the orchestrator + a
+        // tool registry the assembler resolves tool grants against. The
+        // builtins suffice for the A–J rows (their warrants grant no tools, so
+        // assemble emits no tool items); a warrant that DOES grant a tool
+        // resolves it here and the description reaches the model window.
+        let sink = SnapshotSink::new();
+        let registry: Arc<dyn ToolRegistry> = Arc::new(InMemoryToolRegistry::with_builtins());
+        let executor = ModelExecutor::new(
+            self.backend.clone(),
+            self.store.clone(),
+            sink.clone(),
+            registry.clone(),
+        );
         let broker = Arc::new(ModelBroker::new(
             self.backend.clone(),
             self.store.clone(),
             config.crash_at,
             Some(workflow.stc_crash_target),
             self.observer.clone(),
+            sink.clone(),
+            registry,
         ));
         let protocol =
             StandardCommitProtocol::new(self.store.clone(), self.journal.clone(), broker);
@@ -232,6 +250,7 @@ impl Harness {
             &executor,
             &protocol,
             None,
+            Some(&sink),
         )
     }
 }

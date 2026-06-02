@@ -24,10 +24,11 @@ use kx_capability::{BrokerError, BrokerHandle, CapabilityBroker, EffectRequest};
 use kx_content::ContentStore;
 use kx_inference::{inference_params_from_mote, InferenceBackend};
 use kx_mote::{Mote, MoteId, ToolName, ToolVersion};
-use kx_runtime::CrashPoint;
+use kx_runtime::{CrashPoint, SnapshotSink};
+use kx_tool_registry::ToolRegistry;
 use kx_warrant::WarrantSpec;
 
-use crate::prompt;
+use crate::{context, prompt};
 
 /// Capability version reported on every harness dispatch.
 const CAPABILITY_VERSION: &str = "kx-model-harness-0.1.0";
@@ -54,19 +55,39 @@ impl BrokerObserver {
 }
 
 /// A [`CapabilityBroker`] backed by an [`InferenceBackend`] + a [`ContentStore`].
-#[derive(Debug)]
+///
+/// Holds the D78 context seams (snapshot sink + tool registry) so a ROND/WM
+/// **model** Mote assembles its upstream context + tool menu before dispatch,
+/// exactly like [`crate::ModelExecutor`]; a tool Mote (no prompt) is unaffected.
 pub struct ModelBroker<B: InferenceBackend, S: ContentStore> {
     backend: Arc<B>,
     store: Arc<S>,
     crash_at: Option<CrashPoint>,
     stc_crash_target: Option<MoteId>,
     observer: Arc<BrokerObserver>,
+    sink: SnapshotSink,
+    registry: Arc<dyn ToolRegistry>,
+}
+
+impl<B: InferenceBackend, S: ContentStore> std::fmt::Debug for ModelBroker<B, S> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // `dyn ToolRegistry` is not `Debug`; elide it (mirrors `kx-inference`'s
+        // `Dispatcher` Debug impl for its `dyn ModelRegistry`).
+        f.debug_struct("ModelBroker")
+            .field("crash_at", &self.crash_at)
+            .field("stc_crash_target", &self.stc_crash_target)
+            .field("observer", &self.observer)
+            .field("sink", &self.sink)
+            .field("registry", &"<dyn ToolRegistry>")
+            .finish_non_exhaustive()
+    }
 }
 
 impl<B: InferenceBackend, S: ContentStore> ModelBroker<B, S> {
     /// Build a broker over a shared backend + content store, with optional
     /// `PreCommitStc` crash injection on `stc_crash_target`, writing counters
-    /// through `observer`.
+    /// through `observer`, plus the D78 context seams (snapshot sink + tool
+    /// registry).
     #[must_use]
     pub fn new(
         backend: Arc<B>,
@@ -74,6 +95,8 @@ impl<B: InferenceBackend, S: ContentStore> ModelBroker<B, S> {
         crash_at: Option<CrashPoint>,
         stc_crash_target: Option<MoteId>,
         observer: Arc<BrokerObserver>,
+        sink: SnapshotSink,
+        registry: Arc<dyn ToolRegistry>,
     ) -> Self {
         Self {
             backend,
@@ -81,6 +104,8 @@ impl<B: InferenceBackend, S: ContentStore> ModelBroker<B, S> {
             crash_at,
             stc_crash_target,
             observer,
+            sink,
+            registry,
         }
     }
 
@@ -115,7 +140,22 @@ where
 
         // A model Mote (carries a prompt) runs the backend; a tool Mote stages a
         // deterministic, content-addressed response.
-        let bytes = if let Some(input) = prompt::input_for(mote) {
+        let bytes = if let Some(instruction) = prompt::raw_prompt(mote) {
+            // D78: assemble upstream context + tool menu into the input (empty ⇒
+            // byte-identical to the pre-D78 leaf path). Overflow ⇒ typed
+            // `StageWriteFailed` (shaper-decision seam), never a panic.
+            let input = context::model_input(
+                mote,
+                warrant,
+                &instruction,
+                &self.sink,
+                &*self.store,
+                &*self.registry,
+            )
+            .map_err(|e| BrokerError::StageWriteFailed {
+                capability: capability.clone(),
+                diagnostic: format!("context assembly: {e}"),
+            })?;
             let params = inference_params_from_mote(mote, warrant).map_err(|e| {
                 BrokerError::StageWriteFailed {
                     capability: capability.clone(),
