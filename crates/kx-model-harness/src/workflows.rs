@@ -15,6 +15,7 @@ use kx_mote::{
 use kx_runtime::workflow::WorkflowMote;
 use kx_runtime::DemoWorkflow;
 use kx_warrant::WarrantSpec;
+use kx_workflow::CompiledWorkflow;
 use smallvec::SmallVec;
 
 use crate::prompt;
@@ -336,6 +337,63 @@ pub fn model_tool_call(
     DemoWorkflow {
         motes,
         stc_crash_target: m_id,
+        vtc_crash_target: sentinel_shaper(),
+        shaper_id: sentinel_shaper(),
+    }
+}
+
+/// **M6 — the planner step.** A single READ-ONLY-NONDET *model* Mote carrying the
+/// `planning_prompt`; the model's output (a structured plan envelope) commits as
+/// the Mote's `result_ref` — the plan is a content-addressed FACT (D74). The
+/// warrant grants no tools, so the broker's fail-closed `parse_tool_call` returns
+/// `None` and the completion bytes (the plan) are committed verbatim. ROND ⇒ the
+/// planner re-samples on a *fresh* run by design, but on REPLAY the committed plan
+/// is served, never re-sampled (`vtc_crash_target = the planner`, so the
+/// `post-commit-vtc` crash test proves a recovered run re-reads the plan).
+///
+/// Drive it through the same orchestrator as the A–J rows, read the committed plan
+/// back via `projection.result_ref_of(&planner_id)` → `store.get`, then
+/// `kx_planner::compile_plan` it and run the result via [`from_compiled`].
+#[must_use]
+pub fn planner_mote(
+    model_id: &ModelId,
+    warrant: &WarrantSpec,
+    planning_prompt: &str,
+) -> DemoWorkflow {
+    let planner = mote(
+        0x60,
+        model_id,
+        Some(planning_prompt),
+        sampled(256, 0x0050_1a2b),
+        NdClass::ReadOnlyNondet,
+        EffectPattern::IdempotentByConstruction,
+        None,
+        None,
+        &[],
+    );
+    let planner_id = planner.id;
+    // ROND ⇒ a crash AFTER commit must re-READ the plan (served, not re-sampled).
+    wrap(vec![planner], warrant, sentinel_shaper(), planner_id)
+}
+
+/// **M6 — run a planner-produced DAG.** Map a `kx_planner::compile_plan` result
+/// (`CompiledMote { mote, warrant, capability }`) 1:1 to a flat (shaperless)
+/// [`DemoWorkflow`], so it drives through `run_with_seams` with NO new execution
+/// mechanism — a planner-produced DAG is "just another built workflow" (pivot §3.6).
+#[must_use]
+pub fn from_compiled(compiled: &CompiledWorkflow) -> DemoWorkflow {
+    let motes = compiled
+        .motes
+        .iter()
+        .map(|cm| WorkflowMote {
+            mote: cm.mote.clone(),
+            warrant: cm.warrant.clone(),
+            capability: cm.capability.clone(),
+        })
+        .collect();
+    DemoWorkflow {
+        motes,
+        stc_crash_target: sentinel_shaper(),
         vtc_crash_target: sentinel_shaper(),
         shaper_id: sentinel_shaper(),
     }

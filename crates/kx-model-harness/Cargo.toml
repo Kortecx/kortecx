@@ -22,6 +22,10 @@ kx-tool-registry.workspace = true
 kx-memoizer.workspace = true
 kx-runtime.workspace = true
 kx-workflow.workspace = true
+# M6: the planner — lower a committed plan FACT into a registered Mote DAG. The
+# model-runs-once + read-the-plan-back wiring lives HERE (the harness), keeping
+# kx-planner a pure lowering lib with no projection/inference coupling.
+kx-planner.workspace = true
 kx-dataset.workspace = true
 kx-critic-types.workspace = true
 kx-capture.workspace = true
@@ -39,6 +43,9 @@ sha2.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+# Canonical-bincode staging of a planner-produced TopologyDecision / WarrantSpec
+# in the M6 replan e2e (same content-addressing the materializer decodes).
+bincode.workspace = true
 # The deterministic-critic evaluator — used by tests to independently re-derive a
 # verdict over a producer's bytes and confirm byte-identity with the committed one.
 kx-critic.workspace = true

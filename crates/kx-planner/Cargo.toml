@@ -1,0 +1,34 @@
+[package]
+name = "kx-planner"
+version = "0.0.1"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "kortecx planner (M6) — lowers an untrusted model PROPOSAL into a registered Mote DAG. Decodes plan bytes fail-closed (IMP-5), selects ROLES not raw permissions (D75 — warrant = intersect(parent, role)), and lowers to a kx_workflow::WorkflowDef (compiled by kx_workflow::compile, the structural gate) or a kx_mote::TopologyDecision (loop → shaper, D76). PURE lowering library: sits ABOVE the scheduler and depends ONLY on kx-workflow + kx-mote + kx-warrant + kx-critic-types — NEVER kx-scheduler/kx-projection/kx-executor/kx-inference (the P2 thesis test). The model-runs-once + context-assembly wiring lives in kx-model-harness."
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+# Thesis-clean deps ONLY. None of these pulls kx-scheduler / kx-projection /
+# kx-executor / kx-inference (verified via `cargo tree`), so kx-planner cannot
+# couple the planner layer to the engine it sits above (P2 thesis test). The
+# dependency-ban is asserted in kx-model-harness/tests (cargo_dependency_ban).
+kx-workflow     = { workspace = true } # WorkflowDef / StepDef / StepRole / compile / CompiledWorkflow / CompileError
+kx-mote         = { workspace = true } # RoleId / ChildDescriptor / TopologyDecision / LogicRef / NdClass / EffectPattern / ModelId / ToolName / ToolVersion / InferenceParams / EdgeMeta / ConfigKey / ConfigVal
+kx-warrant      = { workspace = true } # RoleRegistry / Role / WarrantSpec / intersect / NarrowingError
+kx-critic-types = { workspace = true } # CheckSpec (a DeterministicCritic step's check comes from the vetted recipe, never the model)
+
+serde      = { workspace = true } # derive on the plan envelope (Deserialize only)
+serde_json = { workspace = true } # strict envelope decode into fixed flat structs (never a dynamic Value)
+thiserror  = { workspace = true }
+blake3     = { workspace = true } # the caller derives a replay-stable WorkflowDef seed from the committed plan bytes
+
+[dev-dependencies]
+proptest   = { workspace = true } # fail-closed-decode + role-cannot-widen property sweeps
+kx-content = { workspace = true } # ContentRef, only to build test WarrantSpecs (leaf; not an engine crate)
+
+[lints]
+workspace = true
