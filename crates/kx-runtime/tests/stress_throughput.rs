@@ -206,6 +206,79 @@ fn h1_throughput_wide_and_deep() {
     println!("H1: ceiling WIDE={wide_ceiling} DEEP={deep_ceiling}");
 }
 
+/// H3 — the M3.1 on-by-default capture (D67) sweep is flat per Mote at scale.
+///
+/// Commits a WIDE PURE DAG of `n` Motes, then times the exact operations the
+/// engine's `capture_committed_actions` sweep performs at return —
+/// `Projection::result_ref_of` + `CaptureSink::record` per committed Mote — across
+/// the ramp. Asserts exactly-once (`sink.len() == n`) and a flat per-Mote cost, so
+/// turning capture on by default cannot make a large run super-linear.
+#[test]
+#[ignore = "stress: run with --release --ignored --nocapture --test-threads=1"]
+fn h3_capture_sweep_is_flat_per_mote() {
+    let warrant = pure_warrant();
+    let mut per_mote_ns: Vec<(usize, f64)> = Vec::new();
+    for &n in SIZES {
+        let motes = build_dag(n, Shape::Wide);
+        let journal = SqliteJournal::open_in_memory().unwrap();
+        let rm = LocalResourceManager::dev_defaults();
+        let executor = TestMoteExecutor::deterministic();
+        let mut projection = Projection::new();
+        let mut scheduler = Scheduler::new(LocalPlacement);
+        for m in &motes {
+            scheduler
+                .submit(m.clone(), warrant.clone(), &mut projection)
+                .unwrap();
+        }
+        for m in &motes {
+            run_pure_mote(m, &warrant, &journal, &rm, &executor).unwrap();
+        }
+        let projection = Projection::from_journal(&journal).unwrap();
+        assert_eq!(projection.committed_count(), n);
+
+        // Time the capture sweep over the committed projection (the engine's
+        // final-sweep cost): result_ref_of + record per committed Mote.
+        let sink = kx_runtime::CaptureSink::actions_only();
+        let start = Instant::now();
+        for m in &motes {
+            if let Some(rr) = projection.result_ref_of(&m.id) {
+                sink.record(kx_capture::StepRecord::action(m.id, rr));
+            }
+        }
+        let elapsed = start.elapsed();
+        assert_eq!(
+            sink.len(),
+            n,
+            "every committed action captured exactly once at n={n}"
+        );
+        let per = elapsed.as_nanos() as f64 / n as f64;
+        println!(
+            "H3 capture-sweep: n={n} sweep_ms={} per_mote_ns={per:.1} exactly-once=ok",
+            elapsed.as_millis()
+        );
+        per_mote_ns.push((n, per));
+
+        if elapsed > WALL_CEILING {
+            break;
+        }
+    }
+    // Capture is O(committed·log): one `result_ref_of` BTreeMap read + one
+    // BTreeMap insert per Mote (both O(log N)). The per-Mote time rises by a small
+    // CONSTANT factor at scale (the 25k-entry projection map falls out of cache →
+    // memory-latency-bound lookups), NOT algorithmically. This bound catches a
+    // genuine super-linear regression — a quadratic sweep would be ~625× at 25k vs
+    // 1k — with generous headroom for the cache factor (observed ~3-4×). The
+    // absolute wall time printed above (≈20ms for 25k) is the meaningful guarantee:
+    // capture adds negligible overhead to a run that takes far longer to execute.
+    let first = per_mote_ns.first().unwrap().1;
+    let last = per_mote_ns.last().unwrap().1;
+    assert!(
+        last <= first * 8.0,
+        "capture sweep must stay sub-quadratic per Mote (n=1k {first:.1}ns vs n=25k {last:.1}ns)"
+    );
+    println!("H3: capture-sweep sub-quadratic per_mote 1k={first:.1}ns 25k={last:.1}ns");
+}
+
 #[test]
 #[ignore = "stress: run with --release --ignored --nocapture --test-threads=1"]
 fn h2_largest_dag_is_byte_reproducible() {

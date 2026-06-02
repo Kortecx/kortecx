@@ -126,6 +126,7 @@ scale-smoke:
     cargo test -p kx-projection --release --test incremental_children_index -- --ignored --nocapture --test-threads=1
     cargo test -p kx-projection --release --test fold_checkpoint -- --ignored --nocapture --test-threads=1
     cargo test -p kx-journal --release --test schema_evolution -- --ignored --nocapture --test-threads=1
+    cargo test -p kx-capture --release --test scale -- --ignored --nocapture --test-threads=1
 
 # ============================================================================
 # Preflight diagnostic

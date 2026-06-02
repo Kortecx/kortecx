@@ -209,6 +209,7 @@ fn drive(
         &protocol,
         None,
         Some(&sink),
+        None, // capture_sink (D67) — off for this MCP model-driven test
     );
     (result, store, journal, m_id)
 }

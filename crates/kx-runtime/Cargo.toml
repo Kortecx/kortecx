@@ -17,6 +17,7 @@ path = "src/main.rs"
 
 [dependencies]
 kx-mote       = { workspace = true }
+kx-capture    = { workspace = true }
 kx-content    = { workspace = true }
 kx-journal    = { workspace = true }
 kx-projection = { workspace = true }

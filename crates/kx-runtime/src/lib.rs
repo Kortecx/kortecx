@@ -55,6 +55,7 @@
 //! folding only the journal reconstructs a bit-identical projection.
 
 pub mod broker;
+pub mod capture_sink;
 pub mod checkpoint_io;
 pub mod config;
 pub mod crash;
@@ -66,11 +67,13 @@ pub mod snapshot_sink;
 pub mod topology;
 pub mod workflow;
 
+pub use capture_sink::CaptureSink;
 pub use config::{Mode, RuntimeConfig};
 pub use crash::CrashPoint;
 pub use digest::{digest_journal, digest_projection, ProjectionDigest};
 pub use engine::{
-    canonical_mote_ids, canonical_targets, digest_only, run, run_with_seams, RunOutcome,
+    canonical_mote_ids, canonical_targets, digest_only, run, run_with_capture, run_with_seams,
+    RunOutcome,
 };
 pub use error::RuntimeError;
 pub use migrate::migrate_and_verify;

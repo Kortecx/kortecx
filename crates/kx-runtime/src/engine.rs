@@ -16,6 +16,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use kx_capability::EffectRequest;
+use kx_capture::StepRecord;
 use kx_content::{ContentStore, LocalFsContentStore};
 use kx_executor::{
     redispatch_wm_mote, run_native_critic_mote, run_pure_mote, run_wm_mote, CommitProtocol,
@@ -30,6 +31,7 @@ use kx_scheduler::{LocalPlacement, Scheduler};
 use kx_warrant::{FsScope, NetScope};
 
 use crate::broker::DemoBroker;
+use crate::capture_sink::CaptureSink;
 use crate::checkpoint_io;
 use crate::config::{Mode, RuntimeConfig};
 use crate::crash::CrashPoint;
@@ -81,12 +83,33 @@ enum Action {
 /// outcome, or aborts the process at the configured crash point (which never
 /// returns).
 ///
-/// This is the thin demo-defaults wrapper over [`run_with_seams`]: it wires the
-/// deterministic stub seams (`TestMoteExecutor::deterministic()` + `DemoBroker`)
-/// and the canonical topology shaper, then drives the real orchestrator. Its
-/// output is byte-identical to the pre-seam engine (digest `a6b5c679…`, 8/8) —
-/// the seam injects, it does not change, the truth path.
+/// This is the thin demo-defaults wrapper over [`run_with_capture`] /
+/// [`run_with_seams`]: it wires the deterministic stub seams
+/// (`TestMoteExecutor::deterministic()` + `DemoBroker`) and the canonical topology
+/// shaper, then drives the real orchestrator. Its output is byte-identical to the
+/// pre-seam engine (digest `a6b5c679…`, 8/8) — the seam injects, it does not
+/// change, the truth path.
+///
+/// **D67:** capture is ON by default (`CaptureScope::ActionsOnly`). The ledger is
+/// internal here (the demo discards it); a caller that wants the captured
+/// `MoteId → action result_ref` ledger drives [`run_with_capture`] with its own
+/// [`CaptureSink`]. Capture is OFF the truth path — it is never journaled — so the
+/// digest is byte-unchanged whether capture is on, off, or inspected.
 pub fn run(config: &RuntimeConfig) -> Result<RunOutcome, RuntimeError> {
+    let capture = CaptureSink::actions_only();
+    run_with_capture(config, Some(&capture))
+}
+
+/// As [`run`], but drives the canonical demo with the caller's `capture_sink`, so
+/// the captured action ledger (D67) is inspectable after the run. `None` disables
+/// capture entirely (the byte-identity-without-overhead path). Because capture is
+/// OFF the truth path (never journaled, never a `MoteId` input, never a gate), the
+/// reported digest is identical for any `capture_sink` — `None`, `ActionsOnly`, or
+/// `Full`.
+pub fn run_with_capture(
+    config: &RuntimeConfig,
+    capture_sink: Option<&CaptureSink>,
+) -> Result<RunOutcome, RuntimeError> {
     let workflow = DemoWorkflow::canonical();
 
     let store = Arc::new(LocalFsContentStore::open(&config.content_root)?);
@@ -133,6 +156,7 @@ pub fn run(config: &RuntimeConfig) -> Result<RunOutcome, RuntimeError> {
         // The deterministic demo assembles no context: `None` ⇒ no snapshot is
         // ever published ⇒ the truth path (digest `a6b5c679…`) is byte-unchanged.
         None,
+        capture_sink,
     )
 }
 
@@ -179,6 +203,7 @@ pub fn run_with_seams<S, E, CP>(
     protocol: &CP,
     shaper: Option<(&WorkflowMote, &TopologyDecision)>,
     snapshot_sink: Option<&SnapshotSink>,
+    capture_sink: Option<&CaptureSink>,
 ) -> Result<RunOutcome, RuntimeError>
 where
     S: ContentStore + Send + Sync + 'static,
@@ -351,6 +376,19 @@ where
     // the seal) tail. Skipped if the cadence already captured this exact frontier.
     if config.checkpoint_every.is_some() && folded_through > last_checkpoint_at {
         write_checkpoint(&projection, &journal, &sidecar_path, folded_through);
+    }
+
+    // D67: capture each committed Mote's ACTION (its `result_ref`) off the truth
+    // path, once, at return. A single O(committed·log) sweep over the final
+    // committed projection — flat per-Mote, no super-linear per-iteration rescan.
+    // The returned ledger is identical to a per-step capture because there is no
+    // concurrent observer in M3.1 (live streaming is M11); a crash loses the
+    // in-memory ledger anyway and recovery re-derives it from the journal. No-op
+    // for `None` (the byte-identity-without-overhead path). A pure `result_ref_of`
+    // read + an in-memory insert: NEVER touches the journal/projection fold, so the
+    // product digest `a6b5c679…` is byte-unchanged.
+    if let Some(sink) = capture_sink {
+        capture_committed_actions(&runnable, &projection, sink);
     }
 
     let outcome = outcome(&runnable, &projection);
@@ -592,6 +630,27 @@ fn effect_request_for(w: &WorkflowMote) -> EffectRequest {
         idempotency_key: None,
         net_scope: NetScope::None,
         fs_scope: FsScope::empty(),
+    }
+}
+
+/// Record the committed action (`result_ref`) of every committed runnable Mote
+/// into the off-truth-path capture sink (D67).
+///
+/// `runnable` is the authoritative full Mote set (materialized shaper children are
+/// extended into it — the same set [`outcome`] counts over), so iterating it once
+/// is complete. Reads only `result_ref_of` (in-memory projection state) — no
+/// content-store read, no journal write. `O(committed·log)`, flat per-Mote.
+/// Recording is idempotent (overwrite by `MoteId`). Capture is `ActionsOnly`
+/// exhaust; `Full` reasoning/thinking enrichment is the real-model harness's job.
+fn capture_committed_actions(
+    runnable: &[WorkflowMote],
+    projection: &Projection,
+    sink: &CaptureSink,
+) {
+    for w in runnable {
+        if let Some(result_ref) = projection.result_ref_of(&w.mote.id) {
+            sink.record(StepRecord::action(w.mote.id, result_ref));
+        }
     }
 }
 
