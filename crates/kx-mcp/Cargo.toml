@@ -27,6 +27,10 @@ serde            = { workspace = true }
 serde_json       = { workspace = true, features = ["raw_value"] }
 thiserror        = { workspace = true }
 tracing          = { workspace = true }
+# M5.2b HTTP transport (sync; rustls+webpki-roots via the workspace `tls` feature).
+ureq             = { workspace = true }
+# Endpoint URL parse + host extraction for the egress sandbox (already in-tree via ureq).
+url              = { workspace = true }
 
 [dev-dependencies]
 # LocalCapabilityBroker + an in-memory ContentStore to dispatch McpCapability through

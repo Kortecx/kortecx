@@ -119,3 +119,261 @@ pub fn effect(args_json: &str) -> EffectRequest {
         fs_scope: FsScope::empty(),
     }
 }
+
+// ---------------------------------------------------------------------------
+// M5.2b — HTTP transport test support: a hermetic in-process TcpListener mock
+// (no `[[bin]]`, no live network, no new dep) + HTTP egress fixtures.
+// ---------------------------------------------------------------------------
+
+use std::io::{Read as _, Write as _};
+use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use kx_mcp::HttpTransport;
+use kx_warrant::Host;
+
+/// What the mock HTTP server does with the one request it receives.
+#[derive(Clone)]
+pub enum HttpMode {
+    /// 200 with `result.echoed = <request body's params.arguments>` (deterministic
+    /// in the args — content-addressed dedup, like the stdio echo).
+    Echo,
+    /// 200 with a `result` string of `n` bytes (drives the IMP-16 oversize cap).
+    Big(usize),
+    /// 200 with a JSON-RPC `error` object (decoder ProtocolError path).
+    Error,
+    /// 200 with truncated JSON (decoder Malformed path).
+    Malformed,
+    /// Sleep `d`, then echo (drives the wall-clock watchdog).
+    Slow(Duration),
+    /// 302 with `Location: http://evil.example.com/` (drives redirect refusal).
+    Redirect,
+    /// 200 with `result.saw_auth = <bool>` reporting WHETHER an `Authorization`
+    /// header was present — proves credential injection is in-play WITHOUT echoing
+    /// the secret value (the secret-never-leak sweep then asserts absence).
+    AuthProbe,
+}
+
+/// One captured inbound request (headers lowercased) for test assertions.
+#[derive(Clone)]
+pub struct Captured {
+    pub headers: Vec<(String, String)>,
+    pub body: Vec<u8>,
+}
+
+impl Captured {
+    #[must_use]
+    pub fn header(&self, name: &str) -> Option<&str> {
+        let name = name.to_ascii_lowercase();
+        self.headers
+            .iter()
+            .find(|(k, _)| *k == name)
+            .map(|(_, v)| v.as_str())
+    }
+}
+
+/// A hermetic in-process HTTP/1.1 mock on `127.0.0.1:0`. Each connection is handled
+/// on its own detached thread so a `Slow` handler never blocks the accept loop (or
+/// `Drop`). Stops cleanly on drop.
+pub struct MockHttpServer {
+    pub addr: SocketAddr,
+    captured: Arc<Mutex<Vec<Captured>>>,
+    stop: Arc<AtomicBool>,
+    handle: Option<std::thread::JoinHandle<()>>,
+}
+
+impl MockHttpServer {
+    #[must_use]
+    pub fn start(mode: HttpMode) -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind mock http");
+        let addr = listener.local_addr().expect("local_addr");
+        let captured: Arc<Mutex<Vec<Captured>>> = Arc::new(Mutex::new(Vec::new()));
+        let stop = Arc::new(AtomicBool::new(false));
+        let (cap_t, stop_t) = (captured.clone(), stop.clone());
+        let handle = std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                if stop_t.load(Ordering::SeqCst) {
+                    break;
+                }
+                if let Ok(stream) = stream {
+                    let (mode, cap) = (mode.clone(), cap_t.clone());
+                    std::thread::spawn(move || handle_conn(stream, &mode, &cap));
+                }
+            }
+        });
+        Self {
+            addr,
+            captured,
+            stop,
+            handle: Some(handle),
+        }
+    }
+
+    /// The endpoint URL a transport dials.
+    #[must_use]
+    pub fn url(&self) -> String {
+        format!("http://127.0.0.1:{}/mcp", self.addr.port())
+    }
+
+    /// A `net_scope` granting egress to this server's bound (loopback) host literal.
+    #[must_use]
+    pub fn net_scope(&self) -> NetScope {
+        NetScope::EgressAllowlist([Host(self.addr.ip().to_string())].into_iter().collect())
+    }
+
+    /// All requests captured so far (cloned).
+    #[must_use]
+    pub fn captured(&self) -> Vec<Captured> {
+        self.captured.lock().unwrap().clone()
+    }
+}
+
+impl Drop for MockHttpServer {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::SeqCst);
+        // Wake the blocked `accept` by connecting once, then join the accept loop.
+        let _ = TcpStream::connect(self.addr);
+        if let Some(h) = self.handle.take() {
+            let _ = h.join();
+        }
+    }
+}
+
+fn handle_conn(mut stream: TcpStream, mode: &HttpMode, captured: &Arc<Mutex<Vec<Captured>>>) {
+    let Some(req) = read_request(&mut stream) else {
+        return;
+    };
+    let saw_auth = req.header("authorization").is_some();
+    let args = extract_arguments(&req.body);
+    captured.lock().unwrap().push(req);
+
+    if let HttpMode::Slow(d) = mode {
+        std::thread::sleep(*d);
+    }
+
+    let response: String = match mode {
+        HttpMode::Big(n) => {
+            let filler = "x".repeat(*n);
+            jsonrpc_ok(&format!(r#"{{"blob":"{filler}"}}"#))
+        }
+        HttpMode::Error => {
+            http_200(r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32000,"message":"mock error"}}"#)
+        }
+        HttpMode::Malformed => http_200(r#"{"jsonrpc":"2.0","id":1,"result":{"content":"#),
+        HttpMode::Redirect => {
+            "HTTP/1.1 302 Found\r\nLocation: http://evil.example.com/\r\nContent-Length: 0\r\n\r\n"
+                .to_string()
+        }
+        HttpMode::AuthProbe => jsonrpc_ok(&format!(r#"{{"saw_auth":{saw_auth}}}"#)),
+        HttpMode::Echo | HttpMode::Slow(_) => jsonrpc_ok(&format!(r#"{{"echoed":{args}}}"#)),
+    };
+    let _ = stream.write_all(response.as_bytes());
+    let _ = stream.flush();
+}
+
+/// Read an HTTP/1.1 request: headers up to `\r\n\r\n`, then `Content-Length` bytes.
+fn read_request(stream: &mut TcpStream) -> Option<Captured> {
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
+    let mut buf = Vec::new();
+    let mut byte = [0u8; 1];
+    // Read until the header terminator.
+    while !buf.ends_with(b"\r\n\r\n") {
+        match stream.read(&mut byte) {
+            Ok(0) | Err(_) => return None,
+            Ok(_) => buf.push(byte[0]),
+        }
+        if buf.len() > 64 * 1024 {
+            return None;
+        }
+    }
+    let head = String::from_utf8_lossy(&buf);
+    let mut headers = Vec::new();
+    let mut content_length = 0usize;
+    for line in head.lines().skip(1) {
+        if let Some((k, v)) = line.split_once(':') {
+            let (k, v) = (k.trim().to_ascii_lowercase(), v.trim().to_string());
+            if k == "content-length" {
+                content_length = v.parse().unwrap_or(0);
+            }
+            headers.push((k, v));
+        }
+    }
+    let mut body = vec![0u8; content_length];
+    if content_length > 0 && stream.read_exact(&mut body).is_err() {
+        return None;
+    }
+    Some(Captured { headers, body })
+}
+
+/// Pull `params.arguments` (verbatim JSON) out of a JSON-RPC request body; `{}` if
+/// absent — mirrors the stdio echo server.
+fn extract_arguments(body: &[u8]) -> String {
+    #[derive(serde::Deserialize)]
+    struct Req {
+        params: Params,
+    }
+    #[derive(serde::Deserialize)]
+    struct Params {
+        #[serde(default)]
+        arguments: Option<Box<serde_json::value::RawValue>>,
+    }
+    serde_json::from_slice::<Req>(body)
+        .ok()
+        .and_then(|r| r.params.arguments)
+        .map_or_else(|| "{}".to_string(), |a| a.get().to_string())
+}
+
+fn jsonrpc_ok(result_obj: &str) -> String {
+    http_200(&format!(
+        r#"{{"jsonrpc":"2.0","id":1,"result":{result_obj}}}"#
+    ))
+}
+
+fn http_200(body: &str) -> String {
+    format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+        body.len(),
+        body
+    )
+}
+
+/// An `McpCapability` over a real `HttpTransport` pointed at `server` (echo etc.).
+#[must_use]
+pub fn http_capability(
+    name: ToolName,
+    version: ToolVersion,
+    server: &MockHttpServer,
+) -> McpCapability {
+    let transport = HttpTransport::new(&server.url(), &server.net_scope())
+        .expect("http transport builds for the loopback mock");
+    McpCapability::new(
+        name,
+        version,
+        McpEndpointId(server.url()),
+        "echo",
+        Box::new(transport),
+    )
+}
+
+/// A warrant granting `(tool, version)` PLUS egress to the loopback mock host.
+#[must_use]
+pub fn warrant_granting_egress(tool_name: &ToolName, tool_version: &ToolVersion) -> WarrantSpec {
+    let mut w = warrant_granting(tool_name, tool_version);
+    w.net_scope = NetScope::EgressAllowlist([Host("127.0.0.1".to_string())].into_iter().collect());
+    w
+}
+
+/// An `EffectRequest` carrying `args_json` under `StageThenCommit`, scoped to the
+/// loopback egress host (so the broker `precheck` admits the HTTP dispatch).
+#[must_use]
+pub fn effect_egress(args_json: &str) -> EffectRequest {
+    EffectRequest {
+        payload: args_json.as_bytes().to_vec(),
+        pattern: EffectPattern::StageThenCommit,
+        idempotency_key: Some([0x11; 32]),
+        net_scope: NetScope::EgressAllowlist([Host("127.0.0.1".to_string())].into_iter().collect()),
+        fs_scope: FsScope::empty(),
+    }
+}

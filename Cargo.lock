@@ -1255,6 +1255,8 @@ dependencies = [
  "smallvec",
  "thiserror",
  "tracing",
+ "ureq",
+ "url",
 ]
 
 [[package]]

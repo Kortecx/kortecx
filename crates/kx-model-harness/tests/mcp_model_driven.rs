@@ -110,6 +110,7 @@ impl McpTransport for ConstResultTransport {
         _request: &[u8],
         _max: usize,
         _ms: u64,
+        _idempotency_key: Option<&[u8; 32]>,
     ) -> Result<Vec<u8>, TransportError> {
         Ok(br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#.to_vec())
     }
@@ -191,6 +192,10 @@ fn drive(
         sink.clone(),
         registry,
         tool_broker,
+        // A fixed registered-run instance_id (D64): both runs in the determinism
+        // test use the same id, so the run-scoped token (and thus the remote
+        // Idempotency-Key) is stable — the staged ref is content-addressed anyway.
+        [0x5au8; kx_capability::INSTANCE_ID_LEN],
     ));
     let protocol = StandardCommitProtocol::new(store.clone(), journal.clone(), broker);
     let rm = LocalResourceManager::dev_defaults();

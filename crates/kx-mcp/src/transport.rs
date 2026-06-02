@@ -18,8 +18,9 @@ use crate::errors::TransportError;
 
 /// Fallback wall-clock budget when the warrant supplies none (`0`): 30 s. Keeps a
 /// hung or chatty server from blocking a dispatch indefinitely while not failing a
-/// legitimately slow tool that simply has no explicit ceiling.
-const DEFAULT_WALL_CLOCK_MS: u64 = 30_000;
+/// legitimately slow tool that simply has no explicit ceiling. Shared with the
+/// HTTP transport so both transports honour the same default budget.
+pub(crate) const DEFAULT_WALL_CLOCK_MS: u64 = 30_000;
 
 /// The MCP transport seam: one synchronous request/response round-trip.
 ///
@@ -35,6 +36,13 @@ pub trait McpTransport: Send + Sync {
     /// without the transport buffering an unbounded amount) and MUST abandon the
     /// call after `wall_clock_ms` (a `0` budget means "use a sane default").
     ///
+    /// `idempotency_key` is the run-scoped cross-boundary dedup token (D38 §1 /
+    /// M1.2 `run_scoped_token`). A transport that maps to a protocol with a
+    /// first-class dedup header (the HTTP `Idempotency-Key`) SHOULD send it, so a
+    /// crash-recovery re-dispatch makes the *remote* effect exactly-once. A
+    /// transport with no such header (stdio) ignores it — recovery dedup there is
+    /// the content-addressed staging key, not a wire header.
+    ///
     /// # Errors
     ///
     /// [`TransportError`] on spawn/connection failure, I/O failure, or timeout.
@@ -43,6 +51,7 @@ pub trait McpTransport: Send + Sync {
         request: &[u8],
         max_response_bytes: usize,
         wall_clock_ms: u64,
+        idempotency_key: Option<&[u8; 32]>,
     ) -> Result<Vec<u8>, TransportError>;
 }
 
@@ -102,7 +111,12 @@ impl McpTransport for StdioTransport {
         request: &[u8],
         max_response_bytes: usize,
         wall_clock_ms: u64,
+        idempotency_key: Option<&[u8; 32]>,
     ) -> Result<Vec<u8>, TransportError> {
+        // stdio has no wire header for a dedup key; recovery dedup is the
+        // content-addressed staging key (the broker's idempotency token), so the
+        // key is intentionally unused here.
+        let _ = idempotency_key;
         let mut cmd = Command::new(&self.program);
         cmd.args(&self.args)
             .stdin(Stdio::piped())

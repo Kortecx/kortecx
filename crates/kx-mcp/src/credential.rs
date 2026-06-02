@@ -43,6 +43,24 @@ impl CredentialRef {
             cmd.env(&self.0, secret);
         }
     }
+
+    /// Read the referenced secret transiently from the host environment, for
+    /// injection as an HTTP request header (the M5.2b [`crate::HttpTransport`]
+    /// path — stdio injects into the child env instead, [`inject_into`]).
+    ///
+    /// Returns `None` when the variable is unset (the server then fails its own
+    /// auth — the runtime never fabricates a credential). The returned `String` is
+    /// the ONLY place the secret materializes: the caller injects it into a header
+    /// and drops it; it is never stored on this struct, an `EffectRequest`, a
+    /// `BrokerHandle`, the journal, a `MoteId`, or a `StepRecord` (D81). Because
+    /// the type still holds only the variable name, `Debug`/`Display` redaction is
+    /// unaffected.
+    ///
+    /// [`inject_into`]: Self::inject_into
+    #[must_use]
+    pub fn read_secret(&self) -> Option<String> {
+        std::env::var(&self.0).ok()
+    }
 }
 
 // Manual `Debug` — print ONLY the identity, never let a derived Debug expose a

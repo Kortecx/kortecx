@@ -228,6 +228,9 @@ fn drive(workflow: &DemoWorkflow, dir: &Path) -> (Result<RunOutcome, RuntimeErro
         sink.clone(),
         registry,
         tool_broker,
+        // These wiring tests grant no tools (the tool arm is never entered), so the
+        // instance_id is inert — an all-zero sentinel suffices.
+        [0u8; kx_capability::INSTANCE_ID_LEN],
     ));
     let protocol = StandardCommitProtocol::new(store.clone(), journal.clone(), broker);
     let rm = LocalResourceManager::dev_defaults();

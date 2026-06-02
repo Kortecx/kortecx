@@ -20,13 +20,15 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use kx_capability::{BrokerError, BrokerHandle, CapabilityBroker, EffectRequest};
+use kx_capability::{
+    run_scoped_token, BrokerError, BrokerHandle, CapabilityBroker, EffectRequest, INSTANCE_ID_LEN,
+};
 use kx_content::ContentStore;
 use kx_inference::{inference_params_from_mote, InferenceBackend};
 use kx_mote::{EffectPattern, Mote, MoteId, ToolName, ToolVersion};
 use kx_runtime::{CrashPoint, SnapshotSink};
 use kx_tool_registry::ToolRegistry;
-use kx_warrant::{FsScope, NetScope, WarrantSpec};
+use kx_warrant::{FsScope, WarrantSpec};
 
 use crate::{context, prompt, toolcall};
 
@@ -74,6 +76,12 @@ pub struct ModelBroker<B: InferenceBackend, S: ContentStore> {
     /// re-implemented gate. An empty broker means "no tools" (the model's proposals,
     /// if any, are refused as ungranted before reaching here).
     tool_broker: Arc<dyn CapabilityBroker>,
+    /// M5.2b: the registered run's `instance_id` (D64/M1.1) — the root of the
+    /// run-scoped idempotency token a model-driven dispatch sends to a remote tool
+    /// as its `Idempotency-Key` (remote exactly-once on a crash-recovery
+    /// re-dispatch, M1.2). The single-node demo path grants no tools, so the value
+    /// is inert there; a real tool-firing run anchors it to its registered identity.
+    instance_id: [u8; INSTANCE_ID_LEN],
 }
 
 impl<B: InferenceBackend, S: ContentStore> std::fmt::Debug for ModelBroker<B, S> {
@@ -97,7 +105,7 @@ impl<B: InferenceBackend, S: ContentStore> ModelBroker<B, S> {
     /// through `observer`, plus the D78 context seams (snapshot sink + tool
     /// registry).
     #[must_use]
-    #[allow(clippy::too_many_arguments)] // Wiring seam; grouped meaningfully (M5.2 adds tool_broker).
+    #[allow(clippy::too_many_arguments)] // Wiring seam; grouped meaningfully (M5.2 adds tool_broker + instance_id).
     pub fn new(
         backend: Arc<B>,
         store: Arc<S>,
@@ -107,6 +115,7 @@ impl<B: InferenceBackend, S: ContentStore> ModelBroker<B, S> {
         sink: SnapshotSink,
         registry: Arc<dyn ToolRegistry>,
         tool_broker: Arc<dyn CapabilityBroker>,
+        instance_id: [u8; INSTANCE_ID_LEN],
     ) -> Self {
         Self {
             backend,
@@ -117,6 +126,7 @@ impl<B: InferenceBackend, S: ContentStore> ModelBroker<B, S> {
             sink,
             registry,
             tool_broker,
+            instance_id,
         }
     }
 
@@ -204,19 +214,37 @@ where
             match toolcall::parse_tool_call(&out.bytes, warrant, toolcall::max_args_bytes(warrant))
             {
                 Ok(Some(call)) => {
+                    // M5.2b — derive the egress this dispatch requires from the
+                    // RESOLVED tool's declared requirement (never hardcoded). The
+                    // registry lookup yields the approved ToolDef; its
+                    // `net_scope_required` is the egress the broker `precheck` then
+                    // gates ⊆ warrant. A stdio/in-proc tool declares `None` (→
+                    // byte-identical to M5.2a); an HTTP tool declares its host
+                    // allowlist. A tool that does not resolve is refused fail-closed
+                    // (no effect fires).
+                    let net_scope = match self.registry.lookup(&call.name, &call.version) {
+                        Some(def) => def.required_capability.net_scope_required,
+                        None => {
+                            return Err(BrokerError::StageWriteFailed {
+                                capability: capability.clone(),
+                                diagnostic: format!(
+                                    "tool {:?}@{:?} not resolvable for egress derivation",
+                                    call.name, call.version
+                                ),
+                            });
+                        }
+                    };
                     let effect = EffectRequest {
                         payload: call.args_bytes,
                         // MCP effects are world-mutating by default → StageThenCommit (D66).
                         pattern: EffectPattern::StageThenCommit,
-                        // Run-stable dedup: a recovery re-dispatch re-derives the same
-                        // token (= mote.id) so the staged effect is exactly-once
-                        // (content-addressed). Matches the existing row-G tool path.
-                        // M5.2b note: when the HTTP transport sends a real remote
-                        // `Idempotency-Key` header, switch to `run_scoped_token`
-                        // (kx_capability::token) so a re-SUBMITTED run gets a fresh key.
-                        idempotency_key: Some(token),
-                        // M5.2a stdio transport performs no egress.
-                        net_scope: NetScope::None,
+                        // M5.2b: the RUN-SCOPED idempotency token (D38 §1 / M1.2). A
+                        // recovery re-dispatch of the SAME run re-derives the SAME
+                        // token → the HTTP transport re-sends the SAME `Idempotency-Key`
+                        // → the remote dedups (remote exactly-once). A re-SUBMITTED run
+                        // (fresh instance_id) gets a fresh token and fires afresh (D64).
+                        idempotency_key: Some(run_scoped_token(&self.instance_id, mote)),
+                        net_scope,
                         fs_scope: FsScope::empty(),
                     };
                     let handle = self
