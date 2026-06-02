@@ -206,6 +206,7 @@ fn input_for<'a>(
         idempotency_key,
         parents: SmallVec::new(),
         diagnostic_context: "proptest",
+        idempotency_class: None,
     }
 }
 

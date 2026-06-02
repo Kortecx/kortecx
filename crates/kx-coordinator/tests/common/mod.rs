@@ -121,6 +121,25 @@ pub fn wm_mote(seed: u8, effect_pattern: EffectPattern) -> Mote {
     )
 }
 
+/// A WORLD-MUTATING `StageThenCommit` Mote whose `tool_contract` names exactly
+/// the given `(tool, version)` — used to exercise the class-aware recovery gate
+/// (M2.3b). `StageThenCommit` is not subject to R-1 (which is IBC-only), so the
+/// contract may name an `AtLeastOnce` tool without an additional idempotent tool.
+#[must_use]
+pub fn wm_mote_with_tool(seed: u8, tool: &str, version: &str) -> Mote {
+    let mut def = mote_def(NdClass::WorldMutating);
+    def.effect_pattern = EffectPattern::StageThenCommit;
+    def.tool_contract = BTreeMap::new();
+    def.tool_contract
+        .insert(ToolName(tool.into()), ToolVersion(version.into()));
+    Mote::new(
+        def,
+        InputDataId::from_bytes([seed; 32]),
+        GraphPosition(vec![seed]),
+        SmallVec::new(),
+    )
+}
+
 /// The canonical parentless PURE root Mote.
 #[must_use]
 pub fn pure_root_mote() -> Mote {

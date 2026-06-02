@@ -46,6 +46,13 @@ pub enum AnomalyKind {
     /// folded in between. Repudiated targets a Committed that doesn't exist; the
     /// fold quarantines the Mote (sets `info.inconsistent`) rather than aborting.
     EffectStagedThenRepudiatedNoCommitted,
+    /// **Recovery-time quarantine (M2.3b, D105.4 / D65).** A staged-uncommitted
+    /// at-most-once (`IdempotencyClass::AtLeastOnce`) WORLD-MUTATING effect could
+    /// not be safely re-dispatched (no closing mechanism) and the capability does
+    /// not support compensation, so recovery quarantined it: a terminal
+    /// `Failed { reason_class: QuarantinedAtLeastOnce }` was appended (the Mote is
+    /// `MoteState::Failed`, never re-dispatched). Surfaced here for operator review.
+    QuarantinedAtLeastOnceEffect,
 }
 
 /// 3c (validate-then-commit) promotion state, per D18 + D20.

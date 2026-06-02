@@ -14,8 +14,17 @@ use kx_capability::{BrokerError, BrokerHandle, CapabilityBroker, EffectRequest};
 use kx_content::{ContentRef, ContentStore, InMemoryContentStore};
 use kx_executor::{
     redispatch_wm_mote, CommitProtocolError, LifecycleError, LocalResourceManager,
-    StandardCommitProtocol, WmRedispatchOracle,
+    StandardCommitProtocol, WmLifecycleCommit, WmRecoveryOutcome, WmRedispatchOracle,
 };
+
+/// Unwrap a recovery outcome that must be a `Committed` (Redispatch /
+/// CommitFromReadback) into the commit details these PR 9b-7 / M2.3a tests assert.
+fn into_commit(out: WmRecoveryOutcome) -> WmLifecycleCommit {
+    match out {
+        WmRecoveryOutcome::Committed { commit, .. } => commit,
+        other => panic!("expected a Committed recovery outcome, got {other:?}"),
+    }
+}
 use kx_journal::{InMemoryJournal, Journal, JournalEntry};
 use kx_mote::{
     EffectPattern, GraphPosition, InputDataId, LogicRef, ModelId, Mote, MoteDef, MoteId, NdClass,
@@ -168,6 +177,7 @@ fn r13_fires_before_broker_dispatch_when_oracle_refuses() {
         &warrant(),
         ToolName("test".into()),
         empty_request(EffectPattern::StageThenCommit),
+        None,
         &submission_motes,
         &*journal,
         &rm,
@@ -229,18 +239,21 @@ fn oracle_approves_then_commit_protocol_proceeds_no_fresh_proposed() {
     let submission_motes: BTreeMap<MoteId, Mote> =
         std::iter::once((mote.id, mote.clone())).collect();
 
-    let result = redispatch_wm_mote(
-        &mote,
-        &warrant(),
-        ToolName("test".into()),
-        empty_request(EffectPattern::IdempotentByConstruction),
-        &submission_motes,
-        &*journal,
-        &rm,
-        &protocol,
-        &oracle,
-    )
-    .expect("oracle-approved re-dispatch must succeed");
+    let result = into_commit(
+        redispatch_wm_mote(
+            &mote,
+            &warrant(),
+            ToolName("test".into()),
+            empty_request(EffectPattern::IdempotentByConstruction),
+            None,
+            &submission_motes,
+            &*journal,
+            &rm,
+            &protocol,
+            &oracle,
+        )
+        .expect("oracle-approved re-dispatch must succeed"),
+    );
 
     assert_eq!(result.mote_id, mote.id);
     assert!(oracle.consulted.load(Ordering::SeqCst));
@@ -293,6 +306,7 @@ fn redispatch_wm_mote_refuses_pure_motes() {
         &warrant(),
         ToolName("never-called".into()),
         empty_request(EffectPattern::IdempotentByConstruction),
+        None,
         &submission_motes,
         &*journal,
         &rm,
@@ -352,18 +366,21 @@ fn redispatch_validate_then_commit_schedules_critic_proposed() {
     submission_motes.insert(producer.id, producer.clone());
     submission_motes.insert(critic.id, critic.clone());
 
-    let result = redispatch_wm_mote(
-        &producer,
-        &warrant(),
-        ToolName("test".into()),
-        empty_request(EffectPattern::ValidateThenCommit),
-        &submission_motes,
-        &*journal,
-        &rm,
-        &protocol,
-        &oracle,
-    )
-    .expect("re-dispatch must succeed");
+    let result = into_commit(
+        redispatch_wm_mote(
+            &producer,
+            &warrant(),
+            ToolName("test".into()),
+            empty_request(EffectPattern::ValidateThenCommit),
+            None,
+            &submission_motes,
+            &*journal,
+            &rm,
+            &protocol,
+            &oracle,
+        )
+        .expect("re-dispatch must succeed"),
+    );
 
     let critic_seq = result
         .critic_proposed_seq
@@ -486,12 +503,14 @@ fn redispatch_with_probe(
         &warrant(),
         ToolName("probe".into()),
         empty_request(EffectPattern::StageThenCommit),
+        None,
         &submission_motes,
         &*journal,
         &rm,
         &protocol,
         &oracle,
-    );
+    )
+    .map(into_commit);
     (journal, store, broker_ref, out)
 }
 

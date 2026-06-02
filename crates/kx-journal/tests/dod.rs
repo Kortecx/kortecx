@@ -300,13 +300,14 @@ fn obligation_13_schema_version_mismatch_loud_refusal() {
     }
 }
 
-/// M2.2c (D103.2/D104): pin the schema version so the v4→v5 bump (the new
-/// `DigestSealed` kind) is an intentional, reviewable change — a future edit that
-/// touches the entry encoding must bump this in lock-step. (Prior bumps: v3→v4
-/// added `RunVersionsResolved`, M1.2/D79.)
+/// M2.3b (D105.4): pin the schema version so the v5→v6 bump (the
+/// `ResolvedCapabilityRecord.idempotency_class` field + two recovery `FailureReason`
+/// variants) is an intentional, reviewable change — a future edit that touches the
+/// entry encoding must bump this in lock-step. (Prior bumps: v3→v4 added
+/// `RunVersionsResolved`, M1.2/D79; v4→v5 added `DigestSealed`, M2.2c/D104.)
 #[test]
-fn schema_version_is_v5() {
-    assert_eq!(JOURNAL_SCHEMA_VERSION, 5);
+fn schema_version_is_v6() {
+    assert_eq!(JOURNAL_SCHEMA_VERSION, 6);
 }
 
 // ---------------------------------------------------------------------------

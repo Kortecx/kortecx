@@ -406,3 +406,42 @@ fn is_pre_commit_crash_classifies_canonically_terminal_variants() {
         FailureReason::UnsafeWorldMutatingConstruction
     ));
 }
+
+// ---------------------------------------------------------------------------
+// M2.3b (D105.4): recovery-time quarantine of a staged-uncommitted at-most-once
+// effect. The fold sees `EffectStaged` then a terminal `Failed { reason_class:
+// QuarantinedAtLeastOnce }` (written by recovery, no `Committed`). The Mote must
+// be terminal `Failed`, never re-dispatchable, and surfaced via `anomaly_motes`.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn quarantined_at_least_once_is_terminal_and_surfaced() {
+    let mid = MoteId([0xC1; 32]);
+    let (p, _) = projection_from_entries(vec![
+        effect_staged(mid, 0),
+        failed(mid, 1, FailureReason::QuarantinedAtLeastOnce),
+    ]);
+
+    // Terminal `Failed` — never re-dispatched (the recovery oracle refuses).
+    assert_eq!(p.state_of(&mid), MoteState::Failed);
+    assert!(!p.can_redispatch_world_effect(&mid));
+
+    // Surfaced as a quarantine anomaly for operator review (distinct from cell-8).
+    let anomalies = p.anomaly_motes();
+    assert!(anomalies.contains(&(mid, AnomalyKind::QuarantinedAtLeastOnceEffect)));
+    assert!(!anomalies.contains(&(mid, AnomalyKind::EffectStagedThenRepudiatedNoCommitted)));
+}
+
+#[test]
+fn compensated_at_least_once_is_terminal_but_not_an_anomaly() {
+    // A *successful* compensation also ends terminal `Failed`, but is NOT a
+    // quarantine anomaly (the world was cleaned up; nothing for an operator).
+    let mid = MoteId([0xC2; 32]);
+    let (p, _) = projection_from_entries(vec![
+        effect_staged(mid, 0),
+        failed(mid, 1, FailureReason::CompensatedAtLeastOnce),
+    ]);
+    assert_eq!(p.state_of(&mid), MoteState::Failed);
+    assert!(!p.can_redispatch_world_effect(&mid));
+    assert!(p.anomaly_motes().is_empty());
+}

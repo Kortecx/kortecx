@@ -304,7 +304,7 @@ pub use fact_zero::{
 pub use factory::{default_executor, executor_for_class};
 pub use lifecycle::{
     redispatch_wm_mote, run_pure_mote, run_wm_mote, LifecycleCommit, LifecycleError,
-    TestMoteExecutor, WmLifecycleCommit, WmRedispatchOracle,
+    RecoveryAction, TestMoteExecutor, WmLifecycleCommit, WmRecoveryOutcome, WmRedispatchOracle,
 };
 pub use native_critic::run_native_critic_mote;
 // Submission-time refusal vocabulary + predicates. Extracted to the `kx-refusal`

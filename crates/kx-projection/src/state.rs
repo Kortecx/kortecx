@@ -74,6 +74,15 @@ pub(crate) struct MoteInfo {
     /// **Prefix-monotonic-true** — never reset. Quarantines the Mote per
     /// STEP 5.3.
     pub(crate) inconsistent: bool,
+    /// **v6 (M2.3b, D105.4 / D65).** `true` if a terminal
+    /// `Failed { reason_class: QuarantinedAtLeastOnce }` was folded for this
+    /// MoteId — recovery quarantined a staged-uncommitted at-most-once effect
+    /// (no closing mechanism, compensation unsupported) rather than risk a
+    /// double-fire. **Prefix-monotonic-true** — never reset. Distinct from
+    /// `inconsistent` (the cell-8 Repudiated anomaly); a quarantined Mote is
+    /// terminal `Failed` (via `terminal_failure_observed`), surfaced via
+    /// [`crate::AnomalyKind::QuarantinedAtLeastOnceEffect`].
+    pub(crate) quarantined: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -235,15 +244,24 @@ impl State {
     }
 
     /// Enumerate every Mote currently flagged anomalous, with its anomaly kind.
+    ///
+    /// A Mote can carry more than one anomaly (the cell-8 `inconsistent` flag and
+    /// the M2.3b `quarantined` flag are independent, set-once facts), so each is
+    /// emitted as its own `(MoteId, AnomalyKind)` entry. Entries are grouped by
+    /// `MoteId` (the map iterates in key order); the per-Mote kind order is
+    /// `inconsistent` then `quarantined`.
     pub(crate) fn anomaly_motes_iter(&self) -> Vec<(MoteId, AnomalyKind)> {
         self.motes
             .iter()
-            .filter_map(|(id, info)| {
+            .flat_map(|(id, info)| {
+                let mut kinds: SmallVec<[AnomalyKind; 2]> = SmallVec::new();
                 if info.inconsistent {
-                    Some((*id, AnomalyKind::EffectStagedThenRepudiatedNoCommitted))
-                } else {
-                    None
+                    kinds.push(AnomalyKind::EffectStagedThenRepudiatedNoCommitted);
                 }
+                if info.quarantined {
+                    kinds.push(AnomalyKind::QuarantinedAtLeastOnceEffect);
+                }
+                kinds.into_iter().map(move |k| (*id, k))
             })
             .collect()
     }

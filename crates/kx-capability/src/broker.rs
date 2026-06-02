@@ -82,4 +82,38 @@ pub trait CapabilityBroker: Send + Sync {
         capability: &ToolName,
         probe: EffectRequest,
     ) -> Result<Option<BrokerHandle>, BrokerError>;
+
+    /// D65 / M2.3b — deterministic compensation (undo) for an at-most-once
+    /// (`IdempotencyClass::AtLeastOnce`) effect that crash-recovery cannot safely
+    /// re-dispatch (no closing mechanism → a re-dispatch would double-fire).
+    ///
+    /// The broker runs the **same per-call contract checks** as
+    /// [`dispatch`][Self::dispatch] / [`probe_readback`][Self::probe_readback]
+    /// (capability ∈ tool_contract, supports pattern, ∈ warrant.tool_grants,
+    /// request scopes ⊆ warrant scopes) — compensation is a world-mutating effect
+    /// and must NOT bypass the warrant gate — then invokes the capability's
+    /// [`compensate`][crate::Capability::compensate] method:
+    ///
+    /// - `Ok(Some(handle))` — the undo ran; its externally-observable result was
+    ///   staged into the content store. The executor R-11-verifies the staged ref
+    ///   and records a terminal `Failed { reason_class: CompensatedAtLeastOnce }`
+    ///   (no re-dispatch).
+    /// - `Ok(None)` — the capability does NOT support compensation; the executor
+    ///   quarantines the Mote (`Failed { reason_class: QuarantinedAtLeastOnce }`).
+    /// - `Err(_)` — compensation itself failed; surfaced like any other broker
+    ///   error (the executor refuses, fail-closed — never re-dispatches).
+    ///
+    /// **Default `Ok(None)`** so an existing broker that does not implement
+    /// compensation falls through to quarantine. Like `probe_readback`, the
+    /// broker is recovery-state-independent: it only runs the undo and stages.
+    fn compensate(
+        &self,
+        mote: &kx_mote::Mote,
+        warrant: &WarrantSpec,
+        capability: &ToolName,
+        request: EffectRequest,
+    ) -> Result<Option<BrokerHandle>, BrokerError> {
+        let _ = (mote, warrant, capability, request);
+        Ok(None)
+    }
 }
