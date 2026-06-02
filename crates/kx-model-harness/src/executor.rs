@@ -17,24 +17,52 @@ use kx_content::ContentStore;
 use kx_executor::{MoteExecutionResult, MoteExecutor, MoteExecutorError, Rootfs};
 use kx_inference::{inference_params_from_mote, InferenceBackend};
 use kx_mote::Mote;
+use kx_runtime::SnapshotSink;
+use kx_tool_registry::ToolRegistry;
 use kx_warrant::{ExecutorClass, WarrantSpec};
 
-use crate::prompt;
+use crate::{context, prompt};
 
 /// A [`MoteExecutor`] backed by an [`InferenceBackend`] + a [`ContentStore`].
 /// Shares the metered backend `Arc` with [`crate::ModelBroker`] so the dispatch
 /// count aggregates across both seams.
-#[derive(Debug)]
+///
+/// Holds the D78 context seams: the [`SnapshotSink`] the orchestrator publishes
+/// to, and the [`ToolRegistry`] the assembler resolves tool grants against.
 pub struct ModelExecutor<B: InferenceBackend, S: ContentStore> {
     backend: Arc<B>,
     store: Arc<S>,
+    sink: SnapshotSink,
+    registry: Arc<dyn ToolRegistry>,
+}
+
+impl<B: InferenceBackend, S: ContentStore> std::fmt::Debug for ModelExecutor<B, S> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // `dyn ToolRegistry` is not `Debug`; elide it (mirrors `kx-inference`'s
+        // `Dispatcher` Debug impl for its `dyn ModelRegistry`).
+        f.debug_struct("ModelExecutor")
+            .field("sink", &self.sink)
+            .field("registry", &"<dyn ToolRegistry>")
+            .finish_non_exhaustive()
+    }
 }
 
 impl<B: InferenceBackend, S: ContentStore> ModelExecutor<B, S> {
-    /// Build an executor over a shared backend + content store.
+    /// Build an executor over a shared backend + content store, plus the D78
+    /// context seams (snapshot sink + tool registry).
     #[must_use]
-    pub fn new(backend: Arc<B>, store: Arc<S>) -> Self {
-        Self { backend, store }
+    pub fn new(
+        backend: Arc<B>,
+        store: Arc<S>,
+        sink: SnapshotSink,
+        registry: Arc<dyn ToolRegistry>,
+    ) -> Self {
+        Self {
+            backend,
+            store,
+            sink,
+            registry,
+        }
     }
 }
 
@@ -49,10 +77,24 @@ where
         warrant: &WarrantSpec,
         _env: Option<Rootfs>,
     ) -> Result<MoteExecutionResult, MoteExecutorError> {
-        let bytes = if let Some(input) = prompt::input_for(mote) {
+        let bytes = if let Some(instruction) = prompt::raw_prompt(mote) {
             // A model Mote: greedy decode (params come verbatim from the
             // identity-bearing `mote.def.inference_params`, the SOLE permitted
-            // constructor — D50). The model produces the bytes.
+            // constructor — D50). D78: the input is the Mote's instruction plus
+            // any assembled upstream context + tool menu (empty ⇒ byte-identical
+            // to the pre-D78 `chatml(prompt)` leaf path). An overflow surfaces a
+            // typed `Internal` error here (shaper-decision seam), never a panic.
+            let input = context::model_input(
+                mote,
+                warrant,
+                &instruction,
+                &self.sink,
+                &*self.store,
+                &*self.registry,
+            )
+            .map_err(|e| MoteExecutorError::Internal {
+                reason: format!("context assembly: {e}"),
+            })?;
             let params = inference_params_from_mote(mote, warrant).map_err(|e| {
                 MoteExecutorError::Internal {
                     reason: format!("inference params: {e}"),

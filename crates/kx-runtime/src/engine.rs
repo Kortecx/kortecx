@@ -35,6 +35,7 @@ use crate::config::{Mode, RuntimeConfig};
 use crate::crash::CrashPoint;
 use crate::digest::{digest_projection, ProjectionDigest};
 use crate::error::RuntimeError;
+use crate::snapshot_sink::SnapshotSink;
 use crate::topology;
 use crate::workflow::{DemoWorkflow, WorkflowMote};
 
@@ -129,6 +130,9 @@ pub fn run(config: &RuntimeConfig) -> Result<RunOutcome, RuntimeError> {
         &executor,
         &protocol,
         Some((&shaper_wm, &topology_decision)),
+        // The deterministic demo assembles no context: `None` ⇒ no snapshot is
+        // ever published ⇒ the truth path (digest `a6b5c679…`) is byte-unchanged.
+        None,
     )
 }
 
@@ -146,6 +150,15 @@ pub fn run(config: &RuntimeConfig) -> Result<RunOutcome, RuntimeError> {
 /// `shaper` carries the topology shaper + its decision when the workflow has one
 /// (the canonical demo); pass `None` for a flat DAG (the harness's A–J workflows),
 /// in which case the topology materializer + child re-derivation are skipped.
+///
+/// `snapshot_sink` is the D78 context-publishing seam: when `Some`, the
+/// orchestrator publishes the current committed-state [`kx_projection::Snapshot`]
+/// to it immediately before each dispatch, so a real-model executor/broker can
+/// assemble the Mote's upstream context + tool menu
+/// (`kx_context_assembler::assemble`). The canonical demo passes `None` — no
+/// snapshot is published and the deterministic truth path is byte-unchanged
+/// (the published snapshot is model input only; it never enters identity or the
+/// journal, D64).
 // `store` / `journal` are taken by value: the orchestrator owns these `Arc`
 // handles for the run (cloning them into the verdict lookup + materializer +
 // commit calls), so `needless_pass_by_value` is intentional here — the caller
@@ -165,6 +178,7 @@ pub fn run_with_seams<S, E, CP>(
     executor: &E,
     protocol: &CP,
     shaper: Option<(&WorkflowMote, &TopologyDecision)>,
+    snapshot_sink: Option<&SnapshotSink>,
 ) -> Result<RunOutcome, RuntimeError>
 where
     S: ContentStore + Send + Sync + 'static,
@@ -252,6 +266,14 @@ where
         let Some(action) = pick_next(&runnable, &projection, &verdicts) else {
             break;
         };
+        // D78: publish the current committed-state snapshot so a real-model
+        // executor/broker can assemble this Mote's upstream context + tool menu
+        // before dispatch. No-op for the demo (`None`) — keeps the truth path
+        // byte-identical. The Mote picked here has its Data parents committed
+        // (it is in the ready set), so the snapshot carries their `result_ref`s.
+        if let Some(sink) = snapshot_sink {
+            sink.publish(projection.snapshot());
+        }
         match action {
             Action::RunPure(w) => {
                 crash_if_children_pending(config, &child_ids, w.mote.id);
