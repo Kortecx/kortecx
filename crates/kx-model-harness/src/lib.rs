@@ -283,6 +283,9 @@ impl Harness {
             &protocol,
             None,
             Some(&sink),
+            // capture_sink — off for the harness; the runtime seam captures only
+            // the action, and `Full` reasoning/thinking enrichment is M3.2 (D67).
+            None,
         )
     }
 }

@@ -244,6 +244,7 @@ fn drive(workflow: &DemoWorkflow, dir: &Path) -> (Result<RunOutcome, RuntimeErro
         &protocol,
         None,
         Some(&sink),
+        None, // capture_sink (D67) — off for this assemble-wiring test
     );
     let captured = inputs.lock().unwrap().clone();
     (result, captured)
