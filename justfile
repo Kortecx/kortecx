@@ -117,17 +117,35 @@ smoke-test-with-model:
 # churn (not by journal length), (M2.2b) the SAME bound holds end-to-end over a real
 # disk-backed SQLite journal + an on-disk checkpoint sidecar, and (M2.x-E / IMP-2)
 # offline schema migration (`migrate_to`) stays O(entries) so resume-after-upgrade
-# is not an outage. The first three cases live in `kx-projection`; the migration
-# case in `kx-journal` (both llamacpp-free — no C++ FFI in this lean job). A
-# super-linear resume is an outage, and resume IS the product. `--release` is
-# REQUIRED — in a debug build the differential oracle re-imposes the O(n^2) full
-# rebuild on every fold and the ratio assertions are skipped.
+# is not an outage, and (IMP-4 / D116) the cold-recovery projection fold stays
+# O(entries) at 10^5 — the read side of the single-writer ceiling (cold resume folds
+# the whole log; a super-linear fold turns a large-log resume into an outage). The
+# fold cases live in `kx-projection`; the migration case in `kx-journal` (both
+# llamacpp-free — no C++ FFI in this lean job). A super-linear resume is an outage,
+# and resume IS the product. `--release` is REQUIRED — in a debug build the
+# differential oracle re-imposes the O(n^2) full rebuild on every fold and the ratio
+# assertions are skipped.
 scale-smoke:
     cargo test -p kx-projection --release --test incremental_children_index -- --ignored --nocapture --test-threads=1
     cargo test -p kx-projection --release --test fold_checkpoint -- --ignored --nocapture --test-threads=1
     cargo test -p kx-projection --release --test run_metadata_scale -- --ignored --nocapture --test-threads=1
+    cargo test -p kx-projection --release --test fold_curve_scale -- --ignored --nocapture --test-threads=1
     cargo test -p kx-journal --release --test schema_evolution -- --ignored --nocapture --test-threads=1
     cargo test -p kx-capture --release --test scale -- --ignored --nocapture --test-threads=1
+
+# IMP-4 (D116) single-writer scale-readiness measurement spike — publish the
+# single-writer journal commit ceiling + the projection-fold curve so a real number
+# replaces the "qualitatively true, quantitatively unproven" placeholder (HANDOFF
+# §3.9 §A). NON-GATING (not part of `just ci`): every test is `#[ignore]`, prints
+# commits/s + µs/entry, and asserts only a loose catastrophic-regression floor (the
+# fold-curve linearity ratio is the only gated piece, run by `scale-smoke` above).
+# `--release` is REQUIRED. `KX_CEILING_HUGE=1 just bench-ceiling` adds the 10^6 tier
+# (hundreds of MB RAM + on-disk WAL — local only). On-disk commits/s is platform-
+# sensitive (macOS fsync is weaker than Linux) — label numbers with their environment.
+bench-ceiling:
+    cargo test -p kx-journal --release --test ceiling_throughput -- --ignored --nocapture --test-threads=1
+    cargo test -p kx-coordinator --release --test ceiling_e2e -- --ignored --nocapture --test-threads=1
+    cargo test -p kx-projection --release --test fold_curve_scale -- --ignored --nocapture --test-threads=1
 
 # ============================================================================
 # Preflight diagnostic
