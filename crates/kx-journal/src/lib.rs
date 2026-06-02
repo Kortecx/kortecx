@@ -96,10 +96,14 @@ pub use crate::entry::{
     KIND_REPUDIATED, KIND_RUN_REGISTERED, KIND_RUN_VERSIONS_RESOLVED, MAX_ENTRY_LEN, MAX_PARENTS,
 };
 pub use crate::in_memory::InMemoryJournal;
-pub use crate::sqlite::SqliteJournal;
+pub use crate::migration::{
+    migrate_entry, MIN_SUPPORTED_SCHEMA_VERSION, V5_ABSENT_IDEMPOTENCY_CLASS,
+};
+pub use crate::sqlite::{migrate_to, MigrationReport, ReplayJournal, SqliteJournal};
 
 mod entry;
 mod in_memory;
+mod migration;
 mod sqlite;
 
 use std::ops::Range;

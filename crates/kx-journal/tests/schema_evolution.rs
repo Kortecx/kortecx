@@ -1,0 +1,459 @@
+// Integration-test file: compiled as a separate crate from the host lib.
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
+//! Schema-evolution replay corpus (IMP-2, carrier M2.x-E).
+//!
+//! Proves the forward-migration story: a journal written under an older,
+//! still-supported schema version can be replayed read-only ([`ReplayJournal`])
+//! and rewritten into a fresh current-version journal ([`migrate_to`]) that the
+//! strict [`SqliteJournal::open`] accepts, resumes, and appends to — without
+//! changing the run's committed facts.
+//!
+//! ## The frozen v5 representation
+//!
+//! No production journals exist in the wild yet, so the v5 fixture is built
+//! deterministically by [`build_v5_journal`]: write a current-version (v6)
+//! journal via the normal backend, then *downgrade* it with raw SQL to the exact
+//! v5 byte shape — strip the trailing `idempotency_class` byte from every
+//! capability-present `RunVersionsResolved` (the one and only v5→v6 delta) and
+//! stamp `metadata.schema_version = 5`. The v5 shape is therefore defined, as the
+//! corpus documents it, as "v6 minus the trailing capability class byte". The
+//! `migrate_entry` unit tests pin that byte-level relationship independently.
+
+use std::path::{Path, PathBuf};
+use std::time::Instant;
+
+use kx_content::ContentRef;
+use kx_journal::{
+    decode_entry_with_def_hash, migrate_to, FailureReason, IdempotencyClassTag, Journal,
+    JournalEntry, JournalError, ParentEntry, ReplayJournal, ResolvedCapabilityRecord,
+    ResolvedKindTag, SqliteJournal, INSTANCE_ID_LEN, JOURNAL_SCHEMA_VERSION,
+    MIN_SUPPORTED_SCHEMA_VERSION, V5_ABSENT_IDEMPOTENCY_CLASS,
+};
+use kx_mote::{MoteDefHash, MoteId, NdClass};
+use rusqlite::{params, Connection};
+use smallvec::SmallVec;
+
+// ---------------------------------------------------------------------------
+// Fixture: a small, representative v5 journal
+// ---------------------------------------------------------------------------
+
+/// The curated v5 entry set (constructed at v6, downgraded in `build_v5_journal`):
+/// a run registration, two committed Motes (B depends on A), a resolved-capability
+/// record (the entry that actually up-converts), a zero-grant resolved-versions
+/// record, a terminal failure, and a digest seal (kind 7, version-stable body).
+fn curated_v6_entries() -> Vec<JournalEntry> {
+    let instance_id = [1u8; INSTANCE_ID_LEN];
+    let a = MoteId::from_bytes([10u8; 32]);
+    vec![
+        JournalEntry::RunRegistered {
+            instance_id,
+            recipe_fingerprint: [2u8; 32],
+            ts: 0,
+            seq: 0,
+        },
+        JournalEntry::Committed {
+            mote_id: a,
+            idempotency_key: [10u8; 32],
+            seq: 0,
+            nondeterminism: NdClass::Pure,
+            result_ref: ContentRef::from_bytes([110u8; 32]),
+            parents: SmallVec::new(),
+            warrant_ref: ContentRef::from_bytes([0xaa; 32]),
+            mote_def_hash: MoteDefHash::from_bytes([20u8; 32]),
+        },
+        JournalEntry::Committed {
+            mote_id: MoteId::from_bytes([11u8; 32]),
+            idempotency_key: [11u8; 32],
+            seq: 0,
+            nondeterminism: NdClass::ReadOnlyNondet,
+            result_ref: ContentRef::from_bytes([111u8; 32]),
+            parents: {
+                let mut p = SmallVec::new();
+                p.push(ParentEntry {
+                    parent_id: a,
+                    edge_kind: 0, // Data
+                    non_cascade: 0,
+                });
+                p
+            },
+            warrant_ref: ContentRef::from_bytes([0xaa; 32]),
+            mote_def_hash: MoteDefHash::from_bytes([21u8; 32]),
+        },
+        JournalEntry::RunVersionsResolved {
+            instance_id,
+            warrant_ref: ContentRef::from_bytes([0xaa; 32]),
+            model_id: "qwen2-0_5b".to_string(),
+            // Original resolved class was Token; v5 did not record it, so migration
+            // must apply the SAFE default (AtLeastOnce), not recover Token.
+            capability: Some(ResolvedCapabilityRecord {
+                tool_id: "fs.read".to_string(),
+                tool_version: "1.0.0".to_string(),
+                resolved_kind: ResolvedKindTag::Builtin,
+                resolved_def_hash: ContentRef::from_bytes([30u8; 32]),
+                idempotency_class: IdempotencyClassTag::Token,
+            }),
+            seq: 0,
+        },
+        JournalEntry::RunVersionsResolved {
+            instance_id,
+            warrant_ref: ContentRef::from_bytes([0xaa; 32]),
+            model_id: "qwen2-0_5b".to_string(),
+            capability: None,
+            seq: 0,
+        },
+        JournalEntry::Failed {
+            mote_id: MoteId::from_bytes([12u8; 32]),
+            idempotency_key: [12u8; 32],
+            seq: 0,
+            reason_class: FailureReason::TimedOut,
+            reporter_id: 0,
+        },
+        JournalEntry::DigestSealed {
+            through_seq: 6,
+            state_digest: [0xEE; 32],
+            seq: 0,
+        },
+    ]
+}
+
+/// Build the v5 fixture journal at `dir/sample_v5.kxjournal` and return its path.
+fn build_v5_journal(dir: &Path) -> PathBuf {
+    let path = dir.join("sample_v5.kxjournal");
+    {
+        let j = SqliteJournal::open(&path).unwrap();
+        j.append_batch(curated_v6_entries()).unwrap();
+    }
+    downgrade_to_v5(&path);
+    path
+}
+
+/// Raw-SQL downgrade of a v6 journal file to the v5 byte shape: strip the trailing
+/// `idempotency_class` byte from each capability-present `RunVersionsResolved`, and
+/// stamp `metadata.schema_version = 5`. Wrapped in one transaction.
+fn downgrade_to_v5(path: &Path) {
+    let mut conn = Connection::open(path).unwrap();
+    let kind6: Vec<(i64, Vec<u8>)> = {
+        let mut stmt = conn
+            .prepare("SELECT seq, entry_bytes FROM entries WHERE kind = 6")
+            .unwrap();
+        stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap()
+    };
+    let txn = conn.transaction().unwrap();
+    for (seq, bytes) in kind6 {
+        let entry = decode_entry_with_def_hash(&bytes, MoteDefHash::from_bytes([0u8; 32])).unwrap();
+        if matches!(
+            entry,
+            JournalEntry::RunVersionsResolved {
+                capability: Some(_),
+                ..
+            }
+        ) {
+            let v5 = &bytes[..bytes.len() - 1]; // drop the trailing class byte
+            txn.execute(
+                "UPDATE entries SET entry_bytes = ?1 WHERE seq = ?2",
+                params![v5, seq],
+            )
+            .unwrap();
+        }
+    }
+    let v5_ver: [u8; 2] = 5u16.to_le_bytes();
+    txn.execute(
+        "UPDATE metadata SET value = ?1 WHERE key = 'schema_version'",
+        params![&v5_ver[..]],
+    )
+    .unwrap();
+    txn.commit().unwrap();
+    conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
+        .unwrap();
+}
+
+fn read_all<J: Journal>(j: &J) -> Vec<JournalEntry> {
+    let head = j.current_seq().unwrap();
+    j.read_entries_by_seq(0..head + 1).unwrap().collect()
+}
+
+// ---------------------------------------------------------------------------
+// Read-side: ReplayJournal up-converts an old journal on the fly
+// ---------------------------------------------------------------------------
+
+#[test]
+fn open_still_refuses_v5_loudly() {
+    // Regression guard: the strict open() contract is UNCHANGED — it must still
+    // refuse an older version loudly (migration is a separate, additive path).
+    let tmp = tempfile::tempdir().unwrap();
+    let path = build_v5_journal(tmp.path());
+    let err = SqliteJournal::open(&path).unwrap_err();
+    assert!(matches!(
+        err,
+        JournalError::SchemaVersionMismatch { found: 5, expected } if expected == JOURNAL_SCHEMA_VERSION
+    ));
+}
+
+#[test]
+fn replay_reads_v5_and_upconverts_capability() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = build_v5_journal(tmp.path());
+
+    let replay = ReplayJournal::open(&path).unwrap();
+    assert_eq!(replay.from_version(), 5);
+    assert_eq!(replay.count_entries().unwrap(), 7);
+
+    let entries = read_all(&replay);
+    let cap = entries
+        .iter()
+        .find_map(|e| match e {
+            JournalEntry::RunVersionsResolved {
+                capability: Some(c),
+                ..
+            } => Some(c),
+            _ => None,
+        })
+        .expect("a capability-present RunVersionsResolved");
+    // The original class was Token; v5 lost it; migration applies the safe default.
+    assert_eq!(cap.idempotency_class, V5_ABSENT_IDEMPOTENCY_CLASS);
+    assert_eq!(cap.idempotency_class, IdempotencyClassTag::AtLeastOnce);
+    assert_eq!(cap.tool_id, "fs.read");
+}
+
+#[test]
+fn replay_journal_is_read_only() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = build_v5_journal(tmp.path());
+    let replay = ReplayJournal::open(&path).unwrap();
+    let attempt = replay.append(JournalEntry::Failed {
+        mote_id: MoteId::from_bytes([99u8; 32]),
+        idempotency_key: [99u8; 32],
+        seq: 0,
+        reason_class: FailureReason::TimedOut,
+        reporter_id: 0,
+    });
+    assert!(matches!(attempt, Err(JournalError::Invariant(_))));
+}
+
+#[test]
+fn open_for_replay_refuses_future_version() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("future.kxjournal");
+    {
+        let _ = SqliteJournal::open(&path).unwrap();
+    }
+    set_schema_version(&path, JOURNAL_SCHEMA_VERSION + 1);
+    let err = ReplayJournal::open(&path).unwrap_err();
+    assert!(matches!(
+        err,
+        JournalError::SchemaVersionMismatch { found, .. } if found == JOURNAL_SCHEMA_VERSION + 1
+    ));
+}
+
+#[test]
+fn open_for_replay_refuses_too_old() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("ancient.kxjournal");
+    {
+        let _ = SqliteJournal::open(&path).unwrap();
+    }
+    set_schema_version(&path, MIN_SUPPORTED_SCHEMA_VERSION - 1);
+    let err = ReplayJournal::open(&path).unwrap_err();
+    assert!(matches!(
+        err,
+        JournalError::SchemaVersionMismatch { found, .. } if found == MIN_SUPPORTED_SCHEMA_VERSION - 1
+    ));
+}
+
+fn set_schema_version(path: &Path, v: u16) {
+    let conn = Connection::open(path).unwrap();
+    conn.execute(
+        "UPDATE metadata SET value = ?1 WHERE key = 'schema_version'",
+        params![&v.to_le_bytes()[..]],
+    )
+    .unwrap();
+}
+
+// ---------------------------------------------------------------------------
+// Write-side: migrate_to rewrites a v5 journal into a strict v6 journal
+// ---------------------------------------------------------------------------
+
+#[test]
+fn migrate_to_produces_strict_v6_journal() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = build_v5_journal(tmp.path());
+    let dst = tmp.path().join("migrated_v6.kxjournal");
+
+    let report = migrate_to(&src, &dst).unwrap();
+    assert_eq!(report.from_version, 5);
+    assert_eq!(report.to_version, JOURNAL_SCHEMA_VERSION);
+    assert_eq!(report.entries_migrated, 7);
+    assert_eq!(report.entries_upconverted, 1); // exactly the one cap record
+
+    // The migrated journal is accepted by the STRICT open() (its version is v6).
+    let j = SqliteJournal::open(&dst).unwrap();
+    assert_eq!(j.count_entries().unwrap(), 7);
+}
+
+#[test]
+fn migrate_to_matches_replay_readback() {
+    // The whole point: rewriting via migrate_to yields exactly the same logical
+    // entries as reading the source via the up-converting ReplayJournal.
+    let tmp = tempfile::tempdir().unwrap();
+    let src = build_v5_journal(tmp.path());
+    let dst = tmp.path().join("migrated_v6.kxjournal");
+    migrate_to(&src, &dst).unwrap();
+
+    let via_replay = read_all(&ReplayJournal::open(&src).unwrap());
+    let via_migrate = read_all(&SqliteJournal::open(&dst).unwrap());
+    assert_eq!(via_replay, via_migrate);
+}
+
+#[test]
+fn migrate_to_preserves_committed_facts_byte_identical() {
+    // Product identity (committed facts) is invariant across migration: the
+    // Committed entries are byte-for-byte unchanged (only kind-6 cap bodies grow).
+    let tmp = tempfile::tempdir().unwrap();
+    let src = build_v5_journal(tmp.path());
+    let dst = tmp.path().join("migrated_v6.kxjournal");
+    migrate_to(&src, &dst).unwrap();
+
+    let committed_bytes = |p: &Path| -> Vec<Vec<u8>> {
+        let conn = Connection::open(p).unwrap();
+        let mut stmt = conn
+            .prepare("SELECT entry_bytes FROM entries WHERE kind = 1 ORDER BY seq")
+            .unwrap();
+        stmt.query_map([], |r| r.get::<_, Vec<u8>>(0))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect()
+    };
+    assert_eq!(committed_bytes(&src), committed_bytes(&dst));
+}
+
+#[test]
+fn migrate_to_preserves_seqs() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = build_v5_journal(tmp.path());
+    let dst = tmp.path().join("migrated_v6.kxjournal");
+    migrate_to(&src, &dst).unwrap();
+
+    let src_seqs: Vec<u64> = read_all(&ReplayJournal::open(&src).unwrap())
+        .iter()
+        .map(JournalEntry::seq)
+        .collect();
+    let dst_seqs: Vec<u64> = read_all(&SqliteJournal::open(&dst).unwrap())
+        .iter()
+        .map(JournalEntry::seq)
+        .collect();
+    assert_eq!(src_seqs, dst_seqs);
+    assert_eq!(src_seqs, vec![1, 2, 3, 4, 5, 6, 7]);
+}
+
+#[test]
+fn migrate_to_enables_resume_and_append() {
+    // The upgrade story: after migrating, the v6 journal resumes and appends.
+    let tmp = tempfile::tempdir().unwrap();
+    let src = build_v5_journal(tmp.path());
+    let dst = tmp.path().join("migrated_v6.kxjournal");
+    migrate_to(&src, &dst).unwrap();
+
+    let j = SqliteJournal::open(&dst).unwrap();
+    let appended = j
+        .append(JournalEntry::Failed {
+            mote_id: MoteId::from_bytes([200u8; 32]),
+            idempotency_key: [200u8; 32],
+            seq: 0,
+            reason_class: FailureReason::WorkerCrashed,
+            reporter_id: 7,
+        })
+        .unwrap();
+    assert_eq!(appended.seq(), 8); // continues the sequence after the 7 migrated
+    assert_eq!(j.count_entries().unwrap(), 8);
+}
+
+#[test]
+fn migrate_to_is_idempotent_on_current_version() {
+    // Migrating an already-current journal yields a logically-equivalent current
+    // journal with nothing up-converted.
+    let tmp = tempfile::tempdir().unwrap();
+    let src = tmp.path().join("already_v6.kxjournal");
+    {
+        let j = SqliteJournal::open(&src).unwrap();
+        j.append_batch(curated_v6_entries()).unwrap();
+    }
+    let dst = tmp.path().join("recopied_v6.kxjournal");
+    let report = migrate_to(&src, &dst).unwrap();
+    assert_eq!(report.from_version, JOURNAL_SCHEMA_VERSION);
+    assert_eq!(report.to_version, JOURNAL_SCHEMA_VERSION);
+    assert_eq!(report.entries_upconverted, 0);
+
+    let before = read_all(&SqliteJournal::open(&src).unwrap());
+    let after = read_all(&SqliteJournal::open(&dst).unwrap());
+    assert_eq!(before, after);
+}
+
+// ---------------------------------------------------------------------------
+// Scale: migration is O(entries) — resume after upgrade is not an outage
+// ---------------------------------------------------------------------------
+
+/// Build a v5 journal of `n` capability-present `RunVersionsResolved` entries
+/// (every entry up-converts — the worst case for migration cost).
+fn build_v5_cap_journal(dir: &Path, n: u32) -> PathBuf {
+    let path = dir.join(format!("scale_{n}.kxjournal"));
+    let instance_id = [1u8; INSTANCE_ID_LEN];
+    let entries: Vec<JournalEntry> = (0..n)
+        .map(|i| JournalEntry::RunVersionsResolved {
+            instance_id,
+            warrant_ref: ContentRef::from_bytes([0xaa; 32]),
+            model_id: "m".to_string(),
+            capability: Some(ResolvedCapabilityRecord {
+                tool_id: format!("tool-{i}"),
+                tool_version: "1".to_string(),
+                resolved_kind: ResolvedKindTag::Builtin,
+                resolved_def_hash: ContentRef::from_bytes([7u8; 32]),
+                idempotency_class: IdempotencyClassTag::Token,
+            }),
+            seq: 0,
+        })
+        .collect();
+    {
+        let j = SqliteJournal::open(&path).unwrap();
+        j.append_batch(entries).unwrap();
+    }
+    downgrade_to_v5(&path);
+    path
+}
+
+#[test]
+#[ignore = "scale: run --release --test schema_evolution -- --ignored --nocapture"]
+fn migrate_25k_is_linear() {
+    const SIZES: &[u32] = &[1_000, 5_000, 10_000, 25_000];
+    let tmp = tempfile::tempdir().unwrap();
+    let mut per_entry_us: Vec<f64> = Vec::with_capacity(SIZES.len());
+
+    for &n in SIZES {
+        let src = build_v5_cap_journal(tmp.path(), n);
+        let dst = tmp.path().join(format!("scale_{n}_v6.kxjournal"));
+        let start = Instant::now();
+        let report = migrate_to(&src, &dst).unwrap();
+        let elapsed = start.elapsed();
+        assert_eq!(report.entries_migrated, u64::from(n));
+        assert_eq!(report.entries_upconverted, u64::from(n));
+        let us = elapsed.as_secs_f64() * 1e6;
+        let per = us / f64::from(n);
+        per_entry_us.push(per);
+        eprintln!(
+            "n={n:>6}  migrate={:>9.2}ms  per_entry={per:>7.3}us",
+            us / 1e3
+        );
+    }
+
+    let ratio = per_entry_us.last().unwrap() / per_entry_us.first().unwrap();
+    eprintln!("per-entry migrate cost ratio (25k/1k) = {ratio:.2}  (quadratic would be ~25x)");
+    if !cfg!(debug_assertions) {
+        assert!(
+            ratio < 8.0,
+            "migrate_to per-entry cost grew {ratio:.1}x (1k->25k) — super-linear; \
+             resume-after-upgrade must stay O(entries)"
+        );
+    }
+}
