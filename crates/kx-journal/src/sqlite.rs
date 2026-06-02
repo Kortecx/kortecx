@@ -394,11 +394,22 @@ fn append_one(
     let kind = entry.kind();
     if kind == KIND_COMMITTED || kind == KIND_REPUDIATED || kind == KIND_EFFECT_STAGED {
         let key = *entry.idempotency_key();
+        // The dedupe lookup MUST use the partial `idx_entries_dedupe` index
+        // (`... WHERE kind IN (1, 2, 4)`). SQLite only applies a partial index when
+        // the query's WHERE clause provably implies the index's predicate — and a
+        // *bound* `kind = ?2` parameter cannot be proven to imply `kind IN (1,2,4)`
+        // at plan time, so without the explicit `AND kind IN (1, 2, 4)` below SQLite
+        // falls back to a FULL TABLE SCAN, making every append O(n) and the journal
+        // O(n²) over its life (IMP-4 / D116 — measured + EXPLAIN-confirmed). The added
+        // predicate is always TRUE here (the enclosing guard restricts `kind` to
+        // exactly {1, 2, 4}), so it changes nothing semantically — it only lets the
+        // planner use the index, restoring O(log n) per append.
         let existing = txn
             .query_row(
                 "SELECT entry_bytes, mote_def_hash
                    FROM entries
-                  WHERE idempotency_key = ?1 AND kind = ?2",
+                  WHERE idempotency_key = ?1 AND kind = ?2
+                    AND kind IN (1, 2, 4)",
                 params![&key[..], kind as i64],
                 |r| {
                     let bytes: Vec<u8> = r.get(0)?;
