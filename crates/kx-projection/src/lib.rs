@@ -128,6 +128,7 @@ mod mote_def_registry;
 mod projection;
 pub mod promotion;
 mod register;
+mod run_metadata;
 mod snapshot;
 mod state;
 
@@ -143,6 +144,7 @@ pub use mote_def_registry::{InMemoryMoteDefRegistry, MoteDefRegistry};
 pub use projection::Projection;
 pub use promotion::{ContentStoreVerdicts, VerdictLookup};
 pub use register::RegisterMote;
+pub use run_metadata::{fold_run_metadata, RunMetadata, RunMetadataFold};
 pub use snapshot::Snapshot;
 pub use state::RunResolvedVersions;
 

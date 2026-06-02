@@ -1279,6 +1279,7 @@ dependencies = [
 name = "kx-model-harness"
 version = "0.0.1"
 dependencies = [
+ "bincode",
  "blake3",
  "kx-capability",
  "kx-capture",
@@ -1293,6 +1294,7 @@ dependencies = [
  "kx-mcp",
  "kx-memoizer",
  "kx-mote",
+ "kx-planner",
  "kx-projection",
  "kx-runtime",
  "kx-tool-registry",
@@ -1345,6 +1347,22 @@ dependencies = [
  "thiserror",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "kx-planner"
+version = "0.0.1"
+dependencies = [
+ "blake3",
+ "kx-content",
+ "kx-critic-types",
+ "kx-mote",
+ "kx-warrant",
+ "kx-workflow",
+ "proptest",
+ "serde",
+ "serde_json",
+ "thiserror",
 ]
 
 [[package]]

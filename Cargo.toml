@@ -35,6 +35,7 @@ members = [
     "crates/kx-capture",
     "crates/kx-refusal",
     "crates/kx-mcp",
+    "crates/kx-planner",
     "crates/kx-model-harness",
 ]
 exclude = [
@@ -131,6 +132,12 @@ kx-refusal           = { path = "crates/kx-refusal",           version = "0.0.1"
 # concrete ToolKind::Mcp dispatch. A thin SYNC client (stdio now; ureq HTTP in M5.2b)
 # so the broker trait + kx-tool-registry stay dependency-clean (no tokio/rmcp).
 kx-mcp               = { path = "crates/kx-mcp",               version = "0.0.1" }
+# The planner (M6, D73) — lowers an untrusted model PROPOSAL into a registered
+# Mote DAG (decode fail-closed; select ROLES not permissions; compile is the
+# structural gate). Sits above the scheduler; PURE lowering lib — depends only on
+# kx-workflow/kx-mote/kx-warrant/kx-critic-types (NEVER scheduler/projection/
+# executor/inference — the thesis dependency-ban, asserted in kx-model-harness).
+kx-planner           = { path = "crates/kx-planner",           version = "0.0.1" }
 bindgen            = "0.70"
 cmake              = "0.1"
 ureq               = { version = "2", default-features = false, features = ["tls"] }
