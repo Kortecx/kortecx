@@ -50,8 +50,17 @@ use kx_capability::{BrokerError, BrokerHandle, CapabilityBroker, EffectRequest};
 use kx_content::{ContentRef, ContentStore, InMemoryContentStore};
 use kx_executor::{
     redispatch_wm_mote, run_wm_mote, CommitProtocolError, LifecycleError, LocalResourceManager,
-    StandardCommitProtocol,
+    StandardCommitProtocol, WmLifecycleCommit, WmRecoveryOutcome,
 };
+
+/// Unwrap a `Committed` recovery outcome (this e2e exercises the Staged-class
+/// probe-then-redispatch path; class `None` → no compensate/quarantine).
+fn into_commit(out: WmRecoveryOutcome) -> WmLifecycleCommit {
+    match out {
+        WmRecoveryOutcome::Committed { commit, .. } => commit,
+        other => panic!("expected a Committed recovery outcome, got {other:?}"),
+    }
+}
 use kx_journal::{InMemoryJournal, Journal, JournalEntry};
 use kx_mote::{
     EffectPattern, GraphPosition, InputDataId, LogicRef, ModelId, Mote, MoteDef, MoteId, NdClass,
@@ -265,18 +274,21 @@ fn wm_mote_crash_recovery_end_to_end_runtime_promise() {
     // commit.
     // ---------------------------------------------------------------------
     let projection = Arc::new(Projection::from_journal(&*journal).expect("from_journal"));
-    let phase2 = redispatch_wm_mote(
-        &producer,
-        &w,
-        ToolName("staged-tool".into()),
-        empty_request(),
-        &submission_motes,
-        &*journal,
-        &rm,
-        &protocol,
-        &*projection,
-    )
-    .expect("phase 2: recovery dispatch must succeed");
+    let phase2 = into_commit(
+        redispatch_wm_mote(
+            &producer,
+            &w,
+            ToolName("staged-tool".into()),
+            empty_request(),
+            None,
+            &submission_motes,
+            &*journal,
+            &rm,
+            &protocol,
+            &*projection,
+        )
+        .expect("phase 2: recovery dispatch must succeed"),
+    );
 
     assert_eq!(phase2.mote_id, producer.id);
     assert_eq!(
@@ -337,6 +349,7 @@ fn wm_mote_crash_recovery_end_to_end_runtime_promise() {
         &w,
         ToolName("staged-tool".into()),
         empty_request(),
+        None,
         &submission_motes,
         &*journal,
         &rm,
@@ -421,6 +434,7 @@ fn wm_mote_terminal_failure_recovery_refused_cell_4_hazard_guard() {
         &warrant(),
         ToolName("staged-tool".into()),
         empty_request(),
+        None,
         &submission_motes,
         &*journal,
         &rm,

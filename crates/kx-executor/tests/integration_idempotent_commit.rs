@@ -172,6 +172,7 @@ fn input_for<'a>(mote: &'a Mote, warrant: &'a WarrantSpec, diagnostic: &'a str) 
         idempotency_key: [5; 32],
         parents: SmallVec::new(),
         diagnostic_context: diagnostic,
+        idempotency_class: None,
     }
 }
 

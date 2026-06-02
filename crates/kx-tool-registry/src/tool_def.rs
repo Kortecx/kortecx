@@ -81,6 +81,15 @@ pub struct ToolResolutionEvent {
     /// blake3 of the resolved `ToolDef`'s canonical bytes. Pins the exact
     /// `ToolDef` shape that was used for this resolution.
     pub resolved_def_hash: ContentRef,
+    /// The resolved tool's declared idempotency mechanism (D38 §2 / D65).
+    ///
+    /// Carried explicitly (in addition to being implied by `resolved_def_hash`)
+    /// because the resolved `ToolDef` is **never content-stored** — so the class
+    /// could not otherwise be recovered from the hash. The coordinator persists it
+    /// on the `RunVersionsResolved` metadata fact (M2.3b, D105.4 Option A) so crash
+    /// recovery can pick the class-correct action (Redispatch / CommitFromReadback /
+    /// Compensate / Quarantine) for a staged-uncommitted WORLD-MUTATING Mote.
+    pub idempotency_class: IdempotencyClass,
 }
 
 impl ToolResolutionEvent {
@@ -92,7 +101,7 @@ impl ToolResolutionEvent {
     /// # Example
     ///
     /// ```
-    /// use kx_tool_registry::{ToolKind, ToolResolutionEvent};
+    /// use kx_tool_registry::{IdempotencyClass, ToolKind, ToolResolutionEvent};
     /// use kx_mote::{ToolName, ToolVersion};
     /// use kx_content::ContentRef;
     ///
@@ -101,6 +110,7 @@ impl ToolResolutionEvent {
     ///     tool_version: ToolVersion("1".into()),
     ///     resolved_kind: ToolKind::Builtin,
     ///     resolved_def_hash: ContentRef::from_bytes([0; 32]),
+    ///     idempotency_class: IdempotencyClass::Readback,
     /// };
     /// // Same event → same ref (deterministic).
     /// assert_eq!(event.to_ref(), event.to_ref());

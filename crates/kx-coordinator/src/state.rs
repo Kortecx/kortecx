@@ -21,8 +21,8 @@ use std::sync::Arc;
 
 use kx_content::{ContentStore, LocalFsContentStore};
 use kx_journal::{
-    FailureReason, Journal, JournalEntry, RepudiationReason, ResolvedCapabilityRecord,
-    ResolvedKindTag, INSTANCE_ID_LEN,
+    FailureReason, IdempotencyClassTag, Journal, JournalEntry, RepudiationReason,
+    ResolvedCapabilityRecord, ResolvedKindTag, INSTANCE_ID_LEN,
 };
 use kx_mote::{Mote, MoteId, NdClass};
 use kx_projection::{MoteState, Projection};
@@ -494,12 +494,21 @@ fn lease_ready(
     // never re-leased. The ready-set half is NOT gated (those are first dispatches; a
     // StageThenCommit Mote that staged-then-crashed is `Pending`/in the ready-set with the
     // hint present, so it is still offered there).
-    for mote_id in projection.ready_set().into_iter().chain(
-        rescheduleable
-            .iter()
-            .copied()
-            .filter(|id| redispatch_admissible(submitted_defs, projection, id)),
-    ) {
+    for mote_id in projection
+        .ready_set()
+        .into_iter()
+        .chain(
+            rescheduleable
+                .iter()
+                .copied()
+                .filter(|id| redispatch_admissible(submitted_defs, projection, id)),
+        )
+        // M2.3b (D65): an at-most-once effect that has already staged is NEVER
+        // re-offered (no closing mechanism → a re-dispatch would double-fire).
+        // Applied to the COMBINED stream because a staged-then-crashed
+        // StageThenCommit Mote is `Pending` (in the ungated ready set).
+        .filter(|id| !at_least_once_already_staged(submitted_defs, projection, id))
+    {
         if !seen.insert(mote_id) {
             continue;
         }
@@ -547,6 +556,44 @@ fn redispatch_admissible(
         }
         None => false,
     }
+}
+
+/// **M2.3b (D65 / D105.4) — the distributed class-aware quarantine.** `true` iff
+/// re-dispatching `id` would re-fire an **at-most-once** (`IdempotencyClass::AtLeastOnce`)
+/// effect that has **already staged** — there is no closing mechanism, so a re-lease
+/// double-fires. Such a Mote is excluded from BOTH lease candidate halves (the ready
+/// set AND the crash-failed rescheduleable set): a staged-then-crashed
+/// `StageThenCommit` Mote is `Pending` (in the ungated ready set), so gating only
+/// the rescheduleable half would miss it. The Mote is left stuck + operator-recoverable
+/// (the distributed analogue of the single-node executor's quarantine arm).
+///
+/// A **fresh** at-most-once Mote (no `EffectStaged` → `can_redispatch_world_effect`
+/// is `false`) is NOT excluded — its first dispatch proceeds normally. The class is
+/// read from the durable folded `RunVersionsResolved` metadata; a tool with no
+/// resolved record (e.g. a run that journaled no resolution) does not match, so the
+/// behavior is unchanged where the class is not durably known (no regression).
+fn at_least_once_already_staged(
+    submitted_defs: &BTreeMap<MoteId, (Mote, WarrantSpec)>,
+    projection: &Projection,
+    id: &MoteId,
+) -> bool {
+    match submitted_defs.get(id) {
+        Some((mote, _)) => {
+            mote_dispatches_at_least_once(mote, projection)
+                && projection.can_redispatch_world_effect(id)
+        }
+        None => false,
+    }
+}
+
+/// `true` iff any tool in the Mote's `tool_contract` durably resolved to
+/// [`IdempotencyClass::AtLeastOnce`] (M2.3b). Reads the off-DAG resolved-version
+/// metadata folded from `RunVersionsResolved`; a tool with no resolved record
+/// does not count.
+fn mote_dispatches_at_least_once(mote: &Mote, projection: &Projection) -> bool {
+    mote.def.tool_contract.keys().any(|tool| {
+        projection.idempotency_class_for_tool(&tool.0) == Some(IdempotencyClassTag::AtLeastOnce)
+    })
 }
 
 /// Reap dead workers (D57 §3). For each registered worker the registry now reports
@@ -1138,6 +1185,9 @@ fn capture_run_versions<J: Journal>(
             tool_version: event.tool_version.0,
             resolved_kind: tool_kind_tag(&event.resolved_kind),
             resolved_def_hash: event.resolved_def_hash,
+            // M2.3b (D105.4): persist the resolved class so crash recovery can
+            // pick the class-correct action (see `redispatch_admissible`).
+            idempotency_class: idempotency_class_tag(event.idempotency_class),
         };
         append_run_versions(
             journal,
@@ -1196,6 +1246,17 @@ fn tool_kind_tag(kind: &ToolKind) -> ResolvedKindTag {
         ToolKind::External { .. } => ResolvedKindTag::External,
         ToolKind::Mcp { .. } => ResolvedKindTag::Mcp,
         ToolKind::SelfGenerated { .. } => ResolvedKindTag::SelfGenerated,
+    }
+}
+
+/// Map a resolved [`IdempotencyClass`] to its journal [`IdempotencyClassTag`]
+/// (the closed mirror kept in `kx-journal`). M2.3b (D105.4).
+fn idempotency_class_tag(class: IdempotencyClass) -> IdempotencyClassTag {
+    match class {
+        IdempotencyClass::Token => IdempotencyClassTag::Token,
+        IdempotencyClass::Readback => IdempotencyClassTag::Readback,
+        IdempotencyClass::Staged => IdempotencyClassTag::Staged,
+        IdempotencyClass::AtLeastOnce => IdempotencyClassTag::AtLeastOnce,
     }
 }
 

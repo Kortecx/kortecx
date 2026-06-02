@@ -271,6 +271,11 @@ where
                         &wm.warrant,
                         wm.capability.clone(),
                         request,
+                        // Single-node demo: vacuous tool contract → no durable
+                        // resolved class, so recovery uses today's probe-then-
+                        // redispatch path. M2.3b class-aware routing is exercised
+                        // on the coordinator path + the executor integration tests.
+                        None,
                         &submission_motes,
                         &*journal,
                         rm,

@@ -276,4 +276,42 @@ impl<S: ContentStore + Send + Sync> CapabilityBroker for LocalCapabilityBroker<S
         };
         Ok(Some(self.stage(&cap_name, &cap_version, bytes)?))
     }
+
+    #[tracing::instrument(
+        level = "debug",
+        skip(self, mote, warrant, request),
+        fields(
+            mote_id = %mote.id,
+            capability = %capability.0,
+            pattern = ?request.pattern,
+        )
+    )]
+    fn compensate(
+        &self,
+        mote: &Mote,
+        warrant: &WarrantSpec,
+        capability: &ToolName,
+        request: EffectRequest,
+    ) -> Result<Option<BrokerHandle>, BrokerError> {
+        // SAME per-call contract gate as dispatch/probe_readback — compensation
+        // is a world-mutating undo and must not bypass the warrant (D65 / M2.3b).
+        let guard = self.capabilities.read().expect("RwLock poisoned");
+        let cap = Self::precheck(&guard, mote, warrant, capability, &request)?;
+        let cap_name = cap.name().clone();
+        let cap_version = cap.version().clone();
+        let outcome = cap.compensate(&request);
+        // Drop the read lock BEFORE staging — staging is I/O.
+        drop(guard);
+        let bytes = match outcome {
+            Ok(Some(b)) => b,
+            Ok(None) => return Ok(None),
+            Err(reason) => {
+                return Err(BrokerError::CapabilityFailure {
+                    capability: cap_name,
+                    reason,
+                });
+            }
+        };
+        Ok(Some(self.stage(&cap_name, &cap_version, bytes)?))
+    }
 }

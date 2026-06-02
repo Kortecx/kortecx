@@ -59,8 +59,9 @@
 
 use kx_capability::{CapabilityBroker, EffectRequest};
 use kx_content::{ContentRef, ContentStore};
-use kx_journal::{Journal, JournalEntry};
+use kx_journal::{FailureReason, Journal, JournalEntry};
 use kx_mote::{EffectPattern, Mote, MoteDefHash, MoteId, ToolName};
+use kx_tool_registry::IdempotencyClass;
 use kx_warrant::WarrantSpec;
 use smallvec::SmallVec;
 use thiserror::Error;
@@ -143,6 +144,20 @@ pub enum CommitProtocolError {
         /// The Mote whose recovery probe failed.
         mote_id: MoteId,
         /// Diagnostic from the broker's `probe_readback`.
+        reason: String,
+    },
+
+    /// **M2.3b (D65 / D105.4)** — the broker's `compensate` (undo) call errored
+    /// while recovering a staged-uncommitted at-most-once
+    /// (`IdempotencyClass::AtLeastOnce`) effect. Recovery cannot prove the world
+    /// is clean, so it refuses (fail-closed): the Mote is left in-flight +
+    /// surfaced, never re-dispatched. A recovery refusal (sibling of
+    /// [`Self::ProbeFailed`] / [`Self::R13WmReDispatchRefused`]).
+    #[error("M2.3b: compensation failed for Mote {mote_id:?}: {reason}; recovery refused (fail-closed, D65)")]
+    CompensateFailed {
+        /// The Mote whose compensation failed.
+        mote_id: MoteId,
+        /// Diagnostic from the broker's `compensate`.
         reason: String,
     },
 
@@ -243,6 +258,7 @@ impl CommitProtocolError {
             | Self::R12CommittedNotProofOfValidity { mote_id, .. }
             | Self::R13WmReDispatchRefused { mote_id, .. }
             | Self::ProbeFailed { mote_id, .. }
+            | Self::CompensateFailed { mote_id, .. }
             | Self::BrokerDispatchFailed { mote_id, .. }
             | Self::ContentStorePutFailed { mote_id, .. }
             | Self::JournalAppendCommittedFailed { mote_id, .. }
@@ -277,7 +293,9 @@ impl CommitProtocolError {
     pub fn is_recovery_refusal(&self) -> bool {
         matches!(
             self,
-            Self::R13WmReDispatchRefused { .. } | Self::ProbeFailed { .. }
+            Self::R13WmReDispatchRefused { .. }
+                | Self::ProbeFailed { .. }
+                | Self::CompensateFailed { .. }
         )
     }
 }
@@ -357,6 +375,34 @@ pub trait CommitProtocol: Send + Sync {
         let _ = input;
         Ok(None)
     }
+
+    /// **M2.3b (D65 / D105.4) — recovery compensation (undo).** For a
+    /// staged-uncommitted at-most-once (`IdempotencyClass::AtLeastOnce`)
+    /// WORLD-MUTATING Mote on the recovery path, attempt the capability's
+    /// deterministic undo (via [`kx_capability::CapabilityBroker::compensate`])
+    /// instead of a blind re-dispatch (which would double-fire — there is no
+    /// closing mechanism for this class):
+    ///
+    /// - `Ok(Some(seq))` — the undo ran (R-11-verified its staged result) and a
+    ///   terminal `Failed { reason_class: CompensatedAtLeastOnce }` was appended;
+    ///   the Mote is terminal, never re-dispatched. Returns the `Failed` seq.
+    /// - `Ok(None)` — the capability does NOT support compensation; the caller
+    ///   QUARANTINES the Mote (terminal `Failed { QuarantinedAtLeastOnce }`).
+    /// - `Err(CommitProtocolError::CompensateFailed)` — the undo itself errored;
+    ///   recovery refuses (fail-closed), never re-dispatching.
+    ///
+    /// The **default returns `Ok(None)`** — a protocol with no broker (test
+    /// doubles) opts out and the caller quarantines.
+    ///
+    /// # Errors
+    /// [`CommitProtocolError::CompensateFailed`] if the undo errors;
+    /// [`CommitProtocolError::R11ResultRefIncomplete`] /
+    /// [`CommitProtocolError::JournalAppendCommittedFailed`] if persisting the
+    /// terminal `Failed` after a successful undo fails.
+    fn try_compensate(&self, input: CommitInput<'_>) -> Result<Option<u64>, CommitProtocolError> {
+        let _ = input;
+        Ok(None)
+    }
 }
 
 /// Input bundle for `CommitProtocol::commit`. Carries the Mote being
@@ -407,6 +453,17 @@ pub struct CommitInput<'a> {
     /// commit refuses). Lifecycle layer constructs from
     /// `(workflow_id, mote_id.to_hex())`.
     pub diagnostic_context: &'a str,
+    /// **M2.3b (D105.4 / D65)** — the dispatched capability's DURABLE resolved
+    /// [`IdempotencyClass`], or `None` when the class is not durably known.
+    ///
+    /// Drives the class-aware recovery decision in
+    /// [`crate::redispatch_wm_mote`]: `Some(AtLeastOnce)` recovers via
+    /// compensate/quarantine (no blind re-dispatch); `Some(Readback)` probes;
+    /// `Some(Token | Staged)` / `None` re-dispatches as before. `None` preserves
+    /// today's exact behavior for callers that have no durable class (e.g. the
+    /// single-node demo with a vacuous tool contract). On the normal (non-recovery)
+    /// commit path this field is unread.
+    pub idempotency_class: Option<IdempotencyClass>,
 }
 
 /// The standard `CommitProtocol` implementation — wires
@@ -510,6 +567,54 @@ where
                 reason: format!("{e:?}"),
             }
         })?;
+        Ok(Some(written.seq()))
+    }
+
+    fn try_compensate(&self, input: CommitInput<'_>) -> Result<Option<u64>, CommitProtocolError> {
+        let mote_id = input.mote.id;
+
+        // D65 / M2.3b: run the capability's deterministic undo (warrant-gated by
+        // the broker, same precheck as dispatch). The default `Capability::compensate`
+        // returns `Ok(None)`, so a tool without an undo yields `Ok(None)` → the
+        // caller quarantines instead of risking a double-fire.
+        let handle = match self.broker.compensate(
+            input.mote,
+            input.warrant,
+            &input.capability,
+            input.effect_request,
+        ) {
+            Ok(Some(handle)) => handle, // undo ran → record terminal Failed{Compensated}
+            Ok(None) => return Ok(None), // unsupported → caller quarantines
+            Err(e) => {
+                // Indeterminate world state — fail closed (never re-dispatch).
+                return Err(CommitProtocolError::CompensateFailed {
+                    mote_id,
+                    reason: format!("{e:?}"),
+                });
+            }
+        };
+
+        // R-11 verify the undo's externally-observable result is durable (audit
+        // evidence the compensation actually ran) before recording the outcome.
+        enforce_r11(&*self.store, mote_id, &handle.staged_ref)?;
+
+        // The effect was undone — the Mote is TERMINAL `Failed{Compensated}`,
+        // never re-dispatched. `Failed` carries no `result_ref`; the undo's
+        // staged bytes live in the content store for audit.
+        let entry = JournalEntry::Failed {
+            mote_id,
+            idempotency_key: input.idempotency_key,
+            seq: 0, // journal-assigned
+            reason_class: FailureReason::CompensatedAtLeastOnce,
+            reporter_id: 0,
+        };
+        let written = self
+            .journal
+            .append(entry)
+            .map_err(|e| CommitProtocolError::Internal {
+                mote_id,
+                reason: format!("append Failed{{Compensated}} failed: {e:?}"),
+            })?;
         Ok(Some(written.seq()))
     }
 

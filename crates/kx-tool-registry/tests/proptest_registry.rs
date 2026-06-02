@@ -281,12 +281,14 @@ proptest! {
         name in arb_tool_name(),
         version in arb_tool_version(),
         kind in arb_tool_kind(),
+        class in arb_idempotency_class(),
     ) {
         let event = ToolResolutionEvent {
             tool_id: name,
             tool_version: version,
             resolved_kind: kind,
             resolved_def_hash: ContentRef::from_bytes([42; 32]),
+            idempotency_class: class,
         };
         prop_assert_eq!(event.to_ref(), event.to_ref());
     }

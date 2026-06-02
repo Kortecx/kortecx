@@ -302,6 +302,7 @@ fn commit_input_constructs_with_required_fields() {
         idempotency_key: [5; 32],
         parents: SmallVec::new(),
         diagnostic_context: "test",
+        idempotency_class: None,
     };
     assert_eq!(input.mote.id, mote.id);
     assert_eq!(input.diagnostic_context, "test");
@@ -343,6 +344,7 @@ fn commit_protocol_is_object_safe_send_sync() {
         idempotency_key: [5; 32],
         parents: SmallVec::new(),
         diagnostic_context: "stub-test",
+        idempotency_class: None,
     };
     let r = dyn_protocol.commit(input);
     assert!(matches!(

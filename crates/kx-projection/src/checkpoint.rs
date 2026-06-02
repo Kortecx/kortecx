@@ -424,7 +424,7 @@ struct CheckpointState {
     run_resolved_versions: Vec<RunResolvedVersionsDto>,
 }
 
-// Mirrors `MoteInfo`'s five flags 1:1 — same `struct_excessive_bools` allow.
+// Mirrors `MoteInfo`'s flags 1:1 — same `struct_excessive_bools` allow.
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Serialize, Deserialize)]
 struct MoteInfoDto {
@@ -435,6 +435,7 @@ struct MoteInfoDto {
     effect_staged_observed: bool,
     terminal_failure_observed: bool,
     inconsistent: bool,
+    quarantined: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -512,6 +513,7 @@ impl From<&MoteInfo> for MoteInfoDto {
             effect_staged_observed,
             terminal_failure_observed,
             inconsistent,
+            quarantined,
         } = mi;
         Self {
             declared: declared.as_ref().map(DeclaredInfoDto::from),
@@ -521,6 +523,7 @@ impl From<&MoteInfo> for MoteInfoDto {
             effect_staged_observed: *effect_staged_observed,
             terminal_failure_observed: *terminal_failure_observed,
             inconsistent: *inconsistent,
+            quarantined: *quarantined,
         }
     }
 }
@@ -645,6 +648,7 @@ impl TryFrom<MoteInfoDto> for MoteInfo {
             effect_staged_observed,
             terminal_failure_observed,
             inconsistent,
+            quarantined,
         } = dto;
         Ok(MoteInfo {
             declared: declared.map(DeclaredInfo::from),
@@ -654,6 +658,7 @@ impl TryFrom<MoteInfoDto> for MoteInfo {
             effect_staged_observed,
             terminal_failure_observed,
             inconsistent,
+            quarantined,
         })
     }
 }

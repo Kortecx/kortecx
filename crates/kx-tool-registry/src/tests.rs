@@ -515,6 +515,7 @@ fn tool_resolution_event_ref_is_deterministic() {
         tool_version: ToolVersion("1".into()),
         resolved_kind: ToolKind::Builtin,
         resolved_def_hash: ContentRef::from_bytes([0; 32]),
+        idempotency_class: IdempotencyClass::Token,
     };
     assert_eq!(event.to_ref(), event.to_ref());
 }
@@ -526,6 +527,7 @@ fn tool_resolution_event_ref_changes_with_kind() {
         tool_version: ToolVersion("1".into()),
         resolved_kind: ToolKind::Builtin,
         resolved_def_hash: ContentRef::from_bytes([0; 32]),
+        idempotency_class: IdempotencyClass::Token,
     };
     let e2 = ToolResolutionEvent {
         tool_id: ToolName("t".into()),
@@ -534,6 +536,21 @@ fn tool_resolution_event_ref_changes_with_kind() {
             source_url: "https://example.com/t".into(),
         },
         resolved_def_hash: ContentRef::from_bytes([0; 32]),
+        idempotency_class: IdempotencyClass::Token,
     };
     assert_ne!(e1.to_ref(), e2.to_ref());
+}
+
+#[test]
+fn tool_resolution_event_ref_changes_with_idempotency_class() {
+    let base = ToolResolutionEvent {
+        tool_id: ToolName("t".into()),
+        tool_version: ToolVersion("1".into()),
+        resolved_kind: ToolKind::Builtin,
+        resolved_def_hash: ContentRef::from_bytes([0; 32]),
+        idempotency_class: IdempotencyClass::Token,
+    };
+    let mut changed = base.clone();
+    changed.idempotency_class = IdempotencyClass::AtLeastOnce;
+    assert_ne!(base.to_ref(), changed.to_ref());
 }

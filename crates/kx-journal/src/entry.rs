@@ -57,6 +57,7 @@
 //!     tool_version       [u8; tool_version_len] (UTF-8)
 //!     resolved_kind_tag  u8 (Builtin=0 .. SelfGenerated=4)
 //!     resolved_def_hash  [u8;32]
+//!     idempotency_class  u8 (Token=0, Readback=1, Staged=2, AtLeastOnce=3) (v6, M2.3b, D105.4)
 //!
 //! ParentEntry (34 bytes):
 //!     parent_id        [u8;32]
@@ -124,7 +125,25 @@ use smallvec::SmallVec;
 ///
 /// v5 readers refuse v4 files loudly (no in-place evolution; no production v4
 /// journals are retained across the bump per the corpus, acceptable).
-pub const JOURNAL_SCHEMA_VERSION: u16 = 5;
+///
+/// **v6 (M2.3b, D105.4) changes** vs v5:
+/// - `ResolvedCapabilityRecord` gains a trailing `idempotency_class` (one u8 tag,
+///   [`IdempotencyClassTag`]) inside the `RunVersionsResolved` body's
+///   capability-present arm. This makes the per-tool `IdempotencyClass` DURABLE
+///   so crash recovery can pick the class-correct action (Redispatch /
+///   CommitFromReadback / Compensate / Quarantine) for a staged-uncommitted
+///   WORLD-MUTATING Mote, instead of relying on the Token-only idempotency-key
+///   dedup. Body layout for a present capability becomes
+///   `… ‖ resolved_kind_tag(u8) ‖ resolved_def_hash(32) ‖ idempotency_class_tag(u8)`
+///   (+1 byte). Still off-DAG, never an identity input, never folded into any
+///   digest; the dedup index stays `{1, 2, 4}`; `MAX_ENTRY_LEN` is unchanged.
+/// - Two new terminal [`FailureReason`] variants (`CompensatedAtLeastOnce`,
+///   `QuarantinedAtLeastOnce`) record the recovery outcome for an at-most-once
+///   effect. No `Failed`-body layout change (`reason_class` is already a u8).
+///
+/// v6 readers refuse v5 files loudly (no in-place evolution; no production v5
+/// journals are retained across the bump per the corpus, acceptable).
+pub const JOURNAL_SCHEMA_VERSION: u16 = 6;
 
 /// Fixed entry-header length in bytes (`journal-entry.md` §3).
 pub const HEADER_LEN: usize = 74;
@@ -261,8 +280,54 @@ impl ResolvedKindTag {
     }
 }
 
+/// The resolved tool's idempotency class, mirrored as a closed `u8`-tagged enum
+/// so `kx-journal` need not depend on `kx-tool-registry` (the journal must stay
+/// dependency-clean, like [`ResolvedKindTag`]). Tags MUST mirror
+/// `kx_tool_registry::IdempotencyClass`'s variant order (Token=0, Readback=1,
+/// Staged=2, AtLeastOnce=3); the coordinator maps `IdempotencyClass →
+/// IdempotencyClassTag` when building the entry. Adding a variant is a
+/// `schema_version` bump.
+///
+/// Made durable by M2.3b (D105.4 Option A): the resolved `IdempotencyClass` is
+/// otherwise transient (resolved at submit for the R-10 refusal, then dropped),
+/// so crash recovery could only safely re-dispatch Token-class effects. This tag
+/// lets recovery pick the class-correct action for every class.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[repr(u8)]
+pub enum IdempotencyClassTag {
+    /// Tool accepts an idempotency token (`kx_tool_registry::IdempotencyClass::Token`).
+    Token = 0,
+    /// Deterministic read-back probe (`kx_tool_registry::IdempotencyClass::Readback`).
+    Readback = 1,
+    /// Staged-intent via the `EffectStaged` kind (`kx_tool_registry::IdempotencyClass::Staged`).
+    Staged = 2,
+    /// No closing mechanism; explicit author ack (`kx_tool_registry::IdempotencyClass::AtLeastOnce`).
+    AtLeastOnce = 3,
+}
+
+impl IdempotencyClassTag {
+    /// The tag's discriminant byte.
+    #[must_use]
+    pub const fn as_u8(self) -> u8 {
+        self as u8
+    }
+
+    /// Parse a tag byte; `None` for an unknown discriminant (decoder rejects).
+    #[must_use]
+    pub const fn from_u8(b: u8) -> Option<Self> {
+        Some(match b {
+            0 => Self::Token,
+            1 => Self::Readback,
+            2 => Self::Staged,
+            3 => Self::AtLeastOnce,
+            _ => return None,
+        })
+    }
+}
+
 /// One resolved capability captured in a [`JournalEntry::RunVersionsResolved`]
-/// fact (M1.2, D79). Audit/lineage metadata — never an identity input.
+/// fact (M1.2, D79; `idempotency_class` added M2.3b/D105.4). Audit/lineage
+/// metadata — never an identity input.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ResolvedCapabilityRecord {
     /// The resolved tool's name (opaque identifier).
@@ -273,6 +338,11 @@ pub struct ResolvedCapabilityRecord {
     pub resolved_kind: ResolvedKindTag,
     /// `blake3(canonical_bincode(ToolDef))` — pins the exact resolved `ToolDef`.
     pub resolved_def_hash: ContentRef,
+    /// The resolved tool's durable idempotency class (M2.3b, D105.4). Carried
+    /// explicitly because the resolved `ToolDef` is never content-stored, so the
+    /// class cannot be recovered from `resolved_def_hash`. Drives the class-aware
+    /// recovery decision for a staged-uncommitted WORLD-MUTATING Mote.
+    pub idempotency_class: IdempotencyClassTag,
 }
 
 // ---------------------------------------------------------------------------
@@ -349,6 +419,19 @@ pub enum FailureReason {
     /// Submission-time refusal: WORLD-MUTATING + no idempotency strategy + no critic
     /// (`mote.md` §4 anti-pattern; refusal predicate in `validate-then-commit.md` §7).
     UnsafeWorldMutatingConstruction = 5,
+    /// **Recovery-time outcome (M2.3b, D105.4 / D65).** A staged-uncommitted
+    /// at-most-once (`IdempotencyClass::AtLeastOnce`) WORLD-MUTATING effect could
+    /// not be safely re-dispatched (that would double-fire), so recovery ran the
+    /// capability's deterministic `compensate` (undo). The effect was reversed;
+    /// the Mote is terminal. Distinct from `UnsafeWorldMutatingConstruction`
+    /// (a *submission-time* refusal) — this is a *recovery-time* clean-up.
+    CompensatedAtLeastOnce = 6,
+    /// **Recovery-time outcome (M2.3b, D105.4 / D65).** Same situation as
+    /// `CompensatedAtLeastOnce`, but the capability does NOT support compensation,
+    /// so recovery quarantined the Mote rather than risk a double-fire: it is
+    /// terminal (never re-dispatched) and surfaced via the projection's
+    /// `AnomalyKind`/`anomaly_motes` for operator review.
+    QuarantinedAtLeastOnce = 7,
 }
 
 impl FailureReason {
@@ -369,6 +452,8 @@ impl FailureReason {
             3 => Self::WorkerCrashed,
             4 => Self::UpstreamRepudiated,
             5 => Self::UnsafeWorldMutatingConstruction,
+            6 => Self::CompensatedAtLeastOnce,
+            7 => Self::QuarantinedAtLeastOnce,
             _ => return None,
         })
     }
@@ -885,6 +970,12 @@ pub enum DecodeError {
     /// five known [`ResolvedKindTag`] values.
     #[error("unknown resolved_kind tag: {0}")]
     UnknownResolvedKind(u8),
+    /// A `RunVersionsResolved` entry's `idempotency_class` tag byte is not one of
+    /// the four known [`IdempotencyClassTag`] values (v6, M2.3b). A v5-shaped body
+    /// lacking the trailing byte fails the exact-cursor check as `TrailingBytes`
+    /// before reaching here; this guards a present-but-corrupt tag.
+    #[error("unknown idempotency_class tag: {0}")]
+    UnknownIdempotencyClass(u8),
     /// A `RunVersionsResolved` entry's `has_cap` flag is neither 0 nor 1.
     #[error("has_cap flag is not boolean: {0}")]
     NonBooleanHasCap(u8),
@@ -1095,9 +1186,10 @@ pub fn encode_entry(entry: &JournalEntry) -> Result<Vec<u8>, EncodeError> {
             capability,
             ..
         } => {
-            // v4 (M1.2): body = instance_id(16) ‖ warrant_ref(32) ‖
+            // v4 (M1.2) + v6 (M2.3b): body = instance_id(16) ‖ warrant_ref(32) ‖
             // u16-prefixed model_id ‖ has_cap(u8) ‖ [if has_cap: u16-prefixed
-            // tool_id ‖ u16-prefixed tool_version ‖ kind_tag(u8) ‖ def_hash(32)].
+            // tool_id ‖ u16-prefixed tool_version ‖ kind_tag(u8) ‖ def_hash(32) ‖
+            // idempotency_class_tag(u8)].
             out.extend_from_slice(instance_id);
             out.extend_from_slice(warrant_ref.as_bytes());
             push_len_prefixed_str(&mut out, model_id)?;
@@ -1109,6 +1201,7 @@ pub fn encode_entry(entry: &JournalEntry) -> Result<Vec<u8>, EncodeError> {
                     push_len_prefixed_str(&mut out, &cap.tool_version)?;
                     out.push(cap.resolved_kind.as_u8());
                     out.extend_from_slice(cap.resolved_def_hash.as_bytes());
+                    out.push(cap.idempotency_class.as_u8());
                 }
             }
             // Pathological-id guard (real-id bodies are ~100 B). Mirrors the
@@ -1396,11 +1489,16 @@ pub fn decode_entry_with_def_hash(
                     let resolved_kind = ResolvedKindTag::from_u8(tag_byte)
                         .ok_or(DecodeError::UnknownResolvedKind(tag_byte))?;
                     let def_hash_bytes = read_array32(body, &mut cursor, kind)?;
+                    // v6 (M2.3b): trailing idempotency_class tag byte.
+                    let class_byte = read_u8(body, &mut cursor, kind)?;
+                    let idempotency_class = IdempotencyClassTag::from_u8(class_byte)
+                        .ok_or(DecodeError::UnknownIdempotencyClass(class_byte))?;
                     Some(ResolvedCapabilityRecord {
                         tool_id,
                         tool_version,
                         resolved_kind,
                         resolved_def_hash: ContentRef::from_bytes(def_hash_bytes),
+                        idempotency_class,
                     })
                 }
                 other => return Err(DecodeError::NonBooleanHasCap(other)),
@@ -2077,6 +2175,7 @@ mod tests {
             tool_version: "1.0.0".to_owned(),
             resolved_kind: ResolvedKindTag::Builtin,
             resolved_def_hash: ContentRef::from_bytes([0x77; 32]),
+            idempotency_class: IdempotencyClassTag::Readback,
         }
     }
 
@@ -2144,14 +2243,74 @@ mod tests {
     fn decode_rejects_run_versions_unknown_kind_tag() {
         let e = sample_run_versions(Some(sample_capability()));
         let bytes = encode_entry(&e).unwrap();
-        // The kind tag byte sits just before the trailing 32-byte def_hash.
-        let tag_idx = bytes.len() - 33;
+        // Body tail (v6): kind_tag(1) ‖ def_hash(32) ‖ class_tag(1). The kind tag
+        // sits 34 bytes from the end (33 trailing bytes after it, plus itself).
+        let tag_idx = bytes.len() - 34;
         let mut corrupted = bytes.clone();
         corrupted[tag_idx] = 0xff;
         assert_eq!(
             decode_entry(&corrupted).unwrap_err(),
             DecodeError::UnknownResolvedKind(0xff)
         );
+    }
+
+    #[test]
+    fn decode_rejects_run_versions_unknown_idempotency_class() {
+        // v6 (M2.3b): the idempotency_class tag is the LAST body byte.
+        let e = sample_run_versions(Some(sample_capability()));
+        let bytes = encode_entry(&e).unwrap();
+        let class_idx = bytes.len() - 1;
+        let mut corrupted = bytes.clone();
+        corrupted[class_idx] = 0xff;
+        assert_eq!(
+            decode_entry(&corrupted).unwrap_err(),
+            DecodeError::UnknownIdempotencyClass(0xff)
+        );
+    }
+
+    #[test]
+    fn decode_rejects_v5_shaped_run_versions_body_missing_class_byte() {
+        // A v5-shaped capability body (no trailing class byte) is a body-too-short
+        // under v6 — the decoder reads through def_hash then runs out of bytes
+        // reading the class tag. Fail-closed; backstopped by the schema-version gate.
+        let e = sample_run_versions(Some(sample_capability()));
+        let mut bytes = encode_entry(&e).unwrap();
+        bytes.pop(); // drop the trailing idempotency_class tag → v5 shape
+        assert!(matches!(
+            decode_entry(&bytes),
+            Err(DecodeError::BodyTooShort {
+                kind: KIND_RUN_VERSIONS_RESOLVED,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn idempotency_class_tag_round_trips_and_rejects_unknown() {
+        for tag in [
+            IdempotencyClassTag::Token,
+            IdempotencyClassTag::Readback,
+            IdempotencyClassTag::Staged,
+            IdempotencyClassTag::AtLeastOnce,
+        ] {
+            assert_eq!(IdempotencyClassTag::from_u8(tag.as_u8()), Some(tag));
+        }
+        assert_eq!(IdempotencyClassTag::from_u8(4), None);
+    }
+
+    #[test]
+    fn recovery_failure_reasons_round_trip_and_are_terminal() {
+        for r in [
+            FailureReason::CompensatedAtLeastOnce,
+            FailureReason::QuarantinedAtLeastOnce,
+        ] {
+            assert_eq!(FailureReason::from_u8(r.as_u8()), Some(r));
+            // Both recovery outcomes are TERMINAL — never re-dispatched.
+            assert!(!is_pre_commit_crash(r));
+        }
+        assert_eq!(FailureReason::CompensatedAtLeastOnce.as_u8(), 6);
+        assert_eq!(FailureReason::QuarantinedAtLeastOnce.as_u8(), 7);
+        assert_eq!(FailureReason::from_u8(8), None);
     }
 
     #[test]

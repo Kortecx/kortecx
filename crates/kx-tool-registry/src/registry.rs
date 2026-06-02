@@ -452,6 +452,7 @@ impl ToolRegistry for InMemoryToolRegistry {
             tool_version: grant.tool_version.clone(),
             resolved_kind: rec.def.kind.clone(),
             resolved_def_hash,
+            idempotency_class: rec.def.idempotency_class,
         };
         let event_ref = event.to_ref();
 

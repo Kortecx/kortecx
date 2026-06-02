@@ -574,3 +574,82 @@ fn compensate_defaults_to_unsupported_and_is_overridable() {
     };
     assert_eq!(comp.compensate(&req).unwrap(), Some(b"undone".to_vec()));
 }
+
+// -- M2.3b — broker-level compensate stages the undo, gated by the warrant ----
+
+#[test]
+fn broker_compensate_stages_undo_when_capability_supports_it() {
+    let name = tool_name("c");
+    let version = tool_version("1");
+    let mote = mote_with_tool(&name, &version);
+    let warrant = permissive_warrant_with_grant(ToolGrant {
+        tool_id: name.clone(),
+        tool_version: version.clone(),
+    });
+    let broker = LocalCapabilityBroker::new(InMemoryContentStore::new());
+    broker.register_capability(Box::new(CompensatingCapability {
+        name: name.clone(),
+        version,
+        patterns: vec![EffectPattern::StageThenCommit],
+    }));
+    let req = empty_request_with_pattern(EffectPattern::StageThenCommit, vec![]);
+    let handle = broker
+        .compensate(&mote, &warrant, &name, req)
+        .expect("compensate ok")
+        .expect("expected Some(handle) — capability ran its undo");
+    // The undo's externally-observable result is content-addressed in the store.
+    assert_eq!(handle.staged_ref, ContentRef::of(b"undone"));
+}
+
+#[test]
+fn broker_compensate_returns_none_for_unsupported_capability() {
+    let name = tool_name("rev");
+    let version = tool_version("1");
+    let mote = mote_with_tool(&name, &version);
+    let warrant = permissive_warrant_with_grant(ToolGrant {
+        tool_id: name.clone(),
+        tool_version: version.clone(),
+    });
+    let broker = LocalCapabilityBroker::new(InMemoryContentStore::new());
+    broker.register_capability(Box::new(ReverseCapability::new(
+        "rev",
+        "1",
+        vec![EffectPattern::StageThenCommit],
+    )));
+    let req = empty_request_with_pattern(EffectPattern::StageThenCommit, vec![1, 2, 3]);
+    let outcome = broker
+        .compensate(&mote, &warrant, &name, req)
+        .expect("compensate ok");
+    assert!(
+        outcome.is_none(),
+        "default compensate impl returns None — broker yields None → executor quarantines"
+    );
+}
+
+#[test]
+fn broker_compensate_refuses_capability_outside_warrant() {
+    // Compensation is a world-mutating undo — the broker MUST run the same
+    // warrant gate as dispatch (no unwarranted effect bypass, D65 / M2.3b).
+    let name = tool_name("c");
+    let version = tool_version("1");
+    let mote = mote_with_tool(&name, &version);
+    // A warrant that grants a DIFFERENT tool → the capability is not granted.
+    let warrant = permissive_warrant_with_grant(ToolGrant {
+        tool_id: tool_name("other"),
+        tool_version: version.clone(),
+    });
+    let broker = LocalCapabilityBroker::new(InMemoryContentStore::new());
+    broker.register_capability(Box::new(CompensatingCapability {
+        name: name.clone(),
+        version,
+        patterns: vec![EffectPattern::StageThenCommit],
+    }));
+    let req = empty_request_with_pattern(EffectPattern::StageThenCommit, vec![]);
+    let err = broker
+        .compensate(&mote, &warrant, &name, req)
+        .expect_err("compensate must refuse a capability outside the warrant");
+    assert!(matches!(
+        err,
+        BrokerError::CapabilityExceedsWarrant { .. } | BrokerError::UnknownCapability { .. }
+    ));
+}

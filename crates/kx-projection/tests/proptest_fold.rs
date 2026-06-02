@@ -559,6 +559,7 @@ fn sample_cap_record() -> kx_journal::ResolvedCapabilityRecord {
         tool_version: "1.0.0".to_owned(),
         resolved_kind: kx_journal::ResolvedKindTag::Builtin,
         resolved_def_hash: ContentRef::from_bytes([0x42; 32]),
+        idempotency_class: kx_journal::IdempotencyClassTag::Readback,
     }
 }
 
@@ -584,6 +585,13 @@ fn run_versions_resolved_fold_is_off_dag_and_appends_metadata() {
     assert_eq!(recs[0].model_id, "qwen");
     assert_eq!(recs[0].capability.as_ref().unwrap().tool_id, "fs-read");
     assert!(recs[1].capability.is_none());
+
+    // **M2.3b:** the durable class lookup the recovery decision reads.
+    assert_eq!(
+        p.idempotency_class_for_tool("fs-read"),
+        Some(kx_journal::IdempotencyClassTag::Readback)
+    );
+    assert_eq!(p.idempotency_class_for_tool("unknown-tool"), None);
 }
 
 /// **Scale (D95):** folding a large run-metadata log stays O(1) **off the

@@ -23,8 +23,9 @@ use std::sync::Arc;
 
 use kx_capability::EffectRequest;
 use kx_content::ContentRef;
-use kx_journal::{Journal, JournalEntry};
+use kx_journal::{FailureReason, Journal, JournalEntry};
 use kx_mote::{Mote, MoteId, NdClass, ToolName};
+use kx_tool_registry::IdempotencyClass;
 use kx_warrant::WarrantSpec;
 use smallvec::SmallVec;
 use thiserror::Error;
@@ -109,6 +110,83 @@ pub struct WmLifecycleCommit {
     /// the submission, the critic's `Proposed` entry seq. `None` for
     /// `IdempotentByConstruction` / `StageThenCommit` paths (no critic).
     pub critic_proposed_seq: Option<u64>,
+}
+
+/// **M2.3b (D65 / D105.4).** The realized recovery action for a staged-uncommitted
+/// WORLD-MUTATING Mote — the typed, class-aware decision that closes the M2 exit
+/// gate ("resume-or-compensate proven per `IdempotencyClass`").
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecoveryAction {
+    /// The effect was re-dispatched (Token/Staged, or class-unknown): a fresh
+    /// `Committed` via the broker. Token-boundary / `EffectStaged` dedup makes
+    /// this exactly-once.
+    Redispatch,
+    /// A Readback probe found the effect already applied → committed from the
+    /// probed `result_ref` with NO re-dispatch (exactly-once).
+    CommitFromReadback,
+    /// An at-most-once (`AtLeastOnce`) effect was undone via the capability's
+    /// `compensate`; a terminal `Failed { CompensatedAtLeastOnce }` was recorded.
+    Compensate,
+    /// An at-most-once (`AtLeastOnce`) effect could not be undone (no compensation
+    /// support); the Mote was quarantined as terminal
+    /// `Failed { QuarantinedAtLeastOnce }`, never re-dispatched, surfaced via
+    /// `anomaly_motes()`.
+    Quarantine,
+}
+
+/// The upfront, class-driven route a staged-uncommitted WM Mote takes at recovery.
+/// Pure function of the durable [`IdempotencyClass`] — see [`recovery_route_for`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RecoveryRoute {
+    /// Token / Readback / Staged / unknown(`None`): probe, then commit-from-readback
+    /// or re-dispatch. The class has a closing mechanism (or is unknown → today's
+    /// behavior), so re-dispatch is safe.
+    ProbeThenRedispatch,
+    /// `AtLeastOnce`: no closing mechanism, so a blind re-dispatch would double-fire.
+    /// Compensate (undo) if supported, else quarantine.
+    CompensateOrQuarantine,
+}
+
+/// The class-driven recovery route (M2.3b, D65). Pure + total + testable: the
+/// exhaustive match means a NEW [`IdempotencyClass`] variant is a compile error
+/// here until its recovery route is decided (Rule 5.2 — illegal states
+/// unrepresentable).
+fn recovery_route_for(class: Option<IdempotencyClass>) -> RecoveryRoute {
+    match class {
+        // No closing mechanism → never blind-redispatch (would double-fire).
+        Some(IdempotencyClass::AtLeastOnce) => RecoveryRoute::CompensateOrQuarantine,
+        // Token (remote token dedup), Staged (EffectStaged dedup), Readback
+        // (deterministic probe), or unknown (None → today's exact behavior):
+        // re-dispatch / probe-then-commit is the safe, exactly-once action.
+        Some(IdempotencyClass::Token | IdempotencyClass::Readback | IdempotencyClass::Staged)
+        | None => RecoveryRoute::ProbeThenRedispatch,
+    }
+}
+
+/// **M2.3b.** The outcome of [`redispatch_wm_mote`]. Recovery now either commits
+/// the Mote (Redispatch / CommitFromReadback) OR terminates it (Compensate /
+/// Quarantine) — the latter produces a `Failed`, not a `Committed`, so the result
+/// is a sum type rather than the commit-only [`WmLifecycleCommit`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WmRecoveryOutcome {
+    /// The Mote committed during recovery. Carries the commit info + which action.
+    Committed {
+        /// The successful commit details (seq, `result_ref`, critic Proposed seq).
+        commit: WmLifecycleCommit,
+        /// Whether the commit came from a re-dispatch or a readback.
+        action: RecoveryAction,
+    },
+    /// The Mote terminally failed during recovery (an at-most-once effect that was
+    /// compensated or quarantined). No `Committed`; the run does not progress past
+    /// this Mote.
+    TerminallyFailed {
+        /// The Mote that was terminated.
+        mote_id: MoteId,
+        /// The seq of the terminal `Failed` entry.
+        failed_seq: u64,
+        /// Whether the effect was compensated (undone) or quarantined.
+        action: RecoveryAction,
+    },
 }
 
 /// The **P0.4 hard gate** (P3.3): if `mote_id` is already `Committed` in the journal,
@@ -306,12 +384,13 @@ pub fn redispatch_wm_mote<J, R, CP, O>(
     warrant: &WarrantSpec,
     capability: ToolName,
     effect_request: EffectRequest,
+    idempotency_class: Option<IdempotencyClass>,
     submission_motes: &BTreeMap<MoteId, Mote>,
     journal: &J,
     resource_manager: &R,
     commit_protocol: &CP,
     oracle: &O,
-) -> Result<WmLifecycleCommit, LifecycleError>
+) -> Result<WmRecoveryOutcome, LifecycleError>
 where
     J: Journal + ?Sized,
     R: ResourceManager + ?Sized,
@@ -349,18 +428,6 @@ where
     // intent. The broker's idempotency_key dedup is the load-bearing
     // safety here.
 
-    // Step 4: the recovery decision (M2.3a, D38 §2a / D65). For a
-    // staged-uncommitted WM Mote the recovery action is one of three outcomes,
-    // encoded by `try_commit_from_readback`'s `Result<Option<u64>>`:
-    //   • Ok(Some) = COMMIT-FROM-READBACK — the probe found the effect applied;
-    //     the protocol committed the probed result_ref WITHOUT re-dispatching
-    //     (exactly-once for Readback-class tools).
-    //   • Ok(None) = REDISPATCH — no readback support (default probe) or the
-    //     effect did not land → fall through to the normal re-dispatch.
-    //   • Err(ProbeFailed) = REFUSE — the probe errored; world state is
-    //     indeterminate, so re-dispatch is refused (fail-closed, no double-fire).
-    // (M2.3b extends this to a typed Compensate/Quarantine arm once the
-    // IdempotencyClass is durable.)
     let commit_input = CommitInput {
         mote,
         warrant,
@@ -371,57 +438,183 @@ where
         idempotency_key,
         parents: SmallVec::new(),
         diagnostic_context: "lifecycle::redispatch_wm_mote",
+        idempotency_class,
     };
-    let committed_seq = match commit_protocol.try_commit_from_readback(commit_input.clone()) {
-        Ok(Some(seq)) => seq, // probe: effect already applied → committed from readback
-        Ok(None) => match commit_protocol.commit(commit_input) {
-            Ok(seq) => seq,
+
+    // Step 4: the class-aware recovery decision (M2.3b, D38 §2a / D65). The
+    // durable `IdempotencyClass` routes the staged-uncommitted WM Mote:
+    //   • ProbeThenRedispatch (Token/Readback/Staged/unknown) — the M2.3a path:
+    //       Ok(Some) = COMMIT-FROM-READBACK (probe found it applied → committed
+    //                  the probed result_ref WITHOUT re-dispatching),
+    //       Ok(None) = REDISPATCH (no readback / not applied → re-dispatch),
+    //       Err(ProbeFailed) = REFUSE (indeterminate → fail-closed).
+    //   • CompensateOrQuarantine (AtLeastOnce — no closing mechanism, a blind
+    //       re-dispatch would double-fire):
+    //       Ok(Some) = COMPENSATE (undo ran → terminal Failed{Compensated}),
+    //       Ok(None) = QUARANTINE (no undo → terminal Failed{Quarantined}),
+    //       Err(CompensateFailed) = REFUSE (fail-closed).
+    match recovery_route_for(idempotency_class) {
+        RecoveryRoute::CompensateOrQuarantine => {
+            let outcome = compensate_or_quarantine(
+                mote,
+                idempotency_key,
+                journal,
+                commit_protocol,
+                commit_input,
+            );
+            // Release the slot regardless of outcome; never re-dispatch.
+            let _ = resource_manager.release(slot);
+            return outcome;
+        }
+        RecoveryRoute::ProbeThenRedispatch => {}
+    }
+
+    let (committed_seq, action) =
+        match commit_protocol.try_commit_from_readback(commit_input.clone()) {
+            // probe: effect already applied → committed from readback
+            Ok(Some(seq)) => (seq, RecoveryAction::CommitFromReadback),
+            Ok(None) => match commit_protocol.commit(commit_input) {
+                Ok(seq) => (seq, RecoveryAction::Redispatch),
+                Err(e) => {
+                    let _ = resource_manager.release(slot);
+                    return Err(LifecycleError::CommitProtocol(e));
+                }
+            },
             Err(e) => {
+                // ProbeFailed (fail-closed) — never re-dispatch on an indeterminate probe.
                 let _ = resource_manager.release(slot);
                 return Err(LifecycleError::CommitProtocol(e));
             }
-        },
+        };
+
+    // Step 5: critic-Mote child scheduling (same as run_wm_mote).
+    let critic_proposed_seq = match schedule_sibling_critic(
+        mote,
+        submission_motes,
+        journal,
+        warrant_ref,
+        " (recovery)",
+    ) {
+        Ok(seq) => seq,
         Err(e) => {
-            // ProbeFailed (fail-closed) — never re-dispatch on an indeterminate probe.
             let _ = resource_manager.release(slot);
-            return Err(LifecycleError::CommitProtocol(e));
+            return Err(e);
         }
     };
 
-    // Step 5: critic-Mote child scheduling (same as run_wm_mote).
-    let critic_proposed_seq =
-        if mote.def.effect_pattern == kx_mote::EffectPattern::ValidateThenCommit {
-            let critic = submission_motes
-                .values()
-                .find(|sibling| sibling.def.critic_for == Some(mote.id));
-            match critic {
-                Some(critic_mote) => {
-                    let critic_proposed = JournalEntry::Proposed {
-                        mote_id: critic_mote.id,
-                        idempotency_key: *critic_mote.id.as_bytes(),
-                        seq: 0,
-                        nondeterminism: critic_mote.def.nd_class,
-                        placement_hint: 0,
-                        warrant_ref,
-                    };
-                    match journal.append(critic_proposed) {
-                        Ok(entry) => Some(entry.seq()),
-                        Err(e) => {
-                            let _ = resource_manager.release(slot);
-                            return Err(LifecycleError::JournalAppend(format!(
-                                "critic Proposed (recovery): {e:?}"
-                            )));
-                        }
-                    }
-                }
-                None => None,
-            }
-        } else {
-            None
-        };
+    let result_ref = match read_committed_result_ref(journal, mote.id, committed_seq) {
+        Ok(r) => r,
+        Err(e) => {
+            let _ = resource_manager.release(slot);
+            return Err(e);
+        }
+    };
 
-    let result_ref = journal
-        .read_committed(&mote.id)
+    resource_manager.release(slot)?;
+
+    Ok(WmRecoveryOutcome::Committed {
+        commit: WmLifecycleCommit {
+            committed_seq,
+            result_ref,
+            mote_id: mote.id,
+            critic_proposed_seq,
+        },
+        action,
+    })
+}
+
+/// **M2.3b.** The `AtLeastOnce` recovery branch: compensate (undo) the
+/// staged-uncommitted effect if the capability supports it, else quarantine the
+/// Mote. NEVER re-dispatches — there is no closing mechanism, so a re-dispatch
+/// would double-fire. Both arms produce a TERMINAL `Failed` (non-redispatchable);
+/// the caller releases the resource slot.
+fn compensate_or_quarantine<J, CP>(
+    mote: &Mote,
+    idempotency_key: [u8; 32],
+    journal: &J,
+    commit_protocol: &CP,
+    commit_input: CommitInput<'_>,
+) -> Result<WmRecoveryOutcome, LifecycleError>
+where
+    J: Journal + ?Sized,
+    CP: CommitProtocol + ?Sized,
+{
+    match commit_protocol.try_compensate(commit_input) {
+        // The undo ran; the protocol recorded terminal Failed{Compensated}.
+        Ok(Some(failed_seq)) => Ok(WmRecoveryOutcome::TerminallyFailed {
+            mote_id: mote.id,
+            failed_seq,
+            action: RecoveryAction::Compensate,
+        }),
+        // No compensation support → quarantine: append terminal Failed{Quarantined}
+        // (no broker call). The fold marks the Mote quarantined + surfaces it via
+        // `anomaly_motes()`; the recovery oracle then refuses any re-dispatch.
+        Ok(None) => {
+            let entry = JournalEntry::Failed {
+                mote_id: mote.id,
+                idempotency_key,
+                seq: 0, // journal-assigned
+                reason_class: FailureReason::QuarantinedAtLeastOnce,
+                reporter_id: 0,
+            };
+            let written = journal.append(entry).map_err(|e| {
+                LifecycleError::JournalAppend(format!("append Failed{{Quarantined}}: {e:?}"))
+            })?;
+            Ok(WmRecoveryOutcome::TerminallyFailed {
+                mote_id: mote.id,
+                failed_seq: written.seq(),
+                action: RecoveryAction::Quarantine,
+            })
+        }
+        // The undo itself errored → fail-closed (never re-dispatch).
+        Err(e) => Err(LifecycleError::CommitProtocol(e)),
+    }
+}
+
+/// Schedule the `ValidateThenCommit` producer's sibling critic by appending its
+/// `Proposed` entry (shared by `run_wm_mote` + `redispatch_wm_mote`). Returns the
+/// critic's `Proposed` seq, or `None` when the producer is not VTC / has no sibling
+/// critic in the submission. On a journal-append error the caller releases its
+/// resource slot. `label` distinguishes the operator diagnostic (e.g. recovery).
+fn schedule_sibling_critic<J: Journal + ?Sized>(
+    mote: &Mote,
+    submission_motes: &BTreeMap<MoteId, Mote>,
+    journal: &J,
+    warrant_ref: ContentRef,
+    label: &str,
+) -> Result<Option<u64>, LifecycleError> {
+    if mote.def.effect_pattern != kx_mote::EffectPattern::ValidateThenCommit {
+        return Ok(None);
+    }
+    let Some(critic_mote) = submission_motes
+        .values()
+        .find(|sibling| sibling.def.critic_for == Some(mote.id))
+    else {
+        return Ok(None);
+    };
+    let critic_proposed = JournalEntry::Proposed {
+        mote_id: critic_mote.id,
+        idempotency_key: *critic_mote.id.as_bytes(),
+        seq: 0, // journal-assigned
+        nondeterminism: critic_mote.def.nd_class,
+        placement_hint: 0,
+        warrant_ref,
+    };
+    journal
+        .append(critic_proposed)
+        .map(|entry| Some(entry.seq()))
+        .map_err(|e| LifecycleError::JournalAppend(format!("critic Proposed{label}: {e:?}")))
+}
+
+/// Read back the `result_ref` of the `Committed` entry the commit protocol just
+/// wrote for `mote_id` (shared by `run_wm_mote` + `redispatch_wm_mote`).
+fn read_committed_result_ref<J: Journal + ?Sized>(
+    journal: &J,
+    mote_id: MoteId,
+    committed_seq: u64,
+) -> Result<ContentRef, LifecycleError> {
+    journal
+        .read_committed(&mote_id)
         .map_err(|e| LifecycleError::JournalAppend(format!("read Committed: {e:?}")))?
         .and_then(|e| match e {
             JournalEntry::Committed { result_ref, .. } => Some(result_ref),
@@ -431,16 +624,7 @@ where
             LifecycleError::Internal(format!(
                 "commit_protocol returned Ok({committed_seq}) but no Committed entry visible"
             ))
-        })?;
-
-    resource_manager.release(slot)?;
-
-    Ok(WmLifecycleCommit {
-        committed_seq,
-        result_ref,
-        mote_id: mote.id,
-        critic_proposed_seq,
-    })
+        })
 }
 
 /// Run a single WORLD-MUTATING Mote end-to-end via the commit_protocol.
@@ -555,6 +739,9 @@ where
         idempotency_key,
         parents: SmallVec::new(),
         diagnostic_context: "lifecycle::run_wm_mote",
+        // Fresh (non-recovery) dispatch: the class-aware recovery decision is not
+        // taken here, so the field is unread on this path.
+        idempotency_class: None,
     };
     let committed_seq = match commit_protocol.commit(commit_input) {
         Ok(seq) => seq,
@@ -568,53 +755,23 @@ where
     // The submission's sibling map is the source of truth — R-2 ensured
     // a critic exists at submission time (or refused the submission).
     let critic_proposed_seq =
-        if mote.def.effect_pattern == kx_mote::EffectPattern::ValidateThenCommit {
-            let critic = submission_motes
-                .values()
-                .find(|sibling| sibling.def.critic_for == Some(mote.id));
-            match critic {
-                Some(critic_mote) => {
-                    let critic_proposed = JournalEntry::Proposed {
-                        mote_id: critic_mote.id,
-                        idempotency_key: *critic_mote.id.as_bytes(),
-                        seq: 0, // journal-assigned
-                        nondeterminism: critic_mote.def.nd_class,
-                        placement_hint: 0,
-                        warrant_ref,
-                    };
-                    match journal.append(critic_proposed) {
-                        Ok(entry) => Some(entry.seq()),
-                        Err(e) => {
-                            let _ = resource_manager.release(slot);
-                            return Err(LifecycleError::JournalAppend(format!(
-                                "critic Proposed: {e:?}"
-                            )));
-                        }
-                    }
-                }
-                None => None,
+        match schedule_sibling_critic(mote, submission_motes, journal, warrant_ref, "") {
+            Ok(seq) => seq,
+            Err(e) => {
+                let _ = resource_manager.release(slot);
+                return Err(e);
             }
-        } else {
-            None
         };
 
-    // The producer's result_ref is the broker's staged response. Recover
-    // it by reading the Committed entry the protocol just wrote. (We
-    // can't read it back cheaply without journal lookups; for the
-    // PR 9b-6 scope we record committed_seq + signal completion. Callers
-    // who need result_ref read it from the journal.)
-    let result_ref = journal
-        .read_committed(&mote.id)
-        .map_err(|e| LifecycleError::JournalAppend(format!("read Committed: {e:?}")))?
-        .and_then(|e| match e {
-            JournalEntry::Committed { result_ref, .. } => Some(result_ref),
-            _ => None,
-        })
-        .ok_or_else(|| {
-            LifecycleError::Internal(format!(
-                "commit_protocol returned Ok({committed_seq}) but no Committed entry visible"
-            ))
-        })?;
+    // The producer's result_ref is the broker's staged response — read it back
+    // from the Committed entry the protocol just wrote.
+    let result_ref = match read_committed_result_ref(journal, mote.id, committed_seq) {
+        Ok(r) => r,
+        Err(e) => {
+            let _ = resource_manager.release(slot);
+            return Err(e);
+        }
+    };
 
     // Step 6: release the slot.
     resource_manager.release(slot)?;
@@ -690,5 +847,37 @@ impl MoteExecutor for TestMoteExecutor {
         // Test backend supports every class — the integration test fixture
         // explicitly opts in to the test backend regardless of warrant.executor_class.
         true
+    }
+}
+
+#[cfg(test)]
+mod recovery_route_tests {
+    use super::{recovery_route_for, RecoveryRoute};
+    use kx_tool_registry::IdempotencyClass;
+
+    /// **M2.3b (D65).** The class-aware recovery route is exhaustive + total: only
+    /// `AtLeastOnce` (no closing mechanism) takes the compensate/quarantine path;
+    /// every other class — and the unknown (`None`) case — re-dispatches/probes,
+    /// preserving today's exactly-once behavior. The exhaustive match in
+    /// `recovery_route_for` means a NEW `IdempotencyClass` variant is a compile
+    /// error there until its route is decided.
+    #[test]
+    fn only_at_least_once_routes_to_compensate_or_quarantine() {
+        assert_eq!(
+            recovery_route_for(Some(IdempotencyClass::AtLeastOnce)),
+            RecoveryRoute::CompensateOrQuarantine,
+        );
+        for safe in [
+            None,
+            Some(IdempotencyClass::Token),
+            Some(IdempotencyClass::Readback),
+            Some(IdempotencyClass::Staged),
+        ] {
+            assert_eq!(
+                recovery_route_for(safe),
+                RecoveryRoute::ProbeThenRedispatch,
+                "class {safe:?} must take the probe-then-redispatch route",
+            );
+        }
     }
 }

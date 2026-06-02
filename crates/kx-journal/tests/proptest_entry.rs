@@ -196,6 +196,12 @@ fn arb_resolved_kind() -> impl Strategy<Value = kx_journal::ResolvedKindTag> {
     ]
 }
 
+/// **v6 (M2.3b): IdempotencyClassTag strategy** — one of the four closed variants.
+fn arb_idempotency_class() -> impl Strategy<Value = kx_journal::IdempotencyClassTag> {
+    use kx_journal::IdempotencyClassTag::{AtLeastOnce, Readback, Staged, Token};
+    prop_oneof![Just(Token), Just(Readback), Just(Staged), Just(AtLeastOnce)]
+}
+
 /// **v4 (M1.2): RunVersionsResolved strategy.** `instance_id` is the 16-byte run
 /// nonce; `model_id`/`tool_id`/`tool_version` are bounded UTF-8 ids; the
 /// capability is present or absent (zero-grant warrant).
@@ -205,15 +211,19 @@ fn arb_run_versions_resolved() -> impl Strategy<Value = JournalEntry> {
         "[a-z0-9._-]{0,16}",
         arb_resolved_kind(),
         arb_byte_array_32(),
+        arb_idempotency_class(),
     )
-        .prop_map(|(tool_id, tool_version, resolved_kind, def_hash)| {
-            kx_journal::ResolvedCapabilityRecord {
-                tool_id,
-                tool_version,
-                resolved_kind,
-                resolved_def_hash: ContentRef::from_bytes(def_hash),
-            }
-        });
+        .prop_map(
+            |(tool_id, tool_version, resolved_kind, def_hash, idempotency_class)| {
+                kx_journal::ResolvedCapabilityRecord {
+                    tool_id,
+                    tool_version,
+                    resolved_kind,
+                    resolved_def_hash: ContentRef::from_bytes(def_hash),
+                    idempotency_class,
+                }
+            },
+        );
     (
         proptest::array::uniform16(any::<u8>()),
         arb_byte_array_32(),

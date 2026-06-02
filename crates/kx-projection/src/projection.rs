@@ -474,6 +474,14 @@ impl Projection {
                     if !kx_journal::is_pre_commit_crash(*reason_class) {
                         info.terminal_failure_observed = true;
                     }
+                    // **v6 (M2.3b, D105.4).** A recovery-time quarantine of a
+                    // staged-uncommitted at-most-once effect: mark it so
+                    // `anomaly_motes` surfaces it for operator review. Set-once;
+                    // terminal_failure_observed is already set above (the variant
+                    // is not pre-commit-crash), so it is non-redispatchable too.
+                    if *reason_class == kx_journal::FailureReason::QuarantinedAtLeastOnce {
+                        info.quarantined = true;
+                    }
                 }
                 self.state.last_seq = self.state.last_seq.max(*seq);
             }
@@ -908,6 +916,34 @@ impl Projection {
     #[must_use]
     pub fn run_resolved_versions(&self) -> &[crate::state::RunResolvedVersions] {
         &self.state.run_resolved_versions
+    }
+
+    /// The durable resolved [`kx_journal::IdempotencyClassTag`] for a tool, folded
+    /// from the run's `RunVersionsResolved` metadata (M2.3b, D105.4). `None` if no
+    /// resolved record names this tool (e.g. a run that journaled no resolution —
+    /// the single-node demo path — or a tool outside the run's grants).
+    ///
+    /// This is the durable source the class-aware recovery decision reads: the
+    /// resolved class is otherwise transient (used at submit for the R-10 refusal,
+    /// then dropped), so a crash-recovered run could only safely re-dispatch
+    /// Token-class effects without it. A tool resolves to exactly one class per
+    /// run; the first matching record wins (records for one run share a class per
+    /// tool by construction).
+    ///
+    /// **Audit/lineage metadata, never identity** — like [`Self::run_resolved_versions`],
+    /// reading it moves no digest and gates no scheduling/identity decision (it
+    /// only informs the recovery action).
+    #[must_use]
+    pub fn idempotency_class_for_tool(
+        &self,
+        tool_id: &str,
+    ) -> Option<kx_journal::IdempotencyClassTag> {
+        self.state
+            .run_resolved_versions
+            .iter()
+            .filter_map(|r| r.capability.as_ref())
+            .find(|cap| cap.tool_id == tool_id)
+            .map(|cap| cap.idempotency_class)
     }
 
     /// Count of Motes currently in `MoteState::Repudiated`.
