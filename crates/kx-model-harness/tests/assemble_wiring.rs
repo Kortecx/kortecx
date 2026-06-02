@@ -21,6 +21,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use kx_capability::{CapabilityBroker, LocalCapabilityBroker};
 use kx_content::LocalFsContentStore;
 use kx_executor::{LocalResourceManager, StandardCommitProtocol};
 use kx_inference::{InferenceBackend, InferenceError, InferenceInput, InferenceOutput};
@@ -214,6 +215,10 @@ fn drive(workflow: &DemoWorkflow, dir: &Path) -> (Result<RunOutcome, RuntimeErro
         registry.clone(),
     );
     let observer = Arc::new(BrokerObserver::default());
+    // M5.2: an empty tool broker (these wiring tests assert the menu/parent bytes
+    // reach the model — not tool selection), so the routing is inert here.
+    let tool_broker: Arc<dyn CapabilityBroker> =
+        Arc::new(LocalCapabilityBroker::new(store.clone()));
     let broker = Arc::new(ModelBroker::new(
         backend,
         store.clone(),
@@ -222,6 +227,7 @@ fn drive(workflow: &DemoWorkflow, dir: &Path) -> (Result<RunOutcome, RuntimeErro
         observer,
         sink.clone(),
         registry,
+        tool_broker,
     ));
     let protocol = StandardCommitProtocol::new(store.clone(), journal.clone(), broker);
     let rm = LocalResourceManager::dev_defaults();

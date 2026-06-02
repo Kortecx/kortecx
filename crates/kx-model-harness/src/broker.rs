@@ -23,12 +23,12 @@ use std::sync::{Arc, Mutex};
 use kx_capability::{BrokerError, BrokerHandle, CapabilityBroker, EffectRequest};
 use kx_content::ContentStore;
 use kx_inference::{inference_params_from_mote, InferenceBackend};
-use kx_mote::{Mote, MoteId, ToolName, ToolVersion};
+use kx_mote::{EffectPattern, Mote, MoteId, ToolName, ToolVersion};
 use kx_runtime::{CrashPoint, SnapshotSink};
 use kx_tool_registry::ToolRegistry;
-use kx_warrant::WarrantSpec;
+use kx_warrant::{FsScope, NetScope, WarrantSpec};
 
-use crate::{context, prompt};
+use crate::{context, prompt, toolcall};
 
 /// Capability version reported on every harness dispatch.
 const CAPABILITY_VERSION: &str = "kx-model-harness-0.1.0";
@@ -67,6 +67,13 @@ pub struct ModelBroker<B: InferenceBackend, S: ContentStore> {
     observer: Arc<BrokerObserver>,
     sink: SnapshotSink,
     registry: Arc<dyn ToolRegistry>,
+    /// M5.2: where a model-proposed tool call is dispatched after the fail-closed
+    /// decode. Holds the concrete `McpCapability` (registered by the caller) so the
+    /// proposal flows through the authoritative `LocalCapabilityBroker::precheck`
+    /// warrant gate (net_scope ⊆ warrant, tool_grants, pattern) — never a second,
+    /// re-implemented gate. An empty broker means "no tools" (the model's proposals,
+    /// if any, are refused as ungranted before reaching here).
+    tool_broker: Arc<dyn CapabilityBroker>,
 }
 
 impl<B: InferenceBackend, S: ContentStore> std::fmt::Debug for ModelBroker<B, S> {
@@ -79,6 +86,7 @@ impl<B: InferenceBackend, S: ContentStore> std::fmt::Debug for ModelBroker<B, S>
             .field("observer", &self.observer)
             .field("sink", &self.sink)
             .field("registry", &"<dyn ToolRegistry>")
+            .field("tool_broker", &"<dyn CapabilityBroker>")
             .finish_non_exhaustive()
     }
 }
@@ -89,6 +97,7 @@ impl<B: InferenceBackend, S: ContentStore> ModelBroker<B, S> {
     /// through `observer`, plus the D78 context seams (snapshot sink + tool
     /// registry).
     #[must_use]
+    #[allow(clippy::too_many_arguments)] // Wiring seam; grouped meaningfully (M5.2 adds tool_broker).
     pub fn new(
         backend: Arc<B>,
         store: Arc<S>,
@@ -97,6 +106,7 @@ impl<B: InferenceBackend, S: ContentStore> ModelBroker<B, S> {
         observer: Arc<BrokerObserver>,
         sink: SnapshotSink,
         registry: Arc<dyn ToolRegistry>,
+        tool_broker: Arc<dyn CapabilityBroker>,
     ) -> Self {
         Self {
             backend,
@@ -106,6 +116,7 @@ impl<B: InferenceBackend, S: ContentStore> ModelBroker<B, S> {
             observer,
             sink,
             registry,
+            tool_broker,
         }
     }
 
@@ -115,6 +126,17 @@ impl<B: InferenceBackend, S: ContentStore> ModelBroker<B, S> {
         let mut bytes = b"kx-model-harness-tool:".to_vec();
         bytes.extend_from_slice(mote_id.as_bytes());
         bytes
+    }
+
+    /// Scenario-1 (`PreCommitStc`) crash injection: abort AFTER the effect is staged
+    /// (the staged content + `EffectStaged` journal entry are durable) but BEFORE
+    /// the commit protocol appends `Committed`. Shared by the model-completion and
+    /// the model-driven-MCP staging paths.
+    fn maybe_crash_pre_commit_stc(&self, mote_id: MoteId) {
+        if self.crash_at == Some(CrashPoint::PreCommitStc) && self.stc_crash_target == Some(mote_id)
+        {
+            CrashPoint::PreCommitStc.abort_now();
+        }
     }
 }
 
@@ -169,7 +191,48 @@ where
                     capability: capability.clone(),
                     diagnostic: format!("model dispatch: {e}"),
                 })?;
-            out.bytes
+
+            // M5.2 — IMP-5: decode a model-PROPOSED tool call, fail-closed. The
+            // model selects a tool from the menu M5.1 placed in its context; the
+            // runtime ENFORCES (SN-8). On a valid, warrant-granted call we route it
+            // through `tool_broker` — whose `precheck` is the authoritative warrant
+            // gate (net_scope ⊆ warrant, tool_grants, pattern) — and return its
+            // handle (already carrying the MCP capability identity as provenance,
+            // D72). No call ⇒ commit the completion bytes (byte-identical to
+            // pre-M5.2; the A–J rows grant no tools ⇒ always this arm). A malformed
+            // or ungranted proposal is REFUSED and never fires an effect.
+            match toolcall::parse_tool_call(&out.bytes, warrant, toolcall::max_args_bytes(warrant))
+            {
+                Ok(Some(call)) => {
+                    let effect = EffectRequest {
+                        payload: call.args_bytes,
+                        // MCP effects are world-mutating by default → StageThenCommit (D66).
+                        pattern: EffectPattern::StageThenCommit,
+                        // Run-stable dedup: a recovery re-dispatch re-derives the same
+                        // token (= mote.id) so the staged effect is exactly-once
+                        // (content-addressed). Matches the existing row-G tool path.
+                        // M5.2b note: when the HTTP transport sends a real remote
+                        // `Idempotency-Key` header, switch to `run_scoped_token`
+                        // (kx_capability::token) so a re-SUBMITTED run gets a fresh key.
+                        idempotency_key: Some(token),
+                        // M5.2a stdio transport performs no egress.
+                        net_scope: NetScope::None,
+                        fs_scope: FsScope::empty(),
+                    };
+                    let handle = self
+                        .tool_broker
+                        .dispatch(mote, warrant, &call.name, effect)?;
+                    self.maybe_crash_pre_commit_stc(mote.id);
+                    return Ok(handle);
+                }
+                Ok(None) => out.bytes,
+                Err(reason) => {
+                    return Err(BrokerError::StageWriteFailed {
+                        capability: capability.clone(),
+                        diagnostic: format!("model-proposed tool call rejected: {reason:?}"),
+                    });
+                }
+            }
         } else {
             Self::tool_response(&mote.id)
         };
@@ -189,10 +252,7 @@ where
         // `EffectStaged` is already in the journal because StageThenCommit
         // writes it before calling dispatch) but BEFORE the commit protocol
         // appends `Committed`.
-        if self.crash_at == Some(CrashPoint::PreCommitStc) && self.stc_crash_target == Some(mote.id)
-        {
-            CrashPoint::PreCommitStc.abort_now();
-        }
+        self.maybe_crash_pre_commit_stc(mote.id);
 
         Ok(BrokerHandle {
             staged_ref,

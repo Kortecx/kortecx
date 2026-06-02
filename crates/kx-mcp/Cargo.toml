@@ -1,0 +1,48 @@
+[package]
+name         = "kx-mcp"
+version      = "0.0.1"
+edition      = { workspace = true }
+rust-version = { workspace = true }
+license      = { workspace = true }
+authors      = { workspace = true }
+repository   = { workspace = true }
+description  = "kortecx MCP adapter (M5.2, D80): McpCapability — the FIRST production kx_capability::Capability impl, the concrete ToolKind::Mcp dispatch routed through the CapabilityBroker. A thin, SYNCHRONOUS, hand-rolled MCP JSON-RPC client (std::process stdio transport in M5.2a; ureq streamable-HTTP in M5.2b) so the broker trait + kx-tool-registry stay dependency-clean (no tokio/rmcp). MCP is UNTRUSTED: inbound payloads decode FAIL-CLOSED + size-capped (IMP-16); output is provenance-captured (D72); effects default to StageThenCommit (D66); credentials are supplied OUT-OF-BAND and never embedded (D81)."
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+# The Capability trait this crate implements + EffectRequest / CapabilityFailureReason.
+kx-capability    = { workspace = true }
+# ToolName / ToolVersion / EffectPattern — the capability's identity + pattern surface.
+kx-mote          = { workspace = true }
+# Host / NetScope — the egress-host derivation the broker's net_scope gate checks (M5.2b).
+kx-warrant       = { workspace = true }
+# McpEndpointId — the ToolKind::Mcp endpoint identity this capability fronts.
+kx-tool-registry = { workspace = true }
+serde            = { workspace = true }
+# JSON-RPC framing ONLY. `raw_value` carries the args/result verbatim as opaque
+# bytes (never decoded into a dynamic `Value` / floats) — mirrors kx-critic's
+# no-float discipline so nothing on the effect path can introduce float-ordering.
+serde_json       = { workspace = true, features = ["raw_value"] }
+thiserror        = { workspace = true }
+tracing          = { workspace = true }
+
+[dev-dependencies]
+# LocalCapabilityBroker + an in-memory ContentStore to dispatch McpCapability through
+# the REAL warrant gate (precheck) in the integration tests.
+kx-content = { workspace = true }
+# SmallVec parents when building test Motes via Mote::new.
+smallvec   = { workspace = true }
+# Property tests: decode_tool_result is total/fail-closed over arbitrary + truncated bytes.
+proptest   = { workspace = true }
+
+# Test-support: a tiny newline-delimited JSON-RPC stdio MCP server the integration
+# tests spawn to exercise the REAL StdioTransport (env-injection + round-trip).
+# Kept out of the lib so the adapter surface stays clean.
+[[bin]]
+name = "kx-mcp-mock-stdio"
+path = "tests/support/mock_stdio_server.rs"
+
+[lints]
+workspace = true

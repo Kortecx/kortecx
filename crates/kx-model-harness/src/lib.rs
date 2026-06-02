@@ -37,6 +37,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
+use kx_capability::{CapabilityBroker, LocalCapabilityBroker};
 use kx_content::LocalFsContentStore;
 use kx_executor::{LocalResourceManager, StandardCommitProtocol};
 use kx_inference::LlamaInferenceBackend;
@@ -56,6 +57,7 @@ pub mod evidence;
 pub mod executor;
 pub mod metered;
 pub mod prompt;
+pub mod toolcall;
 pub mod workflows;
 
 pub use broker::{BrokerObserver, ModelBroker};
@@ -216,6 +218,29 @@ impl Harness {
         config: &RuntimeConfig,
         workflow: &DemoWorkflow,
     ) -> Result<RunOutcome, RuntimeError> {
+        // Default: NO MCP capability registered. A model that proposes a tool call
+        // then has no matching `warrant.tool_grants` entry → `parse_tool_call`
+        // returns `Ok(None)` → the path is byte-identical to pre-M5.2 (the A–J
+        // rows are unaffected). The model-driven MCP path is exercised via
+        // [`drive_with_tool_broker`] (M5.2 deterministic tests); a real MCP server
+        // for the bin is M5.2b.
+        let tool_broker: Arc<dyn CapabilityBroker> =
+            Arc::new(LocalCapabilityBroker::new(self.store.clone()));
+        self.drive_with_tool_broker(config, workflow, tool_broker)
+    }
+
+    /// Like [`drive`](Self::drive), but routes a model-proposed tool call through
+    /// `tool_broker` (M5.2). Register the concrete `McpCapability` on a
+    /// `LocalCapabilityBroker` and pass it here: a model Mote whose warrant grants
+    /// that tool can then SELECT it (the runtime decodes the proposal fail-closed
+    /// and dispatches through the warrant gate). An empty broker reproduces
+    /// [`drive`](Self::drive) exactly.
+    pub fn drive_with_tool_broker(
+        &self,
+        config: &RuntimeConfig,
+        workflow: &DemoWorkflow,
+        tool_broker: Arc<dyn CapabilityBroker>,
+    ) -> Result<RunOutcome, RuntimeError> {
         let rm = LocalResourceManager::dev_defaults();
         // D78 context seams: one snapshot sink shared with the orchestrator + a
         // tool registry the assembler resolves tool grants against. The
@@ -238,6 +263,7 @@ impl Harness {
             self.observer.clone(),
             sink.clone(),
             registry,
+            tool_broker,
         ));
         let protocol =
             StandardCommitProtocol::new(self.store.clone(), self.journal.clone(), broker);
