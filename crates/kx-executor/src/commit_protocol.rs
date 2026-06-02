@@ -130,6 +130,22 @@ pub enum CommitProtocolError {
         reason: String,
     },
 
+    /// **M2.3a (D38 §2a / D65).** At recovery time, the readback probe
+    /// (`CapabilityBroker::probe_readback`) for a staged-uncommitted
+    /// WORLD-MUTATING Mote returned an error — the executor cannot determine
+    /// whether the effect already landed, so re-dispatch is REFUSED
+    /// (fail-closed; re-dispatching on an indeterminate probe risks a
+    /// double-fire). A recovery refusal (sibling of
+    /// [`Self::R13WmReDispatchRefused`]): the Mote is left in-flight + surfaced,
+    /// never re-dispatched.
+    #[error("M2.3a: readback probe failed for Mote {mote_id:?}: {reason}; re-dispatch refused (fail-closed, D38 §2a)")]
+    ProbeFailed {
+        /// The Mote whose recovery probe failed.
+        mote_id: MoteId,
+        /// Diagnostic from the broker's `probe_readback`.
+        reason: String,
+    },
+
     /// The capability broker's `dispatch` call returned a typed error. The
     /// body has not run; no `Committed` entry is appended. The lifecycle
     /// layer surfaces this as a `Failed` journal entry.
@@ -226,6 +242,7 @@ impl CommitProtocolError {
             Self::R11ResultRefIncomplete { mote_id, .. }
             | Self::R12CommittedNotProofOfValidity { mote_id, .. }
             | Self::R13WmReDispatchRefused { mote_id, .. }
+            | Self::ProbeFailed { mote_id, .. }
             | Self::BrokerDispatchFailed { mote_id, .. }
             | Self::ContentStorePutFailed { mote_id, .. }
             | Self::JournalAppendCommittedFailed { mote_id, .. }
@@ -258,7 +275,10 @@ impl CommitProtocolError {
     /// ```
     #[must_use]
     pub fn is_recovery_refusal(&self) -> bool {
-        matches!(self, Self::R13WmReDispatchRefused { .. })
+        matches!(
+            self,
+            Self::R13WmReDispatchRefused { .. } | Self::ProbeFailed { .. }
+        )
     }
 }
 
@@ -304,6 +324,39 @@ pub trait CommitProtocol: Send + Sync {
     /// Returns a `CommitProtocolError` variant for any refusal or failure
     /// in the commit path. See variant docs for the per-case semantics.
     fn commit(&self, input: CommitInput<'_>) -> Result<u64, CommitProtocolError>;
+
+    /// **M2.3a (D38 §2a / D65) — recovery readback probe.** For a
+    /// staged-uncommitted WORLD-MUTATING Mote on the recovery path, probe
+    /// whether the effect already landed (via
+    /// [`kx_capability::CapabilityBroker::probe_readback`])
+    /// **before** re-dispatching:
+    ///
+    /// - `Ok(Some(seq))` — the probe found the effect applied; the protocol
+    ///   committed the probed `result_ref` (R-11-verified) and returns the
+    ///   `Committed` seq. The caller MUST NOT re-dispatch — the effect is
+    ///   exactly-once.
+    /// - `Ok(None)` — no readback support (the default `Capability::probe`
+    ///   returns `Ok(None)`) or the probe found the effect not applied; the
+    ///   caller proceeds to the normal re-dispatch ([`Self::commit`]).
+    /// - `Err(CommitProtocolError::ProbeFailed)` — the probe itself errored;
+    ///   recovery cannot determine whether the effect landed, so it refuses
+    ///   re-dispatch (fail-closed).
+    ///
+    /// The **default returns `Ok(None)`** — a protocol with no broker (test
+    /// doubles) opts out and the caller re-dispatches as before.
+    ///
+    /// # Errors
+    /// [`CommitProtocolError::ProbeFailed`] if the probe errors;
+    /// [`CommitProtocolError::R11ResultRefIncomplete`] /
+    /// [`CommitProtocolError::JournalAppendCommittedFailed`] if the
+    /// commit-from-readback step fails after a positive probe.
+    fn try_commit_from_readback(
+        &self,
+        input: CommitInput<'_>,
+    ) -> Result<Option<u64>, CommitProtocolError> {
+        let _ = input;
+        Ok(None)
+    }
 }
 
 /// Input bundle for `CommitProtocol::commit`. Carries the Mote being
@@ -404,6 +457,62 @@ where
     J: Journal + Send + Sync,
     B: CapabilityBroker + Send + Sync,
 {
+    fn try_commit_from_readback(
+        &self,
+        input: CommitInput<'_>,
+    ) -> Result<Option<u64>, CommitProtocolError> {
+        let mote_id = input.mote.id;
+
+        // D38 §2a: probe the world state (deterministic, keyed on MoteId via the
+        // idempotency key) BEFORE re-dispatching. The default `Capability::probe`
+        // returns `Ok(None)`, so a non-readback tool's `probe_readback` is
+        // `Ok(None)` → the caller falls through to the normal re-dispatch.
+        let handle = match self.broker.probe_readback(
+            input.mote,
+            input.warrant,
+            &input.capability,
+            input.effect_request,
+        ) {
+            Ok(Some(handle)) => handle,  // effect already applied → commit it
+            Ok(None) => return Ok(None), // not applied / no readback → re-dispatch
+            Err(e) => {
+                // Indeterminate world state — fail closed (no re-dispatch).
+                return Err(CommitProtocolError::ProbeFailed {
+                    mote_id,
+                    reason: format!("{e:?}"),
+                });
+            }
+        };
+        let result_ref = handle.staged_ref;
+
+        // R-11 verify the probed ref is durable before journaling Committed —
+        // same defense the dispatch path uses against a hostile/buggy broker.
+        enforce_r11(&*self.store, mote_id, &result_ref)?;
+
+        // Commit-from-readback: append Committed with the PROBED result_ref and
+        // NO `broker.dispatch`. The fold sees EffectStaged + Committed (cell 4/6)
+        // → done; downstream reads `result_ref`. Exactly-once: the external
+        // effect ran exactly once (pre-crash), and recovery commits its result
+        // without re-applying it.
+        let entry = JournalEntry::Committed {
+            mote_id,
+            idempotency_key: input.idempotency_key,
+            seq: 0, // journal-assigned
+            nondeterminism: input.mote.def.nd_class,
+            result_ref,
+            parents: input.parents,
+            warrant_ref: input.warrant_ref,
+            mote_def_hash: input.mote_def_hash,
+        };
+        let written = self.journal.append(entry).map_err(|e| {
+            CommitProtocolError::JournalAppendCommittedFailed {
+                mote_id,
+                reason: format!("{e:?}"),
+            }
+        })?;
+        Ok(Some(written.seq()))
+    }
+
     fn commit(&self, input: CommitInput<'_>) -> Result<u64, CommitProtocolError> {
         let pattern = input.mote.def.effect_pattern;
         match pattern {

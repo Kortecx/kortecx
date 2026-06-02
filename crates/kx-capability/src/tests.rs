@@ -534,3 +534,43 @@ fn registered_count_reflects_register_calls() {
     )));
     assert_eq!(broker.registered_count(), 2);
 }
+
+/// A capability that overrides `compensate` (the M2.3 recovery seam).
+struct CompensatingCapability {
+    name: ToolName,
+    version: ToolVersion,
+    patterns: Vec<EffectPattern>,
+}
+impl Capability for CompensatingCapability {
+    fn name(&self) -> &ToolName {
+        &self.name
+    }
+    fn version(&self) -> &ToolVersion {
+        &self.version
+    }
+    fn supported_patterns(&self) -> &[EffectPattern] {
+        &self.patterns
+    }
+    fn invoke(&self, _: &EffectRequest) -> Result<Vec<u8>, CapabilityFailureReason> {
+        Ok(b"forward".to_vec())
+    }
+    fn compensate(&self, _: &EffectRequest) -> Result<Option<Vec<u8>>, CapabilityFailureReason> {
+        Ok(Some(b"undone".to_vec()))
+    }
+}
+
+#[test]
+fn compensate_defaults_to_unsupported_and_is_overridable() {
+    let req = empty_request_with_pattern(EffectPattern::StageThenCommit, Vec::new());
+    // M2.3a: the default `compensate` returns Ok(None) — compensation unsupported,
+    // so recovery quarantines rather than risking a double-fire.
+    let plain = ReverseCapability::new("r", "1", vec![EffectPattern::StageThenCommit]);
+    assert_eq!(plain.compensate(&req).unwrap(), None);
+    // A capability that overrides it runs its deterministic undo.
+    let comp = CompensatingCapability {
+        name: tool_name("c"),
+        version: tool_version("1"),
+        patterns: vec![EffectPattern::StageThenCommit],
+    };
+    assert_eq!(comp.compensate(&req).unwrap(), Some(b"undone".to_vec()));
+}
