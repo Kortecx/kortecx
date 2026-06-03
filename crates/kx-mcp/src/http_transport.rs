@@ -177,6 +177,10 @@ impl HttpTransport {
 }
 
 impl McpTransport for HttpTransport {
+    fn declared_secret_scope(&self) -> kx_warrant::SecretScope {
+        crate::transport::scope_of_credentials(self.credentials.iter().map(|(_, c)| c))
+    }
+
     fn round_trip(
         &self,
         request: &[u8],

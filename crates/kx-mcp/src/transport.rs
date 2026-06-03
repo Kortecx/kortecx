@@ -14,6 +14,8 @@ use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::Arc;
 use std::time::Duration;
 
+use kx_warrant::SecretScope;
+
 use crate::credential::CredentialRef;
 use crate::errors::TransportError;
 use crate::secret_store::{EnvSecretStore, SecretStore};
@@ -55,6 +57,29 @@ pub trait McpTransport: Send + Sync {
         wall_clock_ms: u64,
         idempotency_key: Option<&[u8; 32]>,
     ) -> Result<Vec<u8>, TransportError>;
+
+    /// The [`SecretScope`] this transport will actually resolve at dispatch — the
+    /// union of its configured credentials' [`SecretRef`](kx_warrant::SecretRef)s
+    /// (D110.3). [`crate::McpCapability`] surfaces this as its
+    /// `required_secret_scope`, which the broker gates `⊆ warrant.secret_scope`.
+    /// Default: [`SecretScope::None`] (no credentials configured).
+    fn declared_secret_scope(&self) -> SecretScope {
+        SecretScope::None
+    }
+}
+
+/// Build a [`SecretScope`] from an iterator of credential refs: `None` when empty,
+/// else an `AllowList` of their [`SecretRef`](kx_warrant::SecretRef)s.
+pub(crate) fn scope_of_credentials<'a>(
+    creds: impl Iterator<Item = &'a CredentialRef>,
+) -> SecretScope {
+    let set: std::collections::BTreeSet<kx_warrant::SecretRef> =
+        creds.map(|c| c.secret_ref().clone()).collect();
+    if set.is_empty() {
+        SecretScope::None
+    } else {
+        SecretScope::AllowList(set)
+    }
 }
 
 /// A subprocess MCP transport: newline-delimited JSON-RPC over the child's
@@ -132,6 +157,10 @@ impl StdioTransport {
 }
 
 impl McpTransport for StdioTransport {
+    fn declared_secret_scope(&self) -> SecretScope {
+        scope_of_credentials(self.credentials.iter())
+    }
+
     fn round_trip(
         &self,
         request: &[u8],

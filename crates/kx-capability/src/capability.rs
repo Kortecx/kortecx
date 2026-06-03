@@ -3,6 +3,7 @@
 //! integration.
 
 use kx_mote::{EffectPattern, ToolName, ToolVersion};
+use kx_warrant::SecretScope;
 
 use crate::errors::CapabilityFailureReason;
 use crate::request::EffectRequest;
@@ -40,6 +41,16 @@ pub trait Capability: Send + Sync {
     /// `StageThenCommit`; an MCP server call may honor
     /// `ValidateThenCommit`.
     fn supported_patterns(&self) -> &[EffectPattern];
+
+    /// The secret references this capability will actually resolve when invoked
+    /// (its configured credentials, D110.3). The broker's `precheck` gates this
+    /// `⊆ warrant.secret_scope`, so a run whose role does not grant a secret the
+    /// capability needs is refused at dispatch — data-minimization enforced by the
+    /// runtime, not just the registrant. Default: [`SecretScope::None`] (the
+    /// capability resolves no secret).
+    fn required_secret_scope(&self) -> SecretScope {
+        SecretScope::None
+    }
 
     /// Invoke the capability with the given request, producing the
     /// response bytes that the broker will stage into the content store.
