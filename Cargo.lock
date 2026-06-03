@@ -1026,6 +1026,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "kx-catalog"
+version = "0.0.1"
+dependencies = [
+ "bincode",
+ "blake3",
+ "kx-dataset",
+ "kx-mote",
+ "kx-workflow",
+ "proptest",
+ "serde",
+ "smallvec",
+ "thiserror",
+ "tracing",
+]
+
+[[package]]
 name = "kx-chaos"
 version = "0.0.1"
 dependencies = [
