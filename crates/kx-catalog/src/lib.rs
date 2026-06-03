@@ -31,6 +31,18 @@
 //!   `kx-journal`**. Authorization is the fail-closed [`GrantLedger::effective_grants`]
 //!   fold, never trusted from a fact; the runtime warrant a `Use` runs under is
 //!   action-aligned ([`GrantLedger::resolve_effective_warrant_for`]).
+//! - **M7.2 — content-versioning + provenance/lineage** (`version` /
+//!   `version_ledger` / `in_memory_version_ledger` / `governed`, D82/D88 +
+//!   D-LOCK-4): an [`AssetPath`] is a **mutable handle** that resolves to an
+//!   immutable, content-addressed [`VersionedContent`]; "update" is never a
+//!   mutation — you **publish a new [`AssetVersion`]** and the [`VersionLedger`]
+//!   moves the handle (prior versions retained forever; rollback is a new fact).
+//!   Lineage is a **computed-not-stored** fold over the `prior` edges (the
+//!   `kx_projection::transitive_consumers` pattern, without the dependency) and is
+//!   ADVISORY (D84) — it never gates. [`GovernedCatalog`] is the production
+//!   surface: publishing requires a [`CatalogAction::Register`] grant, viewing
+//!   requires `Read` — composing the [`GrantLedger`] with the [`VersionLedger`]
+//!   without coupling either impl.
 //!
 //! ## A separate truth (R4 — NOT a journal-as-truth violation)
 //!
@@ -83,14 +95,18 @@
 
 mod action;
 mod entry;
+mod governed;
 mod grant;
 mod in_memory;
 mod in_memory_ledger;
+mod in_memory_version_ledger;
 mod ledger;
 mod party;
 mod path;
 mod registry;
 mod signature;
+mod version;
+mod version_ledger;
 
 #[cfg(test)]
 mod tests;
@@ -116,6 +132,18 @@ pub use ledger::{
 };
 pub use party::PartyId;
 pub use path::{AssetPath, AssetPathError, AssetRef, MAX_SEGMENT_LEN};
+
+// M7.2 (D82/D88 + D-LOCK-4) — content-versioning handles + provenance/lineage.
+pub use governed::{GovernedCatalog, GovernedError};
+pub use in_memory_version_ledger::InMemoryVersionLedger;
+pub use version::{
+    AssetVersion, Provenance, VersionError, VersionId, VersionedContent,
+    CATALOG_VERSION_SCHEMA_VERSION, MAX_PROVENANCE_LINEAGE,
+};
+pub use version_ledger::{
+    PublishOutcome, VersionLedger, VersionLedgerError, MAX_VERSION_CHAIN_DEPTH,
+    MAX_VERSION_DESCENDANTS,
+};
 
 // REUSE (never modify) the frozen monotonic-narrowing seam — one import surface
 // for catalog callers building grant runtime scopes (M7.2 consumes `intersect`;
