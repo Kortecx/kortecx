@@ -20,6 +20,12 @@ kx-mote     = { workspace = true }
 kx-workflow = { workspace = true }
 # DatasetId — the optional pinned corpus on a RecipeSnapshot.
 kx-dataset  = { workspace = true }
+# Role / WarrantSpec / intersect / NarrowingError (M7.2, D86): a grant's runtime
+# scope REUSES the frozen monotonic-narrowing seam verbatim — the catalog never
+# re-implements narrowing and never modifies kx-warrant. This is a dependency ON
+# kx-warrant, NOT a dependency BY the guarantee path, so the SN-8 wall is intact
+# (no guarantee-path crate depends on kx-catalog; asserted by the m7_2 exit-gate).
+kx-warrant  = { workspace = true }
 # The frozen canonical content-addressed encoding (bincode v2, LE + fixed-int —
 # byte-identical to kx_mote::canonical_config; replicated to keep the hash
 # discipline self-contained, mirroring kx-critic-types).
