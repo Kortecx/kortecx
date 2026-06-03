@@ -21,10 +21,13 @@
 use std::sync::Arc;
 
 use kx_catalog::{
-    AssetBinding, AssetPath, AssetRef, CatalogAction, CatalogActionSet, Grant, GrantId,
-    GrantLedger, InMemoryGrantLedger, LedgerFact, PartyId, Revocation,
+    AssetBinding, AssetPath, AssetRef, AssetVersion, CatalogAction, CatalogActionSet,
+    GovernedCatalog, GovernedError, Grant, GrantId, GrantLedger, InMemoryGrantLedger,
+    InMemoryVersionLedger, LedgerFact, PartyId, Provenance, Revocation, TaskSignatureHash,
+    VersionLedger, VersionLedgerError, VersionedContent,
 };
-use kx_mote::ModelId;
+use kx_dataset::DatasetId;
+use kx_mote::{ModelId, MoteId};
 use kx_warrant::{ModelRoute, ResourceCeiling, Role, SecretRef, SecretScope, WarrantSpec};
 
 // ---- fixtures ---------------------------------------------------------------
@@ -578,6 +581,10 @@ fn guarantee_path_does_not_depend_on_catalog() {
         "kx-executor",
         "kx-projection",
         "kx-inference",
+        // The journal/identity core must also stay off kx-catalog (the new
+        // versioning/lineage modules add no edge back into the frozen spine).
+        "kx-mote",
+        "kx-journal",
     ];
     for c in crates {
         let manifest = format!("{}/../{c}/Cargo.toml", env!("CARGO_MANIFEST_DIR"));
@@ -666,4 +673,579 @@ fn m7_2_exit_gate() {
         ledger.is_authorized(&ds, &asset, CatalogAction::Read),
         "unaffected action stands"
     );
+}
+
+// ============================================================================
+// M7.2 — content-versioning + provenance/lineage (D82/D88 + D-LOCK-4)
+// ============================================================================
+
+fn vpath(name: &str) -> AssetPath {
+    AssetPath::new("acme", "recipes", name).unwrap()
+}
+
+fn recipe(byte: u8) -> VersionedContent {
+    VersionedContent::Recipe(TaskSignatureHash::from_bytes([byte; 32]))
+}
+
+/// A governed catalog where `owner` owns `handle` and `publisher` holds the given
+/// actions on it.
+fn governed_with(
+    handle: &AssetPath,
+    owner: &PartyId,
+    publisher: &PartyId,
+    actions: CatalogActionSet,
+) -> GovernedCatalog<InMemoryGrantLedger, InMemoryVersionLedger> {
+    let grants = InMemoryGrantLedger::new();
+    let asset = AssetRef::Path(handle.clone());
+    grants
+        .append_binding(AssetBinding::new(asset.clone(), owner.clone()))
+        .unwrap();
+    grants
+        .append_grant(Grant::root(
+            asset,
+            owner.clone(),
+            publisher.clone(),
+            actions,
+            role("publisher", 10),
+        ))
+        .unwrap();
+    GovernedCatalog::new(grants, InMemoryVersionLedger::new())
+}
+
+// ---- governance (publish gated by Register; reads gated by Read) -------------
+
+#[test]
+fn unauthorized_publish_is_refused() {
+    let handle = vpath("summarize");
+    let owner = PartyId::new("owner@acme");
+    let mate = PartyId::new("mate@acme");
+    // mate holds Read+Use but NOT Register.
+    let catalog = governed_with(
+        &handle,
+        &owner,
+        &mate,
+        CatalogActionSet::allow([CatalogAction::Read, CatalogAction::Use]),
+    );
+    let v = AssetVersion::root(handle, recipe(1), mate, Provenance::from_recipe([1u8; 32]));
+    let err = catalog.publish(v).unwrap_err();
+    assert!(matches!(
+        err,
+        GovernedError::Unauthorized {
+            action: CatalogAction::Register,
+            ..
+        }
+    ));
+    assert_eq!(catalog.versions().len(), 0, "nothing appended on refusal");
+}
+
+#[test]
+fn register_granted_party_can_publish() {
+    let handle = vpath("summarize");
+    let owner = PartyId::new("owner@acme");
+    let lead = PartyId::new("lead@acme");
+    let catalog = governed_with(
+        &handle,
+        &owner,
+        &lead,
+        CatalogActionSet::allow([CatalogAction::Read, CatalogAction::Register]),
+    );
+    let v = AssetVersion::root(
+        handle.clone(),
+        recipe(1),
+        lead.clone(),
+        Provenance::from_recipe([1u8; 32]),
+    );
+    assert!(catalog.publish(v).unwrap().is_published());
+    // lead also holds Read → can resolve.
+    assert!(catalog.resolve(&lead, &handle).unwrap().is_some());
+}
+
+#[test]
+fn confused_deputy_publish_across_handles_is_refused() {
+    let handle_a = vpath("recipe-a");
+    let owner = PartyId::new("owner@acme");
+    let lead = PartyId::new("lead@acme");
+    // lead holds Register on handle A only.
+    let catalog = governed_with(
+        &handle_a,
+        &owner,
+        &lead,
+        CatalogActionSet::allow([CatalogAction::Register]),
+    );
+    // Publishing to a DIFFERENT handle B is refused (authority is asset-keyed).
+    let handle_b = vpath("recipe-b");
+    let v = AssetVersion::root(
+        handle_b,
+        recipe(2),
+        lead,
+        Provenance::from_recipe([2u8; 32]),
+    );
+    assert!(matches!(
+        catalog.publish(v).unwrap_err(),
+        GovernedError::Unauthorized { .. }
+    ));
+}
+
+#[test]
+fn revoked_register_cannot_publish_but_prior_versions_retained() {
+    let handle = vpath("summarize");
+    let owner = PartyId::new("owner@acme");
+    let lead = PartyId::new("lead@acme");
+    let grants = InMemoryGrantLedger::new();
+    let asset = AssetRef::Path(handle.clone());
+    grants
+        .append_binding(AssetBinding::new(asset.clone(), owner.clone()))
+        .unwrap();
+    let reg_grant = Grant::root(
+        asset.clone(),
+        owner.clone(),
+        lead.clone(),
+        CatalogActionSet::allow([CatalogAction::Read, CatalogAction::Register]),
+        role("publisher", 10),
+    );
+    let reg_gid = reg_grant.grant_id();
+    grants.append_grant(reg_grant).unwrap();
+    let catalog = GovernedCatalog::new(grants, InMemoryVersionLedger::new());
+
+    // v1 publishes fine.
+    let v1 = AssetVersion::root(
+        handle.clone(),
+        recipe(1),
+        lead.clone(),
+        Provenance::from_recipe([1u8; 32]),
+    );
+    let v1_id = catalog.publish(v1).unwrap().version_id();
+
+    // Owner revokes Register (a NEW fact). v2 is now refused.
+    catalog
+        .grants()
+        .append_revocation(Revocation::new(reg_gid, owner))
+        .unwrap();
+    let v2 = AssetVersion::successor(
+        v1_id,
+        0,
+        handle.clone(),
+        recipe(2),
+        lead.clone(),
+        Provenance::from_recipe([2u8; 32]),
+    );
+    assert!(matches!(
+        catalog.publish(v2).unwrap_err(),
+        GovernedError::Unauthorized { .. }
+    ));
+    // v1 is retained and still resolves (revocation stops FUTURE publishes only).
+    assert_eq!(catalog.versions().resolve(&handle).unwrap().1, v1_id);
+    assert!(catalog.versions().get_version(&v1_id).is_some());
+}
+
+#[test]
+fn governed_read_requires_read() {
+    let handle = vpath("summarize");
+    let owner = PartyId::new("owner@acme");
+    let lead = PartyId::new("lead@acme");
+    let stranger = PartyId::new("stranger@acme");
+    let catalog = governed_with(
+        &handle,
+        &owner,
+        &lead,
+        CatalogActionSet::allow([CatalogAction::Read, CatalogAction::Register]),
+    );
+    let v = AssetVersion::root(
+        handle.clone(),
+        recipe(1),
+        lead.clone(),
+        Provenance::from_recipe([1u8; 32]),
+    );
+    catalog.publish(v).unwrap();
+    // lead has Read → ok; stranger has nothing → refused.
+    assert!(catalog.resolve(&lead, &handle).unwrap().is_some());
+    assert!(matches!(
+        catalog.resolve(&stranger, &handle).unwrap_err(),
+        GovernedError::Unauthorized {
+            action: CatalogAction::Read,
+            ..
+        }
+    ));
+}
+
+// ---- lineage integrity + advisory wall ---------------------------------------
+
+#[test]
+fn provenance_forgery_via_fake_prior_is_refused_at_publish() {
+    // A forged "successor" grafting a FOREIGN handle's version as its prior is
+    // refused fail-closed at publish — stronger than truncate-on-read: the forged
+    // edge never lands, so the forward (descendants) and backward (lineage) folds
+    // can never disagree about it (the review's consistency finding).
+    let ledger = InMemoryVersionLedger::new();
+    let foreign = AssetVersion::root(
+        vpath("other"),
+        recipe(9),
+        PartyId::new("x"),
+        Provenance::from_recipe([9u8; 32]),
+    );
+    let foreign_id = ledger.publish(foreign).unwrap().version_id();
+    let forged = AssetVersion::successor(
+        foreign_id,
+        0,
+        vpath("summarize"),
+        recipe(1),
+        PartyId::new("x"),
+        Provenance::from_recipe([1u8; 32]),
+    );
+    assert!(matches!(
+        ledger.publish(forged).unwrap_err(),
+        VersionLedgerError::InvalidLineage { .. }
+    ));
+    // The foreign version gained NO descendant (the graft never landed), and the
+    // target handle was never created.
+    assert!(ledger.descendants(&foreign_id).is_empty());
+    assert!(ledger.resolve(&vpath("summarize")).is_none());
+}
+
+#[test]
+fn lineage_never_gates_publish() {
+    // A version with empty/garbage provenance still publishes (D84: provenance is
+    // advisory; only the Register grant gates). Build it via the governed surface.
+    let handle = vpath("summarize");
+    let owner = PartyId::new("owner@acme");
+    let lead = PartyId::new("lead@acme");
+    let catalog = governed_with(
+        &handle,
+        &owner,
+        &lead,
+        CatalogActionSet::allow([CatalogAction::Register]),
+    );
+    // Provenance points at a recipe that was never run / does not exist — advisory.
+    let v = AssetVersion::root(handle, recipe(1), lead, Provenance::from_recipe([0xAB; 32]));
+    assert!(
+        catalog.publish(v).unwrap().is_published(),
+        "advisory provenance never blocks a Register-authorized publish"
+    );
+}
+
+#[test]
+fn version_fold_is_deterministic_on_refold() {
+    let ledger = InMemoryVersionLedger::new();
+    let handle = vpath("summarize");
+    let v1 = AssetVersion::root(
+        handle.clone(),
+        recipe(1),
+        PartyId::new("p"),
+        Provenance::from_recipe([1u8; 32]),
+    );
+    let v1_id = ledger.publish(v1).unwrap().version_id();
+    let v2 = AssetVersion::successor(
+        v1_id,
+        0,
+        handle,
+        recipe(2),
+        PartyId::new("p"),
+        Provenance::from_recipe([2u8; 32]),
+    );
+    let v2_id = ledger.publish(v2).unwrap().version_id();
+    let a: Vec<_> = ledger
+        .lineage(&v2_id)
+        .iter()
+        .map(AssetVersion::version_id)
+        .collect();
+    let b: Vec<_> = ledger
+        .lineage(&v2_id)
+        .iter()
+        .map(AssetVersion::version_id)
+        .collect();
+    assert_eq!(a, b, "lineage re-fold is byte-identical");
+    assert_eq!(a, vec![v2_id, v1_id]);
+}
+
+// ---- Kind 4 analogue: concurrency / poison-safety + idempotent replay --------
+
+#[test]
+fn concurrent_version_publishes_and_resolves_are_safe() {
+    let ledger = Arc::new(InMemoryVersionLedger::new());
+
+    // 8 threads each publish a DISTINCT handle + resolve concurrently.
+    let mut handles = Vec::new();
+    for i in 0..8u32 {
+        let l = Arc::clone(&ledger);
+        handles.push(std::thread::spawn(move || {
+            let h = AssetPath::new("acme", "recipes", format!("r{i}")).unwrap();
+            let v = AssetVersion::root(
+                h.clone(),
+                recipe(u8::try_from(i).unwrap()),
+                PartyId::new("p"),
+                Provenance::from_recipe([1u8; 32]),
+            );
+            l.publish(v).unwrap();
+            assert!(l.resolve(&h).is_some());
+        }));
+    }
+    for h in handles {
+        h.join().unwrap();
+    }
+
+    // Idempotent replay: a burst of the SAME version from many threads lands once.
+    let shared = AssetVersion::root(
+        vpath("shared"),
+        recipe(42),
+        PartyId::new("p"),
+        Provenance::from_recipe([2u8; 32]),
+    );
+    let mut bursts = Vec::new();
+    for _ in 0..8 {
+        let l = Arc::clone(&ledger);
+        let v = shared.clone();
+        bursts.push(std::thread::spawn(move || {
+            l.publish(v).unwrap().is_published()
+        }));
+    }
+    let published = bursts
+        .into_iter()
+        .map(|h| h.join().unwrap())
+        .filter(|&b| b)
+        .count();
+    assert_eq!(published, 1, "exactly one of the identical bursts lands");
+}
+
+// ---- Integration: real-life enterprise scenarios -----------------------------
+
+/// Scenario A — a platform team publishes a recipe v1, improves it, publishes v2;
+/// the handle resolves v2, v1 stays exact-pinnable (D87), lineage traces v2 → v1.
+#[test]
+fn platform_team_publishes_recipe_v1_then_v2() {
+    let handle = vpath("summarize");
+    let owner = PartyId::new("platform-team@acme");
+    let catalog = governed_with(
+        &handle,
+        &owner,
+        &owner, // the team owns and publishes
+        CatalogActionSet::allow([CatalogAction::Read, CatalogAction::Register]),
+    );
+
+    let v1 = AssetVersion::root(
+        handle.clone(),
+        recipe(0x11),
+        owner.clone(),
+        Provenance::from_recipe([0x11; 32]),
+    );
+    let v1_id = catalog.publish(v1).unwrap().version_id();
+
+    // Improve the recipe → publish v2 (new fingerprint, prior = v1).
+    let v2 = AssetVersion::successor(
+        v1_id,
+        0,
+        handle.clone(),
+        recipe(0x22),
+        owner.clone(),
+        Provenance::from_recipe([0x22; 32]),
+    );
+    let v2_id = catalog.publish(v2).unwrap().version_id();
+
+    // The handle now resolves v2; v1 is still pinnable by its exact id (D87).
+    assert_eq!(catalog.resolve(&owner, &handle).unwrap().unwrap().1, v2_id);
+    assert!(catalog.versions().get_version(&v1_id).is_some());
+    // Lineage traces v2 → v1.
+    let lin: Vec<_> = catalog
+        .lineage(&owner, &v2_id)
+        .unwrap()
+        .iter()
+        .map(AssetVersion::version_id)
+        .collect();
+    assert_eq!(lin, vec![v2_id, v1_id]);
+    assert_eq!(catalog.history(&owner, &handle).unwrap().len(), 2);
+}
+
+/// Scenario B — governed publishing: a lead with `Register` may publish a new
+/// version; an intern with only `Use` is refused.
+#[test]
+fn governed_publishing_intern_with_use_is_refused() {
+    let handle = vpath("summarize");
+    let owner = PartyId::new("owner@acme");
+    let lead = PartyId::new("lead@acme");
+    let intern = PartyId::new("intern@acme");
+    let asset = AssetRef::Path(handle.clone());
+
+    let grants = InMemoryGrantLedger::new();
+    grants
+        .append_binding(AssetBinding::new(asset.clone(), owner.clone()))
+        .unwrap();
+    grants
+        .append_grant(Grant::root(
+            asset.clone(),
+            owner.clone(),
+            lead.clone(),
+            CatalogActionSet::allow([CatalogAction::Read, CatalogAction::Register]),
+            role("lead", 10),
+        ))
+        .unwrap();
+    grants
+        .append_grant(Grant::root(
+            asset,
+            owner,
+            intern.clone(),
+            CatalogActionSet::allow([CatalogAction::Read, CatalogAction::Use]),
+            role("intern", 10),
+        ))
+        .unwrap();
+    let catalog = GovernedCatalog::new(grants, InMemoryVersionLedger::new());
+
+    // Lead publishes.
+    let v1 = AssetVersion::root(
+        handle.clone(),
+        recipe(1),
+        lead,
+        Provenance::from_recipe([1u8; 32]),
+    );
+    let v1_id = catalog.publish(v1).unwrap().version_id();
+
+    // Intern (Use, not Register) tries to publish a new version → refused.
+    let v2 = AssetVersion::successor(
+        v1_id,
+        0,
+        handle.clone(),
+        recipe(2),
+        intern,
+        Provenance::from_recipe([2u8; 32]),
+    );
+    assert!(matches!(
+        catalog.publish(v2).unwrap_err(),
+        GovernedError::Unauthorized {
+            action: CatalogAction::Register,
+            ..
+        }
+    ));
+    // The shared recipe is unchanged (still v1).
+    assert_eq!(catalog.versions().resolve(&handle).unwrap().1, v1_id);
+}
+
+/// Scenario C — provenance audit / M12 flywheel: a curated model is published as
+/// a new version carrying full provenance + a `prior` to the previous corpus
+/// version; an auditor traces the lineage and confirms it gated nothing.
+#[test]
+fn provenance_audit_m12_flywheel_traces_chain() {
+    let handle = vpath("curated-summarizer");
+    let owner = PartyId::new("ml-platform@acme");
+    let catalog = governed_with(
+        &handle,
+        &owner,
+        &owner,
+        CatalogActionSet::allow([CatalogAction::Read, CatalogAction::Register]),
+    );
+
+    // v1 — the first curated corpus (a Dataset content).
+    let v1 = AssetVersion::root(
+        handle.clone(),
+        VersionedContent::Dataset(DatasetId([0x10; 32])),
+        owner.clone(),
+        Provenance::from_recipe([0x10; 32]),
+    );
+    let v1_id = catalog.publish(v1).unwrap().version_id();
+
+    // v2 — a re-curated corpus produced by a known run, derived from v1.
+    let prov_v2 = Provenance::from_recipe([0x20; 32])
+        .with_run([0x21; 16])
+        .with_dataset(DatasetId([0x22; 32]))
+        .with_corpus_lineage([
+            MoteId::from_bytes([0x23; 32]),
+            MoteId::from_bytes([0x24; 32]),
+        ])
+        .unwrap();
+    let v2 = AssetVersion::successor(
+        v1_id,
+        0,
+        handle.clone(),
+        VersionedContent::Dataset(DatasetId([0x25; 32])),
+        owner.clone(),
+        prov_v2,
+    );
+    let v2_id = catalog.publish(v2).unwrap().version_id();
+
+    // The auditor walks the lineage and reads each version's advisory provenance.
+    let lin = catalog.lineage(&owner, &v2_id).unwrap();
+    assert_eq!(lin.len(), 2, "v2 → v1");
+    let head = &lin[0];
+    assert_eq!(head.version_id(), v2_id);
+    assert_eq!(head.provenance().generating_run(), Some([0x21; 16]));
+    assert_eq!(head.provenance().corpus_lineage().len(), 2);
+    assert_eq!(head.provenance().recipe_fingerprint(), &[0x20; 32]);
+    // The advisory provenance gated nothing — the Register grant did.
+    assert_eq!(catalog.resolve(&owner, &handle).unwrap().unwrap().1, v2_id);
+}
+
+// ---- Exit gate (versioning) --------------------------------------------------
+
+/// The M7.2 versioning exit gate, composite: publish → resolve → move-handle →
+/// rollback round-trip; governed publish refused without `Register`; lineage is
+/// advisory (a forged-provenance publish still succeeds); the schema version is
+/// pinned; and the guarantee-path wall holds (asserted by
+/// `guarantee_path_does_not_depend_on_catalog`).
+#[test]
+fn m7_2_versioning_exit_gate() {
+    let handle = vpath("recipe");
+    let owner = PartyId::new("owner@acme");
+    let catalog = governed_with(
+        &handle,
+        &owner,
+        &owner,
+        CatalogActionSet::allow([CatalogAction::Read, CatalogAction::Register]),
+    );
+
+    // (a) publish → resolve → move handle → rollback.
+    let v1 = AssetVersion::root(
+        handle.clone(),
+        recipe(1),
+        owner.clone(),
+        Provenance::from_recipe([1u8; 32]),
+    );
+    assert_eq!(
+        v1.schema_version(),
+        kx_catalog::CATALOG_VERSION_SCHEMA_VERSION
+    );
+    let v1_id = catalog.publish(v1).unwrap().version_id();
+    let v2 = AssetVersion::successor(
+        v1_id,
+        0,
+        handle.clone(),
+        recipe(2),
+        owner.clone(),
+        Provenance::from_recipe([2u8; 32]),
+    );
+    let v2_id = catalog.publish(v2).unwrap().version_id();
+    assert_eq!(catalog.resolve(&owner, &handle).unwrap().unwrap().1, v2_id);
+    // rollback to v1's content (a NEW version).
+    let v3 = AssetVersion::successor(
+        v2_id,
+        1,
+        handle.clone(),
+        recipe(1),
+        owner.clone(),
+        Provenance::from_recipe([3u8; 32]),
+    );
+    let v3_id = catalog.publish(v3).unwrap().version_id();
+    assert_eq!(catalog.resolve(&owner, &handle).unwrap().unwrap().1, v3_id);
+    assert_eq!(
+        catalog.resolve(&owner, &handle).unwrap().unwrap().0,
+        recipe(1),
+        "rolled back to v1 content"
+    );
+    assert_eq!(catalog.versions().len(), 3, "all versions retained");
+
+    // (b) without Register, a publish is refused.
+    let nobody = PartyId::new("nobody@acme");
+    let bad = AssetVersion::root(
+        handle,
+        recipe(9),
+        nobody,
+        Provenance::from_recipe([9u8; 32]),
+    );
+    assert!(matches!(
+        catalog.publish(bad).unwrap_err(),
+        GovernedError::Unauthorized {
+            action: CatalogAction::Register,
+            ..
+        }
+    ));
+
+    // (c) lineage is advisory: it traces the chain but never gated a publish.
+    let lin = catalog.lineage(&owner, &v3_id).unwrap();
+    assert_eq!(lin.len(), 3, "v3 → v2 → v1");
 }

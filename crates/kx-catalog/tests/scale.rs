@@ -11,9 +11,10 @@
 use std::time::Instant;
 
 use kx_catalog::{
-    AssetBinding, AssetPath, AssetRef, CatalogAction, CatalogActionSet, CatalogRegistry, Grant,
-    GrantLedger, InMemoryCatalog, InMemoryGrantLedger, PartyId, RecipeSnapshot, SignatureEntry,
-    TaskSignature, TaskSignatureHash,
+    AssetBinding, AssetPath, AssetRef, AssetVersion, CatalogAction, CatalogActionSet,
+    CatalogRegistry, Grant, GrantLedger, InMemoryCatalog, InMemoryGrantLedger,
+    InMemoryVersionLedger, PartyId, Provenance, RecipeSnapshot, SignatureEntry, TaskSignature,
+    TaskSignatureHash, VersionLedger, VersionedContent, MAX_VERSION_CHAIN_DEPTH,
 };
 use kx_mote::{ModelId, MoteDefHash};
 use kx_warrant::{ModelRoute, ResourceCeiling, Role, WarrantSpec};
@@ -258,4 +259,220 @@ fn deep_chain_query_is_bounded() {
         last <= first * 4.0,
         "deep-chain query must be depth-bounded (depth 1k {first:.1}ns vs 50k {last:.1}ns)"
     );
+}
+
+/// M7.2 versioning: publish + handle-resolve + history stay O(log n) in the
+/// number of distinct handles — the `BTreeMap` indices keep the
+/// mutable-handle → immutable-content mapping sub-linear at catalog scale.
+#[test]
+#[ignore = "scale-smoke: run with --release --ignored --nocapture --test-threads=1"]
+fn version_ledger_publish_resolve_history_stay_sublinear() {
+    let mut publish_ns: Vec<(usize, f64)> = Vec::new();
+    let mut resolve_ns: Vec<(usize, f64)> = Vec::new();
+    let mut history_ns: Vec<(usize, f64)> = Vec::new();
+
+    for &n in SIZES {
+        let ledger = InMemoryVersionLedger::new();
+        let handles: Vec<AssetPath> = (0..n)
+            .map(|i| AssetPath::new("ns", "c", format!("a{i}")).unwrap())
+            .collect();
+        // Build the (distinct-handle) root versions OUTSIDE the timed region.
+        let versions: Vec<AssetVersion> = handles
+            .iter()
+            .map(|h| {
+                AssetVersion::root(
+                    h.clone(),
+                    VersionedContent::Recipe(TaskSignatureHash::from_bytes([1u8; 32])),
+                    PartyId::new("p"),
+                    Provenance::from_recipe([2u8; 32]),
+                )
+            })
+            .collect();
+
+        let start = Instant::now();
+        for v in versions {
+            ledger.publish(v).unwrap();
+        }
+        let publish_elapsed = start.elapsed();
+        assert_eq!(ledger.len(), n, "one version per handle at n={n}");
+
+        let start = Instant::now();
+        for h in &handles {
+            assert!(ledger.resolve(h).is_some(), "published handle must resolve");
+        }
+        let resolve_elapsed = start.elapsed();
+
+        let start = Instant::now();
+        for h in &handles {
+            assert_eq!(ledger.history(h).len(), 1, "single-version history");
+        }
+        let history_elapsed = start.elapsed();
+
+        #[allow(clippy::cast_precision_loss)]
+        let per = |d: std::time::Duration| d.as_nanos() as f64 / n as f64;
+        println!(
+            "version-ledger: n={n} publish_per_ns={:.1} resolve_per_ns={:.1} history_per_ns={:.1}",
+            per(publish_elapsed),
+            per(resolve_elapsed),
+            per(history_elapsed)
+        );
+        publish_ns.push((n, per(publish_elapsed)));
+        resolve_ns.push((n, per(resolve_elapsed)));
+        history_ns.push((n, per(history_elapsed)));
+    }
+
+    assert_sublinear("version-publish", &publish_ns);
+    assert_sublinear("version-resolve", &resolve_ns);
+    assert_sublinear("version-history", &history_ns);
+}
+
+/// M7.2 versioning: a lineage query is BOUNDED by `MAX_VERSION_CHAIN_DEPTH`
+/// (1024), independent of how deep the version chain actually is. A 50k-deep
+/// chain's lineage walks at most 1024 hops — without the cap it would walk 50k
+/// (≈50× slower), so flatness across a 50× depth increase proves the bound.
+#[test]
+#[ignore = "scale-smoke: run with --release --ignored --nocapture --test-threads=1"]
+fn deep_version_chain_lineage_is_bounded() {
+    const DEPTHS: &[usize] = &[1_000, 10_000, 50_000];
+    const ITERS: usize = 500;
+    let mut query_ns: Vec<(usize, f64)> = Vec::new();
+
+    for &depth in DEPTHS {
+        let ledger = InMemoryVersionLedger::new();
+        let handle = AssetPath::new("ns", "c", "deep").unwrap();
+        let v0 = AssetVersion::root(
+            handle.clone(),
+            VersionedContent::Recipe(TaskSignatureHash::from_bytes([0u8; 32])),
+            PartyId::new("p"),
+            Provenance::from_recipe([0u8; 32]),
+        );
+        let mut prev_id = v0.version_id();
+        let mut prev_rev = v0.revision();
+        ledger.publish(v0).unwrap();
+        for i in 1..depth {
+            let v = AssetVersion::successor(
+                prev_id,
+                prev_rev,
+                handle.clone(),
+                VersionedContent::Recipe(TaskSignatureHash::from_bytes(
+                    [u8::try_from(i % 256).unwrap(); 32],
+                )),
+                PartyId::new("p"),
+                Provenance::from_recipe([0u8; 32]),
+            );
+            prev_id = v.version_id();
+            prev_rev = v.revision();
+            ledger.publish(v).unwrap();
+        }
+        let leaf = prev_id;
+
+        // Query the leaf's lineage many times; the walk caps at MAX_VERSION_CHAIN_DEPTH.
+        // Tight length check: EXACTLY min(depth, cap) — catches an early-truncation
+        // regression that a loose `<= cap` would pass trivially.
+        let start = Instant::now();
+        for _ in 0..ITERS {
+            let lin = ledger.lineage(&leaf);
+            assert_eq!(lin.len(), depth.min(MAX_VERSION_CHAIN_DEPTH));
+        }
+        let elapsed = start.elapsed();
+        #[allow(clippy::cast_precision_loss)]
+        let per = elapsed.as_nanos() as f64 / ITERS as f64;
+        println!("deep-version-chain: depth={depth} lineage_per_ns={per:.1}");
+        query_ns.push((depth, per));
+    }
+
+    let first = query_ns.first().unwrap().1;
+    let last = query_ns.last().unwrap().1;
+    assert!(
+        last <= first * 4.0,
+        "deep version-chain lineage must be depth-bounded (depth 1k {first:.1}ns vs 50k {last:.1}ns)"
+    );
+}
+
+/// M7.2 versioning: the realistic enterprise shape — MANY handles each with a
+/// fixed-depth version history — keeps publish (the rank-comparison handle-move
+/// `Some` branch), resolve, and multi-version history sub-linear as the catalog
+/// (handle count) grows. Chain depth is held CONSTANT (`DEPTH`) and the handle
+/// count grows with `n`, so each op stays `O(log n)` in the `BTreeMap` indices.
+/// Complements `version_ledger_publish_resolve_history_stay_sublinear` (which
+/// only times distinct single-version roots and never exercises the handle move).
+#[test]
+#[ignore = "scale-smoke: run with --release --ignored --nocapture --test-threads=1"]
+fn version_chains_publish_resolve_history_stay_sublinear() {
+    const DEPTH: usize = 4; // fixed per-handle chain depth (exercises the Some-branch move)
+    let mut publish_ns: Vec<(usize, f64)> = Vec::new();
+    let mut resolve_ns: Vec<(usize, f64)> = Vec::new();
+    let mut history_ns: Vec<(usize, f64)> = Vec::new();
+
+    for &n in SIZES {
+        let ledger = InMemoryVersionLedger::new();
+        let handle_count = n / DEPTH;
+        let handles: Vec<AssetPath> = (0..handle_count)
+            .map(|i| AssetPath::new("ns", "c", format!("h{i}")).unwrap())
+            .collect();
+
+        // Build all DEPTH-deep chains (causal order) OUTSIDE the timed region.
+        let mut versions: Vec<AssetVersion> = Vec::with_capacity(handle_count * DEPTH);
+        for h in &handles {
+            let v0 = AssetVersion::root(
+                h.clone(),
+                VersionedContent::Recipe(TaskSignatureHash::from_bytes([0u8; 32])),
+                PartyId::new("p"),
+                Provenance::from_recipe([0u8; 32]),
+            );
+            let mut prev_id = v0.version_id();
+            let mut prev_rev = v0.revision();
+            versions.push(v0);
+            for k in 1..DEPTH {
+                let v = AssetVersion::successor(
+                    prev_id,
+                    prev_rev,
+                    h.clone(),
+                    VersionedContent::Recipe(TaskSignatureHash::from_bytes(
+                        [u8::try_from(k).unwrap(); 32],
+                    )),
+                    PartyId::new("p"),
+                    Provenance::from_recipe([0u8; 32]),
+                );
+                prev_id = v.version_id();
+                prev_rev = v.revision();
+                versions.push(v);
+            }
+        }
+
+        let total = versions.len();
+        let start = Instant::now();
+        for v in versions {
+            ledger.publish(v).unwrap(); // exercises the rank-comparison handle move
+        }
+        let publish_elapsed = start.elapsed();
+
+        let start = Instant::now();
+        for h in &handles {
+            assert!(ledger.resolve(h).is_some());
+        }
+        let resolve_elapsed = start.elapsed();
+
+        let start = Instant::now();
+        for h in &handles {
+            assert_eq!(ledger.history(h).len(), DEPTH, "full multi-version history");
+        }
+        let history_elapsed = start.elapsed();
+
+        #[allow(clippy::cast_precision_loss)]
+        let per = |d: std::time::Duration, by: usize| d.as_nanos() as f64 / by as f64;
+        println!(
+            "version-chains: n={n} handles={handle_count} depth={DEPTH} publish_per_ns={:.1} resolve_per_ns={:.1} history_per_ns={:.1}",
+            per(publish_elapsed, total),
+            per(resolve_elapsed, handle_count),
+            per(history_elapsed, handle_count)
+        );
+        publish_ns.push((n, per(publish_elapsed, total)));
+        resolve_ns.push((n, per(resolve_elapsed, handle_count)));
+        history_ns.push((n, per(history_elapsed, handle_count)));
+    }
+
+    assert_sublinear("version-chains-publish", &publish_ns);
+    assert_sublinear("version-chains-resolve", &resolve_ns);
+    assert_sublinear("version-chains-history", &history_ns);
 }

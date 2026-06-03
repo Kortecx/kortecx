@@ -574,3 +574,375 @@ mod m7_2 {
             .is_err());
     }
 }
+
+// ---- M7.2: content-versioning + provenance/lineage (D82/D88 + D-LOCK-4) ------
+
+mod m7_2_versioning {
+    use kx_dataset::DatasetId;
+    use kx_mote::MoteId;
+    use kx_workflow::ManifestId;
+
+    use crate::{
+        AssetPath, AssetVersion, InMemoryVersionLedger, PartyId, Provenance, TaskSignatureHash,
+        VersionError, VersionLedger, VersionLedgerError, VersionedContent,
+        CATALOG_VERSION_SCHEMA_VERSION, MAX_PROVENANCE_LINEAGE,
+    };
+
+    fn apath(name: &str) -> AssetPath {
+        AssetPath::new("acme", "recipes", name).unwrap()
+    }
+
+    fn recipe(byte: u8) -> VersionedContent {
+        VersionedContent::Recipe(TaskSignatureHash::from_bytes([byte; 32]))
+    }
+
+    fn prov(byte: u8) -> Provenance {
+        Provenance::from_recipe([byte; 32])
+    }
+
+    fn alice() -> PartyId {
+        PartyId::new("alice@acme")
+    }
+
+    // -- content addressing ----------------------------------------------------
+
+    #[test]
+    fn version_id_is_stable_and_deterministic() {
+        let v = AssetVersion::root(apath("summarize"), recipe(1), alice(), prov(1));
+        assert_eq!(v.version_id(), v.version_id(), "deterministic");
+        let same = AssetVersion::root(apath("summarize"), recipe(1), alice(), prov(1));
+        assert_eq!(v.version_id(), same.version_id(), "same bytes ⇒ same id");
+    }
+
+    #[test]
+    fn version_id_distinct_on_content() {
+        let a = AssetVersion::root(apath("summarize"), recipe(1), alice(), prov(1));
+        let b = AssetVersion::root(apath("summarize"), recipe(2), alice(), prov(1));
+        assert_ne!(a.version_id(), b.version_id());
+    }
+
+    #[test]
+    fn version_id_distinct_on_handle() {
+        let a = AssetVersion::root(apath("summarize"), recipe(1), alice(), prov(1));
+        let b = AssetVersion::root(apath("classify"), recipe(1), alice(), prov(1));
+        assert_ne!(a.version_id(), b.version_id());
+    }
+
+    #[test]
+    fn version_id_distinct_on_provenance() {
+        // Provenance folds into the id ⇒ a forged provenance is tamper-evident.
+        let a = AssetVersion::root(apath("summarize"), recipe(1), alice(), prov(1));
+        let b = AssetVersion::root(apath("summarize"), recipe(1), alice(), prov(9));
+        assert_ne!(a.version_id(), b.version_id());
+    }
+
+    #[test]
+    fn version_id_distinct_on_content_kind() {
+        // Recipe vs Workflow vs Dataset are distinct even on coincident bytes.
+        let r = AssetVersion::root(apath("x"), recipe(1), alice(), prov(1));
+        let w = AssetVersion::root(
+            apath("x"),
+            VersionedContent::Workflow(ManifestId([1u8; 32])),
+            alice(),
+            prov(1),
+        );
+        let d = AssetVersion::root(
+            apath("x"),
+            VersionedContent::Dataset(DatasetId([1u8; 32])),
+            alice(),
+            prov(1),
+        );
+        assert_ne!(r.version_id(), w.version_id());
+        assert_ne!(r.version_id(), d.version_id());
+        assert_ne!(w.version_id(), d.version_id());
+    }
+
+    #[test]
+    fn version_id_hex_is_64_chars() {
+        let id = AssetVersion::root(apath("x"), recipe(1), alice(), prov(1)).version_id();
+        assert_eq!(id.to_hex().len(), 64);
+        assert_eq!(format!("{id}").len(), 64);
+    }
+
+    #[test]
+    fn schema_version_is_pinned() {
+        let v = AssetVersion::root(apath("x"), recipe(1), alice(), prov(1));
+        assert_eq!(v.schema_version(), CATALOG_VERSION_SCHEMA_VERSION);
+        assert_eq!(CATALOG_VERSION_SCHEMA_VERSION, 1);
+    }
+
+    // -- root / successor shape ------------------------------------------------
+
+    #[test]
+    fn root_has_no_prior_revision_zero() {
+        let v = AssetVersion::root(apath("x"), recipe(1), alice(), prov(1));
+        assert!(v.prior().is_none());
+        assert_eq!(v.revision(), 0);
+    }
+
+    #[test]
+    fn successor_increments_revision() {
+        let v1 = AssetVersion::root(apath("x"), recipe(1), alice(), prov(1));
+        let v1_id = v1.version_id();
+        let v2 = AssetVersion::successor(v1_id, 0, apath("x"), recipe(2), alice(), prov(2));
+        assert_eq!(v2.prior(), Some(v1_id));
+        assert_eq!(v2.revision(), 1);
+    }
+
+    // -- publish / resolve / move handle ---------------------------------------
+
+    #[test]
+    fn publish_then_resolve_returns_content() {
+        let ledger = InMemoryVersionLedger::new();
+        let v = AssetVersion::root(apath("summarize"), recipe(1), alice(), prov(1));
+        let id = ledger.publish(v).unwrap().version_id();
+        let (content, vid) = ledger.resolve(&apath("summarize")).unwrap();
+        assert_eq!(vid, id);
+        assert_eq!(content, recipe(1));
+    }
+
+    #[test]
+    fn publish_successor_moves_handle() {
+        let ledger = InMemoryVersionLedger::new();
+        let v1 = AssetVersion::root(apath("summarize"), recipe(1), alice(), prov(1));
+        let v1_id = ledger.publish(v1).unwrap().version_id();
+        let v2 = AssetVersion::successor(v1_id, 0, apath("summarize"), recipe(2), alice(), prov(2));
+        let v2_id = ledger.publish(v2).unwrap().version_id();
+        let (content, vid) = ledger.resolve(&apath("summarize")).unwrap();
+        assert_eq!(vid, v2_id, "handle moved to the latest");
+        assert_eq!(content, recipe(2));
+        assert!(ledger.get_version(&v1_id).is_some(), "v1 retained");
+    }
+
+    #[test]
+    fn rollback_moves_handle_keeps_all() {
+        let ledger = InMemoryVersionLedger::new();
+        let v1 = AssetVersion::root(apath("x"), recipe(1), alice(), prov(1));
+        let v1_id = ledger.publish(v1).unwrap().version_id();
+        let v2 = AssetVersion::successor(v1_id, 0, apath("x"), recipe(2), alice(), prov(2));
+        let v2_id = ledger.publish(v2).unwrap().version_id();
+        // Rollback = a NEW version (revision 2) pinning v1's OLDER content.
+        let v3 = AssetVersion::successor(v2_id, 1, apath("x"), recipe(1), alice(), prov(3));
+        let v3_id = ledger.publish(v3).unwrap().version_id();
+        let (content, vid) = ledger.resolve(&apath("x")).unwrap();
+        assert_eq!(vid, v3_id);
+        assert_eq!(content, recipe(1), "rolled back to v1's content");
+        assert_eq!(ledger.len(), 3, "all three versions retained (D-LOCK-4)");
+        assert!(ledger.get_version(&v1_id).is_some());
+        assert!(ledger.get_version(&v2_id).is_some());
+    }
+
+    #[test]
+    fn publish_is_idempotent() {
+        // Re-publishing a byte-identical version is AlreadyPresent (the same-id
+        // tripwire's ImmutabilityConflict branch is cryptographically unreachable
+        // because version_id hashes the WHOLE fact — same id ⟺ same bytes).
+        let ledger = InMemoryVersionLedger::new();
+        let v = AssetVersion::root(apath("x"), recipe(1), alice(), prov(1));
+        assert!(ledger.publish(v.clone()).unwrap().is_published());
+        for _ in 0..5 {
+            assert!(!ledger.publish(v.clone()).unwrap().is_published());
+        }
+        assert_eq!(ledger.len(), 1);
+    }
+
+    // -- history / lineage / descendants ---------------------------------------
+
+    #[test]
+    fn history_walks_latest_to_oldest() {
+        let ledger = InMemoryVersionLedger::new();
+        let v1 = AssetVersion::root(apath("x"), recipe(1), alice(), prov(1));
+        let v1_id = ledger.publish(v1).unwrap().version_id();
+        let v2 = AssetVersion::successor(v1_id, 0, apath("x"), recipe(2), alice(), prov(2));
+        let v2_id = ledger.publish(v2).unwrap().version_id();
+        let v3 = AssetVersion::successor(v2_id, 1, apath("x"), recipe(3), alice(), prov(3));
+        let v3_id = ledger.publish(v3).unwrap().version_id();
+
+        let hist = ledger.history(&apath("x"));
+        let ids: Vec<_> = hist.iter().map(AssetVersion::version_id).collect();
+        assert_eq!(ids, vec![v3_id, v2_id, v1_id], "latest → oldest");
+
+        let lin = ledger.lineage(&v3_id);
+        assert_eq!(lin.len(), 3);
+        assert_eq!(lin.first().unwrap().version_id(), v3_id);
+        assert_eq!(lin.last().unwrap().version_id(), v1_id);
+    }
+
+    #[test]
+    fn descendants_covers_forward_chain() {
+        let ledger = InMemoryVersionLedger::new();
+        let v1 = AssetVersion::root(apath("x"), recipe(1), alice(), prov(1));
+        let v1_id = ledger.publish(v1).unwrap().version_id();
+        let v2 = AssetVersion::successor(v1_id, 0, apath("x"), recipe(2), alice(), prov(2));
+        let v2_id = ledger.publish(v2).unwrap().version_id();
+        let v3 = AssetVersion::successor(v2_id, 1, apath("x"), recipe(3), alice(), prov(3));
+        let v3_id = ledger.publish(v3).unwrap().version_id();
+
+        let desc = ledger.descendants(&v1_id);
+        assert_eq!(desc.len(), 2, "v1's descendants are v2, v3 (not v1 itself)");
+        assert!(desc.contains(&v2_id) && desc.contains(&v3_id));
+        assert!(ledger.descendants(&v3_id).is_empty(), "leaf has none");
+    }
+
+    #[test]
+    fn missing_prior_publish_is_refused() {
+        // A successor whose `prior` was never published is refused fail-closed at
+        // the door (publish is causally ordered).
+        let ledger = InMemoryVersionLedger::new();
+        let phantom = AssetVersion::root(apath("ghost"), recipe(9), alice(), prov(9)).version_id();
+        let orphan = AssetVersion::successor(phantom, 0, apath("x"), recipe(1), alice(), prov(1));
+        assert!(matches!(
+            ledger.publish(orphan).unwrap_err(),
+            VersionLedgerError::PriorNotFound(_)
+        ));
+        assert_eq!(ledger.len(), 0, "nothing landed");
+    }
+
+    #[test]
+    fn foreign_prior_publish_is_refused() {
+        // A successor grafting a DIFFERENT handle's version as its prior is refused
+        // (the stored chain can never carry a cross-handle graft).
+        let ledger = InMemoryVersionLedger::new();
+        let vy = AssetVersion::root(apath("other"), recipe(2), alice(), prov(2));
+        let vy_id = ledger.publish(vy).unwrap().version_id();
+        let forged = AssetVersion::successor(vy_id, 0, apath("x"), recipe(1), alice(), prov(1));
+        assert!(matches!(
+            ledger.publish(forged).unwrap_err(),
+            VersionLedgerError::InvalidLineage { .. }
+        ));
+        assert_eq!(ledger.len(), 1, "only the legitimate root landed");
+    }
+
+    #[test]
+    fn wrong_prior_revision_publish_is_refused() {
+        // Declaring an inflated `prior_revision` (the griefing vector) is refused:
+        // the revision must be exactly real_prior.revision + 1.
+        let ledger = InMemoryVersionLedger::new();
+        let v1 = AssetVersion::root(apath("x"), recipe(1), alice(), prov(1));
+        let v1_id = ledger.publish(v1).unwrap().version_id();
+        // prior is v1 (revision 0) but we LIE that prior_revision = u32::MAX-1 ⇒
+        // revision = u32::MAX, which does not equal 0 + 1.
+        let inflated =
+            AssetVersion::successor(v1_id, u32::MAX - 1, apath("x"), recipe(2), alice(), prov(2));
+        assert_eq!(inflated.revision(), u32::MAX);
+        assert!(matches!(
+            ledger.publish(inflated).unwrap_err(),
+            VersionLedgerError::InvalidLineage { .. }
+        ));
+        assert_eq!(
+            ledger.resolve(&apath("x")).unwrap().1,
+            v1_id,
+            "handle unmoved"
+        );
+    }
+
+    #[test]
+    fn fork_two_successors_same_prior() {
+        // Two distinct successors of the SAME prior on the SAME handle (a fork):
+        // both publish; descendants(v1) = {both}; resolve tie-breaks by version-id
+        // bytes deterministically + order-independently; each branch's lineage is
+        // [branch, v1]; history is the rank-winner's lineage.
+        let publish_order = |a_first: bool| {
+            let ledger = InMemoryVersionLedger::new();
+            let v1 = AssetVersion::root(apath("x"), recipe(1), alice(), prov(1));
+            let v1_id = ledger.publish(v1).unwrap().version_id();
+            let a =
+                AssetVersion::successor(v1_id, 0, apath("x"), recipe(0xA0), alice(), prov(0xA0));
+            let b =
+                AssetVersion::successor(v1_id, 0, apath("x"), recipe(0xB0), alice(), prov(0xB0));
+            let (a_id, b_id) = (a.version_id(), b.version_id());
+            if a_first {
+                ledger.publish(a).unwrap();
+                ledger.publish(b).unwrap();
+            } else {
+                ledger.publish(b).unwrap();
+                ledger.publish(a).unwrap();
+            }
+            (ledger, v1_id, a_id, b_id)
+        };
+
+        let (ledger, v1_id, a_id, b_id) = publish_order(true);
+        // descendants(v1) = exactly {a, b}.
+        let mut desc = ledger.descendants(&v1_id);
+        desc.sort_unstable_by_key(|v| *v.as_bytes());
+        let mut want = vec![a_id, b_id];
+        want.sort_unstable_by_key(|v| *v.as_bytes());
+        assert_eq!(desc, want, "both fork branches are descendants of v1");
+        // each branch's lineage is [branch, v1].
+        assert_eq!(
+            ledger
+                .lineage(&a_id)
+                .iter()
+                .map(AssetVersion::version_id)
+                .collect::<Vec<_>>(),
+            vec![a_id, v1_id]
+        );
+        // resolve tie-breaks by version-id bytes (both revision 1): the larger wins.
+        let winner = if *a_id.as_bytes() > *b_id.as_bytes() {
+            a_id
+        } else {
+            b_id
+        };
+        assert_eq!(ledger.resolve(&apath("x")).unwrap().1, winner);
+        // history is the winner's lineage; publish order does not change the winner.
+        let (ledger2, _, _, _) = publish_order(false);
+        assert_eq!(
+            ledger2.resolve(&apath("x")).unwrap().1,
+            winner,
+            "tie-break is publish-order-independent"
+        );
+        assert_eq!(ledger.history(&apath("x"))[0].version_id(), winner);
+    }
+
+    #[test]
+    fn lineage_of_absent_version_is_empty() {
+        let ledger = InMemoryVersionLedger::new();
+        let nobody = AssetVersion::root(apath("x"), recipe(1), alice(), prov(1)).version_id();
+        assert!(ledger.lineage(&nobody).is_empty());
+        assert!(ledger.resolve(&apath("x")).is_none());
+    }
+
+    // -- Provenance ------------------------------------------------------------
+
+    #[test]
+    fn provenance_builders_and_accessors() {
+        let p = Provenance::from_recipe([7u8; 32])
+            .with_run([3u8; 16])
+            .with_dataset(DatasetId([4u8; 32]))
+            .with_corpus_lineage([MoteId::from_bytes([5u8; 32])])
+            .unwrap();
+        assert_eq!(p.recipe_fingerprint(), &[7u8; 32]);
+        assert_eq!(p.generating_run(), Some([3u8; 16]));
+        assert_eq!(p.dataset_id(), Some(DatasetId([4u8; 32])));
+        assert_eq!(p.corpus_lineage().len(), 1);
+    }
+
+    #[test]
+    fn provenance_too_large_is_refused() {
+        // Build MAX+1 distinct MoteIds (distinct by their leading 8 bytes).
+        let lineage: Vec<MoteId> = (0..=MAX_PROVENANCE_LINEAGE as u64)
+            .map(|i| {
+                let mut b = [0u8; 32];
+                b[..8].copy_from_slice(&i.to_le_bytes());
+                MoteId::from_bytes(b)
+            })
+            .collect();
+        assert!(lineage.len() > MAX_PROVENANCE_LINEAGE);
+        let err = Provenance::from_recipe([0u8; 32])
+            .with_corpus_lineage(lineage)
+            .unwrap_err();
+        assert!(matches!(err, VersionError::ProvenanceTooLarge { .. }));
+    }
+
+    #[test]
+    fn provenance_serde_round_trips() {
+        let p = Provenance::from_recipe([1u8; 32])
+            .with_run([2u8; 16])
+            .with_dataset(DatasetId([3u8; 32]));
+        let bytes = bincode::serde::encode_to_vec(&p, crate::canonical_config()).unwrap();
+        let (back, _) =
+            bincode::serde::decode_from_slice::<Provenance, _>(&bytes, crate::canonical_config())
+                .unwrap();
+        assert_eq!(p, back);
+    }
+}
