@@ -478,6 +478,7 @@ async fn w3_worker_death_after_stage_is_exactly_once() {
         idempotency_key: Some(run_scoped_token(&iid, &wm)),
         net_scope: kx_warrant::NetScope::None,
         fs_scope: kx_warrant::FsScope::empty(),
+        secret_scope: kx_warrant::SecretScope::None,
     };
     broker.dispatch(&wm, &warrant, &cap, req).unwrap();
     assert_eq!(broker.net_effects.load(Ordering::SeqCst), 1);
@@ -627,6 +628,7 @@ async fn w5_dead_workers_late_commit_dedupes() {
                 idempotency_key: Some(idempotency_token_for(&wm)),
                 net_scope: kx_warrant::NetScope::None,
                 fs_scope: kx_warrant::FsScope::empty(),
+                secret_scope: kx_warrant::SecretScope::None,
             },
         )
         .unwrap();

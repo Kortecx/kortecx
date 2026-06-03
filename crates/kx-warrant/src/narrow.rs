@@ -64,6 +64,7 @@ use crate::spec::{Role, WarrantSpec};
 ///     // narrowing inherits the AXES, not the VALUES); the macOS sibling
 ///     // variant `MacOsSandbox` is a sibling default on macOS hosts.
 ///     executor_class: ExecutorClass::Bwrap,
+///     ..Default::default()
 /// };
 ///
 /// // A child role that strictly tightens (max_calls 10 → 5) AND selects
@@ -124,6 +125,16 @@ pub fn intersect(parent: &WarrantSpec, role: &Role) -> Result<WarrantSpec, Narro
         });
     }
 
+    // secret_scope: None authorizes nothing; allowlist must be subset of
+    // parent's (the D110.3 authorization axis; mirrors net_scope).
+    if !proposed.secret_scope.is_subset_of(&parent.secret_scope) {
+        return Err(NarrowingError::AttemptedWiden {
+            field: WarrantField::SecretScope,
+            parent: format!("{:?}", parent.secret_scope),
+            proposed: format!("{:?}", proposed.secret_scope),
+        });
+    }
+
     // model_route: child names its own model; quantitative ceilings narrow.
     // Reject zero ceilings as structurally invalid (a route with zero tokens
     // is useless; surface loudly).
@@ -142,6 +153,16 @@ pub fn intersect(parent: &WarrantSpec, role: &Role) -> Result<WarrantSpec, Narro
     // resource_ceiling: per-axis min.
     let resource_ceiling = proposed.resource_ceiling.narrow(&parent.resource_ceiling);
 
+    // cost_ceiling: per-axis min — a child can only lower the dollar ceiling
+    // (D115; mirrors resource_ceiling). Axis reserved; enforcement is M11.
+    let cost_ceiling = proposed.cost_ceiling.narrow(&parent.cost_ceiling);
+
+    // tls_required: tighten-only. A child can add TLS but never remove a
+    // parent's requirement — the boolean dual of the quantitative `min()` axes
+    // (safe value = true), so a relaxation is structurally impossible rather
+    // than a loud error (D118.5).
+    let tls_required = proposed.tls_required || parent.tls_required;
+
     // mote_class / nd_class: set by child's role (NOT inherited).
     // executor_class: set by child's role (orthogonal to narrowing).
     // environment_ref: set by child's role (orthogonal to narrowing).
@@ -157,6 +178,9 @@ pub fn intersect(parent: &WarrantSpec, role: &Role) -> Result<WarrantSpec, Narro
         resource_ceiling,
         environment_ref: proposed.environment_ref,
         executor_class: proposed.executor_class,
+        secret_scope: proposed.secret_scope.clone(),
+        cost_ceiling,
+        tls_required,
     })
 }
 

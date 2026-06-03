@@ -163,6 +163,7 @@ fn warrant() -> WarrantSpec {
         },
         environment_ref: None,
         executor_class: ExecutorClass::Bwrap,
+        ..Default::default()
     }
 }
 
@@ -196,6 +197,7 @@ fn empty_request() -> EffectRequest {
         idempotency_key: None,
         net_scope: NetScope::None,
         fs_scope: FsScope::empty(),
+        secret_scope: kx_warrant::SecretScope::None,
     }
 }
 

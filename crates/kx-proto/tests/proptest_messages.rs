@@ -242,6 +242,7 @@ fn arb_warrant() -> impl Strategy<Value = WarrantSpec> {
                 resource_ceiling: rc,
                 environment_ref: env.map(ContentRef::from_bytes),
                 executor_class: exec,
+                ..Default::default()
             },
         )
 }

@@ -139,6 +139,7 @@ fn permissive_warrant_with_grant(grant: ToolGrant) -> WarrantSpec {
         },
         environment_ref: None,
         executor_class: ExecutorClass::Bwrap,
+        ..Default::default()
     }
 }
 
@@ -175,6 +176,7 @@ fn empty_request_with_pattern(pattern: EffectPattern, payload: Vec<u8>) -> Effec
         idempotency_key: None,
         net_scope: NetScope::None,
         fs_scope: FsScope::empty(),
+        secret_scope: kx_warrant::SecretScope::None,
     }
 }
 
@@ -394,6 +396,7 @@ fn cap_7a_capability_exceeds_warrant_on_net_scope() {
         idempotency_key: None,
         net_scope: NetScope::EgressAllowlist(BTreeSet::from([Host("evil.example.com:443".into())])),
         fs_scope: FsScope::empty(),
+        secret_scope: kx_warrant::SecretScope::None,
     };
     let err = broker.dispatch(&mote, &warrant, &name, req).unwrap_err();
     assert!(matches!(
@@ -431,12 +434,53 @@ fn cap_7b_capability_exceeds_warrant_on_fs_scope() {
         fs_scope: FsScope {
             mounts: BTreeMap::from([(PathBuf::from("/etc"), FsMode::ReadWrite)]),
         },
+        secret_scope: kx_warrant::SecretScope::None,
     };
     let err = broker.dispatch(&mote, &warrant, &name, req).unwrap_err();
     assert!(matches!(
         err,
         BrokerError::CapabilityExceedsWarrant {
             axis: WarrantField::FsScope
+        }
+    ));
+}
+
+// -- CAP-7c — request.secret_scope ⊄ warrant.secret_scope is refused (D110.3)
+
+#[test]
+fn cap_7c_capability_exceeds_warrant_on_secret_scope() {
+    let name = tool_name("rev");
+    let version = tool_version("1");
+    let mote = mote_with_tool(&name, &version);
+    // The permissive fixture warrant carries `secret_scope: None` (deny-all) by
+    // default, so ANY requested secret exceeds it.
+    let warrant = permissive_warrant_with_grant(ToolGrant {
+        tool_id: name.clone(),
+        tool_version: version.clone(),
+    });
+    let broker = LocalCapabilityBroker::new(InMemoryContentStore::new());
+    broker.register_capability(Box::new(ReverseCapability::new(
+        "rev",
+        "1",
+        vec![EffectPattern::StageThenCommit],
+    )));
+
+    // Request needs a secret the warrant does not grant.
+    let req = EffectRequest {
+        payload: vec![],
+        pattern: EffectPattern::StageThenCommit,
+        idempotency_key: None,
+        net_scope: NetScope::None,
+        fs_scope: FsScope::empty(),
+        secret_scope: kx_warrant::SecretScope::AllowList(BTreeSet::from([kx_warrant::SecretRef(
+            "STRIPE_SK".into(),
+        )])),
+    };
+    let err = broker.dispatch(&mote, &warrant, &name, req).unwrap_err();
+    assert!(matches!(
+        err,
+        BrokerError::CapabilityExceedsWarrant {
+            axis: WarrantField::SecretScope
         }
     ));
 }

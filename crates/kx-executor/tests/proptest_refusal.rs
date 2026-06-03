@@ -116,6 +116,7 @@ fn arb_warrant() -> impl Strategy<Value = WarrantSpec> {
         },
         environment_ref: None,
         executor_class: ec,
+        ..Default::default()
     })
 }
 

@@ -599,6 +599,11 @@ impl TryFrom<proto::WarrantSpec> for WarrantSpec {
                 p.executor_class,
                 "ExecutorClass",
             )?,
+            // The proto schema does not yet carry the M5.3 axes (secret_scope /
+            // cost_ceiling / tls_required); they decode to the fail-closed
+            // deny-all default. Distributed enforcement of these axes extends
+            // the proto wire format in M10 (single-node M5.3 does not use proto).
+            ..Default::default()
         })
     }
 }

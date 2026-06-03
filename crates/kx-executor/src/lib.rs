@@ -107,6 +107,7 @@
 //! #         },
 //! #         environment_ref: None,
 //! #         executor_class: kx_warrant::ExecutorClass::Bwrap,
+//! #         ..Default::default()
 //! #     }
 //! # }
 //! ```
@@ -150,6 +151,7 @@
 //! #         },
 //! #         environment_ref: None,
 //! #         executor_class: kx_warrant::ExecutorClass::Bwrap,
+//! #         ..Default::default()
 //! #     }
 //! # }
 //! ```
@@ -215,6 +217,7 @@
 //! #         },
 //! #         environment_ref: None,
 //! #         executor_class: kx_warrant::ExecutorClass::Bwrap,
+//! #         ..Default::default()
 //! #     }
 //! # }
 //! ```

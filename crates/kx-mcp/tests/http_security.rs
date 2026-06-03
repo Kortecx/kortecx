@@ -130,6 +130,7 @@ fn unscoped_egress_request_under_none_warrant_never_dials() {
             [Host("example.com".to_string())].into_iter().collect(),
         ),
         fs_scope: FsScope::empty(),
+        secret_scope: kx_warrant::SecretScope::None,
     };
     let err = broker
         .dispatch(&mote, &warrant, &name, req)

@@ -42,6 +42,7 @@ fn warrant() -> kx_warrant::WarrantSpec {
         },
         environment_ref: None,
         executor_class: kx_warrant::ExecutorClass::Bwrap,
+        ..Default::default()
     }
 }
 

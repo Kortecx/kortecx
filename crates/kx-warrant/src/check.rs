@@ -44,6 +44,7 @@ use crate::spec::{ToolRequirement, WarrantSpec};
 ///         fd_count: 64, disk_bytes: 1 << 28,
 ///     },
 ///     environment_ref: None, executor_class: ExecutorClass::Bwrap,
+///     ..Default::default()
 /// };
 ///
 /// // A tool requiring more memory than the warrant permits → ToolDenied.

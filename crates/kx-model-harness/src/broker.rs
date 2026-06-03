@@ -246,6 +246,7 @@ where
                         idempotency_key: Some(run_scoped_token(&self.instance_id, mote)),
                         net_scope,
                         fs_scope: FsScope::empty(),
+                        secret_scope: kx_warrant::SecretScope::None,
                     };
                     let handle = self
                         .tool_broker

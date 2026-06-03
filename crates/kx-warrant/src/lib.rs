@@ -20,7 +20,7 @@
 //!   output. No I/O, no clock, no journal access. Recovery re-derives warrants
 //!   bit-for-bit (machine-independent).
 //!
-//! # Six narrowable axes (qualitative — widening rejected as typed error)
+//! # Seven narrowable axes (qualitative — widening rejected as typed error)
 //!
 //! | Axis                  | Semantics                                              |
 //! |-----------------------|--------------------------------------------------------|
@@ -28,6 +28,7 @@
 //! | `net_scope`           | egress allowlist subset; `None` blocks all egress      |
 //! | `syscall_profile_ref` | opaque content-ref; subset check deferred to compiler  |
 //! | `tool_grants`         | set subset on `(ToolName, ToolVersion)`                |
+//! | `secret_scope`        | secret-ref allowlist subset; `None` authorizes none (D110.3) |
 //! | `executor_class`      | set by child's role; not narrowed from parent          |
 //! | `environment_ref`     | set by child's role; not narrowed from parent          |
 //!
@@ -35,6 +36,12 @@
 //!
 //! - `resource_ceiling.*` — cpu_milli, mem_bytes, wall_clock_ms, fd_count, disk_bytes.
 //! - `model_route.max_input_tokens` / `max_output_tokens` / `max_calls`.
+//! - `cost_ceiling.micro_usd` — dollar ceiling (D115; axis reserved at M5.3,
+//!   spend enforcement at M11).
+//!
+//! # `tls_required` is tighten-only (narrowed via `||`)
+//!
+//! A child can add a TLS requirement but never relax a parent's (D118.5).
 //!
 //! # `mote_class` and `nd_class` are set by child's role (NOT inherited).
 //!
@@ -87,6 +94,7 @@ mod narrow;
 mod refs;
 mod registry;
 mod scope;
+mod secret;
 mod spec;
 
 pub use check::check_tool_requirement;
@@ -97,7 +105,10 @@ pub use narrow::{intersect, narrow};
 pub use refs::{role_id_of, warrant_ref_of};
 pub use registry::{InMemoryRoleRegistry, RoleRegistry};
 pub use scope::{FsScope, NetScope};
-pub use spec::{ModelRoute, ResourceCeiling, Role, ToolGrant, ToolRequirement, WarrantSpec};
+pub use secret::{SecretRef, SecretScope};
+pub use spec::{
+    CostCeiling, ModelRoute, ResourceCeiling, Role, ToolGrant, ToolRequirement, WarrantSpec,
+};
 
 #[cfg(test)]
 mod tests;

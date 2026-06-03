@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::classes::{ExecutorClass, MoteClass};
 use crate::scope::{FsScope, NetScope};
+use crate::secret::SecretScope;
 
 /// A reference to a tool in the shared registry (per D32).
 ///
@@ -98,11 +99,43 @@ impl ResourceCeiling {
     }
 }
 
+/// A quantitative cost ceiling, in micro-dollars (D115).
+///
+/// `micro_usd` is the MAXIMUM spend permitted under this warrant. Integer
+/// fixed-point — **no float on the identity path** (SN-8). `0` = no spend
+/// permitted (the fail-closed default); [`u64::MAX`] = effectively unlimited.
+/// Narrowed silently via `min()` like [`ResourceCeiling`] (a child can never
+/// raise the ceiling).
+///
+/// **M5.3 reserves the axis only** (D115.1): the field + `min()`-narrowing exist
+/// here; the spend FOLD (accumulating cost) and the `spent ≤ cost_ceiling`
+/// enforcement land in M11 (`kx-trace`). At M5.3 the ceiling is recorded +
+/// narrowed but never consulted (no cost accounting is built).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct CostCeiling {
+    /// Maximum spend in micro-dollars (USD × 1_000_000).
+    pub micro_usd: u64,
+}
+
+impl CostCeiling {
+    /// Per-axis `min` narrowing (a child can only lower the ceiling).
+    #[inline]
+    #[must_use]
+    pub fn narrow(&self, parent: &Self) -> Self {
+        Self {
+            micro_usd: self.micro_usd.min(parent.micro_usd),
+        }
+    }
+}
+
 /// The complete capability envelope a Mote attempts under.
 ///
 /// Computed via [`crate::intersect`] of the parent's warrant and the child's
 /// role. Content-addressed via [`crate::warrant_ref_of`]; recovery re-derives
-/// bit-for-bit.
+/// bit-for-bit. [`WarrantSpec::default`] is a fail-closed **deny-all** envelope
+/// (no tools, no egress, no filesystem, zero resource/cost ceilings, TLS
+/// required, `Pure`) — the safe base every fixture and future axis builds on via
+/// `..Default::default()`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct WarrantSpec {
     /// Non-determinism class. Set by child's role; NOT inherited.
@@ -128,6 +161,50 @@ pub struct WarrantSpec {
     pub environment_ref: Option<ContentRef>,
     /// Executor backend selection. Set by child's role.
     pub executor_class: ExecutorClass,
+    /// Which secret references this warrant may resolve (D110.3). Narrowable via
+    /// subset; widening → `AttemptedWiden`. `None` authorizes no secret.
+    pub secret_scope: SecretScope,
+    /// Quantitative cost ceiling (D115). Narrowed silently via `min()`. Axis
+    /// reserved at M5.3; spend enforcement is M11 (see [`CostCeiling`]).
+    pub cost_ceiling: CostCeiling,
+    /// Force TLS on remote MCP egress (D118.5). Tighten-only: a parent requiring
+    /// TLS forces every child to require it too (narrow = `||`). Consumed by the
+    /// HTTP transport (`https_only`) in M5.3 PR-B.
+    pub tls_required: bool,
+}
+
+impl Default for WarrantSpec {
+    /// A fail-closed **deny-all** warrant: no tools, no egress, no filesystem,
+    /// zero resource + cost ceilings, TLS required, `Pure` class, the default
+    /// executor backend. The least-privilege base for `..Default::default()`.
+    fn default() -> Self {
+        Self {
+            mote_class: MoteClass::Pure,
+            nd_class: MoteClass::Pure,
+            fs_scope: FsScope::empty(),
+            net_scope: NetScope::None,
+            syscall_profile_ref: ContentRef::from_bytes([0u8; 32]),
+            tool_grants: BTreeSet::new(),
+            model_route: ModelRoute {
+                model_id: ModelId(String::new()),
+                max_input_tokens: 0,
+                max_output_tokens: 0,
+                max_calls: 0,
+            },
+            resource_ceiling: ResourceCeiling {
+                cpu_milli: 0,
+                mem_bytes: 0,
+                wall_clock_ms: 0,
+                fd_count: 0,
+                disk_bytes: 0,
+            },
+            environment_ref: None,
+            executor_class: ExecutorClass::Bwrap,
+            secret_scope: SecretScope::None,
+            cost_ceiling: CostCeiling { micro_usd: 0 },
+            tls_required: true,
+        }
+    }
 }
 
 /// A `(name, version, spec, description)` tuple identifying a named, versioned

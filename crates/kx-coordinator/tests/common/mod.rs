@@ -203,6 +203,7 @@ pub fn sample_warrant() -> WarrantSpec {
         },
         environment_ref: Some(ContentRef::from_bytes([8u8; 32])),
         executor_class: ExecutorClass::MacOsSandbox,
+        ..Default::default()
     }
 }
 

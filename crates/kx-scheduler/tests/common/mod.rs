@@ -100,6 +100,7 @@ pub(crate) fn permissive_warrant() -> WarrantSpec {
         },
         environment_ref: None,
         executor_class: ExecutorClass::Bwrap,
+        ..Default::default()
     }
 }
 
