@@ -56,6 +56,14 @@ pub struct ToolDef {
     /// Per-tool declared idempotency mechanism (D38 §2). Required field;
     /// no default. See [`IdempotencyClass`] for variant semantics.
     pub idempotency_class: IdempotencyClass,
+    /// Optional typed parameter schema (the MCP `inputSchema` analogue, D110.4).
+    /// When `Some`, the runtime validates a model's proposed tool-call args against
+    /// it **fail-closed** before dispatch ([`crate::validate_args`]); `None`
+    /// preserves the pre-M5.3 unvalidated behavior. Like any `ToolDef` field it
+    /// participates in `resolved_def_hash` — a tool that gains a schema is a new
+    /// tool version (the canonical-bytes shift is the intended content-addressing
+    /// behavior, bounded to in-test fixtures + built-ins; the PR-4.6/D38 precedent).
+    pub input_schema: Option<crate::InputSchema>,
 }
 
 /// The content-addressed fact that "tool X version Y was resolved as kind Z

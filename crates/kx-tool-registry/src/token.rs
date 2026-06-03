@@ -44,6 +44,7 @@ use crate::tool_def::ToolDef;
 ///     },
 ///     description: String::new(),
 ///     idempotency_class: IdempotencyClass::Token,
+///     input_schema: None,
 /// };
 /// let prov = ToolProvenance::HumanAuthored { author: "ops".into() };
 ///

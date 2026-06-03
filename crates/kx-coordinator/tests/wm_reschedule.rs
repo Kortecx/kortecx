@@ -76,6 +76,7 @@ fn coordinator_with_alo_tool(clock: Arc<FakeClock>) -> CoordinatorService {
                 },
                 description: "a token-less, no-readback effect (at-most-once)".into(),
                 idempotency_class: IdempotencyClass::AtLeastOnce,
+                input_schema: None,
             },
             ToolProvenance::HumanAuthored {
                 author: "ops".into(),

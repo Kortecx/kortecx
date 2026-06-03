@@ -199,6 +199,7 @@ fn registry_with_http_tool(
             },
             description: "HTTP MCP echo tool (M5.2b e2e).".into(),
             idempotency_class: IdempotencyClass::Staged,
+            input_schema: None,
         },
         ToolProvenance::HumanAuthored {
             author: "test".into(),

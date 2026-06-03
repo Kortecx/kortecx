@@ -149,6 +149,7 @@ fn registry_with_at_least_once() -> Arc<dyn ToolRegistry> {
             },
             description: "sends an email; no closing mechanism (at-least-once)".into(),
             idempotency_class: IdempotencyClass::AtLeastOnce,
+            input_schema: None,
         },
         ToolProvenance::HumanAuthored {
             author: "ops".into(),
@@ -242,6 +243,7 @@ async fn d66_security_refuses_capability_exceeding_warrant() {
             },
             description: "needs egress the warrant lacks".into(),
             idempotency_class: IdempotencyClass::Token,
+            input_schema: None,
         },
         ToolProvenance::HumanAuthored {
             author: "ops".into(),

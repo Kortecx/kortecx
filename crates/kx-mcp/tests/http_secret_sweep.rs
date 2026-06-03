@@ -59,7 +59,8 @@ fn http_secret_reaches_no_runtime_sink() {
     let mote = sample_mote(&name, &version);
     // The role grants the secret the header credential needs (D110.3).
     let mut warrant = warrant_granting_egress(&name, &version);
-    warrant.secret_scope = SecretScope::AllowList(BTreeSet::from([SecretRef(CRED_VAR.to_string())]));
+    warrant.secret_scope =
+        SecretScope::AllowList(BTreeSet::from([SecretRef(CRED_VAR.to_string())]));
     let req = effect_egress(r#"{"q":"hello"}"#);
     assert!(
         !contains(&req.payload, SECRET.as_bytes()),

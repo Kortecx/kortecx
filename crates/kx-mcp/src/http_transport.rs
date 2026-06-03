@@ -388,15 +388,23 @@ mod tests {
 
     #[test]
     fn new_refuses_non_http_scheme() {
-        let err = HttpTransport::new("ftp://api.example.com/mcp", &scope(&["api.example.com"]), false)
-            .expect_err("non-http scheme must refuse");
+        let err = HttpTransport::new(
+            "ftp://api.example.com/mcp",
+            &scope(&["api.example.com"]),
+            false,
+        )
+        .expect_err("non-http scheme must refuse");
         assert!(matches!(err, TransportError::Unreachable(_)));
     }
 
     #[test]
     fn new_accepts_allowlisted_endpoint() {
-        let t = HttpTransport::new("https://api.example.com/mcp", &scope(&["api.example.com"]), true)
-            .expect("allowlisted endpoint builds (tls_required does not fail at build)");
+        let t = HttpTransport::new(
+            "https://api.example.com/mcp",
+            &scope(&["api.example.com"]),
+            true,
+        )
+        .expect("allowlisted endpoint builds (tls_required does not fail at build)");
         let _ = t;
     }
 

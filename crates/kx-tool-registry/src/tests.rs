@@ -58,6 +58,7 @@ fn sample_def(id: &str, version: &str, kind: ToolKind, req: ToolRequirement) -> 
         required_capability: req,
         description: format!("test tool {id}@{version}"),
         idempotency_class: IdempotencyClass::Token,
+        input_schema: None,
     }
 }
 

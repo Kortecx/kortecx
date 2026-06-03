@@ -350,6 +350,7 @@ async fn capability_exceeds_warrant_skips_capture() {
                 },
                 description: "needs egress the warrant lacks".into(),
                 idempotency_class: IdempotencyClass::Token,
+                input_schema: None,
             },
             ToolProvenance::HumanAuthored {
                 author: "ops".into(),

@@ -1481,6 +1481,7 @@ dependencies = [
  "kx-warrant",
  "proptest",
  "serde",
+ "serde_json",
  "thiserror",
  "tracing",
  "tracing-subscriber",

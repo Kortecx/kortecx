@@ -222,18 +222,32 @@ where
                     // byte-identical to M5.2a); an HTTP tool declares its host
                     // allowlist. A tool that does not resolve is refused fail-closed
                     // (no effect fires).
-                    let net_scope = match self.registry.lookup(&call.name, &call.version) {
-                        Some(def) => def.required_capability.net_scope_required,
-                        None => {
+                    let Some(def) = self.registry.lookup(&call.name, &call.version) else {
+                        return Err(BrokerError::StageWriteFailed {
+                            capability: capability.clone(),
+                            diagnostic: format!(
+                                "tool {:?}@{:?} not resolvable for egress derivation",
+                                call.name, call.version
+                            ),
+                        });
+                    };
+                    // M5.3 (D110.4) — validate the model's proposed args against the
+                    // tool's declared typed `inputSchema`, FAIL-CLOSED, BEFORE any
+                    // effect fires. A tool with no schema (`None`) is dispatched as
+                    // before (byte-identical). The model proposes; the runtime enforces.
+                    if let Some(schema) = &def.input_schema {
+                        if let Err(reason) =
+                            kx_tool_registry::validate_args(schema, &call.args_bytes)
+                        {
                             return Err(BrokerError::StageWriteFailed {
                                 capability: capability.clone(),
                                 diagnostic: format!(
-                                    "tool {:?}@{:?} not resolvable for egress derivation",
-                                    call.name, call.version
+                                    "model-proposed args failed inputSchema: {reason:?}"
                                 ),
                             });
                         }
-                    };
+                    }
+                    let net_scope = def.required_capability.net_scope_required;
                     let effect = EffectRequest {
                         payload: call.args_bytes,
                         // MCP effects are world-mutating by default → StageThenCommit (D66).

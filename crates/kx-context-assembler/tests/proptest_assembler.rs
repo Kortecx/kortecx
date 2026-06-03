@@ -344,6 +344,7 @@ fn register_tool_for_test(
         },
         description: description.into(),
         idempotency_class: IdempotencyClass::Readback,
+        input_schema: None,
     };
     let prov = ToolProvenance::HumanAuthored {
         author: "h2-test".into(),
