@@ -411,6 +411,7 @@ const DENY_DEFAULT_TEMPLATE: &[u8] = b"(version 1)\n(import \"system.sb\")\n(den
 ///     },
 ///     environment_ref: None,
 ///     executor_class: ExecutorClass::MacOsSandbox,
+///     ..Default::default()
 /// };
 ///
 /// // Pure / total / deterministic: same input → byte-identical output.

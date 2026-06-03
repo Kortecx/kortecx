@@ -630,6 +630,7 @@ fn effect_request_for(w: &WorkflowMote) -> EffectRequest {
         idempotency_key: None,
         net_scope: NetScope::None,
         fs_scope: FsScope::empty(),
+        secret_scope: kx_warrant::SecretScope::None,
     }
 }
 

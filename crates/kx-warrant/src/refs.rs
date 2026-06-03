@@ -43,6 +43,7 @@ use crate::spec::{Role, WarrantSpec};
 ///         fd_count: 0, disk_bytes: 0,
 ///     },
 ///     environment_ref: None, executor_class: ExecutorClass::Bwrap,
+///     ..Default::default()
 /// };
 /// // Same spec → same ref (idempotent).
 /// assert_eq!(warrant_ref_of(&spec), warrant_ref_of(&spec));

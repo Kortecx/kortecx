@@ -100,6 +100,7 @@ fn effect_request_for(mote: &Mote, instance_id: Option<[u8; INSTANCE_ID_LEN]>) -
         idempotency_key: Some(idempotency_key),
         net_scope: NetScope::None,
         fs_scope: FsScope::empty(),
+        secret_scope: kx_warrant::SecretScope::None,
     }
 }
 

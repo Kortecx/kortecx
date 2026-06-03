@@ -107,6 +107,7 @@ fn warrant_with_grant(grant: ToolGrant) -> WarrantSpec {
         },
         environment_ref: None,
         executor_class: ExecutorClass::Bwrap,
+        ..Default::default()
     }
 }
 
@@ -155,6 +156,7 @@ fn request_with(payload: Vec<u8>) -> EffectRequest {
         idempotency_key: None,
         net_scope: NetScope::None,
         fs_scope: FsScope::empty(),
+        secret_scope: kx_warrant::SecretScope::None,
     }
 }
 

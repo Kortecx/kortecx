@@ -94,6 +94,7 @@ fn warrant_granting(tools: &[(&str, &str)], model_id: &str) -> WarrantSpec {
         },
         environment_ref: None,
         executor_class: ExecutorClass::MacOsSandbox,
+        ..Default::default()
     }
 }
 

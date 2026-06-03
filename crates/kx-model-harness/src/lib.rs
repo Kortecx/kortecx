@@ -132,6 +132,7 @@ pub fn harness_warrant(
         },
         environment_ref: None,
         executor_class: ExecutorClass::Bwrap,
+        ..Default::default()
     }
 }
 

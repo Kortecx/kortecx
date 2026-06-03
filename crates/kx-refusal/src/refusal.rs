@@ -402,6 +402,7 @@ pub fn validate_submission(submission: &WorkflowSubmission) -> Result<(), Submis
 ///     },
 ///     environment_ref: None,
 ///     executor_class: ExecutorClass::Bwrap,
+///     ..Default::default()
 /// };
 /// let submission = WorkflowSubmission {
 ///     run_id: [0u8; 32],

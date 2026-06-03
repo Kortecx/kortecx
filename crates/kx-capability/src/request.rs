@@ -4,7 +4,7 @@
 
 use kx_content::ContentRef;
 use kx_mote::{EffectPattern, ToolName, ToolVersion};
-use kx_warrant::{FsScope, NetScope};
+use kx_warrant::{FsScope, NetScope, SecretScope};
 use serde::{Deserialize, Serialize};
 
 /// The opaque payload the broker passes through to a capability.
@@ -40,6 +40,12 @@ pub struct EffectRequest {
     /// [`crate::BrokerError::CapabilityExceedsWarrant`] on
     /// [`kx_warrant::WarrantField::FsScope`].
     pub fs_scope: FsScope,
+    /// The secret references this dispatch requires resolution of (D110.3).
+    /// Must be a subset of `warrant.secret_scope`; otherwise the broker refuses
+    /// with [`crate::BrokerError::CapabilityExceedsWarrant`] on
+    /// [`kx_warrant::WarrantField::SecretScope`]. Defaults to
+    /// [`SecretScope::None`] (a dispatch that needs no secret).
+    pub secret_scope: SecretScope,
 }
 
 /// The broker's commit-ready artifact for a dispatched effect.

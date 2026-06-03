@@ -81,6 +81,7 @@ pub trait RoleRegistry: Send + Sync {
 ///         fd_count: 1, disk_bytes: 1,
 ///     },
 ///     environment_ref: None, executor_class: ExecutorClass::Bwrap,
+///     ..Default::default()
 /// };
 /// let role = Role {
 ///     name: "worker".into(), version: 1, spec,
@@ -180,6 +181,7 @@ mod tests {
             },
             environment_ref: None,
             executor_class: ExecutorClass::Bwrap,
+            ..Default::default()
         };
         Role {
             name: name.into(),

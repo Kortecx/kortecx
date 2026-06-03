@@ -80,6 +80,7 @@ mod macos {
             },
             environment_ref: None,
             executor_class: ExecutorClass::MacOsSandbox,
+            ..Default::default()
         }
     }
 

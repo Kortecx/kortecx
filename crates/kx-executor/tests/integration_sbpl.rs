@@ -38,6 +38,7 @@ fn permissive_warrant_with(fs_scope: FsScope, net_scope: NetScope) -> WarrantSpe
         },
         environment_ref: None,
         executor_class: ExecutorClass::MacOsSandbox,
+        ..Default::default()
     }
 }
 

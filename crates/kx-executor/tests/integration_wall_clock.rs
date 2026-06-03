@@ -77,6 +77,7 @@ mod macos {
             },
             environment_ref: None,
             executor_class: ExecutorClass::MacOsSandbox,
+            ..Default::default()
         }
     }
 
@@ -257,6 +258,7 @@ mod linux {
             },
             environment_ref: None,
             executor_class: ExecutorClass::Bwrap,
+            ..Default::default()
         }
     }
 

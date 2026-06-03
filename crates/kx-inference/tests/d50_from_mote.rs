@@ -70,6 +70,7 @@ fn warrant_with_ceiling(max_output_tokens: u32) -> WarrantSpec {
         },
         environment_ref: None,
         executor_class: ExecutorClass::Bwrap,
+        ..Default::default()
     }
 }
 

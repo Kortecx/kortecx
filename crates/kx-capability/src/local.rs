@@ -182,6 +182,17 @@ impl<S: ContentStore + Send + Sync> LocalCapabilityBroker<S> {
             });
         }
 
+        // (5) request.secret_scope ⊆ warrant.secret_scope (D110.3) — the broker
+        //     is the single authorization gate for secret resolution; the
+        //     transport (kx-mcp `SecretStore`) only resolves what is granted
+        //     here. `cost_ceiling` (D115) enforcement is M11 (the spend fold);
+        //     no precheck consults it at M5.3.
+        if !request.secret_scope.is_subset_of(&warrant.secret_scope) {
+            return Err(BrokerError::CapabilityExceedsWarrant {
+                axis: WarrantField::SecretScope,
+            });
+        }
+
         Ok(&**capability)
     }
 

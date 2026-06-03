@@ -179,6 +179,7 @@ impl Cluster {
             idempotency_key: Some(idempotency_token_for(mote)),
             net_scope: NetScope::None,
             fs_scope: FsScope::empty(),
+            secret_scope: kx_warrant::SecretScope::None,
         };
         let handle = self
             .broker

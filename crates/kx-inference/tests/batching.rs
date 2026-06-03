@@ -43,6 +43,7 @@ fn dummy_warrant(model_id: ModelId) -> WarrantSpec {
         },
         environment_ref: None,
         executor_class: ExecutorClass::Bwrap,
+        ..Default::default()
     }
 }
 

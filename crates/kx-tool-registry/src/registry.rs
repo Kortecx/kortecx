@@ -76,6 +76,7 @@ pub trait ToolRegistry: Send + Sync {
     ///         fd_count: 16, disk_bytes: 1 << 20,
     ///     },
     ///     environment_ref: None, executor_class: ExecutorClass::Bwrap,
+    ///     ..Default::default()
     /// };
     /// let resolved = reg.resolve(&grant, &warrant).expect("builtin fs-read fits");
     /// assert_eq!(resolved.def.tool_id.0, "fs-read");
@@ -147,6 +148,7 @@ pub trait ToolRegistry: Send + Sync {
     ///         fd_count: 16, disk_bytes: 1 << 20,
     ///     },
     ///     environment_ref: None, executor_class: ExecutorClass::Bwrap,
+    ///     ..Default::default()
     /// };
     ///
     /// let mut reg = InMemoryToolRegistry::new();

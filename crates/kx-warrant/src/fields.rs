@@ -23,6 +23,12 @@ pub enum WarrantField {
     ExecutorClass,
     /// Environment rootfs.
     EnvironmentRef,
+    /// Secret-resolution scope (D110.3).
+    SecretScope,
+    /// Cost ceiling (D115).
+    CostCeiling,
+    /// TLS-required flag (D118.5).
+    TlsRequired,
 }
 
 /// A host:port pair in the egress allowlist of

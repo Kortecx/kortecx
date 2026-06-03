@@ -29,9 +29,9 @@ use std::path::PathBuf;
 use kx_content::ContentRef;
 use kx_mote::{ModelId, ToolName, ToolVersion};
 use kx_warrant::{
-    check_tool_requirement, intersect, narrow, warrant_ref_of, ExecutorClass, FsMode, FsScope,
-    Host, ModelRoute, MoteClass, NarrowingError, NetScope, ResourceCeiling, Role, ToolGrant,
-    ToolRequirement, WarrantField, WarrantSpec,
+    check_tool_requirement, intersect, narrow, warrant_ref_of, CostCeiling, ExecutorClass, FsMode,
+    FsScope, Host, ModelRoute, MoteClass, NarrowingError, NetScope, ResourceCeiling, Role,
+    SecretRef, SecretScope, ToolGrant, ToolRequirement, WarrantField, WarrantSpec,
 };
 use proptest::prelude::*;
 
@@ -174,8 +174,27 @@ fn arb_resource_ceiling() -> impl Strategy<Value = ResourceCeiling> {
         )
 }
 
+fn arb_secret_ref() -> impl Strategy<Value = SecretRef> {
+    prop_oneof!["API_KEY", "DB_URL", "TOKEN", "SLACK_HOOK", "STRIPE_SK"]
+        .prop_map(|s: String| SecretRef(s))
+}
+
+fn arb_secret_scope() -> impl Strategy<Value = SecretScope> {
+    prop_oneof![
+        Just(SecretScope::None),
+        proptest::collection::btree_set(arb_secret_ref(), 0..4).prop_map(SecretScope::AllowList),
+    ]
+}
+
+fn arb_cost_ceiling() -> impl Strategy<Value = CostCeiling> {
+    (0u64..=10_000_000_000).prop_map(|micro_usd| CostCeiling { micro_usd })
+}
+
 fn arb_warrant_spec() -> impl Strategy<Value = WarrantSpec> {
-    (
+    // Base 9-axis warrant (new M5.3 axes default-filled), then overlay the three
+    // M5.3 axes (secret_scope / cost_ceiling / tls_required) so every property
+    // exercises them. Two-stage compose keeps each tuple within proptest's arity.
+    let base = (
         arb_mote_class(),
         arb_fs_scope(),
         arb_net_scope(),
@@ -208,8 +227,17 @@ fn arb_warrant_spec() -> impl Strategy<Value = WarrantSpec> {
                 resource_ceiling,
                 environment_ref,
                 executor_class,
+                ..Default::default()
             },
-        )
+        );
+    (base, arb_secret_scope(), arb_cost_ceiling(), any::<bool>()).prop_map(
+        |(base, secret_scope, cost_ceiling, tls_required)| WarrantSpec {
+            secret_scope,
+            cost_ceiling,
+            tls_required,
+            ..base
+        },
+    )
 }
 
 fn arb_role(spec_strategy: impl Strategy<Value = WarrantSpec>) -> impl Strategy<Value = Role> {
@@ -401,6 +429,84 @@ proptest! {
         prop_assert!(child2.resource_ceiling.fd_count <= child1.resource_ceiling.fd_count);
         prop_assert!(child2.resource_ceiling.disk_bytes <= child1.resource_ceiling.disk_bytes);
     }
+
+    /// Property 8 (D110.3): `cost_ceiling` narrows to the per-axis `min`.
+    /// Mirrors property 5 for the new quantitative axis.
+    #[test]
+    fn prop_cost_ceiling_narrows_to_min(
+        parent in arb_warrant_spec(),
+        child_cost in arb_cost_ceiling(),
+    ) {
+        // Inherit every other axis from the parent so no widen trips; vary only cost.
+        let mut child_spec = parent.clone();
+        child_spec.cost_ceiling = child_cost;
+        let role = Role { name: "cc".into(), version: 1, spec: child_spec, description: String::new() };
+        if let Ok(r) = intersect(&parent, &role) {
+            prop_assert_eq!(
+                r.cost_ceiling.micro_usd,
+                parent.cost_ceiling.micro_usd.min(child_cost.micro_usd)
+            );
+        }
+    }
+
+    /// Property 9 (D118.5): `tls_required` is TIGHTEN-ONLY (`parent || child`).
+    /// A parent requiring TLS forces the result to require it; a relaxation is
+    /// structurally impossible (never an error, always the safe value).
+    #[test]
+    fn prop_tls_required_tighten_only(
+        parent in arb_warrant_spec(),
+        child_tls in any::<bool>(),
+    ) {
+        let mut child_spec = parent.clone();
+        child_spec.tls_required = child_tls;
+        let role = Role { name: "tls".into(), version: 1, spec: child_spec, description: String::new() };
+        if let Ok(r) = intersect(&parent, &role) {
+            prop_assert_eq!(r.tls_required, parent.tls_required || child_tls);
+            // Never relaxes: if the parent required TLS, the result requires it.
+            if parent.tls_required {
+                prop_assert!(r.tls_required);
+            }
+        }
+    }
+
+    /// Property 10 (D110.3): a `secret_scope` ⊆ the parent's NARROWS (Ok, value
+    /// = child's). Mirrors the qualitative subset axes.
+    #[test]
+    fn prop_secret_scope_subset_narrows(parent in arb_warrant_spec()) {
+        // A child whose secret_scope is `None` is always ⊆ any parent.
+        let mut child_spec = parent.clone();
+        child_spec.secret_scope = SecretScope::None;
+        let role = Role { name: "ss".into(), version: 1, spec: child_spec, description: String::new() };
+        if let Ok(r) = intersect(&parent, &role) {
+            prop_assert_eq!(r.secret_scope, SecretScope::None);
+        }
+    }
+
+    /// Property 11 (D110.3): WIDENING `secret_scope` is REFUSED with
+    /// `AttemptedWiden { field: SecretScope }`. Mirrors property 6.
+    #[test]
+    fn prop_secret_scope_widening_is_refused(
+        parent in arb_warrant_spec(),
+        extra in arb_secret_ref(),
+    ) {
+        // Build a child scope that is a strict SUPERSET of the parent's (so it
+        // can never be ⊆): parent's refs ∪ {extra}, with `extra` not already in.
+        let mut child_set: std::collections::BTreeSet<SecretRef> = match &parent.secret_scope {
+            SecretScope::None => std::collections::BTreeSet::new(),
+            SecretScope::AllowList(s) => s.clone(),
+        };
+        if child_set.contains(&extra) {
+            return Ok(()); // degenerate: already present, not a widen
+        }
+        child_set.insert(extra);
+        let mut child_spec = parent.clone();
+        child_spec.secret_scope = SecretScope::AllowList(child_set);
+        let role = Role { name: "ssw".into(), version: 1, spec: child_spec, description: String::new() };
+        match intersect(&parent, &role) {
+            Err(NarrowingError::AttemptedWiden { field: WarrantField::SecretScope, .. }) => {}
+            other => prop_assert!(false, "expected SecretScope AttemptedWiden, got {:?}", other),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -450,6 +556,7 @@ fn check_tool_requirement_smoke() {
         },
         environment_ref: None,
         executor_class: ExecutorClass::Bwrap,
+        ..Default::default()
     };
 
     // Permissive req: ok.

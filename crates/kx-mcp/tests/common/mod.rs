@@ -104,6 +104,7 @@ pub fn warrant_granting(tool_name: &ToolName, tool_version: &ToolVersion) -> War
         },
         environment_ref: None,
         executor_class: ExecutorClass::Bwrap,
+        ..Default::default()
     }
 }
 
@@ -117,6 +118,7 @@ pub fn effect(args_json: &str) -> EffectRequest {
         idempotency_key: None,
         net_scope: NetScope::None,
         fs_scope: FsScope::empty(),
+        secret_scope: kx_warrant::SecretScope::None,
     }
 }
 
@@ -375,5 +377,6 @@ pub fn effect_egress(args_json: &str) -> EffectRequest {
         idempotency_key: Some([0x11; 32]),
         net_scope: NetScope::EgressAllowlist([Host("127.0.0.1".to_string())].into_iter().collect()),
         fs_scope: FsScope::empty(),
+        secret_scope: kx_warrant::SecretScope::None,
     }
 }

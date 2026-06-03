@@ -111,6 +111,7 @@ pub fn pure_warrant() -> WarrantSpec {
         },
         environment_ref: Some(ContentRef::from_bytes([8u8; 32])),
         executor_class: WORKER_CLASS,
+        ..Default::default()
     }
 }
 
