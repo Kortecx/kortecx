@@ -40,7 +40,7 @@ fn http_secret_reaches_no_runtime_sink() {
     let store = Arc::new(InMemoryContentStore::new());
     let broker = LocalCapabilityBroker::new(store.clone());
 
-    let transport = HttpTransport::new(&server.url(), &server.net_scope())
+    let transport = HttpTransport::new(&server.url(), &server.net_scope(), false)
         .unwrap()
         .header_credential("Authorization", CredentialRef::from_env_var(CRED_VAR));
     let cap = McpCapability::new(

@@ -263,6 +263,7 @@ fn drive(
     let transport = HttpTransport::new(
         &server.url(),
         &NetScope::EgressAllowlist([Host("127.0.0.1".to_string())].into_iter().collect()),
+        false,
     )
     .expect("http transport builds for loopback");
     tool_broker_concrete.register_capability(Box::new(McpCapability::new(

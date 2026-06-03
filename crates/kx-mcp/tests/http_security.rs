@@ -39,7 +39,7 @@ fn allowlisted_name_resolving_to_loopback_is_refused() {
     let store = Arc::new(InMemoryContentStore::new());
     let broker = LocalCapabilityBroker::new(store);
     let endpoint = format!("http://localhost:{}/mcp", server.addr.port());
-    let transport = HttpTransport::new(&endpoint, &localhost_scope)
+    let transport = HttpTransport::new(&endpoint, &localhost_scope, false)
         .expect("transport builds (localhost is allowlisted by name)");
     broker.register_capability(Box::new(McpCapability::new(
         name.clone(),

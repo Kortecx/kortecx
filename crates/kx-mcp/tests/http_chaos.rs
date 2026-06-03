@@ -27,7 +27,7 @@ fn broker_with(
 ) -> LocalCapabilityBroker<Arc<InMemoryContentStore>> {
     let store = Arc::new(InMemoryContentStore::new());
     let broker = LocalCapabilityBroker::new(store);
-    let transport = HttpTransport::new(&server.url(), &server.net_scope()).unwrap();
+    let transport = HttpTransport::new(&server.url(), &server.net_scope(), false).unwrap();
     let cap = McpCapability::new(
         name.clone(),
         version.clone(),
