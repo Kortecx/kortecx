@@ -1,0 +1,42 @@
+# SPDX-License-Identifier: Apache-2.0
+[package]
+name         = "kx-catalog"
+version      = "0.0.1"
+edition      = { workspace = true }
+rust-version = { workspace = true }
+license      = { workspace = true }
+authors      = { workspace = true }
+repository   = { workspace = true }
+description  = "kortecx snapshot registry + sharable catalog (M7, D82/D83): the TaskSignature verdict-reuse foundation (M7.0) + a content-addressed, idempotent, immutable signature registry (M7.1). A SEPARATE TRUTH — authoritative for WHAT recipes exist; the journal stays authoritative for what runs DID. Off-journal and off the identity path: it composes kx-mote/kx-workflow/kx-content identities and never bumps MoteDef. SN-8: discovery/stats never gate selection; reuse is exact crypto-equality only."
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+# Identity primitives COMPOSED into TaskSignature / SignatureEntry / VerdictScope:
+# MoteDefHash (the pinned critic + skill hashes) and MoteId (the citee).
+kx-mote     = { workspace = true }
+# ManifestId — the recipe-as-product identity a SignatureEntry pins.
+kx-workflow = { workspace = true }
+# DatasetId — the optional pinned corpus on a RecipeSnapshot.
+kx-dataset  = { workspace = true }
+# The frozen canonical content-addressed encoding (bincode v2, LE + fixed-int —
+# byte-identical to kx_mote::canonical_config; replicated to keep the hash
+# discipline self-contained, mirroring kx-critic-types).
+bincode     = { workspace = true }
+# task_signature_hash + content-addressing.
+blake3      = { workspace = true }
+# Stack-inline pinned-skill vec without per-entry heap churn at scale.
+smallvec    = { workspace = true }
+# serde derives across all public types (persistence-friendly, sharable bundles).
+serde       = { workspace = true }
+# Typed CatalogError.
+thiserror   = { workspace = true }
+# Registration observability (debug-level only; never on the truth path).
+tracing     = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+
+[lints]
+workspace = true

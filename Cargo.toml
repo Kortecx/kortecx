@@ -36,6 +36,7 @@ members = [
     "crates/kx-refusal",
     "crates/kx-mcp",
     "crates/kx-planner",
+    "crates/kx-catalog",
     "crates/kx-model-harness",
 ]
 exclude = [
@@ -138,6 +139,12 @@ kx-mcp               = { path = "crates/kx-mcp",               version = "0.0.1"
 # kx-workflow/kx-mote/kx-warrant/kx-critic-types (NEVER scheduler/projection/
 # executor/inference — the thesis dependency-ban, asserted in kx-model-harness).
 kx-planner           = { path = "crates/kx-planner",           version = "0.0.1" }
+# The sharable catalog (M7, D82/D83) — the TaskSignature verdict-reuse foundation
+# + a content-addressed, idempotent, immutable signature registry. A SEPARATE
+# TRUTH (authoritative for WHAT recipes exist); off-journal + off the identity
+# path (composes kx-mote/kx-workflow identities, never bumps MoteDef). Depends
+# only on kx-mote/kx-workflow/kx-dataset — NEVER the journal or the frozen trio.
+kx-catalog           = { path = "crates/kx-catalog",           version = "0.0.1" }
 bindgen            = "0.70"
 cmake              = "0.1"
 ureq               = { version = "2", default-features = false, features = ["tls"] }
