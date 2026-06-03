@@ -11,10 +11,14 @@ use std::ffi::OsString;
 use std::io::{Read, Write};
 use std::process::{Command, Stdio};
 use std::sync::mpsc::{self, RecvTimeoutError};
+use std::sync::Arc;
 use std::time::Duration;
+
+use kx_warrant::SecretScope;
 
 use crate::credential::CredentialRef;
 use crate::errors::TransportError;
+use crate::secret_store::{EnvSecretStore, SecretStore};
 
 /// Fallback wall-clock budget when the warrant supplies none (`0`): 30 s. Keeps a
 /// hung or chatty server from blocking a dispatch indefinitely while not failing a
@@ -53,6 +57,29 @@ pub trait McpTransport: Send + Sync {
         wall_clock_ms: u64,
         idempotency_key: Option<&[u8; 32]>,
     ) -> Result<Vec<u8>, TransportError>;
+
+    /// The [`SecretScope`] this transport will actually resolve at dispatch — the
+    /// union of its configured credentials' [`SecretRef`](kx_warrant::SecretRef)s
+    /// (D110.3). [`crate::McpCapability`] surfaces this as its
+    /// `required_secret_scope`, which the broker gates `⊆ warrant.secret_scope`.
+    /// Default: [`SecretScope::None`] (no credentials configured).
+    fn declared_secret_scope(&self) -> SecretScope {
+        SecretScope::None
+    }
+}
+
+/// Build a [`SecretScope`] from an iterator of credential refs: `None` when empty,
+/// else an `AllowList` of their [`SecretRef`](kx_warrant::SecretRef)s.
+pub(crate) fn scope_of_credentials<'a>(
+    creds: impl Iterator<Item = &'a CredentialRef>,
+) -> SecretScope {
+    let set: std::collections::BTreeSet<kx_warrant::SecretRef> =
+        creds.map(|c| c.secret_ref().clone()).collect();
+    if set.is_empty() {
+        SecretScope::None
+    } else {
+        SecretScope::AllowList(set)
+    }
 }
 
 /// A subprocess MCP transport: newline-delimited JSON-RPC over the child's
@@ -61,12 +88,27 @@ pub trait McpTransport: Send + Sync {
 /// M5.2a is **single-shot**: write one `tools/call` request, read one response.
 /// The `initialize`/`initialized` handshake a stateful MCP server expects is a
 /// documented forward seam (M5.2b); the bundled test server is handshake-free.
-#[derive(Debug, Default)]
 pub struct StdioTransport {
     program: OsString,
     args: Vec<OsString>,
     envs: Vec<(OsString, OsString)>,
     credentials: Vec<CredentialRef>,
+    /// Resolves a `CredentialRef`'s `SecretRef` → value at spawn (D110.2).
+    /// Defaults to [`EnvSecretStore`]; swap a cloud vault via
+    /// [`StdioTransport::with_secret_store`].
+    secret_store: Arc<dyn SecretStore>,
+}
+
+impl std::fmt::Debug for StdioTransport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Elide the secret store (not `Debug`-meaningful); credential identities
+        // are already redaction-safe.
+        f.debug_struct("StdioTransport")
+            .field("program", &self.program)
+            .field("args", &self.args)
+            .field("credentials", &self.credentials)
+            .finish_non_exhaustive()
+    }
 }
 
 impl StdioTransport {
@@ -78,7 +120,16 @@ impl StdioTransport {
             args: Vec::new(),
             envs: Vec::new(),
             credentials: Vec::new(),
+            secret_store: Arc::new(EnvSecretStore),
         }
+    }
+
+    /// Swap the [`SecretStore`] used to resolve credential secrets (D110.2).
+    /// Defaults to [`EnvSecretStore`].
+    #[must_use]
+    pub fn with_secret_store(mut self, store: Arc<dyn SecretStore>) -> Self {
+        self.secret_store = store;
+        self
     }
 
     /// Append a command-line argument for the server subprocess.
@@ -106,6 +157,10 @@ impl StdioTransport {
 }
 
 impl McpTransport for StdioTransport {
+    fn declared_secret_scope(&self) -> SecretScope {
+        scope_of_credentials(self.credentials.iter())
+    }
+
     fn round_trip(
         &self,
         request: &[u8],
@@ -125,10 +180,10 @@ impl McpTransport for StdioTransport {
         for (key, value) in &self.envs {
             cmd.env(key, value);
         }
-        // Out-of-band secret injection (D81): read from the host env into the child
-        // env; the secret never transits an EffectRequest / handle / journal.
+        // Out-of-band secret injection (D81): resolve through the SecretStore into
+        // the child env; the secret never transits an EffectRequest / handle / journal.
         for credential in &self.credentials {
-            credential.inject_into(&mut cmd);
+            credential.inject_into(&*self.secret_store, &mut cmd);
         }
 
         let mut child = cmd

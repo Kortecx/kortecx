@@ -112,6 +112,14 @@ impl Capability for McpCapability {
         &SUPPORTED_PATTERNS
     }
 
+    fn required_secret_scope(&self) -> kx_warrant::SecretScope {
+        // The secrets this capability will actually resolve = its transport's
+        // configured credentials. The broker gates this ⊆ warrant.secret_scope
+        // (D110.3), so a run whose role does not grant the tool's credentials is
+        // refused at dispatch (data-minimization), and the model never sees them.
+        self.transport.declared_secret_scope()
+    }
+
     fn invoke(&self, request: &EffectRequest) -> Result<Vec<u8>, CapabilityFailureReason> {
         // The args are the validated `EffectRequest.payload`, carried VERBATIM as an
         // opaque RawValue (never decoded into a dynamic Value / floats). An empty

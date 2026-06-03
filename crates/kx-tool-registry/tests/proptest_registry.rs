@@ -162,6 +162,7 @@ prop_compose! {
             required_capability: req,
             description: "arb tool".into(),
             idempotency_class,
+            input_schema: None,
         }
     }
 }
@@ -255,6 +256,7 @@ proptest! {
             required_capability: permissive_req(),
             description: "needs lots of memory".into(),
             idempotency_class: IdempotencyClass::Token,
+            input_schema: None,
         };
         def.required_capability.min_resource_ceiling.mem_bytes = mem_req;
         let mut reg = InMemoryToolRegistry::new();
@@ -307,6 +309,7 @@ proptest! {
             required_capability: permissive_req(),
             description: "subset-check parity".into(),
             idempotency_class: IdempotencyClass::Token,
+            input_schema: None,
         };
         def.required_capability.min_resource_ceiling.mem_bytes = mem_req;
         let warrant = permissive_warrant();
@@ -358,6 +361,7 @@ fn self_gen_lifecycle_smoke() {
         required_capability: permissive_req(),
         description: "self-emitted".into(),
         idempotency_class: IdempotencyClass::Token,
+        input_schema: None,
     };
     let token = reg
         .register(

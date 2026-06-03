@@ -62,6 +62,7 @@ fn registry_with_mcp(tool: &ToolName, version: &ToolVersion) -> InMemoryToolRegi
             },
             description: "MCP echo tool (M5.2 test).".into(),
             idempotency_class: IdempotencyClass::Staged,
+            input_schema: None,
         },
         ToolProvenance::HumanAuthored {
             author: "test".into(),

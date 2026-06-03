@@ -348,7 +348,7 @@ pub fn http_capability(
     version: ToolVersion,
     server: &MockHttpServer,
 ) -> McpCapability {
-    let transport = HttpTransport::new(&server.url(), &server.net_scope())
+    let transport = HttpTransport::new(&server.url(), &server.net_scope(), false)
         .expect("http transport builds for the loopback mock");
     McpCapability::new(
         name,

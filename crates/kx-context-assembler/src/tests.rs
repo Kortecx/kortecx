@@ -158,6 +158,7 @@ fn assemble_two_parents_one_tool() {
         required_capability: permissive_req(),
         description: "reads files".into(),
         idempotency_class: kx_tool_registry::IdempotencyClass::Readback,
+        input_schema: None,
     };
     let _ = registry
         .register(

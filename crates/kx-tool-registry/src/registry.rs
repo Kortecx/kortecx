@@ -167,6 +167,7 @@ pub trait ToolRegistry: Send + Sync {
     ///     },
     ///     description: String::new(),
     ///     idempotency_class: IdempotencyClass::Token,
+    ///     input_schema: None,
     /// };
     /// let token = reg.register(
     ///     def.clone(),
@@ -263,6 +264,7 @@ struct RegistrationRecord {
 ///     },
 ///     description: "Read files from /input".into(),
 ///     idempotency_class: IdempotencyClass::Readback,
+///     input_schema: None,
 /// };
 ///
 /// let token = reg.register(
@@ -323,6 +325,7 @@ impl InMemoryToolRegistry {
                 },
                 description: "Read bytes from a path declared in the warrant's fs_scope. Read-only; naturally idempotent.".into(),
                 idempotency_class: IdempotencyClass::Readback,
+                input_schema: None,
             },
             ToolProvenance::HumanAuthored {
                 author: author.clone(),
@@ -364,6 +367,7 @@ impl InMemoryToolRegistry {
                 },
                 description: "Write the complete intended file content to a path declared in the warrant's fs_scope (overwrite-only; no append; staged-intent dispatch).".into(),
                 idempotency_class: IdempotencyClass::Staged,
+                input_schema: None,
             },
             ToolProvenance::HumanAuthored {
                 author: author.clone(),
@@ -390,6 +394,7 @@ impl InMemoryToolRegistry {
                 },
                 description: "Deterministic text summarization heuristic. Pure transformation; naturally idempotent.".into(),
                 idempotency_class: IdempotencyClass::Readback,
+                input_schema: None,
             },
             ToolProvenance::HumanAuthored { author },
         );

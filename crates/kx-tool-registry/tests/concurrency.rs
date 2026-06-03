@@ -119,6 +119,7 @@ fn resolve_is_thread_independent() {
         },
         description: "thread test".into(),
         idempotency_class: IdempotencyClass::Token,
+        input_schema: None,
     };
     let _ = reg
         .register(
@@ -184,6 +185,7 @@ fn registration_token_of_is_thread_independent() {
         },
         description: "test".into(),
         idempotency_class: IdempotencyClass::Token,
+        input_schema: None,
     };
     let prov = ToolProvenance::SelfGenerated {
         generating_lineage_warrant: permissive_warrant(),

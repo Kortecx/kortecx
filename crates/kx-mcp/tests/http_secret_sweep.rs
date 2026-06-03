@@ -9,13 +9,15 @@
 
 mod common;
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use common::{effect_egress, sample_mote, tool, warrant_granting_egress, HttpMode, MockHttpServer};
 use kx_capability::{CapabilityBroker, LocalCapabilityBroker};
 use kx_content::{ContentStore, InMemoryContentStore};
-use kx_mcp::{CredentialRef, HttpTransport, McpCapability};
+use kx_mcp::{CredentialRef, HttpTransport, McpCapability, SecretRef};
 use kx_tool_registry::McpEndpointId;
+use kx_warrant::SecretScope;
 
 const SECRET: &str = "SUPER_SECRET_sk-HTTP-DEADBEEF-do-not-leak-0123456789";
 const CRED_VAR: &str = "KX_MCP_TEST_CRED_HTTP_SECRETS_LEAK";
@@ -40,7 +42,7 @@ fn http_secret_reaches_no_runtime_sink() {
     let store = Arc::new(InMemoryContentStore::new());
     let broker = LocalCapabilityBroker::new(store.clone());
 
-    let transport = HttpTransport::new(&server.url(), &server.net_scope())
+    let transport = HttpTransport::new(&server.url(), &server.net_scope(), false)
         .unwrap()
         .header_credential("Authorization", CredentialRef::from_env_var(CRED_VAR));
     let cap = McpCapability::new(
@@ -55,7 +57,10 @@ fn http_secret_reaches_no_runtime_sink() {
     broker.register_capability(Box::new(cap));
 
     let mote = sample_mote(&name, &version);
-    let warrant = warrant_granting_egress(&name, &version);
+    // The role grants the secret the header credential needs (D110.3).
+    let mut warrant = warrant_granting_egress(&name, &version);
+    warrant.secret_scope =
+        SecretScope::AllowList(BTreeSet::from([SecretRef(CRED_VAR.to_string())]));
     let req = effect_egress(r#"{"q":"hello"}"#);
     assert!(
         !contains(&req.payload, SECRET.as_bytes()),

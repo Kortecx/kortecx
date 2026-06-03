@@ -92,6 +92,7 @@
 mod errors;
 mod idempotency_class;
 mod ids;
+mod param_schema;
 mod provenance;
 mod registry;
 mod token;
@@ -101,6 +102,7 @@ mod tool_kind;
 pub use errors::{RegistrationError, ResolutionError};
 pub use idempotency_class::IdempotencyClass;
 pub use ids::{McpEndpointId, RegistrationToken, ReviewerId};
+pub use param_schema::{validate_args, InputSchema, ParamSpec, ParamType, SchemaError};
 pub use provenance::{RegistrationStatus, ToolProvenance};
 pub use registry::{resolve_run_versions, InMemoryToolRegistry, ToolRegistry};
 pub use token::registration_token_of;

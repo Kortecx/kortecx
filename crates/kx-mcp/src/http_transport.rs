@@ -33,6 +33,7 @@
 use std::io::Read;
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::sync::mpsc::{self, RecvTimeoutError};
+use std::sync::Arc;
 use std::time::Duration;
 
 use url::Url;
@@ -40,6 +41,7 @@ use url::Url;
 use crate::credential::CredentialRef;
 use crate::egress::{vet_resolved_addr, EgressPolicy};
 use crate::errors::TransportError;
+use crate::secret_store::{EnvSecretStore, SecretStore};
 use crate::transport::{McpTransport, DEFAULT_WALL_CLOCK_MS};
 
 /// Slack added to the per-call budget for ureq's own request timeout, so a worker
@@ -66,12 +68,16 @@ pub struct HttpTransport {
     endpoint: Url,
     /// `header-name → credential` pairs injected transiently at dispatch (D81).
     credentials: Vec<(String, CredentialRef)>,
+    /// Resolves a `CredentialRef`'s `SecretRef` → value at dispatch (D110.2).
+    /// Defaults to [`EnvSecretStore`]; a cloud vault swaps in via
+    /// [`HttpTransport::with_secret_store`].
+    secret_store: Arc<dyn SecretStore>,
 }
 
 impl std::fmt::Debug for HttpTransport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // Print only header NAMES + the credential identities (never a secret);
-        // elide the agent (not `Debug`-meaningful).
+        // elide the agent + the secret store (not `Debug`-meaningful / secret-bearing).
         f.debug_struct("HttpTransport")
             .field("endpoint", &self.endpoint.as_str())
             .field("credentials", &self.credentials)
@@ -83,6 +89,11 @@ impl HttpTransport {
     /// Build an HTTP transport that POSTs to `endpoint_url`, permitted to dial only
     /// hosts in `net_scope` (the resolved tool's warrant-validated egress).
     ///
+    /// When `tls_required` is `true` (the warrant's `tls_required` axis, D118.5),
+    /// the agent is built with `https_only(true)` and refuses any plaintext
+    /// `http://` dial at request time — closing the plaintext-credential gap. The
+    /// hermetic loopback path passes `false` (it serves plaintext `http://127.0.0.1`).
+    ///
     /// # Errors
     ///
     /// [`TransportError::Unreachable`] if `endpoint_url` is not a valid `http(s)`
@@ -92,6 +103,7 @@ impl HttpTransport {
     pub fn new(
         endpoint_url: &str,
         net_scope: &kx_warrant::NetScope,
+        tls_required: bool,
     ) -> Result<Self, TransportError> {
         let endpoint = Url::parse(endpoint_url)
             .map_err(|e| TransportError::Unreachable(format!("invalid endpoint URL: {e}")))?;
@@ -122,10 +134,11 @@ impl HttpTransport {
             // Refuse ALL redirects: a 3xx surfaces as an Ok response we reject in
             // `round_trip`, so a cross-host redirect can never smuggle egress.
             .redirects(0)
-            // Safety is the host-allowlist + the vetting resolver, NOT the scheme:
-            // the hermetic test server is plaintext `http://127.0.0.1`. A
-            // TLS-required policy is a forward warrant axis (M5.3+).
-            .https_only(false)
+            // The host-allowlist + vetting resolver bind WHERE we dial; `https_only`
+            // binds the SCHEME. The warrant's `tls_required` axis (D118.5) drives it:
+            // `true` refuses plaintext `http://`; `false` permits the hermetic
+            // loopback `http://127.0.0.1`.
+            .https_only(tls_required)
             // No FIXED agent-wide timeout: a per-call ureq timeout (set in
             // `round_trip`, derived from the warrant budget) is the worker backstop,
             // so a large legitimate budget is never pre-empted by a shared ceiling.
@@ -135,7 +148,17 @@ impl HttpTransport {
             agent,
             endpoint,
             credentials: Vec::new(),
+            secret_store: Arc::new(EnvSecretStore),
         })
+    }
+
+    /// Swap the [`SecretStore`] used to resolve credential secrets (the cloud KMS/HSM
+    /// vault swaps in here behind the same trait, D110.2). Defaults to
+    /// [`EnvSecretStore`].
+    #[must_use]
+    pub fn with_secret_store(mut self, store: Arc<dyn SecretStore>) -> Self {
+        self.secret_store = store;
+        self
     }
 
     /// Register a credential to inject as the `header_name` request header,
@@ -154,6 +177,10 @@ impl HttpTransport {
 }
 
 impl McpTransport for HttpTransport {
+    fn declared_secret_scope(&self) -> kx_warrant::SecretScope {
+        crate::transport::scope_of_credentials(self.credentials.iter().map(|(_, c)| c))
+    }
+
     fn round_trip(
         &self,
         request: &[u8],
@@ -179,7 +206,10 @@ impl McpTransport for HttpTransport {
         let headers: Vec<(String, String)> = self
             .credentials
             .iter()
-            .filter_map(|(name, cred)| cred.read_secret().map(|val| (name.clone(), val)))
+            .filter_map(|(name, cred)| {
+                cred.read_secret(&*self.secret_store)
+                    .map(|val| (name.clone(), val))
+            })
             .collect();
         let idempotency_header = idempotency_key.map(hex32);
 
@@ -344,29 +374,37 @@ mod tests {
 
     #[test]
     fn new_refuses_endpoint_host_outside_allowlist() {
-        let err = HttpTransport::new("https://evil.com/mcp", &scope(&["api.example.com"]))
+        let err = HttpTransport::new("https://evil.com/mcp", &scope(&["api.example.com"]), false)
             .expect_err("host not allowlisted must refuse");
         assert!(matches!(err, TransportError::Unreachable(_)));
     }
 
     #[test]
     fn new_refuses_none_scope() {
-        let err = HttpTransport::new("https://api.example.com/mcp", &NetScope::None)
+        let err = HttpTransport::new("https://api.example.com/mcp", &NetScope::None, false)
             .expect_err("None egress must refuse every host");
         assert!(matches!(err, TransportError::Unreachable(_)));
     }
 
     #[test]
     fn new_refuses_non_http_scheme() {
-        let err = HttpTransport::new("ftp://api.example.com/mcp", &scope(&["api.example.com"]))
-            .expect_err("non-http scheme must refuse");
+        let err = HttpTransport::new(
+            "ftp://api.example.com/mcp",
+            &scope(&["api.example.com"]),
+            false,
+        )
+        .expect_err("non-http scheme must refuse");
         assert!(matches!(err, TransportError::Unreachable(_)));
     }
 
     #[test]
     fn new_accepts_allowlisted_endpoint() {
-        let t = HttpTransport::new("https://api.example.com/mcp", &scope(&["api.example.com"]))
-            .expect("allowlisted endpoint builds");
+        let t = HttpTransport::new(
+            "https://api.example.com/mcp",
+            &scope(&["api.example.com"]),
+            true,
+        )
+        .expect("allowlisted endpoint builds (tls_required does not fail at build)");
         let _ = t;
     }
 
