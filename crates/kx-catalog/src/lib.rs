@@ -18,6 +18,19 @@
 //!   `TaskSignatureHash`. [`CatalogRegistry`] is backend-agnostic (in-memory now;
 //!   a persistent / cloud backend is a later impl behind the same trait, exactly
 //!   as `kx_content::ContentStore` and `kx_dataset::RetrievalIndex`).
+//! - **M7.2 — namespacing + grants/RBAC + revocation** (`path` / `party` /
+//!   `action` / `grant` / `ledger` / `in_memory_ledger`, D86): an asset lives at
+//!   an [`AssetPath`] (`namespace/collection/name`) bound to an owner; a
+//!   content-addressed [`Grant`] issues a grantee [`CatalogActionSet`] catalog
+//!   actions plus a runtime scope, **narrowing-only** through the FROZEN
+//!   `kx_warrant::intersect` (the model can never authorize a widen). A
+//!   [`Revocation`] is a NEW fact (D-LOCK-4) honored only for an authorized
+//!   revoker. [`GrantLedger`] is backend-agnostic (in-memory now; durable / cloud
+//!   later, D94); "journaled" is realized as the append-only, content-addressed,
+//!   immutable, idempotent discipline — this crate still **never depends on
+//!   `kx-journal`**. Authorization is the fail-closed [`GrantLedger::effective_grants`]
+//!   fold, never trusted from a fact; the runtime warrant a `Use` runs under is
+//!   action-aligned ([`GrantLedger::resolve_effective_warrant_for`]).
 //!
 //! ## A separate truth (R4 — NOT a journal-as-truth violation)
 //!
@@ -68,8 +81,14 @@
 #![allow(clippy::expect_used)]
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 
+mod action;
 mod entry;
+mod grant;
 mod in_memory;
+mod in_memory_ledger;
+mod ledger;
+mod party;
+mod path;
 mod registry;
 mod signature;
 
@@ -83,3 +102,23 @@ pub use signature::{
     canonical_config, SignatureAxis, TaskSignature, TaskSignatureHash, VerdictScope,
     TASK_SIGNATURE_SCHEMA_VERSION,
 };
+
+// M7.2 (D86) — namespacing + grants/RBAC + revocation.
+pub use action::{CatalogAction, CatalogActionSet};
+pub use grant::{
+    effective_runtime_warrant, revocation_idempotency_key, Grant, GrantId, Revocation,
+    RevocationId, GRANT_SCHEMA_VERSION,
+};
+pub use in_memory_ledger::InMemoryGrantLedger;
+pub use ledger::{
+    AppendOutcome, AssetBinding, EffectiveGrants, FactId, GrantLedger, GrantWarrant, LedgerError,
+    LedgerFact, MAX_DELEGATION_DEPTH,
+};
+pub use party::PartyId;
+pub use path::{AssetPath, AssetPathError, AssetRef, MAX_SEGMENT_LEN};
+
+// REUSE (never modify) the frozen monotonic-narrowing seam — one import surface
+// for catalog callers building grant runtime scopes (M7.2 consumes `intersect`;
+// it adds no warrant axis — `secret_scope`/`cost_ceiling`/`tls_required` landed
+// in M5.3a).
+pub use kx_warrant::{intersect, NarrowingError, Role, WarrantSpec};

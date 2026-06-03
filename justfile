@@ -124,7 +124,9 @@ smoke-test-with-model:
 # llamacpp-free — no C++ FFI in this lean job). A super-linear resume is an outage,
 # and resume IS the product. `--release` is REQUIRED — in a debug build the
 # differential oracle re-imposes the O(n^2) full rebuild on every fold and the ratio
-# assertions are skipped.
+# assertions are skipped. Also gates (M7 / D86) the kx-catalog governance paths —
+# signature register/lookup, the grant-ledger authorization fold, and the
+# depth-bounded deep-chain query — all stay sub-linear / depth-bounded at 25k-50k.
 scale-smoke:
     cargo test -p kx-projection --release --test incremental_children_index -- --ignored --nocapture --test-threads=1
     cargo test -p kx-projection --release --test fold_checkpoint -- --ignored --nocapture --test-threads=1
@@ -132,6 +134,7 @@ scale-smoke:
     cargo test -p kx-projection --release --test fold_curve_scale -- --ignored --nocapture --test-threads=1
     cargo test -p kx-journal --release --test schema_evolution -- --ignored --nocapture --test-threads=1
     cargo test -p kx-capture --release --test scale -- --ignored --nocapture --test-threads=1
+    cargo test -p kx-catalog --release --test scale -- --ignored --nocapture --test-threads=1
 
 # IMP-4 (D116) single-writer scale-readiness measurement spike — publish the
 # single-writer journal commit ceiling + the projection-fold curve so a real number

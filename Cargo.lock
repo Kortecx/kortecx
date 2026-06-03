@@ -1033,6 +1033,7 @@ dependencies = [
  "blake3",
  "kx-dataset",
  "kx-mote",
+ "kx-warrant",
  "kx-workflow",
  "proptest",
  "serde",

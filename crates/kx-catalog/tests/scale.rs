@@ -11,13 +11,44 @@
 use std::time::Instant;
 
 use kx_catalog::{
-    CatalogRegistry, InMemoryCatalog, RecipeSnapshot, SignatureEntry, TaskSignature,
-    TaskSignatureHash,
+    AssetBinding, AssetPath, AssetRef, CatalogAction, CatalogActionSet, CatalogRegistry, Grant,
+    GrantLedger, InMemoryCatalog, InMemoryGrantLedger, PartyId, RecipeSnapshot, SignatureEntry,
+    TaskSignature, TaskSignatureHash,
 };
-use kx_mote::MoteDefHash;
+use kx_mote::{ModelId, MoteDefHash};
+use kx_warrant::{ModelRoute, ResourceCeiling, Role, WarrantSpec};
 use kx_workflow::ManifestId;
 
 const SIZES: &[usize] = &[1_000, 5_000, 10_000, 25_000];
+
+/// A non-default-quantitative warrant (qualitative axes are empty defaults).
+fn warrant_calls(max_calls: u32) -> WarrantSpec {
+    WarrantSpec {
+        model_route: ModelRoute {
+            model_id: ModelId("m".into()),
+            max_input_tokens: 1_000,
+            max_output_tokens: 1_000,
+            max_calls,
+        },
+        resource_ceiling: ResourceCeiling {
+            cpu_milli: 1_000,
+            mem_bytes: 1 << 20,
+            wall_clock_ms: 1_000,
+            fd_count: 16,
+            disk_bytes: 1 << 20,
+        },
+        ..Default::default()
+    }
+}
+
+fn role_calls(max_calls: u32) -> Role {
+    Role {
+        name: "r".into(),
+        version: 1,
+        spec: warrant_calls(max_calls),
+        description: String::new(),
+    }
+}
 
 /// A distinct entry for index `i` (the index encoded into the critic hash bytes,
 /// so every signature — and thus every key — is unique).
@@ -84,5 +115,147 @@ fn assert_sublinear(label: &str, series: &[(usize, f64)]) {
     assert!(
         last <= first * 4.0,
         "{label} must stay sub-linear (n=1k {first:.1}ns vs n=25k {last:.1}ns)"
+    );
+}
+
+/// M7.2: grant append + authorization query + warrant resolution stay O(log n)
+/// in the number of distinct (party, asset) grants — the index keeps governance
+/// sub-linear at catalog scale (a full-log scan would be ~25× at 25k vs 1k).
+#[test]
+#[ignore = "scale-smoke: run with --release --ignored --nocapture --test-threads=1"]
+fn grant_ledger_fold_stays_sublinear() {
+    let mut append_ns: Vec<(usize, f64)> = Vec::new();
+    let mut auth_ns: Vec<(usize, f64)> = Vec::new();
+    let mut resolve_ns: Vec<(usize, f64)> = Vec::new();
+    let owner = PartyId::new("owner");
+    let owner_root = warrant_calls(100);
+
+    for &n in SIZES {
+        let ledger = InMemoryGrantLedger::new();
+
+        // n distinct (party, asset) pairs, each a single root grant of {Use}.
+        let assets: Vec<AssetRef> = (0..n)
+            .map(|i| AssetRef::Path(AssetPath::new("ns", "c", format!("a{i}")).unwrap()))
+            .collect();
+        let parties: Vec<PartyId> = (0..n).map(|i| PartyId::new(format!("p{i}"))).collect();
+        for a in &assets {
+            ledger
+                .append_binding(AssetBinding::new(a.clone(), owner.clone()))
+                .unwrap();
+        }
+
+        let start = Instant::now();
+        for (a, p) in assets.iter().zip(&parties) {
+            ledger
+                .append_grant(Grant::root(
+                    a.clone(),
+                    owner.clone(),
+                    p.clone(),
+                    CatalogActionSet::allow([CatalogAction::Use]),
+                    role_calls(10),
+                ))
+                .unwrap();
+        }
+        let append_elapsed = start.elapsed();
+
+        let start = Instant::now();
+        for (a, p) in assets.iter().zip(&parties) {
+            assert!(ledger.is_authorized(p, a, CatalogAction::Use));
+        }
+        let auth_elapsed = start.elapsed();
+
+        let start = Instant::now();
+        for (a, p) in assets.iter().zip(&parties) {
+            assert!(ledger
+                .resolve_effective_warrant_for(p, a, CatalogAction::Use, &owner_root)
+                .unwrap()
+                .is_some());
+        }
+        let resolve_elapsed = start.elapsed();
+
+        #[allow(clippy::cast_precision_loss)]
+        let per = |d: std::time::Duration| d.as_nanos() as f64 / n as f64;
+        println!(
+            "grant-ledger: n={n} append_per_ns={:.1} auth_per_ns={:.1} resolve_per_ns={:.1}",
+            per(append_elapsed),
+            per(auth_elapsed),
+            per(resolve_elapsed)
+        );
+        append_ns.push((n, per(append_elapsed)));
+        auth_ns.push((n, per(auth_elapsed)));
+        resolve_ns.push((n, per(resolve_elapsed)));
+    }
+
+    assert_sublinear("grant-append", &append_ns);
+    assert_sublinear("grant-authorize", &auth_ns);
+    assert_sublinear("grant-resolve-warrant", &resolve_ns);
+}
+
+/// M7.2: an authorization query is BOUNDED by `MAX_DELEGATION_DEPTH` (64),
+/// independent of how deep the delegation chain actually is — the `DoS` / stack
+/// guard. A 50k-deep chain queries no slower than a 1k-deep one (both walk at
+/// most 64 hops, then fail closed), so the cost stays flat as depth grows.
+#[test]
+#[ignore = "scale-smoke: run with --release --ignored --nocapture --test-threads=1"]
+fn deep_chain_query_is_bounded() {
+    const DEPTHS: &[usize] = &[1_000, 10_000, 50_000];
+    const ITERS: usize = 2_000;
+    let mut query_ns: Vec<(usize, f64)> = Vec::new();
+    let owner = PartyId::new("owner");
+    let acts = CatalogActionSet::allow([CatalogAction::Use, CatalogAction::Delegate]);
+
+    for &depth in DEPTHS {
+        let ledger = InMemoryGrantLedger::new();
+        let asset = AssetRef::Path(AssetPath::new("ns", "c", "deep").unwrap());
+        ledger
+            .append_binding(AssetBinding::new(asset.clone(), owner.clone()))
+            .unwrap();
+
+        // owner → p0 → p1 → … → p(depth-1), each conveying {Use, Delegate}.
+        let leaf = PartyId::new(format!("p{}", depth - 1));
+        let root = Grant::root(
+            asset.clone(),
+            owner.clone(),
+            PartyId::new("p0"),
+            acts.clone(),
+            role_calls(50),
+        );
+        let mut prev_id = root.grant_id();
+        let mut prev_party = PartyId::new("p0");
+        ledger.append_grant(root).unwrap();
+        for i in 1..depth {
+            let p = PartyId::new(format!("p{i}"));
+            let g = Grant::delegated(
+                prev_id,
+                asset.clone(),
+                prev_party.clone(),
+                p.clone(),
+                acts.clone(),
+                role_calls(50),
+            );
+            prev_id = g.grant_id();
+            prev_party = p;
+            ledger.append_grant(g).unwrap();
+        }
+
+        // Query the leaf many times; the fold walks at most 64 hops (then fails
+        // closed for depth > 64), so cost is independent of `depth`.
+        let start = Instant::now();
+        for _ in 0..ITERS {
+            let _ = ledger.is_authorized(&leaf, &asset, CatalogAction::Use);
+        }
+        let elapsed = start.elapsed();
+        #[allow(clippy::cast_precision_loss)]
+        let per = elapsed.as_nanos() as f64 / ITERS as f64;
+        println!("deep-chain: depth={depth} query_per_ns={per:.1}");
+        query_ns.push((depth, per));
+    }
+
+    // Flat within the 4× headband across a 50× depth increase.
+    let first = query_ns.first().unwrap().1;
+    let last = query_ns.last().unwrap().1;
+    assert!(
+        last <= first * 4.0,
+        "deep-chain query must be depth-bounded (depth 1k {first:.1}ns vs 50k {last:.1}ns)"
     );
 }
