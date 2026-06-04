@@ -88,6 +88,30 @@ impl<'ctx, 'm, 'b, 's, 'v> Generator<'ctx, 'm, 'b, 's, 'v> {
         })
     }
 
+    /// Construct a generator over an **already-prefilled** context, positioned
+    /// at `n_past`. Unlike [`Self::new`], this does NOT decode a prompt — the
+    /// caller has already populated the KV cache (e.g. via the multi-modal
+    /// prefill `mtmd_helper_eval_chunks`, run with `logits_last = true` so the
+    /// last position's logits are ready for the first sample). The iterator
+    /// then continues the ordinary sample → decode → feed-back loop verbatim.
+    ///
+    /// `n_past` is the number of positions already in sequence 0 (the value
+    /// returned by the prefill).
+    pub fn from_prefilled(
+        ctx: &'ctx mut Context<'m, 'b>,
+        sampler: &'s mut Sampler<'b>,
+        vocab: &'v Vocab<'m, 'b>,
+        n_past: i32,
+    ) -> Self {
+        Self {
+            ctx,
+            sampler,
+            vocab,
+            pos: n_past,
+            done: false,
+        }
+    }
+
     /// Maximum sequence length this iterator can produce before the context
     /// window is exhausted.
     pub fn n_ctx(&self) -> u32 {

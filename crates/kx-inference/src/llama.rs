@@ -23,15 +23,43 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
-use kx_model_store::{ModelDescriptor, ModelRegistry, ModelResolver};
+use kx_content::{sniff_image_format, ContentRef, ContentStore, NotFound};
+use kx_model_store::{Modality, ModelDescriptor, ModelRegistry, ModelResolver};
 use kx_mote::ModelId;
 use kx_warrant::WarrantSpec;
+use smallvec::SmallVec;
 
 use crate::backend::InferenceBackend;
 use crate::cache::{ModelCache, DEFAULT_CACHE_CAPACITY};
 use crate::types::{
     check_within, InferenceError, InferenceInput, InferenceOutput, InferenceParams,
 };
+
+/// Object-safe byte fetcher that erases [`ContentStore`]'s associated `Payload`
+/// type so the backend can hold a single trait object regardless of the store
+/// implementation. Blanket-implemented for every `Send + Sync` `ContentStore`,
+/// so callers pass an `Arc<ConcreteStore>` and it coerces to
+/// `Arc<dyn ContentFetcher>` directly.
+///
+/// Lives here (not in `kx-content`) because it exists solely to let the
+/// multi-modal backend fetch a `content_ref`'s bytes; the store trait stays
+/// generic for its hot-path callers (assembler, executor) that use `&S`.
+pub trait ContentFetcher: Send + Sync {
+    /// Fetch the bytes at `r`, or `None` if the store has no such object.
+    fn fetch(&self, r: &ContentRef) -> Option<Vec<u8>>;
+}
+
+impl<S> ContentFetcher for S
+where
+    S: ContentStore + Send + Sync + ?Sized,
+{
+    fn fetch(&self, r: &ContentRef) -> Option<Vec<u8>> {
+        match self.get(r) {
+            Ok(payload) => Some(payload.to_vec()),
+            Err(NotFound) => None,
+        }
+    }
+}
 
 /// Backend name reported in `InferenceOutput.backend_name`.
 pub(crate) const BACKEND_NAME: &str = "kx-llamacpp";
@@ -60,6 +88,10 @@ pub struct LlamaInferenceBackend {
     /// that never dispatches (e.g. a unit test expecting `ModelNotFound`) never
     /// spawns a thread or touches the FFI. Shared across `Clone`s via `Arc`.
     cache: Arc<OnceLock<ModelCache>>,
+    /// Optional content store the multi-modal path fetches `content_ref` image
+    /// bytes from. `None` on the text-only path (the default); an image
+    /// dispatch with no store bound fails closed with `Unsupported`.
+    content_store: Option<Arc<dyn ContentFetcher>>,
     /// Context window passed to each dispatch.
     n_ctx: u32,
     /// Number of distinct models the cache keeps loaded at once.
@@ -81,9 +113,22 @@ impl LlamaInferenceBackend {
         Self {
             resolver,
             cache: Arc::new(OnceLock::new()),
+            content_store: None,
             n_ctx: DEFAULT_N_CTX,
             cache_capacity: DEFAULT_CACHE_CAPACITY,
         }
+    }
+
+    /// Bind a content store the multi-modal path fetches image bytes from.
+    ///
+    /// Additive: text-only dispatch ignores it. Any `Send + Sync`
+    /// [`ContentStore`] (e.g. an `Arc<LocalFsContentStore>`) coerces in via the
+    /// [`ContentFetcher`] blanket impl. Without it, an image dispatch fails
+    /// closed (`Unsupported`).
+    #[must_use]
+    pub fn with_content_store(mut self, store: Arc<dyn ContentFetcher>) -> Self {
+        self.content_store = Some(store);
+        self
     }
 
     /// Construct a backend with a single text model registered.
@@ -115,6 +160,20 @@ impl LlamaInferenceBackend {
         Self::with_resolver(Arc::new(registry_from_paths(models)))
     }
 
+    /// Construct a backend serving a single image (vision) model: the VLM
+    /// weights `gguf` plus its vision projector `mmproj`. Pair with
+    /// [`Self::with_content_store`] so the multi-modal path can fetch image
+    /// `content_ref`s. Files need not exist at construction (lazy, like
+    /// [`Self::with_model`]); the first image dispatch loads them.
+    #[must_use]
+    pub fn with_image_model(id: ModelId, gguf: PathBuf, mmproj: PathBuf) -> Self {
+        let mut registry = ModelRegistry::new();
+        if let Err(e) = registry.register(ModelDescriptor::image(id, gguf, mmproj, DEFAULT_N_CTX)) {
+            tracing::error!(error = %e, "skipping image model in registry shim (unexpected)");
+        }
+        Self::with_resolver(Arc::new(registry))
+    }
+
     /// Override the default context window.
     #[must_use]
     pub fn with_n_ctx(mut self, n_ctx: u32) -> Self {
@@ -135,6 +194,69 @@ impl LlamaInferenceBackend {
     #[must_use]
     pub fn loads_performed(&self) -> u64 {
         self.cache.get().map_or(0, ModelCache::loads)
+    }
+
+    /// Number of multi-modal projector (`mmproj`) loads performed so far. In
+    /// PR-2 this rises once per image dispatch (the projector is re-created each
+    /// time, the base model stays cached); the PR-2.5 projector cache will make
+    /// it rise once per distinct model. The measured signal that justifies that
+    /// follow-up — never a claimed figure.
+    #[must_use]
+    pub fn mmproj_loads_performed(&self) -> u64 {
+        self.cache.get().map_or(0, ModelCache::mmproj_loads)
+    }
+
+    /// Resolve multimodal `content_refs` to fail-closed, size-capped,
+    /// image-sniffed bytes ready for the projector. Gates, in order:
+    /// 1. the model must DECLARE the image modality (capability);
+    /// 2. a content store must be bound (else nothing to fetch from);
+    /// 3. every ref must resolve in the store;
+    /// 4. every payload must be within the warrant's `mem_bytes` ceiling
+    ///    (the pre-decode size cap — untrusted bytes are never handed to the
+    ///    C decoder above the ceiling);
+    /// 5. every payload must be a recognized image (audio / unknown are
+    ///    reserved for later PRs — rejected, not silently decoded).
+    fn resolve_image_refs(
+        &self,
+        descriptor: &ModelDescriptor,
+        content_refs: &[ContentRef],
+        warrant: &WarrantSpec,
+    ) -> Result<SmallVec<[Vec<u8>; 2]>, InferenceError> {
+        if !descriptor.supports(Modality::Image) {
+            return Err(InferenceError::Unsupported {
+                reason: "model does not declare the image modality; cannot serve a \
+                         multimodal request",
+            });
+        }
+        let store = self
+            .content_store
+            .as_ref()
+            .ok_or(InferenceError::Unsupported {
+                reason: "no content store bound; cannot fetch multimodal content_refs",
+            })?;
+        let cap = warrant.resource_ceiling.mem_bytes;
+        let mut images: SmallVec<[Vec<u8>; 2]> = SmallVec::with_capacity(content_refs.len());
+        for r in content_refs {
+            let bytes = store
+                .fetch(r)
+                .ok_or(InferenceError::ContentStoreMiss { content_ref: *r })?;
+            let len = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
+            if len > cap {
+                return Err(InferenceError::ScopeViolation {
+                    field: "image_bytes",
+                    requested: len,
+                    ceiling: cap,
+                });
+            }
+            if sniff_image_format(&bytes).is_none() {
+                return Err(InferenceError::Unsupported {
+                    reason: "content_ref is not a recognized image; audio and other \
+                             modalities are reserved for later PRs",
+                });
+            }
+            images.push(bytes);
+        }
+        Ok(images)
     }
 }
 
@@ -158,6 +280,7 @@ impl std::fmt::Debug for LlamaInferenceBackend {
             .field("n_ctx", &self.n_ctx)
             .field("cache_capacity", &self.cache_capacity)
             .field("cache_spawned", &self.cache.get().is_some())
+            .field("content_store_bound", &self.content_store.is_some())
             .finish_non_exhaustive()
     }
 }
@@ -176,22 +299,16 @@ impl InferenceBackend for LlamaInferenceBackend {
         params: &InferenceParams,
         warrant: &WarrantSpec,
     ) -> Result<InferenceOutput, InferenceError> {
-        // ---- Forward-compat reservation gates (fire BEFORE any model work) ----
-        let prompt = match input {
-            InferenceInput::Text(s) => s.as_str(),
-            InferenceInput::Multimodal { .. } => {
-                return Err(InferenceError::Unsupported {
-                    reason: "multimodal input reserved for the multi-modal PRs; see HANDOFF",
-                });
-            }
-        };
+        // ---- Grammar reservation gate (fires before any model work) -------
+        // Constrained generation is a distinct, still-reserved seam; it gates
+        // every input variant.
         if params.grammar.is_some() {
             return Err(InferenceError::Unsupported {
                 reason: "constrained generation (grammar) reserved; see HANDOFF",
             });
         }
 
-        // ---- Warrant gates (D30 + D35) ------------------------------------
+        // ---- Warrant gates (D30 + D35) — authorize BEFORE touching content -
         if model_id != &warrant.model_route.model_id {
             return Err(InferenceError::WarrantDeniesModel {
                 model_id: model_id.0.clone(),
@@ -208,19 +325,44 @@ impl InferenceBackend for LlamaInferenceBackend {
                     model_id: model_id.0.clone(),
                 })?;
 
-        // ---- Dispatch through the loaded-model cache (owner thread) -------
         let cache = self
             .cache
             .get_or_init(|| ModelCache::spawn(self.cache_capacity));
-        cache.dispatch(
-            descriptor.identity_digest,
-            descriptor.gguf_path.clone(),
-            model_id.clone(),
-            prompt.to_string(),
-            params.clone(),
-            self.n_ctx,
-            warrant.resource_ceiling.wall_clock_ms,
-        )
+
+        // ---- Dispatch by input modality -----------------------------------
+        match input {
+            InferenceInput::Text(prompt) => cache.dispatch(
+                descriptor.identity_digest,
+                descriptor.gguf_path.clone(),
+                model_id.clone(),
+                prompt.clone(),
+                SmallVec::new(),
+                None,
+                params.clone(),
+                self.n_ctx,
+                warrant.resource_ceiling.wall_clock_ms,
+            ),
+            InferenceInput::Multimodal { text, content_refs } => {
+                let images = self.resolve_image_refs(descriptor, content_refs, warrant)?;
+                let mmproj = descriptor
+                    .mmproj_path
+                    .clone()
+                    .ok_or(InferenceError::Unsupported {
+                        reason: "image-capable model has no mmproj projector configured",
+                    })?;
+                cache.dispatch(
+                    descriptor.identity_digest,
+                    descriptor.gguf_path.clone(),
+                    model_id.clone(),
+                    text.clone(),
+                    images,
+                    Some(mmproj),
+                    params.clone(),
+                    self.n_ctx,
+                    warrant.resource_ceiling.wall_clock_ms,
+                )
+            }
+        }
     }
 
     fn supports(&self, model_id: &ModelId) -> bool {

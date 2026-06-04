@@ -95,6 +95,40 @@ pub enum LlamaError {
     #[error("chat-template apply failed (rc = {0})")]
     ChatTemplateFailed(i32),
 
+    /// `mtmd_init_from_file` returned NULL — the multi-modal projector (`mmproj`)
+    /// could not be loaded (bad path, malformed projector GGUF, or a projector
+    /// incompatible with the text model).
+    #[error("failed to initialize mtmd (multi-modal) context from mmproj {path:?}")]
+    MtmdInitFailed {
+        /// The projector path that was attempted.
+        path: PathBuf,
+    },
+
+    /// `mtmd_helper_bitmap_init_from_buf` returned NULL — the media bytes could
+    /// not be decoded (corrupt/truncated image, or a format stb/miniaudio does
+    /// not support). The fail-closed boundary for untrusted media bytes.
+    #[error("failed to decode media bytes into an mtmd bitmap ({n_bytes} bytes)")]
+    BitmapDecodeFailed {
+        /// Length of the buffer that failed to decode.
+        n_bytes: usize,
+    },
+
+    /// Media bytes decoded as **audio** but the caller only accepts images
+    /// (PR-2 is image-only; audio lands in PR-3 behind a default-off feature).
+    #[error("audio media is not supported on this path (image-only)")]
+    AudioNotSupported,
+
+    /// `mtmd_tokenize` returned a non-zero status. 1 = the number of media
+    /// markers in the text does not match the number of bitmaps; 2 = media
+    /// preprocessing failed.
+    #[error("mtmd_tokenize returned non-zero status {0}")]
+    TokenizeChunksFailed(i32),
+
+    /// `mtmd_helper_eval_chunks` returned a non-zero status — a text/image chunk
+    /// failed to encode or `llama_decode` failed during the multi-modal prefill.
+    #[error("mtmd_helper_eval_chunks returned non-zero status {0}")]
+    EvalChunksFailed(i32),
+
     /// An underlying I/O error while reading metadata before passing to llama.cpp.
     #[error(transparent)]
     Io(#[from] std::io::Error),

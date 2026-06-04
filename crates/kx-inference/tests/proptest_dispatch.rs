@@ -68,19 +68,22 @@ fn arbitrary_content_refs() -> impl Strategy<Value = SmallVec<[ContentRef; 4]>> 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(64))]
 
-    /// Property 1: `Unsupported` on Multimodal is deterministic
-    /// across any text + content-ref input. The reservation
-    /// `LlamaInferenceBackend` enforces is a pure property of the
-    /// variant, not of its payload.
+    /// Property 1 (PR-2, narrowed contract): a Multimodal request against a
+    /// **text-only** model is deterministically `Unsupported` — for any text +
+    /// content-ref input — because the capability gate (`descriptor.supports
+    /// (Image)`) fails closed BEFORE any content fetch or FFI. `with_model`
+    /// registers a text-only descriptor, so the model never declares Image.
+    /// (Multimodal is no longer *blanket*-reserved — an image-capable model
+    /// with a projector + bound store serves it; that path is covered in
+    /// `tests/multimodal_dispatch.rs`.)
     #[test]
-    fn prop_multimodal_always_unsupported(
+    fn prop_multimodal_text_only_model_unsupported(
         text in ".{0,256}",
         refs in arbitrary_content_refs(),
     ) {
         let id = ModelId("any-model".into());
-        // Register the model so we know `ModelNotFound` cannot mask the
-        // Unsupported error; the multimodal gate fires earlier in the
-        // dispatch flow.
+        // Register a text-only model so `ModelNotFound` cannot mask the
+        // Unsupported error; the capability gate fires once resolved.
         let backend = LlamaInferenceBackend::with_model(
             id.clone(),
             std::path::PathBuf::from("/dev/null"),
@@ -89,7 +92,7 @@ proptest! {
         let input = InferenceInput::Multimodal { text, content_refs: refs };
         let params = InferenceParams::default();
         let err = backend.dispatch(&id, &input, &params, &warrant)
-            .expect_err("multimodal must be Unsupported");
+            .expect_err("multimodal against a text-only model must be Unsupported");
         let is_unsupported = matches!(err, InferenceError::Unsupported { .. });
         prop_assert!(is_unsupported);
     }

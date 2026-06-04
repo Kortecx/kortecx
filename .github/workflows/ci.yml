@@ -413,6 +413,17 @@ jobs:
       - name: just smoke-test-with-model
         run: just smoke-test-with-model
 
+  # NOTE (PR-2): the IMAGE pipeline is intentionally NOT a CI job. A 2 B VLM
+  # (~1.6 GB download + a CPU inference run, twice for the determinism check)
+  # would add 20-40 min + network flakiness for marginal unique value: `ffi-link`
+  # already proves `mtmd` LINKS on Linux, `build-no-inference` proves the
+  # feature-gating, and the no-model tests in `cargo test --workspace` (the sniff,
+  # the fail-closed dispatch gates, the assembler exclusion, the harness
+  # `Multimodal` routing) prove the logic. Real-VLM image→text is validated
+  # LOCALLY/manually via `just smoke-test-multimodal` (a release / FFI-touch
+  # gate), the same place the heavy validation belongs — see the recipe in the
+  # justfile. (The text smoke stays in CI because stories260K is ~1.2 MB.)
+
   # ---------------------------------------------------------------------------
   # scale-smoke — M2.1 + M2.2 + M2.x-E / D92 resume-availability gate. Folds a
   # 25k+ Mote journal in RELEASE and asserts the incremental children-index re-fold

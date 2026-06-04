@@ -459,6 +459,47 @@ fn overflow_decision_required_when_window_too_small() {
     }
 }
 
+#[test]
+fn image_parent_is_excluded_from_text_window_overflow() {
+    let store = InMemoryContentStore::new();
+    // A 4096-byte PNG (valid magic + padding). The cheap sniff recognizes it,
+    // so its bytes must NOT count against the text window — only the projector
+    // (token-bounded) and the warrant `mem_bytes` cap bound an image.
+    let mut png = vec![0x89u8, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+    png.resize(4096, 0u8);
+    let r = store.put(&png).unwrap();
+    let id = mid(1);
+
+    let journal = InMemoryJournal::new();
+    let e = build_committed_entry(id, r, SmallVec::new());
+    let _ = journal.append(e).unwrap();
+    let snapshot = Projection::from_journal(&journal).unwrap().snapshot();
+
+    let registry = InMemoryToolRegistry::new();
+    let parents: SmallVec<[ParentRef; 4]> = SmallVec::from_vec(vec![ParentRef {
+        parent_id: id,
+        edge: EdgeMeta::data(),
+    }]);
+    let child = make_mote(mid(9), parents, GraphPosition(vec![0]));
+
+    // window_bytes = 100, far below the 4096-byte image — yet NOT an overflow:
+    // image bytes are excluded from the text-window sum. (A 4096-byte *text*
+    // parent at the same window DOES overflow — proven by
+    // `overflow_decision_required_when_window_too_small`.)
+    let ctx = assemble(
+        &child,
+        &permissive_warrant(),
+        &snapshot,
+        &store,
+        &registry,
+        100,
+    )
+    .expect("image bytes must be excluded from the text-window overflow sum");
+    // The image item is still assembled (its source_ref routes to content_refs
+    // downstream); it simply does not consume the text budget.
+    assert_eq!(ctx.len(), 1);
+}
+
 // -----------------------------------------------------------------
 // Empty assembly: no parents + no tool grants
 // -----------------------------------------------------------------

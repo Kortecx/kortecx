@@ -69,6 +69,30 @@ impl ModelDescriptor {
         Self::new(model_id, gguf_path, None, modalities, context_window)
     }
 
+    /// Construct an image (vision) descriptor: declares [`Modality::Text`] +
+    /// [`Modality::Image`] and carries the vision projector (`mmproj`). The
+    /// convenience constructor the multi-modal IMAGE path (PR-2) registers a
+    /// VLM through. Identity folds the Image modality, so the same weights
+    /// declared text-only vs. image-capable are distinct cache identities.
+    #[must_use]
+    pub fn image(
+        model_id: ModelId,
+        gguf_path: impl Into<PathBuf>,
+        mmproj_path: impl Into<PathBuf>,
+        context_window: u32,
+    ) -> Self {
+        let mut modalities = SmallVec::new();
+        modalities.push(Modality::Text);
+        modalities.push(Modality::Image);
+        Self::new(
+            model_id,
+            gguf_path,
+            Some(mmproj_path.into()),
+            modalities,
+            context_window,
+        )
+    }
+
     /// Construct a descriptor with an explicit modality set and optional
     /// projector. [`Modality::Text`] is added if the caller omits it (every
     /// model consumes a textual instruction alongside any media).
@@ -177,6 +201,28 @@ mod tests {
         assert!(d.supports(Modality::Audio));
         assert!(!d.supports(Modality::Video));
         assert!(d.is_multimodal());
+    }
+
+    #[test]
+    fn image_descriptor_declares_text_image_and_projector() {
+        let d = ModelDescriptor::image(
+            mid("qwen2-vl-2b-q4"),
+            "/m/qwen2vl.gguf",
+            "/m/qwen2vl-mmproj.gguf",
+            4096,
+        );
+        assert!(d.supports(Modality::Text));
+        assert!(d.supports(Modality::Image));
+        assert!(!d.supports(Modality::Audio));
+        assert!(d.is_multimodal());
+        assert_eq!(
+            d.mmproj_path.as_deref(),
+            Some(std::path::Path::new("/m/qwen2vl-mmproj.gguf"))
+        );
+        // An image descriptor over the same weights is a DISTINCT cache identity
+        // from a text-only one (modalities fold into the digest).
+        let text = ModelDescriptor::text(mid("qwen2-vl-2b-q4"), "/m/qwen2vl.gguf", 4096);
+        assert_ne!(d.identity_digest, text.identity_digest);
     }
 
     #[test]

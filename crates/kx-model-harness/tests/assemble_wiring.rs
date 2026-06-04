@@ -24,7 +24,9 @@ use std::time::Duration;
 use kx_capability::{CapabilityBroker, LocalCapabilityBroker};
 use kx_content::LocalFsContentStore;
 use kx_executor::{LocalResourceManager, StandardCommitProtocol};
-use kx_inference::{InferenceBackend, InferenceError, InferenceInput, InferenceOutput};
+use kx_inference::{
+    InferenceBackend, InferenceError, InferenceInput, InferenceOutput, MEDIA_MARKER,
+};
 use kx_journal::SqliteJournal;
 use kx_model_harness::{
     harness_warrant, prompt, workflows, BrokerObserver, ModelBroker, ModelExecutor,
@@ -314,6 +316,169 @@ fn wired_path_is_deterministic() {
         inputs_a[0], inputs_b[0],
         "the assembled model input is deterministic across runs"
     );
+}
+
+// -----------------------------------------------------------------
+// PR-2: an image-typed Data parent routes the child to a Multimodal input.
+// -----------------------------------------------------------------
+
+/// A stub backend that emits PNG-magic bytes (so a Data child sees an image
+/// parent) and records the full `InferenceInput` each dispatch was handed.
+struct PngEmittingBackend {
+    inputs: Arc<Mutex<Vec<InferenceInput>>>,
+}
+
+const PNG_BYTES: &[u8] = &[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x01];
+
+impl InferenceBackend for PngEmittingBackend {
+    fn dispatch(
+        &self,
+        model_id: &ModelId,
+        input: &InferenceInput,
+        _params: &kx_mote::InferenceParams,
+        _warrant: &WarrantSpec,
+    ) -> Result<InferenceOutput, InferenceError> {
+        self.inputs.lock().unwrap().push(input.clone());
+        Ok(InferenceOutput {
+            bytes: PNG_BYTES.to_vec(),
+            output_tokens: 1,
+            backend_name: "png-stub",
+            model_id: model_id.clone(),
+            elapsed: Duration::from_millis(0),
+        })
+    }
+    fn supports(&self, _model_id: &ModelId) -> bool {
+        true
+    }
+    fn name(&self) -> &'static str {
+        "png-stub"
+    }
+}
+
+/// A flat workflow: a MODEL parent `P` (emits PNG bytes) → a MODEL child `M`
+/// with a Data edge to `P`. `M`'s assembled context therefore has one
+/// image-typed parent.
+fn image_parent_workflow(model_id: &ModelId) -> DemoWorkflow {
+    let parent = build_mote(
+        0x11,
+        model_id,
+        Some("emit an image"),
+        InferenceParams {
+            max_output_tokens: 8,
+            ..InferenceParams::default()
+        },
+        &[],
+    );
+    let child = build_mote(
+        0x12,
+        model_id,
+        Some(INSTRUCTION),
+        InferenceParams {
+            max_output_tokens: 32,
+            ..InferenceParams::default()
+        },
+        &[ParentRef {
+            parent_id: parent.id,
+            edge: EdgeMeta::data(),
+        }],
+    );
+    let cap = ToolName("kx-model".into());
+    let sentinel = workflows::sentinel_shaper();
+    let motes = vec![
+        WorkflowMote {
+            mote: parent,
+            warrant: harness_warrant(model_id, 48, 1000),
+            capability: cap.clone(),
+        },
+        WorkflowMote {
+            mote: child,
+            warrant: harness_warrant(model_id, 48, 1000),
+            capability: cap,
+        },
+    ];
+    DemoWorkflow {
+        motes,
+        stc_crash_target: sentinel,
+        vtc_crash_target: sentinel,
+        shaper_id: sentinel,
+    }
+}
+
+#[test]
+fn image_parent_routes_child_to_multimodal_input() {
+    let id = model_id();
+    let workflow = image_parent_workflow(&id);
+    let dir = tempfile::tempdir().unwrap();
+
+    let config = config_for(dir.path());
+    let store = Arc::new(LocalFsContentStore::open(&config.content_root).unwrap());
+    let journal = Arc::new(SqliteJournal::open(&config.journal_path).unwrap());
+    let inputs = Arc::new(Mutex::new(Vec::new()));
+    let backend = Arc::new(PngEmittingBackend {
+        inputs: inputs.clone(),
+    });
+    let sink = SnapshotSink::new();
+    let registry: Arc<dyn ToolRegistry> = Arc::new(InMemoryToolRegistry::with_builtins());
+    let executor = ModelExecutor::new(
+        backend.clone(),
+        store.clone(),
+        sink.clone(),
+        registry.clone(),
+    );
+    let observer = Arc::new(BrokerObserver::default());
+    let tool_broker: Arc<dyn CapabilityBroker> =
+        Arc::new(LocalCapabilityBroker::new(store.clone()));
+    let broker = Arc::new(ModelBroker::new(
+        backend,
+        store.clone(),
+        None,
+        Some(workflow.stc_crash_target),
+        observer,
+        sink.clone(),
+        registry,
+        tool_broker,
+        [0u8; kx_capability::INSTANCE_ID_LEN],
+    ));
+    let protocol = StandardCommitProtocol::new(store.clone(), journal.clone(), broker);
+    let rm = LocalResourceManager::dev_defaults();
+    let result = run_with_seams(
+        &config,
+        &workflow,
+        store,
+        journal,
+        &rm,
+        &executor,
+        &protocol,
+        None,
+        Some(&sink),
+        None,
+    );
+    assert!(result.unwrap().is_complete(), "both Motes committed");
+
+    let captured = inputs.lock().unwrap().clone();
+    assert_eq!(captured.len(), 2, "two model dispatches (parent, child)");
+
+    // Dispatch 0 is the parent (no parents ⇒ Text). Dispatch 1 is the child,
+    // whose sole Data parent committed PNG bytes ⇒ a Multimodal input.
+    assert!(
+        matches!(captured[0], InferenceInput::Text(_)),
+        "the leaf parent gets a Text input, got {:?}",
+        captured[0]
+    );
+    match &captured[1] {
+        InferenceInput::Multimodal { text, content_refs } => {
+            assert_eq!(content_refs.len(), 1, "one image parent ⇒ one content_ref");
+            // Exactly one media marker (one per image), inside the user turn.
+            assert_eq!(text.matches(MEDIA_MARKER).count(), 1, "one media marker");
+            // The instruction is present; the raw PNG bytes are NOT in the text.
+            assert!(text.contains(INSTRUCTION), "instruction reached the model");
+            assert!(
+                !text.contains("\u{89}PNG"),
+                "raw image bytes must never enter the text prompt"
+            );
+        }
+        InferenceInput::Text(t) => panic!("child must get a Multimodal input, got Text({t:?})"),
+    }
 }
 
 #[test]
