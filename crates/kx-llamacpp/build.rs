@@ -25,7 +25,7 @@
 use std::env;
 use std::fs;
 use std::io::{Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// The model URL — a 1.18 MB tinystories model in GGUF v3 format.
 ///
@@ -41,40 +41,91 @@ const MODEL_SHA256: &str = "270cba1bd5109f42d03350f60406024560464db173c0e387d91f
 /// The output filename inside `OUT_DIR`.
 const MODEL_FILENAME: &str = "stories260K.gguf";
 
+// ---------------------------------------------------------------------------
+// Multi-modal smoke model (PR-2): a small VLM + its vision projector.
+//
+// Qwen2-VL-2B-Instruct, the canonical ggml-org mtmd test VLM — modern, supported
+// at the b9000 pin (models/qwen2vl.cpp), and exercises the M-RoPE image path the
+// mtmd helper handles. ~940 MB LLM (Q4_K_M) + ~676 MB projector (Q8_0). Heavy:
+// only fetched under the `model-smoke-test-multimodal` feature.
+// ---------------------------------------------------------------------------
+const VLM_GGUF_URL: &str =
+    "https://huggingface.co/ggml-org/Qwen2-VL-2B-Instruct-GGUF/resolve/main/Qwen2-VL-2B-Instruct-Q4_K_M.gguf";
+const VLM_GGUF_SHA256: &str = "5745685d2e607a82a0696c1118e56a2a1ae0901da450fd9cd4f161c6b62867d7";
+const VLM_GGUF_FILENAME: &str = "Qwen2-VL-2B-Instruct-Q4_K_M.gguf";
+
+const VLM_MMPROJ_URL: &str =
+    "https://huggingface.co/ggml-org/Qwen2-VL-2B-Instruct-GGUF/resolve/main/mmproj-Qwen2-VL-2B-Instruct-Q8_0.gguf";
+const VLM_MMPROJ_SHA256: &str = "a0ad91f00a7a80dcf84d719a61b00ee2e07b71794f4ee2dfa81a254621a8c418";
+const VLM_MMPROJ_FILENAME: &str = "mmproj-Qwen2-VL-2B-Instruct-Q8_0.gguf";
+
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_MODEL_SMOKE_TEST");
-
-    if env::var("CARGO_FEATURE_MODEL_SMOKE_TEST").is_err() {
-        // Feature disabled — nothing to do.
-        return;
-    }
+    println!("cargo:rerun-if-env-changed=CARGO_FEATURE_MODEL_SMOKE_TEST_MULTIMODAL");
 
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR set by cargo"));
-    let model_path = out_dir.join(MODEL_FILENAME);
 
-    if model_path.exists() {
-        // Verify the cached copy matches the expected SHA. If it does, reuse.
-        // If it doesn't, re-download (cache poisoning / partial-write recovery).
-        if verify_sha(&model_path, MODEL_SHA256).is_ok() {
-            println!(
-                "cargo:rustc-env=KX_LLAMACPP_SMOKE_TEST_MODEL={}",
-                model_path.display()
-            );
-            return;
-        }
-        let _ = fs::remove_file(&model_path);
+    // Text smoke model (stories260K, ~1.2 MB) — the existing pipeline.
+    if env::var("CARGO_FEATURE_MODEL_SMOKE_TEST").is_ok() {
+        let model_path = ensure_model(MODEL_URL, MODEL_FILENAME, MODEL_SHA256, 300, &out_dir);
+        println!(
+            "cargo:rustc-env=KX_LLAMACPP_SMOKE_TEST_MODEL={}",
+            model_path.display()
+        );
     }
 
-    download_and_verify(MODEL_URL, &model_path, MODEL_SHA256);
-
-    println!(
-        "cargo:rustc-env=KX_LLAMACPP_SMOKE_TEST_MODEL={}",
-        model_path.display()
-    );
+    // Multi-modal smoke model (VLM + projector, ~1.6 GB) — the IMAGE pipeline.
+    // Generous timeouts for the large files; cached in OUT_DIR across builds.
+    if env::var("CARGO_FEATURE_MODEL_SMOKE_TEST_MULTIMODAL").is_ok() {
+        let gguf = ensure_model(
+            VLM_GGUF_URL,
+            VLM_GGUF_FILENAME,
+            VLM_GGUF_SHA256,
+            900,
+            &out_dir,
+        );
+        let mmproj = ensure_model(
+            VLM_MMPROJ_URL,
+            VLM_MMPROJ_FILENAME,
+            VLM_MMPROJ_SHA256,
+            900,
+            &out_dir,
+        );
+        println!(
+            "cargo:rustc-env=KX_LLAMACPP_SMOKE_VLM_GGUF={}",
+            gguf.display()
+        );
+        println!(
+            "cargo:rustc-env=KX_LLAMACPP_SMOKE_VLM_MMPROJ={}",
+            mmproj.display()
+        );
+    }
 }
 
-fn download_and_verify(url: &str, dest: &PathBuf, expected_sha: &str) {
+/// Ensure `filename` (verified against `expected_sha`) exists in `out_dir`,
+/// downloading it from `url` on a miss / SHA mismatch. Returns its path.
+fn ensure_model(
+    url: &str,
+    filename: &str,
+    expected_sha: &str,
+    timeout_secs: u64,
+    out_dir: &Path,
+) -> PathBuf {
+    let path = out_dir.join(filename);
+    if path.exists() {
+        // Reuse a cached copy whose SHA matches; otherwise re-download (recovers
+        // from a partial write / poisoned cache).
+        if verify_sha(&path, expected_sha).is_ok() {
+            return path;
+        }
+        let _ = fs::remove_file(&path);
+    }
+    download_and_verify(url, &path, expected_sha, timeout_secs);
+    path
+}
+
+fn download_and_verify(url: &str, dest: &PathBuf, expected_sha: &str, timeout_secs: u64) {
     eprintln!(
         "kx-llamacpp build.rs: downloading {url} → {}",
         dest.display()
@@ -83,7 +134,7 @@ fn download_and_verify(url: &str, dest: &PathBuf, expected_sha: &str) {
     // ureq with default TLS handles the redirects HF serves.
     let agent = ureq::AgentBuilder::new()
         .timeout_connect(std::time::Duration::from_secs(30))
-        .timeout(std::time::Duration::from_secs(300))
+        .timeout(std::time::Duration::from_secs(timeout_secs))
         .build();
 
     let resp = agent

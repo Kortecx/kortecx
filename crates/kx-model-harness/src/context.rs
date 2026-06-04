@@ -22,9 +22,9 @@
 //! identity or the journal (D64). The instruction itself remains identity-bearing
 //! via `config_subset["prompt"]` (see [`crate::prompt`]).
 
-use kx_content::ContentStore;
-use kx_context_assembler::{assemble, AssembledContext, AssemblyError};
-use kx_inference::InferenceInput;
+use kx_content::{sniff_image_format, ContentStore};
+use kx_context_assembler::{assemble, AssembledContext, AssembledItem, AssemblyError};
+use kx_inference::{InferenceInput, MEDIA_MARKER};
 use kx_mote::Mote;
 use kx_runtime::SnapshotSink;
 use kx_tool_registry::ToolRegistry;
@@ -58,9 +58,13 @@ pub(crate) fn window_bytes_from_warrant(warrant: &WarrantSpec) -> usize {
 ///
 /// **Only `label` + `bytes` are rendered — never `source_ref`** (the D78
 /// "no hash reaches the window" invariant; `bytes` is content, never a hash).
-fn render_context(ctx: &AssembledContext) -> String {
+///
+/// Renders only the supplied (text) items. Image items are routed out as
+/// `content_ref`s (see [`model_input`]); their raw bytes never enter the text
+/// prompt — a media marker stands in for each.
+fn render_context(items: &[&AssembledItem]) -> String {
     let mut out = String::new();
-    for item in &ctx.items {
+    for item in items {
         out.push_str(&item.label);
         out.push_str(":\n");
         out.push_str(&String::from_utf8_lossy(&item.bytes));
@@ -106,12 +110,39 @@ pub(crate) fn model_input<S: ContentStore>(
         None => AssembledContext::default(),
     };
 
-    let user_turn = if ctx.is_empty() {
-        instruction.to_string()
-    } else {
-        // D78: the resolved tool-menu + parent bytes reach the model, ahead of
-        // the instruction, inside the ChatML user turn.
-        format!("{}{instruction}", render_context(&ctx))
-    };
-    Ok(InferenceInput::text(prompt::chatml(&user_turn)))
+    // Partition the assembled items by modality. Image-sniffed parents flow to
+    // the projector as `content_ref`s (PR-2); everything else is text the model
+    // reads in the window. A text-only closure takes the exact pre-PR-2 path.
+    let mut text_items: Vec<&AssembledItem> = Vec::with_capacity(ctx.items.len());
+    let mut image_refs: Vec<kx_content::ContentRef> = Vec::new();
+    for item in &ctx.items {
+        if sniff_image_format(&item.bytes).is_some() {
+            image_refs.push(item.source_ref);
+        } else {
+            text_items.push(item);
+        }
+    }
+
+    if image_refs.is_empty() {
+        // Text-only path — BYTE-IDENTICAL to the pre-multimodal behavior.
+        let user_turn = if text_items.is_empty() {
+            instruction.to_string()
+        } else {
+            // D78: the resolved tool-menu + parent bytes reach the model, ahead
+            // of the instruction, inside the ChatML user turn.
+            format!("{}{instruction}", render_context(&text_items))
+        };
+        return Ok(InferenceInput::text(prompt::chatml(&user_turn)));
+    }
+
+    // Multi-modal path: one media marker per image at the head of the user turn
+    // (the projector splices each image in marker-order), then any text context,
+    // then the instruction — ChatML-wrapped. The image BYTES never enter the
+    // text; they ride as `content_ref`s the backend fetches + decodes.
+    let markers = MEDIA_MARKER.repeat(image_refs.len());
+    let user_turn = format!("{markers}{}{instruction}", render_context(&text_items));
+    Ok(InferenceInput::Multimodal {
+        text: prompt::chatml(&user_turn),
+        content_refs: image_refs.into_iter().collect(),
+    })
 }

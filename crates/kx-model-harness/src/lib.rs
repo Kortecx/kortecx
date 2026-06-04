@@ -198,7 +198,43 @@ impl Harness {
     ) -> Result<Self, RuntimeError> {
         let store = Arc::new(LocalFsContentStore::open(&config.content_root)?);
         let journal = Arc::new(SqliteJournal::open(&config.journal_path)?);
-        let llama = LlamaInferenceBackend::with_model(model_id.clone(), gguf_path.to_path_buf());
+        // Bind the content store so a multimodal dispatch can fetch image
+        // `content_ref`s; the text path ignores it (harmless, consistent).
+        let llama = LlamaInferenceBackend::with_model(model_id.clone(), gguf_path.to_path_buf())
+            .with_content_store(store.clone());
+        let backend = Arc::new(MeteredBackend::new(llama));
+        let observer = Arc::new(BrokerObserver::default());
+        Ok(Self {
+            store,
+            journal,
+            backend,
+            observer,
+            model_id,
+        })
+    }
+
+    /// Open the store + journal and load an **image (vision) model** behind a
+    /// metered backend: the VLM weights `gguf_path` plus its vision projector
+    /// `mmproj_path`. The content store is bound so the multi-modal dispatch
+    /// path can fetch + decode image `content_ref`s (an image-typed Data parent
+    /// of a model Mote routes through this path automatically).
+    ///
+    /// # Errors
+    /// Propagates store / journal open failures, as [`Self::open`].
+    pub fn open_multimodal(
+        config: &RuntimeConfig,
+        gguf_path: &Path,
+        mmproj_path: &Path,
+        model_id: ModelId,
+    ) -> Result<Self, RuntimeError> {
+        let store = Arc::new(LocalFsContentStore::open(&config.content_root)?);
+        let journal = Arc::new(SqliteJournal::open(&config.journal_path)?);
+        let llama = LlamaInferenceBackend::with_image_model(
+            model_id.clone(),
+            gguf_path.to_path_buf(),
+            mmproj_path.to_path_buf(),
+        )
+        .with_content_store(store.clone());
         let backend = Arc::new(MeteredBackend::new(llama));
         let observer = Arc::new(BrokerObserver::default());
         Ok(Self {

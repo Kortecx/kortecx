@@ -23,6 +23,16 @@ default = []
 # `cargo test -p kx-llamacpp --features model-smoke-test`.
 model-smoke-test = []
 
+# Enable to make `build.rs` download a small VLM (Qwen2-VL-2B-Instruct GGUF +
+# its mmproj projector, ~1.6 GB) and run `tests/smoke_multimodal.rs` — the full
+# IMAGE pipeline (load → mtmd projector → decode bitmap → tokenize → mtmd
+# prefill → generate). A LOCAL / manual gate (run via `just smoke-test-multimodal`
+# before a release or when touching the FFI) — deliberately NOT a CI job: a 2B
+# VLM (multi-GB download + a CPU inference run, twice for determinism) is far too
+# heavy for the runner, and `ffi-link` + the no-model tests already cover the
+# Linux link + the dispatch/sniff/routing logic. NEVER part of default `just ci`.
+model-smoke-test-multimodal = []
+
 [dependencies]
 kx-llamacpp-sys = { workspace = true }
 thiserror       = { workspace = true }

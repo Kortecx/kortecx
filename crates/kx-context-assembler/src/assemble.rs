@@ -118,8 +118,22 @@ pub fn assemble<S: ContentStore>(
     // 3. Sort already enforced above (parents by mote_id, tools by BTreeSet
     //    order). Final pass: verify monotonic invariant for tests.
 
-    // 4. Overflow check.
-    let total: usize = items.iter().map(|i| i.bytes.len()).sum();
+    // 4. Overflow check — against the TEXT window only.
+    //
+    //    Image-typed items (recognized by a cheap magic-byte sniff) do NOT
+    //    consume the text token budget: the multi-modal backend flows them to
+    //    the projector as `content_ref`s, and their token cost is computed by
+    //    mtmd (bounded separately by the projector + the warrant). Counting a
+    //    multi-MB JPEG against `window_bytes` would spuriously trip overflow.
+    //    For a text-only closure (no image-sniffed parents) this sum is
+    //    byte-identical to the prior `total_bytes()` — the digest stays
+    //    invariant. The pre-decode size cap on image bytes is enforced by the
+    //    inference backend against `warrant.resource_ceiling.mem_bytes`.
+    let total: usize = items
+        .iter()
+        .filter(|i| kx_content::sniff_image_format(&i.bytes).is_none())
+        .map(|i| i.bytes.len())
+        .sum();
     if total > window_bytes {
         return Err(AssemblyError::OverflowDecisionRequired {
             closure_size_bytes: total,

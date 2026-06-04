@@ -59,6 +59,15 @@ pub enum InferenceInput {
     },
 }
 
+/// The media placeholder that marks, inside a [`InferenceInput::Multimodal`]
+/// `text`, where each `content_ref` image is spliced in — one marker per ref,
+/// in order. The context assembler (which owns prompt construction) embeds this
+/// constant; the multi-modal backend resolves it to the loaded projector's
+/// actual marker (`mtmd_default_marker()`), rewriting on the rare event a
+/// llama.cpp pin bump changes the upstream marker. Kept here (un-feature-gated)
+/// so the assembler can reference the contract without pulling the FFI.
+pub const MEDIA_MARKER: &str = "<__media__>";
+
 impl InferenceInput {
     /// Length of the textual portion of the input, in bytes. Used by the
     /// dispatcher when checking against

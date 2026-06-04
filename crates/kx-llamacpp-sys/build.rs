@@ -25,7 +25,10 @@
     clippy::unwrap_used,
     clippy::expect_used,
     clippy::items_after_statements,
-    clippy::doc_markdown
+    clippy::doc_markdown,
+    // The pin-echo + dual CMake/bindgen setup makes `main` a linear script that
+    // reads top-to-bottom; splitting it for a line count would hurt legibility.
+    clippy::too_many_lines
 )]
 
 use std::env;
@@ -38,7 +41,10 @@ fn main() {
     // Invalidate the build if the submodule contents change. The submodule pointer
     // is the load-bearing pin; rebuilds happen when llama.cpp is updated.
     println!("cargo:rerun-if-changed=llama.cpp/include/llama.h");
+    println!("cargo:rerun-if-changed=llama.cpp/tools/mtmd/mtmd.h");
+    println!("cargo:rerun-if-changed=llama.cpp/tools/mtmd/mtmd-helper.h");
     println!("cargo:rerun-if-changed=llama.cpp/CMakeLists.txt");
+    println!("cargo:rerun-if-changed=wrapper.h");
     println!("cargo:rerun-if-changed=build.rs");
 
     // ------------------------------------------------------------------
@@ -133,6 +139,14 @@ fn main() {
 
     // llama.cpp's static archives produced by `BUILD_SHARED_LIBS=OFF`.
     // Linking order matters for static libs — dependencies after dependents.
+    // `mtmd` (multi-modal: vision/audio projector + clip + stb/miniaudio decode,
+    // with `mtmd-helper` compiled in) depends on `llama` + `ggml`, so it must
+    // precede them. It is already produced by the CMake build (the `cmake` crate
+    // builds llama.cpp as top-level source → LLAMA_STANDALONE=ON → LLAMA_BUILD_TOOLS
+    // ON → tools/mtmd builds libmtmd.a); PR-2 only adds the link + the bindings.
+    // `libmtmd.a` is `llama-common`-free (its CMakeLists FATAL_ERROR-guards that),
+    // so no extra archive is needed.
+    println!("cargo:rustc-link-lib=static=mtmd");
     println!("cargo:rustc-link-lib=static=llama");
     println!("cargo:rustc-link-lib=static=ggml");
     println!("cargo:rustc-link-lib=static=ggml-base");
@@ -158,24 +172,38 @@ fn main() {
     // ------------------------------------------------------------------
     // 3. Generate Rust bindings via bindgen.
     // ------------------------------------------------------------------
-    let llama_h = llama_cpp_dir.join("include").join("llama.h");
+    // `wrapper.h` (committed, crate root) aggregates llama.h + mtmd-helper.h so a
+    // single bindgen pass emits one bindings.rs with no duplicate llama_*/ggml_*
+    // types. Parsed as C (no `-x c++`): the `#ifdef __cplusplus` blocks (mtmd.h's
+    // C++ STL includes + smart-pointer deleters) are skipped, leaving only the
+    // `extern "C"` surface.
+    let wrapper_h = manifest_dir.join("wrapper.h");
     let include_dir = llama_cpp_dir.join("include");
     let ggml_include = llama_cpp_dir.join("ggml").join("include");
+    let mtmd_dir = llama_cpp_dir.join("tools").join("mtmd");
 
     let bindings = bindgen::Builder::default()
-        .header(llama_h.to_string_lossy())
+        .header(wrapper_h.to_string_lossy())
         .clang_arg(format!("-I{}", include_dir.display()))
         .clang_arg(format!("-I{}", ggml_include.display()))
-        // Allowlist: only llama_* (and the closely-related ggml types llama_h
-        // transitively references). Keeps the binding surface manageable.
+        // mtmd.h / mtmd-helper.h live under tools/mtmd.
+        .clang_arg(format!("-I{}", mtmd_dir.display()))
+        // Allowlist: llama_* (+ the closely-related ggml types llama.h
+        // transitively references) and mtmd_* (the multi-modal C API:
+        // mtmd_init_from_file, mtmd_tokenize, mtmd_helper_eval_chunks,
+        // mtmd_helper_bitmap_init_from_buf, …). Keeps the surface manageable.
         .allowlist_function("llama_.*")
+        .allowlist_function("mtmd_.*")
         .allowlist_type("llama_.*")
+        .allowlist_type("mtmd_.*")
         .allowlist_var("LLAMA_.*")
+        .allowlist_var("MTMD_.*")
         // Use core types so the bindings work in no_std contexts too.
         .use_core()
         .ctypes_prefix("::core::ffi")
         // Generate Rust enums for known C enums; rustified for usability.
         .rustified_enum("llama_.*")
+        .rustified_enum("mtmd_.*")
         // Block clang from looking at system headers it doesn't need.
         .layout_tests(false)
         .derive_default(true)

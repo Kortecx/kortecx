@@ -127,6 +127,17 @@ check-reproducible:
 smoke-test-with-model:
     cargo test -p kx-llamacpp --features model-smoke-test -- --nocapture
 
+# LOCAL / manual gate (NOT a CI job): downloads a small VLM (Qwen2-VL-2B-Instruct
+# GGUF + mmproj, ~1.6 GB) and runs the full IMAGE pipeline through the safe wrapper
+# (load → projector → decode bitmap → tokenize → mtmd prefill → generate),
+# asserting image→text non-empty + greedy determinism + fail-closed on corrupt
+# bytes. Run it before a release or when touching the mtmd FFI. Deliberately kept
+# OUT of CI: a 2B VLM (multi-GB download + a CPU inference run, twice) is too heavy
+# for the runner, and `ffi-link` + the no-model tests already cover the Linux link
+# + the dispatch/sniff/routing logic. NOT part of `just ci`.
+smoke-test-multimodal:
+    cargo test -p kx-llamacpp --features model-smoke-test-multimodal --release -- --nocapture
+
 # ============================================================================
 # Scale / performance gate
 # ============================================================================

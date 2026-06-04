@@ -75,9 +75,11 @@ use serde::{Deserialize, Serialize};
 
 pub use crate::in_memory::InMemoryContentStore;
 pub use crate::local_fs::LocalFsContentStore;
+pub use crate::sniff::{sniff_image_format, ImageFormat};
 
 mod in_memory;
 mod local_fs;
+mod sniff;
 
 // ---------------------------------------------------------------------------
 // ContentRef — the opaque 32-byte content hash

@@ -136,6 +136,9 @@
 //!    | `Context` | `llama_init_from_model` | `llama_free` | [`context`] |
 //!    | `Sampler` | `llama_sampler_chain_init` | `llama_sampler_free` | [`sampler`] |
 //!    | `Batch` | `llama_batch_init` | `llama_batch_free` | [`batch`] |
+//!    | `Mtmd` | `mtmd_init_from_file` | `mtmd_free` | [`mtmd`] |
+//!    | `Bitmap` | `mtmd_helper_bitmap_init_from_buf` | `mtmd_bitmap_free` | [`mtmd`] |
+//!    | `InputChunks` | `mtmd_input_chunks_init` | `mtmd_input_chunks_free` | [`mtmd`] |
 //!
 //!    `Drop` runs exactly once. Each `*_free` is called with a `ptr` that
 //!    is non-null (enforced by `NonNull` storage) and that the FFI assigned
@@ -166,6 +169,7 @@ pub mod context;
 pub mod error;
 pub mod generator;
 pub mod model;
+pub mod mtmd;
 pub mod sampler;
 pub mod vocab;
 
@@ -176,6 +180,7 @@ pub use context::{Context, ContextParams, PerfData, PoolingType};
 pub use error::LlamaError;
 pub use generator::Generator;
 pub use model::{Model, ModelParams};
+pub use mtmd::{Bitmap, InputChunks, Mtmd};
 pub use sampler::{Sampler, SamplerChainBuilder};
 pub use vocab::{Token, Vocab};
 

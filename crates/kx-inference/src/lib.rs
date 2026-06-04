@@ -53,8 +53,8 @@ mod types;
 pub use backend::{BatchItem, InferenceBackend};
 pub use dispatcher::{DispatchOutcome, Dispatcher, DispatcherConfig};
 #[cfg(feature = "llamacpp")]
-pub use llama::LlamaInferenceBackend;
+pub use llama::{ContentFetcher, LlamaInferenceBackend};
 pub use types::{
     inference_params_from_mote, Grammar, InferenceError, InferenceInput, InferenceOutput,
-    InferenceParams,
+    InferenceParams, MEDIA_MARKER,
 };
