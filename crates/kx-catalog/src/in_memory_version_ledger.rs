@@ -40,8 +40,13 @@ use crate::version_ledger::{
 type Hash32 = [u8; 32];
 
 /// The append-only truth + derived indices.
+///
+/// `pub(crate)` so the durable [`crate::SqliteVersionLedger`] holds the SAME
+/// `Inner` and shares the SAME fold/apply logic (no in-memory-vs-replayed
+/// divergence). Fields stay private to this module; cross-module callers use
+/// [`Inner::apply_version`] (write) + the `pub(crate)` read functions below.
 #[derive(Debug, Default)]
-struct Inner {
+pub(crate) struct Inner {
     /// The append-only version log (the truth; everything else is a derived index).
     versions: Vec<AssetVersion>,
     /// Content id → position in `versions` (idempotency + immutability tripwire).
@@ -52,6 +57,52 @@ struct Inner {
     /// whose `prior` == it). Built incrementally on publish — `descendants` is then
     /// O(subtree), never an O(n) scan.
     children: BTreeMap<VersionId, Vec<VersionId>>,
+}
+
+impl Inner {
+    /// Apply an already-deduped, lineage-validated version: **recompute the handle
+    /// move from CURRENT state** (`rank = (revision, version_id-bytes)`, a total,
+    /// order-independent order), then push + index. The SINGLE apply step — used by
+    /// BOTH the in-memory publish (after its dedup + validation gate) and the
+    /// durable rebuild (replaying the persisted log in `seq` order). Because the
+    /// rank is a total order, replaying in append order reproduces the identical
+    /// `by_path_latest` regardless of order — no divergence by construction.
+    pub(crate) fn apply_version(&mut self, version: AssetVersion) {
+        let vid = version.version_id();
+        let new_rank = (version.revision(), *vid.as_bytes());
+        let move_handle = match self.by_path_latest.get(version.handle()) {
+            None => true,
+            Some(cur_vid) => {
+                let cur_rank: (u32, Hash32) =
+                    self.by_id.get(cur_vid).map_or((0u32, [0u8; 32]), |&cpos| {
+                        (self.versions[cpos].revision(), *cur_vid.as_bytes())
+                    });
+                new_rank > cur_rank
+            }
+        };
+        let handle = version.handle().clone();
+        let parent = version.prior();
+        let pos = self.versions.len();
+        if let Some(parent) = parent {
+            self.children.entry(parent).or_default().push(vid);
+        }
+        self.by_id.insert(vid, pos);
+        if move_handle {
+            self.by_path_latest.insert(handle, vid);
+        }
+        self.versions.push(version);
+    }
+
+    /// `true` iff a version with this id is already present (the idempotency /
+    /// immutability tripwire the durable append consults under its transaction).
+    pub(crate) fn contains_version(&self, vid: &VersionId) -> Option<&AssetVersion> {
+        self.by_id.get(vid).map(|&pos| &self.versions[pos])
+    }
+
+    /// The count of published versions.
+    pub(crate) fn len_versions(&self) -> usize {
+        self.versions.len()
+    }
 }
 
 /// An ephemeral, process-local [`VersionLedger`]. Multiple readers, one writer.
@@ -104,8 +155,56 @@ impl InMemoryVersionLedger {
 }
 
 /// Look up a version by id, borrowing it from the log.
-fn version_at<'a>(inner: &'a Inner, id: &VersionId) -> Option<&'a AssetVersion> {
+pub(crate) fn version_at<'a>(inner: &'a Inner, id: &VersionId) -> Option<&'a AssetVersion> {
     inner.by_id.get(id).map(|&pos| &inner.versions[pos])
+}
+
+/// Lineage validation (fail-closed at the door): a successor's `prior` must be
+/// present, on the SAME handle, and exactly one revision below. Shared by the
+/// in-memory publish and the durable publish so a forged graft / inflated revision
+/// can never land on either backend (keeping the handle-move rank ungameable and
+/// the forward/backward folds in agreement).
+pub(crate) fn validate_lineage(
+    inner: &Inner,
+    version: &AssetVersion,
+) -> Result<(), VersionLedgerError> {
+    if let Some(pid) = version.prior() {
+        let Some(parent) = version_at(inner, &pid) else {
+            return Err(VersionLedgerError::PriorNotFound(pid.to_hex()));
+        };
+        if parent.handle() != version.handle() {
+            return Err(VersionLedgerError::InvalidLineage {
+                version_id: version.version_id().to_hex(),
+                reason: format!("prior {pid} is on a different handle"),
+            });
+        }
+        if parent.revision().checked_add(1) != Some(version.revision()) {
+            return Err(VersionLedgerError::InvalidLineage {
+                version_id: version.version_id().to_hex(),
+                reason: format!(
+                    "revision {} is not prior.revision ({}) + 1",
+                    version.revision(),
+                    parent.revision()
+                ),
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Resolve a handle to its current content + resolving version id.
+pub(crate) fn read_resolve(
+    inner: &Inner,
+    handle: &AssetPath,
+) -> Option<(VersionedContent, VersionId)> {
+    let vid = *inner.by_path_latest.get(handle)?;
+    let v = version_at(inner, &vid)?;
+    Some((*v.content(), vid))
+}
+
+/// A snapshot of the append-only version log (append order).
+pub(crate) fn snapshot_versions(inner: &Inner) -> Vec<AssetVersion> {
+    inner.versions.clone()
 }
 
 /// `true` iff `child`'s `prior` edge to `parent` is a valid lineage edge: the
@@ -114,7 +213,11 @@ fn version_at<'a>(inner: &'a Inner, id: &VersionId) -> Option<&'a AssetVersion> 
 /// write time (so a stored chain is always well-formed); the folds re-apply it as
 /// defense-in-depth, so even a corrupt / non-validating backend cannot make the
 /// advisory forward (descendants) and backward (lineage) views disagree.
-fn is_valid_edge(child: &AssetVersion, parent: &AssetVersion, parent_id: VersionId) -> bool {
+pub(crate) fn is_valid_edge(
+    child: &AssetVersion,
+    parent: &AssetVersion,
+    parent_id: VersionId,
+) -> bool {
     child.prior() == Some(parent_id)
         && child.handle() == parent.handle()
         && child.revision() > parent.revision()
@@ -126,7 +229,7 @@ fn is_valid_edge(child: &AssetVersion, parent: &AssetVersion, parent_id: Version
 /// real published fact) but the walk STOPS there (a forged/foreign graft conveys
 /// no further ancestry — the provenance analog of "a forged grant conveys
 /// nothing"). Over-depth returns the bounded prefix (ADVISORY → cannot escalate).
-fn fold_lineage(inner: &Inner, start: VersionId) -> Vec<AssetVersion> {
+pub(crate) fn fold_lineage(inner: &Inner, start: VersionId) -> Vec<AssetVersion> {
     let mut chain: Vec<AssetVersion> = Vec::new();
     let mut seen: BTreeSet<VersionId> = BTreeSet::new();
     let mut cur = Some(start);
@@ -163,7 +266,7 @@ fn fold_lineage(inner: &Inner, start: VersionId) -> Vec<AssetVersion> {
 /// `visited` makes it cycle-safe; [`MAX_VERSION_DESCENDANTS`] bounds the work.
 /// `root` itself is not a descendant. The emit order is BFS-over-publish-order and
 /// is NOT a stable guarantee (it is advisory, never hashed).
-fn fold_descendants(inner: &Inner, root: VersionId) -> Vec<VersionId> {
+pub(crate) fn fold_descendants(inner: &Inner, root: VersionId) -> Vec<VersionId> {
     let mut visited: BTreeSet<VersionId> = BTreeSet::new();
     let mut order: Vec<VersionId> = Vec::new();
     let mut queue: VecDeque<VersionId> = VecDeque::new();
@@ -196,92 +299,36 @@ impl VersionLedger for InMemoryVersionLedger {
     fn publish(&self, version: AssetVersion) -> Result<PublishOutcome, VersionLedgerError> {
         let vid = version.version_id();
         let mut guard = self.inner.write().expect("poisoned lock");
-        if let Some(&pos) = guard.by_id.get(&vid) {
-            return if guard.versions[pos] == version {
+        if let Some(existing) = guard.contains_version(&vid) {
+            return if *existing == version {
                 Ok(PublishOutcome::AlreadyPresent(vid))
             } else {
                 Err(VersionLedgerError::ImmutabilityConflict(vid.to_hex()))
             };
         }
-        // Lineage validation (fail-closed at the door): a successor's prior must be
-        // present, on the SAME handle, and exactly one revision below. This keeps
-        // the stored chain well-formed — a forged cross-handle graft or an inflated
-        // `revision` can never land, so the handle-move rank cannot be gamed and the
-        // forward/backward folds always agree.
-        if let Some(pid) = version.prior() {
-            let Some(parent) = version_at(&guard, &pid) else {
-                return Err(VersionLedgerError::PriorNotFound(pid.to_hex()));
-            };
-            if parent.handle() != version.handle() {
-                return Err(VersionLedgerError::InvalidLineage {
-                    version_id: vid.to_hex(),
-                    reason: format!("prior {pid} is on a different handle"),
-                });
-            }
-            if parent.revision().checked_add(1) != Some(version.revision()) {
-                return Err(VersionLedgerError::InvalidLineage {
-                    version_id: vid.to_hex(),
-                    reason: format!(
-                        "revision {} is not prior.revision ({}) + 1",
-                        version.revision(),
-                        parent.revision()
-                    ),
-                });
-            }
-        }
-        // Decide the handle move from a READ of current state (before any mutation).
-        // rank = (revision, id-bytes): a total, deterministic, order-independent order.
-        let new_rank = (version.revision(), *vid.as_bytes());
-        let move_handle = match guard.by_path_latest.get(version.handle()) {
-            None => true,
-            Some(cur_vid) => {
-                let cur_rank: (u32, Hash32) =
-                    guard.by_id.get(cur_vid).map_or((0u32, [0u8; 32]), |&cpos| {
-                        (guard.versions[cpos].revision(), *cur_vid.as_bytes())
-                    });
-                new_rank > cur_rank
-            }
-        };
-        let handle = version.handle().clone();
-        let parent = version.prior();
-        let pos = guard.versions.len();
-        guard.versions.push(version);
-        guard.by_id.insert(vid, pos);
-        if let Some(parent) = parent {
-            guard.children.entry(parent).or_default().push(vid);
-        }
-        if move_handle {
-            guard.by_path_latest.insert(handle, vid);
-        }
+        validate_lineage(&guard, &version)?;
+        guard.apply_version(version);
         Ok(PublishOutcome::Published(vid))
     }
 
     fn resolve(&self, handle: &AssetPath) -> Option<(VersionedContent, VersionId)> {
-        let guard = self.inner.read().expect("poisoned lock");
-        let vid = *guard.by_path_latest.get(handle)?;
-        let v = version_at(&guard, &vid)?;
-        Some((*v.content(), vid))
+        read_resolve(&self.inner.read().expect("poisoned lock"), handle)
     }
 
     fn get_version(&self, id: &VersionId) -> Option<AssetVersion> {
-        let guard = self.inner.read().expect("poisoned lock");
-        version_at(&guard, id).cloned()
+        version_at(&self.inner.read().expect("poisoned lock"), id).cloned()
     }
 
     fn lineage(&self, id: &VersionId) -> Vec<AssetVersion> {
-        let guard = self.inner.read().expect("poisoned lock");
-        fold_lineage(&guard, *id)
+        fold_lineage(&self.inner.read().expect("poisoned lock"), *id)
     }
 
     fn descendants(&self, id: &VersionId) -> Vec<VersionId> {
-        let guard = self.inner.read().expect("poisoned lock");
-        fold_descendants(&guard, *id)
+        fold_descendants(&self.inner.read().expect("poisoned lock"), *id)
     }
 
     fn list_versions<'a>(&'a self) -> Box<dyn Iterator<Item = AssetVersion> + 'a> {
-        let guard = self.inner.read().expect("poisoned lock");
-        // Snapshot under the read lock (append order), then release before iterating.
-        let versions: Vec<AssetVersion> = guard.versions.clone();
+        let versions = snapshot_versions(&self.inner.read().expect("poisoned lock"));
         Box::new(versions.into_iter())
     }
 

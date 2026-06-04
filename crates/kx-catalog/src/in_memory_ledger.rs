@@ -32,8 +32,13 @@ use crate::party::PartyId;
 use crate::path::AssetRef;
 
 /// The append-only truth + derived indices.
+///
+/// `pub(crate)` so the durable [`crate::SqliteGrantLedger`] holds the SAME `Inner`
+/// and shares the SAME fold/read/apply logic (no in-memory-vs-replayed divergence
+/// by construction). Fields stay private to this module; cross-module callers use
+/// [`Inner::apply_fact`] (write) + the `pub(crate)` read functions below.
 #[derive(Debug, Default)]
-struct Inner {
+pub(crate) struct Inner {
     /// The append-only fact log (the truth; everything else is a derived index).
     facts: Vec<LedgerFact>,
     /// Content id → position in `facts` (idempotency + immutability tripwire).
@@ -47,6 +52,56 @@ struct Inner {
     /// Grant id → the parties that have recorded a revocation of it. The fold
     /// filters to AUTHORIZED revokers (grantor or owner); recording is unchecked.
     revoked: BTreeMap<GrantId, BTreeSet<PartyId>>,
+}
+
+impl Inner {
+    /// Apply an already-validated, non-duplicate fact: assign it the next append
+    /// position, update the derived indices, and push it onto the log. The SINGLE
+    /// fold step — used by BOTH the in-memory append (after its conflict/dedup
+    /// gate) and the durable rebuild (replaying the persisted log in `seq` order),
+    /// so the two backends can never diverge.
+    pub(crate) fn apply_fact(&mut self, fact: LedgerFact) {
+        let pos = self.facts.len();
+        let fid = fact.fact_id();
+        match &fact {
+            LedgerFact::Bind(b) => {
+                self.bindings.insert(b.asset().clone(), b.owner().clone());
+            }
+            LedgerFact::Grant(g) => {
+                let gid = g.grant_id();
+                self.grants.insert(gid, pos);
+                self.grants_by_grantee_asset
+                    .entry((g.grantee().clone(), g.asset().clone()))
+                    .or_default()
+                    .push(gid);
+            }
+            LedgerFact::Revoke(r) => {
+                self.revoked
+                    .entry(r.grant_id())
+                    .or_default()
+                    .insert(r.revoker().clone());
+            }
+        }
+        self.by_id.insert(fid, pos);
+        self.facts.push(fact);
+    }
+
+    /// `true` iff a fact with this content id is already present (the
+    /// idempotency/immutability tripwire the durable append consults under its
+    /// transaction).
+    pub(crate) fn contains_fact(&self, fid: &crate::ledger::FactId) -> Option<&LedgerFact> {
+        self.by_id.get(fid).map(|&pos| &self.facts[pos])
+    }
+
+    /// The bound owner of `asset`, if any (the owner-conflict gate for bindings).
+    pub(crate) fn owner_of_asset(&self, asset: &AssetRef) -> Option<&PartyId> {
+        self.bindings.get(asset)
+    }
+
+    /// The count of appended facts.
+    pub(crate) fn len_facts(&self) -> usize {
+        self.facts.len()
+    }
 }
 
 /// An ephemeral, process-local [`GrantLedger`]. Multiple readers, one writer.
@@ -93,7 +148,7 @@ impl InMemoryGrantLedger {
 }
 
 /// Look up a grant by id, borrowing it from the fact log.
-fn grant_at<'a>(inner: &'a Inner, gid: &GrantId) -> Option<&'a Grant> {
+pub(crate) fn grant_at<'a>(inner: &'a Inner, gid: &GrantId) -> Option<&'a Grant> {
     inner
         .grants
         .get(gid)
@@ -107,7 +162,12 @@ fn grant_at<'a>(inner: &'a Inner, gid: &GrantId) -> Option<&'a Grant> {
 /// grantor (you may revoke what you granted) or the asset owner (an owner may
 /// revoke any grant on their asset). An unauthorized party's recorded revocation
 /// conveys nothing.
-fn is_revoked(inner: &Inner, gid: &GrantId, grant: &Grant, owner: Option<&PartyId>) -> bool {
+pub(crate) fn is_revoked(
+    inner: &Inner,
+    gid: &GrantId,
+    grant: &Grant,
+    owner: Option<&PartyId>,
+) -> bool {
     match inner.revoked.get(gid) {
         None => false,
         Some(revokers) => revokers
@@ -117,7 +177,7 @@ fn is_revoked(inner: &Inner, gid: &GrantId, grant: &Grant, owner: Option<&PartyI
 }
 
 /// The folded result of one delegation chain.
-struct ChainFold {
+pub(crate) struct ChainFold {
     actions: CatalogActionSet,
     /// `Some` iff `owner_root` was supplied (the warrant-bearing fold); `None`
     /// for the actions-only fold (which never invokes warrant narrowing, so it
@@ -132,7 +192,7 @@ struct ChainFold {
 /// delegator lacking `Delegate`, or a root grant not from the asset owner).
 /// `Err` = a runtime-scope widen surfaced by `kx_warrant::intersect` (only
 /// possible when `owner_root` is `Some`).
-fn fold_chain(
+pub(crate) fn fold_chain(
     inner: &Inner,
     leaf: &GrantId,
     owner: Option<&PartyId>,
@@ -200,13 +260,83 @@ fn fold_chain(
     }))
 }
 
+// ---------------------------------------------------------------------------
+// Shared read folds (pub(crate)) — the in-memory AND the durable
+// `SqliteGrantLedger` trait impls call these over their respective `Inner`, so
+// the read semantics are ONE source of truth (no backend divergence).
+// ---------------------------------------------------------------------------
+
+/// The bound owner of `asset`, if any.
+pub(crate) fn read_owner_of(inner: &Inner, asset: &AssetRef) -> Option<PartyId> {
+    inner.bindings.get(asset).cloned()
+}
+
+/// The catalog actions `party` effectively holds on `asset` (the fail-closed
+/// chain-narrowed, revocation-honoring fold).
+pub(crate) fn read_effective_grants(
+    inner: &Inner,
+    party: &PartyId,
+    asset: &AssetRef,
+) -> EffectiveGrants {
+    let owner = inner.bindings.get(asset);
+    let Some(gids) = inner
+        .grants_by_grantee_asset
+        .get(&(party.clone(), asset.clone()))
+    else {
+        return EffectiveGrants::default();
+    };
+    let mut per_grant: Vec<(GrantId, CatalogActionSet)> = Vec::new();
+    for gid in gids {
+        // Actions-only fold (owner_root = None): never invokes warrant
+        // narrowing, so it cannot error — an Err is structurally impossible.
+        if let Ok(Some(cf)) = fold_chain(inner, gid, owner, None) {
+            if !cf.actions.is_empty() {
+                per_grant.push((*gid, cf.actions));
+            }
+        }
+    }
+    EffectiveGrants::from_parts(per_grant)
+}
+
+/// Every active grant chain `party` holds on `asset`, each bundling its actions
+/// with the runtime warrant folded against `owner_root`.
+pub(crate) fn read_effective_grant_warrants(
+    inner: &Inner,
+    party: &PartyId,
+    asset: &AssetRef,
+    owner_root: &WarrantSpec,
+) -> Result<Vec<GrantWarrant>, NarrowingError> {
+    let owner = inner.bindings.get(asset);
+    let Some(gids) = inner
+        .grants_by_grantee_asset
+        .get(&(party.clone(), asset.clone()))
+    else {
+        return Ok(Vec::new());
+    };
+    let mut out: Vec<GrantWarrant> = Vec::new();
+    for gid in gids {
+        if let Some(cf) = fold_chain(inner, gid, owner, Some(owner_root))? {
+            // owner_root is Some ⇒ the fold always yields Some(warrant).
+            if let (false, Some(w)) = (cf.actions.is_empty(), cf.warrant) {
+                out.push(GrantWarrant::new(*gid, cf.actions, w));
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// A snapshot of the append-only fact log (append order).
+pub(crate) fn snapshot_facts(inner: &Inner) -> Vec<LedgerFact> {
+    inner.facts.clone()
+}
+
 impl GrantLedger for InMemoryGrantLedger {
     fn append_binding(&self, binding: AssetBinding) -> Result<AppendOutcome, LedgerError> {
         let fact = LedgerFact::Bind(binding.clone());
         let fid = fact.fact_id();
         let mut guard = self.inner.write().expect("poisoned lock");
         // Owner conflict takes precedence: an asset has exactly one owner.
-        if let Some(existing) = guard.bindings.get(binding.asset()) {
+        if let Some(existing) = guard.owner_of_asset(binding.asset()) {
             if existing != binding.owner() {
                 return Err(LedgerError::OwnerConflict(format!(
                     "asset {} already bound to a different owner",
@@ -215,38 +345,22 @@ impl GrantLedger for InMemoryGrantLedger {
             }
             return Ok(AppendOutcome::AlreadyPresent(fid)); // same owner → idempotent
         }
-        let pos = guard.facts.len();
-        guard.facts.push(fact);
-        guard.by_id.insert(fid, pos);
-        guard
-            .bindings
-            .insert(binding.asset().clone(), binding.owner().clone());
+        guard.apply_fact(fact);
         Ok(AppendOutcome::Appended(fid))
     }
 
     fn append_grant(&self, grant: Grant) -> Result<AppendOutcome, LedgerError> {
-        let gid = grant.grant_id();
-        let grantee = grant.grantee().clone();
-        let asset = grant.asset().clone();
         let fact = LedgerFact::Grant(Box::new(grant));
         let fid = fact.fact_id();
         let mut guard = self.inner.write().expect("poisoned lock");
-        if let Some(&pos) = guard.by_id.get(&fid) {
-            return if guard.facts[pos] == fact {
+        if let Some(existing) = guard.contains_fact(&fid) {
+            return if *existing == fact {
                 Ok(AppendOutcome::AlreadyPresent(fid))
             } else {
                 Err(LedgerError::ImmutabilityConflict(fid.to_hex()))
             };
         }
-        let pos = guard.facts.len();
-        guard.facts.push(fact);
-        guard.by_id.insert(fid, pos);
-        guard.grants.insert(gid, pos);
-        guard
-            .grants_by_grantee_asset
-            .entry((grantee, asset))
-            .or_default()
-            .push(gid);
+        guard.apply_fact(fact);
         Ok(AppendOutcome::Appended(fid))
     }
 
@@ -254,55 +368,26 @@ impl GrantLedger for InMemoryGrantLedger {
         &self,
         revocation: crate::grant::Revocation,
     ) -> Result<AppendOutcome, LedgerError> {
-        let grant_id = revocation.grant_id();
-        let revoker = revocation.revoker().clone();
         let fact = LedgerFact::Revoke(revocation);
         let fid = fact.fact_id();
         let mut guard = self.inner.write().expect("poisoned lock");
-        if let Some(&pos) = guard.by_id.get(&fid) {
-            return if guard.facts[pos] == fact {
+        if let Some(existing) = guard.contains_fact(&fid) {
+            return if *existing == fact {
                 Ok(AppendOutcome::AlreadyPresent(fid))
             } else {
                 Err(LedgerError::ImmutabilityConflict(fid.to_hex()))
             };
         }
-        let pos = guard.facts.len();
-        guard.facts.push(fact);
-        guard.by_id.insert(fid, pos);
-        guard.revoked.entry(grant_id).or_default().insert(revoker);
+        guard.apply_fact(fact);
         Ok(AppendOutcome::Appended(fid))
     }
 
     fn owner_of(&self, asset: &AssetRef) -> Option<PartyId> {
-        self.inner
-            .read()
-            .expect("poisoned lock")
-            .bindings
-            .get(asset)
-            .cloned()
+        read_owner_of(&self.inner.read().expect("poisoned lock"), asset)
     }
 
     fn effective_grants(&self, party: &PartyId, asset: &AssetRef) -> EffectiveGrants {
-        let guard = self.inner.read().expect("poisoned lock");
-        let inner: &Inner = &guard;
-        let owner = inner.bindings.get(asset);
-        let Some(gids) = inner
-            .grants_by_grantee_asset
-            .get(&(party.clone(), asset.clone()))
-        else {
-            return EffectiveGrants::default();
-        };
-        let mut per_grant: Vec<(GrantId, CatalogActionSet)> = Vec::new();
-        for gid in gids {
-            // Actions-only fold (owner_root = None): never invokes warrant
-            // narrowing, so it cannot error — an Err is structurally impossible.
-            if let Ok(Some(cf)) = fold_chain(inner, gid, owner, None) {
-                if !cf.actions.is_empty() {
-                    per_grant.push((*gid, cf.actions));
-                }
-            }
-        }
-        EffectiveGrants::from_parts(per_grant)
+        read_effective_grants(&self.inner.read().expect("poisoned lock"), party, asset)
     }
 
     fn effective_grant_warrants(
@@ -311,31 +396,16 @@ impl GrantLedger for InMemoryGrantLedger {
         asset: &AssetRef,
         owner_root: &WarrantSpec,
     ) -> Result<Vec<GrantWarrant>, NarrowingError> {
-        let guard = self.inner.read().expect("poisoned lock");
-        let inner: &Inner = &guard;
-        let owner = inner.bindings.get(asset);
-        let Some(gids) = inner
-            .grants_by_grantee_asset
-            .get(&(party.clone(), asset.clone()))
-        else {
-            return Ok(Vec::new());
-        };
-        let mut out: Vec<GrantWarrant> = Vec::new();
-        for gid in gids {
-            if let Some(cf) = fold_chain(inner, gid, owner, Some(owner_root))? {
-                // owner_root is Some ⇒ the fold always yields Some(warrant).
-                if let (false, Some(w)) = (cf.actions.is_empty(), cf.warrant) {
-                    out.push(GrantWarrant::new(*gid, cf.actions, w));
-                }
-            }
-        }
-        Ok(out)
+        read_effective_grant_warrants(
+            &self.inner.read().expect("poisoned lock"),
+            party,
+            asset,
+            owner_root,
+        )
     }
 
     fn list_facts<'a>(&'a self) -> Box<dyn Iterator<Item = LedgerFact> + 'a> {
-        let guard = self.inner.read().expect("poisoned lock");
-        // Snapshot under the read lock (append order), then release before iterating.
-        let facts: Vec<LedgerFact> = guard.facts.clone();
+        let facts = snapshot_facts(&self.inner.read().expect("poisoned lock"));
         Box::new(facts.into_iter())
     }
 

@@ -52,6 +52,11 @@ pub enum CatalogError {
     /// overwrite a registered fact. Carries the conflicting hash (hex).
     #[error("immutable catalog conflict at task_signature_hash {0}")]
     ImmutabilityConflict(String),
+    /// A durable-backend storage failure (SQLite I/O, a corrupt row, or a
+    /// schema-version mismatch on open). Owned `String` (not `#[from]
+    /// rusqlite::Error`) so the enum stays `Clone + PartialEq + Eq`.
+    #[error("catalog storage error: {0}")]
+    Storage(String),
 }
 
 /// The catalog seam — backend-agnostic (in-memory now; SQLite / cloud later

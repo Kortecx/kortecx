@@ -52,9 +52,19 @@ serde       = { workspace = true }
 thiserror   = { workspace = true }
 # Registration observability (debug-level only; never on the truth path).
 tracing     = { workspace = true }
+# G1 (D94) — durable SQLite backends for the registry/grant/version/body ledgers
+# (the same `bundled` static SQLite kx-journal uses). The catalog is OFF the
+# guarantee path, so adding rusqlite here adds no spine→catalog edge (the wall
+# holds). Always compiled (no feature flag) ⇒ `cargo test --workspace` covers it.
+rusqlite    = { workspace = true }
 
 [dev-dependencies]
 proptest = { workspace = true }
+# Durability tests: write → drop handle → reopen a temp-file-backed ledger.
+tempfile = { workspace = true }
+# Atomicity-under-panic + schema-mismatch tests forge/corrupt rows via a raw
+# connection (integration tests don't inherit the lib's normal deps).
+rusqlite = { workspace = true }
 
 [lints]
 workspace = true

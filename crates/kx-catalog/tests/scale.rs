@@ -672,3 +672,43 @@ fn advertisement_generation_stays_sublinear() {
 
     assert_sublinear("advertisement-generation", &series);
 }
+
+/// G1 (D94): the durable grant ledger's append stays sub-linear (an indexed
+/// `INSERT` + the same `BTreeMap` index update), and a reopen-rebuild survives
+/// at scale. Proves durability adds no accidental super-linear path.
+#[test]
+#[ignore = "scale-smoke: run with --release --ignored --nocapture --test-threads=1"]
+fn durable_grant_append_and_reopen_stay_sublinear() {
+    fn grant_at(i: usize) -> Grant {
+        let asset = AssetRef::Path(AssetPath::new("acme", "scale", format!("r{i}")).unwrap());
+        Grant::root(
+            asset,
+            PartyId::new("admin@acme"),
+            PartyId::new(format!("u{i}")),
+            CatalogActionSet::allow([CatalogAction::Use]),
+            role_calls(10),
+        )
+    }
+
+    let mut append_series: Vec<(usize, f64)> = Vec::new();
+    for &n in SIZES {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let path = tmp.path().to_owned();
+        {
+            let ledger = kx_catalog::SqliteGrantLedger::open(&path).unwrap();
+            let start = Instant::now();
+            for i in 0..n {
+                ledger.append_grant(grant_at(i)).unwrap();
+            }
+            #[allow(clippy::cast_precision_loss)]
+            let per = start.elapsed().as_secs_f64() / n as f64;
+            println!("durable-grant-append: n={n} per_op={per:.3e}s");
+            append_series.push((n, per));
+            assert_eq!(ledger.len(), n);
+        } // drop the handle → flush.
+          // The reopen-rebuild (one `ORDER BY seq` scan + fold) survives at scale.
+        let reopened = kx_catalog::SqliteGrantLedger::open(&path).unwrap();
+        assert_eq!(reopened.len(), n, "all facts survive reopen at scale");
+    }
+    assert_sublinear("durable grant append (per-op)", &append_series);
+}

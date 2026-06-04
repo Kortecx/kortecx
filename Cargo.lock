@@ -1038,8 +1038,10 @@ dependencies = [
  "kx-warrant",
  "kx-workflow",
  "proptest",
+ "rusqlite",
  "serde",
  "smallvec",
+ "tempfile",
  "thiserror",
  "tracing",
 ]
@@ -1604,6 +1606,7 @@ dependencies = [
 name = "kx-workflow"
 version = "0.0.1"
 dependencies = [
+ "bincode",
  "blake3",
  "kx-content",
  "kx-critic-types",

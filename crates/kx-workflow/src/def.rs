@@ -15,6 +15,7 @@ use kx_mote::{
     MoteGraph, NdClass, PromptTemplateHash, ToolName, ToolVersion,
 };
 use kx_warrant::WarrantSpec;
+use serde::{Deserialize, Serialize};
 
 /// An opaque handle to a step within one [`WorkflowDef`].
 ///
@@ -22,7 +23,7 @@ use kx_warrant::WarrantSpec;
 /// `StepRef` cannot be forged or dangle within the workflow that created it.
 /// (Mixing a `StepRef` across two different `WorkflowDef`s is the one misuse the
 /// type cannot prevent; [`crate::compile`] still range-checks every index.)
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct StepRef(pub(crate) usize);
 
 impl StepRef {
@@ -40,7 +41,7 @@ impl StepRef {
 /// Modelled as an enum so the critic/shaper mutual exclusion (executor refusal
 /// R-8: a Mote may not be both a critic and a topology shaper) is
 /// *unrepresentable* — a step is exactly one of these.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum StepRole {
     /// An ordinary producer step. `critic_for = None`, `is_topology_shaper = false`.
     Plain,
@@ -82,7 +83,7 @@ pub enum StepRole {
 /// [`kx_mote::MoteDef`] EXCEPT the per-instance position (`graph_position`) and
 /// committed-input identity (`input_data_id`), which [`crate::compile`] derives
 /// from the DAG. Carries the `warrant` + `capability` through to submission.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StepDef {
     /// Hash of the compiled artifact backing this step's logic.
     pub logic_ref: LogicRef,
@@ -111,7 +112,7 @@ pub struct StepDef {
 
 /// A declared directed dependency edge (`parent` → `child`) carrying
 /// [`kx_mote::EdgeMeta`] (Data / Control, cascade semantics).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StepEdge {
     /// The upstream step.
     pub parent: StepRef,
@@ -127,7 +128,7 @@ pub struct StepEdge {
 /// `graph_position` and entrypoint `input_data_id`). Build one with
 /// [`WorkflowDef::new`], [`WorkflowDef::add_step`], and [`WorkflowDef::add_edge`],
 /// then [`crate::compile`] it.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkflowDef {
     pub(crate) steps: Vec<StepDef>,
     pub(crate) edges: Vec<StepEdge>,
