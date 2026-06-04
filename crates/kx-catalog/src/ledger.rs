@@ -191,6 +191,11 @@ pub enum LedgerError {
     /// owner; re-binding to a new owner is refused (the binding is genesis).
     #[error("asset ownership conflict: {0}")]
     OwnerConflict(String),
+    /// A durable-backend storage failure (SQLite I/O, a corrupt row, or a
+    /// schema-version mismatch on open). Owned `String` so the enum stays
+    /// `Clone + PartialEq + Eq`.
+    #[error("grant-ledger storage error: {0}")]
+    Storage(String),
 }
 
 /// One active grant chain a party holds on an asset, paired with the catalog

@@ -110,6 +110,11 @@ mod party;
 mod path;
 mod registry;
 mod signature;
+mod sqlite_body_ledger;
+mod sqlite_catalog;
+mod sqlite_grant_ledger;
+mod sqlite_util;
+mod sqlite_version_ledger;
 mod version;
 mod version_ledger;
 
@@ -159,6 +164,16 @@ pub use advertise::{
 // M8 (D121) — content-addressed recipe-BODY storage: turns "advertised" into
 // "servable" by resolving the executable WorkflowDef a published recipe runs.
 pub use body::{body_manifest_id, BodyLedger, BodyLedgerError, BodyOutcome, InMemoryBodyLedger};
+
+// G1 (D94) — durable SQLite backends behind the EXISTING ledger traits: catalog
+// (recipes/grants/versions/bodies) survives a process restart. Each is a second
+// impl of its trait (the in-memory ones stay); the durable+in-memory pair is the
+// "backend-agnostic" discipline (as SqliteJournal/InMemoryJournal). OFF the
+// guarantee path — adding rusqlite here is no spine→catalog edge (the wall holds).
+pub use sqlite_body_ledger::{SqliteBodyLedger, BODY_LEDGER_SCHEMA_VERSION};
+pub use sqlite_catalog::{SqliteCatalog, CATALOG_SCHEMA_VERSION};
+pub use sqlite_grant_ledger::{SqliteGrantLedger, GRANT_LEDGER_SCHEMA_VERSION};
+pub use sqlite_version_ledger::{SqliteVersionLedger, VERSION_LEDGER_SCHEMA_VERSION};
 // The M5.3 closed, no-float typed-arg schema, re-exported so an advertisement's
 // `input_schema` is one import surface (the SAME schema M8's `validate_args` uses).
 pub use kx_tool_registry::{validate_args, InputSchema, ParamSpec, ParamType, SchemaError};

@@ -64,6 +64,17 @@ pub trait DiscoveryIndex {
     /// `O(log n + result)`.
     fn by_path_prefix(&self, prefix: &str) -> Vec<AssetRef>;
 
+    /// Repopulate this index by replaying every published handle from a version
+    /// ledger, so discovery survives a restart by rebuilding from the durable
+    /// truth (G1 / D94). Idempotent ([`DiscoveryIndex::index_path`] is); ADVISORY —
+    /// a partial rebuild only degrades discoverability, never gates (a discovery
+    /// miss can't reach a committed selection: fuzzy-in / exact-out, SN-8 / D87).
+    fn rebuild_from_versions(&self, ledger: &dyn crate::VersionLedger) {
+        for version in ledger.list_versions() {
+            self.index_path(version.handle());
+        }
+    }
+
     /// Number of indexed paths.
     fn len(&self) -> usize;
 

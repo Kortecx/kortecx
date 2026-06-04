@@ -98,6 +98,11 @@ pub enum VersionLedgerError {
         /// Why the lineage was refused.
         reason: String,
     },
+    /// A durable-backend storage failure (SQLite I/O, a corrupt row, or a
+    /// schema-version mismatch on open). Owned `String` so the enum stays
+    /// `Clone + PartialEq + Eq`.
+    #[error("version-ledger storage error: {0}")]
+    Storage(String),
 }
 
 /// The backend-agnostic content-versioning + lineage ledger.

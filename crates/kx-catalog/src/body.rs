@@ -31,6 +31,10 @@ pub enum BodyLedgerError {
     /// A DIFFERENT body is already published under the same recipe identity.
     #[error("a different body is already published for recipe {0} (immutability)")]
     ImmutabilityConflict(String),
+    /// A durable-backend storage failure (SQLite I/O, a corrupt row, or a
+    /// schema-version mismatch / content-verification failure on open).
+    #[error("body-ledger storage error: {0}")]
+    Storage(String),
 }
 
 /// The outcome of publishing a recipe body.
