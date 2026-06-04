@@ -17,11 +17,14 @@
 // model). The owner thread loads each model once, keyed by its
 // `kx_model_store` `identity_digest`, and reuses it. A small LRU bounds RAM.
 //
-// MULTI-MODAL (PR-2): an image dispatch carries already-resolved image bytes +
-// the projector (`mmproj`) path. The owner thread reuses the cached base model
-// but (PR-2) re-creates the `Mtmd` projector context per dispatch — the base
-// model cache (the PR-1 win) is preserved; the projector reload is *measured*
-// via `mmproj_loads` and eliminated in the PR-2.5 projector-cache follow-up.
+// MULTI-MODAL (PR-2 → PR-2.5): an image dispatch carries already-resolved image
+// bytes + the projector (`mmproj`) path. The owner thread caches each loaded
+// model together with its projector in a `ModelWithProjector` bundle, so the
+// projector (`Mtmd`) — like the base model — is loaded ONCE per distinct
+// model+projector and reused across dispatches (PR-2.5). `mmproj_loads` counts
+// only those cold projector loads; a per-dispatch rise would mean the projector
+// cache regressed. (PR-2 reloaded the projector on every image dispatch and
+// merely *measured* it via the same counter.)
 //
 // CONCURRENCY: dispatch is serialized by the single owner thread — exactly the
 // discipline `kx-llamacpp` mandates ("never `&Context` from two threads").
@@ -36,8 +39,8 @@ use std::time::{Duration, Instant};
 
 use kx_content::ContentRef;
 use kx_llamacpp::{
-    Bitmap, Context, ContextParams, Generator, LlamaBackend, LlamaError, Model, Mtmd, Sampler,
-    Vocab,
+    Bitmap, Context, ContextParams, Generator, LlamaBackend, LlamaError, Model, ModelWithProjector,
+    Mtmd, Sampler, Vocab,
 };
 use kx_mote::{InferenceParams, ModelId};
 use smallvec::SmallVec;
@@ -101,10 +104,10 @@ pub(crate) struct ModelCache {
     /// Number of cold `Model::load`s performed — the observable proof that a
     /// cache hit did NOT reload (and the ops metric for "the reload is gone").
     loads: Arc<AtomicU64>,
-    /// Number of `Mtmd` projector loads performed. In PR-2 this increments once
-    /// per image dispatch (the projector is re-created each time); the PR-2.5
-    /// projector cache will make it increment once per distinct model. Exposed
-    /// as the measured signal that justifies that follow-up.
+    /// Number of cold `Mtmd` projector loads performed. With the PR-2.5
+    /// projector cache this increments once per distinct model+projector (the
+    /// bundle loads it on the first image dispatch, then reuses it); a rise on
+    /// every image dispatch would mean the projector cache regressed.
     mmproj_loads: Arc<AtomicU64>,
 }
 
@@ -199,10 +202,12 @@ fn owner_loop(rx: &Receiver<Job>, capacity: usize, loads: &AtomicU64, mmproj_loa
         }
     };
 
-    // LRU of loaded models. Each `Model<'_>` borrows `backend`; both are locals
-    // of this function, so the borrow is valid for the whole loop and `lru` is
-    // dropped before `backend`.
-    let mut lru: Vec<(ContentRef, Model<'_>)> = Vec::with_capacity(capacity);
+    // LRU of loaded models, each bundled with its (lazily-loaded) projector.
+    // Every `ModelWithProjector<'_>` borrows `backend`; both are locals of this
+    // function, so the borrow is valid for the whole loop and `lru` is dropped
+    // before `backend`. Within a bundle the projector is dropped before its
+    // model (declaration order); across the `lru`, eviction drops a whole bundle.
+    let mut lru: Vec<(ContentRef, ModelWithProjector<'_>)> = Vec::with_capacity(capacity);
 
     while let Ok(job) = rx.recv() {
         let result = run_job(&backend, &mut lru, capacity, loads, mmproj_loads, &job);
@@ -211,10 +216,11 @@ fn owner_loop(rx: &Receiver<Job>, capacity: usize, loads: &AtomicU64, mmproj_loa
     }
 }
 
-/// Resolve-or-load the model, then run (multi-modal or text) generation.
+/// Resolve-or-load the model (+ its cached projector), then run (multi-modal or
+/// text) generation.
 fn run_job<'b>(
     backend: &'b LlamaBackend,
-    lru: &mut Vec<(ContentRef, Model<'b>)>,
+    lru: &mut Vec<(ContentRef, ModelWithProjector<'b>)>,
     capacity: usize,
     loads: &AtomicU64,
     mmproj_loads: &AtomicU64,
@@ -222,12 +228,12 @@ fn run_job<'b>(
 ) -> Result<InferenceOutput, InferenceError> {
     let start = Instant::now();
     let timeout = Duration::from_millis(job.wall_clock_ms);
-    let model = get_or_load(backend, lru, capacity, loads, job.identity, &job.path)
+    let entry = get_or_load(backend, lru, capacity, loads, job.identity, &job.path)
         .map_err(map_llama_err)?;
     check_timeout(start.elapsed(), timeout, job.wall_clock_ms)?;
 
     let (bytes, output_tokens) = if job.images.is_empty() {
-        generate(backend, model, job, start, timeout)?
+        generate(backend, entry.model(), job, start, timeout)?
     } else {
         let mmproj = job
             .mmproj_path
@@ -235,7 +241,7 @@ fn run_job<'b>(
             .ok_or(InferenceError::Unsupported {
                 reason: "multimodal job is missing its projector (mmproj) path",
             })?;
-        generate_multimodal(backend, model, mmproj, mmproj_loads, job, start, timeout)?
+        generate_multimodal(backend, entry, mmproj, mmproj_loads, job, start, timeout)?
     };
     Ok(InferenceOutput {
         bytes,
@@ -246,33 +252,37 @@ fn run_job<'b>(
     })
 }
 
-/// Return a reference to the cached model for `identity`, loading + inserting it
-/// (and evicting the LRU front at capacity) on a miss. By construction the
-/// wanted model is the last LRU entry on return.
+/// Return a mutable reference to the cached model bundle for `identity`,
+/// loading and inserting it (evicting the LRU front at capacity) on a miss. By
+/// construction the wanted bundle is the last LRU entry on return.
+///
+/// The reference is `&mut` so the multi-modal path can lazily load and cache the
+/// projector via `ensure_projector`; the text path only reads `model()`.
 fn get_or_load<'a, 'b>(
     backend: &'b LlamaBackend,
-    lru: &'a mut Vec<(ContentRef, Model<'b>)>,
+    lru: &'a mut Vec<(ContentRef, ModelWithProjector<'b>)>,
     capacity: usize,
     loads: &AtomicU64,
     identity: ContentRef,
     path: &Path,
-) -> Result<&'a Model<'b>, LlamaError> {
+) -> Result<&'a mut ModelWithProjector<'b>, LlamaError> {
     if let Some(pos) = lru.iter().position(|(id, _)| *id == identity) {
-        // Hit: move to the most-recently-used end.
+        // Hit: move to the most-recently-used end (keeps the cached projector).
         let entry = lru.remove(pos);
         lru.push(entry);
     } else {
-        // Miss: evict LRU front if full, then load + insert.
+        // Miss: evict LRU front if full (dropping its projector then model),
+        // then load + insert. The projector is loaded lazily on first image use.
         if lru.len() >= capacity {
             let _evicted = lru.remove(0);
         }
         let model = Model::load(backend, path)?;
         loads.fetch_add(1, Ordering::Relaxed);
-        lru.push((identity, model));
+        lru.push((identity, ModelWithProjector::new(model)));
     }
     // Non-empty by construction (a hit re-pushes; a miss pushes).
     let idx = lru.len() - 1;
-    Ok(&lru[idx].1)
+    Ok(&mut lru[idx].1)
 }
 
 /// Build the sampler for `params` (greedy when `temperature_bps == 0`, else
@@ -352,31 +362,39 @@ fn generate(
     run_generation(generator, &vocab, job, start, timeout)
 }
 
-/// The multi-modal (image) generation path: load the projector, decode the
+/// The multi-modal (image) generation path: ensure the projector is resident
+/// (loaded once per model+projector, then cached on the bundle), decode the
 /// images into bitmaps (fail-closed), splice them in at the media markers,
 /// run the mtmd prefill, then emit tokens with the SAME sampler + generation
 /// loop as the text path.
 fn generate_multimodal(
     backend: &LlamaBackend,
-    model: &Model<'_>,
+    entry: &mut ModelWithProjector<'_>,
     mmproj: &Path,
     mmproj_loads: &AtomicU64,
     job: &Job,
     start: Instant,
     timeout: Duration,
 ) -> Result<(Vec<u8>, u32), InferenceError> {
-    // A larger batch so a single high-token image does not overflow the decode.
-    let ctx_params = ContextParams::new()
-        .with_n_ctx(job.n_ctx)
-        .with_n_batch(MULTIMODAL_N_BATCH)
-        .with_n_ubatch(MULTIMODAL_N_UBATCH);
-    let mut ctx = Context::new_with_params(model, &ctx_params).map_err(map_llama_err)?;
-    let n_batch = i32::try_from(ctx.n_batch()).unwrap_or(i32::MAX);
-
-    // Load the projector. PR-2: per-dispatch (measured via `mmproj_loads`);
-    // PR-2.5 caches it on this owner thread.
-    let mtmd = Mtmd::from_file(model, mmproj, 0, true).map_err(map_llama_err)?;
-    mmproj_loads.fetch_add(1, Ordering::Relaxed);
+    // Ensure the projector is resident. PR-2.5: loaded ONCE per model+projector
+    // and cached on the bundle (the heavyweight `mtmd_init_from_file` +
+    // GPU upload). `mmproj_loads` rises only on a real (re)load — the measured
+    // proof that the per-dispatch reload is gone.
+    if entry
+        .ensure_projector(mmproj, 0, true)
+        .map_err(map_llama_err)?
+    {
+        mmproj_loads.fetch_add(1, Ordering::Relaxed);
+    }
+    // `ensure_projector` returned `Ok`, so a projector is resident; the `None`
+    // arm is unreachable. Surface it as a typed backend failure (never a panic)
+    // rather than `expect`, keeping the dispatch path fail-closed.
+    let mtmd = entry
+        .projector()
+        .ok_or_else(|| InferenceError::BackendFailure {
+            backend: BACKEND_NAME,
+            message: "projector not resident after ensure_projector returned Ok".to_string(),
+        })?;
     // Defense-in-depth beyond the descriptor's declared modality: the loaded
     // projector itself must accept images.
     if !mtmd.supports_vision() {
@@ -386,12 +404,21 @@ fn generate_multimodal(
     }
     check_timeout(start.elapsed(), timeout, job.wall_clock_ms)?;
 
+    // A larger batch so a single high-token image does not overflow the decode.
+    let model = entry.model();
+    let ctx_params = ContextParams::new()
+        .with_n_ctx(job.n_ctx)
+        .with_n_batch(MULTIMODAL_N_BATCH)
+        .with_n_ubatch(MULTIMODAL_N_UBATCH);
+    let mut ctx = Context::new_with_params(model, &ctx_params).map_err(map_llama_err)?;
+    let n_batch = i32::try_from(ctx.n_batch()).unwrap_or(i32::MAX);
+
     // Decode each image (untrusted bytes → stb). A decode failure is a typed
     // error, never a panic.
     let bitmaps: Vec<Bitmap> = job
         .images
         .iter()
-        .map(|bytes| Bitmap::from_image_buf(&mtmd, bytes))
+        .map(|bytes| Bitmap::from_image_buf(mtmd, bytes))
         .collect::<Result<_, _>>()
         .map_err(map_llama_err)?;
     let bitmap_refs: Vec<&Bitmap> = bitmaps.iter().collect();

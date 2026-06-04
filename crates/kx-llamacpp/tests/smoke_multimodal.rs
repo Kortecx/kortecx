@@ -19,7 +19,8 @@
 #![cfg(feature = "model-smoke-test-multimodal")]
 
 use kx_llamacpp::{
-    Bitmap, Context, ContextParams, Generator, LlamaBackend, LlamaError, Model, Mtmd, Sampler,
+    Bitmap, Context, ContextParams, Generator, LlamaBackend, LlamaError, Model, ModelWithProjector,
+    Mtmd, Sampler,
 };
 
 const VLM_GGUF: &str = env!(
@@ -161,5 +162,79 @@ fn smoke_projector_capabilities() {
     assert!(
         !mtmd.supports_audio(),
         "an image projector must not claim audio support"
+    );
+}
+
+/// PR-2.5: the projector is cached on a `ModelWithProjector` bundle —
+/// `ensure_projector` performs the cold load once and reports a HIT (no reload)
+/// on the second call with the same path, and inference still runs through the
+/// cached projector. This is the wrapper-level proof behind the backend's
+/// `mmproj_loads` metric (which counts exactly these cold loads); it also
+/// exercises the self-referential bundle (cached `Mtmd<'b,'b>` used with a
+/// per-dispatch `Context`) against a real model.
+#[test]
+fn smoke_cached_projector_loads_once_and_serves() {
+    let backend = LlamaBackend::new().expect("backend init");
+    let model = Model::load(&backend, VLM_GGUF).expect("load VLM gguf");
+    let mut bundle = ModelWithProjector::new(model);
+    let mmproj = std::path::Path::new(VLM_MMPROJ);
+
+    // First ensure: a cold projector load.
+    assert!(
+        bundle
+            .ensure_projector(mmproj, 0, true)
+            .expect("cold-load projector"),
+        "first ensure_projector must perform a cold load"
+    );
+    // Second ensure (same path): a cache HIT — no reload.
+    assert!(
+        !bundle
+            .ensure_projector(mmproj, 0, true)
+            .expect("ensure projector"),
+        "second ensure_projector with the same path must be a cache HIT (no reload)"
+    );
+
+    let mtmd = bundle.projector().expect("projector resident after ensure");
+    assert!(
+        mtmd.supports_vision(),
+        "the cached projector must support vision"
+    );
+
+    // The cached projector still drives a real prefill + generation.
+    let bitmap = Bitmap::from_image_buf(mtmd, RED_SQUARE_PNG).expect("decode the test PNG");
+    let chunks = mtmd
+        .tokenize(&prompt_with_image("What color is the shape?"), &[&bitmap])
+        .expect("tokenize text + image into chunks");
+    let mut ctx = Context::new_with_params(
+        bundle.model(),
+        &ContextParams::new()
+            .with_n_ctx(N_CTX)
+            .with_n_batch(N_BATCH)
+            .with_n_ubatch(N_UBATCH)
+            .with_n_seq_max(1),
+    )
+    .expect("context");
+    let n_batch = ctx.n_batch() as i32;
+    let n_past = mtmd
+        .eval_chunks(&mut ctx, &chunks, 0, 0, n_batch, true)
+        .expect("prefill through the cached projector");
+    assert!(n_past > 0, "prefill must advance n_past past zero");
+
+    let vocab = bundle.model().vocab();
+    let mut sampler = Sampler::greedy(&backend).expect("greedy");
+    let gen = Generator::from_prefilled(&mut ctx, &mut sampler, &vocab, n_past);
+    let mut bytes: Vec<u8> = Vec::new();
+    for tok in gen.take(16) {
+        let tok = tok.expect("token");
+        if tok.is_eog(&vocab) {
+            break;
+        }
+        vocab
+            .token_to_piece_into(tok, 0, false, &mut bytes)
+            .expect("detokenize");
+    }
+    assert!(
+        !String::from_utf8_lossy(&bytes).trim().is_empty(),
+        "generation through the cached projector must be non-empty"
     );
 }

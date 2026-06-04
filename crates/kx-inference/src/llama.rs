@@ -196,11 +196,12 @@ impl LlamaInferenceBackend {
         self.cache.get().map_or(0, ModelCache::loads)
     }
 
-    /// Number of multi-modal projector (`mmproj`) loads performed so far. In
-    /// PR-2 this rises once per image dispatch (the projector is re-created each
-    /// time, the base model stays cached); the PR-2.5 projector cache will make
-    /// it rise once per distinct model. The measured signal that justifies that
-    /// follow-up — never a claimed figure.
+    /// Number of cold multi-modal projector (`mmproj`) loads performed so far.
+    /// With the PR-2.5 projector cache this rises once per distinct
+    /// model+projector — the bundle loads the projector on the first image
+    /// dispatch and reuses it thereafter (the base model stays cached too). A
+    /// rise on *every* image dispatch would mean the projector cache regressed;
+    /// the measured signal, never a claimed figure.
     #[must_use]
     pub fn mmproj_loads_performed(&self) -> u64 {
         self.cache.get().map_or(0, ModelCache::mmproj_loads)
