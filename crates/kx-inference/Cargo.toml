@@ -19,11 +19,30 @@ kx-model-validator   = { workspace = true }
 kx-memoizer          = { workspace = true }
 kx-projection        = { workspace = true }
 kx-context-assembler = { workspace = true }
-kx-llamacpp          = { workspace = true }
+# The in-process llama.cpp backend is the ONLY part of this crate that needs the
+# native FFI (C++ toolchain + CMake + the kx-llamacpp-sys submodule). It is an
+# OPTIONAL dependency behind the `llamacpp` feature so a consumer can use the
+# `Dispatcher` + `InferenceBackend` trait (bring-your-own backend) with NO native
+# toolchain. See the [features] section below.
+kx-llamacpp          = { workspace = true, optional = true }
 serde                = { workspace = true }
 thiserror            = { workspace = true }
 tracing              = { workspace = true }
 smallvec             = { workspace = true }
+
+[features]
+# `llamacpp` (DEFAULT-ON, preserves existing behavior): compile the in-process
+# `LlamaInferenceBackend` and pull the kx-llamacpp FFI. Turning it OFF
+# (`default-features = false`) drops the native build entirely — the dispatcher,
+# the `InferenceBackend` trait, and the inference types remain, so a downstream
+# crate can bind its own backend and build/install with no C++ toolchain. The
+# runtime takes exactly this path: the workspace sets `default-features = false`
+# for kx-inference (root Cargo.toml [workspace.dependencies]), so
+# `cargo install kx-runtime` needs no native build. `cargo {build,test}
+# --workspace` keep the FFI ON because kx-model-harness (the only consumer of the
+# concrete backend) opts back in with `features = ["llamacpp"]`.
+default  = ["llamacpp"]
+llamacpp = ["dep:kx-llamacpp"]
 
 [dev-dependencies]
 kx-journal         = { workspace = true }

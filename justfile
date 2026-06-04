@@ -21,7 +21,7 @@ check: fmt-check clippy test
 # Exact mirror of the CI workflow's gates (in dependency order). Runs every
 # job .github/workflows/ci.yml runs in parallel, here sequentially. Modify
 # this recipe in lock-step with ci.yml.
-ci: fmt-check clippy test deny doc ffi-link check-reproducible scale-smoke
+ci: fmt-check clippy test deny doc ffi-link build-no-inference check-reproducible scale-smoke
 
 # Verify code is formatted per rustfmt.toml. Fails on any drift.
 fmt-check:
@@ -70,6 +70,27 @@ deny:
 ffi-link:
     cargo build -p kx-llamacpp-sys --release
     cargo build -p kx-llamacpp --release
+
+# Prove the runtime installs/builds with NO native FFI in its dependency closure
+# (no C++ toolchain, no llama.cpp submodule). Step 1.1 of the OSS Adoption & Trust
+# track: `cargo install kx-runtime` must not require a C++ build. Asserts
+# kx-llamacpp{,-sys} is absent from the runtime's normal dependency tree, then
+# builds the runtime + the feature-off inference lib (the bring-your-own-backend
+# path). CI runs this on a runner WITHOUT a C++ toolchain or submodule, so a
+# regression that leaks the FFI back into the runtime closure fails loudly.
+build-no-inference:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "Asserting kx-runtime's dependency closure is FFI-free..."
+    if cargo tree -p kx-runtime -e normal | grep -qE 'kx-llamacpp'; then
+        echo " ✗ FAIL: kx-llamacpp is in kx-runtime's dependency closure (the FFI leaked into the runtime)"
+        cargo tree -p kx-runtime -e normal | grep -E 'kx-llamacpp' || true
+        exit 1
+    fi
+    echo " ✓ no kx-llamacpp in kx-runtime closure"
+    cargo build -p kx-runtime
+    cargo build -p kx-inference --no-default-features
+    echo " ✓ build-no-inference: PASS"
 
 # Byte-determinism check (I1.c). Two consecutive release builds must produce
 # bit-identical artifacts. Failure indicates the build is nondeterministic and

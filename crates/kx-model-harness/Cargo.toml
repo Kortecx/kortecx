@@ -16,7 +16,12 @@ kx-projection.workspace = true
 kx-executor.workspace = true
 kx-capability.workspace = true
 kx-warrant.workspace = true
-kx-inference.workspace = true
+# The harness is the only crate that constructs the concrete in-process
+# `LlamaInferenceBackend`, so it opts back into the FFI (the workspace default is
+# `default-features = false` / no llama.cpp, to keep `cargo install kx-runtime`
+# toolchain-free). This is what keeps `cargo {build,test} --workspace` exercising
+# the real model path.
+kx-inference = { workspace = true, features = ["llamacpp"] }
 kx-context-assembler.workspace = true
 kx-tool-registry.workspace = true
 kx-memoizer.workspace = true

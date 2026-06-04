@@ -101,7 +101,14 @@ kx-tool-registry     = { path = "crates/kx-tool-registry",     version = "0.0.1"
 kx-context-assembler = { path = "crates/kx-context-assembler", version = "0.0.1" }
 kx-memoizer          = { path = "crates/kx-memoizer",          version = "0.0.1" }
 kx-normalizer        = { path = "crates/kx-normalizer",        version = "0.0.1" }
-kx-inference         = { path = "crates/kx-inference",         version = "0.0.1" }
+# `default-features = false` (no llama.cpp FFI) is the WORKSPACE default for every
+# crate that depends on kx-inference, so the runtime's closure builds with no C++
+# toolchain (`cargo install kx-runtime`). It must live here, not on a member edge —
+# Cargo ignores member-level `default-features` on an inherited workspace dep. The
+# one crate that needs the in-process backend, kx-model-harness, opts back in with
+# `features = ["llamacpp"]`. kx-inference's own `default = ["llamacpp"]` keeps its
+# own build/test/doctests on the FFI when it is itself the target.
+kx-inference         = { path = "crates/kx-inference",         version = "0.0.1", default-features = false }
 kx-capability        = { path = "crates/kx-capability",        version = "0.0.1" }
 kx-executor          = { path = "crates/kx-executor",          version = "0.0.1" }
 kx-scheduler         = { path = "crates/kx-scheduler",         version = "0.0.1" }
