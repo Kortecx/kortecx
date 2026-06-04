@@ -18,8 +18,14 @@ path = "src/lib.rs"
 kx-mote     = { workspace = true }
 # ManifestId — the recipe-as-product identity a SignatureEntry pins.
 kx-workflow = { workspace = true }
-# DatasetId — the optional pinned corpus on a RecipeSnapshot.
+# DatasetId — the optional pinned corpus on a RecipeSnapshot. M7.3 also consumes
+# its RetrievalIndex/Hit similarity seam (SN-8-confined fuzzy discovery, D87).
 kx-dataset  = { workspace = true }
+# ContentRef — the content-addressed identity of an M7.3 SelectionFact (the
+# exact-out artifact of fuzzy-in/exact-out discovery, D87). A foundational
+# primitive (already transitive via kx-dataset); strictly BELOW the SN-8 wall
+# (kx-content cannot depend on kx-catalog), so the dependency direction holds.
+kx-content  = { workspace = true }
 # Role / WarrantSpec / intersect / NarrowingError (M7.2, D86): a grant's runtime
 # scope REUSES the frozen monotonic-narrowing seam verbatim — the catalog never
 # re-implements narrowing and never modifies kx-warrant. This is a dependency ON

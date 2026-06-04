@@ -476,3 +476,111 @@ fn version_chains_publish_resolve_history_stay_sublinear() {
     assert_sublinear("version-chains-resolve", &resolve_ns);
     assert_sublinear("version-chains-history", &history_ns);
 }
+
+/// M7.3 (D87): exact discovery by namespace / collection stays `O(log n + result)`
+/// — NOT an O(n) `list` scan. Each namespace holds a CONSTANT number of entries
+/// (`PER_NS`) and the namespace COUNT grows with `n`, so every query returns a
+/// fixed-size result and the measured cost isolates the `O(log n)` range-scan seek.
+/// A full-table scan would be ~25× at 25k vs 1k; the index keeps it flat.
+#[test]
+#[ignore = "scale-smoke: run with --release --ignored --nocapture --test-threads=1"]
+fn discovery_exact_lookup_stays_sublinear() {
+    use kx_catalog::{DiscoveryIndex, InMemoryDiscoveryIndex};
+
+    const PER_NS: usize = 4; // constant result size per namespace
+    let mut by_ns: Vec<(usize, f64)> = Vec::new();
+    let mut by_col: Vec<(usize, f64)> = Vec::new();
+
+    for &n in SIZES {
+        let index = InMemoryDiscoveryIndex::new();
+        let ns_count = n / PER_NS;
+        for i in 0..n {
+            let p = AssetPath::new(format!("ns{}", i / PER_NS), "c", format!("n{i}")).unwrap();
+            index.index_path(&p);
+        }
+        assert_eq!(index.len(), n);
+
+        // Precompute query keys OUTSIDE the timed region (mirrors the registry
+        // test convention) so the measurement isolates the lookup, not `format!`.
+        let q = 500;
+        let ns_queries: Vec<String> = (0..q)
+            .map(|j| format!("ns{}", (j * 7) % ns_count))
+            .collect();
+
+        let start = Instant::now();
+        for ns in &ns_queries {
+            assert_eq!(index.by_namespace(ns).len(), PER_NS);
+        }
+        let ns_elapsed = start.elapsed();
+
+        let start = Instant::now();
+        for ns in &ns_queries {
+            assert_eq!(index.by_collection(ns, "c").len(), PER_NS);
+        }
+        let col_elapsed = start.elapsed();
+
+        #[allow(clippy::cast_precision_loss)]
+        let per = |d: std::time::Duration| d.as_nanos() as f64 / q as f64;
+        println!(
+            "discovery-exact: n={n} ns_count={ns_count} by_ns_per_ns={:.1} by_col_per_ns={:.1}",
+            per(ns_elapsed),
+            per(col_elapsed)
+        );
+        by_ns.push((n, per(ns_elapsed)));
+        by_col.push((n, per(col_elapsed)));
+    }
+
+    assert_sublinear("discovery-by-namespace", &by_ns);
+    assert_sublinear("discovery-by-collection", &by_col);
+}
+
+/// M7.3 (D84/D87): tag-based discovery stays `O(log n + result)` via the inverted
+/// tag index — never an O(n) scan over all advisory records. Each tag holds a
+/// CONSTANT number of assets (`PER_TAG`); the tag COUNT grows with `n`.
+#[test]
+#[ignore = "scale-smoke: run with --release --ignored --nocapture --test-threads=1"]
+fn discovery_tag_lookup_stays_sublinear() {
+    use std::collections::BTreeSet;
+
+    use kx_catalog::{AdvisoryMetadata, AdvisoryMetadataStore, Tag};
+
+    const PER_TAG: usize = 4;
+    let mut series: Vec<(usize, f64)> = Vec::new();
+
+    for &n in SIZES {
+        let mut store = AdvisoryMetadataStore::new();
+        let tag_count = n / PER_TAG;
+        for i in 0..n {
+            let tag = Tag::new(format!("t{}", i / PER_TAG)).unwrap();
+            let asset = AssetRef::Path(AssetPath::new("ns", "c", format!("n{i}")).unwrap());
+            let meta = AdvisoryMetadata {
+                tags: BTreeSet::from([tag]),
+                ..Default::default()
+            };
+            store.set(asset, meta).unwrap();
+        }
+        assert_eq!(store.len(), n);
+
+        // Precompute query tags OUTSIDE the timed region; materialize each result
+        // into a Vec (what a real discovery caller does) so the measured cost is
+        // the realistic get + collect, not a bare iterator `count`.
+        let q = 500;
+        let query_tags: Vec<Tag> = (0..q)
+            .map(|j| Tag::new(format!("t{}", (j * 7) % tag_count)).unwrap())
+            .collect();
+
+        let start = Instant::now();
+        for tag in &query_tags {
+            let hits: Vec<AssetRef> = store.assets_with_tag(tag).cloned().collect();
+            assert_eq!(hits.len(), PER_TAG);
+        }
+        let elapsed = start.elapsed();
+
+        #[allow(clippy::cast_precision_loss)]
+        let per = elapsed.as_nanos() as f64 / q as f64;
+        println!("discovery-tag: n={n} tag_count={tag_count} per_query_ns={per:.1}");
+        series.push((n, per));
+    }
+
+    assert_sublinear("discovery-by-tag", &series);
+}
