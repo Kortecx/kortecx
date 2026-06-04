@@ -6,6 +6,12 @@
 //! is reclaimed by the operating-system temp-file cleanup or by an explicit retention pass;
 //! it never appears at the target ref because the rename never happened.
 //!
+//! Durability: `put` fsyncs the file's bytes (`sync_all`) AND — on Unix — fsyncs the parent
+//! directory after the rename, so the directory entry that names the object survives power
+//! loss. Without the directory fsync, a crash could lose an object the caller was told
+//! exists; the directory fsync brings this store to the same durability tier as the journal's
+//! `synchronous=FULL`, keeping the executor's stage-then-commit pair honest.
+//!
 //! Zero-copy reads: this backend reads the file's bytes into a [`bytes::Bytes`] buffer. The
 //! `Bytes` wrapper enables zero-copy slicing and reference-counted sharing for downstream
 //! consumers. (True mmap-based zero-copy from disk is a future enhancement that would require
@@ -80,6 +86,25 @@ impl LocalFsContentStore {
     fn path_for(&self, r: &ContentRef) -> PathBuf {
         self.root.join(r.to_hex())
     }
+
+    /// Durably commit directory-entry changes (an atomic rename in [`Self::put`])
+    /// by fsync'ing the store root directory.
+    ///
+    /// A successful rename is only crash-durable once the *containing directory*
+    /// is fsync'd; a file's own `sync_all` flushes its data + inode but not the
+    /// parent directory entry that names it. On Unix we open the directory and
+    /// `sync_all` its descriptor. On non-Unix platforms a directory cannot be
+    /// opened as a file for fsync, so this is a no-op (those platforms already
+    /// fall back to a non-atomic rename — see the module note — and carry a
+    /// weaker durability contract).
+    fn sync_root_dir(&self) -> Result<(), StoreError> {
+        #[cfg(unix)]
+        {
+            let dir = fs::File::open(&self.root)?;
+            dir.sync_all()?;
+        }
+        Ok(())
+    }
 }
 
 impl ContentStore for LocalFsContentStore {
@@ -106,12 +131,23 @@ impl ContentStore for LocalFsContentStore {
         // but the same content-addressed naming makes a racing overwrite harmless (the
         // bytes are identical).
         match temp.persist(&final_path) {
-            Ok(_) => Ok(r),
+            Ok(_) => {
+                // Durably commit the rename: `sync_all` above flushed the file's BYTES,
+                // but the new directory ENTRY (the rename) is only crash-durable once the
+                // containing directory is fsync'd. Without this, a power loss between the
+                // rename and the next directory flush can lose an object the caller was
+                // told exists — a durability-tier mismatch with the journal's
+                // `synchronous=FULL`. Closing it keeps the StageThenCommit pair honest.
+                self.sync_root_dir()?;
+                Ok(r)
+            }
             Err(persist_err) => {
                 // If another concurrent writer beat us to the same ref, persist may fail
                 // (file already exists on some platforms). Re-check before surfacing the
-                // error — concurrent identical puts are not a failure.
+                // error — concurrent identical puts are not a failure. Fsync the directory
+                // so the entry is durable even if the winning writer has not yet.
                 if final_path.exists() {
+                    self.sync_root_dir()?;
                     Ok(r)
                 } else {
                     Err(StoreError::Io(persist_err.error))
@@ -346,6 +382,34 @@ mod atomicity_seam_tests {
         assert!(persisted, "no interrupt → persist must run");
         assert!(store.contains(&r));
         assert_eq!(&*store.get(&r).expect("present"), payload);
+    }
+
+    /// Production `put` (which now fsyncs the parent directory after the rename)
+    /// round-trips every object: several distinct payloads are each persisted and
+    /// immediately readable, and an idempotent re-put is a no-op. Exercises the
+    /// `sync_root_dir` durability path on the happy path so it can never silently
+    /// regress put/get. (Crash-durability of the rename itself requires power-loss
+    /// fault injection a unit test cannot perform; this proves the fsync path is
+    /// on the production write path and round-trips correctly.)
+    #[test]
+    fn put_fsyncs_directory_and_round_trips_multiple_objects() {
+        let tmp = TempDir::new().expect("tempdir");
+        let store = LocalFsContentStore::open(tmp.path()).expect("open");
+        let payloads: [&[u8]; 3] = [b"alpha", b"beta-payload", b"gamma gamma gamma"];
+        let refs: Vec<ContentRef> = payloads
+            .iter()
+            .map(|p| store.put(p).expect("put persists (incl. directory fsync)"))
+            .collect();
+        for (r, p) in refs.iter().zip(payloads.iter()) {
+            assert!(
+                store.contains(r),
+                "object must be present after fsync'd put"
+            );
+            assert_eq!(&*store.get(r).expect("present"), *p);
+        }
+        // An idempotent re-put of an existing object is a no-op and still Ok.
+        let again = store.put(payloads[0]).expect("idempotent re-put");
+        assert_eq!(again, refs[0], "re-put returns the same content ref");
     }
 
     /// Recovery: after an interrupted attempt, a subsequent normal `put` with
