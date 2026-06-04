@@ -1,0 +1,64 @@
+# SPDX-License-Identifier: Apache-2.0
+[package]
+name         = "kx-gateway"
+version      = "0.0.1"
+edition      = { workspace = true }
+rust-version = { workspace = true }
+license      = { workspace = true }
+authors      = { workspace = true }
+repository   = { workspace = true }
+description  = "kortecx single-system gateway server (R1, D130): a tonic gRPC binary hosting the FROZEN KxGateway service over kx-gateway-core, with an embedded loopback coordinator + local worker so a hosted SubmitRun reaches Committed. The auth seam is a deny-all stub (serving requires --dev-allow-local). FFI-free by default."
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "kx-gateway"
+path = "src/main.rs"
+
+[dependencies]
+# The KxGateway backend (read-fold + propose-proxy) being hosted + the generated
+# tonic server/client stubs. Always required (the gateway is always hosted).
+kx-gateway-core = { workspace = true }
+kx-proto        = { workspace = true }
+# Read-only seams the gateway folds over (a SECOND journal handle + the content store).
+kx-journal      = { workspace = true }
+kx-content      = { workspace = true }
+# ExecutorClass (worker registration + the platform-default class). A tiny FFI-free leaf.
+kx-warrant      = { workspace = true }
+# The embedded single-system engine (D129-sanctioned single-process worker management),
+# behind a default-on feature so R13's `cluster` story can disable it for a lib consumer.
+# kx-executor -> kx-inference is `default-features = false` at the workspace root, so this
+# closure stays FFI-free (no llama.cpp toolchain) — the dep_wall test pins it.
+kx-coordinator  = { workspace = true, optional = true }
+kx-worker       = { workspace = true, optional = true }
+kx-executor     = { workspace = true, optional = true }
+kx-capability   = { workspace = true, optional = true }
+tonic              = { workspace = true }
+# Additive feature bump over the workspace tokio (rt-multi-thread/macros/net):
+# `signal` for graceful Ctrl-C shutdown, `time` for the worker poll/backoff +
+# connect-retry. Member-level feature additions are honored (unlike default-features).
+tokio              = { workspace = true, features = ["signal", "time"] }
+tracing            = { workspace = true }
+tracing-subscriber = { workspace = true }
+thiserror          = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+kx-mote  = { workspace = true }
+smallvec = { workspace = true }
+tokio    = { workspace = true, features = ["time"] }
+
+[features]
+default = ["embedded-worker"]
+# The in-process coordinator + local worker (single-system OSS, D129). On by default so
+# the binary is genuinely reachable end-to-end (SubmitRun -> Committed). A future library
+# consumer can disable it to embed a gateway-only front end (then `serve` requires an
+# external coordinator — a later step; R1 refuses without the feature).
+embedded-worker = ["dep:kx-coordinator", "dep:kx-worker", "dep:kx-executor", "dep:kx-capability"]
+# Reserved (R2+): the in-process model / WORLD-MUTATING dispatch path. Mirrors the
+# workspace's llamacpp gate; OFF by default so `build-no-inference` stays green.
+llamacpp = []
+
+[lints]
+workspace = true
