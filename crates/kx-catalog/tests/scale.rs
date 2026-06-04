@@ -584,3 +584,91 @@ fn discovery_tag_lookup_stays_sublinear() {
 
     assert_sublinear("discovery-by-tag", &series);
 }
+
+/// M7.3 (D85): Mote-as-MCP advertisement stays `O(log n)` in catalog size — the
+/// governance fold is depth-bounded, the version resolve is `O(log n)`, and the
+/// FreeParamContract→InputSchema map is `O(#slots)` (constant). A descriptor is
+/// produced per call; per-op cost stays flat as the catalog grows.
+#[test]
+#[ignore = "scale-smoke: run with --release --ignored --nocapture --test-threads=1"]
+fn advertisement_generation_stays_sublinear() {
+    use kx_catalog::{
+        advertise_snapshot, encode_param_schema, FreeParamContract, FreeParamSlot, GovernedCatalog,
+        ParamType,
+    };
+
+    const SCHEMA_REF: [u8; 32] = [55u8; 32];
+    let resolver = |r: &[u8; 32]| {
+        (*r == SCHEMA_REF).then(|| {
+            encode_param_schema(&ParamType::Int {
+                min: None,
+                max: None,
+            })
+        })
+    };
+    let snap = RecipeSnapshot::new([1u8; 32]).with_free_params(
+        FreeParamContract::new().with_slot("p", FreeParamSlot::variable(Some(SCHEMA_REF))),
+    );
+    let owner = PartyId::new("owner");
+    let user = PartyId::new("user");
+
+    let mut series: Vec<(usize, f64)> = Vec::new();
+    for &n in SIZES {
+        let grants = InMemoryGrantLedger::new();
+        let versions = InMemoryVersionLedger::new();
+        let handles: Vec<AssetPath> = (0..n)
+            .map(|i| AssetPath::new("ns", "c", format!("h{i}")).unwrap())
+            .collect();
+        for h in &handles {
+            let asset = AssetRef::Path(h.clone());
+            grants
+                .append_binding(AssetBinding::new(asset.clone(), owner.clone()))
+                .unwrap();
+            grants
+                .append_grant(Grant::root(
+                    asset.clone(),
+                    owner.clone(),
+                    owner.clone(),
+                    CatalogActionSet::all(),
+                    role_calls(10),
+                ))
+                .unwrap();
+            grants
+                .append_grant(Grant::root(
+                    asset,
+                    owner.clone(),
+                    user.clone(),
+                    CatalogActionSet::allow([CatalogAction::Use]),
+                    role_calls(10),
+                ))
+                .unwrap();
+        }
+        let governed = GovernedCatalog::new(grants, versions);
+        for h in &handles {
+            governed
+                .publish(AssetVersion::root(
+                    h.clone(),
+                    VersionedContent::Recipe(TaskSignatureHash::from_bytes([1u8; 32])),
+                    owner.clone(),
+                    Provenance::from_recipe([1u8; 32]),
+                ))
+                .unwrap();
+        }
+
+        let q = 500;
+        let start = Instant::now();
+        for j in 0..q {
+            let h = &handles[(j * 7) % n];
+            let ad = advertise_snapshot(&governed, &user, h, &snap, "d", &resolver).unwrap();
+            assert_eq!(ad.input_schema.params.len(), 1);
+        }
+        let elapsed = start.elapsed();
+
+        #[allow(clippy::cast_precision_loss)]
+        let per = elapsed.as_nanos() as f64 / q as f64;
+        println!("advertise: n={n} per_op_ns={per:.1}");
+        series.push((n, per));
+    }
+
+    assert_sublinear("advertisement-generation", &series);
+}

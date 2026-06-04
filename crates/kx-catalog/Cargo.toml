@@ -26,6 +26,12 @@ kx-dataset  = { workspace = true }
 # primitive (already transitive via kx-dataset); strictly BELOW the SN-8 wall
 # (kx-content cannot depend on kx-catalog), so the dependency direction holds.
 kx-content  = { workspace = true }
+# M7.3 (D85): reuse the M5.3 closed, no-float typed-arg schema (InputSchema /
+# ParamType / validate_args) for the Mote-as-MCP tool descriptor — the SAME schema
+# M8's inbound path will pass to validate_args. NOT a guarantee-path edge
+# (kx-tool-registry does not depend on kx-catalog → no cycle), so the SN-8 wall
+# holds; the MCP JSON-RPC wire is M8's inbound server (we do NOT pull kx-mcp).
+kx-tool-registry = { workspace = true }
 # Role / WarrantSpec / intersect / NarrowingError (M7.2, D86): a grant's runtime
 # scope REUSES the frozen monotonic-narrowing seam verbatim — the catalog never
 # re-implements narrowing and never modifies kx-warrant. This is a dependency ON
