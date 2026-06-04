@@ -276,6 +276,53 @@ jobs:
             | sort | xargs -I {} sh -c 'printf "%10s  %s\n" "$(stat -c%s "{}")" "{}"'
 
   # ---------------------------------------------------------------------------
+  # build-no-inference — the OSS Adoption & Trust install gate (Step 1.1).
+  #
+  # Proves `cargo install kx-runtime` needs NO C++ toolchain: this job
+  # deliberately checks out WITHOUT submodules and installs NO native build
+  # deps (no libclang/clang/cmake). If the runtime's dependency closure ever
+  # pulls the llama.cpp FFI back in, the build fails here (CMake/submodule
+  # absent) — and the explicit `cargo tree` assertion fails first with a clear
+  # message. Also builds kx-inference --no-default-features (the
+  # bring-your-own-`InferenceBackend` path) to keep the feature-off gate honest.
+  # ---------------------------------------------------------------------------
+  build-no-inference:
+    name: build-no-inference (kx-runtime installs without a C++ toolchain)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (NO submodules — the FFI must not be needed)
+        uses: actions/checkout@v6
+        # Deliberately NO submodules and NO C++ toolchain install below.
+
+      - name: Install Rust toolchain (from rust-toolchain.toml)
+        run: |
+          rustup show active-toolchain
+          rustc --version
+          cargo --version
+
+      - name: Cache Cargo registry + target
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-noinfer-${{ runner.os }}-${{ hashFiles('**/Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: |
+            cargo-noinfer-${{ runner.os }}-
+            cargo-${{ runner.os }}-
+
+      - name: Configure RUSTFLAGS for path-stripping
+        run: |
+          echo "RUSTFLAGS=--remap-path-prefix=${GITHUB_WORKSPACE}= -Cmetadata=kortecx-v0" >> $GITHUB_ENV
+
+      - name: Install just
+        uses: extractions/setup-just@v4
+
+      - name: just build-no-inference
+        run: just build-no-inference
+
+  # ---------------------------------------------------------------------------
   # reproducible — byte-determinism check (I1.c). Runs `just check-reproducible`
   # which performs two clean release builds and diffs the output. Expensive
   # (~6+ minutes) but the load-bearing reproducibility gate.

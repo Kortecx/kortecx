@@ -40,11 +40,16 @@
 
 mod backend;
 mod dispatcher;
+// The llama.cpp-backed `LlamaInferenceBackend` lives behind the `llamacpp`
+// feature (default-on). Gating the module — not just the dep — is what lets the
+// crate compile with `--no-default-features` (no native FFI). See Cargo.toml.
+#[cfg(feature = "llamacpp")]
 mod llama;
 mod types;
 
 pub use backend::{BatchItem, InferenceBackend};
 pub use dispatcher::{DispatchOutcome, Dispatcher, DispatcherConfig};
+#[cfg(feature = "llamacpp")]
 pub use llama::LlamaInferenceBackend;
 pub use types::{
     inference_params_from_mote, Grammar, InferenceError, InferenceInput, InferenceOutput,

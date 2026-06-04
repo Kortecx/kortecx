@@ -125,6 +125,12 @@ pub fn inference_params_from_mote(
 ///
 /// Backends call this from their `dispatch` impl to enforce D30's
 /// monotonic-narrowing rule on a quantitative axis.
+///
+/// Gated on `llamacpp`: the only caller today is the in-process
+/// `LlamaInferenceBackend`. A bring-your-own backend (built without the FFI
+/// feature) re-uses it once it is wired; the gate just keeps the
+/// `--no-default-features` build warning-free until then.
+#[cfg(feature = "llamacpp")]
 pub(crate) fn check_within(
     params: &InferenceParams,
     warrant: &WarrantSpec,
