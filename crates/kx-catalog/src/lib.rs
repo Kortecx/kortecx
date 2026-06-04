@@ -94,6 +94,7 @@
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 
 mod action;
+mod advertise;
 mod discovery;
 mod discovery_index;
 mod entry;
@@ -147,6 +148,14 @@ pub use version_ledger::{
     PublishOutcome, VersionLedger, VersionLedgerError, MAX_VERSION_CHAIN_DEPTH,
     MAX_VERSION_DESCENDANTS,
 };
+
+// M7.3 (D85) — Mote-as-MCP advertisement (descriptor only; execution is M8/D121).
+pub use advertise::{
+    advertise_snapshot, encode_param_schema, AdvertiseError, SchemaResolver, SnapshotAdvertisement,
+};
+// The M5.3 closed, no-float typed-arg schema, re-exported so an advertisement's
+// `input_schema` is one import surface (the SAME schema M8's `validate_args` uses).
+pub use kx_tool_registry::{validate_args, InputSchema, ParamSpec, ParamType, SchemaError};
 
 // M7.3 (D87/D84) — discovery (fuzzy-in, exact-out) + advisory metadata.
 pub use discovery::{commit_selection, CatalogDiscovery, FuzzyDiscovery, SelectionFact};

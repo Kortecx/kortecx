@@ -1034,6 +1034,7 @@ dependencies = [
  "kx-content",
  "kx-dataset",
  "kx-mote",
+ "kx-tool-registry",
  "kx-warrant",
  "kx-workflow",
  "proptest",
