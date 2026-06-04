@@ -4,75 +4,66 @@
 // repo. Out-of-process backends (Triton, vLLM, remote APIs) ride the same
 // `InferenceBackend` trait but live in private `kx-cloud/*` crates.
 //
-// v0.1 design choices:
-//   - Model registry is a frozen-at-construction `HashMap<ModelId, PathBuf>`.
-//     Reloading a different model is a `kx-llamacpp` constructor reset; the
-//     runtime doesn't reload models per-dispatch (they're heavyweight).
-//   - LlamaBackend is RAII-ref-counted inside kx-llamacpp; we call ::new()
-//     per dispatch since the type is `!Send + !Sync` and we cannot hold it
-//     long-term in a Send + Sync backend struct. The internal mutex makes
-//     repeated `LlamaBackend::new()` calls cheap (subsequent calls just
-//     bump a ref-count; the actual `llama_backend_init` runs once).
-//   - The Model load IS expensive (seconds for a 7B GGUF). Future PRs may
-//     introduce a long-lived `LoadedModel` cache (via worker thread + mpsc
-//     channel to dodge the `!Send` constraint). v0.1 ships the simpler
-//     per-call path because the OSS critical-path goal is the seam,
-//     not throughput.
+// Design (post-M4, D108.2):
+//   - Model identity + paths + declared modalities come from a
+//     `kx_model_store::ModelResolver` (a `BTreeMap`-backed `ModelRegistry` by
+//     default), NOT a frozen `HashMap<ModelId, PathBuf>`. A future durable /
+//     remote registry implements the same trait without this backend changing.
+//   - Loaded `llama_model` handles are CACHED across dispatches by a dedicated
+//     owner thread (see `cache.rs`). The pre-M4 path reloaded the model from
+//     disk on EVERY dispatch (seconds for a 7B model; ruinous for a multi-GB
+//     multimodal model); the cache loads each model once, keyed by its
+//     `identity_digest`. `LlamaBackend`/`Model` are `!Send`/`!Sync`, so the
+//     owner thread (which holds only a `Send + Sync` channel handle) is what
+//     keeps this backend `Send + Sync`.
+//   - `with_model` / `with_models` are retained as thin shims that build a
+//     one-/multi-entry `ModelRegistry`, so existing callers are unchanged.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::sync::{Arc, OnceLock};
 
+use kx_model_store::{ModelDescriptor, ModelRegistry, ModelResolver};
 use kx_mote::ModelId;
 use kx_warrant::WarrantSpec;
 
 use crate::backend::InferenceBackend;
+use crate::cache::{ModelCache, DEFAULT_CACHE_CAPACITY};
 use crate::types::{
     check_within, InferenceError, InferenceInput, InferenceOutput, InferenceParams,
 };
 
 /// Backend name reported in `InferenceOutput.backend_name`.
-const BACKEND_NAME: &str = "kx-llamacpp";
+pub(crate) const BACKEND_NAME: &str = "kx-llamacpp";
 
 /// Default context window. Per llama.cpp convention, 0 means "use the
 /// model's own `n_ctx_train`". We pick a conservative cap so v0.1 doesn't
 /// silently allocate huge KV caches.
-const DEFAULT_N_CTX: u32 = 4096;
-
-/// Convert a `kx_llamacpp::LlamaError` into our public error enum.
-///
-/// Localised to one place so the dispatcher's error surface stays
-/// stable as `kx-llamacpp`'s error variants evolve. Takes the error
-/// by value so it can be used directly as `.map_err(map_llama_err)`
-/// in the dispatch path; the underlying error's `Display` is what
-/// we ultimately surface so consuming the original is fine.
-#[allow(clippy::needless_pass_by_value)]
-fn map_llama_err(err: kx_llamacpp::LlamaError) -> InferenceError {
-    InferenceError::BackendFailure {
-        backend: BACKEND_NAME,
-        message: format!("{err}"),
-    }
-}
+pub(crate) const DEFAULT_N_CTX: u32 = 4096;
 
 /// OSS v0.1 in-process inference backend wrapping `kx-llamacpp`.
 ///
 /// **What it implements**:
 ///   - `InferenceInput::Text(prompt)` — runs the prompt through the
-///     loaded model.
+///     loaded (and cached) model.
 ///   - `InferenceParams.grammar = None` — vanilla sampling (greedy when
 ///     `temperature_bps == 0`, otherwise temp + top-k + top-p).
 ///
 /// **What it returns `Err(Unsupported)` on** (deliberate seam):
-///   - `InferenceInput::Multimodal { .. }` — reserved for future PRs.
-///   - `InferenceParams.grammar = Some(_)` — reserved for future PRs.
-///
-/// See `roadmap-multimodal-synthesis-post-pr9` for the sequencing
-/// commitment.
-#[derive(Debug, Clone)]
+///   - `InferenceInput::Multimodal { .. }` — reserved for the multi-modal PRs.
+///   - `InferenceParams.grammar = Some(_)` — reserved for constrained generation.
+#[derive(Clone)]
 pub struct LlamaInferenceBackend {
-    model_paths: Arc<HashMap<ModelId, PathBuf>>,
+    /// The model registry / resolver this backend serves from.
+    resolver: Arc<dyn ModelResolver>,
+    /// Lazily-spawned loaded-model cache (owner thread). `OnceLock` so a backend
+    /// that never dispatches (e.g. a unit test expecting `ModelNotFound`) never
+    /// spawns a thread or touches the FFI. Shared across `Clone`s via `Arc`.
+    cache: Arc<OnceLock<ModelCache>>,
+    /// Context window passed to each dispatch.
     n_ctx: u32,
+    /// Number of distinct models the cache keeps loaded at once.
+    cache_capacity: usize,
 }
 
 impl LlamaInferenceBackend {
@@ -80,13 +71,22 @@ impl LlamaInferenceBackend {
     /// tests where every dispatch is expected to return `ModelNotFound`.
     #[must_use]
     pub fn new() -> Self {
+        Self::with_resolver(Arc::new(ModelRegistry::new()))
+    }
+
+    /// Construct a backend that serves from an arbitrary [`ModelResolver`]
+    /// (e.g. a richly-populated `ModelRegistry`, or a future durable registry).
+    #[must_use]
+    pub fn with_resolver(resolver: Arc<dyn ModelResolver>) -> Self {
         Self {
-            model_paths: Arc::new(HashMap::new()),
+            resolver,
+            cache: Arc::new(OnceLock::new()),
             n_ctx: DEFAULT_N_CTX,
+            cache_capacity: DEFAULT_CACHE_CAPACITY,
         }
     }
 
-    /// Construct a backend with a single model registered.
+    /// Construct a backend with a single text model registered.
     ///
     /// # Examples
     ///
@@ -106,21 +106,13 @@ impl LlamaInferenceBackend {
     /// ```
     #[must_use]
     pub fn with_model(id: ModelId, path: PathBuf) -> Self {
-        let mut map = HashMap::new();
-        map.insert(id, path);
-        Self {
-            model_paths: Arc::new(map),
-            n_ctx: DEFAULT_N_CTX,
-        }
+        Self::with_resolver(Arc::new(registry_from_paths(std::iter::once((id, path)))))
     }
 
-    /// Construct a backend with multiple model ids registered.
+    /// Construct a backend with multiple text model ids registered.
     #[must_use]
     pub fn with_models(models: HashMap<ModelId, PathBuf>) -> Self {
-        Self {
-            model_paths: Arc::new(models),
-            n_ctx: DEFAULT_N_CTX,
-        }
+        Self::with_resolver(Arc::new(registry_from_paths(models)))
     }
 
     /// Override the default context window.
@@ -128,6 +120,45 @@ impl LlamaInferenceBackend {
     pub fn with_n_ctx(mut self, n_ctx: u32) -> Self {
         self.n_ctx = n_ctx;
         self
+    }
+
+    /// Override the loaded-model cache capacity (distinct models kept resident).
+    #[must_use]
+    pub fn with_cache_capacity(mut self, capacity: usize) -> Self {
+        self.cache_capacity = capacity.max(1);
+        self
+    }
+
+    /// Number of cold `Model::load`s performed so far (0 if no dispatch has
+    /// spawned the cache yet). The observable proof that cache hits do not
+    /// reload, and the ops metric for model-load pressure.
+    #[must_use]
+    pub fn loads_performed(&self) -> u64 {
+        self.cache.get().map_or(0, ModelCache::loads)
+    }
+}
+
+/// Build a [`ModelRegistry`] of text-only descriptors from `(ModelId, path)`
+/// pairs. Registration of a fresh, unique set is infallible; a duplicate or an
+/// over-capacity entry is logged and skipped rather than panicking in an
+/// infallible constructor (a `HashMap` source cannot contain duplicates).
+fn registry_from_paths(paths: impl IntoIterator<Item = (ModelId, PathBuf)>) -> ModelRegistry {
+    let mut registry = ModelRegistry::new();
+    for (id, path) in paths {
+        if let Err(e) = registry.register(ModelDescriptor::text(id, path, DEFAULT_N_CTX)) {
+            tracing::error!(error = %e, "skipping model in registry shim (unexpected)");
+        }
+    }
+    registry
+}
+
+impl std::fmt::Debug for LlamaInferenceBackend {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LlamaInferenceBackend")
+            .field("n_ctx", &self.n_ctx)
+            .field("cache_capacity", &self.cache_capacity)
+            .field("cache_spawned", &self.cache.get().is_some())
+            .finish_non_exhaustive()
     }
 }
 
@@ -145,18 +176,18 @@ impl InferenceBackend for LlamaInferenceBackend {
         params: &InferenceParams,
         warrant: &WarrantSpec,
     ) -> Result<InferenceOutput, InferenceError> {
-        // ---- Forward-compat reservation gates (PR 8 plan) -----------------
+        // ---- Forward-compat reservation gates (fire BEFORE any model work) ----
         let prompt = match input {
             InferenceInput::Text(s) => s.as_str(),
             InferenceInput::Multimodal { .. } => {
                 return Err(InferenceError::Unsupported {
-                    reason: "multimodal input reserved for post-PR-9; see HANDOFF §3.8",
+                    reason: "multimodal input reserved for the multi-modal PRs; see HANDOFF",
                 });
             }
         };
         if params.grammar.is_some() {
             return Err(InferenceError::Unsupported {
-                reason: "constrained generation (grammar) reserved for post-PR-9; see HANDOFF §3.8",
+                reason: "constrained generation (grammar) reserved; see HANDOFF",
             });
         }
 
@@ -169,89 +200,31 @@ impl InferenceBackend for LlamaInferenceBackend {
         }
         check_within(params, warrant)?;
 
-        // ---- Resolve registered path --------------------------------------
-        let path = self
-            .model_paths
-            .get(model_id)
-            .ok_or_else(|| InferenceError::ModelNotFound {
-                model_id: model_id.0.clone(),
-            })?;
+        // ---- Resolve the model descriptor (paths + capabilities) ----------
+        let descriptor =
+            self.resolver
+                .resolve(model_id)
+                .ok_or_else(|| InferenceError::ModelNotFound {
+                    model_id: model_id.0.clone(),
+                })?;
 
-        // ---- Timeout setup -------------------------------------------------
-        let start = Instant::now();
-        let timeout = Duration::from_millis(warrant.resource_ceiling.wall_clock_ms);
-        let check_timeout = |elapsed: Duration| -> Result<(), InferenceError> {
-            if elapsed >= timeout {
-                Err(InferenceError::Timeout {
-                    wall_clock_ms: warrant.resource_ceiling.wall_clock_ms,
-                })
-            } else {
-                Ok(())
-            }
-        };
-
-        // ---- llama.cpp setup (per-call; see module docs) ------------------
-        let backend = kx_llamacpp::LlamaBackend::new().map_err(map_llama_err)?;
-        let model = kx_llamacpp::Model::load(&backend, path).map_err(map_llama_err)?;
-        check_timeout(start.elapsed())?;
-
-        let ctx_params = kx_llamacpp::ContextParams::new().with_n_ctx(self.n_ctx);
-        let mut ctx =
-            kx_llamacpp::Context::new_with_params(&model, &ctx_params).map_err(map_llama_err)?;
-        let vocab = model.vocab();
-
-        let prompt_tokens = vocab.tokenize(prompt, true, false).map_err(map_llama_err)?;
-        check_timeout(start.elapsed())?;
-
-        // ---- Sampler chain -------------------------------------------------
-        let mut sampler = if params.temperature_bps == 0 {
-            kx_llamacpp::Sampler::greedy(&backend).map_err(map_llama_err)?
-        } else {
-            #[allow(clippy::cast_precision_loss)]
-            let temp = (params.temperature_bps as f32) / 10_000.0;
-            #[allow(clippy::cast_precision_loss)]
-            let top_p = (params.top_p_bps as f32) / 10_000.0;
-            #[allow(clippy::cast_possible_wrap)]
-            let top_k = params.top_k as i32;
-            kx_llamacpp::Sampler::typical(&backend, temp, top_k, top_p, params.seed)
-                .map_err(map_llama_err)?
-        };
-
-        // ---- Generation loop ----------------------------------------------
-        let generator = kx_llamacpp::Generator::new(&mut ctx, &mut sampler, &vocab, prompt_tokens)
-            .map_err(map_llama_err)?;
-
-        let mut output_bytes: Vec<u8> = Vec::with_capacity(
-            usize::try_from(params.max_output_tokens.saturating_mul(4)).unwrap_or(2048),
-        );
-        let mut output_tokens: u32 = 0;
-
-        for token_result in generator {
-            check_timeout(start.elapsed())?;
-            let token = token_result.map_err(map_llama_err)?;
-            vocab
-                .token_to_piece_into(token, 0, false, &mut output_bytes)
-                .map_err(map_llama_err)?;
-            output_tokens = output_tokens.saturating_add(1);
-            if output_tokens >= params.max_output_tokens {
-                break;
-            }
-            if vocab.is_eog(token) {
-                break;
-            }
-        }
-
-        Ok(InferenceOutput {
-            bytes: output_bytes,
-            output_tokens,
-            backend_name: BACKEND_NAME,
-            model_id: model_id.clone(),
-            elapsed: start.elapsed(),
-        })
+        // ---- Dispatch through the loaded-model cache (owner thread) -------
+        let cache = self
+            .cache
+            .get_or_init(|| ModelCache::spawn(self.cache_capacity));
+        cache.dispatch(
+            descriptor.identity_digest,
+            descriptor.gguf_path.clone(),
+            model_id.clone(),
+            prompt.to_string(),
+            params.clone(),
+            self.n_ctx,
+            warrant.resource_ceiling.wall_clock_ms,
+        )
     }
 
     fn supports(&self, model_id: &ModelId) -> bool {
-        self.model_paths.contains_key(model_id)
+        self.resolver.resolve(model_id).is_some()
     }
 
     fn name(&self) -> &'static str {

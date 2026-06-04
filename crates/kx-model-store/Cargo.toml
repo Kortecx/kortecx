@@ -1,0 +1,38 @@
+# SPDX-License-Identifier: Apache-2.0
+[package]
+name         = "kx-model-store"
+version      = "0.0.1"
+edition      = { workspace = true }
+rust-version = { workspace = true }
+license      = { workspace = true }
+authors      = { workspace = true }
+repository   = { workspace = true }
+description  = "kortecx model lifecycle (M4, D108.2): the backend-agnostic registry of model IDENTITY, declared MODALITIES (text/image/audio/video), projector (mmproj) path, and a fail-closed GGUF-header validator. A ModelResolver maps a ModelId → ModelDescriptor so an InferenceBackend sources paths + capabilities from one place instead of a frozen HashMap. FFI-FREE by construction (no kx-llamacpp dep) so `cargo install kx-runtime` still needs no C++ toolchain; the LIVE loaded-model handle cache lives in the backend (kx-inference), keyed by this crate's identity_digest. Off the trust path (SN-8): never gates selection/commit/audit."
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+# ModelId — the pinned model identity (name+version+quant) this registry keys on.
+kx-mote    = { workspace = true }
+# ContentRef — the 32-byte content-address newtype reused as the stable
+# loaded-model cache key (identity_digest). kx-content sits below everything,
+# so depending on it never widens the dependency wall.
+kx-content = { workspace = true }
+# Stack-inline modality lists (1–4 entries) without per-descriptor heap churn.
+smallvec   = { workspace = true, features = ["serde"] }
+# Domain-tagged blake3 for the path+modality identity_digest (NOT a hash of the
+# multi-GB weights — a cheap, stable cache identity).
+blake3     = { workspace = true }
+# serde derives so a descriptor set is a sharable, persistence-friendly bundle.
+serde      = { workspace = true }
+# Typed ModelStoreError (fail-closed GGUF validation + registry guards).
+thiserror  = { workspace = true }
+# Append/validate observability (debug-level only; never on a truth path).
+tracing    = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[lints]
+workspace = true
