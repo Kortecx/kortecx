@@ -1,0 +1,49 @@
+# SPDX-License-Identifier: Apache-2.0
+[package]
+name         = "kx-fleet"
+version      = "0.0.1"
+edition      = { workspace = true }
+rust-version = { workspace = true }
+license      = { workspace = true }
+authors      = { workspace = true }
+repository   = { workspace = true }
+description  = "kortecx teams/fleets (M7, D112): journaled membership facts + a fail-closed fold + composed warrant resolution. A SEPARATE TRUTH (authoritative for WHO is in a team), realized as the D-LOCK-4 discipline (append-only, content-addressed, immutable, idempotent, revoke-by-new-fact) — off-journal and off the trust path (SN-8). Membership is one-level-up delegation: a member's effective warrant on a recipe = intersect(team_grant_warrant, member_role) via the FROZEN kx_warrant::intersect, so a member can NEVER exceed the team's grant; nested fleet-of-teams generalizes it to a bounded multi-hop narrow. Depends only on kx-catalog/kx-warrant; the frozen trio and the journal NEVER depend on it."
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+# PartyId / AssetRef / CatalogAction(Set) / GrantLedger / resolve_effective_warrant_for
+# (M7.2, D86): a team is a PartyId, "team T may Use recipe A under warrant W" is an
+# ordinary catalog grant, and the team's effective warrant is resolved through the
+# EXISTING grant fold — kx-fleet adds no grant logic. Also reuses kx_catalog::canonical_config
+# so the membership content-hash discipline is byte-identical to the catalog's.
+kx-catalog  = { workspace = true }
+# Role / WarrantSpec / intersect / NarrowingError: a membership's runtime scope REUSES
+# the frozen monotonic-narrowing seam verbatim — kx-fleet never re-implements narrowing
+# and never modifies kx-warrant (a STRICT seam; its own PR by Rule 1). This is a
+# dependency ON kx-warrant, NOT a dependency BY the guarantee path, so the SN-8 wall holds.
+kx-warrant  = { workspace = true }
+# The frozen canonical content-addressed encoding (bincode v2, LE + fixed-int), used via
+# kx_catalog::canonical_config for the Team / Admit / Removal / Disband content ids.
+bincode     = { workspace = true }
+# Content-addressing (domain-tagged blake3) for membership fact ids.
+blake3      = { workspace = true }
+# Stack-inline small vecs (membership edges / role chains) without per-entry heap churn.
+smallvec    = { workspace = true }
+# serde derives across all public fact types (persistence-friendly, sharable bundles).
+serde       = { workspace = true }
+# Typed MembershipLedgerError / GovernedFleetError.
+thiserror   = { workspace = true }
+# Append observability (debug-level only; never on the truth path).
+tracing     = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+# TEST-ONLY: kx_mote::ModelId to build a positive `ModelRoute` (kx_warrant::intersect
+# rejects a zero model_route). Production depends ONLY on kx-catalog/kx-warrant; a
+# dev-dep does not widen the dependency wall (and kx-mote sits below everything).
+kx-mote  = { workspace = true }
+
+[lints]
+workspace = true

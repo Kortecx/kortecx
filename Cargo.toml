@@ -37,6 +37,7 @@ members = [
     "crates/kx-mcp",
     "crates/kx-planner",
     "crates/kx-catalog",
+    "crates/kx-fleet",
     "crates/kx-model-harness",
 ]
 exclude = [
@@ -145,6 +146,12 @@ kx-planner           = { path = "crates/kx-planner",           version = "0.0.1"
 # path (composes kx-mote/kx-workflow identities, never bumps MoteDef). Depends
 # only on kx-mote/kx-workflow/kx-dataset — NEVER the journal or the frozen trio.
 kx-catalog           = { path = "crates/kx-catalog",           version = "0.0.1" }
+# Teams / fleets (M7, D112) — journaled membership facts + a fail-closed fold +
+# composed warrant resolution. Membership is one-level-up delegation
+# (intersect(team_warrant, member_role)); nested fleet-of-teams = a bounded multi-hop
+# narrow. A SEPARATE TRUTH (off-journal, off the trust path, SN-8). Depends ONLY on
+# kx-catalog/kx-warrant; the journal + frozen trio NEVER depend on it (one-way edge).
+kx-fleet             = { path = "crates/kx-fleet",             version = "0.0.1" }
 bindgen            = "0.70"
 cmake              = "0.1"
 ureq               = { version = "2", default-features = false, features = ["tls"] }
