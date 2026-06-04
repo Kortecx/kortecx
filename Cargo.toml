@@ -39,6 +39,8 @@ members = [
     "crates/kx-catalog",
     "crates/kx-fleet",
     "crates/kx-model-harness",
+    "crates/kx-gateway-core",
+    "crates/kx-invoke",
 ]
 exclude = [
     "kx-cloud",
@@ -152,6 +154,14 @@ kx-catalog           = { path = "crates/kx-catalog",           version = "0.0.1"
 # narrow. A SEPARATE TRUTH (off-journal, off the trust path, SN-8). Depends ONLY on
 # kx-catalog/kx-warrant; the journal + frozen trio NEVER depend on it (one-way edge).
 kx-fleet             = { path = "crates/kx-fleet",             version = "0.0.1" }
+# M8 (D120) gateway backend: read-fold (journal -> ProjectionView / GetContent /
+# StreamEvents) + propose-proxy (SubmitRun -> coordinator). No journal write path;
+# never links the frozen-trio writers (a dep-wall test pins it).
+kx-gateway-core      = { path = "crates/kx-gateway-core",      version = "0.0.1" }
+# M8 (D121) inbound execution: resolve a published recipe by handle, validate +
+# bind args, compile, and submit under intersect(use, step) via the gateway
+# RunSubmitter. A composition over the catalog + gateway; adds no new write path.
+kx-invoke            = { path = "crates/kx-invoke",            version = "0.0.1" }
 bindgen            = "0.70"
 cmake              = "0.1"
 ureq               = { version = "2", default-features = false, features = ["tls"] }
@@ -174,6 +184,10 @@ nix                = { version = "0.29", features = ["process", "signal", "resou
 tonic              = "0.12"
 prost              = "0.13"
 tokio              = { version = "1", features = ["rt-multi-thread", "macros", "net"] }
+# Server-streaming adapter for the KxGateway `StreamEvents` RPC (M8/D120). Already
+# present transitively (tonic pulls it in) — promoting it to a direct dep adds NO
+# new crate to the build/deny graph; `tokio_stream::iter` backs the resumable cursor.
+tokio-stream       = "0.1"
 tonic-build        = "0.12"
 protoc-bin-vendored = "3"
 

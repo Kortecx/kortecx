@@ -1,0 +1,51 @@
+# SPDX-License-Identifier: Apache-2.0
+[package]
+name         = "kx-gateway-core"
+version      = "0.0.1"
+edition      = { workspace = true }
+rust-version = { workspace = true }
+license      = { workspace = true }
+authors      = { workspace = true }
+repository   = { workspace = true }
+description  = "kortecx M8 (D120) gateway backend: the read-fold (journal -> ProjectionView render-a-run-as-a-DAG, GetContent, StreamEvents cursor) + propose-proxy (SubmitRun -> coordinator RegisterRun/SubmitMote) behind the external KxGateway service. NO new journal write path: reads go through a read-only JournalReader/ContentReader seam (a write cannot type-check), submits go through a RunSubmitter seam to the coordinator (the sole journal writer). Every MoteSnapshot is SERVER-DERIVED (the client never computes a MoteId, SN-8); GetContent returns a uniform not-authorized (no existence oracle). MUST NOT link kx-executor/kx-scheduler/kx-coordinator/kx-capture (proven by a dep-wall test); auth/ownership stay cloud-side."
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+# The generated KxGateway server trait + messages + the Coordinator client (for the
+# propose-proxy adapter) + the proto<->domain conversions. No journal-writer link.
+kx-proto      = { workspace = true }
+# The read-fold engine: Projection::fold + the read API (state_of/parents_of/...). It
+# depends on kx-journal as a READER; gateway-core only ever folds (never appends).
+kx-projection = { workspace = true }
+# ContentRef + the ContentStore trait, exposed to the gateway through a get/contains-only
+# ContentReader seam (no put surface).
+kx-content    = { workspace = true }
+# MoteId / NdClass / MoteDefHash / ParentRef / EdgeMeta for the server-derived view mapping.
+kx-mote       = { workspace = true }
+# WarrantSpec (spec-only) — named in the RunSubmitter seam + the SubmitRun proxy. A
+# dependency ON kx-warrant, never a narrowing OF it; forward-enables the D121 inbound path.
+kx-warrant    = { workspace = true }
+# The Journal trait + JournalEntry, wrapped by the read-only ReadOnly<J> seam. gateway-core
+# NEVER names append/append_batch — the write path cannot type-check.
+kx-journal    = { workspace = true }
+# Async gRPC service (Request/Response/Status/Streaming) + the re-exported async_trait.
+tonic         = { workspace = true }
+# Backs the resumable StreamEvents cursor (tokio_stream::iter over precomputed frames).
+tokio-stream  = { workspace = true }
+# Typed GatewayError -> tonic::Status mapping.
+thiserror     = { workspace = true }
+# Read-path observability (debug only; never on a truth path — gateway-core has none).
+tracing       = { workspace = true }
+
+[dev-dependencies]
+# In-process round-trip harness: a real tonic transport Server hosting KxGateway.
+tokio         = { workspace = true }
+# Property tests for the view mapping + fold purity + error uniformity.
+proptest      = { workspace = true }
+# TEST-ONLY: build journal `Committed` entries (the parents SmallVec) in fixtures.
+smallvec      = { workspace = true }
+
+[lints]
+workspace = true

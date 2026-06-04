@@ -214,6 +214,31 @@ impl WorkflowDef {
     pub const fn seed(&self) -> u32 {
         self.seed
     }
+
+    /// Bind a free-param slot to a concrete value across every step that
+    /// declares it, returning the number of steps bound.
+    ///
+    /// A step *declares* slot `name` by carrying `ConfigKey(name)` in its
+    /// `config_subset`; this overwrites that entry with `value`. A return of `0`
+    /// means no step declares the slot — the caller (e.g. the D121 inbound
+    /// execution path) should fail-closed rather than silently drop the value.
+    ///
+    /// This is the binding primitive for parametrized recipes: inject validated
+    /// argument bytes here, *before* [`compile`](crate::compile). Because
+    /// `config_subset` flows verbatim into each `MoteDef`, distinct bound values
+    /// yield distinct `MoteId`s — exactly-once-per-distinct-input by construction
+    /// (and identical inputs re-derive identical identity → idempotent re-invoke).
+    pub fn bind_param(&mut self, name: &str, value: &ConfigVal) -> usize {
+        let key = ConfigKey(name.to_string());
+        let mut bound = 0usize;
+        for step in &mut self.steps {
+            if let Some(slot) = step.config_subset.get_mut(&key) {
+                *slot = value.clone();
+                bound += 1;
+            }
+        }
+        bound
+    }
 }
 
 /// One compiled step ready to submit: a derived [`Mote`] plus the warrant and

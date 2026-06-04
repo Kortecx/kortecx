@@ -1,0 +1,222 @@
+syntax = "proto3";
+
+// ===========================================================================
+// kortecx M8 / D120 — the external `KxGateway` contract (FROZEN).
+//
+// This is a SECOND, DISTINCT service from `Coordinator` (coordinator.proto is
+// the internal coordinator/worker plane and stays byte-unchanged). KxGateway is
+// the client-facing surface: render-a-run-as-a-DAG reads, fetch-a-committed-
+// result reads, a resumable event cursor, and a propose-proxy submit path. It
+// is realized by `kx-gateway-core` as a READ-FOLD (journal -> ProjectionView)
+// + PROPOSE-PROXY (SubmitRun -> coordinator RegisterRun/SubmitMote). The
+// gateway adds NO new journal write path.
+//
+// IDENTITY INVARIANT (load-bearing, same as coordinator.proto). Every MoteId /
+// content ref / instance_id is computed Rust-side by the runtime. ProjectionView
+// and MoteSnapshot are SERVER-DERIVED from the journal fold — the client NEVER
+// computes a MoteId (SN-8 / D70). Protobuf carries field VALUES only.
+//
+// Every enum carries an explicit *_UNSPECIFIED = 0 sentinel; domain
+// discriminants are +1-shifted; the Rust TryFrom boundary REJECTS UNSPECIFIED.
+// 32-byte hashes are `bytes` validated length==32 Rust-side; instance_id is 16B.
+//
+// EVOLUTION (D120.6): additive only — new RPCs / optional fields / new `oneof`
+// variants (proto3 unknown-field skipping). The external gateway proto version
+// is SEPARATE from the journal-entry schema version (D107 is a journal concern).
+// ===========================================================================
+
+package kortecx.v1;
+
+// Reuse the value messages + enums already pinned by the coordinator contract
+// (Mote / MoteDef / WarrantSpec / ParentRef / NdClass / EdgeKind). The include
+// root is `proto/` (build.rs), so the import path is rooted there.
+import "kortecx/v1/coordinator.proto";
+
+// ---------------------------------------------------------------------------
+// Gateway-side enums (mirror the kx_projection read-model enums; +1-shifted)
+// ---------------------------------------------------------------------------
+
+// Mirrors kx_projection::MoteState.
+enum MoteSnapshotState {
+  MOTE_SNAPSHOT_STATE_UNSPECIFIED = 0;
+  MOTE_SNAPSHOT_STATE_PENDING = 1;       // declared; no journal entry yet
+  MOTE_SNAPSHOT_STATE_SCHEDULED = 2;     // Proposed; not yet Committed/Failed
+  MOTE_SNAPSHOT_STATE_COMMITTED = 3;     // durable fact, not repudiated
+  MOTE_SNAPSHOT_STATE_FAILED = 4;        // terminal failure
+  MOTE_SNAPSHOT_STATE_REPUDIATED = 5;    // Committed then repudiated
+  MOTE_SNAPSHOT_STATE_INCONSISTENT = 6;  // cell-8 anomaly
+}
+
+// Mirrors kx_projection::PromotionState (P1 read API stub = NOT_APPLICABLE).
+enum PromotionState {
+  PROMOTION_STATE_UNSPECIFIED = 0;
+  PROMOTION_STATE_NOT_APPLICABLE = 1;
+  PROMOTION_STATE_UNPROMOTED = 2;
+  PROMOTION_STATE_PROMOTED = 3;
+}
+
+// Mirrors kx_projection::AnomalyKind.
+enum MoteAnomaly {
+  MOTE_ANOMALY_UNSPECIFIED = 0;
+  MOTE_ANOMALY_EFFECT_STAGED_THEN_REPUDIATED_NO_COMMITTED = 1;
+  MOTE_ANOMALY_QUARANTINED_AT_LEAST_ONCE_EFFECT = 2;
+}
+
+// ---------------------------------------------------------------------------
+// SubmitRun — propose-proxy (RegisterRun + N x SubmitMote). Returns ONLY after
+// the journaled instance_id (never acks ahead of the journal). D120.1.
+// ---------------------------------------------------------------------------
+
+message SubmitRunRequest {
+  bytes recipe_fingerprint = 1;          // 32B — recipe def/content hash (discovery/dedup only; NEVER identity)
+  repeated SubmitMoteSpec motes = 2;     // the run's Motes to admit under the registered instance
+}
+
+// One Mote to admit, mirrors SubmitMoteRequest (coordinator.proto). `mote_id`
+// inside `mote` is advisory only; the coordinator re-derives identity Rust-side.
+message SubmitMoteSpec {
+  Mote mote = 1;
+  WarrantSpec warrant = 2;
+  bool accept_at_least_once = 3;
+}
+
+message RunHandle {
+  bytes instance_id = 1;                 // 16B — coordinator-assigned, journaled
+  bytes recipe_fingerprint = 2;          // 32B — echoed for client-side discovery/dedup
+}
+
+// ---------------------------------------------------------------------------
+// GetProjection — the "render my run as a DAG" READ query (missing today).
+// All fields server-derived from the kx-projection fold. D120.2.
+// ---------------------------------------------------------------------------
+
+message GetProjectionRequest {
+  bytes instance_id = 1;                 // 16B — the run to render (ownership ticket)
+  optional uint64 at_seq = 2;            // fold up to and including this seq; absent = current head (clamped <= head)
+}
+
+message ProjectionView {
+  bytes instance_id = 1;                 // 16B
+  bytes recipe_fingerprint = 2;          // 32B
+  uint64 current_seq = 3;                // the fold frontier this view reflects
+  repeated MoteSnapshot motes = 4;       // all fields server-derived from the fold
+}
+
+message MoteSnapshot {
+  bytes mote_id = 1;                     // 32B — SERVER-DERIVED (never client-supplied)
+  MoteSnapshotState state = 2;
+  NdClass nd_class = 3;                  // reuses coordinator.proto NdClass
+  PromotionState promotion = 4;
+  optional bytes result_ref = 5;         // 32B when committed
+  optional bytes warrant_ref = 6;        // 32B — a REFERENCE only (never the warrant body / secret material)
+  bytes mote_def_hash = 7;              // 32B
+  optional uint64 committed_seq = 8;     // present iff committed
+  repeated ParentRef parents = 9;        // reuses coordinator.proto ParentRef
+  optional bytes verdict = 10;           // OPAQUE committed CriticVerdict bytes (never deserialized server-side); absent if none
+  optional MoteAnomaly anomaly = 11;
+}
+
+// ---------------------------------------------------------------------------
+// GetContent — fetch a committed result. instance_id = ownership ticket; the
+// run's committed result_refs are the authorized set. Uniform "not authorized"
+// (no existence oracle). D120.1.
+// ---------------------------------------------------------------------------
+
+message GetContentRequest {
+  bytes content_ref = 1;                 // 32B
+  bytes instance_id = 2;                 // 16B — ownership ticket
+}
+
+message ContentBlob {
+  bytes payload = 1;                     // raw bytes from the content store
+}
+
+// ---------------------------------------------------------------------------
+// StreamEvents — resumable cursor (since_seq -> next_seq). Bounded queue; slow
+// consumers resume from last ack (CatchupRequired); never ack ahead of the
+// journal head. Deltas = Committed/Failed/Repudiated/EffectStaged. D120.3.
+// ---------------------------------------------------------------------------
+
+message StreamEventsRequest {
+  bytes instance_id = 1;                 // 16B — the run to stream
+  uint64 since_seq = 2;                  // resume cursor (0 = from start)
+}
+
+message EventFrame {
+  uint64 seq = 1;                        // seq of the highest delta in this frame
+  repeated EventDelta deltas = 2;
+  uint64 next_seq = 3;                   // cursor to resume from (never > journal head)
+  bool journal_boundary = 4;             // true when the frame reached the current head (caught up)
+}
+
+message EventDelta {
+  uint64 seq = 1;
+  oneof kind {
+    CommittedDelta committed = 2;
+    FailedDelta failed = 3;
+    RepudiatedDelta repudiated = 4;
+    EffectStagedDelta effect_staged = 5;
+  }
+}
+
+message CommittedDelta {
+  bytes mote_id = 1;                     // 32B
+  bytes result_ref = 2;                  // 32B
+  NdClass nd_class = 3;
+}
+
+message FailedDelta {
+  bytes mote_id = 1;                     // 32B
+  uint32 reason_class = 2;               // opaque-numeric (kx_journal::FailureReason discriminant)
+}
+
+message RepudiatedDelta {
+  bytes target_mote_id = 1;              // 32B
+  uint64 target_committed_seq = 2;
+}
+
+message EffectStagedDelta {
+  bytes mote_id = 1;                     // 32B
+}
+
+// ---------------------------------------------------------------------------
+// M7 catalog signature RPCs — STUBBED at the D120 freeze (the wire shape is
+// frozen now; gateway-core returns UNIMPLEMENTED until the catalog read path
+// is wired). D120.1.
+// ---------------------------------------------------------------------------
+
+message ListSignaturesRequest {}
+message SignatureSummary {
+  bytes signature_id = 1;                // 32B TaskSignatureHash
+  string name = 2;
+}
+message ListSignaturesResponse {
+  repeated SignatureSummary signatures = 1;
+}
+message GetSignatureRequest {
+  bytes signature_id = 1;                // 32B
+}
+message GetSignatureResponse {
+  bytes signature_id = 1;                // 32B
+  bytes manifest = 2;                    // opaque encoded signature entry
+}
+message RegisterSignatureRequest {
+  bytes manifest = 1;                    // opaque encoded signature entry
+}
+message RegisterSignatureResponse {
+  bytes signature_id = 1;                // 32B
+}
+
+// ---------------------------------------------------------------------------
+// Service — the external client-facing gateway (distinct from Coordinator).
+// ---------------------------------------------------------------------------
+
+service KxGateway {
+  rpc SubmitRun(SubmitRunRequest) returns (RunHandle);
+  rpc GetProjection(GetProjectionRequest) returns (ProjectionView);
+  rpc GetContent(GetContentRequest) returns (ContentBlob);
+  rpc StreamEvents(StreamEventsRequest) returns (stream EventFrame);
+  rpc ListSignatures(ListSignaturesRequest) returns (ListSignaturesResponse);
+  rpc GetSignature(GetSignatureRequest) returns (GetSignatureResponse);
+  rpc RegisterSignature(RegisterSignatureRequest) returns (RegisterSignatureResponse);
+}

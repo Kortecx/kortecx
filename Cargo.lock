@@ -1212,6 +1212,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "kx-gateway-core"
+version = "0.0.1"
+dependencies = [
+ "kx-content",
+ "kx-journal",
+ "kx-mote",
+ "kx-projection",
+ "kx-proto",
+ "kx-warrant",
+ "proptest",
+ "smallvec",
+ "thiserror",
+ "tokio",
+ "tokio-stream",
+ "tonic",
+ "tracing",
+]
+
+[[package]]
 name = "kx-inference"
 version = "0.0.1"
 dependencies = [
@@ -1233,6 +1252,29 @@ dependencies = [
  "thiserror",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "kx-invoke"
+version = "0.0.1"
+dependencies = [
+ "kx-catalog",
+ "kx-content",
+ "kx-executor",
+ "kx-fleet",
+ "kx-gateway-core",
+ "kx-journal",
+ "kx-mote",
+ "kx-projection",
+ "kx-warrant",
+ "kx-workflow",
+ "proptest",
+ "serde_json",
+ "smallvec",
+ "thiserror",
+ "tokio",
+ "tonic",
+ "tracing",
 ]
 
 [[package]]

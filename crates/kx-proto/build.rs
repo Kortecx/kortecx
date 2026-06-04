@@ -13,8 +13,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     tonic_build::configure()
         .build_server(true)
         .build_client(true)
-        .compile_protos(&["proto/kortecx/v1/coordinator.proto"], &["proto"])?;
+        .compile_protos(
+            &[
+                "proto/kortecx/v1/coordinator.proto",
+                "proto/kortecx/v1/gateway.proto",
+            ],
+            &["proto"],
+        )?;
 
     println!("cargo:rerun-if-changed=proto/kortecx/v1/coordinator.proto");
+    println!("cargo:rerun-if-changed=proto/kortecx/v1/gateway.proto");
     Ok(())
 }
