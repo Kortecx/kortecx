@@ -1242,6 +1242,7 @@ dependencies = [
  "kx-journal",
  "kx-llamacpp",
  "kx-memoizer",
+ "kx-model-store",
  "kx-model-validator",
  "kx-mote",
  "kx-projection",
@@ -1386,6 +1387,20 @@ dependencies = [
  "tempfile",
  "tracing",
  "ureq",
+]
+
+[[package]]
+name = "kx-model-store"
+version = "0.0.1"
+dependencies = [
+ "blake3",
+ "kx-content",
+ "kx-mote",
+ "serde",
+ "smallvec",
+ "tempfile",
+ "thiserror",
+ "tracing",
 ]
 
 [[package]]

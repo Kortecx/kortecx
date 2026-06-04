@@ -41,6 +41,7 @@ members = [
     "crates/kx-model-harness",
     "crates/kx-gateway-core",
     "crates/kx-invoke",
+    "crates/kx-model-store",
 ]
 exclude = [
     "kx-cloud",
@@ -169,6 +170,11 @@ kx-gateway-core      = { path = "crates/kx-gateway-core",      version = "0.0.1"
 # bind args, compile, and submit under intersect(use, step) via the gateway
 # RunSubmitter. A composition over the catalog + gateway; adds no new write path.
 kx-invoke            = { path = "crates/kx-invoke",            version = "0.0.1" }
+# M4 (D108.2) model lifecycle: backend-agnostic, FFI-FREE registry of model
+# identity + declared modalities + projector path + fail-closed GGUF validation.
+# An InferenceBackend resolves paths/capabilities through its ModelResolver seam;
+# the live loaded-model handle cache (kx-inference) keys on its identity_digest.
+kx-model-store       = { path = "crates/kx-model-store",       version = "0.0.1" }
 bindgen            = "0.70"
 cmake              = "0.1"
 ureq               = { version = "2", default-features = false, features = ["tls"] }

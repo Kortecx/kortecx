@@ -25,6 +25,11 @@ kx-context-assembler = { workspace = true }
 # `Dispatcher` + `InferenceBackend` trait (bring-your-own backend) with NO native
 # toolchain. See the [features] section below.
 kx-llamacpp          = { workspace = true, optional = true }
+# Model lifecycle (M4): the ModelResolver / ModelDescriptor the concrete backend
+# resolves paths + modalities through. Optional + behind `llamacpp` because only
+# the in-process backend consumes it; a bring-your-own backend pulls it directly
+# if it wants the registry. FFI-free, so it never affects `build-no-inference`.
+kx-model-store       = { workspace = true, optional = true }
 serde                = { workspace = true }
 thiserror            = { workspace = true }
 tracing              = { workspace = true }
@@ -42,7 +47,7 @@ smallvec             = { workspace = true }
 # --workspace` keep the FFI ON because kx-model-harness (the only consumer of the
 # concrete backend) opts back in with `features = ["llamacpp"]`.
 default  = ["llamacpp"]
-llamacpp = ["dep:kx-llamacpp"]
+llamacpp = ["dep:kx-llamacpp", "dep:kx-model-store"]
 
 [dev-dependencies]
 kx-journal         = { workspace = true }
