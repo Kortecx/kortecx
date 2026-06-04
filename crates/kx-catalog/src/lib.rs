@@ -94,6 +94,8 @@
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 
 mod action;
+mod discovery;
+mod discovery_index;
 mod entry;
 mod governed;
 mod grant;
@@ -101,6 +103,7 @@ mod in_memory;
 mod in_memory_ledger;
 mod in_memory_version_ledger;
 mod ledger;
+mod metadata;
 mod party;
 mod path;
 mod registry;
@@ -143,6 +146,18 @@ pub use version::{
 pub use version_ledger::{
     PublishOutcome, VersionLedger, VersionLedgerError, MAX_VERSION_CHAIN_DEPTH,
     MAX_VERSION_DESCENDANTS,
+};
+
+// M7.3 (D87/D84) — discovery (fuzzy-in, exact-out) + advisory metadata.
+pub use discovery::{commit_selection, CatalogDiscovery, FuzzyDiscovery, SelectionFact};
+// One import surface for catalog callers building discovery: the content-address
+// type (in `SelectionFact`/`commit_selection`) and the similarity seam the fuzzy
+// surface wraps (`kx_dataset`, already a dependency; the SN-8-confined ANN seam).
+pub use discovery_index::{DiscoveryIndex, InMemoryDiscoveryIndex, MAX_DISCOVERY_RESULT};
+pub use kx_content::ContentRef;
+pub use kx_dataset::{Hit, InMemoryRetrievalIndex, RetrievalIndex};
+pub use metadata::{
+    AdvisoryMetadata, AdvisoryMetadataStore, Tag, TagError, MAX_TAGS_PER_ASSET, MAX_TAG_LEN,
 };
 
 // REUSE (never modify) the frozen monotonic-narrowing seam — one import surface
