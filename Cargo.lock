@@ -1196,6 +1196,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "kx-fleet"
+version = "0.0.1"
+dependencies = [
+ "bincode",
+ "blake3",
+ "kx-catalog",
+ "kx-mote",
+ "kx-warrant",
+ "proptest",
+ "serde",
+ "smallvec",
+ "thiserror",
+ "tracing",
+]
+
+[[package]]
 name = "kx-inference"
 version = "0.0.1"
 dependencies = [
