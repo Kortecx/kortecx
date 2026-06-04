@@ -40,6 +40,7 @@ members = [
     "crates/kx-fleet",
     "crates/kx-model-harness",
     "crates/kx-gateway-core",
+    "crates/kx-gateway",
     "crates/kx-invoke",
     "crates/kx-model-store",
 ]
@@ -166,6 +167,10 @@ kx-fleet             = { path = "crates/kx-fleet",             version = "0.0.1"
 # StreamEvents) + propose-proxy (SubmitRun -> coordinator). No journal write path;
 # never links the frozen-trio writers (a dep-wall test pins it).
 kx-gateway-core      = { path = "crates/kx-gateway-core",      version = "0.0.1" }
+# R1 (D130) gateway dev BINARY: hosts the FROZEN KxGateway proto over kx-gateway-core
+# with an embedded single-system coordinator + local worker; the first network server
+# that binds a port outside tests. Deny-all auth stub (R2 fills it). FFI-free by default.
+kx-gateway           = { path = "crates/kx-gateway",           version = "0.0.1" }
 # M8 (D121) inbound execution: resolve a published recipe by handle, validate +
 # bind args, compile, and submit under intersect(use, step) via the gateway
 # RunSubmitter. A composition over the catalog + gateway; adds no new write path.
