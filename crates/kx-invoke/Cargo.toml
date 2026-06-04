@@ -1,0 +1,53 @@
+# SPDX-License-Identifier: Apache-2.0
+[package]
+name         = "kx-invoke"
+version      = "0.0.1"
+edition      = { workspace = true }
+rust-version = { workspace = true }
+license      = { workspace = true }
+authors      = { workspace = true }
+repository   = { workspace = true }
+description  = "kortecx M8 (D121) inbound execution: turn an ADVERTISED catalog snapshot into a SERVED, guaranteed-execution run. Resolve a published recipe by handle (Read-gated) -> resolve the executable body -> validate args fail-closed (the SAME InputSchema the advertisement publishes) -> bind validated args into the recipe's Variable config slots (distinct args = distinct identity = exactly-once-per-input) -> compile -> submit each Mote under intersect(effective-Use-warrant, step-warrant) (no-widen) via the gateway RunSubmitter -> the durable spine drives StageThenCommit -> Committed. A composition over the M7 catalog + the D120 gateway; adds NO new journal write path and never links the frozen trio."
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+# Resolve a recipe by handle (GovernedCatalog, Read-gated) + the executable body
+# (BodyLedger) + the free-param contract -> InputSchema mapping (the SAME one the
+# advertisement publishes) + validate_args + the frozen kx_warrant::intersect.
+kx-catalog      = { workspace = true }
+# Compile the bound recipe body to runnable Motes; the bind_param primitive.
+kx-workflow     = { workspace = true }
+# Mote / MoteId / ConfigVal (the bound argument value type).
+kx-mote         = { workspace = true }
+# WarrantSpec + intersect (run each Mote under no more than the caller's authority
+# AND no more than the recipe declares).
+kx-warrant      = { workspace = true }
+# The RunSubmitter propose-proxy seam (register_run + submit_mote -> the coordinator,
+# the sole journal writer). kx-invoke executes by SUBMITTING, never by writing.
+kx-gateway-core = { workspace = true }
+# Validate + canonically re-encode each typed argument value (no float on the path).
+serde_json      = { workspace = true }
+# Typed InvokeError.
+thiserror       = { workspace = true }
+# Debug-level observability (never on a truth path).
+tracing         = { workspace = true }
+
+[dev-dependencies]
+# Resolve a TEAM MEMBER's effective Use warrant (GovernedFleet) for the G3 scenario.
+kx-fleet        = { workspace = true }
+# Drive the bound Motes to Committed on the real single-node durable spine.
+kx-executor     = { workspace = true }
+kx-journal      = { workspace = true }
+kx-content      = { workspace = true }
+kx-projection   = { workspace = true }
+# The RunSubmitter ordering test (register-before-submit) + async harness.
+tokio           = { workspace = true }
+# The `#[tonic::async_trait]` macro to implement a mock RunSubmitter in tests.
+tonic           = { workspace = true }
+proptest        = { workspace = true }
+smallvec        = { workspace = true }
+
+[lints]
+workspace = true

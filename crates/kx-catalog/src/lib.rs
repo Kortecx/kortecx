@@ -95,6 +95,7 @@
 
 mod action;
 mod advertise;
+mod body;
 mod discovery;
 mod discovery_index;
 mod entry;
@@ -151,8 +152,13 @@ pub use version_ledger::{
 
 // M7.3 (D85) — Mote-as-MCP advertisement (descriptor only; execution is M8/D121).
 pub use advertise::{
-    advertise_snapshot, encode_param_schema, AdvertiseError, SchemaResolver, SnapshotAdvertisement,
+    advertise_snapshot, encode_param_schema, free_params_to_input_schema, AdvertiseError,
+    SchemaResolver, SnapshotAdvertisement,
 };
+
+// M8 (D121) — content-addressed recipe-BODY storage: turns "advertised" into
+// "servable" by resolving the executable WorkflowDef a published recipe runs.
+pub use body::{body_manifest_id, BodyLedger, BodyLedgerError, BodyOutcome, InMemoryBodyLedger};
 // The M5.3 closed, no-float typed-arg schema, re-exported so an advertisement's
 // `input_schema` is one import surface (the SAME schema M8's `validate_args` uses).
 pub use kx_tool_registry::{validate_args, InputSchema, ParamSpec, ParamType, SchemaError};

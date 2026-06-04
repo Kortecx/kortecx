@@ -183,7 +183,10 @@ pub fn advertise_snapshot<G: GrantLedger, V: VersionLedger>(
 /// [`ParamType`]. Every `Variable` param is `required: true` and the schema is
 /// `deny_unknown: true` (fail-closed against smuggled args, matching `validate_args`
 /// strict mode). `BTreeMap` iteration gives a canonical param order.
-fn free_params_to_input_schema(
+///
+/// Public so the M8 inbound-execution path (D121) binds args against the **same**
+/// schema the advertisement publishes — forward-compatible by construction.
+pub fn free_params_to_input_schema(
     contract: &FreeParamContract,
     resolver: &impl SchemaResolver,
 ) -> Result<InputSchema, AdvertiseError> {

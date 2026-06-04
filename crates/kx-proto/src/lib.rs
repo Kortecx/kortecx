@@ -24,6 +24,19 @@
 //! contract** — `protoc`/`buf` generate native Rust, Python, and TypeScript
 //! types from the same `proto/kortecx/v1/coordinator.proto`.
 //!
+//! ## The external `KxGateway` service (M8 / D120)
+//!
+//! `proto/kortecx/v1/gateway.proto` adds a SECOND, distinct
+//! [`proto::kx_gateway_server::KxGateway`] service (and
+//! [`proto::kx_gateway_client::KxGatewayClient`]) — the client-facing surface
+//! realized by `kx-gateway-core` as a read-fold (`GetProjection`/`GetContent`/
+//! `StreamEvents`) + propose-proxy (`SubmitRun` → coordinator `RegisterRun`/
+//! `SubmitMote`). It reuses the coordinator value messages (`Mote`/`WarrantSpec`/
+//! `ParentRef`/`NdClass`) via `import` and adds NO new journal write path. The
+//! `Coordinator` contract is byte-unchanged. Same identity invariant: a
+//! `ProjectionView`/`MoteSnapshot` is **server-derived**; the client never
+//! computes a `MoteId`.
+//!
 //! ## Mirrored fields, Rust-side identity
 //!
 //! The schema mirrors the domain types as real protobuf messages (not opaque
@@ -41,8 +54,9 @@
 //! drift from the domain types. A failed decode surfaces as a [`ConvertError`].
 
 /// Generated gRPC message + service types (tonic/prost codegen from
-/// `proto/kortecx/v1/coordinator.proto`). Includes the `Coordinator` service
-/// server (`coordinator_server`) and client (`coordinator_client`).
+/// `proto/kortecx/v1/coordinator.proto` + `proto/kortecx/v1/gateway.proto`).
+/// Includes the `Coordinator` service (`coordinator_server`/`coordinator_client`)
+/// and the external `KxGateway` service (`kx_gateway_server`/`kx_gateway_client`).
 pub mod proto {
     // Generated code is exempt from the workspace lint policy: documentation and
     // style live in the `.proto`, not in the machine-generated Rust.
