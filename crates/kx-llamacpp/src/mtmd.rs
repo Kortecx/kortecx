@@ -39,7 +39,7 @@
 //! Each handle is wrapped in `NonNull` at construction and freed exactly once.
 
 use std::ffi::{CStr, CString};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::ptr::NonNull;
 
 use kx_llamacpp_sys as sys;
@@ -241,6 +241,119 @@ impl Drop for Mtmd<'_, '_> {
     }
 }
 
+/// A loaded text [`Model`] bundled with a lazily-loaded, **cached** multi-modal
+/// projector ([`Mtmd`]).
+///
+/// ## Why this type exists (PR-2.5)
+///
+/// [`Mtmd`] borrows the [`Model`] it is initialized from (`Mtmd<'m, 'b>` holds
+/// `PhantomData<&'m Model<'b>>`), so a `Model` and an `Mtmd` derived from it
+/// cannot live in the same ordinary struct in safe Rust — that is a
+/// self-referential borrow. The in-process backend needs exactly that: keep one
+/// model resident AND keep its projector resident across dispatches, instead of
+/// re-running [`Mtmd::from_file`] (which re-uploads the projector to the GPU —
+/// seconds of work) on **every** multi-modal call. This type resolves the
+/// self-reference soundly and **contains the single `unsafe`** it requires, per
+/// the crate invariant that all `unsafe` lives in `kx-llamacpp`.
+///
+/// ## Why it is sound (the two load-bearing facts)
+///
+/// 1. **Stable address.** The model is heap-pinned in a [`Box`], so its address
+///    never moves when the bundle itself is moved (e.g. within a cache `Vec`
+///    that reorders entries or reallocates).
+/// 2. **Drop order.** Rust drops struct fields in *declaration order*, so the
+///    `projector` field (declared first ⇒ `mtmd_free` first) is always dropped
+///    strictly before the `model` field (`llama_model_free`). The projector
+///    therefore never outlives the model despite the lifetime-erased self-borrow.
+///    The `struct_field_drop_order_is_declaration_order` test guards the
+///    declaration-order ⇒ drop-order mechanism this relies on.
+///
+/// The projector is stored at `Mtmd<'b, 'b>` (the model-borrow lifetime widened
+/// to the backend lifetime `'b`). Because [`Mtmd`] is **covariant** in its
+/// model-borrow lifetime, [`Self::projector`] can still be used wherever a
+/// shorter-lived `Mtmd<'_, 'b>` is expected — e.g. alongside a per-dispatch
+/// [`Context`] in [`Mtmd::eval_chunks`].
+pub struct ModelWithProjector<'b> {
+    // FIELD ORDER IS LOAD-BEARING — DO NOT REORDER. Rust drops struct fields in
+    // declaration order; `projector` borrows `model`, so it MUST be declared
+    // (and therefore dropped) before `model`.
+    projector: Option<Mtmd<'b, 'b>>,
+    /// The projector path currently cached in `projector` (if any). A request
+    /// for a *different* path triggers a reload (defensive — a model identity
+    /// normally maps to exactly one projector).
+    mmproj_path: Option<PathBuf>,
+    model: Box<Model<'b>>,
+}
+
+impl<'b> ModelWithProjector<'b> {
+    /// Wrap a loaded model. No projector is loaded until [`Self::ensure_projector`].
+    #[must_use]
+    pub fn new(model: Model<'b>) -> Self {
+        Self {
+            projector: None,
+            mmproj_path: None,
+            model: Box::new(model),
+        }
+    }
+
+    /// The wrapped text model.
+    #[must_use]
+    pub fn model(&self) -> &Model<'b> {
+        &self.model
+    }
+
+    /// The cached projector, if one has been loaded via [`Self::ensure_projector`].
+    #[must_use]
+    pub fn projector(&self) -> Option<&Mtmd<'b, 'b>> {
+        self.projector.as_ref()
+    }
+
+    /// Ensure a projector for `mmproj_path` is loaded and cached, loading it on a
+    /// miss (or reloading if a *different* path is requested). Returns `true`
+    /// iff a (re)load actually occurred — the caller uses this to count cold
+    /// projector loads (the `mmproj_loads` metric): on a cache HIT it returns
+    /// `false` and performs no FFI work.
+    ///
+    /// `n_threads` / `use_gpu` are forwarded to [`Mtmd::from_file`].
+    ///
+    /// # Errors
+    /// [`LlamaError::MtmdInitFailed`] / [`LlamaError::PathInvalid`] propagated
+    /// from [`Mtmd::from_file`].
+    pub fn ensure_projector(
+        &mut self,
+        mmproj_path: &Path,
+        n_threads: i32,
+        use_gpu: bool,
+    ) -> Result<bool, LlamaError> {
+        if self.projector.is_some() && self.mmproj_path.as_deref() == Some(mmproj_path) {
+            return Ok(false); // cache HIT — the projector is already resident.
+        }
+        // Miss (or a different projector path): drop any existing projector
+        // FIRST — its `mtmd_free` runs while `self.model` is still alive, the
+        // correct drop order — then load the new one.
+        self.projector = None;
+        self.mmproj_path = None;
+
+        // SAFETY: we hand `Mtmd::from_file` a `&'b Model<'b>` synthesized from
+        // the heap-pinned model via a raw pointer. Widening the borrow to `'b`
+        // is a lie the type system cannot verify; it is made sound by this
+        // type's two invariants (see the struct docs): (1) the model is
+        // `Box`-pinned, so its address is stable for as long as `self` lives;
+        // (2) field-declaration order guarantees the projector — stored into
+        // `self.projector` below — is dropped strictly before `self.model`. The
+        // returned `Mtmd` retains only its own `mtmd_context` pointer plus a
+        // zero-sized `PhantomData` of the borrow (no dangling reference is kept
+        // at runtime) and never dereferences the synthesized reference after
+        // construction; `mtmd_init_from_file` reads `model.ptr` only during this
+        // call, while the model is plainly alive and not concurrently mutated.
+        let model_ref: &'b Model<'b> = unsafe { &*std::ptr::addr_of!(*self.model) };
+        let projector = Mtmd::from_file(model_ref, mmproj_path, n_threads, use_gpu)?;
+        self.projector = Some(projector);
+        self.mmproj_path = Some(mmproj_path.to_owned());
+        Ok(true)
+    }
+}
+
 /// RAII handle to a decoded media bitmap.
 pub struct Bitmap {
     ptr: NonNull<sys::mtmd_bitmap>,
@@ -333,5 +446,49 @@ mod tests {
             marker.starts_with('<') && marker.ends_with('>'),
             "media marker should be a bracketed tag, got {marker:?}"
         );
+    }
+
+    /// The load-bearing invariant behind [`ModelWithProjector`]'s soundness:
+    /// Rust drops struct fields in *declaration order*, so a `projector` field
+    /// declared before a `model` field is dropped first (`mtmd_free` before
+    /// `llama_model_free`). The real bundle holds FFI handles we cannot
+    /// instrument from a unit test, so this locks the *mechanism* on a mirror
+    /// struct with the SAME field order. If `ModelWithProjector`'s fields are
+    /// ever reordered, this guard must be revisited together with that change.
+    #[test]
+    fn struct_field_drop_order_is_declaration_order() {
+        use std::cell::RefCell;
+        thread_local! {
+            static LOG: RefCell<Vec<&'static str>> = const { RefCell::new(Vec::new()) };
+        }
+        struct Projector;
+        impl Drop for Projector {
+            fn drop(&mut self) {
+                LOG.with(|l| l.borrow_mut().push("projector"));
+            }
+        }
+        struct Weights;
+        impl Drop for Weights {
+            fn drop(&mut self) {
+                LOG.with(|l| l.borrow_mut().push("model"));
+            }
+        }
+        // MIRROR of `ModelWithProjector`'s field order: projector BEFORE model.
+        struct Mirror {
+            _projector: Option<Projector>,
+            _model: Box<Weights>,
+        }
+        LOG.with(|l| l.borrow_mut().clear());
+        drop(Mirror {
+            _projector: Some(Projector),
+            _model: Box::new(Weights),
+        });
+        LOG.with(|l| {
+            assert_eq!(
+                *l.borrow(),
+                vec!["projector", "model"],
+                "projector (mtmd_free) must drop before model (llama_model_free)"
+            );
+        });
     }
 }

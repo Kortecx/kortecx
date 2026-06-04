@@ -150,6 +150,18 @@
 //!    holds a `NonNull`. No `*mut T` flows further than the construction
 //!    site.
 //!
+//! 5. **One sanctioned self-reference: [`ModelWithProjector`].** A cached
+//!    multi-modal projector must coexist with the [`Model`] it borrows in a
+//!    single owned value (so a model + its projector can be cached together).
+//!    `ModelWithProjector` is the *only* place that holds such a
+//!    self-referential borrow. Its soundness rests on two facts the compiler
+//!    cannot check — the model is `Box`-pinned (stable address) and
+//!    field-declaration order guarantees the projector is dropped before the
+//!    model — both documented at its definition and guarded by the
+//!    `struct_field_drop_order_is_declaration_order` test. No new FFI handle is
+//!    allocated (it composes `Model` + `Mtmd`, each of which still frees itself
+//!    exactly once per invariant 3).
+//!
 //! ## ABI pin
 //!
 //! The `llama.cpp` source is a **pinned git submodule** at a specific
@@ -180,7 +192,7 @@ pub use context::{Context, ContextParams, PerfData, PoolingType};
 pub use error::LlamaError;
 pub use generator::Generator;
 pub use model::{Model, ModelParams};
-pub use mtmd::{Bitmap, InputChunks, Mtmd};
+pub use mtmd::{Bitmap, InputChunks, ModelWithProjector, Mtmd};
 pub use sampler::{Sampler, SamplerChainBuilder};
 pub use vocab::{Token, Vocab};
 
