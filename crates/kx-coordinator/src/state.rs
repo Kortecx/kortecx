@@ -60,9 +60,10 @@ const MAX_DRAIN: usize = 256;
 
 /// Outcome of a `SubmitMote`: the canonically re-derived id, whether it was a
 /// duplicate (idempotent re-submit before commit), and the registered run's
-/// `instance_id` if the run was registered (M1.2/D64 — the resume key surfaced
-/// on the wire; `None` for an unregistered run, where M1.2 captures no metadata
-/// and the worker falls back to the MoteId-only token).
+/// `instance_id` (M1.2/D64 — the resume key surfaced on the wire). Registration
+/// is enforced before submit (Gate 1), so a returned outcome always carries
+/// `Some(instance_id)` for BOTH a fresh and a duplicate submit; the `Option` only
+/// reflects the internal pre-fill before `submit_and_capture` resolves the run.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct SubmitOutcome {
     pub(crate) mote_id: MoteId,
@@ -1065,14 +1066,17 @@ fn submit_and_capture<J: Journal>(
     let warrant_for_capture = warrant.clone();
     let mut outcome = handle_submit(scheduler, projection, dispatch, mote, warrant);
 
-    // M1.2 (D79): on a FRESH (non-duplicate) submit, surface the run's
-    // instance_id and — when the tools resolved cleanly — capture the resolved
-    // tool/model/warrant versions as off-DAG run metadata. Registration is now
-    // guaranteed (Gate 1), so every fresh submit anchors to a real instance_id.
-    // A WM Unresolved submit never reaches here (refused at Gate 2); a PURE/ROND
-    // Unresolved submit reaches here and skips capture (the M1.2 behavior).
+    // The run's instance_id is known (Gate 1 guarantees registration) for BOTH a
+    // fresh AND a duplicate submit — surface it ALWAYS (the M2 resume key / server-
+    // derived identity). A DUPLICATE (idempotent re-submit: the same already-
+    // committed Mote, e.g. an Invoke of the same recipe+args) must still resolve to
+    // its run, not return an empty instance_id that a client decodes into a 16-byte
+    // id. M1.2 (D79) version CAPTURE stays FRESH-only — a duplicate already recorded
+    // its run metadata, and re-capture would double-append. (A WM Unresolved submit
+    // never reaches here — refused at Gate 2; a PURE/ROND Unresolved submit reaches
+    // here and skips capture, the M1.2 behavior.)
+    outcome.instance_id = Some(instance_id);
     if !outcome.duplicate {
-        outcome.instance_id = Some(instance_id);
         if let ToolResolution::Resolved(_) = resolution {
             capture_run_versions(
                 journal,

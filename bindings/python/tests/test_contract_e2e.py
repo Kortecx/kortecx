@@ -105,19 +105,18 @@ async def test_async_invoke_and_wait_modes(dev_server):
     assert polled.ok and polled.to_dict() == evented.to_dict()
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="RUNTIME bug (not SDK): re-invoking with identical args yields the same "
-    "already-committed terminal Mote, and the coordinator's duplicate-submit path "
-    "returns an empty instance_id (kx-gateway-core submit.rs / kx-coordinator "
-    "SubmitMote) → UNAVAILABLE. Tracked for a runtime fix; this xfail flips when fixed.",
-)
 def test_idempotent_reinvoke_same_args(dev_server):
+    """Idempotent re-invoke: the same recipe+args resolves to the same already-
+    committed terminal Mote and result (exactly-once-per-input). Regression for the
+    coordinator duplicate-submit fix — previously the second invoke failed with
+    `UNAVAILABLE: non-16-byte instance_id` because the duplicate path dropped the
+    run's instance_id."""
     with KxClient(dev_server.endpoint) as kx:
         a = kx.invoke(ECHO_HANDLE, {"topic": "same"}, wait=True)
-        b = kx.invoke(ECHO_HANDLE, {"topic": "same"}, wait=True)  # currently raises KxUnavailable
-        assert a.terminal_mote_id == b.terminal_mote_id
-        assert a.result_ref == b.result_ref
+        b = kx.invoke(ECHO_HANDLE, {"topic": "same"}, wait=True)
+    assert a.instance_id == b.instance_id
+    assert a.terminal_mote_id == b.terminal_mote_id
+    assert a.result_ref == b.result_ref
 
 
 # --- the projection → content flow -------------------------------------------
