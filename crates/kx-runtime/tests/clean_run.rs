@@ -18,6 +18,7 @@ fn cfg(dir: &std::path::Path, mode: Mode) -> RuntimeConfig {
         // sidecars, and the "replay is a no-op" case then exercises the
         // seeded-recovery (happy) path — recovery stays bit-identical.
         checkpoint_every: Some(2),
+        audit_log: None,
     }
 }
 

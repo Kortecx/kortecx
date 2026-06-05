@@ -23,6 +23,7 @@ fn cfg(dir: &std::path::Path, mode: Mode) -> RuntimeConfig {
         // Cadence 2 over the 8-Mote demo: capture co-exists with checkpointing
         // (both fire at the loop-bottom frontier) without perturbing either.
         checkpoint_every: Some(2),
+        audit_log: None,
     }
 }
 

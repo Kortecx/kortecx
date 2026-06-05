@@ -323,6 +323,8 @@ impl Harness {
             // capture_sink — off for the harness; the runtime seam captures only
             // the action, and `Full` reasoning/thinking enrichment is M3.2 (D67).
             None,
+            // audit_sink (R4) — off for the harness driver.
+            None,
         )
     }
 }

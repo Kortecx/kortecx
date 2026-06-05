@@ -43,6 +43,7 @@ fn config(dir: &Path) -> RuntimeConfig {
         // These invariants are unrelated to checkpointing; keep the cadence off
         // so no sidecar is written (recovery would read it harmlessly anyway).
         checkpoint_every: None,
+        audit_log: None,
     }
 }
 

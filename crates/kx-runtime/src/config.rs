@@ -41,16 +41,24 @@ pub struct RuntimeConfig {
     /// still *reads* any existing sidecar — the read path is always safe). The
     /// sidecar only ever speeds up resume; it can never change the outcome.
     pub checkpoint_every: Option<u64>,
+    /// Off-truth-path audit log path (R4). `Some(path)` writes a best-effort JSONL
+    /// trail of the run's lifecycle, truncated fresh per run; `None` disables
+    /// auditing (the byte-identity-without-overhead path). Audit is never journaled
+    /// and never feeds the digest, so this never changes the run outcome.
+    pub audit_log: Option<PathBuf>,
 }
 
 impl RuntimeConfig {
     /// Parse `argv` (excluding the program name) into a [`RuntimeConfig`].
     ///
     /// Grammar: `<run|replay|digest> --journal <path> --content <dir>
-    /// [--crash-at <pre-commit-stc|post-commit-vtc>] [--checkpoint-every <N>]`.
+    /// [--crash-at <pre-commit-stc|post-commit-vtc>] [--checkpoint-every <N>]
+    /// [--audit-log <path>]`.
     /// `--crash-at` is honored only in `run` mode (a crash point in replay/digest
     /// is a config error). `--checkpoint-every 0` disables checkpoint writing;
-    /// omitting it uses [`DEFAULT_CHECKPOINT_EVERY`].
+    /// omitting it uses [`DEFAULT_CHECKPOINT_EVERY`]. `--audit-log <path>` enables
+    /// the off-truth-path JSONL audit trail for `run`/`replay` (ignored by
+    /// `digest`, which only prints a digest and exits).
     pub fn from_args<I, S>(args: I) -> Result<Self, RuntimeError>
     where
         I: IntoIterator<Item = S>,
@@ -77,6 +85,7 @@ impl RuntimeConfig {
         let mut content_root: Option<PathBuf> = None;
         let mut crash_at: Option<CrashPoint> = None;
         let mut checkpoint_every: Option<u64> = Some(DEFAULT_CHECKPOINT_EVERY);
+        let mut audit_log: Option<PathBuf> = None;
 
         while let Some(flag) = args.next() {
             let mut take_value = |name: &str| -> Result<String, RuntimeError> {
@@ -100,6 +109,7 @@ impl RuntimeConfig {
                     // 0 == disabled; any positive N is the cadence.
                     checkpoint_every = (n != 0).then_some(n);
                 }
+                "--audit-log" => audit_log = Some(PathBuf::from(take_value("--audit-log")?)),
                 other => {
                     return Err(RuntimeError::Config(format!("unknown flag {other:?}")));
                 }
@@ -123,6 +133,7 @@ impl RuntimeConfig {
             mode,
             crash_at,
             checkpoint_every,
+            audit_log,
         })
     }
 }
@@ -149,6 +160,52 @@ mod tests {
         assert_eq!(c.crash_at, Some(CrashPoint::PostCommitVtc));
         // Checkpointing is on by default at the coarse cadence.
         assert_eq!(c.checkpoint_every, Some(DEFAULT_CHECKPOINT_EVERY));
+        // Auditing is OFF by default (the byte-identity-without-overhead path).
+        assert_eq!(c.audit_log, None);
+    }
+
+    #[test]
+    fn audit_log_flag_parses_and_defaults_off() {
+        let on = RuntimeConfig::from_args([
+            "run",
+            "--journal",
+            "/tmp/j",
+            "--content",
+            "/tmp/c",
+            "--audit-log",
+            "/tmp/audit.jsonl",
+        ])
+        .unwrap();
+        assert_eq!(on.audit_log, Some(PathBuf::from("/tmp/audit.jsonl")));
+
+        // Honored in replay too.
+        let replay = RuntimeConfig::from_args([
+            "replay",
+            "--journal",
+            "/tmp/j",
+            "--content",
+            "/tmp/c",
+            "--audit-log",
+            "/tmp/a.jsonl",
+        ])
+        .unwrap();
+        assert_eq!(replay.audit_log, Some(PathBuf::from("/tmp/a.jsonl")));
+
+        // Absent by default.
+        let off = RuntimeConfig::from_args(["run", "--journal", "/tmp/j", "--content", "/tmp/c"])
+            .unwrap();
+        assert_eq!(off.audit_log, None);
+
+        // Missing value is a config error.
+        let bad = RuntimeConfig::from_args([
+            "run",
+            "--journal",
+            "/tmp/j",
+            "--content",
+            "/tmp/c",
+            "--audit-log",
+        ]);
+        assert!(matches!(bad, Err(RuntimeError::Config(_))));
     }
 
     #[test]

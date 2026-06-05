@@ -195,6 +195,7 @@ fn config_for(dir: &Path) -> RuntimeConfig {
         mode: Mode::Run,
         crash_at: None,
         checkpoint_every: None,
+        audit_log: None,
     }
 }
 
@@ -247,6 +248,7 @@ fn drive(workflow: &DemoWorkflow, dir: &Path) -> (Result<RunOutcome, RuntimeErro
         None,
         Some(&sink),
         None, // capture_sink (D67) — off for this assemble-wiring test
+        None, // audit_sink (R4) — off for this assemble-wiring test
     );
     let captured = inputs.lock().unwrap().clone();
     (result, captured)
@@ -452,6 +454,7 @@ fn image_parent_routes_child_to_multimodal_input() {
         None,
         Some(&sink),
         None,
+        None, // audit_sink (R4)
     );
     assert!(result.unwrap().is_complete(), "both Motes committed");
 

@@ -18,6 +18,9 @@ path = "src/main.rs"
 [dependencies]
 kx-mote       = { workspace = true }
 kx-capture    = { workspace = true }
+# R4 off-truth-path audit seam — wired into run_with_seams like capture_sink;
+# best-effort/non-fatal, timestamps never feed the digest. FFI-free leaf.
+kx-audit      = { workspace = true }
 kx-content    = { workspace = true }
 kx-journal    = { workspace = true }
 kx-projection = { workspace = true }
@@ -35,6 +38,8 @@ tracing-subscriber = { workspace = true }
 [dev-dependencies]
 tempfile = { workspace = true }
 rusqlite = { workspace = true }
+# Parse the R4 JSONL audit trail in tests/audit_trail.rs (test-only).
+serde_json = { workspace = true }
 
 [lints]
 workspace = true

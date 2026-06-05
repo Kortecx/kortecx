@@ -42,6 +42,13 @@ pub enum RuntimeError {
     #[error("config: {0}")]
     Config(String),
 
+    /// Opening the off-truth-path audit log failed (R4). Surfaced at construction
+    /// (fail-fast on a misconfigured `--audit-log` path) — record-time audit write
+    /// failures are best-effort and NEVER surface here (they are swallowed +
+    /// counted via `kx_audit::AuditSink::dropped`).
+    #[error("audit: {0}")]
+    Audit(#[from] kx_audit::AuditError),
+
     /// A verified schema migration ([`crate::migrate_and_verify`]) rewrote the
     /// journal but the result did not preserve the run's product identity — the
     /// up-converted source and the migrated destination fold to different

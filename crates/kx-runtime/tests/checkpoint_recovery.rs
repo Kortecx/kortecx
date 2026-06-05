@@ -22,6 +22,7 @@ fn cfg(dir: &Path, checkpoint_every: Option<u64>) -> RuntimeConfig {
         mode: Mode::Run,
         crash_at: None,
         checkpoint_every,
+        audit_log: None,
     }
 }
 
