@@ -64,4 +64,4 @@ pub use provision::{DemoLibrary, HostRecipeBinder, HostSignatureCatalog, DEMO_RE
 pub use server::{serve, start, RunningGateway};
 
 #[cfg(feature = "embedded-worker")]
-pub use server::{default_executor_class, demo_pure_result};
+pub use server::{default_executor_class, demo_pure_result, demo_submit_run_request};

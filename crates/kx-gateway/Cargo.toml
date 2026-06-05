@@ -38,6 +38,11 @@ bincode         = { workspace = true }
 kx-invoke       = { workspace = true }
 kx-mote         = { workspace = true }
 kx-workflow     = { workspace = true }
+# Inline parent-edge storage for the demo Mote built by `demo_submit_run_request`
+# (`Mote::new`'s `parents` is a `SmallVec<[ParentRef; 4]>`). Promoted from a dev-dep
+# (R3) so the helper is a NORMAL public library fn. FFI-free (the dep_wall forbids
+# only the llama.cpp FFI crates).
+smallvec        = { workspace = true }
 # The embedded single-system engine (D129-sanctioned single-process worker management),
 # behind a default-on feature so R13's `cluster` story can disable it for a lib consumer.
 # kx-executor -> kx-inference is `default-features = false` at the workspace root, so this
@@ -57,7 +62,6 @@ thiserror          = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
-smallvec = { workspace = true }
 tokio    = { workspace = true, features = ["time"] }
 
 [features]

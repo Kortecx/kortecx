@@ -88,7 +88,15 @@ build-no-inference:
         exit 1
     fi
     echo " ✓ no kx-llamacpp in kx-runtime closure"
+    echo "Asserting kx-cli's dependency closure is FFI-free (the user-facing binary installs without a C++ toolchain)..."
+    if cargo tree -p kx-cli -e normal | grep -qE 'kx-llamacpp'; then
+        echo " ✗ FAIL: kx-llamacpp is in kx-cli's dependency closure (the FFI leaked into the CLI)"
+        cargo tree -p kx-cli -e normal | grep -E 'kx-llamacpp' || true
+        exit 1
+    fi
+    echo " ✓ no kx-llamacpp in kx-cli closure"
     cargo build -p kx-runtime
+    cargo build -p kx-cli
     cargo build -p kx-inference --no-default-features
     echo " ✓ build-no-inference: PASS"
 

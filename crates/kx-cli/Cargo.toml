@@ -1,0 +1,49 @@
+# SPDX-License-Identifier: Apache-2.0
+[package]
+name         = "kx-cli"
+version      = "0.0.1"
+edition      = { workspace = true }
+rust-version = { workspace = true }
+license      = { workspace = true }
+authors      = { workspace = true }
+repository   = { workspace = true }
+description  = "kortecx unified `kx` CLI (R3, D130): a hand-rolled (no-clap) front end that forwards run|replay|digest to the kx-runtime engine and serve to the kx-gateway server, and is a gRPC client of the FROZEN KxGateway service for invoke|submit|projection|content|events|signatures. Adds --wait (run-to-result) + --json so an agent can call the runtime like a function. FFI-free by default."
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "kx"
+path = "src/main.rs"
+
+[dependencies]
+# run|replay|digest forward to the engine VERBATIM (digest invariant). FFI-free by default.
+kx-runtime = { workspace = true }
+# `serve` forwards to kx_gateway::serve; `submit --demo` uses kx_gateway::demo_submit_run_request.
+# Default features ON ⇒ the embedded-worker closure; FFI-free (the dep_wall pins it).
+kx-gateway = { workspace = true }
+# The FROZEN KxGateway client stubs + request/response messages.
+kx-proto   = { workspace = true }
+# gRPC transport + Request/Status/Code for the client verbs.
+tonic        = { workspace = true }
+# `time` for the --wait / --follow poll backoff; `signal` for a clean --follow Ctrl-C.
+tokio        = { workspace = true, features = ["rt-multi-thread", "macros", "time", "signal"] }
+# --json machine output (a workspace dep; no new dependency).
+serde_json   = { workspace = true }
+tracing            = { workspace = true }
+tracing-subscriber = { workspace = true }
+thiserror          = { workspace = true }
+
+[dev-dependencies]
+# E2E: host an in-process gateway (kx_gateway::start) + drive CLIENT verbs as subprocesses.
+kx-gateway = { workspace = true }
+tempfile   = { workspace = true }
+# `net` for the E2E readiness probe (wait until the in-process gateway's port
+# accepts before driving the CLI — the serve task may bind just after `start`).
+tokio      = { workspace = true, features = ["rt-multi-thread", "macros", "time", "net"] }
+# Parse the verbs' --json output back in the E2E assertions (separate test crate
+# ⇒ a dev-dep even though it's a normal dep of the lib).
+serde_json = { workspace = true }
+
+[lints]
+workspace = true
