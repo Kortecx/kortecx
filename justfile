@@ -169,6 +169,31 @@ verify-quickstart:
     echo "   digest fold all produce the canonical digest (8/8 committed)."
 
 # ============================================================================
+# Container (Docker / OCI) recipes
+# ============================================================================
+
+# Build the FFI-free `kx` runtime image (no C++ toolchain, no llama.cpp submodule).
+# Tags `kortecx/kx:dev` by default; override with KX_IMAGE.
+#   just docker-build                       # → kortecx/kx:dev
+#   KX_IMAGE=ghcr.io/you/kx:v0 just docker-build
+docker-build:
+    DOCKER_BUILDKIT=1 docker build -f Dockerfile -t {{ env_var_or_default("KX_IMAGE", "kortecx/kx:dev") }} .
+
+# Build the CPU inference image (fetches the PINNED llama.cpp inside the builder;
+# needs a C++ toolchain in the BUILDER only, not at runtime). CPU-only — Metal is
+# macOS-host-only and GPU/CUDA is the cloud-side seam (Dockerfile.cuda, D28).
+docker-build-inference:
+    DOCKER_BUILDKIT=1 docker build -f Dockerfile.inference -t {{ env_var_or_default("KX_IMAGE", "kortecx/kx:inference-cpu") }} .
+
+# In-container docs-as-test: build the FFI-free image, then reproduce the canonical
+# projection digest THROUGH the container (clean run · crash-then-replay over a
+# persisted volume · read-only rootfs). The Docker analog of `verify-quickstart`,
+# and what the CI `docker-smoke` job runs. Requires a working Docker daemon. NOT
+# part of `just ci` (a separate, Docker-dependent gate — like verify-quickstart).
+docker-smoke:
+    ./scripts/docker-smoke.sh
+
+# ============================================================================
 # Policy + supply-chain recipes
 # ============================================================================
 

@@ -1,0 +1,88 @@
+# syntax=docker/dockerfile:1
+#
+# kortecx — CPU inference image (Linux).
+#
+# This image adds the llama.cpp FFI (built from the PINNED submodule commit) on top
+# of the `kx` runtime, so the inference toolchain is proven to build + LINK inside a
+# Linux container. It ships TWO binaries:
+#
+#   kx           — the runtime (serve / run / replay / digest). Same as the FFI-free
+#                  image: `kx` itself has NO model-inference verb yet — the in-process
+#                  model-dispatch path wires at A4 (until then `kx serve` uses the
+#                  deterministic demo executor). This image is the forward base for it.
+#   kx-generate  — the `kx-llamacpp` `generate` example: a REAL CPU inference run
+#                  (load GGUF → tokenize → decode → sample → detokenize). Use it to
+#                  actually run a model on CPU in a container today:
+#                    docker run --rm -v $PWD/models:/models \
+#                      --entrypoint kx-generate kortecx/kx:inference-cpu \
+#                      /models/stories260K.gguf "Once upon a time"
+#
+# CPU ONLY. Metal is macOS-HOST-only (`kx-llamacpp-sys/build.rs` links Metal solely
+# on `target.contains("apple")`) — a Linux container cannot use Metal regardless of
+# the host. GPU/NVIDIA is the cloud-side seam — see `Dockerfile.cuda` (D28: CUDA
+# inference is cloud-tier; OSS ships the seam, not the build).
+#
+#   build : docker build -f Dockerfile.inference -t kortecx/kx:inference-cpu .
+#           (or: just docker-build-inference)
+
+# ---- builder ---------------------------------------------------------------
+FROM rust:1.94-bookworm AS builder
+
+# The native build deps the FFI link needs (mirrors the CI `ffi-link` job +
+# `just setup-inference`): cmake + clang/libclang (bindgen) + a C++ toolchain.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends cmake clang libclang-dev build-essential git ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY . .
+
+# Fetch the PINNED llama.cpp commit into the submodule path (the submodule itself is
+# .dockerignore'd to keep the FFI-free context lean). KEEP THIS SHA IN SYNC WITH
+# `crates/kx-llamacpp-sys/PIN.md` — that file is the source of truth for the ABI pin.
+ARG LLAMA_CPP_REF=1a03cf47f67be591699d1f0f7ca28e1ed6eb8c7e
+RUN rm -rf crates/kx-llamacpp-sys/llama.cpp \
+ && git init -q crates/kx-llamacpp-sys/llama.cpp \
+ && git -C crates/kx-llamacpp-sys/llama.cpp remote add origin https://github.com/ggerganov/llama.cpp \
+ && git -C crates/kx-llamacpp-sys/llama.cpp fetch -q --depth 1 origin "${LLAMA_CPP_REF}" \
+ && git -C crates/kx-llamacpp-sys/llama.cpp checkout -q FETCH_HEAD
+
+# Build the runtime + the FFI link (proves the static archives build + link under
+# Linux) + the real CPU-inference example. GGML_CUDA stays OFF (build.rs default).
+RUN cargo build --release -p kx-cli \
+ && cargo build --release -p kx-llamacpp --example generate \
+ && strip target/release/kx target/release/examples/generate \
+ && cp target/release/kx /usr/local/bin/kx \
+ && cp target/release/examples/generate /usr/local/bin/kx-generate
+
+# ---- runtime ---------------------------------------------------------------
+FROM debian:bookworm-slim AS runtime
+
+# libstdc++6: the Linux FFI link pulls `stdc++` (build.rs:169). ca-certificates +
+# tini as in the FFI-free image (TLS-ready; PID-1 SIGTERM forwarding + reaping).
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates libstdc++6 tini \
+ && rm -rf /var/lib/apt/lists/*
+
+RUN groupadd --gid 10001 kx \
+ && useradd  --uid 10001 --gid 10001 --home-dir /var/lib/kortecx --shell /usr/sbin/nologin kx \
+ && mkdir -p /var/lib/kortecx/journal /var/lib/kortecx/content /var/lib/kortecx/catalog /var/lib/kortecx/models \
+ && chown -R 10001:10001 /var/lib/kortecx
+
+COPY --from=builder /usr/local/bin/kx          /usr/local/bin/kx
+COPY --from=builder /usr/local/bin/kx-generate /usr/local/bin/kx-generate
+
+ENV KX_JOURNAL=/var/lib/kortecx/journal/kx.db \
+    KX_CONTENT=/var/lib/kortecx/content \
+    KX_CATALOG=/var/lib/kortecx/catalog \
+    KX_MODELS=/var/lib/kortecx/models \
+    RUST_LOG=info
+
+EXPOSE 50151 50152
+VOLUME ["/var/lib/kortecx/journal", "/var/lib/kortecx/content", "/var/lib/kortecx/catalog", "/var/lib/kortecx/models"]
+
+USER 10001:10001
+WORKDIR /var/lib/kortecx
+
+ENTRYPOINT ["/usr/bin/tini", "--", "kx"]
+CMD ["--help"]

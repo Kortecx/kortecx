@@ -1275,6 +1275,7 @@ dependencies = [
  "kx-warrant",
  "kx-worker",
  "kx-workflow",
+ "nix",
  "serde",
  "serde_json",
  "smallvec",

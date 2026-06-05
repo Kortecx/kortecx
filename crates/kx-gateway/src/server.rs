@@ -261,13 +261,49 @@ pub async fn start(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> {
     start_impl(cfg).await
 }
 
-/// Start the server, then block until Ctrl-C and shut down gracefully.
+/// Start the server, then block until a shutdown signal and drain gracefully.
+///
+/// Waits for **Ctrl-C (SIGINT)** on every platform, plus **SIGTERM** on Unix —
+/// the signal `docker stop`, Kubernetes, and systemd send FIRST (then SIGKILL
+/// after a grace period). Without the SIGTERM arm a containerized `kx serve` was
+/// hard-killed at the end of the grace window, skipping the graceful drain
+/// ([`RunningGateway::shutdown`] flips the live-tail loops off so the gRPC +
+/// WebSocket streams end and `tonic` finishes in-flight requests). The journal is
+/// crash-safe either way (replay recovers), but a clean drain avoids dropping
+/// in-flight responses + leaving the live-tail sockets abruptly reset.
 pub async fn serve(cfg: GatewayConfig) -> Result<(), GatewayError> {
     let running = start(cfg).await?;
-    tracing::info!(addr = %running.local_addr(), "kx-gateway listening (Ctrl-C to stop)");
-    let _ = tokio::signal::ctrl_c().await;
+    tracing::info!(addr = %running.local_addr(), "kx-gateway listening (Ctrl-C / SIGTERM to stop)");
+    wait_for_shutdown_signal().await;
     tracing::info!("shutdown signal received; draining");
     running.shutdown().await
+}
+
+/// Resolve when the process receives a shutdown signal: Ctrl-C (SIGINT) on every
+/// platform, or SIGTERM on Unix (whichever arrives first). If the SIGTERM handler
+/// cannot be installed it falls back to Ctrl-C only — a missing handler is never a
+/// hard failure of `serve`.
+async fn wait_for_shutdown_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+        match signal(SignalKind::terminate()) {
+            Ok(mut sigterm) => {
+                tokio::select! {
+                    _ = tokio::signal::ctrl_c() => {}
+                    _ = sigterm.recv() => {}
+                }
+            }
+            Err(error) => {
+                tracing::warn!(%error, "could not install a SIGTERM handler; waiting on Ctrl-C only");
+                let _ = tokio::signal::ctrl_c().await;
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
+    }
 }
 
 #[cfg(feature = "embedded-worker")]
@@ -517,4 +553,39 @@ async fn resolve_listen(listen: SocketAddr) -> Result<SocketAddr, GatewayError> 
         .map_err(|e| GatewayError::Bind(e.to_string()))?;
     drop(probe);
     Ok(addr)
+}
+
+#[cfg(all(test, unix))]
+mod sigterm_tests {
+    use std::time::Duration;
+    use tokio::time::timeout;
+
+    /// SIGTERM (what `docker stop` / Kubernetes / systemd send first) must wake the
+    /// shutdown wait, not just Ctrl-C — otherwise a containerized `kx serve` is
+    /// SIGKILLed after the stop-grace period and skips the graceful drain. We
+    /// pre-register a SIGTERM stream so tokio installs its process-global handler
+    /// (replacing the default *terminate* action — the raised signal can't kill the
+    /// test binary), spawn the real `wait_for_shutdown_signal`, raise SIGTERM, and
+    /// assert the wait resolves. Only our two registered streams consume the signal;
+    /// no other code in this binary awaits SIGTERM, so parallel unit tests are
+    /// unaffected.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn wait_for_shutdown_signal_wakes_on_sigterm() {
+        use tokio::signal::unix::{signal, SignalKind};
+        // Install the global SIGTERM handler BEFORE raising so the default
+        // terminate action is replaced and this test process survives the signal.
+        let mut _guard = signal(SignalKind::terminate()).expect("install SIGTERM guard stream");
+        let waiter = tokio::spawn(super::wait_for_shutdown_signal());
+        // Give the spawned task a beat to register its own SIGTERM stream before we
+        // raise — tokio streams only observe signals delivered AFTER registration.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        // Deliver SIGTERM to this process. `nix`'s `raise` is a safe wrapper (no
+        // `unsafe` block — kx-gateway forbids it); the handler installed above turns
+        // delivery into a stream notification rather than terminating the test binary.
+        nix::sys::signal::raise(nix::sys::signal::Signal::SIGTERM).expect("raise(SIGTERM) failed");
+        timeout(Duration::from_secs(5), waiter)
+            .await
+            .expect("the shutdown wait did not wake on SIGTERM within 5s")
+            .expect("the shutdown-wait task panicked");
+    }
 }

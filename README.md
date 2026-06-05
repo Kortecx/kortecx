@@ -162,6 +162,51 @@ real principals use `--auth-token <token>=<party>` (or `--auth-token-file`), and
 pass `--token`/`--token-file` on the client. Identity is always derived
 server-side — never asserted by the client.
 
+## Run in Docker
+
+The `kx` binary is FFI-free, so the runtime ships as a small container image — no
+C++ toolchain, no CUDA, no model baked in. The durability guarantee is proven
+*through* the container, not just asserted:
+
+```bash
+# Build the FFI-free image + reproduce the canonical digest IN-CONTAINER
+# (clean run · crash-then-replay over a persisted volume · read-only rootfs):
+just docker-smoke
+
+# Or bring up the server stack — embedded coordinator + worker + gateway — with the
+# journal & content on named volumes that survive a restart:
+docker compose up --build
+```
+
+With the stack up, drive it from the host (the compose dev token is `kx-dev-token`):
+
+```bash
+kx submit --demo --wait --endpoint http://127.0.0.1:50151 --token kx-dev-token
+kx invoke kx/recipes/echo --args '{"topic":"durable agents"}' --wait \
+    --endpoint http://127.0.0.1:50151 --token kx-dev-token
+
+docker compose restart kx     # journal + content persist on the named volumes
+docker compose down           # SIGTERM → graceful drain, not a hard kill
+```
+
+**Images.** `Dockerfile` builds the FFI-free runtime (`kortecx/kx:dev`); the
+container runs as a **non-root** user (uid 10001), keeps durable state under
+`/var/lib/kortecx/{journal,content,catalog}`, and is `--read-only`-rootfs
+compatible (only the mounted volumes + `/tmp` are writable). `Dockerfile.inference`
+adds the CPU llama.cpp link + a `kx-generate` example for a real CPU inference run.
+
+**Auth on a published port.** A non-loopback bind refuses `--dev-allow-local`, so the
+compose uses **bearer-token auth** (a Docker secret). Plaintext gRPC carries the
+bearer in cleartext — **front `kx serve` with a TLS reverse proxy** for any
+non-loopback deployment (in-binary TLS is on the roadmap). Replace the dev tokens in
+`deploy/secrets/` for anything real.
+
+**GPU posture.** OSS GPU inference today is **Metal, on an Apple host** — not in a
+Linux container (Metal is macOS-host-only). NVIDIA **CUDA inference is cloud-tier**
+(decision D28): `Dockerfile.cuda` is a *documented seam* (the intended image shape +
+an `nvidia-smi` detection hook), not a buildable OSS image; multi-tenant
+GPU-batched serving lives in the cloud offering.
+
 ## Commands
 
 The `kx` CLI is one binary. `run`/`replay`/`digest` drive the engine locally;

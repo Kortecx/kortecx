@@ -1,0 +1,87 @@
+# kortecx single-system gateway — docker compose.
+#
+# Brings up `kx serve` (the embedded coordinator + local worker + gateway) bound to
+# all interfaces, behind bearer-token auth, with the durable spine on NAMED VOLUMES
+# so the journal + content survive `docker compose restart` — exactly-once across
+# the container boundary, not just within one container.
+#
+#   docker compose up --build           # first run builds the FFI-free image
+#   # from the host, against the published port:
+#   kx invoke kx/recipes/echo --args '{"topic":"durable agents"}' --wait \
+#       --endpoint http://127.0.0.1:50151 --token kx-dev-token
+#   docker compose restart kx           # journal + content persist on the volumes
+#   docker compose down                 # SIGTERM → graceful drain (stop_grace_period)
+#
+# Auth: the example secrets are DEV-ONLY (localhost). Plaintext gRPC carries the
+# bearer in cleartext — front with a TLS reverse proxy for any non-loopback
+# deployment (in-binary TLS is A1, a later step). The bind is non-loopback, so
+# `--dev-allow-local` is REFUSED by design — token auth is required.
+
+services:
+  kx:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: kortecx/kx:dev
+    command:
+      - serve
+      - --journal
+      - /var/lib/kortecx/journal/kx.db
+      - --content
+      - /var/lib/kortecx/content
+      - --catalog-dir
+      - /var/lib/kortecx/catalog
+      - --listen
+      - 0.0.0.0:50151
+      - --ws-listen
+      - 0.0.0.0:50152
+      - --auth-token-file
+      - /run/secrets/kx_authtokens
+    ports:
+      - "50151:50151"   # gRPC (Submit/Invoke/Fetch/Catalog)
+      - "50152:50152"   # live-event WebSocket (StreamEvents bridge)
+    volumes:
+      - kx-journal:/var/lib/kortecx/journal
+      - kx-content:/var/lib/kortecx/content
+      - kx-catalog:/var/lib/kortecx/catalog
+    secrets:
+      - kx_authtokens   # server: <token>=<party> lines (--auth-token-file)
+      - kx_token        # client/healthcheck: the raw bearer token (--token-file)
+    # Hardening: read-only rootfs — only the named volumes + /tmp are writable.
+    read_only: true
+    tmpfs:
+      - /tmp
+    user: "10001:10001"
+    # No /healthz yet (observability = A2). `kx signatures list` is a read-only RPC
+    # exercising the full bind→auth→RPC path; a clean exit ⇒ the server is live.
+    healthcheck:
+      test:
+        - CMD
+        - kx
+        - signatures
+        - list
+        - --endpoint
+        - http://127.0.0.1:50151
+        - --token-file
+        - /run/secrets/kx_token
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    # `docker compose stop/down` sends SIGTERM first; `kx serve` now drains on it
+    # (graceful gRPC + WebSocket shutdown). Give the drain room before SIGKILL.
+    stop_grace_period: 30s
+    restart: unless-stopped
+
+volumes:
+  kx-journal:
+  kx-content:
+  kx-catalog:
+
+secrets:
+  # DEV defaults — copy the *.example to the un-suffixed name (gitignored) to
+  # customize, or replace inline. NEVER ship these tokens to a real deployment.
+  kx_authtokens:
+    file: ./deploy/secrets/kx_authtokens.example
+  kx_token:
+    file: ./deploy/secrets/kx_token.example
