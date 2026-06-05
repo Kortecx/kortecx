@@ -5,8 +5,9 @@ guarantees are load-bearing, so the bar for changes to the core is high, but
 there is plenty of approachable work, and this guide is meant to get you from
 clone to first PR without spelunking.
 
-Read [ARCHITECTURE.md](ARCHITECTURE.md) and [GLOSSARY.md](GLOSSARY.md) first — a
-30-minute investment that makes the codebase legible.
+Read the README's [How it works](README.md#how-it-works) and
+[GLOSSARY.md](GLOSSARY.md) first — a 30-minute investment that makes the codebase
+legible.
 
 > kortecx is in early development. Interfaces will change before 1.0. Open an
 > issue to discuss any substantial change before sending a PR, so we can point
@@ -24,16 +25,24 @@ Read [ARCHITECTURE.md](ARCHITECTURE.md) and [GLOSSARY.md](GLOSSARY.md) first —
   those native deps; the rest of the workspace builds without them.
 
 Run `just doctor` (if you have [`just`](https://github.com/casey/just)) for a
-preflight check of toolchain + native deps + submodule.
+**tiered** preflight: Tier 0 (Rust only — the FFI-free runtime) vs Tier 1 (the
+C++ toolchain + submodule for inference), with the exact per-OS install command
+for anything missing.
 
 ## Build and test
 
 ```bash
 git clone https://github.com/Kortecx/kortecx.git
 cd kortecx
+just setup                 # FFI-free: build + install the `kx` binary (Rust only)
 cargo build --workspace
 cargo test  --workspace
 ```
+
+Onboarding shortcuts: `just setup-inference` (opt into the native llama.cpp
+backend), `just fetch-demo-model` (download a tiny SHA-256-verified GGUF), and
+`just verify-quickstart` (run the README quickstart end to end and assert the
+canonical digest — the gate that keeps the docs honest).
 
 To see the authoring path end to end — author a workflow → compile to a Mote DAG
 → run → fold the journal — run the worked example:
@@ -43,7 +52,7 @@ cargo run -p kx-workflow --example author_a_workflow
 ```
 
 To exercise the core *guarantee* (exactly-once across a crash), run the
-crash-and-replay demo in the [README](README.md#try-it).
+crash-and-replay demo in the [README](README.md#install--quick-start).
 
 ## The pre-merge gate (run it before you push)
 
@@ -70,8 +79,9 @@ CI runs them on every PR. `cargo fmt --all` before committing saves a round trip
 
 ## Where to start
 
-The dependency graph is a clean layered DAG (see ARCHITECTURE.md). **Touch a leaf
-or a forward-seam before you touch the waist.**
+The dependency graph is a clean layered DAG (see the README's
+[How it works](README.md#how-it-works)). **Touch a leaf or a forward-seam before
+you touch the waist.**
 
 - **Approachable:** doc-comments (especially turning a terse invariant into a clear
   explanation), additional unit/property tests, a new runnable example, a leaf

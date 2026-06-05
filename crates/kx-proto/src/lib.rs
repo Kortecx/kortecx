@@ -16,7 +16,7 @@
 //! > **Phase: distributed (P2/P3).** The gRPC schema for the multi-node control
 //! > plane — wiring on the same trait seams as the single-node core, *not* a
 //! > rewrite of it. You do **not** need this crate to build, run, or understand
-//! > single-node kortecx (`kx-runtime`). See `ARCHITECTURE.md`.
+//! > single-node kortecx (`kx-runtime`). See the README (How it works).
 //!
 //! tonic/prost gRPC schema for the coordinator/worker control plane: **submit
 //! Mote**, **report commit**, **heartbeat**, **register worker**. This is the

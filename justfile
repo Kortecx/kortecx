@@ -48,6 +48,127 @@ doc:
     RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 
 # ============================================================================
+# Onboarding / install automation (sudo-free, opt-in)
+# ============================================================================
+
+# One-shot onboarding for the FFI-FREE runtime (Tier 0). Builds + installs the
+# `kx` binary with NO C++ toolchain and NO llama.cpp submodule. NEVER runs
+# sudo / brew / apt. Opt into local inference separately (`just setup-inference`).
+#   just setup            # install `kx` to ~/.cargo/bin
+#   INSTALL=0 just setup  # just `cargo build --release -p kx-cli` (no install)
+setup:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "kortecx setup — FFI-free runtime (Tier 0: Rust only, no C++ toolchain)"
+    if ! command -v cargo >/dev/null 2>&1; then
+        echo " ✗ cargo not found — install Rust from https://rustup.rs, then re-run." >&2
+        exit 1
+    fi
+    if [ "${INSTALL:-1}" = "1" ]; then
+        echo "Installing the kx binary (cargo install --path crates/kx-cli)..."
+        cargo install --path crates/kx-cli
+        BIN="kx"
+    else
+        echo "Building the kx binary (cargo build --release -p kx-cli)..."
+        cargo build --release -p kx-cli
+        BIN="./target/release/kx"
+    fi
+    echo ""
+    echo " ✓ ready. Next steps:"
+    echo "     ${BIN} run    --journal /tmp/kx.db --content /tmp/kx-content"
+    echo "     ${BIN} replay --journal /tmp/kx.db --content /tmp/kx-content"
+    echo "     ${BIN} serve  --journal /tmp/kx.db --content /tmp/kx-content --dev-allow-local"
+    echo ""
+    echo "For REAL local LLM inference (opt-in; needs a C++ toolchain), run:"
+    echo "     just doctor   # per-OS install hints   →   just setup-inference"
+
+# OPT-IN inference tier (Tier 1). Inits the llama.cpp submodule and builds the FFI
+# link. Requires a C++ toolchain — run `just doctor` first for per-OS hints.
+# Deliberately separate from `setup` so the default flow never triggers CMake.
+setup-inference:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "Initializing the llama.cpp submodule (crates/kx-llamacpp-sys/llama.cpp)..."
+    git submodule update --init --recursive crates/kx-llamacpp-sys/llama.cpp
+    echo "Building the FFI link (runs CMake on the submodule)..."
+    cargo build -p kx-llamacpp-sys --release
+    cargo build -p kx-llamacpp --release
+    echo " ✓ inference tier ready. Try:  just fetch-demo-model  &&  just smoke-test-with-model"
+
+# Download the tiny demo GGUF (stories260K, ~1.2 MB) to target/models/ with
+# SHA-256 verification. Idempotent: skips if already present + valid. Triggers NO
+# build (does not enable the model-smoke-test feature). Feed it to the examples:
+#   cargo run -p kx-llamacpp --example generate -- target/models/stories260K.gguf "Once upon a time"
+fetch-demo-model:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    URL="https://huggingface.co/ggml-org/models/resolve/main/tinyllamas/stories260K.gguf"
+    SHA="270cba1bd5109f42d03350f60406024560464db173c0e387d91f0426d3bd256d"
+    DEST="target/models/stories260K.gguf"
+    mkdir -p target/models
+    if [ -f "$DEST" ] && [ "$(shasum -a 256 "$DEST" | cut -d' ' -f1)" = "$SHA" ]; then
+        echo " ✓ demo model already present + verified: $DEST"
+        exit 0
+    fi
+    echo "Downloading $URL → $DEST ..."
+    rm -f "$DEST" "$DEST.partial"
+    if   command -v curl >/dev/null 2>&1; then curl -fsSL "$URL" -o "$DEST.partial"
+    elif command -v wget >/dev/null 2>&1; then wget -q "$URL" -O "$DEST.partial"
+    else echo " ✗ neither curl nor wget found on PATH" >&2; exit 1; fi
+    GOT="$(shasum -a 256 "$DEST.partial" | cut -d' ' -f1)"
+    if [ "$GOT" != "$SHA" ]; then
+        echo " ✗ SHA-256 mismatch: expected $SHA, got $GOT" >&2
+        rm -f "$DEST.partial"; exit 1
+    fi
+    mv "$DEST.partial" "$DEST"
+    echo " ✓ verified + saved: $DEST"
+
+# Docs-as-test gate: run the README quickstart end to end and assert the canonical
+# projection digest. Builds the FFI-free `kx` binary (no C++ toolchain) and drives
+# run → crash → replay → digest over temp dirs, asserting the canonical digest
+# (8/8 committed) at every step. Cleans up. Fails LOUDLY on any drift — this is the
+# gate that keeps the README honest. NOT part of `just ci` (a separate, fast gate).
+verify-quickstart:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    CANON="a6b5c67939f14bfcbd125f7461b2bd0e481f6ee2fc98c1ab638730e2d2ace2e9"
+    echo "Building the FFI-free kx binary..."
+    cargo build --release -p kx-cli
+    KX="{{justfile_directory()}}/target/release/kx"
+    WORK="$(mktemp -d)"
+    trap 'rm -rf "$WORK"' EXIT
+    J="$WORK/kx.db"; C="$WORK/kx-content"
+
+    echo "[1/3] clean run → digest"
+    RUN_OUT="$("$KX" run --journal "$J" --content "$C")"
+    echo "    $RUN_OUT"
+    if [ "${RUN_OUT%% *}" != "$CANON" ]; then
+        echo " ✗ FAIL: clean-run digest ${RUN_OUT%% *} != canonical $CANON" >&2; exit 1
+    fi
+    case "$RUN_OUT" in *"(8/8 committed)"*) ;; *)
+        echo " ✗ FAIL: expected 8/8 committed, got: $RUN_OUT" >&2; exit 1 ;; esac
+
+    echo "[2/3] fresh crash run (aborts mid-commit; non-zero is expected)"
+    rm -f "$J"; rm -rf "$C"
+    set +e
+    "$KX" run --journal "$J" --content "$C" --crash-at post-commit-vtc >/dev/null 2>&1
+    set -e
+
+    echo "[3/3] replay (recover) → digest, then a standalone digest fold"
+    REPLAY_OUT="$("$KX" replay --journal "$J" --content "$C")"
+    echo "    $REPLAY_OUT"
+    DIGEST_ONLY="$("$KX" digest --journal "$J" --content "$C")"
+    if [ "${REPLAY_OUT%% *}" != "$CANON" ]; then
+        echo " ✗ FAIL: replay digest ${REPLAY_OUT%% *} != canonical $CANON" >&2; exit 1
+    fi
+    if [ "$DIGEST_ONLY" != "$CANON" ]; then
+        echo " ✗ FAIL: standalone digest $DIGEST_ONLY != canonical $CANON" >&2; exit 1
+    fi
+    echo ""
+    echo " ✓ verify-quickstart PASS — clean run, crash-then-replay, and a fresh"
+    echo "   digest fold all produce the canonical digest (8/8 committed)."
+
+# ============================================================================
 # Policy + supply-chain recipes
 # ============================================================================
 
@@ -238,10 +359,39 @@ doctor:
         fi
     }
 
-    echo "kortecx preflight — toolchain + C++ deps + submodule"
+    # Print a per-OS install hint for a missing optional (Tier 1) dependency.
+    # $1 = Homebrew formula (macOS, empty ⇒ Xcode CLT); $2 = apt/dnf package(s).
+    os_hint() {
+        case "$(uname)" in
+            Darwin)
+                if [ -n "$1" ]; then echo "       fix (macOS):         brew install $1"
+                else                 echo "       fix (macOS):         xcode-select --install" ; fi ;;
+            Linux)
+                if   command -v apt-get >/dev/null 2>&1; then echo "       fix (Debian/Ubuntu): sudo apt-get install -y $2"
+                elif command -v dnf     >/dev/null 2>&1; then echo "       fix (Fedora):        sudo dnf install -y $2"
+                else echo "       install '$2' via your distro's package manager" ; fi ;;
+            *) echo "       install it for your platform" ;;
+        esac
+    }
+
+    # Like warn_check, but prints an install hint when the dep is missing.
+    # $1 = label, $2 = test cmd, $3 = brew formula, $4 = apt/dnf package(s).
+    warn_with_hint() {
+        if eval "$2" >/dev/null 2>&1; then
+            echo "${OK} $1"
+        else
+            echo "${WARN} $1"
+            warnings=$((warnings + 1))
+            os_hint "$3" "$4"
+        fi
+    }
+
+    echo "kortecx preflight — TIERED"
+    echo "  Tier 0 (REQUIRED): Rust only — runs kx run / replay / serve (FFI-free)."
+    echo "  Tier 1 (OPTIONAL): C++ toolchain + llama.cpp submodule — local LLM inference."
     echo ""
 
-    echo "Required Rust toolchain:"
+    echo "Tier 0 — required Rust toolchain:"
     check "Rust toolchain installed and resolves to rust-toolchain.toml pin" \
         "rustup show active-toolchain"
     check "cargo on PATH" "command -v cargo"
@@ -250,33 +400,25 @@ doctor:
         "rustup component list --installed | grep -q rustfmt && rustup component list --installed | grep -q clippy"
 
     echo ""
-    echo "Native build prerequisites (kx-llamacpp-sys CMake build):"
-    check "cmake on PATH" "command -v cmake"
-    check "clang on PATH" "command -v clang"
+    echo "Tier 1 — local LLM inference (optional; skip for the FFI-free runtime):"
+    warn_with_hint "cmake on PATH" "command -v cmake" "cmake" "cmake"
+    warn_with_hint "clang on PATH" "command -v clang" "llvm" "clang"
 
-    # Platform-specific libclang check (bindgen requires libclang for header parsing).
+    # Platform-specific libclang + C++ toolchain checks (bindgen needs libclang;
+    # the static-archive link needs a C++ compiler). Tier 1 ⇒ warnings, not errors.
     if [ "$(uname)" = "Linux" ]; then
-        warn_check "libclang available (Linux — apt: libclang-dev)" \
-            "ldconfig -p 2>/dev/null | grep -q libclang || dpkg -s libclang-dev 2>/dev/null | grep -q 'install ok installed'"
+        warn_with_hint "libclang available (bindgen)" \
+            "ldconfig -p 2>/dev/null | grep -q libclang || dpkg -s libclang-dev 2>/dev/null | grep -q 'install ok installed'" \
+            "llvm" "libclang-dev"
+        warn_with_hint "C++ toolchain (g++)" "command -v g++" "" "build-essential"
     elif [ "$(uname)" = "Darwin" ]; then
-        warn_check "libclang available (macOS — Xcode CLT)" "xcode-select -p"
+        warn_with_hint "Xcode Command Line Tools (libclang + clang++)" "xcode-select -p" "" ""
     fi
 
-    # C++ stdlib link target (used by the static-archive link path).
-    if [ "$(uname)" = "Linux" ]; then
-        check "C++ toolchain present (Linux — build-essential)" "command -v g++"
-    elif [ "$(uname)" = "Darwin" ]; then
-        check "C++ toolchain present (macOS — Xcode CLT)" "command -v clang++"
-    fi
-
-    echo ""
-    echo "C++ FFI submodule (llama.cpp):"
-    check "crates/kx-llamacpp-sys/llama.cpp/ checked out (CMakeLists.txt present)" \
+    warn_check "llama.cpp submodule checked out (just setup-inference)" \
         "test -f crates/kx-llamacpp-sys/llama.cpp/CMakeLists.txt"
-    check "submodule HEAD readable" \
-        "git -C crates/kx-llamacpp-sys/llama.cpp rev-parse HEAD"
 
-    if [ -f crates/kx-llamacpp-sys/PIN.md ] && command -v git >/dev/null 2>&1; then
+    if [ -f crates/kx-llamacpp-sys/llama.cpp/CMakeLists.txt ] && command -v git >/dev/null 2>&1; then
         pinned=$(git -C crates/kx-llamacpp-sys/llama.cpp rev-parse HEAD 2>/dev/null || echo "unknown")
         echo "   note: submodule HEAD = ${pinned}"
         echo "         see crates/kx-llamacpp-sys/PIN.md for the audit ritual on advancing the pin."
@@ -290,13 +432,16 @@ doctor:
 
     echo ""
     if [ "${errors}" -gt 0 ]; then
-        echo "${FAIL} preflight FAILED: ${errors} errors, ${warnings} warnings"
+        echo "${FAIL} preflight FAILED: ${errors} Tier-0 errors, ${warnings} warnings"
+        echo "    Tier 0 is required to build/run the runtime — fix the errors above."
         exit 1
     elif [ "${warnings}" -gt 0 ]; then
-        echo "${WARN} preflight passed with ${warnings} warnings (optional tools missing)"
+        echo "${WARN} Tier 0 OK (the FFI-free runtime is good to go); ${warnings} Tier-1/optional warnings"
+        echo "    Run \`just setup\` to install the kx binary now; the warnings only"
+        echo "    matter if you want local LLM inference (\`just setup-inference\`)."
         exit 0
     else
-        echo "${OK} preflight passed"
+        echo "${OK} preflight passed — Tier 0 + Tier 1 ready"
         exit 0
     fi
 

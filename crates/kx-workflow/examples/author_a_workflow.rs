@@ -12,7 +12,7 @@
 //! cargo run -p kx-workflow --example author_a_workflow
 //! ```
 //!
-//! See ARCHITECTURE.md for how these pieces fit and GLOSSARY.md for the terms.
+//! See the README (How it works) for how these pieces fit and GLOSSARY.md for the terms.
 
 use std::fmt::Write as _;
 
