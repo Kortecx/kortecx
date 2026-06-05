@@ -3,7 +3,7 @@
 //! minimal and matches the workspace's established CLI style. R3 matures the CLI.
 
 use std::collections::HashMap;
-use std::net::SocketAddr;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 
 use crate::error::GatewayError;
@@ -12,12 +12,21 @@ use crate::error::GatewayError;
 /// pulls per `run_once`. Modest by default; tune with `--max-lease`.
 pub const DEFAULT_MAX_LEASE: u32 = 16;
 
+/// Default address for the R5 WebSocket `StreamEvents` bridge (the browser live-
+/// tail surface). Loopback by default (like the gRPC port); override with
+/// `--ws-listen`. A `:0` port asks the OS for an ephemeral one (used by tests).
+pub const DEFAULT_WS_LISTEN: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 50152);
+
 /// Resolved `serve` configuration.
 #[derive(Debug, Clone)]
 pub struct GatewayConfig {
     /// The address:port the gateway gRPC service binds (e.g. `127.0.0.1:50151`).
     /// A `0` port asks the OS for an ephemeral one (used by tests).
     pub listen: SocketAddr,
+    /// The address:port the R5 WebSocket `StreamEvents` bridge binds (the browser
+    /// live-tail surface; default [`DEFAULT_WS_LISTEN`]). A `0` port is ephemeral.
+    /// Loopback-only under `--dev-allow-local` (same Rule-8c check as `listen`).
+    pub ws_listen: SocketAddr,
     /// On-disk SQLite journal path. The embedded coordinator opens this
     /// read-write (sole writer); the gateway opens a SECOND read-only handle.
     pub journal_path: PathBuf,
@@ -52,8 +61,9 @@ pub enum Cli {
 /// One-line usage string (printed on `--help` and on a parse error).
 pub const USAGE: &str =
     "usage: kx-gateway serve --listen <addr:port> --journal <path> --content <dir> \
-[--max-lease <N>] [--dev-allow-local] [--auth-token <token>=<party>]... \
-[--auth-token-file <path>] [--catalog-dir <dir>]\n       kx-gateway --help | --version";
+[--ws-listen <addr:port>] [--max-lease <N>] [--dev-allow-local] \
+[--auth-token <token>=<party>]... [--auth-token-file <path>] [--catalog-dir <dir>]\n       \
+kx-gateway --help | --version";
 
 impl Cli {
     /// Parse `argv` (excluding the program name).
@@ -80,6 +90,7 @@ impl Cli {
 
 fn parse_serve(mut args: impl Iterator<Item = String>) -> Result<GatewayConfig, GatewayError> {
     let mut listen: Option<SocketAddr> = None;
+    let mut ws_listen: SocketAddr = DEFAULT_WS_LISTEN;
     let mut journal_path: Option<PathBuf> = None;
     let mut content_root: Option<PathBuf> = None;
     let mut max_lease: u32 = DEFAULT_MAX_LEASE;
@@ -100,6 +111,14 @@ fn parse_serve(mut args: impl Iterator<Item = String>) -> Result<GatewayConfig, 
                         "--listen expects an addr:port (IP literal), got {v:?}"
                     ))
                 })?);
+            }
+            "--ws-listen" => {
+                let v = take_value("--ws-listen")?;
+                ws_listen = v.parse::<SocketAddr>().map_err(|_| {
+                    GatewayError::Config(format!(
+                        "--ws-listen expects an addr:port (IP literal), got {v:?}"
+                    ))
+                })?;
             }
             "--journal" => journal_path = Some(PathBuf::from(take_value("--journal")?)),
             "--content" => content_root = Some(PathBuf::from(take_value("--content")?)),
@@ -146,6 +165,7 @@ fn parse_serve(mut args: impl Iterator<Item = String>) -> Result<GatewayConfig, 
 
     Ok(GatewayConfig {
         listen,
+        ws_listen,
         journal_path,
         content_root,
         max_lease,
@@ -217,6 +237,55 @@ mod tests {
         assert_eq!(c.content_root, PathBuf::from("/tmp/blobs"));
         assert_eq!(c.max_lease, 8);
         assert!(c.dev_allow_local);
+    }
+
+    #[test]
+    fn ws_listen_parses_and_defaults() {
+        // Default when omitted.
+        let c = serve(
+            Cli::from_args([
+                "serve",
+                "--listen",
+                "127.0.0.1:0",
+                "--journal",
+                "/tmp/j",
+                "--content",
+                "/tmp/c",
+            ])
+            .unwrap(),
+        );
+        assert_eq!(c.ws_listen, DEFAULT_WS_LISTEN);
+
+        // Explicit override.
+        let c = serve(
+            Cli::from_args([
+                "serve",
+                "--listen",
+                "127.0.0.1:0",
+                "--ws-listen",
+                "127.0.0.1:0",
+                "--journal",
+                "/tmp/j",
+                "--content",
+                "/tmp/c",
+            ])
+            .unwrap(),
+        );
+        assert_eq!(c.ws_listen, "127.0.0.1:0".parse::<SocketAddr>().unwrap());
+
+        // Bad value is a config error.
+        assert!(Cli::from_args([
+            "serve",
+            "--listen",
+            "127.0.0.1:0",
+            "--ws-listen",
+            "not-an-addr",
+            "--journal",
+            "/tmp/j",
+            "--content",
+            "/tmp/c",
+        ])
+        .is_err());
     }
 
     #[test]

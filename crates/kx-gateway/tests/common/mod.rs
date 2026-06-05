@@ -12,18 +12,87 @@
 )]
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::time::Duration;
 
 use kx_gateway::GatewayConfig;
 use kx_mote::{
     EdgeMeta, EffectPattern, GraphPosition, InferenceParams, InputDataId, LogicRef, ModelId, Mote,
     MoteDef, MoteId, NdClass, ParentRef, PromptTemplateHash, MOTE_DEF_SCHEMA_VERSION,
 };
+use kx_proto::proto;
+use kx_proto::proto::kx_gateway_client::KxGatewayClient;
 use kx_warrant::{
     FsMode, FsScope, Host, ModelRoute, MoteClass, NetScope, ResourceCeiling, WarrantSpec,
 };
 use smallvec::SmallVec;
 use tempfile::TempDir;
+use tonic::transport::Channel;
+
+/// Connect a gRPC client to `addr`, retrying briefly while the server binds.
+pub async fn connect_client(addr: SocketAddr) -> KxGatewayClient<Channel> {
+    let endpoint = format!("http://{addr}");
+    for _ in 0..100 {
+        if let Ok(c) = KxGatewayClient::connect(endpoint.clone()).await {
+            return c;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("client connects to the gateway at {endpoint}");
+}
+
+/// `SubmitRun` one parentless PURE demo Mote (`seed`); return its journaled
+/// 16-byte `instance_id`.
+pub async fn submit_pure_run(client: &mut KxGatewayClient<Channel>, seed: u8) -> Vec<u8> {
+    client
+        .submit_run(proto::SubmitRunRequest {
+            recipe_fingerprint: vec![0x5a; 32],
+            motes: vec![proto::SubmitMoteSpec {
+                mote: Some(pure_mote(seed, &[]).into()),
+                warrant: Some(pure_warrant().into()),
+                accept_at_least_once: false,
+            }],
+        })
+        .await
+        .unwrap()
+        .into_inner()
+        .instance_id
+}
+
+/// Poll `GetProjection` until the run has a `Committed` Mote; return its
+/// `(mote_id, result_ref)`. Panics on timeout.
+pub async fn await_committed(
+    client: &mut KxGatewayClient<Channel>,
+    instance_id: &[u8],
+) -> ([u8; 32], [u8; 32]) {
+    for _ in 0..200 {
+        let view = client
+            .get_projection(proto::GetProjectionRequest {
+                instance_id: instance_id.to_vec(),
+                at_seq: None,
+            })
+            .await
+            .unwrap()
+            .into_inner();
+        if let Some(m) = view
+            .motes
+            .iter()
+            .find(|m| m.state == proto::MoteSnapshotState::Committed as i32)
+        {
+            let mote_id: [u8; 32] = m.mote_id.clone().try_into().unwrap();
+            let result_ref: [u8; 32] = m
+                .result_ref
+                .clone()
+                .expect("a committed Mote carries a result_ref")
+                .try_into()
+                .unwrap();
+            return (mote_id, result_ref);
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    panic!("the submitted Mote never reached Committed");
+}
 
 /// A gateway config rooted at `dir` (ephemeral journal + content + catalog).
 /// `dev_allow_local` installs the dev resolver; a non-empty `auth_tokens`
@@ -36,6 +105,7 @@ pub fn gateway_config(
 ) -> GatewayConfig {
     GatewayConfig {
         listen: "127.0.0.1:0".parse().unwrap(),
+        ws_listen: "127.0.0.1:0".parse().unwrap(),
         journal_path: dir.path().join("kx.db"),
         content_root: dir.path().join("blobs"),
         max_lease: 16,

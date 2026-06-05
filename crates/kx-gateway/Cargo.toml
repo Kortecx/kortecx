@@ -54,8 +54,23 @@ kx-capability   = { workspace = true, optional = true }
 tonic              = { workspace = true }
 # Additive feature bump over the workspace tokio (rt-multi-thread/macros/net):
 # `signal` for graceful Ctrl-C shutdown, `time` for the worker poll/backoff +
-# connect-retry. Member-level feature additions are honored (unlike default-features).
-tokio              = { workspace = true, features = ["signal", "time"] }
+# connect-retry + the R5 live-tail poll interval, `sync` for the R5 per-subscriber
+# bounded mpsc. Member-level feature additions are honored (unlike default-features).
+tokio              = { workspace = true, features = ["signal", "time", "sync"] }
+# R5: `ReceiverStream` adapts the live-tail mpsc into the tonic server stream.
+# Already a transitive dep (tonic) — promoting it adds no new crate.
+tokio-stream       = { workspace = true }
+# R5: the WebSocket bridge transport (the browser StreamEvents surface). MIT;
+# hyper/tower already locked via tonic. Lives in the binary only (the dep wall
+# keeps kx-gateway-core a passive read-fold).
+tokio-tungstenite  = { workspace = true }
+# R5: split the WS into read/write halves (push frames while handling Close/Ping).
+futures-util       = { workspace = true }
+# R5: parse the WS upgrade request's query string (instance_id + since_seq) +
+# the JSON hex wire DTO. Both already workspace deps (no new crate).
+url                = { workspace = true }
+serde              = { workspace = true }
+serde_json         = { workspace = true }
 tracing            = { workspace = true }
 tracing-subscriber = { workspace = true }
 thiserror          = { workspace = true }
