@@ -1,0 +1,36 @@
+[package]
+name         = "kx-audit"
+version      = "0.0.1"
+edition      = { workspace = true }
+rust-version = { workspace = true }
+license      = { workspace = true }
+authors      = { workspace = true }
+repository   = { workspace = true }
+description  = "kortecx runtime audit sink (R4, D127 step 2.1) — an append-only, OFF-TRUTH-PATH, best-effort/non-fatal record of the runtime's execution lifecycle (run started / recovered / children-derived / mote dispatched / committed / failed / repudiated / inconsistent / run completed). Pluggable behind the AuditSink trait (InMemory for tests/embedding, JSONL for an operator log; OTLP/syslog are future impls). Records JOIN KEYS ONLY (MoteId/ContentRef hashes, NdClass, integer counts, the product digest) — NEVER payload bytes, model output, or secrets. Timestamps live only on the JSONL wire and NEVER feed the digest; SN-8 (no float/similarity on the audit path; integer/crypto-equality only). The dependency wall: guarantee-path crates (the frozen trio + journal/projection/memoizer) never depend on this crate."
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+# Join keys ECHOED into events (the atomic Mote id + its non-determinism class) +
+# the committed action's content-addressed result ref. The sink never recomputes
+# an identity — it echoes already-derived runtime state (SN-8).
+kx-mote    = { workspace = true }
+kx-content = { workspace = true }
+# The JSONL wire DTO derives Serialize; serde_json encodes one object per line.
+# Values are emitted as integers / hex strings and are NEVER decoded to floats —
+# no NaN/float-ordering ever touches the audit path (SN-8).
+serde      = { workspace = true }
+serde_json = { workspace = true }
+# Construction-time open error only (record-time write errors are swallowed).
+thiserror  = { workspace = true }
+# Best-effort `warn` on a dropped/failed audit write — NEVER propagated to the
+# run loop (the audit subsystem must never be able to fail the run it audits).
+tracing    = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

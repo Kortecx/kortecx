@@ -1001,6 +1001,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "kx-audit"
+version = "0.0.1"
+dependencies = [
+ "kx-content",
+ "kx-mote",
+ "proptest",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tracing",
+]
+
+[[package]]
 name = "kx-capability"
 version = "0.0.1"
 dependencies = [
@@ -1561,6 +1575,7 @@ version = "0.0.1"
 dependencies = [
  "bincode",
  "blake3",
+ "kx-audit",
  "kx-capability",
  "kx-capture",
  "kx-content",
@@ -1571,6 +1586,7 @@ dependencies = [
  "kx-scheduler",
  "kx-warrant",
  "rusqlite",
+ "serde_json",
  "smallvec",
  "tempfile",
  "thiserror",

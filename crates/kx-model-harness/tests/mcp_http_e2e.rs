@@ -225,6 +225,7 @@ fn config_for(dir: &Path) -> RuntimeConfig {
         mode: Mode::Run,
         crash_at: None,
         checkpoint_every: None,
+        audit_log: None,
     }
 }
 
@@ -311,6 +312,7 @@ fn drive(
         None,
         Some(&sink),
         None, // capture_sink (D67) — off for this MCP HTTP e2e test
+        None, // audit_sink (R4) — off for this MCP HTTP e2e test
     );
     (result, store, journal, m_id)
 }

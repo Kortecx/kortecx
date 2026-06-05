@@ -54,6 +54,7 @@
 //! run, (b) no Mote has more than one `Committed` entry, (c) a fresh process
 //! folding only the journal reconstructs a bit-identical projection.
 
+pub mod audit_sink;
 pub mod broker;
 pub mod capture_sink;
 pub mod checkpoint_io;
@@ -67,6 +68,7 @@ pub mod snapshot_sink;
 pub mod topology;
 pub mod workflow;
 
+pub use audit_sink::RuntimeAuditSink;
 pub use capture_sink::CaptureSink;
 pub use config::{Mode, RuntimeConfig};
 pub use crash::CrashPoint;
@@ -76,6 +78,9 @@ pub use engine::{
     RunOutcome,
 };
 pub use error::RuntimeError;
+// Re-export the audit vocabulary so callers (CLI / harness / future gateway) use
+// the runtime facade, mirroring how `CaptureSink` fronts `kx-capture`.
+pub use kx_audit::{AuditEvent, AuditSink, DispatchKind, InMemoryAuditSink, JsonlAuditSink};
 pub use migrate::migrate_and_verify;
 pub use snapshot_sink::SnapshotSink;
 pub use workflow::DemoWorkflow;

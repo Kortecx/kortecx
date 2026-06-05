@@ -33,6 +33,7 @@ members = [
     "crates/kx-critic-types",
     "crates/kx-critic",
     "crates/kx-capture",
+    "crates/kx-audit",
     "crates/kx-refusal",
     "crates/kx-mcp",
     "crates/kx-planner",
@@ -137,6 +138,12 @@ kx-critic            = { path = "crates/kx-critic",            version = "0.0.1"
 # Step-capture projection (P4.2 pivot) — opt-in, off-truth-path per-Mote capture of
 # input/output/reasoning/thinking in blob storage; reuse the action, never the thinking.
 kx-capture           = { path = "crates/kx-capture",           version = "0.0.1" }
+# Runtime audit sink (R4, D127 step 2.1) — append-only, off-truth-path, best-effort/
+# non-fatal lifecycle trail (AuditSink trait + AuditEvent + JsonlAuditSink/InMemory).
+# Join keys only (no payload/secrets); timestamps live only on the JSONL wire and
+# never feed the digest; SN-8 integer/crypto-equality. The guarantee-path crates
+# (frozen trio + journal/projection/memoizer) NEVER depend on it (a dep-wall test pins it).
+kx-audit             = { path = "crates/kx-audit",             version = "0.0.1" }
 # Submission-time refusal vocabulary + predicates (M1.3) — a dependency-light LEAF
 # (kx-mote / kx-tool-registry / kx-warrant only) so the control-plane kx-coordinator
 # can enforce R-1..R-15 + D66 at SubmitMote WITHOUT linking kx-executor's inference

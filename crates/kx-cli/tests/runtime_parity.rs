@@ -57,6 +57,64 @@ fn run_then_digest_agree_on_the_projection_digest() {
 }
 
 #[test]
+fn run_with_audit_log_writes_a_parseable_trail_and_preserves_digest() {
+    // R4 reachability: `kx run --audit-log <path>` writes a best-effort JSONL audit
+    // trail of the run lifecycle, off the truth path (the digest is unchanged).
+    let dir = TempDir::new().unwrap();
+    let journal = dir.path().join("kx.db");
+    let content = dir.path().join("blobs");
+    let audit = dir.path().join("audit.jsonl");
+    let (j, c, a) = (
+        journal.to_str().unwrap(),
+        content.to_str().unwrap(),
+        audit.to_str().unwrap(),
+    );
+
+    let run = kx(&[
+        "run",
+        "--journal",
+        j,
+        "--content",
+        c,
+        "--audit-log",
+        a,
+        "--json",
+    ]);
+    assert!(
+        run.status.success(),
+        "run failed: {}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let rv: serde_json::Value = serde_json::from_slice(&run.stdout).unwrap();
+    let digest = rv["digest"]
+        .as_str()
+        .expect("digest in --json output")
+        .to_string();
+
+    // The audit log exists and every line is valid line-delimited JSON.
+    let text = std::fs::read_to_string(&audit).expect("`kx run --audit-log` wrote the trail");
+    let lines: Vec<serde_json::Value> = text
+        .lines()
+        .filter(|l| !l.is_empty())
+        .map(|l| serde_json::from_str(l).expect("each audit line is valid JSON"))
+        .collect();
+    assert!(!lines.is_empty(), "the trail is non-empty");
+
+    // Bookends: run_started first; run_completed last carrying the SAME digest the
+    // CLI printed (the audit trail and the engine agree, off the truth path).
+    assert_eq!(lines.first().unwrap()["type"], "run_started");
+    let done = lines.last().unwrap();
+    assert_eq!(done["type"], "run_completed");
+    assert_eq!(
+        done["digest"].as_str(),
+        Some(digest.as_str()),
+        "audit RunCompleted digest == the digest the CLI reported"
+    );
+    assert_eq!(done["committed"], 8);
+    assert_eq!(done["total"], 8);
+}
+
+#[test]
 fn missing_required_flag_is_usage_exit_2() {
     let out = kx(&["run", "--content", "/tmp/c"]); // no --journal
     assert_eq!(out.status.code(), Some(2), "usage error exits 2");

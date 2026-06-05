@@ -25,6 +25,7 @@ fn seam_preserves_canonical_demo_digest() {
         // discardable checkpoint live (the checkpoint never touches the truth
         // path). This is test T9 of the M2.2b matrix.
         checkpoint_every: Some(2),
+        audit_log: None,
     };
     let outcome = kx_runtime::run(&config).unwrap();
     assert_eq!(outcome.committed, 8, "committed count");

@@ -15,9 +15,10 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use kx_audit::{AuditEvent, DispatchKind};
 use kx_capability::EffectRequest;
 use kx_capture::StepRecord;
-use kx_content::{ContentStore, LocalFsContentStore};
+use kx_content::{ContentRef, ContentStore, LocalFsContentStore};
 use kx_executor::{
     redispatch_wm_mote, run_native_critic_mote, run_pure_mote, run_wm_mote, CommitProtocol,
     LocalResourceManager, MoteExecutor, StandardCommitProtocol, TestMoteExecutor,
@@ -30,6 +31,7 @@ use kx_projection::{
 use kx_scheduler::{LocalPlacement, Scheduler};
 use kx_warrant::{FsScope, NetScope};
 
+use crate::audit_sink::RuntimeAuditSink;
 use crate::broker::DemoBroker;
 use crate::capture_sink::CaptureSink;
 use crate::checkpoint_io;
@@ -77,6 +79,34 @@ enum Action {
         /// `true` ⇒ recover an in-flight WM Mote (re-dispatch); `false` ⇒ fresh.
         recover: bool,
     },
+}
+
+impl Action {
+    /// The Mote being dispatched (R4 audit echo — already-derived, no recompute).
+    fn mote_id(&self) -> MoteId {
+        match self {
+            Action::RunPure(w) | Action::RunNativeCritic(w) => w.mote.id,
+            Action::RunWm { wm, .. } => wm.mote.id,
+        }
+    }
+
+    /// Its non-determinism class.
+    fn nd_class(&self) -> NdClass {
+        match self {
+            Action::RunPure(w) | Action::RunNativeCritic(w) => w.mote.nd_class(),
+            Action::RunWm { wm, .. } => wm.mote.nd_class(),
+        }
+    }
+
+    /// Which dispatch path this action takes (for the R4 audit trail).
+    fn dispatch_kind(&self) -> DispatchKind {
+        match self {
+            Action::RunPure(_) => DispatchKind::Pure,
+            Action::RunNativeCritic(_) => DispatchKind::Critic,
+            Action::RunWm { recover: false, .. } => DispatchKind::WmFresh,
+            Action::RunWm { recover: true, .. } => DispatchKind::WmRecovery,
+        }
+    }
 }
 
 /// Run (or replay) the canonical demo workflow per `config`. Returns the final
@@ -144,6 +174,16 @@ pub fn run_with_capture(
     ));
     let protocol = StandardCommitProtocol::new(store.clone(), journal.clone(), broker.clone());
 
+    // R4: enable the off-truth-path audit log iff the operator passed
+    // `--audit-log <path>` (a `kx run --audit-log` JSONL trail, truncated fresh per
+    // run). Open failure is surfaced here (fail-fast on a bad path), never mid-run.
+    // Audit is OFF the truth path, so the digest `a6b5c679…` is byte-unchanged
+    // whether the log is on or off.
+    let audit = match &config.audit_log {
+        Some(path) => Some(RuntimeAuditSink::jsonl(path)?),
+        None => None,
+    };
+
     run_with_seams(
         config,
         &workflow,
@@ -157,6 +197,7 @@ pub fn run_with_capture(
         // ever published ⇒ the truth path (digest `a6b5c679…`) is byte-unchanged.
         None,
         capture_sink,
+        audit.as_ref(),
     )
 }
 
@@ -204,6 +245,7 @@ pub fn run_with_seams<S, E, CP>(
     shaper: Option<(&WorkflowMote, &TopologyDecision)>,
     snapshot_sink: Option<&SnapshotSink>,
     capture_sink: Option<&CaptureSink>,
+    audit_sink: Option<&RuntimeAuditSink>,
 ) -> Result<RunOutcome, RuntimeError>
 where
     S: ContentStore + Send + Sync + 'static,
@@ -250,6 +292,24 @@ where
     // incremental fold doesn't re-apply (and trip `DuplicateCommitted`).
     let mut folded_through: u64 = journal.current_seq()?;
     log_recovery(recovery_outcome, folded_through, recovery_start.elapsed());
+    // R4: a resume folded an existing journal before the drive loop ran. Record
+    // the recovered frontier off the truth path. `folded_through` (the journal
+    // seq) is already in hand; the committed count is a ONE-TIME scan of the
+    // just-folded projection, run only when auditing is enabled — zero cost when
+    // `None`. (Per-Mote `MoteCommitted` events for the recovered set are emitted by
+    // the terminal sweep at run end, so they cover recovery-committed Motes too.)
+    if folded_through > 0 {
+        if let Some(a) = audit_sink {
+            let committed_through = projection
+                .iter_motes()
+                .filter(|(_, s)| *s == MoteState::Committed)
+                .count();
+            a.record(AuditEvent::Recovered {
+                committed_through: as_u32(committed_through),
+                folded_through,
+            });
+        }
+    }
     // Seed the cadence counter from the recovered frontier so the first
     // post-recovery checkpoint fires after N *new* entries, not immediately.
     let mut last_checkpoint_at = folded_through;
@@ -266,6 +326,13 @@ where
     // A shaperless workflow never derives children — start "done".
     let mut children_derived = shaper.is_none();
     let mut child_ids: Vec<MoteId> = Vec::new();
+
+    // R4: the drive loop is starting. Off the truth path — `None` ⇒ no event.
+    if let Some(a) = audit_sink {
+        a.record(AuditEvent::RunStarted {
+            runnable: as_u32(runnable.len()),
+        });
+    }
 
     // The drive loop.
     loop {
@@ -285,6 +352,16 @@ where
                     &mut runnable,
                     &mut child_ids,
                 );
+                // R4: the committed shaper just materialized its children into the
+                // runnable set. Echo the shaper id + child count off the truth path.
+                if children_derived {
+                    if let Some(a) = audit_sink {
+                        a.record(AuditEvent::ChildrenDerived {
+                            shaper: shaper_wm.mote.id,
+                            children: as_u32(child_ids.len()),
+                        });
+                    }
+                }
             }
         }
 
@@ -298,6 +375,15 @@ where
         // (it is in the ready set), so the snapshot carries their `result_ref`s.
         if let Some(sink) = snapshot_sink {
             sink.publish(projection.snapshot());
+        }
+        // R4: record the dispatch off the truth path (echoes the picked Mote's id +
+        // nd_class + which dispatch path was taken; no recomputation, SN-8).
+        if let Some(a) = audit_sink {
+            a.record(AuditEvent::MoteDispatched {
+                mote_id: action.mote_id(),
+                nd_class: action.nd_class(),
+                kind: action.dispatch_kind(),
+            });
         }
         match action {
             Action::RunPure(w) => {
@@ -392,6 +478,24 @@ where
     }
 
     let outcome = outcome(&runnable, &projection);
+
+    // R4: the run finished. Emit the per-Mote terminal-state trail + the run
+    // summary off the truth path, then flush best-effort. A single
+    // O(committed·log) sweep over the FINAL projection — flat per-Mote, and
+    // (unlike a per-dispatch state check) COMPLETE: it covers Motes committed by
+    // recovery before the loop ran. `RunCompleted.digest` is the product digest
+    // bytes (`a6b5c679…` for the canonical demo) — a tamper-evident receipt.
+    // No-op for `None` (the byte-identity-without-overhead path).
+    if let Some(a) = audit_sink {
+        audit_terminal_states(&runnable, &projection, a);
+        a.record(AuditEvent::RunCompleted {
+            committed: as_u32(outcome.committed),
+            total: as_u32(outcome.total),
+            digest: outcome.digest.0,
+        });
+        a.flush();
+    }
+
     if config.mode == Mode::Run && !outcome.is_complete() {
         // A clean run that didn't finish means a Mote is stuck (e.g. a WM Mote
         // with no EffectStaged hint the oracle refuses to re-dispatch).
@@ -655,6 +759,67 @@ fn capture_committed_actions(
     }
 }
 
+/// Saturating `usize → u32` for off-truth-path audit counts (avoids a cast lint;
+/// audit counts never approach `u32::MAX` in practice).
+fn as_u32(n: usize) -> u32 {
+    u32::try_from(n).unwrap_or(u32::MAX)
+}
+
+/// R4: emit one terminal-state [`AuditEvent`] per runnable Mote off the truth path.
+///
+/// A single O(committed·log) sweep over the FINAL projection — flat per-Mote and
+/// COMPLETE (it reads the same `(result_ref, nd_class)` the digest folds, so the
+/// emitted `MoteCommitted` set is exactly the digest's committed set, and it covers
+/// Motes committed by recovery before the loop ran). Non-terminal Motes
+/// (`Pending`/`Scheduled`) emit nothing. Echoes already-derived projection state —
+/// it NEVER recomputes a `MoteId` (SN-8) and NEVER reads payload bytes.
+fn audit_terminal_states(
+    runnable: &[WorkflowMote],
+    projection: &Projection,
+    sink: &RuntimeAuditSink,
+) {
+    for w in runnable {
+        let id = w.mote.id;
+        if let Some(event) = terminal_event_for(
+            id,
+            projection.state_of(&id),
+            projection.result_ref_of(&id),
+            projection.nondeterminism_of(&id),
+        ) {
+            sink.record(event);
+        }
+    }
+}
+
+/// Pure mapping from a Mote's FINAL projection state to its terminal audit event
+/// (R4). Extracted so the per-state mapping — including the rarely-reached
+/// `Failed`/`Repudiated`/`Inconsistent` cases — is exhaustively unit-testable
+/// without standing up a run. `Committed` echoes the SAME `(result_ref, nd_class)`
+/// the digest folds (so the emitted `MoteCommitted` set is exactly the digest's
+/// committed set); a `Committed` missing either is skipped (it would not be in the
+/// digest either). Non-terminal states (`Pending`/`Scheduled`) emit nothing.
+fn terminal_event_for(
+    id: MoteId,
+    state: MoteState,
+    result_ref: Option<ContentRef>,
+    nd_class: Option<NdClass>,
+) -> Option<AuditEvent> {
+    match state {
+        MoteState::Committed => match (result_ref, nd_class) {
+            (Some(result_ref), Some(nd_class)) => Some(AuditEvent::MoteCommitted {
+                mote_id: id,
+                result_ref,
+                nd_class,
+            }),
+            _ => None,
+        },
+        MoteState::Failed => Some(AuditEvent::MoteFailed { mote_id: id }),
+        MoteState::Repudiated => Some(AuditEvent::MoteRepudiated { mote_id: id }),
+        MoteState::Inconsistent => Some(AuditEvent::MoteInconsistent { mote_id: id }),
+        MoteState::Pending | MoteState::Scheduled => None,
+    }
+}
+
 fn outcome(runnable: &[WorkflowMote], projection: &Projection) -> RunOutcome {
     let committed = runnable
         .iter()
@@ -696,4 +861,220 @@ pub fn canonical_mote_ids() -> Vec<MoteId> {
         .iter()
         .map(|w: &WorkflowMote| w.mote.id)
         .collect()
+}
+
+#[cfg(test)]
+mod audit_tests {
+    //! R4 audit-seam unit tests over the engine internals: the pure terminal-state
+    //! mapping (exhaustive over every `MoteState`) and the terminal sweep driven by
+    //! a REAL projection folded into each terminal state (the "producing" test for
+    //! the `Failed`/`Repudiated`/`Inconsistent` variants the canonical demo never
+    //! reaches on its own).
+
+    use std::sync::Arc;
+
+    use kx_audit::{AuditEvent, DispatchKind, InMemoryAuditSink};
+    use kx_content::ContentRef;
+    use kx_journal::{FailureReason, JournalEntry, RepudiationReason};
+    use kx_mote::{MoteDefHash, MoteId, NdClass};
+    use smallvec::SmallVec;
+
+    use super::*;
+
+    fn cref(b: u8) -> ContentRef {
+        ContentRef::from_bytes([b; 32])
+    }
+
+    // `key` is a distinct per-Mote idempotency byte so different Motes' entries
+    // never collide in the dedup index `(idempotency_key, kind)`.
+    fn committed(
+        mote_id: MoteId,
+        seq: u64,
+        key: u8,
+        nd: NdClass,
+        result_ref: ContentRef,
+    ) -> JournalEntry {
+        JournalEntry::Committed {
+            mote_id,
+            idempotency_key: [key; 32],
+            seq,
+            nondeterminism: nd,
+            result_ref,
+            parents: SmallVec::new(),
+            warrant_ref: cref(0xaa),
+            mote_def_hash: MoteDefHash::from_bytes([key; 32]),
+        }
+    }
+
+    fn failed(mote_id: MoteId, seq: u64, key: u8) -> JournalEntry {
+        JournalEntry::Failed {
+            mote_id,
+            idempotency_key: [key; 32],
+            seq,
+            reason_class: FailureReason::TimedOut,
+            reporter_id: 0,
+        }
+    }
+
+    fn effect_staged(mote_id: MoteId, seq: u64, key: u8) -> JournalEntry {
+        JournalEntry::EffectStaged {
+            mote_id,
+            idempotency_key: [key; 32],
+            seq,
+        }
+    }
+
+    fn repudiated(
+        target_mote_id: MoteId,
+        target_committed_seq: u64,
+        seq: u64,
+        key: u8,
+    ) -> JournalEntry {
+        JournalEntry::Repudiated {
+            target_mote_id,
+            idempotency_key: [key; 32],
+            seq,
+            target_committed_seq,
+            reason_class: RepudiationReason::OperatorAction,
+            repudiator_id: 0,
+        }
+    }
+
+    #[test]
+    fn terminal_event_maps_every_state() {
+        let id = MoteId::from_bytes([1u8; 32]);
+        let r = cref(2);
+
+        // Committed with both refs → MoteCommitted echoing the digest's tuple.
+        assert_eq!(
+            terminal_event_for(
+                id,
+                MoteState::Committed,
+                Some(r),
+                Some(NdClass::WorldMutating)
+            ),
+            Some(AuditEvent::MoteCommitted {
+                mote_id: id,
+                result_ref: r,
+                nd_class: NdClass::WorldMutating,
+            })
+        );
+        // Committed missing a ref is NOT emitted (it would not be in the digest either).
+        assert_eq!(
+            terminal_event_for(id, MoteState::Committed, None, Some(NdClass::Pure)),
+            None
+        );
+        assert_eq!(
+            terminal_event_for(id, MoteState::Committed, Some(r), None),
+            None
+        );
+        // The terminal failure / anomaly states each map to their event.
+        assert_eq!(
+            terminal_event_for(id, MoteState::Failed, None, None),
+            Some(AuditEvent::MoteFailed { mote_id: id })
+        );
+        assert_eq!(
+            terminal_event_for(id, MoteState::Repudiated, None, None),
+            Some(AuditEvent::MoteRepudiated { mote_id: id })
+        );
+        assert_eq!(
+            terminal_event_for(id, MoteState::Inconsistent, None, None),
+            Some(AuditEvent::MoteInconsistent { mote_id: id })
+        );
+        // Non-terminal states emit nothing.
+        assert_eq!(terminal_event_for(id, MoteState::Pending, None, None), None);
+        assert_eq!(
+            terminal_event_for(id, MoteState::Scheduled, None, None),
+            None
+        );
+    }
+
+    #[test]
+    fn sweep_emits_each_terminal_state_from_a_real_projection() {
+        // Real demo Motes give real ids; we fold crafted journal entries to drive
+        // four of them into Committed / Failed / Repudiated / Inconsistent and leave
+        // the rest Pending, then assert the sweep emits exactly the right trail.
+        let wf = DemoWorkflow::canonical();
+        assert!(
+            wf.motes.len() >= 5,
+            "demo declares enough motes for the matrix"
+        );
+        let ids: Vec<MoteId> = wf.motes.iter().map(|w| w.mote.id).collect();
+
+        let mut p = Projection::new();
+        // motes[0] → Committed (nd = ReadOnlyNondet, result_ref = cref(9)).
+        p.fold(&committed(
+            ids[0],
+            1,
+            0xa0,
+            NdClass::ReadOnlyNondet,
+            cref(9),
+        ))
+        .unwrap();
+        // motes[1] → Failed.
+        p.fold(&failed(ids[1], 2, 0xa1)).unwrap();
+        // motes[2] → Committed(seq 3) then Repudiated(target 3).
+        p.fold(&committed(ids[2], 3, 0xa2, NdClass::Pure, cref(3)))
+            .unwrap();
+        p.fold(&repudiated(ids[2], 3, 4, 0xa2)).unwrap();
+        // motes[3] → EffectStaged then Repudiated-without-Committed (cell-8 anomaly).
+        p.fold(&effect_staged(ids[3], 5, 0xa3)).unwrap();
+        p.fold(&repudiated(ids[3], 0, 6, 0xa3)).unwrap();
+        // motes[4..] left Pending (never folded).
+
+        assert_eq!(p.state_of(&ids[0]), MoteState::Committed);
+        assert_eq!(p.state_of(&ids[1]), MoteState::Failed);
+        assert_eq!(p.state_of(&ids[2]), MoteState::Repudiated);
+        assert_eq!(p.state_of(&ids[3]), MoteState::Inconsistent);
+
+        let mem = InMemoryAuditSink::new();
+        let sink = RuntimeAuditSink::from_arc(Arc::new(mem.clone()));
+        audit_terminal_states(&wf.motes, &p, &sink);
+
+        let events = mem.events();
+        assert_eq!(
+            events,
+            vec![
+                AuditEvent::MoteCommitted {
+                    mote_id: ids[0],
+                    result_ref: cref(9),
+                    nd_class: NdClass::ReadOnlyNondet,
+                },
+                AuditEvent::MoteFailed { mote_id: ids[1] },
+                AuditEvent::MoteRepudiated { mote_id: ids[2] },
+                AuditEvent::MoteInconsistent { mote_id: ids[3] },
+            ],
+            "the sweep emits one terminal event per non-pending Mote, in runnable order"
+        );
+    }
+
+    #[test]
+    fn action_accessors_echo_the_picked_mote() {
+        // The dispatch-kind mapping the MoteDispatched event relies on.
+        let wf = DemoWorkflow::canonical();
+        let w = wf.motes[0].clone();
+        let pure = Action::RunPure(w.clone());
+        assert_eq!(pure.dispatch_kind(), DispatchKind::Pure);
+        assert_eq!(pure.mote_id(), w.mote.id);
+        let critic = Action::RunNativeCritic(w.clone());
+        assert_eq!(critic.dispatch_kind(), DispatchKind::Critic);
+        let fresh = Action::RunWm {
+            wm: w.clone(),
+            recover: false,
+        };
+        assert_eq!(fresh.dispatch_kind(), DispatchKind::WmFresh);
+        let recovery = Action::RunWm {
+            wm: w.clone(),
+            recover: true,
+        };
+        assert_eq!(recovery.dispatch_kind(), DispatchKind::WmRecovery);
+        assert_eq!(recovery.nd_class(), w.mote.nd_class());
+    }
+
+    #[test]
+    fn as_u32_saturates() {
+        assert_eq!(as_u32(0), 0);
+        assert_eq!(as_u32(8), 8);
+        assert_eq!(as_u32(usize::MAX), u32::MAX);
+    }
 }

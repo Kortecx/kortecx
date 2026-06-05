@@ -18,7 +18,8 @@ pub const USAGE: &str = "\
 usage: kx <command> [args]
 
   engine (local, no server):
-    kx run|replay|digest --journal <path> --content <dir> [--crash-at <pt>] [--checkpoint-every N] [--json]
+    kx run|replay|digest --journal <path> --content <dir> [--crash-at <pt>] [--checkpoint-every N]
+                         [--audit-log <path>] [--json]
 
   server:
     kx serve --journal <path> --content <dir> [--listen <addr:port>] [--dev-allow-local]
@@ -249,10 +250,13 @@ fn inject_listen_default(mut rest: Vec<String>) -> Vec<String> {
 fn help_for(cmd: &str) -> String {
     match cmd {
         "run" | "replay" | "digest" => "\
-kx run|replay|digest --journal <path> --content <dir> [--crash-at <pt>] [--checkpoint-every N] [--json]
+kx run|replay|digest --journal <path> --content <dir> [--crash-at <pt>] [--checkpoint-every N]
+                     [--audit-log <path>] [--json]
   Forwards to the kx-runtime engine. `run` drives the canonical demo from scratch;
   `replay` recovers + finishes an existing journal; `digest` prints the projection
-  digest. Output is parity-identical to the `kx-runtime` binary."
+  digest. Output is parity-identical to the `kx-runtime` binary.
+  --audit-log <path> writes a best-effort JSONL audit trail of the run lifecycle
+  (off the truth path; never changes the digest). Honored by run/replay."
             .into(),
         "serve" => "\
 kx serve --journal <path> --content <dir> [--listen <addr:port>] [--dev-allow-local] ...
