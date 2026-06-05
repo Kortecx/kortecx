@@ -43,4 +43,48 @@ pub enum CompileError {
         /// The child step's index.
         child: usize,
     },
+
+    /// A prompt template (see [`crate::PromptTemplate`]) is structurally
+    /// malformed — an unbalanced, empty, nested, or invalid-character
+    /// `{placeholder}` brace. Detected by the pure [`crate::PromptTemplate::parse`].
+    #[error("malformed prompt template: {reason}")]
+    MalformedTemplate {
+        /// Human-readable description of the structural defect.
+        reason: String,
+    },
+
+    /// A template placeholder has no bound parameter at render time. Fail-closed:
+    /// every `{name}` MUST be supplied — a recipe never renders a half-bound prompt.
+    #[error("prompt template placeholder '{name}' has no bound parameter")]
+    MissingPlaceholder {
+        /// The unfilled placeholder name.
+        name: String,
+    },
+
+    /// A supplied parameter names no placeholder the template declares.
+    /// Fail-closed: an unknown parameter is a caller error, never silently dropped
+    /// (a typo'd param would otherwise leave the intended placeholder unfilled).
+    #[error("prompt parameter '{name}' names no template placeholder")]
+    UnknownParam {
+        /// The unrecognized parameter name.
+        name: String,
+    },
+
+    /// [`crate::render_prompts`] failed rendering the template carried by a
+    /// specific step. Carries the step index and the underlying reason; the
+    /// `WorkflowDef` is left byte-unchanged (the pass is atomic — clone-then-commit).
+    #[error("prompt render failed at step {step}: {reason}")]
+    RenderPromptStep {
+        /// The index of the step whose template failed to render.
+        step: usize,
+        /// The underlying [`MalformedTemplate`](Self::MalformedTemplate) /
+        /// [`MissingPlaceholder`](Self::MissingPlaceholder) /
+        /// [`UnknownParam`](Self::UnknownParam) failure, rendered.
+        reason: String,
+    },
+
+    /// A recipe builder was given an empty set of required step logics (zero
+    /// mappers / workers / attempts / images). A recipe must declare ≥1 such step.
+    #[error("recipe requires at least one step but none were provided")]
+    EmptyRecipe,
 }

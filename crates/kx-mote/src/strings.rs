@@ -43,6 +43,23 @@ pub struct ConfigKey(pub String);
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct ConfigVal(pub Vec<u8>);
 
+/// The single canonical [`ConfigKey`] *name* under which a Mote's instruction
+/// prompt is carried in its `config_subset`.
+///
+/// `MoteDef` has no prompt field — in the full runtime the prompt is assembled
+/// at context-assembly time, but its identity-bearing text is carried here, in
+/// `config_subset`, so the prompt folds into [`crate::MoteDef::hash`] (same
+/// prompt ⇒ same `MoteId`, different prompt ⇒ different `MoteId`). This constant
+/// is promoted to the shared substrate so every layer that writes or reads a
+/// prompt (the workflow recipe library, the model harness, the planner)
+/// references **one** source rather than hand-mirroring the literal `"prompt"`
+/// across crates (closes the IMP-7 hand-mirrored-constant hazard).
+///
+/// Only the *string value* participates in identity (it is a [`ConfigKey`]'s
+/// inner `String`); the constant binding itself is never serialized, so adding
+/// or referencing it cannot move any digest.
+pub const PROMPT_KEY: &str = "prompt";
+
 /// The stable position of a Mote in its DAG.
 ///
 /// Assigned at DAG-compile time (workflow SDK) or derived from a topology

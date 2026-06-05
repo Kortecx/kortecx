@@ -88,7 +88,9 @@ pub use id::{InputDataId, LogicRef, MoteDefHash, MoteId, PromptTemplateHash};
 pub use inference_params::{Grammar, InferenceParams};
 pub use mote::Mote;
 pub use ndclass::NdClass;
-pub use strings::{ConfigKey, ConfigVal, GraphPosition, ModelId, ToolName, ToolVersion};
+pub use strings::{
+    ConfigKey, ConfigVal, GraphPosition, ModelId, ToolName, ToolVersion, PROMPT_KEY,
+};
 pub use topology::{ChildDescriptor, RoleId, TopologyDecision};
 
 #[cfg(test)]
