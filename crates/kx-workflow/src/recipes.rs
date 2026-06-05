@@ -46,11 +46,15 @@ pub enum WorkerKind {
     Generator,
 }
 
-/// The `config_subset` key under which an image-describe step carries the
-/// content ref of the image it consumes — baked at authoring time by
-/// [`image_batch_describe_reduce`] (one distinct image per describe step,
-/// identity-bearing). The multi-modal image path (PR-2) routes the referenced
-/// content to the model as a `content_ref` at dispatch.
+/// The `config_subset` key under which an image-describe step records *which*
+/// image it describes — its content ref, baked at authoring time by
+/// [`image_batch_describe_reduce`] (one distinct image per describe step). This
+/// is the per-step image *association* (identity-bearing → distinct describe
+/// identities), **not** the dispatch-time image input: the multi-modal path
+/// (PR-2) feeds the model from a describe step's image-sniffed Data-edge *parent*
+/// content, so a runnable multi-modal describe supplies the image as a committed
+/// parent (a dispatch extension that fetches this ref directly is a future
+/// model-harness follow-up).
 pub const IMAGE_REF_KEY: &str = "image_ref";
 
 /// Shared fan-in builder: `N` leaf steps of `kind` → one PURE `combine` step,
@@ -270,17 +274,20 @@ pub fn react_tool_loop(
     Ok(wf)
 }
 
-/// **image-batch describe-reduce (multi-modal capstone).** One describe step per
-/// image (READ-ONLY-NONDET generators, all running the same `describe_logic`) →
-/// one PURE reduce step that folds every description. Static `N`
-/// (`image_refs.len()`).
+/// **image-batch describe-reduce (multi-modal capstone — authoring scaffold).**
+/// One describe step per image (READ-ONLY-NONDET generators, all running the same
+/// `describe_logic`) → one PURE reduce step that folds every description. Static
+/// `N` (`image_refs.len()`).
 ///
-/// Each describe step carries *its own* image's content ref under
+/// Each describe step records *its own* image's content ref under
 /// [`IMAGE_REF_KEY`], baked at authoring time — so the `N` describe steps describe
 /// `N` **distinct** images and have distinct identities (the image ref folds into
-/// `config_subset` → `MoteId`; a different image is a different Mote). The
-/// multi-modal image path (PR-2) routes each referenced image to the model as a
-/// `content_ref` at dispatch. The reduce folds the committed descriptions into one
+/// `config_subset` → `MoteId`; a different image is a different Mote). This builds
+/// the correct DAG shape + per-image identities; to actually *run* it
+/// multi-modally the harness supplies each image as the describe step's
+/// image-sniffed Data-edge **parent** content (the PR-2 dispatch path routes image
+/// parents — not this `config_subset` key — as `content_ref`s) — the local
+/// Gemma-4 milestone wiring. The reduce folds the committed descriptions into one
 /// summary.
 ///
 /// # Errors
