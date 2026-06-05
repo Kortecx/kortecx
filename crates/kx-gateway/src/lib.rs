@@ -14,7 +14,7 @@
 //! > network port outside tests. It hosts the FROZEN
 //! > [`KxGateway`](kx_proto::proto::kx_gateway_server::KxGateway) gRPC service
 //! > over [`kx_gateway_core`] so a human / SDK / browser can connect and run a
-//! > workflow over the wire. See `ARCHITECTURE.md` (core-vs-distributed legend).
+//! > workflow over the wire. See the README (How it works; core-vs-distributed legend).
 //!
 //! ## What it hosts
 //!

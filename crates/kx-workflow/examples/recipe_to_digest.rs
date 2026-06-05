@@ -13,7 +13,7 @@
 //! cargo run -p kx-workflow --example recipe_to_digest
 //! ```
 //!
-//! See ARCHITECTURE.md / GLOSSARY.md for how the pieces fit.
+//! See the README (How it works) / GLOSSARY.md for how the pieces fit.
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;

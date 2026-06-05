@@ -13,7 +13,7 @@
 //! > **Phase: client surfaces (M8).** The OSS backend behind the
 //! > [`KxGateway`](kx_proto::proto::kx_gateway_server::KxGateway) service — the
 //! > client-facing surface over the durable runtime. It is a **read-fold +
-//! > propose-proxy**, not a new write path. See `ARCHITECTURE.md`.
+//! > propose-proxy**, not a new write path. See the README (How it works).
 //!
 //! ## What it does
 //!

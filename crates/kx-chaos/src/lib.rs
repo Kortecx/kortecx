@@ -2,7 +2,7 @@
 //!
 //! > **Phase: distributed (P2/P3) — test harness.** Drives the coordinator/worker
 //! > layer under injected faults; not part of the runtime you deploy, and not
-//! > needed to build, run, or understand single-node kortecx. See `ARCHITECTURE.md`.
+//! > needed to build, run, or understand single-node kortecx. See the README (How it works).
 //!
 //! This crate is kortecx's **product core proof**: a *seed-deterministic* engine
 //! that kills workers mid-Mote across a sweep of seeds and proves, for **every**

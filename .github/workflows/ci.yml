@@ -323,6 +323,51 @@ jobs:
         run: just build-no-inference
 
   # ---------------------------------------------------------------------------
+  # verify-quickstart — docs-as-test gate (R7). Runs `just verify-quickstart`,
+  # which builds the FFI-free `kx` binary and drives the README quickstart
+  # (run → crash → replay → digest), asserting the canonical projection digest at
+  # every step. Keeps the docs from silently drifting from the CLI. Deliberately
+  # FFI-free (NO submodules, NO C++ toolchain), mirroring build-no-inference, so a
+  # regression that leaked the FFI into kx-cli would also fail here. NON-REQUIRED:
+  # this is a new context, not in branch protection — promote it to required once
+  # it is green across a few runs (a separate, authorized branch-protection change).
+  # ---------------------------------------------------------------------------
+  verify-quickstart:
+    name: verify-quickstart (docs-as-test; FFI-free)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (NO submodules — the quickstart path is FFI-free)
+        uses: actions/checkout@v6
+        # Deliberately NO submodules and NO C++ toolchain install below.
+
+      - name: Install Rust toolchain (from rust-toolchain.toml)
+        run: |
+          rustup show active-toolchain
+          cargo --version
+
+      - name: Cache Cargo registry + target
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-quickstart-${{ runner.os }}-${{ hashFiles('**/Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: |
+            cargo-quickstart-${{ runner.os }}-
+            cargo-${{ runner.os }}-
+
+      - name: Configure RUSTFLAGS for path-stripping
+        run: |
+          echo "RUSTFLAGS=--remap-path-prefix=${GITHUB_WORKSPACE}= -Cmetadata=kortecx-v0" >> $GITHUB_ENV
+
+      - name: Install just
+        uses: extractions/setup-just@v4
+
+      - name: just verify-quickstart
+        run: just verify-quickstart
+
+  # ---------------------------------------------------------------------------
   # reproducible — byte-determinism check (I1.c). Runs `just check-reproducible`
   # which performs two clean release builds and diffs the output. Expensive
   # (~6+ minutes) but the load-bearing reproducibility gate.

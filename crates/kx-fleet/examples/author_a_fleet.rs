@@ -20,7 +20,7 @@
 //!    the same way, narrowed at every hop;
 //! 5. **removing** a member makes their access vanish immediately (revoke-by-new-fact).
 //!
-//! See ARCHITECTURE.md / GLOSSARY.md for how this sits OFF the trust path (SN-8): the
+//! See the README (How it works) / GLOSSARY.md for how this sits OFF the trust path (SN-8): the
 //! fleet layer never gates selection/promotion and never touches the journal.
 
 // Example code: `.unwrap()` on the ledger appends is the right "fail loud in a demo"

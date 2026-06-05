@@ -1,8 +1,8 @@
 # Glossary
 
 The vocabulary of the kortecx runtime, for contributors. Each term notes where
-it's defined in the code. See [ARCHITECTURE.md](ARCHITECTURE.md) for how the
-pieces fit.
+it's defined in the code. See the README's [How it works](README.md#how-it-works)
+for how the pieces fit.
 
 ### Mote
 The unit of work — one step an agent takes (call a model, run logic, hit a tool).
@@ -134,3 +134,48 @@ The multi-node layer: the **coordinator** is the sole journal writer + worker
 registry; **workers** lease ready Motes, dispatch them, and propose results back.
 Same guarantees as single-node — distribution is wiring on the same seams, not a
 rewrite. Optional for single-node. `kx-coordinator`, `kx-worker`, `kx-proto`.
+
+### Gateway
+The networked front door: a gRPC service (`KxGateway`) that hosts an embedded
+coordinator + local worker behind bearer-token auth (deny-all by default,
+identity derived server-side). It holds a read-only journal handle and proxies
+submits to the coordinator — it is **not** a second journal writer. `kx serve`
+runs it. `kx-gateway`, `kx-gateway-core`.
+
+### Invoke
+The inbound execution path: bind a **published recipe** by handle (e.g.
+`kx/recipes/echo`) to JSON args, compile it to a Mote DAG, and run it to a
+committed terminal Mote — exactly-once, no new write path. The runtime as a
+callable function. `kx-invoke`.
+
+### Recipe / WorkflowDef
+A reusable, parameterized **workflow** that compiles to a Mote DAG. Authored as a
+`WorkflowDef` (steps + typed edges + free params), bound to args, then compiled.
+The shipped library (`map_reduce`, `fan_out_gather`, `retry_until_critic`,
+`react_tool_loop`, `image_batch_describe_reduce`) is composed from pure builders.
+`kx-workflow/src/recipes.rs`.
+
+### Prompt template
+A pure, fail-closed template (`{name}` slots, `{{`/`}}` escapes) rendered
+**before** compile so the final prompt is identity-bearing (it folds into the
+`MoteId`). An unfilled slot or unknown param is an error, never silently dropped.
+`kx-workflow/src/prompt.rs`.
+
+### Audit event / sink
+An **off-the-truth-path** record of the run lifecycle (join-keys only, never
+payloads/secrets) written to a best-effort sink (`InMemoryAuditSink`,
+`JsonlAuditSink`). Time lives only on the wire DTO, never in the digest — so the
+audit trail **never changes** the projection digest. `kx run --audit-log <path>`.
+`kx-audit`.
+
+### Signature / Catalog
+A **TaskSignature** is the content-addressed, registerable description of a task;
+the **catalog** is the sharable registry of signatures, recipes, grants, and
+versions, backed by durable SQLite ledgers. Fuzzy-in / exact-out selection is a
+single chokepoint. `kx-catalog`.
+
+### Fleet / Team
+Append-only **membership facts** + a fail-closed fold that resolve a member's
+effective warrant as `intersect(team_warrant, member_role)` — one-level-up
+delegation, additive capabilities, nestable fleet-of-teams. Off the journal /
+off the trust path. `kx-fleet`.
