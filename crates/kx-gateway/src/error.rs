@@ -21,6 +21,10 @@ pub enum GatewayError {
     /// Connecting / talking to the embedded coordinator failed.
     #[error("coordinator: {0}")]
     Coordinator(String),
+    /// Opening / seeding the durable catalog (signature registry + recipe
+    /// ledgers) failed.
+    #[error("catalog: {0}")]
+    Catalog(String),
     /// A required capability is missing from this build (e.g. the embedded
     /// worker was compiled out with `--no-default-features`).
     #[error("unsupported: {0}")]

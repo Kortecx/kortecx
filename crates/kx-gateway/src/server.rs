@@ -29,16 +29,21 @@ use std::sync::Arc;
 use std::time::Duration;
 #[cfg(feature = "embedded-worker")]
 use {
+    crate::provision::{DemoLibrary, HostRecipeBinder, HostSignatureCatalog},
     kx_capability::{CapabilityBroker, LocalCapabilityBroker},
+    kx_catalog::SqliteCatalog,
     kx_content::{ContentRef, ContentStore, LocalFsContentStore},
     kx_coordinator::CoordinatorService,
     kx_executor::{LocalResourceManager, MoteExecutor, TestMoteExecutor},
-    kx_gateway_core::{GatewayService, ReadOnly, TonicCoordinatorSubmitter},
+    kx_gateway_core::{
+        GatewayService, ReadOnly, RecipeBinder, SignatureCatalog, TonicCoordinatorSubmitter,
+    },
     kx_journal::SqliteJournal,
     kx_proto::proto::coordinator_server::CoordinatorServer,
     kx_proto::proto::kx_gateway_server::KxGatewayServer,
     kx_warrant::ExecutorClass,
     kx_worker::{Worker, WorkerClient, DEFAULT_HEARTBEAT_CADENCE},
+    std::path::{Path, PathBuf},
     tonic::transport::Server,
 };
 
@@ -204,11 +209,29 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
             .await
             .map_err(|e| GatewayError::Coordinator(e.to_string()))?,
     );
-    let gateway = GatewayService::new(reader, submitter, content);
 
-    // (4) Auth interceptor (deny-all unless --dev-allow-local) + bind + serve.
+    // (3b) Durable catalog directory (R2a/R2b): `--catalog-dir` (default:
+    //      alongside the journal), holding the signature registry + recipe ledgers
+    //      so registered signatures + recipes survive restart.
+    let catalog_dir = resolve_catalog_dir(&cfg)?;
+    let signature_catalog = open_signature_catalog(&catalog_dir)?;
+    // (3c) Server-provisioned demo recipe library (R2b) so `Invoke` runs E2E.
+    //      Grant `Use` to every configured token party (+ the dev principal); the
+    //      step warrant uses the embedded worker's executor_class so a bound run
+    //      leases (see `provision::demo_warrant`).
+    let parties: Vec<String> = cfg.auth_tokens.values().cloned().collect();
+    let demo = DemoLibrary::open(&catalog_dir, default_executor_class(), &parties)?;
+    let binder: Arc<dyn RecipeBinder> = Arc::new(HostRecipeBinder::new(demo));
+    let gateway = GatewayService::new(reader, submitter, content)
+        .with_signature_catalog(signature_catalog)
+        .with_recipe_binder(binder);
+
+    // (4) Auth interceptor + bind + serve. Posture: --dev-allow-local (loopback
+    //     dev) → configured bearer tokens → deny-all (the safe default).
     let resolver: Arc<dyn crate::auth::PrincipalResolver> = if cfg.dev_allow_local {
         Arc::new(crate::auth::DevAllowLocal)
+    } else if !cfg.auth_tokens.is_empty() {
+        Arc::new(crate::auth::TokenResolver::new(cfg.auth_tokens.clone()))
     } else {
         Arc::new(crate::auth::DenyAll)
     };
@@ -242,6 +265,30 @@ async fn start_impl(_cfg: GatewayConfig) -> Result<RunningGateway, GatewayError>
          Rebuild with default features."
             .into(),
     ))
+}
+
+/// Resolve (creating if absent) the durable catalog directory: `--catalog-dir`
+/// if set, else the journal's parent directory (else the cwd). Holds the
+/// signature registry + the recipe ledgers (the G1a SQLite backends).
+#[cfg(feature = "embedded-worker")]
+fn resolve_catalog_dir(cfg: &GatewayConfig) -> Result<PathBuf, GatewayError> {
+    let dir = cfg.catalog_dir.clone().unwrap_or_else(|| {
+        cfg.journal_path
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .map_or_else(|| PathBuf::from("."), Path::to_path_buf)
+    });
+    std::fs::create_dir_all(&dir).map_err(|e| GatewayError::Catalog(e.to_string()))?;
+    Ok(dir)
+}
+
+/// Open the durable signature catalog under `dir` and wrap it as the gateway's
+/// catalog seam. Registered signatures survive restart (the G1a SQLite backend).
+#[cfg(feature = "embedded-worker")]
+fn open_signature_catalog(dir: &Path) -> Result<Arc<dyn SignatureCatalog>, GatewayError> {
+    let registry = SqliteCatalog::open(dir.join("catalog.db"))
+        .map_err(|e| GatewayError::Catalog(e.to_string()))?;
+    Ok(Arc::new(HostSignatureCatalog::new(registry)))
 }
 
 /// A `MoteExecutor` for PURE Motes that PUBLISHES its deterministic result bytes

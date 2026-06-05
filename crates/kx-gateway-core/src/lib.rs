@@ -47,14 +47,19 @@
 
 mod error;
 mod events;
+mod identity;
 mod reader;
 mod service;
 mod submit;
 mod view;
 
 pub use error::GatewayError;
+pub use identity::CallerParty;
 pub use reader::{ContentReader, JournalReader, ReadOnly};
-pub use service::GatewayService;
+pub use service::{
+    BinderError, BoundRecipe, CatalogSeamError, GatewayService, RecipeBinder, RegisteredSignature,
+    SignatureCatalog, SignatureSummaryEntry,
+};
 pub use submit::{
     RunSubmitter, SubmitMoteOutcome, SubmitStatus, SubmitterError, TonicCoordinatorSubmitter,
 };

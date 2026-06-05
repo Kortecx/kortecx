@@ -15,6 +15,7 @@
 
 mod common;
 
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::time::Duration;
 
@@ -25,13 +26,7 @@ use tempfile::TempDir;
 use tonic::transport::Channel;
 
 fn config(dir: &TempDir, dev_allow_local: bool) -> GatewayConfig {
-    GatewayConfig {
-        listen: "127.0.0.1:0".parse().unwrap(),
-        journal_path: dir.path().join("kx.db"),
-        content_root: dir.path().join("blobs"),
-        max_lease: 16,
-        dev_allow_local,
-    }
+    common::gateway_config(dir, dev_allow_local, HashMap::new())
 }
 
 async fn client(addr: SocketAddr) -> KxGatewayClient<Channel> {

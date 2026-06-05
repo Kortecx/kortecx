@@ -86,6 +86,35 @@ message RunHandle {
 }
 
 // ---------------------------------------------------------------------------
+// Invoke — bind a PUBLISHED recipe by handle to args and run it (R2 / D121).
+// Additive RPC (D120.6). The caller's party is SERVER-DERIVED from the auth
+// interceptor (there is NO party/principal field on the wire — SN-8). The
+// gateway resolves handle+args under the party's authoritative Use warrant via
+// the host's recipe binder (kx-invoke: resolve→validate→bind→intersect), then
+// register-then-submits through the SAME propose-proxy as SubmitRun (no new
+// journal write path).
+//
+// A run is keyed by recipe identity (RegisterRun dedups by recipe_fingerprint),
+// so every invocation of the SAME recipe joins ONE run instance; distinct args
+// yield distinct Motes WITHIN it (exactly-once-per-input). Invoke therefore
+// returns the SERVER-DERIVED `terminal_mote_id` (never client-supplied — SN-8)
+// so the caller knows which committed Mote in the run is THIS invocation's
+// output: poll GetProjection on instance_id, find terminal_mote_id, then
+// GetContent on its result_ref.
+// ---------------------------------------------------------------------------
+
+message InvokeRequest {
+  string handle = 1;                     // "namespace/collection/name" recipe handle (AssetPath)
+  bytes  args   = 2;                     // opaque JSON object bytes; validated server-side, fail-closed
+}
+
+message InvokeResponse {
+  bytes instance_id = 1;                 // 16B — the run this invocation joined (coordinator-assigned)
+  bytes recipe_fingerprint = 2;          // 32B — the resolved recipe identity
+  bytes terminal_mote_id = 3;            // 32B — SERVER-DERIVED sink Mote; its committed result is THIS invocation's output
+}
+
+// ---------------------------------------------------------------------------
 // GetProjection — the "render my run as a DAG" READ query (missing today).
 // All fields server-derived from the kx-projection fold. D120.2.
 // ---------------------------------------------------------------------------
@@ -213,6 +242,7 @@ message RegisterSignatureResponse {
 
 service KxGateway {
   rpc SubmitRun(SubmitRunRequest) returns (RunHandle);
+  rpc Invoke(InvokeRequest) returns (InvokeResponse);
   rpc GetProjection(GetProjectionRequest) returns (ProjectionView);
   rpc GetContent(GetContentRequest) returns (ContentBlob);
   rpc StreamEvents(StreamEventsRequest) returns (stream EventFrame);

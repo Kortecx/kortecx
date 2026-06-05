@@ -11,9 +11,10 @@
     unreachable_pub
 )]
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::PathBuf;
 
+use kx_gateway::GatewayConfig;
 use kx_mote::{
     EdgeMeta, EffectPattern, GraphPosition, InferenceParams, InputDataId, LogicRef, ModelId, Mote,
     MoteDef, MoteId, NdClass, ParentRef, PromptTemplateHash, MOTE_DEF_SCHEMA_VERSION,
@@ -22,6 +23,27 @@ use kx_warrant::{
     FsMode, FsScope, Host, ModelRoute, MoteClass, NetScope, ResourceCeiling, WarrantSpec,
 };
 use smallvec::SmallVec;
+use tempfile::TempDir;
+
+/// A gateway config rooted at `dir` (ephemeral journal + content + catalog).
+/// `dev_allow_local` installs the dev resolver; a non-empty `auth_tokens`
+/// (token → party) installs the bearer-token resolver instead.
+#[must_use]
+pub fn gateway_config(
+    dir: &TempDir,
+    dev_allow_local: bool,
+    auth_tokens: HashMap<String, String>,
+) -> GatewayConfig {
+    GatewayConfig {
+        listen: "127.0.0.1:0".parse().unwrap(),
+        journal_path: dir.path().join("kx.db"),
+        content_root: dir.path().join("blobs"),
+        max_lease: 16,
+        dev_allow_local,
+        auth_tokens,
+        catalog_dir: None,
+    }
+}
 
 fn pure_def() -> MoteDef {
     MoteDef {
