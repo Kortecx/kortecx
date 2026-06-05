@@ -214,6 +214,16 @@ tokio              = { version = "1", features = ["rt-multi-thread", "macros", "
 # present transitively (tonic pulls it in) — promoting it to a direct dep adds NO
 # new crate to the build/deny graph; `tokio_stream::iter` backs the resumable cursor.
 tokio-stream       = "0.1"
+# R5 (D120.3): the WebSocket bridge transport for the browser `StreamEvents`
+# surface, in the `kx-gateway` binary only (the dep wall keeps kx-gateway-core a
+# passive read-fold). MIT; default features = plaintext handshake + client connect
+# (no TLS backend — loopback dev, transport TLS is a later seam like gRPC TLS);
+# http/hyper/tower already locked via tonic, so this adds the tungstenite codec only.
+tokio-tungstenite  = "0.24"
+# R5: `Sink`/`Stream` combinators for the WS bridge (split read/write so the
+# server pushes frames while handling the client's Close/Ping). MIT/Apache;
+# already transitive via tonic/hyper. Lean feature set (no executor/io-compat).
+futures-util       = { version = "0.3", default-features = false, features = ["std", "sink", "async-await"] }
 tonic-build        = "0.12"
 protoc-bin-vendored = "3"
 

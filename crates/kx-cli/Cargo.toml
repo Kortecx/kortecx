@@ -40,7 +40,9 @@ kx-gateway = { workspace = true }
 tempfile   = { workspace = true }
 # `net` for the E2E readiness probe (wait until the in-process gateway's port
 # accepts before driving the CLI — the serve task may bind just after `start`).
-tokio      = { workspace = true, features = ["rt-multi-thread", "macros", "time", "net"] }
+# `process`/`io-util` for the R5 `events --follow` E2E (spawn the long-running
+# follow subprocess + read its stdout line-by-line, then kill it).
+tokio      = { workspace = true, features = ["rt-multi-thread", "macros", "time", "net", "process", "io-util"] }
 # Parse the verbs' --json output back in the E2E assertions (separate test crate
 # ⇒ a dev-dep even though it's a normal dep of the lib).
 serde_json = { workspace = true }

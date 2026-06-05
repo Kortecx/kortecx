@@ -1,8 +1,15 @@
-//! The `StreamEvents` cursor. Reads the run's journal deltas in `(since_seq,
+//! The `StreamEvents` event source: reads a run's journal deltas in `(since_seq,
 //! head]`, chunks them into bounded [`EventFrame`](proto::EventFrame)s, and never
-//! advances `next_seq` past the journal head. For the D120 freeze this is a
-//! snapshot-to-head stream; the cursor protocol (`since_seq -> next_seq`,
-//! resumable, bounded) is frozen now so live tailing (M8) is additive.
+//! advances `next_seq` past the journal head. The cursor protocol (`since_seq ->
+//! next_seq`, resumable, bounded) is frozen at D120.
+//!
+//! Split into reusable pieces so both the default snapshot path and the live
+//! tailer (R5, in the `kx-gateway` binary) share ONE event source:
+//! - [`check_run_ownership`] — the one-time fold-to-head ownership gate.
+//! - [`frames_for_range`] — frames for the deltas in `(since_seq, head]`, taking
+//!   the already-polled `head` so a live tailer calls it once per advance.
+//! - `build_frames` — the snapshot composition (ownership + one range to head),
+//!   backing the default [`crate::SnapshotTailer`].
 
 use kx_journal::JournalEntry;
 use kx_proto::proto;
@@ -12,28 +19,39 @@ use crate::reader::JournalReader;
 use crate::view::fold_through;
 
 /// Max deltas per frame — bounds frame size (mirrors the coordinator's
-/// `READ_ENTRIES_MAX`). A run with more deltas than this is split across frames;
+/// `READ_ENTRIES_MAX`). A range with more deltas than this is split across frames;
 /// the client resumes from each frame's `next_seq`.
 const MAX_FRAME_DELTAS: usize = 4096;
 
-/// Build the frames for `StreamEvents(instance_id, since_seq)`. Validates run
-/// ownership first (uniform `NotAuthorized`), then emits resumable frames.
-pub(crate) fn build_frames(
+/// Validate run ownership (uniform `NotAuthorized`). Folds to head to read the
+/// run's `RunRegistered` entry (which is typically at seq=1, before `since_seq`).
+///
+/// The live tailer calls this ONCE at subscribe; per-poll re-reads skip it
+/// (ownership of an already-registered run cannot change). `O(journal)` once.
+pub fn check_run_ownership(
     reader: &dyn JournalReader,
     instance_id: [u8; 16],
-    since_seq: u64,
-) -> Result<Vec<proto::EventFrame>, GatewayError> {
+) -> Result<(), GatewayError> {
     let head = reader.current_seq().map_err(internal)?;
-
-    // Ownership: fold to head to read the run's registration (RunRegistered at
-    // seq=1 may be before `since_seq`).
     let (projection, _) = fold_through(reader, head)?;
     match projection.run_registration() {
-        Some((inst, _)) if inst == instance_id => {}
-        _ => return Err(GatewayError::NotAuthorized),
+        Some((inst, _)) if inst == instance_id => Ok(()),
+        _ => Err(GatewayError::NotAuthorized),
     }
+}
 
-    // Collect surfaced deltas in (since_seq, head].
+/// Build resumable frames for the surfaced deltas in `(since_seq, head]`, the
+/// caller supplying the already-polled `head`. Assumes ownership was already
+/// checked (the snapshot path checks in `build_frames`; the live tailer checks
+/// once at subscribe). `next_seq` is never `> head` by construction; the final
+/// frame flags `journal_boundary` at the supplied head.
+pub fn frames_for_range(
+    reader: &dyn JournalReader,
+    since_seq: u64,
+    head: u64,
+) -> Result<Vec<proto::EventFrame>, GatewayError> {
+    // Collect surfaced deltas in (since_seq, head]. The range is half-open
+    // `[start, end)`, so `+1` on both bounds yields the inclusive `(since_seq, head]`.
     let mut deltas: Vec<(u64, proto::event_delta::Kind)> = Vec::new();
     let entries = reader
         .read_entries_by_seq(since_seq.saturating_add(1)..head.saturating_add(1))
@@ -80,6 +98,20 @@ pub(crate) fn build_frames(
         }
     }
     Ok(frames)
+}
+
+/// The snapshot composition for `StreamEvents(instance_id, since_seq)`: validate
+/// ownership, then emit the frames for `(since_seq, head]` once. Backs the default
+/// [`crate::SnapshotTailer`]; the live tailer composes the pieces itself so it can
+/// re-poll the head.
+pub(crate) fn build_frames(
+    reader: &dyn JournalReader,
+    instance_id: [u8; 16],
+    since_seq: u64,
+) -> Result<Vec<proto::EventFrame>, GatewayError> {
+    check_run_ownership(reader, instance_id)?;
+    let head = reader.current_seq().map_err(internal)?;
+    frames_for_range(reader, since_seq, head)
 }
 
 /// Map a journal entry to a streamed delta, or `None` for kinds the cursor does

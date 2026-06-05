@@ -54,11 +54,15 @@ mod submit;
 mod view;
 
 pub use error::GatewayError;
+// The event-source pieces a live tailer (R5, `kx-gateway`) reuses: the one-time
+// ownership gate + the per-range frame builder. The snapshot composition stays
+// crate-private (it backs the default `SnapshotTailer`).
+pub use events::{check_run_ownership, frames_for_range};
 pub use identity::CallerParty;
 pub use reader::{ContentReader, JournalReader, ReadOnly};
 pub use service::{
-    BinderError, BoundRecipe, CatalogSeamError, GatewayService, RecipeBinder, RegisteredSignature,
-    SignatureCatalog, SignatureSummaryEntry,
+    BinderError, BoundRecipe, CatalogSeamError, EventStream, EventTailer, GatewayService,
+    RecipeBinder, RegisteredSignature, SignatureCatalog, SignatureSummaryEntry, SnapshotTailer,
 };
 pub use submit::{
     RunSubmitter, SubmitMoteOutcome, SubmitStatus, SubmitterError, TonicCoordinatorSubmitter,

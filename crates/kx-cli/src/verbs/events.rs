@@ -1,21 +1,19 @@
 //! `kx events --instance <hex16> [--since N] [--follow]` — print a run's event
-//! deltas. `StreamEvents` is snapshot-to-head today (it catches up to the
-//! current journal boundary and ends); `--follow` re-polls from the last cursor
-//! on a bounded backoff until Ctrl-C. True live-tail arrives with the R5
-//! WebSocket bridge — the verb surface is unchanged when it does.
-
-use std::time::Duration;
+//! deltas. Without `--follow` it reads one snapshot (`since_seq` → the current
+//! journal boundary) and exits. With `--follow` (R5) it consumes the server's
+//! LIVE TAIL: one open `StreamEvents` stream that keeps delivering frames as the
+//! journal advances, until Ctrl-C. If the server drops a slow consumer with
+//! `resource_exhausted` (CatchupRequired), the client transparently reconnects
+//! from its last `next_seq` — no lost or duplicated delta.
 
 use kx_proto::proto;
 use kx_proto::proto::kx_gateway_client::KxGatewayClient;
 use tonic::transport::Channel;
+use tonic::Code;
 
 use crate::client::{next_value, take_fixed, ClientCommon, Resolved};
 use crate::error::CliError;
 use crate::format;
-
-/// Re-poll cadence under `--follow` (bounded backoff — never a busy-spin).
-const FOLLOW_POLL: Duration = Duration::from_millis(250);
 
 /// Parsed `events` arguments.
 #[derive(Debug)]
@@ -103,19 +101,57 @@ pub async fn execute(args: EventsArgs) -> Result<(), CliError> {
     let mut client = resolved.connect().await?;
     let json = args.common.json;
 
-    let mut cursor = args.since;
-    loop {
-        cursor = drain_once(&mut client, &resolved, &args.instance, cursor, json).await?;
-        if !args.follow {
-            if !json {
-                println!("-- caught up at seq {cursor} --");
-            }
-            return Ok(());
+    if !args.follow {
+        let cursor = drain_once(&mut client, &resolved, &args.instance, args.since, json).await?;
+        if !json {
+            println!("-- caught up at seq {cursor} --");
         }
-        // --follow: back off, then re-poll from the cursor; a clean Ctrl-C exits.
-        tokio::select! {
-            () = tokio::time::sleep(FOLLOW_POLL) => {}
-            _ = tokio::signal::ctrl_c() => return Ok(()),
+        return Ok(());
+    }
+    follow_live(&mut client, &resolved, &args.instance, args.since, json).await
+}
+
+/// Consume the server's live tail: ONE open `StreamEvents` stream, printing deltas
+/// as they arrive until Ctrl-C. On a `resource_exhausted` (CatchupRequired) drop,
+/// reconnect from the last `next_seq` (resume — no lost/duplicated delta).
+async fn follow_live(
+    client: &mut KxGatewayClient<Channel>,
+    resolved: &Resolved,
+    instance: &[u8; 16],
+    mut cursor: u64,
+    json: bool,
+) -> Result<(), CliError> {
+    loop {
+        let mut stream = client
+            .stream_events(resolved.request(proto::StreamEventsRequest {
+                instance_id: instance.to_vec(),
+                since_seq: cursor,
+            })?)
+            .await
+            .map_err(CliError::from_status)?
+            .into_inner();
+
+        loop {
+            tokio::select! {
+                message = stream.message() => match message {
+                    Ok(Some(frame)) => {
+                        for delta in &frame.deltas {
+                            if let Some(line) = format::render_delta(delta, json) {
+                                println!("{line}");
+                            }
+                        }
+                        cursor = frame.next_seq;
+                    }
+                    // The live tail does not end on its own; a clean end means the
+                    // server is snapshot-only — we are done.
+                    Ok(None) => return Ok(()),
+                    // CatchupRequired: the server dropped a slow consumer. Resume
+                    // from the last acked cursor.
+                    Err(status) if status.code() == Code::ResourceExhausted => break,
+                    Err(status) => return Err(CliError::from_status(status)),
+                },
+                _ = tokio::signal::ctrl_c() => return Ok(()),
+            }
         }
     }
 }

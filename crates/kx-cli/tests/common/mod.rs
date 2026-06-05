@@ -29,6 +29,7 @@ pub fn gateway_config(
 ) -> GatewayConfig {
     GatewayConfig {
         listen: "127.0.0.1:0".parse().unwrap(),
+        ws_listen: "127.0.0.1:0".parse().unwrap(),
         journal_path: dir.path().join("kx.db"),
         content_root: dir.path().join("blobs"),
         max_lease: 16,

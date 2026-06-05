@@ -126,6 +126,59 @@ pub trait RecipeBinder: Send + Sync {
     ) -> Result<BoundRecipe, BinderError>;
 }
 
+/// The boxed server-streaming type the `StreamEvents` RPC returns.
+pub type EventStream =
+    Pin<Box<dyn Stream<Item = Result<proto::EventFrame, Status>> + Send + 'static>>;
+
+/// The event-tailing seam behind `StreamEvents`. The default [`SnapshotTailer`]
+/// emits the deltas in `(since_seq, head]` once and ends (snapshot-to-head); the
+/// host can inject a LIVE tailer (R5 — `kx-gateway`'s `LiveTailer`) that keeps the
+/// stream open and emits frames as the journal advances. Spoken in gateway-core's
+/// own vocabulary (a [`JournalReader`] + the frozen [`EventFrame`](proto::EventFrame))
+/// so the live tailer lives in the binary WITHOUT putting a runtime/timer dep on
+/// the read-fold crate (the dep wall).
+pub trait EventTailer: Send + Sync {
+    /// Open the event stream for `(instance_id, since_seq)`. `reader` is owned
+    /// (`Arc`) so a tailer that spawns a poller can outlive the handler call. The
+    /// ownership check is the tailer's first action.
+    ///
+    /// # Errors
+    /// A uniform `permission_denied` if the caller does not own the run (no
+    /// existence oracle); `internal` on a read/fold failure.
+    // The Ok variant is a thin boxed stream while `tonic::Status` is large, which
+    // trips `result_large_err`; boxing the Status would force every caller to
+    // unbox to satisfy the tonic handler's own `Result<_, Status>`. A clean
+    // pre-stream ownership error (vs. an in-band error frame) is the right
+    // semantics, so allow the lint on this seam.
+    #[allow(clippy::result_large_err)]
+    fn stream(
+        &self,
+        reader: Arc<dyn JournalReader>,
+        instance_id: [u8; 16],
+        since_seq: u64,
+    ) -> Result<EventStream, Status>;
+}
+
+/// The default, dependency-free tailer: emit `(since_seq, head]` once, then END
+/// (snapshot-to-head). This was gateway-core's behavior before R5; it is kept as
+/// the default so the crate stays self-contained and its round-trip tests need no
+/// async runtime. A live tail is opt-in via [`GatewayService::with_event_tailer`].
+#[derive(Clone, Copy, Debug, Default)]
+pub struct SnapshotTailer;
+
+impl EventTailer for SnapshotTailer {
+    #[allow(clippy::result_large_err)] // see the trait method.
+    fn stream(
+        &self,
+        reader: Arc<dyn JournalReader>,
+        instance_id: [u8; 16],
+        since_seq: u64,
+    ) -> Result<EventStream, Status> {
+        let frames = events::build_frames(reader.as_ref(), instance_id, since_seq)?;
+        Ok(Box::pin(tokio_stream::iter(frames.into_iter().map(Ok))))
+    }
+}
+
 /// The backend behind the external `KxGateway` service: a read-only journal +
 /// content reader (the read-fold) and a [`RunSubmitter`] (the propose-proxy).
 /// Holds no writer; auth/ownership stay cloud-side (the host wraps this with
@@ -142,6 +195,9 @@ pub struct GatewayService {
     /// The optional recipe-binding seam (the host injects a kx-invoke-backed
     /// binder). `None` ⇒ `Invoke` returns `unimplemented`.
     binder: Option<Arc<dyn RecipeBinder>>,
+    /// The `StreamEvents` tailer. Defaults to [`SnapshotTailer`]; the host injects
+    /// a live tailer via [`GatewayService::with_event_tailer`].
+    tailer: Arc<dyn EventTailer>,
 }
 
 impl GatewayService {
@@ -159,6 +215,7 @@ impl GatewayService {
             content,
             catalog: None,
             binder: None,
+            tailer: Arc::new(SnapshotTailer),
         }
     }
 
@@ -175,6 +232,15 @@ impl GatewayService {
     #[must_use]
     pub fn with_recipe_binder(mut self, binder: Arc<dyn RecipeBinder>) -> Self {
         self.binder = Some(binder);
+        self
+    }
+
+    /// Wire a live `StreamEvents` tailer (R5 — `kx-gateway`'s `LiveTailer`),
+    /// replacing the default snapshot-to-head [`SnapshotTailer`]. Read-side only;
+    /// it never changes the journal or the digest.
+    #[must_use]
+    pub fn with_event_tailer(mut self, tailer: Arc<dyn EventTailer>) -> Self {
+        self.tailer = tailer;
         self
     }
 }
@@ -310,8 +376,7 @@ impl KxGateway for GatewayService {
         Ok(Response::new(proto::ContentBlob { payload }))
     }
 
-    type StreamEventsStream =
-        Pin<Box<dyn Stream<Item = Result<proto::EventFrame, Status>> + Send + 'static>>;
+    type StreamEventsStream = EventStream;
 
     async fn stream_events(
         &self,
@@ -319,9 +384,13 @@ impl KxGateway for GatewayService {
     ) -> Result<Response<Self::StreamEventsStream>, Status> {
         let req = request.into_inner();
         let instance_id = instance_id_16(&req.instance_id)?;
-        let frames = events::build_frames(self.reader.as_ref(), instance_id, req.since_seq)?;
-        let stream = tokio_stream::iter(frames.into_iter().map(Ok));
-        Ok(Response::new(Box::pin(stream)))
+        // Delegate to the injected tailer (default snapshot-to-head; the host
+        // wires a live tailer via `with_event_tailer`). Ownership is the tailer's
+        // first action → uniform `permission_denied`.
+        let stream = self
+            .tailer
+            .stream(self.reader.clone(), instance_id, req.since_seq)?;
+        Ok(Response::new(stream))
     }
 
     async fn list_signatures(

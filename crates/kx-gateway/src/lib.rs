@@ -54,12 +54,16 @@
 mod auth;
 mod config;
 mod error;
+mod live_tail;
 mod provision;
 mod server;
+#[cfg(feature = "embedded-worker")]
+mod ws;
 
 pub use auth::{DenyAll, DevAllowLocal, Principal, PrincipalResolver, TokenResolver};
-pub use config::{Cli, GatewayConfig, DEFAULT_MAX_LEASE, USAGE};
+pub use config::{Cli, GatewayConfig, DEFAULT_MAX_LEASE, DEFAULT_WS_LISTEN, USAGE};
 pub use error::GatewayError;
+pub use live_tail::LiveTailer;
 pub use provision::{DemoLibrary, HostRecipeBinder, HostSignatureCatalog, DEMO_RECIPE_HANDLE};
 pub use server::{serve, start, RunningGateway};
 

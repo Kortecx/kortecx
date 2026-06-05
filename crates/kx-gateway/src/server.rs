@@ -17,7 +17,7 @@
 
 use std::net::SocketAddr;
 
-use tokio::sync::oneshot;
+use tokio::sync::{oneshot, watch};
 use tokio::task::JoinHandle;
 
 use crate::config::GatewayConfig;
@@ -36,7 +36,8 @@ use {
     kx_coordinator::CoordinatorService,
     kx_executor::{LocalResourceManager, MoteExecutor, TestMoteExecutor},
     kx_gateway_core::{
-        GatewayService, ReadOnly, RecipeBinder, SignatureCatalog, TonicCoordinatorSubmitter,
+        EventTailer, GatewayService, JournalReader, ReadOnly, RecipeBinder, SignatureCatalog,
+        TonicCoordinatorSubmitter,
     },
     kx_journal::SqliteJournal,
     kx_proto::proto::coordinator_server::CoordinatorServer,
@@ -188,10 +189,15 @@ fn demo_pure_warrant() -> kx_warrant::WarrantSpec {
 /// gracefully. Returned by [`start`]; [`serve`] drives it to a Ctrl-C.
 pub struct RunningGateway {
     local_addr: SocketAddr,
+    ws_local_addr: SocketAddr,
     shutdown: oneshot::Sender<()>,
+    /// Flips the live-tail poll loops off so their (otherwise endless) streams end
+    /// and the gateway's graceful drain can complete (R5). Signalled BEFORE the
+    /// gateway is awaited on shutdown.
+    live_shutdown: watch::Sender<bool>,
     gateway: JoinHandle<Result<(), GatewayError>>,
-    /// Background tasks (embedded coordinator server, worker loop, heartbeat)
-    /// aborted after the gateway drains.
+    /// Background tasks (embedded coordinator server, worker loop, heartbeat, the
+    /// R5 WebSocket-bridge accept loop) aborted after the gateway drains.
     aux: Vec<JoinHandle<()>>,
 }
 
@@ -203,6 +209,13 @@ impl RunningGateway {
         self.local_addr
     }
 
+    /// The address the R5 WebSocket `StreamEvents` bridge is bound to (resolved
+    /// from a `:0` request to the OS-assigned port).
+    #[must_use]
+    pub fn ws_local_addr(&self) -> SocketAddr {
+        self.ws_local_addr
+    }
+
     /// Stop accepting new gateway RPCs, drain in-flight ones, then abort the
     /// embedded coordinator + worker. The journal is always left at a safe
     /// boundary: commits are durable before they are acked, and any
@@ -210,10 +223,14 @@ impl RunningGateway {
     pub async fn shutdown(self) -> Result<(), GatewayError> {
         let RunningGateway {
             shutdown,
+            live_shutdown,
             gateway,
             aux,
             ..
         } = self;
+        // Stop the live-tail poll loops FIRST so their endless streams end —
+        // otherwise the graceful drain below would wait on them forever (R5).
+        let _ = live_shutdown.send(true);
         // Signal the gateway server to stop; it finishes in-flight requests
         // (which may still proxy to the not-yet-aborted coordinator).
         let _ = shutdown.send(());
@@ -232,11 +249,13 @@ impl RunningGateway {
 /// Build the runtime + bind the gateway, returning a [`RunningGateway`] handle
 /// (with the bound address) without blocking. The caller owns shutdown.
 pub async fn start(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> {
-    // Rule 8c: the dev local-allow resolver is loopback-only. (Deny-all may bind
-    // anywhere — every RPC is refused, so a public bind is still a closed door.)
-    if cfg.dev_allow_local && !cfg.listen.ip().is_loopback() {
+    // Rule 8c: the dev local-allow resolver is loopback-only — for BOTH the gRPC
+    // and the WebSocket (R5) ports. (Deny-all may bind anywhere — every RPC /
+    // handshake is refused, so a public bind is still a closed door.)
+    if cfg.dev_allow_local && (!cfg.listen.ip().is_loopback() || !cfg.ws_listen.ip().is_loopback())
+    {
         return Err(GatewayError::Config(
-            "--dev-allow-local permits a loopback --listen address only".into(),
+            "--dev-allow-local permits loopback --listen and --ws-listen addresses only".into(),
         ));
     }
     start_impl(cfg).await
@@ -305,7 +324,9 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     //     plus the shared content store as the read-only content seam.
     let read_journal =
         SqliteJournal::open(&cfg.journal_path).map_err(|e| GatewayError::Journal(e.to_string()))?;
-    let reader = Arc::new(ReadOnly::new(read_journal));
+    // Typed as `Arc<dyn JournalReader>` so the SAME read-only handle backs both the
+    // gateway read-fold and the R5 WebSocket bridge (cheap clone, one fold source).
+    let reader: Arc<dyn JournalReader> = Arc::new(ReadOnly::new(read_journal));
     let submitter = Arc::new(
         TonicCoordinatorSubmitter::connect(coord_endpoint.clone())
             .await
@@ -324,12 +345,21 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     let parties: Vec<String> = cfg.auth_tokens.values().cloned().collect();
     let demo = DemoLibrary::open(&catalog_dir, default_executor_class(), &parties)?;
     let binder: Arc<dyn RecipeBinder> = Arc::new(HostRecipeBinder::new(demo));
-    let gateway = GatewayService::new(reader, submitter, content)
+    // R5: the gRPC `StreamEvents` becomes a live tail (resumable, bounded,
+    // recovery-safe). Read-side only — the digest + frozen proto are untouched. The
+    // `live_shutdown` watch lets shutdown stop the poll loops (so their endless
+    // streams end and the graceful drain completes).
+    let (live_shutdown, live_shutdown_rx) = watch::channel(false);
+    let gateway = GatewayService::new(reader.clone(), submitter, content)
         .with_signature_catalog(signature_catalog)
-        .with_recipe_binder(binder);
+        .with_recipe_binder(binder)
+        .with_event_tailer(Arc::new(crate::live_tail::LiveTailer::new(
+            live_shutdown_rx.clone(),
+        )));
 
     // (4) Auth interceptor + bind + serve. Posture: --dev-allow-local (loopback
-    //     dev) → configured bearer tokens → deny-all (the safe default).
+    //     dev) → configured bearer tokens → deny-all (the safe default). The SAME
+    //     resolver gates the WS-bridge handshake (R5).
     let resolver: Arc<dyn crate::auth::PrincipalResolver> = if cfg.dev_allow_local {
         Arc::new(crate::auth::DevAllowLocal)
     } else if !cfg.auth_tokens.is_empty() {
@@ -337,6 +367,26 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     } else {
         Arc::new(crate::auth::DenyAll)
     };
+
+    // (5) R5 WebSocket bridge: a second listener serving the SAME live-tail event
+    //     stream over WS for browser clients, behind the same auth resolver. Bound
+    //     before spawning so the resolved (ephemeral) addr is known; aborted on
+    //     shutdown like the other aux tasks.
+    let ws_tcp = tokio::net::TcpListener::bind(cfg.ws_listen)
+        .await
+        .map_err(|e| GatewayError::Bind(e.to_string()))?;
+    let ws_local_addr = ws_tcp
+        .local_addr()
+        .map_err(|e| GatewayError::Bind(e.to_string()))?;
+    let ws_tailer: Arc<dyn EventTailer> =
+        Arc::new(crate::live_tail::LiveTailer::new(live_shutdown_rx));
+    let ws_task = tokio::spawn(crate::ws::serve_ws(
+        ws_tcp,
+        reader.clone(),
+        ws_tailer,
+        resolver.clone(),
+    ));
+
     let svc = KxGatewayServer::with_interceptor(gateway, crate::auth::interceptor(resolver));
     let local_addr = resolve_listen(cfg.listen).await?;
     let (shutdown, shutdown_rx) = oneshot::channel::<()>();
@@ -352,9 +402,11 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
 
     Ok(RunningGateway {
         local_addr,
+        ws_local_addr,
         shutdown,
+        live_shutdown,
         gateway,
-        aux: vec![coord_task, worker_task, heartbeat_task],
+        aux: vec![coord_task, worker_task, heartbeat_task, ws_task],
     })
 }
 

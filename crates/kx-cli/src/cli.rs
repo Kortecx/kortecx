@@ -22,9 +22,10 @@ usage: kx <command> [args]
                          [--audit-log <path>] [--json]
 
   server:
-    kx serve --journal <path> --content <dir> [--listen <addr:port>] [--dev-allow-local]
-             [--auth-token <tok>=<party>]... [--auth-token-file <path>] [--max-lease N] [--catalog-dir <dir>]
-             (--listen defaults to 127.0.0.1:50151)
+    kx serve --journal <path> --content <dir> [--listen <addr:port>] [--ws-listen <addr:port>]
+             [--dev-allow-local] [--auth-token <tok>=<party>]... [--auth-token-file <path>]
+             [--max-lease N] [--catalog-dir <dir>]
+             (--listen defaults to 127.0.0.1:50151; --ws-listen — the live-event WebSocket — to :50152)
 
   client verbs (gRPC over the gateway; common flags: --endpoint <url> --token <t> | --token-file <p> --json):
     kx invoke <handle> --args <json> [--args-file <path>] [--wait] [--timeout-secs N] [--out <file>]
@@ -259,8 +260,9 @@ kx run|replay|digest --journal <path> --content <dir> [--crash-at <pt>] [--check
   (off the truth path; never changes the digest). Honored by run/replay."
             .into(),
         "serve" => "\
-kx serve --journal <path> --content <dir> [--listen <addr:port>] [--dev-allow-local] ...
-  Hosts the embedded single-system gateway. --listen defaults to 127.0.0.1:50151.
+kx serve --journal <path> --content <dir> [--listen <addr:port>] [--ws-listen <addr:port>] [--dev-allow-local] ...
+  Hosts the embedded single-system gateway. --listen (gRPC) defaults to 127.0.0.1:50151;
+  --ws-listen (the R5 live-event WebSocket bridge) defaults to 127.0.0.1:50152.
   Deny-all by default: pass --dev-allow-local (loopback only) or --auth-token(-file)."
             .into(),
         "invoke" => "\
