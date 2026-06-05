@@ -1,101 +1,98 @@
-# `bindings/python` — Python language binding (PyO3 + maturin)
+# `kortecx` — Python client SDK
 
-**Status**: structure-only. No source files yet. The Python binding is a
-separate piece of work scheduled to land AFTER `kx-executor` (P1.9) makes a
-runtime promise meaningful to bind from a host language.
+A **pure gRPC client SDK** for the [kortecx](https://github.com/Kortecx/kortecx)
+durable agentic-execution runtime. It speaks the **frozen `KxGateway` contract**
+(`kortecx.v1`) over the wire to a running `kx serve` — it is **not** a native
+binding: no Rust, no C++, no `kx-*` crate, no compiler needed to install.
 
-## The rule (restated for Python)
+> **Note on the old design.** Earlier drafts of this directory described a
+> PyO3 / `maturin` *native* binding. That approach is **superseded**: the
+> supported integration surface is this gRPC client SDK (decision D130.3). The
+> runtime is reached over its network contract, not linked in-process.
 
-**Bindings depend on core. Core NEVER depends on this binding and stays
-unaware that Python exists.**
-
-What this means concretely:
-
-- **No `pyo3` in any `kx-*` core crate's `Cargo.toml`.** The pyo3 dep lives
-  exclusively in `bindings/python/Cargo.toml`.
-- **No `#[pyclass]` / `#[pyfunction]` / `#[pyo3(...)]` attributes on any
-  type defined in a `kx-*` core crate.** Wrapper types in
-  `bindings/python/src/` re-expose core types with PyO3 attributes.
-- **No "Python is special" carve-outs in core.** If Python needs a different
-  serialization shape, that's the binding's transform, not core's
-  responsibility. (Bincode wire format is canonical; binding can map to
-  Python dicts / dataclasses on its side.)
-- **No PyO3 features in the workspace `Cargo.toml`'s
-  `[workspace.dependencies]`** for any core crate to use.
-
-## Why PyO3 + maturin
-
-When the Python binding lands:
-
-- **[pyo3](https://pyo3.rs/)** — the Rust → Python bridge. ABI3-stable
-  builds (one wheel works across CPython 3.8+).
-- **[maturin](https://www.maturin.rs/)** — the build tool that wraps cargo
-  to produce a Python wheel. Replaces the older `setuptools-rust` path.
-- **PEP 517 / PEP 518** via maturin's `pyproject.toml` shape.
-
-## Expected directory shape (NOT yet present)
-
-```
-bindings/python/
-├── README.md            ← this file
-├── Cargo.toml           ← out-of-workspace; lib.crate-type = ["cdylib"]
-├── pyproject.toml       ← maturin config
-├── src/
-│   └── lib.rs           ← #[pymodule] entrypoint + per-host wrapper types
-└── tests/
-    └── test_smoke.py    ← runs against the built wheel
-```
-
-## The binding's responsibility surface
-
-The Python wrapper is a **thin transform layer**, not a feature layer. Its
-job is to:
-
-1. Re-export core types with idiomatic Python shapes (`MoteId` as a Python
-   `int`-like class, `JournalEntry` as a Python dataclass, etc.).
-2. Translate Rust `Result<T, E>` to Python exceptions via PyO3's
-   `PyErr` conversion.
-3. Convert between Python objects (bytes, dicts, strings) and the bincode
-   canonical shape core uses internally.
-4. Honor the GIL: every public Python-callable function takes / releases
-   the GIL correctly. Long-running core calls (inference, journal fold)
-   release the GIL via `Python::allow_threads`.
-
-Things the wrapper does NOT do:
-
-- It does NOT add features to core. Bindings reflect; they don't extend.
-- It does NOT define new domain types. A new domain concept goes in core
-  first; the wrapper picks it up after.
-- It does NOT cache state. Core owns state; the wrapper holds handles.
-
-## CI
-
-When the binding lands, it gets its own CI job (separate from the core
-workspace's `ci.yml`):
-
-- Builds the wheel via `maturin build --release` on the matrix of
-  (CPython 3.8, 3.9, 3.10, 3.11, 3.12) × (Linux x86_64, Linux aarch64,
-  macOS x86_64, macOS aarch64).
-- Runs `pytest bindings/python/tests/` against each wheel.
-
-The job is **independent** of the core CI workflow's `test` job — the
-binding's tests CAN run in parallel with core's tests because the
-inward-only dependency is preserved.
-
-## Audit invariant — verifiable by command
-
-The inward-only rule is verifiable mechanically. From the workspace root:
+## Install
 
 ```bash
-# A: core crates' Cargo.toml MUST NOT mention pyo3 / maturin.
-grep -rE "pyo3|maturin" crates/kx-*/Cargo.toml && echo "RULE VIOLATED" || echo "ok"
-
-# B: core code MUST NOT contain #[pyclass] / #[pyfunction] / #[pymethods] /
-#    #[pymodule] / #[pyo3] attributes anywhere in src/.
-grep -rE "#\[py(class|function|methods|module|o3)" crates/kx-*/src/ && echo "RULE VIOLATED" || echo "ok"
-
-# C: `cargo test --workspace` MUST pass with bindings/ removed.
-mv bindings /tmp/bindings.bak && cargo test --workspace && mv /tmp/bindings.bak bindings
+pip install kortecx            # core client (grpcio + protobuf)
+pip install 'kortecx[ws]'      # + the optional WebSocket live-tail client
 ```
 
-A future CI job can codify (A) + (B) as an audit step.
+Run a gateway to talk to (FFI-free, no toolchain):
+
+```bash
+cargo install --path crates/kx-cli      # or use a prebuilt `kx` (install script, A0)
+kx serve --journal /tmp/kx.db --content /tmp/kx-blobs --dev-allow-local
+```
+
+## Quickstart — call the runtime like a function
+
+```python
+from kortecx import KxClient
+
+with KxClient("http://127.0.0.1:50151") as kx:
+    # invoke a published recipe, wait for the durable result, get the bytes:
+    result = kx.invoke("kx/recipes/echo", {"topic": "hello"}, wait=True)
+    print(result.text)             # the committed output
+    print(result.instance_id)      # server-derived run id (hex)
+    print(result.terminal_mote_id) # server-derived sink Mote (hex)
+```
+
+Async (asyncio):
+
+```python
+from kortecx import AsyncKxClient
+
+async with AsyncKxClient("http://127.0.0.1:50151", token="…") as kx:
+    result = await kx.invoke("kx/recipes/echo", {"topic": "hi"}, wait=True)
+```
+
+## Surface
+
+A thin, typed mirror of the `KxGateway` contract — exactly what the `kx` CLI does,
+with language-native ergonomics. Both `KxClient` (sync) and `AsyncKxClient` (async)
+expose:
+
+- **`invoke(handle, args, wait=False, timeout=120)`** — bind a published recipe to
+  JSON `args` and run it. With `wait=True` you get the committed `Result`
+  (poll, or `wait_mode="events"` for a sub-second live subscription); without it,
+  a `Run` handle. *The one-call "runtime as a function".*
+- **`Run`** handle — `.wait()`, `.projection(at_seq=…)`, `.content(ref)`,
+  `.events(since=0, follow=False)`, `.result()`.
+- **All eight RPCs** — `submit_run`, `invoke`, `get_projection`, `get_content`,
+  `stream_events`, `list_signatures`, `get_signature`, `register_signature`.
+- **Auth** — bearer token via `token=…`, `token_file=…`, or the `KX_TOKEN` env var
+  (file/env preferred; a warning fires if a token would cross a non-loopback
+  plaintext endpoint — TLS lands in a later release).
+- **Events** — `stream_events(...)` yields typed deltas, auto-resumes from
+  `next_seq`, and transparently reconnects on a `CatchupRequired` drop. An optional
+  WebSocket client (`kortecx[ws]`) consumes the same live tail in browser/firewall
+  -friendly JSON.
+- **Typed errors** — every failure is a `KxError` subclass with a stable `.code`
+  (`KxUnauthenticated`, `KxPermissionDenied`, `KxCatchupRequired`, `KxWaitTimeout`,
+  `KxRunFailed`, …) mapped from the gateway's gRPC status.
+
+## Identity is server-derived (SN-8)
+
+Every `MoteId` / `instance_id` / `content_ref` / `terminal_mote_id` is computed by
+the runtime. The SDK **never** constructs one — it only carries the server's bytes
+(surfaced as lowercase hex). This is a load-bearing security property; the client is
+never a source of identity.
+
+## Generated stubs
+
+The protobuf + gRPC stubs under `src/kortecx/v1/` are generated from the single
+source of truth — `crates/kx-proto/proto/` — by `./codegen.sh`, and are **committed**
+(so `pip install` needs no `protoc`). CI's `codegen-fresh` guard re-runs codegen and
+fails on any drift from the frozen proto.
+
+## Develop
+
+```bash
+uv venv --python 3.12 .venv && source .venv/bin/activate
+uv pip install -e '.[dev]'
+./codegen.sh        # regenerate stubs (only if the proto changed)
+pytest              # unit + contract e2e (spins up a real `kx serve`)
+ruff check . && mypy src
+```
+
+Licensed under Apache-2.0.
