@@ -1,0 +1,88 @@
+# syntax=docker/dockerfile:1
+#
+# ============================================================================
+#  DOCUMENTED SEAM — NOT a buildable OSS image.
+# ============================================================================
+#
+# GPU/CUDA inference is CLOUD-TIER (decision D28: "CUDA is cloud-side" — the same
+# boundary `crates/kx-llamacpp-sys/build.rs` enforces with `GGML_CUDA=OFF`). The
+# OSS runtime ships the *seam* — this template + the `nvidia-smi` detection hook in
+# the install script — but NOT the CUDA build itself. The opt-in `cuda` cargo
+# feature that would flip `GGML_CUDA=ON` is part of the kortecx cloud offering and
+# is NOT present in OSS, so building this file in OSS fails by design (the guard
+# stage below stops it with a helpful message).
+#
+# Why a single-node CUDA image stays OUT of OSS (and what stays IN):
+#   • IN  (today): Metal single-node GPU inference, on an Apple host.
+#   • OUT (cloud): NVIDIA/CUDA inference + multi-tenant GPU-batched serving
+#                  (vLLM / SGLang / Triton). The OSS/cloud line (D28) is named,
+#                  never blurred.
+#
+# This template exists so the path is a localized add (base images + a feature
+# flag), never a rewrite, IF the boundary is ever moved by a sanctioned decision.
+#
+# Intended usage IF the `cuda` feature lands (cloud / a sanctioned line-move):
+#   docker build -f Dockerfile.cuda --build-arg I_UNDERSTAND_CUDA_IS_CLOUD_SIDE=1 \
+#                -t kortecx/kx:cuda .
+#   docker run --gpus all ... kortecx/kx:cuda ...        # NVIDIA Container Toolkit
+
+# ---- guard: fail helpfully on an accidental OSS build ----------------------
+FROM debian:bookworm-slim AS guard
+ARG I_UNDERSTAND_CUDA_IS_CLOUD_SIDE=0
+RUN if [ "${I_UNDERSTAND_CUDA_IS_CLOUD_SIDE}" != "1" ]; then \
+      echo "" >&2; \
+      echo "Dockerfile.cuda is a DOCUMENTED SEAM, not a buildable OSS image." >&2; \
+      echo "CUDA inference is cloud-tier (D28): OSS ships the seam, not the build." >&2; \
+      echo "The opt-in 'cuda' feature on kx-llamacpp-sys is NOT present in OSS, so" >&2; \
+      echo "the builder stage below would fail at 'cargo build --features cuda'." >&2; \
+      echo "See the README 'Run in Docker -> GPU posture' section." >&2; \
+      echo "" >&2; \
+      exit 2; \
+    fi
+
+# ---- builder (the intended shape; requires the cloud-side `cuda` feature) ---
+# nvidia/cuda *-devel carries nvcc + the CUDA toolkit headers/libs needed to
+# compile ggml's CUDA backend. HARDENING: pin by @sha256.
+FROM nvidia/cuda:12.6.2-devel-ubuntu24.04 AS builder
+COPY --from=guard /etc/hostname /tmp/.cuda-build-acknowledged
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends curl ca-certificates cmake clang libclang-dev build-essential git \
+ && rm -rf /var/lib/apt/lists/* \
+ && curl -fsSL https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.94.0 --profile minimal
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+WORKDIR /app
+COPY . .
+ARG LLAMA_CPP_REF=1a03cf47f67be591699d1f0f7ca28e1ed6eb8c7e
+RUN rm -rf crates/kx-llamacpp-sys/llama.cpp \
+ && git init -q crates/kx-llamacpp-sys/llama.cpp \
+ && git -C crates/kx-llamacpp-sys/llama.cpp remote add origin https://github.com/ggerganov/llama.cpp \
+ && git -C crates/kx-llamacpp-sys/llama.cpp fetch -q --depth 1 origin "${LLAMA_CPP_REF}" \
+ && git -C crates/kx-llamacpp-sys/llama.cpp checkout -q FETCH_HEAD
+
+# The load-bearing line: the `cuda` feature (NOT in OSS) makes build.rs flip
+# GGML_CUDA=ON + link cudart/cublas. Without it, this fails — by design.
+RUN cargo build --release -p kx-cli \
+ && cargo build --release -p kx-llamacpp --example generate --features cuda \
+ && cp target/release/kx /usr/local/bin/kx \
+ && cp target/release/examples/generate /usr/local/bin/kx-generate
+
+# ---- runtime ---------------------------------------------------------------
+# nvidia/cuda *-runtime ships the CUDA runtime libs (no toolkit). Run with
+# `--gpus all` (NVIDIA Container Toolkit) so the GPU is visible to `n_gpu_layers`.
+FROM nvidia/cuda:12.6.2-runtime-ubuntu24.04 AS runtime
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates libstdc++6 tini \
+ && rm -rf /var/lib/apt/lists/* \
+ && groupadd --gid 10001 kx \
+ && useradd  --uid 10001 --gid 10001 --home-dir /var/lib/kortecx --shell /usr/sbin/nologin kx \
+ && mkdir -p /var/lib/kortecx/journal /var/lib/kortecx/content /var/lib/kortecx/catalog /var/lib/kortecx/models \
+ && chown -R 10001:10001 /var/lib/kortecx
+COPY --from=builder /usr/local/bin/kx          /usr/local/bin/kx
+COPY --from=builder /usr/local/bin/kx-generate /usr/local/bin/kx-generate
+ENV RUST_LOG=info NVIDIA_VISIBLE_DEVICES=all NVIDIA_DRIVER_CAPABILITIES=compute,utility
+EXPOSE 50151 50152
+USER 10001:10001
+WORKDIR /var/lib/kortecx
+ENTRYPOINT ["/usr/bin/tini", "--", "kx"]
+CMD ["--help"]

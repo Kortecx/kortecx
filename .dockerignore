@@ -1,0 +1,61 @@
+# Build-context hygiene for the kortecx images.
+#
+# Keep the context small (faster `docker build`) and — load-bearing — keep the
+# PRIVATE cloud code and internal corpus OUT of any image layer (the SN-2 OSS↔cloud
+# boundary). The FFI-free `Dockerfile` builds only `kx-cli`, so the llama.cpp
+# submodule is excluded too; `Dockerfile.inference` fetches a pinned llama.cpp
+# inside its own builder stage (no context dependency).
+
+# ---- build artifacts ----
+target/
+**/target/
+*.pdb
+*.profraw
+*.gcda
+*.gcno
+**/*.proptest-regressions
+
+# ---- VCS + CI ----
+.git/
+.gitignore
+.github/
+
+# ---- PRIVATE / internal — must NEVER land in an OSS image layer (SN-2) ----
+kx-cloud/
+docs/plans/
+docs/design/
+docs/suggestions/
+WARNINGS.md
+CLAUDE.md
+/00-*.md
+/01-*.md
+/02-*.md
+/03-*.md
+/04-*.md
+/05-*.md
+/06-*.md
+/07-*.md
+
+# ---- local agent state + editor/OS noise ----
+.claude/
+.idea/
+.vscode/
+.DS_Store
+*.swp
+*~
+
+# ---- local runtime state / models — never bake into the context ----
+*.db
+*.db-wal
+*.db-shm
+**/models/
+*.gguf
+
+# ---- the llama.cpp submodule: not needed for the FFI-free image; the inference
+#      image fetches the pinned commit itself. Excluding it keeps the default
+#      (FFI-free) build context tiny even when a dev has run `just setup-inference`.
+crates/kx-llamacpp-sys/llama.cpp/
+
+# ---- the compose dev secrets (real ones are gitignored; only *.example ships) ----
+deploy/secrets/kx_authtokens
+deploy/secrets/kx_token

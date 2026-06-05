@@ -54,3 +54,10 @@ kx-cloud/
 /docs/plans/
 # Internal warning/debug log — kept in the private kortecx-core repo only.
 /WARNINGS.md
+
+# ---- Docker compose dev secrets ----
+# Only the *.example templates are committed. A developer may copy them to the
+# un-suffixed names below (or replace them) for local customization; the real
+# secret files never land in git.
+/deploy/secrets/kx_authtokens
+/deploy/secrets/kx_token

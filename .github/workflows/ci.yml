@@ -368,7 +368,29 @@ jobs:
         run: just verify-quickstart
 
   # ---------------------------------------------------------------------------
-  # sdk-python — the Python gRPC client SDK (bindings/python). Builds the FFI-free
+  # docker-smoke — in-container docs-as-test (the Docker track, Scope A). Builds the
+  # FFI-free `kx` image and reproduces the canonical projection digest THROUGH the
+  # container: a clean run, a crash-then-replay over a PERSISTED volume, and a
+  # read-only rootfs. This proves exactly-once durability survives the container
+  # boundary — a measured green/red claim, not a "runs in Docker" badge.
+  # FFI-free (NO submodules, NO C++ toolchain — the image needs neither).
+  # NON-REQUIRED: a new context, not in branch protection — promote to required once
+  # green across a few runs (a separate, authorized change). Mirrors verify-quickstart.
+  # ---------------------------------------------------------------------------
+  docker-smoke:
+    name: docker-smoke (in-container digest reproduction; FFI-free)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (NO submodules — the FFI-free image needs none)
+        uses: actions/checkout@v6
+
+      - name: Install just
+        uses: extractions/setup-just@v4
+
+      # ubuntu-latest ships Docker + BuildKit. The script builds the image and drives
+      # run → crash → replay → digest in-container, asserting the canonical digest.
+      - name: just docker-smoke
+        run: just docker-smoke
   # `kx` (serve + client), checks the vendored protobuf stubs are still fresh
   # against the FROZEN proto (codegen-fresh), then runs ruff + mypy + the unit and
   # contract-e2e suites (which spin up a real `kx serve` and compare the SDK's

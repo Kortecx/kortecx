@@ -78,6 +78,10 @@ thiserror          = { workspace = true }
 [dev-dependencies]
 tempfile = { workspace = true }
 tokio    = { workspace = true, features = ["time"] }
+# `nix::sys::signal::raise(SIGTERM)` (a SAFE wrapper — kx-gateway is
+# `#![forbid(unsafe_code)]`) for the graceful-shutdown signal test. Unix-only,
+# test-only; stays out of the FFI-free normal closure `build-no-inference` asserts.
+nix      = { workspace = true }
 
 [features]
 default = ["embedded-worker"]
