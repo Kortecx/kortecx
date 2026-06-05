@@ -1,0 +1,7 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.DS_Store
+
+# The generated stubs under src/gen/ are VENDORED + COMMITTED (the codegen-fresh
+# CI guard diffs them), so they are intentionally NOT ignored.

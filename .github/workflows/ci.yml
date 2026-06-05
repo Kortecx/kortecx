@@ -436,6 +436,71 @@ jobs:
         run: pytest -q
 
   # ---------------------------------------------------------------------------
+  # sdk-typescript — the TypeScript/JS gRPC client SDK (bindings/typescript).
+  # Builds the FFI-free `kx`, checks the vendored Connect/protobuf stubs are still
+  # fresh against the FROZEN proto (codegen-fresh), then runs biome + tsc + the
+  # unit and contract-e2e suites (which spin up a real `kx serve` and reproduce the
+  # `kx` CLI output byte-for-byte). Pure gRPC client — NO submodules, NO C++, NO
+  # napi. NON-REQUIRED: a new context, not in branch protection (promote once
+  # green via a separate authorized change). Mirrors sdk-python.
+  # ---------------------------------------------------------------------------
+  sdk-typescript:
+    name: sdk-typescript (gRPC client SDK — contract tests + codegen-fresh)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (NO submodules — the SDK is pure gRPC, FFI-free)
+        uses: actions/checkout@v6
+
+      - name: Install Rust toolchain (from rust-toolchain.toml)
+        run: cargo --version
+
+      - name: Cache Cargo registry + target
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-sdkts-${{ runner.os }}-${{ hashFiles('**/Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: |
+            cargo-sdkts-${{ runner.os }}-
+            cargo-${{ runner.os }}-
+
+      - name: Build the FFI-free kx (serve + client) for the contract tests
+        run: cargo build -p kx-cli
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install the SDK (clean, from the committed lockfile)
+        working-directory: bindings/typescript
+        run: npm ci
+
+      - name: codegen-fresh (vendored stubs match the frozen proto)
+        working-directory: bindings/typescript
+        run: |
+          ./codegen.sh
+          if ! git diff --quiet -- src/gen; then
+            echo "::error::generated TS stubs drifted from the proto — run bindings/typescript/codegen.sh and commit"
+            git --no-pager diff -- src/gen
+            exit 1
+          fi
+
+      - name: Lint + format + type-check (biome + tsc)
+        working-directory: bindings/typescript
+        run: |
+          npx biome ci .
+          npx tsc --noEmit
+
+      - name: Tests (unit + contract e2e against a real `kx serve`)
+        working-directory: bindings/typescript
+        env:
+          KX_BIN: ${{ github.workspace }}/target/debug/kx
+        run: npx vitest run
+
+  # ---------------------------------------------------------------------------
   # reproducible — byte-determinism check (I1.c). Runs `just check-reproducible`
   # which performs two clean release builds and diffs the output. Expensive
   # (~6+ minutes) but the load-bearing reproducibility gate.

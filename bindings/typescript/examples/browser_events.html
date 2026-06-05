@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>kortecx — live run events (browser)</title>
+  </head>
+  <body>
+    <h1>kortecx live events</h1>
+    <p>
+      Live-tails a run over the R5 WebSocket bridge using <code>@kortecx/sdk/web</code>. This works
+      against today's gateway (<code>kx serve --ws-listen 127.0.0.1:50152</code>) because the WS
+      bridge re-skins the gRPC event stream as JSON. (Unary gRPC-web from the browser needs a
+      gateway grpc-web/CORS handler — a follow-up gateway PR.)
+    </p>
+    <pre id="log"></pre>
+
+    <script type="module">
+      // In a real app: import { KxClient } from "@kortecx/sdk/web";
+      import { KxClient } from "../dist/web.js";
+
+      const log = (line) => {
+        document.getElementById("log").textContent += `${line}\n`;
+      };
+
+      // The 32-byte (16-byte for instance) ids are server-derived; paste the
+      // instance id from `kx invoke … ` (or a prior SDK call) here.
+      const INSTANCE_ID = new URLSearchParams(location.search).get("instance") ?? "";
+
+      const kx = new KxClient("http://127.0.0.1:50151", {
+        // optional bearer token (loopback dev shown without one):
+        // token: "s3cr3t",
+        wsEndpoint: "ws://127.0.0.1:50152",
+      });
+
+      if (!INSTANCE_ID) {
+        log("add ?instance=<hex16> to the URL");
+      } else {
+        log(`tailing ${INSTANCE_ID} …`);
+        for await (const delta of kx.wsEvents(INSTANCE_ID, { since: 0n })) {
+          log(`seq=${delta.seq} ${delta.kind} ${delta.moteId ?? delta.targetMoteId ?? ""}`);
+        }
+      }
+    </script>
+  </body>
+</html>
