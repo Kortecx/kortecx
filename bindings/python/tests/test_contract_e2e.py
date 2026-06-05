@@ -14,7 +14,6 @@ import json
 import subprocess
 
 import pytest
-from tests.conftest import ECHO_HANDLE
 
 from kortecx import (
     AsyncKxClient,
@@ -25,6 +24,11 @@ from kortecx import (
     KxUnauthenticated,
     KxWaitTimeout,
 )
+
+# The demo recipe the gateway provisions (also defined in conftest for the
+# fixtures). Inlined here so the module imports under any pytest invocation
+# (bare `pytest` does not put the rootdir on sys.path, unlike `python -m pytest`).
+ECHO_HANDLE = "kx/recipes/echo"
 
 # Fields of the invoke --wait --json shape that are derived from content (and so
 # are identical across any server, language, or process — the SN-8 guarantee).
