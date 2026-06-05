@@ -29,9 +29,12 @@ use crate::role::{RoleRecipe, RoleRecipeResolver};
 /// The `config_subset` key under which a step's `intent` is carried — the same
 /// stable convention `kx_model_harness::prompt::PROMPT_KEY` reads, so a model
 /// executor uses the intent as the step's instruction. Identity-bearing (two
-/// plans with different intents compile to different `MoteId`s). A drift guard
-/// in `kx-model-harness` asserts the two constants stay equal.
-pub const PLAN_PROMPT_KEY: &str = "prompt";
+/// plans with different intents compile to different `MoteId`s).
+///
+/// Re-exported from [`kx_mote::PROMPT_KEY`], the single source of truth: the
+/// planner intent key and the harness prompt key are now the **same** constant
+/// by construction (the drift guard in `kx-model-harness` can no longer fail).
+pub use kx_mote::PROMPT_KEY as PLAN_PROMPT_KEY;
 
 /// Derive a replay-stable `WorkflowDef` seed from the committed plan bytes.
 ///

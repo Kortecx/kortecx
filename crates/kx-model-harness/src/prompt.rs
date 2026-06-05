@@ -16,7 +16,10 @@ use kx_inference::InferenceInput;
 use kx_mote::{ConfigKey, ConfigVal, Mote};
 
 /// `config_subset` key under which the harness carries a Mote's prompt text.
-pub const PROMPT_KEY: &str = "prompt";
+///
+/// Re-exported from [`kx_mote::PROMPT_KEY`] — the single source of truth shared
+/// with the workflow recipe library + the planner (no hand-mirrored copies).
+pub use kx_mote::PROMPT_KEY;
 
 /// Insert `prompt` into a `config_subset` map under [`PROMPT_KEY`]. The map is
 /// part of `MoteDef`, so the prompt folds into the Mote's identity.

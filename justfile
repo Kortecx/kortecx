@@ -167,6 +167,8 @@ smoke-test-multimodal:
 # assertions are skipped. Also gates (M7 / D86) the kx-catalog governance paths —
 # signature register/lookup, the grant-ledger authorization fold, and the
 # depth-bounded deep-chain query — all stay sub-linear / depth-bounded at 25k-50k.
+# Also gates (R6) the Morphic recipe library's wide fan-out (`map_reduce` to a
+# 10k-wide reduce) — deterministic compile + reproducible run + ~linear curve.
 scale-smoke:
     cargo test -p kx-projection --release --test incremental_children_index -- --ignored --nocapture --test-threads=1
     cargo test -p kx-projection --release --test fold_checkpoint -- --ignored --nocapture --test-threads=1
@@ -178,6 +180,7 @@ scale-smoke:
     cargo test -p kx-catalog --release --test scale -- --ignored --nocapture --test-threads=1
     cargo test -p kx-fleet --release --test scale -- --ignored --nocapture --test-threads=1
     cargo test -p kx-gateway-core --release --test scale -- --ignored --nocapture --test-threads=1
+    cargo test -p kx-workflow --release --test stress_fanout -- --ignored --nocapture --test-threads=1
 
 # IMP-4 (D116) single-writer scale-readiness measurement spike — publish the
 # single-writer journal commit ceiling + the projection-fold curve so a real number
