@@ -1217,16 +1217,20 @@ dependencies = [
 name = "kx-gateway"
 version = "0.0.1"
 dependencies = [
+ "bincode",
  "kx-capability",
+ "kx-catalog",
  "kx-content",
  "kx-coordinator",
  "kx-executor",
  "kx-gateway-core",
+ "kx-invoke",
  "kx-journal",
  "kx-mote",
  "kx-proto",
  "kx-warrant",
  "kx-worker",
+ "kx-workflow",
  "smallvec",
  "tempfile",
  "thiserror",

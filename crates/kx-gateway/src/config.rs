@@ -2,6 +2,7 @@
 //! `kx-runtime`): the verb-then-`--flag value` loop keeps the dependency surface
 //! minimal and matches the workspace's established CLI style. R3 matures the CLI.
 
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
@@ -25,8 +26,16 @@ pub struct GatewayConfig {
     /// Worker lease batch size (see [`DEFAULT_MAX_LEASE`]).
     pub max_lease: u32,
     /// Install the dev `local-allow` auth resolver instead of deny-all. Refuses a
-    /// non-loopback `listen` (loopback-only dev access).
+    /// non-loopback `listen` (loopback-only dev access). Mutually exclusive with
+    /// `auth_tokens`.
     pub dev_allow_local: bool,
+    /// Bearer tokens the gateway accepts, as `token → party handle`. Empty ⇒ no
+    /// token resolver (deny-all unless `dev_allow_local`). Parsed from
+    /// `--auth-token <token>=<party>` (repeatable) and `--auth-token-file <path>`.
+    pub auth_tokens: HashMap<String, String>,
+    /// Directory for the durable catalog SQLite files (the signature registry +,
+    /// in R2b, the recipe ledgers). `None` ⇒ alongside the journal.
+    pub catalog_dir: Option<PathBuf>,
 }
 
 /// A parsed invocation: print help / version, or serve with a config.
@@ -43,7 +52,8 @@ pub enum Cli {
 /// One-line usage string (printed on `--help` and on a parse error).
 pub const USAGE: &str =
     "usage: kx-gateway serve --listen <addr:port> --journal <path> --content <dir> \
-[--max-lease <N>] [--dev-allow-local]\n       kx-gateway --help | --version";
+[--max-lease <N>] [--dev-allow-local] [--auth-token <token>=<party>]... \
+[--auth-token-file <path>] [--catalog-dir <dir>]\n       kx-gateway --help | --version";
 
 impl Cli {
     /// Parse `argv` (excluding the program name).
@@ -74,6 +84,8 @@ fn parse_serve(mut args: impl Iterator<Item = String>) -> Result<GatewayConfig, 
     let mut content_root: Option<PathBuf> = None;
     let mut max_lease: u32 = DEFAULT_MAX_LEASE;
     let mut dev_allow_local = false;
+    let mut auth_tokens: HashMap<String, String> = HashMap::new();
+    let mut catalog_dir: Option<PathBuf> = None;
 
     while let Some(flag) = args.next() {
         let mut take_value = |name: &str| -> Result<String, GatewayError> {
@@ -100,6 +112,20 @@ fn parse_serve(mut args: impl Iterator<Item = String>) -> Result<GatewayConfig, 
                 })?;
             }
             "--dev-allow-local" => dev_allow_local = true,
+            "--auth-token" => {
+                let v = take_value("--auth-token")?;
+                let (token, party) = split_token_party(&v).ok_or_else(|| {
+                    GatewayError::Config(format!("--auth-token expects <token>=<party>, got {v:?}"))
+                })?;
+                auth_tokens.insert(token, party);
+            }
+            "--auth-token-file" => {
+                let path = take_value("--auth-token-file")?;
+                let body = std::fs::read_to_string(&path)
+                    .map_err(|e| GatewayError::Config(format!("--auth-token-file {path}: {e}")))?;
+                parse_token_file(&body, &mut auth_tokens)?;
+            }
+            "--catalog-dir" => catalog_dir = Some(PathBuf::from(take_value("--catalog-dir")?)),
             other => return Err(GatewayError::Config(format!("unknown flag {other:?}"))),
         }
     }
@@ -110,13 +136,52 @@ fn parse_serve(mut args: impl Iterator<Item = String>) -> Result<GatewayConfig, 
     let content_root =
         content_root.ok_or_else(|| GatewayError::Config("--content is required".into()))?;
 
+    // Exactly one auth posture: dev-allow-local and configured tokens are
+    // mutually exclusive (no ambiguity about which resolver wins).
+    if dev_allow_local && !auth_tokens.is_empty() {
+        return Err(GatewayError::Config(
+            "--dev-allow-local and --auth-token/--auth-token-file are mutually exclusive".into(),
+        ));
+    }
+
     Ok(GatewayConfig {
         listen,
         journal_path,
         content_root,
         max_lease,
         dev_allow_local,
+        auth_tokens,
+        catalog_dir,
     })
+}
+
+/// Split a `token=party` spec on the LAST `=` (so a base64 token with `=`
+/// padding survives — the party handle never contains `=`). Both sides must be
+/// non-empty.
+fn split_token_party(spec: &str) -> Option<(String, String)> {
+    let (token, party) = spec.rsplit_once('=')?;
+    if token.is_empty() || party.is_empty() {
+        return None;
+    }
+    Some((token.to_string(), party.to_string()))
+}
+
+/// Parse a token file: one `token=party` per line, skipping blank lines and
+/// `#` comments. A non-conforming line is a hard error (fail-closed config).
+fn parse_token_file(body: &str, tokens: &mut HashMap<String, String>) -> Result<(), GatewayError> {
+    for line in body.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let (token, party) = split_token_party(line).ok_or_else(|| {
+            GatewayError::Config(format!(
+                "--auth-token-file line is not <token>=<party>: {line:?}"
+            ))
+        })?;
+        tokens.insert(token, party);
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -185,6 +250,80 @@ mod tests {
             Cli::Version
         ));
         assert!(matches!(Cli::from_args(["-V"]).unwrap(), Cli::Version));
+    }
+
+    #[test]
+    fn parses_auth_tokens_and_catalog_dir() {
+        let c = serve(
+            Cli::from_args([
+                "serve",
+                "--listen",
+                "127.0.0.1:0",
+                "--journal",
+                "/tmp/j",
+                "--content",
+                "/tmp/c",
+                "--auth-token",
+                "tok-a=alice@acme",
+                "--auth-token",
+                "tok-b=bob@acme",
+                "--catalog-dir",
+                "/tmp/cat",
+            ])
+            .unwrap(),
+        );
+        assert_eq!(
+            c.auth_tokens.get("tok-a").map(String::as_str),
+            Some("alice@acme")
+        );
+        assert_eq!(
+            c.auth_tokens.get("tok-b").map(String::as_str),
+            Some("bob@acme")
+        );
+        assert_eq!(c.catalog_dir, Some(PathBuf::from("/tmp/cat")));
+        assert!(!c.dev_allow_local);
+    }
+
+    #[test]
+    fn auth_token_and_dev_allow_local_are_mutually_exclusive() {
+        assert!(Cli::from_args([
+            "serve",
+            "--listen",
+            "127.0.0.1:0",
+            "--journal",
+            "/tmp/j",
+            "--content",
+            "/tmp/c",
+            "--dev-allow-local",
+            "--auth-token",
+            "tok=alice",
+        ])
+        .is_err());
+    }
+
+    #[test]
+    fn split_token_party_keeps_base64_padding_in_token() {
+        // The separator is the LAST '=', so a token with '=' padding survives.
+        assert_eq!(
+            split_token_party("YWJj==alice@acme"),
+            Some(("YWJj=".to_string(), "alice@acme".to_string()))
+        );
+        assert_eq!(split_token_party("noequals"), None);
+        assert_eq!(split_token_party("=party"), None);
+        assert_eq!(split_token_party("token="), None);
+    }
+
+    #[test]
+    fn token_file_parses_lines_and_skips_comments() {
+        let mut tokens = HashMap::new();
+        let body = "# a comment\n\n  tok-a=alice@acme  \ntok-b=bob@acme\n# trailing\n";
+        parse_token_file(body, &mut tokens).unwrap();
+        assert_eq!(tokens.len(), 2);
+        assert_eq!(tokens.get("tok-a").map(String::as_str), Some("alice@acme"));
+        assert_eq!(tokens.get("tok-b").map(String::as_str), Some("bob@acme"));
+        // A non-conforming line is a hard error.
+        let mut bad = HashMap::new();
+        assert!(parse_token_file("not-a-pair\n", &mut bad).is_err());
     }
 
     #[test]

@@ -32,14 +32,16 @@
 //! principal namespace. Multi-node coordination + multi-tenant isolation are the
 //! cloud product; a hosted OSS server is single-tenant by construction.
 //!
-//! ## Auth (R1 stub; R2 fills it)
+//! ## Auth (R2: real bearer-token resolver)
 //!
 //! The freshly-bound port defaults to **deny-all** ([`auth::DenyAll`]): every RPC
-//! returns `unauthenticated` unless the operator passes `--dev-allow-local`
-//! (which attributes a fixed local-dev principal and refuses a non-loopback bind).
-//! The [`auth::PrincipalResolver`] seam is the fill point — R2 adds a real
-//! token / mTLS resolver without changing the trait. Identity is **server-derived**
-//! from transport metadata, never client-asserted (SN-8).
+//! returns `unauthenticated` unless the operator either passes `--dev-allow-local`
+//! (a fixed local-dev principal, loopback-only) or configures bearer tokens
+//! (`--auth-token <token>=<party>` / `--auth-token-file <path>`) which install a
+//! [`auth::TokenResolver`]. The [`auth::PrincipalResolver`] seam is the fill point
+//! — mTLS / OIDC are later impls of the same trait (OIDC stays cloud, D94/D101.1).
+//! Identity is **server-derived** from transport metadata, never client-asserted
+//! (SN-8): the client supplies a credential, not a claimed identity.
 //!
 //! ## The no-write discipline (D120.5)
 //!
@@ -52,11 +54,13 @@
 mod auth;
 mod config;
 mod error;
+mod provision;
 mod server;
 
-pub use auth::{DenyAll, DevAllowLocal, Principal, PrincipalResolver};
+pub use auth::{DenyAll, DevAllowLocal, Principal, PrincipalResolver, TokenResolver};
 pub use config::{Cli, GatewayConfig, DEFAULT_MAX_LEASE, USAGE};
 pub use error::GatewayError;
+pub use provision::{DemoLibrary, HostRecipeBinder, HostSignatureCatalog, DEMO_RECIPE_HANDLE};
 pub use server::{serve, start, RunningGateway};
 
 #[cfg(feature = "embedded-worker")]

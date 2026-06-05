@@ -26,6 +26,18 @@ kx-journal      = { workspace = true }
 kx-content      = { workspace = true }
 # ExecutorClass (worker registration + the platform-default class). A tiny FFI-free leaf.
 kx-warrant      = { workspace = true }
+# R2a: the signature catalog (the 3 catalog RPCs) — FFI-free (pulls kx-dataset /
+# kx-tool-registry / rusqlite, none of which link llama.cpp; the dep_wall pins it).
+# `bincode` (+ canonical_config from kx-catalog) round-trips a SignatureEntry to
+# the opaque wire `manifest` bytes and server-derives its id.
+kx-catalog      = { workspace = true }
+bincode         = { workspace = true }
+# R2b: the inbound recipe-by-handle execution path (resolve→validate→bind→
+# intersect) + the recipe types the host provisions the demo library from. All
+# FFI-free (the dep_wall pins it).
+kx-invoke       = { workspace = true }
+kx-mote         = { workspace = true }
+kx-workflow     = { workspace = true }
 # The embedded single-system engine (D129-sanctioned single-process worker management),
 # behind a default-on feature so R13's `cluster` story can disable it for a lib consumer.
 # kx-executor -> kx-inference is `default-features = false` at the workspace root, so this
@@ -45,7 +57,6 @@ thiserror          = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
-kx-mote  = { workspace = true }
 smallvec = { workspace = true }
 tokio    = { workspace = true, features = ["time"] }
 

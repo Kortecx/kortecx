@@ -10,10 +10,13 @@ mod common;
 use std::sync::Arc;
 
 use common::{
-    build_run, sample_mote, sample_warrant, service_from, spawn, MockSubmitter, INSTANCE_ID,
-    RECIPE_FP,
+    build_run, sample_mote, sample_warrant, service_from, spawn, spawn_with_party, MockSubmitter,
+    INSTANCE_ID, RECIPE_FP,
 };
-use kx_gateway_core::RunSubmitter;
+use kx_gateway_core::{
+    BinderError, BoundRecipe, CatalogSeamError, GatewayService, RecipeBinder, RegisteredSignature,
+    RunSubmitter, SignatureCatalog, SignatureSummaryEntry,
+};
 use kx_proto::proto;
 use tonic::Code;
 
@@ -264,15 +267,211 @@ fn submit_boundary_rederives_mote_id_discarding_wire_advisory() {
     assert_ne!(*rebuilt.id.as_bytes(), [0xFF; 32]);
 }
 
-// --- Stubbed signature RPCs ------------------------------------------------
+// --- Signature RPCs: the optional catalog seam (R2a) ------------------------
+
+/// A mock [`SignatureCatalog`] that knows exactly one id (`[0x11; 32]`) and can
+/// be configured to fail registration with an immutability conflict.
+#[derive(Default)]
+struct MockCatalog {
+    conflict: bool,
+}
+
+const MOCK_ID: [u8; 32] = [0x11; 32];
+
+impl SignatureCatalog for MockCatalog {
+    fn register(&self, _manifest: &[u8]) -> Result<RegisteredSignature, CatalogSeamError> {
+        if self.conflict {
+            Err(CatalogSeamError::ImmutabilityConflict)
+        } else {
+            Ok(RegisteredSignature {
+                signature_id: MOCK_ID,
+            })
+        }
+    }
+
+    fn get(&self, signature_id: &[u8; 32]) -> Option<Vec<u8>> {
+        (*signature_id == MOCK_ID).then(|| b"mock-manifest".to_vec())
+    }
+
+    fn list(&self) -> Vec<SignatureSummaryEntry> {
+        vec![SignatureSummaryEntry {
+            signature_id: MOCK_ID,
+            name: "sig-11111111".to_string(),
+        }]
+    }
+}
+
+fn service_with_catalog(catalog: MockCatalog) -> GatewayService {
+    service_from(build_run(), Arc::new(MockSubmitter::default()))
+        .with_signature_catalog(Arc::new(catalog))
+}
 
 #[tokio::test]
-async fn signature_rpcs_are_unimplemented_at_freeze() {
+async fn signature_rpcs_unimplemented_without_a_catalog_seam() {
+    // The default service wires no catalog → all three RPCs are unimplemented
+    // (backward-compatible: SubmitRun-only hosts are unaffected).
     let svc = service_from(build_run(), Arc::new(MockSubmitter::default()));
     let mut client = spawn(svc).await;
-    let err = client
+    assert_eq!(
+        client
+            .list_signatures(proto::ListSignaturesRequest {})
+            .await
+            .unwrap_err()
+            .code(),
+        Code::Unimplemented,
+    );
+    assert_eq!(
+        client
+            .get_signature(proto::GetSignatureRequest {
+                signature_id: vec![0u8; 32],
+            })
+            .await
+            .unwrap_err()
+            .code(),
+        Code::Unimplemented,
+    );
+    assert_eq!(
+        client
+            .register_signature(proto::RegisterSignatureRequest { manifest: vec![] })
+            .await
+            .unwrap_err()
+            .code(),
+        Code::Unimplemented,
+    );
+}
+
+#[tokio::test]
+async fn signature_rpcs_dispatch_to_the_catalog_seam() {
+    let mut client = spawn(service_with_catalog(MockCatalog::default())).await;
+
+    let reg = client
+        .register_signature(proto::RegisterSignatureRequest {
+            manifest: b"anything".to_vec(),
+        })
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(reg.signature_id, MOCK_ID.to_vec());
+
+    let got = client
+        .get_signature(proto::GetSignatureRequest {
+            signature_id: MOCK_ID.to_vec(),
+        })
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(got.manifest, b"mock-manifest".to_vec());
+
+    // A public discovery surface: an unknown id is `not_found` (NOT collapsed).
+    let unknown = client
+        .get_signature(proto::GetSignatureRequest {
+            signature_id: vec![0x22; 32],
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(unknown.code(), Code::NotFound);
+
+    let list = client
         .list_signatures(proto::ListSignaturesRequest {})
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(list.signatures.len(), 1);
+    assert_eq!(list.signatures[0].signature_id, MOCK_ID.to_vec());
+}
+
+#[tokio::test]
+async fn register_immutability_conflict_is_failed_precondition() {
+    let mut client = spawn(service_with_catalog(MockCatalog { conflict: true })).await;
+    let err = client
+        .register_signature(proto::RegisterSignatureRequest {
+            manifest: b"x".to_vec(),
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(err.code(), Code::FailedPrecondition);
+}
+
+// --- Invoke RPC: the optional recipe-binding seam (R2b) ---------------------
+
+/// A mock [`RecipeBinder`] that binds any request to a single canned Mote.
+struct MockBinder;
+
+#[tonic::async_trait]
+impl RecipeBinder for MockBinder {
+    async fn bind(
+        &self,
+        _party: &str,
+        _handle: &str,
+        _args: &[u8],
+    ) -> Result<BoundRecipe, BinderError> {
+        Ok(BoundRecipe {
+            recipe_fingerprint: RECIPE_FP,
+            motes: vec![(sample_mote(), sample_warrant())],
+            terminal_mote_id: sample_mote().id,
+        })
+    }
+}
+
+#[tokio::test]
+async fn invoke_unimplemented_without_a_binder() {
+    // The default service wires no binder → Invoke is unimplemented (backward
+    // compatible: SubmitRun-only hosts are unaffected).
+    let mut client = spawn(service_from(
+        build_run(),
+        Arc::new(MockSubmitter::default()),
+    ))
+    .await;
+    let err = client
+        .invoke(proto::InvokeRequest {
+            handle: "ns/coll/name".to_string(),
+            args: vec![],
+        })
         .await
         .unwrap_err();
     assert_eq!(err.code(), Code::Unimplemented);
+}
+
+#[tokio::test]
+async fn invoke_without_a_resolved_party_is_unauthenticated() {
+    // Binder wired, but the plain harness injects no CallerParty (no interceptor)
+    // → the handler refuses (identity is server-derived; absent ⇒ deny).
+    let svc = service_from(build_run(), Arc::new(MockSubmitter::default()))
+        .with_recipe_binder(Arc::new(MockBinder));
+    let mut client = spawn(svc).await;
+    let err = client
+        .invoke(proto::InvokeRequest {
+            handle: "ns/coll/name".to_string(),
+            args: vec![],
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(err.code(), Code::Unauthenticated);
+}
+
+#[tokio::test]
+async fn invoke_dispatches_to_binder_then_proposes() {
+    let submitter = Arc::new(MockSubmitter::default());
+    let svc = service_from(build_run(), submitter.clone()).with_recipe_binder(Arc::new(MockBinder));
+    let mut client = spawn_with_party(svc, "alice@acme").await;
+
+    let resp = client
+        .invoke(proto::InvokeRequest {
+            handle: "ns/coll/name".to_string(),
+            args: vec![],
+        })
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(resp.instance_id, INSTANCE_ID.to_vec());
+    assert_eq!(
+        resp.terminal_mote_id,
+        sample_mote().id.as_bytes().to_vec(),
+        "the server-derived terminal Mote is returned (SN-8)"
+    );
+
+    // Register-first, then one submit per bound Mote (the propose-proxy order).
+    let calls = submitter.calls();
+    assert!(calls.first().is_some_and(|c| c.starts_with("register_run")));
+    assert_eq!(calls.iter().filter(|c| *c == "submit_mote").count(), 1);
 }

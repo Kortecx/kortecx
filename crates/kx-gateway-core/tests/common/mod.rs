@@ -6,6 +6,10 @@
     clippy::unwrap_used,
     clippy::expect_used,
     clippy::pedantic,
+    // The `spawn_with_party` interceptor closure returns `Result<_, tonic::Status>`
+    // — the type is dictated by tonic's `Interceptor` contract, not chosen here
+    // (same justification as `kx-gateway/src/auth.rs`).
+    clippy::result_large_err,
     dead_code,
     unreachable_pub
 )]
@@ -16,8 +20,8 @@ use std::time::Duration;
 
 use kx_content::{ContentRef, ContentStore, InMemoryContentStore};
 use kx_gateway_core::{
-    ContentReader, GatewayService, JournalReader, ReadOnly, RunSubmitter, SubmitMoteOutcome,
-    SubmitStatus, SubmitterError,
+    CallerParty, ContentReader, GatewayService, JournalReader, ReadOnly, RunSubmitter,
+    SubmitMoteOutcome, SubmitStatus, SubmitterError,
 };
 use kx_journal::{InMemoryJournal, Journal, JournalEntry, ParentEntry};
 use kx_mote::{
@@ -240,6 +244,37 @@ pub async fn spawn(service: GatewayService) -> KxGatewayClient<Channel> {
     tokio::spawn(async move {
         Server::builder()
             .add_service(KxGatewayServer::new(service))
+            .serve(addr)
+            .await
+            .unwrap();
+    });
+
+    let endpoint = format!("http://{addr}");
+    for _ in 0..100 {
+        if let Ok(client) = KxGatewayClient::connect(endpoint.clone()).await {
+            return client;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("client failed to connect to the gateway server");
+}
+
+/// Spawn `service` behind an interceptor that stamps every request with a
+/// server-derived [`CallerParty`] — the test stand-in for the host's auth
+/// interceptor — so the `Invoke` handler can resolve identity.
+pub async fn spawn_with_party(service: GatewayService, party: &str) -> KxGatewayClient<Channel> {
+    let party = party.to_string();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    drop(listener);
+
+    tokio::spawn(async move {
+        let svc = KxGatewayServer::with_interceptor(service, move |mut req: tonic::Request<()>| {
+            req.extensions_mut().insert(CallerParty(party.clone()));
+            Ok(req)
+        });
+        Server::builder()
+            .add_service(svc)
             .serve(addr)
             .await
             .unwrap();
