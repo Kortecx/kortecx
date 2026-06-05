@@ -212,6 +212,44 @@ async fn submit_response_surfaces_instance_id() {
 }
 
 #[tokio::test]
+async fn duplicate_submit_response_also_surfaces_instance_id() {
+    // Regression — idempotent re-invoke. A DUPLICATE submit (the same Mote
+    // re-submitted before commit — e.g. an Invoke of the same recipe+args, which
+    // re-derives the same terminal Mote) MUST still surface the registered run's
+    // instance_id. Before the fix the duplicate path returned `instance_id = None`,
+    // so the gateway decoded an empty 16-byte id and failed the whole call with
+    // `UNAVAILABLE("non-16-byte instance_id")` — breaking exactly-once-per-input.
+    let instance_id = [0xe7u8; 16];
+    let svc = coordinator(InMemoryJournal::new(), instance_id);
+
+    let mote = common::mote(2, NdClass::Pure, &[]);
+    let warrant = warrant_granting(&[("fs-read", "1")], "m");
+
+    let first = common::submit(&svc, &mote, &warrant).await;
+    assert_eq!(first.status, proto::SubmitStatus::Accepted as i32);
+    assert_eq!(first.instance_id, instance_id);
+
+    // Re-submit the SAME Mote → Duplicate, but the instance_id must be present.
+    let second = common::submit(&svc, &mote, &warrant).await;
+    assert_eq!(
+        second.status,
+        proto::SubmitStatus::Duplicate as i32,
+        "re-submitting the same Mote before commit is a duplicate"
+    );
+    assert_eq!(
+        second.instance_id, instance_id,
+        "a duplicate submit surfaces the SAME registered run id (not an empty one)"
+    );
+    assert_eq!(second.mote_id, first.mote_id, "same canonical Mote id");
+    // Capture stays fresh-only: the duplicate appended no second metadata fact.
+    assert_eq!(
+        svc.run_resolved_versions().await.unwrap().len(),
+        1,
+        "duplicate submit must NOT re-capture run-version metadata"
+    );
+}
+
+#[tokio::test]
 async fn unregistered_submit_is_refused() {
     // M1.3 (was M1.1/M1.2 `unregistered_run_captures_nothing`): submit-before-register
     // is now REFUSED (failed_precondition). An unregistered run has no journaled
