@@ -1,0 +1,92 @@
+# kortecx — Python gRPC client SDK (NOT a native FFI binding).
+#
+# This package is a PURE gRPC client over the FROZEN `KxGateway` contract
+# (`kortecx.v1`, defined in `crates/kx-proto/proto/`). It links no Rust, no
+# C++, no `kx-*` crate — it speaks protobuf over the wire to a running
+# `kx serve`. The generated protobuf/gRPC stubs are vendored under
+# `src/kortecx/v1/` (regenerate with `./codegen.sh`), so `pip install`
+# needs no `protoc`.
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "kortecx"
+version = "0.1.0"
+description = "Python client SDK for the kortecx durable agentic-execution runtime (gRPC over the KxGateway contract)."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "Apache-2.0" }
+authors = [{ name = "kortecx" }]
+keywords = ["kortecx", "agentic", "durable", "grpc", "workflow", "runtime"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Software Development :: Libraries",
+]
+dependencies = [
+    "grpcio>=1.60",
+    # The vendored stubs are protobuf-5.27 gencode (accepted by protobuf 5.27
+    # through the 6.x cross-major support window). Regenerate via ./codegen.sh
+    # if this range changes.
+    "protobuf>=5.27,<7",
+]
+
+[project.optional-dependencies]
+# The optional WebSocket events client (firewall/browser-friendly live tail
+# over the R5 bridge). The core SDK uses native gRPC streaming and needs none
+# of this.
+ws = ["websockets>=12.0"]
+# Tooling for regenerating stubs + running the test/lint suite. grpcio-tools is
+# PINNED so ./codegen.sh reproduces byte-identical stubs (the `codegen-fresh` CI
+# guard compares against the committed output).
+dev = [
+    "grpcio-tools==1.67.1",
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "mypy>=1.8",
+    "ruff>=0.4",
+    "websockets>=12.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/Kortecx/kortecx"
+Repository = "https://github.com/Kortecx/kortecx"
+Changelog = "https://github.com/Kortecx/kortecx/blob/main/CHANGELOG.md"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/kortecx"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests", "examples"]
+# The generated protobuf modules are not ours to lint.
+extend-exclude = ["src/kortecx/v1"]
+
+# Classic `typing` forms (Optional/List/Union) are kept deliberately: the package
+# supports Python 3.9+, and some aliases (e.g. ArgsType) are runtime values where
+# PEP-604 `X | Y` would fail on 3.9 — so the `UP` (pyupgrade) set is not enabled.
+[tool.ruff.lint]
+select = ["E", "F", "I", "B"]
+
+[tool.mypy]
+# Type-check target (runtime min is 3.9, enforced by requires-python + the
+# `from __future__ import annotations` in every module).
+python_version = "3.10"
+warn_unused_ignores = true
+# The generated *_pb2 modules ship their own .pyi; everything else is typed.
+exclude = ["src/kortecx/v1/"]
+
+[[tool.mypy.overrides]]
+module = "kortecx.v1.*"
+ignore_errors = true
+
+[[tool.mypy.overrides]]
+# grpcio ships no complete type stubs.
+module = ["grpc", "grpc.*"]
+ignore_missing_imports = true
