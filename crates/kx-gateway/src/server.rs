@@ -82,6 +82,108 @@ pub fn demo_pure_result(mote_id: &[u8; 32]) -> Vec<u8> {
     payload
 }
 
+/// A ready-to-send [`proto::SubmitRunRequest`](kx_proto::proto::SubmitRunRequest)
+/// admitting a single PURE demo Mote whose warrant names the embedded worker's
+/// [`default_executor_class`], so a bound `SubmitRun` leases → runs → reaches
+/// `Committed`.
+///
+/// This is the ONE source of truth for the demo run shared by `kx submit --demo`
+/// (the R3 CLI's low-level SubmitRun path) and the gateway end-to-end tests — the
+/// shape mirrors `tests/common::{pure_mote, pure_warrant}` so the two never drift.
+/// The `recipe_fingerprint` is a fixed discovery-only sentinel (`SubmitRun` takes
+/// it as-is; it is NEVER identity — the coordinator re-derives every `MoteId`
+/// Rust-side, SN-8). The advisory `mote_id` inside the Mote is likewise re-derived.
+#[cfg(feature = "embedded-worker")]
+#[must_use]
+pub fn demo_submit_run_request() -> kx_proto::proto::SubmitRunRequest {
+    use kx_proto::proto::{SubmitMoteSpec, SubmitRunRequest};
+    SubmitRunRequest {
+        // Fixed discovery/dedup sentinel — not identity (SN-8). Matches the e2e fixture.
+        recipe_fingerprint: vec![0x5a; 32],
+        motes: vec![SubmitMoteSpec {
+            mote: Some(demo_pure_mote(1).into()),
+            warrant: Some(demo_pure_warrant().into()),
+            accept_at_least_once: false,
+        }],
+    }
+}
+
+/// A parentless PURE demo Mote, made unique by `seed`. Mirrors
+/// `tests/common::pure_mote` (kept in lockstep so `submit --demo` and the e2e
+/// tests admit the identical Mote shape).
+#[cfg(feature = "embedded-worker")]
+fn demo_pure_mote(seed: u8) -> kx_mote::Mote {
+    use kx_mote::{
+        EffectPattern, GraphPosition, InferenceParams, InputDataId, LogicRef, ModelId, Mote,
+        MoteDef, NdClass, PromptTemplateHash, MOTE_DEF_SCHEMA_VERSION,
+    };
+    use smallvec::SmallVec;
+    use std::collections::BTreeMap;
+
+    let def = MoteDef {
+        critic_check: None,
+        logic_ref: LogicRef::from_bytes([7u8; 32]),
+        model_id: ModelId("llama-3.1-8b-instruct-q4_k_m".into()),
+        prompt_template_hash: PromptTemplateHash::from_bytes([9u8; 32]),
+        tool_contract: BTreeMap::new(),
+        nd_class: NdClass::Pure,
+        config_subset: BTreeMap::new(),
+        effect_pattern: EffectPattern::IdempotentByConstruction,
+        critic_for: None,
+        is_topology_shaper: false,
+        inference_params: InferenceParams::default(),
+        schema_version: MOTE_DEF_SCHEMA_VERSION,
+    };
+    Mote::new(
+        def,
+        InputDataId::from_bytes([seed; 32]),
+        GraphPosition(vec![seed]),
+        SmallVec::new(),
+    )
+}
+
+/// A warrant the embedded demo worker can lease: its `executor_class` is the
+/// server's [`default_executor_class`]. Mirrors `tests/common::pure_warrant`.
+#[cfg(feature = "embedded-worker")]
+fn demo_pure_warrant() -> kx_warrant::WarrantSpec {
+    use kx_content::ContentRef;
+    use kx_mote::ModelId;
+    use kx_warrant::{
+        FsMode, FsScope, Host, ModelRoute, MoteClass, NetScope, ResourceCeiling, WarrantSpec,
+    };
+    use std::collections::{BTreeMap, BTreeSet};
+
+    let mut mounts = BTreeMap::new();
+    mounts.insert(PathBuf::from("/tmp/in"), FsMode::ReadOnly);
+    let mut egress = BTreeSet::new();
+    egress.insert(Host("api.example.com:443".into()));
+
+    WarrantSpec {
+        mote_class: MoteClass::Pure,
+        nd_class: MoteClass::Pure,
+        fs_scope: FsScope { mounts },
+        net_scope: NetScope::EgressAllowlist(egress),
+        syscall_profile_ref: ContentRef::from_bytes([4u8; 32]),
+        tool_grants: BTreeSet::new(),
+        model_route: ModelRoute {
+            model_id: ModelId("llama-3.1-8b-instruct-q4_k_m".into()),
+            max_input_tokens: 4_096,
+            max_output_tokens: 512,
+            max_calls: 3,
+        },
+        resource_ceiling: ResourceCeiling {
+            cpu_milli: 1_000,
+            mem_bytes: 1 << 30,
+            wall_clock_ms: 30_000,
+            fd_count: 64,
+            disk_bytes: 1 << 28,
+        },
+        environment_ref: Some(ContentRef::from_bytes([8u8; 32])),
+        executor_class: default_executor_class(),
+        ..Default::default()
+    }
+}
+
 /// A running gateway: the bound address plus the handles needed to stop it
 /// gracefully. Returned by [`start`]; [`serve`] drives it to a Ctrl-C.
 pub struct RunningGateway {

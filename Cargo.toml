@@ -43,6 +43,7 @@ members = [
     "crates/kx-gateway",
     "crates/kx-invoke",
     "crates/kx-model-store",
+    "crates/kx-cli",
 ]
 exclude = [
     "kx-cloud",

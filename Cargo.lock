@@ -1066,6 +1066,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "kx-cli"
+version = "0.0.1"
+dependencies = [
+ "kx-gateway",
+ "kx-proto",
+ "kx-runtime",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tonic",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "kx-content"
 version = "0.0.1"
 dependencies = [
