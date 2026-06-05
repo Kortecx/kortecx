@@ -1,0 +1,18 @@
+# Codegen config for the TypeScript SDK stubs.
+#
+# The single source of truth is `crates/kx-proto/proto/` — there is NO vendored
+# copy of the .proto files, so the generated stubs can never drift from a stale
+# copy. CI's `codegen-fresh` guard re-runs `./codegen.sh` and fails on any git
+# diff (the exact mirror of the Python SDK's `codegen-fresh`). The codegen
+# toolchain (`@bufbuild/buf` + `@bufbuild/protoc-gen-es`) is pinned by the
+# committed `package-lock.json` so `npm ci && ./codegen.sh` reproduces
+# byte-identical output.
+version: v2
+inputs:
+  - directory: ../../crates/kx-proto/proto
+plugins:
+  - local: protoc-gen-es
+    out: src/gen
+    opt:
+      - target=ts
+      - import_extension=js
