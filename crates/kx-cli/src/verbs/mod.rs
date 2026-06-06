@@ -4,6 +4,7 @@
 
 pub mod content;
 pub mod events;
+pub mod health;
 pub mod invoke;
 pub mod projection;
 pub mod signatures;

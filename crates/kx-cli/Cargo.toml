@@ -30,6 +30,9 @@ kx-proto   = { workspace = true }
 # A custom/self-signed CA comes from `--tls-ca`. Reuses the rustls 0.23 + ring
 # already in the lock (via ureq) — no new crypto provider.
 tonic        = { workspace = true, features = ["tls", "tls-native-roots"] }
+# A2: the `grpc.health.v1.Health` client for `kx health` (the liveness probe the
+# compose healthcheck uses — a purpose-built endpoint, not a side-effectful RPC).
+tonic-health = { workspace = true }
 # `time` for the --wait / --follow poll backoff; `signal` for a clean --follow Ctrl-C.
 tokio        = { workspace = true, features = ["rt-multi-thread", "macros", "time", "signal"] }
 # --json machine output (a workspace dep; no new dependency).

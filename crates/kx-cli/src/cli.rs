@@ -34,6 +34,7 @@ usage: kx <command> [args]
     kx content --ref <hex32> --instance <hex16> [--out <file>]
     kx events --instance <hex16> [--since N] [--follow]
     kx signatures list | get --id <hex32> | register --manifest-file <path>
+    kx health                                   (grpc.health.v1 liveness; exit 0 iff SERVING)
 
     --endpoint defaults to http://127.0.0.1:50151
 
@@ -67,6 +68,8 @@ pub enum Cli {
     Events(verbs::events::EventsArgs),
     /// Catalog signature RPCs.
     Signatures(verbs::signatures::SignaturesArgs),
+    /// Liveness/readiness probe (grpc.health.v1).
+    Health(verbs::health::HealthArgs),
 }
 
 impl Cli {
@@ -105,6 +108,7 @@ impl Cli {
             Some("content") => Ok(Cli::Content(verbs::content::parse(args)?)),
             Some("events") => Ok(Cli::Events(verbs::events::parse(args)?)),
             Some("signatures") => Ok(Cli::Signatures(verbs::signatures::parse(args)?)),
+            Some("health") => Ok(Cli::Health(verbs::health::parse(args)?)),
             Some(other) => Err(CliError::Usage(format!(
                 "unknown command {other:?} (try `kx --help`)"
             ))),
@@ -161,6 +165,7 @@ async fn dispatch(cli: Cli) -> Result<(), CliError> {
         Cli::Content(a) => verbs::content::execute(a).await,
         Cli::Events(a) => verbs::events::execute(a).await,
         Cli::Signatures(a) => verbs::signatures::execute(a).await,
+        Cli::Health(a) => verbs::health::execute(a).await,
     }
 }
 
@@ -293,6 +298,12 @@ kx events --instance <hex16> [--since N] [--follow] [client flags]
         "signatures" => "\
 kx signatures list | get --id <hex32> | register --manifest-file <path> [client flags]
   Browse / fetch / register catalog task signatures over the gateway."
+            .into(),
+        "health" => "\
+kx health [client flags]
+  Probe the gateway's grpc.health.v1 liveness/readiness. Prints SERVING / NOT_SERVING
+  (or --json) and exits 0 iff SERVING — a purpose-built healthcheck (the compose
+  stack uses it). Unauthenticated; honors --endpoint / --tls-ca for a TLS gateway."
             .into(),
         other => format!("no help for {other:?}; try `kx --help`"),
     }

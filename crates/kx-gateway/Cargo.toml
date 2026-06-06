@@ -55,6 +55,10 @@ kx-capability   = { workspace = true, optional = true }
 # 0.23 + ring already in the lock via ureq — no new crypto provider). Server cert/
 # key via `--tls-cert`/`--tls-key`; plaintext stays the default (TLS opt-in).
 tonic              = { workspace = true, features = ["tls"] }
+# A2: serve the standard `grpc.health.v1.Health` service (liveness/readiness) on the
+# gRPC listener, alongside the KxGateway service (NOT behind the auth interceptor —
+# a health probe is unauthenticated by design).
+tonic-health       = { workspace = true }
 # Additive feature bump over the workspace tokio (rt-multi-thread/macros/net):
 # `signal` for graceful Ctrl-C shutdown, `time` for the worker poll/backoff +
 # connect-retry + the R5 live-tail poll interval, `sync` for the R5 per-subscriber
