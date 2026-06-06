@@ -6,10 +6,15 @@
 # of the `kx` runtime, so the inference toolchain is proven to build + LINK inside a
 # Linux container. It ships TWO binaries:
 #
-#   kx           — the runtime (serve / run / replay / digest). Same as the FFI-free
-#                  image: `kx` itself has NO model-inference verb yet — the in-process
-#                  model-dispatch path wires at A4 (until then `kx serve` uses the
-#                  deterministic demo executor). This image is the forward base for it.
+#   kx           — the runtime (serve / run / replay / digest), built `--features
+#                  inference` (AL1): `kx serve` can run REAL model Motes in-process.
+#                  Point it at a mounted GGUF to serve the model recipe:
+#                    docker run --rm -p 50151:50151 -v $PWD/models:/var/lib/kortecx/models \
+#                      -e KX_SERVE_MODEL_GGUF=/var/lib/kortecx/models/<model>.gguf \
+#                      kortecx/kx:inference-cpu serve --dev-allow-local
+#                    # then from any client:  kx invoke kx/recipes/chat --args '{"prompt":"…"}' --wait
+#                  (CPU decode — see the CPU-ONLY note below. Without
+#                  KX_SERVE_MODEL_GGUF `kx serve` runs the deterministic demo path.)
 #   kx-generate  — the `kx-llamacpp` `generate` example: a REAL CPU inference run
 #                  (load GGUF → tokenize → decode → sample → detokenize). Use it to
 #                  actually run a model on CPU in a container today:
@@ -47,9 +52,11 @@ RUN rm -rf crates/kx-llamacpp-sys/llama.cpp \
  && git -C crates/kx-llamacpp-sys/llama.cpp fetch -q --depth 1 origin "${LLAMA_CPP_REF}" \
  && git -C crates/kx-llamacpp-sys/llama.cpp checkout -q FETCH_HEAD
 
-# Build the runtime + the FFI link (proves the static archives build + link under
-# Linux) + the real CPU-inference example. GGML_CUDA stays OFF (build.rs default).
-RUN cargo build --release -p kx-cli \
+# Build the runtime WITH the AL1 `inference` feature (so `kx serve` can dispatch
+# real model Motes in-process) — this also proves the static archives build + link
+# under Linux + exercises the dep-wall-safe `kx-inference[llamacpp]` pull — plus the
+# real CPU-inference example. GGML_CUDA stays OFF (build.rs default; CPU-only).
+RUN cargo build --release -p kx-cli --features inference \
  && cargo build --release -p kx-llamacpp --example generate \
  && strip target/release/kx target/release/examples/generate \
  && cp target/release/kx /usr/local/bin/kx \
