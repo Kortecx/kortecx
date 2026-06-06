@@ -341,6 +341,9 @@ impl Harness {
             None,
             // audit_sink (R4) — off for the harness driver.
             None,
+            // failure_policy (PR-1) — the harness drives deterministic workflows;
+            // `None` keeps legacy abort-on-failure.
+            None,
         )
     }
 }

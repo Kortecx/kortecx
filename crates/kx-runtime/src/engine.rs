@@ -21,7 +21,7 @@ use kx_capture::StepRecord;
 use kx_content::{ContentRef, ContentStore, LocalFsContentStore};
 use kx_executor::{
     redispatch_wm_mote, run_native_critic_mote, run_pure_mote, run_wm_mote, CommitProtocol,
-    LocalResourceManager, MoteExecutor, StandardCommitProtocol, TestMoteExecutor,
+    LifecycleError, LocalResourceManager, MoteExecutor, StandardCommitProtocol, TestMoteExecutor,
 };
 use kx_journal::{Journal, JournalEntry, SqliteJournal};
 use kx_mote::{MoteId, NdClass, TopologyDecision};
@@ -39,6 +39,7 @@ use crate::config::{Mode, RuntimeConfig};
 use crate::crash::CrashPoint;
 use crate::digest::{digest_projection, ProjectionDigest};
 use crate::error::RuntimeError;
+use crate::failure_policy::{classify_lifecycle_error, reason_for, FailureClass, FailurePolicy};
 use crate::snapshot_sink::SnapshotSink;
 use crate::topology;
 use crate::workflow::{DemoWorkflow, WorkflowMote};
@@ -198,6 +199,9 @@ pub fn run_with_capture(
         None,
         capture_sink,
         audit.as_ref(),
+        // The canonical demo never fails a Mote, so no policy is needed; `None`
+        // keeps the legacy abort-on-failure semantics (byte-identical truth path).
+        None,
     )
 }
 
@@ -224,6 +228,16 @@ pub fn run_with_capture(
 /// snapshot is published and the deterministic truth path is byte-unchanged
 /// (the published snapshot is model input only; it never enters identity or the
 /// journal, D64).
+///
+/// `failure_policy` is the PR-1 bounded-retry + dead-letter seam. When `Some`, a
+/// Mote dispatch error no longer aborts the run: a transient infrastructure
+/// failure is retried (bounded by `max_attempts`), and a terminal failure (or an
+/// exhausted transient) is journaled as a `Failed` fact so the drive loop continues
+/// **past** the dead-lettered Mote. The canonical demo + every existing caller pass
+/// `None`, so a dispatch error propagates exactly as the pre-PR-1 `?` did — the
+/// deterministic truth path (digest `a6b5c679…`) is byte-unchanged. (A dead-lettered
+/// `Failed` is the durable, auditable record the model-driven re-plan loop (AL2)
+/// later reads — kortecx never blindly re-runs a failing Mote.)
 // `store` / `journal` are taken by value: the orchestrator owns these `Arc`
 // handles for the run (cloning them into the verdict lookup + materializer +
 // commit calls), so `needless_pass_by_value` is intentional here — the caller
@@ -246,6 +260,7 @@ pub fn run_with_seams<S, E, CP>(
     snapshot_sink: Option<&SnapshotSink>,
     capture_sink: Option<&CaptureSink>,
     audit_sink: Option<&RuntimeAuditSink>,
+    failure_policy: Option<&FailurePolicy>,
 ) -> Result<RunOutcome, RuntimeError>
 where
     S: ContentStore + Send + Sync + 'static,
@@ -326,6 +341,10 @@ where
     // A shaperless workflow never derives children — start "done".
     let mut children_derived = shaper.is_none();
     let mut child_ids: Vec<MoteId> = Vec::new();
+    // PR-1: per-Mote transient-retry counter (in-memory, off the truth path — a
+    // crash simply re-folds the committed prefix and the budget restarts). Only
+    // consulted when `failure_policy` is `Some`; empty + untouched otherwise.
+    let mut attempts: BTreeMap<MoteId, u32> = BTreeMap::new();
 
     // R4: the drive loop is starting. Off the truth path — `None` ⇒ no event.
     if let Some(a) = audit_sink {
@@ -385,16 +404,26 @@ where
                 kind: action.dispatch_kind(),
             });
         }
-        match action {
+        // Dispatch the picked Mote. Each lifecycle entry returns
+        // `Result<_, LifecycleError>`; unify to `Result<(), LifecycleError>` so a
+        // failure can be routed through the PR-1 `failure_policy` (or propagated
+        // verbatim when there is none). `mote_id` + `wm_vtc_target` are captured
+        // before the `match` consumes `action`.
+        let mote_id = action.mote_id();
+        let wm_vtc_target = matches!(
+            &action,
+            Action::RunWm { wm, .. } if wm.mote.id == workflow.vtc_crash_target
+        );
+        let dispatch: Result<(), LifecycleError> = match action {
             Action::RunPure(w) => {
                 crash_if_children_pending(config, &child_ids, w.mote.id);
-                run_pure_mote(&w.mote, &w.warrant, &*journal, rm, executor)?;
+                run_pure_mote(&w.mote, &w.warrant, &*journal, rm, executor).map(|_| ())
             }
             Action::RunNativeCritic(w) => {
                 // Evaluate the declared check in-process against the producer's
                 // committed bytes and commit a CriticVerdict (P4.2-2). The
                 // verdict drives the P4.2-3 promotion gate on the next fold.
-                run_native_critic_mote(&w.mote, &w.warrant, &*journal, &*store)?;
+                run_native_critic_mote(&w.mote, &w.warrant, &*journal, &*store).map(|_| ())
             }
             Action::RunWm { wm, recover } => {
                 let request = effect_request_for(&wm);
@@ -414,7 +443,8 @@ where
                         rm,
                         protocol,
                         &projection,
-                    )?;
+                    )
+                    .map(|_| ())
                 } else {
                     run_wm_mote(
                         &wm.mote,
@@ -425,21 +455,43 @@ where
                         &*journal,
                         rm,
                         protocol,
-                    )?;
+                    )
+                    .map(|_| ())
                 }
+            }
+        };
 
-                // Scenario-2 injection: a hard kill the instant the VTC Mote's
-                // Committed is durable (and the critic's Proposed has been
-                // recorded), before the run finishes. Recovery must RE-READ it,
-                // never re-run its world effect.
-                if config.crash_at == Some(CrashPoint::PostCommitVtc)
-                    && wm.mote.id == workflow.vtc_crash_target
-                {
-                    fold_new(&journal, &mut projection, &mut folded_through)?;
-                    if projection.state_of(&workflow.vtc_crash_target) == MoteState::Committed {
-                        CrashPoint::PostCommitVtc.abort_now();
-                    }
+        // PR-1: a dispatch failure no longer aborts the run when a policy is set.
+        // With no policy (the demo + every existing caller) the error propagates
+        // exactly as the pre-PR-1 `?` did — byte-identical truth path.
+        if let Err(e) = dispatch {
+            match failure_policy {
+                None => return Err(RuntimeError::Lifecycle(e)),
+                Some(policy) => {
+                    handle_failure(
+                        &e,
+                        mote_id,
+                        policy,
+                        &mut attempts,
+                        &journal,
+                        &mut projection,
+                        &mut folded_through,
+                    )?;
+                    // Retry → `pick_next` re-selects the still-ready Mote; dead-letter
+                    // → it is now `Failed` and `pick_next` skips it. Either way, re-loop.
+                    continue;
                 }
+            }
+        }
+
+        // Scenario-2 injection (success path only): a hard kill the instant the VTC
+        // Mote's Committed is durable (and the critic's Proposed has been recorded),
+        // before the run finishes. Recovery must RE-READ it, never re-run its world
+        // effect.
+        if wm_vtc_target && config.crash_at == Some(CrashPoint::PostCommitVtc) {
+            fold_new(&journal, &mut projection, &mut folded_through)?;
+            if projection.state_of(&workflow.vtc_crash_target) == MoteState::Committed {
+                CrashPoint::PostCommitVtc.abort_now();
             }
         }
         fold_new(&journal, &mut projection, &mut folded_through)?;
@@ -496,10 +548,19 @@ where
         a.flush();
     }
 
-    if config.mode == Mode::Run && !outcome.is_complete() {
-        // A clean run that didn't finish means a Mote is stuck (e.g. a WM Mote
-        // with no EffectStaged hint the oracle refuses to re-dispatch).
-        return Err(RuntimeError::Stalled(outcome.total - outcome.committed));
+    if config.mode == Mode::Run {
+        // "Stalled" means a Mote is genuinely stuck — non-terminal with no way
+        // forward (e.g. a WM Mote with no EffectStaged hint the oracle refuses to
+        // re-dispatch). A Mote dead-lettered by the failure policy is *terminal*
+        // (`Failed`), not stuck, so the run completes rather than aborting. On the
+        // demo path no Mote is non-committed, so `stuck == 0` exactly as before.
+        let stuck = runnable
+            .iter()
+            .filter(|w| !is_terminal(projection.state_of(&w.mote.id)))
+            .count();
+        if stuck > 0 {
+            return Err(RuntimeError::Stalled(stuck));
+        }
     }
     Ok(outcome)
 }
@@ -525,6 +586,81 @@ fn fold_new(
         projection.fold(&entry)?;
     }
     *folded_through = current;
+    Ok(())
+}
+
+/// Reporter id stamped on the single-process engine's dead-letter `Failed` entries
+/// (the distributed coordinator uses its own `COORDINATOR_REPORTER_ID = 0`). A
+/// distinct, fixed, UUID-shaped marker — never part of identity or dedup (a
+/// `Failed` entry is not deduped, D19), purely a provenance hint for audit.
+const RUNTIME_REPORTER_ID: u128 = 0x6b78_5f72_756e_7469_6d65_0000_0000_0001;
+
+/// Whether a Mote has reached a terminal state — committed or dead-lettered. The
+/// drive loop never re-picks a terminal Mote, and a `Mode::Run` that leaves only
+/// terminal Motes is *complete*, not *stalled*.
+fn is_terminal(state: MoteState) -> bool {
+    matches!(
+        state,
+        MoteState::Committed | MoteState::Failed | MoteState::Repudiated | MoteState::Inconsistent
+    )
+}
+
+/// PR-1 failure handling (only reached when `failure_policy` is `Some`): retry a
+/// transient infrastructure error within budget, else dead-letter the Mote by
+/// journaling a terminal `Failed` fact so the drive loop can continue **past** it.
+///
+/// First re-folds: a commit-protocol path may have already journaled its own
+/// terminal `Failed` (e.g. an R-13 re-dispatch refusal), in which case the Mote is
+/// already terminal and we must NOT double-write. Otherwise, a transient class is
+/// retried (in-memory attempt counter, backoff) until `max_attempts`, then a single
+/// `Failed{reason_class}` is appended. A terminal-logic class dead-letters at once.
+///
+/// Returns `Ok(())` in every handled case — the caller re-loops: a retry re-selects
+/// the still-ready Mote, a dead-letter is now `MoteState::Failed` and is skipped.
+fn handle_failure(
+    err: &LifecycleError,
+    mote_id: MoteId,
+    policy: &FailurePolicy,
+    attempts: &mut BTreeMap<MoteId, u32>,
+    journal: &SqliteJournal,
+    projection: &mut Projection,
+    folded_through: &mut u64,
+) -> Result<(), RuntimeError> {
+    // Pick up anything the failed dispatch already journaled (e.g. a commit-protocol
+    // terminal `Failed`). If the Mote is already terminal, don't double-write.
+    fold_new(journal, projection, folded_through)?;
+    if is_terminal(projection.state_of(&mote_id)) {
+        tracing::warn!(mote = ?mote_id, error = %err, "dispatch failed; Mote already terminal — not re-writing");
+        return Ok(());
+    }
+
+    let class = classify_lifecycle_error(err);
+    if class == FailureClass::TransientInfra {
+        let n = attempts.entry(mote_id).or_insert(0);
+        *n += 1;
+        if *n < policy.max_attempts {
+            if !policy.backoff.is_zero() {
+                std::thread::sleep(policy.backoff);
+            }
+            tracing::warn!(mote = ?mote_id, attempt = *n, max = policy.max_attempts, error = %err, "transient dispatch failure — retrying");
+            return Ok(());
+        }
+    }
+
+    // Terminal, or transient budget exhausted → dead-letter with a terminal `Failed`
+    // fact. NOT re-running a failing Mote is the whole point (the user's "no point
+    // re-running it"); the durable `Failed` is what a later model re-plan (AL2) reads.
+    let reason_class = reason_for(class);
+    let failed = JournalEntry::Failed {
+        mote_id,
+        idempotency_key: *mote_id.as_bytes(),
+        seq: 0, // journal assigns
+        reason_class,
+        reporter_id: RUNTIME_REPORTER_ID,
+    };
+    journal.append(failed)?;
+    fold_new(journal, projection, folded_through)?;
+    tracing::warn!(mote = ?mote_id, ?reason_class, error = %err, "dead-lettering Mote (failsafe: a failing Mote is recorded, never blindly re-run)");
     Ok(())
 }
 
@@ -689,7 +825,11 @@ fn pick_next(
     for w in runnable {
         let id = w.mote.id;
         let state = projection.state_of(&id);
-        if matches!(state, MoteState::Committed | MoteState::Repudiated) {
+        // Skip any terminal Mote — committed, or dead-lettered (`Failed`/
+        // `Inconsistent`) by the PR-1 failure policy. On the demo path no Mote is
+        // ever `Failed`/`Inconsistent`, so this is byte-identical to skipping only
+        // `Committed | Repudiated`.
+        if is_terminal(state) {
             continue;
         }
         let in_ready = ready.contains(&id);
@@ -1076,5 +1216,197 @@ mod audit_tests {
         assert_eq!(as_u32(0), 0);
         assert_eq!(as_u32(8), 8);
         assert_eq!(as_u32(usize::MAX), u32::MAX);
+    }
+}
+
+#[cfg(test)]
+mod failure_tests {
+    //! PR-1 — the bounded-retry + dead-letter drive-loop behavior. Each test
+    //! drives a flat 2-PURE-Mote workflow through `run_with_seams` with a
+    //! `FailingExecutor` that fails one Mote, asserting the run COMPLETES with the
+    //! failing Mote dead-lettered (`Failed`) and its sibling committed — the live
+    //! correctness fix (a mid-DAG failure no longer aborts the whole run) — while
+    //! the `None` path still aborts exactly as before.
+    #![allow(clippy::unwrap_used)]
+
+    use std::collections::BTreeMap;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use kx_content::LocalFsContentStore;
+    use kx_executor::{
+        LocalResourceManager, MoteExecutionResult, MoteExecutor, MoteExecutorError, Rootfs,
+        StandardCommitProtocol, TestMoteExecutor,
+    };
+    use kx_journal::SqliteJournal;
+    use kx_mote::Mote;
+    use kx_projection::{MoteState, Projection};
+    use kx_warrant::{ExecutorClass, WarrantSpec};
+
+    use super::{run_with_seams, RunOutcome};
+    use crate::broker::DemoBroker;
+    use crate::config::{Mode, RuntimeConfig};
+    use crate::error::RuntimeError;
+    use crate::failure_policy::FailurePolicy;
+    use crate::workflow::flat_pure_workflow;
+
+    /// A `MoteExecutor` that fails a chosen Mote and delegates the rest to a real
+    /// deterministic stub, counting how many times the chosen Mote is dispatched.
+    struct FailingExecutor {
+        inner: TestMoteExecutor,
+        target: kx_mote::MoteId,
+        error: fn() -> MoteExecutorError,
+        target_calls: Arc<AtomicUsize>,
+    }
+
+    impl MoteExecutor for FailingExecutor {
+        fn run(
+            &self,
+            mote: &Mote,
+            warrant: &WarrantSpec,
+            env: Option<Rootfs>,
+        ) -> Result<MoteExecutionResult, MoteExecutorError> {
+            if mote.id == self.target {
+                self.target_calls.fetch_add(1, Ordering::SeqCst);
+                return Err((self.error)());
+            }
+            self.inner.run(mote, warrant, env)
+        }
+
+        fn supports(&self, class: ExecutorClass) -> bool {
+            self.inner.supports(class)
+        }
+    }
+
+    fn config_for(dir: &std::path::Path) -> RuntimeConfig {
+        RuntimeConfig {
+            journal_path: dir.join("journal.sqlite"),
+            content_root: dir.join("content"),
+            mode: Mode::Run,
+            crash_at: None,
+            checkpoint_every: None,
+            audit_log: None,
+        }
+    }
+
+    /// Drive a flat 2-PURE-Mote workflow whose second Mote fails with `error`,
+    /// under `policy`. Returns the run result, the (target, sibling) ids, the
+    /// re-folded final projection, and the target's dispatch count.
+    fn drive(
+        error: fn() -> MoteExecutorError,
+        policy: Option<&FailurePolicy>,
+    ) -> (
+        Result<RunOutcome, RuntimeError>,
+        kx_mote::MoteId,
+        kx_mote::MoteId,
+        Option<Projection>,
+        usize,
+    ) {
+        let dir = tempfile::tempdir().unwrap();
+        let config = config_for(dir.path());
+        let workflow = flat_pure_workflow(&[0x10, 0x11]);
+        let sibling = workflow.motes[0].mote.id;
+        let target = workflow.motes[1].mote.id;
+
+        let store = Arc::new(LocalFsContentStore::open(&config.content_root).unwrap());
+        let journal = Arc::new(SqliteJournal::open(&config.journal_path).unwrap());
+        let rm = LocalResourceManager::dev_defaults();
+        let broker = Arc::new(DemoBroker::new(store.clone(), BTreeMap::new(), None, None));
+        let protocol = StandardCommitProtocol::new(store.clone(), journal.clone(), broker);
+        let target_calls = Arc::new(AtomicUsize::new(0));
+        let executor = FailingExecutor {
+            inner: TestMoteExecutor::deterministic(),
+            target,
+            error,
+            target_calls: target_calls.clone(),
+        };
+
+        let result = run_with_seams(
+            &config,
+            &workflow,
+            store,
+            journal.clone(),
+            &rm,
+            &executor,
+            &protocol,
+            None, // shaper — flat DAG
+            None, // snapshot_sink
+            None, // capture_sink
+            None, // audit_sink
+            policy,
+        );
+
+        // Re-fold the on-disk journal into a fresh projection so the assertions read
+        // the same durable truth a cold recovery would.
+        let projection = Projection::from_journal(&*journal).ok();
+        (
+            result,
+            target,
+            sibling,
+            projection,
+            target_calls.load(Ordering::SeqCst),
+        )
+    }
+
+    #[test]
+    fn terminal_failure_dead_letters_and_run_completes() {
+        let policy = FailurePolicy::new(3, Duration::ZERO);
+        let (result, target, sibling, projection, calls) =
+            drive(|| MoteExecutorError::BodyExited { code: 1 }, Some(&policy));
+
+        let outcome = result.expect("the run completes (not aborts) past a dead-lettered Mote");
+        assert_eq!(outcome.total, 2);
+        assert_eq!(
+            outcome.committed, 1,
+            "the sibling commits; the target does not"
+        );
+
+        let projection = projection.unwrap();
+        assert_eq!(
+            projection.state_of(&target),
+            MoteState::Failed,
+            "the failing Mote is dead-lettered (terminal Failed)"
+        );
+        assert_eq!(
+            projection.state_of(&sibling),
+            MoteState::Committed,
+            "its sibling still commits"
+        );
+        // Terminal logic failure ⇒ dispatched exactly once, never retried.
+        assert_eq!(calls, 1, "a terminal failure is not retried");
+    }
+
+    #[test]
+    fn transient_failure_retries_to_budget_then_dead_letters() {
+        let policy = FailurePolicy::new(3, Duration::ZERO);
+        let (result, target, sibling, projection, calls) = drive(
+            || MoteExecutorError::SandboxLoadFailed {
+                reason: "transient".into(),
+            },
+            Some(&policy),
+        );
+
+        let outcome = result.expect("the run completes after exhausting the retry budget");
+        assert_eq!(outcome.committed, 1);
+
+        let projection = projection.unwrap();
+        assert_eq!(projection.state_of(&target), MoteState::Failed);
+        assert_eq!(projection.state_of(&sibling), MoteState::Committed);
+        // A transient error is retried up to `max_attempts` dispatches, then dead-lettered.
+        assert_eq!(calls, 3, "transient retried to the 3-attempt budget");
+    }
+
+    #[test]
+    fn no_policy_aborts_the_run_exactly_as_before() {
+        // The legacy path: with no `FailurePolicy`, a dispatch error propagates and
+        // aborts the whole run (`RuntimeError::Lifecycle`) — byte-identical to the
+        // pre-PR-1 `?`. This is what every existing caller (and the demo) relies on.
+        let (result, _target, _sibling, _projection, _calls) =
+            drive(|| MoteExecutorError::BodyExited { code: 1 }, None);
+        assert!(
+            matches!(result, Err(RuntimeError::Lifecycle(_))),
+            "without a policy a failing Mote aborts the run"
+        );
     }
 }

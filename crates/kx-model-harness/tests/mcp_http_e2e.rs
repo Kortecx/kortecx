@@ -313,6 +313,7 @@ fn drive(
         Some(&sink),
         None, // capture_sink (D67) — off for this MCP HTTP e2e test
         None, // audit_sink (R4) — off for this MCP HTTP e2e test
+        None, // failure_policy (PR-1) — legacy abort-on-failure
     );
     (result, store, journal, m_id)
 }

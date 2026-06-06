@@ -63,6 +63,7 @@ pub mod crash;
 pub mod digest;
 pub mod engine;
 pub mod error;
+pub mod failure_policy;
 pub mod migrate;
 pub mod snapshot_sink;
 pub mod topology;
@@ -78,6 +79,7 @@ pub use engine::{
     RunOutcome,
 };
 pub use error::RuntimeError;
+pub use failure_policy::FailurePolicy;
 // Re-export the audit vocabulary so callers (CLI / harness / future gateway) use
 // the runtime facade, mirroring how `CaptureSink` fronts `kx-capture`.
 pub use kx_audit::{AuditEvent, AuditSink, DispatchKind, InMemoryAuditSink, JsonlAuditSink};
