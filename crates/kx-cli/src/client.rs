@@ -160,10 +160,12 @@ pub struct Resolved {
 }
 
 impl Resolved {
-    /// Dial the gateway, mapping a transport failure to [`CliError::Connect`]. An
+    /// Dial the gateway and return the raw transport [`Channel`] (TLS-aware). An
     /// `https://` endpoint is dialed over TLS (A1): a `--tls-ca` PEM is the explicit
     /// trust anchor (self-signed gateway cert), else the OS trust store (public CA).
-    pub async fn connect(&self) -> Result<KxGatewayClient<Channel>, CliError> {
+    /// Shared by [`Resolved::connect`] (the KxGateway client) and the `health` verb
+    /// (the grpc.health.v1 client), so both honor `--endpoint`/`--tls-ca`.
+    pub async fn channel(&self) -> Result<Channel, CliError> {
         let connect_err = |detail: String| CliError::Connect {
             endpoint: self.endpoint.clone(),
             detail,
@@ -181,10 +183,16 @@ impl Resolved {
                 .tls_config(tls)
                 .map_err(|e| connect_err(e.to_string()))?;
         }
-        let channel = endpoint
+        endpoint
             .connect()
             .await
-            .map_err(|e| connect_err(e.to_string()))?;
+            .map_err(|e| connect_err(e.to_string()))
+    }
+
+    /// Dial the gateway as a [`KxGatewayClient`], mapping a transport failure to
+    /// [`CliError::Connect`].
+    pub async fn connect(&self) -> Result<KxGatewayClient<Channel>, CliError> {
+        let channel = self.channel().await?;
         Ok(KxGatewayClient::new(channel))
     }
 

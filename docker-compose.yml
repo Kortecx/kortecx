@@ -46,24 +46,21 @@ services:
       - kx-catalog:/var/lib/kortecx/catalog
     secrets:
       - kx_authtokens   # server: <token>=<party> lines (--auth-token-file)
-      - kx_token        # client/healthcheck: the raw bearer token (--token-file)
     # Hardening: read-only rootfs — only the named volumes + /tmp are writable.
     read_only: true
     tmpfs:
       - /tmp
     user: "10001:10001"
-    # No /healthz yet (observability = A2). `kx signatures list` is a read-only RPC
-    # exercising the full bind→auth→RPC path; a clean exit ⇒ the server is live.
+    # A2: a purpose-built liveness probe — `kx health` calls grpc.health.v1 and exits
+    # 0 iff the gateway reports SERVING. Unauthenticated by design (the health service
+    # is not behind the auth interceptor), so it needs no token.
     healthcheck:
       test:
         - CMD
         - kx
-        - signatures
-        - list
+        - health
         - --endpoint
         - http://127.0.0.1:50151
-        - --token-file
-        - /run/secrets/kx_token
       interval: 10s
       timeout: 5s
       retries: 5
@@ -79,9 +76,10 @@ volumes:
   kx-catalog:
 
 secrets:
-  # DEV defaults — copy the *.example to the un-suffixed name (gitignored) to
-  # customize, or replace inline. NEVER ship these tokens to a real deployment.
+  # DEV default — copy the *.example to the un-suffixed name (gitignored) to
+  # customize, or replace inline. NEVER ship this token to a real deployment.
+  # (`deploy/secrets/kx_token.example` is the matching CLIENT bearer template for
+  # `kx invoke --token-file` from inside the container; the healthcheck no longer
+  # needs it since `kx health` is unauthenticated.)
   kx_authtokens:
     file: ./deploy/secrets/kx_authtokens.example
-  kx_token:
-    file: ./deploy/secrets/kx_token.example

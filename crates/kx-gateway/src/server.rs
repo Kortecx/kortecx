@@ -453,6 +453,16 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         %local_addr,
         "gateway gRPC listener ready"
     );
+    // A2: the standard `grpc.health.v1.Health` service, served alongside KxGateway
+    // (NOT behind the auth interceptor — a health probe is unauthenticated by
+    // design). The runtime is wired + about to bind, so the overall service ("")
+    // is set SERVING; `kx health`, `grpc_health_probe`, and k8s gRPC probes read it.
+    // The reporter is dropped after — the service keeps the last-set status; on
+    // shutdown the port closes, so probes get connection-refused (= unhealthy).
+    let (mut health_reporter, health_service) = tonic_health::server::health_reporter();
+    health_reporter
+        .set_service_status("", tonic_health::ServingStatus::Serving)
+        .await;
     let (shutdown, shutdown_rx) = oneshot::channel::<()>();
     let gateway = tokio::spawn(async move {
         let mut builder = Server::builder();
@@ -462,6 +472,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
                 .map_err(|e| GatewayError::Tls(e.to_string()))?;
         }
         builder
+            .add_service(health_service)
             .add_service(svc)
             .serve_with_shutdown(local_addr, async move {
                 let _ = shutdown_rx.await;

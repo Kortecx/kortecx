@@ -225,6 +225,7 @@ The `kx` CLI is one binary. `run`/`replay`/`digest` drive the engine locally;
 | `kx content` | Fetch a committed result by ref (binary-safe) | `--ref <r>` · `--instance <id>` · `--out <file>` |
 | `kx events` | Print / live-tail a run's event deltas | `--instance <id>` · `--since N` · `--follow` |
 | `kx signatures` | Browse / fetch / register catalog task signatures | `list` · `get --id <id>` · `register --manifest-file <path>` |
+| `kx health` | Probe gateway liveness (`grpc.health.v1`); exit 0 iff SERVING | `--endpoint` · `--tls-ca` · `--json` |
 
 Client verbs share `--endpoint <url>` *(default `http://127.0.0.1:50151`)*,
 `--token <t>` / `--token-file <p>`, and `--json`.
@@ -365,8 +366,10 @@ reach surface is young. We name the boundaries plainly rather than hide them:
   default single-system runtime.
 - **Inference is single-stream** (N=1, serialized) and models are referenced by
   path — there is no model registry or auto-download in the runtime yet.
-- **Observability** today is the audit log + the event stream; a metrics/OTel
-  export seam is on the roadmap.
+- **Observability**: liveness/readiness is the standard `grpc.health.v1` service
+  (probe it with `kx health`, `grpc_health_probe`, or a k8s gRPC probe), plus the
+  audit log + the event stream. A **Prometheus/OTel metrics** export seam is the
+  next step.
 
 Interfaces will change before 1.0 — **pin a commit** if you build on it now.
 
