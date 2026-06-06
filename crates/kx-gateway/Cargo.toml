@@ -51,7 +51,10 @@ kx-coordinator  = { workspace = true, optional = true }
 kx-worker       = { workspace = true, optional = true }
 kx-executor     = { workspace = true, optional = true }
 kx-capability   = { workspace = true, optional = true }
-tonic              = { workspace = true }
+# A1: `tls` enables in-binary rustls TLS on the gRPC listener (reuses the rustls
+# 0.23 + ring already in the lock via ureq — no new crypto provider). Server cert/
+# key via `--tls-cert`/`--tls-key`; plaintext stays the default (TLS opt-in).
+tonic              = { workspace = true, features = ["tls"] }
 # Additive feature bump over the workspace tokio (rt-multi-thread/macros/net):
 # `signal` for graceful Ctrl-C shutdown, `time` for the worker poll/backoff +
 # connect-retry + the R5 live-tail poll interval, `sync` for the R5 per-subscriber
@@ -82,6 +85,11 @@ tokio    = { workspace = true, features = ["time"] }
 # `#![forbid(unsafe_code)]`) for the graceful-shutdown signal test. Unix-only,
 # test-only; stays out of the FFI-free normal closure `build-no-inference` asserts.
 nix      = { workspace = true }
+# A1: generate a self-signed cert/key for the TLS handshake integration test.
+rcgen    = { workspace = true }
+# A1: a tonic TLS client (Endpoint + ClientTlsConfig) to drive the TLS gateway in
+# the handshake test; `transport` is already on via tonic's default features.
+tonic    = { workspace = true, features = ["tls"] }
 
 [features]
 default = ["embedded-worker"]

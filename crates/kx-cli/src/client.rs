@@ -9,7 +9,7 @@
 use std::path::PathBuf;
 
 use kx_proto::proto::kx_gateway_client::KxGatewayClient;
-use tonic::transport::Channel;
+use tonic::transport::{Certificate, Channel, ClientTlsConfig, Endpoint};
 
 use crate::error::CliError;
 
@@ -27,6 +27,9 @@ pub struct ClientCommon {
     pub token: Option<String>,
     /// A file holding a bearer token (`--token-file`); the file is read + trimmed.
     pub token_file: Option<PathBuf>,
+    /// A PEM CA certificate to trust for an `https://` endpoint (`--tls-ca`) — e.g.
+    /// the gateway's self-signed cert. `None` ⇒ the OS trust store (public CAs).
+    pub tls_ca: Option<PathBuf>,
     /// Emit machine-readable JSON instead of the human rendering (`--json`).
     pub json: bool,
 }
@@ -37,6 +40,7 @@ impl Default for ClientCommon {
             endpoint: DEFAULT_ENDPOINT.to_string(),
             token: None,
             token_file: None,
+            tls_ca: None,
             json: false,
         }
     }
@@ -76,6 +80,7 @@ impl ClientCommon {
             "--token-file" => {
                 self.token_file = Some(PathBuf::from(next_value(args, "--token-file")?));
             }
+            "--tls-ca" => self.tls_ca = Some(PathBuf::from(next_value(args, "--tls-ca")?)),
             "--json" => self.json = true,
             _ => return Ok(false),
         }
@@ -114,35 +119,73 @@ impl ClientCommon {
         if token.is_some() && is_nonloopback_plaintext(&self.endpoint) {
             eprintln!(
                 "kx: warning: sending a bearer token to a non-loopback plaintext endpoint ({}); \
-                 it travels in cleartext — TLS/mTLS is a later step",
+                 it travels in cleartext — use an https:// endpoint (kx serve --tls-cert/--tls-key)",
                 self.endpoint
             );
         }
+        // `--tls-ca`: read the PEM now (a missing file fails before we dial) and
+        // require an https:// endpoint (a CA on a plaintext endpoint is a misconfig).
+        let ca_pem = match &self.tls_ca {
+            Some(path) => {
+                if !self.endpoint.starts_with("https://") {
+                    return Err(CliError::Usage(
+                        "--tls-ca requires an https:// --endpoint".into(),
+                    ));
+                }
+                Some(
+                    std::fs::read(path)
+                        .map_err(|e| CliError::Io(format!("--tls-ca {}: {e}", path.display())))?,
+                )
+            }
+            None => None,
+        };
         Ok(Resolved {
             endpoint: self.endpoint.clone(),
             token,
+            ca_pem,
         })
     }
 }
 
-/// A resolved endpoint + optional bearer token.
+/// A resolved endpoint + optional bearer token + optional trust anchor.
 #[derive(Debug, Clone)]
 pub struct Resolved {
     /// The gateway endpoint to dial.
     pub endpoint: String,
     /// The bearer token to attach (if any).
     pub token: Option<String>,
+    /// A PEM CA to trust for an `https://` endpoint (`--tls-ca`); `None` ⇒ the OS
+    /// trust store for a public CA, or irrelevant for a plaintext `http://` dial.
+    pub ca_pem: Option<Vec<u8>>,
 }
 
 impl Resolved {
-    /// Dial the gateway, mapping a transport failure to [`CliError::Connect`].
+    /// Dial the gateway, mapping a transport failure to [`CliError::Connect`]. An
+    /// `https://` endpoint is dialed over TLS (A1): a `--tls-ca` PEM is the explicit
+    /// trust anchor (self-signed gateway cert), else the OS trust store (public CA).
     pub async fn connect(&self) -> Result<KxGatewayClient<Channel>, CliError> {
-        KxGatewayClient::connect(self.endpoint.clone())
+        let connect_err = |detail: String| CliError::Connect {
+            endpoint: self.endpoint.clone(),
+            detail,
+        };
+        let mut endpoint =
+            Endpoint::from_shared(self.endpoint.clone()).map_err(|e| connect_err(e.to_string()))?;
+        if self.endpoint.starts_with("https://") {
+            let tls = match &self.ca_pem {
+                Some(ca) => {
+                    ClientTlsConfig::new().ca_certificate(Certificate::from_pem(ca.clone()))
+                }
+                None => ClientTlsConfig::new().with_native_roots(),
+            };
+            endpoint = endpoint
+                .tls_config(tls)
+                .map_err(|e| connect_err(e.to_string()))?;
+        }
+        let channel = endpoint
+            .connect()
             .await
-            .map_err(|e| CliError::Connect {
-                endpoint: self.endpoint.clone(),
-                detail: e.to_string(),
-            })
+            .map_err(|e| connect_err(e.to_string()))?;
+        Ok(KxGatewayClient::new(channel))
     }
 
     /// Wrap `payload` in a request, attaching `authorization: Bearer <token>`
@@ -239,6 +282,31 @@ mod tests {
     }
 
     #[test]
+    fn tls_ca_requires_https_and_is_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let ca = dir.path().join("ca.pem");
+        std::fs::write(
+            &ca,
+            "-----BEGIN CERTIFICATE-----\ntest\n-----END CERTIFICATE-----\n",
+        )
+        .unwrap();
+        // A CA with a plaintext http:// endpoint is a misconfig → usage error.
+        let c = ClientCommon {
+            endpoint: "http://example.com:50151".into(),
+            tls_ca: Some(ca.clone()),
+            ..ClientCommon::default()
+        };
+        assert!(c.resolve().is_err());
+        // With https:// the CA PEM is read and carried for the dial.
+        let c = ClientCommon {
+            endpoint: "https://example.com:50151".into(),
+            tls_ca: Some(ca),
+            ..ClientCommon::default()
+        };
+        assert!(c.resolve().unwrap().ca_pem.is_some());
+    }
+
+    #[test]
     fn plaintext_detection() {
         assert!(is_nonloopback_plaintext("http://example.com:50151"));
         assert!(is_nonloopback_plaintext("http://10.0.0.5:50151"));
@@ -253,6 +321,7 @@ mod tests {
         let ok = Resolved {
             endpoint: DEFAULT_ENDPOINT.into(),
             token: Some("s3cr3t".into()),
+            ca_pem: None,
         };
         let req = ok.request(()).unwrap();
         assert_eq!(
@@ -266,6 +335,7 @@ mod tests {
         let bad = Resolved {
             endpoint: DEFAULT_ENDPOINT.into(),
             token: Some("bad\ntoken".into()),
+            ca_pem: None,
         };
         assert!(bad.request(()).is_err());
     }

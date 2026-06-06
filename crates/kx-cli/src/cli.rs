@@ -27,7 +27,7 @@ usage: kx <command> [args]
              [--max-lease N] [--catalog-dir <dir>]
              (--listen defaults to 127.0.0.1:50151; --ws-listen — the live-event WebSocket — to :50152)
 
-  client verbs (gRPC over the gateway; common flags: --endpoint <url> --token <t> | --token-file <p> --json):
+  client verbs (gRPC over the gateway; common flags: --endpoint <url> --token <t> | --token-file <p> --tls-ca <path> --json):
     kx invoke <handle> --args <json> [--args-file <path>] [--wait] [--timeout-secs N] [--out <file>]
     kx submit --demo [--wait] [--timeout-secs N] [--out <file>]
     kx projection --instance <hex16> [--at-seq N]

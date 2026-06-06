@@ -195,11 +195,12 @@ container runs as a **non-root** user (uid 10001), keeps durable state under
 compatible (only the mounted volumes + `/tmp` are writable). `Dockerfile.inference`
 adds the CPU llama.cpp link + a `kx-generate` example for a real CPU inference run.
 
-**Auth on a published port.** A non-loopback bind refuses `--dev-allow-local`, so the
-compose uses **bearer-token auth** (a Docker secret). Plaintext gRPC carries the
-bearer in cleartext — **front `kx serve` with a TLS reverse proxy** for any
-non-loopback deployment (in-binary TLS is on the roadmap). Replace the dev tokens in
-`deploy/secrets/` for anything real.
+**Auth + TLS on a published port.** A non-loopback bind refuses `--dev-allow-local`, so
+the compose uses **bearer-token auth** (a Docker secret). Bearer-over-plaintext travels
+in cleartext, so enable **in-binary TLS** with `kx serve --tls-cert <pem> --tls-key
+<pem>` (rustls) and dial it with `kx … --endpoint https://… --tls-ca <pem>` (or a
+public CA via the OS trust store) — or front with a TLS reverse proxy. Replace the dev
+tokens in `deploy/secrets/` for anything real.
 
 **GPU posture.** OSS GPU inference today is **Metal, on an Apple host** — not in a
 Linux container (Metal is macOS-host-only). NVIDIA **CUDA inference is cloud-tier**
@@ -217,7 +218,7 @@ The `kx` CLI is one binary. `run`/`replay`/`digest` drive the engine locally;
 | `kx run` | Drive the canonical demo workflow from scratch | `--journal` `--content` · `--crash-at <pt>` · `--checkpoint-every N` · `--audit-log <path>` · `--json` |
 | `kx replay` | Recover an existing journal and finish the run | `--journal` `--content` · `--audit-log` · `--json` |
 | `kx digest` | Print the projection digest of a journal | `--journal` `--content` · `--json` |
-| `kx serve` | Host the embedded single-system gateway | `--journal` `--content` · `--listen` *(default `127.0.0.1:50151`)* · `--ws-listen` *(default `:50152`)* · `--dev-allow-local` · `--auth-token <t>=<party>` · `--auth-token-file` · `--max-lease N` · `--catalog-dir` |
+| `kx serve` | Host the embedded single-system gateway | `--journal` `--content` · `--listen` *(default `127.0.0.1:50151`)* · `--ws-listen` *(default `:50152`)* · `--dev-allow-local` · `--auth-token <t>=<party>` · `--auth-token-file` · `--tls-cert <path> --tls-key <path>` *(in-binary TLS)* · `--max-lease N` · `--catalog-dir` |
 | `kx invoke <handle>` | Bind a published recipe to JSON args and run it | `--args <json>` / `--args-file` · `--wait` · `--timeout-secs N` · `--out <file>` |
 | `kx submit --demo` | Submit a built-in pure demo run | `--wait` · `--timeout-secs N` · `--out` |
 | `kx projection` | Render a run as a DAG of Mote states | `--instance <id>` · `--at-seq N` |
@@ -349,9 +350,12 @@ Implement a trait, swap it in at construction — the guarantee machinery is unc
 kortecx is in early development; the durability spine is real and tested, but the
 reach surface is young. We name the boundaries plainly rather than hide them:
 
-- **Transport is plaintext.** The gateway speaks plain gRPC; bearer tokens over a
-  non-loopback endpoint are warned about. **Front `kx serve` with TLS** (a reverse
-  proxy or service mesh) for any non-loopback deployment.
+- **Transport: in-binary TLS or plaintext.** `kx serve --tls-cert/--tls-key` serves
+  rustls TLS on the gRPC listener (clients dial `https://…` with `--tls-ca` for a
+  self-signed cert, or the OS trust store for a public CA); the bearer-over-plaintext
+  path is still warned about. The **WebSocket bridge stays plaintext** for now — front
+  it (or the whole server) with a TLS proxy if you need `wss`. **mTLS** client-cert auth
+  is a follow-on.
 - **Auth is bearer-token + deny-all.** Identity is server-derived; the
   `PrincipalResolver` seam is where OIDC/mTLS plug in later. There is no
   multi-tenant isolation or per-tenant quota yet.

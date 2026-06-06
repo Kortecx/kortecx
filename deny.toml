@@ -69,6 +69,19 @@ ignore = [
     # Expires 2026-08-31 — forces a re-evaluation before P1.13 (the runtime
     # binary + reproducibility-discipline final check).
     { id = "RUSTSEC-2025-0141", reason = "bincode unmaintained; migration requires canonical-bytes-shift audit (see HANDOFF §1.8 follow-ups); expires 2026-08-31" },
+    # ----------------------------------------------------------------------
+    # RUSTSEC-2025-0134 — rustls-pemfile unmaintained
+    # ----------------------------------------------------------------------
+    # A transitive dep of tonic's `tls` feature (via tokio-rustls), pulled in by
+    # A1 (in-binary TLS for the gateway). `rustls-pemfile` is a tiny, stable
+    # PEM-object reader; upstream is winding it down because its functionality is
+    # being FOLDED INTO `rustls-pki-types` (the maintained successor), so this is
+    # an "absorbed into the ecosystem", not an abandoned-and-broken, signal — no
+    # known vulnerability, no untrusted input on our path (we only parse an
+    # operator-provided server cert/key + an optional client CA). It is not a
+    # direct dependency; it leaves the tree when tonic/tokio-rustls finish the
+    # `pki-types` migration. Expires 2026-08-31 — re-evaluate when bumping tonic.
+    { id = "RUSTSEC-2025-0134", reason = "rustls-pemfile unmaintained; a tonic-tls transitive (A1), folded into rustls-pki-types upstream; no vuln, operator-supplied PEM only; expires 2026-08-31" },
 ]
 
 # ----------------------------------------------------------------------------

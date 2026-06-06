@@ -81,6 +81,10 @@ serde_json         = "1"
 regex              = "1"
 proptest           = "1"
 tempfile           = "3"
+# A1 TLS — self-signed cert/key generation for the TLS handshake integration tests
+# (dev-only). Pinned to the `ring` backend (already in the lock via ureq/rustls) so
+# it adds NO new crypto provider / no aws-lc-rs C build / no new license surface.
+rcgen              = { version = "0.13", default-features = false, features = ["pem", "ring"] }
 # Benchmark harness (dev-only). default-features off drops the html_reports
 # (plotters) + rayon trees to keep the dep surface — and cargo-deny — minimal;
 # `cargo_bench_support` is the bit the `harness = false` benches actually need.

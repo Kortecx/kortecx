@@ -306,6 +306,11 @@ async fn wait_for_shutdown_signal() {
     }
 }
 
+// A flat, sequential wiring function: content store → coordinator → worker →
+// gateway read seams → catalog → auth → (optional) TLS → bind. Splitting it would
+// scatter the one-shot startup wiring across helpers for no clarity gain (the
+// precedent: `kx-runtime::engine`, `kx-executor::spawn`). Allow the length.
+#[allow(clippy::too_many_lines)]
 #[cfg(feature = "embedded-worker")]
 async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> {
     let content = Arc::new(
@@ -414,6 +419,16 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     let ws_local_addr = ws_tcp
         .local_addr()
         .map_err(|e| GatewayError::Bind(e.to_string()))?;
+    // A1: the gRPC listener can be TLS, but the WebSocket bridge is still plaintext
+    // ws:// (wss is a fast-follow). Say so loudly so a TLS deployment doesn't assume
+    // the WS surface is encrypted — front it with a TLS proxy if browsers need wss.
+    if cfg.tls.is_some() {
+        tracing::warn!(
+            ws_listen = %ws_local_addr,
+            "gRPC TLS is enabled but the WebSocket bridge serves PLAINTEXT ws:// — \
+             front it with a TLS proxy for wss (in-binary wss is a follow-on)"
+        );
+    }
     let ws_tailer: Arc<dyn EventTailer> =
         Arc::new(crate::live_tail::LiveTailer::new(live_shutdown_rx));
     let ws_task = tokio::spawn(crate::ws::serve_ws(
@@ -425,9 +440,28 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
 
     let svc = KxGatewayServer::with_interceptor(gateway, crate::auth::interceptor(resolver));
     let local_addr = resolve_listen(cfg.listen).await?;
+    // A1: build the (optional) server TLS config up front so a missing/unreadable
+    // cert or key fails `start` loudly — before the port is bound — never a silent
+    // plaintext fall-back. (The embedded loopback coordinator + worker above stay
+    // plaintext: internal traffic that never leaves the process's loopback.)
+    let tls_config = match cfg.tls.as_ref() {
+        Some(paths) => Some(crate::tls::server_tls_config(paths)?),
+        None => None,
+    };
+    tracing::info!(
+        tls = tls_config.is_some(),
+        %local_addr,
+        "gateway gRPC listener ready"
+    );
     let (shutdown, shutdown_rx) = oneshot::channel::<()>();
     let gateway = tokio::spawn(async move {
-        Server::builder()
+        let mut builder = Server::builder();
+        if let Some(tls) = tls_config {
+            builder = builder
+                .tls_config(tls)
+                .map_err(|e| GatewayError::Tls(e.to_string()))?;
+        }
+        builder
             .add_service(svc)
             .serve_with_shutdown(local_addr, async move {
                 let _ = shutdown_rx.await;

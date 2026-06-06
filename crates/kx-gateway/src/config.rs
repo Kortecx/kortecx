@@ -45,9 +45,29 @@ pub struct GatewayConfig {
     /// Directory for the durable catalog SQLite files (the signature registry +,
     /// in R2b, the recipe ledgers). `None` ⇒ alongside the journal.
     pub catalog_dir: Option<PathBuf>,
+    /// In-binary TLS for the gRPC listener (A1). `Some` ⇒ serve TLS (rustls) from
+    /// the given PEM cert + key; `None` ⇒ plaintext (the default). `--tls-cert` and
+    /// `--tls-key` are given together or not at all.
+    pub tls: Option<TlsPaths>,
+}
+
+/// PEM paths for the gRPC listener's server TLS (A1). The embedded loopback
+/// coordinator + worker stay plaintext (internal); only the external listener is
+/// encrypted. The WebSocket bridge stays plaintext for now (wss is a fast-follow —
+/// front it with the same TLS proxy, or upgrade in a focused PR).
+#[derive(Debug, Clone)]
+pub struct TlsPaths {
+    /// PEM-encoded server certificate chain (leaf first).
+    pub cert_path: PathBuf,
+    /// PEM-encoded private key for the leaf certificate.
+    pub key_path: PathBuf,
 }
 
 /// A parsed invocation: print help / version, or serve with a config.
+// `Serve` legitimately carries the full `GatewayConfig`; `Help`/`Version` are rare
+// one-shots. Boxing the common variant to shave a few bytes off a parse-once enum
+// buys an allocation for no benefit — allow the size difference.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone)]
 pub enum Cli {
     /// Print usage and exit 0.
@@ -62,7 +82,8 @@ pub enum Cli {
 pub const USAGE: &str =
     "usage: kx-gateway serve --listen <addr:port> --journal <path> --content <dir> \
 [--ws-listen <addr:port>] [--max-lease <N>] [--dev-allow-local] \
-[--auth-token <token>=<party>]... [--auth-token-file <path>] [--catalog-dir <dir>]\n       \
+[--auth-token <token>=<party>]... [--auth-token-file <path>] [--catalog-dir <dir>] \
+[--tls-cert <path> --tls-key <path>]\n       \
 kx-gateway --help | --version";
 
 impl Cli {
@@ -97,6 +118,8 @@ fn parse_serve(mut args: impl Iterator<Item = String>) -> Result<GatewayConfig, 
     let mut dev_allow_local = false;
     let mut auth_tokens: HashMap<String, String> = HashMap::new();
     let mut catalog_dir: Option<PathBuf> = None;
+    let mut tls_cert: Option<PathBuf> = None;
+    let mut tls_key: Option<PathBuf> = None;
 
     while let Some(flag) = args.next() {
         let mut take_value = |name: &str| -> Result<String, GatewayError> {
@@ -145,6 +168,8 @@ fn parse_serve(mut args: impl Iterator<Item = String>) -> Result<GatewayConfig, 
                 parse_token_file(&body, &mut auth_tokens)?;
             }
             "--catalog-dir" => catalog_dir = Some(PathBuf::from(take_value("--catalog-dir")?)),
+            "--tls-cert" => tls_cert = Some(PathBuf::from(take_value("--tls-cert")?)),
+            "--tls-key" => tls_key = Some(PathBuf::from(take_value("--tls-key")?)),
             other => return Err(GatewayError::Config(format!("unknown flag {other:?}"))),
         }
     }
@@ -163,6 +188,21 @@ fn parse_serve(mut args: impl Iterator<Item = String>) -> Result<GatewayConfig, 
         ));
     }
 
+    // TLS cert + key are given together or not at all (a half-configured TLS would
+    // silently fall back to plaintext — fail closed instead).
+    let tls = match (tls_cert, tls_key) {
+        (Some(cert_path), Some(key_path)) => Some(TlsPaths {
+            cert_path,
+            key_path,
+        }),
+        (None, None) => None,
+        _ => {
+            return Err(GatewayError::Config(
+                "--tls-cert and --tls-key must be given together".into(),
+            ))
+        }
+    };
+
     Ok(GatewayConfig {
         listen,
         ws_listen,
@@ -172,6 +212,7 @@ fn parse_serve(mut args: impl Iterator<Item = String>) -> Result<GatewayConfig, 
         dev_allow_local,
         auth_tokens,
         catalog_dir,
+        tls,
     })
 }
 
@@ -351,6 +392,33 @@ mod tests {
         );
         assert_eq!(c.catalog_dir, Some(PathBuf::from("/tmp/cat")));
         assert!(!c.dev_allow_local);
+    }
+
+    #[test]
+    fn tls_cert_and_key_must_be_given_together() {
+        let base = |extra: &[&str]| {
+            let mut a = vec![
+                "serve",
+                "--listen",
+                "127.0.0.1:0",
+                "--journal",
+                "/tmp/j",
+                "--content",
+                "/tmp/c",
+            ];
+            a.extend_from_slice(extra);
+            Cli::from_args(a)
+        };
+        // Both → Some(TlsPaths).
+        let c = serve(base(&["--tls-cert", "/tmp/cert.pem", "--tls-key", "/tmp/key.pem"]).unwrap());
+        let tls = c.tls.expect("tls configured");
+        assert_eq!(tls.cert_path, PathBuf::from("/tmp/cert.pem"));
+        assert_eq!(tls.key_path, PathBuf::from("/tmp/key.pem"));
+        // Cert-without-key and key-without-cert are both errors (fail closed).
+        assert!(base(&["--tls-cert", "/tmp/cert.pem"]).is_err());
+        assert!(base(&["--tls-key", "/tmp/key.pem"]).is_err());
+        // Neither → None (plaintext default).
+        assert!(serve(base(&[]).unwrap()).tls.is_none());
     }
 
     #[test]
