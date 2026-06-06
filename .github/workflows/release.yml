@@ -1,0 +1,111 @@
+name: Release
+
+# Tag-triggered: publish SHA-256-verified prebuilt FFI-free `kx` binaries on a `v*`
+# tag (the tag is cut from an already-green `main`). This is NOT a pull-request /
+# branch check, so it adds NO branch-protection status context. `scripts/install.sh`
+# downloads these assets. `leak-check.yml` still guards every push/PR to main.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to (re)build a release for"
+        required: true
+
+permissions:
+  contents: write # create the GitHub Release + upload assets
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # build — one FFI-free `kx` per target, on a NATIVE runner (no cross-compile):
+  # linux-x86_64 (ubuntu), linux-aarch64 (ubuntu-arm), macos-arm64 (macos-14).
+  # Asset names are the target triples, so adding a future target (e.g.
+  # x86_64-pc-windows-msvc, x86_64-apple-darwin) is a localized matrix add — the
+  # install-script detection already has the seams.
+  # ---------------------------------------------------------------------------
+  build:
+    name: build ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+          - target: aarch64-apple-darwin
+            runner: macos-14
+    steps:
+      - name: Checkout (NO submodules — the prebuilt `kx` is FFI-free)
+        uses: actions/checkout@v6
+
+      - name: Toolchain (from rust-toolchain.toml)
+        run: cargo --version
+
+      - name: Build the FFI-free kx
+        run: cargo build --release -p kx-cli
+
+      - name: Package + checksum
+        shell: bash
+        run: |
+          asset="kx-${{ matrix.target }}"
+          cp target/release/kx "$asset"
+          strip "$asset" || true
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "$asset" > "$asset.sha256"
+          else
+            shasum -a 256 "$asset" > "$asset.sha256"
+          fi
+          cat "$asset.sha256"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kx-${{ matrix.target }}
+          path: |
+            kx-${{ matrix.target }}
+            kx-${{ matrix.target }}.sha256
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # publish — gather the per-target binaries, assemble one `checksums.txt`, and
+  # create (or update) the GitHub Release via the gh CLI (no third-party action).
+  # ---------------------------------------------------------------------------
+  publish:
+    name: publish release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Assemble checksums.txt
+        shell: bash
+        run: |
+          cd dist
+          cat kx-*.sha256 > checksums.txt
+          rm -f kx-*.sha256
+          echo "=== release assets ==="; ls -la
+          echo "=== checksums.txt ==="; cat checksums.txt
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          if gh release view "$tag" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release upload "$tag" dist/* --repo "${{ github.repository }}" --clobber
+          else
+            gh release create "$tag" dist/* \
+              --repo "${{ github.repository }}" \
+              --title "$tag" \
+              --generate-notes
+          fi

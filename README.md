@@ -94,11 +94,20 @@ anything missing on your OS.
 
 ## Install & quick start
 
-Install the `kx` binary (Rust only — no C++ toolchain):
+Install the FFI-free `kx` binary — no toolchain, no clone:
+
+```bash
+# Prebuilt binary (Linux x86_64/arm64, macOS arm64) — SHA-256 verified, no sudo,
+# installs to ~/.local/bin (override with KX_INSTALL_DIR):
+curl -fsSL https://raw.githubusercontent.com/Kortecx/kortecx/main/scripts/install.sh | sh
+```
+
+Or from source (Rust 1.94+ only — no C++ toolchain), or via Docker:
 
 ```bash
 git clone https://github.com/Kortecx/kortecx.git && cd kortecx
 just setup            # installs `kx` (or: cargo install --path crates/kx-cli)
+# …or run it containerized — see "Run in Docker" below.
 ```
 
 Now **prove exactly-once end to end** — run the canonical demo workflow, crash it
