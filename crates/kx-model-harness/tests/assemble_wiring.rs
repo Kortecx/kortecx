@@ -249,6 +249,7 @@ fn drive(workflow: &DemoWorkflow, dir: &Path) -> (Result<RunOutcome, RuntimeErro
         Some(&sink),
         None, // capture_sink (D67) — off for this assemble-wiring test
         None, // audit_sink (R4) — off for this assemble-wiring test
+        None, // failure_policy (PR-1) — legacy abort-on-failure
     );
     let captured = inputs.lock().unwrap().clone();
     (result, captured)
@@ -455,6 +456,7 @@ fn image_parent_routes_child_to_multimodal_input() {
         Some(&sink),
         None,
         None, // audit_sink (R4)
+        None, // failure_policy (PR-1) — legacy abort-on-failure
     );
     assert!(result.unwrap().is_complete(), "both Motes committed");
 

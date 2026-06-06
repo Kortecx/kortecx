@@ -232,6 +232,7 @@ fn drive(
         Some(&sink),
         None,
         None, // audit_sink (R4)
+        None, // failure_policy (PR-1) — legacy abort-on-failure
     );
     (result, calls.load(Ordering::SeqCst))
 }

@@ -148,6 +148,33 @@ impl DemoWorkflow {
     }
 }
 
+/// A flat (shaperless) workflow of independent PURE **root** Motes — one per
+/// `seed`, with no parents so each commits or fails independently (no cascade).
+/// Test-only: the PR-1 failure-policy tests need a DAG where one Mote can be
+/// dead-lettered while its siblings still commit, driven with `shaper: None`.
+#[cfg(test)]
+pub(crate) fn flat_pure_workflow(seeds: &[u8]) -> DemoWorkflow {
+    let cap = ToolName("demo-tool".into());
+    let permissive = permissive_warrant();
+    let motes = seeds
+        .iter()
+        .map(|&seed| WorkflowMote {
+            mote: pure_mote(seed, &[]),
+            warrant: permissive.clone(),
+            capability: cap.clone(),
+        })
+        .collect();
+    // The flat path never consults a shaper (run with `shaper: None`); a sentinel
+    // id fills the struct's crash/shaper fields.
+    let sentinel = pure_mote(0xFF, &[]).id;
+    DemoWorkflow {
+        motes,
+        stc_crash_target: sentinel,
+        vtc_crash_target: sentinel,
+        shaper_id: sentinel,
+    }
+}
+
 /// A permissive warrant — the demo runs in a single trusted process, so every
 /// axis is wide open. (The broker/executor seams still enforce structurally;
 /// the warrant just doesn't narrow anything for the demo.)
