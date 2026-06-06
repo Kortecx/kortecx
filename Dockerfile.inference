@@ -1,45 +1,87 @@
 # syntax=docker/dockerfile:1
 #
-# kortecx — CPU inference image (Linux).
+# kortecx — CPU inference image (Linux), AL1-capable.
 #
-# This image adds the llama.cpp FFI (built from the PINNED submodule commit) on top
-# of the `kx` runtime, so the inference toolchain is proven to build + LINK inside a
-# Linux container. It ships TWO binaries:
+# Adds the llama.cpp FFI (built from the PINNED submodule commit) on top of the
+# `kx` runtime, built `--features inference` so `kx serve` can dispatch REAL model
+# Motes in-process. Ships TWO binaries:
 #
-#   kx           — the runtime (serve / run / replay / digest). Same as the FFI-free
-#                  image: `kx` itself has NO model-inference verb yet — the in-process
-#                  model-dispatch path wires at A4 (until then `kx serve` uses the
-#                  deterministic demo executor). This image is the forward base for it.
-#   kx-generate  — the `kx-llamacpp` `generate` example: a REAL CPU inference run
-#                  (load GGUF → tokenize → decode → sample → detokenize). Use it to
-#                  actually run a model on CPU in a container today:
+#   kx           — the AL1 runtime (serve / run / replay / digest). Serve a mounted
+#                  GGUF as the model recipe:
+#                    docker run --rm -v $PWD/models:/var/lib/kortecx/models \
+#                      -e KX_SERVE_MODEL_GGUF=/var/lib/kortecx/models/<model>.gguf \
+#                      kortecx/kx:inference-cpu serve --dev-allow-local
+#                    # then, loopback inside the container (--dev-allow-local is
+#                    # loopback-only; for remote use bearer tokens + 0.0.0.0):
+#                    #   docker exec <ctr> kx invoke kx/recipes/chat \
+#                    #     --args '{"prompt":"…"}' --wait
+#                  Without KX_SERVE_MODEL_GGUF, `kx serve` runs the deterministic
+#                  demo path (no model dispatch).
+#   kx-generate  — the kx-llamacpp `generate` example (load → decode → sample):
 #                    docker run --rm -v $PWD/models:/models \
 #                      --entrypoint kx-generate kortecx/kx:inference-cpu \
 #                      /models/stories260K.gguf "Once upon a time"
 #
+# BUILD SPEED — this image uses the same strategy as the FFI-free `Dockerfile`:
+#   * cargo-chef cooks kx-cli's (default, FFI-free) dependency closure into a
+#     Docker LAYER that is reused on every source-only rebuild;
+#   * BuildKit cache mounts persist the cargo registry + the `target/` dir
+#     (INCLUDING the compiled llama.cpp static archives) across builds, so a
+#     source-only rebuild is minutes — the heavy llama.cpp C++ compile only re-runs
+#     when the submodule pin or `kx-llamacpp-sys/build.rs` actually changes.
+# The toolchain + all build artifacts stay in the builder; the runtime image ships
+# ONLY the two stripped binaries, so the container's CPU/RAM go to inference +
+# agentic orchestration at run time, not to a build.
+#
+# RUNTIME TUNING — llama.cpp uses all detected cores by default; in a CPU-capped
+# container cap the inference threads to the allotment with `-e KX_N_THREADS=<n>`
+# (alongside `docker run --cpus=<n>`). `KX_KV_TYPE=q8_0` ~halves the KV-cache RAM.
+#
 # CPU ONLY. Metal is macOS-HOST-only (`kx-llamacpp-sys/build.rs` links Metal solely
 # on `target.contains("apple")`) — a Linux container cannot use Metal regardless of
-# the host. GPU/NVIDIA is the cloud-side seam — see `Dockerfile.cuda` (D28: CUDA
-# inference is cloud-tier; OSS ships the seam, not the build).
+# the host. The aarch64-Linux fp16 baseline (arm64 servers / Apple-Silicon Docker)
+# is set in `build.rs`. GPU/NVIDIA is the cloud-side seam — see `Dockerfile.cuda`
+# (D28: CUDA inference is cloud-tier; OSS ships the seam, not the build).
 #
 #   build : docker build -f Dockerfile.inference -t kortecx/kx:inference-cpu .
 #           (or: just docker-build-inference)
 
-# ---- builder ---------------------------------------------------------------
-FROM rust:1.94-bookworm AS builder
+# ---- chef base: cargo-chef for dependency-layer caching --------------------
+# Pinned to the workspace toolchain channel (rust-toolchain.toml = 1.94.0).
+FROM rust:1.94-bookworm AS chef
+RUN cargo install cargo-chef --locked
+WORKDIR /app
 
+# ---- planner: distill the dependency graph into recipe.json -----------------
+# recipe.json is a function of the Cargo manifests + lockfile ONLY, so the cooked
+# layer below is reused across every source-only change.
+FROM chef AS planner
+COPY . .
+RUN cargo chef prepare --recipe-path recipe.json
+
+# ---- builder: cook deps (cached), then build the AL1 runtime + example ------
+FROM chef AS builder
 # The native build deps the FFI link needs (mirrors the CI `ffi-link` job +
 # `just setup-inference`): cmake + clang/libclang (bindgen) + a C++ toolchain.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends cmake clang libclang-dev build-essential git ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /app
-COPY . .
+COPY --from=planner /app/recipe.json recipe.json
+# Cook kx-cli's DEFAULT (FFI-free) dependency closure — the bulk of the build.
+# Cached unless the manifests / lockfile change. We deliberately cook WITHOUT
+# `--features inference` so cargo-chef (which stubs workspace crates) never reaches
+# the kx-llamacpp-sys build script: the heavy llama.cpp cmake C++ build runs ONCE in
+# the build step below, where the submodule + toolchain exist, and is persisted by
+# the `target` cache mount across rebuilds.
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/app/target \
+    cargo chef cook --release --recipe-path recipe.json -p kx-cli
 
-# Fetch the PINNED llama.cpp commit into the submodule path (the submodule itself is
-# .dockerignore'd to keep the FFI-free context lean). KEEP THIS SHA IN SYNC WITH
+# App sources + the PINNED llama.cpp submodule (the submodule is .dockerignore'd to
+# keep the FFI-free context lean). KEEP THIS SHA IN SYNC WITH
 # `crates/kx-llamacpp-sys/PIN.md` — that file is the source of truth for the ABI pin.
+COPY . .
 ARG LLAMA_CPP_REF=1a03cf47f67be591699d1f0f7ca28e1ed6eb8c7e
 RUN rm -rf crates/kx-llamacpp-sys/llama.cpp \
  && git init -q crates/kx-llamacpp-sys/llama.cpp \
@@ -47,9 +89,15 @@ RUN rm -rf crates/kx-llamacpp-sys/llama.cpp \
  && git -C crates/kx-llamacpp-sys/llama.cpp fetch -q --depth 1 origin "${LLAMA_CPP_REF}" \
  && git -C crates/kx-llamacpp-sys/llama.cpp checkout -q FETCH_HEAD
 
-# Build the runtime + the FFI link (proves the static archives build + link under
-# Linux) + the real CPU-inference example. GGML_CUDA stays OFF (build.rs default).
-RUN cargo build --release -p kx-cli \
+# Build the AL1 runtime WITH `--features inference` (so `kx serve` dispatches real
+# model Motes; also proves the static archives build + LINK under Linux + exercises
+# the dep-wall-safe `kx-inference[llamacpp]` pull) + the real CPU-inference example.
+# The cache mounts make a source-only rebuild reuse the compiled llama.cpp archives
+# + dependency objects. GGML_CUDA stays OFF (build.rs default; CPU-only). `cp` out
+# of the cache-mounted target so the binaries land in committed image layers.
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/app/target \
+    cargo build --release -p kx-cli --features inference \
  && cargo build --release -p kx-llamacpp --example generate \
  && strip target/release/kx target/release/examples/generate \
  && cp target/release/kx /usr/local/bin/kx \
@@ -60,6 +108,8 @@ FROM debian:bookworm-slim AS runtime
 
 # libstdc++6: the Linux FFI link pulls `stdc++` (build.rs:169). ca-certificates +
 # tini as in the FFI-free image (TLS-ready; PID-1 SIGTERM forwarding + reaping).
+# Distroless is the hardening target (Pass B) — deferred for the same reason as the
+# FFI-free image (no shell for the smoke harness / operational debugging).
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates libstdc++6 tini \
  && rm -rf /var/lib/apt/lists/*

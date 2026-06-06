@@ -123,6 +123,61 @@ fetch-demo-model:
     mv "$DEST.partial" "$DEST"
     echo " ✓ verified + saved: $DEST"
 
+# Download a PUBLIC Qwen3 stand-in GGUF (unsloth Qwen3-0.6B-Q4_K_M, ~397 MB) to
+# target/models/ with SHA-256 verification — the drop-in test vehicle for the
+# Qwen3-4B agent campaign until the private finetune ships. Same `qwen3` arch +
+# ChatML + native tool-calling shape as the real model. Idempotent.
+#
+# Then point the harness at it:
+#   export KX_MODEL_NAME=qwen3-0.6b
+#   export KX_MODEL_HARNESS_GGUF="$(pwd)/target/models/qwen3-0.6b-q4_k_m.gguf"
+#
+# For the REAL (private) Qwen3-4B q4_k_m, override the source — a SHA is REQUIRED
+# (never fetch a model unverified); a gated repo also needs HF_TOKEN:
+#   KX_AGENT_MODEL_URL=<hf-resolve-url> KX_AGENT_MODEL_SHA=<sha256> \
+#     KX_AGENT_MODEL_DEST=target/models/qwen3-4b-q4_k_m.gguf HF_TOKEN=<tok> just fetch-agent-model
+fetch-agent-model:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    URL="${KX_AGENT_MODEL_URL:-https://huggingface.co/unsloth/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B-Q4_K_M.gguf}"
+    SHA="${KX_AGENT_MODEL_SHA:-ac2d97712095a558e31573f62f466a3f9d93990898b0ec79d7c974c1780d524a}"
+    DEST="${KX_AGENT_MODEL_DEST:-target/models/qwen3-0.6b-q4_k_m.gguf}"
+    mkdir -p "$(dirname "$DEST")"
+    if [ -f "$DEST" ] && [ "$(shasum -a 256 "$DEST" | cut -d' ' -f1)" = "$SHA" ]; then
+        echo " ✓ agent stand-in already present + verified: $DEST"
+        exit 0
+    fi
+    echo "Downloading $URL → $DEST ..."
+    rm -f "$DEST" "$DEST.partial"
+    # Token-aware fetch (no bash arrays — macOS ships bash 3.2 where an empty
+    # `"${arr[@]}"` trips `set -u`).
+    if command -v curl >/dev/null 2>&1; then
+        if [ -n "${HF_TOKEN:-}" ]; then
+            curl -fsSL -H "Authorization: Bearer ${HF_TOKEN}" "$URL" -o "$DEST.partial"
+        else
+            curl -fsSL "$URL" -o "$DEST.partial"
+        fi
+    elif command -v wget >/dev/null 2>&1; then
+        if [ -n "${HF_TOKEN:-}" ]; then
+            wget -q --header="Authorization: Bearer ${HF_TOKEN}" "$URL" -O "$DEST.partial"
+        else
+            wget -q "$URL" -O "$DEST.partial"
+        fi
+    else
+        echo " ✗ neither curl nor wget found on PATH" >&2; exit 1
+    fi
+    GOT="$(shasum -a 256 "$DEST.partial" | cut -d' ' -f1)"
+    if [ "$GOT" != "$SHA" ]; then
+        echo " ✗ SHA-256 mismatch: expected $SHA, got $GOT" >&2
+        echo "   (overriding the model? pass the matching KX_AGENT_MODEL_SHA)" >&2
+        rm -f "$DEST.partial"; exit 1
+    fi
+    mv "$DEST.partial" "$DEST"
+    echo " ✓ verified + saved: $DEST"
+    echo "   Point the harness at it:"
+    echo "     export KX_MODEL_NAME=qwen3-0.6b"
+    echo "     export KX_MODEL_HARNESS_GGUF=\"$(pwd)/$DEST\""
+
 # Docs-as-test gate: run the README quickstart end to end and assert the canonical
 # projection digest. Builds the FFI-free `kx` binary (no C++ toolchain) and drives
 # run → crash → replay → digest over temp dirs, asserting the canonical digest
@@ -290,6 +345,15 @@ check-reproducible:
 # need network access.
 smoke-test-with-model:
     cargo test -p kx-llamacpp --features model-smoke-test -- --nocapture
+
+# LOCAL / manual gate (NOT a CI job): exercise the safe-wrapper inference pipeline
+# with GPU offload forced ON (`KX_N_GPU_LAYERS=-1`) so an Apple-Silicon dev sees
+# Metal actually used (look for `offloaded N/N layers to GPU` + `ggml_metal_*`),
+# plus the q8_0 KV-cache + flash-attn determinism cases. Pairs with the AL1
+# live-serve witness (`cargo test -p kx-gateway --features inference -- --ignored`).
+# CPU elsewhere (CUDA is cloud-only, D28); harmless no-op without a GPU.
+metal-smoke:
+    KX_N_GPU_LAYERS=-1 cargo test -p kx-llamacpp --features model-smoke-test -- --nocapture
 
 # LOCAL / manual gate (NOT a CI job): downloads a small VLM (Qwen2-VL-2B-Instruct
 # GGUF + mmproj, ~1.6 GB) and runs the full IMAGE pipeline through the safe wrapper

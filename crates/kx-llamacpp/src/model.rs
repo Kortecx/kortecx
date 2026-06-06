@@ -28,18 +28,30 @@ impl Default for ModelParams {
 }
 
 impl ModelParams {
-    /// Construct with llama.cpp's defaults.
+    /// Construct with llama.cpp's defaults, then apply the env-driven GPU
+    /// offload default (the `KX_N_GPU_LAYERS` env var).
+    ///
+    /// Reading the env HERE is what lets the (frozen) `kx-inference` dispatch
+    /// path — which calls `Model::load` → `ModelParams::new()` — offload to the
+    /// GPU with no edit to the frozen trio. When `KX_N_GPU_LAYERS` is unset the
+    /// platform default applies: **all layers on Apple (Metal compiled in), CPU
+    /// (`0`) elsewhere** (CUDA is cloud-only per D28). The non-Apple default of
+    /// `0` is byte-identical to llama.cpp's `llama_model_default_params()`.
     pub fn new() -> Self {
         // SAFETY: llama_model_default_params is a pure C function that returns
         // a value struct populated with safe defaults.
-        Self {
+        let mut params = Self {
             inner: unsafe { sys::llama_model_default_params() },
-        }
+        };
+        params.inner.n_gpu_layers =
+            crate::env::n_gpu_layers().unwrap_or_else(crate::env::default_n_gpu_layers);
+        params
     }
 
     /// Number of layers to offload to GPU. Negative = all. Per D28 CUDA is
     /// disabled in OSS builds, so this only has effect when llama.cpp's
     /// platform-default GPU backend is enabled (e.g. Metal on Apple Silicon).
+    /// Overrides the `KX_N_GPU_LAYERS` env default applied by [`Self::new`].
     pub fn with_n_gpu_layers(mut self, n: i32) -> Self {
         self.inner.n_gpu_layers = n;
         self

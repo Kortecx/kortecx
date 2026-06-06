@@ -104,7 +104,8 @@ fn main() {
     // ------------------------------------------------------------------
     // 1. Build llama.cpp via CMake.
     // ------------------------------------------------------------------
-    let dst = cmake::Config::new(&llama_cpp_dir)
+    let mut config = cmake::Config::new(&llama_cpp_dir);
+    config
         // Static libraries — no .so/.dylib runtime dependencies.
         .define("BUILD_SHARED_LIBS", "OFF")
         // No tests, no examples, no server (they bloat the build and pull deps).
@@ -128,8 +129,29 @@ fn main() {
         // Position-independent code for downstream static linking.
         .define("CMAKE_POSITION_INDEPENDENT_CODE", "ON")
         // Use Release optimization for the C++ build to keep runtime perf.
-        .profile("Release")
-        .build();
+        .profile("Release");
+
+    // aarch64-LINUX baseline: GCC won't inline the `__fp16` NEON intrinsics
+    // ggml-cpu's `vec.cpp`/`ops.cpp` use (`vfmaq_f16`/`vaddq_f16`) without an arch
+    // that enables FP16 arithmetic — the default build fails with "inlining failed
+    // in call to 'always_inline' 'vfmaq_f16' … target specific option mismatch"
+    // (hit when building the Linux/arm64 inference image, e.g. Docker on Apple
+    // Silicon). ggml's default `GGML_NATIVE=ON` path runs `-mcpu=native` detection
+    // which on GCC-12 yields `+fp16fml` but NOT the base `+fp16` arithmetic the
+    // intrinsics need; and `GGML_CPU_ARM_ARCH` is only honored when `GGML_NATIVE`
+    // is OFF (ggml `ggml-cpu/CMakeLists.txt`). So set BOTH: disable native
+    // detection and pin `armv8.2-a+fp16` (the modern-arm64 baseline — Apple
+    // Silicon, Graviton2+, Ampere). SCOPED to aarch64-linux so the aarch64-APPLE
+    // (Apple clang enables fp16 itself) + x86_64 builds are byte-unchanged: macOS
+    // native + amd64 CI never take this branch.
+    let cmake_target = env::var("TARGET").unwrap_or_default();
+    if cmake_target.contains("aarch64") && cmake_target.contains("linux") {
+        config
+            .define("GGML_NATIVE", "OFF")
+            .define("GGML_CPU_ARM_ARCH", "armv8.2-a+fp16");
+    }
+
+    let dst = config.build();
 
     // ------------------------------------------------------------------
     // 2. Tell cargo about the build output + libraries.

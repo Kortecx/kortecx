@@ -56,6 +56,14 @@ kx-capability   = { workspace = true, optional = true }
 # of kx-executor); gated under `embedded-worker` so the gateway-only closure that
 # `build-no-inference` asserts stays unchanged.
 tempfile        = { workspace = true, optional = true }
+# AL1 (the live `kx serve` LLM loop): the in-process inference backend + model
+# registry/validator, all OPTIONAL + behind the `inference` feature so the DEFAULT
+# build stays FFI-free (`build-no-inference` + the dep-wall). We depend on
+# `kx-inference` WITH its `llamacpp` feature — pulling the C++ FFI transitively
+# WITHOUT naming the FFI crate here (the dep-wall manifest scan forbids that name).
+kx-inference       = { workspace = true, optional = true, features = ["llamacpp"] }
+kx-model-store     = { workspace = true, optional = true }
+kx-model-validator = { workspace = true, optional = true }
 # A1: `tls` enables in-binary rustls TLS on the gRPC listener (reuses the rustls
 # 0.23 + ring already in the lock via ureq — no new crypto provider). Server cert/
 # key via `--tls-cert`/`--tls-key`; plaintext stays the default (TLS opt-in).
@@ -107,9 +115,17 @@ default = ["embedded-worker"]
 # consumer can disable it to embed a gateway-only front end (then `serve` requires an
 # external coordinator — a later step; R1 refuses without the feature).
 embedded-worker = ["dep:kx-coordinator", "dep:kx-worker", "dep:kx-executor", "dep:kx-capability", "dep:tempfile"]
-# Reserved (R2+): the in-process model / WORLD-MUTATING dispatch path. Mirrors the
-# workspace's llamacpp gate; OFF by default so `build-no-inference` stays green.
-llamacpp = []
+# AL1: the in-process model dispatch path for `kx serve` — the embedded worker can
+# execute model Motes through the in-process inference backend. OFF by default so
+# the default `kx serve` stays FFI-free (`build-no-inference` + the dep-wall stay
+# green); a toolchain build opts in with `--features inference`. Implies the
+# embedded worker (the loop runs in the in-process worker).
+inference = [
+    "embedded-worker",
+    "dep:kx-inference",
+    "dep:kx-model-store",
+    "dep:kx-model-validator",
+]
 
 [lints]
 workspace = true

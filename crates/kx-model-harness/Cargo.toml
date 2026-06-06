@@ -31,12 +31,18 @@ kx-workflow.workspace = true
 # model-runs-once + read-the-plan-back wiring lives HERE (the harness), keeping
 # kx-planner a pure lowering lib with no projection/inference coupling.
 kx-planner.workspace = true
+# M-agent: register the campaign model's descriptor + ProvidedCapabilities and
+# type-check it against the kortecx agent's RequiredCapabilities (Apache-2.0,
+# Text, native tool-calling). Both are FFI-free leaves.
+kx-model-store.workspace = true
+kx-model-validator.workspace = true
 kx-dataset.workspace = true
 kx-critic-types.workspace = true
 kx-capture.workspace = true
 blake3.workspace = true
 smallvec.workspace = true
 serde.workspace = true
+thiserror.workspace = true
 # `raw_value` carries a model-proposed tool call's args verbatim (opaque bytes,
 # never a dynamic `Value`/floats) in `toolcall::parse_tool_call` (M5.2, IMP-5).
 serde_json = { workspace = true, features = ["raw_value"] }

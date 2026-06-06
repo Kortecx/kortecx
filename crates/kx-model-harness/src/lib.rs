@@ -57,32 +57,50 @@ pub mod evidence;
 pub mod executor;
 pub mod metered;
 pub mod prompt;
+pub mod registration;
 pub mod toolcall;
 pub mod workflows;
 
 pub use broker::{BrokerObserver, ModelBroker};
 pub use executor::ModelExecutor;
 pub use metered::MeteredBackend;
+pub use registration::{register_kortecx, RegistrationError};
 
 /// The exact quantization of the pinned campaign model, folded into the
 /// [`ModelId`] so a different quant yields a different identity.
 pub const MODEL_QUANT: &str = "q4_k_m";
 
+/// The default model NAME folded into the [`ModelId`] when `KX_MODEL_NAME` is
+/// unset. Kept as the historical string so existing harness rows / recipe-reuse
+/// keep their `MoteId` identities byte-stable.
+pub const DEFAULT_MODEL_NAME: &str = "qwen2.5-0.5b-instruct";
+
+/// The campaign model name: the `KX_MODEL_NAME` env override, else
+/// [`DEFAULT_MODEL_NAME`]. The Qwen3-4B agent campaign sets
+/// `KX_MODEL_NAME=qwen3-4b-instruct`; the default keeps the stand-in's identity.
+#[must_use]
+pub fn model_name() -> String {
+    std::env::var("KX_MODEL_NAME").unwrap_or_else(|_| DEFAULT_MODEL_NAME.to_string())
+}
+
 /// Resolve the pinned GGUF path: the `KX_MODEL_HARNESS_GGUF` env override, else
-/// `<workspace>/target/models/qwen2.5-0.5b-instruct-q4_k_m.gguf`.
+/// `<workspace>/target/models/<model_name>-<quant>.gguf` (default
+/// `qwen2.5-0.5b-instruct-q4_k_m.gguf`).
 #[must_use]
 pub fn default_gguf_path() -> std::path::PathBuf {
     if let Ok(p) = std::env::var("KX_MODEL_HARNESS_GGUF") {
         return std::path::PathBuf::from(p);
     }
     std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../target/models/qwen2.5-0.5b-instruct-q4_k_m.gguf")
+        .join("../../target/models")
+        .join(format!("{}-{MODEL_QUANT}.gguf", model_name()))
 }
 
-/// Derive the pinned-model [`ModelId`] from a GGUF file: the name
-/// `qwen2.5-0.5b-instruct`, the quant, and the file's blake3 (D50 — model
-/// identity is content and quant, so a different model/quant yields a different
-/// `ModelId`, hence a different `MoteId`).
+/// Derive the model [`ModelId`] from a GGUF file: the [`model_name`], the quant,
+/// and the file's blake3 (D50 — model identity is content + quant, so a
+/// different model/quant yields a different `ModelId`, hence a different
+/// `MoteId`). With `KX_MODEL_NAME` unset the id is byte-identical to the
+/// historical `qwen2.5-0.5b-instruct:{quant}:{hex}` form.
 pub fn model_id_for(gguf_path: &Path) -> std::io::Result<ModelId> {
     use std::io::Read;
     let mut f = std::fs::File::open(gguf_path)?;
@@ -96,9 +114,7 @@ pub fn model_id_for(gguf_path: &Path) -> std::io::Result<ModelId> {
         hasher.update(&buf[..n]);
     }
     let hex = hasher.finalize().to_hex();
-    Ok(ModelId(format!(
-        "qwen2.5-0.5b-instruct:{MODEL_QUANT}:{hex}"
-    )))
+    Ok(ModelId(format!("{}:{MODEL_QUANT}:{hex}", model_name())))
 }
 
 /// A permissive warrant for harness Motes. Unlike the demo's `permissive_warrant`

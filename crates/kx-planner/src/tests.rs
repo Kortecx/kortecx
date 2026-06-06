@@ -152,6 +152,39 @@ fn well_formed_plan_decodes() {
 }
 
 #[test]
+fn think_preamble_then_plan_decodes() {
+    // Qwen3 thinking-mode: a reasoning block precedes the plan JSON.
+    let bytes = json(
+        "<think>The user wants a read then a summary.</think>\n{\"plan\":{\"version\":1,\"steps\":[{\"role\":\"reader\",\"intent\":\"read\"},{\"role\":\"summarizer\",\"intent\":\"sum\"}],\"edges\":[{\"parent\":0,\"child\":1}]}}",
+    );
+    let plan = decode_plan(&bytes, 8192).expect("a plan after a think block decodes");
+    assert_eq!(plan.steps.len(), 2);
+    assert_eq!(plan.edges.len(), 1);
+}
+
+#[test]
+fn unclosed_think_is_malformed() {
+    // An unterminated reasoning block strips to "" ⇒ a plan is mandatory ⇒ Err.
+    assert!(matches!(
+        decode_plan(b"<think>reasoning with no closing tag", 8192),
+        Err(PlanError::Malformed { .. })
+    ));
+}
+
+#[test]
+fn oversize_with_think_still_oversize_on_original_bytes() {
+    // The size cap is on the ORIGINAL bytes — a giant `<think>` block cannot
+    // sneak past the budget by being stripped before the length check.
+    let mut s = String::from("<think>");
+    s.push_str(&"x".repeat(10_240));
+    s.push_str("</think>{\"plan\":{\"version\":1,\"steps\":[{\"role\":\"r\",\"intent\":\"i\"}]}}");
+    assert!(matches!(
+        decode_plan(s.as_bytes(), 64),
+        Err(PlanError::Oversize { .. })
+    ));
+}
+
+#[test]
 fn oversize_is_refused_before_parse() {
     // A 10 KiB buffer with a 4-byte cap must refuse on size alone (no parse).
     let big = vec![b'{'; 10_240];

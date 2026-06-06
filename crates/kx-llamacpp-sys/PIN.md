@@ -38,6 +38,13 @@ This is why the peer-review of P1.7-foundation flagged `kx-llamacpp-sys` as
 *ASSUMED-with-tail-risk* (the link compiles, smoke tests pass, but FFI bugs
 hide until specific call patterns hit them).
 
+> **Note (agent-model integration).** This pin already provides everything the
+> Qwen3-4B agent model + the GPU/decoding tuning need — **no bump required**:
+> `qwen3` arch (`src/llama-arch.cpp` `LLM_ARCH_QWEN3`), the `llama_flash_attn_type`
+> enum on `llama_context_params.flash_attn_type`, and `type_k`/`type_v` (`ggml_type`)
+> KV-cache element types. This SHA equals the `LLAMA_CPP_REF` the companion model
+> repo (`Kortecx/kortecx-model-base-0.0.1`) pins for GGUF format compatibility.
+
 The pin makes ABI drift **an explicit, audited event** rather than a
 shadow upgrade.
 

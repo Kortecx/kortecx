@@ -31,18 +31,42 @@ pub fn max_plan_bytes(warrant: &WarrantSpec) -> usize {
     (warrant.model_route.max_output_tokens as usize).saturating_mul(4)
 }
 
+/// Strip a single leading `<think>…</think>` reasoning block (Qwen3 thinking
+/// mode) so the strict envelope parser sees the JSON plan that follows it.
+///
+/// ONLY a leading block is removed — never a mid-string scan. An unclosed
+/// `<think>` (reasoning with no closing tag) yields `""`, which fails the
+/// strict parse below (a plan is mandatory) — fail-closed.
+///
+/// Total + panic-free (`find` returns a valid byte boundary; the ASCII close
+/// tag makes the post-tag slice boundary always valid).
+fn strip_reasoning_preamble(text: &str) -> &str {
+    const OPEN: &str = "<think>";
+    const CLOSE: &str = "</think>";
+    let t = text.trim_start();
+    let Some(rest) = t.strip_prefix(OPEN) else {
+        return t;
+    };
+    match rest.find(CLOSE) {
+        Some(i) => rest[i + CLOSE.len()..].trim_start(),
+        None => "",
+    }
+}
+
 /// Decode a model-proposed plan, fail-closed.
 ///
 /// Returns `Ok(plan)` only for a strict, size-bounded `{"plan": …}` envelope with
 /// `version == 1` and `1..=MAX_PLAN_STEPS` steps / `..=MAX_PLAN_EDGES` edges.
 /// Returns `Err` for everything else — oversized bytes, non-JSON / non-object /
 /// truncated / trailing-garbage / unexpected-key payloads, an unknown version,
-/// an empty plan, or an over-cap step/edge count.
+/// an empty plan, or an over-cap step/edge count. A leading `<think>…</think>`
+/// block (Qwen3 reasoning) is stripped before the strict parse.
 ///
 /// Total + panic-free over arbitrary `bytes`.
 pub fn decode_plan(bytes: &[u8], max_plan_bytes: usize) -> Result<Plan, PlanError> {
     // (1) Size cap BEFORE parse — a hostile model cannot force a large parse
-    //     allocation by overshooting the budget.
+    //     allocation by overshooting the budget. The cap is on the ORIGINAL
+    //     bytes, so the `<think>` strip below can only ever shrink the parse.
     if bytes.len() > max_plan_bytes {
         return Err(PlanError::Oversize {
             got: bytes.len(),
@@ -50,12 +74,18 @@ pub fn decode_plan(bytes: &[u8], max_plan_bytes: usize) -> Result<Plan, PlanErro
         });
     }
 
-    // (2) Parse strictly into fixed flat structs. `serde_json::from_slice` is
-    //     total over arbitrary bytes (non-UTF-8 / non-JSON / non-object /
-    //     truncation / trailing garbage / unknown keys all → Err, never panic).
-    //     `deny_unknown_fields` (on every plan struct) makes an unexpected key a
-    //     hard refusal, closing the "smuggle an extra field" vector.
-    let envelope: Envelope = serde_json::from_slice(bytes).map_err(|e| PlanError::Malformed {
+    // (2) Require UTF-8 (a plan is mandatory — no `Ok(None)` arm), strip a
+    //     leading Qwen3 `<think>…</think>` block, then parse strictly into fixed
+    //     flat structs. `serde_json::from_str` is total over arbitrary text
+    //     (non-JSON / non-object / truncation / trailing garbage / unknown keys
+    //     all → Err, never panic). `deny_unknown_fields` (on every plan struct)
+    //     makes an unexpected key a hard refusal, closing the "smuggle an extra
+    //     field" vector.
+    let text = std::str::from_utf8(bytes).map_err(|_| PlanError::Malformed {
+        diagnostic: "model output was not valid UTF-8".to_string(),
+    })?;
+    let stripped = strip_reasoning_preamble(text);
+    let envelope: Envelope = serde_json::from_str(stripped).map_err(|e| PlanError::Malformed {
         diagnostic: e.to_string(),
     })?;
     let plan = envelope.plan;

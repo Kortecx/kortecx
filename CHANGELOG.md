@@ -8,6 +8,38 @@ development; interfaces may change before 1.0 — pin a commit if you build on i
 
 ### Added
 
+- **GPU/Metal + decoding tuning for the in-process backend** (`crates/kx-llamacpp`).
+  Env-driven knobs applied inside `ModelParams::new` / `ContextParams::new` — the
+  exact constructors the runtime's dispatch path already calls — so they take effect
+  with **no edit to the frozen trio**: `KX_N_GPU_LAYERS` (now **all layers offload to
+  Metal by default on Apple**, CPU elsewhere — CUDA stays cloud-only, D28),
+  `KX_FLASH_ATTN` (`auto`/`on`/`off`), `KX_KV_TYPE` (`f16`/`q8_0`), `KX_N_THREADS`.
+  New `ContextParams::with_flash_attn`/`with_type_k`/`with_type_v` builders +
+  `FlashAttn`/`KvCacheType`. Unset env = llama.cpp defaults (byte-identical; the
+  determinism smoke + canonical digest are preserved). `just metal-smoke` witnesses
+  real offload.
+- **Qwen3 agent-model integration** (`crates/kx-model-harness`, `crates/kx-model-store`,
+  `crates/kx-planner`). The model name is now configurable (`KX_MODEL_NAME`; default
+  unchanged for identity stability); a fail-soft GGUF metadata reader
+  (`kx_model_store::read_context_length`) lets the runtime size `n_ctx` to the model;
+  a `register_kortecx` helper builds the model's `ModelDescriptor` +
+  `ProvidedCapabilities` and asserts the validator returns `TypeOk` (Apache-2.0, Text,
+  native tool-calling). The strict tool-call (`kx-model-harness`) and plan
+  (`kx-planner`) decoders now tolerate a leading Qwen3 `<think>…</think>` reasoning
+  block (leading-block-only — the fail-closed strict parse and SN-8 exact-grant
+  matching are unchanged). `just fetch-agent-model` fetches a public Qwen3 stand-in.
+- **Live model dispatch in `kx serve` (AL1, opt-in)** (`crates/kx-gateway`,
+  `crates/kx-cli`). Built `--features inference`, the embedded worker runs **real
+  model Motes** through the in-process llama.cpp backend: the new `kx/recipes/chat`
+  recipe ChatML-wraps a `prompt` free-param, greedy-decodes, and commits the
+  completion exactly-once. Composes the existing public `InferenceBackend` surface —
+  **the frozen trio is untouched** — behind a `MoteExecutor` the gateway owns, and is
+  **off by default** so the default `kx` stays FFI-free (the `build-no-inference` gate
+  + the dep-wall stay green).
+- **`frozen-trio` CI guard** (`.github/workflows/ci.yml`). A PR whose diff touches
+  `kx-inference`/`kx-executor`/`kx-scheduler` `src/` fails the gate — the thesis test
+  (layers-on-top must not edit the kernel) is now enforced, not just promised.
+
 - **Real, sandboxed Mote body-execution in `kx serve`** (`crates/kx-gateway`).
   The embedded worker now runs a real Mote body inside the platform sandbox
   (bubblewrap on Linux, sandbox-exec on macOS) for the new `kx/recipes/exec-demo`
