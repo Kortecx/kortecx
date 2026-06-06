@@ -48,10 +48,16 @@ use crate::workflow::WorkflowMote;
 /// budget) returns [`TopologyProviderError`]; the caller dead-letters the shaper
 /// (composing with the PR-1 failure policy), never panics, never re-runs it.
 ///
-/// PR-2 invokes this **eagerly** in the harness (the single parentless shaper is
-/// computed once, before the run, then served as the shaper's effect). PR-3
-/// (re-plan) will have the engine invoke it **lazily** per round against the live
-/// snapshot — the same seam, no signature change.
+/// PR-2 invokes `decide` **eagerly** in the harness (the single parentless shaper
+/// is computed once, before the run, then served as the shaper's effect). PR-3
+/// (re-plan) drives a **bounded loop in the harness driver**
+/// (`kx_model_harness::run_replan_loop`): the engine stays UNCHANGED and is called
+/// once per round, while the driver invokes the provider per round against the live
+/// snapshot (`decide` for round 0, `replan` for a correction). Each round is a NEW
+/// committed ROND shaper fact, so a cold re-fold reproduces the whole chain (R49).
+/// The driver — not the engine — owns the loop because the engine assumes a SINGLE
+/// shaper and has no mid-loop stage-then-commit path; keeping iteration in the
+/// driver holds this seam, the frozen trio, and the digest invariant intact.
 pub trait TopologyProvider: Send + Sync {
     /// Compute this shaper's [`TopologyDecision`] from the model's proposal,
     /// assembled against `snapshot`. The caller encodes the returned decision

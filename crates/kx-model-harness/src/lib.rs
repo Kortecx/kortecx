@@ -66,7 +66,10 @@ pub use broker::{BrokerObserver, ModelBroker};
 pub use executor::ModelExecutor;
 pub use metered::MeteredBackend;
 pub use registration::{register_kortecx, RegistrationError};
-pub use topology_provider::{run_model_loop, LoopBudget, ModelTopologyProvider};
+pub use topology_provider::{
+    run_model_loop, run_replan_loop, LoopBudget, ModelTopologyProvider, ReplanLoopOutcome,
+    ReplanOutcome,
+};
 
 /// The exact quantization of the pinned campaign model, folded into the
 /// [`ModelId`] so a different quant yields a different identity.
@@ -370,6 +373,33 @@ impl Harness {
     ) -> Result<RunOutcome, RuntimeError> {
         let registry: Arc<dyn ToolRegistry> = Arc::new(InMemoryToolRegistry::with_builtins());
         crate::run_model_loop(
+            config,
+            self.store.clone(),
+            self.journal.clone(),
+            self.backend.clone(),
+            registry,
+            recipes,
+            workflow,
+            budget,
+        )
+    }
+
+    /// PR-3 (AL2) — drive a **bounded model-driven re-plan-on-failure loop**. The
+    /// initial plan runs; if a step dead-letters, the model sees WHY (the read-side
+    /// [`kx_projection::Snapshot::failure_reason_of`]) and proposes a correction or
+    /// escalates — bounded by `budget`, every round a replayable committed fact (R49).
+    ///
+    /// `workflow` is a round-0 [`workflows::loop_shaper`]; the corrective rounds use
+    /// [`workflows::replan_shaper`] internally. See [`run_replan_loop`].
+    pub fn drive_replan_loop(
+        &self,
+        config: &RuntimeConfig,
+        workflow: &DemoWorkflow,
+        recipes: Arc<dyn kx_planner::RoleRecipeResolver>,
+        budget: crate::LoopBudget,
+    ) -> Result<ReplanLoopOutcome, RuntimeError> {
+        let registry: Arc<dyn ToolRegistry> = Arc::new(InMemoryToolRegistry::with_builtins());
+        crate::run_replan_loop(
             config,
             self.store.clone(),
             self.journal.clone(),

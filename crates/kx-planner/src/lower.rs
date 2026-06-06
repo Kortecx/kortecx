@@ -235,6 +235,22 @@ pub struct LoopProposal {
     pub next_steps: Vec<PlanStep>,
 }
 
+/// A model-proposed **re-plan round** decision (PR-3 / AL2) — the decoded form of
+/// the 3-way router. `Topology` carries the corrective fan-out
+/// (corrected-context / permission-adapt, lowered identically through vetted
+/// recipes); `FlagHuman` carries the escalation reason (flag-a-human). The runtime
+/// treats `Topology` exactly as a normal proposal (`intersect` narrows authority,
+/// so a permission-adapt can never widen — SN-8) and treats `FlagHuman` as a clean
+/// terminal stop (the failed step stays a durable dead-lettered fact; the active
+/// HITL handshake is a later PR / cloud).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReplanProposal {
+    /// Spawn these corrective steps next (the re-plan continues).
+    Topology(LoopProposal),
+    /// The model cannot fix this within its authority — escalate to a human.
+    FlagHuman(String),
+}
+
 /// Lower an agentic-loop proposal into a [`TopologyDecision`] a ROND shaper
 /// commits (D76). Each next-step becomes a [`ChildDescriptor`] whose
 /// `role_id` / `logic_ref` / `nd_class` / `effect_pattern` come from the vetted

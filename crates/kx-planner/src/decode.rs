@@ -13,8 +13,8 @@
 use kx_warrant::WarrantSpec;
 
 use crate::error::PlanError;
-use crate::lower::LoopProposal;
-use crate::plan::{Envelope, LoopEnvelope, Plan};
+use crate::lower::{LoopProposal, ReplanProposal};
+use crate::plan::{Envelope, LoopEnvelope, Plan, ReplanEnvelope};
 
 /// Hard structural cap on declared steps — a `DoS` bound independent of the byte
 /// cap. A plan with more steps is refused before lowering touches the graph.
@@ -30,6 +30,11 @@ pub const MAX_PLAN_EDGES: usize = 1024;
 /// Tighter than [`MAX_PLAN_STEPS`]: one re-plan round fans out far less than a
 /// full authored plan.
 pub const MAX_LOOP_STEPS: usize = 64;
+
+/// Hard cap on a `flag_human` escalation reason (bytes) — defense-in-depth on top
+/// of the overall `max_bytes` proposal cap, so the operator-facing reason can
+/// never be an unbounded model-authored blob (PR-3 / AL2).
+pub const MAX_FLAG_HUMAN_BYTES: usize = 1024;
 
 /// The per-plan byte cap, derived from the warrant's output ceiling
 /// (`max_output_tokens · 4` — the model produced the plan, so its output budget
@@ -188,4 +193,85 @@ pub fn decode_loop_proposal(bytes: &[u8], max_bytes: usize) -> Result<LoopPropos
     Ok(LoopProposal {
         next_steps: wire.next_steps,
     })
+}
+
+/// Decode a model-proposed **re-plan round** (PR-3 / AL2), fail-closed — the 3-way
+/// router's trust boundary.
+///
+/// Returns `Ok(ReplanProposal::Topology(..))` for a strict, size-bounded
+/// `{"replan": {"version": 1, "next_steps": [ … ]}}` envelope (the corrective
+/// fan-out — corrected-context / permission-adapt), or
+/// `Ok(ReplanProposal::FlagHuman(reason))` for `{"replan": {"version": 1,
+/// "flag_human": "…"}}` (escalate). Exactly ONE of `next_steps` / `flag_human` may
+/// be present: both, or neither, is an `Err`.
+///
+/// A SEPARATE boundary from [`decode_loop_proposal`] (the PR-2 initial-round
+/// decode, kept byte-frozen) — but the IDENTICAL untrusted-bytes discipline
+/// (IMP-5): size-check BEFORE parse, a leading `<think>` strip, decode into fixed
+/// flat structs (never a dynamic `Value`), `deny_unknown_fields` on every struct
+/// (no `confidence`/score smuggle — D77). The escalation reason is bounded by
+/// [`MAX_FLAG_HUMAN_BYTES`]. `max_bytes` is the warrant-derived output ceiling.
+///
+/// Total + panic-free over arbitrary `bytes`.
+pub fn decode_replan_proposal(bytes: &[u8], max_bytes: usize) -> Result<ReplanProposal, PlanError> {
+    // (1) Size cap BEFORE parse — on the ORIGINAL bytes.
+    if bytes.len() > max_bytes {
+        return Err(PlanError::Oversize {
+            got: bytes.len(),
+            max: max_bytes,
+        });
+    }
+
+    // (2) UTF-8, strip a leading `<think>…</think>`, then strict flat-struct parse.
+    let text = std::str::from_utf8(bytes).map_err(|_| PlanError::Malformed {
+        diagnostic: "model output was not valid UTF-8".to_string(),
+    })?;
+    let stripped = strip_reasoning_preamble(text);
+    let envelope: ReplanEnvelope =
+        serde_json::from_str(stripped).map_err(|e| PlanError::Malformed {
+            diagnostic: e.to_string(),
+        })?;
+    let wire = envelope.replan;
+
+    // (3) Version — fail closed on anything but 1.
+    if wire.version != 1 {
+        return Err(PlanError::UnknownVersion {
+            version: wire.version,
+        });
+    }
+
+    // (4) The 3-way router: exactly one of next_steps / flag_human.
+    let has_steps = !wire.next_steps.is_empty();
+    match (has_steps, wire.flag_human) {
+        // Corrective fan-out (corrected-context / permission-adapt).
+        (true, None) => {
+            if wire.next_steps.len() > MAX_LOOP_STEPS {
+                return Err(PlanError::TooManySteps {
+                    got: wire.next_steps.len(),
+                    max: MAX_LOOP_STEPS,
+                });
+            }
+            Ok(ReplanProposal::Topology(LoopProposal {
+                next_steps: wire.next_steps,
+            }))
+        }
+        // Escalate (flag-a-human) — bounded reason.
+        (false, Some(reason)) => {
+            if reason.len() > MAX_FLAG_HUMAN_BYTES {
+                return Err(PlanError::Oversize {
+                    got: reason.len(),
+                    max: MAX_FLAG_HUMAN_BYTES,
+                });
+            }
+            Ok(ReplanProposal::FlagHuman(reason))
+        }
+        // Neither: a round that proposes nothing is refused (empty), mirroring
+        // `decode_loop_proposal`'s empty-round refusal.
+        (false, None) => Err(PlanError::EmptyPlan),
+        // Both: ambiguous — a re-plan round corrects OR escalates, never both.
+        (true, Some(_)) => Err(PlanError::Malformed {
+            diagnostic: "a re-plan round must propose next_steps OR flag_human, not both"
+                .to_string(),
+        }),
+    }
 }

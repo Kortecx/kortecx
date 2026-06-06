@@ -431,6 +431,66 @@ pub fn loop_shaper(
     }
 }
 
+/// **PR-3 (AL2) — a re-plan round's topology shaper.** Like [`loop_shaper`], but
+/// its identity is derived from the `round` index (a 32-byte blake3 namespace),
+/// NOT a single seed byte — so each re-plan round's shaper has a DISTINCT,
+/// deterministic, replay-stable `MoteId` that can never collide with the round-0
+/// [`loop_shaper`] or a sibling round (the [`crate::run_replan_loop`] crash-safety
+/// precondition: a re-plan round's shaper is a pure function of the round, so a
+/// cold re-fold reconstructs the SAME chain). `planning_prompt` is the
+/// failure-corrected instruction the driver builds from the prior round's
+/// dead-lettered step(s); it is carried in `config_subset` (identity-bearing), so
+/// the corrective intent is part of the committed shaper fact.
+#[must_use]
+pub fn replan_shaper(
+    model_id: &ModelId,
+    warrant: &WarrantSpec,
+    planning_prompt: &str,
+    round: u32,
+) -> DemoWorkflow {
+    // Round-namespaced 32-byte identity material — deterministic + distinct per
+    // round, and cryptographically distinct from a `loop_shaper` `[seed; 32]`.
+    let mut material = b"kx-replan-round".to_vec();
+    material.extend_from_slice(&round.to_le_bytes());
+    let id_bytes = *blake3::hash(&material).as_bytes();
+
+    let mut config_subset = BTreeMap::new();
+    prompt::put_prompt(&mut config_subset, planning_prompt);
+    let def = MoteDef {
+        critic_check: None,
+        logic_ref: LogicRef::from_bytes(id_bytes),
+        model_id: model_id.clone(),
+        prompt_template_hash: PromptTemplateHash::from_bytes(id_bytes),
+        tool_contract: BTreeMap::new(),
+        // ROND + shaper (R-14: a shaper is never WM); the COMMITTED decision is
+        // the served fact (R49), greedy so a live decode stays reproducible.
+        nd_class: NdClass::ReadOnlyNondet,
+        config_subset,
+        effect_pattern: EffectPattern::IdempotentByConstruction,
+        critic_for: None,
+        is_topology_shaper: true,
+        inference_params: greedy(128),
+        schema_version: MOTE_DEF_SCHEMA_VERSION,
+    };
+    let shaper = Mote::new(
+        def,
+        InputDataId::from_bytes(id_bytes),
+        GraphPosition(id_bytes.to_vec()),
+        SmallVec::new(),
+    );
+    let shaper_id = shaper.id;
+    DemoWorkflow {
+        motes: vec![WorkflowMote {
+            mote: shaper,
+            warrant: warrant.clone(),
+            capability: ToolName(CAPABILITY.to_string()),
+        }],
+        stc_crash_target: sentinel_shaper(),
+        vtc_crash_target: sentinel_shaper(),
+        shaper_id,
+    }
+}
+
 /// **M6 — run a planner-produced DAG.** Map a `kx_planner::compile_plan` result
 /// (`CompiledMote { mote, warrant, capability }`) 1:1 to a flat (shaperless)
 /// [`DemoWorkflow`], so it drives through `run_with_seams` with NO new execution

@@ -91,6 +91,70 @@ fn failed_then_proposed_resets_to_scheduled() {
     assert_eq!(p.state_of(&mid(1)), MoteState::Scheduled);
 }
 
+// PR-3 (AL2): the read-side failure-reason channel a model-driven re-plan reads.
+fn failed_entry_with_reason(mote_byte: u8, seq: u64, reason: FailureReason) -> JournalEntry {
+    JournalEntry::Failed {
+        mote_id: mid(mote_byte),
+        idempotency_key: [mote_byte; 32],
+        seq,
+        reason_class: reason,
+        reporter_id: 0,
+    }
+}
+
+#[test]
+fn failure_reason_of_exposes_terminal_reason_and_defaults_none() {
+    let mut p = Projection::new();
+    // A terminal-logic dead-letter (NOT a pre-commit-crash) retains its reason.
+    p.fold(&proposed_entry(1, 1)).unwrap();
+    p.fold(&failed_entry_with_reason(
+        1,
+        2,
+        FailureReason::ExecutorRefused,
+    ))
+    .unwrap();
+    assert_eq!(p.state_of(&mid(1)), MoteState::Failed);
+    assert_eq!(
+        p.failure_reason_of(&mid(1)),
+        Some(FailureReason::ExecutorRefused)
+    );
+
+    // A pre-commit-crash reason (TimedOut/WorkerCrashed) is NOT a terminal
+    // dead-letter reason — it stays None (matches `terminal_failure_observed`).
+    p.fold(&proposed_entry(2, 3)).unwrap();
+    p.fold(&failed_entry_with_reason(2, 4, FailureReason::TimedOut))
+        .unwrap();
+    assert_eq!(p.failure_reason_of(&mid(2)), None);
+
+    // A never-failed / unknown Mote is None; a committed Mote is None.
+    assert_eq!(p.failure_reason_of(&mid(9)), None);
+    p.fold(&committed_entry(3, 5, NdClass::Pure)).unwrap();
+    assert_eq!(p.failure_reason_of(&mid(3)), None);
+}
+
+#[test]
+fn failure_reason_is_prefix_monotonic_first_terminal_wins() {
+    // Two terminal Failed entries: the FIRST terminal reason is retained.
+    let mut p = Projection::new();
+    p.fold(&proposed_entry(1, 1)).unwrap();
+    p.fold(&failed_entry_with_reason(
+        1,
+        2,
+        FailureReason::ExecutorRefused,
+    ))
+    .unwrap();
+    p.fold(&failed_entry_with_reason(
+        1,
+        3,
+        FailureReason::ValidatorRejected,
+    ))
+    .unwrap();
+    assert_eq!(
+        p.failure_reason_of(&mid(1)),
+        Some(FailureReason::ExecutorRefused)
+    );
+}
+
 #[test]
 fn repudiated_only_applies_when_target_committed_seq_matches() {
     let mut p = Projection::new();
