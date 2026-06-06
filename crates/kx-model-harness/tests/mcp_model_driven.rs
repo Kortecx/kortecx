@@ -210,6 +210,7 @@ fn drive(
         &executor,
         &protocol,
         None,
+        None, // topology_provider (PR-2) — flat tool-call DAG
         Some(&sink),
         None, // capture_sink (D67) — off for this MCP model-driven test
         None, // audit_sink (R4) — off for this MCP model-driven test

@@ -85,4 +85,5 @@ pub use failure_policy::FailurePolicy;
 pub use kx_audit::{AuditEvent, AuditSink, DispatchKind, InMemoryAuditSink, JsonlAuditSink};
 pub use migrate::migrate_and_verify;
 pub use snapshot_sink::SnapshotSink;
+pub use topology::{decode_topology_decision, TopologyProvider, TopologyProviderError};
 pub use workflow::DemoWorkflow;

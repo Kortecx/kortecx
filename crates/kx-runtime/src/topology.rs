@@ -18,13 +18,89 @@ use kx_mote::{
 };
 use kx_projection::{
     ChildResolver, DefaultTopologyMaterializer, InMemoryMoteDefRegistry, InheritFromShaperResolver,
-    TopologyMaterializer,
+    Snapshot, TopologyMaterializer,
 };
 use kx_warrant::{InMemoryRoleRegistry, Role, WarrantSpec};
 use smallvec::SmallVec;
+use thiserror::Error;
 
 use crate::error::RuntimeError;
 use crate::workflow::WorkflowMote;
+
+/// The PR-2 (F-4) seam: a **model** computes a topology shaper's
+/// [`TopologyDecision`] at dispatch time, replacing the hardcoded
+/// [`demo_topology_decision`]. This is "the model drives the loop": the shaper's
+/// committed `result_ref` is the *model's* lowered decision, a captured fact the
+/// projection materializer re-derives children from on every fold (incl. replay).
+///
+/// Object-safe (`&dyn TopologyProvider`) and `Send + Sync` so the engine can hold
+/// `Option<&dyn TopologyProvider>`. It carries **no** model/inference type — the
+/// concrete provider lives in `kx-model-harness` (the dependency arrow points
+/// down; `kx-runtime` never depends on the harness/inference). It receives only
+/// what the engine already holds at the shaper-dispatch point: the shaper `Mote`,
+/// its `WarrantSpec`, and the current committed-state [`Snapshot`].
+///
+/// SN-8: the provider **proposes** (the model output is untrusted — the concrete
+/// impl decodes it fail-closed and lowers role names through *vetted recipes*);
+/// the **runtime decides** authority — each materialized child's warrant is
+/// `intersect(shaper.warrant, role)` (narrowing-only) downstream. A fail-closed
+/// provider (malformed / oversized / un-grantable proposal, or an exhausted
+/// budget) returns [`TopologyProviderError`]; the caller dead-letters the shaper
+/// (composing with the PR-1 failure policy), never panics, never re-runs it.
+///
+/// PR-2 invokes this **eagerly** in the harness (the single parentless shaper is
+/// computed once, before the run, then served as the shaper's effect). PR-3
+/// (re-plan) will have the engine invoke it **lazily** per round against the live
+/// snapshot — the same seam, no signature change.
+pub trait TopologyProvider: Send + Sync {
+    /// Compute this shaper's [`TopologyDecision`] from the model's proposal,
+    /// assembled against `snapshot`. The caller encodes the returned decision
+    /// (canonical bincode) and commits it as the shaper's `result_ref`, so a cold
+    /// re-fold re-materializes byte-identical children (R49). Returns
+    /// [`TopologyProviderError`] for any fail-closed refusal.
+    fn decide(
+        &self,
+        shaper: &Mote,
+        shaper_warrant: &WarrantSpec,
+        snapshot: &Snapshot,
+    ) -> Result<TopologyDecision, TopologyProviderError>;
+
+    /// Build the topology materializer the runtime folds through while THIS
+    /// provider drives the loop. The demo's [`build_materializer`] only resolves
+    /// the `demo-worker` role; a model-driven decision proposes arbitrary roles,
+    /// so the provider supplies a materializer whose role registry resolves every
+    /// role its [`decide`](Self::decide) can emit (still `intersect(shaper.warrant,
+    /// role)`-narrowing — SN-8). The runtime calls this once, at projection build,
+    /// in place of `build_materializer` whenever a provider is present; the
+    /// returned materializer MUST read the SAME content store the run commits to
+    /// (so the committed decision + warrant bytes resolve).
+    fn materializer(
+        &self,
+        shaper_def: &MoteDef,
+        shaper_warrant: &WarrantSpec,
+    ) -> Box<dyn TopologyMaterializer>;
+}
+
+/// Why a [`TopologyProvider`] could not produce a decision. Opaque to the engine
+/// (a `String` payload keeps `kx-runtime` free of a `kx-planner`/inference dep —
+/// the harness formats its `PlanError` / backend error into it). The caller
+/// dead-letters the shaper on this; it is never a panic and never a silent skip.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[error("topology provider could not produce a decision: {0}")]
+pub struct TopologyProviderError(pub String);
+
+/// Decode the canonical-bincode bytes a topology shaper committed as its
+/// `result_ref` back into a [`TopologyDecision`] — the exact inverse of
+/// [`encode_topology_decision`], and the identical decode the
+/// `DefaultTopologyMaterializer` performs. Used by the engine's fact-driven child
+/// derivation so its runnable children are provably the SAME set the materializer
+/// registers (both decode one committed fact — a single source of truth).
+pub fn decode_topology_decision(bytes: &[u8]) -> Result<TopologyDecision, RuntimeError> {
+    let (td, _) =
+        bincode::serde::decode_from_slice::<TopologyDecision, _>(bytes, canonical_config())
+            .map_err(|e| RuntimeError::Decode(format!("topology decision: {e}")))?;
+    Ok(td)
+}
 
 /// The `RoleId` every demo worker child takes.
 pub const DEMO_WORKER_ROLE: &str = "demo-worker";

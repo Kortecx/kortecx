@@ -13,7 +13,8 @@
 use kx_warrant::WarrantSpec;
 
 use crate::error::PlanError;
-use crate::plan::{Envelope, Plan};
+use crate::lower::LoopProposal;
+use crate::plan::{Envelope, LoopEnvelope, Plan};
 
 /// Hard structural cap on declared steps — a `DoS` bound independent of the byte
 /// cap. A plan with more steps is refused before lowering touches the graph.
@@ -21,6 +22,14 @@ pub const MAX_PLAN_STEPS: usize = 256;
 
 /// Hard structural cap on declared edges (`DoS` bound).
 pub const MAX_PLAN_EDGES: usize = 1024;
+
+/// Hard structural cap on a single agentic-loop round's proposed steps — a `DoS`
+/// bound independent of the byte cap, and DISTINCT from the cross-run round
+/// budget (`kx_model_harness::LoopBudget::max_rounds`, enforced where the model
+/// runs). A round proposing more children than this is refused before lowering.
+/// Tighter than [`MAX_PLAN_STEPS`]: one re-plan round fans out far less than a
+/// full authored plan.
+pub const MAX_LOOP_STEPS: usize = 64;
 
 /// The per-plan byte cap, derived from the warrant's output ceiling
 /// (`max_output_tokens · 4` — the model produced the plan, so its output budget
@@ -113,4 +122,70 @@ pub fn decode_plan(bytes: &[u8], max_plan_bytes: usize) -> Result<Plan, PlanErro
     }
 
     Ok(plan)
+}
+
+/// Decode a model-proposed **agentic-loop round**, fail-closed.
+///
+/// Returns `Ok(LoopProposal)` only for a strict, size-bounded
+/// `{"loop_proposal": {"version": 1, "next_steps": [ … ]}}` envelope with
+/// `1..=MAX_LOOP_STEPS` steps. Returns `Err` for everything else — oversized
+/// bytes, non-JSON / non-object / truncated / trailing-garbage / unexpected-key
+/// payloads, an unknown version, an empty round, or an over-cap step count. A
+/// leading `<think>…</think>` block (Qwen3 reasoning) is stripped before the
+/// strict parse.
+///
+/// This is the loop counterpart of [`decode_plan`] and shares its exact
+/// untrusted-bytes discipline (IMP-5): size-check BEFORE parse (so a hostile
+/// model cannot force a large parse allocation), decode into fixed flat structs
+/// (never a dynamic `serde_json::Value`, so no float/NaN/unbounded-recursion
+/// path), and `deny_unknown_fields` on every struct (closing the "smuggle an
+/// extra field" vector — a `confidence` channel can never reach the runtime, D77).
+/// `max_bytes` is the warrant-derived output ceiling (`max_plan_bytes(warrant)`
+/// — the model produced the proposal, so its output budget bounds it).
+///
+/// Total + panic-free over arbitrary `bytes`.
+pub fn decode_loop_proposal(bytes: &[u8], max_bytes: usize) -> Result<LoopProposal, PlanError> {
+    // (1) Size cap BEFORE parse — on the ORIGINAL bytes, so the `<think>` strip
+    //     below can only ever shrink the parsed text.
+    if bytes.len() > max_bytes {
+        return Err(PlanError::Oversize {
+            got: bytes.len(),
+            max: max_bytes,
+        });
+    }
+
+    // (2) UTF-8 (a proposal is mandatory — no `Ok(None)` arm), strip a leading
+    //     Qwen3 `<think>…</think>` block, then parse strictly into fixed flat
+    //     structs. `deny_unknown_fields` makes any unexpected key a hard refusal.
+    let text = std::str::from_utf8(bytes).map_err(|_| PlanError::Malformed {
+        diagnostic: "model output was not valid UTF-8".to_string(),
+    })?;
+    let stripped = strip_reasoning_preamble(text);
+    let envelope: LoopEnvelope =
+        serde_json::from_str(stripped).map_err(|e| PlanError::Malformed {
+            diagnostic: e.to_string(),
+        })?;
+    let wire = envelope.loop_proposal;
+
+    // (3) Envelope invariants — fail closed on each. Reuse the closed PlanError
+    //     vocabulary (Oversize / Malformed / UnknownVersion / EmptyPlan /
+    //     TooManySteps): a loop round is a plan with no edges and a tighter cap.
+    if wire.version != 1 {
+        return Err(PlanError::UnknownVersion {
+            version: wire.version,
+        });
+    }
+    if wire.next_steps.is_empty() {
+        return Err(PlanError::EmptyPlan);
+    }
+    if wire.next_steps.len() > MAX_LOOP_STEPS {
+        return Err(PlanError::TooManySteps {
+            got: wire.next_steps.len(),
+            max: MAX_LOOP_STEPS,
+        });
+    }
+
+    Ok(LoopProposal {
+        next_steps: wire.next_steps,
+    })
 }

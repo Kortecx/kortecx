@@ -59,12 +59,14 @@ pub mod metered;
 pub mod prompt;
 pub mod registration;
 pub mod toolcall;
+pub mod topology_provider;
 pub mod workflows;
 
 pub use broker::{BrokerObserver, ModelBroker};
 pub use executor::ModelExecutor;
 pub use metered::MeteredBackend;
 pub use registration::{register_kortecx, RegistrationError};
+pub use topology_provider::{run_model_loop, LoopBudget, ModelTopologyProvider};
 
 /// The exact quantization of the pinned campaign model, folded into the
 /// [`ModelId`] so a different quant yields a different identity.
@@ -335,6 +337,9 @@ impl Harness {
             &executor,
             &protocol,
             None,
+            // topology_provider (PR-2) — the generic driver runs flat DAGs; a
+            // model-driven topology loop uses `drive_model_loop`.
+            None,
             Some(&sink),
             // capture_sink — off for the harness; the runtime seam captures only
             // the action, and `Full` reasoning/thinking enrichment is M3.2 (D67).
@@ -344,6 +349,35 @@ impl Harness {
             // failure_policy (PR-1) — the harness drives deterministic workflows;
             // `None` keeps legacy abort-on-failure.
             None,
+        )
+    }
+
+    /// PR-2 (F-4) — drive a **model-driven topology loop**. The model computes the
+    /// shaper's [`kx_mote::TopologyDecision`] (via [`ModelTopologyProvider`]), its
+    /// children materialize + execute, and a cold re-fold re-derives byte-identical
+    /// children (R49 — the model's choice is replayed, never re-sampled).
+    ///
+    /// `workflow` is a [`workflows::loop_shaper`]; `recipes` is the vetted
+    /// role→recipe allowlist the proposal lowers through (an unregistered role
+    /// fails closed); `budget` bounds the fan-out. A refused proposal dead-letters
+    /// the shaper and the run completes with no children (PR-1 discipline).
+    pub fn drive_model_loop(
+        &self,
+        config: &RuntimeConfig,
+        workflow: &DemoWorkflow,
+        recipes: Arc<dyn kx_planner::RoleRecipeResolver>,
+        budget: crate::LoopBudget,
+    ) -> Result<RunOutcome, RuntimeError> {
+        let registry: Arc<dyn ToolRegistry> = Arc::new(InMemoryToolRegistry::with_builtins());
+        crate::run_model_loop(
+            config,
+            self.store.clone(),
+            self.journal.clone(),
+            self.backend.clone(),
+            registry,
+            recipes,
+            workflow,
+            budget,
         )
     }
 }
