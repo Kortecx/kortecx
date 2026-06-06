@@ -40,6 +40,59 @@ pub enum PoolingType {
     Rank = 4,
 }
 
+/// When to enable Flash Attention. Mirrors `llama_flash_attn_type`.
+///
+/// `Auto` (the upstream default) lets llama.cpp decide per backend.
+///
+/// # Examples
+///
+/// ```
+/// use kx_llamacpp::{ContextParams, FlashAttn};
+///
+/// let _p = ContextParams::new().with_flash_attn(FlashAttn::Auto);
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(i32)]
+pub enum FlashAttn {
+    /// Let llama.cpp decide per-backend (the upstream default).
+    Auto = -1,
+    /// Force-disable Flash Attention.
+    Disabled = 0,
+    /// Force-enable Flash Attention.
+    Enabled = 1,
+}
+
+/// KV-cache element type. `Q8_0` roughly halves KV-cache memory at a small
+/// quality cost; `F16` is llama.cpp's default and the only type valid for
+/// embedding/pooling contexts (see [`ContextParams::with_embeddings`]).
+///
+/// # Examples
+///
+/// ```
+/// use kx_llamacpp::{ContextParams, KvCacheType};
+///
+/// let _p = ContextParams::new()
+///     .with_type_k(KvCacheType::Q8_0)
+///     .with_type_v(KvCacheType::Q8_0);
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KvCacheType {
+    /// 16-bit float (llama.cpp default).
+    F16,
+    /// 8-bit quantized.
+    Q8_0,
+}
+
+impl KvCacheType {
+    /// Map to the underlying `ggml_type` constant.
+    fn to_ggml(self) -> sys::ggml_type {
+        match self {
+            Self::F16 => sys::ggml_type_GGML_TYPE_F16,
+            Self::Q8_0 => sys::ggml_type_GGML_TYPE_Q8_0,
+        }
+    }
+}
+
 /// Builder for inference-context parameters.
 ///
 /// Wraps llama.cpp's default `llama_context_params` and exposes the knobs
@@ -55,12 +108,29 @@ impl Default for ContextParams {
 }
 
 impl ContextParams {
-    /// Construct with llama.cpp's defaults.
+    /// Construct with llama.cpp's defaults, then apply any env-driven tuning
+    /// (the `KX_FLASH_ATTN`, `KX_KV_TYPE`, `KX_N_THREADS` env vars).
+    ///
+    /// Reading the env HERE is what lets the (frozen) `kx-inference` dispatch
+    /// path — which calls `ContextParams::new().with_n_ctx(..)` — pick up flash
+    /// attention, KV-cache quantization, and thread tuning with no edit to the
+    /// frozen trio. When none of those env vars are set the result is
+    /// byte-identical to llama.cpp's defaults (preserving determinism).
     pub fn new() -> Self {
         // SAFETY: pure C function returning a value struct.
-        Self {
+        let mut params = Self {
             inner: unsafe { sys::llama_context_default_params() },
+        };
+        if let Some(fa) = crate::env::flash_attn() {
+            params = params.with_flash_attn(fa);
         }
+        if let Some(kv) = crate::env::kv_cache_type() {
+            params = params.with_type_k(kv).with_type_v(kv);
+        }
+        if let Some(t) = crate::env::n_threads() {
+            params = params.with_n_threads(t).with_n_threads_batch(t);
+        }
+        params
     }
 
     /// Text context size in tokens. 0 = take from model.
@@ -100,8 +170,43 @@ impl ContextParams {
     }
 
     /// Extract embeddings alongside logits during decode.
+    ///
+    /// Enabling embeddings RESETS `type_k`/`type_v` to F16: embedding/pooling
+    /// contexts require an unquantized KV cache, and `ContextParams::new()` may
+    /// have applied a quantized `KX_KV_TYPE` default that the shared `embed()`
+    /// path must not inherit. (Set `with_type_k`/`with_type_v` AFTER this call
+    /// to override deliberately.)
     pub fn with_embeddings(mut self, on: bool) -> Self {
         self.inner.embeddings = on;
+        if on {
+            self.inner.type_k = sys::ggml_type_GGML_TYPE_F16;
+            self.inner.type_v = sys::ggml_type_GGML_TYPE_F16;
+        }
+        self
+    }
+
+    /// When to enable Flash Attention. Defaults to llama.cpp's `Auto`.
+    pub fn with_flash_attn(mut self, fa: FlashAttn) -> Self {
+        self.inner.flash_attn_type = match fa {
+            FlashAttn::Auto => sys::llama_flash_attn_type::LLAMA_FLASH_ATTN_TYPE_AUTO,
+            FlashAttn::Disabled => sys::llama_flash_attn_type::LLAMA_FLASH_ATTN_TYPE_DISABLED,
+            FlashAttn::Enabled => sys::llama_flash_attn_type::LLAMA_FLASH_ATTN_TYPE_ENABLED,
+        };
+        self
+    }
+
+    /// Data type for the K cache. `Q8_0` halves K-cache memory; `F16` (default)
+    /// is required for embedding contexts. NOTE: a quantized KV type can cause
+    /// llama.cpp to disable Flash Attention on backends that lack quantized-KV
+    /// FA support.
+    pub fn with_type_k(mut self, t: KvCacheType) -> Self {
+        self.inner.type_k = t.to_ggml();
+        self
+    }
+
+    /// Data type for the V cache. See [`Self::with_type_k`].
+    pub fn with_type_v(mut self, t: KvCacheType) -> Self {
+        self.inner.type_v = t.to_ggml();
         self
     }
 
@@ -498,6 +603,29 @@ mod tests {
             .with_embeddings(false)
             .with_pooling_type(PoolingType::Unspecified)
             .with_offload_kqv(true)
+            .with_flash_attn(FlashAttn::Auto)
+            .with_type_k(KvCacheType::Q8_0)
+            .with_type_v(KvCacheType::Q8_0)
             .with_no_perf(false);
+    }
+
+    #[test]
+    fn flash_attn_repr_matches_c_enum() {
+        // If a submodule advance shifts these, the wrapper's mapping is stale.
+        assert_eq!(FlashAttn::Auto as i32, -1);
+        assert_eq!(FlashAttn::Disabled as i32, 0);
+        assert_eq!(FlashAttn::Enabled as i32, 1);
+    }
+
+    #[test]
+    fn enabling_embeddings_resets_kv_to_f16() {
+        // A quantized KV type set before with_embeddings(true) must be undone,
+        // so the shared `ContextParams::new()` env default can't break embed().
+        let p = ContextParams::new()
+            .with_type_k(KvCacheType::Q8_0)
+            .with_type_v(KvCacheType::Q8_0)
+            .with_embeddings(true);
+        assert_eq!(p.inner.type_k, sys::ggml_type_GGML_TYPE_F16);
+        assert_eq!(p.inner.type_v, sys::ggml_type_GGML_TYPE_F16);
     }
 }

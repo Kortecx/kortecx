@@ -25,8 +25,8 @@
 #![cfg(feature = "model-smoke-test")]
 
 use kx_llamacpp::{
-    Batch, ChatMessage, Context, ContextParams, Generator, LlamaBackend, Model, ModelParams,
-    PoolingType, Sampler,
+    Batch, ChatMessage, Context, ContextParams, FlashAttn, Generator, KvCacheType, LlamaBackend,
+    Model, ModelParams, PoolingType, Sampler,
 };
 
 const MODEL_PATH: &str = env!(
@@ -652,6 +652,116 @@ fn smoke_generator_determinism() {
     let a = run();
     let b = run();
     assert_eq!(a, b, "Generator + greedy must be deterministic across runs");
+}
+
+/// Phase-A: a `Q8_0` KV cache is surfaced cleanly by the wrapper — either it
+/// builds a context (and then greedy decode stays deterministic — the property
+/// the runtime's memoizer relies on) OR it returns a typed
+/// `ContextCreationFailed` for models whose head dim is incompatible with the
+/// q8_0 block size — never a panic/UB.
+///
+/// The toy stories260K CI model has `n_embd_head_k = 8`, which the q8_0 block
+/// size (32) cannot divide, so on CI this exercises the clean-error arm. Full
+/// `q8_0` K+V decode is validated against a real model via `just metal-smoke`.
+#[test]
+fn smoke_kv_quant_determinism() {
+    fn try_run() -> Option<Vec<i32>> {
+        let backend = LlamaBackend::new().expect("backend init");
+        let model = Model::load(&backend, MODEL_PATH).expect("load");
+        let vocab = model.vocab();
+        let prompt = vocab
+            .tokenize("Once upon a time", true, false)
+            .expect("tokenize");
+        // `Result`, not `expect`: an incompatible head dim is a typed error.
+        let ctx = Context::new_with_params(
+            &model,
+            &ContextParams::new()
+                .with_n_ctx(128)
+                .with_n_seq_max(1)
+                .with_type_k(KvCacheType::Q8_0)
+                .with_type_v(KvCacheType::Q8_0)
+                .with_flash_attn(FlashAttn::Enabled),
+        );
+        let mut ctx = match ctx {
+            Ok(c) => c,
+            Err(kx_llamacpp::LlamaError::ContextCreationFailed) => return None,
+            Err(other) => panic!("unexpected error building q8_0 context: {other}"),
+        };
+        let mut sampler = Sampler::greedy(&backend).expect("greedy");
+        let mut gen = Generator::new(&mut ctx, &mut sampler, &vocab, prompt).expect("generator");
+        Some(
+            gen.by_ref()
+                .take(6)
+                .map(|r| r.map(|t| t.id()))
+                .collect::<Result<Vec<i32>, _>>()
+                .expect("iteration"),
+        )
+    }
+    match (try_run(), try_run()) {
+        (Some(a), Some(b)) => {
+            assert!(!a.is_empty(), "q8_0 KV cache must produce tokens");
+            assert_eq!(a, b, "greedy decode must stay deterministic with q8_0 KV");
+        }
+        (None, None) => {
+            // CI toy model: q8_0 unsupported for this head dim — surfaced as a
+            // clean typed error, which is the invariant under test here.
+            eprintln!("q8_0 KV unsupported for this model's head dim (clean error) — OK");
+        }
+        _ => panic!("q8_0 context support must be deterministic across identical runs"),
+    }
+}
+
+/// Phase-A: the `with_flash_attn` builder links and the universally-supported
+/// modes decode. `Auto` (llama.cpp decides) and `Disabled` (standard attention)
+/// always work — assert those yield tokens. Force-`Enabled` is backend/model
+/// dependent (some FA kernels reject the toy stories260K head dim, esp. on CPU),
+/// so exercise it TOLERANTLY: it must either run or fail closed with a typed
+/// `ContextCreationFailed` — never panic. We don't assert cross-mode token
+/// equality (FA can change the FP reduction order).
+#[test]
+fn smoke_flash_attn_modes_run_or_fail_closed() {
+    // `None` ⇒ this (model, backend) doesn't support the requested FA mode —
+    // surfaced as a clean typed error, not a panic.
+    fn run(fa: FlashAttn) -> Option<usize> {
+        let backend = LlamaBackend::new().expect("backend init");
+        let model = Model::load(&backend, MODEL_PATH).expect("load");
+        let vocab = model.vocab();
+        let prompt = vocab
+            .tokenize("Once upon a time", true, false)
+            .expect("tokenize");
+        let ctx = Context::new_with_params(
+            &model,
+            &ContextParams::new()
+                .with_n_ctx(128)
+                .with_n_seq_max(1)
+                .with_flash_attn(fa),
+        );
+        let mut ctx = match ctx {
+            Ok(c) => c,
+            Err(kx_llamacpp::LlamaError::ContextCreationFailed) => return None,
+            Err(other) => panic!("unexpected error building FA context: {other}"),
+        };
+        let mut sampler = Sampler::greedy(&backend).expect("greedy");
+        let mut gen = Generator::new(&mut ctx, &mut sampler, &vocab, prompt).expect("generator");
+        Some(
+            gen.by_ref()
+                .take(4)
+                .map(|r| r.map(|t| t.id()))
+                .collect::<Result<Vec<i32>, _>>()
+                .expect("iteration")
+                .len(),
+        )
+    }
+    // Universally supported on any backend/model.
+    assert_eq!(run(FlashAttn::Auto), Some(4), "FA-auto must yield tokens");
+    assert_eq!(
+        run(FlashAttn::Disabled),
+        Some(4),
+        "FA-disabled must yield tokens"
+    );
+    // Force-enabled: run-or-clean-error (no panic). On a capable model+backend
+    // it yields tokens; on the toy CI model it may cleanly fail.
+    let _ = run(FlashAttn::Enabled);
 }
 
 /// HF-shaped one-shot embedding: `Model::embed(text)` returns the mean-pooled

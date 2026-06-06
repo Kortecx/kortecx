@@ -79,6 +79,29 @@ pub fn max_args_bytes(warrant: &WarrantSpec) -> usize {
     (warrant.model_route.max_output_tokens as usize).saturating_mul(4)
 }
 
+/// Strip a single leading `<think>…</think>` reasoning block (Qwen3 thinking
+/// mode) so the strict envelope parser sees the JSON that follows it.
+///
+/// ONLY a leading block is removed — we never scan for `{` mid-string, which
+/// would reopen the injection vector the strict `starts_with('{')` gate closes.
+/// An unclosed `<think>` (reasoning with no closing tag / no JSON) yields `""`,
+/// which the caller treats as a normal (non-call) completion — fail-closed.
+///
+/// Total + panic-free (`find` returns a valid byte boundary; the close tag is
+/// ASCII so the post-tag slice boundary is always valid).
+fn strip_reasoning_preamble(text: &str) -> &str {
+    const OPEN: &str = "<think>";
+    const CLOSE: &str = "</think>";
+    let t = text.trim_start();
+    let Some(rest) = t.strip_prefix(OPEN) else {
+        return t;
+    };
+    match rest.find(CLOSE) {
+        Some(i) => rest[i + CLOSE.len()..].trim_start(),
+        None => "",
+    }
+}
+
 /// Decode a model-proposed tool call from raw model output, fail-closed.
 ///
 /// Returns `Ok(None)` for a normal completion (prose, non-envelope JSON, or — the
@@ -86,6 +109,9 @@ pub fn max_args_bytes(warrant: &WarrantSpec) -> usize {
 /// Returns `Ok(Some(call))` for a well-formed, warrant-granted, size-bounded call.
 /// Returns `Err` when the model committed to a tool-call envelope that is malformed,
 /// names an ungranted tool, or overshoots the args cap.
+///
+/// A leading `<think>…</think>` block (Qwen3 reasoning) is stripped before the
+/// strict parse; everything after it is still gated by `starts_with('{')`.
 ///
 /// Total + panic-free over arbitrary `bytes`.
 pub fn parse_tool_call(
@@ -104,7 +130,9 @@ pub fn parse_tool_call(
     let Ok(text) = std::str::from_utf8(bytes) else {
         return Ok(None);
     };
-    let trimmed = text.trim_start();
+    // Strip a leading Qwen3 `<think>…</think>` block, then require the remainder
+    // to BEGIN with `{` — leading-block-only; no mid-string scan (SN-8).
+    let trimmed = strip_reasoning_preamble(text);
     if !trimmed.starts_with('{') {
         return Ok(None);
     }
@@ -221,6 +249,42 @@ mod tests {
         assert_eq!(call.name, ToolName("mcp-echo".into()));
         assert_eq!(call.version, ToolVersion("1".into()));
         assert_eq!(call.args_bytes, br#"{"q":"x"}"#.to_vec());
+    }
+
+    #[test]
+    fn think_preamble_then_envelope_is_decoded() {
+        let w = warrant_granting(Some(("mcp-echo", "1")));
+        // Qwen3 thinking-mode: a reasoning block precedes the tool-call JSON.
+        let env = b"<think>I should echo the query.</think>\n{\"tool_call\":{\"name\":\"mcp-echo\",\"version\":\"1\",\"args\":{\"q\":\"x\"}}}";
+        let call = parse_tool_call(env, &w, 4096).unwrap().expect("a call");
+        assert_eq!(call.name, ToolName("mcp-echo".into()));
+        assert_eq!(call.args_bytes, br#"{"q":"x"}"#.to_vec());
+    }
+
+    #[test]
+    fn think_only_no_json_is_normal_completion() {
+        let w = warrant_granting(Some(("mcp-echo", "1")));
+        // Reasoning then prose (no JSON) ⇒ not a tool call.
+        let env = b"<think>hmm</think>\nThe answer is blue.";
+        assert_eq!(parse_tool_call(env, &w, 4096), Ok(None));
+    }
+
+    #[test]
+    fn unclosed_think_is_normal_completion() {
+        let w = warrant_granting(Some(("mcp-echo", "1")));
+        // An unterminated reasoning block strips to "" ⇒ fail-closed to None.
+        let env = b"<think>reasoning with no closing tag and no json";
+        assert_eq!(parse_tool_call(env, &w, 4096), Ok(None));
+    }
+
+    #[test]
+    fn think_does_not_enable_midstring_injection() {
+        // A `<think>` block whose body contains a JSON-looking object must NOT
+        // be parsed as the call — only what FOLLOWS `</think>` is considered,
+        // and here that's prose ⇒ None (the strict starts_with('{') gate holds).
+        let w = warrant_granting(Some(("mcp-danger", "1")));
+        let env = b"<think>{\"tool_call\":{\"name\":\"mcp-danger\",\"version\":\"1\",\"args\":{}}}</think> nope";
+        assert_eq!(parse_tool_call(env, &w, 4096), Ok(None));
     }
 
     #[test]

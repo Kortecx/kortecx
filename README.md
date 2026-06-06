@@ -212,9 +212,11 @@ public CA via the OS trust store) — or front with a TLS reverse proxy. Replace
 tokens in `deploy/secrets/` for anything real.
 
 **GPU posture.** OSS GPU inference today is **Metal, on an Apple host** — not in a
-Linux container (Metal is macOS-host-only). NVIDIA **CUDA inference is cloud-tier**
-(decision D28): `Dockerfile.cuda` is a *documented seam* (the intended image shape +
-an `nvidia-smi` detection hook), not a buildable OSS image; multi-tenant
+Linux container (Metal is macOS-host-only). On Apple the runtime now **offloads all
+layers to Metal by default** (`KX_N_GPU_LAYERS` overrides; see [Local LLM
+inference](#local-llm-inference)); on Linux it is CPU. NVIDIA **CUDA inference is
+cloud-tier** (decision D28): `Dockerfile.cuda` is a *documented seam* (the intended
+image shape + an `nvidia-smi` detection hook), not a buildable OSS image; multi-tenant
 GPU-batched serving lives in the cloud offering.
 
 ## Commands
@@ -280,6 +282,44 @@ cargo run -p kx-llamacpp --example embed    -- /path/to/your-model.gguf "embed t
 
 In the runtime, model inference is a trait seam (`InferenceBackend`); the llama.cpp
 backend is one implementation, and you point it at a GGUF file by path.
+
+### GPU + decoding tuning (env knobs)
+
+The in-process backend reads a few env vars at model/context construction, so they
+apply with no code change. Unset = llama.cpp defaults (byte-identical to before on
+non-Apple), so determinism + the canonical digest are preserved:
+
+| Env var | Effect | Default |
+|---|---|---|
+| `KX_N_GPU_LAYERS` | transformer layers to offload to the GPU (`-1`/`all` = all) | **all on Apple/Metal**, `0` (CPU) elsewhere — CUDA is cloud-only (D28) |
+| `KX_FLASH_ATTN` | `auto` / `on` / `off` Flash Attention | `auto` (llama.cpp decides) |
+| `KX_KV_TYPE` | KV-cache element type: `f16` or `q8_0` (≈½ the KV memory) | `f16`. NOTE: a quantized **V** cache needs Flash-Attention support on the model/backend |
+| `KX_N_THREADS` | generation/batch thread count | `0` (llama.cpp auto) |
+
+Verify Metal offload locally with `just metal-smoke` (look for `offloaded N/N layers
+to GPU`).
+
+### Live model dispatch in `kx serve` (AL1, opt-in)
+
+By default `kx serve` runs the durable spine + the deterministic/sandboxed demo
+recipes (and is **FFI-free**). Built with the inference feature, the embedded worker
+can run **real model Motes**:
+
+```bash
+just fetch-agent-model        # fetch a public Qwen3 stand-in GGUF (SHA-256 verified)
+cargo build -p kx-cli --features inference   # a `kx` that links the llama.cpp backend
+
+KX_SERVE_MODEL_GGUF="$(pwd)/target/models/qwen3-0.6b-q4_k_m.gguf" \
+  kx serve --dev-allow-local --journal /tmp/kx.db --content /tmp/kx-content
+
+# in another shell — the model recipe runs greedy inference and commits the completion:
+kx invoke kx/recipes/chat --args '{"prompt":"What is the capital of France?"}' --wait --json
+```
+
+The default model is the finetuned **Qwen3-4B** agent (Apache-2.0, q4_k_m, ChatML,
+native tool-calling) once published; until then any ChatML GGUF works as a stand-in
+(`KX_SERVE_MODEL_GGUF` + `KX_MODEL_NAME`). Greedy decoding is deterministic, so a
+model Mote is recomputable (exactly-once-per-input).
 
 ## How it works
 

@@ -41,6 +41,13 @@ tracing            = { workspace = true }
 tracing-subscriber = { workspace = true }
 thiserror          = { workspace = true }
 
+[features]
+# AL1: build `kx serve` with live in-process model dispatch — forwards to the
+# kx-gateway `inference` feature (which pulls the llama.cpp FFI via kx-inference).
+# OFF by default so the default `kx` build stays FFI-free (the `build-no-inference`
+# gate + the dep-wall). Opt in with `cargo build -p kx-cli --features inference`.
+inference = ["kx-gateway/inference"]
+
 [dev-dependencies]
 # E2E: host an in-process gateway (kx_gateway::start) + drive CLIENT verbs as subprocesses.
 kx-gateway = { workspace = true }

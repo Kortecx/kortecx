@@ -24,7 +24,7 @@ use kx_gateway_core::{
     SignatureCatalog, SignatureSummaryEntry,
 };
 use kx_invoke::{bind_snapshot, InvokeError, UseWarrantResolver};
-use kx_mote::{ConfigKey, ConfigVal, LogicRef, ToolName};
+use kx_mote::{ConfigKey, ConfigVal, LogicRef, ModelId, ToolName, PROMPT_KEY};
 use kx_warrant::{
     ExecutorClass, FsMode, FsScope, Host, ModelRoute, MoteClass, NetScope, ResourceCeiling, Role,
     WarrantSpec,
@@ -127,6 +127,22 @@ pub const EXEC_RECIPE_HANDLE: &str = "kx/recipes/exec-demo";
 /// The content-ref of the demo recipe's single typed free-param (`topic`).
 const TOPIC_SCHEMA_REF: [u8; 32] = [0x2b; 32];
 
+/// The wire handle of the AL1 model recipe: a single PURE (greedy) model step
+/// that ChatML-wraps a `prompt` free-param and runs it through the in-process
+/// inference backend. Provisioned only when `kx serve --features inference` has a
+/// fit, resolvable serve model (see `model_exec::resolve_serve_model`). Shared
+/// with the e2e test (no drift).
+pub const MODEL_RECIPE_HANDLE: &str = "kx/recipes/chat";
+
+/// The schema-ref of the model recipe's single typed free-param (`prompt`).
+const MODEL_PROMPT_SCHEMA_REF: [u8; 32] = [0x3d; 32];
+
+/// A placeholder `logic_ref` for the model step. Unlike a body Mote, a model Mote
+/// is routed by its `prompt` + resolvable `model_id` (see `model_exec`), not its
+/// `logic_ref`, so this is a distinct, ignored sentinel (≠ the `echo` placeholder
+/// so the two recipe bodies get distinct manifests).
+const MODEL_LOGIC_REF: [u8; 32] = [0x3c; 32];
+
 /// A server-provisioned recipe library backing the `Invoke` path, over the
 /// durable G1a SQLite ledgers (so a registered recipe survives restart). R2b
 /// seeds ONE PURE demo recipe whose step warrant uses the embedded worker's
@@ -165,7 +181,7 @@ impl DemoLibrary {
         exec_class: ExecutorClass,
         parties: &[String],
     ) -> Result<Self, GatewayError> {
-        Self::seed(dir, exec_class, parties, None)
+        Self::seed(dir, exec_class, parties, None, None)
     }
 
     /// Like [`DemoLibrary::open`], plus (when `real_body_ref` is `Some`) seeds the
@@ -180,7 +196,24 @@ impl DemoLibrary {
         parties: &[String],
         real_body_ref: Option<ContentRef>,
     ) -> Result<Self, GatewayError> {
-        Self::seed(dir, exec_class, parties, real_body_ref)
+        Self::seed(dir, exec_class, parties, real_body_ref, None)
+    }
+
+    /// Like [`DemoLibrary::open_with_real_exec`], plus (when `serve_model` is
+    /// `Some`) the AL1 model recipe [`MODEL_RECIPE_HANDLE`] — a PURE (greedy)
+    /// model step routed to `serve_model` with a `prompt` free-param. `None` ⇒
+    /// byte-identical to [`DemoLibrary::open_with_real_exec`].
+    ///
+    /// # Errors
+    /// [`GatewayError::Catalog`] on a ledger open / seed failure.
+    pub fn open_full(
+        dir: &Path,
+        exec_class: ExecutorClass,
+        parties: &[String],
+        real_body_ref: Option<ContentRef>,
+        serve_model: Option<ModelId>,
+    ) -> Result<Self, GatewayError> {
+        Self::seed(dir, exec_class, parties, real_body_ref, serve_model)
     }
 
     /// Open the durable ledgers under `dir` and idempotently seed the demo `echo`
@@ -192,6 +225,7 @@ impl DemoLibrary {
         exec_class: ExecutorClass,
         parties: &[String],
         real_body_ref: Option<ContentRef>,
+        serve_model: Option<ModelId>,
     ) -> Result<Self, GatewayError> {
         let cat = |e: String| GatewayError::Catalog(e);
         let versions =
@@ -247,6 +281,35 @@ impl DemoLibrary {
                 RecipeMeta {
                     owner_root: exec_warrant,
                     free_params: FreeParamContract::new(),
+                },
+            ));
+        }
+
+        // (chat) the AL1 model recipe — a single PURE (greedy) model step routed
+        // to the served model, with a `prompt` free-param. Seeded only when a fit
+        // serve model is configured (`kx serve --features inference`).
+        if let Some(model_id) = serve_model {
+            let model_w = model_warrant(exec_class, &model_id);
+            let model_h = model_handle()?;
+            seed_recipe(
+                &versions,
+                &bodies,
+                &grants,
+                &owner,
+                parties,
+                &model_h,
+                recipe_body(
+                    LogicRef::from_bytes(MODEL_LOGIC_REF),
+                    &model_w,
+                    &[PROMPT_KEY],
+                ),
+                &model_w,
+            )?;
+            recipes.push((
+                model_h,
+                RecipeMeta {
+                    owner_root: model_w,
+                    free_params: prompt_contract(),
                 },
             ));
         }
@@ -470,13 +533,67 @@ fn topic_contract() -> FreeParamContract {
     FreeParamContract::new().with_slot("topic", FreeParamSlot::variable(Some(TOPIC_SCHEMA_REF)))
 }
 
-/// Resolves the demo recipe's `topic` schema-ref to a `Str` param schema.
+/// The model recipe's free-param contract: one `prompt` variable slot typed
+/// `Str`. The slot name is [`PROMPT_KEY`], so a bound arg overwrites the model
+/// step's `config_subset["prompt"]` — the key the model executor reads.
+fn prompt_contract() -> FreeParamContract {
+    FreeParamContract::new().with_slot(
+        PROMPT_KEY,
+        FreeParamSlot::variable(Some(MODEL_PROMPT_SCHEMA_REF)),
+    )
+}
+
+fn model_handle() -> Result<AssetPath, GatewayError> {
+    parse_handle(MODEL_RECIPE_HANDLE)
+        .ok_or_else(|| GatewayError::Catalog("invalid model recipe handle".into()))
+}
+
+/// Resolves the demo `topic` and the model `prompt` schema-refs to `Str` schemas.
 struct DemoSchemaResolver;
 
 impl SchemaResolver for DemoSchemaResolver {
     fn resolve_schema(&self, schema_ref: &[u8; 32]) -> Option<Vec<u8>> {
-        (*schema_ref == TOPIC_SCHEMA_REF)
-            .then(|| encode_param_schema(&ParamType::Str { max_len: 4096 }))
+        if *schema_ref == TOPIC_SCHEMA_REF {
+            Some(encode_param_schema(&ParamType::Str { max_len: 4096 }))
+        } else if *schema_ref == MODEL_PROMPT_SCHEMA_REF {
+            Some(encode_param_schema(&ParamType::Str { max_len: 8192 }))
+        } else {
+            None
+        }
+    }
+}
+
+/// The AL1 model recipe warrant: a PURE (greedy ⇒ recomputable) model step
+/// routed to `model_id`. `executor_class` MUST equal the embedded worker's so the
+/// bound run leases; positive `model_route` ceilings (a zero ceiling is rejected
+/// by the warrant-narrowing `intersect`); a generous wall clock since CPU
+/// inference is slow. No tools, no fs/net scope (text-only greedy completion).
+fn model_warrant(exec_class: ExecutorClass, model_id: &ModelId) -> WarrantSpec {
+    WarrantSpec {
+        mote_class: MoteClass::Pure,
+        nd_class: MoteClass::Pure,
+        fs_scope: FsScope::empty(),
+        net_scope: NetScope::None,
+        syscall_profile_ref: ContentRef::from_bytes([0u8; 32]),
+        tool_grants: BTreeSet::new(),
+        model_route: ModelRoute {
+            model_id: model_id.clone(),
+            max_input_tokens: 4_096,
+            max_output_tokens: 512,
+            max_calls: 4,
+        },
+        resource_ceiling: ResourceCeiling {
+            cpu_milli: 0,
+            mem_bytes: 0,
+            // The dispatch uses this as the inference wall-clock; CPU decode of a
+            // few-B model can take many seconds, so keep it generous.
+            wall_clock_ms: 120_000,
+            fd_count: 0,
+            disk_bytes: 0,
+        },
+        environment_ref: None,
+        executor_class: exec_class,
+        ..Default::default()
     }
 }
 
@@ -804,6 +921,66 @@ mod tests {
         for (_, w) in &bound.motes {
             assert_eq!(w.executor_class, ExecutorClass::Bwrap);
         }
+    }
+
+    /// AL1: when a serve model is configured, the `chat` model recipe binds for a
+    /// granted party — the bound model Mote carries the `prompt` (under
+    /// [`PROMPT_KEY`]) + routes to the served model id, and keeps the worker's
+    /// executor_class so the bound run leases.
+    #[tokio::test]
+    async fn model_recipe_binds_with_prompt_and_model_route() {
+        let dir = tempfile::tempdir().unwrap();
+        let model_id = ModelId("kx-serve:test-model".to_string());
+        let lib = DemoLibrary::open_full(
+            dir.path(),
+            ExecutorClass::Bwrap,
+            &["alice@acme".to_string()],
+            None,
+            Some(model_id.clone()),
+        )
+        .unwrap();
+        let binder = HostRecipeBinder::new(lib);
+
+        let bound = binder
+            .bind(
+                "alice@acme",
+                MODEL_RECIPE_HANDLE,
+                br#"{"prompt":"Capital of France?"}"#,
+            )
+            .await
+            .expect("chat recipe binds for a granted party");
+        assert!(!bound.motes.is_empty());
+        for (mote, w) in &bound.motes {
+            assert_eq!(w.executor_class, ExecutorClass::Bwrap);
+            assert_eq!(
+                w.model_route.model_id, model_id,
+                "routes to the served model"
+            );
+            // The bound prompt landed under PROMPT_KEY (what the model executor
+            // reads). The free-param binder stores it JSON-encoded, so assert it
+            // CONTAINS the text (quoting-robust; the executor JSON-decodes it).
+            let got = mote
+                .def
+                .config_subset
+                .get(&ConfigKey(PROMPT_KEY.to_string()))
+                .map(|v| String::from_utf8_lossy(&v.0).into_owned())
+                .expect("prompt bound under PROMPT_KEY");
+            assert!(got.contains("Capital of France?"), "bound prompt: {got:?}");
+        }
+    }
+
+    /// Without a serve model the `chat` recipe is NOT provisioned (uniform
+    /// `NotAuthorized`), while `echo` still binds.
+    #[tokio::test]
+    async fn model_recipe_absent_without_a_serve_model() {
+        let dir = tempfile::tempdir().unwrap();
+        let binder = demo_lib(dir.path()); // open() ⇒ no serve model
+        assert!(matches!(
+            binder
+                .bind("alice@acme", MODEL_RECIPE_HANDLE, br#"{"prompt":"x"}"#)
+                .await,
+            Err(BinderError::NotAuthorized)
+        ));
     }
 
     /// Without a registered body the `exec-demo` recipe is NOT provisioned, so it

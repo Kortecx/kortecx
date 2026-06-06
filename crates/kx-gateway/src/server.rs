@@ -368,6 +368,43 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         default_executor_class(),
         storing_executor(content.clone()),
     ));
+    // AL1: when built `--features inference` and a fit serve model resolves, wrap
+    // the router so leased model Motes run REAL in-process inference; provision the
+    // `kx/recipes/chat` model recipe routed to it. Fail-soft: no/unfit model ⇒
+    // unchanged behavior (no model recipe). The default (FFI-free) build keeps
+    // `serve_model = None` and the executor unchanged.
+    #[cfg(feature = "inference")]
+    let (executor, serve_model): (Arc<dyn MoteExecutor>, Option<kx_mote::ModelId>) =
+        match crate::model_exec::resolve_serve_model() {
+            Some(gguf) => {
+                let model_id = crate::model_exec::serve_model_id(&gguf);
+                match crate::model_exec::build_serve_backend(&gguf, &model_id) {
+                    Ok(backend) => {
+                        tracing::info!(
+                            model = %model_id.0, gguf = %gguf.display(),
+                            "AL1: live model dispatch enabled (kx/recipes/chat is live)"
+                        );
+                        let wrapped: Arc<dyn MoteExecutor> =
+                            Arc::new(crate::model_exec::ModelRouterExecutor::new(
+                                executor,
+                                backend,
+                                (*content).clone(),
+                            ));
+                        (wrapped, Some(model_id))
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            %error,
+                            "AL1: serve model is not fit; live model dispatch NOT enabled"
+                        );
+                        (executor, None)
+                    }
+                }
+            }
+            None => (executor, None),
+        };
+    #[cfg(not(feature = "inference"))]
+    let serve_model: Option<kx_mote::ModelId> = None;
     let broker: Arc<dyn CapabilityBroker> =
         Arc::new(LocalCapabilityBroker::new((*content).clone()));
     let worker = Worker::register(
@@ -411,11 +448,12 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     //      step warrant uses the embedded worker's executor_class so a bound run
     //      leases (see `provision::demo_warrant`).
     let parties: Vec<String> = cfg.auth_tokens.values().cloned().collect();
-    let demo = DemoLibrary::open_with_real_exec(
+    let demo = DemoLibrary::open_full(
         &catalog_dir,
         default_executor_class(),
         &parties,
         real_body_ref,
+        serve_model,
     )?;
     let binder: Arc<dyn RecipeBinder> = Arc::new(HostRecipeBinder::new(demo));
     // R5: the gRPC `StreamEvents` becomes a live tail (resumable, bounded,

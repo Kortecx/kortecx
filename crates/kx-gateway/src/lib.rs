@@ -55,6 +55,10 @@ mod auth;
 mod config;
 mod error;
 mod live_tail;
+// AL1: the in-process model executor for `kx serve` (live LLM dispatch). Pulls
+// the inference FFI, so it's behind the off-by-default `inference` feature.
+#[cfg(feature = "inference")]
+mod model_exec;
 mod provision;
 #[cfg(feature = "embedded-worker")]
 mod real_exec;
@@ -69,6 +73,7 @@ pub use error::GatewayError;
 pub use live_tail::LiveTailer;
 pub use provision::{
     DemoLibrary, HostRecipeBinder, HostSignatureCatalog, DEMO_RECIPE_HANDLE, EXEC_RECIPE_HANDLE,
+    MODEL_RECIPE_HANDLE,
 };
 pub use server::{serve, start, RunningGateway};
 

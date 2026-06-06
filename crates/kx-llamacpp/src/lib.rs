@@ -185,10 +185,15 @@ pub mod mtmd;
 pub mod sampler;
 pub mod vocab;
 
+// Env-driven inference tuning (CPU + Apple-Metal). Crate-private: read inside
+// `ModelParams::new` / `ContextParams::new` so the frozen `kx-inference` call
+// sites pick up GPU offload / flash-attn / KV-quant / threads transparently.
+mod env;
+
 pub use backend::LlamaBackend;
 pub use batch::Batch;
 pub use chat::ChatMessage;
-pub use context::{Context, ContextParams, PerfData, PoolingType};
+pub use context::{Context, ContextParams, FlashAttn, KvCacheType, PerfData, PoolingType};
 pub use error::LlamaError;
 pub use generator::Generator;
 pub use model::{Model, ModelParams};

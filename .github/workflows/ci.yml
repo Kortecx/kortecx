@@ -54,6 +54,42 @@ jobs:
         run: cargo fmt --all -- --check
 
   # ---------------------------------------------------------------------------
+  # frozen-trio — the thesis-test guard. The single-node execution kernel
+  # (kx-scheduler / kx-executor / kx-inference) is the stable spine: layers added
+  # ON TOP (distribution, gateway/AL1, SDKs, Docker) must NOT reach down and edit
+  # it. This job FAILS a PR whose diff touches the trio's `src/`. Touching the
+  # kernel is a deliberate, signed-off act of kernel evolution (e.g. a dedicated
+  # inference PR for continuous batching / GBNF) — such a PR updates THIS guard in
+  # the same change. Cheap (no toolchain); pull_request-only (needs a base to diff).
+  # ---------------------------------------------------------------------------
+  frozen-trio:
+    name: frozen-trio (kernel src unchanged)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (full history for the base diff)
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Assert kx-inference / kx-executor / kx-scheduler src is unchanged
+        run: |
+          set -euo pipefail
+          BASE="${{ github.base_ref }}"
+          git fetch --no-tags origin "$BASE"
+          CHANGED="$(git diff --name-only "origin/$BASE...HEAD" -- \
+            crates/kx-inference/src crates/kx-executor/src crates/kx-scheduler/src)"
+          if [ -n "$CHANGED" ]; then
+            echo "::error::Frozen-trio source changed (thesis test). The kernel" \
+                 "(kx-inference/kx-executor/kx-scheduler) must not be edited by a" \
+                 "layer-on-top PR. If this is deliberate kernel evolution, update" \
+                 "this guard in the same PR."
+            echo "Changed files:"; echo "$CHANGED"
+            exit 1
+          fi
+          echo "frozen trio unchanged ✓"
+
+  # ---------------------------------------------------------------------------
   # clippy — needs the full build graph (build scripts + bindgen output).
   # ---------------------------------------------------------------------------
   clippy:
