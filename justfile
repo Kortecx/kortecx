@@ -173,11 +173,21 @@ verify-quickstart:
 # ============================================================================
 
 # Build the FFI-free `kx` runtime image (no C++ toolchain, no llama.cpp submodule).
-# Tags `kortecx/kx:dev` by default; override with KX_IMAGE.
+# Compiles from source via cargo-chef (dependency layer cached across source-only
+# rebuilds). Tags `kortecx/kx:dev` by default; override with KX_IMAGE.
 #   just docker-build                       # → kortecx/kx:dev
 #   KX_IMAGE=ghcr.io/you/kx:v0 just docker-build
 docker-build:
     DOCKER_BUILDKIT=1 docker build -f Dockerfile -t {{ env_var_or_default("KX_IMAGE", "kortecx/kx:dev") }} .
+
+# Build the FFI-free image WITHOUT compiling — COPY the SHA-256-verified `kx` from
+# the GitHub Release (near-zero build). Requires KX_VERSION (the Release tag).
+#   KX_VERSION=v0.1.0 just docker-build-fast
+docker-build-fast:
+    DOCKER_BUILDKIT=1 docker build -f Dockerfile \
+      --build-arg KX_SOURCE=prebuilt \
+      --build-arg KX_VERSION={{ env_var_or_default("KX_VERSION", "") }} \
+      -t {{ env_var_or_default("KX_IMAGE", "kortecx/kx:dev") }} .
 
 # Build the CPU inference image (fetches the PINNED llama.cpp inside the builder;
 # needs a C++ toolchain in the BUILDER only, not at runtime). CPU-only — Metal is

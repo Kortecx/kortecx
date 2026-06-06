@@ -50,6 +50,8 @@ kx-cloud/
 /.claude/
 /docs/design/*.md
 /docs/suggestions/*.md
+# Internal analysis / feasibility reviews — private-only (docs default to private).
+/docs/analysis/
 # Plan files are private-only (SN-5: plans NEVER land in the public OSS repo).
 /docs/plans/
 # Internal warning/debug log — kept in the private kortecx-core repo only.
