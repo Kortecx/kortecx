@@ -24,8 +24,12 @@ kx-runtime = { workspace = true }
 kx-gateway = { workspace = true }
 # The FROZEN KxGateway client stubs + request/response messages.
 kx-proto   = { workspace = true }
-# gRPC transport + Request/Status/Code for the client verbs.
-tonic        = { workspace = true }
+# gRPC transport + Request/Status/Code for the client verbs. `tls` lets the client
+# dial an `https://` gateway (A1); `tls-native-roots` trusts the OS trust store for
+# a public CA (Apache/MIT — `tls-webpki-roots` is MPL-2.0, which deny.toml forbids).
+# A custom/self-signed CA comes from `--tls-ca`. Reuses the rustls 0.23 + ring
+# already in the lock (via ureq) — no new crypto provider.
+tonic        = { workspace = true, features = ["tls", "tls-native-roots"] }
 # `time` for the --wait / --follow poll backoff; `signal` for a clean --follow Ctrl-C.
 tokio        = { workspace = true, features = ["rt-multi-thread", "macros", "time", "signal"] }
 # --json machine output (a workspace dep; no new dependency).

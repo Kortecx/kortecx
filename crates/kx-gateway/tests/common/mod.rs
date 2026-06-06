@@ -112,6 +112,7 @@ pub fn gateway_config(
         dev_allow_local,
         auth_tokens,
         catalog_dir: None,
+        tls: None,
     }
 }
 

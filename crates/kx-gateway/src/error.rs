@@ -29,4 +29,7 @@ pub enum GatewayError {
     /// worker was compiled out with `--no-default-features`).
     #[error("unsupported: {0}")]
     Unsupported(String),
+    /// Loading the TLS cert/key or applying the TLS config failed (A1).
+    #[error("tls: {0}")]
+    Tls(String),
 }
