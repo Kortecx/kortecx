@@ -340,7 +340,34 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     //     deterministic content-storing executor (publishes bytes into the shared
     //     store BEFORE proposing, so D55 holds), and proposes the commit.
     let client = connect_worker(&coord_endpoint).await?;
-    let executor: Arc<dyn MoteExecutor> = storing_executor(content.clone());
+    // PR-9b: locate + register the sandbox demo body. `None` ⇒ no body binary on
+    // this host/image, so the `exec-demo` recipe is not provisioned and the router
+    // behaves exactly like the R1 storing executor.
+    let real_body_ref = crate::real_exec::register_demo_body(content.as_ref());
+    // Probe the sandbox once before advertising exec-demo: if it can't actually run
+    // here (e.g. Docker's default seccomp blocks the user namespace bubblewrap
+    // needs), DROP the body ref so exec-demo is NOT provisioned — an Invoke then
+    // gets a clean refusal instead of a worker re-leasing a never-committable Mote
+    // forever. The durable spine + the `echo` recipe are unaffected.
+    let exec_class = default_executor_class();
+    let real_body_ref = real_body_ref.filter(|&body_ref| {
+        crate::real_exec::probe_sandbox(
+            content.as_ref(),
+            body_ref,
+            exec_class,
+            &crate::provision::real_exec_warrant(exec_class),
+        )
+    });
+    // The embedded worker's executor routes a real-body Mote to the platform
+    // sandbox (bwrap on Linux / sandbox-exec on macOS) and the bodyless PURE demo
+    // `echo` to the unchanged deterministic storing fallback. Fail-closed: a
+    // sandbox that cannot run errors (worker backs off); never host-exec.
+    let executor: Arc<dyn MoteExecutor> = Arc::new(crate::real_exec::RouterExecutor::new(
+        (*content).clone(),
+        real_body_ref,
+        default_executor_class(),
+        storing_executor(content.clone()),
+    ));
     let broker: Arc<dyn CapabilityBroker> =
         Arc::new(LocalCapabilityBroker::new((*content).clone()));
     let worker = Worker::register(
@@ -384,7 +411,12 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     //      step warrant uses the embedded worker's executor_class so a bound run
     //      leases (see `provision::demo_warrant`).
     let parties: Vec<String> = cfg.auth_tokens.values().cloned().collect();
-    let demo = DemoLibrary::open(&catalog_dir, default_executor_class(), &parties)?;
+    let demo = DemoLibrary::open_with_real_exec(
+        &catalog_dir,
+        default_executor_class(),
+        &parties,
+        real_body_ref,
+    )?;
     let binder: Arc<dyn RecipeBinder> = Arc::new(HostRecipeBinder::new(demo));
     // R5: the gRPC `StreamEvents` becomes a live tail (resumable, bounded,
     // recovery-safe). Read-side only — the digest + frozen proto are untouched. The

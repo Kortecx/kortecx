@@ -117,6 +117,13 @@ fn short_label(id: &[u8; 32]) -> String {
 /// library is a later PR, R6.) Shared with the e2e test (no drift).
 pub const DEMO_RECIPE_HANDLE: &str = "kx/recipes/echo";
 
+/// The wire handle of the PR-9b real-exec demo recipe: a PURE step whose body
+/// is a REAL binary the embedded worker runs inside the platform sandbox
+/// (bwrap/macOS). Provisioned only when a body binary was located at startup
+/// (see `real_exec::register_demo_body`); takes no free-params (the
+/// body's input is the Mote's identity). Shared with the e2e test (no drift).
+pub const EXEC_RECIPE_HANDLE: &str = "kx/recipes/exec-demo";
+
 /// The content-ref of the demo recipe's single typed free-param (`topic`).
 const TOPIC_SCHEMA_REF: [u8; 32] = [0x2b; 32];
 
@@ -129,9 +136,18 @@ pub struct DemoLibrary {
     versions: SqliteVersionLedger,
     bodies: SqliteBodyLedger,
     grants: SqliteGrantLedger,
-    /// The owner's base warrant the grant fold narrows from (== the recipe step
-    /// warrant, so the bound run keeps the worker's `executor_class` and the
-    /// `intersect` chain never attempts a widen).
+    /// Per-handle binding metadata — one entry per seeded recipe (the demo
+    /// `echo` always; the PR-9b real-exec `exec-demo` when a body was located).
+    /// `bind` looks the handle up here for its owner-root warrant + free-param
+    /// contract; an unknown handle is a uniform `NotAuthorized` (no oracle).
+    recipes: Vec<(AssetPath, RecipeMeta)>,
+}
+
+/// Per-recipe binding metadata: the owner's base warrant the grant fold narrows
+/// from (== the recipe step warrant, so every `intersect` in the bind chain is a
+/// no-op narrowing and the bound run keeps the worker's `executor_class`) + the
+/// recipe's free-param contract.
+struct RecipeMeta {
     owner_root: WarrantSpec,
     free_params: FreeParamContract,
 }
@@ -149,6 +165,34 @@ impl DemoLibrary {
         exec_class: ExecutorClass,
         parties: &[String],
     ) -> Result<Self, GatewayError> {
+        Self::seed(dir, exec_class, parties, None)
+    }
+
+    /// Like [`DemoLibrary::open`], plus (when `real_body_ref` is `Some`) seeds the
+    /// PR-9b real-exec recipe [`EXEC_RECIPE_HANDLE`] whose step body is the located
+    /// sandbox binary. `None` ⇒ byte-identical to [`DemoLibrary::open`].
+    ///
+    /// # Errors
+    /// [`GatewayError::Catalog`] on a ledger open / seed failure.
+    pub fn open_with_real_exec(
+        dir: &Path,
+        exec_class: ExecutorClass,
+        parties: &[String],
+        real_body_ref: Option<ContentRef>,
+    ) -> Result<Self, GatewayError> {
+        Self::seed(dir, exec_class, parties, real_body_ref)
+    }
+
+    /// Open the durable ledgers under `dir` and idempotently seed the demo `echo`
+    /// recipe (always) plus the real-exec `exec-demo` recipe (when `real_body_ref`
+    /// is `Some`). Re-opening on restart is a no-op (content-addressed bodies +
+    /// guarded version publish + idempotent grants).
+    fn seed(
+        dir: &Path,
+        exec_class: ExecutorClass,
+        parties: &[String],
+        real_body_ref: Option<ContentRef>,
+    ) -> Result<Self, GatewayError> {
         let cat = |e: String| GatewayError::Catalog(e);
         let versions =
             SqliteVersionLedger::open(dir.join("versions.db")).map_err(|e| cat(e.to_string()))?;
@@ -156,69 +200,126 @@ impl DemoLibrary {
             SqliteBodyLedger::open(dir.join("bodies.db")).map_err(|e| cat(e.to_string()))?;
         let grants =
             SqliteGrantLedger::open(dir.join("grants.db")).map_err(|e| cat(e.to_string()))?;
-
-        let warrant = demo_warrant(exec_class);
         let owner = PartyId::new("kx-gateway");
-        let handle = demo_handle()?;
-        let asset = AssetRef::Path(handle.clone());
+        let mut recipes: Vec<(AssetPath, RecipeMeta)> = Vec::new();
 
-        // (1) Own the asset (idempotent on re-open with the same owner).
-        grants
-            .append_binding(AssetBinding::new(asset.clone(), owner.clone()))
-            .map_err(|e| cat(e.to_string()))?;
+        // (echo) the PURE demo recipe — a placeholder logic_ref the storing
+        // executor ignores, a `topic` free-param.
+        let echo_warrant = demo_warrant(exec_class);
+        let echo_handle = demo_handle()?;
+        seed_recipe(
+            &versions,
+            &bodies,
+            &grants,
+            &owner,
+            parties,
+            &echo_handle,
+            recipe_body(LogicRef::from_bytes([0x2b; 32]), &echo_warrant, &["topic"]),
+            &echo_warrant,
+        )?;
+        recipes.push((
+            echo_handle,
+            RecipeMeta {
+                owner_root: echo_warrant,
+                free_params: topic_contract(),
+            },
+        ));
 
-        // (2) Publish the executable body (content-addressed, idempotent) + move
-        //     the handle to it (guarded so a restart re-seed is a no-op).
-        let (manifest_id, _) = bodies
-            .publish_body(recipe_body(&warrant))
-            .map_err(|e| cat(e.to_string()))?;
-        if versions.resolve(&handle).is_none() {
-            versions
-                .publish(AssetVersion::root(
-                    handle.clone(),
-                    VersionedContent::Workflow(manifest_id),
-                    owner.clone(),
-                    Provenance::from_recipe(manifest_id.0),
-                ))
-                .map_err(|e| cat(e.to_string()))?;
-        }
-
-        // (3) Grant Use+Read to every configured party (and the dev principal),
-        //     under a runtime scope == the recipe warrant.
-        let role = Role {
-            name: "demo-use".to_string(),
-            version: 1,
-            spec: warrant.clone(),
-            description: String::new(),
-        };
-        let mut granted: BTreeSet<&str> = BTreeSet::new();
-        for party in parties
-            .iter()
-            .map(String::as_str)
-            .chain(std::iter::once("local-dev"))
-        {
-            if !granted.insert(party) {
-                continue;
-            }
-            grants
-                .append_grant(Grant::root(
-                    asset.clone(),
-                    owner.clone(),
-                    PartyId::new(party),
-                    CatalogActionSet::allow([CatalogAction::Read, CatalogAction::Use]),
-                    role.clone(),
-                ))
-                .map_err(|e| cat(e.to_string()))?;
+        // (exec-demo) the PR-9b real-exec recipe — step logic_ref == the located
+        // body's content ref, a sandbox warrant, no free-params. Seeded only when
+        // a body binary was found.
+        if let Some(body_ref) = real_body_ref {
+            let exec_warrant = real_exec_warrant(exec_class);
+            let exec_handle = exec_handle()?;
+            let step_logic = LogicRef::from_bytes(*body_ref.as_bytes());
+            seed_recipe(
+                &versions,
+                &bodies,
+                &grants,
+                &owner,
+                parties,
+                &exec_handle,
+                recipe_body(step_logic, &exec_warrant, &[]),
+                &exec_warrant,
+            )?;
+            recipes.push((
+                exec_handle,
+                RecipeMeta {
+                    owner_root: exec_warrant,
+                    free_params: FreeParamContract::new(),
+                },
+            ));
         }
 
         Ok(Self {
             versions,
             bodies,
             grants,
-            owner_root: warrant,
-            free_params: topic_contract(),
+            recipes,
         })
     }
+}
+
+/// Idempotently seed one recipe: own the asset, publish its content-addressed
+/// body (guarding the version publish), and grant `Use`+`Read` to every party
+/// (plus the dev `local-dev` principal) under a runtime scope == the recipe
+/// warrant. Shared by every recipe `DemoLibrary::seed` provisions.
+#[allow(clippy::too_many_arguments)] // seeding genuinely needs all three ledgers + owner/parties/handle/body/warrant
+fn seed_recipe(
+    versions: &SqliteVersionLedger,
+    bodies: &SqliteBodyLedger,
+    grants: &SqliteGrantLedger,
+    owner: &PartyId,
+    parties: &[String],
+    handle: &AssetPath,
+    body: WorkflowDef,
+    warrant: &WarrantSpec,
+) -> Result<(), GatewayError> {
+    let cat = |e: String| GatewayError::Catalog(e);
+    let asset = AssetRef::Path(handle.clone());
+
+    grants
+        .append_binding(AssetBinding::new(asset.clone(), owner.clone()))
+        .map_err(|e| cat(e.to_string()))?;
+
+    let (manifest_id, _) = bodies.publish_body(body).map_err(|e| cat(e.to_string()))?;
+    if versions.resolve(handle).is_none() {
+        versions
+            .publish(AssetVersion::root(
+                handle.clone(),
+                VersionedContent::Workflow(manifest_id),
+                owner.clone(),
+                Provenance::from_recipe(manifest_id.0),
+            ))
+            .map_err(|e| cat(e.to_string()))?;
+    }
+
+    let role = Role {
+        name: "demo-use".to_string(),
+        version: 1,
+        spec: warrant.clone(),
+        description: String::new(),
+    };
+    let mut granted: BTreeSet<&str> = BTreeSet::new();
+    for party in parties
+        .iter()
+        .map(String::as_str)
+        .chain(std::iter::once("local-dev"))
+    {
+        if !granted.insert(party) {
+            continue;
+        }
+        grants
+            .append_grant(Grant::root(
+                asset.clone(),
+                owner.clone(),
+                PartyId::new(party),
+                CatalogActionSet::allow([CatalogAction::Read, CatalogAction::Use]),
+                role.clone(),
+            ))
+            .map_err(|e| cat(e.to_string()))?;
+    }
+    Ok(())
 }
 
 /// A [`RecipeBinder`] over a [`DemoLibrary`]: resolves a handle + args for the
@@ -246,10 +347,19 @@ impl RecipeBinder for HostRecipeBinder {
     ) -> Result<BoundRecipe, BinderError> {
         // A malformed handle reveals nothing (uniform NotAuthorized — no probing).
         let asset_path = parse_handle(handle).ok_or(BinderError::NotAuthorized)?;
+        // Resolve the recipe's binding metadata; an unknown handle is the same
+        // uniform NotAuthorized (no existence oracle on the execution surface).
+        let meta = self
+            .lib
+            .recipes
+            .iter()
+            .find(|(h, _)| *h == asset_path)
+            .map(|(_, m)| m)
+            .ok_or(BinderError::NotAuthorized)?;
         let party_id = PartyId::new(party);
         let resolver = HostUseResolver {
             grants: &self.lib.grants,
-            owner_root: self.lib.owner_root.clone(),
+            owner_root: meta.owner_root.clone(),
         };
         let bound = bind_snapshot(
             &self.lib.versions,
@@ -257,7 +367,7 @@ impl RecipeBinder for HostRecipeBinder {
             &resolver,
             &party_id,
             &asset_path,
-            &self.lib.free_params,
+            &meta.free_params,
             &DemoSchemaResolver,
             args,
         )
@@ -326,19 +436,31 @@ fn demo_handle() -> Result<AssetPath, GatewayError> {
         .ok_or_else(|| GatewayError::Catalog("invalid demo recipe handle".into()))
 }
 
-/// The PURE demo recipe body: a single content-addressed step that declares a
-/// `topic` variable slot (so a bound free-param can overwrite it). PURE so the
-/// embedded worker's deterministic content-storing executor runs it.
-fn recipe_body(warrant: &WarrantSpec) -> WorkflowDef {
-    let mut wf = WorkflowDef::new(0x2b2b_2b2b);
+fn exec_handle() -> Result<AssetPath, GatewayError> {
+    parse_handle(EXEC_RECIPE_HANDLE)
+        .ok_or_else(|| GatewayError::Catalog("invalid exec recipe handle".into()))
+}
+
+/// A PURE recipe body: a single content-addressed step with `step_logic_ref` as
+/// its body reference + `warrant` as its step warrant, declaring each name in
+/// `var_slots` as a variable slot (so a bound free-param can overwrite it). The
+/// `WorkflowDef` seed is derived from the logic_ref so distinct bodies get
+/// distinct manifests (the `echo` placeholder `[0x2b; 32]` ⇒ the historical
+/// `0x2b2b_2b2b` seed, so its body stays byte-identical + idempotent).
+fn recipe_body(step_logic_ref: LogicRef, warrant: &WarrantSpec, var_slots: &[&str]) -> WorkflowDef {
+    let b = step_logic_ref.as_bytes();
+    let seed = u32::from_le_bytes([b[0], b[1], b[2], b[3]]);
+    let mut wf = WorkflowDef::new(seed);
     let mut step = transform(
-        LogicRef::from_bytes([0x2b; 32]),
+        step_logic_ref,
         warrant.model_route.model_id.clone(),
         warrant.clone(),
         ToolName("demo".into()),
     );
-    step.config_subset
-        .insert(ConfigKey("topic".into()), ConfigVal(Vec::new()));
+    for slot in var_slots {
+        step.config_subset
+            .insert(ConfigKey((*slot).into()), ConfigVal(Vec::new()));
+    }
     wf.add_step(step);
     wf
 }
@@ -393,6 +515,76 @@ fn demo_warrant(exec_class: ExecutorClass) -> WarrantSpec {
         environment_ref: Some(ContentRef::from_bytes([8u8; 32])),
         executor_class: exec_class,
         ..Default::default()
+    }
+}
+
+/// The PR-9b real-exec recipe warrant: the sandbox scope under which the embedded
+/// worker runs the located body binary. The body + its per-Mote input are
+/// materialized as tempfiles under the process temp dir, so the scope grants
+/// `ExecOnly` on the (canonicalized) temp dir — and, on macOS only, `ReadOnly` on
+/// `/` so dyld can load libsystem (mirrors the proven `kx-executor`
+/// `integration_body_resolver` warrant). Network is fully isolated
+/// (`NetScope::None`). `executor_class` MUST equal the embedded worker's so the
+/// bound run leases. NOTE: the temp dir is host-specific but stable across
+/// restarts for the same user — adequate for the single-system demo recipe.
+pub(crate) fn real_exec_warrant(exec_class: ExecutorClass) -> WarrantSpec {
+    let tempdir = std::env::temp_dir();
+    let tempdir = std::fs::canonicalize(&tempdir).unwrap_or(tempdir);
+    let mut mounts = std::collections::BTreeMap::new();
+    if exec_class == ExecutorClass::MacOsSandbox {
+        // dyld/libsystem load (SBPL file-read*); bwrap binds /usr,/lib,/lib64,/etc
+        // itself, so Linux needs no `/` mount.
+        mounts.insert(std::path::PathBuf::from("/"), FsMode::ReadOnly);
+    }
+    // process-exec on the materialized body (+ read of body/input under the same
+    // dir; on Linux ExecOnly maps to a bwrap `--ro-bind`, which permits exec).
+    mounts.insert(tempdir, FsMode::ExecOnly);
+    WarrantSpec {
+        mote_class: MoteClass::Pure,
+        nd_class: MoteClass::Pure,
+        fs_scope: FsScope { mounts },
+        net_scope: NetScope::None,
+        syscall_profile_ref: ContentRef::from_bytes([0u8; 32]),
+        tool_grants: BTreeSet::new(),
+        // The body is PURE (no model call), but the warrant-narrowing `intersect`
+        // (kx-warrant) rejects a zero model-route ceiling as structurally invalid,
+        // so declare positive ceilings (the sandbox backends ignore `model_route`).
+        model_route: ModelRoute {
+            model_id: kx_mote::ModelId("local".into()),
+            max_input_tokens: 4_096,
+            max_output_tokens: 512,
+            max_calls: 1,
+        },
+        resource_ceiling: real_exec_ceiling(exec_class),
+        environment_ref: None,
+        executor_class: exec_class,
+        ..Default::default()
+    }
+}
+
+/// The body's resource ceiling, platform-split. On Linux/bwrap, bound mem/CPU/FD
+/// so a misbehaving body can't OOM or CPU-spin the container (it only ever has a
+/// RO tempdir, so `disk_bytes`/`RLIMIT_FSIZE` stays unbounded). On macOS the axes
+/// stay 0: a tight `RLIMIT_AS` (mem_bytes) is rejected for the body's
+/// virtual-address reservation (`setrlimit` → `_exit(80)`), so the 30 s wall clock
+/// is the only backstop there. `intersect` does not validate ceiling zeros.
+fn real_exec_ceiling(exec_class: ExecutorClass) -> ResourceCeiling {
+    if exec_class == ExecutorClass::Bwrap {
+        ResourceCeiling {
+            cpu_milli: 5_000,     // ceil → 5 s of CPU time (a hash body uses ms)
+            mem_bytes: 512 << 20, // 512 MiB RLIMIT_AS — ample for a small binary
+            wall_clock_ms: 30_000,
+            fd_count: 256,
+            disk_bytes: 0,
+        }
+    } else {
+        ResourceCeiling {
+            cpu_milli: 0,
+            mem_bytes: 0,
+            wall_clock_ms: 30_000,
+            fd_count: 0,
+            disk_bytes: 0,
+        }
     }
 }
 
@@ -582,5 +774,52 @@ mod tests {
             &["alice@acme".to_string()],
         );
         assert!(b.is_ok(), "re-opening the durable demo library is a no-op");
+    }
+
+    // --- PR-9b: the real-exec recipe (provisioning + bind path) -------------
+
+    /// When a body is registered, the `exec-demo` recipe binds for a granted
+    /// party (empty free-params → empty JSON args) and keeps the worker's
+    /// executor_class so the bound run leases. (The real sandboxed spawn is the
+    /// `#[ignore]` `real_exec_e2e` witness — this covers the durable bind path.)
+    #[tokio::test]
+    async fn exec_recipe_binds_when_a_body_is_registered() {
+        let dir = tempfile::tempdir().unwrap();
+        let lib = DemoLibrary::open_with_real_exec(
+            dir.path(),
+            ExecutorClass::Bwrap,
+            &["alice@acme".to_string()],
+            // The bind path resolves the recipe def + warrant only; the body bytes
+            // are fetched at EXECUTION (the resolver), so a stand-in ref binds fine.
+            Some(ContentRef::from_bytes([0x5a; 32])),
+        )
+        .unwrap();
+        let binder = HostRecipeBinder::new(lib);
+
+        let bound = binder
+            .bind("alice@acme", EXEC_RECIPE_HANDLE, b"{}")
+            .await
+            .expect("exec-demo binds for a granted party");
+        assert!(!bound.motes.is_empty());
+        for (_, w) in &bound.motes {
+            assert_eq!(w.executor_class, ExecutorClass::Bwrap);
+        }
+    }
+
+    /// Without a registered body the `exec-demo` recipe is NOT provisioned, so it
+    /// is uniformly `NotAuthorized` (no existence oracle) — while `echo` still binds.
+    #[tokio::test]
+    async fn exec_recipe_absent_without_a_body() {
+        let dir = tempfile::tempdir().unwrap();
+        let binder = demo_lib(dir.path()); // open() ⇒ no real body
+        assert!(matches!(
+            binder.bind("alice@acme", EXEC_RECIPE_HANDLE, b"{}").await,
+            Err(BinderError::NotAuthorized)
+        ));
+        // The demo echo recipe is unaffected.
+        assert!(binder
+            .bind("alice@acme", DEMO_RECIPE_HANDLE, br#"{"topic":"x"}"#)
+            .await
+            .is_ok());
     }
 }

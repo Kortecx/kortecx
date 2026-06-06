@@ -6,6 +6,21 @@ development; interfaces may change before 1.0 — pin a commit if you build on i
 
 ## [Unreleased]
 
+### Added
+
+- **Real, sandboxed Mote body-execution in `kx serve`** (`crates/kx-gateway`).
+  The embedded worker now runs a real Mote body inside the platform sandbox
+  (bubblewrap on Linux, sandbox-exec on macOS) for the new `kx/recipes/exec-demo`
+  recipe — materializing the body from its `logic_ref`, running it under the
+  warrant's scope, and reconciling its output into the content store so the run
+  commits exactly-once. The demo `echo` path and the canonical projection digest
+  are unchanged (the frozen trio `kx-executor`/`kx-scheduler`/`kx-inference` is
+  untouched — the gateway composes their existing public API). **Fail-closed:** a
+  sandbox that cannot run errors rather than executing on the host. The runtime
+  image ships `bubblewrap` + the demo body; real-exec under the hardened
+  `docker-compose` is a documented `seccomp=unconfined` opt-in (Docker's default
+  seccomp blocks the unprivileged user namespace bubblewrap needs).
+
 ## [0.1.0] — the reachable runtime
 
 The first release where the durable runtime is **reachable end to end**: a server,
