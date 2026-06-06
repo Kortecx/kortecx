@@ -41,7 +41,7 @@ use crate::digest::{digest_projection, ProjectionDigest};
 use crate::error::RuntimeError;
 use crate::failure_policy::{classify_lifecycle_error, reason_for, FailureClass, FailurePolicy};
 use crate::snapshot_sink::SnapshotSink;
-use crate::topology;
+use crate::topology::{self, TopologyProvider};
 use crate::workflow::{DemoWorkflow, WorkflowMote};
 
 /// The result of driving the workflow to a stopping point.
@@ -194,6 +194,10 @@ pub fn run_with_capture(
         &executor,
         &protocol,
         Some((&shaper_wm, &topology_decision)),
+        // No model drives the demo's topology — the decision is the hardcoded
+        // `demo_topology_decision()`, supplied directly. `None` keeps arg-based
+        // child derivation (byte-identical truth path).
+        None,
         // The deterministic demo assembles no context: `None` ⇒ no snapshot is
         // ever published ⇒ the truth path (digest `a6b5c679…`) is byte-unchanged.
         None,
@@ -219,6 +223,17 @@ pub fn run_with_capture(
 /// `shaper` carries the topology shaper + its decision when the workflow has one
 /// (the canonical demo); pass `None` for a flat DAG (the harness's A–J workflows),
 /// in which case the topology materializer + child re-derivation are skipped.
+///
+/// `topology_provider` is the PR-2 (F-4) "model drives the loop" seam. When `Some`,
+/// the shaper's [`TopologyDecision`] was produced by a model (a
+/// [`TopologyProvider`], lowered + committed as the shaper's `result_ref`), so the
+/// engine derives the shaper's runnable children from that **committed fact**
+/// (decoding the `result_ref`) rather than the caller-supplied `shaper` decision —
+/// guaranteeing the runnable set equals the materializer-registered set (one source
+/// of truth). When `None` (the canonical demo + every existing caller), children are
+/// derived from the supplied decision exactly as before — the deterministic truth
+/// path (digest `a6b5c679…`) is byte-unchanged. (The provider is invoked eagerly by
+/// the harness in PR-2; PR-3 re-plan will invoke it lazily per round — same seam.)
 ///
 /// `snapshot_sink` is the D78 context-publishing seam: when `Some`, the
 /// orchestrator publishes the current committed-state [`kx_projection::Snapshot`]
@@ -257,6 +272,7 @@ pub fn run_with_seams<S, E, CP>(
     executor: &E,
     protocol: &CP,
     shaper: Option<(&WorkflowMote, &TopologyDecision)>,
+    topology_provider: Option<&dyn TopologyProvider>,
     snapshot_sink: Option<&SnapshotSink>,
     capture_sink: Option<&CaptureSink>,
     audit_sink: Option<&RuntimeAuditSink>,
@@ -293,8 +309,16 @@ where
     let recovery_start = Instant::now();
     let (mut projection, recovery_outcome) = if let Some((shaper_wm, _)) = shaper {
         store.put(&topology::encode_warrant(&shaper_wm.warrant)?)?;
-        let materializer =
-            topology::build_materializer(store.clone(), &shaper_wm.mote.def, &shaper_wm.warrant);
+        // PR-2 (F-4): a model-driven loop supplies its own materializer (resolving
+        // the model's proposed roles); the demo uses the hardcoded `demo-worker`
+        // registry. Both read `store` (the provider's materializer is contracted to
+        // use the run's store). `None` ⇒ byte-identical demo path.
+        let materializer = match topology_provider {
+            Some(provider) => provider.materializer(&shaper_wm.mote.def, &shaper_wm.warrant),
+            None => {
+                topology::build_materializer(store.clone(), &shaper_wm.mote.def, &shaper_wm.warrant)
+            }
+        };
         Projection::from_journal_with_checkpoint_with_materializer_reported(
             &*journal,
             materializer,
@@ -363,14 +387,29 @@ where
         // the children remain break first, orphaning the shaper's decision.
         if !children_derived {
             if let Some((shaper_wm, topology_decision)) = shaper {
-                children_derived = derive_shaper_children(
-                    workflow,
-                    shaper_wm,
-                    topology_decision,
-                    &projection,
-                    &mut runnable,
-                    &mut child_ids,
-                );
+                // PR-2 (F-4): a model-driven shaper derives children from the
+                // COMMITTED decision fact (`topology_provider` is `Some`); the demo
+                // + every existing caller (`None`) derive from the supplied decision,
+                // byte-for-byte as before — the digest `a6b5c679…` path is untouched.
+                children_derived = if topology_provider.is_some() {
+                    derive_shaper_children_from_fact(
+                        workflow,
+                        shaper_wm,
+                        &projection,
+                        &*store,
+                        &mut runnable,
+                        &mut child_ids,
+                    )?
+                } else {
+                    derive_shaper_children(
+                        workflow,
+                        shaper_wm,
+                        topology_decision,
+                        &projection,
+                        &mut runnable,
+                        &mut child_ids,
+                    )
+                };
                 // R4: the committed shaper just materialized its children into the
                 // runnable set. Echo the shaper id + child count off the truth path.
                 if children_derived {
@@ -810,6 +849,56 @@ fn derive_shaper_children(
     child_ids.extend(children.iter().map(|c| c.mote.id));
     runnable.extend(children);
     true
+}
+
+/// Like [`derive_shaper_children`], but the [`TopologyDecision`] comes from the
+/// shaper's **committed `result_ref`** (the model's lowered decision, decoded from
+/// the content store) rather than a caller-supplied value. This is the PR-2 (F-4)
+/// fact-driven path, selected when a [`topology::TopologyProvider`] produced the
+/// topology: the engine trusts the journal fact, so its runnable children are
+/// provably the SAME set the `DefaultTopologyMaterializer` registered (both decode
+/// one committed payload — a single source of truth; no pre-staged-arg vs fact
+/// divergence). Pure over the committed entry, so a fresh recovery re-derives the
+/// same children (R49 — replay the model's decision, never re-decide).
+///
+/// `Ok(false)` while the shaper is uncommitted; `Ok(true)` once children derive;
+/// `Err` only if the committed payload is missing or not a decodable
+/// `TopologyDecision` — corruption, since the model-proposal decode boundary
+/// (`kx_planner::decode_loop_proposal`) ran BEFORE the decision was committed.
+fn derive_shaper_children_from_fact<S>(
+    workflow: &DemoWorkflow,
+    shaper_wm: &WorkflowMote,
+    projection: &Projection,
+    store: &S,
+    runnable: &mut Vec<WorkflowMote>,
+    child_ids: &mut Vec<MoteId>,
+) -> Result<bool, RuntimeError>
+where
+    S: ContentStore + ?Sized,
+{
+    if projection.state_of(&workflow.shaper_id) != MoteState::Committed {
+        return Ok(false);
+    }
+    let Some(shaper_result_ref) = projection.result_ref_of(&workflow.shaper_id) else {
+        return Ok(false);
+    };
+    let payload = store.get(&shaper_result_ref).map_err(|_| {
+        RuntimeError::Decode(format!(
+            "shaper {:?} committed result_ref {shaper_result_ref:?} has no payload",
+            workflow.shaper_id
+        ))
+    })?;
+    let decision = topology::decode_topology_decision(&payload)?;
+    let children = topology::derive_child_motes(
+        &shaper_wm.mote,
+        shaper_result_ref,
+        &decision,
+        &shaper_wm.warrant,
+        &shaper_wm.capability,
+    );
+    child_ids.extend(children.iter().map(|c| c.mote.id));
+    runnable.extend(children);
+    Ok(true)
 }
 
 fn pick_next(
@@ -1331,6 +1420,7 @@ mod failure_tests {
             &executor,
             &protocol,
             None, // shaper — flat DAG
+            None, // topology_provider — no model-driven topology
             None, // snapshot_sink
             None, // capture_sink
             None, // audit_sink

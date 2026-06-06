@@ -38,6 +38,15 @@ pub enum RuntimeError {
     #[error("canonical encode: {0}")]
     Encode(String),
 
+    /// Canonical-bincode decoding of a committed shaper `result_ref` back into a
+    /// `TopologyDecision` failed (the engine's fact-driven child derivation,
+    /// PR-2). Reachable only on a corrupt / non-decision payload at a shaper's
+    /// committed `result_ref`; the model-proposal decode boundary
+    /// (`kx_planner::decode_loop_proposal`) runs BEFORE commit, so a well-formed
+    /// run never reaches this — it is surfaced (not `expect`-ed) as corruption.
+    #[error("canonical decode: {0}")]
+    Decode(String),
+
     /// CLI / config error (bad argument, missing path).
     #[error("config: {0}")]
     Config(String),

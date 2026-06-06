@@ -229,6 +229,7 @@ fn drive(
         &executor,
         &protocol,
         None,
+        None, // topology_provider (PR-2) — static plan, not a model-driven loop
         Some(&sink),
         None,
         None, // audit_sink (R4)

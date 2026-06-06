@@ -376,6 +376,61 @@ pub fn planner_mote(
     wrap(vec![planner], warrant, sentinel_shaper(), planner_id)
 }
 
+/// **PR-2 (F-4) — the model-driven topology shaper.** A single READ-ONLY-NONDET
+/// *model* Mote with `is_topology_shaper = true`, carrying `planning_prompt`. The
+/// model's lowered [`kx_mote::TopologyDecision`] commits as the shaper's
+/// `result_ref` (a captured fact, D76); the `DefaultTopologyMaterializer` spawns
+/// its children, which execute and cold-refold to byte-identical `MoteId`s (R49 —
+/// the model's choice is replayed, never re-sampled). `shaper_id` is the shaper
+/// itself (NOT the sentinel), so `run_with_seams` takes the topology-materializing
+/// path. Drive it through [`crate::topology_provider::run_model_loop`].
+///
+/// GREEDY params: the committed decision is served (not re-sampled) on recovery
+/// regardless, but greedy keeps a live decode reproducible for the campaign.
+#[must_use]
+pub fn loop_shaper(
+    model_id: &ModelId,
+    warrant: &WarrantSpec,
+    planning_prompt: &str,
+    seed: u8,
+) -> DemoWorkflow {
+    let mut config_subset = BTreeMap::new();
+    prompt::put_prompt(&mut config_subset, planning_prompt);
+    let def = MoteDef {
+        critic_check: None,
+        logic_ref: LogicRef::from_bytes([seed; 32]),
+        model_id: model_id.clone(),
+        prompt_template_hash: PromptTemplateHash::from_bytes([seed; 32]),
+        tool_contract: BTreeMap::new(),
+        // ROND: the planner samples a plan; the COMMITTED decision is the fact
+        // (served, not re-sampled, on replay). R-14: a shaper is never WM.
+        nd_class: NdClass::ReadOnlyNondet,
+        config_subset,
+        effect_pattern: EffectPattern::IdempotentByConstruction,
+        critic_for: None,
+        is_topology_shaper: true,
+        inference_params: greedy(128),
+        schema_version: MOTE_DEF_SCHEMA_VERSION,
+    };
+    let shaper = Mote::new(
+        def,
+        InputDataId::from_bytes([seed; 32]),
+        GraphPosition(vec![seed]),
+        SmallVec::new(),
+    );
+    let shaper_id = shaper.id;
+    DemoWorkflow {
+        motes: vec![WorkflowMote {
+            mote: shaper,
+            warrant: warrant.clone(),
+            capability: ToolName(CAPABILITY.to_string()),
+        }],
+        stc_crash_target: sentinel_shaper(),
+        vtc_crash_target: sentinel_shaper(),
+        shaper_id,
+    }
+}
+
 /// **M6 — run a planner-produced DAG.** Map a `kx_planner::compile_plan` result
 /// (`CompiledMote { mote, warrant, capability }`) 1:1 to a flat (shaperless)
 /// [`DemoWorkflow`], so it drives through `run_with_seams` with NO new execution

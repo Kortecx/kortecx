@@ -246,6 +246,7 @@ fn drive(workflow: &DemoWorkflow, dir: &Path) -> (Result<RunOutcome, RuntimeErro
         &executor,
         &protocol,
         None,
+        None, // topology_provider (PR-2) — flat assemble-wiring DAG
         Some(&sink),
         None, // capture_sink (D67) — off for this assemble-wiring test
         None, // audit_sink (R4) — off for this assemble-wiring test
@@ -453,6 +454,7 @@ fn image_parent_routes_child_to_multimodal_input() {
         &executor,
         &protocol,
         None,
+        None, // topology_provider (PR-2) — flat assemble-wiring DAG
         Some(&sink),
         None,
         None, // audit_sink (R4)

@@ -19,6 +19,34 @@ pub(crate) struct Envelope {
     pub plan: Plan,
 }
 
+/// The strict outer envelope for a model-proposed agentic-loop round:
+/// `{ "loop_proposal": { … } }`. `deny_unknown_fields` rejects any sibling key,
+/// so a payload that merely *contains* a proposal (or smuggles a sibling field)
+/// is refused — the same fail-closed boundary as [`Envelope`].
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct LoopEnvelope {
+    pub loop_proposal: LoopProposalWire,
+}
+
+/// The wire form of a [`crate::LoopProposal`]: a versioned, strict list of the
+/// next round's steps. Decoded into the public `LoopProposal` (which carries no
+/// `version` — that is an envelope concern, validated then dropped) only after
+/// the envelope invariants pass. Reuses [`PlanStep`] verbatim — the same minimal
+/// trust surface (role name + intent, `deny_unknown_fields`, no score channel →
+/// D77 holds for free).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct LoopProposalWire {
+    /// Envelope schema version. Only `1` is accepted; any other value is refused
+    /// as [`crate::PlanError::UnknownVersion`] (forward-compatible fail-closed,
+    /// mirroring [`Plan::version`]).
+    pub version: u32,
+    /// The next round's steps, in author/intent order. Each lowers to a
+    /// [`kx_mote::ChildDescriptor`] via [`crate::lower_loop_to_topology_decision`].
+    pub next_steps: Vec<PlanStep>,
+}
+
 /// A model-proposed plan: an ordered list of steps plus the dependency edges
 /// between them. Compiled (after role resolution) into a [`kx_workflow::WorkflowDef`].
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
