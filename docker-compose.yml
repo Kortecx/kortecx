@@ -53,12 +53,18 @@ services:
     user: "10001:10001"
     # PR-9b real, sandboxed Mote body-exec (kx/recipes/exec-demo): the embedded
     # worker runs a real body in bubblewrap, which needs an unprivileged user
-    # namespace. Docker's DEFAULT seccomp profile BLOCKS that, so the real-exec
-    # recipe fails CLOSED here (the durable spine, `kx serve`, the `echo` recipe,
-    # health, TLS + restart/SIGTERM are all unaffected). To OPT IN to real-exec —
-    # a deliberate hardening trade-off — uncomment the relaxed seccomp below (a
-    # narrow custom profile that allows only the namespace syscalls is the
-    # follow-on). On macOS the host path uses sandbox-exec (no namespaces needed).
+    # namespace. Docker's DEFAULT seccomp profile BLOCKS that — so `kx serve`
+    # PROBES the sandbox at startup and, finding it unavailable, simply does NOT
+    # advertise exec-demo (an Invoke gets a clean refusal; the durable spine,
+    # `kx serve`, the `echo` recipe, health, TLS + restart/SIGTERM are unaffected).
+    # To OPT IN to real-exec — a deliberate hardening trade-off — uncomment the
+    # relaxed seccomp below. ⚠ `seccomp=unconfined` removes ALL syscall filtering
+    # for the WHOLE container (not just the body), re-opening the unprivileged-
+    # user-namespace / kernel-LPE surface: acceptable for single-tenant / loopback
+    # dev, but MULTI-TENANT or hostile-workload deployments MUST NOT enable it
+    # without a NARROW custom seccomp profile (allow only the namespace/mount
+    # syscalls — the follow-on). On macOS the host path uses sandbox-exec (no
+    # namespaces), so none of this applies there.
     # security_opt:
     #   - seccomp=unconfined
     # A2: a purpose-built liveness probe — `kx health` calls grpc.health.v1 and exits

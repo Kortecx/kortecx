@@ -344,6 +344,20 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     // this host/image, so the `exec-demo` recipe is not provisioned and the router
     // behaves exactly like the R1 storing executor.
     let real_body_ref = crate::real_exec::register_demo_body(content.as_ref());
+    // Probe the sandbox once before advertising exec-demo: if it can't actually run
+    // here (e.g. Docker's default seccomp blocks the user namespace bubblewrap
+    // needs), DROP the body ref so exec-demo is NOT provisioned — an Invoke then
+    // gets a clean refusal instead of a worker re-leasing a never-committable Mote
+    // forever. The durable spine + the `echo` recipe are unaffected.
+    let exec_class = default_executor_class();
+    let real_body_ref = real_body_ref.filter(|&body_ref| {
+        crate::real_exec::probe_sandbox(
+            content.as_ref(),
+            body_ref,
+            exec_class,
+            &crate::provision::real_exec_warrant(exec_class),
+        )
+    });
     // The embedded worker's executor routes a real-body Mote to the platform
     // sandbox (bwrap on Linux / sandbox-exec on macOS) and the bodyless PURE demo
     // `echo` to the unchanged deterministic storing fallback. Fail-closed: a

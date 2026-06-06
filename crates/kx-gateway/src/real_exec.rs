@@ -89,71 +89,83 @@ impl RouterExecutor {
     }
 
     /// Run the Mote's body inside the platform sandbox, then reconcile its result
-    /// bytes into the store. The body program is materialized from `logic_ref` by
-    /// [`ContentStoreBodyResolver`]; its per-Mote input is the Mote's identity
-    /// bytes (deterministic ⇒ exactly-once-per-input).
+    /// bytes into the store (delegates to [`run_body_in_sandbox`], shared with the
+    /// startup probe).
     fn run_sandboxed(
         &self,
         mote: &Mote,
         warrant: &WarrantSpec,
         env: Option<Rootfs>,
     ) -> Result<MoteExecutionResult, MoteExecutorError> {
-        // 1. Per-Mote input → a tempfile the sandboxed body reads as argv[1]. The
-        //    NamedTempFile MUST outlive `run()` (the child reads it), so it stays
-        //    in scope until the end of this function.
-        let input_bytes = mote.id.as_bytes().to_vec();
-        let mut input_file = tempfile::NamedTempFile::new()
-            .map_err(|e| internal(&format!("input tempfile: {e}")))?;
-        input_file
-            .write_all(&input_bytes)
-            .map_err(|e| internal(&format!("write input: {e}")))?;
-        input_file
-            .flush()
-            .map_err(|e| internal(&format!("flush input: {e}")))?;
-        let input_path = input_file.path().to_path_buf();
-
-        // 2. The body resolver materializes `logic_ref` → a chmod-+x tempfile.
-        let resolver: Arc<dyn BodyResolver> =
-            Arc::new(ContentStoreBodyResolver::new(self.store.clone()));
-
-        // 3. The platform sandbox, constructed per-call (so each lease gets its own
-        //    per-Mote input). Only the two real-spawn backends are wired into serve;
-        //    anything else fails closed.
-        let result = match self.exec_class {
-            ExecutorClass::MacOsSandbox => MacOsSandboxExecutor::new()
-                .with_body_resolver(resolver)
-                .with_input_file(input_path)
-                .run(mote, warrant, env),
-            ExecutorClass::Bwrap => BwrapExecutor::new()
-                .with_body_resolver(resolver)
-                .with_input_file(input_path)
-                .run(mote, warrant, env),
-            other => Err(MoteExecutorError::BackendUnsupported {
-                class: other,
-                reason: "kx serve wires only the bwrap/macOS sandbox backends".into(),
-            }),
-        }?;
-
-        // 4. Reconcile (D55): the result object IS `PURE_BODY_PREFIX ‖ input`. `put`
-        //    it so the coordinator can verify the committed ref exists, then assert
-        //    the body's printed ref matches (a mismatch ⇒ a phantom; fail closed).
-        let mut object = Vec::with_capacity(PURE_BODY_PREFIX.len() + input_bytes.len());
-        object.extend_from_slice(PURE_BODY_PREFIX);
-        object.extend_from_slice(&input_bytes);
-        let put_ref = self
-            .store
-            .put(&object)
-            .map_err(|e| internal(&format!("reconcile put: {e}")))?;
-        if put_ref != result.result_ref {
-            return Err(internal(
-                "sandbox result_ref != reconstructed object ref (phantom result rejected)",
-            ));
-        }
-
-        // Keep the input tempfile alive until here (the sandboxed child read it).
-        drop(input_file);
-        Ok(result)
+        run_body_in_sandbox(&self.store, self.exec_class, mote, warrant, env)
     }
+}
+
+/// Run `mote`'s body in the platform sandbox under `warrant`, then reconcile its
+/// output into `store`. The body program is materialized from `logic_ref` by
+/// [`ContentStoreBodyResolver`]; its per-Mote input is the Mote's identity bytes
+/// (deterministic ⇒ exactly-once-per-input). Shared by [`RouterExecutor`] and the
+/// startup [`probe_sandbox`].
+fn run_body_in_sandbox(
+    store: &LocalFsContentStore,
+    exec_class: ExecutorClass,
+    mote: &Mote,
+    warrant: &WarrantSpec,
+    env: Option<Rootfs>,
+) -> Result<MoteExecutionResult, MoteExecutorError> {
+    // 1. Per-Mote input → a tempfile the sandboxed body reads as argv[1]. The
+    //    NamedTempFile MUST outlive `run()` (the child reads it), so it stays in
+    //    scope until the end of this function.
+    let input_bytes = mote.id.as_bytes().to_vec();
+    let mut input_file =
+        tempfile::NamedTempFile::new().map_err(|e| internal(&format!("input tempfile: {e}")))?;
+    input_file
+        .write_all(&input_bytes)
+        .map_err(|e| internal(&format!("write input: {e}")))?;
+    input_file
+        .flush()
+        .map_err(|e| internal(&format!("flush input: {e}")))?;
+    let input_path = input_file.path().to_path_buf();
+
+    // 2. The body resolver materializes `logic_ref` → a chmod-+x tempfile.
+    let resolver: Arc<dyn BodyResolver> = Arc::new(ContentStoreBodyResolver::new(store.clone()));
+
+    // 3. The platform sandbox, constructed per-call (so each lease gets its own
+    //    per-Mote input). Only the two real-spawn backends are wired into serve;
+    //    anything else fails closed.
+    let result = match exec_class {
+        ExecutorClass::MacOsSandbox => MacOsSandboxExecutor::new()
+            .with_body_resolver(resolver)
+            .with_input_file(input_path)
+            .run(mote, warrant, env),
+        ExecutorClass::Bwrap => BwrapExecutor::new()
+            .with_body_resolver(resolver)
+            .with_input_file(input_path)
+            .run(mote, warrant, env),
+        other => Err(MoteExecutorError::BackendUnsupported {
+            class: other,
+            reason: "kx serve wires only the bwrap/macOS sandbox backends".into(),
+        }),
+    }?;
+
+    // 4. Reconcile (D55): the result object IS `PURE_BODY_PREFIX ‖ input`. `put` it
+    //    so the coordinator can verify the committed ref exists, then assert the
+    //    body's printed ref matches (a mismatch ⇒ a phantom; fail closed).
+    let mut object = Vec::with_capacity(PURE_BODY_PREFIX.len() + input_bytes.len());
+    object.extend_from_slice(PURE_BODY_PREFIX);
+    object.extend_from_slice(&input_bytes);
+    let put_ref = store
+        .put(&object)
+        .map_err(|e| internal(&format!("reconcile put: {e}")))?;
+    if put_ref != result.result_ref {
+        return Err(internal(
+            "sandbox result_ref != reconstructed object ref (phantom result rejected)",
+        ));
+    }
+
+    // Keep the input tempfile alive until here (the sandboxed child read it).
+    drop(input_file);
+    Ok(result)
 }
 
 impl MoteExecutor for RouterExecutor {
@@ -182,6 +194,65 @@ fn internal(reason: &str) -> MoteExecutorError {
     MoteExecutorError::Internal {
         reason: reason.to_string(),
     }
+}
+
+/// One-shot startup probe: run the registered body once through the platform
+/// sandbox under the real-exec `warrant`. Returns `true` iff it succeeds
+/// end-to-end. The gateway uses this to GATE provisioning of `exec-demo`: when the
+/// sandbox cannot run (e.g. Docker's default seccomp blocks the unprivileged user
+/// namespace bubblewrap needs, or rlimits are too tight), the recipe is NOT
+/// advertised — so an `Invoke` gets a clean refusal instead of a worker that
+/// re-leases a never-committable Mote forever. The durable spine + the `echo`
+/// recipe are unaffected either way.
+pub(crate) fn probe_sandbox(
+    store: &LocalFsContentStore,
+    body_ref: ContentRef,
+    exec_class: ExecutorClass,
+    warrant: &WarrantSpec,
+) -> bool {
+    match run_body_in_sandbox(store, exec_class, &probe_mote(body_ref), warrant, None) {
+        Ok(_) => true,
+        Err(error) => {
+            tracing::warn!(
+                %error,
+                "PR-9b: sandbox probe failed — kx/recipes/exec-demo NOT provisioned \
+                 (durable spine + echo recipe unaffected; enable real-exec per docker-compose.yml)"
+            );
+            false
+        }
+    }
+}
+
+/// A throwaway PURE Mote whose `logic_ref` is the registered body, used only by
+/// [`probe_sandbox`] (its committed output is content-addressed + discarded).
+fn probe_mote(body_ref: ContentRef) -> Mote {
+    use kx_mote::{
+        EffectPattern, GraphPosition, InferenceParams, InputDataId, LogicRef, ModelId, MoteDef,
+        NdClass, PromptTemplateHash, MOTE_DEF_SCHEMA_VERSION,
+    };
+    use smallvec::SmallVec;
+    use std::collections::BTreeMap;
+
+    let def = MoteDef {
+        critic_check: None,
+        logic_ref: LogicRef::from_bytes(*body_ref.as_bytes()),
+        model_id: ModelId("local".into()),
+        prompt_template_hash: PromptTemplateHash::from_bytes([0u8; 32]),
+        tool_contract: BTreeMap::new(),
+        nd_class: NdClass::Pure,
+        config_subset: BTreeMap::new(),
+        effect_pattern: EffectPattern::IdempotentByConstruction,
+        critic_for: None,
+        is_topology_shaper: false,
+        inference_params: InferenceParams::default(),
+        schema_version: MOTE_DEF_SCHEMA_VERSION,
+    };
+    Mote::new(
+        def,
+        InputDataId::from_bytes([0u8; 32]),
+        GraphPosition(b"kx-exec-demo-probe".to_vec()),
+        SmallVec::new(),
+    )
 }
 
 /// Locate the sandbox demo-body binary and `put` its bytes into the content

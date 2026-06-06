@@ -527,7 +527,7 @@ fn demo_warrant(exec_class: ExecutorClass) -> WarrantSpec {
 /// (`NetScope::None`). `executor_class` MUST equal the embedded worker's so the
 /// bound run leases. NOTE: the temp dir is host-specific but stable across
 /// restarts for the same user — adequate for the single-system demo recipe.
-fn real_exec_warrant(exec_class: ExecutorClass) -> WarrantSpec {
+pub(crate) fn real_exec_warrant(exec_class: ExecutorClass) -> WarrantSpec {
     let tempdir = std::env::temp_dir();
     let tempdir = std::fs::canonicalize(&tempdir).unwrap_or(tempdir);
     let mut mounts = std::collections::BTreeMap::new();
@@ -555,20 +555,36 @@ fn real_exec_warrant(exec_class: ExecutorClass) -> WarrantSpec {
             max_output_tokens: 512,
             max_calls: 1,
         },
-        // Zero = "no setrlimit on this axis" (the proven kx-executor real-spawn
-        // warrant): macOS rejects a tight RLIMIT_AS (mem_bytes) for the body's
-        // virtual-address reservation, so leave the rlimit axes unset and bound
-        // only the wall clock. `intersect` does not validate ceiling zeros.
-        resource_ceiling: ResourceCeiling {
+        resource_ceiling: real_exec_ceiling(exec_class),
+        environment_ref: None,
+        executor_class: exec_class,
+        ..Default::default()
+    }
+}
+
+/// The body's resource ceiling, platform-split. On Linux/bwrap, bound mem/CPU/FD
+/// so a misbehaving body can't OOM or CPU-spin the container (it only ever has a
+/// RO tempdir, so `disk_bytes`/`RLIMIT_FSIZE` stays unbounded). On macOS the axes
+/// stay 0: a tight `RLIMIT_AS` (mem_bytes) is rejected for the body's
+/// virtual-address reservation (`setrlimit` → `_exit(80)`), so the 30 s wall clock
+/// is the only backstop there. `intersect` does not validate ceiling zeros.
+fn real_exec_ceiling(exec_class: ExecutorClass) -> ResourceCeiling {
+    if exec_class == ExecutorClass::Bwrap {
+        ResourceCeiling {
+            cpu_milli: 5_000,     // ceil → 5 s of CPU time (a hash body uses ms)
+            mem_bytes: 512 << 20, // 512 MiB RLIMIT_AS — ample for a small binary
+            wall_clock_ms: 30_000,
+            fd_count: 256,
+            disk_bytes: 0,
+        }
+    } else {
+        ResourceCeiling {
             cpu_milli: 0,
             mem_bytes: 0,
             wall_clock_ms: 30_000,
             fd_count: 0,
             disk_bytes: 0,
-        },
-        environment_ref: None,
-        executor_class: exec_class,
-        ..Default::default()
+        }
     }
 }
 
