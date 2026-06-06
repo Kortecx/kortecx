@@ -56,6 +56,8 @@ mod config;
 mod error;
 mod live_tail;
 mod provision;
+#[cfg(feature = "embedded-worker")]
+mod real_exec;
 mod server;
 mod tls;
 #[cfg(feature = "embedded-worker")]
@@ -65,7 +67,9 @@ pub use auth::{DenyAll, DevAllowLocal, Principal, PrincipalResolver, TokenResolv
 pub use config::{Cli, GatewayConfig, TlsPaths, DEFAULT_MAX_LEASE, DEFAULT_WS_LISTEN, USAGE};
 pub use error::GatewayError;
 pub use live_tail::LiveTailer;
-pub use provision::{DemoLibrary, HostRecipeBinder, HostSignatureCatalog, DEMO_RECIPE_HANDLE};
+pub use provision::{
+    DemoLibrary, HostRecipeBinder, HostSignatureCatalog, DEMO_RECIPE_HANDLE, EXEC_RECIPE_HANDLE,
+};
 pub use server::{serve, start, RunningGateway};
 
 #[cfg(feature = "embedded-worker")]

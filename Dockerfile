@@ -75,7 +75,17 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/app/target \
     cargo build --release -p kx-cli \
  && strip target/release/kx \
- && cp target/release/kx /usr/local/bin/kx
+ && cp target/release/kx /usr/local/bin/kx \
+ && mkdir -p /usr/local/libexec/kx
+# PR-9b: build the sandbox demo body (`pure_body`, the kx-executor example) so
+# `kx serve` can run a REAL sandboxed Mote body (kx/recipes/exec-demo). FFI-FREE
+# (kx-executor → kx-inference is default-features = false), so no C++ toolchain.
+# Staged at the in-image path `real_exec::register_demo_body` looks for.
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/app/target \
+    cargo build --release -p kx-executor --example pure_body \
+ && strip target/release/examples/pure_body \
+ && cp target/release/examples/pure_body /usr/local/libexec/kx/pure_body
 
 # ---- prebuilt (FAST variant): COPY the verified `kx` from the GitHub Release ---
 # Compiles NOTHING. Downloads the per-target binary + its `.sha256` sidecar and
@@ -100,7 +110,11 @@ RUN set -eux; \
     curl -fsSL -o /tmp/kx        "${base}/kx-${triple}"; \
     curl -fsSL -o /tmp/kx.sha256 "${base}/kx-${triple}.sha256"; \
     printf '%s  /tmp/kx\n' "$(awk '{print $1}' /tmp/kx.sha256)" | sha256sum -c -; \
-    install -m 0755 /tmp/kx /usr/local/bin/kx
+    install -m 0755 /tmp/kx /usr/local/bin/kx; \
+    mkdir -p /usr/local/libexec/kx; \
+    : "the prebuilt Release ships only kx — no sandbox demo body; the .keep marker"; \
+    : "keeps the libexec dir COPY-able. exec-demo is then gracefully not provisioned."; \
+    touch /usr/local/libexec/kx/.keep
 
 # ---- kx-bin: the selected source of the `kx` binary ------------------------
 # Aliases either `builder` (default) or `prebuilt`. The runtime copies from here,
@@ -118,9 +132,12 @@ FROM debian:bookworm-slim AS runtime
 
 # ca-certificates: outbound TLS (A1 + model fetch). tini: a tiny init that becomes
 # PID 1 and FORWARDS SIGTERM to `kx serve` (+ reaps any children), so `docker stop`
-# triggers the graceful drain rather than a SIGKILL.
+# triggers the graceful drain rather than a SIGKILL. bubblewrap (PR-9b): the Linux
+# sandbox `kx serve` runs a REAL Mote body in (kx-executor `BwrapExecutor`); without
+# it the real-exec recipe fails closed (no host execution). bwrap needs unprivileged
+# user-namespaces — see the docker-compose note if your host restricts them.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates tini \
+ && apt-get install -y --no-install-recommends ca-certificates tini bubblewrap \
  && rm -rf /var/lib/apt/lists/*
 
 # Non-root runtime identity. Create + own the durable-state dirs so a FRESH named
@@ -129,9 +146,16 @@ RUN apt-get update \
 RUN groupadd --gid 10001 kx \
  && useradd  --uid 10001 --gid 10001 --home-dir /var/lib/kortecx --shell /usr/sbin/nologin kx \
  && mkdir -p /var/lib/kortecx/journal /var/lib/kortecx/content /var/lib/kortecx/catalog \
- && chown -R 10001:10001 /var/lib/kortecx
+ && chown -R 10001:10001 /var/lib/kortecx \
+ && mkdir -p /lib64
+# PR-9b: the kx-executor bwrap argv `--ro-bind /lib64 /lib64` unconditionally;
+# arm64 debian has no /lib64, and `--ro-bind` errors on a missing source. An empty
+# /lib64 makes the bind a no-op on arm64 (harmless on amd64, where it exists).
 
 COPY --from=kx-bin /usr/local/bin/kx /usr/local/bin/kx
+# PR-9b: the sandbox demo body (present in the from-source image; the prebuilt fast
+# image carries only a `.keep` marker, so `exec-demo` is gracefully not provisioned).
+COPY --from=kx-bin /usr/local/libexec/kx/ /usr/local/libexec/kx/
 
 # Convention defaults. NOTE: `kx serve` reads FLAGS, not env — these are
 # documentation + compose-interpolation only (the compose passes explicit flags).
