@@ -47,7 +47,7 @@
 use std::collections::BTreeMap;
 
 use kx_content::ContentRef;
-use kx_journal::{ParentEntry, ResolvedCapabilityRecord, INSTANCE_ID_LEN};
+use kx_journal::{FailureReason, ParentEntry, ResolvedCapabilityRecord, INSTANCE_ID_LEN};
 use kx_mote::{EdgeMeta, EffectPattern, MoteDefHash, MoteId, NdClass, ParentRef};
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
@@ -59,7 +59,10 @@ use crate::state::{
 /// The on-disk format version. Bump on **any** change to the envelope layout or
 /// the `CheckpointState` payload encoding — old checkpoints then fail
 /// [`FoldCheckpoint::from_bytes`] and recovery falls back to a full fold (self-healing).
-pub const CURRENT_FORMAT_VERSION: u16 = 1;
+///
+/// `2` (PR-3, AL2): `MoteInfoDto` gained `failure_reason` so a checkpoint-seeded
+/// recovery preserves the terminal `FailureReason` a model-driven re-plan reads.
+pub const CURRENT_FORMAT_VERSION: u16 = 2;
 
 /// Payload codec tag. `0` = canonical-bincode (LE + fixed-int, the house
 /// [`kx_mote::canonical_config`]). Reserved for a future rkyv zero-copy payload
@@ -436,6 +439,7 @@ struct MoteInfoDto {
     terminal_failure_observed: bool,
     inconsistent: bool,
     quarantined: bool,
+    failure_reason: Option<FailureReason>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -514,6 +518,7 @@ impl From<&MoteInfo> for MoteInfoDto {
             terminal_failure_observed,
             inconsistent,
             quarantined,
+            failure_reason,
         } = mi;
         Self {
             declared: declared.as_ref().map(DeclaredInfoDto::from),
@@ -524,6 +529,7 @@ impl From<&MoteInfo> for MoteInfoDto {
             terminal_failure_observed: *terminal_failure_observed,
             inconsistent: *inconsistent,
             quarantined: *quarantined,
+            failure_reason: *failure_reason,
         }
     }
 }
@@ -649,6 +655,7 @@ impl TryFrom<MoteInfoDto> for MoteInfo {
             terminal_failure_observed,
             inconsistent,
             quarantined,
+            failure_reason,
         } = dto;
         Ok(MoteInfo {
             declared: declared.map(DeclaredInfo::from),
@@ -659,6 +666,7 @@ impl TryFrom<MoteInfoDto> for MoteInfo {
             terminal_failure_observed,
             inconsistent,
             quarantined,
+            failure_reason,
         })
     }
 }
@@ -818,7 +826,13 @@ mod tests {
         // the remaining per-flag motes
         s.moteinfo_mut(&mid(20)).has_proposed = true;
         s.moteinfo_mut(&mid(21)).failed_pending_reattempt = true;
-        s.moteinfo_mut(&mid(22)).terminal_failure_observed = true;
+        {
+            // PR-3: a terminal-failure mote carries a retained `failure_reason`, so
+            // the round-trip proves the v1→v2 format preserves it (the bump's point).
+            let m = s.moteinfo_mut(&mid(22));
+            m.terminal_failure_observed = true;
+            m.failure_reason = Some(kx_journal::FailureReason::ExecutorRefused);
+        }
         s.moteinfo_mut(&mid(23)).inconsistent = true;
         s.last_seq = 4;
         s.run_registration = Some(RunRegistration {

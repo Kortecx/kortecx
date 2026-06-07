@@ -18,9 +18,9 @@ use kx_warrant::{
 use proptest::prelude::*;
 
 use crate::{
-    compile_plan, decode_loop_proposal, decode_plan, lower_loop_to_topology_decision, lower_plan,
-    seed_from_plan_bytes, InMemoryRoleRecipes, LoopProposal, PlanError, PlanStep, PlanStepKind,
-    RoleRecipe,
+    compile_plan, decode_loop_proposal, decode_plan, decode_replan_proposal,
+    lower_loop_to_topology_decision, lower_plan, seed_from_plan_bytes, InMemoryRoleRecipes,
+    LoopProposal, PlanError, PlanStep, PlanStepKind, ReplanProposal, RoleRecipe,
 };
 
 const SYSCALL: [u8; 32] = [7; 32];
@@ -458,6 +458,136 @@ proptest! {
         s.push_str(&"[".repeat(depth));
         let r = decode_loop_proposal(s.as_bytes(), 1 << 20);
         prop_assert!(r.is_err());
+    }
+}
+
+// ---------------------------------------------------------------------------
+// decode_replan_proposal (PR-3 / AL2) — the re-plan-round 3-way router boundary.
+// A SEPARATE envelope (`replan`) keeps decode_loop_proposal byte-frozen; identical
+// fail-closed discipline + a strict next_steps XOR flag_human shape.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn replan_corrected_context_decodes_to_topology() {
+    let bytes = json(
+        r#"{"replan":{"version":1,"next_steps":[{"role":"reader","intent":"retry via the mirror source"}]}}"#,
+    );
+    match decode_replan_proposal(&bytes, 8192).expect("a valid corrective round decodes") {
+        ReplanProposal::Topology(p) => {
+            assert_eq!(p.next_steps.len(), 1);
+            assert_eq!(p.next_steps[0].role, "reader");
+        }
+        ReplanProposal::FlagHuman(_) => panic!("expected Topology"),
+    }
+}
+
+#[test]
+fn replan_flag_human_decodes_to_escalation() {
+    let bytes =
+        json(r#"{"replan":{"version":1,"flag_human":"needs a credential I cannot grant"}}"#);
+    match decode_replan_proposal(&bytes, 8192).expect("a valid escalation decodes") {
+        ReplanProposal::FlagHuman(reason) => {
+            assert_eq!(reason, "needs a credential I cannot grant");
+        }
+        ReplanProposal::Topology(_) => panic!("expected FlagHuman"),
+    }
+}
+
+#[test]
+fn replan_think_preamble_then_decodes() {
+    let bytes = json(
+        "<think>the fetch failed; try a fallback</think>\n{\"replan\":{\"version\":1,\"next_steps\":[{\"role\":\"reader\",\"intent\":\"fallback\"}]}}",
+    );
+    assert!(matches!(
+        decode_replan_proposal(&bytes, 8192),
+        Ok(ReplanProposal::Topology(_))
+    ));
+}
+
+#[test]
+fn replan_both_or_neither_is_refused() {
+    // both next_steps AND flag_human → ambiguous → Malformed.
+    let both = json(
+        r#"{"replan":{"version":1,"next_steps":[{"role":"r","intent":"i"}],"flag_human":"x"}}"#,
+    );
+    assert!(matches!(
+        decode_replan_proposal(&both, 8192),
+        Err(PlanError::Malformed { .. })
+    ));
+    // neither → empty round → EmptyPlan.
+    let neither = json(r#"{"replan":{"version":1}}"#);
+    assert!(matches!(
+        decode_replan_proposal(&neither, 8192),
+        Err(PlanError::EmptyPlan)
+    ));
+}
+
+#[test]
+fn replan_unknown_field_and_version_and_oversize_fail_closed() {
+    // a smuggled confidence/score on the envelope is refused (D77).
+    let smuggle =
+        json(r#"{"replan":{"version":1,"next_steps":[{"role":"r","intent":"i"}],"score":0.9}}"#);
+    assert!(matches!(
+        decode_replan_proposal(&smuggle, 8192),
+        Err(PlanError::Malformed { .. })
+    ));
+    // unknown version fails closed.
+    assert!(matches!(
+        decode_replan_proposal(br#"{"replan":{"version":2,"flag_human":"x"}}"#, 8192),
+        Err(PlanError::UnknownVersion { version: 2 })
+    ));
+    // size cap is BEFORE parse.
+    let big = vec![b'{'; 10_240];
+    assert!(matches!(
+        decode_replan_proposal(&big, 4),
+        Err(PlanError::Oversize {
+            got: 10_240,
+            max: 4
+        })
+    ));
+    // missing the `replan` envelope key (a loop_proposal smuggled in) is refused.
+    assert!(matches!(
+        decode_replan_proposal(
+            br#"{"loop_proposal":{"version":1,"next_steps":[{"role":"r","intent":"i"}]}}"#,
+            8192
+        ),
+        Err(PlanError::Malformed { .. })
+    ));
+}
+
+#[test]
+fn replan_flag_human_reason_is_bounded() {
+    let huge = "x".repeat(crate::MAX_FLAG_HUMAN_BYTES + 1);
+    let bytes = json(&format!(
+        r#"{{"replan":{{"version":1,"flag_human":"{huge}"}}}}"#
+    ));
+    assert!(matches!(
+        decode_replan_proposal(&bytes, 1 << 20),
+        Err(PlanError::Oversize { .. })
+    ));
+}
+
+#[test]
+fn replan_corrected_context_lowers_to_topology_decision() {
+    // The corrective round lowers through the SAME vetted-recipe path as an
+    // initial round (SN-8): role names → recipe identity axes.
+    let (_roles, recipes) = standard_registries();
+    let bytes = json(
+        r#"{"replan":{"version":1,"next_steps":[{"role":"reader","intent":"again"},{"role":"summarizer","intent":"again"}]}}"#,
+    );
+    let ReplanProposal::Topology(p) = decode_replan_proposal(&bytes, 8192).expect("decodes") else {
+        panic!("expected Topology");
+    };
+    let td = lower_loop_to_topology_decision(&p, &recipes).expect("lowers");
+    assert_eq!(td.children.len(), 2);
+    assert_eq!(&td.children[0].role_id.0, "reader");
+}
+
+proptest! {
+    /// decode_replan_proposal is total + panic-free over arbitrary bytes.
+    #[test]
+    fn decode_replan_proposal_never_panics_on_arbitrary_bytes(bytes: Vec<u8>) {
+        let _ = decode_replan_proposal(&bytes, 4096);
     }
 }
 

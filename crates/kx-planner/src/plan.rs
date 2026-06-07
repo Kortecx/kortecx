@@ -47,6 +47,41 @@ pub(crate) struct LoopProposalWire {
     pub next_steps: Vec<PlanStep>,
 }
 
+/// The strict outer envelope for a model-proposed **re-plan round** (PR-3 / AL2):
+/// `{ "replan": { … } }`. Distinct from [`LoopEnvelope`] so [`crate::decode_loop_proposal`]
+/// (the PR-2 initial-round boundary) stays byte-frozen — this is the SEPARATE
+/// trust boundary a re-plan-on-failure round decodes through. `deny_unknown_fields`
+/// rejects any sibling key (the same fail-closed discipline).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ReplanEnvelope {
+    pub replan: ReplanWire,
+}
+
+/// The wire form of a re-plan round's 3-way decision. Exactly ONE of `next_steps`
+/// (a non-empty corrective fan-out — corrected-context / permission-adapt) or
+/// `flag_human` (escalate) is present; both-or-neither is refused. `next_steps`
+/// reuses [`PlanStep`] verbatim, so a corrective round lowers through the SAME
+/// vetted-recipe path as an initial round (SN-8). `flag_human` carries an opaque,
+/// bounded human-readable reason (never parsed for enforcement; surfaced to the
+/// operator). No score channel anywhere → D77 holds for free.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ReplanWire {
+    /// Envelope schema version. Only `1` is accepted; any other value is refused
+    /// as [`crate::PlanError::UnknownVersion`] (forward-compatible fail-closed).
+    pub version: u32,
+    /// The corrective round's steps (empty ⇒ the model is escalating, not
+    /// re-planning). `#[serde(default)]` + `deny_unknown_fields` keeps the
+    /// either/or shape strict.
+    #[serde(default)]
+    pub next_steps: Vec<PlanStep>,
+    /// An escalation reason — present iff the model chose flag-a-human (the third
+    /// route). Bounded by `MAX_FLAG_HUMAN_BYTES` in the decoder.
+    #[serde(default)]
+    pub flag_human: Option<String>,
+}
+
 /// A model-proposed plan: an ordered list of steps plus the dependency edges
 /// between them. Compiled (after role resolution) into a [`kx_workflow::WorkflowDef`].
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]

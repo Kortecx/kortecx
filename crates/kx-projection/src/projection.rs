@@ -3,7 +3,7 @@
 //! in `seq` order; query via the 7-method read API.
 
 use kx_content::ContentRef;
-use kx_journal::{Journal, JournalEntry};
+use kx_journal::{FailureReason, Journal, JournalEntry};
 use kx_mote::{EdgeMeta, MoteId, NdClass};
 use smallvec::SmallVec;
 
@@ -473,6 +473,14 @@ impl Projection {
                     // `is_pre_commit_crash` is the single source of class truth.
                     if !kx_journal::is_pre_commit_crash(*reason_class) {
                         info.terminal_failure_observed = true;
+                        // **PR-3 (AL2).** Retain the terminal reason (first-wins,
+                        // prefix-monotonic) so a model-driven re-plan can read WHY
+                        // a step dead-lettered. Pure read-side: off-digest, off-id,
+                        // off-DAG (the demo never folds a terminal Failed, so this
+                        // stays None and the canonical digest is byte-unchanged).
+                        if info.failure_reason.is_none() {
+                            info.failure_reason = Some(*reason_class);
+                        }
                     }
                     // **v6 (M2.3b, D105.4).** A recovery-time quarantine of a
                     // staged-uncommitted at-most-once effect: mark it so
@@ -716,6 +724,20 @@ impl Projection {
             .motes
             .get(mote_id)
             .and_then(|i| i.committed.as_ref().map(|c| c.nondeterminism))
+    }
+
+    /// The Mote's terminal [`FailureReason`] if it dead-lettered (a TERMINAL
+    /// `Failed` was folded — not a pre-commit-crash); `None` otherwise (incl. a
+    /// never-failed or a committed Mote, and a pre-commit-crash `Failed`).
+    ///
+    /// **PR-3 (AL2).** The minimal read-side surface a model-driven re-plan reads
+    /// to learn WHY a step failed (corrected-context), and an operator reads for
+    /// triage. Mirrors [`Projection::result_ref_of`] — a pure O(1) lookup. Returns
+    /// ONLY the closed, low-entropy reason enum: never the failed Mote's result
+    /// bytes or warrant secrets (a safe action-selection input, SN-8 / D77).
+    #[must_use]
+    pub fn failure_reason_of(&self, mote_id: &MoteId) -> Option<FailureReason> {
+        self.state.motes.get(mote_id).and_then(|i| i.failure_reason)
     }
 
     /// Motes whose parents are all `Committed-and-not-Repudiated` AND whose

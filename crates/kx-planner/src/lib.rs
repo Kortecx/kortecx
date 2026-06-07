@@ -64,13 +64,13 @@ mod plan;
 mod role;
 
 pub use decode::{
-    decode_loop_proposal, decode_plan, max_plan_bytes, MAX_LOOP_STEPS, MAX_PLAN_EDGES,
-    MAX_PLAN_STEPS,
+    decode_loop_proposal, decode_plan, decode_replan_proposal, max_plan_bytes,
+    MAX_FLAG_HUMAN_BYTES, MAX_LOOP_STEPS, MAX_PLAN_EDGES, MAX_PLAN_STEPS,
 };
 pub use error::PlanError;
 pub use lower::{
     compile_plan, lower_loop_to_topology_decision, lower_plan, seed_from_plan_bytes, LoopProposal,
-    PLAN_PROMPT_KEY,
+    ReplanProposal, PLAN_PROMPT_KEY,
 };
 pub use plan::{Plan, PlanEdge, PlanStep, PlanStepKind};
 pub use role::{InMemoryRoleRecipes, RoleRecipe, RoleRecipeResolver};

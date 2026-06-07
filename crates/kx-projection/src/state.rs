@@ -7,7 +7,7 @@
 use std::collections::BTreeMap;
 
 use kx_content::ContentRef;
-use kx_journal::ParentEntry;
+use kx_journal::{FailureReason, ParentEntry};
 use kx_mote::{EdgeMeta, EffectPattern, MoteDefHash, MoteId, NdClass, ParentRef};
 use smallvec::SmallVec;
 
@@ -83,6 +83,17 @@ pub(crate) struct MoteInfo {
     /// terminal `Failed` (via `terminal_failure_observed`), surfaced via
     /// [`crate::AnomalyKind::QuarantinedAtLeastOnceEffect`].
     pub(crate) quarantined: bool,
+    /// **PR-3 (AL2).** The journaled [`FailureReason`] of the FIRST *terminal*
+    /// `Failed` folded for this MoteId (i.e. NOT a pre-commit-crash per
+    /// [`kx_journal::is_pre_commit_crash`]) — retained so a model-driven re-plan
+    /// (and an operator) can read WHY a step dead-lettered, not merely THAT it did.
+    /// **Prefix-monotonic** (first-terminal-reason-wins; set in the same `Failed`
+    /// arm that sets `terminal_failure_observed`, never reset). Pure read-side
+    /// annotation: it is NEVER an input to identity, `digest_projection`,
+    /// `ready_set`, or any commit — the canonical demo never folds a `Failed`
+    /// entry, so it stays `None` there and the digest is byte-unchanged. Surfaced
+    /// via [`crate::Projection::failure_reason_of`] / [`crate::Snapshot::failure_reason_of`].
+    pub(crate) failure_reason: Option<FailureReason>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

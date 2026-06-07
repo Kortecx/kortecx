@@ -3,6 +3,7 @@
 //! semantics.
 
 use kx_content::ContentRef;
+use kx_journal::FailureReason;
 use kx_mote::{EdgeMeta, MoteId, NdClass};
 use smallvec::SmallVec;
 
@@ -143,6 +144,15 @@ impl Snapshot {
             .motes
             .get(mote_id)
             .and_then(|i| i.committed.as_ref().map(|c| c.nondeterminism))
+    }
+
+    /// Terminal [`FailureReason`] of a dead-lettered Mote. See
+    /// [`crate::Projection::failure_reason_of`]. PR-3 (AL2): the read-side a
+    /// model-driven re-plan consumes (against this immutable snapshot) to learn
+    /// WHY a step failed.
+    #[must_use]
+    pub fn failure_reason_of(&self, mote_id: &MoteId) -> Option<FailureReason> {
+        self.state.motes.get(mote_id).and_then(|i| i.failure_reason)
     }
 
     /// Committed-entry `seq`. See [`crate::Projection::committed_seq_of`].
