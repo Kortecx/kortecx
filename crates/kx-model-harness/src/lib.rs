@@ -57,6 +57,7 @@ pub mod evidence;
 pub mod executor;
 pub mod metered;
 pub mod prompt;
+pub mod react;
 pub mod registration;
 pub mod toolcall;
 pub mod topology_provider;
@@ -65,6 +66,7 @@ pub mod workflows;
 pub use broker::{BrokerObserver, ModelBroker};
 pub use executor::ModelExecutor;
 pub use metered::MeteredBackend;
+pub use react::{run_react_loop, ReactBudget, ReactLoopOutcome, ReactStop};
 pub use registration::{register_kortecx, RegistrationError};
 pub use topology_provider::{
     run_model_loop, run_replan_loop, LoopBudget, ModelTopologyProvider, ReplanLoopOutcome,
@@ -407,6 +409,43 @@ impl Harness {
             registry,
             recipes,
             workflow,
+            budget,
+        )
+    }
+
+    /// PR-4 (M5) — drive a **bounded model-driven tool-call ReAct loop**: the model
+    /// proposes a tool, the runtime ENFORCES + fires it (SN-8), the committed result
+    /// is the OBSERVATION the next turn reads back, until a final answer or a budget
+    /// is hit. Each acting turn writes two durable facts (model output + observation);
+    /// a crash resumes by re-folding (committed turns served, the tail exactly-once),
+    /// and a cold re-fold reproduces the chain (R49).
+    ///
+    /// `registry` must resolve the run's MCP tool(s); `tool_broker` holds the concrete
+    /// `McpCapability` under each granted tool name; `instance_id` (D64) anchors the
+    /// run-scoped idempotency token. The `warrant` MUST grant every tool the model may
+    /// call. See [`run_react_loop`].
+    #[allow(clippy::too_many_arguments)] // distinct injected seams (registry/tool_broker/instance_id/warrant/budget)
+    pub fn drive_react_loop(
+        &self,
+        config: &RuntimeConfig,
+        warrant: &WarrantSpec,
+        instruction: &str,
+        registry: Arc<dyn ToolRegistry>,
+        tool_broker: Arc<dyn CapabilityBroker>,
+        instance_id: [u8; kx_capability::INSTANCE_ID_LEN],
+        budget: crate::ReactBudget,
+    ) -> Result<ReactLoopOutcome, RuntimeError> {
+        crate::run_react_loop(
+            config,
+            self.store.clone(),
+            self.journal.clone(),
+            self.backend.clone(),
+            registry,
+            tool_broker,
+            instance_id,
+            &self.model_id,
+            warrant,
+            instruction,
             budget,
         )
     }

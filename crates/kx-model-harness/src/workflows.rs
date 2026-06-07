@@ -10,7 +10,8 @@ use std::collections::BTreeMap;
 use kx_critic_types::CheckSpec;
 use kx_mote::{
     EdgeMeta, EffectPattern, GraphPosition, InferenceParams, InputDataId, LogicRef, ModelId, Mote,
-    MoteDef, MoteId, NdClass, ParentRef, PromptTemplateHash, ToolName, MOTE_DEF_SCHEMA_VERSION,
+    MoteDef, MoteId, NdClass, ParentRef, PromptTemplateHash, ToolName, ToolVersion,
+    MOTE_DEF_SCHEMA_VERSION,
 };
 use kx_runtime::workflow::WorkflowMote;
 use kx_runtime::DemoWorkflow;
@@ -488,6 +489,138 @@ pub fn replan_shaper(
         stc_crash_target: sentinel_shaper(),
         vtc_crash_target: sentinel_shaper(),
         shaper_id,
+    }
+}
+
+/// **PR-4 (M5) — a ReAct loop TURN.** A single READ-ONLY-NONDET *model* Mote that
+/// carries `instruction` and (via `prior_trajectory`) a Data edge to EVERY prior
+/// turn-output + observation Mote, so [`kx_context_assembler::assemble`] reconstructs
+/// the full Reason/Act/Observe transcript into the model window (D78). Its identity
+/// is round-namespaced (`blake3("kx-react-turn" || turn)`) — distinct + replay-stable
+/// per turn (the [`crate::react::run_react_loop`] crash-safety precondition: a turn is
+/// a pure function of its index, so a cold re-fold reconstructs the SAME chain). The
+/// model's RAW output (a `{"tool_call": …}` envelope OR a final answer) commits as the
+/// turn's `result_ref` — a captured fact (D76) the driver re-decodes via
+/// [`crate::toolcall::parse_tool_call`] on replay. NOT a topology shaper (a ReAct turn
+/// does not fan out children; the driver chains the next turn). The `warrant` grants
+/// the tools (so `assemble` emits the tool menu); the turn carries NO `tool_contract`
+/// (it proposes, it does not fire — the separate [`react_tool_mote`] fires).
+#[must_use]
+pub fn react_turn(
+    model_id: &ModelId,
+    warrant: &WarrantSpec,
+    instruction: &str,
+    turn: u32,
+    prior_trajectory: &[MoteId],
+) -> DemoWorkflow {
+    // Round-namespaced 32-byte identity — deterministic + distinct per turn, and
+    // cryptographically distinct from a `loop_shaper`/`replan_shaper` namespace.
+    let mut material = b"kx-react-turn".to_vec();
+    material.extend_from_slice(&turn.to_le_bytes());
+    let id_bytes = *blake3::hash(&material).as_bytes();
+
+    let mut config_subset = BTreeMap::new();
+    prompt::put_prompt(&mut config_subset, instruction);
+    let def = MoteDef {
+        critic_check: None,
+        logic_ref: LogicRef::from_bytes(id_bytes),
+        model_id: model_id.clone(),
+        prompt_template_hash: PromptTemplateHash::from_bytes(id_bytes),
+        // No tool_contract: the turn PROPOSES; firing is the tool Mote's job.
+        tool_contract: BTreeMap::new(),
+        // ROND: the model samples; the COMMITTED output is the served fact (R49,
+        // never re-sampled on replay). Greedy keeps a live decode reproducible.
+        nd_class: NdClass::ReadOnlyNondet,
+        config_subset,
+        effect_pattern: EffectPattern::IdempotentByConstruction,
+        critic_for: None,
+        is_topology_shaper: false,
+        // Output budget = the warrant's ceiling (never wider — `inference_params_from_mote`
+        // refuses a widening, D35). The caller sizes the warrant for the turn's needs.
+        inference_params: greedy(warrant.model_route.max_output_tokens),
+        schema_version: MOTE_DEF_SCHEMA_VERSION,
+    };
+    // Data edges to the full prior trajectory (turn outputs + observations).
+    let parents: SmallVec<[ParentRef; 4]> = prior_trajectory
+        .iter()
+        .map(|id| ParentRef {
+            parent_id: *id,
+            edge: EdgeMeta::data(),
+        })
+        .collect();
+    let turn_mote = Mote::new(
+        def,
+        InputDataId::from_bytes(id_bytes),
+        GraphPosition(id_bytes.to_vec()),
+        parents,
+    );
+    DemoWorkflow {
+        motes: vec![WorkflowMote {
+            mote: turn_mote,
+            warrant: warrant.clone(),
+            capability: ToolName(CAPABILITY.to_string()),
+        }],
+        stc_crash_target: sentinel_shaper(),
+        vtc_crash_target: sentinel_shaper(),
+        shaper_id: sentinel_shaper(),
+    }
+}
+
+/// **PR-4 (M5) — a ReAct loop OBSERVATION.** The WorldMutating `StageThenCommit` tool
+/// Mote that fires the tool the model proposed at `turn` (decoded + warrant-checked by
+/// the driver), with a Data edge to its `turn_mote_id` (durable lineage). Its
+/// committed `result_ref` is the OBSERVATION the next [`react_turn`] reads back.
+/// Round-namespaced identity (`blake3("kx-react-tool" || turn)`) — distinct +
+/// replay-stable. It declares `(tool_id, tool_version)` in its `tool_contract` and
+/// dispatches under the tool's own name, so [`crate::broker::dispatch_decoded_call`]'s
+/// `tool_broker.precheck` (tool_contract / grants / net_scope) is coherent. The
+/// `warrant` MUST grant `(tool_id, tool_version)`.
+#[must_use]
+pub fn react_tool_mote(
+    model_id: &ModelId,
+    warrant: &WarrantSpec,
+    tool_id: &ToolName,
+    tool_version: &ToolVersion,
+    turn: u32,
+    turn_mote_id: MoteId,
+) -> WorkflowMote {
+    let mut material = b"kx-react-tool".to_vec();
+    material.extend_from_slice(&turn.to_le_bytes());
+    let id_bytes = *blake3::hash(&material).as_bytes();
+
+    let mut tool_contract = BTreeMap::new();
+    tool_contract.insert(tool_id.clone(), tool_version.clone());
+    let def = MoteDef {
+        critic_check: None,
+        logic_ref: LogicRef::from_bytes(id_bytes),
+        model_id: model_id.clone(),
+        prompt_template_hash: PromptTemplateHash::from_bytes(id_bytes),
+        tool_contract,
+        // The tool effect is world-mutating by default → StageThenCommit (D66),
+        // so a crash-recovery re-dispatch is exactly-once (content-addressed +
+        // run-scoped idempotency key). No prompt: it fires the decoded call.
+        nd_class: NdClass::WorldMutating,
+        config_subset: BTreeMap::new(),
+        effect_pattern: EffectPattern::StageThenCommit,
+        critic_for: None,
+        is_topology_shaper: false,
+        inference_params: InferenceParams::default(),
+        schema_version: MOTE_DEF_SCHEMA_VERSION,
+    };
+    let tool_mote = Mote::new(
+        def,
+        InputDataId::from_bytes(id_bytes),
+        GraphPosition(id_bytes.to_vec()),
+        std::iter::once(ParentRef {
+            parent_id: turn_mote_id,
+            edge: EdgeMeta::data(),
+        })
+        .collect::<SmallVec<[ParentRef; 4]>>(),
+    );
+    WorkflowMote {
+        mote: tool_mote,
+        warrant: warrant.clone(),
+        capability: tool_id.clone(),
     }
 }
 
