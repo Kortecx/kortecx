@@ -318,11 +318,51 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
             .map_err(|e| GatewayError::Content(e.to_string()))?,
     );
 
+    // (0) Resolve the LIVE agentic-loop runtime (PR-2b, `--features inference`): the serve
+    //     model's inference backend + the role→recipe allowlist (the shaper executor lowers
+    //     a model proposal through it) + the role→warrant registry (the coordinator narrows
+    //     materialized children against it). Resolved BEFORE the coordinator because the
+    //     coordinator needs the role registry. Fail-soft: no/unfit model ⇒ `None` ⇒ the
+    //     durable spine + AL1 leaf-model path are unaffected (no shaper loop).
+    #[cfg(feature = "inference")]
+    let shaper_runtime: Option<crate::model_exec::ShaperRuntime> =
+        match crate::model_exec::resolve_serve_model() {
+            Some(gguf) => {
+                let model_id = crate::model_exec::serve_model_id(&gguf);
+                match crate::model_exec::build_serve_backend(&gguf, &model_id) {
+                    Ok(backend) => Some(crate::model_exec::build_shaper_runtime(
+                        &model_id,
+                        backend,
+                        default_executor_class(),
+                    )),
+                    Err(error) => {
+                        tracing::warn!(%error, "serve model is not fit; live loop NOT enabled");
+                        None
+                    }
+                }
+            }
+            None => None,
+        };
+
     // (1) Embedded coordinator — the SOLE journal writer. It opens the journal
     //     read-write (by value) and verifies each committed result_ref against
-    //     the shared store (D55). Hosted on a loopback ephemeral port.
+    //     the shared store (D55). Hosted on a loopback ephemeral port. With a shaper
+    //     runtime it also materializes + dispatches a committed shaper's children (PR-2b).
     let writer =
         SqliteJournal::open(&cfg.journal_path).map_err(|e| GatewayError::Journal(e.to_string()))?;
+    #[cfg(feature = "inference")]
+    let coordinator = match shaper_runtime.as_ref() {
+        Some(rt) => {
+            tracing::info!("PR-2b: live model-driven topology loop enabled (kx/recipes/plan)");
+            CoordinatorService::with_store_and_shaper_materialization(
+                writer,
+                content.clone(),
+                rt.role_registry.clone(),
+            )
+        }
+        None => CoordinatorService::with_store(writer, content.clone()),
+    };
+    #[cfg(not(feature = "inference"))]
     let coordinator = CoordinatorService::with_store(writer, content.clone());
     let coord_addr = resolve_listen(SocketAddr::from(([127, 0, 0, 1], 0))).await?;
     let coord_task = tokio::spawn(async move {
@@ -368,38 +408,25 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         default_executor_class(),
         storing_executor(content.clone()),
     ));
-    // AL1: when built `--features inference` and a fit serve model resolves, wrap
-    // the router so leased model Motes run REAL in-process inference; provision the
-    // `kx/recipes/chat` model recipe routed to it. Fail-soft: no/unfit model ⇒
-    // unchanged behavior (no model recipe). The default (FFI-free) build keeps
-    // `serve_model = None` and the executor unchanged.
+    // AL1 + PR-2b: when a fit serve model resolved (above), wrap the router so leased
+    // model Motes run REAL in-process inference (`kx/recipes/chat`) AND a leased SHAPER
+    // proposes topology that is lowered + committed as a TopologyDecision the coordinator
+    // dispatches (`kx/recipes/plan`). The shaper arm shares the run's recipe allowlist with
+    // the coordinator's role registry (both from `shaper_runtime`). Fail-soft: no model ⇒
+    // unchanged behavior. The default (FFI-free) build keeps `serve_model = None`.
     #[cfg(feature = "inference")]
     let (executor, serve_model): (Arc<dyn MoteExecutor>, Option<kx_mote::ModelId>) =
-        match crate::model_exec::resolve_serve_model() {
-            Some(gguf) => {
-                let model_id = crate::model_exec::serve_model_id(&gguf);
-                match crate::model_exec::build_serve_backend(&gguf, &model_id) {
-                    Ok(backend) => {
-                        tracing::info!(
-                            model = %model_id.0, gguf = %gguf.display(),
-                            "AL1: live model dispatch enabled (kx/recipes/chat is live)"
-                        );
-                        let wrapped: Arc<dyn MoteExecutor> =
-                            Arc::new(crate::model_exec::ModelRouterExecutor::new(
-                                executor,
-                                backend,
-                                (*content).clone(),
-                            ));
-                        (wrapped, Some(model_id))
-                    }
-                    Err(error) => {
-                        tracing::warn!(
-                            %error,
-                            "AL1: serve model is not fit; live model dispatch NOT enabled"
-                        );
-                        (executor, None)
-                    }
-                }
+        match shaper_runtime {
+            Some(rt) => {
+                tracing::info!(model = %rt.model_id.0, "AL1+PR-2b: live model + topology loop enabled");
+                let wrapped: Arc<dyn MoteExecutor> =
+                    Arc::new(crate::model_exec::ModelRouterExecutor::new(
+                        executor,
+                        rt.backend,
+                        (*content).clone(),
+                        Some(rt.recipes),
+                    ));
+                (wrapped, Some(rt.model_id))
             }
             None => (executor, None),
         };

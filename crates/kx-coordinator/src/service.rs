@@ -163,6 +163,26 @@ impl CoordinatorService {
         }
     }
 
+    /// [`with_store`](Self::with_store) + live shaper materialization (PR-2b): the
+    /// store's phantom-ref guard plus the `shaper_roles` registry, with the default
+    /// in-memory worker registry / system clock / OS nonce / built-in tool registry. The
+    /// constructor the gateway uses under `--features inference`.
+    pub fn with_store_and_shaper_materialization<J: Journal + Send + 'static>(
+        journal: J,
+        store: Arc<LocalFsContentStore>,
+        shaper_roles: Arc<dyn kx_warrant::RoleRegistry>,
+    ) -> Self {
+        Self::with_shaper_materialization(
+            journal,
+            Arc::new(InMemoryWorkerRegistry::new()),
+            store,
+            Arc::new(SystemClock),
+            Arc::new(OsRandomNonce),
+            Arc::new(InMemoryToolRegistry::with_builtins()),
+            shaper_roles,
+        )
+    }
+
     fn build<J: Journal + Send + 'static>(
         journal: J,
         registry: Arc<dyn WorkerRegistry>,

@@ -1300,6 +1300,7 @@ dependencies = [
  "kx-model-store",
  "kx-model-validator",
  "kx-mote",
+ "kx-planner",
  "kx-proto",
  "kx-warrant",
  "kx-worker",
