@@ -51,6 +51,7 @@ pub use kx_scheduler::WorkerId;
 mod clock;
 mod commit;
 mod error;
+mod materialize;
 mod nonce;
 mod placement;
 mod registry;

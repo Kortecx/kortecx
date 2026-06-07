@@ -212,4 +212,26 @@ impl TopologyDecision {
             .expect("TopologyDecision canonical bincode encodes infallibly");
         *blake3::hash(&bytes).as_bytes()
     }
+
+    /// Canonical-bincode bytes of this decision — the exact payload a shaper commits
+    /// at its `result_ref` (`ContentRef::of(self.encode()) == self.hash()` as a
+    /// `ContentRef`). The inverse of [`Self::decode`].
+    #[must_use]
+    pub fn encode(&self) -> Vec<u8> {
+        bincode::serde::encode_to_vec(self, canonical_config())
+            .expect("TopologyDecision canonical bincode encodes infallibly")
+    }
+
+    /// Decode a `TopologyDecision` from the canonical-bincode bytes a shaper committed
+    /// (the inverse of [`Self::encode`]). The single public reader of a committed
+    /// decision: the projection's materializer reads it during the fold, and a consumer
+    /// off the projection (e.g. the coordinator's dispatch-side child derivation, PR-2b)
+    /// reads the SAME bytes here, so both reconstruct byte-identical children (R49).
+    /// Returns the bincode error message on a malformed/foreign payload (fail-closed —
+    /// the caller treats a decode failure as a non-materializable shaper).
+    pub fn decode(bytes: &[u8]) -> Result<Self, String> {
+        bincode::serde::decode_from_slice::<Self, _>(bytes, canonical_config())
+            .map(|(td, _consumed)| td)
+            .map_err(|e| e.to_string())
+    }
 }

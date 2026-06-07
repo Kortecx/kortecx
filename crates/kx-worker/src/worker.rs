@@ -13,12 +13,20 @@ use kx_warrant::{ExecutorClass, WarrantSpec};
 use tokio::task::JoinHandle;
 
 use crate::client::WorkerClient;
-use crate::error::WorkerError;
+use crate::error::{classify_worker_failure, FailureClass, WorkerError};
 use crate::read_model::ReadModel;
 use crate::{commit_builder, run, run_wm};
 
 /// `ReadEntries` page size when folding the local read model.
 const READ_PAGE: u32 = 256;
+
+/// How many times the worker retries a Mote whose execution fails *transiently*
+/// before giving up and dead-lettering it (F4). A *terminal* failure (a deterministic
+/// logic error — e.g. the shaper executor's fail-closed verdict on a malformed model
+/// proposal, or a body that always non-zero-exits) is dead-lettered on the FIRST
+/// observation, never retried. This bound is what turns the old "re-lease a failing
+/// Mote forever" spin into a clean, bounded terminal `Failed`.
+const WORKER_MAX_ATTEMPTS: u32 = 3;
 
 /// Default cadence for the background liveness heartbeat ([`Worker::spawn_heartbeat`]).
 ///
@@ -52,6 +60,12 @@ pub struct Worker {
     /// background heartbeat ([`spawn_heartbeat`](Self::spawn_heartbeat)) reads it, so
     /// liveness *and* load (D56 placement) stay accurate even while idle.
     in_flight: Arc<AtomicU32>,
+    /// Per-Mote *transient* execution-failure counter (F4). In-memory, off the truth
+    /// path: it bounds how many times a Mote whose execution fails transiently is
+    /// retried before the worker dead-letters it. A success or a dead-letter clears the
+    /// entry. A worker restart resets it harmlessly — the bound is a sanity ceiling, not
+    /// durable state (the coordinator's terminal `Failed` is the durable truth).
+    attempts: std::collections::HashMap<MoteId, u32>,
 }
 
 impl Worker {
@@ -89,6 +103,7 @@ impl Worker {
             read_model: ReadModel::new(),
             max_lease,
             in_flight: Arc::new(AtomicU32::new(0)),
+            attempts: std::collections::HashMap::new(),
         })
     }
 
@@ -163,8 +178,15 @@ impl Worker {
             // stage→fire→commit via RPCs + the broker (P3.6b, D58 §4): the worker is not
             // the journal writer, so it cannot run `run_wm_mote`. Either path yields the
             // `result_ref` (= the broker's `staged_ref` for non-PURE) the worker PROPOSES.
-            let result_ref = if mote.nd_class() == NdClass::Pure {
-                run::run_pure(&mote, &warrant, &*self.executor, &self.resource_manager)?
+            //
+            // F4: a per-Mote execution failure must NOT `?`-abort the whole batch — that
+            // discards the rest of the lease AND re-leases the failing Mote forever (the
+            // spin PR-9b's startup probe only narrowly patched). Instead classify it:
+            // a terminal failure dead-letters now; a transient one retries within
+            // `WORKER_MAX_ATTEMPTS`, then dead-letters. Either way we `continue` to the
+            // next item. Transport/RPC errors on the lease/commit calls stay batch-level.
+            let exec = if mote.nd_class() == NdClass::Pure {
+                run::run_pure(&mote, &warrant, &*self.executor, &self.resource_manager)
             } else {
                 run_wm::run_wm(
                     &mut self.client,
@@ -174,7 +196,17 @@ impl Worker {
                     self.id,
                     instance_id,
                 )
-                .await?
+                .await
+            };
+            let result_ref = match exec {
+                Ok(result_ref) => {
+                    self.attempts.remove(&mote.id); // a clean run clears the retry counter
+                    result_ref
+                }
+                Err(error) => {
+                    self.handle_execution_failure(mote.id, &error).await;
+                    continue;
+                }
             };
             let request =
                 commit_builder::report_commit_request(&mote, &warrant, result_ref, self.id);
@@ -188,6 +220,7 @@ impl Worker {
                         mote = ?mote.id,
                         "commit proposal accepted"
                     );
+                    self.attempts.remove(&mote.id);
                     committed += 1;
                 }
                 _ => return Err(WorkerError::CommitRejected(response.detail)),
@@ -198,6 +231,68 @@ impl Worker {
             let _ = self.client.heartbeat(self.id, now_ms(), 0).await;
         }
         Ok(committed)
+    }
+
+    /// Handle a per-Mote execution failure (F4): classify it, and either dead-letter the
+    /// Mote now (a terminal-logic failure, or a transient one that has exhausted
+    /// [`WORKER_MAX_ATTEMPTS`]) or leave it `Pending` for a bounded retry on the next
+    /// lease. Never propagates — the caller `continue`s to the next leased item, so one
+    /// Mote's failure can neither abort the batch nor spin the worker.
+    async fn handle_execution_failure(&mut self, mote_id: MoteId, error: &WorkerError) {
+        match classify_worker_failure(error) {
+            FailureClass::TerminalLogic => {
+                tracing::warn!(
+                    worker_id = self.id,
+                    mote = ?mote_id,
+                    %error,
+                    "terminal execution failure; dead-lettering"
+                );
+                self.dead_letter(mote_id).await;
+            }
+            FailureClass::TransientInfra => {
+                let attempts = self.attempts.entry(mote_id).or_insert(0);
+                *attempts += 1;
+                if *attempts >= WORKER_MAX_ATTEMPTS {
+                    tracing::warn!(
+                        worker_id = self.id,
+                        mote = ?mote_id,
+                        attempts = *attempts,
+                        %error,
+                        "transient failure budget exhausted; dead-lettering"
+                    );
+                    self.dead_letter(mote_id).await;
+                } else {
+                    tracing::warn!(
+                        worker_id = self.id,
+                        mote = ?mote_id,
+                        attempts = *attempts,
+                        %error,
+                        "transient execution failure; will retry on re-lease"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Dead-letter `mote_id`: report a terminal failure to the coordinator (F4) and drop
+    /// the local retry counter. **Best-effort**: a failed report is logged, not
+    /// propagated — the Mote simply stays leasable and a later report (or the
+    /// coordinator's death reaper) resolves it; the coordinator's `ReportFailure` is
+    /// idempotent, so a duplicate after a retry is a no-op.
+    async fn dead_letter(&mut self, mote_id: MoteId) {
+        self.attempts.remove(&mote_id);
+        if let Err(error) = self
+            .client
+            .report_failure(*mote_id.as_bytes(), self.id)
+            .await
+        {
+            tracing::warn!(
+                worker_id = self.id,
+                mote = ?mote_id,
+                %error,
+                "report_failure failed; mote will be retried or reaped"
+            );
+        }
     }
 
     /// Send a liveness heartbeat with the current wall-clock and `in_flight` count.

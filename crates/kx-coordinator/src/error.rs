@@ -45,6 +45,18 @@ pub enum CoordinatorError {
     #[error("unknown mote {0:?} (never submitted)")]
     UnknownMote(MoteId),
 
+    /// A `ReportFailure` (F4 worker dead-letter) named a Mote the reporting worker
+    /// does not currently hold a lease on. A worker may only dead-letter work it was
+    /// actually leased — the admission gate that keeps one worker from terminating
+    /// another's (or phantom) Motes.
+    #[error("mote {mote:?} is not leased to worker {worker:?}")]
+    NotLeased {
+        /// The Mote the worker tried to dead-letter.
+        mote: MoteId,
+        /// The worker that issued the (rejected) `ReportFailure`.
+        worker: WorkerId,
+    },
+
     /// `RegisterRun` was called on a run whose journal already has entries but no
     /// `RunRegistered` fact at seq=1 (a run started without registration). Run
     /// registration must be the FIRST journal fact (M1.1, D64); registering after
@@ -135,14 +147,15 @@ impl From<CoordinatorError> for tonic::Status {
             | CoordinatorError::Scheduler(_) => Self::invalid_argument(message),
             // The run is not in a state that allows registration (it already
             // began) — the gRPC-canonical code for a state precondition failure.
-            // Submit-before-register is the same class of ordering violation.
-            CoordinatorError::RunAlreadyStarted | CoordinatorError::RunNotRegistered => {
-                Self::failed_precondition(message)
-            }
-            // A refusal is a precondition failure on the construction; on the
-            // success path the service consumes it into a REJECTED response
-            // before this conversion, so this arm is defensive.
-            CoordinatorError::SubmissionRefused(_) => Self::failed_precondition(message),
+            // Submit-before-register is the same class of ordering violation; the F4
+            // lease-admission failure (a worker that does not hold the lease it tried to
+            // dead-letter) is likewise a precondition. A `SubmissionRefused` is normally
+            // consumed into a REJECTED response before this conversion (this arm is
+            // defensive), and is the same class of construction precondition.
+            CoordinatorError::RunAlreadyStarted
+            | CoordinatorError::RunNotRegistered
+            | CoordinatorError::NotLeased { .. }
+            | CoordinatorError::SubmissionRefused(_) => Self::failed_precondition(message),
             CoordinatorError::Journal(_)
             | CoordinatorError::Projection(_)
             | CoordinatorError::CommitFailed(_) => Self::internal(message),

@@ -24,12 +24,12 @@ use kx_journal::{
     FailureReason, IdempotencyClassTag, Journal, JournalEntry, RepudiationReason,
     ResolvedCapabilityRecord, ResolvedKindTag, INSTANCE_ID_LEN,
 };
-use kx_mote::{Mote, MoteId, NdClass};
+use kx_mote::{Mote, MoteDef, MoteId, NdClass};
 use kx_projection::{MoteState, Projection};
 use kx_refusal::{validate_mote_submission, ToolResolution};
 use kx_scheduler::{LocalPlacement, Placement, Scheduler, SchedulerError, WorkerId};
 use kx_tool_registry::{IdempotencyClass, ToolKind, ToolRegistry, ToolResolutionEvent};
-use kx_warrant::{warrant_ref_of, ExecutorClass, WarrantSpec};
+use kx_warrant::{warrant_ref_of, ExecutorClass, RoleRegistry, WarrantSpec};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::clock::Clock;
@@ -133,6 +133,16 @@ pub(crate) enum Command {
         idempotency_key: [u8; 32],
         reply: oneshot::Sender<Result<u64, CoordinatorError>>,
     },
+    // F4 worker dead-letter: a LIVE worker reports a TERMINAL Mote failure so the
+    // coordinator appends a terminal `Failed` (the Mote leaves `ready_set` and is
+    // never re-leased) instead of the worker re-leasing it forever.
+    ReportFailure {
+        mote_id: MoteId,
+        idempotency_key: [u8; 32],
+        reason_class: FailureReason,
+        worker: WorkerId,
+        reply: oneshot::Sender<Result<(u64, bool), CoordinatorError>>,
+    },
     RegisterRun {
         recipe_fingerprint: [u8; 32],
         reply: oneshot::Sender<Result<[u8; INSTANCE_ID_LEN], CoordinatorError>>,
@@ -165,6 +175,12 @@ impl CoreHandle {
         clock: Arc<dyn Clock>,
         nonce: Arc<dyn RunNonceSource>,
         tool_registry: Arc<dyn ToolRegistry>,
+        // PR-2b: the role registry the topology materializer narrows child warrants
+        // against (SN-8). `Some` enables live shaper-child materialization (the agentic
+        // loop in serve); `None` keeps the pre-PR-2b behavior byte-identical (no shaper
+        // fan-out — `kx run`, non-inference serve). Held `Send + Sync` (Arc) for the move
+        // into the owner thread; materialization itself runs on that one thread.
+        shaper_roles: Option<Arc<dyn RoleRegistry>>,
     ) -> Self {
         let (commands, inbox) = mpsc::channel(COMMAND_BUFFER);
         std::thread::spawn(move || {
@@ -175,6 +191,7 @@ impl CoreHandle {
                 &*clock,
                 &*nonce,
                 &*tool_registry,
+                shaper_roles.as_deref(),
                 inbox,
             );
         });
@@ -321,6 +338,34 @@ impl CoreHandle {
         self.dispatch(Command::ReportEffectStaged {
             mote_id,
             idempotency_key,
+            reply,
+        })
+        .await?;
+        response
+            .await
+            .map_err(|_| CoordinatorError::CoreUnavailable)?
+    }
+
+    /// Record a worker-observed TERMINAL Mote failure (F4 dead-letter): append a
+    /// terminal `Failed` through the sole writer so the Mote leaves `ready_set` and
+    /// is never re-leased. Returns `(seq, appended)` — `appended == false` for an
+    /// idempotent no-op (the Mote already committed or already terminal). The worker
+    /// calls this after exhausting its attempt budget on a Mote whose execution
+    /// cannot succeed (a malformed model proposal, a body that always non-zero-exits),
+    /// closing the live-worker spin (PR-9b F2 / the deferred F4 analog).
+    pub(crate) async fn report_failure(
+        &self,
+        mote_id: MoteId,
+        idempotency_key: [u8; 32],
+        reason_class: FailureReason,
+        worker: WorkerId,
+    ) -> Result<(u64, bool), CoordinatorError> {
+        let (reply, response) = oneshot::channel();
+        self.dispatch(Command::ReportFailure {
+            mote_id,
+            idempotency_key,
+            reason_class,
+            worker,
             reply,
         })
         .await?;
@@ -692,6 +737,92 @@ fn failed_worker_crashed_entry(mote_id: MoteId) -> JournalEntry {
     }
 }
 
+/// Reporter id stamped on a worker SELF-reported terminal `Failed` (F4 dead-letter),
+/// distinct from the coordinator's reserved `COORDINATOR_REPORTER_ID = 0`. Worker ids
+/// start at 0, so the raw id would collide with the coordinator's; the high bit tags
+/// the reporter as a worker self-report and the low 64 bits carry the worker id for
+/// audit. `reporter_id` is audit metadata only — never folded into a `MoteId`, the
+/// projection digest, `ready_set`, or any identity (so this value is free to choose).
+fn worker_reporter_id(worker: WorkerId) -> u128 {
+    (1u128 << 64) | u128::from(worker.0)
+}
+
+/// Append a TERMINAL `Failed` for a Mote a LIVE worker reports it cannot complete
+/// (F4 dead-letter), through the sole writer. Mirrors `reap_dead_workers`'s
+/// append+fold, but the reporter is the worker (its own terminal verdict — e.g.
+/// `DeadLettered` after a budget-exhausted/terminal-logic dispatch failure), not the
+/// coordinator observing a death. The Mote becomes terminal `Failed` → excluded from
+/// `ready_set` (which yields only `Pending` Motes) → never re-leased, closing the
+/// live-worker spin (PR-9b F2 / the deferred F4 analog).
+///
+/// Fail-safe + idempotent. Returns `(seq, appended)`:
+/// - **admission**: the Mote must currently be leased to `worker` (a worker cannot
+///   dead-letter work it does not hold) — else `NotLeased`;
+/// - a Mote that raced to `Committed` is NEVER dead-lettered (Committed wins): the
+///   lease is resolved and the call is a no-op `(0, false)`;
+/// - an already-terminal Mote (`Failed`/`Repudiated`/`Inconsistent`) is a no-op
+///   `(0, false)` (no second `Failed`);
+/// - otherwise a `Failed` is appended + folded, the Mote is dropped from the dispatch
+///   admission set + lease tracking, and `(seq, true)` is returned.
+// The journal/projection/dispatch trio plus the failure identity (mote/key/reason/worker)
+// are each distinct, named, and threaded once through the owner thread — bundling them
+// into a struct would be churn for no clarity gain (Rule 1), matching the sibling
+// owner-thread handlers (`submit_and_capture`, `repudiate_cascade`).
+#[allow(clippy::too_many_arguments)]
+fn dead_letter_failure<J: Journal>(
+    journal: &J,
+    projection: &mut Projection,
+    folded_through: &mut u64,
+    dispatch: &mut Dispatch,
+    mote_id: MoteId,
+    idempotency_key: [u8; 32],
+    reason_class: FailureReason,
+    worker: WorkerId,
+) -> Result<(u64, bool), CoordinatorError> {
+    // No-op cases first — these write nothing, so they are benign for ANY reporter and
+    // must NOT be rejected by the admission gate (the lease is already resolved by the
+    // time they occur): a Committed Mote (raced ahead) wins; an already-terminal Mote is
+    // an idempotent duplicate report (the first dead-letter resolved the lease). Either
+    // way clear any lingering lease tracking and ack a no-op.
+    match projection.state_of(&mote_id) {
+        MoteState::Pending | MoteState::Scheduled => {}
+        _ => {
+            dispatch.tracker.resolve_committed(mote_id);
+            return Ok((0, false));
+        }
+    }
+    // We are about to write a terminal `Failed`: enforce the admission gate. Only the
+    // worker that HOLDS the lease (recorded at `serve_lease`) may dead-letter a live,
+    // in-flight Mote — keeping one worker from terminating another's (or a phantom) Mote.
+    if !dispatch.tracker.is_held_by(mote_id, worker) {
+        return Err(CoordinatorError::NotLeased {
+            mote: mote_id,
+            worker,
+        });
+    }
+    let entry = JournalEntry::Failed {
+        mote_id,
+        idempotency_key,
+        seq: 0,
+        reason_class,
+        reporter_id: worker_reporter_id(worker),
+    };
+    let durable = journal.append(entry)?;
+    let seq = durable.seq();
+    if seq > *folded_through {
+        projection.fold(&durable)?;
+        *folded_through = seq;
+    }
+    // Never re-lease it: drop from the dispatch admission set + lease tracking. The
+    // terminal `Failed` already removes it from `ready_set`; this keeps `dispatch.defs`
+    // from carrying a dead Mote and resolves the lease (`resolve_committed` clears all
+    // tracking for the Mote — the operation is identical for a terminal failure).
+    dispatch.submitted.remove(&mote_id);
+    dispatch.defs.remove(&mote_id);
+    dispatch.tracker.resolve_committed(mote_id);
+    Ok((seq, true))
+}
+
 /// Read up to `max` `Committed` entries with seq in `(since_seq, current_seq]`, in
 /// seq order, plus the cursor to resume from. The cursor (`next_seq`) advances past
 /// everything scanned: it is `current_seq` when the whole range was scanned (the peer
@@ -745,6 +876,7 @@ struct Dispatch {
 
 /// The owner-thread loop. Recovers the projection from the journal, then services
 /// commands until every sender drops (the channel closes on coordinator shutdown).
+#[allow(clippy::too_many_arguments)]
 fn core_loop<J: Journal>(
     journal: &J,
     store: Option<&LocalFsContentStore>,
@@ -752,6 +884,7 @@ fn core_loop<J: Journal>(
     clock: &dyn Clock,
     nonce: &dyn RunNonceSource,
     tool_registry: &dyn ToolRegistry,
+    shaper_roles: Option<&dyn RoleRegistry>,
     mut inbox: mpsc::Receiver<Command>,
 ) {
     let Some((mut projection, mut folded_through, submitted)) = recover(journal) else {
@@ -794,6 +927,7 @@ fn core_loop<J: Journal>(
             flush_commits(
                 journal,
                 store,
+                shaper_roles,
                 &mut projection,
                 &mut folded_through,
                 &mut dispatch,
@@ -801,6 +935,8 @@ fn core_loop<J: Journal>(
             );
             handle_command(
                 journal,
+                store,
+                shaper_roles,
                 &mut projection,
                 &mut folded_through,
                 registry,
@@ -815,6 +951,7 @@ fn core_loop<J: Journal>(
         flush_commits(
             journal,
             store,
+            shaper_roles,
             &mut projection,
             &mut folded_through,
             &mut dispatch,
@@ -834,6 +971,8 @@ fn core_loop<J: Journal>(
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn handle_command<J: Journal>(
     journal: &J,
+    store: Option<&LocalFsContentStore>,
+    shaper_roles: Option<&dyn RoleRegistry>,
     projection: &mut Projection,
     folded_through: &mut u64,
     registry: &dyn WorkerRegistry,
@@ -854,6 +993,8 @@ fn handle_command<J: Journal>(
         } => {
             let outcome = submit_and_capture(
                 journal,
+                store,
+                shaper_roles,
                 projection,
                 folded_through,
                 tool_registry,
@@ -930,6 +1071,25 @@ fn handle_command<J: Journal>(
                 idempotency_key,
             );
             let _ = reply.send(seq);
+        }
+        Command::ReportFailure {
+            mote_id,
+            idempotency_key,
+            reason_class,
+            worker,
+            reply,
+        } => {
+            let outcome = dead_letter_failure(
+                journal,
+                projection,
+                folded_through,
+                dispatch,
+                mote_id,
+                idempotency_key,
+                reason_class,
+                worker,
+            );
+            let _ = reply.send(outcome);
         }
         Command::RegisterRun {
             recipe_fingerprint,
@@ -1035,6 +1195,8 @@ fn register_run<J: Journal>(
 #[allow(clippy::too_many_arguments)]
 fn submit_and_capture<J: Journal>(
     journal: &J,
+    store: Option<&LocalFsContentStore>,
+    shaper_roles: Option<&dyn RoleRegistry>,
     projection: &mut Projection,
     folded_through: &mut u64,
     tool_registry: &dyn ToolRegistry,
@@ -1062,6 +1224,14 @@ fn submit_and_capture<J: Journal>(
     validate_mote_submission(&mote, accept_at_least_once, &resolution)
         .map_err(CoordinatorError::SubmissionRefused)?;
 
+    // PR-2b: capture the shaper identity BEFORE `handle_submit` consumes `mote`/`warrant`,
+    // so a re-submitted-but-already-committed shaper (recovery: the in-memory dispatch.defs
+    // + materialized children are gone on restart, but the journal still has the committed
+    // shaper fact) can re-materialize its children below.
+    let shaper_def = mote.def.is_topology_shaper.then(|| mote.def.clone());
+    let shaper_mote_id = mote.id;
+    let shaper_warrant = warrant.clone();
+
     // Admit through the hosted scheduler (verbatim — the P2 thesis test).
     let warrant_for_capture = warrant.clone();
     let mut outcome = handle_submit(scheduler, projection, dispatch, mote, warrant);
@@ -1088,7 +1258,74 @@ fn submit_and_capture<J: Journal>(
             );
         }
     }
+
+    // PR-2b recovery: if this submit is a shaper that is ALREADY committed (a re-submit
+    // after a restart, or an idempotent re-invoke), materialize its children into the
+    // projection + dispatch admission set now — they were derived in-memory the first
+    // time but lost on restart, while the committed `TopologyDecision` fact survives. The
+    // children's identities are re-derived from that fact (R49: served, never re-sampled).
+    if let (Some(def), Some(store), Some(roles)) = (shaper_def, store, shaper_roles) {
+        if projection.state_of(&shaper_mote_id) == MoteState::Committed {
+            materialize_committed_shaper(
+                projection,
+                dispatch,
+                store,
+                roles,
+                shaper_mote_id,
+                &def,
+                &shaper_warrant,
+            );
+        }
+    }
     Ok(outcome)
+}
+
+/// Materialize a COMMITTED topology shaper's children into BOTH the projection (so they
+/// enter `ready_set`) and the dispatch admission set (`Dispatch.defs`, so `lease_ready`
+/// can hand them to a worker) — the splice that closes the "materialized children never
+/// reach dispatch" gap (§2.149). Derives each child's full `(Mote, WarrantSpec)` from the
+/// committed `TopologyDecision` fact via [`crate::materialize::derive_shaper_children`],
+/// so the dispatch entry's `MoteId` equals the one a `DefaultTopologyMaterializer` would
+/// register (one source of truth). Runs on the live commit-fold (`flush_commits`) AND on a
+/// recovery re-submit (`submit_and_capture`); idempotent — `register_mote` overwrites and
+/// the dispatch inserts are keyed by id, so re-running is a no-op. A derivation error is
+/// logged (the children just do not dispatch — the shaper's commit stands, degraded-safe).
+fn materialize_committed_shaper(
+    projection: &mut Projection,
+    dispatch: &mut Dispatch,
+    store: &LocalFsContentStore,
+    roles: &dyn RoleRegistry,
+    shaper_mote_id: MoteId,
+    shaper_def: &MoteDef,
+    shaper_warrant: &WarrantSpec,
+) {
+    let Some(result_ref) = projection.result_ref_of(&shaper_mote_id) else {
+        return; // not committed (no result_ref yet) — nothing to materialize
+    };
+    match crate::materialize::derive_shaper_children(
+        store,
+        roles,
+        shaper_mote_id,
+        shaper_def,
+        result_ref,
+        shaper_warrant,
+    ) {
+        Ok(children) => {
+            for child in children {
+                let child_id = child.mote.id;
+                projection.register_mote(child.register);
+                dispatch.submitted.insert(child_id);
+                dispatch.defs.insert(child_id, (child.mote, child.warrant));
+            }
+        }
+        Err(reason) => {
+            tracing::error!(
+                ?shaper_mote_id,
+                %reason,
+                "shaper child materialization failed; children will not dispatch"
+            );
+        }
+    }
 }
 
 /// Resolve the warrant's tool grants ONCE per fresh submit (canonical
@@ -1291,9 +1528,11 @@ fn committed_entry(proposal: CommitProposal) -> JournalEntry {
 /// `store` is `Some`, each proposal's `result_ref` must be present in the content
 /// store (D55 phantom-ref guard) — an absent ref is rejected individually, never
 /// blocking its batch-mates.
+#[allow(clippy::too_many_arguments)]
 fn flush_commits<J: Journal>(
     journal: &J,
     store: Option<&LocalFsContentStore>,
+    shaper_roles: Option<&dyn RoleRegistry>,
     projection: &mut Projection,
     folded_through: &mut u64,
     dispatch: &mut Dispatch,
@@ -1334,6 +1573,23 @@ fn flush_commits<J: Journal>(
             // reschedule tracker (D57) clears every outstanding lease + crash-failed
             // entry for the Mote — first-wins resolves all concurrent attempts at once.
             for id in &committed_ids {
+                // PR-2b: a freshly-committed shaper materializes its children into the
+                // projection + dispatch admission set BEFORE its own def is freed below
+                // (the shaper's def + warrant are still in `dispatch.defs` here). Clone
+                // them out first so the `&mut dispatch` materialize call does not alias the
+                // immutable `defs.get` borrow.
+                if let (Some(store), Some(roles)) = (store, shaper_roles) {
+                    let shaper = dispatch
+                        .defs
+                        .get(id)
+                        .filter(|(m, _)| m.def.is_topology_shaper)
+                        .map(|(m, w)| (m.def.clone(), w.clone()));
+                    if let Some((def, warrant)) = shaper {
+                        materialize_committed_shaper(
+                            projection, dispatch, store, roles, *id, &def, &warrant,
+                        );
+                    }
+                }
                 dispatch.defs.remove(id);
                 dispatch.tracker.resolve_committed(*id);
             }

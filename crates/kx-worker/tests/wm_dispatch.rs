@@ -391,6 +391,12 @@ impl Coordinator for RecordingCoordinator {
     ) -> Result<Response<kx_coordinator::proto::RegisterRunResponse>, Status> {
         self.inner.register_run(request).await
     }
+    async fn report_failure(
+        &self,
+        request: Request<kx_coordinator::proto::ReportFailureRequest>,
+    ) -> Result<Response<kx_coordinator::proto::ReportFailureResponse>, Status> {
+        self.inner.report_failure(request).await
+    }
 }
 
 #[tokio::test]

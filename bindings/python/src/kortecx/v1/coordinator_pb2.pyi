@@ -40,6 +40,19 @@ class FsMode(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     FS_MODE_READ_WRITE: _ClassVar[FsMode]
     FS_MODE_EXEC_ONLY: _ClassVar[FsMode]
 
+class FailureReason(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    FAILURE_REASON_UNSPECIFIED: _ClassVar[FailureReason]
+    FAILURE_REASON_TIMED_OUT: _ClassVar[FailureReason]
+    FAILURE_REASON_EXECUTOR_REFUSED: _ClassVar[FailureReason]
+    FAILURE_REASON_VALIDATOR_REJECTED: _ClassVar[FailureReason]
+    FAILURE_REASON_WORKER_CRASHED: _ClassVar[FailureReason]
+    FAILURE_REASON_UPSTREAM_REPUDIATED: _ClassVar[FailureReason]
+    FAILURE_REASON_UNSAFE_WORLD_MUTATING_CONSTRUCTION: _ClassVar[FailureReason]
+    FAILURE_REASON_COMPENSATED_AT_LEAST_ONCE: _ClassVar[FailureReason]
+    FAILURE_REASON_QUARANTINED_AT_LEAST_ONCE: _ClassVar[FailureReason]
+    FAILURE_REASON_DEAD_LETTERED: _ClassVar[FailureReason]
+
 class ExecutorClass(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
     EXECUTOR_CLASS_UNSPECIFIED: _ClassVar[ExecutorClass]
@@ -80,6 +93,16 @@ FS_MODE_UNSPECIFIED: FsMode
 FS_MODE_READ_ONLY: FsMode
 FS_MODE_READ_WRITE: FsMode
 FS_MODE_EXEC_ONLY: FsMode
+FAILURE_REASON_UNSPECIFIED: FailureReason
+FAILURE_REASON_TIMED_OUT: FailureReason
+FAILURE_REASON_EXECUTOR_REFUSED: FailureReason
+FAILURE_REASON_VALIDATOR_REJECTED: FailureReason
+FAILURE_REASON_WORKER_CRASHED: FailureReason
+FAILURE_REASON_UPSTREAM_REPUDIATED: FailureReason
+FAILURE_REASON_UNSAFE_WORLD_MUTATING_CONSTRUCTION: FailureReason
+FAILURE_REASON_COMPENSATED_AT_LEAST_ONCE: FailureReason
+FAILURE_REASON_QUARANTINED_AT_LEAST_ONCE: FailureReason
+FAILURE_REASON_DEAD_LETTERED: FailureReason
 EXECUTOR_CLASS_UNSPECIFIED: ExecutorClass
 EXECUTOR_CLASS_BWRAP: ExecutorClass
 EXECUTOR_CLASS_OCI_DAEMON: ExecutorClass
@@ -337,6 +360,26 @@ class ReportEffectStagedResponse(_message.Message):
     ack: bool
     def __init__(self, staged_seq: _Optional[int] = ..., ack: bool = ...) -> None: ...
 
+class ReportFailureRequest(_message.Message):
+    __slots__ = ("mote_id", "idempotency_key", "reason_class", "worker_id")
+    MOTE_ID_FIELD_NUMBER: _ClassVar[int]
+    IDEMPOTENCY_KEY_FIELD_NUMBER: _ClassVar[int]
+    REASON_CLASS_FIELD_NUMBER: _ClassVar[int]
+    WORKER_ID_FIELD_NUMBER: _ClassVar[int]
+    mote_id: bytes
+    idempotency_key: bytes
+    reason_class: FailureReason
+    worker_id: int
+    def __init__(self, mote_id: _Optional[bytes] = ..., idempotency_key: _Optional[bytes] = ..., reason_class: _Optional[_Union[FailureReason, str]] = ..., worker_id: _Optional[int] = ...) -> None: ...
+
+class ReportFailureResponse(_message.Message):
+    __slots__ = ("failed_seq", "ack")
+    FAILED_SEQ_FIELD_NUMBER: _ClassVar[int]
+    ACK_FIELD_NUMBER: _ClassVar[int]
+    failed_seq: int
+    ack: bool
+    def __init__(self, failed_seq: _Optional[int] = ..., ack: bool = ...) -> None: ...
+
 class HeartbeatRequest(_message.Message):
     __slots__ = ("worker_id", "timestamp_ms", "in_flight")
     WORKER_ID_FIELD_NUMBER: _ClassVar[int]
@@ -377,13 +420,23 @@ class LeaseWorkRequest(_message.Message):
     max_motes: int
     def __init__(self, worker_id: _Optional[int] = ..., executor_class: _Optional[_Union[ExecutorClass, str]] = ..., max_motes: _Optional[int] = ...) -> None: ...
 
+class ParentResult(_message.Message):
+    __slots__ = ("parent_mote_id", "result_ref")
+    PARENT_MOTE_ID_FIELD_NUMBER: _ClassVar[int]
+    RESULT_REF_FIELD_NUMBER: _ClassVar[int]
+    parent_mote_id: bytes
+    result_ref: bytes
+    def __init__(self, parent_mote_id: _Optional[bytes] = ..., result_ref: _Optional[bytes] = ...) -> None: ...
+
 class WorkItem(_message.Message):
-    __slots__ = ("mote", "warrant")
+    __slots__ = ("mote", "warrant", "parent_results")
     MOTE_FIELD_NUMBER: _ClassVar[int]
     WARRANT_FIELD_NUMBER: _ClassVar[int]
+    PARENT_RESULTS_FIELD_NUMBER: _ClassVar[int]
     mote: Mote
     warrant: WarrantSpec
-    def __init__(self, mote: _Optional[_Union[Mote, _Mapping]] = ..., warrant: _Optional[_Union[WarrantSpec, _Mapping]] = ...) -> None: ...
+    parent_results: _containers.RepeatedCompositeFieldContainer[ParentResult]
+    def __init__(self, mote: _Optional[_Union[Mote, _Mapping]] = ..., warrant: _Optional[_Union[WarrantSpec, _Mapping]] = ..., parent_results: _Optional[_Iterable[_Union[ParentResult, _Mapping]]] = ...) -> None: ...
 
 class LeaseWorkResponse(_message.Message):
     __slots__ = ("items", "instance_id")

@@ -35,7 +35,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file kortecx/v1/coordinator.proto.
  */
 export const file_kortecx_v1_coordinator: GenFile = /*@__PURE__*/
-  fileDesc("Chxrb3J0ZWN4L3YxL2Nvb3JkaW5hdG9yLnByb3RvEgprb3J0ZWN4LnYxIqwBCg9JbmZlcmVuY2VQYXJhbXMSGQoRbWF4X291dHB1dF90b2tlbnMYASABKA0SFwoPdGVtcGVyYXR1cmVfYnBzGAIgASgNEhEKCXRvcF9wX2JwcxgDIAEoDRINCgV0b3BfaxgEIAEoDRIMCgRzZWVkGAUgASgNEhMKC3N0b3BfdG9rZW5zGAYgAygJEhQKB2dyYW1tYXIYByABKAlIAIgBAUIKCghfZ3JhbW1hciLLBAoHTW90ZURlZhIRCglsb2dpY19yZWYYASABKAwSEAoIbW9kZWxfaWQYAiABKAkSHAoUcHJvbXB0X3RlbXBsYXRlX2hhc2gYAyABKAwSPAoNdG9vbF9jb250cmFjdBgEIAMoCzIlLmtvcnRlY3gudjEuTW90ZURlZi5Ub29sQ29udHJhY3RFbnRyeRIlCghuZF9jbGFzcxgFIAEoDjITLmtvcnRlY3gudjEuTmRDbGFzcxI8Cg1jb25maWdfc3Vic2V0GAYgAygLMiUua29ydGVjeC52MS5Nb3RlRGVmLkNvbmZpZ1N1YnNldEVudHJ5EjEKDmVmZmVjdF9wYXR0ZXJuGAcgASgOMhkua29ydGVjeC52MS5FZmZlY3RQYXR0ZXJuEhcKCmNyaXRpY19mb3IYCCABKAxIAIgBARIaChJpc190b3BvbG9neV9zaGFwZXIYCSABKAgSNQoQaW5mZXJlbmNlX3BhcmFtcxgKIAEoCzIbLmtvcnRlY3gudjEuSW5mZXJlbmNlUGFyYW1zEhYKDnNjaGVtYV92ZXJzaW9uGAsgASgNEhkKDGNyaXRpY19jaGVjaxgMIAEoDEgBiAEBGjMKEVRvb2xDb250cmFjdEVudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoCToCOAEaMwoRQ29uZmlnU3Vic2V0RW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgMOgI4AUINCgtfY3JpdGljX2ZvckIPCg1fY3JpdGljX2NoZWNrIlwKCVBhcmVudFJlZhIRCglwYXJlbnRfaWQYASABKAwSJwoJZWRnZV9raW5kGAIgASgOMhQua29ydGVjeC52MS5FZGdlS2luZBITCgtub25fY2FzY2FkZRgDIAEoCCKQAQoETW90ZRIPCgdtb3RlX2lkGAEgASgMEiAKA2RlZhgCIAEoCzITLmtvcnRlY3gudjEuTW90ZURlZhIVCg1pbnB1dF9kYXRhX2lkGAMgASgMEhYKDmdyYXBoX3Bvc2l0aW9uGAQgASgMEiYKB3BhcmVudHMYBSADKAsyFS5rb3J0ZWN4LnYxLlBhcmVudFJlZiIyCglUb29sR3JhbnQSDwoHdG9vbF9pZBgBIAEoCRIUCgx0b29sX3ZlcnNpb24YAiABKAkiZgoKTW9kZWxSb3V0ZRIQCghtb2RlbF9pZBgBIAEoCRIYChBtYXhfaW5wdXRfdG9rZW5zGAIgASgNEhkKEW1heF9vdXRwdXRfdG9rZW5zGAMgASgNEhEKCW1heF9jYWxscxgEIAEoDSJ0Cg9SZXNvdXJjZUNlaWxpbmcSEQoJY3B1X21pbGxpGAEgASgNEhEKCW1lbV9ieXRlcxgCIAEoBBIVCg13YWxsX2Nsb2NrX21zGAMgASgEEhAKCGZkX2NvdW50GAQgASgNEhIKCmRpc2tfYnl0ZXMYBSABKAQiOQoHRnNNb3VudBIMCgRwYXRoGAEgASgJEiAKBG1vZGUYAiABKA4yEi5rb3J0ZWN4LnYxLkZzTW9kZSIuCgdGc1Njb3BlEiMKBm1vdW50cxgBIAMoCzITLmtvcnRlY3gudjEuRnNNb3VudCJtCghOZXRTY29wZRIoCgRub25lGAEgASgLMhgua29ydGVjeC52MS5OZXRTY29wZU5vbmVIABIuCglhbGxvd2xpc3QYAiABKAsyGS5rb3J0ZWN4LnYxLkhvc3RBbGxvd2xpc3RIAEIHCgVzY29wZSIOCgxOZXRTY29wZU5vbmUiHgoNSG9zdEFsbG93bGlzdBINCgVob3N0cxgBIAMoCSLDAwoLV2FycmFudFNwZWMSKQoKbW90ZV9jbGFzcxgBIAEoDjIVLmtvcnRlY3gudjEuTW90ZUNsYXNzEicKCG5kX2NsYXNzGAIgASgOMhUua29ydGVjeC52MS5Nb3RlQ2xhc3MSJQoIZnNfc2NvcGUYAyABKAsyEy5rb3J0ZWN4LnYxLkZzU2NvcGUSJwoJbmV0X3Njb3BlGAQgASgLMhQua29ydGVjeC52MS5OZXRTY29wZRIbChNzeXNjYWxsX3Byb2ZpbGVfcmVmGAUgASgMEioKC3Rvb2xfZ3JhbnRzGAYgAygLMhUua29ydGVjeC52MS5Ub29sR3JhbnQSKwoLbW9kZWxfcm91dGUYByABKAsyFi5rb3J0ZWN4LnYxLk1vZGVsUm91dGUSNQoQcmVzb3VyY2VfY2VpbGluZxgIIAEoCzIbLmtvcnRlY3gudjEuUmVzb3VyY2VDZWlsaW5nEhwKD2Vudmlyb25tZW50X3JlZhgJIAEoDEgAiAEBEjEKDmV4ZWN1dG9yX2NsYXNzGAogASgOMhkua29ydGVjeC52MS5FeGVjdXRvckNsYXNzQhIKEF9lbnZpcm9ubWVudF9yZWYiewoRU3VibWl0TW90ZVJlcXVlc3QSHgoEbW90ZRgBIAEoCzIQLmtvcnRlY3gudjEuTW90ZRIoCgd3YXJyYW50GAIgASgLMhcua29ydGVjeC52MS5XYXJyYW50U3BlYxIcChRhY2NlcHRfYXRfbGVhc3Rfb25jZRgDIAEoCCJ0ChJTdWJtaXRNb3RlUmVzcG9uc2USDwoHbW90ZV9pZBgBIAEoDBIoCgZzdGF0dXMYAiABKA4yGC5rb3J0ZWN4LnYxLlN1Ym1pdFN0YXR1cxIOCgZkZXRhaWwYAyABKAkSEwoLaW5zdGFuY2VfaWQYBCABKAwi4QEKE1JlcG9ydENvbW1pdFJlcXVlc3QSDwoHbW90ZV9pZBgBIAEoDBIXCg9pZGVtcG90ZW5jeV9rZXkYAiABKAwSEgoKcmVzdWx0X3JlZhgDIAEoDBITCgt3YXJyYW50X3JlZhgEIAEoDBIVCg1tb3RlX2RlZl9oYXNoGAUgASgMEiUKCG5kX2NsYXNzGAYgASgOMhMua29ydGVjeC52MS5OZENsYXNzEiYKB3BhcmVudHMYByADKAsyFS5rb3J0ZWN4LnYxLlBhcmVudFJlZhIRCgl3b3JrZXJfaWQYCCABKAQiaQoUUmVwb3J0Q29tbWl0UmVzcG9uc2USFQoNY29tbWl0dGVkX3NlcRgBIAEoBBIqCgdvdXRjb21lGAIgASgOMhkua29ydGVjeC52MS5Db21taXRPdXRjb21lEg4KBmRldGFpbBgDIAEoCSJYChlSZXBvcnRFZmZlY3RTdGFnZWRSZXF1ZXN0Eg8KB21vdGVfaWQYASABKAwSFwoPaWRlbXBvdGVuY3lfa2V5GAIgASgMEhEKCXdvcmtlcl9pZBgDIAEoBCI9ChpSZXBvcnRFZmZlY3RTdGFnZWRSZXNwb25zZRISCgpzdGFnZWRfc2VxGAEgASgEEgsKA2FjaxgCIAEoCCJOChBIZWFydGJlYXRSZXF1ZXN0EhEKCXdvcmtlcl9pZBgBIAEoBBIUCgx0aW1lc3RhbXBfbXMYAiABKAQSEQoJaW5fZmxpZ2h0GAMgASgNIiAKEUhlYXJ0YmVhdFJlc3BvbnNlEgsKA2FjaxgBIAEoCCJcChVSZWdpc3RlcldvcmtlclJlcXVlc3QSMQoOZXhlY3V0b3JfY2xhc3MYASABKA4yGS5rb3J0ZWN4LnYxLkV4ZWN1dG9yQ2xhc3MSEAoIZW5kcG9pbnQYAiABKAkiKwoWUmVnaXN0ZXJXb3JrZXJSZXNwb25zZRIRCgl3b3JrZXJfaWQYASABKAQiawoQTGVhc2VXb3JrUmVxdWVzdBIRCgl3b3JrZXJfaWQYASABKAQSMQoOZXhlY3V0b3JfY2xhc3MYAiABKA4yGS5rb3J0ZWN4LnYxLkV4ZWN1dG9yQ2xhc3MSEQoJbWF4X21vdGVzGAMgASgNIlQKCFdvcmtJdGVtEh4KBG1vdGUYASABKAsyEC5rb3J0ZWN4LnYxLk1vdGUSKAoHd2FycmFudBgCIAEoCzIXLmtvcnRlY3gudjEuV2FycmFudFNwZWMiTQoRTGVhc2VXb3JrUmVzcG9uc2USIwoFaXRlbXMYASADKAsyFC5rb3J0ZWN4LnYxLldvcmtJdGVtEhMKC2luc3RhbmNlX2lkGAIgASgMIjQKElJlYWRFbnRyaWVzUmVxdWVzdBIRCglzaW5jZV9zZXEYASABKAQSCwoDbWF4GAIgASgNItYBCg5Db21taXR0ZWRFbnRyeRIPCgdtb3RlX2lkGAEgASgMEhcKD2lkZW1wb3RlbmN5X2tleRgCIAEoDBILCgNzZXEYAyABKAQSJQoIbmRfY2xhc3MYBCABKA4yEy5rb3J0ZWN4LnYxLk5kQ2xhc3MSEgoKcmVzdWx0X3JlZhgFIAEoDBImCgdwYXJlbnRzGAYgAygLMhUua29ydGVjeC52MS5QYXJlbnRSZWYSEwoLd2FycmFudF9yZWYYByABKAwSFQoNbW90ZV9kZWZfaGFzaBgIIAEoDCJUCgxKb3VybmFsRW50cnkSCwoDc2VxGAEgASgEEi8KCWNvbW1pdHRlZBgCIAEoCzIaLmtvcnRlY3gudjEuQ29tbWl0dGVkRW50cnlIAEIGCgRraW5kIlIKE1JlYWRFbnRyaWVzUmVzcG9uc2USKQoHZW50cmllcxgBIAMoCzIYLmtvcnRlY3gudjEuSm91cm5hbEVudHJ5EhAKCG5leHRfc2VxGAIgASgEIjAKElJlZ2lzdGVyUnVuUmVxdWVzdBIaChJyZWNpcGVfZmluZ2VycHJpbnQYASABKAwiKgoTUmVnaXN0ZXJSdW5SZXNwb25zZRITCgtpbnN0YW5jZV9pZBgBIAEoDCpyCgdOZENsYXNzEhgKFE5EX0NMQVNTX1VOU1BFQ0lGSUVEEAASEQoNTkRfQ0xBU1NfUFVSRRABEh0KGU5EX0NMQVNTX1JFQURfT05MWV9OT05ERVQQAhIbChdORF9DTEFTU19XT1JMRF9NVVRBVElORxADKq0BCg1FZmZlY3RQYXR0ZXJuEh4KGkVGRkVDVF9QQVRURVJOX1VOU1BFQ0lGSUVEEAASLQopRUZGRUNUX1BBVFRFUk5fSURFTVBPVEVOVF9CWV9DT05TVFJVQ1RJT04QARIkCiBFRkZFQ1RfUEFUVEVSTl9TVEFHRV9USEVOX0NPTU1JVBACEicKI0VGRkVDVF9QQVRURVJOX1ZBTElEQVRFX1RIRU5fQ09NTUlUEAMqUAoIRWRnZUtpbmQSGQoVRURHRV9LSU5EX1VOU1BFQ0lGSUVEEAASEgoORURHRV9LSU5EX0RBVEEQARIVChFFREdFX0tJTkRfQ09OVFJPTBACKnwKCU1vdGVDbGFzcxIaChZNT1RFX0NMQVNTX1VOU1BFQ0lGSUVEEAASEwoPTU9URV9DTEFTU19QVVJFEAESHwobTU9URV9DTEFTU19SRUFEX09OTFlfTk9OREVUEAISHQoZTU9URV9DTEFTU19XT1JMRF9NVVRBVElORxADKmcKBkZzTW9kZRIXChNGU19NT0RFX1VOU1BFQ0lGSUVEEAASFQoRRlNfTU9ERV9SRUFEX09OTFkQARIWChJGU19NT0RFX1JFQURfV1JJVEUQAhIVChFGU19NT0RFX0VYRUNfT05MWRADKq0BCg1FeGVjdXRvckNsYXNzEh4KGkVYRUNVVE9SX0NMQVNTX1VOU1BFQ0lGSUVEEAASGAoURVhFQ1VUT1JfQ0xBU1NfQldSQVAQARIdChlFWEVDVVRPUl9DTEFTU19PQ0lfREFFTU9OEAISIQodRVhFQ1VUT1JfQ0xBU1NfQ0xPVURfTUlDUk9fVk0QAxIgChxFWEVDVVRPUl9DTEFTU19NQUNPU19TQU5EQk9YEAQqggEKDFN1Ym1pdFN0YXR1cxIdChlTVUJNSVRfU1RBVFVTX1VOU1BFQ0lGSUVEEAASGgoWU1VCTUlUX1NUQVRVU19BQ0NFUFRFRBABEhsKF1NVQk1JVF9TVEFUVVNfRFVQTElDQVRFEAISGgoWU1VCTUlUX1NUQVRVU19SRUpFQ1RFRBADKpABCg1Db21taXRPdXRjb21lEh4KGkNPTU1JVF9PVVRDT01FX1VOU1BFQ0lGSUVEEAASHAoYQ09NTUlUX09VVENPTUVfQ09NTUlUVEVEEAESJAogQ09NTUlUX09VVENPTUVfQUxSRUFEWV9DT01NSVRURUQQAhIbChdDT01NSVRfT1VUQ09NRV9SRUpFQ1RFRBADMp8FCgtDb29yZGluYXRvchJXCg5SZWdpc3RlcldvcmtlchIhLmtvcnRlY3gudjEuUmVnaXN0ZXJXb3JrZXJSZXF1ZXN0GiIua29ydGVjeC52MS5SZWdpc3RlcldvcmtlclJlc3BvbnNlEkgKCUhlYXJ0YmVhdBIcLmtvcnRlY3gudjEuSGVhcnRiZWF0UmVxdWVzdBodLmtvcnRlY3gudjEuSGVhcnRiZWF0UmVzcG9uc2USSwoKU3VibWl0TW90ZRIdLmtvcnRlY3gudjEuU3VibWl0TW90ZVJlcXVlc3QaHi5rb3J0ZWN4LnYxLlN1Ym1pdE1vdGVSZXNwb25zZRJRCgxSZXBvcnRDb21taXQSHy5rb3J0ZWN4LnYxLlJlcG9ydENvbW1pdFJlcXVlc3QaIC5rb3J0ZWN4LnYxLlJlcG9ydENvbW1pdFJlc3BvbnNlEkgKCUxlYXNlV29yaxIcLmtvcnRlY3gudjEuTGVhc2VXb3JrUmVxdWVzdBodLmtvcnRlY3gudjEuTGVhc2VXb3JrUmVzcG9uc2USTgoLUmVhZEVudHJpZXMSHi5rb3J0ZWN4LnYxLlJlYWRFbnRyaWVzUmVxdWVzdBofLmtvcnRlY3gudjEuUmVhZEVudHJpZXNSZXNwb25zZRJjChJSZXBvcnRFZmZlY3RTdGFnZWQSJS5rb3J0ZWN4LnYxLlJlcG9ydEVmZmVjdFN0YWdlZFJlcXVlc3QaJi5rb3J0ZWN4LnYxLlJlcG9ydEVmZmVjdFN0YWdlZFJlc3BvbnNlEk4KC1JlZ2lzdGVyUnVuEh4ua29ydGVjeC52MS5SZWdpc3RlclJ1blJlcXVlc3QaHy5rb3J0ZWN4LnYxLlJlZ2lzdGVyUnVuUmVzcG9uc2ViBnByb3RvMw");
+  fileDesc("Chxrb3J0ZWN4L3YxL2Nvb3JkaW5hdG9yLnByb3RvEgprb3J0ZWN4LnYxIqwBCg9JbmZlcmVuY2VQYXJhbXMSGQoRbWF4X291dHB1dF90b2tlbnMYASABKA0SFwoPdGVtcGVyYXR1cmVfYnBzGAIgASgNEhEKCXRvcF9wX2JwcxgDIAEoDRINCgV0b3BfaxgEIAEoDRIMCgRzZWVkGAUgASgNEhMKC3N0b3BfdG9rZW5zGAYgAygJEhQKB2dyYW1tYXIYByABKAlIAIgBAUIKCghfZ3JhbW1hciLLBAoHTW90ZURlZhIRCglsb2dpY19yZWYYASABKAwSEAoIbW9kZWxfaWQYAiABKAkSHAoUcHJvbXB0X3RlbXBsYXRlX2hhc2gYAyABKAwSPAoNdG9vbF9jb250cmFjdBgEIAMoCzIlLmtvcnRlY3gudjEuTW90ZURlZi5Ub29sQ29udHJhY3RFbnRyeRIlCghuZF9jbGFzcxgFIAEoDjITLmtvcnRlY3gudjEuTmRDbGFzcxI8Cg1jb25maWdfc3Vic2V0GAYgAygLMiUua29ydGVjeC52MS5Nb3RlRGVmLkNvbmZpZ1N1YnNldEVudHJ5EjEKDmVmZmVjdF9wYXR0ZXJuGAcgASgOMhkua29ydGVjeC52MS5FZmZlY3RQYXR0ZXJuEhcKCmNyaXRpY19mb3IYCCABKAxIAIgBARIaChJpc190b3BvbG9neV9zaGFwZXIYCSABKAgSNQoQaW5mZXJlbmNlX3BhcmFtcxgKIAEoCzIbLmtvcnRlY3gudjEuSW5mZXJlbmNlUGFyYW1zEhYKDnNjaGVtYV92ZXJzaW9uGAsgASgNEhkKDGNyaXRpY19jaGVjaxgMIAEoDEgBiAEBGjMKEVRvb2xDb250cmFjdEVudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoCToCOAEaMwoRQ29uZmlnU3Vic2V0RW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgMOgI4AUINCgtfY3JpdGljX2ZvckIPCg1fY3JpdGljX2NoZWNrIlwKCVBhcmVudFJlZhIRCglwYXJlbnRfaWQYASABKAwSJwoJZWRnZV9raW5kGAIgASgOMhQua29ydGVjeC52MS5FZGdlS2luZBITCgtub25fY2FzY2FkZRgDIAEoCCKQAQoETW90ZRIPCgdtb3RlX2lkGAEgASgMEiAKA2RlZhgCIAEoCzITLmtvcnRlY3gudjEuTW90ZURlZhIVCg1pbnB1dF9kYXRhX2lkGAMgASgMEhYKDmdyYXBoX3Bvc2l0aW9uGAQgASgMEiYKB3BhcmVudHMYBSADKAsyFS5rb3J0ZWN4LnYxLlBhcmVudFJlZiIyCglUb29sR3JhbnQSDwoHdG9vbF9pZBgBIAEoCRIUCgx0b29sX3ZlcnNpb24YAiABKAkiZgoKTW9kZWxSb3V0ZRIQCghtb2RlbF9pZBgBIAEoCRIYChBtYXhfaW5wdXRfdG9rZW5zGAIgASgNEhkKEW1heF9vdXRwdXRfdG9rZW5zGAMgASgNEhEKCW1heF9jYWxscxgEIAEoDSJ0Cg9SZXNvdXJjZUNlaWxpbmcSEQoJY3B1X21pbGxpGAEgASgNEhEKCW1lbV9ieXRlcxgCIAEoBBIVCg13YWxsX2Nsb2NrX21zGAMgASgEEhAKCGZkX2NvdW50GAQgASgNEhIKCmRpc2tfYnl0ZXMYBSABKAQiOQoHRnNNb3VudBIMCgRwYXRoGAEgASgJEiAKBG1vZGUYAiABKA4yEi5rb3J0ZWN4LnYxLkZzTW9kZSIuCgdGc1Njb3BlEiMKBm1vdW50cxgBIAMoCzITLmtvcnRlY3gudjEuRnNNb3VudCJtCghOZXRTY29wZRIoCgRub25lGAEgASgLMhgua29ydGVjeC52MS5OZXRTY29wZU5vbmVIABIuCglhbGxvd2xpc3QYAiABKAsyGS5rb3J0ZWN4LnYxLkhvc3RBbGxvd2xpc3RIAEIHCgVzY29wZSIOCgxOZXRTY29wZU5vbmUiHgoNSG9zdEFsbG93bGlzdBINCgVob3N0cxgBIAMoCSLDAwoLV2FycmFudFNwZWMSKQoKbW90ZV9jbGFzcxgBIAEoDjIVLmtvcnRlY3gudjEuTW90ZUNsYXNzEicKCG5kX2NsYXNzGAIgASgOMhUua29ydGVjeC52MS5Nb3RlQ2xhc3MSJQoIZnNfc2NvcGUYAyABKAsyEy5rb3J0ZWN4LnYxLkZzU2NvcGUSJwoJbmV0X3Njb3BlGAQgASgLMhQua29ydGVjeC52MS5OZXRTY29wZRIbChNzeXNjYWxsX3Byb2ZpbGVfcmVmGAUgASgMEioKC3Rvb2xfZ3JhbnRzGAYgAygLMhUua29ydGVjeC52MS5Ub29sR3JhbnQSKwoLbW9kZWxfcm91dGUYByABKAsyFi5rb3J0ZWN4LnYxLk1vZGVsUm91dGUSNQoQcmVzb3VyY2VfY2VpbGluZxgIIAEoCzIbLmtvcnRlY3gudjEuUmVzb3VyY2VDZWlsaW5nEhwKD2Vudmlyb25tZW50X3JlZhgJIAEoDEgAiAEBEjEKDmV4ZWN1dG9yX2NsYXNzGAogASgOMhkua29ydGVjeC52MS5FeGVjdXRvckNsYXNzQhIKEF9lbnZpcm9ubWVudF9yZWYiewoRU3VibWl0TW90ZVJlcXVlc3QSHgoEbW90ZRgBIAEoCzIQLmtvcnRlY3gudjEuTW90ZRIoCgd3YXJyYW50GAIgASgLMhcua29ydGVjeC52MS5XYXJyYW50U3BlYxIcChRhY2NlcHRfYXRfbGVhc3Rfb25jZRgDIAEoCCJ0ChJTdWJtaXRNb3RlUmVzcG9uc2USDwoHbW90ZV9pZBgBIAEoDBIoCgZzdGF0dXMYAiABKA4yGC5rb3J0ZWN4LnYxLlN1Ym1pdFN0YXR1cxIOCgZkZXRhaWwYAyABKAkSEwoLaW5zdGFuY2VfaWQYBCABKAwi4QEKE1JlcG9ydENvbW1pdFJlcXVlc3QSDwoHbW90ZV9pZBgBIAEoDBIXCg9pZGVtcG90ZW5jeV9rZXkYAiABKAwSEgoKcmVzdWx0X3JlZhgDIAEoDBITCgt3YXJyYW50X3JlZhgEIAEoDBIVCg1tb3RlX2RlZl9oYXNoGAUgASgMEiUKCG5kX2NsYXNzGAYgASgOMhMua29ydGVjeC52MS5OZENsYXNzEiYKB3BhcmVudHMYByADKAsyFS5rb3J0ZWN4LnYxLlBhcmVudFJlZhIRCgl3b3JrZXJfaWQYCCABKAQiaQoUUmVwb3J0Q29tbWl0UmVzcG9uc2USFQoNY29tbWl0dGVkX3NlcRgBIAEoBBIqCgdvdXRjb21lGAIgASgOMhkua29ydGVjeC52MS5Db21taXRPdXRjb21lEg4KBmRldGFpbBgDIAEoCSJYChlSZXBvcnRFZmZlY3RTdGFnZWRSZXF1ZXN0Eg8KB21vdGVfaWQYASABKAwSFwoPaWRlbXBvdGVuY3lfa2V5GAIgASgMEhEKCXdvcmtlcl9pZBgDIAEoBCI9ChpSZXBvcnRFZmZlY3RTdGFnZWRSZXNwb25zZRISCgpzdGFnZWRfc2VxGAEgASgEEgsKA2FjaxgCIAEoCCKEAQoUUmVwb3J0RmFpbHVyZVJlcXVlc3QSDwoHbW90ZV9pZBgBIAEoDBIXCg9pZGVtcG90ZW5jeV9rZXkYAiABKAwSLwoMcmVhc29uX2NsYXNzGAMgASgOMhkua29ydGVjeC52MS5GYWlsdXJlUmVhc29uEhEKCXdvcmtlcl9pZBgEIAEoBCI4ChVSZXBvcnRGYWlsdXJlUmVzcG9uc2USEgoKZmFpbGVkX3NlcRgBIAEoBBILCgNhY2sYAiABKAgiTgoQSGVhcnRiZWF0UmVxdWVzdBIRCgl3b3JrZXJfaWQYASABKAQSFAoMdGltZXN0YW1wX21zGAIgASgEEhEKCWluX2ZsaWdodBgDIAEoDSIgChFIZWFydGJlYXRSZXNwb25zZRILCgNhY2sYASABKAgiXAoVUmVnaXN0ZXJXb3JrZXJSZXF1ZXN0EjEKDmV4ZWN1dG9yX2NsYXNzGAEgASgOMhkua29ydGVjeC52MS5FeGVjdXRvckNsYXNzEhAKCGVuZHBvaW50GAIgASgJIisKFlJlZ2lzdGVyV29ya2VyUmVzcG9uc2USEQoJd29ya2VyX2lkGAEgASgEImsKEExlYXNlV29ya1JlcXVlc3QSEQoJd29ya2VyX2lkGAEgASgEEjEKDmV4ZWN1dG9yX2NsYXNzGAIgASgOMhkua29ydGVjeC52MS5FeGVjdXRvckNsYXNzEhEKCW1heF9tb3RlcxgDIAEoDSI6CgxQYXJlbnRSZXN1bHQSFgoOcGFyZW50X21vdGVfaWQYASABKAwSEgoKcmVzdWx0X3JlZhgCIAEoDCKGAQoIV29ya0l0ZW0SHgoEbW90ZRgBIAEoCzIQLmtvcnRlY3gudjEuTW90ZRIoCgd3YXJyYW50GAIgASgLMhcua29ydGVjeC52MS5XYXJyYW50U3BlYxIwCg5wYXJlbnRfcmVzdWx0cxgDIAMoCzIYLmtvcnRlY3gudjEuUGFyZW50UmVzdWx0Ik0KEUxlYXNlV29ya1Jlc3BvbnNlEiMKBWl0ZW1zGAEgAygLMhQua29ydGVjeC52MS5Xb3JrSXRlbRITCgtpbnN0YW5jZV9pZBgCIAEoDCI0ChJSZWFkRW50cmllc1JlcXVlc3QSEQoJc2luY2Vfc2VxGAEgASgEEgsKA21heBgCIAEoDSLWAQoOQ29tbWl0dGVkRW50cnkSDwoHbW90ZV9pZBgBIAEoDBIXCg9pZGVtcG90ZW5jeV9rZXkYAiABKAwSCwoDc2VxGAMgASgEEiUKCG5kX2NsYXNzGAQgASgOMhMua29ydGVjeC52MS5OZENsYXNzEhIKCnJlc3VsdF9yZWYYBSABKAwSJgoHcGFyZW50cxgGIAMoCzIVLmtvcnRlY3gudjEuUGFyZW50UmVmEhMKC3dhcnJhbnRfcmVmGAcgASgMEhUKDW1vdGVfZGVmX2hhc2gYCCABKAwiVAoMSm91cm5hbEVudHJ5EgsKA3NlcRgBIAEoBBIvCgljb21taXR0ZWQYAiABKAsyGi5rb3J0ZWN4LnYxLkNvbW1pdHRlZEVudHJ5SABCBgoEa2luZCJSChNSZWFkRW50cmllc1Jlc3BvbnNlEikKB2VudHJpZXMYASADKAsyGC5rb3J0ZWN4LnYxLkpvdXJuYWxFbnRyeRIQCghuZXh0X3NlcRgCIAEoBCIwChJSZWdpc3RlclJ1blJlcXVlc3QSGgoScmVjaXBlX2ZpbmdlcnByaW50GAEgASgMIioKE1JlZ2lzdGVyUnVuUmVzcG9uc2USEwoLaW5zdGFuY2VfaWQYASABKAwqcgoHTmRDbGFzcxIYChRORF9DTEFTU19VTlNQRUNJRklFRBAAEhEKDU5EX0NMQVNTX1BVUkUQARIdChlORF9DTEFTU19SRUFEX09OTFlfTk9OREVUEAISGwoXTkRfQ0xBU1NfV09STERfTVVUQVRJTkcQAyqtAQoNRWZmZWN0UGF0dGVybhIeChpFRkZFQ1RfUEFUVEVSTl9VTlNQRUNJRklFRBAAEi0KKUVGRkVDVF9QQVRURVJOX0lERU1QT1RFTlRfQllfQ09OU1RSVUNUSU9OEAESJAogRUZGRUNUX1BBVFRFUk5fU1RBR0VfVEhFTl9DT01NSVQQAhInCiNFRkZFQ1RfUEFUVEVSTl9WQUxJREFURV9USEVOX0NPTU1JVBADKlAKCEVkZ2VLaW5kEhkKFUVER0VfS0lORF9VTlNQRUNJRklFRBAAEhIKDkVER0VfS0lORF9EQVRBEAESFQoRRURHRV9LSU5EX0NPTlRST0wQAip8CglNb3RlQ2xhc3MSGgoWTU9URV9DTEFTU19VTlNQRUNJRklFRBAAEhMKD01PVEVfQ0xBU1NfUFVSRRABEh8KG01PVEVfQ0xBU1NfUkVBRF9PTkxZX05PTkRFVBACEh0KGU1PVEVfQ0xBU1NfV09STERfTVVUQVRJTkcQAypnCgZGc01vZGUSFwoTRlNfTU9ERV9VTlNQRUNJRklFRBAAEhUKEUZTX01PREVfUkVBRF9PTkxZEAESFgoSRlNfTU9ERV9SRUFEX1dSSVRFEAISFQoRRlNfTU9ERV9FWEVDX09OTFkQAyqZAwoNRmFpbHVyZVJlYXNvbhIeChpGQUlMVVJFX1JFQVNPTl9VTlNQRUNJRklFRBAAEhwKGEZBSUxVUkVfUkVBU09OX1RJTUVEX09VVBABEiMKH0ZBSUxVUkVfUkVBU09OX0VYRUNVVE9SX1JFRlVTRUQQAhIlCiFGQUlMVVJFX1JFQVNPTl9WQUxJREFUT1JfUkVKRUNURUQQAxIhCh1GQUlMVVJFX1JFQVNPTl9XT1JLRVJfQ1JBU0hFRBAEEiYKIkZBSUxVUkVfUkVBU09OX1VQU1RSRUFNX1JFUFVESUFURUQQBRI1CjFGQUlMVVJFX1JFQVNPTl9VTlNBRkVfV09STERfTVVUQVRJTkdfQ09OU1RSVUNUSU9OEAYSLAooRkFJTFVSRV9SRUFTT05fQ09NUEVOU0FURURfQVRfTEVBU1RfT05DRRAHEiwKKEZBSUxVUkVfUkVBU09OX1FVQVJBTlRJTkVEX0FUX0xFQVNUX09OQ0UQCBIgChxGQUlMVVJFX1JFQVNPTl9ERUFEX0xFVFRFUkVEEAkqrQEKDUV4ZWN1dG9yQ2xhc3MSHgoaRVhFQ1VUT1JfQ0xBU1NfVU5TUEVDSUZJRUQQABIYChRFWEVDVVRPUl9DTEFTU19CV1JBUBABEh0KGUVYRUNVVE9SX0NMQVNTX09DSV9EQUVNT04QAhIhCh1FWEVDVVRPUl9DTEFTU19DTE9VRF9NSUNST19WTRADEiAKHEVYRUNVVE9SX0NMQVNTX01BQ09TX1NBTkRCT1gQBCqCAQoMU3VibWl0U3RhdHVzEh0KGVNVQk1JVF9TVEFUVVNfVU5TUEVDSUZJRUQQABIaChZTVUJNSVRfU1RBVFVTX0FDQ0VQVEVEEAESGwoXU1VCTUlUX1NUQVRVU19EVVBMSUNBVEUQAhIaChZTVUJNSVRfU1RBVFVTX1JFSkVDVEVEEAMqkAEKDUNvbW1pdE91dGNvbWUSHgoaQ09NTUlUX09VVENPTUVfVU5TUEVDSUZJRUQQABIcChhDT01NSVRfT1VUQ09NRV9DT01NSVRURUQQARIkCiBDT01NSVRfT1VUQ09NRV9BTFJFQURZX0NPTU1JVFRFRBACEhsKF0NPTU1JVF9PVVRDT01FX1JFSkVDVEVEEAMy9QUKC0Nvb3JkaW5hdG9yElcKDlJlZ2lzdGVyV29ya2VyEiEua29ydGVjeC52MS5SZWdpc3RlcldvcmtlclJlcXVlc3QaIi5rb3J0ZWN4LnYxLlJlZ2lzdGVyV29ya2VyUmVzcG9uc2USSAoJSGVhcnRiZWF0Ehwua29ydGVjeC52MS5IZWFydGJlYXRSZXF1ZXN0Gh0ua29ydGVjeC52MS5IZWFydGJlYXRSZXNwb25zZRJLCgpTdWJtaXRNb3RlEh0ua29ydGVjeC52MS5TdWJtaXRNb3RlUmVxdWVzdBoeLmtvcnRlY3gudjEuU3VibWl0TW90ZVJlc3BvbnNlElEKDFJlcG9ydENvbW1pdBIfLmtvcnRlY3gudjEuUmVwb3J0Q29tbWl0UmVxdWVzdBogLmtvcnRlY3gudjEuUmVwb3J0Q29tbWl0UmVzcG9uc2USSAoJTGVhc2VXb3JrEhwua29ydGVjeC52MS5MZWFzZVdvcmtSZXF1ZXN0Gh0ua29ydGVjeC52MS5MZWFzZVdvcmtSZXNwb25zZRJOCgtSZWFkRW50cmllcxIeLmtvcnRlY3gudjEuUmVhZEVudHJpZXNSZXF1ZXN0Gh8ua29ydGVjeC52MS5SZWFkRW50cmllc1Jlc3BvbnNlEmMKElJlcG9ydEVmZmVjdFN0YWdlZBIlLmtvcnRlY3gudjEuUmVwb3J0RWZmZWN0U3RhZ2VkUmVxdWVzdBomLmtvcnRlY3gudjEuUmVwb3J0RWZmZWN0U3RhZ2VkUmVzcG9uc2USTgoLUmVnaXN0ZXJSdW4SHi5rb3J0ZWN4LnYxLlJlZ2lzdGVyUnVuUmVxdWVzdBofLmtvcnRlY3gudjEuUmVnaXN0ZXJSdW5SZXNwb25zZRJUCg1SZXBvcnRGYWlsdXJlEiAua29ydGVjeC52MS5SZXBvcnRGYWlsdXJlUmVxdWVzdBohLmtvcnRlY3gudjEuUmVwb3J0RmFpbHVyZVJlc3BvbnNlYgZwcm90bzM");
 
 /**
  * Mirrors kx_mote::InferenceParams (D50 decoding params; identity-bearing).
@@ -740,6 +740,72 @@ export const ReportEffectStagedResponseSchema: GenMessage<ReportEffectStagedResp
   messageDesc(file_kortecx_v1_coordinator, 18);
 
 /**
+ * @generated from message kortecx.v1.ReportFailureRequest
+ */
+export type ReportFailureRequest = Message<"kortecx.v1.ReportFailureRequest"> & {
+  /**
+   * 32B — the Mote that terminally failed
+   *
+   * @generated from field: bytes mote_id = 1;
+   */
+  moteId: Uint8Array;
+
+  /**
+   * 32B — == mote_id (idempotency.md)
+   *
+   * @generated from field: bytes idempotency_key = 2;
+   */
+  idempotencyKey: Uint8Array;
+
+  /**
+   * why it is terminal (DEAD_LETTERED for the F4 budget/terminal-logic path)
+   *
+   * @generated from field: kortecx.v1.FailureReason reason_class = 3;
+   */
+  reasonClass: FailureReason;
+
+  /**
+   * the reporting worker (admission gate)
+   *
+   * @generated from field: uint64 worker_id = 4;
+   */
+  workerId: bigint;
+};
+
+/**
+ * Describes the message kortecx.v1.ReportFailureRequest.
+ * Use `create(ReportFailureRequestSchema)` to create a new message.
+ */
+export const ReportFailureRequestSchema: GenMessage<ReportFailureRequest> = /*@__PURE__*/
+  messageDesc(file_kortecx_v1_coordinator, 19);
+
+/**
+ * @generated from message kortecx.v1.ReportFailureResponse
+ */
+export type ReportFailureResponse = Message<"kortecx.v1.ReportFailureResponse"> & {
+  /**
+   * journal seq of the Failed entry (or dedup hit)
+   *
+   * @generated from field: uint64 failed_seq = 1;
+   */
+  failedSeq: bigint;
+
+  /**
+   * true once durable
+   *
+   * @generated from field: bool ack = 2;
+   */
+  ack: boolean;
+};
+
+/**
+ * Describes the message kortecx.v1.ReportFailureResponse.
+ * Use `create(ReportFailureResponseSchema)` to create a new message.
+ */
+export const ReportFailureResponseSchema: GenMessage<ReportFailureResponse> = /*@__PURE__*/
+  messageDesc(file_kortecx_v1_coordinator, 20);
+
+/**
  * @generated from message kortecx.v1.HeartbeatRequest
  */
 export type HeartbeatRequest = Message<"kortecx.v1.HeartbeatRequest"> & {
@@ -768,7 +834,7 @@ export type HeartbeatRequest = Message<"kortecx.v1.HeartbeatRequest"> & {
  * Use `create(HeartbeatRequestSchema)` to create a new message.
  */
 export const HeartbeatRequestSchema: GenMessage<HeartbeatRequest> = /*@__PURE__*/
-  messageDesc(file_kortecx_v1_coordinator, 19);
+  messageDesc(file_kortecx_v1_coordinator, 21);
 
 /**
  * @generated from message kortecx.v1.HeartbeatResponse
@@ -785,7 +851,7 @@ export type HeartbeatResponse = Message<"kortecx.v1.HeartbeatResponse"> & {
  * Use `create(HeartbeatResponseSchema)` to create a new message.
  */
 export const HeartbeatResponseSchema: GenMessage<HeartbeatResponse> = /*@__PURE__*/
-  messageDesc(file_kortecx_v1_coordinator, 20);
+  messageDesc(file_kortecx_v1_coordinator, 22);
 
 /**
  * @generated from message kortecx.v1.RegisterWorkerRequest
@@ -811,7 +877,7 @@ export type RegisterWorkerRequest = Message<"kortecx.v1.RegisterWorkerRequest"> 
  * Use `create(RegisterWorkerRequestSchema)` to create a new message.
  */
 export const RegisterWorkerRequestSchema: GenMessage<RegisterWorkerRequest> = /*@__PURE__*/
-  messageDesc(file_kortecx_v1_coordinator, 21);
+  messageDesc(file_kortecx_v1_coordinator, 23);
 
 /**
  * @generated from message kortecx.v1.RegisterWorkerResponse
@@ -830,7 +896,7 @@ export type RegisterWorkerResponse = Message<"kortecx.v1.RegisterWorkerResponse"
  * Use `create(RegisterWorkerResponseSchema)` to create a new message.
  */
 export const RegisterWorkerResponseSchema: GenMessage<RegisterWorkerResponse> = /*@__PURE__*/
-  messageDesc(file_kortecx_v1_coordinator, 22);
+  messageDesc(file_kortecx_v1_coordinator, 24);
 
 /**
  * @generated from message kortecx.v1.LeaseWorkRequest
@@ -863,10 +929,48 @@ export type LeaseWorkRequest = Message<"kortecx.v1.LeaseWorkRequest"> & {
  * Use `create(LeaseWorkRequestSchema)` to create a new message.
  */
 export const LeaseWorkRequestSchema: GenMessage<LeaseWorkRequest> = /*@__PURE__*/
-  messageDesc(file_kortecx_v1_coordinator, 23);
+  messageDesc(file_kortecx_v1_coordinator, 25);
 
 /**
- * One unit of work: the Mote to run plus the warrant it runs under.
+ * One committed Data-edge parent of a leased Mote: the parent's identity plus the
+ * content-address of its committed result. The forward-ready seam for context assembly
+ * (F-7): the coordinator (which holds the projection) resolves these from `result_ref_of`
+ * so the worker can assemble a model Mote's upstream context WITHOUT a journal of its own
+ * — the heavy fetch + concat then happens worker-side, off the sole-writer thread.
+ * Content-addressed: a forged `result_ref` resolves to nothing and the assembler fails
+ * closed (UpstreamNotCommitted). RESERVED — populated when F-7 lands (deferred to PR-2c,
+ * where Data-parent context is exercised; PR-2b's shaper children carry only a single
+ * Control edge, so the field stays empty and assembly is a no-op).
+ *
+ * @generated from message kortecx.v1.ParentResult
+ */
+export type ParentResult = Message<"kortecx.v1.ParentResult"> & {
+  /**
+   * 32B — the Data-edge parent's MoteId
+   *
+   * @generated from field: bytes parent_mote_id = 1;
+   */
+  parentMoteId: Uint8Array;
+
+  /**
+   * 32B — its committed result's content address
+   *
+   * @generated from field: bytes result_ref = 2;
+   */
+  resultRef: Uint8Array;
+};
+
+/**
+ * Describes the message kortecx.v1.ParentResult.
+ * Use `create(ParentResultSchema)` to create a new message.
+ */
+export const ParentResultSchema: GenMessage<ParentResult> = /*@__PURE__*/
+  messageDesc(file_kortecx_v1_coordinator, 26);
+
+/**
+ * One unit of work: the Mote to run plus the warrant it runs under. `parent_results`
+ * (field 3, additive) is the forward-ready F-7 context seam (RESERVED — empty until PR-2c;
+ * an older worker that ignores it assembles an empty leaf context, byte-identical to today).
  *
  * @generated from message kortecx.v1.WorkItem
  */
@@ -880,6 +984,11 @@ export type WorkItem = Message<"kortecx.v1.WorkItem"> & {
    * @generated from field: kortecx.v1.WarrantSpec warrant = 2;
    */
   warrant?: WarrantSpec | undefined;
+
+  /**
+   * @generated from field: repeated kortecx.v1.ParentResult parent_results = 3;
+   */
+  parentResults: ParentResult[];
 };
 
 /**
@@ -887,7 +996,7 @@ export type WorkItem = Message<"kortecx.v1.WorkItem"> & {
  * Use `create(WorkItemSchema)` to create a new message.
  */
 export const WorkItemSchema: GenMessage<WorkItem> = /*@__PURE__*/
-  messageDesc(file_kortecx_v1_coordinator, 24);
+  messageDesc(file_kortecx_v1_coordinator, 27);
 
 /**
  * @generated from message kortecx.v1.LeaseWorkResponse
@@ -913,7 +1022,7 @@ export type LeaseWorkResponse = Message<"kortecx.v1.LeaseWorkResponse"> & {
  * Use `create(LeaseWorkResponseSchema)` to create a new message.
  */
 export const LeaseWorkResponseSchema: GenMessage<LeaseWorkResponse> = /*@__PURE__*/
-  messageDesc(file_kortecx_v1_coordinator, 25);
+  messageDesc(file_kortecx_v1_coordinator, 28);
 
 /**
  * @generated from message kortecx.v1.ReadEntriesRequest
@@ -939,7 +1048,7 @@ export type ReadEntriesRequest = Message<"kortecx.v1.ReadEntriesRequest"> & {
  * Use `create(ReadEntriesRequestSchema)` to create a new message.
  */
 export const ReadEntriesRequestSchema: GenMessage<ReadEntriesRequest> = /*@__PURE__*/
-  messageDesc(file_kortecx_v1_coordinator, 26);
+  messageDesc(file_kortecx_v1_coordinator, 29);
 
 /**
  * Mirrors kx_journal::JournalEntry::Committed (field-for-field; the identity
@@ -1006,7 +1115,7 @@ export type CommittedEntry = Message<"kortecx.v1.CommittedEntry"> & {
  * Use `create(CommittedEntrySchema)` to create a new message.
  */
 export const CommittedEntrySchema: GenMessage<CommittedEntry> = /*@__PURE__*/
-  messageDesc(file_kortecx_v1_coordinator, 27);
+  messageDesc(file_kortecx_v1_coordinator, 30);
 
 /**
  * One journal entry on the wire. EXTENSIBLE: P2.4 carries only `Committed`;
@@ -1039,7 +1148,7 @@ export type JournalEntry = Message<"kortecx.v1.JournalEntry"> & {
  * Use `create(JournalEntrySchema)` to create a new message.
  */
 export const JournalEntrySchema: GenMessage<JournalEntry> = /*@__PURE__*/
-  messageDesc(file_kortecx_v1_coordinator, 28);
+  messageDesc(file_kortecx_v1_coordinator, 31);
 
 /**
  * @generated from message kortecx.v1.ReadEntriesResponse
@@ -1065,7 +1174,7 @@ export type ReadEntriesResponse = Message<"kortecx.v1.ReadEntriesResponse"> & {
  * Use `create(ReadEntriesResponseSchema)` to create a new message.
  */
 export const ReadEntriesResponseSchema: GenMessage<ReadEntriesResponse> = /*@__PURE__*/
-  messageDesc(file_kortecx_v1_coordinator, 29);
+  messageDesc(file_kortecx_v1_coordinator, 32);
 
 /**
  * @generated from message kortecx.v1.RegisterRunRequest
@@ -1084,7 +1193,7 @@ export type RegisterRunRequest = Message<"kortecx.v1.RegisterRunRequest"> & {
  * Use `create(RegisterRunRequestSchema)` to create a new message.
  */
 export const RegisterRunRequestSchema: GenMessage<RegisterRunRequest> = /*@__PURE__*/
-  messageDesc(file_kortecx_v1_coordinator, 30);
+  messageDesc(file_kortecx_v1_coordinator, 33);
 
 /**
  * @generated from message kortecx.v1.RegisterRunResponse
@@ -1103,7 +1212,7 @@ export type RegisterRunResponse = Message<"kortecx.v1.RegisterRunResponse"> & {
  * Use `create(RegisterRunResponseSchema)` to create a new message.
  */
 export const RegisterRunResponseSchema: GenMessage<RegisterRunResponse> = /*@__PURE__*/
-  messageDesc(file_kortecx_v1_coordinator, 31);
+  messageDesc(file_kortecx_v1_coordinator, 34);
 
 /**
  * Mirrors kx_mote::NdClass (Pure / ReadOnlyNondet / WorldMutating).
@@ -1266,6 +1375,72 @@ export const FsModeSchema: GenEnum<FsMode> = /*@__PURE__*/
   enumDesc(file_kortecx_v1_coordinator, 4);
 
 /**
+ * Mirrors kx_journal::FailureReason (closed enum, D19). +1-shifted; 0 = UNSPECIFIED
+ * is rejected at the Rust boundary. A worker self-reporting a terminal Mote failure
+ * (F4 dead-letter) sends DEAD_LETTERED; the other variants exist so the wire stays a
+ * faithful mirror and future reporters can use them without a wire break.
+ *
+ * @generated from enum kortecx.v1.FailureReason
+ */
+export enum FailureReason {
+  /**
+   * @generated from enum value: FAILURE_REASON_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: FAILURE_REASON_TIMED_OUT = 1;
+   */
+  TIMED_OUT = 1,
+
+  /**
+   * @generated from enum value: FAILURE_REASON_EXECUTOR_REFUSED = 2;
+   */
+  EXECUTOR_REFUSED = 2,
+
+  /**
+   * @generated from enum value: FAILURE_REASON_VALIDATOR_REJECTED = 3;
+   */
+  VALIDATOR_REJECTED = 3,
+
+  /**
+   * @generated from enum value: FAILURE_REASON_WORKER_CRASHED = 4;
+   */
+  WORKER_CRASHED = 4,
+
+  /**
+   * @generated from enum value: FAILURE_REASON_UPSTREAM_REPUDIATED = 5;
+   */
+  UPSTREAM_REPUDIATED = 5,
+
+  /**
+   * @generated from enum value: FAILURE_REASON_UNSAFE_WORLD_MUTATING_CONSTRUCTION = 6;
+   */
+  UNSAFE_WORLD_MUTATING_CONSTRUCTION = 6,
+
+  /**
+   * @generated from enum value: FAILURE_REASON_COMPENSATED_AT_LEAST_ONCE = 7;
+   */
+  COMPENSATED_AT_LEAST_ONCE = 7,
+
+  /**
+   * @generated from enum value: FAILURE_REASON_QUARANTINED_AT_LEAST_ONCE = 8;
+   */
+  QUARANTINED_AT_LEAST_ONCE = 8,
+
+  /**
+   * @generated from enum value: FAILURE_REASON_DEAD_LETTERED = 9;
+   */
+  DEAD_LETTERED = 9,
+}
+
+/**
+ * Describes the enum kortecx.v1.FailureReason.
+ */
+export const FailureReasonSchema: GenEnum<FailureReason> = /*@__PURE__*/
+  enumDesc(file_kortecx_v1_coordinator, 5);
+
+/**
  * Mirrors kx_warrant::ExecutorClass.
  *
  * @generated from enum kortecx.v1.ExecutorClass
@@ -1301,7 +1476,7 @@ export enum ExecutorClass {
  * Describes the enum kortecx.v1.ExecutorClass.
  */
 export const ExecutorClassSchema: GenEnum<ExecutorClass> = /*@__PURE__*/
-  enumDesc(file_kortecx_v1_coordinator, 5);
+  enumDesc(file_kortecx_v1_coordinator, 6);
 
 /**
  * @generated from enum kortecx.v1.SubmitStatus
@@ -1336,7 +1511,7 @@ export enum SubmitStatus {
  * Describes the enum kortecx.v1.SubmitStatus.
  */
 export const SubmitStatusSchema: GenEnum<SubmitStatus> = /*@__PURE__*/
-  enumDesc(file_kortecx_v1_coordinator, 6);
+  enumDesc(file_kortecx_v1_coordinator, 7);
 
 /**
  * @generated from enum kortecx.v1.CommitOutcome
@@ -1371,7 +1546,7 @@ export enum CommitOutcome {
  * Describes the enum kortecx.v1.CommitOutcome.
  */
 export const CommitOutcomeSchema: GenEnum<CommitOutcome> = /*@__PURE__*/
-  enumDesc(file_kortecx_v1_coordinator, 7);
+  enumDesc(file_kortecx_v1_coordinator, 8);
 
 /**
  * @generated from service kortecx.v1.Coordinator
@@ -1440,6 +1615,14 @@ export const Coordinator: GenService<{
     methodKind: "unary";
     input: typeof RegisterRunRequestSchema;
     output: typeof RegisterRunResponseSchema;
+  },
+  /**
+   * @generated from rpc kortecx.v1.Coordinator.ReportFailure
+   */
+  reportFailure: {
+    methodKind: "unary";
+    input: typeof ReportFailureRequestSchema;
+    output: typeof ReportFailureResponseSchema;
   },
 }> = /*@__PURE__*/
   serviceDesc(file_kortecx_v1_coordinator, 0);

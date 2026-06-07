@@ -64,6 +64,10 @@ tempfile        = { workspace = true, optional = true }
 kx-inference       = { workspace = true, optional = true, features = ["llamacpp"] }
 kx-model-store     = { workspace = true, optional = true }
 kx-model-validator = { workspace = true, optional = true }
+# PR-2b (T1.1): the planner's decode→budget→lower trust boundary for the LIVE shaper
+# arm (model proposal → vetted TopologyDecision). FFI-free (dep-wall-safe); behind
+# `inference` so the default build is unaffected.
+kx-planner         = { workspace = true, optional = true }
 # A1: `tls` enables in-binary rustls TLS on the gRPC listener (reuses the rustls
 # 0.23 + ring already in the lock via ureq — no new crypto provider). Server cert/
 # key via `--tls-cert`/`--tls-key`; plaintext stays the default (TLS opt-in).
@@ -125,6 +129,7 @@ inference = [
     "dep:kx-inference",
     "dep:kx-model-store",
     "dep:kx-model-validator",
+    "dep:kx-planner",
 ]
 
 [lints]
