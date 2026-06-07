@@ -26,7 +26,9 @@ use kx_content::LocalFsContentStore;
 use kx_inference::{InferenceBackend, InferenceError, InferenceInput, InferenceOutput};
 use kx_journal::SqliteJournal;
 use kx_mcp::{McpCapability, McpTransport, TransportError};
-use kx_model_harness::{harness_warrant, run_react_loop, ReactBudget, ReactLoopOutcome, ReactStop};
+use kx_model_harness::{
+    harness_warrant, run_react_loop, workflows, ReactBudget, ReactLoopOutcome, ReactStop,
+};
 use kx_mote::{ModelId, ToolName, ToolVersion};
 use kx_projection::{MoteState, Projection};
 use kx_runtime::config::Mode;
@@ -204,13 +206,14 @@ fn config_for(dir: &Path) -> RuntimeConfig {
     }
 }
 
-/// Drive a ReAct loop over a fresh store+journal in `dir` with the given backend
-/// script + transport result script + budget. Returns the outcome + the backend
+/// Drive a ReAct loop over a fresh store+journal in `dir` with an injectable backend
+/// script + MCP transport + warrant + budget. Returns the outcome + the backend
 /// (for call-count asserts) + the journal (for fold asserts).
-fn drive(
+fn drive_full(
     dir: &Path,
     script: Vec<Vec<u8>>,
-    transport_results: Vec<Vec<u8>>,
+    transport: Box<dyn McpTransport>,
+    warrant: &WarrantSpec,
     budget: ReactBudget,
 ) -> (
     Result<ReactLoopOutcome, RuntimeError>,
@@ -229,14 +232,10 @@ fn drive(
         version(),
         McpEndpointId("inproc://scripted".into()),
         "echo",
-        Box::new(ScriptedTransport {
-            results: transport_results,
-            calls: AtomicUsize::new(0),
-        }),
+        transport,
     )));
     let tool_broker: Arc<dyn CapabilityBroker> = Arc::new(tool_broker_concrete);
 
-    let warrant = warrant_granting();
     let outcome = run_react_loop(
         &config,
         store.clone(),
@@ -246,11 +245,34 @@ fn drive(
         tool_broker,
         INSTANCE_ID,
         &model_id(),
-        &warrant,
+        warrant,
         INSTRUCTION,
         budget,
     );
     (outcome, backend, journal)
+}
+
+/// Drive with the default granting warrant + a scripted (always-Ok) transport.
+fn drive(
+    dir: &Path,
+    script: Vec<Vec<u8>>,
+    transport_results: Vec<Vec<u8>>,
+    budget: ReactBudget,
+) -> (
+    Result<ReactLoopOutcome, RuntimeError>,
+    Arc<ScriptedBackend>,
+    Arc<SqliteJournal>,
+) {
+    drive_full(
+        dir,
+        script,
+        Box::new(ScriptedTransport {
+            results: transport_results,
+            calls: AtomicUsize::new(0),
+        }),
+        &warrant_granting(),
+        budget,
+    )
 }
 
 fn committed_count(journal: &SqliteJournal) -> usize {
@@ -619,6 +641,20 @@ fn crash_resume_serves_committed_turns_and_resamples_only_the_tail() {
         b2.inputs()[0].contains("OBSERVATION-0"),
         "the resumed turn reads back the committed observation"
     );
+    // DIRECT serve-not-resample proof: turn 0's Mote (a pure function of turn index)
+    // is Committed in the resumed journal — it was served from the fact, not re-run
+    // (a re-run would have re-sampled the model, which b2.calls()==2 already rules out).
+    let turn0_id = workflows::react_turn(&model_id(), &warrant_granting(), INSTRUCTION, 0, &[])
+        .motes[0]
+        .mote
+        .id;
+    assert_eq!(
+        Projection::from_journal(&*journal2)
+            .unwrap()
+            .state_of(&turn0_id),
+        MoteState::Committed,
+        "turn 0 is the same committed fact across the crash boundary (served, R49)"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -647,4 +683,78 @@ fn cold_refold_reproduces_committed_set() {
         live_digest,
         "a cold re-fold reproduces the run's committed-facts digest (R49)"
     );
+}
+
+// NOTE (deferred follow-on, NOT in PR-4 scope): a tool *dispatch* failure (e.g. an
+// MCP transport/network error) under StageThenCommit does NOT yet cleanly terminate
+// the engine drive loop — `run_with_seams` can spin on the EffectStaged redispatch
+// path rather than dead-lettering after the failure budget. That is an ENGINE / PR-1
+// failure-classification concern (frozen trio), tied to the corpus's deferred F4
+// "worker terminal-failure / dead-letter" item — it is out of this harness-only PR's
+// scope and must NOT be papered over with a driver-side hack. PR-4 owns the
+// PARSE-time fail-closed paths (malformed / ungranted / oversize), proven above; the
+// observation-commit-failure path (driver tool-committed guard, react.rs) is correct
+// once the engine returns. Tracked for the F4 engine PR.
+
+// ---------------------------------------------------------------------------
+// Safety: a context-window overflow surfaces a TYPED error, never a panic.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn window_overflow_is_a_typed_error_not_a_panic() {
+    // A 1-token input window (≈4 bytes) cannot hold even the granted tool's menu
+    // description. assemble fails closed with OverflowDecisionRequired → the driver
+    // returns a typed RuntimeError (this test returning at all proves no panic).
+    let mut warrant = warrant_granting();
+    warrant.model_route.max_input_tokens = 1;
+    let dir = tempfile::tempdir().unwrap();
+    let (outcome, _backend, _journal) = drive_full(
+        dir.path(),
+        vec![b"irrelevant".to_vec()],
+        Box::new(ScriptedTransport {
+            results: vec![],
+            calls: AtomicUsize::new(0),
+        }),
+        &warrant,
+        ReactBudget {
+            max_turns: 5,
+            max_tool_calls: 5,
+        },
+    );
+    let err = outcome.expect_err("a window overflow must surface as a typed error");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("context assembly") || msg.contains("exceeds window"),
+        "the typed overflow decision is surfaced (got: {msg})"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Degenerate: a warrant granting NO tools is "pure reasoning" mode — even a
+// tool-call-shaped completion is treated as a final answer (fail-closed SN-8).
+// ---------------------------------------------------------------------------
+
+#[test]
+fn empty_tool_grants_is_pure_reasoning() {
+    // No tools granted ⇒ parse_tool_call returns Ok(None) for ANY output ⇒ the
+    // model's "tool call" is committed verbatim as a final answer; nothing fires.
+    let dir = tempfile::tempdir().unwrap();
+    let (outcome, _backend, journal) = drive_full(
+        dir.path(),
+        vec![envelope("mcp-tool", "1", "would-call-but-cannot")],
+        Box::new(ScriptedTransport {
+            results: vec![],
+            calls: AtomicUsize::new(0),
+        }),
+        &harness_warrant(&model_id(), 64, 5_000), // grants NO tools
+        ReactBudget {
+            max_turns: 5,
+            max_tool_calls: 5,
+        },
+    );
+    let outcome = outcome.expect("loop runs");
+    assert_eq!(outcome.outcome, ReactStop::Answered);
+    assert_eq!(outcome.turns_used, 1);
+    assert_eq!(outcome.tool_calls, 0, "no tool can fire with no grants");
+    assert_eq!(committed_count(&journal), 1, "just the reasoning turn");
 }
