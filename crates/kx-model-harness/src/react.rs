@@ -1,0 +1,563 @@
+//! PR-4 (M5) — **the tool-call ReAct loop.** The model drives a bounded, durable,
+//! crash-resumable Reason→Act→Observe→repeat loop: it proposes a tool, the runtime
+//! ENFORCES + fires it (SN-8), the committed result becomes an OBSERVATION the next
+//! turn reads back, until the model gives a final answer or a budget is hit.
+//!
+//! ## The two-fact split (the load-bearing shape)
+//!
+//! M5.2's fused single-call path commits the TOOL RESULT as a model Mote's sole
+//! fact — so a refold cannot re-decode what the model proposed. The ReAct loop
+//! instead writes TWO facts per acting turn:
+//!
+//! 1. a **turn Mote** ([`crate::workflows::react_turn`], ROND) whose committed
+//!    `result_ref` is the model's RAW output (a `{"tool_call": …}` envelope or a
+//!    final answer) — journal-durable, so a cold re-fold re-decodes the branch via
+//!    [`crate::toolcall::parse_tool_call`] (R49), never re-sampling;
+//! 2. an **observation Mote** ([`crate::workflows::react_tool_mote`], WM
+//!    `StageThenCommit`) whose committed `result_ref` is the tool result.
+//!
+//! Each next turn declares Data edges to the FULL prior trajectory, so
+//! [`kx_context_assembler::assemble`] (D78) reconstructs the whole transcript into
+//! the model window (bounded by `window_bytes`, fail-closed on overflow).
+//!
+//! ## Where the loop lives
+//!
+//! In the harness DRIVER (like PR-3's [`crate::run_replan_loop`]); the engine +
+//! frozen trio (`kx-executor`/`kx-scheduler`/`kx-inference`) are UNTOUCHED. The
+//! model runs ONCE per fresh turn (`run_model_turn`); the orchestrator
+//! ([`run_with_seams`]) only COMMITS the pre-computed turn fact + FIRES the decoded
+//! tool through the SINGLE audited gate ([`crate::broker::dispatch_decoded_call`]).
+//!
+//! ## Bounded + fail-closed (composes with PR-1)
+//!
+//! Two independent hard caps ([`ReactBudget`]): `max_turns` (model turns) and
+//! `max_tool_calls` (observations) — either exhausting stops the loop cleanly
+//! ([`ReactStop::BudgetExhausted`]). A malformed / ungranted / oversize proposal
+//! dead-letters the turn (a terminal `Failed` fact, never a panic, never a blind
+//! re-run) and stops ([`ReactStop::DeadLettered`]). The unbounded durable loop
+//! stays cloud (D126 cat-B).
+//!
+//! ## Security (the prompt-injection surface)
+//!
+//! Tool results re-enter the prompt, so an observation is UNTRUSTED. It can NEVER
+//! escalate: the warrant is FIXED for the whole run, and `parse_tool_call` enforces
+//! the proposed tool ∈ `warrant.tool_grants` by exact crypto-equality (SN-8) — an
+//! injected "call a tool you were not granted" decodes to `UngrantedTool` → the
+//! turn dead-letters, no effect fires. The observation renders as `parent.<hex>`
+//! content, never an authority turn.
+
+use std::collections::BTreeMap;
+use std::sync::Arc;
+use std::time::Duration;
+
+use kx_capability::{BrokerError, BrokerHandle, CapabilityBroker, EffectRequest, INSTANCE_ID_LEN};
+use kx_content::{ContentRef, ContentStore};
+use kx_executor::{LocalResourceManager, StandardCommitProtocol};
+use kx_inference::{inference_params_from_mote, InferenceBackend};
+use kx_journal::{FailureReason, Journal, JournalEntry, SqliteJournal};
+use kx_mote::{ModelId, Mote, MoteId, ToolName, ToolVersion};
+use kx_projection::{MoteState, Projection, Snapshot};
+use kx_runtime::workflow::WorkflowMote;
+use kx_runtime::{
+    run_with_seams, CrashPoint, DemoWorkflow, FailurePolicy, RunOutcome, RuntimeConfig,
+    RuntimeError, SnapshotSink,
+};
+use kx_tool_registry::ToolRegistry;
+use kx_warrant::WarrantSpec;
+
+use crate::broker::dispatch_decoded_call;
+use crate::toolcall::{self, ToolCall};
+use crate::{context, prompt, workflows, ModelExecutor};
+
+/// Capability version reported on a ReAct turn's served fact (provenance only).
+const REACT_CAPABILITY_VERSION: &str = "kx-react-0.1.0";
+
+/// Reporter id stamped on a dead-lettered turn's terminal `Failed` entry — a
+/// fixed, UUID-shaped provenance marker (never identity or dedup input, D19),
+/// distinct from the engine/coordinator/topology-provider reporter ids.
+const REACT_REPORTER_ID: u128 = 0x6b78_5f72_6561_6374_0000_0000_0000_0001;
+
+/// The per-run bound on a ReAct loop — the OSS "bounded additive" cap (the
+/// unbounded durable loop stays cloud, D126 cat-B). Two INDEPENDENT bounds: a
+/// turn that calls a tool consumes one `max_turns` AND one `max_tool_calls`; a
+/// turn that answers consumes only one `max_turns`. A useful loop sets
+/// `max_turns > max_tool_calls` (leaving a turn to read the last observation and
+/// answer).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReactBudget {
+    /// Max model turns the loop will drive.
+    pub max_turns: u32,
+    /// Max tool calls (observations) the loop will fire.
+    pub max_tool_calls: u32,
+}
+
+impl Default for ReactBudget {
+    fn default() -> Self {
+        Self {
+            max_turns: 8,
+            max_tool_calls: 8,
+        }
+    }
+}
+
+/// Why a ReAct loop stopped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReactStop {
+    /// The model produced a final answer (no tool call) — success.
+    Answered,
+    /// A budget (`max_turns` or `max_tool_calls`) was exhausted; the loop stopped
+    /// cleanly with the work so far durably committed.
+    BudgetExhausted,
+    /// The model's proposal was refused fail-closed (malformed / ungranted /
+    /// oversize); the turn is a terminal dead-lettered `Failed` fact.
+    DeadLettered,
+}
+
+/// The outcome of a bounded ReAct loop ([`run_react_loop`]).
+#[derive(Debug, Clone)]
+pub struct ReactLoopOutcome {
+    /// The final round's [`RunOutcome`]. Its `digest` is the WHOLE-journal replay
+    /// surface (every committed turn + observation), so a different process
+    /// cold-folding the journal reproduces it (R49).
+    pub run: RunOutcome,
+    /// Model turns driven (1 ⇒ answered/refused on the first turn).
+    pub turns_used: u32,
+    /// Tool calls (observations) fired across the loop.
+    pub tool_calls: u32,
+    /// `Some(ref)` iff [`ReactStop::Answered`]: the committed final-answer fact.
+    pub final_answer: Option<ContentRef>,
+    /// Why the loop stopped.
+    pub outcome: ReactStop,
+}
+
+/// **PR-4 — run a bounded model-driven ReAct (tool-call) loop.**
+///
+/// Drives turns from the seed `instruction` until the model answers, a budget is
+/// hit, or a proposal is refused. Each acting turn writes two durable facts (the
+/// model output + the observation); each next turn sees the full prior trajectory
+/// via Data edges (D78). A crash between turns resumes by re-folding (committed
+/// turns are served, never re-sampled; the tail re-fires exactly-once); a cold
+/// re-fold reproduces the exact chain (R49). Composes with PR-1 (`max_attempts =
+/// 1` ⇒ a refused/failing step dead-letters at once, never a blind re-run).
+///
+/// `registry` must resolve the run's MCP tool(s) (so `assemble` emits the menu and
+/// the dispatch derives egress); `tool_broker` holds the concrete
+/// `McpCapability` under each granted tool name; `instance_id` is the registered
+/// run's id (D64) anchoring the run-scoped idempotency token. The `warrant` MUST
+/// grant every tool the model may call.
+///
+/// # Errors
+/// Propagates store / journal / orchestrator failures and a context-window overflow
+/// (a typed assembly error, never a panic). A refused proposal, budget exhaustion,
+/// and a final answer are NOT errors — they are reflected in [`ReactLoopOutcome`].
+// Each argument is a distinct injected seam — mirrors `run_replan_loop`'s allow.
+// `similar_names`: the loop is intrinsically about `turn_*` bindings.
+#[allow(
+    clippy::too_many_arguments,
+    clippy::too_many_lines,
+    clippy::needless_pass_by_value,
+    clippy::similar_names
+)]
+pub fn run_react_loop<B, S>(
+    config: &RuntimeConfig,
+    store: Arc<S>,
+    journal: Arc<SqliteJournal>,
+    backend: Arc<B>,
+    registry: Arc<dyn ToolRegistry>,
+    tool_broker: Arc<dyn CapabilityBroker>,
+    instance_id: [u8; INSTANCE_ID_LEN],
+    model_id: &ModelId,
+    warrant: &WarrantSpec,
+    instruction: &str,
+    budget: ReactBudget,
+) -> Result<ReactLoopOutcome, RuntimeError>
+where
+    B: InferenceBackend,
+    S: ContentStore + Send + Sync + 'static,
+{
+    let rm = LocalResourceManager::dev_defaults();
+    // PR-1: a refused/failing step is a terminal `Failed` (no retry, no blind re-run).
+    let failure_policy = FailurePolicy::new(1, Duration::ZERO);
+
+    let mut trajectory: Vec<MoteId> = Vec::new();
+    let mut turns_used: u32 = 0;
+    let mut tool_calls: u32 = 0;
+    let mut final_answer: Option<ContentRef> = None;
+
+    // The loop ALWAYS drives at least turn 0; every exit `break`s with
+    // `(RunOutcome, ReactStop)` (the run's `digest` is the whole-journal surface).
+    let (run, outcome): (RunOutcome, ReactStop) = loop {
+        let turn = turns_used;
+        let turn_wf = workflows::react_turn(model_id, warrant, instruction, turn, &trajectory);
+        let turn_wm = turn_wf.motes[0].clone();
+        let turn_id = turn_wm.mote.id;
+        turns_used += 1;
+
+        // Fold + skip-already-committed guard (R49 / crash-resume).
+        let proj = Projection::from_journal(&*journal)?;
+        let turn_state = proj.state_of(&turn_id);
+        if turn_state == MoteState::Failed {
+            // A prior run refused this turn — drive to a clean stop (serves the
+            // journal, returns the whole-journal digest).
+            let run = drive_react_round(
+                config,
+                &store,
+                &journal,
+                &backend,
+                &registry,
+                &tool_broker,
+                instance_id,
+                &rm,
+                &failure_policy,
+                &turn_wf,
+                BTreeMap::new(),
+                BTreeMap::new(),
+            )?;
+            break (run, ReactStop::DeadLettered);
+        }
+
+        // Obtain the model's raw output: served (committed → R49 replay) or fresh.
+        let raw: Vec<u8> = if turn_state == MoteState::Committed {
+            let r = proj.result_ref_of(&turn_id).ok_or_else(|| {
+                RuntimeError::Config("react: committed turn lacks a result_ref".to_string())
+            })?;
+            store
+                .get(&r)
+                .map_err(|e| {
+                    RuntimeError::Config(format!("react: committed turn output missing: {e}"))
+                })?
+                .to_vec()
+        } else {
+            run_model_turn(
+                &backend,
+                &store,
+                &registry,
+                &turn_wm.mote,
+                warrant,
+                &proj.snapshot(),
+            )?
+        };
+
+        // Decode the proposal FAIL-CLOSED. A COMMITTED turn cannot be `Err` (it
+        // committed its output only on `Ok`); a fresh `Err` dead-letters the turn.
+        let branch = toolcall::parse_tool_call(&raw, warrant, toolcall::max_args_bytes(warrant));
+        if turn_state != MoteState::Committed {
+            if let Err(reason) = &branch {
+                tracing::warn!(
+                    ?reason,
+                    turn,
+                    "react: model proposal refused — dead-lettering the turn"
+                );
+                dead_letter(&journal, turn_id)?;
+                let run = drive_react_round(
+                    config,
+                    &store,
+                    &journal,
+                    &backend,
+                    &registry,
+                    &tool_broker,
+                    instance_id,
+                    &rm,
+                    &failure_policy,
+                    &turn_wf,
+                    BTreeMap::new(),
+                    BTreeMap::new(),
+                )?;
+                break (run, ReactStop::DeadLettered);
+            }
+        }
+        // A fresh `Err` already broke above (dead-letter), and a committed turn
+        // re-decodes to the SAME `Ok` it committed on — so an `Err` here is
+        // unreachable and collapses to "no call" (treated as a final answer).
+        let call: Option<ToolCall> = branch.ok().flatten();
+
+        // Build this round's workflow: [turn] (+ [observation] if a tool was named).
+        // The fresh turn output is staged via the ReactBroker; a committed turn is
+        // served by the engine's P0.4 gate (its entry in the map is then inert).
+        let tool_wm: Option<WorkflowMote> = call.as_ref().map(|c| {
+            workflows::react_tool_mote(model_id, warrant, &c.name, &c.version, turn, turn_id)
+        });
+        let mut round_motes = vec![turn_wm.clone()];
+        let mut stc_crash_target = workflows::sentinel_shaper();
+        if let Some(tw) = &tool_wm {
+            stc_crash_target = tw.mote.id; // PreCommitStc targets the observation.
+            round_motes.push(tw.clone());
+        }
+        let round_wf = DemoWorkflow {
+            motes: round_motes,
+            stc_crash_target,
+            vtc_crash_target: workflows::sentinel_shaper(),
+            shaper_id: workflows::sentinel_shaper(),
+        };
+
+        let mut turn_responses: BTreeMap<MoteId, Vec<u8>> = BTreeMap::new();
+        if turn_state != MoteState::Committed {
+            turn_responses.insert(turn_id, raw.clone());
+        }
+        let mut tool_call_map: BTreeMap<MoteId, ToolCall> = BTreeMap::new();
+        if let (Some(tw), Some(c)) = (&tool_wm, &call) {
+            tool_call_map.insert(tw.mote.id, c.clone());
+        }
+
+        let run = drive_react_round(
+            config,
+            &store,
+            &journal,
+            &backend,
+            &registry,
+            &tool_broker,
+            instance_id,
+            &rm,
+            &failure_policy,
+            &round_wf,
+            turn_responses,
+            tool_call_map,
+        )?;
+
+        if let Some(tw) = &tool_wm {
+            // A tool fired — record the trajectory (turn output + observation),
+            // count it, and bound the loop on either cap.
+            //
+            // The observation MUST have committed. A fail-closed tool dispatch (MCP
+            // protocol error / refusal / non-resolvable tool) leaves it non-committed
+            // (PR-1 `Failed`) — stop cleanly rather than feed a non-existent
+            // observation into the next turn's assemble.
+            let post = Projection::from_journal(&*journal)?;
+            if post.state_of(&tw.mote.id) != MoteState::Committed {
+                tracing::warn!(
+                    turn,
+                    observation = ?tw.mote.id,
+                    "react: tool dispatch did not commit — stopping the loop fail-closed"
+                );
+                break (run, ReactStop::DeadLettered);
+            }
+            trajectory.push(turn_id);
+            trajectory.push(tw.mote.id);
+            tool_calls += 1;
+            if tool_calls >= budget.max_tool_calls {
+                break (run, ReactStop::BudgetExhausted);
+            }
+            if turns_used >= budget.max_turns {
+                break (run, ReactStop::BudgetExhausted);
+            }
+        } else {
+            // Final answer (no tool call) — the loop is done; the committed turn
+            // fact IS the answer.
+            final_answer = Projection::from_journal(&*journal)?.result_ref_of(&turn_id);
+            break (run, ReactStop::Answered);
+        }
+    };
+
+    Ok(ReactLoopOutcome {
+        run,
+        turns_used,
+        tool_calls,
+        final_answer,
+        outcome,
+    })
+}
+
+/// Run the model ONCE for a fresh ReAct turn: assemble the turn's full upstream
+/// trajectory + tool menu (D78) and dispatch, returning the raw completion bytes.
+/// Mirrors [`crate::topology_provider`]'s `run_model_once` (minus the cross-round
+/// budget, which the ReAct loop bounds itself). A window overflow surfaces a typed
+/// error (never a panic).
+fn run_model_turn<B, S>(
+    backend: &Arc<B>,
+    store: &Arc<S>,
+    registry: &Arc<dyn ToolRegistry>,
+    turn_mote: &Mote,
+    warrant: &WarrantSpec,
+    snapshot: &Snapshot,
+) -> Result<Vec<u8>, RuntimeError>
+where
+    B: InferenceBackend,
+    S: ContentStore + Send + Sync + 'static,
+{
+    let instruction = prompt::raw_prompt(turn_mote)
+        .ok_or_else(|| RuntimeError::Config("react turn carries no instruction".to_string()))?;
+    let sink = SnapshotSink::new();
+    sink.publish(snapshot.clone());
+    let input = context::model_input(
+        turn_mote,
+        warrant,
+        &instruction,
+        &sink,
+        &**store,
+        &**registry,
+    )
+    .map_err(|e| RuntimeError::Config(format!("react context assembly: {e}")))?;
+    let params = inference_params_from_mote(turn_mote, warrant)
+        .map_err(|e| RuntimeError::Config(format!("react inference params: {e}")))?;
+    let out = backend
+        .dispatch(&turn_mote.def.model_id, &input, &params, warrant)
+        .map_err(|e| RuntimeError::Config(format!("react model dispatch: {e}")))?;
+    Ok(out.bytes)
+}
+
+/// Drive ONE ReAct round (a 1-or-2-Mote flat workflow) through the orchestrator
+/// with a [`ReactBroker`] that serves the pre-computed turn output + fires the
+/// decoded tool. Returns the round's [`RunOutcome`] (whole-journal digest, R49).
+#[allow(clippy::too_many_arguments)]
+fn drive_react_round<B, S>(
+    config: &RuntimeConfig,
+    store: &Arc<S>,
+    journal: &Arc<SqliteJournal>,
+    backend: &Arc<B>,
+    registry: &Arc<dyn ToolRegistry>,
+    tool_broker: &Arc<dyn CapabilityBroker>,
+    instance_id: [u8; INSTANCE_ID_LEN],
+    rm: &LocalResourceManager,
+    failure_policy: &FailurePolicy,
+    workflow: &DemoWorkflow,
+    turn_responses: BTreeMap<MoteId, Vec<u8>>,
+    tool_calls: BTreeMap<MoteId, ToolCall>,
+) -> Result<RunOutcome, RuntimeError>
+where
+    B: InferenceBackend,
+    S: ContentStore + Send + Sync + 'static,
+{
+    let sink = SnapshotSink::new();
+    let executor = ModelExecutor::new(
+        backend.clone(),
+        store.clone(),
+        sink.clone(),
+        registry.clone(),
+    );
+    let broker = Arc::new(ReactBroker {
+        store: store.clone(),
+        turn_responses,
+        tool_calls,
+        tool_broker: tool_broker.clone(),
+        registry: registry.clone(),
+        instance_id,
+        crash_at: config.crash_at,
+        stc_crash_target: Some(workflow.stc_crash_target),
+    });
+    let protocol = StandardCommitProtocol::new(store.clone(), journal.clone(), broker);
+    run_with_seams(
+        config,
+        workflow,
+        store.clone(),
+        journal.clone(),
+        rm,
+        &executor,
+        &protocol,
+        None, // shaper — a ReAct round is a flat 1-or-2-Mote DAG
+        None, // topology_provider — no fan-out
+        Some(&sink),
+        None, // capture_sink — off for the loop foundation
+        None, // audit_sink (R4) — off for the loop foundation
+        Some(failure_policy),
+    )
+}
+
+/// Journal a terminal `Failed` for a turn whose proposal was refused — the same
+/// dead-letter fact PR-1 writes (a durable, auditable record; the engine then
+/// skips the now-terminal turn).
+fn dead_letter(journal: &SqliteJournal, mote_id: MoteId) -> Result<(), RuntimeError> {
+    journal.append(JournalEntry::Failed {
+        mote_id,
+        idempotency_key: *mote_id.as_bytes(),
+        seq: 0, // journal assigns
+        reason_class: FailureReason::ExecutorRefused,
+        reporter_id: REACT_REPORTER_ID,
+    })?;
+    Ok(())
+}
+
+/// A [`CapabilityBroker`] for one ReAct round: it SERVES each turn's pre-computed
+/// model output (content-addressed, like `DemoBroker`) and FIRES each observation's
+/// decoded tool call through the SINGLE audited gate
+/// ([`dispatch_decoded_call`]). A Mote in neither map is a bug (surfaced
+/// fail-closed, never a silent default). Mirrors the `PreCommitStc` crash injection
+/// of `DemoBroker` / `ModelBroker` so the observation's exactly-once-under-crash is
+/// testable.
+struct ReactBroker<S: ContentStore> {
+    store: Arc<S>,
+    /// Turn Mote id → the model's RAW output (staged as that turn's committed fact).
+    turn_responses: BTreeMap<MoteId, Vec<u8>>,
+    /// Observation Mote id → the decoded, warrant-checked tool call to fire.
+    tool_calls: BTreeMap<MoteId, ToolCall>,
+    tool_broker: Arc<dyn CapabilityBroker>,
+    registry: Arc<dyn ToolRegistry>,
+    instance_id: [u8; INSTANCE_ID_LEN],
+    crash_at: Option<CrashPoint>,
+    stc_crash_target: Option<MoteId>,
+}
+
+impl<S: ContentStore> ReactBroker<S> {
+    fn maybe_crash_pre_commit_stc(&self, mote_id: MoteId) {
+        if self.crash_at == Some(CrashPoint::PreCommitStc) && self.stc_crash_target == Some(mote_id)
+        {
+            CrashPoint::PreCommitStc.abort_now();
+        }
+    }
+}
+
+impl<S> CapabilityBroker for ReactBroker<S>
+where
+    S: ContentStore + Send + Sync,
+{
+    fn dispatch(
+        &self,
+        mote: &Mote,
+        warrant: &WarrantSpec,
+        capability: &ToolName,
+        _request: EffectRequest,
+    ) -> Result<BrokerHandle, BrokerError> {
+        // (1) A turn Mote: stage the pre-computed model output verbatim. Content-
+        //     addressing makes a recovery re-stage byte-identical → the same ref.
+        if let Some(raw) = self.turn_responses.get(&mote.id) {
+            let staged_ref = self
+                .store
+                .put(raw)
+                .map_err(|e| BrokerError::StageWriteFailed {
+                    capability: capability.clone(),
+                    diagnostic: format!("{e}"),
+                })?;
+            self.maybe_crash_pre_commit_stc(mote.id);
+            return Ok(BrokerHandle {
+                staged_ref,
+                capability: capability.clone(),
+                capability_version: ToolVersion(REACT_CAPABILITY_VERSION.to_string()),
+            });
+        }
+        // (2) An observation Mote: fire the decoded call through the audited gate
+        //     (validate_args + net_scope ⊆ warrant + run-scoped idempotency).
+        if let Some(call) = self.tool_calls.get(&mote.id) {
+            // Keyed on the SAME `instance_id` every round, so a recovery re-dispatch
+            // re-derives the SAME run-scoped idempotency token (remote exactly-once)
+            // inside `dispatch_decoded_call`.
+            let handle = dispatch_decoded_call(
+                &*self.tool_broker,
+                &*self.registry,
+                mote,
+                warrant,
+                capability,
+                call,
+                &self.instance_id,
+            )?;
+            self.maybe_crash_pre_commit_stc(mote.id);
+            return Ok(handle);
+        }
+        Err(BrokerError::StageWriteFailed {
+            capability: capability.clone(),
+            diagnostic: "react broker: dispatched a Mote that is neither a staged turn \
+                         output nor a decoded tool call"
+                .to_string(),
+        })
+    }
+
+    fn probe_readback(
+        &self,
+        _mote: &Mote,
+        _warrant: &WarrantSpec,
+        _capability: &ToolName,
+        _probe: EffectRequest,
+    ) -> Result<Option<BrokerHandle>, BrokerError> {
+        // No effect read-back: recovery relies on the deterministic idempotency-key
+        // dedup at re-dispatch (same as DemoBroker / ModelBroker).
+        Ok(None)
+    }
+}

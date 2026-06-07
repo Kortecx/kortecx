@@ -35,6 +35,72 @@ use crate::{context, prompt, toolcall};
 /// Capability version reported on every harness dispatch.
 const CAPABILITY_VERSION: &str = "kx-model-harness-0.1.0";
 
+/// Fire a model-PROPOSED, already-decoded tool call through the warrant/broker
+/// gate — the **single audited tool-firing path**, shared by [`ModelBroker`]'s
+/// fused single-call arm (M5.2) and the PR-4 [`crate::react`] loop's per-turn tool
+/// Mote. Given a `call` that [`crate::toolcall::parse_tool_call`] already accepted
+/// (tool ∈ `warrant.tool_grants`, args size-bounded, SN-8), this resolves the tool
+/// def for its declared egress, validates the args against the tool's typed
+/// `inputSchema` FAIL-CLOSED (D110.4), and dispatches a `StageThenCommit` effect
+/// (D66) keyed by the run-scoped idempotency token (D38 §1 / M1.2 — a recovery
+/// re-dispatch re-derives the SAME token ⇒ the remote dedups ⇒ exactly-once)
+/// through `tool_broker`, whose `precheck` is the authoritative gate (net_scope ⊆
+/// warrant, tool_grants, pattern). No effect ever fires before every check passes.
+///
+/// `capability` is the Mote's declared capability (used only for error context);
+/// the dispatch itself names `call.name` (the resolved MCP tool).
+///
+/// # Errors
+/// [`BrokerError::StageWriteFailed`] if the tool does not resolve or the args fail
+/// the schema; otherwise propagates the `tool_broker`'s gate/dispatch error.
+pub fn dispatch_decoded_call(
+    tool_broker: &dyn CapabilityBroker,
+    registry: &dyn ToolRegistry,
+    mote: &Mote,
+    warrant: &WarrantSpec,
+    capability: &ToolName,
+    call: &toolcall::ToolCall,
+    instance_id: &[u8; INSTANCE_ID_LEN],
+) -> Result<BrokerHandle, BrokerError> {
+    // M5.2b — derive the egress this dispatch requires from the RESOLVED tool's
+    // declared requirement (never hardcoded). A tool that does not resolve is
+    // refused fail-closed (no effect fires).
+    let Some(def) = registry.lookup(&call.name, &call.version) else {
+        return Err(BrokerError::StageWriteFailed {
+            capability: capability.clone(),
+            diagnostic: format!(
+                "tool {:?}@{:?} not resolvable for egress derivation",
+                call.name, call.version
+            ),
+        });
+    };
+    // M5.3 (D110.4) — validate the model's proposed args against the tool's declared
+    // typed `inputSchema`, FAIL-CLOSED, BEFORE any effect fires. A tool with no
+    // schema (`None`) is dispatched as before. The model proposes; the runtime enforces.
+    if let Some(schema) = &def.input_schema {
+        if let Err(reason) = kx_tool_registry::validate_args(schema, &call.args_bytes) {
+            return Err(BrokerError::StageWriteFailed {
+                capability: capability.clone(),
+                diagnostic: format!("model-proposed args failed inputSchema: {reason:?}"),
+            });
+        }
+    }
+    let net_scope = def.required_capability.net_scope_required;
+    let effect = EffectRequest {
+        payload: call.args_bytes.clone(),
+        // MCP effects are world-mutating by default → StageThenCommit (D66).
+        pattern: EffectPattern::StageThenCommit,
+        // The RUN-SCOPED idempotency token (D38 §1 / M1.2). A recovery re-dispatch of
+        // the SAME run re-derives the SAME token → the remote dedups (remote
+        // exactly-once). A re-SUBMITTED run (fresh instance_id) fires afresh (D64).
+        idempotency_key: Some(run_scoped_token(instance_id, mote)),
+        net_scope,
+        fs_scope: FsScope::empty(),
+        secret_scope: kx_warrant::SecretScope::None,
+    };
+    tool_broker.dispatch(mote, warrant, &call.name, effect)
+}
+
 /// Shared, observable counters a [`ModelBroker`] writes through — held by the
 /// caller so dispatch counts + idempotency tokens survive the broker's lifetime
 /// (the broker is rebuilt per run, but the counters persist).
@@ -214,57 +280,19 @@ where
             match toolcall::parse_tool_call(&out.bytes, warrant, toolcall::max_args_bytes(warrant))
             {
                 Ok(Some(call)) => {
-                    // M5.2b — derive the egress this dispatch requires from the
-                    // RESOLVED tool's declared requirement (never hardcoded). The
-                    // registry lookup yields the approved ToolDef; its
-                    // `net_scope_required` is the egress the broker `precheck` then
-                    // gates ⊆ warrant. A stdio/in-proc tool declares `None` (→
-                    // byte-identical to M5.2a); an HTTP tool declares its host
-                    // allowlist. A tool that does not resolve is refused fail-closed
-                    // (no effect fires).
-                    let Some(def) = self.registry.lookup(&call.name, &call.version) else {
-                        return Err(BrokerError::StageWriteFailed {
-                            capability: capability.clone(),
-                            diagnostic: format!(
-                                "tool {:?}@{:?} not resolvable for egress derivation",
-                                call.name, call.version
-                            ),
-                        });
-                    };
-                    // M5.3 (D110.4) — validate the model's proposed args against the
-                    // tool's declared typed `inputSchema`, FAIL-CLOSED, BEFORE any
-                    // effect fires. A tool with no schema (`None`) is dispatched as
-                    // before (byte-identical). The model proposes; the runtime enforces.
-                    if let Some(schema) = &def.input_schema {
-                        if let Err(reason) =
-                            kx_tool_registry::validate_args(schema, &call.args_bytes)
-                        {
-                            return Err(BrokerError::StageWriteFailed {
-                                capability: capability.clone(),
-                                diagnostic: format!(
-                                    "model-proposed args failed inputSchema: {reason:?}"
-                                ),
-                            });
-                        }
-                    }
-                    let net_scope = def.required_capability.net_scope_required;
-                    let effect = EffectRequest {
-                        payload: call.args_bytes,
-                        // MCP effects are world-mutating by default → StageThenCommit (D66).
-                        pattern: EffectPattern::StageThenCommit,
-                        // M5.2b: the RUN-SCOPED idempotency token (D38 §1 / M1.2). A
-                        // recovery re-dispatch of the SAME run re-derives the SAME
-                        // token → the HTTP transport re-sends the SAME `Idempotency-Key`
-                        // → the remote dedups (remote exactly-once). A re-SUBMITTED run
-                        // (fresh instance_id) gets a fresh token and fires afresh (D64).
-                        idempotency_key: Some(run_scoped_token(&self.instance_id, mote)),
-                        net_scope,
-                        fs_scope: FsScope::empty(),
-                        secret_scope: kx_warrant::SecretScope::None,
-                    };
-                    let handle = self
-                        .tool_broker
-                        .dispatch(mote, warrant, &call.name, effect)?;
+                    // Route through the SINGLE audited tool-firing path (shared with
+                    // the PR-4 ReAct loop): resolve egress, validate args fail-closed,
+                    // dispatch a StageThenCommit effect keyed by the run-scoped
+                    // idempotency token through `tool_broker`'s authoritative gate.
+                    let handle = dispatch_decoded_call(
+                        &*self.tool_broker,
+                        &*self.registry,
+                        mote,
+                        warrant,
+                        capability,
+                        &call,
+                        &self.instance_id,
+                    )?;
                     self.maybe_crash_pre_commit_stc(mote.id);
                     return Ok(handle);
                 }
