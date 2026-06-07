@@ -70,6 +70,23 @@ enum FsMode {
   FS_MODE_EXEC_ONLY = 3;
 }
 
+// Mirrors kx_journal::FailureReason (closed enum, D19). +1-shifted; 0 = UNSPECIFIED
+// is rejected at the Rust boundary. A worker self-reporting a terminal Mote failure
+// (F4 dead-letter) sends DEAD_LETTERED; the other variants exist so the wire stays a
+// faithful mirror and future reporters can use them without a wire break.
+enum FailureReason {
+  FAILURE_REASON_UNSPECIFIED = 0;
+  FAILURE_REASON_TIMED_OUT = 1;
+  FAILURE_REASON_EXECUTOR_REFUSED = 2;
+  FAILURE_REASON_VALIDATOR_REJECTED = 3;
+  FAILURE_REASON_WORKER_CRASHED = 4;
+  FAILURE_REASON_UPSTREAM_REPUDIATED = 5;
+  FAILURE_REASON_UNSAFE_WORLD_MUTATING_CONSTRUCTION = 6;
+  FAILURE_REASON_COMPENSATED_AT_LEAST_ONCE = 7;
+  FAILURE_REASON_QUARANTINED_AT_LEAST_ONCE = 8;
+  FAILURE_REASON_DEAD_LETTERED = 9;
+}
+
 // Mirrors kx_warrant::ExecutorClass.
 enum ExecutorClass {
   EXECUTOR_CLASS_UNSPECIFIED = 0;
@@ -268,6 +285,32 @@ message ReportEffectStagedResponse {
 }
 
 // ---------------------------------------------------------------------------
+// RPC (9) — report a TERMINAL Mote failure (F4 worker dead-letter). The worker
+// PROPOSES a terminal failure; the coordinator (sole writer, D40) appends a
+// `Failed{reason_class, reporter_id}` — an EXISTING journal entry variant, so no
+// schema change — folds it (the Mote becomes terminal `Failed`, never re-dispatched),
+// and acks. This closes the live-worker spin: without it a terminally-failing Mote
+// (e.g. a malformed model proposal, a body that always non-zero-exits) propagates `?`
+// in `run_once` and is re-leased forever. The coordinator gates the write on the Mote
+// being currently leased to `worker_id` (admission, mirrors ReportCommit) — a worker
+// cannot dead-letter a Mote it does not hold. Idempotent: the `Failed` dedupes by key,
+// so a duplicate report is a no-op success. Distinct from `WorkerCrashed`
+// (coordinator-observed worker DEATH) — this is the live worker's own terminal verdict.
+// ---------------------------------------------------------------------------
+
+message ReportFailureRequest {
+  bytes mote_id = 1;                    // 32B — the Mote that terminally failed
+  bytes idempotency_key = 2;            // 32B — == mote_id (idempotency.md)
+  FailureReason reason_class = 3;       // why it is terminal (DEAD_LETTERED for the F4 budget/terminal-logic path)
+  uint64 worker_id = 4;                 // the reporting worker (admission gate)
+}
+
+message ReportFailureResponse {
+  uint64 failed_seq = 1;                // journal seq of the Failed entry (or dedup hit)
+  bool ack = 2;                         // true once durable
+}
+
+// ---------------------------------------------------------------------------
 // RPC (3) — heartbeat (worker liveness)
 // ---------------------------------------------------------------------------
 
@@ -310,10 +353,26 @@ message LeaseWorkRequest {
   uint32 max_motes = 3;                 // upper bound on items returned this call
 }
 
-// One unit of work: the Mote to run plus the warrant it runs under.
+// One committed Data-edge parent of a leased Mote: the parent's identity plus the
+// content-address of its committed result. The coordinator (which holds the
+// projection) resolves these from `result_ref_of` and hands them to the worker so
+// the worker can assemble the Mote's model context (F-7) WITHOUT a journal/projection
+// of its own — the heavy content fetch + concat then happens worker-side, off the
+// coordinator's sole-writer thread. Content-addressed: a forged `result_ref` resolves
+// to nothing and the assembler fails closed (UpstreamNotCommitted).
+message ParentResult {
+  bytes parent_mote_id = 1;             // 32B — the Data-edge parent's MoteId
+  bytes result_ref = 2;                 // 32B — its committed result's content address
+}
+
+// One unit of work: the Mote to run plus the warrant it runs under. `parent_results`
+// (field 3, additive) carries the resolved Data-edge parent results for context
+// assembly (F-7); an older worker that ignores the field simply assembles an empty
+// leaf context (byte-identical to the pre-F-7 path).
 message WorkItem {
   Mote mote = 1;
   WarrantSpec warrant = 2;
+  repeated ParentResult parent_results = 3;
 }
 
 message LeaseWorkResponse {
@@ -397,4 +456,5 @@ service Coordinator {
   rpc ReadEntries(ReadEntriesRequest) returns (ReadEntriesResponse);
   rpc ReportEffectStaged(ReportEffectStagedRequest) returns (ReportEffectStagedResponse);
   rpc RegisterRun(RegisterRunRequest) returns (RegisterRunResponse);
+  rpc ReportFailure(ReportFailureRequest) returns (ReportFailureResponse);
 }

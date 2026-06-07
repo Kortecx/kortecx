@@ -132,6 +132,33 @@ impl WorkerClient {
         Ok(self.inner.report_commit(request).await?.into_inner())
     }
 
+    /// Report a TERMINAL Mote failure so the coordinator dead-letters it (F4): the
+    /// worker gave up on `mote_id` (a deterministic execution failure, or a transient
+    /// one that exhausted the retry budget). The coordinator appends a terminal
+    /// `Failed{DeadLettered}`; the Mote leaves `ready_set` and is never re-leased,
+    /// closing the live-worker spin. Idempotent coordinator-side (`Failed` dedupes by
+    /// key); the `idempotency_key` is the Mote's identity (`idempotency.md`). The
+    /// reason is always `DEAD_LETTERED` — both a terminal-logic failure and a
+    /// budget-exhausted transient map to it (it is the only terminal-NOT-pre-commit-
+    /// crash reason, so the Mote becomes terminal `Failed`, matching the engine F4).
+    pub async fn report_failure(
+        &mut self,
+        mote_id: [u8; 32],
+        worker_id: u64,
+    ) -> Result<u64, WorkerError> {
+        let resp = self
+            .inner
+            .report_failure(proto::ReportFailureRequest {
+                mote_id: mote_id.to_vec(),
+                idempotency_key: mote_id.to_vec(),
+                reason_class: proto::FailureReason::DeadLettered as i32,
+                worker_id,
+            })
+            .await?
+            .into_inner();
+        Ok(resp.failed_seq)
+    }
+
     /// Read up to `max` committed journal entries after `since_seq`. Returns the
     /// entries + the `next_seq` cursor to resume from (D55 distributed-read).
     pub async fn read_entries(

@@ -64,6 +64,15 @@ impl LeaseTracker {
         self.leases.keys().copied().collect()
     }
 
+    /// Whether `worker` currently holds an outstanding lease on `mote` — the
+    /// admission gate for a worker self-reported terminal failure (F4): a worker
+    /// may only dead-letter work it was actually leased. O(holders of `mote`).
+    pub(crate) fn is_held_by(&self, mote: MoteId, worker: WorkerId) -> bool {
+        self.holders
+            .get(&mote)
+            .is_some_and(|workers| workers.contains(&worker))
+    }
+
     /// Remove and return `worker`'s outstanding leases (used when reaping a dead
     /// worker), keeping the reverse index consistent.
     pub(crate) fn take_leases(&mut self, worker: WorkerId) -> BTreeSet<MoteId> {

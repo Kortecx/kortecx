@@ -133,6 +133,16 @@ pub(crate) enum Command {
         idempotency_key: [u8; 32],
         reply: oneshot::Sender<Result<u64, CoordinatorError>>,
     },
+    // F4 worker dead-letter: a LIVE worker reports a TERMINAL Mote failure so the
+    // coordinator appends a terminal `Failed` (the Mote leaves `ready_set` and is
+    // never re-leased) instead of the worker re-leasing it forever.
+    ReportFailure {
+        mote_id: MoteId,
+        idempotency_key: [u8; 32],
+        reason_class: FailureReason,
+        worker: WorkerId,
+        reply: oneshot::Sender<Result<(u64, bool), CoordinatorError>>,
+    },
     RegisterRun {
         recipe_fingerprint: [u8; 32],
         reply: oneshot::Sender<Result<[u8; INSTANCE_ID_LEN], CoordinatorError>>,
@@ -321,6 +331,34 @@ impl CoreHandle {
         self.dispatch(Command::ReportEffectStaged {
             mote_id,
             idempotency_key,
+            reply,
+        })
+        .await?;
+        response
+            .await
+            .map_err(|_| CoordinatorError::CoreUnavailable)?
+    }
+
+    /// Record a worker-observed TERMINAL Mote failure (F4 dead-letter): append a
+    /// terminal `Failed` through the sole writer so the Mote leaves `ready_set` and
+    /// is never re-leased. Returns `(seq, appended)` — `appended == false` for an
+    /// idempotent no-op (the Mote already committed or already terminal). The worker
+    /// calls this after exhausting its attempt budget on a Mote whose execution
+    /// cannot succeed (a malformed model proposal, a body that always non-zero-exits),
+    /// closing the live-worker spin (PR-9b F2 / the deferred F4 analog).
+    pub(crate) async fn report_failure(
+        &self,
+        mote_id: MoteId,
+        idempotency_key: [u8; 32],
+        reason_class: FailureReason,
+        worker: WorkerId,
+    ) -> Result<(u64, bool), CoordinatorError> {
+        let (reply, response) = oneshot::channel();
+        self.dispatch(Command::ReportFailure {
+            mote_id,
+            idempotency_key,
+            reason_class,
+            worker,
             reply,
         })
         .await?;
@@ -692,6 +730,92 @@ fn failed_worker_crashed_entry(mote_id: MoteId) -> JournalEntry {
     }
 }
 
+/// Reporter id stamped on a worker SELF-reported terminal `Failed` (F4 dead-letter),
+/// distinct from the coordinator's reserved `COORDINATOR_REPORTER_ID = 0`. Worker ids
+/// start at 0, so the raw id would collide with the coordinator's; the high bit tags
+/// the reporter as a worker self-report and the low 64 bits carry the worker id for
+/// audit. `reporter_id` is audit metadata only — never folded into a `MoteId`, the
+/// projection digest, `ready_set`, or any identity (so this value is free to choose).
+fn worker_reporter_id(worker: WorkerId) -> u128 {
+    (1u128 << 64) | u128::from(worker.0)
+}
+
+/// Append a TERMINAL `Failed` for a Mote a LIVE worker reports it cannot complete
+/// (F4 dead-letter), through the sole writer. Mirrors `reap_dead_workers`'s
+/// append+fold, but the reporter is the worker (its own terminal verdict — e.g.
+/// `DeadLettered` after a budget-exhausted/terminal-logic dispatch failure), not the
+/// coordinator observing a death. The Mote becomes terminal `Failed` → excluded from
+/// `ready_set` (which yields only `Pending` Motes) → never re-leased, closing the
+/// live-worker spin (PR-9b F2 / the deferred F4 analog).
+///
+/// Fail-safe + idempotent. Returns `(seq, appended)`:
+/// - **admission**: the Mote must currently be leased to `worker` (a worker cannot
+///   dead-letter work it does not hold) — else `NotLeased`;
+/// - a Mote that raced to `Committed` is NEVER dead-lettered (Committed wins): the
+///   lease is resolved and the call is a no-op `(0, false)`;
+/// - an already-terminal Mote (`Failed`/`Repudiated`/`Inconsistent`) is a no-op
+///   `(0, false)` (no second `Failed`);
+/// - otherwise a `Failed` is appended + folded, the Mote is dropped from the dispatch
+///   admission set + lease tracking, and `(seq, true)` is returned.
+// The journal/projection/dispatch trio plus the failure identity (mote/key/reason/worker)
+// are each distinct, named, and threaded once through the owner thread — bundling them
+// into a struct would be churn for no clarity gain (Rule 1), matching the sibling
+// owner-thread handlers (`submit_and_capture`, `repudiate_cascade`).
+#[allow(clippy::too_many_arguments)]
+fn dead_letter_failure<J: Journal>(
+    journal: &J,
+    projection: &mut Projection,
+    folded_through: &mut u64,
+    dispatch: &mut Dispatch,
+    mote_id: MoteId,
+    idempotency_key: [u8; 32],
+    reason_class: FailureReason,
+    worker: WorkerId,
+) -> Result<(u64, bool), CoordinatorError> {
+    // No-op cases first — these write nothing, so they are benign for ANY reporter and
+    // must NOT be rejected by the admission gate (the lease is already resolved by the
+    // time they occur): a Committed Mote (raced ahead) wins; an already-terminal Mote is
+    // an idempotent duplicate report (the first dead-letter resolved the lease). Either
+    // way clear any lingering lease tracking and ack a no-op.
+    match projection.state_of(&mote_id) {
+        MoteState::Pending | MoteState::Scheduled => {}
+        _ => {
+            dispatch.tracker.resolve_committed(mote_id);
+            return Ok((0, false));
+        }
+    }
+    // We are about to write a terminal `Failed`: enforce the admission gate. Only the
+    // worker that HOLDS the lease (recorded at `serve_lease`) may dead-letter a live,
+    // in-flight Mote — keeping one worker from terminating another's (or a phantom) Mote.
+    if !dispatch.tracker.is_held_by(mote_id, worker) {
+        return Err(CoordinatorError::NotLeased {
+            mote: mote_id,
+            worker,
+        });
+    }
+    let entry = JournalEntry::Failed {
+        mote_id,
+        idempotency_key,
+        seq: 0,
+        reason_class,
+        reporter_id: worker_reporter_id(worker),
+    };
+    let durable = journal.append(entry)?;
+    let seq = durable.seq();
+    if seq > *folded_through {
+        projection.fold(&durable)?;
+        *folded_through = seq;
+    }
+    // Never re-lease it: drop from the dispatch admission set + lease tracking. The
+    // terminal `Failed` already removes it from `ready_set`; this keeps `dispatch.defs`
+    // from carrying a dead Mote and resolves the lease (`resolve_committed` clears all
+    // tracking for the Mote — the operation is identical for a terminal failure).
+    dispatch.submitted.remove(&mote_id);
+    dispatch.defs.remove(&mote_id);
+    dispatch.tracker.resolve_committed(mote_id);
+    Ok((seq, true))
+}
+
 /// Read up to `max` `Committed` entries with seq in `(since_seq, current_seq]`, in
 /// seq order, plus the cursor to resume from. The cursor (`next_seq`) advances past
 /// everything scanned: it is `current_seq` when the whole range was scanned (the peer
@@ -930,6 +1054,25 @@ fn handle_command<J: Journal>(
                 idempotency_key,
             );
             let _ = reply.send(seq);
+        }
+        Command::ReportFailure {
+            mote_id,
+            idempotency_key,
+            reason_class,
+            worker,
+            reply,
+        } => {
+            let outcome = dead_letter_failure(
+                journal,
+                projection,
+                folded_through,
+                dispatch,
+                mote_id,
+                idempotency_key,
+                reason_class,
+                worker,
+            );
+            let _ = reply.send(outcome);
         }
         Command::RegisterRun {
             recipe_fingerprint,

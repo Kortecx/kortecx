@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use kx_content::LocalFsContentStore;
-use kx_journal::{Journal, JournalEntry};
+use kx_journal::{FailureReason, Journal, JournalEntry};
 use kx_mote::{Mote, MoteId};
 use kx_projection::MoteState;
 use kx_proto::proto;
@@ -362,6 +362,47 @@ impl Coordinator for CoordinatorService {
     }
 
     #[tracing::instrument(skip_all)]
+    async fn report_failure(
+        &self,
+        request: Request<proto::ReportFailureRequest>,
+    ) -> Result<Response<proto::ReportFailureResponse>, Status> {
+        let req = request.into_inner();
+        // D40 admission: only a registered worker may report a failure (mirrors
+        // report_commit/report_effect_staged). The per-Mote lease check is enforced
+        // deeper, on the owner thread (`dead_letter_failure`).
+        let worker = WorkerId(req.worker_id);
+        if self.registry.get(worker).is_none() {
+            return Err(CoordinatorError::UnknownWorker(worker).into());
+        }
+        let mote_id_bytes: [u8; 32] = req
+            .mote_id
+            .as_slice()
+            .try_into()
+            .map_err(|_| Status::invalid_argument("mote_id must be 32 bytes"))?;
+        let idempotency_key: [u8; 32] = req
+            .idempotency_key
+            .as_slice()
+            .try_into()
+            .map_err(|_| Status::invalid_argument("idempotency_key must be 32 bytes"))?;
+        let mote_id = MoteId::from_bytes(mote_id_bytes);
+        // Fail-closed reason boundary: a worker may self-report ONLY a terminal-logic
+        // verdict. A pre-commit-crash reason (TimedOut/WorkerCrashed) is coordinator-
+        // observed, never worker-self-reported — accepting one here would (under an
+        // EffectStaged) leave the Mote re-dispatchable forever (the F4 hang). The proto
+        // enum's UNSPECIFIED=0 sentinel is rejected by `worker_reportable_reason`.
+        let reason_class = worker_reportable_reason(req.reason_class)?;
+        let (failed_seq, appended) = self
+            .core
+            .report_failure(mote_id, idempotency_key, reason_class, worker)
+            .await?;
+        tracing::info!(seq = failed_seq, appended, ?mote_id, "worker dead-letter recorded");
+        Ok(Response::new(proto::ReportFailureResponse {
+            failed_seq,
+            ack: true,
+        }))
+    }
+
+    #[tracing::instrument(skip_all)]
     async fn lease_work(
         &self,
         request: Request<proto::LeaseWorkRequest>,
@@ -384,6 +425,9 @@ impl Coordinator for CoordinatorService {
             .map(|(mote, warrant)| proto::WorkItem {
                 mote: Some(mote.into()),
                 warrant: Some(warrant.into()),
+                // F-7 parent-context resolution is populated in Step 5; empty here keeps
+                // the leaf path byte-identical to the pre-F-7 behavior.
+                parent_results: vec![],
             })
             .collect();
         Ok(Response::new(proto::LeaseWorkResponse {
@@ -478,5 +522,29 @@ fn committed_to_proto(entry: JournalEntry) -> Option<proto::JournalEntry> {
             })
         }
         _ => None,
+    }
+}
+
+/// Map a wire `FailureReason` to its domain value, fail-closed to the reasons a worker
+/// may LEGITIMATELY self-report (F4 dead-letter): a TERMINAL-LOGIC verdict only. A
+/// pre-commit-crash reason (`TimedOut`/`WorkerCrashed`) is coordinator-observed (the
+/// death reaper), and accepting one from a worker would, under an `EffectStaged`, keep
+/// the Mote re-dispatchable forever — the F4 hang. `UNSPECIFIED` (the proto3 zero
+/// default) and every non-worker-reportable reason are rejected as `invalid_argument`.
+/// (The proto<->domain map lives here, not in kx-proto, which by design does not depend
+/// on kx-journal — a failure is assembled into a journal entry coordinator-side.)
+// `tonic::Status` (the gRPC-idiomatic error) is large; the Ok arm is a 1-byte enum, so
+// the ratio trips `result_large_err`. Boxing the error would just force every gRPC call
+// site to unbox — Status is the right type at this boundary.
+#[allow(clippy::result_large_err)]
+fn worker_reportable_reason(wire: i32) -> Result<FailureReason, Status> {
+    let proto_reason = proto::FailureReason::try_from(wire)
+        .map_err(|_| Status::invalid_argument(format!("unknown failure reason {wire}")))?;
+    match proto_reason {
+        proto::FailureReason::DeadLettered => Ok(FailureReason::DeadLettered),
+        proto::FailureReason::ExecutorRefused => Ok(FailureReason::ExecutorRefused),
+        other => Err(Status::invalid_argument(format!(
+            "failure reason {other:?} is not worker-self-reportable (terminal-logic only)"
+        ))),
     }
 }

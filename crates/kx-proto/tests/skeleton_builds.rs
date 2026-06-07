@@ -18,8 +18,8 @@ use kx_proto::proto::{
     HeartbeatResponse, JournalEntry, LeaseWorkRequest, LeaseWorkResponse, NdClass,
     ReadEntriesRequest, ReadEntriesResponse, RegisterRunRequest, RegisterRunResponse,
     RegisterWorkerRequest, RegisterWorkerResponse, ReportCommitRequest, ReportCommitResponse,
-    ReportEffectStagedRequest, ReportEffectStagedResponse, SubmitMoteRequest, SubmitMoteResponse,
-    SubmitStatus, WorkItem,
+    ReportEffectStagedRequest, ReportEffectStagedResponse, ReportFailureRequest,
+    ReportFailureResponse, SubmitMoteRequest, SubmitMoteResponse, SubmitStatus, WorkItem,
 };
 use tonic::transport::Server;
 use tonic::{Request, Response, Status};
@@ -92,8 +92,20 @@ impl Coordinator for NoopCoordinator {
             items: vec![WorkItem {
                 mote: Some(sample_mote().into()),
                 warrant: Some(sample_warrant().into()),
+                parent_results: vec![],
             }],
             instance_id: vec![0u8; 16],
+        }))
+    }
+
+    async fn report_failure(
+        &self,
+        req: Request<ReportFailureRequest>,
+    ) -> Result<Response<ReportFailureResponse>, Status> {
+        let _ = req.into_inner();
+        Ok(Response::new(ReportFailureResponse {
+            failed_seq: 1,
+            ack: true,
         }))
     }
 

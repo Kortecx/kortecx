@@ -382,6 +382,27 @@ pub async fn report_effect_staged(
         .staged_seq
 }
 
+/// Report a TERMINAL Mote failure (F4 dead-letter) through the service, returning the
+/// raw `Result` so a test can assert both the success path and the `NotLeased` /
+/// invalid-reason rejections. `reason` is a `proto::FailureReason` discriminant.
+pub async fn report_failure(
+    service: &CoordinatorService,
+    mote: &Mote,
+    worker_id: u64,
+    reason: proto::FailureReason,
+) -> Result<proto::ReportFailureResponse, tonic::Status> {
+    let id = mote.id.as_bytes().to_vec();
+    service
+        .report_failure(Request::new(proto::ReportFailureRequest {
+            mote_id: id.clone(),
+            idempotency_key: id,
+            reason_class: reason as i32,
+            worker_id,
+        }))
+        .await
+        .map(tonic::Response::into_inner)
+}
+
 /// Lease ready PURE work for `worker_id` on `executor_class` through the service.
 pub async fn lease_work(
     service: &CoordinatorService,
