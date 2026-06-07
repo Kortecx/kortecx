@@ -13,8 +13,8 @@ use std::sync::Arc;
 
 use kx_content::{ContentRef, ContentStore};
 use kx_mote::{
-    canonical_config, ChildDescriptor, EdgeMeta, EffectPattern, GraphPosition, InputDataId,
-    LogicRef, Mote, MoteDef, NdClass, ParentRef, RoleId, TopologyDecision,
+    canonical_config, ChildDescriptor, ConfigVal, EdgeMeta, EffectPattern, GraphPosition,
+    InputDataId, LogicRef, Mote, MoteDef, NdClass, ParentRef, RoleId, TopologyDecision,
 };
 use kx_projection::{
     ChildResolver, DefaultTopologyMaterializer, InMemoryMoteDefRegistry, InheritFromShaperResolver,
@@ -101,6 +101,19 @@ pub struct TopologyProviderError(pub String);
 /// `DefaultTopologyMaterializer` performs. Used by the engine's fact-driven child
 /// derivation so its runnable children are provably the SAME set the materializer
 /// registers (both decode one committed fact — a single source of truth).
+///
+/// **Payload-format note (per-child intent).** When `ChildDescriptor` gained its
+/// `intent` field, the canonical-bincode layout of a committed `TopologyDecision`
+/// changed (bincode is non-self-describing, so the extra field is positional, not
+/// optional). `TopologyDecision`s are regenerated in-memory per run — the demo
+/// re-encodes `demo_topology_decision()` each run, and the model loop re-`decide`s
+/// per round, serving committed bytes from the content store on replay — so OSS
+/// has no shipped cross-version topology journal to honor. A pre-intent committed
+/// payload (4-field descriptors) replayed by a post-intent binary fails to decode
+/// here (a deliberate, tested break — see the `*backward_compat*` test); it is NOT
+/// silently mis-materialized. If cross-version topology replay ever becomes a
+/// supported guarantee, a V1/V2 dual-format trial-decode is the migration to add
+/// THEN — not a digest-preservation trick now.
 pub fn decode_topology_decision(bytes: &[u8]) -> Result<TopologyDecision, RuntimeError> {
     let (td, _) =
         bincode::serde::decode_from_slice::<TopologyDecision, _>(bytes, canonical_config())
@@ -126,6 +139,13 @@ pub fn demo_topology_decision() -> TopologyDecision {
                 logic_ref: LogicRef::from_bytes([tag; 32]),
                 nd_class: NdClass::Pure,
                 effect_pattern: EffectPattern::IdempotentByConstruction,
+                // The demo carries NO per-child intent: empty ⇒ the resolver
+                // inherits the shaper's config verbatim, so each demo child's
+                // `MoteId` is UNCHANGED by the new field. (Adding the empty
+                // field to the serialized descriptor still shifts the shaper's
+                // committed `result_ref` bytes — the one deliberate, re-baselined
+                // delta in the canonical projection digest.)
+                intent: ConfigVal(Vec::new()),
             }
         })
         .collect();

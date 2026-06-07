@@ -444,6 +444,74 @@ fn loop_proposal_decodes_then_lowers_to_topology_decision() {
     assert_eq!(td.hash(), td.hash()); // deterministic content address
 }
 
+#[test]
+fn t5_loop_lowering_threads_per_step_intent_onto_the_descriptor() {
+    // THE FIX (planner slice): `lower_loop_to_topology_decision` carries each
+    // PlanStep.intent onto its ChildDescriptor (it was previously DROPPED). This
+    // is what lets a corrective child run its own instruction downstream.
+    let (_roles, recipes) = standard_registries();
+    let bytes = json(
+        r#"{"loop_proposal":{"version":1,"next_steps":[{"role":"reader","intent":"READ the doc"},{"role":"summarizer","intent":"SUMMARISE it"}]}}"#,
+    );
+    let td = lower_loop_to_topology_decision(
+        &decode_loop_proposal(&bytes, 8192).expect("decodes"),
+        &recipes,
+    )
+    .expect("lowers");
+    assert_eq!(
+        td.children[0].intent,
+        kx_mote::ConfigVal(b"READ the doc".to_vec())
+    );
+    assert_eq!(
+        td.children[1].intent,
+        kx_mote::ConfigVal(b"SUMMARISE it".to_vec())
+    );
+
+    // Identity-bearing: distinct intents ⇒ a different decision hash than if the
+    // two children shared one intent (same roles/recipes, only intent differs).
+    let same = json(
+        r#"{"loop_proposal":{"version":1,"next_steps":[{"role":"reader","intent":"x"},{"role":"summarizer","intent":"x"}]}}"#,
+    );
+    let td_same = lower_loop_to_topology_decision(
+        &decode_loop_proposal(&same, 8192).expect("decodes"),
+        &recipes,
+    )
+    .expect("lowers");
+    assert_ne!(
+        td.hash(),
+        td_same.hash(),
+        "distinct per-child intents ⇒ distinct committed decision"
+    );
+}
+
+#[test]
+fn t5_oversize_intent_is_refused_before_parse_fail_closed() {
+    // The per-child intent is UNTRUSTED model content; it is bounded by the SAME
+    // envelope byte-cap-before-parse as every other field. A huge intent string
+    // overflows the cap and dead-letters at decode — it NEVER reaches a
+    // ChildDescriptor (no second, in-kx-mote bound is needed: the boundary is
+    // the decoder, by design).
+    let big_intent = "x".repeat(10_000);
+    let bytes = json(&format!(
+        r#"{{"loop_proposal":{{"version":1,"next_steps":[{{"role":"reader","intent":"{big_intent}"}}]}}}}"#
+    ));
+    assert!(
+        matches!(
+            decode_loop_proposal(&bytes, 256),
+            Err(PlanError::Oversize { .. })
+        ),
+        "an oversize intent must be refused before parse"
+    );
+    // Same boundary on the re-plan path.
+    let replan = json(&format!(
+        r#"{{"replan":{{"version":1,"next_steps":[{{"role":"reader","intent":"{big_intent}"}}]}}}}"#
+    ));
+    assert!(matches!(
+        decode_replan_proposal(&replan, 256),
+        Err(PlanError::Oversize { .. })
+    ));
+}
+
 proptest! {
     /// decode_loop_proposal is total + panic-free over arbitrary bytes.
     #[test]

@@ -574,3 +574,152 @@ fn replan_over_max_children_dead_letters_that_round() {
     );
     assert_eq!(p.committed_count(), 1, "only the round-0 shaper committed");
 }
+
+// ---------------------------------------------------------------------------
+// T4 — HEADLINE correction-fidelity proof: the corrective child runs ITS OWN
+// instruction, not the shaper's planning prompt. This test FAILS on pre-intent
+// code (the child inherited the shaper's `config_subset` → its assembled prompt
+// was the planning prompt) and PASSES after the ChildDescriptor `intent` fix.
+// ---------------------------------------------------------------------------
+
+/// A [`ScriptedBackend`] that ALSO records the textual portion of every
+/// `InferenceInput` it is dispatched with, so a test can prove WHICH prompt a
+/// child actually ran (the assembled ChatML carries `config_subset[PROMPT_KEY]`).
+struct RecordingBackend {
+    replies: Mutex<std::vec::IntoIter<Reply>>,
+    calls: Arc<AtomicUsize>,
+    inputs: Arc<Mutex<Vec<String>>>,
+}
+
+impl InferenceBackend for RecordingBackend {
+    fn dispatch(
+        &self,
+        model_id: &ModelId,
+        input: &InferenceInput,
+        _params: &InferenceParams,
+        _warrant: &WarrantSpec,
+    ) -> Result<InferenceOutput, InferenceError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        let text = match input {
+            InferenceInput::Text(s) => s.clone(),
+            InferenceInput::Multimodal { text, .. } => text.clone(),
+        };
+        self.inputs.lock().unwrap().push(text);
+        let bytes = match self.replies.lock().unwrap().next() {
+            Some(Reply::Ok(b)) => b,
+            None => b"done".to_vec(),
+            Some(Reply::Fail) => {
+                return Err(InferenceError::ModelNotFound {
+                    model_id: model_id.0.clone(),
+                })
+            }
+        };
+        Ok(InferenceOutput {
+            bytes,
+            output_tokens: 1,
+            backend_name: "recording",
+            model_id: model_id.clone(),
+            elapsed: Duration::from_millis(0),
+        })
+    }
+    fn supports(&self, _model_id: &ModelId) -> bool {
+        true
+    }
+    fn name(&self) -> &'static str {
+        "recording"
+    }
+}
+
+fn loop_proposal_with_intent(role: &str, intent: &str) -> Vec<u8> {
+    format!(
+        r#"{{"loop_proposal":{{"version":1,"next_steps":[{{"role":"{role}","intent":"{intent}"}}]}}}}"#
+    )
+    .into_bytes()
+}
+
+fn replan_with_intent(role: &str, intent: &str) -> Vec<u8> {
+    format!(
+        r#"{{"replan":{{"version":1,"next_steps":[{{"role":"{role}","intent":"{intent}"}}]}}}}"#
+    )
+    .into_bytes()
+}
+
+#[test]
+fn t4_corrective_child_runs_its_own_intent_not_the_shapers_planning_prompt() {
+    // Round 0: plan a "reader" child with a distinct first instruction → FAILS.
+    // Round 1: re-plan a "reader" child with a DIFFERENT corrective instruction
+    //          → succeeds. We capture the prompt each dispatch ran with.
+    let first_intent = "READ the raw source document";
+    let corrective_intent = "TRANSLATE the document into French and summarise it";
+    let replies = vec![
+        Reply::Ok(loop_proposal_with_intent("reader", first_intent)),
+        Reply::Fail,
+        Reply::Ok(replan_with_intent("reader", corrective_intent)),
+        Reply::Ok(b"done".to_vec()),
+    ];
+
+    let dir = tempfile::tempdir().unwrap();
+    let config = config_for(dir.path());
+    let store = Arc::new(LocalFsContentStore::open(&config.content_root).unwrap());
+    let journal = Arc::new(SqliteJournal::open(&config.journal_path).unwrap());
+    let inputs = Arc::new(Mutex::new(Vec::<String>::new()));
+    let backend = Arc::new(RecordingBackend {
+        replies: Mutex::new(replies.into_iter()),
+        calls: Arc::new(AtomicUsize::new(0)),
+        inputs: inputs.clone(),
+    });
+    let registry: Arc<dyn ToolRegistry> = Arc::new(InMemoryToolRegistry::with_builtins());
+    let out = run_replan_loop(
+        &config,
+        store,
+        journal.clone(),
+        backend,
+        registry,
+        recipes(),
+        &loop_wf(),
+        LoopBudget::default(),
+    )
+    .expect("the re-plan loop completes");
+    assert_eq!(out.rounds_used, 2);
+
+    let recorded = inputs.lock().unwrap().clone();
+
+    // The corrective child ran ITS OWN instruction: some dispatch carried the
+    // corrective intent text in its assembled prompt.
+    let corrective_runs: Vec<&String> = recorded
+        .iter()
+        .filter(|i| i.contains(corrective_intent))
+        .collect();
+    assert!(
+        !corrective_runs.is_empty(),
+        "the corrective child must run its own instruction; recorded prompts: {recorded:?}"
+    );
+    // THE FIX: that corrective dispatch is NOT re-running the shaper's planning
+    // prompt (pre-fix, the inherited config made it `PLAN_PROMPT`). Nor is it the
+    // stale first-round instruction.
+    for run in &corrective_runs {
+        assert!(
+            !run.contains(PLAN_PROMPT),
+            "corrective child must NOT inherit the shaper's planning prompt"
+        );
+        assert!(
+            !run.contains(first_intent),
+            "corrective child must NOT carry the stale round-0 instruction"
+        );
+    }
+    // Sanity: the shaper DID plan (its own dispatch carried the planning prompt),
+    // so we're really discriminating child-vs-shaper, not trivially passing.
+    assert!(
+        recorded.iter().any(|i| i.contains(PLAN_PROMPT)),
+        "the shaper still runs the planning prompt"
+    );
+
+    // And the corrective child actually committed (the loop made forward progress).
+    let p = Projection::from_journal(&*journal).unwrap();
+    assert_eq!(p.committed_count(), 3, "2 shapers + the corrected child");
+    assert_eq!(
+        p.failed_count(),
+        1,
+        "the round-0 step is a durable Failed fact"
+    );
+}

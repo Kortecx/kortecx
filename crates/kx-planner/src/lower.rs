@@ -276,6 +276,14 @@ pub fn lower_loop_to_topology_decision(
             logic_ref: recipe.logic_ref,
             nd_class: recipe.nd_class,
             effect_pattern: recipe.effect_pattern,
+            // Carry the model's per-step instruction onto the descriptor so the
+            // materialized child runs ITS OWN intent (lands in the child's
+            // `config_subset[PROMPT_KEY]` via `InheritFromShaperResolver`),
+            // rather than re-running the shaper's planning prompt. This mirrors
+            // the static `lower_plan` path's `config_with_intent(&s.intent)`;
+            // before this it was silently dropped (the #1 correction-fidelity
+            // gap). `intent` is already size-capped + strictly parsed upstream.
+            intent: ConfigVal(s.intent.as_bytes().to_vec()),
         });
     }
     Ok(TopologyDecision { children })

@@ -8,6 +8,7 @@ use crate::def::canonical_config;
 use crate::effect::EffectPattern;
 use crate::id::LogicRef;
 use crate::ndclass::NdClass;
+use crate::strings::ConfigVal;
 
 // ---------------------------------------------------------------------------
 // D37 Seam A enforcement: TopologyDecision + ChildDescriptor + RoleId
@@ -48,14 +49,15 @@ pub struct RoleId(pub String);
 /// `mote_def_hash`, which depends on the shaper's `MoteDef` shape; a
 /// chain that's circular and fragile under replay.
 ///
-/// **Closed payload**: the four fields below are the workflow author's
-/// declarative intent for the child. The runtime derives:
+/// **Closed payload**: the five fields below are the workflow author's (or
+/// the topology-shaper model's) declarative intent for the child. The
+/// runtime derives:
 ///
 /// - `parents` from the shaper's committed graph (the shaper's own
 ///   committed parents form the child's data lineage)
 /// - `input_data_id` from those parents' `result_ref`s
 /// - `mote_def_hash` from `MoteDef(logic_ref, nd_class, effect_pattern,
-///   role-derived warrant axes, …)`
+///   role-derived warrant axes, `config_subset`, …)`
 /// - `graph_position` from the shaper's `graph_position` + the
 ///   descriptor's index in the `children` vector
 /// - `mote_id` from [`crate::derive_mote_id`] over the above
@@ -63,13 +65,14 @@ pub struct RoleId(pub String);
 /// # Examples
 ///
 /// ```
-/// use kx_mote::{ChildDescriptor, EffectPattern, LogicRef, NdClass, RoleId};
+/// use kx_mote::{ChildDescriptor, ConfigVal, EffectPattern, LogicRef, NdClass, RoleId};
 ///
 /// let c = ChildDescriptor {
 ///     role_id: RoleId("critic".into()),
 ///     logic_ref: LogicRef([0u8; 32]),
 ///     nd_class: NdClass::Pure,
 ///     effect_pattern: EffectPattern::IdempotentByConstruction,
+///     intent: ConfigVal(Vec::new()),
 /// };
 /// assert_eq!(&c.role_id.0, "critic");
 /// ```
@@ -88,6 +91,28 @@ pub struct ChildDescriptor {
     /// child's `ready_set` gates downstream consumers on a critic verdict
     /// (3c only).
     pub effect_pattern: EffectPattern,
+    /// **Per-child instruction** the topology shaper emits for THIS child —
+    /// carried verbatim into the materialized child's `config_subset` under
+    /// [`crate::PROMPT_KEY`] by the child resolver, so a corrective child in
+    /// a re-plan round runs ITS OWN task instruction rather than re-running
+    /// the shaper's planning prompt. **Untrusted model content** — already
+    /// size-capped + strictly parsed at the planner decode boundary
+    /// (`decode_loop_proposal` / `decode_replan_proposal`) before it ever
+    /// becomes a descriptor; the resolver only ever writes it to the prompt
+    /// key, never to an authority axis (SN-8 narrowing-only is unaffected).
+    ///
+    /// **Empty `intent` preserves the pre-intent behavior**: the resolver
+    /// then inherits the shaper's `config_subset` (incl. its prompt) verbatim,
+    /// so an empty-intent child's materialized `MoteDef` is byte-identical to
+    /// what it was before this field existed.
+    ///
+    /// **Identity-bearing**: a non-empty `intent` lands in the child's
+    /// `config_subset`, which folds into `MoteDef::hash` → the child `MoteId`,
+    /// so two children differing only by `intent` are genuinely distinct work.
+    /// Because `intent` is serialized into the committed `TopologyDecision`,
+    /// the materializer re-derives identical child identities on cold-refold
+    /// (R49) — it is NOT `#[serde(skip)]` (which would make replay diverge).
+    pub intent: ConfigVal,
 }
 
 /// **D37 Seam A enforcement primitive — the closed topology payload.**
@@ -116,7 +141,7 @@ pub struct ChildDescriptor {
 ///
 /// ```
 /// use kx_mote::{
-///     ChildDescriptor, EffectPattern, LogicRef, NdClass, RoleId,
+///     ChildDescriptor, ConfigVal, EffectPattern, LogicRef, NdClass, RoleId,
 ///     TopologyDecision,
 /// };
 ///
@@ -127,12 +152,14 @@ pub struct ChildDescriptor {
 ///             logic_ref: LogicRef([0u8; 32]),
 ///             nd_class: NdClass::Pure,
 ///             effect_pattern: EffectPattern::IdempotentByConstruction,
+///             intent: ConfigVal(Vec::new()),
 ///         },
 ///         ChildDescriptor {
 ///             role_id: RoleId("worker".into()),
 ///             logic_ref: LogicRef([1u8; 32]),
 ///             nd_class: NdClass::WorldMutating,
 ///             effect_pattern: EffectPattern::StageThenCommit,
+///             intent: ConfigVal(b"summarize the inputs".to_vec()),
 ///         },
 ///     ],
 /// };

@@ -13,7 +13,7 @@
 //! eviction (the dependency wall in `kx-capture/tests/boundary.rs` is the
 //! compiler-enforced tripwire). Turning it ON changes only the *quantity
 //! captured*, never its trust status — so the canonical product digest
-//! `a6b5c679…` is byte-unchanged.
+//! `7d22d4bd…` is byte-unchanged.
 //!
 //! It is an **additive** seam: [`crate::run_with_seams`] takes `Option<&CaptureSink>`;
 //! `None` disables capture (the byte-identity-without-overhead path), and the

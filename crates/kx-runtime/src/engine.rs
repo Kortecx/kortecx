@@ -118,7 +118,7 @@ impl Action {
 /// [`run_with_seams`]: it wires the deterministic stub seams
 /// (`TestMoteExecutor::deterministic()` + `DemoBroker`) and the canonical topology
 /// shaper, then drives the real orchestrator. Its output is byte-identical to the
-/// pre-seam engine (digest `a6b5c679…`, 8/8) — the seam injects, it does not
+/// pre-seam engine (digest `7d22d4bd…`, 8/8) — the seam injects, it does not
 /// change, the truth path.
 ///
 /// **D67:** capture is ON by default (`CaptureScope::ActionsOnly`). The ledger is
@@ -178,7 +178,7 @@ pub fn run_with_capture(
     // R4: enable the off-truth-path audit log iff the operator passed
     // `--audit-log <path>` (a `kx run --audit-log` JSONL trail, truncated fresh per
     // run). Open failure is surfaced here (fail-fast on a bad path), never mid-run.
-    // Audit is OFF the truth path, so the digest `a6b5c679…` is byte-unchanged
+    // Audit is OFF the truth path, so the digest `7d22d4bd…` is byte-unchanged
     // whether the log is on or off.
     let audit = match &config.audit_log {
         Some(path) => Some(RuntimeAuditSink::jsonl(path)?),
@@ -199,7 +199,7 @@ pub fn run_with_capture(
         // child derivation (byte-identical truth path).
         None,
         // The deterministic demo assembles no context: `None` ⇒ no snapshot is
-        // ever published ⇒ the truth path (digest `a6b5c679…`) is byte-unchanged.
+        // ever published ⇒ the truth path (digest `7d22d4bd…`) is byte-unchanged.
         None,
         capture_sink,
         audit.as_ref(),
@@ -232,7 +232,7 @@ pub fn run_with_capture(
 /// guaranteeing the runnable set equals the materializer-registered set (one source
 /// of truth). When `None` (the canonical demo + every existing caller), children are
 /// derived from the supplied decision exactly as before — the deterministic truth
-/// path (digest `a6b5c679…`) is byte-unchanged. (The provider is invoked eagerly by
+/// path (digest `7d22d4bd…`) is byte-unchanged. (The provider is invoked eagerly by
 /// the harness in PR-2; PR-3 re-plan will invoke it lazily per round — same seam.)
 ///
 /// `snapshot_sink` is the D78 context-publishing seam: when `Some`, the
@@ -250,7 +250,7 @@ pub fn run_with_capture(
 /// exhausted transient) is journaled as a `Failed` fact so the drive loop continues
 /// **past** the dead-lettered Mote. The canonical demo + every existing caller pass
 /// `None`, so a dispatch error propagates exactly as the pre-PR-1 `?` did — the
-/// deterministic truth path (digest `a6b5c679…`) is byte-unchanged. (A dead-lettered
+/// deterministic truth path (digest `7d22d4bd…`) is byte-unchanged. (A dead-lettered
 /// `Failed` is the durable, auditable record the model-driven re-plan loop (AL2)
 /// later reads — kortecx never blindly re-runs a failing Mote.)
 // `store` / `journal` are taken by value: the orchestrator owns these `Arc`
@@ -390,7 +390,7 @@ where
                 // PR-2 (F-4): a model-driven shaper derives children from the
                 // COMMITTED decision fact (`topology_provider` is `Some`); the demo
                 // + every existing caller (`None`) derive from the supplied decision,
-                // byte-for-byte as before — the digest `a6b5c679…` path is untouched.
+                // byte-for-byte as before — the digest `7d22d4bd…` path is untouched.
                 children_derived = if topology_provider.is_some() {
                     derive_shaper_children_from_fact(
                         workflow,
@@ -563,7 +563,7 @@ where
     // in-memory ledger anyway and recovery re-derives it from the journal. No-op
     // for `None` (the byte-identity-without-overhead path). A pure `result_ref_of`
     // read + an in-memory insert: NEVER touches the journal/projection fold, so the
-    // product digest `a6b5c679…` is byte-unchanged.
+    // product digest `7d22d4bd…` is byte-unchanged.
     if let Some(sink) = capture_sink {
         capture_committed_actions(&runnable, &projection, sink);
     }
@@ -575,7 +575,7 @@ where
     // O(committed·log) sweep over the FINAL projection — flat per-Mote, and
     // (unlike a per-dispatch state check) COMPLETE: it covers Motes committed by
     // recovery before the loop ran. `RunCompleted.digest` is the product digest
-    // bytes (`a6b5c679…` for the canonical demo) — a tamper-evident receipt.
+    // bytes (`7d22d4bd…` for the canonical demo) — a tamper-evident receipt.
     // No-op for `None` (the byte-identity-without-overhead path).
     if let Some(a) = audit_sink {
         audit_terminal_states(&runnable, &projection, a);

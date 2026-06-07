@@ -151,7 +151,7 @@ fn replay_bit_identical_with_and_without_sidecar() {
     );
 }
 
-/// **M2.2c product-digest invariant (guards `a6b5c679…`).** A seal-writing run
+/// **M2.2c product-digest invariant (guards `7d22d4bd…`).** A seal-writing run
 /// (cadence on) and a seal-free run (cadence off) produce the SAME product digest:
 /// `DigestSealed` is off-DAG metadata, invisible to `digest_projection` (which
 /// folds only `Committed` Motes). Also proves the cadence does not runaway-seal —

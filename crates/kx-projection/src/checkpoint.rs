@@ -22,7 +22,7 @@
 //! - **Never journaled, never an identity input, never gates.** The checkpoint
 //!   digest is a *full-state* integrity digest, **distinct** from the
 //!   committed-facts product digest (`kx-runtime`'s `digest_projection`, the
-//!   canonical `a6b5c679…`). It is exact-equality only (SN-8); no fuzzy match.
+//!   canonical `7d22d4bd…`). It is exact-equality only (SN-8); no fuzzy match.
 //! - **Self-healing format.** [`CURRENT_FORMAT_VERSION`] + [`PAYLOAD_CODEC`] are
 //!   checked on decode; a future format / codec (e.g. an rkyv zero-copy payload)
 //!   bumps these and old checkpoints cleanly invalidate → full fold.

@@ -29,11 +29,12 @@ use std::sync::Arc;
 use kx_content::{ContentRef, ContentStore, InMemoryContentStore};
 use kx_journal::{InMemoryJournal, Journal, JournalEntry};
 use kx_mote::{
-    canonical_config, ChildDescriptor, EffectPattern, LogicRef, ModelId, MoteDef, MoteDefHash,
-    MoteId, NdClass, PromptTemplateHash, RoleId, TopologyDecision, MOTE_DEF_SCHEMA_VERSION,
+    canonical_config, ChildDescriptor, ConfigKey, ConfigVal, EffectPattern, LogicRef, ModelId,
+    MoteDef, MoteDefHash, MoteId, NdClass, PromptTemplateHash, RoleId, TopologyDecision,
+    MOTE_DEF_SCHEMA_VERSION, PROMPT_KEY,
 };
 use kx_projection::{
-    derive_child_identity, DefaultTopologyMaterializer, InMemoryMoteDefRegistry,
+    derive_child_identity, ChildResolver, DefaultTopologyMaterializer, InMemoryMoteDefRegistry,
     InheritFromShaperResolver, MoteState, Projection,
 };
 use kx_warrant::{
@@ -70,6 +71,21 @@ fn descriptor(seed: u8, nd: NdClass, ep: EffectPattern) -> ChildDescriptor {
         logic_ref: LogicRef([seed; 32]),
         nd_class: nd,
         effect_pattern: ep,
+        intent: ConfigVal(Vec::new()),
+    }
+}
+
+/// A descriptor carrying a non-empty per-child intent (the corrective-child
+/// case). Same identity axes as [`descriptor`] except the intent bytes.
+fn descriptor_with_intent(
+    seed: u8,
+    nd: NdClass,
+    ep: EffectPattern,
+    intent: &[u8],
+) -> ChildDescriptor {
+    ChildDescriptor {
+        intent: ConfigVal(intent.to_vec()),
+        ..descriptor(seed, nd, ep)
     }
 }
 
@@ -311,6 +327,125 @@ fn p1_cold_refold_rebuilds_identical_children_and_edges() {
             "child {child_id:?} should be in ready_set"
         );
     }
+}
+
+/// **T1 — R49 cold-refold with DISTINCT per-child intents.** The load-bearing
+/// proof that per-child `intent` is BOTH R49-faithful (live MoteIds ==
+/// cold-refolded MoteIds — the materializer re-derives identities from the
+/// committed `TopologyDecision` alone) AND identity-bearing (two children that
+/// differ ONLY by `intent` get genuinely distinct MoteIds). This is precisely
+/// the property `#[serde(skip)]` would have broken (the intent would vanish on
+/// cold-refold, diverging the child identity).
+#[test]
+fn t1_intent_is_r49_faithful_and_identity_bearing() {
+    let shaper = shaper_def();
+    let shaper_id = shaper_mote_id(&shaper);
+    let shaper_hash = shaper.hash();
+
+    // Two children identical on every axis EXCEPT `intent`.
+    let td = TopologyDecision {
+        children: vec![
+            descriptor_with_intent(
+                7,
+                NdClass::Pure,
+                EffectPattern::IdempotentByConstruction,
+                b"summarize the document",
+            ),
+            descriptor_with_intent(
+                7,
+                NdClass::Pure,
+                EffectPattern::IdempotentByConstruction,
+                b"translate the document",
+            ),
+        ],
+    };
+
+    // Live fold.
+    let (store_live, _reg_live, w_ref, mat_live) = build_materializer(&shaper);
+    let td_ref_live = stage_topology(&store_live, &td);
+    let mut live = Projection::with_materializer(mat_live);
+    live.fold(&shaper_committed_entry(
+        shaper_id,
+        shaper_hash,
+        td_ref_live,
+        w_ref,
+        1,
+    ))
+    .unwrap();
+
+    // Cold re-fold over a journal (fresh process equivalent).
+    let (store_cold, _reg_cold, w_ref, mat_cold) = build_materializer(&shaper);
+    let td_ref_cold = stage_topology(&store_cold, &td);
+    assert_eq!(
+        td_ref_live, td_ref_cold,
+        "intent folds into the content ref"
+    );
+    let journal = InMemoryJournal::new();
+    journal
+        .append(shaper_committed_entry(
+            shaper_id,
+            shaper_hash,
+            td_ref_cold,
+            w_ref,
+            1,
+        ))
+        .unwrap();
+    let cold = Projection::from_journal_with_materializer(&journal, mat_cold).unwrap();
+
+    // Identity per child (live == cold == derived) AND child-0 != child-1.
+    let ids: Vec<(MoteId, MoteId)> = td
+        .children
+        .iter()
+        .enumerate()
+        .map(|(i, d)| {
+            let (derived, _h, _nd, _ep) = derive_child_identity(
+                shaper_id,
+                &shaper,
+                td_ref_live,
+                d,
+                i,
+                &InheritFromShaperResolver,
+            );
+            (derived, derived)
+        })
+        .collect();
+    let child0 = ids[0].0;
+    let child1 = ids[1].0;
+    assert_ne!(
+        child0, child1,
+        "distinct intents ⇒ distinct child MoteIds (identity-bearing)"
+    );
+
+    // Both children are visible (materialized) in BOTH projections at their
+    // derived identities — i.e. cold-refold re-derived the SAME ids the live
+    // fold registered (R49). A diverged id would show the child as Unknown.
+    for child in [child0, child1] {
+        assert_eq!(
+            live.parents_of(&child).len(),
+            1,
+            "live: child {child:?} materialized with its shaper parent"
+        );
+        assert_eq!(
+            cold.parents_of(&child).len(),
+            1,
+            "cold-refold re-derived the SAME child id {child:?} (R49)"
+        );
+        assert_eq!(live.parents_of(&child), cold.parents_of(&child));
+    }
+
+    // Behavior: the resolver writes each child's intent into its prompt key,
+    // so the two children run DIFFERENT instructions (not the shaper's prompt —
+    // the shaper here has none, so pre-intent these would have had no prompt).
+    let c0 = InheritFromShaperResolver.resolve(&shaper, &td.children[0]);
+    let c1 = InheritFromShaperResolver.resolve(&shaper, &td.children[1]);
+    assert_eq!(
+        c0.config_subset.get(&ConfigKey(PROMPT_KEY.to_string())),
+        Some(&ConfigVal(b"summarize the document".to_vec())),
+    );
+    assert_eq!(
+        c1.config_subset.get(&ConfigKey(PROMPT_KEY.to_string())),
+        Some(&ConfigVal(b"translate the document".to_vec())),
+    );
 }
 
 // ---------------------------------------------------------------------------

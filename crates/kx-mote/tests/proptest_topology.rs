@@ -27,7 +27,9 @@
 //!    pattern below would fail). Documents the single-source-of-truth
 //!    principle as a structural invariant.
 
-use kx_mote::{ChildDescriptor, EffectPattern, LogicRef, NdClass, RoleId, TopologyDecision};
+use kx_mote::{
+    ChildDescriptor, ConfigVal, EffectPattern, LogicRef, NdClass, RoleId, TopologyDecision,
+};
 use proptest::prelude::*;
 
 // ---------------------------------------------------------------------------
@@ -66,19 +68,27 @@ fn arb_logic_ref() -> impl Strategy<Value = LogicRef> {
     proptest::array::uniform32(any::<u8>()).prop_map(LogicRef)
 }
 
+/// Per-child intent bytes — frequently empty (the common inherit-from-shaper
+/// case), sometimes arbitrary content (the corrective-child case).
+fn arb_intent() -> impl Strategy<Value = ConfigVal> {
+    proptest::collection::vec(any::<u8>(), 0..=24).prop_map(ConfigVal)
+}
+
 fn arb_child_descriptor() -> impl Strategy<Value = ChildDescriptor> {
     (
         arb_role_id(),
         arb_logic_ref(),
         arb_nd_class(),
         arb_effect_pattern(),
+        arb_intent(),
     )
         .prop_map(
-            |(role_id, logic_ref, nd_class, effect_pattern)| ChildDescriptor {
+            |(role_id, logic_ref, nd_class, effect_pattern, intent)| ChildDescriptor {
                 role_id,
                 logic_ref,
                 nd_class,
                 effect_pattern,
+                intent,
             },
         )
 }
@@ -108,6 +118,7 @@ fn empty_vs_singleton_have_distinct_hashes() {
             logic_ref: LogicRef([0u8; 32]),
             nd_class: NdClass::Pure,
             effect_pattern: EffectPattern::IdempotentByConstruction,
+            intent: ConfigVal(Vec::new()),
         }],
     };
     assert_ne!(empty.hash(), singleton.hash());
@@ -122,12 +133,14 @@ fn reordering_children_changes_the_hash() {
         logic_ref: LogicRef([0u8; 32]),
         nd_class: NdClass::Pure,
         effect_pattern: EffectPattern::IdempotentByConstruction,
+        intent: ConfigVal(Vec::new()),
     };
     let child_b = ChildDescriptor {
         role_id: RoleId("b".into()),
         logic_ref: LogicRef([1u8; 32]),
         nd_class: NdClass::ReadOnlyNondet,
         effect_pattern: EffectPattern::StageThenCommit,
+        intent: ConfigVal(Vec::new()),
     };
     let td_ab = TopologyDecision {
         children: vec![child_a.clone(), child_b.clone()],
@@ -145,6 +158,7 @@ fn changing_role_id_changes_the_hash() {
         logic_ref: LogicRef([0u8; 32]),
         nd_class: NdClass::Pure,
         effect_pattern: EffectPattern::IdempotentByConstruction,
+        intent: ConfigVal(Vec::new()),
     };
     let mut modified = base.clone();
     modified.role_id = RoleId("worker".into());
@@ -164,6 +178,7 @@ fn changing_logic_ref_changes_the_hash() {
         logic_ref: LogicRef([0u8; 32]),
         nd_class: NdClass::Pure,
         effect_pattern: EffectPattern::IdempotentByConstruction,
+        intent: ConfigVal(Vec::new()),
     };
     let mut modified = base.clone();
     modified.logic_ref = LogicRef([1u8; 32]);
@@ -183,6 +198,7 @@ fn changing_nd_class_changes_the_hash() {
         logic_ref: LogicRef([0u8; 32]),
         nd_class: NdClass::Pure,
         effect_pattern: EffectPattern::IdempotentByConstruction,
+        intent: ConfigVal(Vec::new()),
     };
     let mut modified = base.clone();
     modified.nd_class = NdClass::WorldMutating;
@@ -202,6 +218,7 @@ fn changing_effect_pattern_changes_the_hash() {
         logic_ref: LogicRef([0u8; 32]),
         nd_class: NdClass::Pure,
         effect_pattern: EffectPattern::IdempotentByConstruction,
+        intent: ConfigVal(Vec::new()),
     };
     let mut modified = base.clone();
     modified.effect_pattern = EffectPattern::StageThenCommit;
@@ -214,14 +231,41 @@ fn changing_effect_pattern_changes_the_hash() {
     assert_ne!(td_base.hash(), td_mod.hash());
 }
 
+#[test]
+fn changing_intent_changes_the_hash() {
+    // CONTENT-sensitivity for the per-child intent: two children differing
+    // ONLY by `intent` are distinct work, so the TopologyDecision hash (and
+    // thus each child's materialized identity) differs. This is the property
+    // that makes the per-child intent identity-bearing + R49-faithful (it is
+    // serialized into the committed payload, never `#[serde(skip)]`'d).
+    let base = ChildDescriptor {
+        role_id: RoleId("worker".into()),
+        logic_ref: LogicRef([0u8; 32]),
+        nd_class: NdClass::Pure,
+        effect_pattern: EffectPattern::IdempotentByConstruction,
+        intent: ConfigVal(b"do step one".to_vec()),
+    };
+    let mut modified = base.clone();
+    modified.intent = ConfigVal(b"do step two".to_vec());
+    let td_base = TopologyDecision {
+        children: vec![base],
+    };
+    let td_mod = TopologyDecision {
+        children: vec![modified],
+    };
+    assert_ne!(td_base.hash(), td_mod.hash());
+}
+
 /// **D37 LOCK: no shaper_mote_id field** — the closed payload
 /// contract. This test instantiates a `ChildDescriptor` with EXACTLY
-/// 4 fields (role_id, logic_ref, nd_class, effect_pattern); if a
-/// future PR adds a 5th field, the field-init shorthand below will
+/// 5 fields (role_id, logic_ref, nd_class, effect_pattern, intent); if a
+/// future PR adds a 6th field, the field-init shorthand below will
 /// fail to compile (E0063 — missing field). This is a structural pin
-/// of D37's single-source-of-truth principle.
+/// of D37's single-source-of-truth principle. (The `intent` field added
+/// per-child instruction support; it is carried into the child's
+/// `config_subset`, never a `shaper_mote_id`-style back-reference.)
 #[test]
-fn child_descriptor_has_exactly_four_fields_d37_lock() {
+fn child_descriptor_has_exactly_five_fields_d37_lock() {
     // Field-list exhaustiveness — if a new field is added without
     // updating this test, compilation fails.
     #[allow(clippy::no_effect_underscore_binding)]
@@ -230,6 +274,7 @@ fn child_descriptor_has_exactly_four_fields_d37_lock() {
         logic_ref: LogicRef([0u8; 32]),
         nd_class: NdClass::Pure,
         effect_pattern: EffectPattern::IdempotentByConstruction,
+        intent: ConfigVal(Vec::new()),
     };
     // Same for TopologyDecision — exactly one field (children).
     let _ = TopologyDecision { children: vec![] };
@@ -326,6 +371,7 @@ proptest! {
                 logic_ref,
                 nd_class,
                 effect_pattern,
+                intent: ConfigVal(Vec::new()),
             }],
         };
         let h = td.hash();

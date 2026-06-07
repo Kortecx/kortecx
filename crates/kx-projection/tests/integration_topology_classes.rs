@@ -12,8 +12,8 @@ use std::sync::Arc;
 use kx_content::{ContentRef, ContentStore, InMemoryContentStore};
 use kx_journal::{repudiation_idempotency_key, JournalEntry, RepudiationReason};
 use kx_mote::{
-    canonical_config, ChildDescriptor, EffectPattern, LogicRef, ModelId, MoteDef, MoteId, NdClass,
-    PromptTemplateHash, RoleId, TopologyDecision, MOTE_DEF_SCHEMA_VERSION,
+    canonical_config, ChildDescriptor, ConfigVal, EffectPattern, LogicRef, ModelId, MoteDef,
+    MoteId, NdClass, PromptTemplateHash, RoleId, TopologyDecision, MOTE_DEF_SCHEMA_VERSION,
 };
 use kx_projection::{
     DefaultTopologyMaterializer, InMemoryMoteDefRegistry, InheritFromShaperResolver, MoteState,
@@ -49,6 +49,7 @@ fn descriptor(seed: u8, nd: NdClass, ep: EffectPattern) -> ChildDescriptor {
         logic_ref: LogicRef([seed; 32]),
         nd_class: nd,
         effect_pattern: ep,
+        intent: ConfigVal(Vec::new()),
     }
 }
 
@@ -671,12 +672,14 @@ fn kg1_close_sibling_children_with_different_roles_get_different_warrants() {
         logic_ref: LogicRef([10u8; 32]),
         nd_class: NdClass::Pure,
         effect_pattern: EffectPattern::IdempotentByConstruction,
+        intent: ConfigVal(Vec::new()),
     };
     let d_b = ChildDescriptor {
         role_id: RoleId("worker-b".into()),
         logic_ref: LogicRef([20u8; 32]),
         nd_class: NdClass::Pure,
         effect_pattern: EffectPattern::IdempotentByConstruction,
+        intent: ConfigVal(Vec::new()),
     };
     let td = TopologyDecision {
         children: vec![d_a.clone(), d_b.clone()],

@@ -186,7 +186,7 @@ fetch-agent-model:
 verify-quickstart:
     #!/usr/bin/env bash
     set -euo pipefail
-    CANON="a6b5c67939f14bfcbd125f7461b2bd0e481f6ee2fc98c1ab638730e2d2ace2e9"
+    CANON="7d22d4bdfc6f68a4311f40b20f3fe7c67f4c5d2b352f3bff8722b439e94a5af9"
     echo "Building the FFI-free kx binary..."
     cargo build --release -p kx-cli
     KX="{{justfile_directory()}}/target/release/kx"

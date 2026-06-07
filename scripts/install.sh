@@ -94,7 +94,7 @@ case ":${PATH}:" in
 esac
 say ""
 say "Next:  kx --help"
-say "       kx run --journal /tmp/kx.db --content /tmp/kx-content   # -> a6b5c679... (8/8 committed)"
+say "       kx run --journal /tmp/kx.db --content /tmp/kx-content   # -> 7d22d4bd... (8/8 committed)"
 # Forward seam: local LLM inference is a separate opt-in (needs a C++ toolchain);
 # GPU is cloud-side (Metal works on an Apple host).
 if command -v nvidia-smi >/dev/null 2>&1; then

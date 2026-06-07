@@ -1,7 +1,7 @@
 //! `WorkflowDef` serde is the M8/G1 durable-body unblock — and it must be
 //! STRICTLY off the identity path: adding the derives changes no field and no
 //! ordering, so `compile()` / `ManifestId` / `MoteId` are byte-invariant (the
-//! product digest `a6b5c679…` stays put). This guard round-trips a non-trivial
+//! product digest `7d22d4bd…` stays put). This guard round-trips a non-trivial
 //! workflow and proves both the round-trip AND the identity invariance.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
@@ -67,6 +67,6 @@ fn serde_does_not_move_the_recipe_identity() {
     assert_eq!(
         Manifest::recipe(&co, original.seed()).id(),
         Manifest::recipe(&cd, decoded.seed()).id(),
-        "ManifestId is serde-invariant (digest a6b5c679 stays put)"
+        "ManifestId is serde-invariant (digest 7d22d4bd stays put)"
     );
 }

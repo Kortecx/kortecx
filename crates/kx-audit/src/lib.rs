@@ -26,7 +26,7 @@
 //! - **Off the truth path.** Audit is NEVER journaled, is NEVER an input to a
 //!   `MoteId`, and NEVER gates scheduling / promotion / eviction. Turning it on
 //!   changes only what is *observed*, never the committed facts — so the canonical
-//!   product digest `a6b5c679…` is byte-unchanged with audit on, off, or inspected.
+//!   product digest `7d22d4bd…` is byte-unchanged with audit on, off, or inspected.
 //! - **Best-effort / non-fatal.** [`AuditSink::record`] returns unit: an audit
 //!   write failure can NEVER propagate into the run loop. Failures are swallowed,
 //!   logged via `tracing`, and counted via [`AuditSink::dropped`].
