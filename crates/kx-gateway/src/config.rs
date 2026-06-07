@@ -49,6 +49,13 @@ pub struct GatewayConfig {
     /// the given PEM cert + key; `None` ⇒ plaintext (the default). `--tls-cert` and
     /// `--tls-key` are given together or not at all.
     pub tls: Option<TlsPaths>,
+    /// Browser cross-origin allowlist for the gRPC-web shim (R9.5). Each entry is
+    /// an explicit origin (`scheme://host[:port]`), parsed from `--cors-origin`
+    /// (repeatable). **Empty ⇒ deny-by-default**: no CORS layer is installed, so a
+    /// browser gets no cross-origin grant (native/`curl` clients are unaffected —
+    /// CORS is a browser same-origin-policy mechanism). A wildcard (`*`) is refused
+    /// at parse time — the allowlist is always explicit (SN-8 fail-closed posture).
+    pub cors_origins: Vec<String>,
 }
 
 /// PEM paths for the gRPC listener's server TLS (A1). The embedded loopback
@@ -83,7 +90,7 @@ pub const USAGE: &str =
     "usage: kx-gateway serve --listen <addr:port> --journal <path> --content <dir> \
 [--ws-listen <addr:port>] [--max-lease <N>] [--dev-allow-local] \
 [--auth-token <token>=<party>]... [--auth-token-file <path>] [--catalog-dir <dir>] \
-[--tls-cert <path> --tls-key <path>]\n       \
+[--tls-cert <path> --tls-key <path>] [--cors-origin <scheme://host[:port]>]...\n       \
 kx-gateway --help | --version";
 
 impl Cli {
@@ -120,6 +127,7 @@ fn parse_serve(mut args: impl Iterator<Item = String>) -> Result<GatewayConfig, 
     let mut catalog_dir: Option<PathBuf> = None;
     let mut tls_cert: Option<PathBuf> = None;
     let mut tls_key: Option<PathBuf> = None;
+    let mut cors_origins: Vec<String> = Vec::new();
 
     while let Some(flag) = args.next() {
         let mut take_value = |name: &str| -> Result<String, GatewayError> {
@@ -170,6 +178,10 @@ fn parse_serve(mut args: impl Iterator<Item = String>) -> Result<GatewayConfig, 
             "--catalog-dir" => catalog_dir = Some(PathBuf::from(take_value("--catalog-dir")?)),
             "--tls-cert" => tls_cert = Some(PathBuf::from(take_value("--tls-cert")?)),
             "--tls-key" => tls_key = Some(PathBuf::from(take_value("--tls-key")?)),
+            "--cors-origin" => {
+                let v = take_value("--cors-origin")?;
+                cors_origins.push(validate_cors_origin(&v)?);
+            }
             other => return Err(GatewayError::Config(format!("unknown flag {other:?}"))),
         }
     }
@@ -188,20 +200,7 @@ fn parse_serve(mut args: impl Iterator<Item = String>) -> Result<GatewayConfig, 
         ));
     }
 
-    // TLS cert + key are given together or not at all (a half-configured TLS would
-    // silently fall back to plaintext — fail closed instead).
-    let tls = match (tls_cert, tls_key) {
-        (Some(cert_path), Some(key_path)) => Some(TlsPaths {
-            cert_path,
-            key_path,
-        }),
-        (None, None) => None,
-        _ => {
-            return Err(GatewayError::Config(
-                "--tls-cert and --tls-key must be given together".into(),
-            ))
-        }
-    };
+    let tls = pair_tls(tls_cert, tls_key)?;
 
     Ok(GatewayConfig {
         listen,
@@ -213,7 +212,64 @@ fn parse_serve(mut args: impl Iterator<Item = String>) -> Result<GatewayConfig, 
         auth_tokens,
         catalog_dir,
         tls,
+        cors_origins,
     })
+}
+
+/// Pair the TLS cert + key: both given (TLS) or neither (plaintext). A
+/// half-configured TLS would silently fall back to plaintext — fail closed instead.
+fn pair_tls(
+    tls_cert: Option<PathBuf>,
+    tls_key: Option<PathBuf>,
+) -> Result<Option<TlsPaths>, GatewayError> {
+    match (tls_cert, tls_key) {
+        (Some(cert_path), Some(key_path)) => Ok(Some(TlsPaths {
+            cert_path,
+            key_path,
+        })),
+        (None, None) => Ok(None),
+        _ => Err(GatewayError::Config(
+            "--tls-cert and --tls-key must be given together".into(),
+        )),
+    }
+}
+
+/// Validate a `--cors-origin` value fail-closed: it must be a concrete origin
+/// (`scheme://host[:port]`), never a wildcard. The allowlist is always explicit so
+/// a browser can never be granted blanket cross-origin access (the gRPC-web shim's
+/// security posture mirrors the deny-all auth default). Returns the trimmed origin.
+///
+/// We reject `*` and `null` (the two blanket/opaque grants) and require a
+/// `scheme://` prefix; the exact host is matched verbatim at request time by the
+/// CORS layer, so we keep parsing minimal (no scheme/host allowlist beyond the
+/// shape) — a typo yields a benign no-match (the browser is simply denied), never
+/// an over-broad grant.
+fn validate_cors_origin(value: &str) -> Result<String, GatewayError> {
+    let v = value.trim();
+    if v.is_empty() {
+        return Err(GatewayError::Config(
+            "--cors-origin requires a non-empty origin".into(),
+        ));
+    }
+    if v == "*" || v.eq_ignore_ascii_case("null") {
+        return Err(GatewayError::Config(format!(
+            "--cors-origin must be an explicit origin, not a wildcard, got {v:?} \
+             (the allowlist is deny-by-default — list each browser origin explicitly)"
+        )));
+    }
+    // Require a scheme://host shape so an accidental bare host is caught early
+    // rather than silently never matching.
+    let Some((scheme, rest)) = v.split_once("://") else {
+        return Err(GatewayError::Config(format!(
+            "--cors-origin expects <scheme://host[:port]>, got {v:?}"
+        )));
+    };
+    if scheme.is_empty() || rest.is_empty() {
+        return Err(GatewayError::Config(format!(
+            "--cors-origin expects <scheme://host[:port]>, got {v:?}"
+        )));
+    }
+    Ok(v.to_string())
 }
 
 /// Split a `token=party` spec on the LAST `=` (so a base64 token with `=`
@@ -419,6 +475,82 @@ mod tests {
         assert!(base(&["--tls-key", "/tmp/key.pem"]).is_err());
         // Neither → None (plaintext default).
         assert!(serve(base(&[]).unwrap()).tls.is_none());
+    }
+
+    #[test]
+    fn cors_origin_parses_repeatable_and_defaults_empty() {
+        // Default: no --cors-origin ⇒ empty ⇒ deny-by-default (no CORS layer).
+        let c = serve(
+            Cli::from_args([
+                "serve",
+                "--listen",
+                "127.0.0.1:0",
+                "--journal",
+                "/tmp/j",
+                "--content",
+                "/tmp/c",
+            ])
+            .unwrap(),
+        );
+        assert!(
+            c.cors_origins.is_empty(),
+            "deny-by-default: no browser origin is granted unless listed"
+        );
+
+        // Repeatable: each --cors-origin appends, in order.
+        let c = serve(
+            Cli::from_args([
+                "serve",
+                "--listen",
+                "127.0.0.1:0",
+                "--journal",
+                "/tmp/j",
+                "--content",
+                "/tmp/c",
+                "--cors-origin",
+                "http://localhost:5173",
+                "--cors-origin",
+                "https://app.example.com",
+            ])
+            .unwrap(),
+        );
+        assert_eq!(
+            c.cors_origins,
+            vec![
+                "http://localhost:5173".to_string(),
+                "https://app.example.com".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn cors_origin_rejects_wildcard_and_malformed() {
+        let base = |origin: &str| {
+            Cli::from_args([
+                "serve",
+                "--listen",
+                "127.0.0.1:0",
+                "--journal",
+                "/tmp/j",
+                "--content",
+                "/tmp/c",
+                "--cors-origin",
+                origin,
+            ])
+        };
+        // A wildcard / opaque grant is refused fail-closed (no blanket access).
+        assert!(base("*").is_err(), "wildcard origin must be refused");
+        assert!(
+            base("null").is_err(),
+            "opaque 'null' origin must be refused"
+        );
+        assert!(base("NULL").is_err(), "case-insensitive 'null' refused");
+        // A bare host (no scheme) is caught early rather than silently never matching.
+        assert!(base("app.example.com").is_err());
+        assert!(base("https://").is_err());
+        assert!(base("").is_err());
+        // A concrete origin is accepted.
+        assert!(base("https://app.example.com").is_ok());
     }
 
     #[test]

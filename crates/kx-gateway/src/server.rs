@@ -45,7 +45,13 @@ use {
     kx_warrant::ExecutorClass,
     kx_worker::{Worker, WorkerClient, DEFAULT_HEARTBEAT_CADENCE},
     std::path::{Path, PathBuf},
+    // R9.5: the gRPC-web shim + deny-by-default CORS for browser unary RPCs. The
+    // `http` types ride tonic's re-export (no new direct `http`/`tower` dep — both
+    // are already locked transitively via tonic).
+    tonic::codegen::http::{HeaderName, HeaderValue, Method},
     tonic::transport::Server,
+    tonic_web::GrpcWebLayer,
+    tower_http::cors::{AllowOrigin, CorsLayer},
 };
 
 /// Backoff when a `run_once` lease found no ready work (keeps an idle server off
@@ -560,15 +566,34 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     health_reporter
         .set_service_status("", tonic_health::ServingStatus::Serving)
         .await;
+    // R9.5: the deny-by-default CORS layer for the gRPC-web shim. Built BEFORE the
+    // spawn so a malformed `--cors-origin` fails `start` loudly (mirrors the TLS
+    // fail-fast). An empty allowlist installs a layer that matches no origin ⇒ a
+    // browser is never granted cross-origin access (deny-by-default); a native
+    // client carries no `Origin` header and is unaffected.
+    let cors = build_cors_layer(&cfg.cors_origins)?;
+    if !cfg.cors_origins.is_empty() {
+        tracing::info!(
+            origins = ?cfg.cors_origins,
+            "gRPC-web CORS enabled for the listed browser origins"
+        );
+    }
     let (shutdown, shutdown_rx) = oneshot::channel::<()>();
     let gateway = tokio::spawn(async move {
-        let mut builder = Server::builder();
+        // `accept_http1(true)` lets the listener also speak HTTP/1.1 (gRPC-web rides
+        // it); native HTTP/2 gRPC clients are detected by the h2 preface and are
+        // UNCHANGED. CORS is the outermost layer (it answers an OPTIONS preflight
+        // before the gRPC-web translation + the auth interceptor), then GrpcWebLayer
+        // translates gRPC-web frames to gRPC for the KxGateway/health services.
+        let mut builder = Server::builder().accept_http1(true);
         if let Some(tls) = tls_config {
             builder = builder
                 .tls_config(tls)
                 .map_err(|e| GatewayError::Tls(e.to_string()))?;
         }
         builder
+            .layer(cors)
+            .layer(GrpcWebLayer::new())
             .add_service(health_service)
             .add_service(svc)
             .serve_with_shutdown(local_addr, async move {
@@ -695,6 +720,51 @@ async fn resolve_listen(listen: SocketAddr) -> Result<SocketAddr, GatewayError> 
         .map_err(|e| GatewayError::Bind(e.to_string()))?;
     drop(probe);
     Ok(addr)
+}
+
+/// Build the gRPC-web CORS layer (R9.5) from the parsed `--cors-origin` allowlist.
+///
+/// **Deny-by-default**: an empty `origins` yields an [`AllowOrigin::list`] that
+/// matches no origin, so a browser is never granted cross-origin access — and a
+/// non-browser client (no `Origin` header) is untouched, so the native gRPC path is
+/// unchanged. The allowlist is ALWAYS explicit (never [`AllowOrigin::any`]); the
+/// `*`/`null` wildcards are already rejected at parse time
+/// ([`crate::config`]'s `validate_cors_origin`), so reaching here with a bad shape
+/// is impossible — the only residual failure is a header-value encoding error,
+/// surfaced as a fail-closed config error before the port binds.
+///
+/// Allowed request headers cover the gRPC-web client surface (`content-type`,
+/// `x-grpc-web`, `x-user-agent`, `grpc-timeout`) plus `authorization` (the bearer
+/// token); exposed response headers carry the gRPC trailers the browser client
+/// reads (`grpc-status`/`grpc-message`/`grpc-status-details-bin`). Credentials are
+/// NOT enabled — the token rides the `Authorization` header, not a cookie.
+#[cfg(feature = "embedded-worker")]
+fn build_cors_layer(origins: &[String]) -> Result<CorsLayer, GatewayError> {
+    let parsed: Vec<HeaderValue> = origins
+        .iter()
+        .map(|o| {
+            HeaderValue::from_str(o).map_err(|e| {
+                GatewayError::Config(format!(
+                    "--cors-origin {o:?} is not a valid header value: {e}"
+                ))
+            })
+        })
+        .collect::<Result<_, _>>()?;
+    Ok(CorsLayer::new()
+        .allow_origin(AllowOrigin::list(parsed))
+        .allow_methods([Method::POST, Method::OPTIONS])
+        .allow_headers([
+            HeaderName::from_static("content-type"),
+            HeaderName::from_static("x-grpc-web"),
+            HeaderName::from_static("x-user-agent"),
+            HeaderName::from_static("grpc-timeout"),
+            HeaderName::from_static("authorization"),
+        ])
+        .expose_headers([
+            HeaderName::from_static("grpc-status"),
+            HeaderName::from_static("grpc-message"),
+            HeaderName::from_static("grpc-status-details-bin"),
+        ]))
 }
 
 #[cfg(all(test, unix))]

@@ -24,8 +24,10 @@ usage: kx <command> [args]
   server:
     kx serve --journal <path> --content <dir> [--listen <addr:port>] [--ws-listen <addr:port>]
              [--dev-allow-local] [--auth-token <tok>=<party>]... [--auth-token-file <path>]
-             [--max-lease N] [--catalog-dir <dir>]
-             (--listen defaults to 127.0.0.1:50151; --ws-listen — the live-event WebSocket — to :50152)
+             [--max-lease N] [--catalog-dir <dir>] [--tls-cert <p> --tls-key <p>]
+             [--cors-origin <scheme://host[:port]>]...
+             (--listen defaults to 127.0.0.1:50151; --ws-listen — the live-event WebSocket — to :50152;
+              --cors-origin enables the gRPC-web browser shim for the listed origins, deny-by-default)
 
   client verbs (gRPC over the gateway; common flags: --endpoint <url> --token <t> | --token-file <p> --tls-ca <path> --json):
     kx invoke <handle> --args <json> [--args-file <path>] [--wait] [--timeout-secs N] [--out <file>]
@@ -268,7 +270,9 @@ kx run|replay|digest --journal <path> --content <dir> [--crash-at <pt>] [--check
 kx serve --journal <path> --content <dir> [--listen <addr:port>] [--ws-listen <addr:port>] [--dev-allow-local] ...
   Hosts the embedded single-system gateway. --listen (gRPC) defaults to 127.0.0.1:50151;
   --ws-listen (the R5 live-event WebSocket bridge) defaults to 127.0.0.1:50152.
-  Deny-all by default: pass --dev-allow-local (loopback only) or --auth-token(-file)."
+  Deny-all by default: pass --dev-allow-local (loopback only) or --auth-token(-file).
+  Browser SPAs: --cors-origin <scheme://host[:port]> (repeatable, deny-by-default) enables the
+  gRPC-web shim for the listed origins (pair with --tls-cert/--tls-key for https)."
             .into(),
         "invoke" => "\
 kx invoke <handle> --args <json> [--args-file <path>] [--wait] [--timeout-secs N] [--out <file>] [client flags]

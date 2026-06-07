@@ -76,6 +76,14 @@ tonic              = { workspace = true, features = ["tls"] }
 # gRPC listener, alongside the KxGateway service (NOT behind the auth interceptor —
 # a health probe is unauthenticated by design).
 tonic-health       = { workspace = true }
+# R9.5: the gRPC-web shim (GrpcWebLayer) so a browser SPA can make unary RPCs over
+# HTTP/1.1 (tonic is HTTP/2-only otherwise). Binary-only; FFI-free; the native h2
+# gRPC path is unchanged (accept_http1 is additive).
+tonic-web          = { workspace = true }
+# R9.5: the deny-by-default CORS layer for the gRPC-web shim (`--cors-origin`
+# allowlist; never a wildcard). `cors` feature only; tower/http already locked via
+# tonic. Outermost layer so OPTIONS preflight is answered before the auth interceptor.
+tower-http         = { workspace = true }
 # Additive feature bump over the workspace tokio (rt-multi-thread/macros/net):
 # `signal` for graceful Ctrl-C shutdown, `time` for the worker poll/backoff +
 # connect-retry + the R5 live-tail poll interval, `sync` for the R5 per-subscriber
