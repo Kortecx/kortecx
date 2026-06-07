@@ -5,9 +5,14 @@
 //!
 //! ```text
 //! kx-gateway serve --listen <addr:port> --journal <path> --content <dir> \
-//!                  [--max-lease <N>] [--dev-allow-local]
+//!                  [--max-lease <N>] [--dev-allow-local] \
+//!                  [--cors-origin <scheme://host[:port]>]...
 //! kx-gateway --help | --version
 //! ```
+//!
+//! `--cors-origin` (R9.5, repeatable, deny-by-default) enables the gRPC-web shim
+//! for the listed browser origins so a SPA can make unary RPCs; omit it and
+//! browsers get no cross-origin grant (native clients are unaffected).
 //!
 //! `serve` brings up an embedded single-system runtime (coordinator + local
 //! worker) and hosts the FROZEN `KxGateway` gRPC service over it, so a client

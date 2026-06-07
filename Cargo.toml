@@ -216,6 +216,14 @@ tonic              = "0.12"
 # A2: the standard `grpc.health.v1.Health` service + client (liveness/readiness),
 # version-locked to tonic 0.12. FFI-free (pure Rust over the same prost/tonic).
 tonic-health       = "0.12"
+# R9.5: the gRPC-web shim for the gateway listener so a browser SPA can make unary
+# RPCs (tonic is HTTP/2-only otherwise). Version-locked to tonic 0.12; FFI-free,
+# MIT; in the `kx-gateway` binary only (the dep wall keeps kx-gateway-core passive).
+tonic-web          = "0.12"
+# R9.5: the deny-by-default CORS middleware for the gRPC-web shim. `cors` feature
+# only; `tower`/`http`/`hyper` are already locked transitively via tonic, so this
+# adds the CORS layer alone. MIT. In the `kx-gateway` binary only.
+tower-http         = { version = "0.5", features = ["cors"] }
 prost              = "0.13"
 tokio              = { version = "1", features = ["rt-multi-thread", "macros", "net"] }
 # Server-streaming adapter for the KxGateway `StreamEvents` RPC (M8/D120). Already

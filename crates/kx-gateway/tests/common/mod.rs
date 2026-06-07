@@ -113,6 +113,7 @@ pub fn gateway_config(
         auth_tokens,
         catalog_dir: None,
         tls: None,
+        cors_origins: Vec::new(),
     }
 }
 
