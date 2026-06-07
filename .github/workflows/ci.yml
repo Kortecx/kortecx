@@ -559,6 +559,90 @@ jobs:
         run: npx vitest run
 
   # ---------------------------------------------------------------------------
+  # ui — the React/Vite dashboard shell (ui/). Builds the FFI-free `kx`, builds the
+  # TS SDK (the UI depends on its dist/ via a `file:` dependency), then lints
+  # (biome), type-checks (tsc), runs the unit/component/contract suites (vitest —
+  # the contract test drives a real `kx serve`), builds the production bundle, and
+  # runs the browser E2E (Playwright/chromium against a real CORS-enabled gateway,
+  # deterministic no-model echo path). Pure gRPC-web client — NO submodules, NO C++.
+  # NON-REQUIRED: a new context, not in branch protection (promote once green via a
+  # separate authorized change). Mirrors sdk-typescript / verify-quickstart.
+  # ---------------------------------------------------------------------------
+  ui:
+    name: ui (React/Vite dashboard shell — biome + tsc + vitest + build + Playwright)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (NO submodules — the UI is pure gRPC-web, FFI-free)
+        uses: actions/checkout@v6
+
+      - name: Install Rust toolchain (from rust-toolchain.toml)
+        run: cargo --version
+
+      - name: Cache Cargo registry + target
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-ui-${{ runner.os }}-${{ hashFiles('**/Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: |
+            cargo-ui-${{ runner.os }}-
+            cargo-${{ runner.os }}-
+
+      - name: Build the FFI-free kx (serve) for the contract + E2E tests
+        run: cargo build -p kx-cli
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Build the TS SDK (the UI depends on its built dist via a file dependency)
+        working-directory: bindings/typescript
+        run: |
+          npm ci
+          npm run build
+
+      - name: Install the UI (clean, from the committed lockfile)
+        working-directory: ui
+        run: npm ci
+
+      - name: Lint + format + type-check (biome + tsc)
+        working-directory: ui
+        run: |
+          npx biome ci .
+          npx tsc --noEmit
+
+      - name: Unit + component + contract tests (vitest; contract vs a real `kx serve`)
+        working-directory: ui
+        env:
+          KX_BIN: ${{ github.workspace }}/target/debug/kx
+        run: npx vitest run
+
+      - name: Production build (proves the SPA bundles)
+        working-directory: ui
+        run: npm run build
+
+      - name: Install the Playwright browser (chromium only)
+        working-directory: ui
+        run: npx playwright install --with-deps chromium
+
+      - name: Browser E2E (deterministic no-model echo path, CORS-enabled serve)
+        working-directory: ui
+        env:
+          KX_BIN: ${{ github.workspace }}/target/debug/kx
+        run: npx playwright test
+
+      - name: Upload the Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: ui/playwright-report
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------
   # reproducible — byte-determinism check (I1.c). Runs `just check-reproducible`
   # which performs two clean release builds and diffs the output. Expensive
   # (~6+ minutes) but the load-bearing reproducibility gate.
