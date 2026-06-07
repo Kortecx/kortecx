@@ -281,7 +281,11 @@ impl Worker {
     /// idempotent, so a duplicate after a retry is a no-op.
     async fn dead_letter(&mut self, mote_id: MoteId) {
         self.attempts.remove(&mote_id);
-        if let Err(error) = self.client.report_failure(*mote_id.as_bytes(), self.id).await {
+        if let Err(error) = self
+            .client
+            .report_failure(*mote_id.as_bytes(), self.id)
+            .await
+        {
             tracing::warn!(
                 worker_id = self.id,
                 mote = ?mote_id,

@@ -184,7 +184,12 @@ fn coordinator(dir: &TempDir, w: &WarrantSpec) -> (CoordinatorService, Arc<Local
 
 /// The expected materialized child ids — the SAME derivation a `DefaultTopologyMaterializer`
 /// performs (one source of truth).
-fn expected_children(shaper_id: kx_mote::MoteId, def: &MoteDef, td_ref: ContentRef, td: &TopologyDecision) -> Vec<kx_mote::MoteId> {
+fn expected_children(
+    shaper_id: kx_mote::MoteId,
+    def: &MoteDef,
+    td_ref: ContentRef,
+    td: &TopologyDecision,
+) -> Vec<kx_mote::MoteId> {
     td.children
         .iter()
         .enumerate()
@@ -209,7 +214,11 @@ async fn committed_shaper_children_are_materialized_and_leasable() {
         children: vec![descriptor(10), descriptor(20)],
     };
     let td_ref = store.put(&td.encode()).unwrap();
-    assert_eq!(td_ref, ContentRef::from_bytes(td.hash()), "staged ref == decision hash");
+    assert_eq!(
+        td_ref,
+        ContentRef::from_bytes(td.hash()),
+        "staged ref == decision hash"
+    );
 
     register_run(&svc).await;
     submit(&svc, &shaper, &w).await;

@@ -450,7 +450,12 @@ impl Coordinator for CoordinatorService {
             .core
             .report_failure(mote_id, idempotency_key, reason_class, worker)
             .await?;
-        tracing::info!(seq = failed_seq, appended, ?mote_id, "worker dead-letter recorded");
+        tracing::info!(
+            seq = failed_seq,
+            appended,
+            ?mote_id,
+            "worker dead-letter recorded"
+        );
         Ok(Response::new(proto::ReportFailureResponse {
             failed_seq,
             ack: true,

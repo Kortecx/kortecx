@@ -372,9 +372,13 @@ impl<B: InferenceBackend> ModelRouterExecutor<B> {
 
     /// Greedy-decode the ChatML-wrapped prompt of a model Mote and return the raw
     /// completion bytes (shared by the leaf-model and shaper arms).
-    fn dispatch_model(&self, mote: &Mote, warrant: &WarrantSpec) -> Result<Vec<u8>, MoteExecutorError> {
-        let instruction =
-            prompt_from_config(mote).ok_or_else(|| internal("model Mote lost its prompt config key"))?;
+    fn dispatch_model(
+        &self,
+        mote: &Mote,
+        warrant: &WarrantSpec,
+    ) -> Result<Vec<u8>, MoteExecutorError> {
+        let instruction = prompt_from_config(mote)
+            .ok_or_else(|| internal("model Mote lost its prompt config key"))?;
         let input = InferenceInput::text(chatml(&instruction));
         let params = inference_params_from_mote(mote, warrant)
             .map_err(|e| internal(&format!("inference params: {e}")))?;
@@ -595,7 +599,12 @@ mod tests {
             reply: reply.to_vec(),
             calls: AtomicUsize::new(0),
         });
-        let exec = ModelRouterExecutor::new(Arc::new(NeverInner), backend.clone(), store.clone(), recipes);
+        let exec = ModelRouterExecutor::new(
+            Arc::new(NeverInner),
+            backend.clone(),
+            store.clone(),
+            recipes,
+        );
         (exec, backend)
     }
 
@@ -605,11 +614,21 @@ mod tests {
     fn shaper_arm_commits_a_decoded_lowered_topology_decision() {
         let dir = tempfile::tempdir().unwrap();
         let store = LocalFsContentStore::open(dir.path()).unwrap();
-        let (exec, backend) = executor(&store, TWO_CHILD_PROPOSAL, Some(worker_recipes(&model_id())));
+        let (exec, backend) = executor(
+            &store,
+            TWO_CHILD_PROPOSAL,
+            Some(worker_recipes(&model_id())),
+        );
         let warrant = shaper_warrant(&model_id(), ExecutorClass::MacOsSandbox);
 
-        let out = exec.run(&shaper_mote(), &warrant, None).expect("shaper runs");
-        assert_eq!(backend.calls.load(Ordering::SeqCst), 1, "the proposal is sampled once");
+        let out = exec
+            .run(&shaper_mote(), &warrant, None)
+            .expect("shaper runs");
+        assert_eq!(
+            backend.calls.load(Ordering::SeqCst),
+            1,
+            "the proposal is sampled once"
+        );
 
         // The committed result_ref is a canonical-bincode TopologyDecision (what the
         // coordinator's materializer decodes), carrying the two lowered children + intents.
@@ -631,11 +650,22 @@ mod tests {
     fn shaper_arm_fails_closed_on_malformed_proposal() {
         let dir = tempfile::tempdir().unwrap();
         let store = LocalFsContentStore::open(dir.path()).unwrap();
-        let (exec, _) = executor(&store, b"not json at all", Some(worker_recipes(&model_id())));
+        let (exec, _) = executor(
+            &store,
+            b"not json at all",
+            Some(worker_recipes(&model_id())),
+        );
         let err = exec
-            .run(&shaper_mote(), &shaper_warrant(&model_id(), ExecutorClass::MacOsSandbox), None)
+            .run(
+                &shaper_mote(),
+                &shaper_warrant(&model_id(), ExecutorClass::MacOsSandbox),
+                None,
+            )
             .expect_err("a malformed proposal is refused");
-        assert!(matches!(err, MoteExecutorError::Internal { .. }), "terminal (dead-letterable)");
+        assert!(
+            matches!(err, MoteExecutorError::Internal { .. }),
+            "terminal (dead-letterable)"
+        );
     }
 
     #[test]
@@ -650,22 +680,35 @@ mod tests {
         );
         let dir = tempfile::tempdir().unwrap();
         let store = LocalFsContentStore::open(dir.path()).unwrap();
-        let (exec, _) = executor(&store, proposal.as_bytes(), Some(worker_recipes(&model_id())));
+        let (exec, _) = executor(
+            &store,
+            proposal.as_bytes(),
+            Some(worker_recipes(&model_id())),
+        );
         let err = exec
-            .run(&shaper_mote(), &shaper_warrant(&model_id(), ExecutorClass::MacOsSandbox), None)
+            .run(
+                &shaper_mote(),
+                &shaper_warrant(&model_id(), ExecutorClass::MacOsSandbox),
+                None,
+            )
             .expect_err("an over-budget fan-out is refused");
         assert!(matches!(err, MoteExecutorError::Internal { .. }));
     }
 
     #[test]
     fn shaper_arm_fails_closed_on_unknown_role() {
-        let proposal = br#"{"loop_proposal":{"version":1,"next_steps":[{"role":"intruder","intent":"x"}]}}"#;
+        let proposal =
+            br#"{"loop_proposal":{"version":1,"next_steps":[{"role":"intruder","intent":"x"}]}}"#;
         let dir = tempfile::tempdir().unwrap();
         let store = LocalFsContentStore::open(dir.path()).unwrap();
         // The recipe allowlist only knows `worker`; an unproposed role fails at lowering.
         let (exec, _) = executor(&store, proposal, Some(worker_recipes(&model_id())));
         let err = exec
-            .run(&shaper_mote(), &shaper_warrant(&model_id(), ExecutorClass::MacOsSandbox), None)
+            .run(
+                &shaper_mote(),
+                &shaper_warrant(&model_id(), ExecutorClass::MacOsSandbox),
+                None,
+            )
             .expect_err("an unregistered role is refused");
         assert!(matches!(err, MoteExecutorError::Internal { .. }));
     }
@@ -676,7 +719,11 @@ mod tests {
         let store = LocalFsContentStore::open(dir.path()).unwrap();
         let (exec, _) = executor(&store, TWO_CHILD_PROPOSAL, None);
         let err = exec
-            .run(&shaper_mote(), &shaper_warrant(&model_id(), ExecutorClass::MacOsSandbox), None)
+            .run(
+                &shaper_mote(),
+                &shaper_warrant(&model_id(), ExecutorClass::MacOsSandbox),
+                None,
+            )
             .expect_err("a shaper without provisioned recipes is refused");
         assert!(matches!(err, MoteExecutorError::Internal { .. }));
     }

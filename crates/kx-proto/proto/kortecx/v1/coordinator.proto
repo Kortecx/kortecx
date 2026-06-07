@@ -354,21 +354,22 @@ message LeaseWorkRequest {
 }
 
 // One committed Data-edge parent of a leased Mote: the parent's identity plus the
-// content-address of its committed result. The coordinator (which holds the
-// projection) resolves these from `result_ref_of` and hands them to the worker so
-// the worker can assemble the Mote's model context (F-7) WITHOUT a journal/projection
-// of its own — the heavy content fetch + concat then happens worker-side, off the
-// coordinator's sole-writer thread. Content-addressed: a forged `result_ref` resolves
-// to nothing and the assembler fails closed (UpstreamNotCommitted).
+// content-address of its committed result. The forward-ready seam for context assembly
+// (F-7): the coordinator (which holds the projection) resolves these from `result_ref_of`
+// so the worker can assemble a model Mote's upstream context WITHOUT a journal of its own
+// — the heavy fetch + concat then happens worker-side, off the sole-writer thread.
+// Content-addressed: a forged `result_ref` resolves to nothing and the assembler fails
+// closed (UpstreamNotCommitted). RESERVED — populated when F-7 lands (deferred to PR-2c,
+// where Data-parent context is exercised; PR-2b's shaper children carry only a single
+// Control edge, so the field stays empty and assembly is a no-op).
 message ParentResult {
   bytes parent_mote_id = 1;             // 32B — the Data-edge parent's MoteId
   bytes result_ref = 2;                 // 32B — its committed result's content address
 }
 
 // One unit of work: the Mote to run plus the warrant it runs under. `parent_results`
-// (field 3, additive) carries the resolved Data-edge parent results for context
-// assembly (F-7); an older worker that ignores the field simply assembles an empty
-// leaf context (byte-identical to the pre-F-7 path).
+// (field 3, additive) is the forward-ready F-7 context seam (RESERVED — empty until PR-2c;
+// an older worker that ignores it assembles an empty leaf context, byte-identical to today).
 message WorkItem {
   Mote mote = 1;
   WarrantSpec warrant = 2;

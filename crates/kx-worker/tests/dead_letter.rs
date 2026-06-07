@@ -148,7 +148,10 @@ async fn terminal_failure_dead_letters_without_aborting_or_spinning() {
         .run_once()
         .await
         .expect("run_once must not abort the batch on one Mote's terminal failure");
-    assert_eq!(committed, 1, "the healthy sibling committed despite the failure");
+    assert_eq!(
+        committed, 1,
+        "the healthy sibling committed despite the failure"
+    );
 
     assert_eq!(
         svc.state_of(good.id).await.unwrap(),
