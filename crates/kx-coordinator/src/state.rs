@@ -24,12 +24,12 @@ use kx_journal::{
     FailureReason, IdempotencyClassTag, Journal, JournalEntry, RepudiationReason,
     ResolvedCapabilityRecord, ResolvedKindTag, INSTANCE_ID_LEN,
 };
-use kx_mote::{Mote, MoteId, NdClass};
+use kx_mote::{Mote, MoteDef, MoteId, NdClass};
 use kx_projection::{MoteState, Projection};
 use kx_refusal::{validate_mote_submission, ToolResolution};
 use kx_scheduler::{LocalPlacement, Placement, Scheduler, SchedulerError, WorkerId};
 use kx_tool_registry::{IdempotencyClass, ToolKind, ToolRegistry, ToolResolutionEvent};
-use kx_warrant::{warrant_ref_of, ExecutorClass, WarrantSpec};
+use kx_warrant::{warrant_ref_of, ExecutorClass, RoleRegistry, WarrantSpec};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::clock::Clock;
@@ -175,6 +175,12 @@ impl CoreHandle {
         clock: Arc<dyn Clock>,
         nonce: Arc<dyn RunNonceSource>,
         tool_registry: Arc<dyn ToolRegistry>,
+        // PR-2b: the role registry the topology materializer narrows child warrants
+        // against (SN-8). `Some` enables live shaper-child materialization (the agentic
+        // loop in serve); `None` keeps the pre-PR-2b behavior byte-identical (no shaper
+        // fan-out — `kx run`, non-inference serve). Held `Send + Sync` (Arc) for the move
+        // into the owner thread; materialization itself runs on that one thread.
+        shaper_roles: Option<Arc<dyn RoleRegistry>>,
     ) -> Self {
         let (commands, inbox) = mpsc::channel(COMMAND_BUFFER);
         std::thread::spawn(move || {
@@ -185,6 +191,7 @@ impl CoreHandle {
                 &*clock,
                 &*nonce,
                 &*tool_registry,
+                shaper_roles.as_deref(),
                 inbox,
             );
         });
@@ -869,6 +876,7 @@ struct Dispatch {
 
 /// The owner-thread loop. Recovers the projection from the journal, then services
 /// commands until every sender drops (the channel closes on coordinator shutdown).
+#[allow(clippy::too_many_arguments)]
 fn core_loop<J: Journal>(
     journal: &J,
     store: Option<&LocalFsContentStore>,
@@ -876,6 +884,7 @@ fn core_loop<J: Journal>(
     clock: &dyn Clock,
     nonce: &dyn RunNonceSource,
     tool_registry: &dyn ToolRegistry,
+    shaper_roles: Option<&dyn RoleRegistry>,
     mut inbox: mpsc::Receiver<Command>,
 ) {
     let Some((mut projection, mut folded_through, submitted)) = recover(journal) else {
@@ -918,6 +927,7 @@ fn core_loop<J: Journal>(
             flush_commits(
                 journal,
                 store,
+                shaper_roles,
                 &mut projection,
                 &mut folded_through,
                 &mut dispatch,
@@ -925,6 +935,8 @@ fn core_loop<J: Journal>(
             );
             handle_command(
                 journal,
+                store,
+                shaper_roles,
                 &mut projection,
                 &mut folded_through,
                 registry,
@@ -939,6 +951,7 @@ fn core_loop<J: Journal>(
         flush_commits(
             journal,
             store,
+            shaper_roles,
             &mut projection,
             &mut folded_through,
             &mut dispatch,
@@ -958,6 +971,8 @@ fn core_loop<J: Journal>(
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn handle_command<J: Journal>(
     journal: &J,
+    store: Option<&LocalFsContentStore>,
+    shaper_roles: Option<&dyn RoleRegistry>,
     projection: &mut Projection,
     folded_through: &mut u64,
     registry: &dyn WorkerRegistry,
@@ -978,6 +993,8 @@ fn handle_command<J: Journal>(
         } => {
             let outcome = submit_and_capture(
                 journal,
+                store,
+                shaper_roles,
                 projection,
                 folded_through,
                 tool_registry,
@@ -1178,6 +1195,8 @@ fn register_run<J: Journal>(
 #[allow(clippy::too_many_arguments)]
 fn submit_and_capture<J: Journal>(
     journal: &J,
+    store: Option<&LocalFsContentStore>,
+    shaper_roles: Option<&dyn RoleRegistry>,
     projection: &mut Projection,
     folded_through: &mut u64,
     tool_registry: &dyn ToolRegistry,
@@ -1205,6 +1224,14 @@ fn submit_and_capture<J: Journal>(
     validate_mote_submission(&mote, accept_at_least_once, &resolution)
         .map_err(CoordinatorError::SubmissionRefused)?;
 
+    // PR-2b: capture the shaper identity BEFORE `handle_submit` consumes `mote`/`warrant`,
+    // so a re-submitted-but-already-committed shaper (recovery: the in-memory dispatch.defs
+    // + materialized children are gone on restart, but the journal still has the committed
+    // shaper fact) can re-materialize its children below.
+    let shaper_def = mote.def.is_topology_shaper.then(|| mote.def.clone());
+    let shaper_mote_id = mote.id;
+    let shaper_warrant = warrant.clone();
+
     // Admit through the hosted scheduler (verbatim — the P2 thesis test).
     let warrant_for_capture = warrant.clone();
     let mut outcome = handle_submit(scheduler, projection, dispatch, mote, warrant);
@@ -1231,7 +1258,74 @@ fn submit_and_capture<J: Journal>(
             );
         }
     }
+
+    // PR-2b recovery: if this submit is a shaper that is ALREADY committed (a re-submit
+    // after a restart, or an idempotent re-invoke), materialize its children into the
+    // projection + dispatch admission set now — they were derived in-memory the first
+    // time but lost on restart, while the committed `TopologyDecision` fact survives. The
+    // children's identities are re-derived from that fact (R49: served, never re-sampled).
+    if let (Some(def), Some(store), Some(roles)) = (shaper_def, store, shaper_roles) {
+        if projection.state_of(&shaper_mote_id) == MoteState::Committed {
+            materialize_committed_shaper(
+                projection,
+                dispatch,
+                store,
+                roles,
+                shaper_mote_id,
+                &def,
+                &shaper_warrant,
+            );
+        }
+    }
     Ok(outcome)
+}
+
+/// Materialize a COMMITTED topology shaper's children into BOTH the projection (so they
+/// enter `ready_set`) and the dispatch admission set (`Dispatch.defs`, so `lease_ready`
+/// can hand them to a worker) — the splice that closes the "materialized children never
+/// reach dispatch" gap (§2.149). Derives each child's full `(Mote, WarrantSpec)` from the
+/// committed `TopologyDecision` fact via [`crate::materialize::derive_shaper_children`],
+/// so the dispatch entry's `MoteId` equals the one a `DefaultTopologyMaterializer` would
+/// register (one source of truth). Runs on the live commit-fold (`flush_commits`) AND on a
+/// recovery re-submit (`submit_and_capture`); idempotent — `register_mote` overwrites and
+/// the dispatch inserts are keyed by id, so re-running is a no-op. A derivation error is
+/// logged (the children just do not dispatch — the shaper's commit stands, degraded-safe).
+fn materialize_committed_shaper(
+    projection: &mut Projection,
+    dispatch: &mut Dispatch,
+    store: &LocalFsContentStore,
+    roles: &dyn RoleRegistry,
+    shaper_mote_id: MoteId,
+    shaper_def: &MoteDef,
+    shaper_warrant: &WarrantSpec,
+) {
+    let Some(result_ref) = projection.result_ref_of(&shaper_mote_id) else {
+        return; // not committed (no result_ref yet) — nothing to materialize
+    };
+    match crate::materialize::derive_shaper_children(
+        store,
+        roles,
+        shaper_mote_id,
+        shaper_def,
+        result_ref,
+        shaper_warrant,
+    ) {
+        Ok(children) => {
+            for child in children {
+                let child_id = child.mote.id;
+                projection.register_mote(child.register);
+                dispatch.submitted.insert(child_id);
+                dispatch.defs.insert(child_id, (child.mote, child.warrant));
+            }
+        }
+        Err(reason) => {
+            tracing::error!(
+                ?shaper_mote_id,
+                %reason,
+                "shaper child materialization failed; children will not dispatch"
+            );
+        }
+    }
 }
 
 /// Resolve the warrant's tool grants ONCE per fresh submit (canonical
@@ -1434,9 +1528,11 @@ fn committed_entry(proposal: CommitProposal) -> JournalEntry {
 /// `store` is `Some`, each proposal's `result_ref` must be present in the content
 /// store (D55 phantom-ref guard) — an absent ref is rejected individually, never
 /// blocking its batch-mates.
+#[allow(clippy::too_many_arguments)]
 fn flush_commits<J: Journal>(
     journal: &J,
     store: Option<&LocalFsContentStore>,
+    shaper_roles: Option<&dyn RoleRegistry>,
     projection: &mut Projection,
     folded_through: &mut u64,
     dispatch: &mut Dispatch,
@@ -1477,6 +1573,23 @@ fn flush_commits<J: Journal>(
             // reschedule tracker (D57) clears every outstanding lease + crash-failed
             // entry for the Mote — first-wins resolves all concurrent attempts at once.
             for id in &committed_ids {
+                // PR-2b: a freshly-committed shaper materializes its children into the
+                // projection + dispatch admission set BEFORE its own def is freed below
+                // (the shaper's def + warrant are still in `dispatch.defs` here). Clone
+                // them out first so the `&mut dispatch` materialize call does not alias the
+                // immutable `defs.get` borrow.
+                if let (Some(store), Some(roles)) = (store, shaper_roles) {
+                    let shaper = dispatch
+                        .defs
+                        .get(id)
+                        .filter(|(m, _)| m.def.is_topology_shaper)
+                        .map(|(m, w)| (m.def.clone(), w.clone()));
+                    if let Some((def, warrant)) = shaper {
+                        materialize_committed_shaper(
+                            projection, dispatch, store, roles, *id, &def, &warrant,
+                        );
+                    }
+                }
                 dispatch.defs.remove(id);
                 dispatch.tracker.resolve_committed(*id);
             }

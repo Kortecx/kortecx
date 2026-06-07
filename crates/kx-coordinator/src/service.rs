@@ -123,6 +123,41 @@ impl CoordinatorService {
                 clock,
                 nonce,
                 tool_registry,
+                // No shaper materialization on the default path — byte-identical to the
+                // pre-PR-2b behavior (`kx run`, non-inference serve: no model fan-out).
+                None,
+            ),
+            registry,
+        }
+    }
+
+    /// Build a coordinator that runs the LIVE model-driven agentic loop (PR-2b/T1.1): a
+    /// committed topology shaper's children are materialized into the projection + dispatch
+    /// admission set so they actually reach a worker. `shaper_roles` is the role registry
+    /// the materializer narrows each child's warrant against (SN-8 — the model proposes a
+    /// role name, the registry maps it to a vetted warrant, `intersect` narrows). Requires
+    /// `store` (the shared content plane the committed `TopologyDecision` lives in). Used by
+    /// the gateway under `--features inference`; every other constructor passes no role
+    /// registry, leaving the topology path inert.
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_shaper_materialization<J: Journal + Send + 'static>(
+        journal: J,
+        registry: Arc<dyn WorkerRegistry>,
+        store: Arc<LocalFsContentStore>,
+        clock: Arc<dyn Clock>,
+        nonce: Arc<dyn RunNonceSource>,
+        tool_registry: Arc<dyn ToolRegistry>,
+        shaper_roles: Arc<dyn kx_warrant::RoleRegistry>,
+    ) -> Self {
+        Self {
+            core: CoreHandle::spawn(
+                journal,
+                Some(store),
+                registry.clone(),
+                clock,
+                nonce,
+                tool_registry,
+                Some(shaper_roles),
             ),
             registry,
         }
