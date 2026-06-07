@@ -8,7 +8,7 @@
 //! erodes — e.g. someone adds `kx-audit` to a guarantee-path crate to "conveniently"
 //! emit audit events from inside the executor, which is itself the boundary
 //! violation: the moment audit/observability influences scheduling/commit/identity,
-//! the off-truth-path guarantee (and the `a6b5c679…` digest invariant) is gone.
+//! the off-truth-path guarantee (and the `7d22d4bd…` digest invariant) is gone.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 

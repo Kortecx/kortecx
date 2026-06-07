@@ -11,7 +11,7 @@
 //!
 //! It is an **opt-in, additive** seam: the canonical demo passes `None`, so no
 //! snapshot is ever published and the deterministic truth path (digest
-//! `a6b5c679…`) is byte-unchanged. The published snapshot is **model input
+//! `7d22d4bd…`) is byte-unchanged. The published snapshot is **model input
 //! only** — it never enters Mote identity or the journal (D64).
 
 use std::sync::{Arc, PoisonError, RwLock};

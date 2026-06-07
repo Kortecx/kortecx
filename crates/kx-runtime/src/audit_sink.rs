@@ -11,7 +11,7 @@
 //! is never a `MoteId` input, and never gates scheduling / promotion / eviction
 //! (the dependency wall in `kx-audit/tests/boundary.rs` is the compiler-enforced
 //! tripwire). Turning it on changes only what is *observed*, never the committed
-//! facts — so the canonical product digest `a6b5c679…` is byte-unchanged.
+//! facts — so the canonical product digest `7d22d4bd…` is byte-unchanged.
 //!
 //! It owns the run-scoped context (today: nothing beyond the wrapped sink; a
 //! future gateway wiring stamps the authenticated `principal` here without

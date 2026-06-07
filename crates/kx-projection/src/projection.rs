@@ -643,7 +643,7 @@ impl Projection {
     /// This is the digest a [`FoldCheckpoint`] embeds, and the digest the roadmap
     /// journaled seal (M2.2c) will store + verify recovery against. It is
     /// **distinct** from `kx-runtime`'s committed-facts *product* digest (the
-    /// canonical run-identity `a6b5c679…`): this one covers the *whole* state for
+    /// canonical run-identity `7d22d4bd…`): this one covers the *whole* state for
     /// recovery integrity, never run identity. Exact-equality only (SN-8).
     #[must_use]
     pub fn state_digest(&self) -> [u8; 32] {

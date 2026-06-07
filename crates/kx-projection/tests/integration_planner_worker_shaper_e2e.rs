@@ -21,8 +21,8 @@ use std::sync::Arc;
 use kx_content::{ContentRef, ContentStore, InMemoryContentStore};
 use kx_journal::{InMemoryJournal, Journal, JournalEntry};
 use kx_mote::{
-    canonical_config, ChildDescriptor, EffectPattern, LogicRef, ModelId, MoteDef, MoteId, NdClass,
-    PromptTemplateHash, RoleId, TopologyDecision, MOTE_DEF_SCHEMA_VERSION,
+    canonical_config, ChildDescriptor, ConfigVal, EffectPattern, LogicRef, ModelId, MoteDef,
+    MoteId, NdClass, PromptTemplateHash, RoleId, TopologyDecision, MOTE_DEF_SCHEMA_VERSION,
 };
 use kx_projection::{
     DefaultTopologyMaterializer, InMemoryMoteDefRegistry, InheritFromShaperResolver, MoteState,
@@ -74,18 +74,21 @@ fn mocked_planner_output() -> TopologyDecision {
                 logic_ref: LogicRef([0xa1; 32]),
                 nd_class: NdClass::Pure,
                 effect_pattern: EffectPattern::IdempotentByConstruction,
+                intent: ConfigVal(Vec::new()),
             },
             ChildDescriptor {
                 role_id: RoleId("worker-b".into()),
                 logic_ref: LogicRef([0xb2; 32]),
                 nd_class: NdClass::Pure,
                 effect_pattern: EffectPattern::IdempotentByConstruction,
+                intent: ConfigVal(Vec::new()),
             },
             ChildDescriptor {
                 role_id: RoleId("worker-c".into()),
                 logic_ref: LogicRef([0xc3; 32]),
                 nd_class: NdClass::Pure,
                 effect_pattern: EffectPattern::IdempotentByConstruction,
+                intent: ConfigVal(Vec::new()),
             },
         ],
     }

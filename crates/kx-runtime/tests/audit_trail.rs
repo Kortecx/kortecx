@@ -1,7 +1,7 @@
 //! R4 — the off-truth-path audit trail, end-to-end over the PUBLIC engine path
 //! (`kx_runtime::run` + `RuntimeConfig.audit_log`, i.e. exactly what
 //! `kx run --audit-log <path>` drives). These tests prove the headline guarantees:
-//! auditing never perturbs the truth (digest `a6b5c679…` invariant with audit ON),
+//! auditing never perturbs the truth (digest `7d22d4bd…` invariant with audit ON),
 //! the trail is a complete + ordered + deterministic JSONL stream, and recovery is
 //! audited as a re-read (zero re-dispatch) that still covers every committed Mote.
 
@@ -15,7 +15,7 @@ use serde_json::Value;
 
 /// The canonical projection digest (schema v5) — the durability law: audit ON,
 /// audit OFF, or inspected, the committed-facts digest is byte-identical.
-const CANONICAL_DIGEST: &str = "a6b5c67939f14bfcbd125f7461b2bd0e481f6ee2fc98c1ab638730e2d2ace2e9";
+const CANONICAL_DIGEST: &str = "7d22d4bdfc6f68a4311f40b20f3fe7c67f4c5d2b352f3bff8722b439e94a5af9";
 
 fn read_jsonl(path: &Path) -> Vec<Value> {
     let text = std::fs::read_to_string(path).expect("audit log written");

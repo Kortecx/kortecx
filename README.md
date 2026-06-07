@@ -21,7 +21,7 @@ model, not a database, not a chat app: the execution kernel beneath them.
 
 ```bash
 cargo install --path crates/kx-cli      # the `kx` binary — Rust only, no C++ toolchain
-kx run    --journal /tmp/kx.db --content /tmp/kx-content      # → a6b5c679… (8/8 committed)
+kx run    --journal /tmp/kx.db --content /tmp/kx-content      # → 7d22d4bd… (8/8 committed)
 ```
 
 ---
@@ -117,7 +117,7 @@ crash-then-replay run:
 ```bash
 # 1. Run the demo to completion, capturing its deterministic digest.
 kx run    --journal /tmp/kx.db --content /tmp/kx-content
-#    → a6b5c67939f14bfcbd125f7461b2bd0e481f6ee2fc98c1ab638730e2d2ace2e9 (8/8 committed)
+#    → 7d22d4bdfc6f68a4311f40b20f3fe7c67f4c5d2b352f3bff8722b439e94a5af9 (8/8 committed)
 
 # 2. Start fresh, but hard-abort right after a side effect commits.
 rm -f /tmp/kx.db; rm -rf /tmp/kx-content

@@ -16,7 +16,7 @@ IMAGE="${KX_IMAGE:-kortecx/kx:dev}"
 DOCKERFILE="${KX_DOCKERFILE:-Dockerfile}"
 # The canonical projection digest (8/8 committed) — the same invariant asserted by
 # `just verify-quickstart` (justfile) and the docs-as-test gate. Keep in lock-step.
-CANON="a6b5c67939f14bfcbd125f7461b2bd0e481f6ee2fc98c1ab638730e2d2ace2e9"
+CANON="7d22d4bdfc6f68a4311f40b20f3fe7c67f4c5d2b352f3bff8722b439e94a5af9"
 
 JRN=/var/lib/kortecx/journal/kx.db
 CNT=/var/lib/kortecx/content

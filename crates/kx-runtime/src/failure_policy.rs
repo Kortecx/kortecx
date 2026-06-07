@@ -6,7 +6,7 @@
 //! is journaled as a `Failed` fact so the drive loop can continue **past** the Mote
 //! (dead-letter). With `None` — the canonical demo and every existing caller — a
 //! dispatch error propagates exactly as before (`return Err`), so the deterministic
-//! truth path (digest `a6b5c679…`) is byte-unchanged. This is the proven
+//! truth path (digest `7d22d4bd…`) is byte-unchanged. This is the proven
 //! `snapshot_sink`/`audit_sink`/`capture_sink` additive-`Option`-seam pattern.
 //!
 //! The policy is the *failsafe foundation* the model-driven re-plan loop (AL2)
