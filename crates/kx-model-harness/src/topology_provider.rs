@@ -840,6 +840,10 @@ fn failure_reason_token(reason: Option<kx_journal::FailureReason>) -> &'static s
         Some(5) => "unsafe-world-mutating-construction",
         Some(6) => "compensated-at-least-once",
         Some(7) => "quarantined-at-least-once",
+        // F4: the engine dead-letter (a budget-exhausted transient or a terminal-logic
+        // dispatch failure the loop gave up on). Distinct from `timed-out` (a liveness
+        // pre-commit-crash) so the AL2 re-plan reads an accurate signal.
+        Some(8) => "dead-lettered",
         // A None (transient/pre-commit-crash → no retained terminal reason) or any
         // future, not-yet-tokenized variant maps to a fixed sentinel — still stable.
         _ => "transient-or-unknown",
@@ -913,6 +917,12 @@ mod replan_unit_tests {
         assert_eq!(
             failure_reason_token(Some(FailureReason::QuarantinedAtLeastOnce)),
             "quarantined-at-least-once"
+        );
+        // F4: the engine dead-letter token (discriminant 8). Existing tokens 0..=7
+        // stay byte-frozen above, so adding this cannot shift any committed identity.
+        assert_eq!(
+            failure_reason_token(Some(FailureReason::DeadLettered)),
+            "dead-lettered"
         );
     }
 

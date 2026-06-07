@@ -695,6 +695,7 @@ fn arbitrary_failure_reason() -> impl Strategy<Value = FailureReason> {
         Just(FailureReason::WorkerCrashed),
         Just(FailureReason::UpstreamRepudiated),
         Just(FailureReason::UnsafeWorldMutatingConstruction),
+        Just(FailureReason::DeadLettered),
     ]
 }
 

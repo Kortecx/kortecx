@@ -440,6 +440,19 @@ pub enum FailureReason {
     /// terminal (never re-dispatched) and surfaced via the projection's
     /// `AnomalyKind`/`anomaly_motes` for operator review.
     QuarantinedAtLeastOnce = 7,
+    /// **Engine dead-letter outcome (F4).** The single-process drive loop gave up
+    /// on a Mote: a *transient* infrastructure dispatch error that exhausted the
+    /// [`crate`]-external `FailurePolicy` retry budget, OR a *terminal-logic*
+    /// dispatch failure that cannot succeed on a retry. Classified **terminal** by
+    /// [`is_pre_commit_crash`] (returns `false`), so the projection's `Failed` fold
+    /// sets `terminal_failure_observed` → the Mote becomes terminal `Failed`, is
+    /// never re-dispatched, and the loop terminates cleanly. **Distinct from
+    /// [`TimedOut`](Self::TimedOut)** — `TimedOut` is a *liveness* pre-commit-crash
+    /// (the worker died mid-flight; under an `EffectStaged` it *permits* re-dispatch
+    /// because the broker's tool-boundary idempotency closes the window). Conflating
+    /// the two is the F4 hang: a budget-exhausted dead-letter written as `TimedOut`
+    /// under `EffectStaged` stays re-dispatchable forever (`run_with_seams` spins).
+    DeadLettered = 8,
 }
 
 impl FailureReason {
@@ -462,6 +475,7 @@ impl FailureReason {
             5 => Self::UnsafeWorldMutatingConstruction,
             6 => Self::CompensatedAtLeastOnce,
             7 => Self::QuarantinedAtLeastOnce,
+            8 => Self::DeadLettered,
             _ => return None,
         })
     }
@@ -504,6 +518,8 @@ impl FailureReason {
 /// assert!(!is_pre_commit_crash(FailureReason::ValidatorRejected));
 /// assert!(!is_pre_commit_crash(FailureReason::UpstreamRepudiated));
 /// assert!(!is_pre_commit_crash(FailureReason::UnsafeWorldMutatingConstruction));
+/// // The engine dead-letter (F4) is terminal — the loop gave up, never re-dispatch.
+/// assert!(!is_pre_commit_crash(FailureReason::DeadLettered));
 /// ```
 #[must_use]
 pub const fn is_pre_commit_crash(reason: FailureReason) -> bool {
@@ -2318,7 +2334,12 @@ mod tests {
         }
         assert_eq!(FailureReason::CompensatedAtLeastOnce.as_u8(), 6);
         assert_eq!(FailureReason::QuarantinedAtLeastOnce.as_u8(), 7);
-        assert_eq!(FailureReason::from_u8(8), None);
+        // F4: the engine dead-letter variant is discriminant 8 (terminal), and it
+        // round-trips. The unknown-sentinel boundary moves to 9.
+        assert_eq!(FailureReason::DeadLettered.as_u8(), 8);
+        assert_eq!(FailureReason::from_u8(8), Some(FailureReason::DeadLettered));
+        assert!(!is_pre_commit_crash(FailureReason::DeadLettered));
+        assert_eq!(FailureReason::from_u8(9), None);
     }
 
     #[test]
@@ -2362,6 +2383,9 @@ mod tests {
         assert!(!is_pre_commit_crash(
             FailureReason::UnsafeWorldMutatingConstruction
         ));
+        // F4: the engine dead-letter is terminal — the loop gave up; NEVER
+        // re-dispatch (writing it under EffectStaged must NOT spin the loop).
+        assert!(!is_pre_commit_crash(FailureReason::DeadLettered));
     }
 
     #[test]

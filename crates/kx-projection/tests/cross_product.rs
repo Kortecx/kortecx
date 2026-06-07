@@ -254,6 +254,32 @@ fn cell_5_terminal_failure_under_effect_staged_unsafe_wm_construction() {
     assert!(!p.can_redispatch_world_effect(&mid));
 }
 
+#[test]
+fn cell_5_terminal_failure_under_effect_staged_dead_lettered() {
+    // **F4 regression (the projection-level proof the hang is closed).** A WM
+    // `StageThenCommit` Mote whose dispatch repeatedly failed gets dead-lettered by
+    // the engine with `FailureReason::DeadLettered`. Because `DeadLettered` is
+    // terminal (NOT a pre-commit-crash), this MUST land in cell 5 (Failed, no
+    // redispatch) — NOT cell 3 (Pending in-flight, redispatch permitted). If this
+    // ever regressed to redispatch-permitted, `run_with_seams` would spin forever.
+    let mid = MoteId::from_bytes([13u8; 32]);
+    let (p, _) = projection_from_entries(vec![
+        effect_staged(mid, 0),
+        failed(mid, 0, FailureReason::DeadLettered),
+    ]);
+    assert_eq!(
+        p.state_of(&mid),
+        MoteState::Failed,
+        "F4: DeadLettered under EffectStaged MUST be terminal Failed (not Pending)"
+    );
+    assert!(
+        !p.can_redispatch_world_effect(&mid),
+        "F4: DeadLettered forbids redispatch — the loop terminates instead of spinning"
+    );
+    // A clean dead-letter is NOT an anomaly (distinct from the quarantine path).
+    assert!(p.anomaly_motes().is_empty());
+}
+
 // ---------------------------------------------------------------------------
 // Cell 5 — EffectStaged + Committed
 // ---------------------------------------------------------------------------
