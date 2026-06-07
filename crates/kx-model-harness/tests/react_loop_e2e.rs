@@ -24,7 +24,7 @@ use std::time::Duration;
 use kx_capability::{CapabilityBroker, LocalCapabilityBroker, INSTANCE_ID_LEN};
 use kx_content::LocalFsContentStore;
 use kx_inference::{InferenceBackend, InferenceError, InferenceInput, InferenceOutput};
-use kx_journal::SqliteJournal;
+use kx_journal::{Journal, SqliteJournal};
 use kx_mcp::{McpCapability, McpTransport, TransportError};
 use kx_model_harness::{
     harness_warrant, run_react_loop, workflows, ReactBudget, ReactLoopOutcome, ReactStop,
@@ -685,16 +685,101 @@ fn cold_refold_reproduces_committed_set() {
     );
 }
 
-// NOTE (deferred follow-on, NOT in PR-4 scope): a tool *dispatch* failure (e.g. an
-// MCP transport/network error) under StageThenCommit does NOT yet cleanly terminate
-// the engine drive loop — `run_with_seams` can spin on the EffectStaged redispatch
-// path rather than dead-lettering after the failure budget. That is an ENGINE / PR-1
-// failure-classification concern (frozen trio), tied to the corpus's deferred F4
-// "worker terminal-failure / dead-letter" item — it is out of this harness-only PR's
-// scope and must NOT be papered over with a driver-side hack. PR-4 owns the
-// PARSE-time fail-closed paths (malformed / ungranted / oversize), proven above; the
-// observation-commit-failure path (driver tool-committed guard, react.rs) is correct
-// once the engine returns. Tracked for the F4 engine PR.
+/// An MCP transport that is hard-down: every `round_trip` fails. Stands in for an
+/// unreachable MCP server / a dropped network. A tool dispatch over it fails the
+/// broker (`CommitProtocolError::BrokerDispatchFailed` → `TransientInfra`).
+struct FailingTransport;
+
+impl McpTransport for FailingTransport {
+    fn round_trip(
+        &self,
+        _request: &[u8],
+        _max: usize,
+        _ms: u64,
+        _idempotency_key: Option<&[u8; 32]>,
+    ) -> Result<Vec<u8>, TransportError> {
+        Err(TransportError::Unreachable(
+            "injected: MCP server down".into(),
+        ))
+    }
+}
+
+#[test]
+fn tool_dispatch_failure_dead_letters_and_loop_returns() {
+    // **F4 — the regression this PR fixes.** The model proposes a tool call, but the
+    // MCP transport is hard-down. The observation Mote is a WM `StageThenCommit`, so
+    // its commit protocol stages `EffectStaged` BEFORE the (failing) broker dispatch.
+    // PRE-FIX, the budget-exhausted dead-letter was written as `TimedOut` (a
+    // pre-commit-crash), which under `EffectStaged` stayed re-dispatchable forever →
+    // `run_with_seams` SPUN (the original test hung 60s+ and was removed). POST-FIX
+    // the dead-letter is the terminal `DeadLettered`, so the engine RETURNS, the
+    // driver sees the non-committed observation, and the loop stops cleanly with
+    // `ReactStop::DeadLettered`.
+    //
+    // We run the drive on a worker thread with a HARD 10s deadline so a regression of
+    // the F4 spin FAILS CI (a timeout) rather than hanging the whole suite.
+    let (tx, rx) = std::sync::mpsc::channel();
+    let worker = std::thread::spawn(move || {
+        let dir = tempfile::tempdir().unwrap();
+        let (outcome, _backend, journal) = drive_full(
+            dir.path(),
+            vec![
+                envelope("mcp-tool", "1", "investigate"),
+                // A fallback final answer — it must NOT be reached (the loop stops at
+                // the dead-letter), but a script entry guards against an accidental
+                // extra turn silently exhausting the script.
+                b"fallback answer (should be unreached)".to_vec(),
+            ],
+            Box::new(FailingTransport),
+            &warrant_granting(),
+            ReactBudget {
+                max_turns: 5,
+                max_tool_calls: 5,
+            },
+        );
+        let outcome = outcome.expect("the loop RETURNS, never hangs (F4: no EffectStaged spin)");
+        // Reduce to Send primitives before crossing the channel (SqliteJournal is not
+        // Send): the stop reason, the tool-call count, the failed-Mote count, and the
+        // total journal length (the anti-spin bound).
+        let failed = failed_count(&journal);
+        let total = journal.current_seq().unwrap();
+        let _ = tx.send((outcome.outcome, outcome.tool_calls, failed, total));
+    });
+
+    let (stop, tool_calls, failed, total) = match rx.recv_timeout(Duration::from_secs(10)) {
+        Ok(v) => v,
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+            panic!(
+                "F4 REGRESSION: the ReAct loop did not terminate within 10s — \
+                    `run_with_seams` is spinning the EffectStaged-redispatch path again"
+            );
+        }
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+            // The worker panicked (e.g. the loop returned Err) — surface that panic.
+            worker.join().unwrap();
+            unreachable!("worker disconnected without sending");
+        }
+    };
+    worker.join().unwrap();
+
+    assert_eq!(
+        stop,
+        ReactStop::DeadLettered,
+        "a failed tool dispatch dead-letters the observation and stops the loop"
+    );
+    assert_eq!(
+        tool_calls, 0,
+        "a dead-lettered observation is NOT counted as a successful tool call"
+    );
+    assert!(
+        failed >= 1,
+        "the observation Mote dead-lettered (terminal Failed), not committed"
+    );
+    assert!(
+        total < 25,
+        "the journal stayed bounded ({total} entries) — no unbounded EffectStaged-redispatch spin"
+    );
+}
 
 // ---------------------------------------------------------------------------
 // Safety: a context-window overflow surfaces a TYPED error, never a panic.

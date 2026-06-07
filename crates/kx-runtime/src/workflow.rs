@@ -175,6 +175,41 @@ pub(crate) fn flat_pure_workflow(seeds: &[u8]) -> DemoWorkflow {
     }
 }
 
+/// A flat (shaperless) workflow of independent WORLD-MUTATING `StageThenCommit`
+/// **root** Motes — one per `seed`, no parents. Test-only: the F4 dead-letter
+/// tests need the WM `StageThenCommit` shape (the only one whose commit protocol
+/// writes `EffectStaged` *before* the broker dispatch — the precise condition under
+/// which a budget-exhausted dead-letter must be terminal, not redispatchable) where
+/// one Mote can dead-letter while its siblings still commit. Driven with
+/// `shaper: None` (a flat DAG, like [`flat_pure_workflow`]).
+#[cfg(test)]
+pub(crate) fn flat_wm_stc_workflow(seeds: &[u8]) -> DemoWorkflow {
+    let cap = ToolName("demo-tool".into());
+    let permissive = permissive_warrant();
+    let motes = seeds
+        .iter()
+        .map(|&seed| WorkflowMote {
+            mote: nondet_mote(
+                seed,
+                NdClass::WorldMutating,
+                EffectPattern::StageThenCommit,
+                None,
+                &[],
+            ),
+            warrant: permissive.clone(),
+            capability: cap.clone(),
+        })
+        .collect();
+    // The flat path never consults a shaper; a sentinel id fills the crash fields.
+    let sentinel = pure_mote(0xFF, &[]).id;
+    DemoWorkflow {
+        motes,
+        stc_crash_target: sentinel,
+        vtc_crash_target: sentinel,
+        shaper_id: sentinel,
+    }
+}
+
 /// A permissive warrant — the demo runs in a single trusted process, so every
 /// axis is wide open. (The broker/executor seams still enforce structurally;
 /// the warrant just doesn't narrow anything for the demo.)

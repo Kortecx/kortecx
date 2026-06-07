@@ -144,14 +144,25 @@ fn classify_commit_error(err: &CommitProtocolError) -> FailureClass {
 }
 
 /// The journaled [`FailureReason`] for a dead-lettered Mote of the given class.
-/// Reuses the existing closed enum (no schema bump): an exhausted transient maps
-/// to [`FailureReason::TimedOut`] (it ran out of attempts, i.e. never committed in
-/// budget), a terminal logic failure to [`FailureReason::ExecutorRefused`] (the
-/// executor did not produce a committable result).
+///
+/// **Both classes map to the dedicated terminal [`FailureReason::DeadLettered`]**
+/// (F4). This is load-bearing for correctness, not cosmetic: the projection's
+/// `Failed` fold sets `terminal_failure_observed` only when the reason is NOT a
+/// pre-commit-crash ([`kx_journal::is_pre_commit_crash`]). The pre-F4 mapping wrote
+/// [`FailureReason::TimedOut`] for an exhausted transient — but `TimedOut` IS a
+/// pre-commit-crash (a worker that died mid-flight, *re-dispatchable* under an
+/// `EffectStaged`). So a budget-exhausted WORLD-MUTATING `StageThenCommit`
+/// dead-letter stayed re-dispatchable forever and `run_with_seams` spun the
+/// EffectStaged-redispatch path without ever terminating (the F4 hang). Writing the
+/// terminal `DeadLettered` makes the Mote terminal `Failed`, so the drive loop skips
+/// it and the run completes. Mapping the *terminal-logic* class to the same variant
+/// (vs the old [`FailureReason::ExecutorRefused`] reuse — a submission-time verdict,
+/// not an engine dead-letter) gives the AL2 re-plan one unambiguous "the engine gave
+/// up on this step" signal. No schema bump beyond the additive `DeadLettered`
+/// variant; `Failed` entries are not folded into the canonical digest.
 pub(crate) fn reason_for(class: FailureClass) -> FailureReason {
     match class {
-        FailureClass::TransientInfra => FailureReason::TimedOut,
-        FailureClass::TerminalLogic => FailureReason::ExecutorRefused,
+        FailureClass::TransientInfra | FailureClass::TerminalLogic => FailureReason::DeadLettered,
     }
 }
 
@@ -166,9 +177,12 @@ mod tests {
         // user's "no point re-running it". It must dead-letter, never retry-storm.
         let e = LifecycleError::ExecutorRun(MoteExecutorError::BodyExited { code: 1 });
         assert_eq!(classify_lifecycle_error(&e), FailureClass::TerminalLogic);
+        // F4: every engine dead-letter is the dedicated terminal `DeadLettered`
+        // reason (NOT pre-commit-crash → sets terminal_failure_observed → the loop
+        // never re-dispatches it).
         assert_eq!(
             reason_for(FailureClass::TerminalLogic),
-            FailureReason::ExecutorRefused
+            FailureReason::DeadLettered
         );
     }
 
@@ -176,9 +190,11 @@ mod tests {
     fn resource_no_capacity_is_transient() {
         let e = LifecycleError::ResourceAcquire(ResourceError::NoCapacity);
         assert_eq!(classify_lifecycle_error(&e), FailureClass::TransientInfra);
+        // F4: an exhausted-transient dead-letter is terminal `DeadLettered`, NOT the
+        // pre-commit-crash `TimedOut` (which under EffectStaged stays redispatchable).
         assert_eq!(
             reason_for(FailureClass::TransientInfra),
-            FailureReason::TimedOut
+            FailureReason::DeadLettered
         );
     }
 

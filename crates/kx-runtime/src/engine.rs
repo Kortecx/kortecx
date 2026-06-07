@@ -1323,13 +1323,14 @@ mod failure_tests {
     use std::sync::Arc;
     use std::time::Duration;
 
+    use kx_capability::{BrokerError, BrokerHandle, CapabilityBroker, EffectRequest};
     use kx_content::LocalFsContentStore;
     use kx_executor::{
         LocalResourceManager, MoteExecutionResult, MoteExecutor, MoteExecutorError, Rootfs,
         StandardCommitProtocol, TestMoteExecutor,
     };
-    use kx_journal::SqliteJournal;
-    use kx_mote::Mote;
+    use kx_journal::{FailureReason, Journal, SqliteJournal};
+    use kx_mote::{Mote, ToolName};
     use kx_projection::{MoteState, Projection};
     use kx_warrant::{ExecutorClass, WarrantSpec};
 
@@ -1338,7 +1339,7 @@ mod failure_tests {
     use crate::config::{Mode, RuntimeConfig};
     use crate::error::RuntimeError;
     use crate::failure_policy::FailurePolicy;
-    use crate::workflow::flat_pure_workflow;
+    use crate::workflow::{flat_pure_workflow, flat_wm_stc_workflow};
 
     /// A `MoteExecutor` that fails a chosen Mote and delegates the rest to a real
     /// deterministic stub, counting how many times the chosen Mote is dispatched.
@@ -1463,6 +1464,13 @@ mod failure_tests {
             MoteState::Committed,
             "its sibling still commits"
         );
+        // F4: every engine dead-letter records the dedicated terminal `DeadLettered`
+        // reason (was the loosely-reused `ExecutorRefused` pre-F4).
+        assert_eq!(
+            projection.failure_reason_of(&target),
+            Some(FailureReason::DeadLettered),
+            "the dead-letter reason is the dedicated terminal DeadLettered"
+        );
         // Terminal logic failure ⇒ dispatched exactly once, never retried.
         assert_eq!(calls, 1, "a terminal failure is not retried");
     }
@@ -1483,6 +1491,12 @@ mod failure_tests {
         let projection = projection.unwrap();
         assert_eq!(projection.state_of(&target), MoteState::Failed);
         assert_eq!(projection.state_of(&sibling), MoteState::Committed);
+        assert_eq!(
+            projection.failure_reason_of(&target),
+            Some(FailureReason::DeadLettered),
+            "an exhausted transient dead-letters with the terminal DeadLettered (NOT \
+             the pre-commit-crash TimedOut, which under EffectStaged would spin)"
+        );
         // A transient error is retried up to `max_attempts` dispatches, then dead-lettered.
         assert_eq!(calls, 3, "transient retried to the 3-attempt budget");
     }
@@ -1497,6 +1511,344 @@ mod failure_tests {
         assert!(
             matches!(result, Err(RuntimeError::Lifecycle(_))),
             "without a policy a failing Mote aborts the run"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // F4 — clean termination of a WM `StageThenCommit` DISPATCH failure.
+    //
+    // The PURE tests above CANNOT reproduce F4: a PURE Mote never stages an
+    // `EffectStaged`, so its dead-letter (`Failed{DeadLettered}`) is terminal via
+    // the `failed_pending_reattempt` branch. F4 is specific to a WORLD-MUTATING
+    // `StageThenCommit` Mote, whose commit protocol writes `EffectStaged` BEFORE the
+    // broker dispatch. Under the pre-F4 mapping (`reason_for(TransientInfra) =
+    // TimedOut`, a pre-commit-crash), a budget-exhausted dead-letter stayed
+    // re-dispatchable forever (`effect_staged_observed` masks the terminal branch) →
+    // `run_with_seams` spun, growing the journal without bound (the 60s+ hang). These
+    // tests drive a flat WM `StageThenCommit` workflow through a FAILING BROKER and
+    // assert the run TERMINATES (bounded re-dispatch → terminal `DeadLettered`).
+    // -----------------------------------------------------------------------
+
+    /// A `CapabilityBroker` that fails `dispatch` for a chosen WM Mote the first
+    /// `fail_times` calls, then delegates to the real [`DemoBroker`]. Counts target
+    /// dispatches. `fail_times == u32::MAX` ⇒ always fail (the repeated-failure /
+    /// hang case); a finite value ⇒ the transient-then-success case. A broker
+    /// `dispatch` error becomes `CommitProtocolError::BrokerDispatchFailed`, which
+    /// `classify_lifecycle_error` maps to `TransientInfra` (retry-then-dead-letter).
+    struct FailingBroker {
+        inner: DemoBroker<LocalFsContentStore>,
+        target: kx_mote::MoteId,
+        fail_times: u32,
+        target_calls: Arc<AtomicUsize>,
+    }
+
+    impl CapabilityBroker for FailingBroker {
+        fn dispatch(
+            &self,
+            mote: &Mote,
+            warrant: &WarrantSpec,
+            capability: &ToolName,
+            request: EffectRequest,
+        ) -> Result<BrokerHandle, BrokerError> {
+            if mote.id == self.target {
+                // `fetch_add` returns the PRE-increment count → the 1st call sees 0.
+                let prior = self.target_calls.fetch_add(1, Ordering::SeqCst);
+                if u32::try_from(prior).unwrap_or(u32::MAX) < self.fail_times {
+                    return Err(BrokerError::StageWriteFailed {
+                        capability: capability.clone(),
+                        diagnostic: "injected: MCP transport unreachable".into(),
+                    });
+                }
+            }
+            self.inner.dispatch(mote, warrant, capability, request)
+        }
+
+        fn probe_readback(
+            &self,
+            mote: &Mote,
+            warrant: &WarrantSpec,
+            capability: &ToolName,
+            probe: EffectRequest,
+        ) -> Result<Option<BrokerHandle>, BrokerError> {
+            self.inner.probe_readback(mote, warrant, capability, probe)
+        }
+    }
+
+    /// Drive a flat 2-Mote WM `StageThenCommit` workflow whose SECOND Mote's broker
+    /// dispatch fails `fail_times` times, under `policy`. Returns the run result, the
+    /// (target, sibling) ids, the re-folded projection, the target's dispatch count,
+    /// and the canonical projection digest (committed-set only — `Failed` excluded).
+    fn drive_wm(
+        fail_times: u32,
+        policy: Option<&FailurePolicy>,
+    ) -> (
+        Result<RunOutcome, RuntimeError>,
+        kx_mote::MoteId,
+        kx_mote::MoteId,
+        Projection,
+        usize,
+        String,
+    ) {
+        let dir = tempfile::tempdir().unwrap();
+        let config = config_for(dir.path());
+        let workflow = flat_wm_stc_workflow(&[0x20, 0x21]);
+        let sibling = workflow.motes[0].mote.id;
+        let target = workflow.motes[1].mote.id;
+
+        let store = Arc::new(LocalFsContentStore::open(&config.content_root).unwrap());
+        let journal = Arc::new(SqliteJournal::open(&config.journal_path).unwrap());
+        let rm = LocalResourceManager::dev_defaults();
+        let target_calls = Arc::new(AtomicUsize::new(0));
+        let broker = Arc::new(FailingBroker {
+            inner: DemoBroker::new(store.clone(), BTreeMap::new(), None, None),
+            target,
+            fail_times,
+            target_calls: target_calls.clone(),
+        });
+        let protocol = StandardCommitProtocol::new(store.clone(), journal.clone(), broker);
+        // WM Motes dispatch through the BROKER, not the executor; the deterministic
+        // stub satisfies the param and is never called on a WM Mote.
+        let executor = TestMoteExecutor::deterministic();
+
+        let result = run_with_seams(
+            &config,
+            &workflow,
+            store,
+            journal.clone(),
+            &rm,
+            &executor,
+            &protocol,
+            None, // shaper — flat DAG
+            None, // topology_provider
+            None, // snapshot_sink
+            None, // capture_sink
+            None, // audit_sink
+            policy,
+        );
+
+        let projection = Projection::from_journal(&*journal).unwrap();
+        let digest = crate::digest::digest_journal(&*journal).unwrap().to_hex();
+        (
+            result,
+            target,
+            sibling,
+            projection,
+            target_calls.load(Ordering::SeqCst),
+            digest,
+        )
+    }
+
+    #[test]
+    fn failing_stage_then_commit_wm_dead_letters_within_budget_and_run_completes() {
+        // THE F4 REGRESSION. Pre-fix this HANGS (unbounded EffectStaged re-stage).
+        let policy = FailurePolicy::new(3, Duration::ZERO);
+        let (result, target, sibling, projection, calls, _digest) =
+            drive_wm(u32::MAX, Some(&policy));
+
+        let outcome = result.expect("the run COMPLETES — F4: no spin on EffectStaged redispatch");
+        assert_eq!(outcome.total, 2);
+        assert_eq!(
+            outcome.committed, 1,
+            "the sibling commits; the target dead-letters"
+        );
+
+        assert_eq!(
+            projection.state_of(&target),
+            MoteState::Failed,
+            "a repeatedly-failing WM StageThenCommit Mote becomes TERMINAL Failed"
+        );
+        assert!(
+            !projection.can_redispatch_world_effect(&target),
+            "terminal dead-letter forbids redispatch — the loop stops instead of spinning"
+        );
+        assert_eq!(
+            projection.failure_reason_of(&target),
+            Some(FailureReason::DeadLettered),
+        );
+        assert_eq!(projection.state_of(&sibling), MoteState::Committed);
+        // The anti-spin proof: bounded by `max_attempts`, NOT unbounded.
+        assert_eq!(calls, 3, "dispatch is bounded by the FailurePolicy budget");
+    }
+
+    #[test]
+    fn wm_dispatch_failure_max_attempts_one_dead_letters_immediately() {
+        // max_attempts = 1 ⇒ a single attempt, then dead-letter (no retry).
+        let policy = FailurePolicy::new(1, Duration::ZERO);
+        let (result, target, _sibling, projection, calls, _digest) =
+            drive_wm(u32::MAX, Some(&policy));
+        result.expect("the run completes");
+        assert_eq!(projection.state_of(&target), MoteState::Failed);
+        assert_eq!(
+            projection.failure_reason_of(&target),
+            Some(FailureReason::DeadLettered)
+        );
+        assert_eq!(calls, 1, "max_attempts=1 ⇒ exactly one dispatch");
+    }
+
+    #[test]
+    fn wm_dispatch_failure_does_not_grow_journal_unbounded() {
+        // The DIRECT anti-spin gate: the on-disk journal stays bounded. Pre-fix this
+        // grows without bound (each loop iteration appends Proposed+EffectStaged+
+        // Failed) until the test times out.
+        let dir = tempfile::tempdir().unwrap();
+        let config = config_for(dir.path());
+        let workflow = flat_wm_stc_workflow(&[0x40, 0x41]);
+        let target = workflow.motes[1].mote.id;
+        let store = Arc::new(LocalFsContentStore::open(&config.content_root).unwrap());
+        let journal = Arc::new(SqliteJournal::open(&config.journal_path).unwrap());
+        let rm = LocalResourceManager::dev_defaults();
+        let policy = FailurePolicy::new(3, Duration::ZERO);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let broker = Arc::new(FailingBroker {
+            inner: DemoBroker::new(store.clone(), BTreeMap::new(), None, None),
+            target,
+            fail_times: u32::MAX,
+            target_calls: calls.clone(),
+        });
+        let protocol = StandardCommitProtocol::new(store.clone(), journal.clone(), broker);
+        let executor = TestMoteExecutor::deterministic();
+        run_with_seams(
+            &config,
+            &workflow,
+            store,
+            journal.clone(),
+            &rm,
+            &executor,
+            &protocol,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(&policy),
+        )
+        .expect("completes");
+        // Per target attempt: at most Proposed + EffectStaged + (a final) Failed; the
+        // sibling adds a small constant. Far below any "spin" signature.
+        let total = journal.current_seq().unwrap();
+        assert!(
+            total < 20,
+            "journal stayed bounded (got {total}) — no EffectStaged-redispatch spin"
+        );
+    }
+
+    #[test]
+    fn wm_transient_then_success_commits_within_budget_digest_invariant() {
+        // A flaky broker that fails twice then succeeds (within a 3-attempt budget)
+        // must COMMIT — NOT dead-letter — and produce the SAME canonical digest as a
+        // clean run (the committed result_ref is content-addressed; the transient
+        // failures leave no committed trace).
+        let policy = FailurePolicy::new(3, Duration::ZERO);
+        let (r_ok, target, sibling, p_ok, calls_ok, digest_baseline) = drive_wm(0, Some(&policy));
+        r_ok.expect("clean run completes");
+        assert_eq!(p_ok.state_of(&target), MoteState::Committed);
+        assert_eq!(p_ok.state_of(&sibling), MoteState::Committed);
+        assert_eq!(calls_ok, 1, "clean: target dispatched once");
+
+        let (r_flaky, t2, s2, p_flaky, calls_flaky, digest_flaky) = drive_wm(2, Some(&policy));
+        r_flaky.expect("flaky run completes");
+        assert_eq!(t2, target, "deterministic ids across runs (same seeds)");
+        assert_eq!(s2, sibling);
+        assert_eq!(
+            p_flaky.state_of(&target),
+            MoteState::Committed,
+            "transient-then-success COMMITS, never dead-letters"
+        );
+        assert_eq!(
+            p_flaky.failure_reason_of(&target),
+            None,
+            "a committed Mote carries no terminal failure reason"
+        );
+        assert_eq!(calls_flaky, 3, "failed twice (n=0,1), succeeded on the 3rd");
+        assert_eq!(
+            digest_flaky, digest_baseline,
+            "digest invariant: the committed set is identical regardless of transient retries"
+        );
+    }
+
+    #[test]
+    fn wm_dead_letter_is_durable_across_restart_and_never_redispatched() {
+        // Crash-resume (R49): a dead-lettered WM Mote stays terminal across a restart
+        // and is NEVER re-dispatched. Run 2 = a fresh `run_with_seams` on the SAME
+        // journal (a fresh in-memory attempt counter, exactly like a process restart).
+        let dir = tempfile::tempdir().unwrap();
+        let config = config_for(dir.path());
+        let workflow = flat_wm_stc_workflow(&[0x30, 0x31]);
+        let target = workflow.motes[1].mote.id;
+        let store = Arc::new(LocalFsContentStore::open(&config.content_root).unwrap());
+        let journal = Arc::new(SqliteJournal::open(&config.journal_path).unwrap());
+        let rm = LocalResourceManager::dev_defaults();
+        let policy = FailurePolicy::new(2, Duration::ZERO);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let executor = TestMoteExecutor::deterministic();
+        let new_broker = || {
+            Arc::new(FailingBroker {
+                inner: DemoBroker::new(store.clone(), BTreeMap::new(), None, None),
+                target,
+                fail_times: u32::MAX,
+                target_calls: calls.clone(),
+            })
+        };
+
+        // Run 1: retries to the 2-attempt budget then dead-letters the target.
+        let p1 = StandardCommitProtocol::new(store.clone(), journal.clone(), new_broker());
+        run_with_seams(
+            &config,
+            &workflow,
+            store.clone(),
+            journal.clone(),
+            &rm,
+            &executor,
+            &p1,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(&policy),
+        )
+        .expect("run 1 completes (dead-letters, no spin)");
+        let calls_after_1 = calls.load(Ordering::SeqCst);
+        assert_eq!(
+            calls_after_1, 2,
+            "target retried to budget then dead-lettered"
+        );
+        assert_eq!(
+            Projection::from_journal(&*journal)
+                .unwrap()
+                .state_of(&target),
+            MoteState::Failed
+        );
+
+        // Run 2 (restart on the same journal): the target is already terminal →
+        // skipped → the broker is NEVER called again; the run completes at once.
+        let p2 = StandardCommitProtocol::new(store.clone(), journal.clone(), new_broker());
+        run_with_seams(
+            &config,
+            &workflow,
+            store.clone(),
+            journal.clone(),
+            &rm,
+            &executor,
+            &p2,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(&policy),
+        )
+        .expect("run 2 (restart) completes immediately");
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            calls_after_1,
+            "a dead-lettered Mote is NEVER re-dispatched on restart (R49)"
+        );
+        assert_eq!(
+            Projection::from_journal(&*journal)
+                .unwrap()
+                .state_of(&target),
+            MoteState::Failed
         );
     }
 }

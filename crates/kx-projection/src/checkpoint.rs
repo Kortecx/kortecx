@@ -829,9 +829,11 @@ mod tests {
         {
             // PR-3: a terminal-failure mote carries a retained `failure_reason`, so
             // the round-trip proves the v1→v2 format preserves it (the bump's point).
+            // F4: use the canonical engine dead-letter reason `DeadLettered` (the new
+            // discriminant 8), so the checkpoint serde is proven to round-trip it.
             let m = s.moteinfo_mut(&mid(22));
             m.terminal_failure_observed = true;
-            m.failure_reason = Some(kx_journal::FailureReason::ExecutorRefused);
+            m.failure_reason = Some(kx_journal::FailureReason::DeadLettered);
         }
         s.moteinfo_mut(&mid(23)).inconsistent = true;
         s.last_seq = 4;
