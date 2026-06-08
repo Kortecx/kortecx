@@ -19,7 +19,7 @@ test("a gateway drop mid-session surfaces a clear, retryable error (no hang/cras
   await expect(endpoint).toHaveValue(gw.endpoint);
   await page.getByRole("button", { name: /^connect$/i }).click();
   await page.getByRole("button", { name: /submit run/i }).click();
-  await expect(page.getByTestId("mote-table")).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId("mote-dag")).toBeVisible({ timeout: 30_000 });
 
   // The gateway disappears.
   gw.stop();

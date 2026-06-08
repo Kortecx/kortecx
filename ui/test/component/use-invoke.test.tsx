@@ -6,19 +6,20 @@ import { connectedWrapper } from "../mocks/harness";
 import { makeMockClient } from "../mocks/kx-client";
 
 const INSTANCE = "ab".repeat(16);
+const TERMINAL = "cd".repeat(32);
 
 describe("useInvoke", () => {
-  it("invokes a recipe and returns the hex instance id", async () => {
+  it("invokes a recipe and returns the run's instance + terminal Mote ids", async () => {
     const { client, invoke } = makeMockClient({
-      // Mirrors the SDK's `Run` (instanceId is a hex getter).
-      invoke: async () => ({ instanceId: INSTANCE }),
+      // Mirrors the SDK's `Run` (instanceId/terminalMoteId are hex getters).
+      invoke: async () => ({ instanceId: INSTANCE, terminalMoteId: TERMINAL }),
     });
     const { result } = renderHook(() => useInvoke(), { wrapper: connectedWrapper(client) });
-    let id = "";
+    let run = { instanceId: "", terminalMoteId: "" };
     await act(async () => {
-      id = await result.current.mutateAsync({ handle: "kx/recipes/echo", args: { topic: "x" } });
+      run = await result.current.mutateAsync({ handle: "kx/recipes/echo", args: { topic: "x" } });
     });
-    expect(id).toBe(INSTANCE);
+    expect(run).toEqual({ instanceId: INSTANCE, terminalMoteId: TERMINAL });
     expect(invoke).toHaveBeenCalledWith("kx/recipes/echo", { topic: "x" });
   });
 

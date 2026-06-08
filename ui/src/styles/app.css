@@ -291,6 +291,92 @@ button:disabled {
   text-align: right;
 }
 
+/* ---- view toggle (DAG / table) ---- */
+.view-toggle {
+  display: inline-flex;
+  gap: 0;
+  margin: 0.75rem 0 0;
+  padding: 0;
+  min-inline-size: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.view-toggle button {
+  background: var(--bg-input);
+  color: var(--fg-muted);
+  border: none;
+  border-radius: 0;
+  margin: 0;
+  padding: 0.3rem 0.7rem;
+  font-weight: 500;
+}
+.view-toggle button[aria-pressed="true"] {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+/* ---- live DAG ---- */
+.dag-canvas {
+  height: 520px;
+  margin-top: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elev);
+  overflow: hidden;
+}
+.dag-node {
+  width: 184px;
+  min-height: 72px;
+  padding: 0.5rem 0.6rem;
+  border-radius: 8px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--t-unknown);
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+.dag-node--pending {
+  border-left-color: var(--t-pending);
+}
+.dag-node--scheduled {
+  border-left-color: var(--t-scheduled);
+}
+.dag-node--committed {
+  border-left-color: var(--t-committed);
+}
+.dag-node--failed {
+  border-left-color: var(--t-failed);
+}
+.dag-node--repudiated {
+  border-left-color: var(--t-repudiated);
+}
+.dag-node--inconsistent {
+  border-left-color: var(--t-inconsistent);
+}
+.dag-node__id {
+  color: var(--fg-muted);
+}
+.dag-node__row {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.dag-handle {
+  width: 6px;
+  height: 6px;
+  background: var(--fg-muted);
+  border: none;
+}
+.dag-edge--control {
+  stroke: var(--fg-muted);
+}
+.dag-edge--noncascade {
+  stroke-dasharray: 5 4;
+}
+
 /* ---- projection summary ---- */
 .proj-summary {
   display: flex;

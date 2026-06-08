@@ -19,6 +19,8 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 // ui/test/contract → up 3 = repo root.
 export const REPO_ROOT = path.resolve(HERE, "../../..");
 export const ECHO_HANDLE = "kx/recipes/echo";
+/** The T3.3 deterministic multi-node demo recipe (root → 3 children → gather). */
+export const FANOUT_HANDLE = "kx/recipes/fanout-demo";
 
 let cachedBin: string | null = null;
 

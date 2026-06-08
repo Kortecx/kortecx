@@ -24,7 +24,7 @@ use kx_gateway_core::{
     SignatureCatalog, SignatureSummaryEntry,
 };
 use kx_invoke::{bind_snapshot, InvokeError, UseWarrantResolver};
-use kx_mote::{ConfigKey, ConfigVal, LogicRef, ModelId, ToolName, PROMPT_KEY};
+use kx_mote::{ConfigKey, ConfigVal, EdgeMeta, LogicRef, ModelId, ToolName, PROMPT_KEY};
 use kx_warrant::{
     ExecutorClass, FsMode, FsScope, Host, ModelRoute, MoteClass, NetScope, ResourceCeiling, Role,
     WarrantSpec,
@@ -123,6 +123,17 @@ pub const DEMO_RECIPE_HANDLE: &str = "kx/recipes/echo";
 /// (see `real_exec::register_demo_body`); takes no free-params (the
 /// body's input is the Mote's identity). Shared with the e2e test (no drift).
 pub const EXEC_RECIPE_HANDLE: &str = "kx/recipes/exec-demo";
+
+/// The wire handle of the T3.3 deterministic MULTI-NODE demo recipe: a PURE
+/// fan-out → gather DAG (root → N children → gather) that runs model-free on the
+/// embedded storing executor, so a single `Invoke` yields a real multi-node
+/// projection with DATA parent edges — the live-DAG viewer's end-to-end fixture.
+/// Always provisioned. Takes no free-params. Shared with the e2e test (no drift).
+pub const FANOUT_RECIPE_HANDLE: &str = "kx/recipes/fanout-demo";
+
+/// The fan-out width of [`FANOUT_RECIPE_HANDLE`]: root + `FANOUT_WIDTH` children +
+/// gather = `FANOUT_WIDTH + 2` Motes. Three keeps the demo graph legible.
+const FANOUT_WIDTH: u8 = 3;
 
 /// The content-ref of the demo recipe's single typed free-param (`topic`).
 const TOPIC_SCHEMA_REF: [u8; 32] = [0x2b; 32];
@@ -258,6 +269,13 @@ impl DemoLibrary {
                 free_params: topic_contract(),
             },
         ));
+
+        // (fanout-demo) the T3.3 PURE multi-node recipe — a fan-out → gather DAG that
+        // runs model-free on the storing executor (see `seed_fanout_demo`). Always
+        // seeded; no free-params.
+        recipes.push(seed_fanout_demo(
+            &versions, &bodies, &grants, &owner, parties, exec_class,
+        )?);
 
         // (exec-demo) the PR-9b real-exec recipe — step logic_ref == the located
         // body's content ref, a sandbox warrant, no free-params. Seeded only when
@@ -502,6 +520,77 @@ fn demo_handle() -> Result<AssetPath, GatewayError> {
 fn exec_handle() -> Result<AssetPath, GatewayError> {
     parse_handle(EXEC_RECIPE_HANDLE)
         .ok_or_else(|| GatewayError::Catalog("invalid exec recipe handle".into()))
+}
+
+fn fanout_handle() -> Result<AssetPath, GatewayError> {
+    parse_handle(FANOUT_RECIPE_HANDLE)
+        .ok_or_else(|| GatewayError::Catalog("invalid fanout recipe handle".into()))
+}
+
+/// Seed the T3.3 PURE multi-node `fanout-demo` recipe and return its
+/// `(handle, meta)` for the binder's recipe table. Factored out of
+/// [`DemoLibrary::seed`] so the orchestrator stays within the line budget and each
+/// recipe reads as a self-contained unit.
+fn seed_fanout_demo(
+    versions: &SqliteVersionLedger,
+    bodies: &SqliteBodyLedger,
+    grants: &SqliteGrantLedger,
+    owner: &PartyId,
+    parties: &[String],
+    exec_class: ExecutorClass,
+) -> Result<(AssetPath, RecipeMeta), GatewayError> {
+    let warrant = demo_warrant(exec_class);
+    let handle = fanout_handle()?;
+    let body = multinode_recipe_body(&warrant)?;
+    seed_recipe(
+        versions, bodies, grants, owner, parties, &handle, body, &warrant,
+    )?;
+    Ok((
+        handle,
+        RecipeMeta {
+            owner_root: warrant,
+            free_params: FreeParamContract::new(),
+        },
+    ))
+}
+
+/// A PURE, deterministic MULTI-step recipe body: a root that fans out to
+/// [`FANOUT_WIDTH`] PURE children which a gather step joins
+/// (`root → {c1..cN} → gather`, all DATA edges). Every step is a PURE `transform`
+/// carrying `warrant` (== the demo warrant), so bind's narrowing `intersect` is a
+/// no-op and each Mote leases on the embedded storing executor — yielding a real
+/// multi-node projection with parent edges WITHOUT a model. The terminal is the
+/// gather step (added last). Distinct `logic_ref`s give the steps distinct
+/// identities (the storing executor ignores `logic_ref`).
+fn multinode_recipe_body(warrant: &WarrantSpec) -> Result<WorkflowDef, GatewayError> {
+    let edge_err =
+        |e: kx_workflow::CompileError| GatewayError::Catalog(format!("fanout edge: {e}"));
+    // Seed "fano" so the body is stable + idempotent across restarts.
+    let mut wf = WorkflowDef::new(u32::from_le_bytes(*b"fano"));
+    let model_id = warrant.model_route.model_id.clone();
+    let step = |tag: u8| {
+        transform(
+            LogicRef::from_bytes([tag; 32]),
+            model_id.clone(),
+            warrant.clone(),
+            ToolName("fanout-demo".into()),
+        )
+    };
+
+    let root = wf.add_step(step(0x40));
+    let mut children = Vec::with_capacity(FANOUT_WIDTH as usize);
+    for i in 0..FANOUT_WIDTH {
+        let child = wf.add_step(step(0x41 + i)); // 0x41, 0x42, 0x43 — distinct identities
+        wf.add_edge(root, child, EdgeMeta::data())
+            .map_err(edge_err)?;
+        children.push(child);
+    }
+    let gather = wf.add_step(step(0x50));
+    for child in children {
+        wf.add_edge(child, gather, EdgeMeta::data())
+            .map_err(edge_err)?;
+    }
+    Ok(wf)
 }
 
 /// A PURE recipe body: a single content-addressed step with `step_logic_ref` as
@@ -823,6 +912,31 @@ mod tests {
             assert_eq!(w.executor_class, ExecutorClass::Bwrap);
             assert!(w.model_route.max_calls <= 3);
         }
+    }
+
+    #[tokio::test]
+    async fn bind_fanout_demo_is_a_multinode_dag() {
+        let dir = tempfile::tempdir().unwrap();
+        let binder = demo_lib(dir.path());
+        let bound = binder
+            .bind("alice@acme", FANOUT_RECIPE_HANDLE, b"{}")
+            .await
+            .unwrap();
+        // root + FANOUT_WIDTH children + gather = a genuine multi-node DAG.
+        assert_eq!(bound.motes.len(), FANOUT_WIDTH as usize + 2);
+        // Every step stays PURE on the worker's executor_class (so it leases on the
+        // embedded storing executor — the model-free multi-node path).
+        for (_, w) in &bound.motes {
+            assert_eq!(w.executor_class, ExecutorClass::Bwrap);
+            assert_eq!(w.mote_class, MoteClass::Pure);
+        }
+        // Idempotent: identical (empty) args → identical terminal identity.
+        let again = binder
+            .bind("alice@acme", FANOUT_RECIPE_HANDLE, b"{}")
+            .await
+            .unwrap();
+        assert_eq!(bound.terminal_mote_id, again.terminal_mote_id);
+        assert_eq!(bound.recipe_fingerprint, again.recipe_fingerprint);
     }
 
     #[tokio::test]

@@ -36,6 +36,9 @@ export {
   isPending,
 } from "./types.js";
 
+export { ParentEdge, edgeKindName } from "./parents.js";
+export type { EdgeKindName } from "./parents.js";
+
 export { WaitState } from "./wait.js";
 export type { WaitOutcome, WaitMode } from "./wait.js";
 

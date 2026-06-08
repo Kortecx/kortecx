@@ -1,4 +1,5 @@
 import { createRoute, useParams, useSearch } from "@tanstack/react-router";
+import { Suspense, lazy, useState } from "react";
 import { ConnectGate } from "../../components/ConnectGate";
 import { EmptyState } from "../../components/EmptyState";
 import { ErrorNotice } from "../../components/ErrorNotice";
@@ -6,14 +7,55 @@ import { MoteTable } from "../../components/MoteTable";
 import { ProjectionSummary } from "../../components/ProjectionSummary";
 import { useConnection } from "../../kx/connection-context";
 import { toUiError } from "../../kx/errors";
-import { allTerminal, useProjection } from "../../kx/use-projection";
+import { type ProjectionVM, runSettled, useProjection } from "../../kx/use-projection";
 import { shortHex } from "../../lib/format";
 import { rootRoute } from "./__root";
+
+// Code-split: reactflow + dagre (~250 kB gzip) load only when a run's graph is
+// actually viewed — the connect/runs screens stay lightweight.
+const MoteDag = lazy(() =>
+  import("../../components/dag/MoteDag").then((m) => ({ default: m.MoteDag })),
+);
 
 const ROUTE_ID = "/runs/$instanceId";
 
 interface RunSearch {
   atSeq?: number;
+  /** The recipe's terminal (sink) Mote id (hex) — the authoritative poll-stop signal. */
+  terminal?: string;
+}
+
+type RunView = "dag" | "table";
+
+/** The Motes as a live DAG (default) or a status table — both read the same VM. */
+function RunBody({
+  projection,
+  view,
+  onView,
+}: {
+  projection: ProjectionVM;
+  view: RunView;
+  onView: (v: RunView) => void;
+}) {
+  return (
+    <>
+      <fieldset className="view-toggle" aria-label="Run view">
+        <button type="button" aria-pressed={view === "dag"} onClick={() => onView("dag")}>
+          Graph
+        </button>
+        <button type="button" aria-pressed={view === "table"} onClick={() => onView("table")}>
+          Table
+        </button>
+      </fieldset>
+      {view === "dag" ? (
+        <Suspense fallback={<EmptyState title="Loading graph…" />}>
+          <MoteDag projection={projection} />
+        </Suspense>
+      ) : (
+        <MoteTable projection={projection} />
+      )}
+    </>
+  );
 }
 
 function RunDetailScreen() {
@@ -26,10 +68,14 @@ function RunDetailScreen() {
 
 function RunDetailContent() {
   const { instanceId } = useParams({ from: ROUTE_ID });
-  const { atSeq } = useSearch({ from: ROUTE_ID });
-  const projection = useProjection(instanceId, atSeq != null ? { atSeq } : {});
+  const { atSeq, terminal } = useSearch({ from: ROUTE_ID });
+  const projection = useProjection(instanceId, {
+    ...(atSeq != null ? { atSeq } : {}),
+    ...(terminal ? { terminalMoteId: terminal } : {}),
+  });
   const data = projection.data;
-  const polling = atSeq == null && data != null && !allTerminal(data);
+  const polling = atSeq == null && data != null && !runSettled(data, terminal);
+  const [view, setView] = useState<RunView>("dag");
 
   return (
     <section className="screen">
@@ -62,7 +108,7 @@ function RunDetailContent() {
       {data ? (
         <>
           <ProjectionSummary projection={data} polling={polling} />
-          <MoteTable projection={data} />
+          <RunBody projection={data} view={view} onView={setView} />
         </>
       ) : null}
     </section>
@@ -73,9 +119,17 @@ export const runDetailRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: ROUTE_ID,
   validateSearch: (search: Record<string, unknown>): RunSearch => {
+    const out: RunSearch = {};
     const raw = search.atSeq;
     const n = typeof raw === "string" ? Number(raw) : typeof raw === "number" ? raw : Number.NaN;
-    return Number.isFinite(n) && n >= 0 ? { atSeq: Math.floor(n) } : {};
+    if (Number.isFinite(n) && n >= 0) {
+      out.atSeq = Math.floor(n);
+    }
+    // The terminal Mote id is a 32-byte (64 hex char) server-derived id.
+    if (typeof search.terminal === "string" && /^[0-9a-f]{64}$/.test(search.terminal)) {
+      out.terminal = search.terminal;
+    }
+    return out;
   },
   component: RunDetailScreen,
 });
