@@ -12,7 +12,10 @@
 use kx_mote::ModelId;
 use kx_warrant::WarrantSpec;
 
-use crate::types::{InferenceError, InferenceInput, InferenceOutput, InferenceParams};
+use crate::types::{
+    EmbeddingOutput, EmbeddingPooling, InferenceError, InferenceInput, InferenceOutput,
+    InferenceParams,
+};
 
 /// A single dispatch request, packaged as a reference-tuple so
 /// `batch_dispatch` doesn't force clones.
@@ -96,6 +99,65 @@ pub trait InferenceBackend: Send + Sync {
         items
             .iter()
             .map(|item| self.dispatch(item.model_id, item.input, item.params, item.warrant))
+            .collect()
+    }
+}
+
+/// The **embedding capability seam** (DP1 / T2.1, the D108.2-sanctioned
+/// `kx-inference` capability addition).
+///
+/// A *separate* trait — NOT a method on [`InferenceBackend`] — so that trait's
+/// source stays byte-stable and every existing backend remains valid without
+/// edit. A backend that can produce embeddings opts in by also implementing
+/// this; the default methods return `Err(Unsupported)`, so the seam is exercised
+/// (and degrades gracefully) even for backends that don't.
+///
+/// The `: InferenceBackend` supertrait bound keeps the dispatcher's existing
+/// `dyn InferenceBackend` set unaffected: a caller that wants embeddings holds an
+/// `&dyn EmbeddingBackend` (or the concrete backend) and calls
+/// [`Self::dispatch_embedding`] directly — embeddings are an ingest-time act, not
+/// a scheduler/executor `dispatch_mote` path, so the frozen control flow is
+/// untouched.
+pub trait EmbeddingBackend: InferenceBackend {
+    /// Embed `text` for `model_id` under `pooling`, enforcing the warrant's
+    /// model route (the backend MUST refuse a model the warrant did not
+    /// authorise, exactly like [`InferenceBackend::dispatch`]).
+    ///
+    /// # Errors
+    /// Returns [`InferenceError::Unsupported`] by default (a backend without the
+    /// embedding capability). A capable backend returns
+    /// [`InferenceError::WarrantDeniesModel`] when the model id does not match
+    /// the warrant route, [`InferenceError::ModelNotFound`] when it cannot serve
+    /// the model, [`InferenceError::Timeout`] on wall-clock expiry, and
+    /// [`InferenceError::BackendFailure`] on any backend-internal failure (incl.
+    /// an empty / untokenizable input).
+    fn dispatch_embedding(
+        &self,
+        model_id: &ModelId,
+        text: &str,
+        pooling: EmbeddingPooling,
+        warrant: &WarrantSpec,
+    ) -> Result<EmbeddingOutput, InferenceError> {
+        let _ = (model_id, text, pooling, warrant);
+        Err(InferenceError::Unsupported {
+            reason: "embedding not supported by this backend",
+        })
+    }
+
+    /// Embed a batch of texts under one `pooling` + `model_id`. The default maps
+    /// [`Self::dispatch_embedding`] per item; a future backend overrides this to
+    /// exploit a single multi-sequence decode (the seam, mirroring
+    /// [`InferenceBackend::batch_dispatch`], is what's load-bearing).
+    fn dispatch_embedding_batch(
+        &self,
+        model_id: &ModelId,
+        texts: &[&str],
+        pooling: EmbeddingPooling,
+        warrant: &WarrantSpec,
+    ) -> Vec<Result<EmbeddingOutput, InferenceError>> {
+        texts
+            .iter()
+            .map(|text| self.dispatch_embedding(model_id, text, pooling, warrant))
             .collect()
     }
 }

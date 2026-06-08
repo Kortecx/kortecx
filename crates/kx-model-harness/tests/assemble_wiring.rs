@@ -68,7 +68,8 @@ impl InferenceBackend for RecordingBackend {
     ) -> Result<InferenceOutput, InferenceError> {
         let text = match input {
             InferenceInput::Text(s) => s.clone(),
-            InferenceInput::Multimodal { text, .. } => text.clone(),
+            InferenceInput::Multimodal { text, .. }
+            | InferenceInput::TextForEmbedding { text, .. } => text.clone(),
         };
         self.inputs.lock().unwrap().push(text);
         Ok(InferenceOutput {
@@ -485,6 +486,9 @@ fn image_parent_routes_child_to_multimodal_input() {
             );
         }
         InferenceInput::Text(t) => panic!("child must get a Multimodal input, got Text({t:?})"),
+        InferenceInput::TextForEmbedding { .. } => {
+            panic!("child must get a Multimodal input, got an embedding request")
+        }
     }
 }
 

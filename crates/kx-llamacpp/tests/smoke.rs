@@ -795,6 +795,47 @@ fn smoke_embed_one_shot_determinism() {
     );
 }
 
+/// DP1: `embed_with(text, pooling)` is the general form of `embed`.
+///
+/// The load-bearing invariant the DP1 refactor must preserve: `embed` is exactly
+/// `embed_with(text, PoolingType::Mean)`, so the two MUST be byte-identical.
+/// Also proves `embed_with` is deterministic and that the alternate single-vector
+/// poolings (`Cls`/`Last`) are total — they either return an `n_embd`-length
+/// vector or a typed error, never a panic.
+#[test]
+fn smoke_embed_with_pooling_matches_mean_and_is_total() {
+    let backend = LlamaBackend::new().expect("backend init");
+    let model = Model::load(&backend, MODEL_PATH).expect("load");
+
+    // `embed` == `embed_with(_, Mean)` — the refactor invariant.
+    let via_embed = model.embed("hello world").expect("embed");
+    let via_with = model
+        .embed_with("hello world", PoolingType::Mean)
+        .expect("embed_with(Mean)");
+    assert_eq!(
+        via_embed, via_with,
+        "embed(text) must equal embed_with(text, Mean) byte-for-byte"
+    );
+
+    // Determinism on the general surface.
+    let again = model
+        .embed_with("hello world", PoolingType::Mean)
+        .expect("embed_with(Mean) again");
+    assert_eq!(via_with, again, "embed_with must be deterministic");
+
+    // Cls / Last are total: an n_embd vector or a typed Err — never a panic.
+    for pooling in [PoolingType::Cls, PoolingType::Last] {
+        match model.embed_with("hello world", pooling) {
+            Ok(v) => assert_eq!(
+                v.len() as i32,
+                model.n_embd(),
+                "pooled vector length must equal n_embd for {pooling:?}"
+            ),
+            Err(e) => eprintln!("embed_with(_, {pooling:?}) → typed Err (acceptable): {e}"),
+        }
+    }
+}
+
 /// HF-shaped chat-template support: `Model::chat_template(None)` returns the
 /// model's default template if it has one, else `None`. `apply_chat_template`
 /// is a pure-string transformation, so it's deterministic by construction.
