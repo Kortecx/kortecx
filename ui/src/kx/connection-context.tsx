@@ -13,8 +13,11 @@ import { useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, createContext, useCallback, useContext, useMemo, useState } from "react";
 import { type UiError, toUiError } from "./errors";
 
-/** Build a client for an endpoint + optional token. Injectable for tests. */
-export type ClientFactory = (endpoint: string, opts: { token?: string }) => KxClientBase;
+/** Build a client for an endpoint + optional token/ws-bridge. Injectable for tests. */
+export type ClientFactory = (
+  endpoint: string,
+  opts: { token?: string; wsEndpoint?: string },
+) => KxClientBase;
 
 const defaultFactory: ClientFactory = (endpoint, opts) => new KxClient(endpoint, opts);
 
@@ -23,14 +26,20 @@ export type ConnectionStatus = "disconnected" | "connecting" | "connected";
 export interface ConnectionState {
   readonly status: ConnectionStatus;
   readonly endpoint: string;
+  /**
+   * The explicit WS-bridge endpoint for the live event tail (`wsEvents`), or null
+   * to derive it from the gRPC endpoint (conventional port 50152). Non-secret.
+   */
+  readonly wsEndpoint: string | null;
   readonly client: KxClientBase | null;
   readonly error: UiError | null;
   /** Connect + probe; resolves `true` on success, `false` on a surfaced error. */
-  connect(endpoint: string, token?: string): Promise<boolean>;
+  connect(endpoint: string, token?: string, wsEndpoint?: string): Promise<boolean>;
   disconnect(): void;
 }
 
 const ENDPOINT_KEY = "kortecx.ui.endpoint";
+const WS_ENDPOINT_KEY = "kortecx.ui.wsEndpoint";
 
 /** Exported so tests can provide a connected state directly (DI). */
 export const ConnectionContext = createContext<ConnectionState | null>(null);
@@ -59,6 +68,26 @@ function persistEndpoint(endpoint: string): void {
   }
 }
 
+function loadWsEndpoint(): string | null {
+  try {
+    return localStorage.getItem(WS_ENDPOINT_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function persistWsEndpoint(wsEndpoint: string | null): void {
+  try {
+    if (wsEndpoint) {
+      localStorage.setItem(WS_ENDPOINT_KEY, wsEndpoint);
+    } else {
+      localStorage.removeItem(WS_ENDPOINT_KEY);
+    }
+  } catch {
+    /* best-effort */
+  }
+}
+
 export function KxConnectionProvider({
   children,
   createClient = defaultFactory,
@@ -69,15 +98,20 @@ export function KxConnectionProvider({
   const [endpoint, setEndpoint] = useState<string>(
     () => initialEndpoint ?? loadEndpoint(DEFAULT_ENDPOINT),
   );
+  const [wsEndpoint, setWsEndpoint] = useState<string | null>(() => loadWsEndpoint());
   const [client, setClient] = useState<KxClientBase | null>(null);
   const [error, setError] = useState<UiError | null>(null);
 
   const connect = useCallback(
-    async (ep: string, token?: string): Promise<boolean> => {
+    async (ep: string, token?: string, ws?: string): Promise<boolean> => {
       setStatus("connecting");
       setError(null);
+      const wsTrim = ws?.trim() ? ws.trim() : undefined;
       // The token is passed straight into the client (memory only) and dropped here.
-      const candidate = createClient(ep, token ? { token } : {});
+      const candidate = createClient(ep, {
+        ...(token ? { token } : {}),
+        ...(wsTrim ? { wsEndpoint: wsTrim } : {}),
+      });
       try {
         // Cheap unary probe. A real gRPC answer (even UNIMPLEMENTED) = reachable + authorized.
         await candidate.listSignatures();
@@ -93,8 +127,10 @@ export function KxConnectionProvider({
       }
       setClient(candidate);
       setEndpoint(ep);
+      setWsEndpoint(wsTrim ?? null);
       setStatus("connected");
       persistEndpoint(ep);
+      persistWsEndpoint(wsTrim ?? null);
       return true;
     },
     [createClient],
@@ -109,8 +145,8 @@ export function KxConnectionProvider({
   }, [client, queryClient]);
 
   const value = useMemo<ConnectionState>(
-    () => ({ status, endpoint, client, error, connect, disconnect }),
-    [status, endpoint, client, error, connect, disconnect],
+    () => ({ status, endpoint, wsEndpoint, client, error, connect, disconnect }),
+    [status, endpoint, wsEndpoint, client, error, connect, disconnect],
   );
 
   return <ConnectionContext.Provider value={value}>{children}</ConnectionContext.Provider>;

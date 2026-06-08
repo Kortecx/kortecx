@@ -5,7 +5,7 @@ import { useConnection } from "../../kx/connection-context";
 import { rootRoute } from "./__root";
 
 function ConnectScreen() {
-  const { status, endpoint, error, connect } = useConnection();
+  const { status, endpoint, wsEndpoint, error, connect } = useConnection();
   const navigate = useNavigate();
 
   return (
@@ -18,11 +18,12 @@ function ConnectScreen() {
       {error ? <ErrorNotice error={error} /> : null}
       <ConnectionForm
         initialEndpoint={endpoint}
+        initialWsEndpoint={wsEndpoint ?? ""}
         connecting={status === "connecting"}
-        onConnect={async (ep, token) => {
-          const ok = await connect(ep, token);
+        onConnect={async (ep, token, ws) => {
+          const ok = await connect(ep, token, ws);
           if (ok) {
-            navigate({ to: "/runs" });
+            navigate({ to: "/activity" });
           }
         }}
       />

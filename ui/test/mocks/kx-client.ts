@@ -8,6 +8,9 @@ export interface MockClientImpl {
   getProjection?: (...args: unknown[]) => Promise<unknown>;
   invoke?: (...args: unknown[]) => Promise<unknown>;
   getContent?: (...args: unknown[]) => Promise<unknown>;
+  getSignature?: (...args: unknown[]) => Promise<unknown>;
+  /** An async-iterable of `Delta`s (the live WS tail). */
+  wsEvents?: (...args: unknown[]) => AsyncIterable<unknown>;
 }
 
 export function makeMockClient(impl: MockClientImpl = {}) {
@@ -25,19 +28,36 @@ export function makeMockClient(impl: MockClientImpl = {}) {
       }),
   );
   const getContent = vi.fn(impl.getContent ?? (async () => new Uint8Array()));
+  const getSignature = vi.fn(impl.getSignature ?? (async () => new Uint8Array()));
+  // Default: an empty, immediately-ending stream.
+  const wsEvents = vi.fn(
+    impl.wsEvents ??
+      async function* () {
+        /* no events */
+      },
+  );
   const close = vi.fn();
   const client = {
     listSignatures,
     getProjection,
     invoke,
     getContent,
+    getSignature,
+    wsEvents,
     close,
     submitRun: vi.fn(),
-    getSignature: vi.fn(),
     registerSignature: vi.fn(),
     streamEvents: vi.fn(),
-    wsEvents: vi.fn(),
     endpoint: "http://127.0.0.1:50151",
   } as unknown as KxClientBase;
-  return { client, listSignatures, getProjection, invoke, getContent, close };
+  return {
+    client,
+    listSignatures,
+    getProjection,
+    invoke,
+    getContent,
+    getSignature,
+    wsEvents,
+    close,
+  };
 }

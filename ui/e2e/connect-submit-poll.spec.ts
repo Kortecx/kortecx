@@ -21,8 +21,10 @@ test("connect → submit echo → watch a Mote reach COMMITTED (real gRPC-web + 
   await expect(endpoint).toHaveValue(gw.endpoint);
   await page.getByRole("button", { name: /^connect$/i }).click();
 
-  // Lands on /runs (the echo handle is prefilled)
-  await expect(page.getByRole("heading", { name: /run a recipe/i })).toBeVisible();
+  // Lands on the Activity dashboard; go to Recipes to submit the echo recipe.
+  await expect(page.getByTestId("activity-panel")).toBeVisible({ timeout: 30_000 });
+  await page.getByTestId("nav-recipes").click();
+  await expect(page.getByRole("heading", { name: "Recipes", exact: true })).toBeVisible();
   await page.getByRole("button", { name: /submit run/i }).click();
 
   // Run-detail defaults to the live DAG: a Mote node appears and flips to COMMITTED

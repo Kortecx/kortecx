@@ -21,6 +21,7 @@ export function connectedWrapper(client: KxClientBase, endpoint = "http://127.0.
   const value: ConnectionState = {
     status: "connected",
     endpoint,
+    wsEndpoint: null,
     client,
     error: null,
     connect: vi.fn(async () => true),

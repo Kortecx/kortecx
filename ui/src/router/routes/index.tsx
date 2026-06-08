@@ -4,7 +4,7 @@ import { rootRoute } from "./__root";
 
 function IndexRedirect() {
   const { status } = useConnection();
-  return <Navigate to={status === "connected" ? "/runs" : "/connect"} />;
+  return <Navigate to={status === "connected" ? "/activity" : "/connect"} />;
 }
 
 export const indexRoute = createRoute({

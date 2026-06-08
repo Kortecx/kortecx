@@ -1,0 +1,53 @@
+import { render, screen } from "@testing-library/react";
+import { describe, expect, it } from "vitest";
+import { MessageBubble } from "../../src/components/chat/MessageBubble";
+import type { ChatMessage } from "../../src/lib/chat-thread";
+
+const msg = (m: Partial<ChatMessage> & Pick<ChatMessage, "role" | "status">): ChatMessage => ({
+  id: "1",
+  text: "",
+  ...m,
+});
+
+describe("MessageBubble", () => {
+  it("renders a user message", () => {
+    render(<MessageBubble message={msg({ role: "user", status: "done", text: "hello" })} />);
+    const bubble = screen.getByTestId("bubble-user");
+    expect(bubble).toHaveTextContent("hello");
+  });
+
+  it("an in-flight assistant shows the thinking indicator", () => {
+    render(<MessageBubble message={msg({ role: "assistant", status: "thinking" })} />);
+    expect(screen.getByTestId("bubble-thinking")).toBeInTheDocument();
+  });
+
+  it("a failed assistant renders an error notice", () => {
+    render(
+      <MessageBubble
+        message={msg({
+          role: "assistant",
+          status: "failed",
+          error: {
+            code: "run_failed",
+            kind: "generic",
+            title: "Run failed",
+            message: "boom",
+            retryable: false,
+          },
+        })}
+      />,
+    );
+    expect(screen.getByTestId("error-notice")).toBeInTheDocument();
+  });
+
+  it("a done assistant renders its text and slots a trace", () => {
+    render(
+      <MessageBubble
+        message={msg({ role: "assistant", status: "done", text: "the answer" })}
+        trace={<div data-testid="trace-slot" />}
+      />,
+    );
+    expect(screen.getByTestId("bubble-assistant")).toHaveTextContent("the answer");
+    expect(screen.getByTestId("trace-slot")).toBeInTheDocument();
+  });
+});
