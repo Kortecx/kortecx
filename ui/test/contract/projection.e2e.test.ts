@@ -13,7 +13,14 @@ import type { Result } from "@kortecx/sdk/node";
 import { afterAll, describe, expect, it } from "vitest";
 import { toUiError } from "../../src/kx/errors";
 import { toProjectionVM } from "../../src/kx/use-projection";
-import { ECHO_HANDLE, authServer, devServer, findOrBuildKx, stopAllServers } from "./serve";
+import {
+  ECHO_HANDLE,
+  FANOUT_HANDLE,
+  authServer,
+  devServer,
+  findOrBuildKx,
+  stopAllServers,
+} from "./serve";
 
 function cli(endpoint: string, ...argv: string[]): Record<string, unknown> {
   const out = execFileSync(findOrBuildKx(), [...argv, "--json", "--endpoint", endpoint], {
@@ -46,6 +53,46 @@ describe("UI data path against a real kx serve", () => {
     expect(terminal?.stateCode).toBe(3); // COMMITTED
     expect(terminal?.resultRef).toBeTruthy();
     expect(typeof terminal?.ndClass).toBe("number");
+  });
+
+  it("echo terminal Mote exposes an empty parents[] (the DAG-edge wire is live end-to-end)", async () => {
+    const s = await devServer();
+    const kx = new KxClient(s.endpoint);
+    const result = (await kx.invoke(ECHO_HANDLE, { topic: "edges" }, { wait: true })) as Result;
+    const proj = await kx.getProjection(result.instanceId);
+    kx.close();
+    const terminal = toProjectionVM(proj).motes.find((m) => m.moteId === result.terminalMoteId);
+    // The SDK→VM `parents` field is present and, for a single-node recipe, empty.
+    expect(Array.isArray(terminal?.parents)).toBe(true);
+    expect(terminal?.parents).toEqual([]);
+  });
+
+  it("fanout-demo → a multi-node projection whose parents[] form a real DAG", async () => {
+    const s = await devServer();
+    const kx = new KxClient(s.endpoint);
+    const result = (await kx.invoke(FANOUT_HANDLE, {}, { wait: true })) as Result;
+    expect(result.ok).toBe(true);
+    const proj = await kx.getProjection(result.instanceId);
+    kx.close();
+
+    const vm = toProjectionVM(proj);
+    // root + 3 children + gather, all driven to COMMITTED model-free.
+    expect(vm.motes).toHaveLength(5);
+    expect(vm.motes.every((m) => m.stateCode === 3)).toBe(true);
+
+    const ids = new Set(vm.motes.map((m) => m.moteId));
+    const edges = vm.motes.flatMap((m) => m.parents.map((p) => ({ child: m.moteId, ...p })));
+    // Referential integrity: every parent id resolves to a node in the projection.
+    expect(edges.every((e) => ids.has(e.parentId))).toBe(true);
+    // 3 fan-out edges (root→child) + 3 fan-in edges (child→gather) = 6 DATA edges.
+    expect(edges).toHaveLength(6);
+    expect(edges.every((e) => e.edgeKind === "data")).toBe(true);
+
+    // Exactly one root (no parents) and the terminal gather joins all three children.
+    const roots = vm.motes.filter((m) => m.parents.length === 0);
+    expect(roots).toHaveLength(1);
+    const gather = vm.motes.find((m) => m.moteId === result.terminalMoteId);
+    expect(gather?.parents).toHaveLength(3);
   });
 
   it("byte-parity: the SDK projection equals the CLI projection (the UI reads the same truth)", async () => {

@@ -25,9 +25,15 @@ test("connect → submit echo → watch a Mote reach COMMITTED (real gRPC-web + 
   await expect(page.getByRole("heading", { name: /run a recipe/i })).toBeVisible();
   await page.getByRole("button", { name: /submit run/i }).click();
 
-  // Run-detail: the DAG table appears and a Mote pill flips to COMMITTED via the poll loop.
-  await expect(page.getByTestId("mote-table")).toBeVisible({ timeout: 30_000 });
+  // Run-detail defaults to the live DAG: a Mote node appears and flips to COMMITTED
+  // via the projection poll loop (the real reactflow canvas + gRPC-web path).
+  await expect(page.getByTestId("mote-dag")).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId("mote-node").first()).toBeVisible({ timeout: 30_000 });
   await expect(page.getByTestId("state-pill").filter({ hasText: "COMMITTED" }).first()).toBeVisible(
     { timeout: 30_000 },
   );
+
+  // The table toggle still works (the proven scale + a11y surface stays reachable).
+  await page.getByRole("button", { name: /^table$/i }).click();
+  await expect(page.getByTestId("mote-table")).toBeVisible();
 });

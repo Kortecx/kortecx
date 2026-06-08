@@ -45,7 +45,14 @@ function RunsContent() {
     setArgsError(null);
     invoke.mutate(
       { handle: handle.trim(), args },
-      { onSuccess: (instanceId) => navigate({ to: "/runs/$instanceId", params: { instanceId } }) },
+      {
+        onSuccess: ({ instanceId, terminalMoteId }) =>
+          navigate({
+            to: "/runs/$instanceId",
+            params: { instanceId },
+            search: { terminal: terminalMoteId },
+          }),
+      },
     );
   }
 

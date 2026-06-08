@@ -16,6 +16,7 @@ import type {
 } from "./gen/kortecx/v1/gateway_pb.js";
 import { MoteSnapshotState } from "./gen/kortecx/v1/gateway_pb.js";
 import { encode } from "./hexids.js";
+import { ParentEdge } from "./parents.js";
 
 const STATE_NAMES: Record<number, string> = {
   [MoteSnapshotState.PENDING]: "PENDING",
@@ -52,6 +53,12 @@ export class MoteView {
     readonly moteDefHash: string,
     readonly committedSeq: number | null,
     readonly anomaly: number | null,
+    /**
+     * Inbound DAG edges (server-derived). Trailing + defaulted so existing
+     * positional callers keep working; deliberately NOT in `toJSON()` (the CLI
+     * `projection --json` shape carries no parents — byte-parity is load-bearing).
+     */
+    readonly parents: readonly ParentEdge[] = [],
   ) {}
 
   static fromProto(m: MoteSnapshot): MoteView {
@@ -65,6 +72,7 @@ export class MoteView {
       encode(m.moteDefHash),
       m.committedSeq !== undefined ? Number(m.committedSeq) : null,
       m.anomaly !== undefined ? m.anomaly : null,
+      m.parents.map((p) => ParentEdge.fromProto(p)),
     );
   }
 

@@ -1,8 +1,9 @@
 /**
  * Start a run by invoking a published recipe handle with JSON args. Returns the
- * run's hex instance id (no wait) so the caller can route to the live run-detail
- * view and watch it execute. The built-in `kx/recipes/echo` recipe makes this work
- * against a plain `kx serve` with no extra wiring.
+ * run's hex instance id + terminal (sink) Mote id (no wait) so the caller can route
+ * to the live run-detail view, watch it execute, and stop polling authoritatively
+ * when the terminal Mote commits. The built-in `kx/recipes/echo` recipe makes this
+ * work against a plain `kx serve` with no extra wiring.
  */
 
 import type { Run } from "@kortecx/sdk/web";
@@ -14,15 +15,21 @@ export interface InvokeVars {
   args: Record<string, unknown>;
 }
 
+/** The server-derived handles for a started run (both hex; the client never derives an id). */
+export interface StartedRun {
+  instanceId: string;
+  terminalMoteId: string;
+}
+
 export function useInvoke() {
   const { client } = useConnection();
-  return useMutation<string, unknown, InvokeVars>({
+  return useMutation<StartedRun, unknown, InvokeVars>({
     mutationFn: async ({ handle, args }) => {
       if (!client) {
         throw new Error("not connected");
       }
       const run = (await client.invoke(handle, args)) as Run;
-      return run.instanceId; // hex (16B)
+      return { instanceId: run.instanceId, terminalMoteId: run.terminalMoteId };
     },
   });
 }
