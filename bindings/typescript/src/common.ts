@@ -45,6 +45,9 @@ export type { RunPage } from "./runs.js";
 export { RecipeForm, RecipeFormField, recipeParamTypeName } from "./recipes.js";
 export type { RecipeParamTypeName } from "./recipes.js";
 
+export { TeamSummary, TeamMember, TeamMembers, WarrantView, teamsFromProto } from "./teams.js";
+export { GrantView, AssetGrants } from "./grants.js";
+
 export { WaitState } from "./wait.js";
 export type { WaitOutcome, WaitMode } from "./wait.js";
 

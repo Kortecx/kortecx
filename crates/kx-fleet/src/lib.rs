@@ -72,6 +72,9 @@ mod governed;
 mod in_memory;
 mod ledger;
 mod membership;
+mod membership_inner;
+mod sqlite_membership_ledger;
+mod sqlite_util;
 mod team;
 
 #[cfg(test)]
@@ -84,6 +87,7 @@ pub use ledger::{
     MemberRole, MembershipLedger, MembershipOutcome, TeamEdge, MAX_TEAM_MEMBERS_WALK,
 };
 pub use membership::{Admit, Disband, MembershipFact, MembershipId, Removal};
+pub use sqlite_membership_ledger::{SqliteMembershipLedger, MEMBERSHIP_LEDGER_SCHEMA_VERSION};
 pub use team::{Team, TeamId, FLEET_SCHEMA_VERSION};
 
 // REUSE (never modify) the M7.2 governance + frozen narrowing seams — one import

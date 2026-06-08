@@ -1276,8 +1276,10 @@ dependencies = [
  "kx-mote",
  "kx-warrant",
  "proptest",
+ "rusqlite",
  "serde",
  "smallvec",
+ "tempfile",
  "thiserror",
  "tracing",
 ]
@@ -1293,6 +1295,7 @@ dependencies = [
  "kx-content",
  "kx-coordinator",
  "kx-executor",
+ "kx-fleet",
  "kx-gateway-core",
  "kx-inference",
  "kx-invoke",

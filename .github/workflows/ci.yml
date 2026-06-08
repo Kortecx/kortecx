@@ -431,8 +431,8 @@ jobs:
   # against the FROZEN proto (codegen-fresh), then runs ruff + mypy + the unit and
   # contract-e2e suites (which spin up a real `kx serve` and compare the SDK's
   # results to the `kx` CLI, byte-for-byte). Pure client + packaging — NO submodules,
-  # NO C++ toolchain. NON-REQUIRED: a new context, not in branch protection (promote
-  # to required once green, via a separate authorized change). Mirrors verify-quickstart.
+  # NO C++ toolchain. REQUIRED: promoted to a branch-protection check once green.
+  # Mirrors verify-quickstart.
   # ---------------------------------------------------------------------------
   sdk-python:
     name: sdk-python (gRPC client SDK — contract tests + codegen-fresh)
@@ -499,8 +499,8 @@ jobs:
   # fresh against the FROZEN proto (codegen-fresh), then runs biome + tsc + the
   # unit and contract-e2e suites (which spin up a real `kx serve` and reproduce the
   # `kx` CLI output byte-for-byte). Pure gRPC client — NO submodules, NO C++, NO
-  # napi. NON-REQUIRED: a new context, not in branch protection (promote once
-  # green via a separate authorized change). Mirrors sdk-python.
+  # napi. REQUIRED: promoted to a branch-protection check once green. Mirrors
+  # sdk-python.
   # ---------------------------------------------------------------------------
   sdk-typescript:
     name: sdk-typescript (gRPC client SDK — contract tests + codegen-fresh)
@@ -565,8 +565,8 @@ jobs:
   # the contract test drives a real `kx serve`), builds the production bundle, and
   # runs the browser E2E (Playwright/chromium against a real CORS-enabled gateway,
   # deterministic no-model echo path). Pure gRPC-web client — NO submodules, NO C++.
-  # NON-REQUIRED: a new context, not in branch protection (promote once green via a
-  # separate authorized change). Mirrors sdk-typescript / verify-quickstart.
+  # REQUIRED: promoted to a branch-protection check once green. Mirrors
+  # sdk-typescript / verify-quickstart.
   # ---------------------------------------------------------------------------
   ui:
     name: ui (React/Vite dashboard shell — biome + tsc + vitest + build + Playwright)

@@ -63,6 +63,9 @@ mod provision;
 #[cfg(feature = "embedded-worker")]
 mod real_exec;
 mod server;
+// UI-3: the host-side teams (MembershipView) + grants (GrantView) read seams + the
+// idempotent demo-team seed.
+mod teams;
 mod tls;
 #[cfg(feature = "embedded-worker")]
 mod ws;
@@ -76,6 +79,7 @@ pub use provision::{
     EXEC_RECIPE_HANDLE, FANOUT_RECIPE_HANDLE, MODEL_RECIPE_HANDLE,
 };
 pub use server::{serve, start, RunningGateway};
+pub use teams::{seed_demo_team, HostGrantView, HostMembershipView, DEMO_TEAM_HANDLE};
 
 #[cfg(feature = "embedded-worker")]
 pub use server::{default_executor_class, demo_pure_result, demo_submit_run_request};

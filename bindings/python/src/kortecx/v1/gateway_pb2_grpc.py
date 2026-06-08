@@ -93,6 +93,21 @@ class KxGatewayStub(object):
                 request_serializer=kortecx_dot_v1_dot_gateway__pb2.GetRecipeFormRequest.SerializeToString,
                 response_deserializer=kortecx_dot_v1_dot_gateway__pb2.GetRecipeFormResponse.FromString,
                 _registered_method=True)
+        self.ListTeams = channel.unary_unary(
+                '/kortecx.v1.KxGateway/ListTeams',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.ListTeamsRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.ListTeamsResponse.FromString,
+                _registered_method=True)
+        self.ListTeamMembers = channel.unary_unary(
+                '/kortecx.v1.KxGateway/ListTeamMembers',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.ListTeamMembersRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.ListTeamMembersResponse.FromString,
+                _registered_method=True)
+        self.ListAssetGrants = channel.unary_unary(
+                '/kortecx.v1.KxGateway/ListAssetGrants',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.ListAssetGrantsRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.ListAssetGrantsResponse.FromString,
+                _registered_method=True)
 
 
 class KxGatewayServicer(object):
@@ -169,6 +184,25 @@ class KxGatewayServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def ListTeams(self, request, context):
+        """UI-3 additive (D120.6): teams (membership) + sharing (grants) read viewers.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ListTeamMembers(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ListAssetGrants(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_KxGatewayServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -226,6 +260,21 @@ def add_KxGatewayServicer_to_server(servicer, server):
                     servicer.GetRecipeForm,
                     request_deserializer=kortecx_dot_v1_dot_gateway__pb2.GetRecipeFormRequest.FromString,
                     response_serializer=kortecx_dot_v1_dot_gateway__pb2.GetRecipeFormResponse.SerializeToString,
+            ),
+            'ListTeams': grpc.unary_unary_rpc_method_handler(
+                    servicer.ListTeams,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.ListTeamsRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.ListTeamsResponse.SerializeToString,
+            ),
+            'ListTeamMembers': grpc.unary_unary_rpc_method_handler(
+                    servicer.ListTeamMembers,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.ListTeamMembersRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.ListTeamMembersResponse.SerializeToString,
+            ),
+            'ListAssetGrants': grpc.unary_unary_rpc_method_handler(
+                    servicer.ListAssetGrants,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.ListAssetGrantsRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.ListAssetGrantsResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -529,6 +578,87 @@ class KxGateway(object):
             '/kortecx.v1.KxGateway/GetRecipeForm',
             kortecx_dot_v1_dot_gateway__pb2.GetRecipeFormRequest.SerializeToString,
             kortecx_dot_v1_dot_gateway__pb2.GetRecipeFormResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ListTeams(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/ListTeams',
+            kortecx_dot_v1_dot_gateway__pb2.ListTeamsRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.ListTeamsResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ListTeamMembers(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/ListTeamMembers',
+            kortecx_dot_v1_dot_gateway__pb2.ListTeamMembersRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.ListTeamMembersResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ListAssetGrants(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/ListAssetGrants',
+            kortecx_dot_v1_dot_gateway__pb2.ListAssetGrantsRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.ListAssetGrantsResponse.FromString,
             options,
             channel_credentials,
             insecure,

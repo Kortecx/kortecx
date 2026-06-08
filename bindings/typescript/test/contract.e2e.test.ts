@@ -360,3 +360,66 @@ describe("UI-2 recipe catalog", () => {
     kx.close();
   });
 });
+
+// --- UI-3: teams (membership) + sharing (grants) viewers ---------------------
+
+const DEMO_TEAM = "kx/teams/demo";
+
+describe("UI-3 teams viewer", () => {
+  it("listTeams enumerates the bootstrap-seeded demo team", async () => {
+    const s = await devServer();
+    const kx = new KxClient(s.endpoint);
+    const teams = await kx.listTeams();
+    kx.close();
+    const demo = teams.find((t) => t.teamId === DEMO_TEAM);
+    expect(demo).toBeDefined();
+    expect(demo?.owner).toBe("kx-gateway");
+    expect(demo?.memberCount).toBeGreaterThanOrEqual(1);
+  });
+
+  it("listTeamMembers shows roles + a delegate; resolves a warrant only with assetRef", async () => {
+    const s = await devServer();
+    const kx = new KxClient(s.endpoint);
+    const members = await kx.listTeamMembers(DEMO_TEAM);
+    expect(members.owner).toBe("kx-gateway");
+    expect(members.members.length).toBeGreaterThanOrEqual(1);
+    expect(members.members.filter((m) => m.isDelegate)).toHaveLength(1);
+    expect(members.members.every((m) => m.resolvedWarrant === null)).toBe(true);
+
+    // With the echo asset: a member resolves a warrant ⊆ the team (no escalation).
+    const withAsset = await kx.listTeamMembers(DEMO_TEAM, { assetRef: ECHO_HANDLE });
+    kx.close();
+    const resolved = withAsset.members.find((m) => m.resolvedWarrant !== null);
+    expect(resolved?.resolvedWarrant?.maxCalls).toBeLessThanOrEqual(3);
+  });
+
+  it("listTeamMembers for an unknown team throws KxNotFound (honest viewer)", async () => {
+    const s = await devServer();
+    const kx = new KxClient(s.endpoint);
+    await expect(kx.listTeamMembers("kx/teams/nope")).rejects.toBeInstanceOf(KxNotFound);
+    kx.close();
+  });
+});
+
+describe("UI-3 sharing inspector", () => {
+  it("listAssetGrants shows the recipe + team grants on echo", async () => {
+    const s = await devServer();
+    const kx = new KxClient(s.endpoint);
+    const grants = await kx.listAssetGrants(ECHO_HANDLE);
+    kx.close();
+    expect(grants.owner).toBe("kx-gateway");
+    const teamGrant = grants.grants.find((g) => g.grantee === DEMO_TEAM);
+    expect(teamGrant?.status).toBe("root");
+    expect(teamGrant?.actions).toContain("Use");
+    expect(grants.grants.every((g) => !g.revoked)).toBe(true);
+  });
+
+  it("listAssetGrants for an unknown asset throws KxNotFound", async () => {
+    const s = await devServer();
+    const kx = new KxClient(s.endpoint);
+    await expect(kx.listAssetGrants("kx/recipes/does-not-exist")).rejects.toBeInstanceOf(
+      KxNotFound,
+    );
+    kx.close();
+  });
+});

@@ -31,6 +31,12 @@ kx-warrant      = { workspace = true }
 # `bincode` (+ canonical_config from kx-catalog) round-trips a SignatureEntry to
 # the opaque wire `manifest` bytes and server-derives its id.
 kx-catalog      = { workspace = true }
+# UI-3: the membership ledger (teams) — the durable SqliteMembershipLedger seeded
+# with a demo team + the GovernedFleet resolve surface (membership ∩ grant). FFI-free
+# (kx-fleet depends only on kx-catalog/kx-warrant + rusqlite, already in the closure;
+# the dep_wall forbids only the llama.cpp FFI crates). The view seams it backs live in
+# this host binary so kx-gateway-core stays off kx-fleet (the dependency wall).
+kx-fleet        = { workspace = true }
 bincode         = { workspace = true }
 # R2b: the inbound recipe-by-handle execution path (resolve→validate→bind→
 # intersect) + the recipe types the host provisions the demo library from. All

@@ -344,3 +344,101 @@ class GetRecipeFormResponse(_message.Message):
     handle: str
     fields: _containers.RepeatedCompositeFieldContainer[RecipeFormField]
     def __init__(self, handle: _Optional[str] = ..., fields: _Optional[_Iterable[_Union[RecipeFormField, _Mapping]]] = ...) -> None: ...
+
+class ListTeamsRequest(_message.Message):
+    __slots__ = ()
+    def __init__(self) -> None: ...
+
+class TeamSummary(_message.Message):
+    __slots__ = ("team_id", "display_name", "owner", "member_count")
+    TEAM_ID_FIELD_NUMBER: _ClassVar[int]
+    DISPLAY_NAME_FIELD_NUMBER: _ClassVar[int]
+    OWNER_FIELD_NUMBER: _ClassVar[int]
+    MEMBER_COUNT_FIELD_NUMBER: _ClassVar[int]
+    team_id: str
+    display_name: str
+    owner: str
+    member_count: int
+    def __init__(self, team_id: _Optional[str] = ..., display_name: _Optional[str] = ..., owner: _Optional[str] = ..., member_count: _Optional[int] = ...) -> None: ...
+
+class ListTeamsResponse(_message.Message):
+    __slots__ = ("teams",)
+    TEAMS_FIELD_NUMBER: _ClassVar[int]
+    teams: _containers.RepeatedCompositeFieldContainer[TeamSummary]
+    def __init__(self, teams: _Optional[_Iterable[_Union[TeamSummary, _Mapping]]] = ...) -> None: ...
+
+class ListTeamMembersRequest(_message.Message):
+    __slots__ = ("team_id", "asset_ref")
+    TEAM_ID_FIELD_NUMBER: _ClassVar[int]
+    ASSET_REF_FIELD_NUMBER: _ClassVar[int]
+    team_id: str
+    asset_ref: str
+    def __init__(self, team_id: _Optional[str] = ..., asset_ref: _Optional[str] = ...) -> None: ...
+
+class WarrantView(_message.Message):
+    __slots__ = ("executor_class", "model_route", "net_scope", "fs_scope", "max_calls", "cpu_milli", "wall_clock_ms")
+    EXECUTOR_CLASS_FIELD_NUMBER: _ClassVar[int]
+    MODEL_ROUTE_FIELD_NUMBER: _ClassVar[int]
+    NET_SCOPE_FIELD_NUMBER: _ClassVar[int]
+    FS_SCOPE_FIELD_NUMBER: _ClassVar[int]
+    MAX_CALLS_FIELD_NUMBER: _ClassVar[int]
+    CPU_MILLI_FIELD_NUMBER: _ClassVar[int]
+    WALL_CLOCK_MS_FIELD_NUMBER: _ClassVar[int]
+    executor_class: str
+    model_route: str
+    net_scope: str
+    fs_scope: str
+    max_calls: int
+    cpu_milli: int
+    wall_clock_ms: int
+    def __init__(self, executor_class: _Optional[str] = ..., model_route: _Optional[str] = ..., net_scope: _Optional[str] = ..., fs_scope: _Optional[str] = ..., max_calls: _Optional[int] = ..., cpu_milli: _Optional[int] = ..., wall_clock_ms: _Optional[int] = ...) -> None: ...
+
+class TeamMember(_message.Message):
+    __slots__ = ("party", "role", "action_caps", "resolved_warrant")
+    PARTY_FIELD_NUMBER: _ClassVar[int]
+    ROLE_FIELD_NUMBER: _ClassVar[int]
+    ACTION_CAPS_FIELD_NUMBER: _ClassVar[int]
+    RESOLVED_WARRANT_FIELD_NUMBER: _ClassVar[int]
+    party: str
+    role: str
+    action_caps: _containers.RepeatedScalarFieldContainer[str]
+    resolved_warrant: WarrantView
+    def __init__(self, party: _Optional[str] = ..., role: _Optional[str] = ..., action_caps: _Optional[_Iterable[str]] = ..., resolved_warrant: _Optional[_Union[WarrantView, _Mapping]] = ...) -> None: ...
+
+class ListTeamMembersResponse(_message.Message):
+    __slots__ = ("owner", "members")
+    OWNER_FIELD_NUMBER: _ClassVar[int]
+    MEMBERS_FIELD_NUMBER: _ClassVar[int]
+    owner: str
+    members: _containers.RepeatedCompositeFieldContainer[TeamMember]
+    def __init__(self, owner: _Optional[str] = ..., members: _Optional[_Iterable[_Union[TeamMember, _Mapping]]] = ...) -> None: ...
+
+class ListAssetGrantsRequest(_message.Message):
+    __slots__ = ("asset_ref",)
+    ASSET_REF_FIELD_NUMBER: _ClassVar[int]
+    asset_ref: str
+    def __init__(self, asset_ref: _Optional[str] = ...) -> None: ...
+
+class GrantView(_message.Message):
+    __slots__ = ("grantor", "grantee", "actions", "runtime_scope", "is_root", "revoked")
+    GRANTOR_FIELD_NUMBER: _ClassVar[int]
+    GRANTEE_FIELD_NUMBER: _ClassVar[int]
+    ACTIONS_FIELD_NUMBER: _ClassVar[int]
+    RUNTIME_SCOPE_FIELD_NUMBER: _ClassVar[int]
+    IS_ROOT_FIELD_NUMBER: _ClassVar[int]
+    REVOKED_FIELD_NUMBER: _ClassVar[int]
+    grantor: str
+    grantee: str
+    actions: _containers.RepeatedScalarFieldContainer[str]
+    runtime_scope: str
+    is_root: bool
+    revoked: bool
+    def __init__(self, grantor: _Optional[str] = ..., grantee: _Optional[str] = ..., actions: _Optional[_Iterable[str]] = ..., runtime_scope: _Optional[str] = ..., is_root: bool = ..., revoked: bool = ...) -> None: ...
+
+class ListAssetGrantsResponse(_message.Message):
+    __slots__ = ("owner", "grants")
+    OWNER_FIELD_NUMBER: _ClassVar[int]
+    GRANTS_FIELD_NUMBER: _ClassVar[int]
+    owner: str
+    grants: _containers.RepeatedCompositeFieldContainer[GrantView]
+    def __init__(self, owner: _Optional[str] = ..., grants: _Optional[_Iterable[_Union[GrantView, _Mapping]]] = ...) -> None: ...

@@ -20,6 +20,11 @@ pub enum MembershipLedgerError {
     /// owner; re-founding to a new owner is refused (the founding is genesis).
     #[error("team ownership conflict: {0}")]
     OwnerConflict(String),
+    /// A durable-backend storage failure (SQLite open / I/O / schema mismatch /
+    /// corrupt row) — only the durable [`crate::SqliteMembershipLedger`] raises it;
+    /// the in-memory backend is infallible. Mirrors `kx_catalog::LedgerError::Storage`.
+    #[error("membership ledger storage: {0}")]
+    Storage(String),
 }
 
 /// A composed [`crate::GovernedFleet`] resolution failure.

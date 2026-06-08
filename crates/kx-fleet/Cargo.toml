@@ -37,9 +37,17 @@ serde       = { workspace = true }
 thiserror   = { workspace = true }
 # Append observability (debug-level only; never on the truth path).
 tracing     = { workspace = true }
+# G1a (D94) — the durable SQLite MembershipLedger backend (the SAME `bundled` static
+# SQLite the catalog/journal use, identical `{ workspace = true }` line so feature
+# unification never shifts Cargo.lock). kx-fleet is OFF the guarantee path, so adding
+# rusqlite here adds no spine→fleet edge (the SN-8 wall is enforced by the dependency
+# direction, not by which storage crate this leaf pulls).
+rusqlite    = { workspace = true }
 
 [dev-dependencies]
 proptest = { workspace = true }
+# TEST-ONLY: a scratch dir for the durable write→drop→reopen parity tests.
+tempfile = { workspace = true }
 # TEST-ONLY: kx_mote::ModelId to build a positive `ModelRoute` (kx_warrant::intersect
 # rejects a zero model_route). Production depends ONLY on kx-catalog/kx-warrant; a
 # dev-dep does not widen the dependency wall (and kx-mote sits below everything).

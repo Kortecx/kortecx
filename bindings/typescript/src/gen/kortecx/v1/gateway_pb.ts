@@ -37,7 +37,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file kortecx/v1/gateway.proto.
  */
 export const file_kortecx_v1_gateway: GenFile = /*@__PURE__*/
-  fileDesc("Chhrb3J0ZWN4L3YxL2dhdGV3YXkucHJvdG8SCmtvcnRlY3gudjEiWQoQU3VibWl0UnVuUmVxdWVzdBIaChJyZWNpcGVfZmluZ2VycHJpbnQYASABKAwSKQoFbW90ZXMYAiADKAsyGi5rb3J0ZWN4LnYxLlN1Ym1pdE1vdGVTcGVjIngKDlN1Ym1pdE1vdGVTcGVjEh4KBG1vdGUYASABKAsyEC5rb3J0ZWN4LnYxLk1vdGUSKAoHd2FycmFudBgCIAEoCzIXLmtvcnRlY3gudjEuV2FycmFudFNwZWMSHAoUYWNjZXB0X2F0X2xlYXN0X29uY2UYAyABKAgiPAoJUnVuSGFuZGxlEhMKC2luc3RhbmNlX2lkGAEgASgMEhoKEnJlY2lwZV9maW5nZXJwcmludBgCIAEoDCItCg1JbnZva2VSZXF1ZXN0Eg4KBmhhbmRsZRgBIAEoCRIMCgRhcmdzGAIgASgMIlsKDkludm9rZVJlc3BvbnNlEhMKC2luc3RhbmNlX2lkGAEgASgMEhoKEnJlY2lwZV9maW5nZXJwcmludBgCIAEoDBIYChB0ZXJtaW5hbF9tb3RlX2lkGAMgASgMIksKFEdldFByb2plY3Rpb25SZXF1ZXN0EhMKC2luc3RhbmNlX2lkGAEgASgMEhMKBmF0X3NlcRgCIAEoBEgAiAEBQgkKB19hdF9zZXEifwoOUHJvamVjdGlvblZpZXcSEwoLaW5zdGFuY2VfaWQYASABKAwSGgoScmVjaXBlX2ZpbmdlcnByaW50GAIgASgMEhMKC2N1cnJlbnRfc2VxGAMgASgEEicKBW1vdGVzGAQgAygLMhgua29ydGVjeC52MS5Nb3RlU25hcHNob3QivwMKDE1vdGVTbmFwc2hvdBIPCgdtb3RlX2lkGAEgASgMEiwKBXN0YXRlGAIgASgOMh0ua29ydGVjeC52MS5Nb3RlU25hcHNob3RTdGF0ZRIlCghuZF9jbGFzcxgDIAEoDjITLmtvcnRlY3gudjEuTmRDbGFzcxItCglwcm9tb3Rpb24YBCABKA4yGi5rb3J0ZWN4LnYxLlByb21vdGlvblN0YXRlEhcKCnJlc3VsdF9yZWYYBSABKAxIAIgBARIYCgt3YXJyYW50X3JlZhgGIAEoDEgBiAEBEhUKDW1vdGVfZGVmX2hhc2gYByABKAwSGgoNY29tbWl0dGVkX3NlcRgIIAEoBEgCiAEBEiYKB3BhcmVudHMYCSADKAsyFS5rb3J0ZWN4LnYxLlBhcmVudFJlZhIUCgd2ZXJkaWN0GAogASgMSAOIAQESLQoHYW5vbWFseRgLIAEoDjIXLmtvcnRlY3gudjEuTW90ZUFub21hbHlIBIgBAUINCgtfcmVzdWx0X3JlZkIOCgxfd2FycmFudF9yZWZCEAoOX2NvbW1pdHRlZF9zZXFCCgoIX3ZlcmRpY3RCCgoIX2Fub21hbHkiPQoRR2V0Q29udGVudFJlcXVlc3QSEwoLY29udGVudF9yZWYYASABKAwSEwoLaW5zdGFuY2VfaWQYAiABKAwiHgoLQ29udGVudEJsb2ISDwoHcGF5bG9hZBgBIAEoDCI9ChNTdHJlYW1FdmVudHNSZXF1ZXN0EhMKC2luc3RhbmNlX2lkGAEgASgMEhEKCXNpbmNlX3NlcRgCIAEoBCJtCgpFdmVudEZyYW1lEgsKA3NlcRgBIAEoBBImCgZkZWx0YXMYAiADKAsyFi5rb3J0ZWN4LnYxLkV2ZW50RGVsdGESEAoIbmV4dF9zZXEYAyABKAQSGAoQam91cm5hbF9ib3VuZGFyeRgEIAEoCCLoAQoKRXZlbnREZWx0YRILCgNzZXEYASABKAQSLwoJY29tbWl0dGVkGAIgASgLMhoua29ydGVjeC52MS5Db21taXR0ZWREZWx0YUgAEikKBmZhaWxlZBgDIAEoCzIXLmtvcnRlY3gudjEuRmFpbGVkRGVsdGFIABIxCgpyZXB1ZGlhdGVkGAQgASgLMhsua29ydGVjeC52MS5SZXB1ZGlhdGVkRGVsdGFIABI2Cg1lZmZlY3Rfc3RhZ2VkGAUgASgLMh0ua29ydGVjeC52MS5FZmZlY3RTdGFnZWREZWx0YUgAQgYKBGtpbmQiXAoOQ29tbWl0dGVkRGVsdGESDwoHbW90ZV9pZBgBIAEoDBISCgpyZXN1bHRfcmVmGAIgASgMEiUKCG5kX2NsYXNzGAMgASgOMhMua29ydGVjeC52MS5OZENsYXNzIjQKC0ZhaWxlZERlbHRhEg8KB21vdGVfaWQYASABKAwSFAoMcmVhc29uX2NsYXNzGAIgASgNIkcKD1JlcHVkaWF0ZWREZWx0YRIWCg50YXJnZXRfbW90ZV9pZBgBIAEoDBIcChR0YXJnZXRfY29tbWl0dGVkX3NlcRgCIAEoBCIkChFFZmZlY3RTdGFnZWREZWx0YRIPCgdtb3RlX2lkGAEgASgMIhcKFUxpc3RTaWduYXR1cmVzUmVxdWVzdCI2ChBTaWduYXR1cmVTdW1tYXJ5EhQKDHNpZ25hdHVyZV9pZBgBIAEoDBIMCgRuYW1lGAIgASgJIkoKFkxpc3RTaWduYXR1cmVzUmVzcG9uc2USMAoKc2lnbmF0dXJlcxgBIAMoCzIcLmtvcnRlY3gudjEuU2lnbmF0dXJlU3VtbWFyeSIrChNHZXRTaWduYXR1cmVSZXF1ZXN0EhQKDHNpZ25hdHVyZV9pZBgBIAEoDCI+ChRHZXRTaWduYXR1cmVSZXNwb25zZRIUCgxzaWduYXR1cmVfaWQYASABKAwSEAoIbWFuaWZlc3QYAiABKAwiLAoYUmVnaXN0ZXJTaWduYXR1cmVSZXF1ZXN0EhAKCG1hbmlmZXN0GAEgASgMIjEKGVJlZ2lzdGVyU2lnbmF0dXJlUmVzcG9uc2USFAoMc2lnbmF0dXJlX2lkGAEgASgMIlcKD0xpc3RSdW5zUmVxdWVzdBISCgVsaW1pdBgBIAEoDUgAiAEBEhcKCmJlZm9yZV9zZXEYAiABKARIAYgBAUIICgZfbGltaXRCDQoLX2JlZm9yZV9zZXEicQoKUnVuU3VtbWFyeRITCgtpbnN0YW5jZV9pZBgBIAEoDBIaChJyZWNpcGVfZmluZ2VycHJpbnQYAiABKAwSFgoOcmVnaXN0ZXJlZF9zZXEYAyABKAQSGgoScmVnaXN0ZXJlZF91bml4X21zGAQgASgEIkoKEExpc3RSdW5zUmVzcG9uc2USJAoEcnVucxgBIAMoCzIWLmtvcnRlY3gudjEuUnVuU3VtbWFyeRIQCghoYXNfbW9yZRgCIAEoCCIUChJMaXN0UmVjaXBlc1JlcXVlc3QiHwoNUmVjaXBlU3VtbWFyeRIOCgZoYW5kbGUYASABKAkiQQoTTGlzdFJlY2lwZXNSZXNwb25zZRIqCgdyZWNpcGVzGAEgAygLMhkua29ydGVjeC52MS5SZWNpcGVTdW1tYXJ5IiYKFEdldFJlY2lwZUZvcm1SZXF1ZXN0Eg4KBmhhbmRsZRgBIAEoCSKPAQoPUmVjaXBlRm9ybUZpZWxkEgwKBG5hbWUYASABKAkSKQoEdHlwZRgCIAEoDjIbLmtvcnRlY3gudjEuUmVjaXBlUGFyYW1UeXBlEhAKCHJlcXVpcmVkGAMgASgIEhQKB21heF9sZW4YBCABKARIAIgBARIPCgdhbGxvd2VkGAUgAygJQgoKCF9tYXhfbGVuIlQKFUdldFJlY2lwZUZvcm1SZXNwb25zZRIOCgZoYW5kbGUYASABKAkSKwoGZmllbGRzGAIgAygLMhsua29ydGVjeC52MS5SZWNpcGVGb3JtRmllbGQqiQIKEU1vdGVTbmFwc2hvdFN0YXRlEiMKH01PVEVfU05BUFNIT1RfU1RBVEVfVU5TUEVDSUZJRUQQABIfChtNT1RFX1NOQVBTSE9UX1NUQVRFX1BFTkRJTkcQARIhCh1NT1RFX1NOQVBTSE9UX1NUQVRFX1NDSEVEVUxFRBACEiEKHU1PVEVfU05BUFNIT1RfU1RBVEVfQ09NTUlUVEVEEAMSHgoaTU9URV9TTkFQU0hPVF9TVEFURV9GQUlMRUQQBBIiCh5NT1RFX1NOQVBTSE9UX1NUQVRFX1JFUFVESUFURUQQBRIkCiBNT1RFX1NOQVBTSE9UX1NUQVRFX0lOQ09OU0lTVEVOVBAGKpMBCg5Qcm9tb3Rpb25TdGF0ZRIfChtQUk9NT1RJT05fU1RBVEVfVU5TUEVDSUZJRUQQABIiCh5QUk9NT1RJT05fU1RBVEVfTk9UX0FQUExJQ0FCTEUQARIeChpQUk9NT1RJT05fU1RBVEVfVU5QUk9NT1RFRBACEhwKGFBST01PVElPTl9TVEFURV9QUk9NT1RFRBADKpsBCgtNb3RlQW5vbWFseRIcChhNT1RFX0FOT01BTFlfVU5TUEVDSUZJRUQQABI7CjdNT1RFX0FOT01BTFlfRUZGRUNUX1NUQUdFRF9USEVOX1JFUFVESUFURURfTk9fQ09NTUlUVEVEEAESMQotTU9URV9BTk9NQUxZX1FVQVJBTlRJTkVEX0FUX0xFQVNUX09OQ0VfRUZGRUNUEAIqvwEKD1JlY2lwZVBhcmFtVHlwZRIhCh1SRUNJUEVfUEFSQU1fVFlQRV9VTlNQRUNJRklFRBAAEhkKFVJFQ0lQRV9QQVJBTV9UWVBFX1NUUhABEhkKFVJFQ0lQRV9QQVJBTV9UWVBFX0lOVBACEhoKFlJFQ0lQRV9QQVJBTV9UWVBFX0JPT0wQAxIbChdSRUNJUEVfUEFSQU1fVFlQRV9CWVRFUxAEEhoKFlJFQ0lQRV9QQVJBTV9UWVBFX0VOVU0QBTLpBgoJS3hHYXRld2F5EkAKCVN1Ym1pdFJ1bhIcLmtvcnRlY3gudjEuU3VibWl0UnVuUmVxdWVzdBoVLmtvcnRlY3gudjEuUnVuSGFuZGxlEj8KBkludm9rZRIZLmtvcnRlY3gudjEuSW52b2tlUmVxdWVzdBoaLmtvcnRlY3gudjEuSW52b2tlUmVzcG9uc2USTQoNR2V0UHJvamVjdGlvbhIgLmtvcnRlY3gudjEuR2V0UHJvamVjdGlvblJlcXVlc3QaGi5rb3J0ZWN4LnYxLlByb2plY3Rpb25WaWV3EkQKCkdldENvbnRlbnQSHS5rb3J0ZWN4LnYxLkdldENvbnRlbnRSZXF1ZXN0Ghcua29ydGVjeC52MS5Db250ZW50QmxvYhJJCgxTdHJlYW1FdmVudHMSHy5rb3J0ZWN4LnYxLlN0cmVhbUV2ZW50c1JlcXVlc3QaFi5rb3J0ZWN4LnYxLkV2ZW50RnJhbWUwARJXCg5MaXN0U2lnbmF0dXJlcxIhLmtvcnRlY3gudjEuTGlzdFNpZ25hdHVyZXNSZXF1ZXN0GiIua29ydGVjeC52MS5MaXN0U2lnbmF0dXJlc1Jlc3BvbnNlElEKDEdldFNpZ25hdHVyZRIfLmtvcnRlY3gudjEuR2V0U2lnbmF0dXJlUmVxdWVzdBogLmtvcnRlY3gudjEuR2V0U2lnbmF0dXJlUmVzcG9uc2USYAoRUmVnaXN0ZXJTaWduYXR1cmUSJC5rb3J0ZWN4LnYxLlJlZ2lzdGVyU2lnbmF0dXJlUmVxdWVzdBolLmtvcnRlY3gudjEuUmVnaXN0ZXJTaWduYXR1cmVSZXNwb25zZRJFCghMaXN0UnVucxIbLmtvcnRlY3gudjEuTGlzdFJ1bnNSZXF1ZXN0Ghwua29ydGVjeC52MS5MaXN0UnVuc1Jlc3BvbnNlEk4KC0xpc3RSZWNpcGVzEh4ua29ydGVjeC52MS5MaXN0UmVjaXBlc1JlcXVlc3QaHy5rb3J0ZWN4LnYxLkxpc3RSZWNpcGVzUmVzcG9uc2USVAoNR2V0UmVjaXBlRm9ybRIgLmtvcnRlY3gudjEuR2V0UmVjaXBlRm9ybVJlcXVlc3QaIS5rb3J0ZWN4LnYxLkdldFJlY2lwZUZvcm1SZXNwb25zZWIGcHJvdG8z", [file_kortecx_v1_coordinator]);
+  fileDesc("Chhrb3J0ZWN4L3YxL2dhdGV3YXkucHJvdG8SCmtvcnRlY3gudjEiWQoQU3VibWl0UnVuUmVxdWVzdBIaChJyZWNpcGVfZmluZ2VycHJpbnQYASABKAwSKQoFbW90ZXMYAiADKAsyGi5rb3J0ZWN4LnYxLlN1Ym1pdE1vdGVTcGVjIngKDlN1Ym1pdE1vdGVTcGVjEh4KBG1vdGUYASABKAsyEC5rb3J0ZWN4LnYxLk1vdGUSKAoHd2FycmFudBgCIAEoCzIXLmtvcnRlY3gudjEuV2FycmFudFNwZWMSHAoUYWNjZXB0X2F0X2xlYXN0X29uY2UYAyABKAgiPAoJUnVuSGFuZGxlEhMKC2luc3RhbmNlX2lkGAEgASgMEhoKEnJlY2lwZV9maW5nZXJwcmludBgCIAEoDCItCg1JbnZva2VSZXF1ZXN0Eg4KBmhhbmRsZRgBIAEoCRIMCgRhcmdzGAIgASgMIlsKDkludm9rZVJlc3BvbnNlEhMKC2luc3RhbmNlX2lkGAEgASgMEhoKEnJlY2lwZV9maW5nZXJwcmludBgCIAEoDBIYChB0ZXJtaW5hbF9tb3RlX2lkGAMgASgMIksKFEdldFByb2plY3Rpb25SZXF1ZXN0EhMKC2luc3RhbmNlX2lkGAEgASgMEhMKBmF0X3NlcRgCIAEoBEgAiAEBQgkKB19hdF9zZXEifwoOUHJvamVjdGlvblZpZXcSEwoLaW5zdGFuY2VfaWQYASABKAwSGgoScmVjaXBlX2ZpbmdlcnByaW50GAIgASgMEhMKC2N1cnJlbnRfc2VxGAMgASgEEicKBW1vdGVzGAQgAygLMhgua29ydGVjeC52MS5Nb3RlU25hcHNob3QivwMKDE1vdGVTbmFwc2hvdBIPCgdtb3RlX2lkGAEgASgMEiwKBXN0YXRlGAIgASgOMh0ua29ydGVjeC52MS5Nb3RlU25hcHNob3RTdGF0ZRIlCghuZF9jbGFzcxgDIAEoDjITLmtvcnRlY3gudjEuTmRDbGFzcxItCglwcm9tb3Rpb24YBCABKA4yGi5rb3J0ZWN4LnYxLlByb21vdGlvblN0YXRlEhcKCnJlc3VsdF9yZWYYBSABKAxIAIgBARIYCgt3YXJyYW50X3JlZhgGIAEoDEgBiAEBEhUKDW1vdGVfZGVmX2hhc2gYByABKAwSGgoNY29tbWl0dGVkX3NlcRgIIAEoBEgCiAEBEiYKB3BhcmVudHMYCSADKAsyFS5rb3J0ZWN4LnYxLlBhcmVudFJlZhIUCgd2ZXJkaWN0GAogASgMSAOIAQESLQoHYW5vbWFseRgLIAEoDjIXLmtvcnRlY3gudjEuTW90ZUFub21hbHlIBIgBAUINCgtfcmVzdWx0X3JlZkIOCgxfd2FycmFudF9yZWZCEAoOX2NvbW1pdHRlZF9zZXFCCgoIX3ZlcmRpY3RCCgoIX2Fub21hbHkiPQoRR2V0Q29udGVudFJlcXVlc3QSEwoLY29udGVudF9yZWYYASABKAwSEwoLaW5zdGFuY2VfaWQYAiABKAwiHgoLQ29udGVudEJsb2ISDwoHcGF5bG9hZBgBIAEoDCI9ChNTdHJlYW1FdmVudHNSZXF1ZXN0EhMKC2luc3RhbmNlX2lkGAEgASgMEhEKCXNpbmNlX3NlcRgCIAEoBCJtCgpFdmVudEZyYW1lEgsKA3NlcRgBIAEoBBImCgZkZWx0YXMYAiADKAsyFi5rb3J0ZWN4LnYxLkV2ZW50RGVsdGESEAoIbmV4dF9zZXEYAyABKAQSGAoQam91cm5hbF9ib3VuZGFyeRgEIAEoCCLoAQoKRXZlbnREZWx0YRILCgNzZXEYASABKAQSLwoJY29tbWl0dGVkGAIgASgLMhoua29ydGVjeC52MS5Db21taXR0ZWREZWx0YUgAEikKBmZhaWxlZBgDIAEoCzIXLmtvcnRlY3gudjEuRmFpbGVkRGVsdGFIABIxCgpyZXB1ZGlhdGVkGAQgASgLMhsua29ydGVjeC52MS5SZXB1ZGlhdGVkRGVsdGFIABI2Cg1lZmZlY3Rfc3RhZ2VkGAUgASgLMh0ua29ydGVjeC52MS5FZmZlY3RTdGFnZWREZWx0YUgAQgYKBGtpbmQiXAoOQ29tbWl0dGVkRGVsdGESDwoHbW90ZV9pZBgBIAEoDBISCgpyZXN1bHRfcmVmGAIgASgMEiUKCG5kX2NsYXNzGAMgASgOMhMua29ydGVjeC52MS5OZENsYXNzIjQKC0ZhaWxlZERlbHRhEg8KB21vdGVfaWQYASABKAwSFAoMcmVhc29uX2NsYXNzGAIgASgNIkcKD1JlcHVkaWF0ZWREZWx0YRIWCg50YXJnZXRfbW90ZV9pZBgBIAEoDBIcChR0YXJnZXRfY29tbWl0dGVkX3NlcRgCIAEoBCIkChFFZmZlY3RTdGFnZWREZWx0YRIPCgdtb3RlX2lkGAEgASgMIhcKFUxpc3RTaWduYXR1cmVzUmVxdWVzdCI2ChBTaWduYXR1cmVTdW1tYXJ5EhQKDHNpZ25hdHVyZV9pZBgBIAEoDBIMCgRuYW1lGAIgASgJIkoKFkxpc3RTaWduYXR1cmVzUmVzcG9uc2USMAoKc2lnbmF0dXJlcxgBIAMoCzIcLmtvcnRlY3gudjEuU2lnbmF0dXJlU3VtbWFyeSIrChNHZXRTaWduYXR1cmVSZXF1ZXN0EhQKDHNpZ25hdHVyZV9pZBgBIAEoDCI+ChRHZXRTaWduYXR1cmVSZXNwb25zZRIUCgxzaWduYXR1cmVfaWQYASABKAwSEAoIbWFuaWZlc3QYAiABKAwiLAoYUmVnaXN0ZXJTaWduYXR1cmVSZXF1ZXN0EhAKCG1hbmlmZXN0GAEgASgMIjEKGVJlZ2lzdGVyU2lnbmF0dXJlUmVzcG9uc2USFAoMc2lnbmF0dXJlX2lkGAEgASgMIlcKD0xpc3RSdW5zUmVxdWVzdBISCgVsaW1pdBgBIAEoDUgAiAEBEhcKCmJlZm9yZV9zZXEYAiABKARIAYgBAUIICgZfbGltaXRCDQoLX2JlZm9yZV9zZXEicQoKUnVuU3VtbWFyeRITCgtpbnN0YW5jZV9pZBgBIAEoDBIaChJyZWNpcGVfZmluZ2VycHJpbnQYAiABKAwSFgoOcmVnaXN0ZXJlZF9zZXEYAyABKAQSGgoScmVnaXN0ZXJlZF91bml4X21zGAQgASgEIkoKEExpc3RSdW5zUmVzcG9uc2USJAoEcnVucxgBIAMoCzIWLmtvcnRlY3gudjEuUnVuU3VtbWFyeRIQCghoYXNfbW9yZRgCIAEoCCIUChJMaXN0UmVjaXBlc1JlcXVlc3QiHwoNUmVjaXBlU3VtbWFyeRIOCgZoYW5kbGUYASABKAkiQQoTTGlzdFJlY2lwZXNSZXNwb25zZRIqCgdyZWNpcGVzGAEgAygLMhkua29ydGVjeC52MS5SZWNpcGVTdW1tYXJ5IiYKFEdldFJlY2lwZUZvcm1SZXF1ZXN0Eg4KBmhhbmRsZRgBIAEoCSKPAQoPUmVjaXBlRm9ybUZpZWxkEgwKBG5hbWUYASABKAkSKQoEdHlwZRgCIAEoDjIbLmtvcnRlY3gudjEuUmVjaXBlUGFyYW1UeXBlEhAKCHJlcXVpcmVkGAMgASgIEhQKB21heF9sZW4YBCABKARIAIgBARIPCgdhbGxvd2VkGAUgAygJQgoKCF9tYXhfbGVuIlQKFUdldFJlY2lwZUZvcm1SZXNwb25zZRIOCgZoYW5kbGUYASABKAkSKwoGZmllbGRzGAIgAygLMhsua29ydGVjeC52MS5SZWNpcGVGb3JtRmllbGQiEgoQTGlzdFRlYW1zUmVxdWVzdCJZCgtUZWFtU3VtbWFyeRIPCgd0ZWFtX2lkGAEgASgJEhQKDGRpc3BsYXlfbmFtZRgCIAEoCRINCgVvd25lchgDIAEoCRIUCgxtZW1iZXJfY291bnQYBCABKA0iOwoRTGlzdFRlYW1zUmVzcG9uc2USJgoFdGVhbXMYASADKAsyFy5rb3J0ZWN4LnYxLlRlYW1TdW1tYXJ5Ik8KFkxpc3RUZWFtTWVtYmVyc1JlcXVlc3QSDwoHdGVhbV9pZBgBIAEoCRIWCglhc3NldF9yZWYYAiABKAlIAIgBAUIMCgpfYXNzZXRfcmVmIpwBCgtXYXJyYW50VmlldxIWCg5leGVjdXRvcl9jbGFzcxgBIAEoCRITCgttb2RlbF9yb3V0ZRgCIAEoCRIRCgluZXRfc2NvcGUYAyABKAkSEAoIZnNfc2NvcGUYBCABKAkSEQoJbWF4X2NhbGxzGAUgASgEEhEKCWNwdV9taWxsaRgGIAEoBBIVCg13YWxsX2Nsb2NrX21zGAcgASgEIosBCgpUZWFtTWVtYmVyEg0KBXBhcnR5GAEgASgJEgwKBHJvbGUYAiABKAkSEwoLYWN0aW9uX2NhcHMYAyADKAkSNgoQcmVzb2x2ZWRfd2FycmFudBgEIAEoCzIXLmtvcnRlY3gudjEuV2FycmFudFZpZXdIAIgBAUITChFfcmVzb2x2ZWRfd2FycmFudCJRChdMaXN0VGVhbU1lbWJlcnNSZXNwb25zZRINCgVvd25lchgBIAEoCRInCgdtZW1iZXJzGAIgAygLMhYua29ydGVjeC52MS5UZWFtTWVtYmVyIisKFkxpc3RBc3NldEdyYW50c1JlcXVlc3QSEQoJYXNzZXRfcmVmGAEgASgJIncKCUdyYW50VmlldxIPCgdncmFudG9yGAEgASgJEg8KB2dyYW50ZWUYAiABKAkSDwoHYWN0aW9ucxgDIAMoCRIVCg1ydW50aW1lX3Njb3BlGAQgASgJEg8KB2lzX3Jvb3QYBSABKAgSDwoHcmV2b2tlZBgGIAEoCCJPChdMaXN0QXNzZXRHcmFudHNSZXNwb25zZRINCgVvd25lchgBIAEoCRIlCgZncmFudHMYAiADKAsyFS5rb3J0ZWN4LnYxLkdyYW50VmlldyqJAgoRTW90ZVNuYXBzaG90U3RhdGUSIwofTU9URV9TTkFQU0hPVF9TVEFURV9VTlNQRUNJRklFRBAAEh8KG01PVEVfU05BUFNIT1RfU1RBVEVfUEVORElORxABEiEKHU1PVEVfU05BUFNIT1RfU1RBVEVfU0NIRURVTEVEEAISIQodTU9URV9TTkFQU0hPVF9TVEFURV9DT01NSVRURUQQAxIeChpNT1RFX1NOQVBTSE9UX1NUQVRFX0ZBSUxFRBAEEiIKHk1PVEVfU05BUFNIT1RfU1RBVEVfUkVQVURJQVRFRBAFEiQKIE1PVEVfU05BUFNIT1RfU1RBVEVfSU5DT05TSVNURU5UEAYqkwEKDlByb21vdGlvblN0YXRlEh8KG1BST01PVElPTl9TVEFURV9VTlNQRUNJRklFRBAAEiIKHlBST01PVElPTl9TVEFURV9OT1RfQVBQTElDQUJMRRABEh4KGlBST01PVElPTl9TVEFURV9VTlBST01PVEVEEAISHAoYUFJPTU9USU9OX1NUQVRFX1BST01PVEVEEAMqmwEKC01vdGVBbm9tYWx5EhwKGE1PVEVfQU5PTUFMWV9VTlNQRUNJRklFRBAAEjsKN01PVEVfQU5PTUFMWV9FRkZFQ1RfU1RBR0VEX1RIRU5fUkVQVURJQVRFRF9OT19DT01NSVRURUQQARIxCi1NT1RFX0FOT01BTFlfUVVBUkFOVElORURfQVRfTEVBU1RfT05DRV9FRkZFQ1QQAiq/AQoPUmVjaXBlUGFyYW1UeXBlEiEKHVJFQ0lQRV9QQVJBTV9UWVBFX1VOU1BFQ0lGSUVEEAASGQoVUkVDSVBFX1BBUkFNX1RZUEVfU1RSEAESGQoVUkVDSVBFX1BBUkFNX1RZUEVfSU5UEAISGgoWUkVDSVBFX1BBUkFNX1RZUEVfQk9PTBADEhsKF1JFQ0lQRV9QQVJBTV9UWVBFX0JZVEVTEAQSGgoWUkVDSVBFX1BBUkFNX1RZUEVfRU5VTRAFMusICglLeEdhdGV3YXkSQAoJU3VibWl0UnVuEhwua29ydGVjeC52MS5TdWJtaXRSdW5SZXF1ZXN0GhUua29ydGVjeC52MS5SdW5IYW5kbGUSPwoGSW52b2tlEhkua29ydGVjeC52MS5JbnZva2VSZXF1ZXN0Ghoua29ydGVjeC52MS5JbnZva2VSZXNwb25zZRJNCg1HZXRQcm9qZWN0aW9uEiAua29ydGVjeC52MS5HZXRQcm9qZWN0aW9uUmVxdWVzdBoaLmtvcnRlY3gudjEuUHJvamVjdGlvblZpZXcSRAoKR2V0Q29udGVudBIdLmtvcnRlY3gudjEuR2V0Q29udGVudFJlcXVlc3QaFy5rb3J0ZWN4LnYxLkNvbnRlbnRCbG9iEkkKDFN0cmVhbUV2ZW50cxIfLmtvcnRlY3gudjEuU3RyZWFtRXZlbnRzUmVxdWVzdBoWLmtvcnRlY3gudjEuRXZlbnRGcmFtZTABElcKDkxpc3RTaWduYXR1cmVzEiEua29ydGVjeC52MS5MaXN0U2lnbmF0dXJlc1JlcXVlc3QaIi5rb3J0ZWN4LnYxLkxpc3RTaWduYXR1cmVzUmVzcG9uc2USUQoMR2V0U2lnbmF0dXJlEh8ua29ydGVjeC52MS5HZXRTaWduYXR1cmVSZXF1ZXN0GiAua29ydGVjeC52MS5HZXRTaWduYXR1cmVSZXNwb25zZRJgChFSZWdpc3RlclNpZ25hdHVyZRIkLmtvcnRlY3gudjEuUmVnaXN0ZXJTaWduYXR1cmVSZXF1ZXN0GiUua29ydGVjeC52MS5SZWdpc3RlclNpZ25hdHVyZVJlc3BvbnNlEkUKCExpc3RSdW5zEhsua29ydGVjeC52MS5MaXN0UnVuc1JlcXVlc3QaHC5rb3J0ZWN4LnYxLkxpc3RSdW5zUmVzcG9uc2USTgoLTGlzdFJlY2lwZXMSHi5rb3J0ZWN4LnYxLkxpc3RSZWNpcGVzUmVxdWVzdBofLmtvcnRlY3gudjEuTGlzdFJlY2lwZXNSZXNwb25zZRJUCg1HZXRSZWNpcGVGb3JtEiAua29ydGVjeC52MS5HZXRSZWNpcGVGb3JtUmVxdWVzdBohLmtvcnRlY3gudjEuR2V0UmVjaXBlRm9ybVJlc3BvbnNlEkgKCUxpc3RUZWFtcxIcLmtvcnRlY3gudjEuTGlzdFRlYW1zUmVxdWVzdBodLmtvcnRlY3gudjEuTGlzdFRlYW1zUmVzcG9uc2USWgoPTGlzdFRlYW1NZW1iZXJzEiIua29ydGVjeC52MS5MaXN0VGVhbU1lbWJlcnNSZXF1ZXN0GiMua29ydGVjeC52MS5MaXN0VGVhbU1lbWJlcnNSZXNwb25zZRJaCg9MaXN0QXNzZXRHcmFudHMSIi5rb3J0ZWN4LnYxLkxpc3RBc3NldEdyYW50c1JlcXVlc3QaIy5rb3J0ZWN4LnYxLkxpc3RBc3NldEdyYW50c1Jlc3BvbnNlYgZwcm90bzM", [file_kortecx_v1_coordinator]);
 
 /**
  * @generated from message kortecx.v1.SubmitRunRequest
@@ -960,6 +960,328 @@ export const GetRecipeFormResponseSchema: GenMessage<GetRecipeFormResponse> = /*
   messageDesc(file_kortecx_v1_gateway, 32);
 
 /**
+ * @generated from message kortecx.v1.ListTeamsRequest
+ */
+export type ListTeamsRequest = Message<"kortecx.v1.ListTeamsRequest"> & {
+};
+
+/**
+ * Describes the message kortecx.v1.ListTeamsRequest.
+ * Use `create(ListTeamsRequestSchema)` to create a new message.
+ */
+export const ListTeamsRequestSchema: GenMessage<ListTeamsRequest> = /*@__PURE__*/
+  messageDesc(file_kortecx_v1_gateway, 33);
+
+/**
+ * @generated from message kortecx.v1.TeamSummary
+ */
+export type TeamSummary = Message<"kortecx.v1.TeamSummary"> & {
+  /**
+   * the team's group PartyId (the principal grants are issued to)
+   *
+   * @generated from field: string team_id = 1;
+   */
+  teamId: string;
+
+  /**
+   * advisory human handle from the founding fact (NEVER parsed)
+   *
+   * @generated from field: string display_name = 2;
+   */
+  displayName: string;
+
+  /**
+   * the founding owner PartyId
+   *
+   * @generated from field: string owner = 3;
+   */
+  owner: string;
+
+  /**
+   * count of effective (authority-checked) active members
+   *
+   * @generated from field: uint32 member_count = 4;
+   */
+  memberCount: number;
+};
+
+/**
+ * Describes the message kortecx.v1.TeamSummary.
+ * Use `create(TeamSummarySchema)` to create a new message.
+ */
+export const TeamSummarySchema: GenMessage<TeamSummary> = /*@__PURE__*/
+  messageDesc(file_kortecx_v1_gateway, 34);
+
+/**
+ * @generated from message kortecx.v1.ListTeamsResponse
+ */
+export type ListTeamsResponse = Message<"kortecx.v1.ListTeamsResponse"> & {
+  /**
+   * founding (append) order
+   *
+   * @generated from field: repeated kortecx.v1.TeamSummary teams = 1;
+   */
+  teams: TeamSummary[];
+};
+
+/**
+ * Describes the message kortecx.v1.ListTeamsResponse.
+ * Use `create(ListTeamsResponseSchema)` to create a new message.
+ */
+export const ListTeamsResponseSchema: GenMessage<ListTeamsResponse> = /*@__PURE__*/
+  messageDesc(file_kortecx_v1_gateway, 35);
+
+/**
+ * @generated from message kortecx.v1.ListTeamMembersRequest
+ */
+export type ListTeamMembersRequest = Message<"kortecx.v1.ListTeamMembersRequest"> & {
+  /**
+   * @generated from field: string team_id = 1;
+   */
+  teamId: string;
+
+  /**
+   * when set, populate resolved_warrant per member (resolve-member-warrant)
+   *
+   * @generated from field: optional string asset_ref = 2;
+   */
+  assetRef?: string | undefined;
+};
+
+/**
+ * Describes the message kortecx.v1.ListTeamMembersRequest.
+ * Use `create(ListTeamMembersRequestSchema)` to create a new message.
+ */
+export const ListTeamMembersRequestSchema: GenMessage<ListTeamMembersRequest> = /*@__PURE__*/
+  messageDesc(file_kortecx_v1_gateway, 36);
+
+/**
+ * A compact, human-readable warrant projection — NEVER the warrant body or any
+ * secret material; the load-bearing ceilings + scopes a member's resolved warrant
+ * conveys, pre-rendered as display strings/scalars (mirrors the `kx` CLI render).
+ *
+ * @generated from message kortecx.v1.WarrantView
+ */
+export type WarrantView = Message<"kortecx.v1.WarrantView"> & {
+  /**
+   * e.g. "Bwrap" / "MacOsSandbox"
+   *
+   * @generated from field: string executor_class = 1;
+   */
+  executorClass: string;
+
+  /**
+   * "model_id ×max_calls (in/out tok)" one-liner
+   *
+   * @generated from field: string model_route = 2;
+   */
+  modelRoute: string;
+
+  /**
+   * "None" / "EgressAllowlist(host:port,…)"
+   *
+   * @generated from field: string net_scope = 3;
+   */
+  netScope: string;
+
+  /**
+   * a "/path:ro, …" summary
+   *
+   * @generated from field: string fs_scope = 4;
+   */
+  fsScope: string;
+
+  /**
+   * model_route.max_calls (the headline narrowing axis)
+   *
+   * @generated from field: uint64 max_calls = 5;
+   */
+  maxCalls: bigint;
+
+  /**
+   * resource_ceiling.cpu_milli
+   *
+   * @generated from field: uint64 cpu_milli = 6;
+   */
+  cpuMilli: bigint;
+
+  /**
+   * resource_ceiling.wall_clock_ms
+   *
+   * @generated from field: uint64 wall_clock_ms = 7;
+   */
+  wallClockMs: bigint;
+};
+
+/**
+ * Describes the message kortecx.v1.WarrantView.
+ * Use `create(WarrantViewSchema)` to create a new message.
+ */
+export const WarrantViewSchema: GenMessage<WarrantView> = /*@__PURE__*/
+  messageDesc(file_kortecx_v1_gateway, 37);
+
+/**
+ * @generated from message kortecx.v1.TeamMember
+ */
+export type TeamMember = Message<"kortecx.v1.TeamMember"> & {
+  /**
+   * the member PartyId
+   *
+   * @generated from field: string party = 1;
+   */
+  party: string;
+
+  /**
+   * the merged runtime-scope role NAME (advisory display)
+   *
+   * @generated from field: string role = 2;
+   */
+  role: string;
+
+  /**
+   * the merged catalog action cap, e.g. ["Read","Use","Delegate"]
+   *
+   * @generated from field: repeated string action_caps = 3;
+   */
+  actionCaps: string[];
+
+  /**
+   * present iff asset_ref set AND a membership path resolves
+   *
+   * @generated from field: optional kortecx.v1.WarrantView resolved_warrant = 4;
+   */
+  resolvedWarrant?: WarrantView | undefined;
+};
+
+/**
+ * Describes the message kortecx.v1.TeamMember.
+ * Use `create(TeamMemberSchema)` to create a new message.
+ */
+export const TeamMemberSchema: GenMessage<TeamMember> = /*@__PURE__*/
+  messageDesc(file_kortecx_v1_gateway, 38);
+
+/**
+ * @generated from message kortecx.v1.ListTeamMembersResponse
+ */
+export type ListTeamMembersResponse = Message<"kortecx.v1.ListTeamMembersResponse"> & {
+  /**
+   * the team owner (so the UI marks the owner row)
+   *
+   * @generated from field: string owner = 1;
+   */
+  owner: string;
+
+  /**
+   * by member PartyId (deterministic)
+   *
+   * @generated from field: repeated kortecx.v1.TeamMember members = 2;
+   */
+  members: TeamMember[];
+};
+
+/**
+ * Describes the message kortecx.v1.ListTeamMembersResponse.
+ * Use `create(ListTeamMembersResponseSchema)` to create a new message.
+ */
+export const ListTeamMembersResponseSchema: GenMessage<ListTeamMembersResponse> = /*@__PURE__*/
+  messageDesc(file_kortecx_v1_gateway, 39);
+
+/**
+ * @generated from message kortecx.v1.ListAssetGrantsRequest
+ */
+export type ListAssetGrantsRequest = Message<"kortecx.v1.ListAssetGrantsRequest"> & {
+  /**
+   * "namespace/collection/name" (AssetPath handle)
+   *
+   * @generated from field: string asset_ref = 1;
+   */
+  assetRef: string;
+};
+
+/**
+ * Describes the message kortecx.v1.ListAssetGrantsRequest.
+ * Use `create(ListAssetGrantsRequestSchema)` to create a new message.
+ */
+export const ListAssetGrantsRequestSchema: GenMessage<ListAssetGrantsRequest> = /*@__PURE__*/
+  messageDesc(file_kortecx_v1_gateway, 40);
+
+/**
+ * @generated from message kortecx.v1.GrantView
+ */
+export type GrantView = Message<"kortecx.v1.GrantView"> & {
+  /**
+   * @generated from field: string grantor = 1;
+   */
+  grantor: string;
+
+  /**
+   * @generated from field: string grantee = 2;
+   */
+  grantee: string;
+
+  /**
+   * e.g. ["Read","Use"]
+   *
+   * @generated from field: repeated string actions = 3;
+   */
+  actions: string[];
+
+  /**
+   * the grant role NAME (advisory display)
+   *
+   * @generated from field: string runtime_scope = 4;
+   */
+  runtimeScope: string;
+
+  /**
+   * true iff grant.prior is None (a root grant from the owner)
+   *
+   * @generated from field: bool is_root = 5;
+   */
+  isRoot: boolean;
+
+  /**
+   * true iff an AUTHORIZED revocation makes it inert in the fold
+   *
+   * @generated from field: bool revoked = 6;
+   */
+  revoked: boolean;
+};
+
+/**
+ * Describes the message kortecx.v1.GrantView.
+ * Use `create(GrantViewSchema)` to create a new message.
+ */
+export const GrantViewSchema: GenMessage<GrantView> = /*@__PURE__*/
+  messageDesc(file_kortecx_v1_gateway, 41);
+
+/**
+ * @generated from message kortecx.v1.ListAssetGrantsResponse
+ */
+export type ListAssetGrantsResponse = Message<"kortecx.v1.ListAssetGrantsResponse"> & {
+  /**
+   * the asset's bound owner ("" if unbound / unknown)
+   *
+   * @generated from field: string owner = 1;
+   */
+  owner: string;
+
+  /**
+   * every grant fact on the asset (root + delegated), fold-classified
+   *
+   * @generated from field: repeated kortecx.v1.GrantView grants = 2;
+   */
+  grants: GrantView[];
+};
+
+/**
+ * Describes the message kortecx.v1.ListAssetGrantsResponse.
+ * Use `create(ListAssetGrantsResponseSchema)` to create a new message.
+ */
+export const ListAssetGrantsResponseSchema: GenMessage<ListAssetGrantsResponse> = /*@__PURE__*/
+  messageDesc(file_kortecx_v1_gateway, 42);
+
+/**
  * Mirrors kx_projection::MoteState.
  *
  * @generated from enum kortecx.v1.MoteSnapshotState
@@ -1229,6 +1551,32 @@ export const KxGateway: GenService<{
     methodKind: "unary";
     input: typeof GetRecipeFormRequestSchema;
     output: typeof GetRecipeFormResponseSchema;
+  },
+  /**
+   * UI-3 additive (D120.6): teams (membership) + sharing (grants) read viewers.
+   *
+   * @generated from rpc kortecx.v1.KxGateway.ListTeams
+   */
+  listTeams: {
+    methodKind: "unary";
+    input: typeof ListTeamsRequestSchema;
+    output: typeof ListTeamsResponseSchema;
+  },
+  /**
+   * @generated from rpc kortecx.v1.KxGateway.ListTeamMembers
+   */
+  listTeamMembers: {
+    methodKind: "unary";
+    input: typeof ListTeamMembersRequestSchema;
+    output: typeof ListTeamMembersResponseSchema;
+  },
+  /**
+   * @generated from rpc kortecx.v1.KxGateway.ListAssetGrants
+   */
+  listAssetGrants: {
+    methodKind: "unary";
+    input: typeof ListAssetGrantsRequestSchema;
+    output: typeof ListAssetGrantsResponseSchema;
   },
 }> = /*@__PURE__*/
   serviceDesc(file_kortecx_v1_gateway, 0);
