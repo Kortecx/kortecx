@@ -277,9 +277,7 @@ class KxClient:
         resp = self._call(lambda: self._stub.ListTeams(_g.ListTeamsRequest(), metadata=self._md))
         return [TeamSummary.from_proto(t) for t in resp.teams]
 
-    def list_team_members(
-        self, team_id: str, *, asset_ref: Optional[str] = None
-    ) -> TeamMembers:
+    def list_team_members(self, team_id: str, *, asset_ref: Optional[str] = None) -> TeamMembers:
         """The members of ``team_id`` (+ each member's role/caps). When ``asset_ref``
         is given, each member's resolved warrant on that asset (membership ∩ grant,
         ⊆ the team) is populated. An unknown team raises ``KxNotFound``."""
