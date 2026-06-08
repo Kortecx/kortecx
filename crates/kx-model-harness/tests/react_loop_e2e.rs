@@ -100,7 +100,8 @@ impl InferenceBackend for ScriptedBackend {
     ) -> Result<InferenceOutput, InferenceError> {
         let text = match input {
             InferenceInput::Text(s) => s.clone(),
-            InferenceInput::Multimodal { text, .. } => text.clone(),
+            InferenceInput::Multimodal { text, .. }
+            | InferenceInput::TextForEmbedding { text, .. } => text.clone(),
         };
         self.inputs.lock().unwrap().push(text);
         let idx = self.calls.fetch_add(1, Ordering::SeqCst);

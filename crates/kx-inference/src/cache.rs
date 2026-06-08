@@ -40,13 +40,15 @@ use std::time::{Duration, Instant};
 use kx_content::ContentRef;
 use kx_llamacpp::{
     Bitmap, Context, ContextParams, Generator, LlamaBackend, LlamaError, Model, ModelWithProjector,
-    Mtmd, Sampler, Vocab,
+    Mtmd, PoolingType, Sampler, Vocab,
 };
 use kx_mote::{InferenceParams, ModelId};
 use smallvec::SmallVec;
 
 use crate::llama::BACKEND_NAME;
-use crate::types::{InferenceError, InferenceOutput, MEDIA_MARKER};
+use crate::types::{
+    EmbeddingOutput, EmbeddingPooling, InferenceError, InferenceOutput, MEDIA_MARKER,
+};
 
 /// Default number of distinct models kept loaded at once. Small because models
 /// are heavyweight; enough for one active model plus a swap.
@@ -96,11 +98,55 @@ struct Job {
     reply: Sender<Result<InferenceOutput, InferenceError>>,
 }
 
+/// One embedding request handed to the owner thread (DP1). All fields are
+/// `Send`. Distinct from [`Job`] because embedding produces a dense `Vec<f32>`,
+/// not completion bytes, and uses no sampler / generation loop — but it shares
+/// the SAME owner thread + loaded-model LRU, so an embedding reuses an
+/// already-cached model and never reloads it.
+struct EmbedJob {
+    /// Loaded-model cache key (the same identity used by [`Job`]).
+    identity: ContentRef,
+    /// Where to load the model from on a cache miss.
+    path: PathBuf,
+    /// Echoed back into `EmbeddingOutput.model_id`.
+    model_id: ModelId,
+    /// The text to embed.
+    text: String,
+    /// Pooling strategy for the per-sequence vector.
+    pooling: EmbeddingPooling,
+    /// Wall-clock ceiling in milliseconds (`warrant.resource_ceiling`).
+    wall_clock_ms: u64,
+    /// Where the owner thread sends the result.
+    reply: Sender<Result<EmbeddingOutput, InferenceError>>,
+}
+
+/// The owner thread serves both completion and embedding jobs over one channel
+/// so a single loaded-model LRU backs both (an embedding reuses the cached
+/// generation model). Boxed variants keep the enum small (the completion `Job`
+/// is heavyweight).
+enum OwnerJob {
+    /// A completion / generation request (text or multimodal).
+    Generate(Box<Job>),
+    /// An embedding request (DP1).
+    Embed(Box<EmbedJob>),
+}
+
+/// Map the FFI-free [`EmbeddingPooling`] seam type to `kx-llamacpp`'s
+/// `PoolingType`. Only single-vector poolings exist on `EmbeddingPooling`, so
+/// this is total and never produces `None`/`Rank`.
+fn map_pooling(pooling: EmbeddingPooling) -> PoolingType {
+    match pooling {
+        EmbeddingPooling::Mean => PoolingType::Mean,
+        EmbeddingPooling::Cls => PoolingType::Cls,
+        EmbeddingPooling::Last => PoolingType::Last,
+    }
+}
+
 /// `Send + Sync` handle to the model-cache owner thread. Cheap to clone (clones
 /// share one worker + the load counters).
 #[derive(Clone, Debug)]
 pub(crate) struct ModelCache {
-    tx: Sender<Job>,
+    tx: Sender<OwnerJob>,
     /// Number of cold `Model::load`s performed — the observable proof that a
     /// cache hit did NOT reload (and the ops metric for "the reload is gone").
     loads: Arc<AtomicU64>,
@@ -116,7 +162,7 @@ impl ModelCache {
     /// every `ModelCache` clone (and thus every `Sender`) is dropped, at which
     /// point `recv` errors and it exits cleanly.
     pub(crate) fn spawn(capacity: usize) -> Self {
-        let (tx, rx) = mpsc::channel::<Job>();
+        let (tx, rx) = mpsc::channel::<OwnerJob>();
         let loads = Arc::new(AtomicU64::new(0));
         let mmproj_loads = Arc::new(AtomicU64::new(0));
         let worker_loads = Arc::clone(&loads);
@@ -172,7 +218,7 @@ impl ModelCache {
             reply: reply_tx,
         };
         self.tx
-            .send(job)
+            .send(OwnerJob::Generate(Box::new(job)))
             .map_err(|_| InferenceError::BackendFailure {
                 backend: BACKEND_NAME,
                 message: "model-cache owner thread is gone (send failed)".to_string(),
@@ -184,19 +230,67 @@ impl ModelCache {
                 message: "model-cache owner thread died mid-job (recv failed)".to_string(),
             })?
     }
+
+    /// Submit an embedding job and block until the owner thread replies (DP1).
+    /// Shares the loaded-model LRU with [`Self::dispatch`], so embedding reuses
+    /// an already-cached generation model.
+    pub(crate) fn dispatch_embedding(
+        &self,
+        identity: ContentRef,
+        path: PathBuf,
+        model_id: ModelId,
+        text: String,
+        pooling: EmbeddingPooling,
+        wall_clock_ms: u64,
+    ) -> Result<EmbeddingOutput, InferenceError> {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        let job = EmbedJob {
+            identity,
+            path,
+            model_id,
+            text,
+            pooling,
+            wall_clock_ms,
+            reply: reply_tx,
+        };
+        self.tx.send(OwnerJob::Embed(Box::new(job))).map_err(|_| {
+            InferenceError::BackendFailure {
+                backend: BACKEND_NAME,
+                message: "model-cache owner thread is gone (send failed)".to_string(),
+            }
+        })?;
+        reply_rx
+            .recv()
+            .map_err(|_| InferenceError::BackendFailure {
+                backend: BACKEND_NAME,
+                message: "model-cache owner thread died mid-job (recv failed)".to_string(),
+            })?
+    }
 }
 
 /// The owner thread's loop. Owns the (`!Send`) backend and the loaded-model LRU
 /// as thread-locals; serves jobs until the channel closes.
-fn owner_loop(rx: &Receiver<Job>, capacity: usize, loads: &AtomicU64, mmproj_loads: &AtomicU64) {
+fn owner_loop(
+    rx: &Receiver<OwnerJob>,
+    capacity: usize,
+    loads: &AtomicU64,
+    mmproj_loads: &AtomicU64,
+) {
     let backend = match LlamaBackend::new() {
         Ok(b) => b,
         Err(e) => {
-            // Backend init failed: reply the same error to every queued job so
-            // callers fail fast instead of hanging.
+            // Backend init failed: reply the same error to every queued job (of
+            // either kind) so callers fail fast instead of hanging.
             let err = map_llama_err(e);
-            while let Ok(job) = rx.recv() {
-                let _ = job.reply.send(Err(err.clone()));
+            while let Ok(owner_job) = rx.recv() {
+                match owner_job {
+                    OwnerJob::Generate(job) => {
+                        let _ = job.reply.send(Err(err.clone()));
+                    }
+                    OwnerJob::Embed(job) => {
+                        let _ = job.reply.send(Err(err.clone()));
+                    }
+                }
             }
             return;
         }
@@ -207,12 +301,21 @@ fn owner_loop(rx: &Receiver<Job>, capacity: usize, loads: &AtomicU64, mmproj_loa
     // function, so the borrow is valid for the whole loop and `lru` is dropped
     // before `backend`. Within a bundle the projector is dropped before its
     // model (declaration order); across the `lru`, eviction drops a whole bundle.
+    // Both completion and embedding jobs share this one LRU.
     let mut lru: Vec<(ContentRef, ModelWithProjector<'_>)> = Vec::with_capacity(capacity);
 
-    while let Ok(job) = rx.recv() {
-        let result = run_job(&backend, &mut lru, capacity, loads, mmproj_loads, &job);
+    while let Ok(owner_job) = rx.recv() {
         // A dropped reply receiver (caller gave up) is not our problem.
-        let _ = job.reply.send(result);
+        match owner_job {
+            OwnerJob::Generate(job) => {
+                let result = run_job(&backend, &mut lru, capacity, loads, mmproj_loads, &job);
+                let _ = job.reply.send(result);
+            }
+            OwnerJob::Embed(job) => {
+                let result = run_embed_job(&backend, &mut lru, capacity, loads, &job);
+                let _ = job.reply.send(result);
+            }
+        }
     }
 }
 
@@ -246,6 +349,37 @@ fn run_job<'b>(
     Ok(InferenceOutput {
         bytes,
         output_tokens,
+        backend_name: BACKEND_NAME,
+        model_id: job.model_id.clone(),
+        elapsed: start.elapsed(),
+    })
+}
+
+/// Resolve-or-load the model (reusing the SHARED LRU, so an embedding never
+/// reloads a model a prior generation already cached), then embed `job.text`
+/// under its pooling (DP1). One synchronous `embed_with` — no sampler, no token
+/// loop — so the wall-clock ceiling is checked once before the (fast) decode.
+fn run_embed_job<'b>(
+    backend: &'b LlamaBackend,
+    lru: &mut Vec<(ContentRef, ModelWithProjector<'b>)>,
+    capacity: usize,
+    loads: &AtomicU64,
+    job: &EmbedJob,
+) -> Result<EmbeddingOutput, InferenceError> {
+    let start = Instant::now();
+    let timeout = Duration::from_millis(job.wall_clock_ms);
+    let entry = get_or_load(backend, lru, capacity, loads, job.identity, &job.path)
+        .map_err(map_llama_err)?;
+    check_timeout(start.elapsed(), timeout, job.wall_clock_ms)?;
+
+    let vector = entry
+        .model()
+        .embed_with(&job.text, map_pooling(job.pooling))
+        .map_err(map_llama_err)?;
+    let dim = u32::try_from(vector.len()).unwrap_or(u32::MAX);
+    Ok(EmbeddingOutput {
+        vector,
+        dim,
         backend_name: BACKEND_NAME,
         model_id: job.model_id.clone(),
         elapsed: start.elapsed(),

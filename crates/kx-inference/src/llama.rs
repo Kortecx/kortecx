@@ -29,10 +29,11 @@ use kx_mote::ModelId;
 use kx_warrant::WarrantSpec;
 use smallvec::SmallVec;
 
-use crate::backend::InferenceBackend;
+use crate::backend::{EmbeddingBackend, InferenceBackend};
 use crate::cache::{ModelCache, DEFAULT_CACHE_CAPACITY};
 use crate::types::{
-    check_within, InferenceError, InferenceInput, InferenceOutput, InferenceParams,
+    check_within, EmbeddingOutput, EmbeddingPooling, InferenceError, InferenceInput,
+    InferenceOutput, InferenceParams,
 };
 
 /// Object-safe byte fetcher that erases [`ContentStore`]'s associated `Payload`
@@ -363,6 +364,12 @@ impl InferenceBackend for LlamaInferenceBackend {
                     warrant.resource_ceiling.wall_clock_ms,
                 )
             }
+            // The completion path produces no embedding; embeddings ride the
+            // separate `EmbeddingBackend::dispatch_embedding` seam.
+            InferenceInput::TextForEmbedding { .. } => Err(InferenceError::Unsupported {
+                reason: "embedding input on the completion path; use \
+                         EmbeddingBackend::dispatch_embedding",
+            }),
         }
     }
 
@@ -372,5 +379,50 @@ impl InferenceBackend for LlamaInferenceBackend {
 
     fn name(&self) -> &'static str {
         BACKEND_NAME
+    }
+}
+
+impl EmbeddingBackend for LlamaInferenceBackend {
+    /// Embed `text` for `model_id` under `pooling` (DP1). Authorizes the model
+    /// route BEFORE touching the model (SN-8 / D35), resolves the descriptor,
+    /// and runs the embed on the shared model-cache owner thread (reusing an
+    /// already-loaded model). There is no `max_output_tokens` axis to narrow
+    /// (an embedding emits no tokens), so the only quantitative ceiling is the
+    /// warrant's wall-clock.
+    fn dispatch_embedding(
+        &self,
+        model_id: &ModelId,
+        text: &str,
+        pooling: EmbeddingPooling,
+        warrant: &WarrantSpec,
+    ) -> Result<EmbeddingOutput, InferenceError> {
+        // ---- Warrant gate (D35) — the route MUST authorize this model id ----
+        if model_id != &warrant.model_route.model_id {
+            return Err(InferenceError::WarrantDeniesModel {
+                model_id: model_id.0.clone(),
+                route: warrant.model_route.model_id.0.clone(),
+            });
+        }
+
+        // ---- Resolve the model descriptor (paths) ---------------------------
+        let descriptor =
+            self.resolver
+                .resolve(model_id)
+                .ok_or_else(|| InferenceError::ModelNotFound {
+                    model_id: model_id.0.clone(),
+                })?;
+
+        let cache = self
+            .cache
+            .get_or_init(|| ModelCache::spawn(self.cache_capacity));
+
+        cache.dispatch_embedding(
+            descriptor.identity_digest,
+            descriptor.gguf_path.clone(),
+            model_id.clone(),
+            text.to_string(),
+            pooling,
+            warrant.resource_ceiling.wall_clock_ms,
+        )
     }
 }

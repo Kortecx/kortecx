@@ -54,13 +54,20 @@ jobs:
         run: cargo fmt --all -- --check
 
   # ---------------------------------------------------------------------------
-  # frozen-trio — the thesis-test guard. The single-node execution kernel
-  # (kx-scheduler / kx-executor / kx-inference) is the stable spine: layers added
-  # ON TOP (distribution, gateway/AL1, SDKs, Docker) must NOT reach down and edit
-  # it. This job FAILS a PR whose diff touches the trio's `src/`. Touching the
-  # kernel is a deliberate, signed-off act of kernel evolution (e.g. a dedicated
-  # inference PR for continuous batching / GBNF) — such a PR updates THIS guard in
-  # the same change. Cheap (no toolchain); pull_request-only (needs a base to diff).
+  # frozen-trio — the thesis-test guard. The single-node EXECUTION kernel
+  # (kx-scheduler / kx-executor) is the stable spine: layers added ON TOP
+  # (distribution, gateway/AL1, SDKs, Docker) — and even a dedicated capability
+  # PR — must NOT reach down and edit it. kx-inference's dispatch CONTROL FLOW
+  # (`dispatcher.rs` — the D35 routing, byte-stable since D50) is frozen for the
+  # same reason. The ONE sanctioned exception (D108.2) is kx-inference's
+  # CAPABILITY seams — the backend traits, the llama.cpp backend impl + model
+  # cache, and additive input/output types: a dedicated inference PR MAY evolve
+  # them (multimodal, embedding, future GBNF / continuous batching). Such a PR is
+  # a deliberate, signed-off act of kernel evolution; the unchanged-EXECUTION-
+  # behaviour invariant is then enforced by the a0_guard canonical-digest test
+  # (`7d22d4bd…`), not a blanket kx-inference/src freeze. This job FAILS a PR whose
+  # diff touches the execution kernel or the dispatch control flow. Cheap (no
+  # toolchain); pull_request-only (needs a base to diff).
   # ---------------------------------------------------------------------------
   frozen-trio:
     name: frozen-trio (kernel src unchanged)
@@ -72,22 +79,26 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Assert kx-inference / kx-executor / kx-scheduler src is unchanged
+      - name: Assert kx-executor / kx-scheduler src + kx-inference dispatch control-flow are unchanged
         run: |
           set -euo pipefail
           BASE="${{ github.base_ref }}"
           git fetch --no-tags origin "$BASE"
           CHANGED="$(git diff --name-only "origin/$BASE...HEAD" -- \
-            crates/kx-inference/src crates/kx-executor/src crates/kx-scheduler/src)"
+            crates/kx-executor/src crates/kx-scheduler/src \
+            crates/kx-inference/src/dispatcher.rs)"
           if [ -n "$CHANGED" ]; then
-            echo "::error::Frozen-trio source changed (thesis test). The kernel" \
-                 "(kx-inference/kx-executor/kx-scheduler) must not be edited by a" \
-                 "layer-on-top PR. If this is deliberate kernel evolution, update" \
+            echo "::error::Frozen kernel source changed (thesis test). The execution" \
+                 "kernel (kx-executor/kx-scheduler) and the kx-inference dispatch" \
+                 "control flow (dispatcher.rs) must not be edited by a layer-on-top" \
+                 "or capability PR. A sanctioned kx-inference CAPABILITY change" \
+                 "(D108.2) must stay OUT of dispatcher.rs and keep the a0_guard" \
+                 "digest invariant; if this is deliberate kernel evolution, update" \
                  "this guard in the same PR."
             echo "Changed files:"; echo "$CHANGED"
             exit 1
           fi
-          echo "frozen trio unchanged ✓"
+          echo "frozen execution kernel + dispatch control-flow unchanged ✓"
 
   # ---------------------------------------------------------------------------
   # clippy — needs the full build graph (build scripts + bindgen output).

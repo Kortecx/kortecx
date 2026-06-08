@@ -40,6 +40,7 @@ use smallvec::SmallVec;
 /// match prompt {
 ///     InferenceInput::Text(s) => assert_eq!(s, "Hello, world!"),
 ///     InferenceInput::Multimodal { .. } => unreachable!(),
+///     InferenceInput::TextForEmbedding { .. } => unreachable!(),
 /// }
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -57,6 +58,39 @@ pub enum InferenceInput {
         /// `kx-content`.
         content_refs: SmallVec<[ContentRef; 4]>,
     },
+    /// Text to be embedded into a single dense vector — the RAG /
+    /// agent-memory payload (DP1 / T2.1). Handled only by backends that
+    /// implement [`crate::EmbeddingBackend`]; a backend's `dispatch`
+    /// (completion) path is NOT expected to handle it (it produces no
+    /// completion bytes), so a backend without the embedding capability
+    /// returns `Err(Unsupported)`.
+    ///
+    /// **Never serialized to the journal / wire.** Like `Multimodal`, this
+    /// value is constructed in-process at ingest time and consumed
+    /// immediately by `dispatch_embedding`; it is not part of `MoteDef` and
+    /// creates no on-disk / on-wire compatibility surface.
+    TextForEmbedding {
+        /// The text to embed.
+        text: String,
+        /// How per-token hidden states are pooled into one vector.
+        pooling: EmbeddingPooling,
+    },
+}
+
+/// Pooling strategy for a [`InferenceInput::TextForEmbedding`] request — the
+/// FFI-free mirror of `kx_llamacpp::PoolingType`'s single-vector variants
+/// (defined here so the seam carries no FFI dependency under
+/// `--no-default-features`). Only single-vector poolings are exposed; per-token
+/// (`None`) and rerank (`Rank`) are intentionally absent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum EmbeddingPooling {
+    /// HF-shaped average over all token hidden states (the default).
+    #[default]
+    Mean,
+    /// The first / CLS token's hidden state (BERT-style embedders).
+    Cls,
+    /// The final token's hidden state (decoder-style embedders).
+    Last,
 }
 
 /// The media placeholder that marks, inside a [`InferenceInput::Multimodal`]
@@ -78,7 +112,7 @@ impl InferenceInput {
     pub fn text_len(&self) -> usize {
         match self {
             Self::Text(s) => s.len(),
-            Self::Multimodal { text, .. } => text.len(),
+            Self::Multimodal { text, .. } | Self::TextForEmbedding { text, .. } => text.len(),
         }
     }
 
@@ -181,6 +215,34 @@ pub struct InferenceOutput {
 
     /// Wall-clock time spent inside the backend's dispatch. Excludes
     /// dispatcher overhead (validator / memoizer / scope checks).
+    pub elapsed: Duration,
+}
+
+/// Result of a single embedding dispatch ([`crate::EmbeddingBackend`]).
+///
+/// Distinct from [`InferenceOutput`] because an embedding is a dense `Vec<f32>`,
+/// not completion `bytes`. It is **not** identity-bearing on its own — when an
+/// embedding is ingested into a dataset the identity comes from the
+/// content-addressed `kx-dataset` row, not from this transient struct (hence no
+/// `Eq`: floats have no total equality).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EmbeddingOutput {
+    /// The dense embedding vector (length == `dim`).
+    pub vector: Vec<f32>,
+
+    /// Dimensionality of `vector` (its length), surfaced for quick schema
+    /// checks without walking the vector.
+    pub dim: u32,
+
+    /// Backend identity that produced this embedding (e.g. `"kx-llamacpp"`).
+    /// Audit-trail field, mirrors [`InferenceOutput::backend_name`].
+    pub backend_name: &'static str,
+
+    /// The model id that produced this embedding. Echoed back so callers can
+    /// confirm the dispatcher routed to the expected model.
+    pub model_id: ModelId,
+
+    /// Wall-clock time spent inside the backend's embedding dispatch.
     pub elapsed: Duration,
 }
 

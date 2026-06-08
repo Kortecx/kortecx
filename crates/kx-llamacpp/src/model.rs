@@ -207,25 +207,50 @@ impl<'b> Model<'b> {
     /// # Determinism
     /// `embed(x)` is deterministic for fixed `x` and fixed model — proved by
     /// `smoke_embed_one_shot_determinism` in `tests/smoke.rs`.
-    #[tracing::instrument(level = "info", skip(self), fields(text_len = text.len()))]
     pub fn embed(&self, text: &str) -> Result<Vec<f32>, LlamaError> {
+        self.embed_with(text, PoolingType::Mean)
+    }
+
+    /// **Embedding with an explicit pooling strategy** — the general form of
+    /// [`Self::embed`] (which is `embed_with(text, PoolingType::Mean)`).
+    ///
+    /// `pooling` selects how the per-token hidden states are reduced to one
+    /// sequence vector: [`PoolingType::Mean`] (the HF-shaped average),
+    /// [`PoolingType::Cls`] (the first / CLS token), or [`PoolingType::Last`]
+    /// (the final token, for decoder-style embedders). [`PoolingType::None`]
+    /// and [`PoolingType::Rank`] are not single-vector poolings and should not
+    /// be passed here (they yield no per-sequence vector).
+    ///
+    /// # Errors
+    /// - [`LlamaError::TokenizeFailed`] if tokenization fails (incl. empty input).
+    /// - [`LlamaError::ContextCreationFailed`] if a fresh context cannot be allocated.
+    /// - [`LlamaError::DecodeFailed`] if the decode pass fails.
+    /// - [`LlamaError::EmbeddingsUnavailable`] if pooling didn't produce a vector
+    ///   (model lacks the necessary metadata).
+    ///
+    /// # Determinism
+    /// `embed_with(x, p)` is deterministic for fixed `x`, model, and pooling `p`
+    /// — the `Mean` case is proved by `smoke_embed_one_shot_determinism` in
+    /// `tests/smoke.rs`.
+    #[tracing::instrument(level = "info", skip(self), fields(text_len = text.len()))]
+    pub fn embed_with(&self, text: &str, pooling: PoolingType) -> Result<Vec<f32>, LlamaError> {
         let vocab = self.vocab();
         let tokens = vocab.tokenize(text, /* add_special */ true, false)?;
         if tokens.is_empty() {
             return Err(LlamaError::TokenizeFailed(0));
         }
 
-        // Embedding-mode context, mean-pool across the sequence.
+        // Embedding-mode context, pooled across the sequence per `pooling`.
         let params = ContextParams::new()
             .with_n_ctx(tokens.len().max(8) as u32 * 2)
             .with_n_batch(tokens.len() as u32)
             .with_n_ubatch(tokens.len() as u32)
             .with_n_seq_max(1)
             .with_embeddings(true)
-            .with_pooling_type(PoolingType::Mean);
+            .with_pooling_type(pooling);
         let mut ctx = Context::new_with_params(self, &params)?;
 
-        // Decode the prompt; mean-pool reads from all positions, so every
+        // Decode the prompt; pooling reads from all positions, so every
         // position needs compute_logits = true.
         let mut batch = Batch::with_capacity(tokens.len() as i32, 1);
         for (i, &t) in tokens.iter().enumerate() {
@@ -233,7 +258,7 @@ impl<'b> Model<'b> {
         }
         ctx.decode(&batch)?;
 
-        // Read the pooled vector. Mean pooling produces one vector per
+        // Read the pooled vector. Non-`None` pooling produces one vector per
         // sequence; we own seq 0.
         let pooled = ctx.embeddings_seq(0)?;
         Ok(pooled.to_vec())
