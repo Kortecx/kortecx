@@ -30,6 +30,7 @@ members = [
     "crates/kx-chaos",
     "crates/kx-workflow",
     "crates/kx-dataset",
+    "crates/kx-dataset-hnsw",
     "crates/kx-critic-types",
     "crates/kx-critic",
     "crates/kx-capture",
@@ -91,6 +92,13 @@ rcgen              = { version = "0.13", default-features = false, features = ["
 criterion          = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
 rkyv               = "0.8"
 rusqlite           = { version = "0.32", features = ["bundled"] }
+# DP3 (T2.3): pure-Rust HNSW (Malkov-Yashunin) ANN for the opt-in kx-dataset-hnsw
+# scale backend. Apache-2.0/MIT; `default-features = false` keeps the SIMD
+# (`simdeez_f`, x86) + nightly (`stdsimd`) features OFF in the default build — the
+# index is correct without them. No C/C++ toolchain (unlike usearch). The full
+# transitive tree (anndists/mmap-rs/rayon/hashbrown/…) is permissive; cargo-deny
+# (all-features) gates it.
+hnsw_rs            = { version = "0.3", default-features = false }
 # Workspace member path-deps carry an explicit `version = "0.0.1"` matching
 # each member's `[package].version`. Without it, cargo-deny flags path-only
 # deps as wildcards (the version constraint is unconstrained). The version
@@ -132,6 +140,11 @@ kx-workflow          = { path = "crates/kx-workflow",          version = "0.0.1"
 # The data-management seam (P4.1c) — typed (tensor/vector/blob/multi-modal)
 # DataStore/Dataset/RetrievalIndex over committed content; journal-authoritative.
 kx-dataset           = { path = "crates/kx-dataset",           version = "0.0.1" }
+# The opt-in SCALE retrieval backend (DP3, T2.3) — a file-backed in-process HNSW
+# index implementing kx-dataset::RetrievalIndex via the pure-Rust hnsw_rs crate.
+# Off the truth path (SN-8); the exact InMemory index stays the reproducible
+# default. Consumed only behind an opt-in feature (kx-gateway's `hnsw`, T3.7).
+kx-dataset-hnsw      = { path = "crates/kx-dataset-hnsw",      version = "0.0.1" }
 # Deterministic-critic vocabulary (P4.2) — CriticVerdict / CriticReason / CheckSpec.
 # Parser-free + dataset-free so kx-mote can embed a CheckSpec in MoteDef without a
 # dependency cycle or inheriting regex/serde_json.
