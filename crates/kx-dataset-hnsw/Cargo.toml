@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: Apache-2.0
+[package]
+name         = "kx-dataset-hnsw"
+version      = "0.0.1"
+edition      = { workspace = true }
+rust-version = { workspace = true }
+license      = { workspace = true }
+authors      = { workspace = true }
+repository   = { workspace = true }
+description  = "kortecx opt-in SCALE retrieval backend (DP3, T2.3) — a file-backed, in-process HNSW (approximate-nearest-neighbour) index implementing kx-dataset::RetrievalIndex via the pure-Rust hnsw_rs crate, for corpora too large for the default exact brute-force scan. Off the truth path (SN-8): similarity stays inside the retrieval Mote; only the ordered neighbour-ref SET is committed. The on-disk form is a REBUILDABLE CACHE of (ContentRef, vector) records — the HNSW graph is rebuilt on open, so a format break is recovered by replay (D40), never a migration. The exact InMemoryRetrievalIndex stays the reproducible DEFAULT; this is the opt-in scale path."
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+# The RetrievalIndex trait + Hit this backend implements (the shared seam), and
+# InMemoryRetrievalIndex for parity tests. FFI-free leaf.
+kx-dataset = { workspace = true }
+# Content-addressed identity the vectors are keyed by (the sidecar map + the
+# cache records are keyed by 32-byte ContentRef).
+kx-content = { workspace = true }
+# Pure-Rust HNSW (Malkov-Yashunin); Apache-2.0/MIT, `default = []` (no SIMD/nightly
+# features) so the default build pulls no x86-simd / nightly std::simd surface.
+hnsw_rs    = { workspace = true }
+thiserror  = { workspace = true }
+
+[dev-dependencies]
+# Durability / corrupt-file / path-traversal integration tests write a cache file.
+tempfile   = { workspace = true }
+
+[lints]
+workspace = true
