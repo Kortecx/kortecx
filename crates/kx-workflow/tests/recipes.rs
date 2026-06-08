@@ -19,8 +19,8 @@ use kx_content::ContentRef;
 use kx_critic_types::{CheckSpec, SchemaSpec, SchemaTag};
 use kx_mote::{ConfigKey, LogicRef, ModelId, NdClass, ToolName, ToolVersion};
 use kx_workflow::{
-    compile, fan_out_gather, image_batch_describe_reduce, map_reduce, react_tool_loop,
-    retry_until_critic, CompileError, WorkerKind, IMAGE_REF_KEY,
+    compile, fan_out_gather, image_batch_describe_reduce, map_reduce, rag_pipeline,
+    react_tool_loop, retry_until_critic, CompileError, WorkerKind, IMAGE_REF_KEY,
 };
 
 fn model() -> ModelId {
@@ -274,6 +274,101 @@ fn react_tool_loop_wires_reason_act_observe_with_tool_contract() {
     assert!(reason.mote.parents.is_empty(), "reason is the turn root");
     assert_eq!(act.mote.parents.len(), 1, "act depends on reason");
     assert_eq!(observe.mote.parents.len(), 1, "observe depends on act");
+}
+
+// ── rag_pipeline (DP2 — retrieval-augmented generation) ─────────────────────
+
+#[test]
+fn rag_pipeline_wires_n_ingest_then_query_then_assemble() {
+    let docs = [logic(1), logic(2), logic(3)];
+    let query = logic(50);
+    let assemble = logic(60);
+    let wf = rag_pipeline(7, model(), cap(), &docs, query, assemble).unwrap();
+    assert_eq!(ids(&wf), ids(&wf), "recipe compile must be deterministic");
+    let out = compile(&wf).unwrap();
+    assert_eq!(
+        out.motes.len(),
+        docs.len() + 2,
+        "N ingest + 1 query + 1 assemble"
+    );
+
+    // The ingest steps are READ-ONLY-NONDET (they embed + populate the index).
+    for d in &docs {
+        let ingest = out
+            .motes
+            .iter()
+            .find(|m| m.mote.def.logic_ref == *d)
+            .expect("ingest present");
+        assert_eq!(
+            ingest.mote.def.nd_class,
+            NdClass::ReadOnlyNondet,
+            "ingest/embed steps sample"
+        );
+        assert!(ingest.mote.parents.is_empty(), "ingest is a corpus root");
+    }
+
+    // The query (retrieval) step is ROND and parents EVERY ingest.
+    let q = out
+        .motes
+        .iter()
+        .find(|m| m.mote.def.logic_ref == query)
+        .expect("query present");
+    assert_eq!(
+        q.mote.def.nd_class,
+        NdClass::ReadOnlyNondet,
+        "retrieval is a nondet read of the index"
+    );
+    assert_eq!(
+        q.mote.parents.len(),
+        docs.len(),
+        "the query reads an index populated by every ingest"
+    );
+
+    // The assemble step is PURE and depends only on the query's top-k fact.
+    let a = out
+        .motes
+        .iter()
+        .find(|m| m.mote.def.logic_ref == assemble)
+        .expect("assemble present");
+    assert_eq!(
+        a.mote.def.nd_class,
+        NdClass::Pure,
+        "assemble folds the retrieved refs deterministically"
+    );
+    assert_eq!(
+        a.mote.parents.len(),
+        1,
+        "assemble depends on the query fact"
+    );
+    assert_eq!(
+        a.mote.parents[0].parent_id, q.mote.id,
+        "assemble's parent is the query step"
+    );
+}
+
+#[test]
+fn rag_pipeline_single_doc_is_three_motes() {
+    let out = compile(&rag_pipeline(0, model(), cap(), &[logic(1)], logic(50), logic(60)).unwrap())
+        .unwrap();
+    assert_eq!(out.motes.len(), 3, "1 ingest + query + assemble");
+}
+
+#[test]
+fn rag_pipeline_seed_changes_identity() {
+    let docs = [logic(1), logic(2)];
+    let a = ids(&rag_pipeline(1, model(), cap(), &docs, logic(50), logic(60)).unwrap());
+    let b = ids(&rag_pipeline(2, model(), cap(), &docs, logic(50), logic(60)).unwrap());
+    for (x, y) in a.iter().zip(b.iter()) {
+        assert_ne!(x, y, "every MoteId shifts with the seed");
+    }
+}
+
+#[test]
+fn rag_pipeline_empty_corpus_is_empty_recipe() {
+    assert_eq!(
+        rag_pipeline(0, model(), cap(), &[], logic(50), logic(60)).unwrap_err(),
+        CompileError::EmptyRecipe
+    );
 }
 
 // ── image_batch_describe_reduce (multi-modal capstone) ──────────────────────
