@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { connectConsole } from "./fixtures/connect";
 import { type Gateway, SPA_ORIGIN, spawnGateway } from "./fixtures/serve";
 
 let gw: Gateway | undefined;
@@ -12,12 +13,9 @@ test("a gateway drop mid-session surfaces a clear, retryable error (no hang/cras
   page,
 }) => {
   gw = await spawnGateway({ corsOrigin: SPA_ORIGIN });
+  await connectConsole(page, gw);
 
-  await page.goto("/connect");
-  const endpoint = page.getByLabel(/gateway endpoint/i);
-  await endpoint.fill(gw.endpoint);
-  await expect(endpoint).toHaveValue(gw.endpoint);
-  await page.getByRole("button", { name: /^connect$/i }).click();
+  await page.getByTestId("nav-recipes").click();
   await page.getByRole("button", { name: /submit run/i }).click();
   await expect(page.getByTestId("mote-dag")).toBeVisible({ timeout: 30_000 });
 
@@ -27,7 +25,8 @@ test("a gateway drop mid-session surfaces a clear, retryable error (no hang/cras
 
   // A manual refresh now hits an unreachable gateway → a clear error notice with a Retry
   // affordance (the durability property: the UI degrades gracefully, it does not hang).
-  await page.getByRole("button", { name: /refresh/i }).click();
+  // Use the run-detail "Refresh" (exact) — the navbar has a separate "Refresh all data".
+  await page.getByRole("button", { name: "Refresh", exact: true }).click();
   await expect(page.getByTestId("error-notice")).toBeVisible({ timeout: 20_000 });
   await expect(page.getByRole("button", { name: /retry/i })).toBeVisible();
 });

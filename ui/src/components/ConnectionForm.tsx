@@ -4,17 +4,27 @@ import { isNonloopbackPlaintext, validateEndpoint } from "../lib/endpoint";
 export interface ConnectionFormProps {
   initialEndpoint: string;
   connecting: boolean;
-  onConnect: (endpoint: string, token: string | undefined) => void;
+  onConnect: (endpoint: string, token: string | undefined, wsEndpoint?: string) => void;
+  /** Prefill for the advanced WS-bridge endpoint (non-secret; persisted). */
+  initialWsEndpoint?: string;
 }
 
 /**
  * Endpoint + optional bearer token. The token is held in local component state
  * (memory) and handed to `onConnect`; it is NEVER persisted. A cleartext warning
- * shows when a token would cross plaintext http:// to a non-loopback host.
+ * shows when a token would cross plaintext http:// to a non-loopback host. An
+ * advanced section sets an explicit WS-bridge endpoint for the live event tail
+ * (the Activity feed) when it is not on the conventional port 50152.
  */
-export function ConnectionForm({ initialEndpoint, connecting, onConnect }: ConnectionFormProps) {
+export function ConnectionForm({
+  initialEndpoint,
+  connecting,
+  onConnect,
+  initialWsEndpoint = "",
+}: ConnectionFormProps) {
   const [endpoint, setEndpoint] = useState(initialEndpoint);
   const [token, setToken] = useState("");
+  const [wsEndpoint, setWsEndpoint] = useState(initialWsEndpoint);
   const endpointError = validateEndpoint(endpoint);
   const plaintextWarning = token.trim() !== "" && isNonloopbackPlaintext(endpoint.trim());
 
@@ -24,7 +34,14 @@ export function ConnectionForm({ initialEndpoint, connecting, onConnect }: Conne
       return;
     }
     const t = token.trim();
-    onConnect(endpoint.trim(), t === "" ? undefined : t);
+    const ws = wsEndpoint.trim();
+    // Only pass the 3rd arg when set, so callers/tests that ignore the WS bridge
+    // keep the 2-argument contract.
+    if (ws === "") {
+      onConnect(endpoint.trim(), t === "" ? undefined : t);
+    } else {
+      onConnect(endpoint.trim(), t === "" ? undefined : t, ws);
+    }
   }
 
   return (
@@ -61,6 +78,21 @@ export function ConnectionForm({ initialEndpoint, connecting, onConnect }: Conne
           (TLS) for remote gateways.
         </output>
       ) : null}
+
+      <details className="connect-form__advanced">
+        <summary>Advanced</summary>
+        <label htmlFor="ws-endpoint">WS bridge endpoint (live events)</label>
+        <input
+          id="ws-endpoint"
+          name="ws-endpoint"
+          type="text"
+          value={wsEndpoint}
+          onChange={(e) => setWsEndpoint(e.target.value)}
+          autoComplete="off"
+          spellCheck={false}
+          placeholder="blank to derive :50152 from the endpoint"
+        />
+      </details>
 
       <button type="submit" disabled={connecting || endpointError !== null}>
         {connecting ? "Connecting…" : "Connect"}

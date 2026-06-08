@@ -86,6 +86,8 @@ async function waitReady(endpoint: string, proc: ChildProcess, timeoutMs = 40_00
 
 export interface Gateway {
   endpoint: string;
+  /** The R5 WS-bridge endpoint (for the Activity live tail). */
+  wsEndpoint: string;
   stop(): void;
 }
 
@@ -123,7 +125,7 @@ export async function spawnGateway(opts: SpawnOpts = {}): Promise<Gateway> {
     }
   };
   await waitReady(endpoint, proc);
-  return { endpoint, stop };
+  return { endpoint, wsEndpoint: `ws://127.0.0.1:${wsPort}`, stop };
 }
 
 /** The pinned origin the SPA is served from (must match playwright webServer). */

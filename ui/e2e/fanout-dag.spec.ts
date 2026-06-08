@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { connectConsole } from "./fixtures/connect";
 import { type Gateway, SPA_ORIGIN, spawnGateway } from "./fixtures/serve";
 
 let gw: Gateway | undefined;
@@ -12,12 +13,10 @@ test("submit fanout-demo → the live DAG renders the whole fan-out → gather g
   page,
 }) => {
   gw = await spawnGateway({ corsOrigin: SPA_ORIGIN });
+  await connectConsole(page, gw);
 
-  await page.goto("/connect");
-  await page.getByLabel(/gateway endpoint/i).fill(gw.endpoint);
-  await page.getByRole("button", { name: /^connect$/i }).click();
-
-  await expect(page.getByRole("heading", { name: /run a recipe/i })).toBeVisible();
+  await page.getByTestId("nav-recipes").click();
+  await expect(page.getByRole("heading", { name: "Recipes", exact: true })).toBeVisible();
   // Focus then type the handle/args (pressSequentially fires per-keystroke input
   // events the React controlled inputs catch; a bulk fill() can leave state stale).
   const handle = page.getByLabel(/recipe handle/i);
