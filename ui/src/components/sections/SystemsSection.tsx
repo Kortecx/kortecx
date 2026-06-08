@@ -1,18 +1,25 @@
+import { useState } from "react";
 import { useConnection } from "../../kx/connection-context";
-import { EmptyState } from "../EmptyState";
 import { HealthIndicator } from "../metrics/HealthIndicator";
+import { GrantInspector } from "../systems/GrantInspector";
+import { TeamsPanel } from "../systems/TeamsPanel";
 
 /**
- * The connected gateway at a glance. Agentic systems (teams / `MembershipLedger`)
- * and sharing (grants / `GrantLedger`) read-only VIEWERS arrive in UI-3 (managing
- * across parties stays cloud, per D129).
+ * The connected gateway + the governance VIEWERS (UI-3): teams (`MembershipLedger`)
+ * and sharing (grants / `GrantLedger`), both read-only. Selecting an asset in the
+ * sharing inspector also resolves each team member's effective warrant on it
+ * (membership ∩ grant) — the kx-fleet thesis, made visible. Managing teams/grants
+ * across parties + multi-tenant identity stay cloud (D129).
  */
 export function SystemsSection() {
   const { endpoint, wsEndpoint } = useConnection();
+  const [selectedTeam, setSelectedTeam] = useState<string | null>(null);
+  const [selectedAsset, setSelectedAsset] = useState<string | null>(null);
+
   return (
     <section className="screen" data-testid="systems-section">
       <h1>Systems</h1>
-      <p className="muted">The connected gateway, its liveness, and (soon) your teams.</p>
+      <p className="muted">The connected gateway, its liveness, and your teams &amp; sharing.</p>
       <dl className="facts">
         <dt>Gateway</dt>
         <dd className="mono">{endpoint}</dd>
@@ -23,10 +30,15 @@ export function SystemsSection() {
           <HealthIndicator />
         </dd>
       </dl>
-      <EmptyState
-        title="Teams & sharing"
-        detail="Teams (MembershipLedger) and sharing (GrantLedger) viewers arrive in UI-3 — read-only in OSS; managing across parties is cloud."
-      />
+
+      <div className="systems-grid">
+        <TeamsPanel
+          selectedTeam={selectedTeam}
+          onSelectTeam={setSelectedTeam}
+          assetRef={selectedAsset ?? undefined}
+        />
+        <GrantInspector selectedAsset={selectedAsset} onSelectAsset={setSelectedAsset} />
+      </div>
     </section>
   );
 }

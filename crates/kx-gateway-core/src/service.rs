@@ -130,6 +130,117 @@ pub trait RecipeCatalog: Send + Sync {
     fn get_recipe_form(&self, handle: &str) -> Option<Vec<RecipeFormFieldEntry>>;
 }
 
+/// One team in a `ListTeams` enumeration, in gateway-core's wire vocabulary
+/// (strings/u32 — no `kx-fleet` type, so the seam stays off the membership crate,
+/// the dependency wall). The host folds its `kx_fleet::MembershipLedger` into these.
+#[derive(Clone, Debug)]
+pub struct TeamSummaryEntry {
+    /// The team's group principal id (the party grants are issued to).
+    pub team_id: String,
+    /// The advisory human handle from the founding fact (never parsed for enforcement).
+    pub display_name: String,
+    /// The founding owner principal id.
+    pub owner: String,
+    /// The count of effective (authority-checked) active members.
+    pub member_count: u32,
+}
+
+/// A compact, human-readable warrant projection — NEVER the warrant body or any
+/// secret material; the load-bearing ceilings + scopes a member's resolved warrant
+/// conveys, as display strings/scalars (mirrors the `kx` CLI warrant render). The
+/// host renders it once from a `kx_warrant::WarrantSpec`; the UI never reconstructs
+/// kx-warrant formatting, and a future kx-warrant axis bump never forces a proto change.
+#[derive(Clone, Debug)]
+pub struct WarrantProjection {
+    /// The executor class (e.g. "Bwrap" / "MacOsSandbox").
+    pub executor_class: String,
+    /// A one-line model route ("model_id ×max_calls (in/out tok)").
+    pub model_route: String,
+    /// The egress scope summary ("None" / "EgressAllowlist(host:port,…)").
+    pub net_scope: String,
+    /// The filesystem scope summary ("/path:ro, …").
+    pub fs_scope: String,
+    /// The headline narrowing axis: `model_route.max_calls`.
+    pub max_calls: u64,
+    /// The CPU ceiling (`resource_ceiling.cpu_milli`).
+    pub cpu_milli: u64,
+    /// The wall-clock ceiling (`resource_ceiling.wall_clock_ms`).
+    pub wall_clock_ms: u64,
+}
+
+/// One member of a team, with the optional resolved-warrant projection.
+#[derive(Clone, Debug)]
+pub struct TeamMemberEntry {
+    /// The member principal id.
+    pub party: String,
+    /// The merged runtime-scope role name (advisory display).
+    pub role: String,
+    /// The merged catalog action cap, e.g. `["Read", "Use", "Delegate"]`.
+    pub action_caps: Vec<String>,
+    /// Present iff the caller passed an `asset_ref` AND a membership path resolves a
+    /// warrant for this member on it (the "what would this member actually get" view).
+    pub resolved_warrant: Option<WarrantProjection>,
+}
+
+/// The members of one team (with the team owner echoed so the UI can mark the owner row).
+#[derive(Clone, Debug)]
+pub struct TeamMembersView {
+    /// The team owner principal id.
+    pub owner: String,
+    /// The active members, by member principal id (deterministic).
+    pub members: Vec<TeamMemberEntry>,
+}
+
+/// The membership read seam (the UI-3 `ListTeams` / `ListTeamMembers` path). The host
+/// implements it over a `kx_fleet::MembershipLedger` (+ a `GovernedFleet` for the
+/// optional resolve), folding `list_facts()` for the team list and `effective_members`
+/// for the member view — spoken in gateway-core's wire vocabulary so the seam stays off
+/// `kx-fleet` / `kx-catalog`. A `None` seam ⇒ the two team RPCs return `unimplemented`.
+pub trait MembershipView: Send + Sync {
+    /// Every founded team, in founding order.
+    fn list_teams(&self) -> Vec<TeamSummaryEntry>;
+    /// The active members of `team_id`, or `None` if no such team is founded. When
+    /// `asset_ref` is `Some`, each member's `resolved_warrant` is populated (the
+    /// membership ∩ grant fold via the frozen narrowing seam); `None` leaves it unset.
+    fn list_members(&self, team_id: &str, asset_ref: Option<&str>) -> Option<TeamMembersView>;
+}
+
+/// One grant on an asset, fold-classified (root vs delegated, active vs revoked).
+#[derive(Clone, Debug)]
+pub struct GrantEntry {
+    /// The grantor principal id.
+    pub grantor: String,
+    /// The grantee principal id.
+    pub grantee: String,
+    /// The catalog actions the grant conveys, e.g. `["Read", "Use"]`.
+    pub actions: Vec<String>,
+    /// The grant's runtime-scope role name (advisory display).
+    pub runtime_scope: String,
+    /// `true` iff this is a root grant (`grant.prior` is `None`) from the asset owner.
+    pub is_root: bool,
+    /// `true` iff an AUTHORIZED revocation makes the grant inert in the fold.
+    pub revoked: bool,
+}
+
+/// Every grant on one asset, with the bound owner echoed.
+#[derive(Clone, Debug)]
+pub struct AssetGrantsView {
+    /// The asset's bound owner principal id ("" if unbound).
+    pub owner: String,
+    /// Every grant fact on the asset (root + delegated), fold-classified.
+    pub grants: Vec<GrantEntry>,
+}
+
+/// The grant read seam (the UI-3 `ListAssetGrants` path). The host implements it over
+/// the SAME `kx_catalog::GrantLedger` the demo recipes seed, classifying each grant
+/// fact root/delegated + active/revoked via the fold. A `None` seam ⇒ `ListAssetGrants`
+/// returns `unimplemented`; an unknown asset ⇒ `None` (the handler maps to `not_found`).
+pub trait GrantView: Send + Sync {
+    /// Every grant on `asset_ref`, or `None` if the asset handle is unparseable /
+    /// unknown.
+    fn list_asset_grants(&self, asset_ref: &str) -> Option<AssetGrantsView>;
+}
+
 /// A recipe resolved + bound to concrete args, ready to submit. Mirrors
 /// `kx_invoke::BoundRun`, but in gateway-core's own vocabulary (`kx_mote` +
 /// `kx_warrant` types it already depends on) so the binding seam stays off
@@ -252,6 +363,12 @@ pub struct GatewayService {
     /// The optional recipe-discovery seam (the host injects a library-backed
     /// catalog). `None` ⇒ `ListRecipes` / `GetRecipeForm` return `unimplemented`.
     catalog_recipes: Option<Arc<dyn RecipeCatalog>>,
+    /// The optional membership-view seam (the host injects a `kx-fleet`-backed view).
+    /// `None` ⇒ `ListTeams` / `ListTeamMembers` return `unimplemented`.
+    membership: Option<Arc<dyn MembershipView>>,
+    /// The optional grant-view seam (the host injects a `kx-catalog`-backed view).
+    /// `None` ⇒ `ListAssetGrants` returns `unimplemented`.
+    grants_view: Option<Arc<dyn GrantView>>,
     /// The `StreamEvents` tailer. Defaults to [`SnapshotTailer`]; the host injects
     /// a live tailer via [`GatewayService::with_event_tailer`].
     tailer: Arc<dyn EventTailer>,
@@ -273,6 +390,8 @@ impl GatewayService {
             catalog: None,
             binder: None,
             catalog_recipes: None,
+            membership: None,
+            grants_view: None,
             tailer: Arc::new(SnapshotTailer),
         }
     }
@@ -299,6 +418,24 @@ impl GatewayService {
     #[must_use]
     pub fn with_recipe_catalog(mut self, catalog_recipes: Arc<dyn RecipeCatalog>) -> Self {
         self.catalog_recipes = Some(catalog_recipes);
+        self
+    }
+
+    /// Wire the membership-view seam (the host's `kx-fleet`-backed view). Enables
+    /// `ListTeams` / `ListTeamMembers` (the UI-3 teams viewer). Read-only — never a
+    /// journal write or a digest change.
+    #[must_use]
+    pub fn with_membership_view(mut self, membership: Arc<dyn MembershipView>) -> Self {
+        self.membership = Some(membership);
+        self
+    }
+
+    /// Wire the grant-view seam (the host's `kx-catalog`-backed view). Enables
+    /// `ListAssetGrants` (the UI-3 sharing/grants inspector). Read-only — never a
+    /// journal write or a digest change.
+    #[must_use]
+    pub fn with_grant_view(mut self, grants_view: Arc<dyn GrantView>) -> Self {
+        self.grants_view = Some(grants_view);
         self
     }
 
@@ -573,6 +710,113 @@ impl KxGateway for GatewayService {
             handle,
             fields,
         }))
+    }
+
+    async fn list_teams(
+        &self,
+        _request: Request<proto::ListTeamsRequest>,
+    ) -> Result<Response<proto::ListTeamsResponse>, Status> {
+        let view = self
+            .membership
+            .as_ref()
+            .ok_or_else(|| Status::unimplemented("ListTeams: no membership view wired"))?;
+        let teams = view
+            .list_teams()
+            .into_iter()
+            .map(team_summary_to_proto)
+            .collect();
+        Ok(Response::new(proto::ListTeamsResponse { teams }))
+    }
+
+    async fn list_team_members(
+        &self,
+        request: Request<proto::ListTeamMembersRequest>,
+    ) -> Result<Response<proto::ListTeamMembersResponse>, Status> {
+        let view = self
+            .membership
+            .as_ref()
+            .ok_or_else(|| Status::unimplemented("ListTeamMembers: no membership view wired"))?;
+        let req = request.into_inner();
+        // A public viewer surface: `not_found` for an unknown team is intended (not
+        // collapsed like the Invoke execution surface — these RPCs are view-only).
+        let members = view
+            .list_members(&req.team_id, req.asset_ref.as_deref())
+            .ok_or_else(|| Status::not_found("team not found"))?;
+        Ok(Response::new(proto::ListTeamMembersResponse {
+            owner: members.owner,
+            members: members
+                .members
+                .into_iter()
+                .map(team_member_to_proto)
+                .collect(),
+        }))
+    }
+
+    async fn list_asset_grants(
+        &self,
+        request: Request<proto::ListAssetGrantsRequest>,
+    ) -> Result<Response<proto::ListAssetGrantsResponse>, Status> {
+        let view = self
+            .grants_view
+            .as_ref()
+            .ok_or_else(|| Status::unimplemented("ListAssetGrants: no grant view wired"))?;
+        let asset_ref = request.into_inner().asset_ref;
+        let grants = view
+            .list_asset_grants(&asset_ref)
+            .ok_or_else(|| Status::not_found("asset not found"))?;
+        Ok(Response::new(proto::ListAssetGrantsResponse {
+            owner: grants.owner,
+            grants: grants
+                .grants
+                .into_iter()
+                .map(grant_entry_to_proto)
+                .collect(),
+        }))
+    }
+}
+
+/// Map a gateway-core team summary into the wire type.
+fn team_summary_to_proto(t: TeamSummaryEntry) -> proto::TeamSummary {
+    proto::TeamSummary {
+        team_id: t.team_id,
+        display_name: t.display_name,
+        owner: t.owner,
+        member_count: t.member_count,
+    }
+}
+
+/// Map a gateway-core team member (with its optional warrant) into the wire type.
+fn team_member_to_proto(m: TeamMemberEntry) -> proto::TeamMember {
+    proto::TeamMember {
+        party: m.party,
+        role: m.role,
+        action_caps: m.action_caps,
+        resolved_warrant: m.resolved_warrant.map(warrant_view_to_proto),
+    }
+}
+
+/// Map a gateway-core warrant projection into the wire type.
+fn warrant_view_to_proto(w: WarrantProjection) -> proto::WarrantView {
+    proto::WarrantView {
+        executor_class: w.executor_class,
+        model_route: w.model_route,
+        net_scope: w.net_scope,
+        fs_scope: w.fs_scope,
+        max_calls: w.max_calls,
+        cpu_milli: w.cpu_milli,
+        wall_clock_ms: w.wall_clock_ms,
+    }
+}
+
+/// Map a gateway-core grant entry into the wire type.
+fn grant_entry_to_proto(g: GrantEntry) -> proto::GrantView {
+    proto::GrantView {
+        grantor: g.grantor,
+        grantee: g.grantee,
+        actions: g.actions,
+        runtime_scope: g.runtime_scope,
+        is_root: g.is_root,
+        revoked: g.revoked,
     }
 }
 

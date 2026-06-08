@@ -317,6 +317,76 @@ message GetRecipeFormResponse {
 }
 
 // ---------------------------------------------------------------------------
+// UI-3 — teams (kx_fleet MembershipLedger) + sharing (kx_catalog GrantLedger)
+// READ-ONLY viewers. Additive RPCs (D120.6). TWO SEPARATE TRUTHS, both
+// off-journal + off-digest: teams = who-is-in-a-team, grants = who-can-do-what
+// on an asset. Every field is a HUMAN-READABLE DISPLAY PROJECTION (string /
+// repeated-string), server-derived from the fail-closed folds — NEVER identity,
+// NEVER a warrant body/secret (the warrant_ref-is-a-reference rule). A None seam
+// ⇒ UNIMPLEMENTED (old-gateway forward-compat degrade); an unknown team/asset ⇒
+// not_found (a public viewer surface, honest codes — like the recipe catalog).
+//
+// SCOPE (single-node OSS): operator-global VIEW. MANAGING (found/admit/remove,
+// grant/revoke), cross-party delegation + multi-tenant OIDC identity = CLOUD
+// (D129). The OSS gateway seeds one demo team (the --auth-token parties) so the
+// viewer is populated out-of-the-box.
+// ---------------------------------------------------------------------------
+
+message ListTeamsRequest {}
+message TeamSummary {
+  string team_id      = 1;               // the team's group PartyId (the principal grants are issued to)
+  string display_name = 2;               // advisory human handle from the founding fact (NEVER parsed)
+  string owner        = 3;               // the founding owner PartyId
+  uint32 member_count = 4;               // count of effective (authority-checked) active members
+}
+message ListTeamsResponse {
+  repeated TeamSummary teams = 1;        // founding (append) order
+}
+
+message ListTeamMembersRequest {
+  string team_id            = 1;
+  optional string asset_ref = 2;         // when set, populate resolved_warrant per member (resolve-member-warrant)
+}
+// A compact, human-readable warrant projection — NEVER the warrant body or any
+// secret material; the load-bearing ceilings + scopes a member's resolved warrant
+// conveys, pre-rendered as display strings/scalars (mirrors the `kx` CLI render).
+message WarrantView {
+  string executor_class = 1;             // e.g. "Bwrap" / "MacOsSandbox"
+  string model_route    = 2;             // "model_id ×max_calls (in/out tok)" one-liner
+  string net_scope      = 3;             // "None" / "EgressAllowlist(host:port,…)"
+  string fs_scope       = 4;             // a "/path:ro, …" summary
+  uint64 max_calls      = 5;             // model_route.max_calls (the headline narrowing axis)
+  uint64 cpu_milli      = 6;             // resource_ceiling.cpu_milli
+  uint64 wall_clock_ms  = 7;             // resource_ceiling.wall_clock_ms
+}
+message TeamMember {
+  string party                = 1;       // the member PartyId
+  string role                 = 2;       // the merged runtime-scope role NAME (advisory display)
+  repeated string action_caps = 3;       // the merged catalog action cap, e.g. ["Read","Use","Delegate"]
+  optional WarrantView resolved_warrant = 4; // present iff asset_ref set AND a membership path resolves
+}
+message ListTeamMembersResponse {
+  string owner               = 1;        // the team owner (so the UI marks the owner row)
+  repeated TeamMember members = 2;       // by member PartyId (deterministic)
+}
+
+message ListAssetGrantsRequest {
+  string asset_ref = 1;                  // "namespace/collection/name" (AssetPath handle)
+}
+message GrantView {
+  string grantor          = 1;
+  string grantee          = 2;
+  repeated string actions = 3;           // e.g. ["Read","Use"]
+  string runtime_scope    = 4;           // the grant role NAME (advisory display)
+  bool is_root            = 5;           // true iff grant.prior is None (a root grant from the owner)
+  bool revoked            = 6;           // true iff an AUTHORIZED revocation makes it inert in the fold
+}
+message ListAssetGrantsResponse {
+  string owner            = 1;           // the asset's bound owner ("" if unbound / unknown)
+  repeated GrantView grants = 2;         // every grant fact on the asset (root + delegated), fold-classified
+}
+
+// ---------------------------------------------------------------------------
 // Service — the external client-facing gateway (distinct from Coordinator).
 // ---------------------------------------------------------------------------
 
@@ -333,4 +403,8 @@ service KxGateway {
   rpc ListRuns(ListRunsRequest) returns (ListRunsResponse);
   rpc ListRecipes(ListRecipesRequest) returns (ListRecipesResponse);
   rpc GetRecipeForm(GetRecipeFormRequest) returns (GetRecipeFormResponse);
+  // UI-3 additive (D120.6): teams (membership) + sharing (grants) read viewers.
+  rpc ListTeams(ListTeamsRequest) returns (ListTeamsResponse);
+  rpc ListTeamMembers(ListTeamMembersRequest) returns (ListTeamMembersResponse);
+  rpc ListAssetGrants(ListAssetGrantsRequest) returns (ListAssetGrantsResponse);
 }

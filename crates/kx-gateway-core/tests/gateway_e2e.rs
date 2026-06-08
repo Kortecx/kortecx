@@ -14,9 +14,10 @@ use common::{
     INSTANCE_ID, RECIPE_FP,
 };
 use kx_gateway_core::{
-    BinderError, BoundRecipe, CatalogSeamError, GatewayService, RecipeBinder, RecipeCatalog,
-    RecipeFormFieldEntry, RecipeParamKind, RegisteredSignature, RunSubmitter, SignatureCatalog,
-    SignatureSummaryEntry,
+    AssetGrantsView, BinderError, BoundRecipe, CatalogSeamError, GatewayService, GrantEntry,
+    GrantView, MembershipView, RecipeBinder, RecipeCatalog, RecipeFormFieldEntry, RecipeParamKind,
+    RegisteredSignature, RunSubmitter, SignatureCatalog, SignatureSummaryEntry, TeamMemberEntry,
+    TeamMembersView, TeamSummaryEntry, WarrantProjection,
 };
 use kx_proto::proto;
 use tonic::Code;
@@ -599,6 +600,229 @@ async fn recipe_rpcs_dispatch_to_the_catalog_seam() {
     let unknown = client
         .get_recipe_form(proto::GetRecipeFormRequest {
             handle: "kx/recipes/nope".to_string(),
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(unknown.code(), Code::NotFound);
+}
+
+// --- UI-3: the teams (MembershipView) + grants (GrantView) read seams --------
+
+/// A mock [`MembershipView`] exposing one `kx/teams/demo` team with two members
+/// (alice = owner-side member; bob = a delegate). `list_members` returns a resolved
+/// warrant ONLY when an `asset_ref` is supplied (the resolve-member-warrant toggle).
+struct MockMembershipView;
+
+impl MembershipView for MockMembershipView {
+    fn list_teams(&self) -> Vec<TeamSummaryEntry> {
+        vec![TeamSummaryEntry {
+            team_id: "kx/teams/demo".to_string(),
+            display_name: "Demo Team".to_string(),
+            owner: "kx-gateway".to_string(),
+            member_count: 2,
+        }]
+    }
+    fn list_members(&self, team_id: &str, asset_ref: Option<&str>) -> Option<TeamMembersView> {
+        if team_id != "kx/teams/demo" {
+            return None;
+        }
+        let warrant = asset_ref.map(|_| WarrantProjection {
+            executor_class: "Bwrap".to_string(),
+            model_route: "m ×10 (1000/1000 tok)".to_string(),
+            net_scope: "None".to_string(),
+            fs_scope: String::new(),
+            max_calls: 10,
+            cpu_milli: 1_000,
+            wall_clock_ms: 1_000,
+        });
+        Some(TeamMembersView {
+            owner: "kx-gateway".to_string(),
+            members: vec![
+                TeamMemberEntry {
+                    party: "alice@acme".to_string(),
+                    role: "demo-member".to_string(),
+                    action_caps: vec!["Read".to_string(), "Use".to_string()],
+                    resolved_warrant: warrant.clone(),
+                },
+                TeamMemberEntry {
+                    party: "bob@acme".to_string(),
+                    role: "demo-delegate".to_string(),
+                    action_caps: vec![
+                        "Read".to_string(),
+                        "Use".to_string(),
+                        "Delegate".to_string(),
+                    ],
+                    resolved_warrant: warrant,
+                },
+            ],
+        })
+    }
+}
+
+/// A mock [`GrantView`] exposing one root grant + one revoked delegated grant on
+/// `kx/recipes/echo`; any other asset is unknown (`None`).
+struct MockGrantView;
+
+impl GrantView for MockGrantView {
+    fn list_asset_grants(&self, asset_ref: &str) -> Option<AssetGrantsView> {
+        if asset_ref != "kx/recipes/echo" {
+            return None;
+        }
+        Some(AssetGrantsView {
+            owner: "kx-gateway".to_string(),
+            grants: vec![
+                GrantEntry {
+                    grantor: "kx-gateway".to_string(),
+                    grantee: "alice@acme".to_string(),
+                    actions: vec!["Read".to_string(), "Use".to_string()],
+                    runtime_scope: "demo".to_string(),
+                    is_root: true,
+                    revoked: false,
+                },
+                GrantEntry {
+                    grantor: "alice@acme".to_string(),
+                    grantee: "bob@acme".to_string(),
+                    actions: vec!["Use".to_string()],
+                    runtime_scope: "demo".to_string(),
+                    is_root: false,
+                    revoked: true,
+                },
+            ],
+        })
+    }
+}
+
+#[tokio::test]
+async fn team_and_grant_rpcs_unimplemented_without_seams() {
+    // No membership/grant view wired → all three UI-3 RPCs are unimplemented (an old
+    // host is unaffected; the SDK degrades to the not-wired empty-state).
+    let mut client = spawn(service_from(build_run(), no_submitter())).await;
+    assert_eq!(
+        client
+            .list_teams(proto::ListTeamsRequest {})
+            .await
+            .unwrap_err()
+            .code(),
+        Code::Unimplemented,
+    );
+    assert_eq!(
+        client
+            .list_team_members(proto::ListTeamMembersRequest {
+                team_id: "kx/teams/demo".to_string(),
+                asset_ref: None,
+            })
+            .await
+            .unwrap_err()
+            .code(),
+        Code::Unimplemented,
+    );
+    assert_eq!(
+        client
+            .list_asset_grants(proto::ListAssetGrantsRequest {
+                asset_ref: "kx/recipes/echo".to_string(),
+            })
+            .await
+            .unwrap_err()
+            .code(),
+        Code::Unimplemented,
+    );
+}
+
+#[tokio::test]
+async fn team_rpcs_dispatch_to_the_membership_view() {
+    let svc = service_from(build_run(), no_submitter())
+        .with_membership_view(Arc::new(MockMembershipView));
+    let mut client = spawn(svc).await;
+
+    let teams = client
+        .list_teams(proto::ListTeamsRequest {})
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(teams.teams.len(), 1);
+    assert_eq!(teams.teams[0].team_id, "kx/teams/demo");
+    assert_eq!(teams.teams[0].owner, "kx-gateway");
+    assert_eq!(teams.teams[0].member_count, 2);
+
+    // Without asset_ref: members + roles, NO resolved warrant.
+    let members = client
+        .list_team_members(proto::ListTeamMembersRequest {
+            team_id: "kx/teams/demo".to_string(),
+            asset_ref: None,
+        })
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(members.owner, "kx-gateway");
+    assert_eq!(members.members.len(), 2);
+    let bob = members
+        .members
+        .iter()
+        .find(|m| m.party == "bob@acme")
+        .unwrap();
+    assert!(
+        bob.action_caps.contains(&"Delegate".to_string()),
+        "bob is a delegate"
+    );
+    assert!(
+        members.members.iter().all(|m| m.resolved_warrant.is_none()),
+        "no asset_ref ⇒ no resolved warrant"
+    );
+
+    // With asset_ref: each member carries the resolved-warrant projection.
+    let with_asset = client
+        .list_team_members(proto::ListTeamMembersRequest {
+            team_id: "kx/teams/demo".to_string(),
+            asset_ref: Some("kx/recipes/echo".to_string()),
+        })
+        .await
+        .unwrap()
+        .into_inner();
+    let w = with_asset.members[0].resolved_warrant.as_ref().unwrap();
+    assert_eq!(
+        w.max_calls, 10,
+        "resolve-member-warrant populated with asset_ref"
+    );
+
+    // A public viewer surface: an unknown team is `not_found`.
+    let unknown = client
+        .list_team_members(proto::ListTeamMembersRequest {
+            team_id: "kx/teams/nope".to_string(),
+            asset_ref: None,
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(unknown.code(), Code::NotFound);
+}
+
+#[tokio::test]
+async fn grant_rpcs_dispatch_to_the_grant_view() {
+    let svc = service_from(build_run(), no_submitter()).with_grant_view(Arc::new(MockGrantView));
+    let mut client = spawn(svc).await;
+
+    let grants = client
+        .list_asset_grants(proto::ListAssetGrantsRequest {
+            asset_ref: "kx/recipes/echo".to_string(),
+        })
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(grants.owner, "kx-gateway");
+    assert_eq!(grants.grants.len(), 2);
+    let root = grants.grants.iter().find(|g| g.is_root).unwrap();
+    assert_eq!(root.grantee, "alice@acme");
+    assert!(!root.revoked);
+    let revoked = grants.grants.iter().find(|g| g.revoked).unwrap();
+    assert_eq!(revoked.grantee, "bob@acme");
+    assert!(
+        !revoked.is_root,
+        "the revoked grant is a delegated sub-grant"
+    );
+
+    // An unknown asset is `not_found` (a public viewer surface).
+    let unknown = client
+        .list_asset_grants(proto::ListAssetGrantsRequest {
+            asset_ref: "kx/recipes/nope".to_string(),
         })
         .await
         .unwrap_err();

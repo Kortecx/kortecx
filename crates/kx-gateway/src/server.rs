@@ -30,14 +30,16 @@ use std::time::Duration;
 #[cfg(feature = "embedded-worker")]
 use {
     crate::provision::{DemoLibrary, HostRecipeBinder, HostRecipeCatalog, HostSignatureCatalog},
+    crate::teams::{seed_demo_team, HostGrantView, HostMembershipView},
     kx_capability::{CapabilityBroker, LocalCapabilityBroker},
     kx_catalog::SqliteCatalog,
     kx_content::{ContentRef, ContentStore, LocalFsContentStore},
     kx_coordinator::CoordinatorService,
     kx_executor::{LocalResourceManager, MoteExecutor, TestMoteExecutor},
+    kx_fleet::SqliteMembershipLedger,
     kx_gateway_core::{
-        EventTailer, GatewayService, JournalReader, ReadOnly, RecipeBinder, RecipeCatalog,
-        SignatureCatalog, TonicCoordinatorSubmitter,
+        EventTailer, GatewayService, GrantView, JournalReader, MembershipView, ReadOnly,
+        RecipeBinder, RecipeCatalog, SignatureCatalog, TonicCoordinatorSubmitter,
     },
     kx_journal::SqliteJournal,
     kx_proto::proto::coordinator_server::CoordinatorServer,
@@ -493,6 +495,20 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     // executable bind agree by construction.
     let binder: Arc<dyn RecipeBinder> = Arc::new(HostRecipeBinder::from_shared(demo.clone()));
     let recipe_catalog: Arc<dyn RecipeCatalog> = Arc::new(HostRecipeCatalog::new(demo.clone()));
+    // (3d) UI-3: a durable membership ledger (teams) under the SAME catalog dir,
+    //      idempotently seeded with one demo team (owner = the gateway principal;
+    //      members = each --auth-token party + the dev principal, one a Delegate) +
+    //      a team grant on `echo` so a member's warrant resolves through membership ∩
+    //      grant. The grant/membership VIEW seams read it + the SHARED demo grant
+    //      ledger; managing across parties is cloud (D129).
+    let members = Arc::new(
+        SqliteMembershipLedger::open(catalog_dir.join("members.db"))
+            .map_err(|e| GatewayError::Catalog(e.to_string()))?,
+    );
+    seed_demo_team(&members, &demo, &parties)?;
+    let membership_view: Arc<dyn MembershipView> =
+        Arc::new(HostMembershipView::new(members, demo.clone()));
+    let grant_view: Arc<dyn GrantView> = Arc::new(HostGrantView::new(demo.clone()));
     // R5: the gRPC `StreamEvents` becomes a live tail (resumable, bounded,
     // recovery-safe). Read-side only — the digest + frozen proto are untouched. The
     // `live_shutdown` watch lets shutdown stop the poll loops (so their endless
@@ -502,6 +518,8 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         .with_signature_catalog(signature_catalog)
         .with_recipe_binder(binder)
         .with_recipe_catalog(recipe_catalog)
+        .with_membership_view(membership_view)
+        .with_grant_view(grant_view)
         .with_event_tailer(Arc::new(crate::live_tail::LiveTailer::new(
             live_shutdown_rx.clone(),
         )));

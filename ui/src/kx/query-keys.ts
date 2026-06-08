@@ -18,6 +18,14 @@ export const queryKeys = {
   /** One recipe's free-param form (`GetRecipeForm`), scoped by handle. */
   recipeForm: (endpoint: string, handle: string) =>
     ["kx", endpoint, "recipe-form", handle] as const,
+  /** The teams the gateway knows (`ListTeams`). */
+  teams: (endpoint: string) => ["kx", endpoint, "teams"] as const,
+  /** One team's members (`ListTeamMembers`); `assetRef` distinguishes the resolved view. */
+  teamMembers: (endpoint: string, teamId: string, assetRef?: string) =>
+    ["kx", endpoint, "team-members", teamId, assetRef ?? "none"] as const,
+  /** The active grants on an asset (`ListAssetGrants`), scoped by asset ref. */
+  assetGrants: (endpoint: string, assetRef: string) =>
+    ["kx", endpoint, "asset-grants", assetRef] as const,
   /** Gateway liveness probe (endpoint-scoped). */
   health: (endpoint: string) => ["kx", endpoint, "health"] as const,
 };

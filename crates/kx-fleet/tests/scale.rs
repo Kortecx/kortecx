@@ -17,12 +17,19 @@ use kx_catalog::{
     InMemoryGrantLedger, PartyId,
 };
 use kx_fleet::{
-    Admit, GovernedFleet, InMemoryMembershipLedger, MembershipLedger, Team, MAX_TEAM_MEMBERS_WALK,
+    Admit, GovernedFleet, InMemoryMembershipLedger, MembershipLedger, SqliteMembershipLedger, Team,
+    MAX_TEAM_MEMBERS_WALK,
 };
 use kx_mote::ModelId;
 use kx_warrant::{ModelRoute, ResourceCeiling, Role, WarrantSpec};
 
 const SIZES: &[usize] = &[1_000, 5_000, 10_000, 25_000];
+
+/// Smaller series for the DURABLE backend (each append fsyncs under
+/// `synchronous=FULL`, so the constant per-commit cost dominates wall-clock) — large
+/// enough to expose any super-linear algorithmic growth, bounded so the scale-smoke
+/// job stays fast.
+const DURABLE_SIZES: &[usize] = &[1_000, 4_000, 16_000];
 
 fn warrant_calls(max_calls: u32) -> WarrantSpec {
     WarrantSpec {
@@ -125,6 +132,74 @@ fn membership_append_and_query_stay_sublinear() {
     assert_sublinear("membership-admit", &admit_ns);
     assert_sublinear("membership-is-member", &is_member_ns);
     assert_sublinear("membership-edges", &edges_ns);
+}
+
+/// The DURABLE backend's two SQLite-specific axes stay sub-linear under REAL disk
+/// I/O: (1) append (a `BTreeMap` update + one INSERT into the `seq`-PK + content-id
+/// unique index + an fsync) stays O(log n) per fact, and (2) rebuild-on-open
+/// (replay the whole `seq`-ordered log through the shared fold) stays O(n log n) —
+/// a large membership log neither slows each append super-linearly nor turns a
+/// restart into an O(n²) outage. The READ folds are the SAME shared `Inner` as the
+/// in-memory backend (proven above), so this isolates the durable axes. The reopened
+/// fold is also asserted EQUAL to the live one (durability correctness, not just
+/// speed). Mirrors `kx-catalog`'s durable scale coverage.
+#[test]
+#[ignore = "scale-smoke: run with --release --ignored --nocapture --test-threads=1"]
+fn sqlite_membership_append_and_rebuild_stay_sublinear() {
+    let owner = PartyId::new("owner");
+    let mut append_ns: Vec<(usize, f64)> = Vec::new();
+    let mut rebuild_ns: Vec<(usize, f64)> = Vec::new();
+
+    for &n in DURABLE_SIZES {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("members.db");
+        let teams: Vec<PartyId> = (0..n).map(|i| PartyId::new(format!("t{i}"))).collect();
+        let members: Vec<PartyId> = (0..n).map(|i| PartyId::new(format!("m{i}"))).collect();
+
+        let append_elapsed = {
+            let fleet = SqliteMembershipLedger::open(&path).unwrap();
+            for t in &teams {
+                fleet
+                    .append_founding(Team::found(t.clone(), owner.clone(), "T"))
+                    .unwrap();
+            }
+            let start = Instant::now();
+            for (t, m) in teams.iter().zip(&members) {
+                fleet
+                    .append_admit(Admit::new(
+                        t.clone(),
+                        m.clone(),
+                        owner.clone(),
+                        role_calls(10),
+                        CatalogActionSet::allow([CatalogAction::Use]),
+                    ))
+                    .unwrap();
+            }
+            start.elapsed()
+        };
+
+        // Reopen = rebuild the full Inner by replaying 2n facts in seq order.
+        let start = Instant::now();
+        let reopened = SqliteMembershipLedger::open(&path).unwrap();
+        let rebuild_elapsed = start.elapsed();
+        assert_eq!(reopened.len(), 2 * n, "all facts durable");
+        for (t, m) in teams.iter().zip(&members) {
+            assert!(reopened.is_member(m, t), "the fold survives the reopen");
+        }
+
+        #[allow(clippy::cast_precision_loss)]
+        let per_append = append_elapsed.as_nanos() as f64 / n as f64;
+        #[allow(clippy::cast_precision_loss)]
+        let per_rebuild = rebuild_elapsed.as_nanos() as f64 / (2 * n) as f64;
+        println!(
+            "sqlite-fleet: n={n} append_per_ns={per_append:.1} rebuild_per_fact_ns={per_rebuild:.1}"
+        );
+        append_ns.push((n, per_append));
+        rebuild_ns.push((n, per_rebuild));
+    }
+
+    assert_sublinear("sqlite-membership-append", &append_ns);
+    assert_sublinear("sqlite-membership-rebuild", &rebuild_ns);
 }
 
 /// The full composed resolution (`resolve_member_warrant`: membership fold + grant

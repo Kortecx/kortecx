@@ -15,10 +15,12 @@ import type { Client, Transport } from "@connectrpc/connect";
 import { KxRunFailed, KxWaitTimeout, rpc } from "./errors.js";
 import { streamDeltas, wsDeltasFromMessages, wsUrl } from "./events.js";
 import { KxGateway, type SubmitRunRequestSchema } from "./gen/kortecx/v1/gateway_pb.js";
+import { AssetGrants } from "./grants.js";
 import { INSTANCE_LEN, REF_LEN, asBytes, encode } from "./hexids.js";
 import { RecipeForm } from "./recipes.js";
 import { Result, Run } from "./run.js";
 import { type RunPage, RunSummary } from "./runs.js";
+import { TeamMembers, type TeamSummary, teamsFromProto } from "./teams.js";
 import { type Args, encodeArgs } from "./transport.js";
 import { type Delta, Projection, SignatureSummary } from "./types.js";
 import { type WaitMode, type WaitOutcome, eventsResult, pollAny, pollResult } from "./wait.js";
@@ -184,6 +186,36 @@ export abstract class KxClientBase {
   async getRecipeForm(handle: string): Promise<RecipeForm> {
     const resp = await rpc(this.grpc.getRecipeForm({ handle }));
     return RecipeForm.fromProto(resp);
+  }
+
+  /**
+   * Enumerate the teams the gateway knows (UI-3 Systems viewer). VIEW-only in OSS.
+   * An old gateway without this RPC throws {@link KxUnimplemented}.
+   */
+  async listTeams(): Promise<TeamSummary[]> {
+    const resp = await rpc(this.grpc.listTeams({}));
+    return teamsFromProto(resp);
+  }
+
+  /**
+   * The members of `teamId` (+ each member's role/caps). When `assetRef` is given,
+   * each member's resolved warrant on that asset (membership ∩ grant, ⊆ the team) is
+   * populated. An unknown team throws {@link KxNotFound}; an old gateway without this
+   * RPC throws {@link KxUnimplemented}.
+   */
+  async listTeamMembers(teamId: string, opts: { assetRef?: string } = {}): Promise<TeamMembers> {
+    const resp = await rpc(this.grpc.listTeamMembers({ teamId, assetRef: opts.assetRef }));
+    return TeamMembers.fromProto(resp);
+  }
+
+  /**
+   * Every grant on `assetRef`, fold-classified root/delegated + active/revoked (the
+   * UI-3 sharing inspector). An unknown asset throws {@link KxNotFound}; an old
+   * gateway without this RPC throws {@link KxUnimplemented}.
+   */
+  async listAssetGrants(assetRef: string): Promise<AssetGrants> {
+    const resp = await rpc(this.grpc.listAssetGrants({ assetRef }));
+    return AssetGrants.fromProto(resp);
   }
 
   /** Connect transports manage their own connections; there is nothing to close. */

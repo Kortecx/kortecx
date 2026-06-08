@@ -14,6 +14,9 @@ export interface MockClientImpl {
   listRuns?: (...args: unknown[]) => Promise<unknown>;
   listRecipes?: (...args: unknown[]) => Promise<unknown>;
   getRecipeForm?: (...args: unknown[]) => Promise<unknown>;
+  listTeams?: (...args: unknown[]) => Promise<unknown>;
+  listTeamMembers?: (...args: unknown[]) => Promise<unknown>;
+  listAssetGrants?: (...args: unknown[]) => Promise<unknown>;
 }
 
 export function makeMockClient(impl: MockClientImpl = {}) {
@@ -47,6 +50,9 @@ export function makeMockClient(impl: MockClientImpl = {}) {
         throw new Error("getRecipeForm not stubbed");
       }),
   );
+  const listTeams = vi.fn(impl.listTeams ?? (async () => []));
+  const listTeamMembers = vi.fn(impl.listTeamMembers ?? (async () => ({ owner: "", members: [] })));
+  const listAssetGrants = vi.fn(impl.listAssetGrants ?? (async () => ({ owner: "", grants: [] })));
   const close = vi.fn();
   const client = {
     listSignatures,
@@ -58,6 +64,9 @@ export function makeMockClient(impl: MockClientImpl = {}) {
     listRuns,
     listRecipes,
     getRecipeForm,
+    listTeams,
+    listTeamMembers,
+    listAssetGrants,
     close,
     submitRun: vi.fn(),
     registerSignature: vi.fn(),
@@ -75,6 +84,9 @@ export function makeMockClient(impl: MockClientImpl = {}) {
     listRuns,
     listRecipes,
     getRecipeForm,
+    listTeams,
+    listTeamMembers,
+    listAssetGrants,
     close,
   };
 }

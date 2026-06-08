@@ -162,7 +162,11 @@ const MODEL_LOGIC_REF: [u8; 32] = [0x3c; 32];
 pub struct DemoLibrary {
     versions: SqliteVersionLedger,
     bodies: SqliteBodyLedger,
-    grants: SqliteGrantLedger,
+    /// The durable grant ledger (`grants.db`). `Arc` so the UI-3 grant/membership
+    /// views read the SAME instance the demo recipes (and the demo team) seed —
+    /// one open, three seams (binder + grant view + the membership-resolve fleet),
+    /// no second `grants.db` handle racing.
+    grants: std::sync::Arc<SqliteGrantLedger>,
     /// Per-handle binding metadata — one entry per seeded recipe (the demo
     /// `echo` always; the PR-9b real-exec `exec-demo` when a body was located).
     /// `bind` looks the handle up here for its owner-root warrant + free-param
@@ -335,7 +339,7 @@ impl DemoLibrary {
         Ok(Self {
             versions,
             bodies,
-            grants,
+            grants: std::sync::Arc::new(grants),
             recipes,
         })
     }
@@ -344,6 +348,47 @@ impl DemoLibrary {
     /// in provision order. Backs the gateway's `ListRecipes` (UI-2 recipe catalog).
     pub fn recipe_handles(&self) -> Vec<String> {
         self.recipes.iter().map(|(h, _)| h.to_string()).collect()
+    }
+
+    /// The principal that owns every demo-provisioned asset + founds the demo team
+    /// (UI-3). A fixed single-node operator identity; cloud multi-tenant identity is
+    /// the OIDC layer (D129).
+    #[must_use]
+    pub fn owner_principal() -> PartyId {
+        PartyId::new("kx-gateway")
+    }
+
+    /// Borrow the durable grant ledger (UI-3: the `HostGrantView` reads it; the demo
+    /// team grant is appended to it). The SAME instance the recipes seeded.
+    #[must_use]
+    pub fn grant_ledger(&self) -> &SqliteGrantLedger {
+        &self.grants
+    }
+
+    /// A shared handle to the durable grant ledger (UI-3: the membership-resolve
+    /// `GovernedFleet` composes it with the membership ledger). Cheap `Arc` clone.
+    #[must_use]
+    pub fn grants_arc(&self) -> std::sync::Arc<SqliteGrantLedger> {
+        self.grants.clone()
+    }
+
+    /// The asset the demo team is granted `Use`+`Read` on (the first seeded recipe,
+    /// `echo`), so a member's warrant resolves through the team membership ∩ grant —
+    /// the kx-fleet thesis, demonstrated end-to-end. `None` only if no recipe seeded.
+    #[must_use]
+    pub fn demo_team_grant_asset(&self) -> Option<AssetRef> {
+        self.recipes.first().map(|(h, _)| AssetRef::Path(h.clone()))
+    }
+
+    /// The owner-root warrant for `asset` (the base the grant fold narrows from), or
+    /// `None` if `asset` is not a provisioned recipe. UI-3 uses it as the
+    /// `resolve_member_warrant` owner-root + the demo team grant's runtime scope.
+    #[must_use]
+    pub fn owner_root_for(&self, asset: &AssetRef) -> Option<WarrantSpec> {
+        self.recipes
+            .iter()
+            .find(|(h, _)| AssetRef::Path(h.clone()) == *asset)
+            .map(|(_, m)| m.owner_root.clone())
     }
 
     /// The variable free-param FORM for `handle`, or `None` if no such recipe is
@@ -553,6 +598,8 @@ impl RecipeBinder for HostRecipeBinder {
             grants: &self.lib.grants,
             owner_root: meta.owner_root.clone(),
         };
+        // (`self.lib.grants` is an `Arc<SqliteGrantLedger>`; the resolver borrows the
+        // inner ledger via deref for the duration of this bind.)
         let bound = bind_snapshot(
             &self.lib.versions,
             &self.lib.bodies,
@@ -611,8 +658,9 @@ fn map_invoke_err(e: InvokeError) -> BinderError {
 }
 
 /// Parse a `"namespace/collection/name"` wire handle into an [`AssetPath`].
-/// Exactly three non-empty segments; anything else ⇒ `None`.
-fn parse_handle(handle: &str) -> Option<AssetPath> {
+/// Exactly three non-empty segments; anything else ⇒ `None`. `pub(crate)` so the
+/// UI-3 grant view (`teams.rs`) parses an asset handle the same way.
+pub(crate) fn parse_handle(handle: &str) -> Option<AssetPath> {
     let mut parts = handle.split('/');
     let ns = parts.next()?;
     let collection = parts.next()?;

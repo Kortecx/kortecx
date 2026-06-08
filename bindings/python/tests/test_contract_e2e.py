@@ -290,3 +290,50 @@ def test_get_recipe_form_echo_topic_and_unknown_not_found(dev_server):
         # A public discovery surface: an unknown handle is NOT_FOUND (honest).
         with pytest.raises(KxNotFound):
             kx.get_recipe_form("kx/recipes/does-not-exist")
+
+
+# --- UI-3: teams (membership) + sharing (grants) viewers --------------------
+
+DEMO_TEAM = "kx/teams/demo"
+
+
+def test_list_teams_enumerates_the_seeded_demo_team(dev_server):
+    with KxClient(dev_server.endpoint) as kx:
+        teams = kx.list_teams()
+        demo = next((t for t in teams if t.team_id == DEMO_TEAM), None)
+        assert demo is not None
+        assert demo.owner == "kx-gateway"
+        assert demo.member_count >= 1
+
+
+def test_list_team_members_roles_delegate_and_resolve(dev_server):
+    with KxClient(dev_server.endpoint) as kx:
+        members = kx.list_team_members(DEMO_TEAM)
+        assert members.owner == "kx-gateway"
+        assert len(members.members) >= 1
+        assert sum(1 for m in members.members if m.is_delegate) == 1
+        assert all(m.resolved_warrant is None for m in members.members)
+
+        # With the echo asset: a member resolves a warrant ⊆ the team (≤ 3 calls).
+        with_asset = kx.list_team_members(DEMO_TEAM, asset_ref=ECHO_HANDLE)
+        resolved = next((m for m in with_asset.members if m.resolved_warrant is not None), None)
+        assert resolved is not None
+        assert resolved.resolved_warrant.max_calls <= 3
+
+        # An unknown team is NOT_FOUND (honest viewer surface).
+        with pytest.raises(KxNotFound):
+            kx.list_team_members("kx/teams/nope")
+
+
+def test_list_asset_grants_shows_recipe_and_team_grants(dev_server):
+    with KxClient(dev_server.endpoint) as kx:
+        grants = kx.list_asset_grants(ECHO_HANDLE)
+        assert grants.owner == "kx-gateway"
+        team_grant = next((g for g in grants.grants if g.grantee == DEMO_TEAM), None)
+        assert team_grant is not None
+        assert team_grant.status == "root"
+        assert "Use" in team_grant.actions
+        assert all(not g.revoked for g in grants.grants)
+
+        with pytest.raises(KxNotFound):
+            kx.list_asset_grants("kx/recipes/does-not-exist")

@@ -19,9 +19,11 @@ from . import events as _events
 from . import hexids, types
 from . import wait as _wait  # aliased: `wait` is also a public kwarg name
 from .errors import KxUsage, from_rpc_error
+from .grants import AssetGrants
 from .recipes import RecipeForm
 from .run import AsyncRun, Result, Run
 from .runs import RunPage, RunSummary
+from .teams import TeamMembers, TeamSummary
 from .v1 import gateway_pb2 as _g
 from .v1 import gateway_pb2_grpc as _gg
 
@@ -270,6 +272,31 @@ class KxClient:
         )
         return RecipeForm.from_proto(resp)
 
+    def list_teams(self) -> List[TeamSummary]:
+        """Enumerate the teams the gateway knows (UI-3 Systems viewer). VIEW-only."""
+        resp = self._call(lambda: self._stub.ListTeams(_g.ListTeamsRequest(), metadata=self._md))
+        return [TeamSummary.from_proto(t) for t in resp.teams]
+
+    def list_team_members(self, team_id: str, *, asset_ref: Optional[str] = None) -> TeamMembers:
+        """The members of ``team_id`` (+ each member's role/caps). When ``asset_ref``
+        is given, each member's resolved warrant on that asset (membership ∩ grant,
+        ⊆ the team) is populated. An unknown team raises ``KxNotFound``."""
+        req = _g.ListTeamMembersRequest(team_id=team_id)
+        if asset_ref is not None:
+            req.asset_ref = asset_ref
+        resp = self._call(lambda: self._stub.ListTeamMembers(req, metadata=self._md))
+        return TeamMembers.from_proto(resp)
+
+    def list_asset_grants(self, asset_ref: str) -> AssetGrants:
+        """Every grant on ``asset_ref``, fold-classified root/delegated + active/
+        revoked (the UI-3 sharing inspector). An unknown asset raises ``KxNotFound``."""
+        resp = self._call(
+            lambda: self._stub.ListAssetGrants(
+                _g.ListAssetGrantsRequest(asset_ref=asset_ref), metadata=self._md
+            )
+        )
+        return AssetGrants.from_proto(resp)
+
     # -- wait plumbing --
     def _await_terminal(
         self, instance: bytes, terminal: bytes, timeout: float, mode: str
@@ -444,6 +471,27 @@ class AsyncKxClient:
             self._stub.GetRecipeForm(_g.GetRecipeFormRequest(handle=handle), metadata=self._md)
         )
         return RecipeForm.from_proto(resp)
+
+    async def list_teams(self) -> List[TeamSummary]:
+        resp = await self._acall(self._stub.ListTeams(_g.ListTeamsRequest(), metadata=self._md))
+        return [TeamSummary.from_proto(t) for t in resp.teams]
+
+    async def list_team_members(
+        self, team_id: str, *, asset_ref: Optional[str] = None
+    ) -> TeamMembers:
+        req = _g.ListTeamMembersRequest(team_id=team_id)
+        if asset_ref is not None:
+            req.asset_ref = asset_ref
+        resp = await self._acall(self._stub.ListTeamMembers(req, metadata=self._md))
+        return TeamMembers.from_proto(resp)
+
+    async def list_asset_grants(self, asset_ref: str) -> AssetGrants:
+        resp = await self._acall(
+            self._stub.ListAssetGrants(
+                _g.ListAssetGrantsRequest(asset_ref=asset_ref), metadata=self._md
+            )
+        )
+        return AssetGrants.from_proto(resp)
 
     async def _await_terminal(
         self, instance: bytes, terminal: bytes, timeout: float, mode: str
