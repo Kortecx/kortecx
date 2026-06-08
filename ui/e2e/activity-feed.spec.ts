@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { connectConsole } from "./fixtures/connect";
+import { connectConsole, runRecipe } from "./fixtures/connect";
 import { type Gateway, SPA_ORIGIN, spawnGateway } from "./fixtures/serve";
 
 let gw: Gateway | undefined;
@@ -15,8 +15,7 @@ test("Activity feed tails events over the WS bridge (real browser WebSocket)", a
   await connectConsole(page, gw, { wsEndpoint: gw.wsEndpoint });
 
   // Submit an echo run and let it commit.
-  await page.getByTestId("nav-recipes").click();
-  await page.getByRole("button", { name: /submit run/i }).click();
+  await runRecipe(page);
   await expect(page.getByTestId("state-pill").filter({ hasText: "COMMITTED" }).first()).toBeVisible(
     {
       timeout: 30_000,

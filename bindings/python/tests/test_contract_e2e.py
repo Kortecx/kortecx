@@ -239,3 +239,54 @@ def test_submit_run_low_level_validates(dev_server):
     with KxClient(dev_server.endpoint) as kx:
         with pytest.raises(KxInvalidArgument):
             kx.submit_run(g.SubmitRunRequest(recipe_fingerprint=b"short"))
+
+
+# --- UI-2: run enumeration + recipe catalog ----------------------------------
+
+FANOUT_HANDLE = "kx/recipes/fanout-demo"
+
+
+def test_list_runs_empty_then_enumerates_the_durable_instance(dev_server):
+    """Single-node: one registered run per journal; every invoke joins it. ListRuns
+    is empty before any run, then enumerates the durable instance with a wall-clock."""
+    with KxClient(dev_server.endpoint) as kx:
+        before = kx.list_runs()
+        assert before.runs == []
+        assert before.has_more is False
+
+        result = kx.invoke(ECHO_HANDLE, {"topic": "audit"}, wait=True)
+        after = kx.list_runs()
+        assert len(after.runs) == 1
+        assert after.runs[0].instance_id == result.instance_id
+        assert after.runs[0].registered_seq == 1  # RunRegistered is seq 1
+        assert after.runs[0].registered_unix_ms > 0  # a live wall-clock
+
+
+def test_list_runs_pagination_shape(dev_server):
+    with KxClient(dev_server.endpoint) as kx:
+        kx.invoke(ECHO_HANDLE, {"topic": "x"}, wait=True)
+        page = kx.list_runs(limit=1)
+        assert len(page.runs) == 1
+        assert page.has_more is False  # only one run exists
+
+
+def test_list_recipes_enumerates_handles(dev_server):
+    with KxClient(dev_server.endpoint) as kx:
+        recipes = kx.list_recipes()
+        assert ECHO_HANDLE in recipes
+        assert FANOUT_HANDLE in recipes
+
+
+def test_get_recipe_form_echo_topic_and_unknown_not_found(dev_server):
+    with KxClient(dev_server.endpoint) as kx:
+        form = kx.get_recipe_form(ECHO_HANDLE)
+        assert form.handle == ECHO_HANDLE
+        assert len(form.fields) == 1
+        assert form.fields[0].name == "topic"
+        assert form.fields[0].type == "str"
+        assert form.fields[0].required is True
+        assert form.fields[0].max_len == 4096
+
+        # A public discovery surface: an unknown handle is NOT_FOUND (honest).
+        with pytest.raises(KxNotFound):
+            kx.get_recipe_form("kx/recipes/does-not-exist")

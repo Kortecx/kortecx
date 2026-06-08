@@ -14,6 +14,9 @@ const ArtifactsSection = lazy(() =>
 );
 
 interface ArtifactsSearch {
+  /** Gallery mode: browse all of this run's committed artifacts. */
+  run?: string;
+  /** Deep-link mode: one committed artifact (`instance` + `ref`). */
   instance?: string;
   ref?: string;
 }
@@ -27,10 +30,10 @@ function ArtifactsScreen() {
 }
 
 function ArtifactsRouter() {
-  const { instance, ref } = useSearch({ from: ROUTE_ID });
+  const { run, instance, ref } = useSearch({ from: ROUTE_ID });
   return (
     <Suspense fallback={<EmptyState title="Loading…" />}>
-      <ArtifactsSection instanceId={instance} contentRef={ref} />
+      <ArtifactsSection runId={run} instanceId={instance} contentRef={ref} />
     </Suspense>
   );
 }
@@ -40,6 +43,10 @@ export const artifactsRoute = createRoute({
   path: ROUTE_ID,
   validateSearch: (search: Record<string, unknown>): ArtifactsSearch => {
     const out: ArtifactsSearch = {};
+    // A run instance id is a 16-byte (32 hex char) server-derived id.
+    if (typeof search.run === "string" && /^[0-9a-f]{32}$/.test(search.run)) {
+      out.run = search.run;
+    }
     if (typeof search.instance === "string" && /^[0-9a-f]{32}$/.test(search.instance)) {
       out.instance = search.instance;
     }

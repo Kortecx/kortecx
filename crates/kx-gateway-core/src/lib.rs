@@ -49,6 +49,7 @@ mod error;
 mod events;
 mod identity;
 mod reader;
+mod runs;
 mod service;
 mod submit;
 mod view;
@@ -62,7 +63,8 @@ pub use identity::CallerParty;
 pub use reader::{ContentReader, JournalReader, ReadOnly};
 pub use service::{
     BinderError, BoundRecipe, CatalogSeamError, EventStream, EventTailer, GatewayService,
-    RecipeBinder, RegisteredSignature, SignatureCatalog, SignatureSummaryEntry, SnapshotTailer,
+    RecipeBinder, RecipeCatalog, RecipeFormFieldEntry, RecipeParamKind, RegisteredSignature,
+    SignatureCatalog, SignatureSummaryEntry, SnapshotTailer,
 };
 pub use submit::{
     RunSubmitter, SubmitMoteOutcome, SubmitStatus, SubmitterError, TonicCoordinatorSubmitter,

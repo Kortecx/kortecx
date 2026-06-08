@@ -1,0 +1,122 @@
+/**
+ * Browse one run's committed artifacts (UI-2). The run's projection yields each
+ * committed Mote's `result_ref`; we list them and fetch + decode ONE on demand
+ * (lazy — bounded by clicks, and the content cache is immutable so re-opening is
+ * free). Rendering is the fail-closed `ArtifactView` (text / JSON / bounded hex —
+ * never innerHTML); download saves the rendered text.
+ */
+
+import { useState } from "react";
+import { toUiError } from "../../kx/errors";
+import { useContent } from "../../kx/use-content";
+import { useRunArtifacts } from "../../kx/use-run-artifacts";
+import { artifactKindVisual } from "../../lib/artifact-kind";
+import type { DecodedContent } from "../../lib/content-decode";
+import { shortHex } from "../../lib/format";
+import { EmptyState } from "../EmptyState";
+import { ErrorNotice } from "../ErrorNotice";
+import { ArtifactView } from "./ArtifactView";
+
+function download(name: string, text: string): void {
+  const url = URL.createObjectURL(new Blob([text], { type: "text/plain" }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+export function ArtifactGallery({ instanceId }: { instanceId: string }) {
+  const { artifacts, isLoading, error, refetch } = useRunArtifacts(instanceId);
+  const [openRef, setOpenRef] = useState<string | null>(null);
+
+  if (isLoading) {
+    return <EmptyState title="Loading run…" />;
+  }
+  if (error) {
+    return <ErrorNotice error={toUiError(error)} onRetry={refetch} />;
+  }
+  if (artifacts.length === 0) {
+    return (
+      <EmptyState
+        title="No artifacts yet"
+        detail="This run has no committed outputs yet — they appear here as its Motes commit."
+      />
+    );
+  }
+
+  return (
+    <div data-testid="artifact-gallery">
+      <p className="muted">
+        {artifacts.length} committed {artifacts.length === 1 ? "output" : "outputs"} · select one to
+        review
+      </p>
+      <ul className="artifact-list">
+        {artifacts.map((a) => {
+          const open = openRef === a.resultRef;
+          return (
+            <li className="artifact-list__item" key={a.resultRef}>
+              <button
+                type="button"
+                className="artifact-list__row mono"
+                data-testid={`artifact-${a.resultRef}`}
+                aria-expanded={open}
+                onClick={() => setOpenRef(open ? null : a.resultRef)}
+              >
+                <span className="artifact-list__mote">{shortHex(a.moteId)}</span>
+                <span className="muted">→</span>
+                <span className="artifact-list__ref">{shortHex(a.resultRef)}</span>
+              </button>
+              {open ? <ArtifactCard instanceId={instanceId} contentRef={a.resultRef} /> : null}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
+function ArtifactCard({ instanceId, contentRef }: { instanceId: string; contentRef: string }) {
+  const content = useContent(instanceId, contentRef);
+  if (content.isLoading) {
+    return <EmptyState title="Loading artifact…" />;
+  }
+  if (content.error) {
+    return <ErrorNotice error={toUiError(content.error)} onRetry={() => void content.refetch()} />;
+  }
+  if (!content.data) {
+    return null;
+  }
+  return <ArtifactCardBody data={content.data} contentRef={contentRef} />;
+}
+
+function ArtifactCardBody({
+  data,
+  contentRef,
+}: {
+  data: DecodedContent;
+  contentRef: string;
+}) {
+  const kind = artifactKindVisual(data.kind);
+  return (
+    <div className="artifact-card">
+      <div className="artifact-card__head">
+        <span className="artifact-card__kind" aria-hidden="true">
+          {kind.glyph}
+        </span>
+        <span>{kind.label}</span>
+        {data.kind !== "empty" ? (
+          <button
+            type="button"
+            className="linkbtn"
+            data-testid="artifact-download"
+            onClick={() => download(`${contentRef.slice(0, 12)}.txt`, data.text)}
+          >
+            Download
+          </button>
+        ) : null}
+      </div>
+      <ArtifactView content={data} />
+    </div>
+  );
+}

@@ -1,8 +1,9 @@
 /**
  * A session run history backed by localStorage (non-secret ids only), keyed per
- * endpoint so switching gateways never mixes histories. This is the FORWARD SEAM
- * for the additive `ListRuns` RPC (UI-2): `use-runs` reads this today; when ListRuns
- * lands, only the hook's source swaps — the `RunRecord` shape + the Runs view stay.
+ * endpoint so switching gateways never mixes histories. UI-2 MERGES this with the
+ * durable `ListRuns` enumeration (see {@link mergeServerRuns}): the local records
+ * carry the richer per-invocation handle + terminal Mote; the server adds any
+ * durable instance the local history doesn't already cover (e.g. after a reload).
  *
  * Pure, fail-closed: a corrupt/unavailable store yields an empty list, never throws.
  */
@@ -15,6 +16,33 @@ export interface RunRecord {
   readonly handle: string | null;
   /** Epoch ms the run was started from this console. */
   readonly startedAt: number;
+}
+
+/** The fields `mergeServerRuns` needs from a `ListRuns` `RunSummary` (SDK-free so
+ *  this module stays a pure lib with no SDK import). */
+export interface ServerRun {
+  readonly instanceId: string;
+  readonly recipeFingerprint: string;
+  readonly registeredUnixMs: number;
+}
+
+/**
+ * Merge the richer local records with the durable server runs: keep every local
+ * record (per-invocation handle + terminal), then append any server instance the
+ * local history does not already cover (as a bare durable card), newest-first.
+ */
+export function mergeServerRuns(local: RunRecord[], server: ServerRun[]): RunRecord[] {
+  const seen = new Set(local.map((r) => r.instanceId));
+  const serverOnly: RunRecord[] = server
+    .filter((s) => !seen.has(s.instanceId))
+    .map((s) => ({
+      instanceId: s.instanceId,
+      terminalMoteId: null,
+      recipeFingerprint: s.recipeFingerprint,
+      handle: null,
+      startedAt: s.registeredUnixMs,
+    }));
+  return [...local, ...serverOnly].sort((a, b) => b.startedAt - a.startedAt);
 }
 
 /** Keep the session history bounded (newest-first). */

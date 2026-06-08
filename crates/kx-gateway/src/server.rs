@@ -29,15 +29,15 @@ use std::sync::Arc;
 use std::time::Duration;
 #[cfg(feature = "embedded-worker")]
 use {
-    crate::provision::{DemoLibrary, HostRecipeBinder, HostSignatureCatalog},
+    crate::provision::{DemoLibrary, HostRecipeBinder, HostRecipeCatalog, HostSignatureCatalog},
     kx_capability::{CapabilityBroker, LocalCapabilityBroker},
     kx_catalog::SqliteCatalog,
     kx_content::{ContentRef, ContentStore, LocalFsContentStore},
     kx_coordinator::CoordinatorService,
     kx_executor::{LocalResourceManager, MoteExecutor, TestMoteExecutor},
     kx_gateway_core::{
-        EventTailer, GatewayService, JournalReader, ReadOnly, RecipeBinder, SignatureCatalog,
-        TonicCoordinatorSubmitter,
+        EventTailer, GatewayService, JournalReader, ReadOnly, RecipeBinder, RecipeCatalog,
+        SignatureCatalog, TonicCoordinatorSubmitter,
     },
     kx_journal::SqliteJournal,
     kx_proto::proto::coordinator_server::CoordinatorServer,
@@ -481,14 +481,18 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     //      step warrant uses the embedded worker's executor_class so a bound run
     //      leases (see `provision::demo_warrant`).
     let parties: Vec<String> = cfg.auth_tokens.values().cloned().collect();
-    let demo = DemoLibrary::open_full(
+    let demo = Arc::new(DemoLibrary::open_full(
         &catalog_dir,
         default_executor_class(),
         &parties,
         real_body_ref,
         serve_model,
-    )?;
-    let binder: Arc<dyn RecipeBinder> = Arc::new(HostRecipeBinder::new(demo));
+    )?);
+    // One seed, two seams: the binder (Invoke) and the recipe catalog (ListRecipes
+    // / GetRecipeForm) share the SAME library, so the published form and the
+    // executable bind agree by construction.
+    let binder: Arc<dyn RecipeBinder> = Arc::new(HostRecipeBinder::from_shared(demo.clone()));
+    let recipe_catalog: Arc<dyn RecipeCatalog> = Arc::new(HostRecipeCatalog::new(demo.clone()));
     // R5: the gRPC `StreamEvents` becomes a live tail (resumable, bounded,
     // recovery-safe). Read-side only — the digest + frozen proto are untouched. The
     // `live_shutdown` watch lets shutdown stop the poll loops (so their endless
@@ -497,6 +501,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     let gateway = GatewayService::new(reader.clone(), submitter, content)
         .with_signature_catalog(signature_catalog)
         .with_recipe_binder(binder)
+        .with_recipe_catalog(recipe_catalog)
         .with_event_tailer(Arc::new(crate::live_tail::LiveTailer::new(
             live_shutdown_rx.clone(),
         )));

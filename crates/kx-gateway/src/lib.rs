@@ -72,8 +72,8 @@ pub use config::{Cli, GatewayConfig, TlsPaths, DEFAULT_MAX_LEASE, DEFAULT_WS_LIS
 pub use error::GatewayError;
 pub use live_tail::LiveTailer;
 pub use provision::{
-    DemoLibrary, HostRecipeBinder, HostSignatureCatalog, DEMO_RECIPE_HANDLE, EXEC_RECIPE_HANDLE,
-    FANOUT_RECIPE_HANDLE, MODEL_RECIPE_HANDLE,
+    DemoLibrary, HostRecipeBinder, HostRecipeCatalog, HostSignatureCatalog, DEMO_RECIPE_HANDLE,
+    EXEC_RECIPE_HANDLE, FANOUT_RECIPE_HANDLE, MODEL_RECIPE_HANDLE,
 };
 pub use server::{serve, start, RunningGateway};
 

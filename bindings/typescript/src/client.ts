@@ -16,7 +16,9 @@ import { KxRunFailed, KxWaitTimeout, rpc } from "./errors.js";
 import { streamDeltas, wsDeltasFromMessages, wsUrl } from "./events.js";
 import { KxGateway, type SubmitRunRequestSchema } from "./gen/kortecx/v1/gateway_pb.js";
 import { INSTANCE_LEN, REF_LEN, asBytes, encode } from "./hexids.js";
+import { RecipeForm } from "./recipes.js";
 import { Result, Run } from "./run.js";
+import { type RunPage, RunSummary } from "./runs.js";
 import { type Args, encodeArgs } from "./transport.js";
 import { type Delta, Projection, SignatureSummary } from "./types.js";
 import { type WaitMode, type WaitOutcome, eventsResult, pollAny, pollResult } from "./wait.js";
@@ -152,6 +154,36 @@ export abstract class KxClientBase {
   async registerSignature(manifest: Uint8Array): Promise<string> {
     const resp = await rpc(this.grpc.registerSignature({ manifest }));
     return encode(resp.signatureId);
+  }
+
+  /**
+   * Enumerate the durable registered runs (newest-first, paginated) — the
+   * "re-open by instance-id" primitive. `beforeSeq` resumes from the
+   * `registeredSeq` of the last run seen; `limit` bounds the page (server-clamped).
+   * An old gateway without this RPC throws {@link KxUnimplemented}.
+   */
+  async listRuns(opts: { limit?: number; beforeSeq?: bigint } = {}): Promise<RunPage> {
+    const resp = await rpc(this.grpc.listRuns({ limit: opts.limit, beforeSeq: opts.beforeSeq }));
+    return { runs: resp.runs.map((r) => RunSummary.fromProto(r)), hasMore: resp.hasMore };
+  }
+
+  /**
+   * List the invocable recipe handles the gateway provisions (the public recipe
+   * catalog). An old gateway without this RPC throws {@link KxUnimplemented}.
+   */
+  async listRecipes(): Promise<string[]> {
+    const resp = await rpc(this.grpc.listRecipes({}));
+    return resp.recipes.map((r) => r.handle);
+  }
+
+  /**
+   * The free-param {@link RecipeForm} for `handle` (render an input form, then
+   * {@link KxClientBase.invoke}). An unknown handle throws {@link KxNotFound}; an
+   * old gateway without this RPC throws {@link KxUnimplemented}.
+   */
+  async getRecipeForm(handle: string): Promise<RecipeForm> {
+    const resp = await rpc(this.grpc.getRecipeForm({ handle }));
+    return RecipeForm.fromProto(resp);
   }
 
   /** Connect transports manage their own connections; there is nothing to close. */

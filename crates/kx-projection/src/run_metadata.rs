@@ -20,6 +20,29 @@ use std::collections::BTreeSet;
 
 use kx_journal::{Journal, JournalEntry, JournalError, INSTANCE_ID_LEN};
 
+/// One registered run, derived from its [`JournalEntry::RunRegistered`] fact:
+/// the run's identity (`instance_id`), the recipe it was registered for, the
+/// fact's seq (ordering + a pagination cursor), and its wall-clock timestamp.
+///
+/// The `registered_ts` is **audit-only** — it is excluded from every hash
+/// (see [`JournalEntry::RunRegistered`]'s `ts`), so surfacing it is legitimate
+/// observability, never identity. This record is purely additive run metadata
+/// (UI-2's `ListRuns`); like the rest of this module it is off the truth fold
+/// and off the projection digest.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunRecord {
+    /// The registered run instance id.
+    pub instance_id: [u8; INSTANCE_ID_LEN],
+    /// The recipe fingerprint the run was registered for.
+    pub recipe_fingerprint: [u8; 32],
+    /// The journal seq of the `RunRegistered` fact (monotonic; the newest-first
+    /// pagination cursor for `ListRuns`).
+    pub registered_seq: u64,
+    /// The `RunRegistered` wall-clock timestamp (unix-ms; audit-only, off every
+    /// hash). `0` when the writer recorded no clock.
+    pub registered_ts: u64,
+}
+
 /// A read-only, journal-derived summary of what a run (or a journal of runs) has
 /// done so far. Purely additive metadata — never an identity or gate input.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -28,6 +51,12 @@ pub struct RunMetadata {
     pub runs: usize,
     /// The registered run instance ids, in journal order.
     pub instance_ids: Vec<[u8; INSTANCE_ID_LEN]>,
+    /// One [`RunRecord`] per registered run, in journal order (the per-run
+    /// identity + recipe + seq + wall-clock `ListRuns` enumerates). Additive in
+    /// M-UI2; the existing `instance_ids`/counter fields are unchanged so
+    /// [`RunMetadata::summary_bytes`] (the planner's deterministic rendering)
+    /// stays byte-identical.
+    pub records: Vec<RunRecord>,
     /// Distinct recipe fingerprints seen (`RunRegistered.recipe_fingerprint` +
     /// each committed Mote's `mote_def_hash`). Sorted (a `BTreeSet`) so the
     /// rendered summary is deterministic.
@@ -91,11 +120,21 @@ impl RunMetadataFold {
             JournalEntry::RunRegistered {
                 instance_id,
                 recipe_fingerprint,
-                ..
+                ts,
+                seq,
             } => {
                 self.md.runs += 1;
                 self.md.instance_ids.push(*instance_id);
                 self.md.recipe_fingerprints.insert(*recipe_fingerprint);
+                // Additive (M-UI2): keep the per-run record (identity + recipe +
+                // seq + audit-only wall-clock) so `ListRuns` can enumerate +
+                // paginate. Off the truth fold and the digest (module doc).
+                self.md.records.push(RunRecord {
+                    instance_id: *instance_id,
+                    recipe_fingerprint: *recipe_fingerprint,
+                    registered_seq: *seq,
+                    registered_ts: *ts,
+                });
             }
             JournalEntry::Committed { mote_def_hash, .. } => {
                 self.md.committed += 1;
@@ -140,11 +179,15 @@ mod tests {
     use smallvec::SmallVec;
 
     fn run_registered(instance: u8, recipe: u8) -> JournalEntry {
+        run_registered_at(instance, recipe, 0, 0)
+    }
+
+    fn run_registered_at(instance: u8, recipe: u8, ts: u64, seq: u64) -> JournalEntry {
         JournalEntry::RunRegistered {
             instance_id: [instance; INSTANCE_ID_LEN],
             recipe_fingerprint: [recipe; 32],
-            ts: 0,
-            seq: 0,
+            ts,
+            seq,
         }
     }
 
@@ -201,5 +244,91 @@ mod tests {
         let j = InMemoryJournal::new();
         let md = fold_run_metadata(&j).unwrap();
         assert_eq!(md, RunMetadata::default());
+        assert!(md.records.is_empty(), "no runs ⇒ no per-run records");
+    }
+
+    // --- UI-2: the additive per-run `records` fold (the `ListRuns` backing) ---
+
+    #[test]
+    fn records_capture_identity_recipe_seq_and_ts_per_run() {
+        let mut fold = RunMetadataFold::new();
+        fold.apply(&run_registered_at(0x01, 0xAA, 1_000, 7));
+        // A committed Mote between runs must not perturb the per-run records.
+        fold.apply(&committed(0x10, 0xAA));
+        fold.apply(&run_registered_at(0x02, 0xBB, 2_000, 19));
+        let md = fold.finish();
+
+        assert_eq!(md.runs, 2);
+        assert_eq!(md.records.len(), 2, "one record per RunRegistered");
+        // Journal order preserved (the gateway sorts newest-first for the wire).
+        assert_eq!(
+            md.records[0],
+            RunRecord {
+                instance_id: [0x01; INSTANCE_ID_LEN],
+                recipe_fingerprint: [0xAA; 32],
+                registered_seq: 7,
+                registered_ts: 1_000,
+            }
+        );
+        assert_eq!(
+            md.records[1],
+            RunRecord {
+                instance_id: [0x02; INSTANCE_ID_LEN],
+                recipe_fingerprint: [0xBB; 32],
+                registered_seq: 19,
+                registered_ts: 2_000,
+            }
+        );
+        // The records track identity 1:1 with `instance_ids` (no double count).
+        assert_eq!(
+            md.records.iter().map(|r| r.instance_id).collect::<Vec<_>>(),
+            md.instance_ids
+        );
+    }
+
+    #[test]
+    fn records_preserve_journal_order_and_use_the_journal_assigned_seq() {
+        // `seq` is JOURNAL-authoritative (the journal's `set_seq` overwrites the
+        // entry's seq to its 1-based append position); `ts` is the writer's clock
+        // and is preserved. `ListRuns` paginates on the journal seq, so the fold
+        // must surface that, not a client-injected value.
+        let j = InMemoryJournal::new();
+        for i in 0..16u8 {
+            j.append(run_registered_at(i, i, u64::from(i) * 10, 0))
+                .unwrap();
+        }
+        let md = fold_run_metadata(&j).unwrap();
+        assert_eq!(md.records.len(), 16);
+        for (i, rec) in md.records.iter().enumerate() {
+            let i = u8::try_from(i).unwrap();
+            assert_eq!(rec.instance_id, [i; INSTANCE_ID_LEN]);
+            assert_eq!(
+                rec.registered_seq,
+                u64::from(i) + 1,
+                "registered_seq is the 1-based journal seq"
+            );
+            assert_eq!(rec.registered_ts, u64::from(i) * 10, "ts is preserved");
+        }
+        // Strictly increasing seqs ⇒ a valid newest-first pagination cursor.
+        for w in md.records.windows(2) {
+            assert!(w[0].registered_seq < w[1].registered_seq);
+        }
+    }
+
+    #[test]
+    fn summary_bytes_unchanged_by_the_additive_records() {
+        // The planner's deterministic rendering must stay byte-identical to the
+        // pre-UI-2 contract — `records` is additive, never in `summary_bytes`.
+        let mut fold = RunMetadataFold::new();
+        fold.apply(&run_registered_at(0x01, 0xAA, 1_234, 1));
+        fold.apply(&committed(0x10, 0xBB));
+        let md = fold.finish();
+        let text = String::from_utf8(md.summary_bytes()).unwrap();
+        assert_eq!(
+            text,
+            "runs=1 committed=1 failed=0 repudiated=0 distinct_recipes=2\n\
+             recipe aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n\
+             recipe bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n",
+        );
     }
 }

@@ -237,6 +237,86 @@ message RegisterSignatureResponse {
 }
 
 // ---------------------------------------------------------------------------
+// UI-2 — run enumeration (the operational "list my runs" query). Additive RPC
+// (D120.6). Folds the journal's RunRegistered facts into per-run identity +
+// wall-clock — server-derived (the client never enumerates the journal). The
+// registered timestamp is AUDIT-ONLY (excluded from every hash, kx-journal),
+// so it is a legitimate observability field, NOT identity.
+//
+// SCOPE (single-node OSS): operator-global — the OSS journal records no party
+// on RunRegistered, so this lists every run on the node (one operator, behind
+// deny-all/bearer auth). CLOUD party-scopes this in the gateway-auth layer.
+//
+// Paginated newest-first: `before_seq` is the resume cursor (return runs whose
+// registered_seq < before_seq); `limit` clamps the page (server caps it).
+// ---------------------------------------------------------------------------
+
+message ListRunsRequest {
+  optional uint32 limit = 1;             // page size; server clamps to a max (absent = the default page)
+  optional uint64 before_seq = 2;        // cursor: only runs registered strictly before this seq (absent = newest)
+}
+message RunSummary {
+  bytes instance_id = 1;                 // 16B — the registered run id
+  bytes recipe_fingerprint = 2;          // 32B — the recipe this run was registered for
+  uint64 registered_seq = 3;             // seq of the RunRegistered fact (ordering + the pagination cursor)
+  uint64 registered_unix_ms = 4;         // RunRegistered wall-clock (audit-only; off every hash)
+}
+message ListRunsResponse {
+  repeated RunSummary runs = 1;          // newest-first (descending registered_seq)
+  bool has_more = 2;                     // a further page exists before the last returned run
+}
+
+// ---------------------------------------------------------------------------
+// UI-2 — recipe discovery (the "what can I run, and with what inputs" query).
+// Additive RPCs (D120.6). DISTINCT from the signature catalog (ListSignatures
+// is the TaskSignature/verdict-reuse registry); these enumerate the INVOCABLE
+// recipe handles the gateway provisions and describe each recipe's free-param
+// FORM so a client can render an input form, then Invoke(handle, args).
+//
+// A PUBLIC discovery surface (like the signature catalog) — honest codes (an
+// unknown handle is not_found), no party secret (the free-param schema is
+// public contract). Invoke remains the authorization gate (uniform refusal).
+// ---------------------------------------------------------------------------
+
+message ListRecipesRequest {}
+message RecipeSummary {
+  string handle = 1;                     // "namespace/collection/name" — the Invoke handle (AssetPath)
+}
+message ListRecipesResponse {
+  repeated RecipeSummary recipes = 1;    // the provisioned, invocable recipe handles
+}
+
+// Mirrors kx_tool_registry::ParamType (the free-param value domain). +1-shifted
+// with a 0 sentinel; the Rust boundary maps UNSPECIFIED → an untyped field.
+// NOTE: there is deliberately no Float (no float ever reaches an action schema)
+// and no Json variant.
+enum RecipeParamType {
+  RECIPE_PARAM_TYPE_UNSPECIFIED = 0;
+  RECIPE_PARAM_TYPE_STR = 1;             // ParamType::Str { max_len }
+  RECIPE_PARAM_TYPE_INT = 2;             // ParamType::Int { .. }
+  RECIPE_PARAM_TYPE_BOOL = 3;            // ParamType::Bool
+  RECIPE_PARAM_TYPE_BYTES = 4;           // ParamType::Bytes { max_len }
+  RECIPE_PARAM_TYPE_ENUM = 5;            // ParamType::Enum { allowed }
+}
+
+message GetRecipeFormRequest {
+  string handle = 1;                     // the recipe to describe
+}
+// One free-param the caller must supply (only VARIABLE slots; constants are
+// fixed by the recipe body and never surfaced).
+message RecipeFormField {
+  string name = 1;                       // the JSON arg key (the slot name)
+  RecipeParamType type = 2;              // the value domain (UNSPECIFIED when the slot is untyped)
+  bool required = 3;                     // a variable slot is required
+  optional uint64 max_len = 4;           // for STR / BYTES
+  repeated string allowed = 5;           // for ENUM (the permitted values)
+}
+message GetRecipeFormResponse {
+  string handle = 1;                     // echoed
+  repeated RecipeFormField fields = 2;   // the variable free-params, in canonical (name) order
+}
+
+// ---------------------------------------------------------------------------
 // Service — the external client-facing gateway (distinct from Coordinator).
 // ---------------------------------------------------------------------------
 
@@ -249,4 +329,8 @@ service KxGateway {
   rpc ListSignatures(ListSignaturesRequest) returns (ListSignaturesResponse);
   rpc GetSignature(GetSignatureRequest) returns (GetSignatureResponse);
   rpc RegisterSignature(RegisterSignatureRequest) returns (RegisterSignatureResponse);
+  // UI-2 additive (D120.6): run enumeration + recipe discovery.
+  rpc ListRuns(ListRunsRequest) returns (ListRunsResponse);
+  rpc ListRecipes(ListRecipesRequest) returns (ListRecipesResponse);
+  rpc GetRecipeForm(GetRecipeFormRequest) returns (GetRecipeFormResponse);
 }

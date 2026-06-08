@@ -76,6 +76,60 @@ pub trait SignatureCatalog: Send + Sync {
     fn list(&self) -> Vec<SignatureSummaryEntry>;
 }
 
+/// The value domain of a recipe free-param, in gateway-core's wire vocabulary
+/// (mirrors `kx_tool_registry::ParamType` without depending on it). `Unspecified`
+/// is an untyped slot (no schema). There is deliberately no float / json.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RecipeParamKind {
+    /// An untyped free-param (the slot declared no schema).
+    Unspecified,
+    /// A UTF-8 string, bounded by `max_len`.
+    Str,
+    /// A signed integer.
+    Int,
+    /// A boolean.
+    Bool,
+    /// Opaque bytes, bounded by `max_len`.
+    Bytes,
+    /// A closed set of permitted string values (`allowed`).
+    Enum,
+}
+
+/// One variable free-param a recipe requires, ready to render as a form field.
+/// Constant slots (fixed by the recipe body) are never surfaced. Spoken in
+/// gateway-core's own vocabulary so the seam stays off `kx-catalog` (the host
+/// maps `kx_catalog::free_params_to_input_schema` output into this).
+#[derive(Clone, Debug)]
+pub struct RecipeFormFieldEntry {
+    /// The JSON arg key (the slot name).
+    pub name: String,
+    /// The value domain.
+    pub kind: RecipeParamKind,
+    /// Whether the caller must supply it (variable slots are required).
+    pub required: bool,
+    /// The max length for [`RecipeParamKind::Str`] / [`RecipeParamKind::Bytes`].
+    pub max_len: Option<u64>,
+    /// The permitted values for [`RecipeParamKind::Enum`] (else empty).
+    pub allowed: Vec<String>,
+}
+
+/// The recipe-discovery seam (the UI-2 `ListRecipes` / `GetRecipeForm` path) —
+/// the PUBLIC catalog of INVOCABLE recipe handles + each handle's free-param
+/// FORM. DISTINCT from [`SignatureCatalog`] (the TaskSignature/verdict registry):
+/// these enumerate the handles `Invoke` runs and describe their inputs. Like the
+/// signature catalog this is a public discovery surface (honest `not_found`, no
+/// existence-oracle collapse — `Invoke` remains the authorization gate). The host
+/// implements it over its provisioned recipe library; a `None` seam ⇒ the two
+/// recipe RPCs return `unimplemented`.
+pub trait RecipeCatalog: Send + Sync {
+    /// Every invocable recipe handle (`"namespace/collection/name"`), in a
+    /// deterministic order.
+    fn list_recipes(&self) -> Vec<String>;
+    /// The variable free-param fields for `handle`, or `None` if no such recipe
+    /// is provisioned.
+    fn get_recipe_form(&self, handle: &str) -> Option<Vec<RecipeFormFieldEntry>>;
+}
+
 /// A recipe resolved + bound to concrete args, ready to submit. Mirrors
 /// `kx_invoke::BoundRun`, but in gateway-core's own vocabulary (`kx_mote` +
 /// `kx_warrant` types it already depends on) so the binding seam stays off
@@ -195,6 +249,9 @@ pub struct GatewayService {
     /// The optional recipe-binding seam (the host injects a kx-invoke-backed
     /// binder). `None` ⇒ `Invoke` returns `unimplemented`.
     binder: Option<Arc<dyn RecipeBinder>>,
+    /// The optional recipe-discovery seam (the host injects a library-backed
+    /// catalog). `None` ⇒ `ListRecipes` / `GetRecipeForm` return `unimplemented`.
+    catalog_recipes: Option<Arc<dyn RecipeCatalog>>,
     /// The `StreamEvents` tailer. Defaults to [`SnapshotTailer`]; the host injects
     /// a live tailer via [`GatewayService::with_event_tailer`].
     tailer: Arc<dyn EventTailer>,
@@ -215,6 +272,7 @@ impl GatewayService {
             content,
             catalog: None,
             binder: None,
+            catalog_recipes: None,
             tailer: Arc::new(SnapshotTailer),
         }
     }
@@ -232,6 +290,15 @@ impl GatewayService {
     #[must_use]
     pub fn with_recipe_binder(mut self, binder: Arc<dyn RecipeBinder>) -> Self {
         self.binder = Some(binder);
+        self
+    }
+
+    /// Wire the recipe-discovery seam (the host's recipe-library-backed catalog).
+    /// Enables `ListRecipes` / `GetRecipeForm` (the UI-2 recipe forms). Read-only
+    /// — never a journal write or a digest change.
+    #[must_use]
+    pub fn with_recipe_catalog(mut self, catalog_recipes: Arc<dyn RecipeCatalog>) -> Self {
+        self.catalog_recipes = Some(catalog_recipes);
         self
     }
 
@@ -457,5 +524,73 @@ impl KxGateway for GatewayService {
         Ok(Response::new(proto::RegisterSignatureResponse {
             signature_id: registered.signature_id.to_vec(),
         }))
+    }
+
+    async fn list_runs(
+        &self,
+        request: Request<proto::ListRunsRequest>,
+    ) -> Result<Response<proto::ListRunsResponse>, Status> {
+        let req = request.into_inner();
+        // A read-only fold over the run-registration facts (off-digest). Always
+        // available (no seam) — it needs only the journal reader the service holds.
+        let resp = crate::runs::list_runs(self.reader.as_ref(), req.limit, req.before_seq)?;
+        Ok(Response::new(resp))
+    }
+
+    async fn list_recipes(
+        &self,
+        _request: Request<proto::ListRecipesRequest>,
+    ) -> Result<Response<proto::ListRecipesResponse>, Status> {
+        let catalog = self
+            .catalog_recipes
+            .as_ref()
+            .ok_or_else(|| Status::unimplemented("ListRecipes: no recipe catalog wired"))?;
+        let recipes = catalog
+            .list_recipes()
+            .into_iter()
+            .map(|handle| proto::RecipeSummary { handle })
+            .collect();
+        Ok(Response::new(proto::ListRecipesResponse { recipes }))
+    }
+
+    async fn get_recipe_form(
+        &self,
+        request: Request<proto::GetRecipeFormRequest>,
+    ) -> Result<Response<proto::GetRecipeFormResponse>, Status> {
+        let catalog = self
+            .catalog_recipes
+            .as_ref()
+            .ok_or_else(|| Status::unimplemented("GetRecipeForm: no recipe catalog wired"))?;
+        let handle = request.into_inner().handle;
+        // A public discovery surface: `not_found` for an unknown handle is intended
+        // (the catalog is authoritative for WHAT recipes exist), NOT collapsed like
+        // the Invoke execution surface — Invoke remains the authorization gate.
+        let fields = catalog
+            .get_recipe_form(&handle)
+            .ok_or_else(|| Status::not_found("recipe not found"))?;
+        let fields = fields.into_iter().map(form_field_to_proto).collect();
+        Ok(Response::new(proto::GetRecipeFormResponse {
+            handle,
+            fields,
+        }))
+    }
+}
+
+/// Map a gateway-core form field into the wire type.
+fn form_field_to_proto(f: RecipeFormFieldEntry) -> proto::RecipeFormField {
+    let ty = match f.kind {
+        RecipeParamKind::Unspecified => proto::RecipeParamType::Unspecified,
+        RecipeParamKind::Str => proto::RecipeParamType::Str,
+        RecipeParamKind::Int => proto::RecipeParamType::Int,
+        RecipeParamKind::Bool => proto::RecipeParamType::Bool,
+        RecipeParamKind::Bytes => proto::RecipeParamType::Bytes,
+        RecipeParamKind::Enum => proto::RecipeParamType::Enum,
+    };
+    proto::RecipeFormField {
+        name: f.name,
+        r#type: ty as i32,
+        required: f.required,
+        max_len: f.max_len,
+        allowed: f.allowed,
     }
 }

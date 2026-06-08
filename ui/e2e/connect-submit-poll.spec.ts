@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { runRecipe } from "./fixtures/connect";
 import { type Gateway, SPA_ORIGIN, spawnGateway } from "./fixtures/serve";
 
 let gw: Gateway | undefined;
@@ -21,11 +22,9 @@ test("connect → submit echo → watch a Mote reach COMMITTED (real gRPC-web + 
   await expect(endpoint).toHaveValue(gw.endpoint);
   await page.getByRole("button", { name: /^connect$/i }).click();
 
-  // Lands on the Activity dashboard; go to Recipes to submit the echo recipe.
+  // Lands on the Activity dashboard; go to Recipes and run echo via its generated form.
   await expect(page.getByTestId("activity-panel")).toBeVisible({ timeout: 30_000 });
-  await page.getByTestId("nav-recipes").click();
-  await expect(page.getByRole("heading", { name: "Recipes", exact: true })).toBeVisible();
-  await page.getByRole("button", { name: /submit run/i }).click();
+  await runRecipe(page, { fields: { topic: "incidents" } });
 
   // Run-detail defaults to the live DAG: a Mote node appears and flips to COMMITTED
   // via the projection poll loop (the real reactflow canvas + gRPC-web path).
