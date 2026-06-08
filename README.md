@@ -149,6 +149,9 @@ kx submit --demo --wait
 
 # Invoke a PUBLISHED recipe by handle, bound to JSON args — run-to-result.
 kx invoke kx/recipes/echo --args '{"topic":"durable agents"}' --wait
+
+# A multi-node DAG, model-free: root → 3 children → gather (5 Motes, all committed).
+kx invoke kx/recipes/fanout-demo --args '{}' --wait
 ```
 
 **Inspect** any run — its DAG, a committed result, and its event stream:
@@ -170,6 +173,24 @@ Auth is **deny-all by default**: `--dev-allow-local` trusts loopback only; for
 real principals use `--auth-token <token>=<party>` (or `--auth-token-file`), and
 pass `--token`/`--token-file` on the client. Identity is always derived
 server-side — never asserted by the client.
+
+### Web console (live DAG)
+
+A static-hostable React + Vite single-page app ([`ui/`](ui/)) talks **gRPC-web** to
+the same `kx serve` and lets you **watch the Mote DAG execute** in the browser —
+nodes light up as the run commits, edges are the `parents[]` lineage. Build the
+TypeScript SDK, start a CORS-allowed gateway, then the dev server:
+
+```bash
+npm --prefix bindings/typescript ci && npm --prefix bindings/typescript run build
+kx serve --journal /tmp/kx.db --content /tmp/kx-content \
+  --dev-allow-local --cors-origin http://localhost:5173 &
+npm --prefix ui ci && npm --prefix ui run dev   # http://localhost:5173
+```
+
+Connect to `http://127.0.0.1:50151`, then submit `kx/recipes/echo` (one node) or
+`kx/recipes/fanout-demo` (a 5-node graph). See [`ui/README.md`](ui/README.md) for
+the full walkthrough.
 
 ## Run in Docker
 
@@ -426,9 +447,11 @@ Interfaces will change before 1.0 — **pin a commit** if you build on it now.
 
 **Early development, built in the open.** Today (v0.1.0): a durable single-system
 runtime with exactly-once world effects and crash recovery, a gateway server, the
-unified `kx` CLI, a recipe library + prompt templating, an audit trail, and a
-live event stream. Next: TypeScript & Python client SDKs over gRPC, a dashboard,
-audio multi-modal inference, and an opt-in cluster layer for managed multi-node.
+unified `kx` CLI, a recipe library + prompt templating, an audit trail, a live
+event stream, TypeScript & Python client SDKs over gRPC, and a React + Vite **web
+console** that renders the live execution DAG (gRPC-web). Next: event timeline /
+time-travel + multi-modal artifact review in the console, audio multi-modal
+inference, and an opt-in cluster layer for managed multi-node.
 
 ## Contributing
 
