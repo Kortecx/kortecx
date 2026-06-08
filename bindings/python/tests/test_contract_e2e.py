@@ -17,7 +17,9 @@ import pytest
 
 from kortecx import (
     AsyncKxClient,
+    IngestDocument,
     KxClient,
+    KxFailedPrecondition,
     KxInvalidArgument,
     KxNotFound,
     KxPermissionDenied,
@@ -337,3 +339,37 @@ def test_list_asset_grants_shows_recipe_and_team_grants(dev_server):
 
         with pytest.raises(KxNotFound):
             kx.list_asset_grants("kx/recipes/does-not-exist")
+
+
+def test_dataset_ingest_list_query_client_vectors(dev_server):
+    """The T3.7 Datasets data-plane over a real server, FFI-FREE client-vector path:
+    ingest → list → query returns the nearest document's bytes + 32B hex ref."""
+    with KxClient(dev_server.endpoint) as kx:
+        ingest = kx.ingest_documents(
+            "corpus",
+            [
+                IngestDocument(content=b"alpha", embedding=[1.0, 0.0, 0.0, 0.1]),
+                IngestDocument(content=b"bravo", embedding=[0.0, 1.0, 0.0, 0.1]),
+                IngestDocument(content=b"charlie", embedding=[0.0, 0.0, 1.0, 0.1]),
+            ],
+        )
+        assert ingest.dataset_id == "corpus"
+        assert ingest.inserted == 3
+        assert ingest.dim == 4
+
+        ids = [d.dataset_id for d in kx.list_datasets()]
+        assert "corpus" in ids
+
+        hits = kx.query_dataset("corpus", embedding=[0.0, 1.0, 0.0, 0.1], k=1)
+        assert hits[0].text == "bravo"
+        assert len(hits[0].content_ref) == 64  # 32B hex
+
+
+def test_dataset_unknown_is_not_found_and_text_without_embedder_fails_precondition(dev_server):
+    with KxClient(dev_server.endpoint) as kx:
+        with pytest.raises(KxNotFound):
+            kx.query_dataset("nope", embedding=[1.0, 0.0], k=1)
+        # The FFI-free server has no embedder, so a TEXT query is FAILED_PRECONDITION.
+        kx.ingest_documents("c", [IngestDocument(content=b"x", embedding=[1.0, 0.0])])
+        with pytest.raises(KxFailedPrecondition):
+            kx.query_dataset("c", text="find x")

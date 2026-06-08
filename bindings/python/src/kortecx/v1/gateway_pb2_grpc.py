@@ -108,6 +108,21 @@ class KxGatewayStub(object):
                 request_serializer=kortecx_dot_v1_dot_gateway__pb2.ListAssetGrantsRequest.SerializeToString,
                 response_deserializer=kortecx_dot_v1_dot_gateway__pb2.ListAssetGrantsResponse.FromString,
                 _registered_method=True)
+        self.ListDatasets = channel.unary_unary(
+                '/kortecx.v1.KxGateway/ListDatasets',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.ListDatasetsRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.ListDatasetsResponse.FromString,
+                _registered_method=True)
+        self.IngestDocuments = channel.unary_unary(
+                '/kortecx.v1.KxGateway/IngestDocuments',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.IngestDocumentsRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.IngestDocumentsResponse.FromString,
+                _registered_method=True)
+        self.QueryDataset = channel.unary_unary(
+                '/kortecx.v1.KxGateway/QueryDataset',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.QueryDatasetRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.QueryDatasetResponse.FromString,
+                _registered_method=True)
 
 
 class KxGatewayServicer(object):
@@ -203,6 +218,25 @@ class KxGatewayServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def ListDatasets(self, request, context):
+        """T3.7 additive (D120.6): the Datasets data-plane (RAG).
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def IngestDocuments(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def QueryDataset(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_KxGatewayServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -275,6 +309,21 @@ def add_KxGatewayServicer_to_server(servicer, server):
                     servicer.ListAssetGrants,
                     request_deserializer=kortecx_dot_v1_dot_gateway__pb2.ListAssetGrantsRequest.FromString,
                     response_serializer=kortecx_dot_v1_dot_gateway__pb2.ListAssetGrantsResponse.SerializeToString,
+            ),
+            'ListDatasets': grpc.unary_unary_rpc_method_handler(
+                    servicer.ListDatasets,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.ListDatasetsRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.ListDatasetsResponse.SerializeToString,
+            ),
+            'IngestDocuments': grpc.unary_unary_rpc_method_handler(
+                    servicer.IngestDocuments,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.IngestDocumentsRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.IngestDocumentsResponse.SerializeToString,
+            ),
+            'QueryDataset': grpc.unary_unary_rpc_method_handler(
+                    servicer.QueryDataset,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.QueryDatasetRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.QueryDatasetResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -659,6 +708,87 @@ class KxGateway(object):
             '/kortecx.v1.KxGateway/ListAssetGrants',
             kortecx_dot_v1_dot_gateway__pb2.ListAssetGrantsRequest.SerializeToString,
             kortecx_dot_v1_dot_gateway__pb2.ListAssetGrantsResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ListDatasets(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/ListDatasets',
+            kortecx_dot_v1_dot_gateway__pb2.ListDatasetsRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.ListDatasetsResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def IngestDocuments(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/IngestDocuments',
+            kortecx_dot_v1_dot_gateway__pb2.IngestDocumentsRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.IngestDocumentsResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def QueryDataset(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/QueryDataset',
+            kortecx_dot_v1_dot_gateway__pb2.QueryDatasetRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.QueryDatasetResponse.FromString,
             options,
             channel_credentials,
             insecure,

@@ -12,6 +12,7 @@ import { execFileSync } from "node:child_process";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   KxClient,
+  KxFailedPrecondition,
   KxInvalidArgument,
   KxNotFound,
   KxPermissionDenied,
@@ -419,6 +420,46 @@ describe("UI-3 sharing inspector", () => {
     const kx = new KxClient(s.endpoint);
     await expect(kx.listAssetGrants("kx/recipes/does-not-exist")).rejects.toBeInstanceOf(
       KxNotFound,
+    );
+    kx.close();
+  });
+});
+
+// --- T3.7: the Datasets data-plane (RAG), FFI-free client-vector path ----------
+
+describe("datasets (RAG) data-plane — client-vector path (FFI-free)", () => {
+  it("ingest → list → query returns the nearest document's bytes + 32B hex ref", async () => {
+    const s = await devServer();
+    const kx = new KxClient(s.endpoint);
+    const ingest = await kx.ingestDocuments("corpus", [
+      { content: new TextEncoder().encode("alpha"), embedding: [1, 0, 0, 0.1] },
+      { content: new TextEncoder().encode("bravo"), embedding: [0, 1, 0, 0.1] },
+      { content: new TextEncoder().encode("charlie"), embedding: [0, 0, 1, 0.1] },
+    ]);
+    expect(ingest.datasetId).toBe("corpus");
+    expect(ingest.inserted).toBe(3);
+    expect(ingest.dim).toBe(4);
+
+    const datasets = await kx.listDatasets();
+    const corpus = datasets.find((d) => d.datasetId === "corpus");
+    expect(corpus?.docCount).toBe(3);
+
+    const hits = await kx.queryDataset("corpus", { embedding: [0, 1, 0, 0.1], k: 1 });
+    expect(hits[0]?.text).toBe("bravo");
+    expect(hits[0]?.contentRef).toHaveLength(64); // 32B hex
+    kx.close();
+  });
+
+  it("an unknown dataset is not-found; a text query without an embedder is failed-precondition", async () => {
+    const s = await devServer();
+    const kx = new KxClient(s.endpoint);
+    await expect(kx.queryDataset("nope", { embedding: [1, 0], k: 1 })).rejects.toBeInstanceOf(
+      KxNotFound,
+    );
+    // The FFI-free server has no embedder, so a TEXT query is FAILED_PRECONDITION.
+    await kx.ingestDocuments("c", [{ content: new TextEncoder().encode("x"), embedding: [1, 0] }]);
+    await expect(kx.queryDataset("c", { text: "find x" })).rejects.toBeInstanceOf(
+      KxFailedPrecondition,
     );
     kx.close();
   });

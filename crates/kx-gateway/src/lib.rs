@@ -53,6 +53,11 @@
 
 mod auth;
 mod config;
+// T3.7: the host-side Datasets data-plane (the kx-dataset-hnsw-backed DatasetView
+// seam). Pulls the FFI-free dataset crates, so it's behind the off-by-default
+// `hnsw` feature (the default build + the dep-wall stay unchanged).
+#[cfg(feature = "hnsw")]
+mod datasets;
 mod error;
 mod live_tail;
 // AL1: the in-process model executor for `kx serve` (live LLM dispatch). Pulls
@@ -72,6 +77,10 @@ mod ws;
 
 pub use auth::{DenyAll, DevAllowLocal, Principal, PrincipalResolver, TokenResolver};
 pub use config::{Cli, GatewayConfig, TlsPaths, DEFAULT_MAX_LEASE, DEFAULT_WS_LISTEN, USAGE};
+#[cfg(feature = "hnsw")]
+pub use datasets::HostDatasetView;
+#[cfg(all(feature = "hnsw", feature = "inference"))]
+pub use datasets::HostEmbedder;
 pub use error::GatewayError;
 pub use live_tail::LiveTailer;
 pub use provision::{

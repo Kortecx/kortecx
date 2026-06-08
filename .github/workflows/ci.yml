@@ -467,8 +467,11 @@ jobs:
             cargo-sdkpy-${{ runner.os }}-
             cargo-${{ runner.os }}-
 
+      # `--features hnsw` adds the Datasets data-plane (RAG) — still FFI-FREE
+      # (pure-Rust kx-dataset-hnsw + rusqlite, no llama.cpp) — so the contract tests
+      # can exercise the client-vector ingest/query path on Linux with no model.
       - name: Build the FFI-free kx (serve + client) for the contract tests
-        run: cargo build -p kx-cli
+        run: cargo build -p kx-cli --features hnsw
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -535,8 +538,11 @@ jobs:
             cargo-sdkts-${{ runner.os }}-
             cargo-${{ runner.os }}-
 
+      # `--features hnsw` adds the Datasets data-plane (RAG) — still FFI-FREE
+      # (pure-Rust kx-dataset-hnsw + rusqlite, no llama.cpp) — so the contract tests
+      # can exercise the client-vector ingest/query path on Linux with no model.
       - name: Build the FFI-free kx (serve + client) for the contract tests
-        run: cargo build -p kx-cli
+        run: cargo build -p kx-cli --features hnsw
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -601,8 +607,10 @@ jobs:
             cargo-ui-${{ runner.os }}-
             cargo-${{ runner.os }}-
 
+      # `--features hnsw` (FFI-FREE — no llama.cpp) wires the Datasets data-plane so
+      # the Playwright e2e can drive the section against a real `kx serve`.
       - name: Build the FFI-free kx (serve) for the contract + E2E tests
-        run: cargo build -p kx-cli
+        run: cargo build -p kx-cli --features hnsw
 
       - name: Set up Node
         uses: actions/setup-node@v4

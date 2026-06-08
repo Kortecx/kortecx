@@ -45,6 +45,7 @@
 //! names that `instance_id`; `GetContent` returns a **uniform** not-authorized
 //! (no existence oracle).
 
+mod datasets;
 mod error;
 mod events;
 mod identity;
@@ -54,6 +55,9 @@ mod service;
 mod submit;
 mod view;
 
+pub use datasets::{
+    DatasetError, DatasetHitEntry, DatasetSummaryEntry, DatasetView, IngestDoc, IngestOutcome,
+};
 pub use error::GatewayError;
 // The event-source pieces a live tailer (R5, `kx-gateway`) reuses: the one-time
 // ownership gate + the per-range frame builder. The snapshot composition stays

@@ -32,13 +32,18 @@ def _find_or_build_kx() -> str:
     env = os.environ.get("KX_BIN")
     if env and pathlib.Path(env).exists():
         return env
+    # NOTE: a pre-existing binary is used as-is. The dataset contract tests need a
+    # binary built ``--features hnsw``; a stale non-hnsw ``target/release/kx`` makes
+    # them fail with UNIMPLEMENTED — ``rm`` it (or set KX_BIN). CI builds fresh with it.
     for rel in ("target/release/kx", "target/debug/kx"):
         cand = REPO_ROOT / rel
         if cand.exists():
             return str(cand)
-    # Build it FFI-free (no C++ toolchain needed for the kx-cli binary).
+    # Build it FFI-free (no C++ toolchain needed). `--features hnsw` adds the Datasets
+    # data-plane (RAG) — still pure-Rust (kx-dataset-hnsw + rusqlite, no llama.cpp) — so
+    # the contract tests can exercise the client-vector ingest/query path.
     subprocess.run(
-        ["cargo", "build", "--release", "-p", "kx-cli"],
+        ["cargo", "build", "--release", "-p", "kx-cli", "--features", "hnsw"],
         cwd=REPO_ROOT,
         check=True,
     )

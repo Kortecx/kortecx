@@ -352,6 +352,20 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
             None => None,
         };
 
+    // T3.7: capture an OPTIONAL dataset embedder from the resolved serve backend (the
+    // server-embed path). `LlamaInferenceBackend` impls `EmbeddingBackend`, so datasets
+    // reuse the SAME loaded model — no new FFI surface + no kx-model-harness dep. `None`
+    // when no fit model resolved ⇒ datasets fall back to the FFI-free client-vector path.
+    #[cfg(all(feature = "hnsw", feature = "inference"))]
+    let dataset_embedder: Option<crate::datasets::HostEmbedder> =
+        shaper_runtime.as_ref().map(|rt| {
+            crate::datasets::HostEmbedder::new(
+                rt.backend.clone(),
+                rt.model_id.clone(),
+                crate::model_exec::shaper_warrant(&rt.model_id, default_executor_class()),
+            )
+        });
+
     // (1) Embedded coordinator — the SOLE journal writer. It opens the journal
     //     read-write (by value) and verifies each committed result_ref against
     //     the shared store (D55). Hosted on a loopback ephemeral port. With a shaper
@@ -514,7 +528,23 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     // `live_shutdown` watch lets shutdown stop the poll loops (so their endless
     // streams end and the graceful drain completes).
     let (live_shutdown, live_shutdown_rx) = watch::channel(false);
-    let gateway = GatewayService::new(reader.clone(), submitter, content)
+    // (3e) T3.7: the Datasets data-plane (RAG) view, behind the opt-in `hnsw` feature —
+    //      a durable SQLite store + a rebuilt-on-open HNSW ANN index under the catalog
+    //      dir. The client-vector path is FFI-free; an `inference` build additionally
+    //      wires the resolved serve model as the server embedder (text-only ingest/query).
+    #[cfg(feature = "hnsw")]
+    let dataset_view: Arc<dyn kx_gateway_core::DatasetView> = {
+        let datasets_dir = catalog_dir.join("datasets");
+        #[cfg_attr(not(feature = "inference"), allow(unused_mut))]
+        let mut view = crate::datasets::HostDatasetView::open(&datasets_dir)?;
+        #[cfg(feature = "inference")]
+        if let Some(embedder) = dataset_embedder {
+            view = view.with_embedder(embedder);
+        }
+        Arc::new(view)
+    };
+    #[cfg_attr(not(feature = "hnsw"), allow(unused_mut))]
+    let mut gateway = GatewayService::new(reader.clone(), submitter, content)
         .with_signature_catalog(signature_catalog)
         .with_recipe_binder(binder)
         .with_recipe_catalog(recipe_catalog)
@@ -523,6 +553,10 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         .with_event_tailer(Arc::new(crate::live_tail::LiveTailer::new(
             live_shutdown_rx.clone(),
         )));
+    #[cfg(feature = "hnsw")]
+    {
+        gateway = gateway.with_dataset_view(dataset_view);
+    }
 
     // (4) Auth interceptor + bind + serve. Posture: --dev-allow-local (loopback
     //     dev) → configured bearer tokens → deny-all (the safe default). The SAME

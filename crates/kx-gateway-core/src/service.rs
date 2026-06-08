@@ -12,6 +12,7 @@ use kx_proto::proto::kx_gateway_server::KxGateway;
 use tokio_stream::Stream;
 use tonic::{Request, Response, Status};
 
+use crate::datasets::DatasetView;
 use crate::error::{hash_32, instance_id_16};
 use crate::identity::CallerParty;
 use crate::reader::{ContentReader, JournalReader};
@@ -369,6 +370,10 @@ pub struct GatewayService {
     /// The optional grant-view seam (the host injects a `kx-catalog`-backed view).
     /// `None` ⇒ `ListAssetGrants` returns `unimplemented`.
     grants_view: Option<Arc<dyn GrantView>>,
+    /// The optional dataset-view seam (the host injects a `kx-dataset-hnsw`-backed
+    /// view behind the `hnsw` feature). `None` ⇒ `ListDatasets` / `IngestDocuments`
+    /// / `QueryDataset` return `unimplemented`.
+    datasets: Option<Arc<dyn DatasetView>>,
     /// The `StreamEvents` tailer. Defaults to [`SnapshotTailer`]; the host injects
     /// a live tailer via [`GatewayService::with_event_tailer`].
     tailer: Arc<dyn EventTailer>,
@@ -392,6 +397,7 @@ impl GatewayService {
             catalog_recipes: None,
             membership: None,
             grants_view: None,
+            datasets: None,
             tailer: Arc::new(SnapshotTailer),
         }
     }
@@ -436,6 +442,16 @@ impl GatewayService {
     #[must_use]
     pub fn with_grant_view(mut self, grants_view: Arc<dyn GrantView>) -> Self {
         self.grants_view = Some(grants_view);
+        self
+    }
+
+    /// Wire the dataset-view seam (the host's `kx-dataset-hnsw`-backed view, behind
+    /// the `hnsw` feature). Enables `ListDatasets` / `IngestDocuments` /
+    /// `QueryDataset` (the T3.7 Datasets data-plane). Off the journal/digest —
+    /// datasets are a separate durable store (D40 rebuildable cache).
+    #[must_use]
+    pub fn with_dataset_view(mut self, datasets: Arc<dyn DatasetView>) -> Self {
+        self.datasets = Some(datasets);
         self
     }
 
@@ -772,6 +788,74 @@ impl KxGateway for GatewayService {
                 .map(grant_entry_to_proto)
                 .collect(),
         }))
+    }
+
+    async fn list_datasets(
+        &self,
+        _request: Request<proto::ListDatasetsRequest>,
+    ) -> Result<Response<proto::ListDatasetsResponse>, Status> {
+        let view = self
+            .datasets
+            .as_ref()
+            .ok_or_else(|| Status::unimplemented("ListDatasets: no dataset view wired"))?;
+        let datasets = view
+            .list_datasets()
+            .into_iter()
+            .map(crate::datasets::dataset_summary_to_proto)
+            .collect();
+        Ok(Response::new(proto::ListDatasetsResponse { datasets }))
+    }
+
+    async fn ingest_documents(
+        &self,
+        request: Request<proto::IngestDocumentsRequest>,
+    ) -> Result<Response<proto::IngestDocumentsResponse>, Status> {
+        let view = self
+            .datasets
+            .as_ref()
+            .ok_or_else(|| Status::unimplemented("IngestDocuments: no dataset view wired"))?;
+        let req = request.into_inner();
+        // Borrow content + the optional client vector from the request (no copy
+        // before the host dedups). An empty `embedding` ⇒ ask the host to embed.
+        let docs: Vec<crate::datasets::IngestDoc<'_>> = req
+            .documents
+            .iter()
+            .map(|d| crate::datasets::IngestDoc {
+                content: &d.content,
+                embedding: (!d.embedding.is_empty()).then_some(d.embedding.as_slice()),
+            })
+            .collect();
+        let out = view
+            .ingest(&req.dataset, &docs)
+            .map_err(crate::datasets::dataset_status)?;
+        Ok(Response::new(proto::IngestDocumentsResponse {
+            dataset_id: out.dataset_id,
+            doc_count: out.doc_count,
+            inserted: out.inserted,
+            dim: out.dim,
+        }))
+    }
+
+    async fn query_dataset(
+        &self,
+        request: Request<proto::QueryDatasetRequest>,
+    ) -> Result<Response<proto::QueryDatasetResponse>, Status> {
+        let view = self
+            .datasets
+            .as_ref()
+            .ok_or_else(|| Status::unimplemented("QueryDataset: no dataset view wired"))?;
+        let req = request.into_inner();
+        // A non-empty client vector takes precedence (the FFI-free path); an empty
+        // one falls back to embedding `query_text` (needs an embedder).
+        let qe = (!req.query_embedding.is_empty()).then_some(req.query_embedding.as_slice());
+        let hits = view
+            .query(&req.dataset, qe, &req.query_text, req.k as usize)
+            .map_err(crate::datasets::dataset_status)?;
+        let hits = hits
+            .into_iter()
+            .map(crate::datasets::dataset_hit_to_proto)
+            .collect();
+        Ok(Response::new(proto::QueryDatasetResponse { hits }))
     }
 }
 

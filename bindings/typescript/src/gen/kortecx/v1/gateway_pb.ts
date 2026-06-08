@@ -37,7 +37,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file kortecx/v1/gateway.proto.
  */
 export const file_kortecx_v1_gateway: GenFile = /*@__PURE__*/
-  fileDesc("Chhrb3J0ZWN4L3YxL2dhdGV3YXkucHJvdG8SCmtvcnRlY3gudjEiWQoQU3VibWl0UnVuUmVxdWVzdBIaChJyZWNpcGVfZmluZ2VycHJpbnQYASABKAwSKQoFbW90ZXMYAiADKAsyGi5rb3J0ZWN4LnYxLlN1Ym1pdE1vdGVTcGVjIngKDlN1Ym1pdE1vdGVTcGVjEh4KBG1vdGUYASABKAsyEC5rb3J0ZWN4LnYxLk1vdGUSKAoHd2FycmFudBgCIAEoCzIXLmtvcnRlY3gudjEuV2FycmFudFNwZWMSHAoUYWNjZXB0X2F0X2xlYXN0X29uY2UYAyABKAgiPAoJUnVuSGFuZGxlEhMKC2luc3RhbmNlX2lkGAEgASgMEhoKEnJlY2lwZV9maW5nZXJwcmludBgCIAEoDCItCg1JbnZva2VSZXF1ZXN0Eg4KBmhhbmRsZRgBIAEoCRIMCgRhcmdzGAIgASgMIlsKDkludm9rZVJlc3BvbnNlEhMKC2luc3RhbmNlX2lkGAEgASgMEhoKEnJlY2lwZV9maW5nZXJwcmludBgCIAEoDBIYChB0ZXJtaW5hbF9tb3RlX2lkGAMgASgMIksKFEdldFByb2plY3Rpb25SZXF1ZXN0EhMKC2luc3RhbmNlX2lkGAEgASgMEhMKBmF0X3NlcRgCIAEoBEgAiAEBQgkKB19hdF9zZXEifwoOUHJvamVjdGlvblZpZXcSEwoLaW5zdGFuY2VfaWQYASABKAwSGgoScmVjaXBlX2ZpbmdlcnByaW50GAIgASgMEhMKC2N1cnJlbnRfc2VxGAMgASgEEicKBW1vdGVzGAQgAygLMhgua29ydGVjeC52MS5Nb3RlU25hcHNob3QivwMKDE1vdGVTbmFwc2hvdBIPCgdtb3RlX2lkGAEgASgMEiwKBXN0YXRlGAIgASgOMh0ua29ydGVjeC52MS5Nb3RlU25hcHNob3RTdGF0ZRIlCghuZF9jbGFzcxgDIAEoDjITLmtvcnRlY3gudjEuTmRDbGFzcxItCglwcm9tb3Rpb24YBCABKA4yGi5rb3J0ZWN4LnYxLlByb21vdGlvblN0YXRlEhcKCnJlc3VsdF9yZWYYBSABKAxIAIgBARIYCgt3YXJyYW50X3JlZhgGIAEoDEgBiAEBEhUKDW1vdGVfZGVmX2hhc2gYByABKAwSGgoNY29tbWl0dGVkX3NlcRgIIAEoBEgCiAEBEiYKB3BhcmVudHMYCSADKAsyFS5rb3J0ZWN4LnYxLlBhcmVudFJlZhIUCgd2ZXJkaWN0GAogASgMSAOIAQESLQoHYW5vbWFseRgLIAEoDjIXLmtvcnRlY3gudjEuTW90ZUFub21hbHlIBIgBAUINCgtfcmVzdWx0X3JlZkIOCgxfd2FycmFudF9yZWZCEAoOX2NvbW1pdHRlZF9zZXFCCgoIX3ZlcmRpY3RCCgoIX2Fub21hbHkiPQoRR2V0Q29udGVudFJlcXVlc3QSEwoLY29udGVudF9yZWYYASABKAwSEwoLaW5zdGFuY2VfaWQYAiABKAwiHgoLQ29udGVudEJsb2ISDwoHcGF5bG9hZBgBIAEoDCI9ChNTdHJlYW1FdmVudHNSZXF1ZXN0EhMKC2luc3RhbmNlX2lkGAEgASgMEhEKCXNpbmNlX3NlcRgCIAEoBCJtCgpFdmVudEZyYW1lEgsKA3NlcRgBIAEoBBImCgZkZWx0YXMYAiADKAsyFi5rb3J0ZWN4LnYxLkV2ZW50RGVsdGESEAoIbmV4dF9zZXEYAyABKAQSGAoQam91cm5hbF9ib3VuZGFyeRgEIAEoCCLoAQoKRXZlbnREZWx0YRILCgNzZXEYASABKAQSLwoJY29tbWl0dGVkGAIgASgLMhoua29ydGVjeC52MS5Db21taXR0ZWREZWx0YUgAEikKBmZhaWxlZBgDIAEoCzIXLmtvcnRlY3gudjEuRmFpbGVkRGVsdGFIABIxCgpyZXB1ZGlhdGVkGAQgASgLMhsua29ydGVjeC52MS5SZXB1ZGlhdGVkRGVsdGFIABI2Cg1lZmZlY3Rfc3RhZ2VkGAUgASgLMh0ua29ydGVjeC52MS5FZmZlY3RTdGFnZWREZWx0YUgAQgYKBGtpbmQiXAoOQ29tbWl0dGVkRGVsdGESDwoHbW90ZV9pZBgBIAEoDBISCgpyZXN1bHRfcmVmGAIgASgMEiUKCG5kX2NsYXNzGAMgASgOMhMua29ydGVjeC52MS5OZENsYXNzIjQKC0ZhaWxlZERlbHRhEg8KB21vdGVfaWQYASABKAwSFAoMcmVhc29uX2NsYXNzGAIgASgNIkcKD1JlcHVkaWF0ZWREZWx0YRIWCg50YXJnZXRfbW90ZV9pZBgBIAEoDBIcChR0YXJnZXRfY29tbWl0dGVkX3NlcRgCIAEoBCIkChFFZmZlY3RTdGFnZWREZWx0YRIPCgdtb3RlX2lkGAEgASgMIhcKFUxpc3RTaWduYXR1cmVzUmVxdWVzdCI2ChBTaWduYXR1cmVTdW1tYXJ5EhQKDHNpZ25hdHVyZV9pZBgBIAEoDBIMCgRuYW1lGAIgASgJIkoKFkxpc3RTaWduYXR1cmVzUmVzcG9uc2USMAoKc2lnbmF0dXJlcxgBIAMoCzIcLmtvcnRlY3gudjEuU2lnbmF0dXJlU3VtbWFyeSIrChNHZXRTaWduYXR1cmVSZXF1ZXN0EhQKDHNpZ25hdHVyZV9pZBgBIAEoDCI+ChRHZXRTaWduYXR1cmVSZXNwb25zZRIUCgxzaWduYXR1cmVfaWQYASABKAwSEAoIbWFuaWZlc3QYAiABKAwiLAoYUmVnaXN0ZXJTaWduYXR1cmVSZXF1ZXN0EhAKCG1hbmlmZXN0GAEgASgMIjEKGVJlZ2lzdGVyU2lnbmF0dXJlUmVzcG9uc2USFAoMc2lnbmF0dXJlX2lkGAEgASgMIlcKD0xpc3RSdW5zUmVxdWVzdBISCgVsaW1pdBgBIAEoDUgAiAEBEhcKCmJlZm9yZV9zZXEYAiABKARIAYgBAUIICgZfbGltaXRCDQoLX2JlZm9yZV9zZXEicQoKUnVuU3VtbWFyeRITCgtpbnN0YW5jZV9pZBgBIAEoDBIaChJyZWNpcGVfZmluZ2VycHJpbnQYAiABKAwSFgoOcmVnaXN0ZXJlZF9zZXEYAyABKAQSGgoScmVnaXN0ZXJlZF91bml4X21zGAQgASgEIkoKEExpc3RSdW5zUmVzcG9uc2USJAoEcnVucxgBIAMoCzIWLmtvcnRlY3gudjEuUnVuU3VtbWFyeRIQCghoYXNfbW9yZRgCIAEoCCIUChJMaXN0UmVjaXBlc1JlcXVlc3QiHwoNUmVjaXBlU3VtbWFyeRIOCgZoYW5kbGUYASABKAkiQQoTTGlzdFJlY2lwZXNSZXNwb25zZRIqCgdyZWNpcGVzGAEgAygLMhkua29ydGVjeC52MS5SZWNpcGVTdW1tYXJ5IiYKFEdldFJlY2lwZUZvcm1SZXF1ZXN0Eg4KBmhhbmRsZRgBIAEoCSKPAQoPUmVjaXBlRm9ybUZpZWxkEgwKBG5hbWUYASABKAkSKQoEdHlwZRgCIAEoDjIbLmtvcnRlY3gudjEuUmVjaXBlUGFyYW1UeXBlEhAKCHJlcXVpcmVkGAMgASgIEhQKB21heF9sZW4YBCABKARIAIgBARIPCgdhbGxvd2VkGAUgAygJQgoKCF9tYXhfbGVuIlQKFUdldFJlY2lwZUZvcm1SZXNwb25zZRIOCgZoYW5kbGUYASABKAkSKwoGZmllbGRzGAIgAygLMhsua29ydGVjeC52MS5SZWNpcGVGb3JtRmllbGQiEgoQTGlzdFRlYW1zUmVxdWVzdCJZCgtUZWFtU3VtbWFyeRIPCgd0ZWFtX2lkGAEgASgJEhQKDGRpc3BsYXlfbmFtZRgCIAEoCRINCgVvd25lchgDIAEoCRIUCgxtZW1iZXJfY291bnQYBCABKA0iOwoRTGlzdFRlYW1zUmVzcG9uc2USJgoFdGVhbXMYASADKAsyFy5rb3J0ZWN4LnYxLlRlYW1TdW1tYXJ5Ik8KFkxpc3RUZWFtTWVtYmVyc1JlcXVlc3QSDwoHdGVhbV9pZBgBIAEoCRIWCglhc3NldF9yZWYYAiABKAlIAIgBAUIMCgpfYXNzZXRfcmVmIpwBCgtXYXJyYW50VmlldxIWCg5leGVjdXRvcl9jbGFzcxgBIAEoCRITCgttb2RlbF9yb3V0ZRgCIAEoCRIRCgluZXRfc2NvcGUYAyABKAkSEAoIZnNfc2NvcGUYBCABKAkSEQoJbWF4X2NhbGxzGAUgASgEEhEKCWNwdV9taWxsaRgGIAEoBBIVCg13YWxsX2Nsb2NrX21zGAcgASgEIosBCgpUZWFtTWVtYmVyEg0KBXBhcnR5GAEgASgJEgwKBHJvbGUYAiABKAkSEwoLYWN0aW9uX2NhcHMYAyADKAkSNgoQcmVzb2x2ZWRfd2FycmFudBgEIAEoCzIXLmtvcnRlY3gudjEuV2FycmFudFZpZXdIAIgBAUITChFfcmVzb2x2ZWRfd2FycmFudCJRChdMaXN0VGVhbU1lbWJlcnNSZXNwb25zZRINCgVvd25lchgBIAEoCRInCgdtZW1iZXJzGAIgAygLMhYua29ydGVjeC52MS5UZWFtTWVtYmVyIisKFkxpc3RBc3NldEdyYW50c1JlcXVlc3QSEQoJYXNzZXRfcmVmGAEgASgJIncKCUdyYW50VmlldxIPCgdncmFudG9yGAEgASgJEg8KB2dyYW50ZWUYAiABKAkSDwoHYWN0aW9ucxgDIAMoCRIVCg1ydW50aW1lX3Njb3BlGAQgASgJEg8KB2lzX3Jvb3QYBSABKAgSDwoHcmV2b2tlZBgGIAEoCCJPChdMaXN0QXNzZXRHcmFudHNSZXNwb25zZRINCgVvd25lchgBIAEoCRIlCgZncmFudHMYAiADKAsyFS5rb3J0ZWN4LnYxLkdyYW50VmlldyqJAgoRTW90ZVNuYXBzaG90U3RhdGUSIwofTU9URV9TTkFQU0hPVF9TVEFURV9VTlNQRUNJRklFRBAAEh8KG01PVEVfU05BUFNIT1RfU1RBVEVfUEVORElORxABEiEKHU1PVEVfU05BUFNIT1RfU1RBVEVfU0NIRURVTEVEEAISIQodTU9URV9TTkFQU0hPVF9TVEFURV9DT01NSVRURUQQAxIeChpNT1RFX1NOQVBTSE9UX1NUQVRFX0ZBSUxFRBAEEiIKHk1PVEVfU05BUFNIT1RfU1RBVEVfUkVQVURJQVRFRBAFEiQKIE1PVEVfU05BUFNIT1RfU1RBVEVfSU5DT05TSVNURU5UEAYqkwEKDlByb21vdGlvblN0YXRlEh8KG1BST01PVElPTl9TVEFURV9VTlNQRUNJRklFRBAAEiIKHlBST01PVElPTl9TVEFURV9OT1RfQVBQTElDQUJMRRABEh4KGlBST01PVElPTl9TVEFURV9VTlBST01PVEVEEAISHAoYUFJPTU9USU9OX1NUQVRFX1BST01PVEVEEAMqmwEKC01vdGVBbm9tYWx5EhwKGE1PVEVfQU5PTUFMWV9VTlNQRUNJRklFRBAAEjsKN01PVEVfQU5PTUFMWV9FRkZFQ1RfU1RBR0VEX1RIRU5fUkVQVURJQVRFRF9OT19DT01NSVRURUQQARIxCi1NT1RFX0FOT01BTFlfUVVBUkFOVElORURfQVRfTEVBU1RfT05DRV9FRkZFQ1QQAiq/AQoPUmVjaXBlUGFyYW1UeXBlEiEKHVJFQ0lQRV9QQVJBTV9UWVBFX1VOU1BFQ0lGSUVEEAASGQoVUkVDSVBFX1BBUkFNX1RZUEVfU1RSEAESGQoVUkVDSVBFX1BBUkFNX1RZUEVfSU5UEAISGgoWUkVDSVBFX1BBUkFNX1RZUEVfQk9PTBADEhsKF1JFQ0lQRV9QQVJBTV9UWVBFX0JZVEVTEAQSGgoWUkVDSVBFX1BBUkFNX1RZUEVfRU5VTRAFMusICglLeEdhdGV3YXkSQAoJU3VibWl0UnVuEhwua29ydGVjeC52MS5TdWJtaXRSdW5SZXF1ZXN0GhUua29ydGVjeC52MS5SdW5IYW5kbGUSPwoGSW52b2tlEhkua29ydGVjeC52MS5JbnZva2VSZXF1ZXN0Ghoua29ydGVjeC52MS5JbnZva2VSZXNwb25zZRJNCg1HZXRQcm9qZWN0aW9uEiAua29ydGVjeC52MS5HZXRQcm9qZWN0aW9uUmVxdWVzdBoaLmtvcnRlY3gudjEuUHJvamVjdGlvblZpZXcSRAoKR2V0Q29udGVudBIdLmtvcnRlY3gudjEuR2V0Q29udGVudFJlcXVlc3QaFy5rb3J0ZWN4LnYxLkNvbnRlbnRCbG9iEkkKDFN0cmVhbUV2ZW50cxIfLmtvcnRlY3gudjEuU3RyZWFtRXZlbnRzUmVxdWVzdBoWLmtvcnRlY3gudjEuRXZlbnRGcmFtZTABElcKDkxpc3RTaWduYXR1cmVzEiEua29ydGVjeC52MS5MaXN0U2lnbmF0dXJlc1JlcXVlc3QaIi5rb3J0ZWN4LnYxLkxpc3RTaWduYXR1cmVzUmVzcG9uc2USUQoMR2V0U2lnbmF0dXJlEh8ua29ydGVjeC52MS5HZXRTaWduYXR1cmVSZXF1ZXN0GiAua29ydGVjeC52MS5HZXRTaWduYXR1cmVSZXNwb25zZRJgChFSZWdpc3RlclNpZ25hdHVyZRIkLmtvcnRlY3gudjEuUmVnaXN0ZXJTaWduYXR1cmVSZXF1ZXN0GiUua29ydGVjeC52MS5SZWdpc3RlclNpZ25hdHVyZVJlc3BvbnNlEkUKCExpc3RSdW5zEhsua29ydGVjeC52MS5MaXN0UnVuc1JlcXVlc3QaHC5rb3J0ZWN4LnYxLkxpc3RSdW5zUmVzcG9uc2USTgoLTGlzdFJlY2lwZXMSHi5rb3J0ZWN4LnYxLkxpc3RSZWNpcGVzUmVxdWVzdBofLmtvcnRlY3gudjEuTGlzdFJlY2lwZXNSZXNwb25zZRJUCg1HZXRSZWNpcGVGb3JtEiAua29ydGVjeC52MS5HZXRSZWNpcGVGb3JtUmVxdWVzdBohLmtvcnRlY3gudjEuR2V0UmVjaXBlRm9ybVJlc3BvbnNlEkgKCUxpc3RUZWFtcxIcLmtvcnRlY3gudjEuTGlzdFRlYW1zUmVxdWVzdBodLmtvcnRlY3gudjEuTGlzdFRlYW1zUmVzcG9uc2USWgoPTGlzdFRlYW1NZW1iZXJzEiIua29ydGVjeC52MS5MaXN0VGVhbU1lbWJlcnNSZXF1ZXN0GiMua29ydGVjeC52MS5MaXN0VGVhbU1lbWJlcnNSZXNwb25zZRJaCg9MaXN0QXNzZXRHcmFudHMSIi5rb3J0ZWN4LnYxLkxpc3RBc3NldEdyYW50c1JlcXVlc3QaIy5rb3J0ZWN4LnYxLkxpc3RBc3NldEdyYW50c1Jlc3BvbnNlYgZwcm90bzM", [file_kortecx_v1_coordinator]);
+  fileDesc("Chhrb3J0ZWN4L3YxL2dhdGV3YXkucHJvdG8SCmtvcnRlY3gudjEiWQoQU3VibWl0UnVuUmVxdWVzdBIaChJyZWNpcGVfZmluZ2VycHJpbnQYASABKAwSKQoFbW90ZXMYAiADKAsyGi5rb3J0ZWN4LnYxLlN1Ym1pdE1vdGVTcGVjIngKDlN1Ym1pdE1vdGVTcGVjEh4KBG1vdGUYASABKAsyEC5rb3J0ZWN4LnYxLk1vdGUSKAoHd2FycmFudBgCIAEoCzIXLmtvcnRlY3gudjEuV2FycmFudFNwZWMSHAoUYWNjZXB0X2F0X2xlYXN0X29uY2UYAyABKAgiPAoJUnVuSGFuZGxlEhMKC2luc3RhbmNlX2lkGAEgASgMEhoKEnJlY2lwZV9maW5nZXJwcmludBgCIAEoDCItCg1JbnZva2VSZXF1ZXN0Eg4KBmhhbmRsZRgBIAEoCRIMCgRhcmdzGAIgASgMIlsKDkludm9rZVJlc3BvbnNlEhMKC2luc3RhbmNlX2lkGAEgASgMEhoKEnJlY2lwZV9maW5nZXJwcmludBgCIAEoDBIYChB0ZXJtaW5hbF9tb3RlX2lkGAMgASgMIksKFEdldFByb2plY3Rpb25SZXF1ZXN0EhMKC2luc3RhbmNlX2lkGAEgASgMEhMKBmF0X3NlcRgCIAEoBEgAiAEBQgkKB19hdF9zZXEifwoOUHJvamVjdGlvblZpZXcSEwoLaW5zdGFuY2VfaWQYASABKAwSGgoScmVjaXBlX2ZpbmdlcnByaW50GAIgASgMEhMKC2N1cnJlbnRfc2VxGAMgASgEEicKBW1vdGVzGAQgAygLMhgua29ydGVjeC52MS5Nb3RlU25hcHNob3QivwMKDE1vdGVTbmFwc2hvdBIPCgdtb3RlX2lkGAEgASgMEiwKBXN0YXRlGAIgASgOMh0ua29ydGVjeC52MS5Nb3RlU25hcHNob3RTdGF0ZRIlCghuZF9jbGFzcxgDIAEoDjITLmtvcnRlY3gudjEuTmRDbGFzcxItCglwcm9tb3Rpb24YBCABKA4yGi5rb3J0ZWN4LnYxLlByb21vdGlvblN0YXRlEhcKCnJlc3VsdF9yZWYYBSABKAxIAIgBARIYCgt3YXJyYW50X3JlZhgGIAEoDEgBiAEBEhUKDW1vdGVfZGVmX2hhc2gYByABKAwSGgoNY29tbWl0dGVkX3NlcRgIIAEoBEgCiAEBEiYKB3BhcmVudHMYCSADKAsyFS5rb3J0ZWN4LnYxLlBhcmVudFJlZhIUCgd2ZXJkaWN0GAogASgMSAOIAQESLQoHYW5vbWFseRgLIAEoDjIXLmtvcnRlY3gudjEuTW90ZUFub21hbHlIBIgBAUINCgtfcmVzdWx0X3JlZkIOCgxfd2FycmFudF9yZWZCEAoOX2NvbW1pdHRlZF9zZXFCCgoIX3ZlcmRpY3RCCgoIX2Fub21hbHkiPQoRR2V0Q29udGVudFJlcXVlc3QSEwoLY29udGVudF9yZWYYASABKAwSEwoLaW5zdGFuY2VfaWQYAiABKAwiHgoLQ29udGVudEJsb2ISDwoHcGF5bG9hZBgBIAEoDCI9ChNTdHJlYW1FdmVudHNSZXF1ZXN0EhMKC2luc3RhbmNlX2lkGAEgASgMEhEKCXNpbmNlX3NlcRgCIAEoBCJtCgpFdmVudEZyYW1lEgsKA3NlcRgBIAEoBBImCgZkZWx0YXMYAiADKAsyFi5rb3J0ZWN4LnYxLkV2ZW50RGVsdGESEAoIbmV4dF9zZXEYAyABKAQSGAoQam91cm5hbF9ib3VuZGFyeRgEIAEoCCLoAQoKRXZlbnREZWx0YRILCgNzZXEYASABKAQSLwoJY29tbWl0dGVkGAIgASgLMhoua29ydGVjeC52MS5Db21taXR0ZWREZWx0YUgAEikKBmZhaWxlZBgDIAEoCzIXLmtvcnRlY3gudjEuRmFpbGVkRGVsdGFIABIxCgpyZXB1ZGlhdGVkGAQgASgLMhsua29ydGVjeC52MS5SZXB1ZGlhdGVkRGVsdGFIABI2Cg1lZmZlY3Rfc3RhZ2VkGAUgASgLMh0ua29ydGVjeC52MS5FZmZlY3RTdGFnZWREZWx0YUgAQgYKBGtpbmQiXAoOQ29tbWl0dGVkRGVsdGESDwoHbW90ZV9pZBgBIAEoDBISCgpyZXN1bHRfcmVmGAIgASgMEiUKCG5kX2NsYXNzGAMgASgOMhMua29ydGVjeC52MS5OZENsYXNzIjQKC0ZhaWxlZERlbHRhEg8KB21vdGVfaWQYASABKAwSFAoMcmVhc29uX2NsYXNzGAIgASgNIkcKD1JlcHVkaWF0ZWREZWx0YRIWCg50YXJnZXRfbW90ZV9pZBgBIAEoDBIcChR0YXJnZXRfY29tbWl0dGVkX3NlcRgCIAEoBCIkChFFZmZlY3RTdGFnZWREZWx0YRIPCgdtb3RlX2lkGAEgASgMIhcKFUxpc3RTaWduYXR1cmVzUmVxdWVzdCI2ChBTaWduYXR1cmVTdW1tYXJ5EhQKDHNpZ25hdHVyZV9pZBgBIAEoDBIMCgRuYW1lGAIgASgJIkoKFkxpc3RTaWduYXR1cmVzUmVzcG9uc2USMAoKc2lnbmF0dXJlcxgBIAMoCzIcLmtvcnRlY3gudjEuU2lnbmF0dXJlU3VtbWFyeSIrChNHZXRTaWduYXR1cmVSZXF1ZXN0EhQKDHNpZ25hdHVyZV9pZBgBIAEoDCI+ChRHZXRTaWduYXR1cmVSZXNwb25zZRIUCgxzaWduYXR1cmVfaWQYASABKAwSEAoIbWFuaWZlc3QYAiABKAwiLAoYUmVnaXN0ZXJTaWduYXR1cmVSZXF1ZXN0EhAKCG1hbmlmZXN0GAEgASgMIjEKGVJlZ2lzdGVyU2lnbmF0dXJlUmVzcG9uc2USFAoMc2lnbmF0dXJlX2lkGAEgASgMIlcKD0xpc3RSdW5zUmVxdWVzdBISCgVsaW1pdBgBIAEoDUgAiAEBEhcKCmJlZm9yZV9zZXEYAiABKARIAYgBAUIICgZfbGltaXRCDQoLX2JlZm9yZV9zZXEicQoKUnVuU3VtbWFyeRITCgtpbnN0YW5jZV9pZBgBIAEoDBIaChJyZWNpcGVfZmluZ2VycHJpbnQYAiABKAwSFgoOcmVnaXN0ZXJlZF9zZXEYAyABKAQSGgoScmVnaXN0ZXJlZF91bml4X21zGAQgASgEIkoKEExpc3RSdW5zUmVzcG9uc2USJAoEcnVucxgBIAMoCzIWLmtvcnRlY3gudjEuUnVuU3VtbWFyeRIQCghoYXNfbW9yZRgCIAEoCCIUChJMaXN0UmVjaXBlc1JlcXVlc3QiHwoNUmVjaXBlU3VtbWFyeRIOCgZoYW5kbGUYASABKAkiQQoTTGlzdFJlY2lwZXNSZXNwb25zZRIqCgdyZWNpcGVzGAEgAygLMhkua29ydGVjeC52MS5SZWNpcGVTdW1tYXJ5IiYKFEdldFJlY2lwZUZvcm1SZXF1ZXN0Eg4KBmhhbmRsZRgBIAEoCSKPAQoPUmVjaXBlRm9ybUZpZWxkEgwKBG5hbWUYASABKAkSKQoEdHlwZRgCIAEoDjIbLmtvcnRlY3gudjEuUmVjaXBlUGFyYW1UeXBlEhAKCHJlcXVpcmVkGAMgASgIEhQKB21heF9sZW4YBCABKARIAIgBARIPCgdhbGxvd2VkGAUgAygJQgoKCF9tYXhfbGVuIlQKFUdldFJlY2lwZUZvcm1SZXNwb25zZRIOCgZoYW5kbGUYASABKAkSKwoGZmllbGRzGAIgAygLMhsua29ydGVjeC52MS5SZWNpcGVGb3JtRmllbGQiEgoQTGlzdFRlYW1zUmVxdWVzdCJZCgtUZWFtU3VtbWFyeRIPCgd0ZWFtX2lkGAEgASgJEhQKDGRpc3BsYXlfbmFtZRgCIAEoCRINCgVvd25lchgDIAEoCRIUCgxtZW1iZXJfY291bnQYBCABKA0iOwoRTGlzdFRlYW1zUmVzcG9uc2USJgoFdGVhbXMYASADKAsyFy5rb3J0ZWN4LnYxLlRlYW1TdW1tYXJ5Ik8KFkxpc3RUZWFtTWVtYmVyc1JlcXVlc3QSDwoHdGVhbV9pZBgBIAEoCRIWCglhc3NldF9yZWYYAiABKAlIAIgBAUIMCgpfYXNzZXRfcmVmIpwBCgtXYXJyYW50VmlldxIWCg5leGVjdXRvcl9jbGFzcxgBIAEoCRITCgttb2RlbF9yb3V0ZRgCIAEoCRIRCgluZXRfc2NvcGUYAyABKAkSEAoIZnNfc2NvcGUYBCABKAkSEQoJbWF4X2NhbGxzGAUgASgEEhEKCWNwdV9taWxsaRgGIAEoBBIVCg13YWxsX2Nsb2NrX21zGAcgASgEIosBCgpUZWFtTWVtYmVyEg0KBXBhcnR5GAEgASgJEgwKBHJvbGUYAiABKAkSEwoLYWN0aW9uX2NhcHMYAyADKAkSNgoQcmVzb2x2ZWRfd2FycmFudBgEIAEoCzIXLmtvcnRlY3gudjEuV2FycmFudFZpZXdIAIgBAUITChFfcmVzb2x2ZWRfd2FycmFudCJRChdMaXN0VGVhbU1lbWJlcnNSZXNwb25zZRINCgVvd25lchgBIAEoCRInCgdtZW1iZXJzGAIgAygLMhYua29ydGVjeC52MS5UZWFtTWVtYmVyIisKFkxpc3RBc3NldEdyYW50c1JlcXVlc3QSEQoJYXNzZXRfcmVmGAEgASgJIncKCUdyYW50VmlldxIPCgdncmFudG9yGAEgASgJEg8KB2dyYW50ZWUYAiABKAkSDwoHYWN0aW9ucxgDIAMoCRIVCg1ydW50aW1lX3Njb3BlGAQgASgJEg8KB2lzX3Jvb3QYBSABKAgSDwoHcmV2b2tlZBgGIAEoCCJPChdMaXN0QXNzZXRHcmFudHNSZXNwb25zZRINCgVvd25lchgBIAEoCRIlCgZncmFudHMYAiADKAsyFS5rb3J0ZWN4LnYxLkdyYW50VmlldyIVChNMaXN0RGF0YXNldHNSZXF1ZXN0ImYKDkRhdGFzZXRTdW1tYXJ5EhIKCmRhdGFzZXRfaWQYASABKAkSDAoEbmFtZRgCIAEoCRIRCglkb2NfY291bnQYAyABKAQSCwoDZGltGAQgASgNEhIKCmNyZWF0ZWRfbXMYBSABKAMiRAoUTGlzdERhdGFzZXRzUmVzcG9uc2USLAoIZGF0YXNldHMYASADKAsyGi5rb3J0ZWN4LnYxLkRhdGFzZXRTdW1tYXJ5IsEBCg5Jbmdlc3REb2N1bWVudBIPCgdjb250ZW50GAEgASgMEhEKCWVtYmVkZGluZxgCIAMoAhITCgZkb2NfaWQYAyABKAlIAIgBARI6CghtZXRhZGF0YRgEIAMoCzIoLmtvcnRlY3gudjEuSW5nZXN0RG9jdW1lbnQuTWV0YWRhdGFFbnRyeRovCg1NZXRhZGF0YUVudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoCToCOAFCCQoHX2RvY19pZCJYChZJbmdlc3REb2N1bWVudHNSZXF1ZXN0Eg8KB2RhdGFzZXQYASABKAkSLQoJZG9jdW1lbnRzGAIgAygLMhoua29ydGVjeC52MS5Jbmdlc3REb2N1bWVudCJfChdJbmdlc3REb2N1bWVudHNSZXNwb25zZRISCgpkYXRhc2V0X2lkGAEgASgJEhEKCWRvY19jb3VudBgCIAEoBBIQCghpbnNlcnRlZBgDIAEoBBILCgNkaW0YBCABKA0iXgoTUXVlcnlEYXRhc2V0UmVxdWVzdBIPCgdkYXRhc2V0GAEgASgJEhIKCnF1ZXJ5X3RleHQYAiABKAkSFwoPcXVlcnlfZW1iZWRkaW5nGAMgAygCEgkKAWsYBCABKA0iQQoKRGF0YXNldEhpdBITCgtjb250ZW50X3JlZhgBIAEoDBIPCgdjb250ZW50GAIgASgMEg0KBXNjb3JlGAMgASgCIjwKFFF1ZXJ5RGF0YXNldFJlc3BvbnNlEiQKBGhpdHMYASADKAsyFi5rb3J0ZWN4LnYxLkRhdGFzZXRIaXQqiQIKEU1vdGVTbmFwc2hvdFN0YXRlEiMKH01PVEVfU05BUFNIT1RfU1RBVEVfVU5TUEVDSUZJRUQQABIfChtNT1RFX1NOQVBTSE9UX1NUQVRFX1BFTkRJTkcQARIhCh1NT1RFX1NOQVBTSE9UX1NUQVRFX1NDSEVEVUxFRBACEiEKHU1PVEVfU05BUFNIT1RfU1RBVEVfQ09NTUlUVEVEEAMSHgoaTU9URV9TTkFQU0hPVF9TVEFURV9GQUlMRUQQBBIiCh5NT1RFX1NOQVBTSE9UX1NUQVRFX1JFUFVESUFURUQQBRIkCiBNT1RFX1NOQVBTSE9UX1NUQVRFX0lOQ09OU0lTVEVOVBAGKpMBCg5Qcm9tb3Rpb25TdGF0ZRIfChtQUk9NT1RJT05fU1RBVEVfVU5TUEVDSUZJRUQQABIiCh5QUk9NT1RJT05fU1RBVEVfTk9UX0FQUExJQ0FCTEUQARIeChpQUk9NT1RJT05fU1RBVEVfVU5QUk9NT1RFRBACEhwKGFBST01PVElPTl9TVEFURV9QUk9NT1RFRBADKpsBCgtNb3RlQW5vbWFseRIcChhNT1RFX0FOT01BTFlfVU5TUEVDSUZJRUQQABI7CjdNT1RFX0FOT01BTFlfRUZGRUNUX1NUQUdFRF9USEVOX1JFUFVESUFURURfTk9fQ09NTUlUVEVEEAESMQotTU9URV9BTk9NQUxZX1FVQVJBTlRJTkVEX0FUX0xFQVNUX09OQ0VfRUZGRUNUEAIqvwEKD1JlY2lwZVBhcmFtVHlwZRIhCh1SRUNJUEVfUEFSQU1fVFlQRV9VTlNQRUNJRklFRBAAEhkKFVJFQ0lQRV9QQVJBTV9UWVBFX1NUUhABEhkKFVJFQ0lQRV9QQVJBTV9UWVBFX0lOVBACEhoKFlJFQ0lQRV9QQVJBTV9UWVBFX0JPT0wQAxIbChdSRUNJUEVfUEFSQU1fVFlQRV9CWVRFUxAEEhoKFlJFQ0lQRV9QQVJBTV9UWVBFX0VOVU0QBTLtCgoJS3hHYXRld2F5EkAKCVN1Ym1pdFJ1bhIcLmtvcnRlY3gudjEuU3VibWl0UnVuUmVxdWVzdBoVLmtvcnRlY3gudjEuUnVuSGFuZGxlEj8KBkludm9rZRIZLmtvcnRlY3gudjEuSW52b2tlUmVxdWVzdBoaLmtvcnRlY3gudjEuSW52b2tlUmVzcG9uc2USTQoNR2V0UHJvamVjdGlvbhIgLmtvcnRlY3gudjEuR2V0UHJvamVjdGlvblJlcXVlc3QaGi5rb3J0ZWN4LnYxLlByb2plY3Rpb25WaWV3EkQKCkdldENvbnRlbnQSHS5rb3J0ZWN4LnYxLkdldENvbnRlbnRSZXF1ZXN0Ghcua29ydGVjeC52MS5Db250ZW50QmxvYhJJCgxTdHJlYW1FdmVudHMSHy5rb3J0ZWN4LnYxLlN0cmVhbUV2ZW50c1JlcXVlc3QaFi5rb3J0ZWN4LnYxLkV2ZW50RnJhbWUwARJXCg5MaXN0U2lnbmF0dXJlcxIhLmtvcnRlY3gudjEuTGlzdFNpZ25hdHVyZXNSZXF1ZXN0GiIua29ydGVjeC52MS5MaXN0U2lnbmF0dXJlc1Jlc3BvbnNlElEKDEdldFNpZ25hdHVyZRIfLmtvcnRlY3gudjEuR2V0U2lnbmF0dXJlUmVxdWVzdBogLmtvcnRlY3gudjEuR2V0U2lnbmF0dXJlUmVzcG9uc2USYAoRUmVnaXN0ZXJTaWduYXR1cmUSJC5rb3J0ZWN4LnYxLlJlZ2lzdGVyU2lnbmF0dXJlUmVxdWVzdBolLmtvcnRlY3gudjEuUmVnaXN0ZXJTaWduYXR1cmVSZXNwb25zZRJFCghMaXN0UnVucxIbLmtvcnRlY3gudjEuTGlzdFJ1bnNSZXF1ZXN0Ghwua29ydGVjeC52MS5MaXN0UnVuc1Jlc3BvbnNlEk4KC0xpc3RSZWNpcGVzEh4ua29ydGVjeC52MS5MaXN0UmVjaXBlc1JlcXVlc3QaHy5rb3J0ZWN4LnYxLkxpc3RSZWNpcGVzUmVzcG9uc2USVAoNR2V0UmVjaXBlRm9ybRIgLmtvcnRlY3gudjEuR2V0UmVjaXBlRm9ybVJlcXVlc3QaIS5rb3J0ZWN4LnYxLkdldFJlY2lwZUZvcm1SZXNwb25zZRJICglMaXN0VGVhbXMSHC5rb3J0ZWN4LnYxLkxpc3RUZWFtc1JlcXVlc3QaHS5rb3J0ZWN4LnYxLkxpc3RUZWFtc1Jlc3BvbnNlEloKD0xpc3RUZWFtTWVtYmVycxIiLmtvcnRlY3gudjEuTGlzdFRlYW1NZW1iZXJzUmVxdWVzdBojLmtvcnRlY3gudjEuTGlzdFRlYW1NZW1iZXJzUmVzcG9uc2USWgoPTGlzdEFzc2V0R3JhbnRzEiIua29ydGVjeC52MS5MaXN0QXNzZXRHcmFudHNSZXF1ZXN0GiMua29ydGVjeC52MS5MaXN0QXNzZXRHcmFudHNSZXNwb25zZRJRCgxMaXN0RGF0YXNldHMSHy5rb3J0ZWN4LnYxLkxpc3REYXRhc2V0c1JlcXVlc3QaIC5rb3J0ZWN4LnYxLkxpc3REYXRhc2V0c1Jlc3BvbnNlEloKD0luZ2VzdERvY3VtZW50cxIiLmtvcnRlY3gudjEuSW5nZXN0RG9jdW1lbnRzUmVxdWVzdBojLmtvcnRlY3gudjEuSW5nZXN0RG9jdW1lbnRzUmVzcG9uc2USUQoMUXVlcnlEYXRhc2V0Eh8ua29ydGVjeC52MS5RdWVyeURhdGFzZXRSZXF1ZXN0GiAua29ydGVjeC52MS5RdWVyeURhdGFzZXRSZXNwb25zZWIGcHJvdG8z", [file_kortecx_v1_coordinator]);
 
 /**
  * @generated from message kortecx.v1.SubmitRunRequest
@@ -1282,6 +1282,279 @@ export const ListAssetGrantsResponseSchema: GenMessage<ListAssetGrantsResponse> 
   messageDesc(file_kortecx_v1_gateway, 42);
 
 /**
+ * @generated from message kortecx.v1.ListDatasetsRequest
+ */
+export type ListDatasetsRequest = Message<"kortecx.v1.ListDatasetsRequest"> & {
+};
+
+/**
+ * Describes the message kortecx.v1.ListDatasetsRequest.
+ * Use `create(ListDatasetsRequestSchema)` to create a new message.
+ */
+export const ListDatasetsRequestSchema: GenMessage<ListDatasetsRequest> = /*@__PURE__*/
+  messageDesc(file_kortecx_v1_gateway, 43);
+
+/**
+ * @generated from message kortecx.v1.DatasetSummary
+ */
+export type DatasetSummary = Message<"kortecx.v1.DatasetSummary"> & {
+  /**
+   * the dataset's stable host name (server-validated, not a hash)
+   *
+   * @generated from field: string dataset_id = 1;
+   */
+  datasetId: string;
+
+  /**
+   * advisory human handle (today == dataset_id)
+   *
+   * @generated from field: string name = 2;
+   */
+  name: string;
+
+  /**
+   * indexed (distinct, content-addressed) document count
+   *
+   * @generated from field: uint64 doc_count = 3;
+   */
+  docCount: bigint;
+
+  /**
+   * embedding dimension (0 until the first insert fixes it)
+   *
+   * @generated from field: uint32 dim = 4;
+   */
+  dim: number;
+
+  /**
+   * unix-ms create time (display only; off every hash)
+   *
+   * @generated from field: int64 created_ms = 5;
+   */
+  createdMs: bigint;
+};
+
+/**
+ * Describes the message kortecx.v1.DatasetSummary.
+ * Use `create(DatasetSummarySchema)` to create a new message.
+ */
+export const DatasetSummarySchema: GenMessage<DatasetSummary> = /*@__PURE__*/
+  messageDesc(file_kortecx_v1_gateway, 44);
+
+/**
+ * @generated from message kortecx.v1.ListDatasetsResponse
+ */
+export type ListDatasetsResponse = Message<"kortecx.v1.ListDatasetsResponse"> & {
+  /**
+   * deterministic (name) order
+   *
+   * @generated from field: repeated kortecx.v1.DatasetSummary datasets = 1;
+   */
+  datasets: DatasetSummary[];
+};
+
+/**
+ * Describes the message kortecx.v1.ListDatasetsResponse.
+ * Use `create(ListDatasetsResponseSchema)` to create a new message.
+ */
+export const ListDatasetsResponseSchema: GenMessage<ListDatasetsResponse> = /*@__PURE__*/
+  messageDesc(file_kortecx_v1_gateway, 45);
+
+/**
+ * @generated from message kortecx.v1.IngestDocument
+ */
+export type IngestDocument = Message<"kortecx.v1.IngestDocument"> & {
+  /**
+   * the retrievable payload (ALWAYS present)
+   *
+   * @generated from field: bytes content = 1;
+   */
+  content: Uint8Array;
+
+  /**
+   * OPTIONAL client-computed vector; empty ⇒ server-embed (needs `inference`)
+   *
+   * @generated from field: repeated float embedding = 2;
+   */
+  embedding: number[];
+
+  /**
+   * RESERVED (forward-compat): accepted on the wire but NOT YET persisted or
+   * returned. The durable id is ALWAYS the server-derived content hash (SN-8), so a
+   * client `doc_id` is advisory only; per-document metadata is a planned CLOUD add.
+   *
+   * @generated from field: optional string doc_id = 3;
+   */
+  docId?: string | undefined;
+
+  /**
+   * @generated from field: map<string, string> metadata = 4;
+   */
+  metadata: { [key: string]: string };
+};
+
+/**
+ * Describes the message kortecx.v1.IngestDocument.
+ * Use `create(IngestDocumentSchema)` to create a new message.
+ */
+export const IngestDocumentSchema: GenMessage<IngestDocument> = /*@__PURE__*/
+  messageDesc(file_kortecx_v1_gateway, 46);
+
+/**
+ * @generated from message kortecx.v1.IngestDocumentsRequest
+ */
+export type IngestDocumentsRequest = Message<"kortecx.v1.IngestDocumentsRequest"> & {
+  /**
+   * dataset NAME (created on first ingest)
+   *
+   * @generated from field: string dataset = 1;
+   */
+  dataset: string;
+
+  /**
+   * @generated from field: repeated kortecx.v1.IngestDocument documents = 2;
+   */
+  documents: IngestDocument[];
+};
+
+/**
+ * Describes the message kortecx.v1.IngestDocumentsRequest.
+ * Use `create(IngestDocumentsRequestSchema)` to create a new message.
+ */
+export const IngestDocumentsRequestSchema: GenMessage<IngestDocumentsRequest> = /*@__PURE__*/
+  messageDesc(file_kortecx_v1_gateway, 47);
+
+/**
+ * @generated from message kortecx.v1.IngestDocumentsResponse
+ */
+export type IngestDocumentsResponse = Message<"kortecx.v1.IngestDocumentsResponse"> & {
+  /**
+   * the validated dataset name
+   *
+   * @generated from field: string dataset_id = 1;
+   */
+  datasetId: string;
+
+  /**
+   * total distinct docs in the dataset AFTER this ingest
+   *
+   * @generated from field: uint64 doc_count = 2;
+   */
+  docCount: bigint;
+
+  /**
+   * NEW distinct docs added by this call (post content-addressed dedup)
+   *
+   * @generated from field: uint64 inserted = 3;
+   */
+  inserted: bigint;
+
+  /**
+   * the dataset's embedding dimension
+   *
+   * @generated from field: uint32 dim = 4;
+   */
+  dim: number;
+};
+
+/**
+ * Describes the message kortecx.v1.IngestDocumentsResponse.
+ * Use `create(IngestDocumentsResponseSchema)` to create a new message.
+ */
+export const IngestDocumentsResponseSchema: GenMessage<IngestDocumentsResponse> = /*@__PURE__*/
+  messageDesc(file_kortecx_v1_gateway, 48);
+
+/**
+ * @generated from message kortecx.v1.QueryDatasetRequest
+ */
+export type QueryDatasetRequest = Message<"kortecx.v1.QueryDatasetRequest"> & {
+  /**
+   * @generated from field: string dataset = 1;
+   */
+  dataset: string;
+
+  /**
+   * server-embed path (needs `inference` + an embedder)
+   *
+   * @generated from field: string query_text = 2;
+   */
+  queryText: string;
+
+  /**
+   * client-vector path (FFI-free); takes precedence when non-empty
+   *
+   * @generated from field: repeated float query_embedding = 3;
+   */
+  queryEmbedding: number[];
+
+  /**
+   * top-k (server-clamped to a sane max)
+   *
+   * @generated from field: uint32 k = 4;
+   */
+  k: number;
+};
+
+/**
+ * Describes the message kortecx.v1.QueryDatasetRequest.
+ * Use `create(QueryDatasetRequestSchema)` to create a new message.
+ */
+export const QueryDatasetRequestSchema: GenMessage<QueryDatasetRequest> = /*@__PURE__*/
+  messageDesc(file_kortecx_v1_gateway, 49);
+
+/**
+ * @generated from message kortecx.v1.DatasetHit
+ */
+export type DatasetHit = Message<"kortecx.v1.DatasetHit"> & {
+  /**
+   * 32B content-addressed id of the retrieved document
+   *
+   * @generated from field: bytes content_ref = 1;
+   */
+  contentRef: Uint8Array;
+
+  /**
+   * the document payload bytes (so a UI can show the snippet)
+   *
+   * @generated from field: bytes content = 2;
+   */
+  content: Uint8Array;
+
+  /**
+   * SN-8: DISPLAY-ONLY similarity; NEVER an identity input
+   *
+   * @generated from field: float score = 3;
+   */
+  score: number;
+};
+
+/**
+ * Describes the message kortecx.v1.DatasetHit.
+ * Use `create(DatasetHitSchema)` to create a new message.
+ */
+export const DatasetHitSchema: GenMessage<DatasetHit> = /*@__PURE__*/
+  messageDesc(file_kortecx_v1_gateway, 50);
+
+/**
+ * @generated from message kortecx.v1.QueryDatasetResponse
+ */
+export type QueryDatasetResponse = Message<"kortecx.v1.QueryDatasetResponse"> & {
+  /**
+   * ordered: score desc, then ascending ref (deterministic)
+   *
+   * @generated from field: repeated kortecx.v1.DatasetHit hits = 1;
+   */
+  hits: DatasetHit[];
+};
+
+/**
+ * Describes the message kortecx.v1.QueryDatasetResponse.
+ * Use `create(QueryDatasetResponseSchema)` to create a new message.
+ */
+export const QueryDatasetResponseSchema: GenMessage<QueryDatasetResponse> = /*@__PURE__*/
+  messageDesc(file_kortecx_v1_gateway, 51);
+
+/**
  * Mirrors kx_projection::MoteState.
  *
  * @generated from enum kortecx.v1.MoteSnapshotState
@@ -1577,6 +1850,32 @@ export const KxGateway: GenService<{
     methodKind: "unary";
     input: typeof ListAssetGrantsRequestSchema;
     output: typeof ListAssetGrantsResponseSchema;
+  },
+  /**
+   * T3.7 additive (D120.6): the Datasets data-plane (RAG).
+   *
+   * @generated from rpc kortecx.v1.KxGateway.ListDatasets
+   */
+  listDatasets: {
+    methodKind: "unary";
+    input: typeof ListDatasetsRequestSchema;
+    output: typeof ListDatasetsResponseSchema;
+  },
+  /**
+   * @generated from rpc kortecx.v1.KxGateway.IngestDocuments
+   */
+  ingestDocuments: {
+    methodKind: "unary";
+    input: typeof IngestDocumentsRequestSchema;
+    output: typeof IngestDocumentsResponseSchema;
+  },
+  /**
+   * @generated from rpc kortecx.v1.KxGateway.QueryDataset
+   */
+  queryDataset: {
+    methodKind: "unary";
+    input: typeof QueryDatasetRequestSchema;
+    output: typeof QueryDatasetResponseSchema;
   },
 }> = /*@__PURE__*/
   serviceDesc(file_kortecx_v1_gateway, 0);
