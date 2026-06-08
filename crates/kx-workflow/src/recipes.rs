@@ -35,6 +35,7 @@ use kx_mote::{ConfigKey, ConfigVal, EdgeMeta, LogicRef, ModelId, ToolName, ToolV
 
 use crate::def::WorkflowDef;
 use crate::error::CompileError;
+use crate::retrieval::retrieval;
 use crate::synthesis::{deterministic_critic, generator, permissive_warrant, transform};
 
 /// Which builder a fan-out leaf step uses.
@@ -153,6 +154,67 @@ pub fn fan_out_gather(
         worker_logics,
         gather_logic,
     )
+}
+
+/// **RAG (retrieval-augmented generation).** A corpus of `doc_logics` — one
+/// ingest/embed step per document (READ-ONLY-NONDET `generator`s: they read the
+/// world/model to embed + populate a [`kx_dataset::RetrievalIndex`], cached by
+/// ROND identity) → a single `retrieval` query step (ROND, the SN-8 boundary —
+/// its committed fact is the ordered content refs, scores excluded) → a PURE
+/// `assemble` step that grounds an answer in the retrieved top-k content
+/// (consumed by exact hash). Static width (`doc_logics.len()`); `k` is the
+/// authored retrieval width baked into the query step's logic.
+///
+/// Wiring: every `ingest_i ──data──> query` (so the query reads an index
+/// populated from the committed ingest facts) and `query ──data──> assemble`
+/// (the top-k fact is a Data-edge parent the assemble step reads via
+/// `assemble()`). The execution glue that actually embeds + indexes + queries
+/// lives in `kx-model-harness::rag` (it needs the FFI + dataset deps `kx-workflow`
+/// must not carry); this builder is the pure-data structure.
+///
+/// # Errors
+///
+/// [`CompileError::EmptyRecipe`] if `doc_logics` is empty; propagates any edge
+/// error from [`WorkflowDef::add_edge`](crate::WorkflowDef::add_edge).
+pub fn rag_pipeline(
+    seed: u32,
+    model_id: ModelId,
+    capability: ToolName,
+    doc_logics: &[LogicRef],
+    query_logic: LogicRef,
+    assemble_logic: LogicRef,
+) -> Result<WorkflowDef, CompileError> {
+    if doc_logics.is_empty() {
+        return Err(CompileError::EmptyRecipe);
+    }
+    let warrant = permissive_warrant(model_id.clone());
+    let mut wf = WorkflowDef::new(seed);
+
+    // N ingest/embed steps — ROND (read the world/model, StageThenCommit, cached).
+    let mut ingests = Vec::with_capacity(doc_logics.len());
+    for logic in doc_logics {
+        ingests.push(wf.add_step(generator(
+            *logic,
+            model_id.clone(),
+            warrant.clone(),
+            capability.clone(),
+        )));
+    }
+    // The retrieval query step — ROND; the SN-8 boundary (similarity in, exact fact out).
+    let query = wf.add_step(retrieval(
+        query_logic,
+        model_id.clone(),
+        warrant.clone(),
+        capability.clone(),
+    ));
+    // Each ingest feeds the query (its index is populated from the committed ingest facts).
+    for &ingest in &ingests {
+        wf.add_edge(ingest, query, EdgeMeta::data())?;
+    }
+    // The PURE assemble step — grounds an answer in the retrieved top-k (exact refs).
+    let assemble = wf.add_step(transform(assemble_logic, model_id, warrant, capability));
+    wf.add_edge(query, assemble, EdgeMeta::data())?;
+    Ok(wf)
 }
 
 /// **retry-until-critic (bounded best-of-N).** `N` independent attempt steps
