@@ -287,3 +287,76 @@ describe("edge cases", () => {
     expect(new Set(results.map((r) => r.terminalMoteId)).size).toBe(N); // distinct per input
   });
 });
+
+// --- UI-2: run enumeration + recipe catalog (the new additive RPCs) ----------
+
+const FANOUT_HANDLE = "kx/recipes/fanout-demo";
+
+describe("UI-2 run enumeration", () => {
+  it("listRuns is empty before any run, then enumerates the durable instance", async () => {
+    const s = await devServer();
+    const kx = new KxClient(s.endpoint);
+    const before = await kx.listRuns();
+    expect(before.runs).toHaveLength(0);
+    expect(before.hasMore).toBe(false);
+
+    const run = (await kx.invoke(ECHO_HANDLE, { topic: "audit" }, { wait: true })) as Result;
+    const after = await kx.listRuns();
+    kx.close();
+    // Single-node: one registered run per journal; every invoke joins it.
+    expect(after.runs).toHaveLength(1);
+    expect(after.runs[0]?.instanceId).toBe(run.instanceId);
+    expect(after.runs[0]?.registeredSeq).toBe(1); // the RunRegistered is seq 1
+    expect(after.runs[0]?.registeredUnixMs).toBeGreaterThan(0); // a live wall-clock
+  });
+
+  it("listRuns honors the limit + before_seq pagination shape", async () => {
+    const s = await devServer();
+    const kx = new KxClient(s.endpoint);
+    await kx.invoke(ECHO_HANDLE, { topic: "x" }, { wait: true });
+    // A page of 0 is server-clamped to >=1 (never an empty unbounded scan).
+    const page = await kx.listRuns({ limit: 1 });
+    kx.close();
+    expect(page.runs.length).toBe(1);
+    expect(page.hasMore).toBe(false); // only one run exists
+  });
+});
+
+describe("UI-2 recipe catalog", () => {
+  it("listRecipes enumerates the provisioned invocable handles", async () => {
+    const s = await devServer();
+    const kx = new KxClient(s.endpoint);
+    const recipes = await kx.listRecipes();
+    kx.close();
+    expect(recipes).toContain(ECHO_HANDLE);
+    expect(recipes).toContain(FANOUT_HANDLE);
+  });
+
+  it("getRecipeForm returns the echo recipe's typed `topic` field", async () => {
+    const s = await devServer();
+    const kx = new KxClient(s.endpoint);
+    const form = await kx.getRecipeForm(ECHO_HANDLE);
+    kx.close();
+    expect(form.handle).toBe(ECHO_HANDLE);
+    expect(form.fields).toHaveLength(1);
+    expect(form.fields[0]?.name).toBe("topic");
+    expect(form.fields[0]?.type).toBe("str");
+    expect(form.fields[0]?.required).toBe(true);
+    expect(form.fields[0]?.maxLen).toBe(4096);
+  });
+
+  it("getRecipeForm for a fanout recipe (no free-params) is an empty form", async () => {
+    const s = await devServer();
+    const kx = new KxClient(s.endpoint);
+    const form = await kx.getRecipeForm(FANOUT_HANDLE);
+    kx.close();
+    expect(form.fields).toHaveLength(0);
+  });
+
+  it("getRecipeForm for an unknown handle throws KxNotFound (honest discovery)", async () => {
+    const s = await devServer();
+    const kx = new KxClient(s.endpoint);
+    await expect(kx.getRecipeForm("kx/recipes/does-not-exist")).rejects.toBeInstanceOf(KxNotFound);
+    kx.close();
+  });
+});

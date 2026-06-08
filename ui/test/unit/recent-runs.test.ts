@@ -1,5 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { type RunRecord, clearRuns, loadRuns, recordRun } from "../../src/lib/recent-runs";
+import {
+  type RunRecord,
+  type ServerRun,
+  clearRuns,
+  loadRuns,
+  mergeServerRuns,
+  recordRun,
+} from "../../src/lib/recent-runs";
 
 const EP = "http://127.0.0.1:50151";
 const OTHER = "http://127.0.0.1:60000";
@@ -55,5 +62,38 @@ describe("recent-runs", () => {
   it("corrupt store → empty list (no throw)", () => {
     localStorage.setItem(`kortecx.ui.runs:${EP}`, "{bad");
     expect(loadRuns(EP)).toEqual([]);
+  });
+});
+
+describe("mergeServerRuns (UI-2 ListRuns merge)", () => {
+  const srv = (instanceId: string, ms: number): ServerRun => ({
+    instanceId,
+    recipeFingerprint: "ff".repeat(32),
+    registeredUnixMs: ms,
+  });
+
+  it("keeps local records and appends server-only instances, newest-first", () => {
+    const local = [run("aa".repeat(8), 100)];
+    const server = [srv("aa".repeat(8), 50), srv("bb".repeat(8), 200)];
+    const merged = mergeServerRuns(local, server);
+    // The shared instance keeps its LOCAL record (richer handle/terminal); the
+    // server-only one is appended; sorted newest-first by startedAt.
+    expect(merged.map((r) => r.instanceId)).toEqual(["bb".repeat(8), "aa".repeat(8)]);
+    expect(merged[1]?.handle).toBe("kx/recipes/echo"); // local record preserved
+    expect(merged[0]?.handle).toBeNull(); // server-only bare card
+    expect(merged[0]?.startedAt).toBe(200);
+  });
+
+  it("no server runs → just the local list (UNIMPLEMENTED fallback)", () => {
+    const local = [run("aa".repeat(8), 1)];
+    expect(mergeServerRuns(local, [])).toEqual(local);
+  });
+
+  it("no local runs → server instances become bare cards", () => {
+    const merged = mergeServerRuns([], [srv("cc".repeat(8), 9)]);
+    expect(merged).toHaveLength(1);
+    expect(merged[0]?.instanceId).toBe("cc".repeat(8));
+    expect(merged[0]?.terminalMoteId).toBeNull();
+    expect(merged[0]?.startedAt).toBe(9);
   });
 });

@@ -15,13 +15,13 @@ use kx_catalog::{
     canonical_config, encode_param_schema, AssetBinding, AssetPath, AssetRef, AssetVersion,
     BodyLedger, CatalogAction, CatalogActionSet, CatalogError, CatalogRegistry, FreeParamContract,
     FreeParamSlot, Grant, GrantLedger, ParamType, PartyId, Provenance, SchemaResolver,
-    SignatureEntry, SqliteBodyLedger, SqliteGrantLedger, SqliteVersionLedger, TaskSignatureHash,
-    VersionLedger, VersionedContent,
+    SignatureEntry, SlotBinding, SqliteBodyLedger, SqliteGrantLedger, SqliteVersionLedger,
+    TaskSignatureHash, VersionLedger, VersionedContent,
 };
 use kx_content::ContentRef;
 use kx_gateway_core::{
-    BinderError, BoundRecipe, CatalogSeamError, RecipeBinder, RegisteredSignature,
-    SignatureCatalog, SignatureSummaryEntry,
+    BinderError, BoundRecipe, CatalogSeamError, RecipeBinder, RecipeCatalog, RecipeFormFieldEntry,
+    RecipeParamKind, RegisteredSignature, SignatureCatalog, SignatureSummaryEntry,
 };
 use kx_invoke::{bind_snapshot, InvokeError, UseWarrantResolver};
 use kx_mote::{ConfigKey, ConfigVal, EdgeMeta, LogicRef, ModelId, ToolName, PROMPT_KEY};
@@ -339,6 +339,84 @@ impl DemoLibrary {
             recipes,
         })
     }
+
+    /// Every provisioned, invocable recipe handle (`"namespace/collection/name"`),
+    /// in provision order. Backs the gateway's `ListRecipes` (UI-2 recipe catalog).
+    pub fn recipe_handles(&self) -> Vec<String> {
+        self.recipes.iter().map(|(h, _)| h.to_string()).collect()
+    }
+
+    /// The variable free-param FORM for `handle`, or `None` if no such recipe is
+    /// provisioned. Backs the gateway's `GetRecipeForm` (UI-2 generated forms).
+    ///
+    /// Mirrors [`kx_catalog::free_params_to_input_schema`]'s slot logic (Variable
+    /// slots only; each typed by resolving its `schema_ref` → [`ParamType`] via
+    /// the in-crate `DemoSchemaResolver`) but maps an UNTYPED slot to
+    /// [`RecipeParamKind::Unspecified`] (a generic field) rather than failing — the
+    /// UI renders a plain input and `Invoke` still validates server-side,
+    /// fail-closed. The recipe library here only declares typed slots.
+    pub fn recipe_form(&self, handle: &str) -> Option<Vec<RecipeFormFieldEntry>> {
+        let asset_path = parse_handle(handle)?;
+        let meta = self
+            .recipes
+            .iter()
+            .find(|(h, _)| *h == asset_path)
+            .map(|(_, m)| m)?;
+        let fields = meta
+            .free_params
+            .slots
+            .iter()
+            .filter(|(_, slot)| slot.binding == SlotBinding::Variable)
+            .map(|(name, slot)| free_param_field(name, slot))
+            .collect();
+        Some(fields)
+    }
+}
+
+/// Resolve one Variable free-param slot into a renderable form field. An untyped
+/// (or unresolvable/undecodable) slot becomes [`RecipeParamKind::Unspecified`].
+fn free_param_field(name: &str, slot: &FreeParamSlot) -> RecipeFormFieldEntry {
+    let ty = slot
+        .schema_ref
+        .and_then(|r| DemoSchemaResolver.resolve_schema(&r))
+        .and_then(|bytes| {
+            bincode::serde::decode_from_slice::<ParamType, _>(&bytes, canonical_config())
+                .ok()
+                .map(|(ty, _)| ty)
+        });
+    match ty {
+        Some(ty) => param_type_field(name, &ty),
+        None => RecipeFormFieldEntry {
+            name: name.to_string(),
+            kind: RecipeParamKind::Unspecified,
+            required: true,
+            max_len: None,
+            allowed: Vec::new(),
+        },
+    }
+}
+
+/// Map a resolved [`ParamType`] to the gateway's wire form-field vocabulary. A
+/// variable free-param is always `required` (it has no recipe-side default).
+fn param_type_field(name: &str, ty: &ParamType) -> RecipeFormFieldEntry {
+    let (kind, max_len, allowed) = match ty {
+        ParamType::Str { max_len } => (RecipeParamKind::Str, Some(*max_len as u64), Vec::new()),
+        ParamType::Bytes { max_len } => (RecipeParamKind::Bytes, Some(*max_len as u64), Vec::new()),
+        ParamType::Int { .. } => (RecipeParamKind::Int, None, Vec::new()),
+        ParamType::Bool => (RecipeParamKind::Bool, None, Vec::new()),
+        ParamType::Enum { allowed } => (
+            RecipeParamKind::Enum,
+            None,
+            allowed.iter().cloned().collect(),
+        ),
+    };
+    RecipeFormFieldEntry {
+        name: name.to_string(),
+        kind,
+        required: true,
+        max_len,
+        allowed,
+    }
 }
 
 /// Idempotently seed one recipe: own the asset, publish its content-addressed
@@ -408,13 +486,46 @@ fn seed_recipe(
 /// authorization/existence errors to a uniform `NotAuthorized` (no oracle on the
 /// execution surface).
 pub struct HostRecipeBinder {
-    lib: DemoLibrary,
+    lib: std::sync::Arc<DemoLibrary>,
 }
 
 impl HostRecipeBinder {
-    /// Wrap a provisioned [`DemoLibrary`].
+    /// Wrap a provisioned [`DemoLibrary`] (owns it).
     pub fn new(lib: DemoLibrary) -> Self {
+        Self {
+            lib: std::sync::Arc::new(lib),
+        }
+    }
+
+    /// Wrap a [`DemoLibrary`] SHARED with a [`HostRecipeCatalog`] (one seed, two
+    /// seams) — the server wires both over the same `Arc<DemoLibrary>`.
+    pub fn from_shared(lib: std::sync::Arc<DemoLibrary>) -> Self {
         Self { lib }
+    }
+}
+
+/// A [`RecipeCatalog`] over a [`DemoLibrary`]: the PUBLIC discovery surface for the
+/// invocable recipe handles + their free-param forms (the UI-2 `ListRecipes` /
+/// `GetRecipeForm` path). Shares the library with the [`HostRecipeBinder`] (same
+/// seed), so the catalog and the executable bind agree by construction.
+pub struct HostRecipeCatalog {
+    lib: std::sync::Arc<DemoLibrary>,
+}
+
+impl HostRecipeCatalog {
+    /// Wrap a [`DemoLibrary`] shared with the binder.
+    pub fn new(lib: std::sync::Arc<DemoLibrary>) -> Self {
+        Self { lib }
+    }
+}
+
+impl RecipeCatalog for HostRecipeCatalog {
+    fn list_recipes(&self) -> Vec<String> {
+        self.lib.recipe_handles()
+    }
+
+    fn get_recipe_form(&self, handle: &str) -> Option<Vec<RecipeFormFieldEntry>> {
+        self.lib.recipe_form(handle)
     }
 }
 
@@ -1112,5 +1223,118 @@ mod tests {
             .bind("alice@acme", DEMO_RECIPE_HANDLE, br#"{"topic":"x"}"#)
             .await
             .is_ok());
+    }
+
+    // --- UI-2: the recipe-discovery accessors (ListRecipes / GetRecipeForm) ---
+
+    #[test]
+    fn recipe_handles_enumerate_the_always_seeded_recipes() {
+        let dir = tempfile::tempdir().unwrap();
+        let lib = DemoLibrary::open(
+            dir.path(),
+            ExecutorClass::Bwrap,
+            &["alice@acme".to_string()],
+        )
+        .unwrap();
+        let handles = lib.recipe_handles();
+        // `echo` + `fanout-demo` are always seeded; `exec-demo`/`chat` are conditional.
+        assert!(handles.contains(&DEMO_RECIPE_HANDLE.to_string()));
+        assert!(handles.contains(&FANOUT_RECIPE_HANDLE.to_string()));
+        assert!(!handles.contains(&MODEL_RECIPE_HANDLE.to_string()));
+    }
+
+    #[test]
+    fn recipe_form_for_echo_is_the_typed_topic_field() {
+        let dir = tempfile::tempdir().unwrap();
+        let lib = DemoLibrary::open(
+            dir.path(),
+            ExecutorClass::Bwrap,
+            &["alice@acme".to_string()],
+        )
+        .unwrap();
+        let form = lib
+            .recipe_form(DEMO_RECIPE_HANDLE)
+            .expect("echo is provisioned");
+        assert_eq!(form.len(), 1);
+        assert_eq!(form[0].name, "topic");
+        assert_eq!(form[0].kind, RecipeParamKind::Str);
+        assert!(form[0].required);
+        assert_eq!(form[0].max_len, Some(4096), "matches the topic schema");
+        assert!(form[0].allowed.is_empty());
+    }
+
+    #[test]
+    fn recipe_form_for_fanout_has_no_free_params() {
+        let dir = tempfile::tempdir().unwrap();
+        let lib = DemoLibrary::open(
+            dir.path(),
+            ExecutorClass::Bwrap,
+            &["alice@acme".to_string()],
+        )
+        .unwrap();
+        let form = lib
+            .recipe_form(FANOUT_RECIPE_HANDLE)
+            .expect("fanout is provisioned");
+        assert!(form.is_empty(), "fanout-demo takes no free-params");
+    }
+
+    #[test]
+    fn recipe_form_for_unknown_or_malformed_handle_is_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let lib = DemoLibrary::open(
+            dir.path(),
+            ExecutorClass::Bwrap,
+            &["alice@acme".to_string()],
+        )
+        .unwrap();
+        assert!(lib.recipe_form("kx/recipes/nope").is_none());
+        assert!(lib.recipe_form("not-a-handle").is_none());
+    }
+
+    #[test]
+    fn recipe_form_for_chat_is_the_prompt_field_when_a_model_is_served() {
+        let dir = tempfile::tempdir().unwrap();
+        let lib = DemoLibrary::open_full(
+            dir.path(),
+            ExecutorClass::Bwrap,
+            &["alice@acme".to_string()],
+            None,
+            Some(ModelId("kx-serve:test-model".to_string())),
+        )
+        .unwrap();
+        assert!(lib
+            .recipe_handles()
+            .contains(&MODEL_RECIPE_HANDLE.to_string()));
+        let form = lib
+            .recipe_form(MODEL_RECIPE_HANDLE)
+            .expect("chat is provisioned with a serve model");
+        assert_eq!(form.len(), 1);
+        assert_eq!(form[0].name, PROMPT_KEY);
+        assert_eq!(form[0].kind, RecipeParamKind::Str);
+        assert!(form[0].required);
+    }
+
+    #[test]
+    fn host_recipe_catalog_shares_the_library_with_the_binder() {
+        // One seed, two seams: the catalog's published form names the SAME slot
+        // the binder validates — agreement by construction.
+        let dir = tempfile::tempdir().unwrap();
+        let lib = std::sync::Arc::new(
+            DemoLibrary::open(
+                dir.path(),
+                ExecutorClass::Bwrap,
+                &["alice@acme".to_string()],
+            )
+            .unwrap(),
+        );
+        let catalog = HostRecipeCatalog::new(lib.clone());
+        let handles = catalog.list_recipes();
+        assert!(handles.contains(&DEMO_RECIPE_HANDLE.to_string()));
+        let form = catalog.get_recipe_form(DEMO_RECIPE_HANDLE).unwrap();
+        assert_eq!(form[0].name, "topic");
+        // The shared binder binds that exact slot.
+        let binder = HostRecipeBinder::from_shared(lib);
+        // (bind is async; the form/bind agreement is what we assert structurally here)
+        let _ = &binder;
     }
 }

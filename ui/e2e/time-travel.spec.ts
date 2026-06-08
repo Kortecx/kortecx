@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { connectConsole } from "./fixtures/connect";
+import { connectConsole, runRecipe } from "./fixtures/connect";
 import { type Gateway, SPA_ORIGIN, spawnGateway } from "./fixtures/serve";
 
 let gw: Gateway | undefined;
@@ -14,8 +14,7 @@ test("Activity time-travel: scrub a run back to seq 0 and resume live", async ({
   await connectConsole(page, gw);
 
   // Submit an echo run and let it commit.
-  await page.getByTestId("nav-recipes").click();
-  await page.getByRole("button", { name: /submit run/i }).click();
+  await runRecipe(page);
   await expect(page.getByTestId("state-pill").filter({ hasText: "COMMITTED" }).first()).toBeVisible(
     {
       timeout: 30_000,

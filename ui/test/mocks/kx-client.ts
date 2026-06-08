@@ -11,6 +11,9 @@ export interface MockClientImpl {
   getSignature?: (...args: unknown[]) => Promise<unknown>;
   /** An async-iterable of `Delta`s (the live WS tail). */
   wsEvents?: (...args: unknown[]) => AsyncIterable<unknown>;
+  listRuns?: (...args: unknown[]) => Promise<unknown>;
+  listRecipes?: (...args: unknown[]) => Promise<unknown>;
+  getRecipeForm?: (...args: unknown[]) => Promise<unknown>;
 }
 
 export function makeMockClient(impl: MockClientImpl = {}) {
@@ -36,6 +39,14 @@ export function makeMockClient(impl: MockClientImpl = {}) {
         /* no events */
       },
   );
+  const listRuns = vi.fn(impl.listRuns ?? (async () => ({ runs: [], hasMore: false })));
+  const listRecipes = vi.fn(impl.listRecipes ?? (async () => []));
+  const getRecipeForm = vi.fn(
+    impl.getRecipeForm ??
+      (async () => {
+        throw new Error("getRecipeForm not stubbed");
+      }),
+  );
   const close = vi.fn();
   const client = {
     listSignatures,
@@ -44,6 +55,9 @@ export function makeMockClient(impl: MockClientImpl = {}) {
     getContent,
     getSignature,
     wsEvents,
+    listRuns,
+    listRecipes,
+    getRecipeForm,
     close,
     submitRun: vi.fn(),
     registerSignature: vi.fn(),
@@ -58,6 +72,9 @@ export function makeMockClient(impl: MockClientImpl = {}) {
     getContent,
     getSignature,
     wsEvents,
+    listRuns,
+    listRecipes,
+    getRecipeForm,
     close,
   };
 }

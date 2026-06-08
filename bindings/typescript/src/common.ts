@@ -39,6 +39,12 @@ export {
 export { ParentEdge, edgeKindName } from "./parents.js";
 export type { EdgeKindName } from "./parents.js";
 
+export { RunSummary } from "./runs.js";
+export type { RunPage } from "./runs.js";
+
+export { RecipeForm, RecipeFormField, recipeParamTypeName } from "./recipes.js";
+export type { RecipeParamTypeName } from "./recipes.js";
+
 export { WaitState } from "./wait.js";
 export type { WaitOutcome, WaitMode } from "./wait.js";
 

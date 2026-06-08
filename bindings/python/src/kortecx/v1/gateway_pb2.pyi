@@ -29,6 +29,15 @@ class MoteAnomaly(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     MOTE_ANOMALY_UNSPECIFIED: _ClassVar[MoteAnomaly]
     MOTE_ANOMALY_EFFECT_STAGED_THEN_REPUDIATED_NO_COMMITTED: _ClassVar[MoteAnomaly]
     MOTE_ANOMALY_QUARANTINED_AT_LEAST_ONCE_EFFECT: _ClassVar[MoteAnomaly]
+
+class RecipeParamType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    RECIPE_PARAM_TYPE_UNSPECIFIED: _ClassVar[RecipeParamType]
+    RECIPE_PARAM_TYPE_STR: _ClassVar[RecipeParamType]
+    RECIPE_PARAM_TYPE_INT: _ClassVar[RecipeParamType]
+    RECIPE_PARAM_TYPE_BOOL: _ClassVar[RecipeParamType]
+    RECIPE_PARAM_TYPE_BYTES: _ClassVar[RecipeParamType]
+    RECIPE_PARAM_TYPE_ENUM: _ClassVar[RecipeParamType]
 MOTE_SNAPSHOT_STATE_UNSPECIFIED: MoteSnapshotState
 MOTE_SNAPSHOT_STATE_PENDING: MoteSnapshotState
 MOTE_SNAPSHOT_STATE_SCHEDULED: MoteSnapshotState
@@ -43,6 +52,12 @@ PROMOTION_STATE_PROMOTED: PromotionState
 MOTE_ANOMALY_UNSPECIFIED: MoteAnomaly
 MOTE_ANOMALY_EFFECT_STAGED_THEN_REPUDIATED_NO_COMMITTED: MoteAnomaly
 MOTE_ANOMALY_QUARANTINED_AT_LEAST_ONCE_EFFECT: MoteAnomaly
+RECIPE_PARAM_TYPE_UNSPECIFIED: RecipeParamType
+RECIPE_PARAM_TYPE_STR: RecipeParamType
+RECIPE_PARAM_TYPE_INT: RecipeParamType
+RECIPE_PARAM_TYPE_BOOL: RecipeParamType
+RECIPE_PARAM_TYPE_BYTES: RecipeParamType
+RECIPE_PARAM_TYPE_ENUM: RecipeParamType
 
 class SubmitRunRequest(_message.Message):
     __slots__ = ("recipe_fingerprint", "motes")
@@ -257,3 +272,75 @@ class RegisterSignatureResponse(_message.Message):
     SIGNATURE_ID_FIELD_NUMBER: _ClassVar[int]
     signature_id: bytes
     def __init__(self, signature_id: _Optional[bytes] = ...) -> None: ...
+
+class ListRunsRequest(_message.Message):
+    __slots__ = ("limit", "before_seq")
+    LIMIT_FIELD_NUMBER: _ClassVar[int]
+    BEFORE_SEQ_FIELD_NUMBER: _ClassVar[int]
+    limit: int
+    before_seq: int
+    def __init__(self, limit: _Optional[int] = ..., before_seq: _Optional[int] = ...) -> None: ...
+
+class RunSummary(_message.Message):
+    __slots__ = ("instance_id", "recipe_fingerprint", "registered_seq", "registered_unix_ms")
+    INSTANCE_ID_FIELD_NUMBER: _ClassVar[int]
+    RECIPE_FINGERPRINT_FIELD_NUMBER: _ClassVar[int]
+    REGISTERED_SEQ_FIELD_NUMBER: _ClassVar[int]
+    REGISTERED_UNIX_MS_FIELD_NUMBER: _ClassVar[int]
+    instance_id: bytes
+    recipe_fingerprint: bytes
+    registered_seq: int
+    registered_unix_ms: int
+    def __init__(self, instance_id: _Optional[bytes] = ..., recipe_fingerprint: _Optional[bytes] = ..., registered_seq: _Optional[int] = ..., registered_unix_ms: _Optional[int] = ...) -> None: ...
+
+class ListRunsResponse(_message.Message):
+    __slots__ = ("runs", "has_more")
+    RUNS_FIELD_NUMBER: _ClassVar[int]
+    HAS_MORE_FIELD_NUMBER: _ClassVar[int]
+    runs: _containers.RepeatedCompositeFieldContainer[RunSummary]
+    has_more: bool
+    def __init__(self, runs: _Optional[_Iterable[_Union[RunSummary, _Mapping]]] = ..., has_more: bool = ...) -> None: ...
+
+class ListRecipesRequest(_message.Message):
+    __slots__ = ()
+    def __init__(self) -> None: ...
+
+class RecipeSummary(_message.Message):
+    __slots__ = ("handle",)
+    HANDLE_FIELD_NUMBER: _ClassVar[int]
+    handle: str
+    def __init__(self, handle: _Optional[str] = ...) -> None: ...
+
+class ListRecipesResponse(_message.Message):
+    __slots__ = ("recipes",)
+    RECIPES_FIELD_NUMBER: _ClassVar[int]
+    recipes: _containers.RepeatedCompositeFieldContainer[RecipeSummary]
+    def __init__(self, recipes: _Optional[_Iterable[_Union[RecipeSummary, _Mapping]]] = ...) -> None: ...
+
+class GetRecipeFormRequest(_message.Message):
+    __slots__ = ("handle",)
+    HANDLE_FIELD_NUMBER: _ClassVar[int]
+    handle: str
+    def __init__(self, handle: _Optional[str] = ...) -> None: ...
+
+class RecipeFormField(_message.Message):
+    __slots__ = ("name", "type", "required", "max_len", "allowed")
+    NAME_FIELD_NUMBER: _ClassVar[int]
+    TYPE_FIELD_NUMBER: _ClassVar[int]
+    REQUIRED_FIELD_NUMBER: _ClassVar[int]
+    MAX_LEN_FIELD_NUMBER: _ClassVar[int]
+    ALLOWED_FIELD_NUMBER: _ClassVar[int]
+    name: str
+    type: RecipeParamType
+    required: bool
+    max_len: int
+    allowed: _containers.RepeatedScalarFieldContainer[str]
+    def __init__(self, name: _Optional[str] = ..., type: _Optional[_Union[RecipeParamType, str]] = ..., required: bool = ..., max_len: _Optional[int] = ..., allowed: _Optional[_Iterable[str]] = ...) -> None: ...
+
+class GetRecipeFormResponse(_message.Message):
+    __slots__ = ("handle", "fields")
+    HANDLE_FIELD_NUMBER: _ClassVar[int]
+    FIELDS_FIELD_NUMBER: _ClassVar[int]
+    handle: str
+    fields: _containers.RepeatedCompositeFieldContainer[RecipeFormField]
+    def __init__(self, handle: _Optional[str] = ..., fields: _Optional[_Iterable[_Union[RecipeFormField, _Mapping]]] = ...) -> None: ...

@@ -14,8 +14,9 @@ use common::{
     INSTANCE_ID, RECIPE_FP,
 };
 use kx_gateway_core::{
-    BinderError, BoundRecipe, CatalogSeamError, GatewayService, RecipeBinder, RegisteredSignature,
-    RunSubmitter, SignatureCatalog, SignatureSummaryEntry,
+    BinderError, BoundRecipe, CatalogSeamError, GatewayService, RecipeBinder, RecipeCatalog,
+    RecipeFormFieldEntry, RecipeParamKind, RegisteredSignature, RunSubmitter, SignatureCatalog,
+    SignatureSummaryEntry,
 };
 use kx_proto::proto;
 use tonic::Code;
@@ -474,4 +475,132 @@ async fn invoke_dispatches_to_binder_then_proposes() {
     let calls = submitter.calls();
     assert!(calls.first().is_some_and(|c| c.starts_with("register_run")));
     assert_eq!(calls.iter().filter(|c| *c == "submit_mote").count(), 1);
+}
+
+// --- UI-2: ListRuns (always available) + the recipe-discovery seam -----------
+
+#[tokio::test]
+async fn list_runs_enumerates_the_registered_run_server_derived() {
+    // `build_run` records ONE RunRegistered (seq 1) for INSTANCE_ID/RECIPE_FP.
+    // ListRuns folds it out of the journal — no seam needed (it uses the reader).
+    let mut client = spawn(service_from(build_run(), no_submitter())).await;
+    let resp = client
+        .list_runs(proto::ListRunsRequest {
+            limit: None,
+            before_seq: None,
+        })
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(resp.runs.len(), 1);
+    assert!(!resp.has_more);
+    let r = &resp.runs[0];
+    assert_eq!(r.instance_id, INSTANCE_ID.to_vec());
+    assert_eq!(r.recipe_fingerprint, RECIPE_FP.to_vec());
+    assert_eq!(
+        r.registered_seq, 1,
+        "the RunRegistered fact is the first entry"
+    );
+}
+
+#[tokio::test]
+async fn list_runs_on_an_empty_journal_is_empty_not_an_error() {
+    // A journal with no RunRegistered → an empty page (not an oracle/error).
+    let mut client = spawn(service_from(build_run(), no_submitter())).await;
+    let resp = client
+        .list_runs(proto::ListRunsRequest {
+            limit: Some(10),
+            // No run has seq < 1, so this page is empty.
+            before_seq: Some(1),
+        })
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(resp.runs.is_empty());
+    assert!(!resp.has_more);
+}
+
+/// A mock [`RecipeCatalog`] exposing one `kx/recipes/demo` handle with a single
+/// required `topic` STR field.
+struct MockRecipeCatalog;
+
+impl RecipeCatalog for MockRecipeCatalog {
+    fn list_recipes(&self) -> Vec<String> {
+        vec!["kx/recipes/demo".to_string()]
+    }
+    fn get_recipe_form(&self, handle: &str) -> Option<Vec<RecipeFormFieldEntry>> {
+        (handle == "kx/recipes/demo").then(|| {
+            vec![RecipeFormFieldEntry {
+                name: "topic".to_string(),
+                kind: RecipeParamKind::Str,
+                required: true,
+                max_len: Some(4096),
+                allowed: vec![],
+            }]
+        })
+    }
+}
+
+#[tokio::test]
+async fn recipe_rpcs_unimplemented_without_a_catalog_seam() {
+    // No recipe catalog wired → both recipe RPCs are unimplemented (an old host
+    // is unaffected; the SDK degrades to the manual handle+JSON path).
+    let mut client = spawn(service_from(build_run(), no_submitter())).await;
+    assert_eq!(
+        client
+            .list_recipes(proto::ListRecipesRequest {})
+            .await
+            .unwrap_err()
+            .code(),
+        Code::Unimplemented,
+    );
+    assert_eq!(
+        client
+            .get_recipe_form(proto::GetRecipeFormRequest {
+                handle: "kx/recipes/demo".to_string(),
+            })
+            .await
+            .unwrap_err()
+            .code(),
+        Code::Unimplemented,
+    );
+}
+
+#[tokio::test]
+async fn recipe_rpcs_dispatch_to_the_catalog_seam() {
+    let svc =
+        service_from(build_run(), no_submitter()).with_recipe_catalog(Arc::new(MockRecipeCatalog));
+    let mut client = spawn(svc).await;
+
+    let list = client
+        .list_recipes(proto::ListRecipesRequest {})
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(list.recipes.len(), 1);
+    assert_eq!(list.recipes[0].handle, "kx/recipes/demo");
+
+    let form = client
+        .get_recipe_form(proto::GetRecipeFormRequest {
+            handle: "kx/recipes/demo".to_string(),
+        })
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(form.handle, "kx/recipes/demo");
+    assert_eq!(form.fields.len(), 1);
+    assert_eq!(form.fields[0].name, "topic");
+    assert_eq!(form.fields[0].r#type, proto::RecipeParamType::Str as i32);
+    assert!(form.fields[0].required);
+    assert_eq!(form.fields[0].max_len, Some(4096));
+
+    // A public discovery surface: an unknown handle is `not_found` (NOT the
+    // uniform NotAuthorized of the Invoke execution surface).
+    let unknown = client
+        .get_recipe_form(proto::GetRecipeFormRequest {
+            handle: "kx/recipes/nope".to_string(),
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(unknown.code(), Code::NotFound);
 }

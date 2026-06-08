@@ -19,7 +19,9 @@ from . import events as _events
 from . import hexids, types
 from . import wait as _wait  # aliased: `wait` is also a public kwarg name
 from .errors import KxUsage, from_rpc_error
+from .recipes import RecipeForm
 from .run import AsyncRun, Result, Run
+from .runs import RunPage, RunSummary
 from .v1 import gateway_pb2 as _g
 from .v1 import gateway_pb2_grpc as _gg
 
@@ -236,6 +238,38 @@ class KxClient:
         )
         return hexids.encode(resp.signature_id)
 
+    def list_runs(
+        self, *, limit: Optional[int] = None, before_seq: Optional[int] = None
+    ) -> RunPage:
+        """Enumerate the durable registered runs (newest-first, paginated) — the
+        "re-open by instance-id" primitive. ``before_seq`` resumes from the
+        ``registered_seq`` of the last run seen; ``limit`` bounds the page."""
+        req = _g.ListRunsRequest()
+        if limit is not None:
+            req.limit = limit
+        if before_seq is not None:
+            req.before_seq = before_seq
+        resp = self._call(lambda: self._stub.ListRuns(req, metadata=self._md))
+        return RunPage(runs=[RunSummary.from_proto(r) for r in resp.runs], has_more=resp.has_more)
+
+    def list_recipes(self) -> List[str]:
+        """List the invocable recipe handles the gateway provisions (the public
+        recipe catalog)."""
+        resp = self._call(
+            lambda: self._stub.ListRecipes(_g.ListRecipesRequest(), metadata=self._md)
+        )
+        return [r.handle for r in resp.recipes]
+
+    def get_recipe_form(self, handle: str) -> RecipeForm:
+        """The free-param :class:`RecipeForm` for ``handle`` (render a form, then
+        :meth:`invoke`). An unknown handle raises ``KxNotFound``."""
+        resp = self._call(
+            lambda: self._stub.GetRecipeForm(
+                _g.GetRecipeFormRequest(handle=handle), metadata=self._md
+            )
+        )
+        return RecipeForm.from_proto(resp)
+
     # -- wait plumbing --
     def _await_terminal(
         self, instance: bytes, terminal: bytes, timeout: float, mode: str
@@ -389,6 +423,27 @@ class AsyncKxClient:
             )
         )
         return hexids.encode(resp.signature_id)
+
+    async def list_runs(
+        self, *, limit: Optional[int] = None, before_seq: Optional[int] = None
+    ) -> RunPage:
+        req = _g.ListRunsRequest()
+        if limit is not None:
+            req.limit = limit
+        if before_seq is not None:
+            req.before_seq = before_seq
+        resp = await self._acall(self._stub.ListRuns(req, metadata=self._md))
+        return RunPage(runs=[RunSummary.from_proto(r) for r in resp.runs], has_more=resp.has_more)
+
+    async def list_recipes(self) -> List[str]:
+        resp = await self._acall(self._stub.ListRecipes(_g.ListRecipesRequest(), metadata=self._md))
+        return [r.handle for r in resp.recipes]
+
+    async def get_recipe_form(self, handle: str) -> RecipeForm:
+        resp = await self._acall(
+            self._stub.GetRecipeForm(_g.GetRecipeFormRequest(handle=handle), metadata=self._md)
+        )
+        return RecipeForm.from_proto(resp)
 
     async def _await_terminal(
         self, instance: bytes, terminal: bytes, timeout: float, mode: str
