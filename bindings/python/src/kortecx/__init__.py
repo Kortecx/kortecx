@@ -13,6 +13,7 @@ go::
 from __future__ import annotations
 
 from .client import DEFAULT_ENDPOINT, AsyncKxClient, KxClient
+from .datasets import DatasetHit, DatasetSummary, IngestDocument, IngestResult
 from .errors import (
     ErrorCode,
     KxCatchupRequired,
@@ -69,6 +70,10 @@ __all__ = [
     "WarrantView",
     "GrantView",
     "AssetGrants",
+    "DatasetSummary",
+    "DatasetHit",
+    "IngestResult",
+    "IngestDocument",
     "state_name",
     # errors
     "ErrorCode",

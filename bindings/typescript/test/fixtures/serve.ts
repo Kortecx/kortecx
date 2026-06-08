@@ -28,6 +28,10 @@ export function findOrBuildKx(): string {
     cachedBin = env;
     return env;
   }
+  // NOTE: a pre-existing binary is used as-is. The dataset contract tests need a
+  // binary built `--features hnsw`; if you have a stale non-hnsw `target/release/kx`,
+  // those tests fail with UNIMPLEMENTED — `rm` it (or set KX_BIN to an hnsw build).
+  // CI builds fresh with the feature, so it always exercises the data-plane.
   for (const rel of ["target/release/kx", "target/debug/kx"]) {
     const cand = path.join(REPO_ROOT, rel);
     if (existsSync(cand)) {
@@ -35,8 +39,10 @@ export function findOrBuildKx(): string {
       return cand;
     }
   }
-  // Build it FFI-free (no C++ toolchain needed for the kx-cli binary).
-  execFileSync("cargo", ["build", "--release", "-p", "kx-cli"], {
+  // Build it FFI-free (no C++ toolchain needed). `--features hnsw` adds the Datasets
+  // data-plane (RAG) — still pure-Rust (kx-dataset-hnsw + rusqlite, no llama.cpp) — so
+  // the contract tests can exercise the client-vector ingest/query path.
+  execFileSync("cargo", ["build", "--release", "-p", "kx-cli", "--features", "hnsw"], {
     cwd: REPO_ROOT,
     stdio: "inherit",
   });

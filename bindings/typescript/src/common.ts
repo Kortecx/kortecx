@@ -48,6 +48,9 @@ export type { RecipeParamTypeName } from "./recipes.js";
 export { TeamSummary, TeamMember, TeamMembers, WarrantView, teamsFromProto } from "./teams.js";
 export { GrantView, AssetGrants } from "./grants.js";
 
+export { DatasetSummary, DatasetHit, IngestResult } from "./datasets.js";
+export type { IngestDoc } from "./datasets.js";
+
 export { WaitState } from "./wait.js";
 export type { WaitOutcome, WaitMode } from "./wait.js";
 

@@ -442,3 +442,94 @@ class ListAssetGrantsResponse(_message.Message):
     owner: str
     grants: _containers.RepeatedCompositeFieldContainer[GrantView]
     def __init__(self, owner: _Optional[str] = ..., grants: _Optional[_Iterable[_Union[GrantView, _Mapping]]] = ...) -> None: ...
+
+class ListDatasetsRequest(_message.Message):
+    __slots__ = ()
+    def __init__(self) -> None: ...
+
+class DatasetSummary(_message.Message):
+    __slots__ = ("dataset_id", "name", "doc_count", "dim", "created_ms")
+    DATASET_ID_FIELD_NUMBER: _ClassVar[int]
+    NAME_FIELD_NUMBER: _ClassVar[int]
+    DOC_COUNT_FIELD_NUMBER: _ClassVar[int]
+    DIM_FIELD_NUMBER: _ClassVar[int]
+    CREATED_MS_FIELD_NUMBER: _ClassVar[int]
+    dataset_id: str
+    name: str
+    doc_count: int
+    dim: int
+    created_ms: int
+    def __init__(self, dataset_id: _Optional[str] = ..., name: _Optional[str] = ..., doc_count: _Optional[int] = ..., dim: _Optional[int] = ..., created_ms: _Optional[int] = ...) -> None: ...
+
+class ListDatasetsResponse(_message.Message):
+    __slots__ = ("datasets",)
+    DATASETS_FIELD_NUMBER: _ClassVar[int]
+    datasets: _containers.RepeatedCompositeFieldContainer[DatasetSummary]
+    def __init__(self, datasets: _Optional[_Iterable[_Union[DatasetSummary, _Mapping]]] = ...) -> None: ...
+
+class IngestDocument(_message.Message):
+    __slots__ = ("content", "embedding", "doc_id", "metadata")
+    class MetadataEntry(_message.Message):
+        __slots__ = ("key", "value")
+        KEY_FIELD_NUMBER: _ClassVar[int]
+        VALUE_FIELD_NUMBER: _ClassVar[int]
+        key: str
+        value: str
+        def __init__(self, key: _Optional[str] = ..., value: _Optional[str] = ...) -> None: ...
+    CONTENT_FIELD_NUMBER: _ClassVar[int]
+    EMBEDDING_FIELD_NUMBER: _ClassVar[int]
+    DOC_ID_FIELD_NUMBER: _ClassVar[int]
+    METADATA_FIELD_NUMBER: _ClassVar[int]
+    content: bytes
+    embedding: _containers.RepeatedScalarFieldContainer[float]
+    doc_id: str
+    metadata: _containers.ScalarMap[str, str]
+    def __init__(self, content: _Optional[bytes] = ..., embedding: _Optional[_Iterable[float]] = ..., doc_id: _Optional[str] = ..., metadata: _Optional[_Mapping[str, str]] = ...) -> None: ...
+
+class IngestDocumentsRequest(_message.Message):
+    __slots__ = ("dataset", "documents")
+    DATASET_FIELD_NUMBER: _ClassVar[int]
+    DOCUMENTS_FIELD_NUMBER: _ClassVar[int]
+    dataset: str
+    documents: _containers.RepeatedCompositeFieldContainer[IngestDocument]
+    def __init__(self, dataset: _Optional[str] = ..., documents: _Optional[_Iterable[_Union[IngestDocument, _Mapping]]] = ...) -> None: ...
+
+class IngestDocumentsResponse(_message.Message):
+    __slots__ = ("dataset_id", "doc_count", "inserted", "dim")
+    DATASET_ID_FIELD_NUMBER: _ClassVar[int]
+    DOC_COUNT_FIELD_NUMBER: _ClassVar[int]
+    INSERTED_FIELD_NUMBER: _ClassVar[int]
+    DIM_FIELD_NUMBER: _ClassVar[int]
+    dataset_id: str
+    doc_count: int
+    inserted: int
+    dim: int
+    def __init__(self, dataset_id: _Optional[str] = ..., doc_count: _Optional[int] = ..., inserted: _Optional[int] = ..., dim: _Optional[int] = ...) -> None: ...
+
+class QueryDatasetRequest(_message.Message):
+    __slots__ = ("dataset", "query_text", "query_embedding", "k")
+    DATASET_FIELD_NUMBER: _ClassVar[int]
+    QUERY_TEXT_FIELD_NUMBER: _ClassVar[int]
+    QUERY_EMBEDDING_FIELD_NUMBER: _ClassVar[int]
+    K_FIELD_NUMBER: _ClassVar[int]
+    dataset: str
+    query_text: str
+    query_embedding: _containers.RepeatedScalarFieldContainer[float]
+    k: int
+    def __init__(self, dataset: _Optional[str] = ..., query_text: _Optional[str] = ..., query_embedding: _Optional[_Iterable[float]] = ..., k: _Optional[int] = ...) -> None: ...
+
+class DatasetHit(_message.Message):
+    __slots__ = ("content_ref", "content", "score")
+    CONTENT_REF_FIELD_NUMBER: _ClassVar[int]
+    CONTENT_FIELD_NUMBER: _ClassVar[int]
+    SCORE_FIELD_NUMBER: _ClassVar[int]
+    content_ref: bytes
+    content: bytes
+    score: float
+    def __init__(self, content_ref: _Optional[bytes] = ..., content: _Optional[bytes] = ..., score: _Optional[float] = ...) -> None: ...
+
+class QueryDatasetResponse(_message.Message):
+    __slots__ = ("hits",)
+    HITS_FIELD_NUMBER: _ClassVar[int]
+    hits: _containers.RepeatedCompositeFieldContainer[DatasetHit]
+    def __init__(self, hits: _Optional[_Iterable[_Union[DatasetHit, _Mapping]]] = ...) -> None: ...

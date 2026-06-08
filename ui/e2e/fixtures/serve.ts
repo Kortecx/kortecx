@@ -29,6 +29,9 @@ function findOrBuildKx(): string {
     cachedBin = env;
     return env;
   }
+  // NOTE: a pre-existing binary is used as-is. The datasets e2e needs a binary built
+  // `--features hnsw`; a stale non-hnsw `target/release/kx` makes it fail with
+  // UNIMPLEMENTED — `rm` it (or set KX_BIN to an hnsw build). CI builds fresh with it.
   for (const rel of ["target/release/kx", "target/debug/kx"]) {
     const cand = path.join(REPO_ROOT, rel);
     if (existsSync(cand)) {
@@ -36,7 +39,9 @@ function findOrBuildKx(): string {
       return cand;
     }
   }
-  execFileSync("cargo", ["build", "--release", "-p", "kx-cli"], {
+  // `--features hnsw` adds the Datasets data-plane (RAG) — still FFI-free (pure-Rust
+  // kx-dataset-hnsw + rusqlite, no llama.cpp) — so the e2e can exercise the section.
+  execFileSync("cargo", ["build", "--release", "-p", "kx-cli", "--features", "hnsw"], {
     cwd: REPO_ROOT,
     stdio: "inherit",
   });

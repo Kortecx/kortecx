@@ -12,6 +12,7 @@
 import type { MessageInitShape } from "@bufbuild/protobuf";
 import { createClient } from "@connectrpc/connect";
 import type { Client, Transport } from "@connectrpc/connect";
+import { DatasetHit, DatasetSummary, type IngestDoc, IngestResult } from "./datasets.js";
 import { KxRunFailed, KxWaitTimeout, rpc } from "./errors.js";
 import { streamDeltas, wsDeltasFromMessages, wsUrl } from "./events.js";
 import { KxGateway, type SubmitRunRequestSchema } from "./gen/kortecx/v1/gateway_pb.js";
@@ -216,6 +217,58 @@ export abstract class KxClientBase {
   async listAssetGrants(assetRef: string): Promise<AssetGrants> {
     const resp = await rpc(this.grpc.listAssetGrants({ assetRef }));
     return AssetGrants.fromProto(resp);
+  }
+
+  /**
+   * Every dataset (RAG corpus) on the gateway (T3.7). An old gateway / a build
+   * without the `hnsw` feature throws {@link KxUnimplemented}.
+   */
+  async listDatasets(): Promise<DatasetSummary[]> {
+    const resp = await rpc(this.grpc.listDatasets({}));
+    return resp.datasets.map((d) => DatasetSummary.fromProto(d));
+  }
+
+  /**
+   * Ingest `documents` into `dataset` (created on first ingest). Each doc carries
+   * `content` (always) + an OPTIONAL client-computed `embedding` (the FFI-free
+   * path); a vector-less doc needs a gateway with the `inference` feature (else
+   * {@link KxFailedPrecondition}). The server derives each doc's id from its content
+   * (SN-8); re-ingesting identical content is a no-op (content-addressed dedup).
+   */
+  async ingestDocuments(dataset: string, documents: readonly IngestDoc[]): Promise<IngestResult> {
+    const resp = await rpc(
+      this.grpc.ingestDocuments({
+        dataset,
+        documents: documents.map((d) => ({
+          content: d.content,
+          embedding: d.embedding ? Array.from(d.embedding) : [],
+          docId: d.docId,
+          metadata: d.metadata ? { ...d.metadata } : {},
+        })),
+      }),
+    );
+    return IngestResult.fromProto(resp);
+  }
+
+  /**
+   * Query `dataset` for the top-`k` nearest documents. Pass `embedding` (the
+   * FFI-free client-vector path, takes precedence) or `text` (server-embed, needs
+   * the `inference` feature). Hits are ordered by the DISPLAY-ONLY score (SN-8). An
+   * unknown dataset throws {@link KxNotFound}.
+   */
+  async queryDataset(
+    dataset: string,
+    opts: { text?: string; embedding?: readonly number[]; k?: number } = {},
+  ): Promise<DatasetHit[]> {
+    const resp = await rpc(
+      this.grpc.queryDataset({
+        dataset,
+        queryText: opts.text ?? "",
+        queryEmbedding: opts.embedding ? Array.from(opts.embedding) : [],
+        k: opts.k ?? 10,
+      }),
+    );
+    return resp.hits.map((h) => DatasetHit.fromProto(h));
   }
 
   /** Connect transports manage their own connections; there is nothing to close. */

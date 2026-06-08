@@ -729,6 +729,49 @@ async fn team_and_grant_rpcs_unimplemented_without_seams() {
 }
 
 #[tokio::test]
+async fn dataset_rpcs_unimplemented_without_a_seam() {
+    // No DatasetView wired (the `hnsw` feature off / an old host) → all three T3.7
+    // RPCs are unimplemented; the SDK/UI degrades to the not-enabled empty-state.
+    let mut client = spawn(service_from(build_run(), no_submitter())).await;
+    assert_eq!(
+        client
+            .list_datasets(proto::ListDatasetsRequest {})
+            .await
+            .unwrap_err()
+            .code(),
+        Code::Unimplemented,
+    );
+    assert_eq!(
+        client
+            .ingest_documents(proto::IngestDocumentsRequest {
+                dataset: "corpus".to_string(),
+                documents: vec![proto::IngestDocument {
+                    content: b"x".to_vec(),
+                    embedding: vec![1.0, 0.0],
+                    ..Default::default()
+                }],
+            })
+            .await
+            .unwrap_err()
+            .code(),
+        Code::Unimplemented,
+    );
+    assert_eq!(
+        client
+            .query_dataset(proto::QueryDatasetRequest {
+                dataset: "corpus".to_string(),
+                query_text: String::new(),
+                query_embedding: vec![1.0, 0.0],
+                k: 1,
+            })
+            .await
+            .unwrap_err()
+            .code(),
+        Code::Unimplemented,
+    );
+}
+
+#[tokio::test]
 async fn team_rpcs_dispatch_to_the_membership_view() {
     let svc = service_from(build_run(), no_submitter())
         .with_membership_view(Arc::new(MockMembershipView));

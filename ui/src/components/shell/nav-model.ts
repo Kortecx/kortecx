@@ -77,7 +77,7 @@ export const NAV_SECTIONS: readonly NavSection[] = [
     label: "Datasets",
     path: "/datasets",
     icon: "datasets",
-    hint: "RAG corpora (coming soon)",
+    hint: "RAG corpora — ingest & search",
   },
   {
     id: "systems",

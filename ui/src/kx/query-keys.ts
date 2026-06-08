@@ -26,6 +26,11 @@ export const queryKeys = {
   /** The active grants on an asset (`ListAssetGrants`), scoped by asset ref. */
   assetGrants: (endpoint: string, assetRef: string) =>
     ["kx", endpoint, "asset-grants", assetRef] as const,
+  /** The datasets (RAG corpora) the gateway holds (`ListDatasets`). */
+  datasets: (endpoint: string) => ["kx", endpoint, "datasets"] as const,
+  /** A dataset query (`QueryDataset`), scoped by dataset + query text + k. */
+  datasetQuery: (endpoint: string, dataset: string, text: string, k: number) =>
+    ["kx", endpoint, "dataset-query", dataset, text, k] as const,
   /** Gateway liveness probe (endpoint-scoped). */
   health: (endpoint: string) => ["kx", endpoint, "health"] as const,
 };

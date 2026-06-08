@@ -387,6 +387,79 @@ message ListAssetGrantsResponse {
 }
 
 // ---------------------------------------------------------------------------
+// T3.7 — the Datasets data-plane (RAG). Additive RPCs (D120.6). A dataset is a
+// named retrieval corpus held in the gateway's catalog dir: content-addressed
+// document bytes in the durable content store + a flat-LE (ContentRef,vector)
+// cache rebuilt into an HNSW graph on open (kx-dataset-hnsw, off the default
+// path / SN-8). FORWARD-COMPATIBLE embedding: every ingest document carries
+// `content` bytes ALWAYS + an OPTIONAL client-computed `embedding`; a query
+// carries `query_text` OR `query_embedding`. The client-vector path runs
+// FFI-FREE (gateway `hnsw` feature) — the exact seam an external embedder
+// (HuggingFace transformers in the Py/TS SDK, transformers.js in the browser)
+// plugs into with no runtime change. The server-embed path (text only) needs
+// the `inference` feature + a wired EmbeddingBackend, else FAILED_PRECONDITION.
+//
+// SN-8 (load-bearing): the similarity `score` here is DISPLAY-ONLY. It never
+// enters a committed fact or a MoteId; only the ordered content-ref SET is the
+// durable retrieval result (kx_workflow::retrieval_result_ref), matched
+// downstream by EXACT hash. A client MUST NOT route identity through `score`.
+// A None DatasetView seam ⇒ UNIMPLEMENTED (old-gateway forward-compat degrade);
+// an unknown dataset ⇒ not_found (a public viewer surface, honest codes).
+//
+// SCOPE (single-node OSS): operator-global, like the teams/grants viewers. The
+// document id is SERVER-DERIVED (the content-addressed ref) — an advisory
+// client `doc_id` is never the identity. Per-party dataset isolation is CLOUD
+// (D129).
+// ---------------------------------------------------------------------------
+
+message ListDatasetsRequest {}
+message DatasetSummary {
+  string dataset_id = 1;                 // the dataset's stable host name (server-validated, not a hash)
+  string name       = 2;                 // advisory human handle (today == dataset_id)
+  uint64 doc_count  = 3;                 // indexed (distinct, content-addressed) document count
+  uint32 dim        = 4;                 // embedding dimension (0 until the first insert fixes it)
+  int64  created_ms = 5;                 // unix-ms create time (display only; off every hash)
+}
+message ListDatasetsResponse {
+  repeated DatasetSummary datasets = 1;  // deterministic (name) order
+}
+
+message IngestDocument {
+  bytes  content              = 1;       // the retrievable payload (ALWAYS present)
+  repeated float embedding    = 2;       // OPTIONAL client-computed vector; empty ⇒ server-embed (needs `inference`)
+  // RESERVED (forward-compat): accepted on the wire but NOT YET persisted or
+  // returned. The durable id is ALWAYS the server-derived content hash (SN-8), so a
+  // client `doc_id` is advisory only; per-document metadata is a planned CLOUD add.
+  optional string doc_id      = 3;
+  map<string,string> metadata = 4;
+}
+message IngestDocumentsRequest {
+  string dataset            = 1;         // dataset NAME (created on first ingest)
+  repeated IngestDocument documents = 2;
+}
+message IngestDocumentsResponse {
+  string dataset_id = 1;                 // the validated dataset name
+  uint64 doc_count  = 2;                 // total distinct docs in the dataset AFTER this ingest
+  uint64 inserted   = 3;                 // NEW distinct docs added by this call (post content-addressed dedup)
+  uint32 dim        = 4;                 // the dataset's embedding dimension
+}
+
+message QueryDatasetRequest {
+  string dataset                 = 1;
+  string query_text              = 2;    // server-embed path (needs `inference` + an embedder)
+  repeated float query_embedding = 3;    // client-vector path (FFI-free); takes precedence when non-empty
+  uint32 k                       = 4;    // top-k (server-clamped to a sane max)
+}
+message DatasetHit {
+  bytes content_ref = 1;                 // 32B content-addressed id of the retrieved document
+  bytes content     = 2;                 // the document payload bytes (so a UI can show the snippet)
+  float score       = 3;                 // SN-8: DISPLAY-ONLY similarity; NEVER an identity input
+}
+message QueryDatasetResponse {
+  repeated DatasetHit hits = 1;          // ordered: score desc, then ascending ref (deterministic)
+}
+
+// ---------------------------------------------------------------------------
 // Service — the external client-facing gateway (distinct from Coordinator).
 // ---------------------------------------------------------------------------
 
@@ -407,4 +480,8 @@ service KxGateway {
   rpc ListTeams(ListTeamsRequest) returns (ListTeamsResponse);
   rpc ListTeamMembers(ListTeamMembersRequest) returns (ListTeamMembersResponse);
   rpc ListAssetGrants(ListAssetGrantsRequest) returns (ListAssetGrantsResponse);
+  // T3.7 additive (D120.6): the Datasets data-plane (RAG).
+  rpc ListDatasets(ListDatasetsRequest) returns (ListDatasetsResponse);
+  rpc IngestDocuments(IngestDocumentsRequest) returns (IngestDocumentsResponse);
+  rpc QueryDataset(QueryDatasetRequest) returns (QueryDatasetResponse);
 }

@@ -47,6 +47,11 @@ thiserror          = { workspace = true }
 # OFF by default so the default `kx` build stays FFI-free (the `build-no-inference`
 # gate + the dep-wall). Opt in with `cargo build -p kx-cli --features inference`.
 inference = ["kx-gateway/inference"]
+# T3.7: build `kx serve` with the Datasets data-plane (RAG) — forwards to the
+# kx-gateway `hnsw` feature. FFI-FREE (pure-Rust kx-dataset-hnsw + rusqlite; no
+# llama.cpp), so the `build-no-inference` gate + the dep-wall stay green. Opt in with
+# `cargo build -p kx-cli --features hnsw` (the client-vector path needs no model).
+hnsw = ["kx-gateway/hnsw"]
 
 [dev-dependencies]
 # E2E: host an in-process gateway (kx_gateway::start) + drive CLIENT verbs as subprocesses.

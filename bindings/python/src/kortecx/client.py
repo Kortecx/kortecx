@@ -11,13 +11,20 @@ from __future__ import annotations
 import json
 import os
 import warnings
-from typing import AsyncIterator, Iterator, List, Optional, Union
+from typing import AsyncIterator, Iterator, List, Optional, Sequence, Union
 
 import grpc
 
 from . import events as _events
 from . import hexids, types
 from . import wait as _wait  # aliased: `wait` is also a public kwarg name
+from .datasets import (
+    DatasetHit,
+    DatasetSummary,
+    IngestDocument,
+    IngestResult,
+    _to_documents,
+)
 from .errors import KxUsage, from_rpc_error
 from .grants import AssetGrants
 from .recipes import RecipeForm
@@ -297,6 +304,44 @@ class KxClient:
         )
         return AssetGrants.from_proto(resp)
 
+    def list_datasets(self) -> List[DatasetSummary]:
+        """Enumerate the datasets (RAG corpora) the gateway holds (T3.7). A gateway
+        built without the ``hnsw`` feature raises ``KxUnimplemented``."""
+        resp = self._call(
+            lambda: self._stub.ListDatasets(_g.ListDatasetsRequest(), metadata=self._md)
+        )
+        return [DatasetSummary.from_proto(d) for d in resp.datasets]
+
+    def ingest_documents(
+        self, dataset: str, documents: Sequence[Union[IngestDocument, bytes]]
+    ) -> IngestResult:
+        """Ingest ``documents`` into ``dataset`` (created on first ingest). Each doc
+        carries ``content`` (always) + an OPTIONAL client-computed ``embedding`` (the
+        FFI-free path); a vector-less doc needs a gateway with the ``inference``
+        feature (else ``KxFailedPrecondition``). The server derives each doc's id from
+        its content (SN-8); re-ingesting identical content is a no-op."""
+        req = _g.IngestDocumentsRequest(dataset=dataset, documents=_to_documents(documents))
+        resp = self._call(lambda: self._stub.IngestDocuments(req, metadata=self._md))
+        return IngestResult.from_proto(resp)
+
+    def query_dataset(
+        self,
+        dataset: str,
+        *,
+        text: Optional[str] = None,
+        embedding: Optional[Sequence[float]] = None,
+        k: int = 10,
+    ) -> List[DatasetHit]:
+        """Query ``dataset`` for the top-``k`` nearest documents. Pass ``embedding``
+        (the FFI-free client-vector path, takes precedence) or ``text`` (server-embed,
+        needs the ``inference`` feature). Hits are ordered by the DISPLAY-ONLY score
+        (SN-8). An unknown dataset raises ``KxNotFound``."""
+        req = _g.QueryDatasetRequest(dataset=dataset, query_text=text or "", k=k)
+        if embedding:
+            req.query_embedding.extend(embedding)
+        resp = self._call(lambda: self._stub.QueryDataset(req, metadata=self._md))
+        return [DatasetHit.from_proto(h) for h in resp.hits]
+
     # -- wait plumbing --
     def _await_terminal(
         self, instance: bytes, terminal: bytes, timeout: float, mode: str
@@ -492,6 +537,33 @@ class AsyncKxClient:
             )
         )
         return AssetGrants.from_proto(resp)
+
+    async def list_datasets(self) -> List[DatasetSummary]:
+        resp = await self._acall(
+            self._stub.ListDatasets(_g.ListDatasetsRequest(), metadata=self._md)
+        )
+        return [DatasetSummary.from_proto(d) for d in resp.datasets]
+
+    async def ingest_documents(
+        self, dataset: str, documents: Sequence[Union[IngestDocument, bytes]]
+    ) -> IngestResult:
+        req = _g.IngestDocumentsRequest(dataset=dataset, documents=_to_documents(documents))
+        resp = await self._acall(self._stub.IngestDocuments(req, metadata=self._md))
+        return IngestResult.from_proto(resp)
+
+    async def query_dataset(
+        self,
+        dataset: str,
+        *,
+        text: Optional[str] = None,
+        embedding: Optional[Sequence[float]] = None,
+        k: int = 10,
+    ) -> List[DatasetHit]:
+        req = _g.QueryDatasetRequest(dataset=dataset, query_text=text or "", k=k)
+        if embedding:
+            req.query_embedding.extend(embedding)
+        resp = await self._acall(self._stub.QueryDataset(req, metadata=self._md))
+        return [DatasetHit.from_proto(h) for h in resp.hits]
 
     async def _await_terminal(
         self, instance: bytes, terminal: bytes, timeout: float, mode: str
