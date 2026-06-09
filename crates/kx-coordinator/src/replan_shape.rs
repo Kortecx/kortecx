@@ -193,9 +193,9 @@ mod tests {
     fn corrected_prompt_is_deterministic_and_frozen() {
         let base = "Plan the run.";
         let id = MoteId::from_bytes([3u8; 32]);
-        let out = corrected_prompt(&base, &[(id, Some(FailureReason::DeadLettered))]);
+        let out = corrected_prompt(base, &[(id, Some(FailureReason::DeadLettered))]);
         // Stable across calls (no clock / no RNG).
-        assert_eq!(out, corrected_prompt(&base, &[(id, Some(FailureReason::DeadLettered))]));
+        assert_eq!(out, corrected_prompt(base, &[(id, Some(FailureReason::DeadLettered))]));
         assert!(out.starts_with(base));
         assert!(out.contains(CORRECTED_SUFFIX));
         // The low-entropy token is rendered, never raw bytes / secrets (SN-8).

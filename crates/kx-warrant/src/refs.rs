@@ -51,9 +51,34 @@ use crate::spec::{Role, WarrantSpec};
 #[tracing::instrument(level = "trace", skip_all)]
 #[must_use]
 pub fn warrant_ref_of(spec: &WarrantSpec) -> ContentRef {
-    let bytes = bincode::serde::encode_to_vec(spec, canonical_config())
-        .expect("canonical bincode encoding of WarrantSpec cannot fail");
-    ContentRef::of(&bytes)
+    ContentRef::of(&encode_warrant(spec))
+}
+
+/// The canonical on-content bytes of a [`WarrantSpec`] — `canonical_bincode(spec)`.
+///
+/// The content-store key of these bytes is exactly [`warrant_ref_of`] of the same
+/// spec (`ContentRef::of(encode_warrant(spec)) == warrant_ref_of(spec)`), so
+/// publishing a warrant to the content store under its `warrant_ref` lets recovery
+/// re-derive it bit-for-bit from the store. PR-2c-2 uses this to make the live
+/// re-plan chain's run-fixed warrant ceiling durable + crash-recoverable.
+///
+/// # Panics
+///
+/// Panics if the bincode encoder fails — impossible for the `WarrantSpec` shape
+/// (mirrors [`warrant_ref_of`]); the panic surfaces loudly rather than corrupting.
+#[must_use]
+pub fn encode_warrant(spec: &WarrantSpec) -> Vec<u8> {
+    bincode::serde::encode_to_vec(spec, canonical_config())
+        .expect("canonical bincode encoding of WarrantSpec cannot fail")
+}
+
+/// Decode the canonical on-content bytes produced by [`encode_warrant`] back into a
+/// [`WarrantSpec`]. Total + fail-closed on malformed/trailing bytes (returns `Err`,
+/// never panics) — the inverse of [`encode_warrant`].
+pub fn decode_warrant(bytes: &[u8]) -> Result<WarrantSpec, String> {
+    bincode::serde::decode_from_slice::<WarrantSpec, _>(bytes, canonical_config())
+        .map(|(spec, _consumed)| spec)
+        .map_err(|e| e.to_string())
 }
 
 /// Compute the content-addressed [`ContentRef`] for a [`Role`].
