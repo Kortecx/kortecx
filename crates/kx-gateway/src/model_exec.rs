@@ -37,8 +37,8 @@ use kx_mote::{
     PromptTemplateHash, RoleId, ToolName, PROMPT_KEY,
 };
 use kx_planner::{
-    decode_loop_proposal, lower_loop_to_topology_decision, max_plan_bytes, InMemoryRoleRecipes,
-    RoleRecipe, RoleRecipeResolver,
+    decode_loop_proposal, decode_replan_proposal, lower_loop_to_topology_decision, max_plan_bytes,
+    InMemoryRoleRecipes, ReplanProposal, RoleRecipe, RoleRecipeResolver,
 };
 use kx_warrant::{
     ExecutorClass, FsScope, InMemoryRoleRegistry, ModelRoute, MoteClass, NetScope, ResourceCeiling,
@@ -368,9 +368,33 @@ impl<B: InferenceBackend> ModelRouterExecutor<B> {
         // (1-2) Run the model ONCE (greedy — the committed decision is content-addressed,
         // so an identical proposal yields an identical result_ref; replay serves the fact).
         let bytes = self.dispatch_model(mote, warrant)?;
-        // (3) Decode the proposal FAIL-CLOSED. The byte cap is the warrant's output ceiling.
-        let proposal = decode_loop_proposal(&bytes, max_plan_bytes(warrant))
-            .map_err(|e| internal(&format!("decode loop proposal: {e}")))?;
+        // (3) Decode FAIL-CLOSED via ENVELOPE DISCRIMINATION (PR-2c-2). The byte-frozen
+        // PR-2b `decode_loop_proposal` (a round-0 `loop` envelope) is tried first; on a
+        // miss we fall back to `decode_replan_proposal` (a re-plan round's `replan`
+        // envelope — its corrected prompt asks for one). The two envelopes are disjoint
+        // (distinct top-level keys + `deny_unknown_fields`), so the fallback never
+        // reinterprets a well-formed round-0 proposal — round 0 stays byte-frozen + the
+        // canonical demo (which always decodes as a loop) is untouched. A `flag_human`
+        // round is a TERMINAL stop: the error dead-letters this shaper (F4) and, having
+        // no children, the run quiesces — the failed step stays a durable dead-lettered
+        // fact (PR-2c-2 passive-terminal scope, D3; the reason is logged).
+        let max_bytes = max_plan_bytes(warrant);
+        let proposal = match decode_loop_proposal(&bytes, max_bytes) {
+            Ok(p) => p,
+            Err(loop_err) => match decode_replan_proposal(&bytes, max_bytes) {
+                Ok(ReplanProposal::Topology(p)) => p,
+                Ok(ReplanProposal::FlagHuman(reason)) => {
+                    return Err(internal(&format!(
+                        "re-plan escalated to a human (flag_human): {reason}"
+                    )));
+                }
+                Err(replan_err) => {
+                    return Err(internal(&format!(
+                        "decode proposal failed as both loop ({loop_err}) and replan ({replan_err})"
+                    )));
+                }
+            },
+        };
         // (4) Run-policy fan-out cap (after decode's structural cap).
         if proposal.next_steps.len() > SHAPER_MAX_CHILDREN {
             return Err(internal(&format!(
@@ -694,6 +718,57 @@ mod tests {
         // The result_ref IS the decision's content hash (so commit's D55 guard + the
         // materializer agree on the bytes).
         assert_eq!(out.result_ref, ContentRef::of(&td.encode()));
+    }
+
+    // PR-2c-2: a re-plan round's shaper emits a `replan` envelope (its corrected prompt
+    // asks for one). The byte-frozen `decode_loop_proposal` rejects it → the gateway falls
+    // back to `decode_replan_proposal`, which lowers `next_steps` identically to a loop
+    // proposal (envelope discrimination — round 0 stays byte-frozen).
+    const REPLAN_NEXT_STEPS: &[u8] = br#"{"replan":{"version":1,"next_steps":[{"role":"worker","intent":"retry-with-creds"}]}}"#;
+    const REPLAN_FLAG_HUMAN: &[u8] =
+        br#"{"replan":{"version":1,"flag_human":"needs a credential I cannot grant"}}"#;
+
+    #[test]
+    fn shaper_arm_routes_a_replan_envelope_to_a_topology_decision() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = LocalFsContentStore::open(dir.path()).unwrap();
+        let (exec, backend) = executor(&store, REPLAN_NEXT_STEPS, Some(worker_recipes(&model_id())));
+        let out = exec
+            .run(
+                &shaper_mote(),
+                &shaper_warrant(&model_id(), ExecutorClass::MacOsSandbox),
+                None,
+            )
+            .expect("a replan-envelope shaper commits a corrective topology");
+        assert_eq!(backend.calls.load(Ordering::SeqCst), 1);
+        let bytes = store.get(&out.result_ref).unwrap();
+        let td = TopologyDecision::decode(bytes.as_ref()).expect("result is a TopologyDecision");
+        assert_eq!(td.children.len(), 1, "the corrective step is lowered");
+        assert_eq!(td.children[0].intent, ConfigVal(b"retry-with-creds".to_vec()));
+        assert_eq!(out.result_ref, ContentRef::of(&td.encode()));
+    }
+
+    #[test]
+    fn shaper_arm_flag_human_dead_letters_the_shaper() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = LocalFsContentStore::open(dir.path()).unwrap();
+        let (exec, _) = executor(&store, REPLAN_FLAG_HUMAN, Some(worker_recipes(&model_id())));
+        let err = exec
+            .run(
+                &shaper_mote(),
+                &shaper_warrant(&model_id(), ExecutorClass::MacOsSandbox),
+                None,
+            )
+            .expect_err("flag_human is a terminal stop (dead-letter)");
+        // Terminal (dead-letterable) — the run quiesces, the failed step stays a durable
+        // dead-lettered fact; the escalation reason is surfaced in the diagnostic.
+        match err {
+            MoteExecutorError::Internal { reason, .. } => {
+                assert!(reason.contains("flag_human"), "reason surfaced: {reason}");
+                assert!(reason.contains("credential"));
+            }
+            other => panic!("expected a terminal Internal error, got {other:?}"),
+        }
     }
 
     #[test]
