@@ -482,12 +482,20 @@ impl Coordinator for CoordinatorService {
         let (work, instance_id) = self.core.lease_work(worker, executor_class, max).await?;
         let items = work
             .into_iter()
-            .map(|(mote, warrant)| proto::WorkItem {
-                mote: Some(mote.into()),
-                warrant: Some(warrant.into()),
-                // F-7 parent-context resolution is populated in Step 5; empty here keeps
-                // the leaf path byte-identical to the pre-F-7 behavior.
-                parent_results: vec![],
+            .map(|item| proto::WorkItem {
+                mote: Some(item.mote.into()),
+                warrant: Some(item.warrant.into()),
+                // F-7 (assemble-into-serve): the leaf's resolved Data context, resolved
+                // on the sole-writer thread (`lease_ready` → `resolve_parent_context`).
+                // Empty for a Mote with no Data context ⇒ byte-identical to pre-F-7.
+                parent_results: item
+                    .parent_results
+                    .into_iter()
+                    .map(|(parent_mote_id, result_ref)| proto::ParentResult {
+                        parent_mote_id: parent_mote_id.as_bytes().to_vec(),
+                        result_ref: result_ref.as_bytes().to_vec(),
+                    })
+                    .collect(),
             })
             .collect();
         Ok(Response::new(proto::LeaseWorkResponse {

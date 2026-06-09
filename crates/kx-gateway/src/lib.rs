@@ -51,6 +51,11 @@
 //! convention. The frozen trio (`kx-scheduler` / `kx-executor`) source is
 //! untouched; this crate only *consumes* their public API.
 
+// PR-2c F-7: render a model Mote's resolved Data context (WorkItem.parent_results)
+// into the prompt. Self-contained + FFI-free; shares the `inference` feature with
+// the model executor that consumes it.
+#[cfg(feature = "inference")]
+mod assemble_serve;
 mod auth;
 mod config;
 // T3.7: the host-side Datasets data-plane (the kx-dataset-hnsw-backed DatasetView

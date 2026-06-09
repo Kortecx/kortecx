@@ -20,7 +20,7 @@
 
 use std::collections::BTreeSet;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use kx_content::{ContentStore, LocalFsContentStore};
 use kx_executor::{MoteExecutionResult, MoteExecutor, MoteExecutorError, Rootfs};
@@ -33,7 +33,7 @@ use kx_model_validator::{
     RequiredCapabilities, ValidatorOutcome,
 };
 use kx_mote::{
-    ConfigKey, EffectPattern, InferenceParams, LogicRef, ModelId, Mote, NdClass,
+    ConfigKey, EffectPattern, InferenceParams, LogicRef, ModelId, Mote, MoteId, NdClass,
     PromptTemplateHash, RoleId, ToolName, PROMPT_KEY,
 };
 use kx_planner::{
@@ -281,6 +281,10 @@ pub(crate) fn build_serve_backend(
 /// - **leaf model** (`is_model_mote`, AL1): a greedy completion (recomputable) committed
 ///   as content bytes — the shaper's children land here, running their per-child intent.
 ///
+/// A leased Mote's resolved Data context: the committed `(parent MoteId, result_ref)`
+/// pairs the worker delivers via [`kx_worker::ContextSink`] for F-7 assembly.
+type ParentResults = Vec<(MoteId, ContentRef)>;
+
 /// Generic over the backend `B` so a deterministic stub injects in tests; production uses
 /// [`LlamaInferenceBackend`]. The whole module is `#[cfg(feature = "inference")]`.
 pub(crate) struct ModelRouterExecutor<B: InferenceBackend> {
@@ -291,6 +295,12 @@ pub(crate) struct ModelRouterExecutor<B: InferenceBackend> {
     /// the model names a role, the recipe gives the child's vetted identity axes). `None`
     /// ⇒ no shaper support provisioned (a shaper Mote then fails closed, dead-lettered).
     recipes: Option<Arc<dyn RoleRecipeResolver>>,
+    /// F-7 (assemble-into-serve): the per-dispatch context slot the worker fills via
+    /// [`kx_worker::ContextSink`] BEFORE each `run` (the frozen `MoteExecutor::run`
+    /// carries no snapshot). Keyed by `MoteId` so a stale slot can never leak into the
+    /// wrong Mote; consumed (taken) inside `dispatch_model`. The worker runs a lease
+    /// batch sequentially on one thread, so the slot is set-then-consumed with no race.
+    parent_ctx: Mutex<Option<(MoteId, ParentResults)>>,
 }
 
 impl<B: InferenceBackend> ModelRouterExecutor<B> {
@@ -309,6 +319,20 @@ impl<B: InferenceBackend> ModelRouterExecutor<B> {
             backend,
             store,
             recipes,
+            parent_ctx: Mutex::new(None),
+        }
+    }
+
+    /// Take this Mote's F-7 context if the worker delivered any for it (and clear the
+    /// slot). Returns the parents iff the slot matches `mote_id` — a non-matching or
+    /// empty slot yields `None`, so a leaf with no Data context assembles nothing
+    /// (byte-identical to pre-F-7). A poisoned lock degrades to "no context" rather
+    /// than aborting the dispatch.
+    fn take_parent_context(&self, mote_id: MoteId) -> Option<Vec<(MoteId, ContentRef)>> {
+        let mut slot = self.parent_ctx.lock().ok()?;
+        match slot.as_ref() {
+            Some((id, _)) if *id == mote_id => slot.take().map(|(_, parents)| parents),
+            _ => None,
         }
     }
 
@@ -379,6 +403,19 @@ impl<B: InferenceBackend> ModelRouterExecutor<B> {
     ) -> Result<Vec<u8>, MoteExecutorError> {
         let instruction = prompt_from_config(mote)
             .ok_or_else(|| internal("model Mote lost its prompt config key"))?;
+        // F-7 (assemble-into-serve): prepend this Mote's resolved upstream context (if
+        // the worker delivered any for it) so a corrective/leaf model reasons over its
+        // run's source/parent results, not blind. Empty context ⇒ the prompt is
+        // byte-identical to pre-F-7. A missing/oversized upstream fails closed.
+        let instruction = match self.take_parent_context(mote.id) {
+            Some(parents) if !parents.is_empty() => {
+                let context =
+                    crate::assemble_serve::assemble_from_parent_results(&parents, &self.store)
+                        .map_err(|e| internal(&format!("assemble F-7 context: {e}")))?;
+                format!("{context}{instruction}")
+            }
+            _ => instruction,
+        };
         let input = InferenceInput::text(chatml(&instruction));
         let params = inference_params_from_mote(mote, warrant)
             .map_err(|e| internal(&format!("inference params: {e}")))?;
@@ -436,6 +473,19 @@ impl<B: InferenceBackend> MoteExecutor for ModelRouterExecutor<B> {
         // The model arm leases on the same class as the inner router (the embedded
         // worker's single class); delegate the predicate so behavior is identical.
         self.inner.supports(executor_class)
+    }
+}
+
+/// F-7 (assemble-into-serve): the worker hands this executor a leased Mote's resolved
+/// Data context BEFORE dispatch (the frozen `MoteExecutor::run` carries no snapshot).
+/// The gateway clones ONE `Arc<ModelRouterExecutor>` into both the `MoteExecutor` and
+/// the `ContextSink` role, so the slot the worker fills is the slot `dispatch_model`
+/// consumes. Setting an empty list clears any stale prior slot for safety.
+impl<B: InferenceBackend> kx_worker::ContextSink for ModelRouterExecutor<B> {
+    fn set_parent_results(&self, mote_id: MoteId, parents: Vec<(MoteId, ContentRef)>) {
+        if let Ok(mut slot) = self.parent_ctx.lock() {
+            *slot = Some((mote_id, parents));
+        }
     }
 }
 

@@ -64,6 +64,15 @@ const POLL_IDLE: Duration = Duration::from_millis(25);
 #[cfg(feature = "embedded-worker")]
 const POLL_ERR: Duration = Duration::from_millis(200);
 
+/// F-7 wiring: the model executor (as the worker's `MoteExecutor`) + the SAME `Arc`
+/// in its `ContextSink` role + the served model id. `None`s ⇒ no model wired.
+#[cfg(feature = "inference")]
+type WiredExecutor = (
+    Arc<dyn MoteExecutor>,
+    Option<Arc<dyn kx_worker::ContextSink>>,
+    Option<kx_mote::ModelId>,
+);
+
 /// The platform-appropriate executor class the embedded worker registers as
 /// (mirrors `kx_executor::default_executor()`'s platform choice). A client's
 /// submitted warrant must name this class for the local worker to lease it.
@@ -436,22 +445,28 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     // dispatches (`kx/recipes/plan`). The shaper arm shares the run's recipe allowlist with
     // the coordinator's role registry (both from `shaper_runtime`). Fail-soft: no model ⇒
     // unchanged behavior. The default (FFI-free) build keeps `serve_model = None`.
+    // F-7 (assemble-into-serve): when the model executor is wired, it is BOTH the
+    // worker's `MoteExecutor` AND its `ContextSink` (one Arc, two roles) so the
+    // coordinator-resolved `parent_results` reach the model prompt. `None` ⇒ no sink
+    // ⇒ the worker dispatch is byte-identical to pre-F-7.
     #[cfg(feature = "inference")]
-    let (executor, serve_model): (Arc<dyn MoteExecutor>, Option<kx_mote::ModelId>) =
-        match shaper_runtime {
-            Some(rt) => {
-                tracing::info!(model = %rt.model_id.0, "AL1+PR-2b: live model + topology loop enabled");
-                let wrapped: Arc<dyn MoteExecutor> =
-                    Arc::new(crate::model_exec::ModelRouterExecutor::new(
-                        executor,
-                        rt.backend,
-                        (*content).clone(),
-                        Some(rt.recipes),
-                    ));
-                (wrapped, Some(rt.model_id))
-            }
-            None => (executor, None),
-        };
+    let (executor, context_sink, serve_model): WiredExecutor = match shaper_runtime {
+        Some(rt) => {
+            tracing::info!(model = %rt.model_id.0, "AL1+PR-2b: live model + topology loop enabled");
+            let model_exec = Arc::new(crate::model_exec::ModelRouterExecutor::new(
+                executor,
+                rt.backend,
+                (*content).clone(),
+                Some(rt.recipes),
+            ));
+            let sink: Arc<dyn kx_worker::ContextSink> = model_exec.clone();
+            let wrapped: Arc<dyn MoteExecutor> = model_exec;
+            (wrapped, Some(sink), Some(rt.model_id))
+        }
+        None => (executor, None, None),
+    };
+    #[cfg(not(feature = "inference"))]
+    let context_sink: Option<Arc<dyn kx_worker::ContextSink>> = None;
     #[cfg(not(feature = "inference"))]
     let serve_model: Option<kx_mote::ModelId> = None;
     let broker: Arc<dyn CapabilityBroker> =
@@ -468,6 +483,11 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     )
     .await
     .map_err(|e| GatewayError::Coordinator(e.to_string()))?;
+    // F-7: attach the model executor as the worker's context sink (if wired).
+    let worker = match context_sink {
+        Some(sink) => worker.with_context_sink(sink),
+        None => worker,
+    };
     // Keep the idle worker live in the registry (background heartbeat) so a run
     // submitted after an idle period leases promptly (no false-death/reschedule).
     let heartbeat_task = worker.spawn_heartbeat(DEFAULT_HEARTBEAT_CADENCE);
