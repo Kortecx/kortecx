@@ -16,9 +16,9 @@ use std::sync::Arc;
 
 use kx_content::{ContentRef, ContentStore, LocalFsContentStore};
 use kx_coordinator::proto::coordinator_server::Coordinator;
+use kx_coordinator::proto::FailureReason as ProtoFailureReason;
 use kx_coordinator::proto::{CommitOutcome, ExecutorClass as ProtoExecutorClass};
 use kx_coordinator::{CoordinatorService, InMemoryWorkerRegistry, MoteState, WorkerRegistry};
-use kx_coordinator::proto::FailureReason as ProtoFailureReason;
 use kx_journal::SqliteJournal;
 use kx_mote::{
     ChildDescriptor, ConfigKey, ConfigVal, EffectPattern, GraphPosition, InputDataId, LogicRef,
@@ -183,7 +183,11 @@ async fn drive_round0_children(
     assert_eq!(outcome, CommitOutcome::Committed as i32);
 
     let child_items = common::lease_work(svc, worker, MAC, 16).await;
-    assert_eq!(child_items.len(), 2, "both children materialized + leasable");
+    assert_eq!(
+        child_items.len(),
+        2,
+        "both children materialized + leasable"
+    );
     let children: Vec<(Mote, WarrantSpec)> = child_items
         .into_iter()
         .map(|it| {
@@ -216,9 +220,14 @@ async fn child_failure_drives_a_live_replan_round() {
     let (worker, children) = drive_round0_children(&svc, &store, &shaper, &w).await;
 
     // Settle the round: child[0] dead-letters, child[1] commits.
-    let resp = common::report_failure(&svc, &children[0].0, worker, ProtoFailureReason::DeadLettered)
-        .await
-        .unwrap();
+    let resp = common::report_failure(
+        &svc,
+        &children[0].0,
+        worker,
+        ProtoFailureReason::DeadLettered,
+    )
+    .await
+    .unwrap();
     assert!(resp.ack);
     let child1_result = store.put(b"child1-result").unwrap();
     let c1 = commit_with_result(
@@ -355,11 +364,23 @@ async fn settled_round_survives_restart_and_drives_replan() {
     {
         let (svc, store) = coordinator(&dir, &w);
         let (worker, children) = drive_round0_children(&svc, &store, &shaper, &w).await;
-        common::report_failure(&svc, &children[0].0, worker, ProtoFailureReason::DeadLettered)
-            .await
-            .unwrap();
+        common::report_failure(
+            &svc,
+            &children[0].0,
+            worker,
+            ProtoFailureReason::DeadLettered,
+        )
+        .await
+        .unwrap();
         let r = store.put(b"c1").unwrap();
-        commit_with_result(&svc, &children[1].0, warrant_ref_of(&children[1].1), r, worker).await;
+        commit_with_result(
+            &svc,
+            &children[1].0,
+            warrant_ref_of(&children[1].1),
+            r,
+            worker,
+        )
+        .await;
         assert_eq!(
             svc.state_of(children[0].0.id).await.unwrap(),
             MoteState::Failed
@@ -371,7 +392,11 @@ async fn settled_round_survives_restart_and_drives_replan() {
     let (svc, _store) = coordinator(&dir, &w);
     let worker = common::register(&svc, "w2").await;
     let round1 = common::lease_work(&svc, worker, MAC, 16).await;
-    assert_eq!(round1.len(), 1, "round 1 is re-derived + leasable after restart");
+    assert_eq!(
+        round1.len(),
+        1,
+        "round 1 is re-derived + leasable after restart"
+    );
     let r1: Mote = round1[0].mote.clone().unwrap().try_into().unwrap();
     assert!(r1.def.is_topology_shaper);
     assert_ne!(r1.id, shaper.id);

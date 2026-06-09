@@ -143,9 +143,12 @@ pub(crate) fn rebuild_replan_shaper(
     store: &LocalFsContentStore,
     record: &ReplanRoundRecord,
 ) -> Result<(Mote, WarrantSpec), String> {
-    let prompt_bytes = store
-        .get(&record.corrected_prompt_ref)
-        .map_err(|e| format!("fetch corrected prompt {:?}: {e:?}", record.corrected_prompt_ref))?;
+    let prompt_bytes = store.get(&record.corrected_prompt_ref).map_err(|e| {
+        format!(
+            "fetch corrected prompt {:?}: {e:?}",
+            record.corrected_prompt_ref
+        )
+    })?;
     let prompt = std::str::from_utf8(prompt_bytes.as_ref())
         .map_err(|_| "corrected prompt is not valid UTF-8".to_string())?;
 

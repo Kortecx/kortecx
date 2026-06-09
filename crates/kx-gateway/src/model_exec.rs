@@ -724,7 +724,8 @@ mod tests {
     // asks for one). The byte-frozen `decode_loop_proposal` rejects it → the gateway falls
     // back to `decode_replan_proposal`, which lowers `next_steps` identically to a loop
     // proposal (envelope discrimination — round 0 stays byte-frozen).
-    const REPLAN_NEXT_STEPS: &[u8] = br#"{"replan":{"version":1,"next_steps":[{"role":"worker","intent":"retry-with-creds"}]}}"#;
+    const REPLAN_NEXT_STEPS: &[u8] =
+        br#"{"replan":{"version":1,"next_steps":[{"role":"worker","intent":"retry-with-creds"}]}}"#;
     const REPLAN_FLAG_HUMAN: &[u8] =
         br#"{"replan":{"version":1,"flag_human":"needs a credential I cannot grant"}}"#;
 
@@ -732,7 +733,8 @@ mod tests {
     fn shaper_arm_routes_a_replan_envelope_to_a_topology_decision() {
         let dir = tempfile::tempdir().unwrap();
         let store = LocalFsContentStore::open(dir.path()).unwrap();
-        let (exec, backend) = executor(&store, REPLAN_NEXT_STEPS, Some(worker_recipes(&model_id())));
+        let (exec, backend) =
+            executor(&store, REPLAN_NEXT_STEPS, Some(worker_recipes(&model_id())));
         let out = exec
             .run(
                 &shaper_mote(),
@@ -744,7 +746,10 @@ mod tests {
         let bytes = store.get(&out.result_ref).unwrap();
         let td = TopologyDecision::decode(bytes.as_ref()).expect("result is a TopologyDecision");
         assert_eq!(td.children.len(), 1, "the corrective step is lowered");
-        assert_eq!(td.children[0].intent, ConfigVal(b"retry-with-creds".to_vec()));
+        assert_eq!(
+            td.children[0].intent,
+            ConfigVal(b"retry-with-creds".to_vec())
+        );
         assert_eq!(out.result_ref, ContentRef::of(&td.encode()));
     }
 

@@ -1117,7 +1117,10 @@ pub enum DecodeError {
     RunVersionsInvalidUtf8,
     /// A `ReplanRound` entry declares more failed steps than
     /// [`MAX_REPLAN_FAILED_STEPS`] (v7, PR-2c-2) — a `DoS` bound.
-    #[error("ReplanRound failed-step count {got} exceeds max {}", MAX_REPLAN_FAILED_STEPS)]
+    #[error(
+        "ReplanRound failed-step count {got} exceeds max {}",
+        MAX_REPLAN_FAILED_STEPS
+    )]
     ReplanRoundTooManyFailedSteps {
         /// The declared failed-step count.
         got: usize,
@@ -1163,14 +1166,20 @@ pub enum EncodeError {
     },
     /// A `ReplanRound` entry declares more failed steps than
     /// [`MAX_REPLAN_FAILED_STEPS`] — a `DoS` bound independent of the size cap.
-    #[error("ReplanRound failed-step count {got} exceeds max {}", MAX_REPLAN_FAILED_STEPS)]
+    #[error(
+        "ReplanRound failed-step count {got} exceeds max {}",
+        MAX_REPLAN_FAILED_STEPS
+    )]
     ReplanRoundTooManyFailedSteps {
         /// The over-long failed-step count the caller requested.
         got: usize,
     },
     /// A `ReplanRound` entry would exceed the absolute size cap ([`MAX_ENTRY_LEN`])
     /// — a pathologically large model id.
-    #[error("ReplanRound entry exceeds size cap: {got} bytes > {} max", MAX_ENTRY_LEN)]
+    #[error(
+        "ReplanRound entry exceeds size cap: {got} bytes > {} max",
+        MAX_ENTRY_LEN
+    )]
     ReplanRoundTooLarge {
         /// The encoded entry's byte length.
         got: usize,
@@ -1764,7 +1773,8 @@ pub fn decode_entry_with_def_hash(
             let round = u32::from_le_bytes(body[..4].try_into().expect("4 bytes"));
             let mut cursor = 4usize;
             let base_prompt_ref = ContentRef::from_bytes(read_array32(body, &mut cursor, kind)?);
-            let corrected_prompt_ref = ContentRef::from_bytes(read_array32(body, &mut cursor, kind)?);
+            let corrected_prompt_ref =
+                ContentRef::from_bytes(read_array32(body, &mut cursor, kind)?);
             let warrant_ref = ContentRef::from_bytes(read_array32(body, &mut cursor, kind)?);
             let model_id = read_len_prefixed_str(body, &mut cursor, kind)?;
             let failed_count = read_u16(body, &mut cursor, kind)? as usize;
@@ -1778,7 +1788,11 @@ pub fn decode_entry_with_def_hash(
             let has_escalation = read_u8(body, &mut cursor, kind)?;
             let escalation_reason_ref = match has_escalation {
                 0 => None,
-                1 => Some(ContentRef::from_bytes(read_array32(body, &mut cursor, kind)?)),
+                1 => Some(ContentRef::from_bytes(read_array32(
+                    body,
+                    &mut cursor,
+                    kind,
+                )?)),
                 other => return Err(DecodeError::NonBooleanHasEscalation(other)),
             };
             if cursor != body.len() {
@@ -2231,7 +2245,10 @@ mod tests {
             escalation_reason_ref: None,
             seq: 401,
         };
-        assert_eq!(decode_entry(&encode_entry(&anchor).unwrap()).unwrap(), anchor);
+        assert_eq!(
+            decode_entry(&encode_entry(&anchor).unwrap()).unwrap(),
+            anchor
+        );
     }
 
     #[test]

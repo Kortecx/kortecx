@@ -24,7 +24,8 @@ use kx_content::ContentRef;
 use kx_journal::FailureReason;
 use kx_mote::{
     ConfigKey, ConfigVal, EffectPattern, GraphPosition, InferenceParams, InputDataId, LogicRef,
-    ModelId, Mote, MoteDef, MoteId, NdClass, PromptTemplateHash, MOTE_DEF_SCHEMA_VERSION, PROMPT_KEY,
+    ModelId, Mote, MoteDef, MoteId, NdClass, PromptTemplateHash, MOTE_DEF_SCHEMA_VERSION,
+    PROMPT_KEY,
 };
 use smallvec::SmallVec;
 
@@ -153,7 +154,10 @@ mod tests {
     fn failure_reason_token_is_frozen() {
         // Pin the canonical as_u8()-keyed mapping (any reorder/renumber that would
         // shift identity bytes fails here).
-        assert_eq!(failure_reason_token(Some(FailureReason::TimedOut)), "timed-out");
+        assert_eq!(
+            failure_reason_token(Some(FailureReason::TimedOut)),
+            "timed-out"
+        );
         assert_eq!(
             failure_reason_token(Some(FailureReason::ExecutorRefused)),
             "executor-refused"
@@ -195,7 +199,10 @@ mod tests {
         let id = MoteId::from_bytes([3u8; 32]);
         let out = corrected_prompt(base, &[(id, Some(FailureReason::DeadLettered))]);
         // Stable across calls (no clock / no RNG).
-        assert_eq!(out, corrected_prompt(base, &[(id, Some(FailureReason::DeadLettered))]));
+        assert_eq!(
+            out,
+            corrected_prompt(base, &[(id, Some(FailureReason::DeadLettered))])
+        );
         assert!(out.starts_with(base));
         assert!(out.contains(CORRECTED_SUFFIX));
         // The low-entropy token is rendered, never raw bytes / secrets (SN-8).

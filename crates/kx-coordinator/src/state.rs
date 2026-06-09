@@ -1474,9 +1474,7 @@ fn materialize_replan_shaper(
         warrant_ref,
     });
     dispatch.submitted.insert(shaper.id);
-    dispatch
-        .defs
-        .insert(shaper.id, (shaper.clone(), warrant));
+    dispatch.defs.insert(shaper.id, (shaper.clone(), warrant));
 }
 
 /// Write the run's round-0 re-plan ANCHOR (PR-2c-2) for a freshly-submitted, prompt-carrying
@@ -1506,10 +1504,14 @@ fn write_replan_anchor<J: Journal>(
     {
         return; // already anchored (idempotent)
     }
-    let Some(prompt) = shaper_def.config_subset.get(&ConfigKey(PROMPT_KEY.to_string())) else {
+    let Some(prompt) = shaper_def
+        .config_subset
+        .get(&ConfigKey(PROMPT_KEY.to_string()))
+    else {
         return; // no planning prompt ⇒ this shaper is not re-plan-able
     };
-    let (Ok(base_ref), Ok(warrant_ref)) = (store.put(&prompt.0), store.put(&encode_warrant(warrant)))
+    let (Ok(base_ref), Ok(warrant_ref)) =
+        (store.put(&prompt.0), store.put(&encode_warrant(warrant)))
     else {
         return; // a store fault leaves the run un-anchored (re-plan simply stays off) — fail-safe
     };
@@ -1717,7 +1719,11 @@ fn recover_replan_chain<J: Journal>(
 
     // Phase B — the latest round shaper, if still in-flight (not committed), is
     // re-inserted so a worker can re-lease it (it was lost from dispatch.defs on restart).
-    if let Some(latest) = rounds.iter().filter(|r| r.round >= 1).max_by_key(|r| r.round) {
+    if let Some(latest) = rounds
+        .iter()
+        .filter(|r| r.round >= 1)
+        .max_by_key(|r| r.round)
+    {
         if projection.state_of(&latest.shaper_mote_id) != MoteState::Committed {
             match crate::materialize::rebuild_replan_shaper(store, latest) {
                 Ok((shaper, warrant)) => {
