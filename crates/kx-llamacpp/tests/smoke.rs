@@ -160,6 +160,82 @@ fn smoke_end_to_end_inference() {
     );
 }
 
+/// Golden Rule 10 (M6) — inference-path timing spike: **model warm-up** (GGUF
+/// load), **time-to-first-token** (TTFT = prompt-decode → first greedy sample),
+/// and **decode tokens/sec** over a short greedy generation.
+///
+/// Prints a single greppable line; there are NO hard thresholds (absolute
+/// inference latency is platform/model-sensitive — Metal vs CPU, and the toy
+/// stories260K is not representative of a production model). `just
+/// profile-inference` runs this and the numbers are copied into the PRIVATE
+/// `docs/benchmarks/` trend record (SN-2). It asserts only that generation
+/// makes progress (no divide-by-zero, ≥ 2 tokens) so a broken pipeline still
+/// fails loudly.
+#[test]
+fn smoke_inference_timing() {
+    use std::time::Instant;
+
+    let backend = LlamaBackend::new().expect("backend init");
+
+    // M6a — model warm-up: time the GGUF load (tensor load + KV alloc).
+    let t_load = Instant::now();
+    let params = ModelParams::new().with_n_gpu_layers(0);
+    let model = Model::load_with_params(&backend, MODEL_PATH, &params).expect("load stories260K");
+    let warmup_load_ms = t_load.elapsed().as_secs_f64() * 1000.0;
+
+    let vocab = model.vocab();
+    let prompt = vocab
+        .tokenize("Once upon a time", true, false)
+        .expect("tokenize");
+
+    let mut ctx = Context::new_with_params(
+        &model,
+        &ContextParams::new().with_n_ctx(256).with_n_seq_max(1),
+    )
+    .expect("context");
+
+    // M6b — TTFT: prompt decode → first greedy sample.
+    let mut batch = Batch::with_capacity(prompt.len() as i32, 1);
+    for (i, &t) in prompt.iter().enumerate() {
+        let last = i + 1 == prompt.len();
+        batch.add(t, i as i32, &[0], last);
+    }
+    let t_ttft = Instant::now();
+    ctx.decode(&batch).expect("decode prompt");
+    let mut sampler = Sampler::greedy(&backend).expect("greedy");
+    let mut next = sampler.sample(&mut ctx, -1);
+    let ttft_ms = t_ttft.elapsed().as_secs_f64() * 1000.0;
+
+    // M6c — decode throughput: time a short greedy generation.
+    const GEN: usize = 16;
+    let t_gen = Instant::now();
+    let mut produced = 1usize; // the TTFT token counts as the first
+    for step in 0..GEN {
+        if next.is_eog(&vocab) {
+            break;
+        }
+        let mut step_batch = Batch::with_capacity(1, 1);
+        step_batch.add(next, (prompt.len() + step) as i32, &[0], true);
+        ctx.decode(&step_batch).expect("decode step");
+        next = sampler.sample(&mut ctx, -1);
+        produced += 1;
+    }
+    let gen_s = t_gen.elapsed().as_secs_f64();
+    let decode_tps = if gen_s > 0.0 {
+        produced as f64 / gen_s
+    } else {
+        0.0
+    };
+
+    assert!(produced >= 2, "must generate at least 2 tokens");
+    // One structured, greppable line for `just profile-inference` → private trend.
+    eprintln!(
+        "M6 inference timing | model={desc} | warmup_load_ms={warmup_load_ms:.3} \
+         | ttft_ms={ttft_ms:.3} | decode_tokens_per_s={decode_tps:.2} | tokens={produced}",
+        desc = model.desc(),
+    );
+}
+
 /// KV-cache management round-trip: decode → query positions → seq_keep →
 /// seq_rm → clear. Verifies the cache ops behave as documented.
 ///

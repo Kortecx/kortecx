@@ -417,6 +417,31 @@ bench-ceiling:
     cargo test -p kx-coordinator --release --test ceiling_e2e -- --ignored --nocapture --test-threads=1
     cargo test -p kx-projection --release --test fold_curve_scale -- --ignored --nocapture --test-threads=1
 
+# Golden Rule 10 — the runtime profiling harness. NON-GATING (not part of `just
+# ci`): captures an environment-labelled, schema-1 JSON report of the FFI-free
+# runtime's client-observable costs, then re-runs the existing throughput spikes
+# so a single invocation prints the full single-node picture. The `kx-profile`
+# JSON lands in `target/profile/` (gitignored); COPY it into the PRIVATE
+# `docs/benchmarks/YYYY-MM-DD-<topic>.json` trend record (never committed to OSS
+# — SN-2). Absolute latencies are platform-sensitive (macOS fsync ≠ Linux) — the
+# report's `env` block labels every number. `--release` is REQUIRED for honest
+# numbers. M1 warm-up (start→SERVING) + M2 submit→Committed come from kx-profile;
+# M3 fold curve + M4 commit ceiling + M5 catalog discovery come from the spikes.
+profile iterations="8":
+    cargo run --release -p kx-profile -- --iterations {{iterations}}
+    cargo test -p kx-coordinator --release --test ceiling_e2e -- --ignored --nocapture --test-threads=1
+    cargo test -p kx-projection --release --test fold_curve_scale -- --ignored --nocapture --test-threads=1
+    cargo test -p kx-catalog --release --test scale -- --ignored --nocapture --test-threads=1
+
+# Golden Rule 10 — inference-path profiling (M6: model warm-up + TTFT +
+# tokens/sec). Requires the `model-smoke-test` GGUF (auto-downloaded, ~1.2 MB,
+# SHA-verified) + the llama.cpp FFI; LOCAL-only (Metal on Apple Silicon for real
+# numbers — in-container CPU inference is not representative, D135). Prints the
+# timing the standard smoke test now captures; copy the numbers into the private
+# trend record alongside the kx-profile JSON.
+profile-inference:
+    cargo test -p kx-llamacpp --release --features model-smoke-test -- --nocapture
+
 # ============================================================================
 # Preflight diagnostic
 # ============================================================================

@@ -1,0 +1,44 @@
+# SPDX-License-Identifier: Apache-2.0
+[package]
+name         = "kx-profile"
+version      = "0.0.1"
+edition      = { workspace = true }
+rust-version = { workspace = true }
+license      = { workspace = true }
+authors      = { workspace = true }
+repository   = { workspace = true }
+description  = "kortecx runtime profiling harness (Golden Rule 10): an FFI-free bin that hosts an in-process gateway, measures warm-up + submit-to-Committed latency, captures an environment-labelled schema-1 JSON report, and is the public half of the measure-and-persist discipline (results live in the private corpus only)."
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "kx-profile"
+path = "src/main.rs"
+
+[dependencies]
+# Host an in-process gateway to measure warm-up + submit→Committed. Default
+# features ON ⇒ the embedded-worker closure; FFI-free (the dep_wall pins it), so
+# the "any contributor can profile their box" claim holds without a C++ toolchain.
+kx-gateway   = { workspace = true }
+# The FROZEN KxGateway client stubs + request/response messages.
+kx-proto     = { workspace = true }
+# gRPC transport for the client + the health probe (warm-up = ready-to-SERVING).
+tonic        = { workspace = true }
+tonic-health = { workspace = true }
+# `time` for the poll backoff (rt-multi-thread/macros/net come from the workspace set).
+tokio        = { workspace = true, features = ["time"] }
+# The structured report (schema-1 JSON) + machine-readable env block.
+serde        = { workspace = true }
+serde_json   = { workspace = true }
+# Ephemeral per-iteration journal/content/catalog roots (already in the lock).
+tempfile     = { workspace = true }
+thiserror    = { workspace = true }
+tracing            = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["time", "macros", "rt-multi-thread"] }
+
+[lints]
+workspace = true

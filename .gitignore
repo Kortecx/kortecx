@@ -54,6 +54,11 @@ kx-cloud/
 /docs/analysis/
 # Plan files are private-only (SN-5: plans NEVER land in the public OSS repo).
 /docs/plans/
+# Profiling/benchmark results are private-only (Golden Rule 10 / SN-2): the
+# `just profile` HARNESS is public OSS, but the captured numbers are a corpus
+# trend record that lives only in the private kortecx-core checkout under
+# docs/benchmarks/. Added BEFORE any result file can exist so none leaks.
+/docs/benchmarks/
 # Internal warning/debug log — kept in the private kortecx-core repo only.
 /WARNINGS.md
 
