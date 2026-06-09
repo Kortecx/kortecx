@@ -73,6 +73,7 @@ pub use kx_proto::proto;
 
 mod client;
 mod commit_builder;
+mod context_sink;
 mod error;
 mod read_model;
 mod run;
@@ -80,5 +81,6 @@ mod run_wm;
 mod worker;
 
 pub use client::WorkerClient;
+pub use context_sink::ContextSink;
 pub use error::WorkerError;
 pub use worker::{Worker, DEFAULT_HEARTBEAT_CADENCE};

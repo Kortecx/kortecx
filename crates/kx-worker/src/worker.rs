@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use kx_capability::{CapabilityBroker, INSTANCE_ID_LEN};
-use kx_content::{ContentStore, LocalFsContentStore};
+use kx_content::{ContentRef, ContentStore, LocalFsContentStore};
 use kx_executor::{LocalResourceManager, MoteExecutor};
 use kx_mote::{Mote, MoteId, NdClass};
 use kx_proto::proto;
@@ -13,6 +13,7 @@ use kx_warrant::{ExecutorClass, WarrantSpec};
 use tokio::task::JoinHandle;
 
 use crate::client::WorkerClient;
+use crate::context_sink::ContextSink;
 use crate::error::{classify_worker_failure, FailureClass, WorkerError};
 use crate::read_model::ReadModel;
 use crate::{commit_builder, run, run_wm};
@@ -66,6 +67,11 @@ pub struct Worker {
     /// entry. A worker restart resets it harmlessly — the bound is a sanity ceiling, not
     /// durable state (the coordinator's terminal `Failed` is the durable truth).
     attempts: std::collections::HashMap<MoteId, u32>,
+    /// F-7 (assemble-into-serve): the optional side-channel that hands a leased Mote's
+    /// resolved Data context (`WorkItem.parent_results`) to the executor *before* each
+    /// dispatch (the frozen `MoteExecutor::run` carries no snapshot). `None` for a worker
+    /// whose executor does not assemble — its dispatch is byte-identical to pre-F-7.
+    context_sink: Option<Arc<dyn ContextSink>>,
 }
 
 impl Worker {
@@ -104,7 +110,19 @@ impl Worker {
             max_lease,
             in_flight: Arc::new(AtomicU32::new(0)),
             attempts: std::collections::HashMap::new(),
+            context_sink: None,
         })
+    }
+
+    /// Attach an F-7 [`ContextSink`] (assemble-into-serve): before each dispatch the
+    /// worker hands the leased Mote's resolved Data context to `sink`, which the model
+    /// executor consumes inside `run`. The gateway clones ONE `Arc` into both the
+    /// `MoteExecutor` and the `ContextSink` role, so the slot is shared. Additive —
+    /// a worker without a sink behaves byte-identically to pre-F-7.
+    #[must_use]
+    pub fn with_context_sink(mut self, sink: Arc<dyn ContextSink>) -> Self {
+        self.context_sink = Some(sink);
+        self
     }
 
     /// The coordinator-assigned worker id.
@@ -172,6 +190,24 @@ impl Worker {
                 .warrant
                 .ok_or(WorkerError::MissingField("warrant"))?
                 .try_into()?;
+
+            // F-7 (assemble-into-serve): hand the executor this Mote's resolved Data
+            // context BEFORE dispatch (the frozen `MoteExecutor::run` carries no
+            // snapshot). Always set — including an empty list — so a prior Mote's
+            // context can never leak into this one. Malformed wire entries are dropped;
+            // a missing parent the model needs surfaces fail-closed in the assembler.
+            if let Some(sink) = &self.context_sink {
+                let parents: Vec<(MoteId, ContentRef)> = item
+                    .parent_results
+                    .iter()
+                    .filter_map(|pr| {
+                        let id: [u8; 32] = pr.parent_mote_id.as_slice().try_into().ok()?;
+                        let r: [u8; 32] = pr.result_ref.as_slice().try_into().ok()?;
+                        Some((MoteId::from_bytes(id), ContentRef::from_bytes(r)))
+                    })
+                    .collect();
+                sink.set_parent_results(mote.id, parents);
+            }
 
             // PURE recomputes locally through the hosted executor (verbatim, D40 — a
             // throwaway journal). Non-PURE (WORLD-MUTATING / READ-ONLY-NONDET) drives

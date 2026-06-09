@@ -19,12 +19,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use kx_content::{ContentStore, LocalFsContentStore};
+use kx_content::{ContentRef, ContentStore, LocalFsContentStore};
 use kx_journal::{
     FailureReason, IdempotencyClassTag, Journal, JournalEntry, RepudiationReason,
     ResolvedCapabilityRecord, ResolvedKindTag, INSTANCE_ID_LEN,
 };
-use kx_mote::{Mote, MoteDef, MoteId, NdClass};
+use kx_mote::{EdgeKind, Mote, MoteDef, MoteId, NdClass};
 use kx_projection::{MoteState, Projection};
 use kx_refusal::{validate_mote_submission, ToolResolution};
 use kx_scheduler::{LocalPlacement, Placement, Scheduler, SchedulerError, WorkerId};
@@ -71,10 +71,24 @@ pub(crate) struct SubmitOutcome {
     pub(crate) instance_id: Option<[u8; INSTANCE_ID_LEN]>,
 }
 
+/// One unit of leased work: the Mote to run, its warrant, and the **F-7
+/// parent-context** — the committed `(MoteId, ContentRef)` of the leaf's Data
+/// context, resolved on the sole-writer thread from the projection (NO journal
+/// write). The worker forwards these to the executor so a model Mote assembles
+/// real upstream context (`WorkItem.parent_results`, the reserved seam). A Mote
+/// with no Data context (the demo / a root) carries an EMPTY list ⇒ byte-identical
+/// to the pre-F-7 leaf path.
+#[derive(Debug, Clone)]
+pub(crate) struct LeasedItem {
+    pub(crate) mote: Mote,
+    pub(crate) warrant: WarrantSpec,
+    pub(crate) parent_results: Vec<(MoteId, ContentRef)>,
+}
+
 /// Leased work plus the run's `instance_id` (if registered) — the `LeaseWork`
 /// reply shape (M1.2): the worker derives the run-scoped idempotency token from
 /// the `instance_id`.
-type LeasedWork = (Vec<(Mote, WarrantSpec)>, Option<[u8; INSTANCE_ID_LEN]>);
+type LeasedWork = (Vec<LeasedItem>, Option<[u8; INSTANCE_ID_LEN]>);
 
 /// Outcome of a `ReportCommit`: the journal-assigned seq and whether the commit
 /// was newly appended or a dedup-by-key hit (first-wins).
@@ -496,7 +510,7 @@ fn serve_lease<J: Journal>(
     );
     dispatch
         .tracker
-        .record_lease(req.worker, items.iter().map(|(mote, _)| mote.id));
+        .record_lease(req.worker, items.iter().map(|it| it.mote.id));
     // M1.2 (O(1) off-DAG read): the run the leased work belongs to.
     let instance_id = projection.run_registration().map(|(id, _)| id);
     (items, instance_id)
@@ -523,7 +537,7 @@ fn lease_ready(
     worker: WorkerId,
     executor_class: ExecutorClass,
     max: usize,
-) -> Vec<(Mote, WarrantSpec)> {
+) -> Vec<LeasedItem> {
     let placement = LoadAwarePlacement::new(registry, executor_class);
     let mut preferred: Vec<MoteId> = Vec::new();
     let mut rest: Vec<MoteId> = Vec::new();
@@ -575,8 +589,66 @@ fn lease_ready(
         .into_iter()
         .chain(rest)
         .take(max)
-        .filter_map(|id| submitted_defs.get(&id).cloned())
+        .filter_map(|id| {
+            submitted_defs.get(&id).map(|(mote, warrant)| {
+                let parent_results = resolve_parent_context(mote, projection, submitted_defs);
+                LeasedItem {
+                    mote: mote.clone(),
+                    warrant: warrant.clone(),
+                    parent_results,
+                }
+            })
+        })
         .collect()
+}
+
+/// F-7 (assemble-into-serve): resolve, on the sole-writer thread, the committed
+/// `(MoteId, ContentRef)` of `mote`'s **Data context** — the upstream a model Mote
+/// must see to reason. This is a pure projection read (NO journal write, NO edge
+/// mutation — the canonical digest is untouched):
+///
+/// - **direct Data parents** of `mote` (the general rule, mirrors
+///   `kx_context_assembler::assemble`'s parent loop), and
+/// - for a **materialized shaper-child** (whose only parent is a Control edge to
+///   its shaper, PR-2b), the shaper's OWN Data parents — so the run's source/prompt
+///   context flows down to the leaf *without* giving the child a new edge.
+///
+/// A Mote with no resolvable Data context (the canonical demo, a root) ⇒ an EMPTY
+/// list ⇒ the worker assembles an empty leaf context, byte-identical to pre-F-7.
+/// Results are de-duplicated and sorted by `MoteId` so the wire payload (and thus
+/// the assembled prompt and the leaf's content-addressed `result_ref`) is
+/// deterministic across leases and recovery re-folds (R49).
+fn resolve_parent_context(
+    mote: &Mote,
+    projection: &Projection,
+    submitted_defs: &BTreeMap<MoteId, (Mote, WarrantSpec)>,
+) -> Vec<(MoteId, ContentRef)> {
+    let mut out: Vec<(MoteId, ContentRef)> = Vec::new();
+    for parent in &mote.parents {
+        match parent.edge.kind {
+            EdgeKind::Data => {
+                if let Some(result_ref) = projection.result_ref_of(&parent.parent_id) {
+                    out.push((parent.parent_id, result_ref));
+                }
+            }
+            EdgeKind::Control => {
+                // Materialized shaper-child: lift the shaper's Data context one level
+                // (never recursive — the shaper's own Control parents are not followed).
+                if let Some((shaper, _)) = submitted_defs.get(&parent.parent_id) {
+                    for sp in &shaper.parents {
+                        if sp.edge.kind == EdgeKind::Data {
+                            if let Some(result_ref) = projection.result_ref_of(&sp.parent_id) {
+                                out.push((sp.parent_id, result_ref));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    out.sort_by(|a, b| a.0.as_bytes().cmp(b.0.as_bytes()));
+    out.dedup_by(|a, b| a.0 == b.0);
+    out
 }
 
 /// R-13 under distribution (P3.6c): whether a **crash-failed** Mote is safe to *re-dispatch*.
