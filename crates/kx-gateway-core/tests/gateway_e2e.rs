@@ -252,6 +252,99 @@ async fn submit_run_rejects_malformed_recipe_fingerprint() {
     assert_eq!(err.code(), Code::InvalidArgument);
 }
 
+// --- PR-2c-3 critic-live: SubmitRun cross-Mote critic ADMISSION (B3 + H5) ---
+
+/// A native deterministic critic Mote wire-spec (`critic_check` + `critic_for`).
+fn critic_mote_spec(critic_for: [u8; 32]) -> proto::SubmitMoteSpec {
+    use common::{mote_def, sample_warrant};
+    use kx_critic_types::{CheckSpec, SchemaSpec, SchemaTag};
+    use kx_mote::{GraphPosition, InputDataId, Mote, MoteId, NdClass};
+
+    let mut def = mote_def(0xC0, NdClass::Pure);
+    def.critic_check = Some(CheckSpec::Schema(SchemaSpec {
+        expected: SchemaTag::Json,
+    }));
+    def.critic_for = Some(MoteId::from_bytes(critic_for));
+    let mote = Mote::new(
+        def,
+        InputDataId::from_bytes([0x20; 32]),
+        GraphPosition(vec![0xC0]),
+        smallvec::SmallVec::new(),
+    );
+    proto::SubmitMoteSpec {
+        mote: Some(mote.into()),
+        warrant: Some(sample_warrant().into()),
+        accept_at_least_once: false,
+    }
+}
+
+#[tokio::test]
+async fn submit_run_refuses_critic_when_critics_unsupported() {
+    // H5: the default service cannot evaluate critics → a critic-bearing workflow
+    // is refused fail-closed (never admitted into an exit-gate deadlock).
+    let svc = service_from(build_run(), Arc::new(MockSubmitter::default()));
+    let mut client = spawn(svc).await;
+    let err = client
+        .submit_run(proto::SubmitRunRequest {
+            recipe_fingerprint: RECIPE_FP.to_vec(),
+            motes: vec![critic_mote_spec([0xAA; 32])],
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(err.code(), Code::FailedPrecondition);
+    assert!(
+        err.message().contains("critic"),
+        "reason surfaced: {}",
+        err.message()
+    );
+}
+
+#[tokio::test]
+async fn submit_run_refuses_critic_with_dangling_critic_for() {
+    // B3: with critics supported, the whole-DAG validator still runs — a critic
+    // whose `critic_for` references no submitted Mote trips R-4 (cross-Mote, NOT
+    // enforced by the per-Mote live submit path) and is refused at ingress.
+    let svc =
+        service_from(build_run(), Arc::new(MockSubmitter::default())).with_critics_supported(true);
+    let mut client = spawn(svc).await;
+    let err = client
+        .submit_run(proto::SubmitRunRequest {
+            recipe_fingerprint: RECIPE_FP.to_vec(),
+            motes: vec![critic_mote_spec([0x77; 32])], // critic_for → a non-existent Mote
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(err.code(), Code::FailedPrecondition);
+    assert!(
+        err.message().contains("critic admission"),
+        "reason surfaced: {}",
+        err.message()
+    );
+}
+
+#[tokio::test]
+async fn submit_run_admits_critic_free_run_unchanged_when_unsupported() {
+    // A critic-free workflow is byte-for-byte unaffected by the admission gate even
+    // on a serve that cannot evaluate critics (the gate only engages on a critic).
+    let mock = MockSubmitter::default();
+    let svc = service_from(build_run(), Arc::new(mock.clone()));
+    let mut client = spawn(svc).await;
+    let handle = client
+        .submit_run(proto::SubmitRunRequest {
+            recipe_fingerprint: RECIPE_FP.to_vec(),
+            motes: vec![proto::SubmitMoteSpec {
+                mote: Some(sample_mote().into()),
+                warrant: Some(sample_warrant().into()),
+                accept_at_least_once: false,
+            }],
+        })
+        .await
+        .expect("a critic-free run is admitted unchanged")
+        .into_inner();
+    assert_eq!(handle.instance_id, INSTANCE_ID.to_vec());
+    assert!(mock.calls().iter().any(|c| c == "submit_mote"));
+}
+
 // --- SN-8 — the client never computes a MoteId -----------------------------
 
 #[test]

@@ -804,6 +804,41 @@ impl Projection {
         })
     }
 
+    /// The ready set with the **P4.2-3 critic exit-gate auto-activated**
+    /// (PR-2c-3 critic-live — the live `kx serve` lease + ReadySet entry point).
+    ///
+    /// - **No critic declared in the run** ⇒ exactly [`Self::ready_set`] (the P1
+    ///   `NotApplicable` default): a critic-free DAG NEVER pays the verdict scan, so
+    ///   the canonical demo + every critic-free run are byte-for-byte unchanged.
+    /// - **A critic IS declared, `Some(verdicts)`** ⇒ [`Self::ready_set_promoted`]
+    ///   (the live exit gate, fed by a content-addressed verdict lookup).
+    /// - **A critic IS declared, `None`** ⇒ FAIL-CLOSED: every critic-gated consumer
+    ///   is withheld (a critic exists but no store can resolve its verdict, so the
+    ///   gate cannot prove `Valid`). Gating on the *folded* `has_declared_critic`
+    ///   (not on whether a store handle is present) keeps the ready set a pure,
+    ///   deterministic fold of the journal — it can never fail OPEN (B2).
+    #[must_use]
+    pub fn ready_set_auto(
+        &self,
+        verdicts: Option<&dyn crate::promotion::VerdictLookup>,
+    ) -> Vec<MoteId> {
+        if !self.state.has_declared_critic() {
+            return self.ready_set();
+        }
+        match verdicts {
+            Some(v) => self.ready_set_promoted(v),
+            None => self.ready_set_promoted(&crate::promotion::NoVerdicts),
+        }
+    }
+
+    /// `true` iff any declared Mote is a deterministic critic (`critic_for =
+    /// Some`). Gates [`Self::ready_set_auto`] so a critic-free run pays zero
+    /// exit-gate cost. A pure fold of the journal (PR-2c-3 critic-live).
+    #[must_use]
+    pub fn has_declared_critic(&self) -> bool {
+        self.state.has_declared_critic()
+    }
+
     /// The verdict-resolved promotion state of `producer_id` (P4.2-3). Unlike
     /// [`Self::promotion_state`] (the P1 `NotApplicable` stub), this reads
     /// committed critic verdicts via `verdicts`.

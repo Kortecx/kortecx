@@ -37,6 +37,6 @@
 mod refusal;
 
 pub use refusal::{
-    refusal_from_narrowing, validate_mote_submission, validate_submission,
+    native_critic_shape, refusal_from_narrowing, validate_mote_submission, validate_submission,
     validate_submission_with_idempotency, SubmissionRefusal, ToolResolution, WorkflowSubmission,
 };

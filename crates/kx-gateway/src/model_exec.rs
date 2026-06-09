@@ -55,6 +55,15 @@ use kx_content::ContentRef;
 /// runaway model cannot materialize an unbounded DAG.
 pub(crate) const SHAPER_MAX_CHILDREN: usize = 8;
 
+/// Fail-closed upper bound on a native critic's producer-output size (PR-2c-3
+/// critic-live, M1). A critic reads the FULL committed producer bytes into memory to
+/// evaluate its check; a pathologically large output is refused (terminal) rather than
+/// risking an allocation blow-up on the lease hot path — and the verdict is NEVER
+/// computed over a truncated input (that would corrupt the gate). 16 MiB comfortably
+/// covers model completions + typical tool outputs; the frozen `run_native_critic_mote`
+/// has no cap, so the byte-for-byte equivalence test pins inputs ≤ this budget.
+pub(crate) const CRITIC_MAX_INPUT_BYTES: usize = 16 * 1024 * 1024;
+
 /// The single demo worker role a shaper fans out to: a PURE (greedy, recomputable) model
 /// step that runs the serve model with the child's per-child `intent` as its prompt.
 pub(crate) const WORKER_ROLE: &str = "worker";
@@ -470,6 +479,88 @@ impl<B: InferenceBackend> ModelRouterExecutor<B> {
             finished_at_epoch_ms: 0,
         })
     }
+
+    /// Run a **native deterministic CRITIC** Mote (PR-2c-3 critic-live) — the live
+    /// `kx serve` mirror of the FROZEN `kx_executor::run_native_critic_mote` (which
+    /// reads the producer from the journal the distributed executor cannot see).
+    ///
+    /// A critic carries no prompt (not a model Mote) and would otherwise fall to the
+    /// inner echo/real-body router, committing the WRONG bytes (no verdict). Instead we
+    /// evaluate the Mote's declared `critic_check` over its producer's (`critic_for`)
+    /// committed bytes — delivered byte-for-byte via the F-7 `parent_results` seam — and
+    /// commit the resulting `CriticVerdict`. The frozen `run_pure_mote` (a critic is
+    /// PURE) then commits the returned `result_ref`; the projection's P4.2-3 exit gate
+    /// withholds the producer's consumers until that verdict decodes `Valid`. A
+    /// behaviour-equivalence test pins `(verdict, result_ref)` byte-identical to the
+    /// frozen executor for the same `(spec, producer_bytes)`.
+    ///
+    /// **Fail-closed on every path** (never promote unvalidated output): a malformed
+    /// shape (R-15) or an oversized input is TERMINAL (dead-letters the critic — a
+    /// misconfigured gate must STALL, not silently pass). A missing producer context is
+    /// also TERMINAL, but it is **unreachable by construction**: a critic enters the
+    /// ready set only after its producer commits (the Data edge), and the coordinator's
+    /// D55 phantom-ref guard proves the producer's bytes are in the store before that
+    /// commit — so `resolve_parent_context` always delivers `[(critic_for, ref)]` and
+    /// `store.get` always resolves. (`MoteExecutorError` lives in the frozen executor and
+    /// has no content-missing variant; a transient-retry path is a deferred follow-on.)
+    fn run_critic(&self, mote: &Mote) -> Result<MoteExecutionResult, MoteExecutorError> {
+        // (1) Shared R-15 SHAPE gate — the identical four-condition predicate the
+        // submission refusal (`check_r15`) and the frozen executor enforce. Terminal.
+        kx_refusal::native_critic_shape(mote)
+            .map_err(|e| internal(&format!("native critic shape (R-15): {e}")))?;
+        // Shape-gated above ⇒ both are present; treat absence as a fail-closed bug.
+        let spec = mote
+            .def
+            .critic_check
+            .as_ref()
+            .ok_or_else(|| internal("critic_check vanished after shape gate"))?;
+        let producer_id = mote
+            .def
+            .critic_for
+            .ok_or_else(|| internal("critic_for vanished after shape gate"))?;
+
+        // (2) The producer's committed bytes via the F-7 seam (B1: EXACTLY `critic_for`,
+        // never another Data parent — `resolve_parent_context` special-cases a critic to
+        // deliver only `[(critic_for, ref)]`, so this find is a defense-in-depth pin).
+        let parents = self.take_parent_context(mote.id).unwrap_or_default();
+        let producer_ref = parents
+            .iter()
+            .find(|(id, _)| *id == producer_id)
+            .map(|(_, r)| *r)
+            .ok_or_else(|| {
+                internal(&format!(
+                    "critic producer {producer_id:?} bytes not delivered via F-7 \
+                     (scheduling/D55 invariant) — withholding fail-closed"
+                ))
+            })?;
+        let producer_bytes = self
+            .store
+            .get(&producer_ref)
+            .map_err(|e| internal(&format!("read critic producer bytes: {e}")))?;
+
+        // (3) Bound the input fail-closed (M1) — never truncate (that corrupts the gate).
+        if producer_bytes.len() > CRITIC_MAX_INPUT_BYTES {
+            return Err(internal(&format!(
+                "critic producer output {} bytes exceeds max {CRITIC_MAX_INPUT_BYTES}",
+                producer_bytes.len()
+            )));
+        }
+
+        // (4) Evaluate IN-PROCESS — pure / total / deterministic. The verdict's content
+        // ref is `blake3(verdict.encode())`, byte-identical to the frozen executor for
+        // the same `(spec, producer_bytes)` (SN-8: exact crypto-equality, integer-only
+        // evidence; the model never decides promotion — the deterministic check does).
+        let verdict = kx_critic::evaluate(spec, &producer_bytes);
+        let result_ref = self
+            .store
+            .put(&verdict.encode())
+            .map_err(|e| internal(&format!("content store put (verdict): {e}")))?;
+        Ok(MoteExecutionResult {
+            result_ref,
+            started_at_epoch_ms: 0,
+            finished_at_epoch_ms: 0,
+        })
+    }
 }
 
 impl<B: InferenceBackend> MoteExecutor for ModelRouterExecutor<B> {
@@ -479,6 +570,13 @@ impl<B: InferenceBackend> MoteExecutor for ModelRouterExecutor<B> {
         warrant: &WarrantSpec,
         env: Option<Rootfs>,
     ) -> Result<MoteExecutionResult, MoteExecutorError> {
+        // Native deterministic CRITIC FIRST (PR-2c-3 critic-live): a critic carries no
+        // prompt (so `is_model_mote` is false) and would otherwise fall to the inner
+        // echo/real-body router, committing the wrong bytes instead of a verdict. Route
+        // it to the in-process check (mirrors the FROZEN `run_native_critic_mote`).
+        if mote.def.critic_check.is_some() {
+            return self.run_critic(mote);
+        }
         // Shaper FIRST (a shaper is also a model Mote — has a prompt): the model proposes
         // topology, lowered + committed as a TopologyDecision. Then leaf-model (greedy
         // completion). Everything else → the inner real-body / PURE-echo router.
@@ -900,5 +998,210 @@ mod tests {
             prompt_from_config(&make(b"raw prompt")).as_deref(),
             Some("raw prompt")
         );
+    }
+
+    // --- critic arm (PR-2c-3 critic-live): verdict == frozen executor + fail-closed ---
+
+    use kx_critic::{CheckSpec, SchemaSpec, SchemaTag};
+    use kx_mote::MoteId;
+
+    fn json_check() -> CheckSpec {
+        CheckSpec::Schema(SchemaSpec {
+            expected: SchemaTag::Json,
+        })
+    }
+
+    /// A WORLD-MUTATING producer Mote (the critic's `critic_for`).
+    fn critic_producer() -> Mote {
+        let def = MoteDef {
+            logic_ref: LogicRef::from_bytes([1u8; 32]),
+            model_id: model_id(),
+            prompt_template_hash: PromptTemplateHash::from_bytes([2u8; 32]),
+            tool_contract: BTreeMap::new(),
+            nd_class: NdClass::WorldMutating,
+            config_subset: BTreeMap::new(),
+            effect_pattern: EffectPattern::StageThenCommit,
+            critic_for: None,
+            is_topology_shaper: false,
+            inference_params: InferenceParams::default(),
+            critic_check: None,
+            schema_version: MOTE_DEF_SCHEMA_VERSION,
+        };
+        Mote::new(
+            def,
+            InputDataId::from_bytes([10u8; 32]),
+            GraphPosition(b"/producer".to_vec()),
+            SmallVec::new(),
+        )
+    }
+
+    /// A native deterministic critic for `producer` carrying `check`.
+    fn critic_mote(producer: MoteId, check: CheckSpec) -> Mote {
+        let def = MoteDef {
+            logic_ref: LogicRef::from_bytes([3u8; 32]),
+            model_id: model_id(),
+            prompt_template_hash: PromptTemplateHash::from_bytes([4u8; 32]),
+            tool_contract: BTreeMap::new(),
+            nd_class: NdClass::Pure,
+            config_subset: BTreeMap::new(),
+            effect_pattern: EffectPattern::IdempotentByConstruction,
+            critic_for: Some(producer),
+            is_topology_shaper: false,
+            inference_params: InferenceParams::default(),
+            critic_check: Some(check),
+            schema_version: MOTE_DEF_SCHEMA_VERSION,
+        };
+        Mote::new(
+            def,
+            InputDataId::from_bytes([20u8; 32]),
+            GraphPosition(b"/critic".to_vec()),
+            SmallVec::new(),
+        )
+    }
+
+    /// The verdict ref the FROZEN `kx_executor::run_native_critic_mote` would commit
+    /// for `(producer_bytes, check)` — the byte-for-byte oracle the gateway arm pins to.
+    fn frozen_verdict_ref(producer: &Mote, critic: &Mote, producer_bytes: &[u8]) -> ContentRef {
+        use kx_content::ContentStore as _;
+        use kx_journal::Journal as _;
+        let journal = kx_journal::InMemoryJournal::new();
+        let store = kx_content::InMemoryContentStore::new();
+        let result_ref = store.put(producer_bytes).unwrap();
+        journal
+            .append(kx_journal::JournalEntry::Committed {
+                mote_id: producer.id,
+                idempotency_key: *producer.id.as_bytes(),
+                seq: 0,
+                nondeterminism: NdClass::WorldMutating,
+                result_ref,
+                parents: SmallVec::new(),
+                warrant_ref: kx_warrant::warrant_ref_of(&shaper_warrant(
+                    &model_id(),
+                    ExecutorClass::MacOsSandbox,
+                )),
+                mote_def_hash: producer.def.hash(),
+            })
+            .unwrap();
+        kx_executor::run_native_critic_mote(
+            critic,
+            &shaper_warrant(&model_id(), ExecutorClass::MacOsSandbox),
+            &journal,
+            &store,
+        )
+        .unwrap()
+        .result_ref
+    }
+
+    /// Deliver `parents` to the executor's F-7 slot (as the worker's `ContextSink`
+    /// would), then route the critic through `run`.
+    fn run_critic_with_context(
+        exec: &ModelRouterExecutor<StubBackend>,
+        critic: &Mote,
+        parents: Vec<(MoteId, ContentRef)>,
+    ) -> Result<MoteExecutionResult, MoteExecutorError> {
+        use kx_worker::ContextSink;
+        exec.set_parent_results(critic.id, parents);
+        exec.run(
+            critic,
+            &shaper_warrant(&model_id(), ExecutorClass::MacOsSandbox),
+            None,
+        )
+    }
+
+    #[test]
+    fn run_critic_verdict_is_byte_identical_to_frozen_executor() {
+        for (label, payload) in [
+            ("valid_json", &br#"{"ok":true}"#[..]),
+            ("invalid_json", &b"not json{{{"[..]),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let store = LocalFsContentStore::open(dir.path()).unwrap();
+            let (exec, _) = executor(&store, b"unused", None);
+
+            let producer = critic_producer();
+            let critic = critic_mote(producer.id, json_check());
+            let producer_ref = store.put(payload).unwrap();
+
+            let out = run_critic_with_context(&exec, &critic, vec![(producer.id, producer_ref)])
+                .unwrap_or_else(|e| panic!("critic runs ({label}): {e:?}"));
+
+            // (1) The committed ref equals the FROZEN executor's verdict ref.
+            assert_eq!(
+                out.result_ref,
+                frozen_verdict_ref(&producer, &critic, payload),
+                "gateway run_critic must commit the SAME verdict ref as the frozen executor ({label})"
+            );
+            // (2) And it decodes to exactly `evaluate(check, producer_bytes)` (SN-8).
+            let bytes = store.get(&out.result_ref).unwrap();
+            let committed = kx_critic::CriticVerdict::decode(&bytes).unwrap();
+            assert_eq!(
+                committed,
+                kx_critic::evaluate(&json_check(), payload),
+                "{label}"
+            );
+        }
+    }
+
+    #[test]
+    fn run_critic_evaluates_only_the_critic_for_parent() {
+        // B1: even handed an EXTRA (non-`critic_for`) parent, the verdict is computed
+        // over the producer's bytes ONLY — never another parent's.
+        let dir = tempfile::tempdir().unwrap();
+        let store = LocalFsContentStore::open(dir.path()).unwrap();
+        let (exec, _) = executor(&store, b"unused", None);
+
+        let producer = critic_producer();
+        let critic = critic_mote(producer.id, json_check());
+        let producer_ref = store.put(br#"{"ok":true}"#).unwrap(); // VALID
+        let decoy_ref = store.put(b"garbage not json").unwrap(); // would be INVALID
+        let decoy_id = MoteId::from_bytes([0x99; 32]);
+
+        let out = run_critic_with_context(
+            &exec,
+            &critic,
+            vec![(decoy_id, decoy_ref), (producer.id, producer_ref)],
+        )
+        .unwrap();
+        let committed =
+            kx_critic::CriticVerdict::decode(&store.get(&out.result_ref).unwrap()).unwrap();
+        assert!(
+            committed.is_valid(),
+            "the verdict must reflect the critic_for producer's (valid) bytes, not the decoy"
+        );
+    }
+
+    #[test]
+    fn run_critic_fails_closed_on_non_pure_shape() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = LocalFsContentStore::open(dir.path()).unwrap();
+        let (exec, _) = executor(&store, b"unused", None);
+        let producer = critic_producer();
+        let mut bad = critic_mote(producer.id, json_check());
+        // An ill-shaped critic (WORLD-MUTATING) must be refused fail-closed (R-15).
+        bad.def.nd_class = NdClass::WorldMutating;
+        let bad = Mote::new(
+            bad.def.clone(),
+            InputDataId::from_bytes([20u8; 32]),
+            GraphPosition(b"/critic".to_vec()),
+            SmallVec::new(),
+        );
+        let producer_ref = store.put(br#"{"ok":true}"#).unwrap();
+        let err = run_critic_with_context(&exec, &bad, vec![(producer.id, producer_ref)])
+            .expect_err("a non-Pure critic is refused (R-15)");
+        assert!(matches!(err, MoteExecutorError::Internal { .. }));
+    }
+
+    #[test]
+    fn run_critic_fails_closed_when_producer_not_delivered() {
+        // No F-7 context delivered ⇒ the producer's bytes are absent ⇒ withhold
+        // fail-closed (terminal), never a silent or empty-input verdict.
+        let dir = tempfile::tempdir().unwrap();
+        let store = LocalFsContentStore::open(dir.path()).unwrap();
+        let (exec, _) = executor(&store, b"unused", None);
+        let producer = critic_producer();
+        let critic = critic_mote(producer.id, json_check());
+        let err = run_critic_with_context(&exec, &critic, vec![])
+            .expect_err("a critic with no delivered producer fails closed");
+        assert!(matches!(err, MoteExecutorError::Internal { .. }));
     }
 }

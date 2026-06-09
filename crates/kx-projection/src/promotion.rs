@@ -53,6 +53,21 @@ impl<S: ContentStore> VerdictLookup for ContentStoreVerdicts<S> {
     }
 }
 
+/// A fail-closed [`VerdictLookup`] that resolves NOTHING — every verdict is
+/// treated as missing (⇒ "not Valid" ⇒ withhold). Used by
+/// [`crate::Projection::ready_set_auto`] when a critic IS declared in the run but
+/// no content store is available to resolve its verdict: the gate withholds the
+/// producer's consumers rather than promoting blind. This keeps the exit gate a
+/// deterministic pure fold of the journal — it can never fail OPEN because a store
+/// handle happened to be absent (PR-2c-3 critic-live, B2).
+pub struct NoVerdicts;
+
+impl VerdictLookup for NoVerdicts {
+    fn verdict(&self, _critic_result_ref: &ContentRef) -> Option<CriticVerdict> {
+        None
+    }
+}
+
 /// Compute the [`PromotionState`] of `producer_id` against committed critic
 /// verdicts. Pure over `state` + the verdict lookups.
 ///

@@ -517,6 +517,12 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     //      step warrant uses the embedded worker's executor_class so a bound run
     //      leases (see `provision::demo_warrant`).
     let parties: Vec<String> = cfg.auth_tokens.values().cloned().collect();
+    // PR-2c-3 critic-live (H5): native deterministic critics are evaluated by the
+    // inference build's `ModelRouterExecutor` (which holds `run_critic`). That executor
+    // is wired exactly when a fit serve model resolved (`serve_model.is_some()`), so the
+    // gateway advertises critic support iff it is present — `SubmitRun` refuses a
+    // critic-bearing workflow otherwise (rather than admitting an exit-gate deadlock).
+    let critics_supported = serve_model.is_some();
     let demo = Arc::new(DemoLibrary::open_full(
         &catalog_dir,
         default_executor_class(),
@@ -570,6 +576,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         .with_recipe_catalog(recipe_catalog)
         .with_membership_view(membership_view)
         .with_grant_view(grant_view)
+        .with_critics_supported(critics_supported)
         .with_event_tailer(Arc::new(crate::live_tail::LiveTailer::new(
             live_shutdown_rx.clone(),
         )));

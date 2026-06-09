@@ -619,9 +619,26 @@ fn check_r14(mote: &Mote) -> Result<(), SubmissionRefusal> {
     Ok(())
 }
 
-/// **R-15** (D60 / P4.2-2). Refuse a `critic_check`-bearing Mote that is not a
-/// well-formed native critic. See `SubmissionRefusal::R15NativeCheckShape`.
-fn check_r15(mote: &Mote) -> Result<(), SubmissionRefusal> {
+/// **R-15** (D60 / P4.2-2) — the shared native-critic SHAPE gate.
+///
+/// The single predicate the runtime enforces in three places: the submission-time
+/// refusal (`check_r15` → [`validate_mote_submission`]), and — re-landed in
+/// PR-2c-3 critic-live — the live verdict executor in `kx-gateway`'s
+/// `ModelRouterExecutor::run_critic`. A `critic_check`-bearing Mote MUST be
+/// [`NdClass::Pure`], declare `critic_for = Some(_)`, and not be a topology shaper;
+/// a non-critic (`critic_check.is_none()`) trivially passes (returns `Ok`).
+///
+/// This is the non-frozen mirror of the FROZEN `kx_executor::run_native_critic_mote`
+/// inline R-15 guard (kx-executor, which cannot be edited). A behaviour-equivalence
+/// test pins all three call-sites to the identical four-condition shape so the live
+/// path can never accept a critic the frozen executor would reject (and vice-versa).
+///
+/// # Errors
+///
+/// Returns [`SubmissionRefusal::R15NativeCheckShape`] iff `mote` carries a
+/// `critic_check` but is not a well-formed native critic (not `Pure`, missing
+/// `critic_for`, or a topology shaper).
+pub fn native_critic_shape(mote: &Mote) -> Result<(), SubmissionRefusal> {
     if mote.def.critic_check.is_none() {
         return Ok(());
     }
@@ -632,6 +649,12 @@ fn check_r15(mote: &Mote) -> Result<(), SubmissionRefusal> {
         return Err(SubmissionRefusal::R15NativeCheckShape { mote_id: mote.id });
     }
     Ok(())
+}
+
+/// **R-15** (D60 / P4.2-2). Refuse a `critic_check`-bearing Mote that is not a
+/// well-formed native critic. Delegates to the shared [`native_critic_shape`] gate.
+fn check_r15(mote: &Mote) -> Result<(), SubmissionRefusal> {
+    native_critic_shape(mote)
 }
 
 fn check_r9(mote: &Mote, motes: &BTreeMap<MoteId, Mote>) -> Result<(), SubmissionRefusal> {

@@ -25,7 +25,7 @@ use kx_journal::{
     ResolvedCapabilityRecord, ResolvedKindTag, INSTANCE_ID_LEN,
 };
 use kx_mote::{ConfigKey, EdgeKind, ModelId, Mote, MoteDef, MoteId, NdClass, PROMPT_KEY};
-use kx_projection::{MoteState, Projection, RegisterMote, ReplanRoundRecord};
+use kx_projection::{ContentStoreVerdicts, MoteState, Projection, RegisterMote, ReplanRoundRecord};
 use kx_refusal::{validate_mote_submission, ToolResolution};
 use kx_scheduler::{LocalPlacement, Placement, Scheduler, SchedulerError, WorkerId};
 use kx_tool_registry::{IdempotencyClass, ToolKind, ToolRegistry, ToolResolutionEvent};
@@ -494,6 +494,7 @@ fn serve_lease<J: Journal>(
     registry: &dyn WorkerRegistry,
     dispatch: &mut Dispatch,
     req: &LeaseReq,
+    store: Option<&LocalFsContentStore>,
 ) -> LeasedWork {
     reap_dead_workers(
         journal,
@@ -510,6 +511,7 @@ fn serve_lease<J: Journal>(
         req.worker,
         req.executor_class,
         req.max,
+        store,
     );
     dispatch
         .tracker
@@ -532,6 +534,27 @@ fn serve_lease<J: Journal>(
 /// ungated. The D55 phantom-ref guard backstops the commit. Placement v2 (D56) then orders them:
 /// `worker`'s placement-preferred Motes come **first**, the rest **fill to `max`**
 /// (starvation-free; double execution stays harmless under dedup, D54).
+/// The lease + `ReadySet` ready set with the **P4.2-3 critic exit-gate**
+/// auto-activated (PR-2c-3 critic-live). A critic-free run takes the byte-identical
+/// `projection.ready_set()` path (zero gate cost). When a critic IS declared, a WM
+/// producer's consumers are withheld until its critic commits `Valid`, read by
+/// content-address from `store`; **`None` store ⇒ fail-closed** (withhold) so the
+/// gate is a pure deterministic fold of the journal, never dependent on a store
+/// handle being wired (B2). Used by BOTH `lease_ready` and the `ReadySet` command
+/// arm so they can never disagree (H4).
+fn gated_ready_set(projection: &Projection, store: Option<&LocalFsContentStore>) -> Vec<MoteId> {
+    match store {
+        Some(s) => {
+            let verdicts = ContentStoreVerdicts::new(s.clone());
+            projection.ready_set_auto(Some(&verdicts))
+        }
+        None => projection.ready_set_auto(None),
+    }
+}
+
+// One more arg than the clippy default (the optional content store for the
+// PR-2c-3 critic exit gate); an internal sole-writer helper, not a public seam.
+#[allow(clippy::too_many_arguments)]
 fn lease_ready(
     projection: &Projection,
     submitted_defs: &BTreeMap<MoteId, (Mote, WarrantSpec)>,
@@ -540,6 +563,7 @@ fn lease_ready(
     worker: WorkerId,
     executor_class: ExecutorClass,
     max: usize,
+    store: Option<&LocalFsContentStore>,
 ) -> Vec<LeasedItem> {
     let placement = LoadAwarePlacement::new(registry, executor_class);
     let mut preferred: Vec<MoteId> = Vec::new();
@@ -557,8 +581,7 @@ fn lease_ready(
     // never re-leased. The ready-set half is NOT gated (those are first dispatches; a
     // StageThenCommit Mote that staged-then-crashed is `Pending`/in the ready-set with the
     // hint present, so it is still offered there).
-    for mote_id in projection
-        .ready_set()
+    for mote_id in gated_ready_set(projection, store)
         .into_iter()
         .chain(
             rescheduleable
@@ -626,6 +649,19 @@ fn resolve_parent_context(
     projection: &Projection,
     submitted_defs: &BTreeMap<MoteId, (Mote, WarrantSpec)>,
 ) -> Vec<(MoteId, ContentRef)> {
+    // PR-2c-3 critic-live (B1): a native deterministic critic evaluates its declared
+    // check over EXACTLY its producer's committed bytes (`critic_for`) — byte-for-byte
+    // the same source the FROZEN `run_native_critic_mote` reads from the journal. So a
+    // critic gets ONLY `[(critic_for, ref)]`, never its other Data parents (if any),
+    // so the live verdict arm can never be fed a different parent's bytes (which would
+    // make a `Valid` verdict promote a producer whose real output was never checked).
+    // Empty (producer not yet committed) ⇒ the arm fails closed.
+    if let Some(producer_id) = mote.def.critic_for {
+        return match projection.result_ref_of(&producer_id) {
+            Some(result_ref) => vec![(producer_id, result_ref)],
+            None => Vec::new(),
+        };
+    }
     let mut out: Vec<(MoteId, ContentRef)> = Vec::new();
     for parent in &mote.parents {
         match parent.edge.kind {
@@ -1110,7 +1146,7 @@ fn handle_command<J: Journal>(
             let _ = reply.send(projection.snapshot().committed_count());
         }
         Command::ReadySet { reply } => {
-            let _ = reply.send(projection.ready_set());
+            let _ = reply.send(gated_ready_set(projection, store));
         }
         Command::LeaseWork {
             worker,
@@ -1129,6 +1165,7 @@ fn handle_command<J: Journal>(
                     executor_class,
                     max,
                 },
+                store,
             );
             let _ = reply.send(leased);
         }
