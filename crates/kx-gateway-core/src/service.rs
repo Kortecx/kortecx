@@ -377,6 +377,15 @@ pub struct GatewayService {
     /// The `StreamEvents` tailer. Defaults to [`SnapshotTailer`]; the host injects
     /// a live tailer via [`GatewayService::with_event_tailer`].
     tailer: Arc<dyn EventTailer>,
+    /// Whether this serve build can EVALUATE a native deterministic critic
+    /// (PR-2c-3 critic-live, H5). The verdict arm lives in the inference-build
+    /// executor; on a serve that lacks it, a critic Mote would commit echo bytes and
+    /// the P4.2-3 exit gate would withhold the producer's consumers FOREVER. So when
+    /// this is `false`, `SubmitRun` REFUSES a critic-bearing workflow fail-closed
+    /// (rather than admitting a guaranteed deadlock). The host sets it `true` via
+    /// [`GatewayService::with_critics_supported`] only when it wires the critic-capable
+    /// executor. Defaults to `false` (conservative).
+    critics_supported: bool,
 }
 
 impl GatewayService {
@@ -399,7 +408,19 @@ impl GatewayService {
             grants_view: None,
             datasets: None,
             tailer: Arc::new(SnapshotTailer),
+            critics_supported: false,
         }
+    }
+
+    /// Declare that this serve can EVALUATE native deterministic critics (PR-2c-3
+    /// critic-live, H5) — the host has wired a critic-capable executor (the
+    /// inference build's `ModelRouterExecutor`). Until set, `SubmitRun` refuses a
+    /// critic-bearing workflow fail-closed (a critic with no verdict arm deadlocks
+    /// the exit gate).
+    #[must_use]
+    pub fn with_critics_supported(mut self, supported: bool) -> Self {
+        self.critics_supported = supported;
+        self
     }
 
     /// Wire the signature-catalog seam (the host's concrete `kx-catalog`-backed
@@ -484,14 +505,12 @@ impl KxGateway for GatewayService {
             "recipe_fingerprint must be 32 bytes",
         )?;
 
-        // Register first: returns only after the journaled instance_id (never
-        // acks ahead of the journal).
-        let instance_id = self
-            .submitter
-            .register_run(recipe_fp)
-            .await
-            .map_err(submit_status)?;
-
+        // Convert ALL Motes up front (PR-2c-3 critic-live): the cross-Mote critic
+        // admission below needs every Mote of the run together, and converting before
+        // `register_run` means a malformed / refused submission never leaves an orphan
+        // registered run behind.
+        let mut collected: Vec<(kx_mote::Mote, kx_warrant::WarrantSpec, bool)> =
+            Vec::with_capacity(req.motes.len());
         for spec in req.motes {
             let mote_proto = spec
                 .mote
@@ -507,8 +526,56 @@ impl KxGateway for GatewayService {
             let warrant: kx_warrant::WarrantSpec = warrant_proto
                 .try_into()
                 .map_err(|e: kx_proto::ConvertError| Status::invalid_argument(e.to_string()))?;
+            collected.push((mote, warrant, spec.accept_at_least_once));
+        }
+
+        // PR-2c-3 critic-live — cross-Mote critic ADMISSION (only when the run carries a
+        // critic, so a critic-free workflow is byte-for-byte unaffected).
+        if collected
+            .iter()
+            .any(|(m, _, _)| m.def.critic_check.is_some())
+        {
+            // H5: a native critic's verdict is computed ONLY by the inference-build
+            // executor. On a serve that cannot, a critic would commit echo bytes and the
+            // P4.2-3 exit gate would withhold its producer's consumers forever — so we
+            // refuse fail-closed rather than admit a guaranteed deadlock.
+            if !self.critics_supported {
+                return Err(Status::failed_precondition(
+                    "this serve cannot evaluate native deterministic critics (no inference \
+                     executor wired); a critic-bearing workflow is refused",
+                ));
+            }
+            // B3: enforce the CROSS-Mote critic refusals (R-2/R-4/R-5/R-6) the per-Mote
+            // submit path cannot — `critic_for` must reference an existing WORLD-MUTATING
+            // producer, no producer may carry two critics, a critic may not be itself
+            // WORLD-MUTATING, etc. `master_warrant`/`run_id` are not consulted by these
+            // checks, so placeholder values are sound.
+            let motes: std::collections::BTreeMap<kx_mote::MoteId, kx_mote::Mote> = collected
+                .iter()
+                .map(|(m, _, _)| (m.id, m.clone()))
+                .collect();
+            let accept_at_least_once = collected.iter().map(|(m, _, a)| (m.id, *a)).collect();
+            let submission = kx_refusal::WorkflowSubmission {
+                run_id: [0u8; 32],
+                master_warrant: kx_warrant::WarrantSpec::default(),
+                motes,
+                accept_at_least_once,
+            };
+            kx_refusal::validate_submission(&submission).map_err(|e| {
+                Status::failed_precondition(format!("critic admission refused: {e}"))
+            })?;
+        }
+
+        // Register: returns only after the journaled instance_id (never acks ahead of
+        // the journal). Then submit each Mote in order.
+        let instance_id = self
+            .submitter
+            .register_run(recipe_fp)
+            .await
+            .map_err(submit_status)?;
+        for (mote, warrant, accept) in collected {
             self.submitter
-                .submit_mote(mote, warrant, spec.accept_at_least_once)
+                .submit_mote(mote, warrant, accept)
                 .await
                 .map_err(submit_status)?;
         }

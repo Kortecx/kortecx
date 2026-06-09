@@ -1524,6 +1524,7 @@ dependencies = [
  "kx-catalog",
  "kx-content",
  "kx-coordinator",
+ "kx-critic",
  "kx-dataset",
  "kx-dataset-hnsw",
  "kx-executor",
@@ -1537,6 +1538,7 @@ dependencies = [
  "kx-mote",
  "kx-planner",
  "kx-proto",
+ "kx-refusal",
  "kx-warrant",
  "kx-worker",
  "kx-workflow",
@@ -1565,10 +1567,12 @@ name = "kx-gateway-core"
 version = "0.0.1"
 dependencies = [
  "kx-content",
+ "kx-critic-types",
  "kx-journal",
  "kx-mote",
  "kx-projection",
  "kx-proto",
+ "kx-refusal",
  "kx-warrant",
  "proptest",
  "smallvec",

@@ -197,6 +197,16 @@ impl State {
         self.motes.entry(*id).or_default()
     }
 
+    /// `true` iff any declared Mote is a deterministic critic (`critic_for =
+    /// Some`). Gates the P4.2-3 exit gate in `kx serve` so a critic-free run pays
+    /// zero verdict-scan cost (PR-2c-3 critic-live). A pure fold read — `O(M)`,
+    /// consulted once per lease poll, far cheaper than the `O(M²)` it guards.
+    pub(crate) fn has_declared_critic(&self) -> bool {
+        self.motes
+            .values()
+            .any(|i| i.declared.as_ref().is_some_and(|d| d.critic_for.is_some()))
+    }
+
     /// Compute the per-identity state per `projection.md` §4 (v2 derivation
     /// per STEP 5.1 of PR 4.5).
     ///

@@ -120,6 +120,8 @@
 
 mod checkpoint;
 mod child_resolver;
+#[cfg(test)]
+mod critic_gate_tests;
 mod enums;
 mod errors;
 mod helpers;

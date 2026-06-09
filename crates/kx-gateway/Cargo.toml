@@ -44,6 +44,12 @@ bincode         = { workspace = true }
 kx-invoke       = { workspace = true }
 kx-mote         = { workspace = true }
 kx-workflow     = { workspace = true }
+# PR-2c-3 (critic-live): the shared whole-DAG submission validator + the R-15
+# native-critic SHAPE gate (`native_critic_shape`). FFI-free (dep-wall-safe);
+# NON-optional because the SubmitRun ingress runs it in BOTH builds — to enforce
+# the cross-Mote critic refusals live (B3) and to refuse a critic-bearing DAG on a
+# non-inference serve build that cannot compute verdicts (H5, fail-closed).
+kx-refusal      = { workspace = true }
 # Inline parent-edge storage for the demo Mote built by `demo_submit_run_request`
 # (`Mote::new`'s `parents` is a `SmallVec<[ParentRef; 4]>`). Promoted from a dev-dep
 # (R3) so the helper is a NORMAL public library fn. FFI-free (the dep_wall forbids
@@ -74,6 +80,12 @@ kx-model-validator = { workspace = true, optional = true }
 # arm (model proposal → vetted TopologyDecision). FFI-free (dep-wall-safe); behind
 # `inference` so the default build is unaffected.
 kx-planner         = { workspace = true, optional = true }
+# PR-2c-3 (critic-live): the FFI-free deterministic-critic evaluator
+# (`kx_critic::evaluate` + `CriticVerdict`). The live verdict arm in
+# `model_exec.rs::run_critic` mirrors the FROZEN `run_native_critic_mote`; behind
+# `inference` because that arm lives in the inference-gated executor (a critic DAG
+# is refused on a non-inference serve, H5). Pure-Rust — the dep-wall stays green.
+kx-critic          = { workspace = true, optional = true }
 # T3.7: the FFI-free durable vector substrate (the Datasets data-plane). kx-dataset
 # (the RetrievalIndex trait + Hit) + kx-dataset-hnsw (the in-process HNSW ANN index).
 # Both pure-Rust (hnsw_rs / thiserror only) — NO llama.cpp, so the dep-wall holds.
@@ -154,6 +166,7 @@ inference = [
     "dep:kx-model-store",
     "dep:kx-model-validator",
     "dep:kx-planner",
+    "dep:kx-critic",
 ]
 # T3.7: the Datasets data-plane (RAG) read/write surface. The client-provided-vector
 # path is FFI-FREE + deterministic (CI-exercisable on Linux with no model). Pulls only

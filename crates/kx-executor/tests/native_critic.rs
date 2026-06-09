@@ -278,3 +278,61 @@ fn run_native_critic_rejects_non_pure_mote() {
         "a non-PURE native critic must be refused at execution (run-time R-15)"
     );
 }
+
+/// PR-2c-3 critic-live (Change #3): the shared `native_critic_shape` R-15 gate
+/// MUST agree, case-for-case, with the FROZEN `run_native_critic_mote` inline gate
+/// (kx-executor) — so the live verdict arm (kx-gateway `run_critic`, which calls
+/// `native_critic_shape`) and the submission refusal (`check_r15`, which delegates
+/// to it) can never accept a critic shape the frozen executor would reject, or
+/// vice-versa. A well-formed critic passes BOTH (and, given a committed producer,
+/// the frozen executor proceeds to commit a verdict); each ill-formed shape trips
+/// BOTH.
+#[test]
+#[allow(clippy::type_complexity)]
+fn native_critic_shape_matches_frozen_executor_gate() {
+    use kx_refusal::native_critic_shape;
+
+    // Each case mutates a well-formed critic's def, then asserts the shared shape
+    // predicate and the frozen executor's gate reach the SAME accept/reject verdict.
+    let cases: [(&str, fn(&mut MoteDef), bool); 4] = [
+        ("well_formed", |_d| {}, true),
+        ("non_pure", |d| d.nd_class = NdClass::WorldMutating, false),
+        ("no_critic_for", |d| d.critic_for = None, false),
+        ("topology_shaper", |d| d.is_topology_shaper = true, false),
+    ];
+
+    for (name, mutate, expect_ok) in cases {
+        // Fresh journal+store with the producer committed, so a VALID shape proceeds
+        // PAST the gate to a real commit (proving the gate accepted), while an
+        // INVALID shape is rejected at the gate (step 1, before the producer read).
+        let journal = InMemoryJournal::new();
+        let store = InMemoryContentStore::new();
+        let producer = producer_mote();
+        commit_producer(&journal, &store, &producer, br#"{"ok":true}"#);
+
+        let mut def = critic_mote(producer.id, json_check()).def.clone();
+        mutate(&mut def);
+        let critic = Mote::new(
+            def,
+            InputDataId::from_bytes([20; 32]),
+            GraphPosition("/critic".into()),
+            SmallVec::new(),
+        );
+
+        let shape_ok = native_critic_shape(&critic).is_ok();
+        assert_eq!(
+            shape_ok, expect_ok,
+            "shared shape gate disagreed on `{name}`"
+        );
+
+        let frozen_ok = run_native_critic_mote(&critic, &warrant(), &journal, &store).is_ok();
+        assert_eq!(
+            frozen_ok, expect_ok,
+            "frozen executor gate disagreed on `{name}`"
+        );
+        assert_eq!(
+            shape_ok, frozen_ok,
+            "shared shape gate and frozen executor gate MUST agree on `{name}`"
+        );
+    }
+}

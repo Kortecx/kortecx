@@ -30,6 +30,11 @@ kx-warrant    = { workspace = true }
 # The Journal trait + JournalEntry, wrapped by the read-only ReadOnly<J> seam. gateway-core
 # NEVER names append/append_batch — the write path cannot type-check.
 kx-journal    = { workspace = true }
+# PR-2c-3 (critic-live): the whole-DAG submission validator (`validate_submission`) the
+# SubmitRun ingress runs to enforce the CROSS-Mote critic refusals (R-2/R-4/R-5/R-6) the
+# per-Mote live path cannot — a `critic_for` must reference an existing WORLD-MUTATING
+# producer, no producer may carry two critics, etc. (B3). FFI-free; pure validation.
+kx-refusal    = { workspace = true }
 # Async gRPC service (Request/Response/Status/Streaming) + the re-exported async_trait.
 tonic         = { workspace = true }
 # Backs the resumable StreamEvents cursor (tokio_stream::iter over precomputed frames).
@@ -46,6 +51,9 @@ tokio         = { workspace = true }
 proptest      = { workspace = true }
 # TEST-ONLY: build journal `Committed` entries (the parents SmallVec) in fixtures.
 smallvec      = { workspace = true }
+# TEST-ONLY (PR-2c-3 critic-live): the `CheckSpec` to build a native-critic Mote in
+# the SubmitRun B3/H5 admission tests.
+kx-critic-types = { workspace = true }
 
 [lints]
 workspace = true
