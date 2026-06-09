@@ -690,6 +690,17 @@ impl KxGateway for GatewayService {
         Ok(Response::new(resp))
     }
 
+    async fn list_replan_rounds(
+        &self,
+        request: Request<proto::ListReplanRoundsRequest>,
+    ) -> Result<Response<proto::ListReplanRoundsResponse>, Status> {
+        let req = request.into_inner();
+        // PR-2c-2: a read-only fold over the off-DAG ReplanRound facts (the live
+        // re-plan loop's self-correction trail). Always available (no seam).
+        let resp = crate::replan::list_replan_rounds(self.reader.as_ref(), req.limit)?;
+        Ok(Response::new(resp))
+    }
+
     async fn list_recipes(
         &self,
         _request: Request<proto::ListRecipesRequest>,

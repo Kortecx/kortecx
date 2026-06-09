@@ -533,3 +533,33 @@ class QueryDatasetResponse(_message.Message):
     HITS_FIELD_NUMBER: _ClassVar[int]
     hits: _containers.RepeatedCompositeFieldContainer[DatasetHit]
     def __init__(self, hits: _Optional[_Iterable[_Union[DatasetHit, _Mapping]]] = ...) -> None: ...
+
+class ListReplanRoundsRequest(_message.Message):
+    __slots__ = ("limit",)
+    LIMIT_FIELD_NUMBER: _ClassVar[int]
+    limit: int
+    def __init__(self, limit: _Optional[int] = ...) -> None: ...
+
+class ReplanRoundSummary(_message.Message):
+    __slots__ = ("round", "shaper_mote_id", "model_id", "failed_step_ids", "escalated", "seq")
+    ROUND_FIELD_NUMBER: _ClassVar[int]
+    SHAPER_MOTE_ID_FIELD_NUMBER: _ClassVar[int]
+    MODEL_ID_FIELD_NUMBER: _ClassVar[int]
+    FAILED_STEP_IDS_FIELD_NUMBER: _ClassVar[int]
+    ESCALATED_FIELD_NUMBER: _ClassVar[int]
+    SEQ_FIELD_NUMBER: _ClassVar[int]
+    round: int
+    shaper_mote_id: bytes
+    model_id: str
+    failed_step_ids: _containers.RepeatedScalarFieldContainer[bytes]
+    escalated: bool
+    seq: int
+    def __init__(self, round: _Optional[int] = ..., shaper_mote_id: _Optional[bytes] = ..., model_id: _Optional[str] = ..., failed_step_ids: _Optional[_Iterable[bytes]] = ..., escalated: bool = ..., seq: _Optional[int] = ...) -> None: ...
+
+class ListReplanRoundsResponse(_message.Message):
+    __slots__ = ("rounds", "has_more")
+    ROUNDS_FIELD_NUMBER: _ClassVar[int]
+    HAS_MORE_FIELD_NUMBER: _ClassVar[int]
+    rounds: _containers.RepeatedCompositeFieldContainer[ReplanRoundSummary]
+    has_more: bool
+    def __init__(self, rounds: _Optional[_Iterable[_Union[ReplanRoundSummary, _Mapping]]] = ..., has_more: bool = ...) -> None: ...

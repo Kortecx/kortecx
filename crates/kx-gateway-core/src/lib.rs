@@ -50,6 +50,7 @@ mod error;
 mod events;
 mod identity;
 mod reader;
+mod replan;
 mod runs;
 mod service;
 mod submit;
