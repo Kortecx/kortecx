@@ -539,9 +539,12 @@ impl Projection {
             // `DigestSealed` (M2.2c) is a pure `last_seq`-only frontier advance —
             // it names no Mote, registers no `MoteInfo`, and is verified at
             // recovery (in `try_seed_state`), never materialized into state.
+            // `ReplanRound` (PR-2c-2) appends a recovery/audit record + advances
+            // `last_seq`; it is NOT folded into any digest.
             JournalEntry::RunRegistered { .. }
             | JournalEntry::RunVersionsResolved { .. }
-            | JournalEntry::DigestSealed { .. } => {
+            | JournalEntry::DigestSealed { .. }
+            | JournalEntry::ReplanRound { .. } => {
                 self.fold_run_metadata(entry);
             }
         }
@@ -549,7 +552,7 @@ impl Projection {
     }
 
     /// Fold an off-DAG run-metadata fact (`RunRegistered` / `RunVersionsResolved`
-    /// / `DigestSealed`).
+    /// / `DigestSealed` / `ReplanRound`).
     ///
     /// None of these name a Mote, so this registers NO `MoteInfo` and does NOT
     /// call `rebuild_children_index` — O(1), off the Mote-DAG. The data is
@@ -598,6 +601,37 @@ impl Projection {
                 // NOTHING into `State` (so it never enters `state_digest()` — that
                 // would be a chicken-and-egg cycle — and never the product digest).
                 // Its digest is verified at recovery in `try_seed_state`, not here.
+                self.state.last_seq = self.state.last_seq.max(*seq);
+            }
+            JournalEntry::ReplanRound {
+                round,
+                shaper_mote_id,
+                base_prompt_ref,
+                corrected_prompt_ref,
+                warrant_ref,
+                model_id,
+                failed_steps,
+                escalation_reason_ref,
+                seq,
+            } => {
+                // v7 (PR-2c-2). Append-many: a run accrues one record per re-plan
+                // round. Replay rebuilds the same Vec from scratch (each journaled
+                // entry folds exactly once). Off-DAG: names a shaper Mote but
+                // registers NO `MoteInfo` and touches NO children index — it is pure
+                // recovery/audit metadata, never an identity/scheduling/digest input.
+                self.state
+                    .replan_rounds
+                    .push(crate::state::ReplanRoundRecord {
+                        round: *round,
+                        shaper_mote_id: *shaper_mote_id,
+                        base_prompt_ref: *base_prompt_ref,
+                        corrected_prompt_ref: *corrected_prompt_ref,
+                        warrant_ref: *warrant_ref,
+                        model_id: model_id.clone(),
+                        failed_steps: failed_steps.to_vec(),
+                        escalation_reason_ref: *escalation_reason_ref,
+                        seq: *seq,
+                    });
                 self.state.last_seq = self.state.last_seq.max(*seq);
             }
             _ => unreachable!("fold_run_metadata called with a non-run-metadata kind"),
@@ -938,6 +972,32 @@ impl Projection {
     #[must_use]
     pub fn run_resolved_versions(&self) -> &[crate::state::RunResolvedVersions] {
         &self.state.run_resolved_versions
+    }
+
+    /// The re-plan-round metadata (PR-2c-2) folded so far — one record per
+    /// `ReplanRound` entry, in journal (round) order.
+    ///
+    /// **Recovery + audit metadata, never identity.** Off the Mote-DAG: no
+    /// scheduling/identity/digest decision reads it, so it can never move the
+    /// projection digest. Reconstructed verbatim on replay. The coordinator's
+    /// `recover_replan_chain` reads these to rebuild each round's shaper Mote
+    /// deterministically from committed facts.
+    #[must_use]
+    pub fn replan_rounds(&self) -> &[crate::state::ReplanRoundRecord] {
+        &self.state.replan_rounds
+    }
+
+    /// The highest-`round` `ReplanRound` record folded so far, or `None` if the run
+    /// has driven no re-plan rounds. The live coordinator uses this for the
+    /// next-round budget check + the submitted-but-uncommitted dedup window; on a
+    /// tie (a defensive duplicate `round`) the lowest-`seq` record wins so recovery
+    /// is deterministic.
+    #[must_use]
+    pub fn latest_replan_round(&self) -> Option<&crate::state::ReplanRoundRecord> {
+        self.state
+            .replan_rounds
+            .iter()
+            .max_by(|a, b| a.round.cmp(&b.round).then(b.seq.cmp(&a.seq)))
     }
 
     /// The durable resolved [`kx_journal::IdempotencyClassTag`] for a tool, folded

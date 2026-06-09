@@ -55,6 +55,7 @@ mod materialize;
 mod nonce;
 mod placement;
 mod registry;
+mod replan_shape;
 mod repudiation;
 mod reschedule;
 mod service;

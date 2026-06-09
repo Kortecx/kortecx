@@ -53,7 +53,8 @@ use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 
 use crate::state::{
-    CommittedInfo, DeclaredInfo, MoteInfo, RunRegistration, RunResolvedVersions, State,
+    CommittedInfo, DeclaredInfo, MoteInfo, ReplanRoundRecord, RunRegistration, RunResolvedVersions,
+    State,
 };
 
 /// The on-disk format version. Bump on **any** change to the envelope layout or
@@ -62,7 +63,13 @@ use crate::state::{
 ///
 /// `2` (PR-3, AL2): `MoteInfoDto` gained `failure_reason` so a checkpoint-seeded
 /// recovery preserves the terminal `FailureReason` a model-driven re-plan reads.
-pub const CURRENT_FORMAT_VERSION: u16 = 2;
+///
+/// `3` (PR-2c-2, re-plan-live): `CheckpointState` gained `replan_rounds` so a
+/// checkpoint-seeded recovery preserves the durable re-plan-round records the live
+/// coordinator re-derives its in-flight replan chain from. A grown payload shifts
+/// the bincoded bytes AND the sealed `state_digest()` of every state, so the bump
+/// is mandatory; a stale v2 sidecar is rejected and recovery full-folds (self-healing).
+pub const CURRENT_FORMAT_VERSION: u16 = 3;
 
 /// Payload codec tag. `0` = canonical-bincode (LE + fixed-int, the house
 /// [`kx_mote::canonical_config`]). Reserved for a future rkyv zero-copy payload
@@ -425,6 +432,7 @@ struct CheckpointState {
     last_seq: u64,
     run_registration: Option<RunRegistrationDto>,
     run_resolved_versions: Vec<RunResolvedVersionsDto>,
+    replan_rounds: Vec<ReplanRoundRecordDto>,
 }
 
 // Mirrors `MoteInfo`'s flags 1:1 — same `struct_excessive_bools` allow.
@@ -479,6 +487,19 @@ struct RunResolvedVersionsDto {
     capability: Option<ResolvedCapabilityRecord>,
 }
 
+#[derive(Serialize, Deserialize)]
+struct ReplanRoundRecordDto {
+    round: u32,
+    shaper_mote_id: MoteId,
+    base_prompt_ref: ContentRef,
+    corrected_prompt_ref: ContentRef,
+    warrant_ref: ContentRef,
+    model_id: String,
+    failed_steps: Vec<MoteId>,
+    escalation_reason_ref: Option<ContentRef>,
+    seq: u64,
+}
+
 // ----- State -> DTO (infallible; destructure-without-`..` drift guard) -----
 
 impl From<&State> for CheckpointState {
@@ -490,6 +511,7 @@ impl From<&State> for CheckpointState {
             last_seq,
             run_registration,
             run_resolved_versions,
+            replan_rounds,
         } = state;
         Self {
             motes: motes
@@ -502,6 +524,10 @@ impl From<&State> for CheckpointState {
             run_resolved_versions: run_resolved_versions
                 .iter()
                 .map(RunResolvedVersionsDto::from)
+                .collect(),
+            replan_rounds: replan_rounds
+                .iter()
+                .map(ReplanRoundRecordDto::from)
                 .collect(),
         }
     }
@@ -611,6 +637,33 @@ impl From<&RunResolvedVersions> for RunResolvedVersionsDto {
     }
 }
 
+impl From<&ReplanRoundRecord> for ReplanRoundRecordDto {
+    fn from(r: &ReplanRoundRecord) -> Self {
+        let ReplanRoundRecord {
+            round,
+            shaper_mote_id,
+            base_prompt_ref,
+            corrected_prompt_ref,
+            warrant_ref,
+            model_id,
+            failed_steps,
+            escalation_reason_ref,
+            seq,
+        } = r;
+        Self {
+            round: *round,
+            shaper_mote_id: *shaper_mote_id,
+            base_prompt_ref: *base_prompt_ref,
+            corrected_prompt_ref: *corrected_prompt_ref,
+            warrant_ref: *warrant_ref,
+            model_id: model_id.clone(),
+            failed_steps: failed_steps.clone(),
+            escalation_reason_ref: *escalation_reason_ref,
+            seq: *seq,
+        }
+    }
+}
+
 // ----- DTO -> State (fallible: revalidates each parent edge) -----
 
 impl TryFrom<CheckpointState> for State {
@@ -624,6 +677,7 @@ impl TryFrom<CheckpointState> for State {
             last_seq,
             run_registration,
             run_resolved_versions,
+            replan_rounds,
         } = dto;
         let mut decoded_motes = BTreeMap::new();
         for (id, mi) in motes {
@@ -637,6 +691,10 @@ impl TryFrom<CheckpointState> for State {
             run_resolved_versions: run_resolved_versions
                 .into_iter()
                 .map(RunResolvedVersions::from)
+                .collect(),
+            replan_rounds: replan_rounds
+                .into_iter()
+                .map(ReplanRoundRecord::from)
                 .collect(),
         })
     }
@@ -760,6 +818,33 @@ impl From<RunResolvedVersionsDto> for RunResolvedVersions {
             warrant_ref,
             model_id,
             capability,
+        }
+    }
+}
+
+impl From<ReplanRoundRecordDto> for ReplanRoundRecord {
+    fn from(dto: ReplanRoundRecordDto) -> Self {
+        let ReplanRoundRecordDto {
+            round,
+            shaper_mote_id,
+            base_prompt_ref,
+            corrected_prompt_ref,
+            warrant_ref,
+            model_id,
+            failed_steps,
+            escalation_reason_ref,
+            seq,
+        } = dto;
+        ReplanRoundRecord {
+            round,
+            shaper_mote_id,
+            base_prompt_ref,
+            corrected_prompt_ref,
+            warrant_ref,
+            model_id,
+            failed_steps,
+            escalation_reason_ref,
+            seq,
         }
     }
 }

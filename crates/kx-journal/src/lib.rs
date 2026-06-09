@@ -93,7 +93,8 @@ pub use crate::entry::{
     FailureReason, IdempotencyClassTag, JournalEntry, ParentEntry, RepudiationReason,
     ResolvedCapabilityRecord, ResolvedKindTag, HEADER_LEN, INSTANCE_ID_LEN, JOURNAL_SCHEMA_VERSION,
     KIND_COMMITTED, KIND_DIGEST_SEALED, KIND_EFFECT_STAGED, KIND_FAILED, KIND_PROPOSED,
-    KIND_REPUDIATED, KIND_RUN_REGISTERED, KIND_RUN_VERSIONS_RESOLVED, MAX_ENTRY_LEN, MAX_PARENTS,
+    KIND_REPLAN_ROUND, KIND_REPUDIATED, KIND_RUN_REGISTERED, KIND_RUN_VERSIONS_RESOLVED,
+    MAX_ENTRY_LEN, MAX_PARENTS, MAX_REPLAN_FAILED_STEPS,
 };
 pub use crate::in_memory::InMemoryJournal;
 pub use crate::migration::{
