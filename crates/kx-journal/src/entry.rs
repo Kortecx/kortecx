@@ -2201,6 +2201,81 @@ mod tests {
             seq: 300,
         };
         assert_eq!(decode_entry(&encode_entry(&rr).unwrap()).unwrap(), rr);
+
+        // v7 (PR-2c-2): ReplanRound — with failed steps + an escalation ref.
+        let rp = JournalEntry::ReplanRound {
+            round: 2,
+            shaper_mote_id: MoteId::from_bytes([0x7c; 32]),
+            base_prompt_ref: ContentRef::from_bytes([0x11; 32]),
+            corrected_prompt_ref: ContentRef::from_bytes([0x22; 32]),
+            warrant_ref: ContentRef::from_bytes([0x33; 32]),
+            model_id: "kx-serve:qwen3-4b".to_string(),
+            failed_steps: smallvec::smallvec![
+                MoteId::from_bytes([0x44; 32]),
+                MoteId::from_bytes([0x55; 32]),
+            ],
+            escalation_reason_ref: Some(ContentRef::from_bytes([0x66; 32])),
+            seq: 400,
+        };
+        assert_eq!(decode_entry(&encode_entry(&rp).unwrap()).unwrap(), rp);
+
+        // v7: ReplanRound — the round-0 anchor shape (no failures, no escalation).
+        let anchor = JournalEntry::ReplanRound {
+            round: 0,
+            shaper_mote_id: MoteId::from_bytes([0x7d; 32]),
+            base_prompt_ref: ContentRef::from_bytes([0x11; 32]),
+            corrected_prompt_ref: ContentRef::from_bytes([0x11; 32]),
+            warrant_ref: ContentRef::from_bytes([0x33; 32]),
+            model_id: String::new(),
+            failed_steps: smallvec::smallvec![],
+            escalation_reason_ref: None,
+            seq: 401,
+        };
+        assert_eq!(decode_entry(&encode_entry(&anchor).unwrap()).unwrap(), anchor);
+    }
+
+    #[test]
+    fn replan_round_rejects_over_cap_failed_steps() {
+        let failed: SmallVec<[MoteId; 4]> = (0..=MAX_REPLAN_FAILED_STEPS)
+            .map(|i| MoteId::from_bytes([u8::try_from(i % 256).unwrap(); 32]))
+            .collect();
+        let e = JournalEntry::ReplanRound {
+            round: 1,
+            shaper_mote_id: MoteId::from_bytes([1u8; 32]),
+            base_prompt_ref: ContentRef::from_bytes([0u8; 32]),
+            corrected_prompt_ref: ContentRef::from_bytes([0u8; 32]),
+            warrant_ref: ContentRef::from_bytes([0u8; 32]),
+            model_id: "m".to_string(),
+            failed_steps: failed,
+            escalation_reason_ref: None,
+            seq: 0,
+        };
+        assert!(matches!(
+            encode_entry(&e),
+            Err(EncodeError::ReplanRoundTooManyFailedSteps { .. })
+        ));
+    }
+
+    #[test]
+    fn replan_round_is_excluded_from_dedup_and_is_off_metadata() {
+        // kind 8 is not in the dedup index {1,2,4}; its idempotency_key is the ZERO
+        // sentinel and its mote_id slot carries the shaper id directly.
+        let shaper = MoteId::from_bytes([0x9a; 32]);
+        let e = JournalEntry::ReplanRound {
+            round: 3,
+            shaper_mote_id: shaper,
+            base_prompt_ref: ContentRef::from_bytes([0u8; 32]),
+            corrected_prompt_ref: ContentRef::from_bytes([0u8; 32]),
+            warrant_ref: ContentRef::from_bytes([0u8; 32]),
+            model_id: "m".to_string(),
+            failed_steps: smallvec::smallvec![],
+            escalation_reason_ref: None,
+            seq: 9,
+        };
+        assert_eq!(e.kind(), KIND_REPLAN_ROUND);
+        assert_eq!(e.idempotency_key(), &[0u8; 32]);
+        assert_eq!(e.mote_id(), shaper);
+        assert_eq!(e.seq(), 9);
     }
 
     #[test]

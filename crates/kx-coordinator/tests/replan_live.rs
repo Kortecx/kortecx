@@ -272,6 +272,74 @@ async fn all_children_commit_drives_no_replan() {
     assert!(after.is_empty(), "success ⇒ no re-plan round driven");
 }
 
+/// Commit `shaper` with a single-child decision, fail that child, and return the NEXT
+/// round's correction shaper if the coordinator drove one (`None` at budget exhaustion).
+async fn settle_one_round(
+    svc: &CoordinatorService,
+    store: &LocalFsContentStore,
+    shaper: &Mote,
+    w: &WarrantSpec,
+    worker: u64,
+) -> Option<Mote> {
+    let td = TopologyDecision {
+        children: vec![descriptor(10)],
+    };
+    let td_ref = store.put(&td.encode()).unwrap();
+    // Lease + commit the shaper pointing at its staged decision.
+    let leased = common::lease_work(svc, worker, MAC, 16).await;
+    assert_eq!(leased.len(), 1, "the round shaper is leasable");
+    let s: Mote = leased[0].mote.clone().unwrap().try_into().unwrap();
+    assert_eq!(s.id, shaper.id);
+    let o = commit_with_result(svc, shaper, warrant_ref_of(w), td_ref, worker).await;
+    assert_eq!(o, CommitOutcome::Committed as i32);
+    // Lease the child + dead-letter it → the round settles with a failure.
+    let child_items = common::lease_work(svc, worker, MAC, 16).await;
+    assert_eq!(child_items.len(), 1, "the single child materialized");
+    let child: Mote = child_items[0].mote.clone().unwrap().try_into().unwrap();
+    common::report_failure(svc, &child, worker, ProtoFailureReason::DeadLettered)
+        .await
+        .unwrap();
+    // The next round's shaper, if the coordinator drove one (and only one).
+    let next = common::lease_work(svc, worker, MAC, 16).await;
+    next.into_iter()
+        .next()
+        .map(|it| it.mote.unwrap().try_into().unwrap())
+}
+
+/// Every round fails ⇒ the chain is bounded at `MAX_SHAPER_ROUNDS` (4 total: round 0 + 3
+/// corrective rounds), then quiesces — no runaway re-plan / unbounded journal growth.
+#[tokio::test]
+async fn replan_chain_is_bounded_by_the_round_budget() {
+    let dir = TempDir::new().unwrap();
+    let w = warrant();
+    let def = shaper_def();
+    let shaper = shaper_mote(&def);
+
+    let (svc, store) = coordinator(&dir, &w);
+    common::register_run(&svc, [0x5a; 32]).await;
+    let worker = common::register(&svc, "w").await;
+    common::submit(&svc, &shaper, &w).await;
+
+    // Round 0 → 1 → 2 → 3 each fail and drive the next; round 3's failure drives NOTHING.
+    let mut current = shaper.clone();
+    let mut driven = 0u32; // corrective rounds beyond round 0
+    for _ in 0..6 {
+        match settle_one_round(&svc, &store, &current, &w, worker).await {
+            Some(next) => {
+                assert!(next.def.is_topology_shaper);
+                assert_ne!(next.id, current.id, "each round is a distinct shaper");
+                current = next;
+                driven += 1;
+            }
+            None => break,
+        }
+    }
+    assert_eq!(
+        driven, 3,
+        "round 0 + exactly 3 corrective rounds (MAX_SHAPER_ROUNDS=4), then quiesce"
+    );
+}
+
 /// Crash after the round-0 children settle with a failure (before the coordinator drives
 /// round 1) ⇒ recovery completes the interrupted round: round 1 is driven from committed
 /// facts alone, surviving the restart.
