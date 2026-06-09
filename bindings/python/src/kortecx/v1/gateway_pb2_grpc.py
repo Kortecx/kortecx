@@ -123,6 +123,11 @@ class KxGatewayStub(object):
                 request_serializer=kortecx_dot_v1_dot_gateway__pb2.QueryDatasetRequest.SerializeToString,
                 response_deserializer=kortecx_dot_v1_dot_gateway__pb2.QueryDatasetResponse.FromString,
                 _registered_method=True)
+        self.ListReplanRounds = channel.unary_unary(
+                '/kortecx.v1.KxGateway/ListReplanRounds',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.ListReplanRoundsRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.ListReplanRoundsResponse.FromString,
+                _registered_method=True)
 
 
 class KxGatewayServicer(object):
@@ -237,6 +242,13 @@ class KxGatewayServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def ListReplanRounds(self, request, context):
+        """PR-2c-2 additive (D120.6): re-plan-round observability (read-only).
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_KxGatewayServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -324,6 +336,11 @@ def add_KxGatewayServicer_to_server(servicer, server):
                     servicer.QueryDataset,
                     request_deserializer=kortecx_dot_v1_dot_gateway__pb2.QueryDatasetRequest.FromString,
                     response_serializer=kortecx_dot_v1_dot_gateway__pb2.QueryDatasetResponse.SerializeToString,
+            ),
+            'ListReplanRounds': grpc.unary_unary_rpc_method_handler(
+                    servicer.ListReplanRounds,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.ListReplanRoundsRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.ListReplanRoundsResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -789,6 +806,33 @@ class KxGateway(object):
             '/kortecx.v1.KxGateway/QueryDataset',
             kortecx_dot_v1_dot_gateway__pb2.QueryDatasetRequest.SerializeToString,
             kortecx_dot_v1_dot_gateway__pb2.QueryDatasetResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ListReplanRounds(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/ListReplanRounds',
+            kortecx_dot_v1_dot_gateway__pb2.ListReplanRoundsRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.ListReplanRoundsResponse.FromString,
             options,
             channel_credentials,
             insecure,

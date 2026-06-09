@@ -92,14 +92,26 @@ pub fn migrate_entry(
             found: from_version,
         });
     }
-    if from_version == JOURNAL_SCHEMA_VERSION {
-        // Current version: no transform, single source of truth for decode.
-        return Ok(decode_entry_with_def_hash(bytes, def_hash)?);
+    // Dispatch on the EXACT on-disk version — never fall an older version through a
+    // newer up-converter (a v6 capability body run through the v5→v6 step would
+    // double-append its `idempotency_class` byte). `from_version` is guaranteed in
+    // [MIN_SUPPORTED, CURRENT] by the guard above.
+    match from_version {
+        // v7 (current): no transform, the single source of truth for decode.
+        JOURNAL_SCHEMA_VERSION => Ok(decode_entry_with_def_hash(bytes, def_hash)?),
+        // v6 → v7: a PURE pass-through. Kinds 0..7 are byte-identical under v7 and
+        // `ReplanRound` (kind 8) is purely additive, so a v6 journal's existing
+        // bytes already decode correctly under v7 — no transform.
+        6 => Ok(decode_entry_with_def_hash(bytes, def_hash)?),
+        // v5 → v7: append the safe-default `idempotency_class` byte (the lone v5→v6
+        // delta); the result is v6-shaped, which decodes identically under v7.
+        5 => upconvert_v5_to_current(bytes, def_hash),
+        // Unreachable (guarded above); kept total + fail-closed.
+        other => Err(JournalError::SchemaVersionMismatch {
+            expected: JOURNAL_SCHEMA_VERSION,
+            found: other,
+        }),
     }
-    // The only older supported version today is v5 (MIN == 5, CURRENT == 6); when a
-    // future link lands, add an arm here. `from_version` is guaranteed in
-    // [MIN_SUPPORTED, CURRENT) at this point, i.e. exactly 5.
-    upconvert_v5_to_current(bytes, def_hash)
 }
 
 /// v5 → current up-converter. The lone transform is appending the safe-default

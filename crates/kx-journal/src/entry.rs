@@ -141,17 +141,36 @@ use smallvec::SmallVec;
 ///   `QuarantinedAtLeastOnce`) record the recovery outcome for an at-most-once
 ///   effect. No `Failed`-body layout change (`reason_class` is already a u8).
 ///
+/// **v7 (PR-2c-2, re-plan-live) changes** vs v6:
+/// - New `ReplanRound` entry kind (=8) — the durable record of a coordinator-driven
+///   model re-plan round, so a crash-then-recover re-derives the in-flight (not-yet-
+///   committed) replan shaper ONLY from committed journal facts (the durability
+///   finding that split PR-2c). Carries the round index, the round's shaper `MoteId`
+///   (the header slot), the `ContentRef`s of the immutable run base prompt + this
+///   round's corrected prompt + the round's `warrant_ref`, the resolved `model_id`,
+///   the failed step set that triggered the round, and an optional
+///   `escalation_reason_ref` (flag-a-human). Body is variable-length. The header
+///   `mote_id` slot carries the round's shaper id directly (a real Mote id, like
+///   `Proposed`/`Committed`); the `idempotency_key` slot is the all-zero sentinel.
+/// - `ReplanRound` does NOT participate in dedup-by-key (the dedup index stays
+///   `{1, 2, 4}`); it is an off-DAG metadata fact (folded as a `last_seq` advance +
+///   a `replan_rounds` record), never an identity input, never folded into the
+///   run-identity product digest. Strictly additive; `MAX_ENTRY_LEN` is unchanged.
+///
 /// The strict [`crate::SqliteJournal::open`] refuses any file whose
-/// `schema_version` is not exactly v6 (the loud-refusal contract is unchanged).
+/// `schema_version` is not exactly v7 (the loud-refusal contract is unchanged).
 ///
 /// **Migration (IMP-2, M2.x-E).** As of the schema-migration work, an older
 /// still-supported version is no longer a dead end: [`crate::migrate_entry`] /
 /// [`crate::ReplayJournal`] up-convert old entries to the current shape for
 /// replay/recovery, and [`crate::migrate_to`] rewrites an old journal into a fresh
-/// v6 one for resume-and-append. The product identity digest is invariant across
-/// migration; see [`crate::migrate_entry`] for the full contract and the
-/// supported version window ([`crate::MIN_SUPPORTED_SCHEMA_VERSION`]..=v6).
-pub const JOURNAL_SCHEMA_VERSION: u16 = 6;
+/// v7 one for resume-and-append. v6 → v7 is a pure pass-through (kinds 0..7 are
+/// byte-identical under v7; `ReplanRound` is purely additive); v5 → v7 appends the
+/// safe-default `idempotency_class` byte (the lone v5→v6 delta) and is then v7-valid.
+/// The product identity digest is invariant across migration; see
+/// [`crate::migrate_entry`] for the full contract and the supported version window
+/// ([`crate::MIN_SUPPORTED_SCHEMA_VERSION`]..=v7).
+pub const JOURNAL_SCHEMA_VERSION: u16 = 7;
 
 /// Fixed entry-header length in bytes (`journal-entry.md` §3).
 pub const HEADER_LEN: usize = 74;
@@ -236,6 +255,22 @@ pub const KIND_RUN_VERSIONS_RESOLVED: u8 = 6;
 /// never folded into the run-identity product digest, never gates.
 pub const KIND_DIGEST_SEALED: u8 = 7;
 
+/// `ReplanRound` entry-kind byte (NEW in v7; PR-2c-2, re-plan-live).
+///
+/// The durable record of a coordinator-driven model re-plan round: enough to
+/// re-derive the round's shaper Mote (its id, the round's corrected-prompt
+/// `ContentRef`, `warrant_ref`, `model_id`) ONLY from committed journal facts on a
+/// cold recovery, so an in-flight (not-yet-committed) replan round survives a
+/// coordinator crash. Variable-length body:
+/// `round(u32 LE) ‖ base_prompt_ref(32) ‖ corrected_prompt_ref(32) ‖
+/// warrant_ref(32) ‖ u16-prefixed model_id ‖ failed_count(u16) ‖ failed_count*32 ‖
+/// has_escalation(u8) ‖ [if 1: escalation_reason_ref(32)]`. The header `mote_id`
+/// slot carries the round's shaper id directly (a real Mote id, like
+/// `Proposed`/`Committed`); the `idempotency_key` slot is the all-zero sentinel.
+/// Does NOT participate in dedup-by-key (the dedup index stays `{1, 2, 4}`);
+/// off-DAG metadata, never an identity input, never folded into any digest.
+pub const KIND_REPLAN_ROUND: u8 = 8;
+
 /// Length in bytes of a run's `instance_id` (the registered run nonce).
 pub const INSTANCE_ID_LEN: usize = 16;
 
@@ -245,6 +280,18 @@ const RUN_REGISTERED_BODY_LEN: usize = INSTANCE_ID_LEN + 32 + 8;
 /// `DigestSealed` body length: `through_seq(u64 LE, 8) + state_digest(32)` = 40
 /// bytes (total entry = `HEADER_LEN` + 40 = 114 bytes).
 const DIGEST_SEALED_BODY_LEN: usize = 8 + 32;
+
+/// `ReplanRound` body fixed-prefix length: `round(u32, 4) + base_prompt_ref(32) +
+/// corrected_prompt_ref(32) + warrant_ref(32) + model_id_len(u16, 2) +
+/// failed_count(u16, 2)` = 104 bytes (before the variable model_id, failed-step
+/// ids, and optional escalation ref).
+const REPLAN_ROUND_PREFIX_LEN: usize = 4 + 32 + 32 + 32 + 2 + 2;
+
+/// Hard cap on a `ReplanRound`'s recorded failed-step ids — a `DoS` bound
+/// independent of the size cap. A round's failed children are bounded by the
+/// fan-out budget (`LoopBudget::max_children`, typically ≤ 8); 64 is generous
+/// headroom and keeps the entry far under [`MAX_ENTRY_LEN`].
+pub const MAX_REPLAN_FAILED_STEPS: usize = 64;
 
 /// The kind of tool a capability resolved as, mirrored as a closed `u8`-tagged
 /// enum so `kx-journal` need not depend on `kx-tool-registry` (the journal must
@@ -805,6 +852,61 @@ pub enum JournalEntry {
         /// fresh seal under the single-writer discipline.
         seq: u64,
     },
+
+    /// The durable record of a coordinator-driven model **re-plan round** (v7,
+    /// PR-2c-2, re-plan-live) — an append-only, off-DAG coordinator-metadata fact.
+    ///
+    /// When a topology shaper's children settle with ≥1 failure, the live
+    /// coordinator drives the next re-plan round: it materializes a round-namespaced
+    /// correction shaper and (BEFORE that shaper commits its own `TopologyDecision`)
+    /// appends this fact, so a crash between materialization and commit is
+    /// recoverable. `recover()` re-derives the entire replan chain ONLY from
+    /// committed facts: the round's shaper Mote is rebuilt from
+    /// `(round, corrected_prompt_ref, warrant_ref, model_id)` and re-inserted into
+    /// the dispatch admission set if it is not yet `Committed`. The `Committed` entry
+    /// stores only `mote_def_hash`, not the shaper's `config_subset` (the corrected
+    /// prompt), so without this fact a live-materialized round is lost on a crash —
+    /// the durability finding that split PR-2c into focused PRs.
+    ///
+    /// **Metadata, never identity** — never folded into `MoteId`/`input_data_id`/any
+    /// content-addressed digest; the projection folds it as a `last_seq`-advance plus
+    /// a `replan_rounds` record. Does NOT participate in dedup-by-key (the dedup
+    /// index stays `{1, 2, 4}`); the coordinator de-dups by `round`. The header
+    /// `mote_id` slot carries `shaper_mote_id` directly; the `idempotency_key` slot
+    /// is the all-zero sentinel; `nondeterminism` is the 0 sentinel.
+    ReplanRound {
+        /// The re-plan round index. `0` is the run's initial-plan anchor (records the
+        /// immutable base prompt + the run-fixed warrant for later rounds); `1..` are
+        /// the corrective rounds bounded by the coordinator's `MAX_SHAPER_ROUNDS`.
+        round: u32,
+        /// The round's shaper `MoteId` (also the header `mote_id` slot). Recovery
+        /// looks up its `state_of` to decide whether to re-materialize it.
+        shaper_mote_id: MoteId,
+        /// `ContentRef` of the run's IMMUTABLE base planning prompt — the
+        /// after-recovery chaining source for building the NEXT round's corrected
+        /// prompt (the base is the same every round; only the failures differ).
+        base_prompt_ref: ContentRef,
+        /// `ContentRef` of THIS round's corrected planning prompt (base + the
+        /// sorted, low-entropy failure tokens). Equals `base_prompt_ref` for round 0.
+        corrected_prompt_ref: ContentRef,
+        /// `blake3(canonical_bincode(WarrantSpec))` of the round's shaper warrant
+        /// (the run-fixed ceiling). Replay re-derives the warrant bit-for-bit.
+        warrant_ref: ContentRef,
+        /// The resolved model id the round's shaper runs (audit + reconstruction).
+        model_id: String,
+        /// The step ids that failed and triggered this round, MoteId-byte-sorted and
+        /// FROZEN at append (recovery rebuilds the corrected prompt from THIS, never
+        /// a fresh `children_of` scan that a late sibling could perturb). Empty for
+        /// round 0. Bounded by [`MAX_REPLAN_FAILED_STEPS`].
+        failed_steps: SmallVec<[MoteId; 4]>,
+        /// `Some(ref)` iff the model escalated (flag-a-human) for this round: the
+        /// `ContentRef` of the bounded escalation reason. The run quiesces; recovery
+        /// never feeds this into a planner prompt (a distinct field, not a corrected
+        /// prompt).
+        escalation_reason_ref: Option<ContentRef>,
+        /// Journal-assigned sequence (0 until appended).
+        seq: u64,
+    },
 }
 
 /// The all-zero sentinel returned as the dedupe key of a `RunRegistered` entry,
@@ -855,7 +957,8 @@ impl JournalEntry {
             | Self::EffectStaged { seq, .. }
             | Self::RunRegistered { seq, .. }
             | Self::RunVersionsResolved { seq, .. }
-            | Self::DigestSealed { seq, .. } => *seq,
+            | Self::DigestSealed { seq, .. }
+            | Self::ReplanRound { seq, .. } => *seq,
         }
     }
 
@@ -878,12 +981,13 @@ impl JournalEntry {
             | Self::EffectStaged {
                 idempotency_key, ..
             } => idempotency_key,
-            // RunRegistered / RunVersionsResolved / DigestSealed do not dedup;
-            // return the all-zero sentinel (kinds 5, 6, 7 are excluded from the
-            // dedup gate).
+            // RunRegistered / RunVersionsResolved / DigestSealed / ReplanRound do
+            // not dedup; return the all-zero sentinel (kinds 5, 6, 7, 8 are excluded
+            // from the dedup gate).
             Self::RunRegistered { .. }
             | Self::RunVersionsResolved { .. }
-            | Self::DigestSealed { .. } => &ZERO_IDEMPOTENCY_KEY,
+            | Self::DigestSealed { .. }
+            | Self::ReplanRound { .. } => &ZERO_IDEMPOTENCY_KEY,
         }
     }
 
@@ -902,6 +1006,10 @@ impl JournalEntry {
             Self::RunRegistered { instance_id, .. }
             | Self::RunVersionsResolved { instance_id, .. } => run_root_id(instance_id),
             Self::DigestSealed { through_seq, .. } => seal_root_id(*through_seq),
+            // The header `mote_id` slot carries the round's shaper id directly (a
+            // real Mote id, like Proposed/Committed) — recovery uses it to look up
+            // the shaper's `state_of`.
+            Self::ReplanRound { shaper_mote_id, .. } => *shaper_mote_id,
         }
     }
 
@@ -917,6 +1025,7 @@ impl JournalEntry {
             Self::RunRegistered { .. } => KIND_RUN_REGISTERED,
             Self::RunVersionsResolved { .. } => KIND_RUN_VERSIONS_RESOLVED,
             Self::DigestSealed { .. } => KIND_DIGEST_SEALED,
+            Self::ReplanRound { .. } => KIND_REPLAN_ROUND,
         }
     }
 }
@@ -951,7 +1060,7 @@ pub enum DecodeError {
         got: usize,
     },
     /// The kind discriminant byte is not one of the known values
-    /// (Proposed=0 .. DigestSealed=7).
+    /// (Proposed=0 .. ReplanRound=8).
     #[error("unknown kind discriminant: {0}")]
     UnknownKind(u8),
     /// The `nondeterminism` discriminant byte is not one of the three known values.
@@ -1006,6 +1115,19 @@ pub enum DecodeError {
     /// A `RunVersionsResolved` entry's UTF-8 string field is not valid UTF-8.
     #[error("RunVersionsResolved string field is not valid UTF-8")]
     RunVersionsInvalidUtf8,
+    /// A `ReplanRound` entry declares more failed steps than
+    /// [`MAX_REPLAN_FAILED_STEPS`] (v7, PR-2c-2) — a `DoS` bound.
+    #[error(
+        "ReplanRound failed-step count {got} exceeds max {}",
+        MAX_REPLAN_FAILED_STEPS
+    )]
+    ReplanRoundTooManyFailedSteps {
+        /// The declared failed-step count.
+        got: usize,
+    },
+    /// A `ReplanRound` entry's `has_escalation` flag is neither 0 nor 1 (v7).
+    #[error("ReplanRound has_escalation flag is not boolean: {0}")]
+    NonBooleanHasEscalation(u8),
     /// Trailing bytes after a complete entry (§2 no-trailing-data rule).
     #[error("trailing bytes after entry: {0} extra")]
     TrailingBytes(usize),
@@ -1039,6 +1161,26 @@ pub enum EncodeError {
         MAX_ENTRY_LEN
     )]
     RunVersionsTooLarge {
+        /// The encoded entry's byte length.
+        got: usize,
+    },
+    /// A `ReplanRound` entry declares more failed steps than
+    /// [`MAX_REPLAN_FAILED_STEPS`] — a `DoS` bound independent of the size cap.
+    #[error(
+        "ReplanRound failed-step count {got} exceeds max {}",
+        MAX_REPLAN_FAILED_STEPS
+    )]
+    ReplanRoundTooManyFailedSteps {
+        /// The over-long failed-step count the caller requested.
+        got: usize,
+    },
+    /// A `ReplanRound` entry would exceed the absolute size cap ([`MAX_ENTRY_LEN`])
+    /// — a pathologically large model id.
+    #[error(
+        "ReplanRound entry exceeds size cap: {got} bytes > {} max",
+        MAX_ENTRY_LEN
+    )]
+    ReplanRoundTooLarge {
         /// The encoded entry's byte length.
         got: usize,
     },
@@ -1122,6 +1264,14 @@ pub fn encode_entry(entry: &JournalEntry) -> Result<Vec<u8>, EncodeError> {
         JournalEntry::DigestSealed {
             through_seq, seq, ..
         } => (seal_root_id(*through_seq), ZERO_IDEMPOTENCY_KEY, *seq, 0),
+        // v7 (PR-2c-2): the header `mote_id` slot carries the round's shaper id
+        // directly; all-zero idempotency key (kind 8 does not dedup), 0 nd (a
+        // re-plan-round fact is not a Mote).
+        JournalEntry::ReplanRound {
+            shaper_mote_id,
+            seq,
+            ..
+        } => (*shaper_mote_id, ZERO_IDEMPOTENCY_KEY, *seq, 0),
     };
     out.extend_from_slice(mote_id_for_header.as_bytes());
     out.extend_from_slice(&idempotency_key);
@@ -1242,6 +1392,47 @@ pub fn encode_entry(entry: &JournalEntry) -> Result<Vec<u8>, EncodeError> {
             // v5 (M2.2c): body = through_seq(u64 LE) ‖ state_digest(32) = 40 bytes.
             out.extend_from_slice(&through_seq.to_le_bytes());
             out.extend_from_slice(state_digest);
+        }
+        JournalEntry::ReplanRound {
+            round,
+            base_prompt_ref,
+            corrected_prompt_ref,
+            warrant_ref,
+            model_id,
+            failed_steps,
+            escalation_reason_ref,
+            ..
+        } => {
+            // v7 (PR-2c-2): body = round(u32 LE) ‖ base_prompt_ref(32) ‖
+            // corrected_prompt_ref(32) ‖ warrant_ref(32) ‖ u16-prefixed model_id ‖
+            // failed_count(u16) ‖ failed_count*32 ‖ has_escalation(u8) ‖ [ref(32)].
+            if failed_steps.len() > MAX_REPLAN_FAILED_STEPS {
+                return Err(EncodeError::ReplanRoundTooManyFailedSteps {
+                    got: failed_steps.len(),
+                });
+            }
+            out.extend_from_slice(&round.to_le_bytes());
+            out.extend_from_slice(base_prompt_ref.as_bytes());
+            out.extend_from_slice(corrected_prompt_ref.as_bytes());
+            out.extend_from_slice(warrant_ref.as_bytes());
+            push_len_prefixed_str(&mut out, model_id)?;
+            let count = u16::try_from(failed_steps.len()).expect("checked above");
+            out.extend_from_slice(&count.to_le_bytes());
+            for id in failed_steps {
+                out.extend_from_slice(id.as_bytes());
+            }
+            match escalation_reason_ref {
+                None => out.push(0u8),
+                Some(r) => {
+                    out.push(1u8);
+                    out.extend_from_slice(r.as_bytes());
+                }
+            }
+            // Pathological-id guard (mirrors RunVersionsResolved) — refuse rather
+            // than over-cap a single oversize entry.
+            if out.len() > MAX_ENTRY_LEN {
+                return Err(EncodeError::ReplanRoundTooLarge { got: out.len() });
+            }
         }
     }
 
@@ -1566,6 +1757,59 @@ pub fn decode_entry_with_def_hash(
                 seq,
             })
         }
+        KIND_REPLAN_ROUND => {
+            // v7 (PR-2c-2): variable-length body. Cursor-based parse with strict
+            // bounds at every read; reject trailing bytes at the end. The header
+            // `mote_id` slot IS the round's shaper id (read directly, like
+            // Proposed/Committed — no synthetic root to re-derive).
+            if body.len() < REPLAN_ROUND_PREFIX_LEN {
+                return Err(DecodeError::BodyTooShort {
+                    kind,
+                    got: body.len(),
+                    expected: REPLAN_ROUND_PREFIX_LEN,
+                });
+            }
+            let shaper_mote_id = mote_id;
+            let round = u32::from_le_bytes(body[..4].try_into().expect("4 bytes"));
+            let mut cursor = 4usize;
+            let base_prompt_ref = ContentRef::from_bytes(read_array32(body, &mut cursor, kind)?);
+            let corrected_prompt_ref =
+                ContentRef::from_bytes(read_array32(body, &mut cursor, kind)?);
+            let warrant_ref = ContentRef::from_bytes(read_array32(body, &mut cursor, kind)?);
+            let model_id = read_len_prefixed_str(body, &mut cursor, kind)?;
+            let failed_count = read_u16(body, &mut cursor, kind)? as usize;
+            if failed_count > MAX_REPLAN_FAILED_STEPS {
+                return Err(DecodeError::ReplanRoundTooManyFailedSteps { got: failed_count });
+            }
+            let mut failed_steps: SmallVec<[MoteId; 4]> = SmallVec::with_capacity(failed_count);
+            for _ in 0..failed_count {
+                failed_steps.push(MoteId::from_bytes(read_array32(body, &mut cursor, kind)?));
+            }
+            let has_escalation = read_u8(body, &mut cursor, kind)?;
+            let escalation_reason_ref = match has_escalation {
+                0 => None,
+                1 => Some(ContentRef::from_bytes(read_array32(
+                    body,
+                    &mut cursor,
+                    kind,
+                )?)),
+                other => return Err(DecodeError::NonBooleanHasEscalation(other)),
+            };
+            if cursor != body.len() {
+                return Err(DecodeError::TrailingBytes(body.len() - cursor));
+            }
+            Ok(JournalEntry::ReplanRound {
+                round,
+                shaper_mote_id,
+                base_prompt_ref,
+                corrected_prompt_ref,
+                warrant_ref,
+                model_id,
+                failed_steps,
+                escalation_reason_ref,
+                seq,
+            })
+        }
         other => Err(DecodeError::UnknownKind(other)),
     }
 }
@@ -1617,6 +1861,20 @@ fn read_u8(body: &[u8], cursor: &mut usize, kind: u8) -> Result<u8, DecodeError>
     let b = body[*cursor];
     *cursor += 1;
     Ok(b)
+}
+
+/// Read a little-endian `u16` at `*cursor`, advancing it.
+fn read_u16(body: &[u8], cursor: &mut usize, kind: u8) -> Result<u16, DecodeError> {
+    if body.len() < *cursor + 2 {
+        return Err(DecodeError::BodyTooShort {
+            kind,
+            got: body.len(),
+            expected: *cursor + 2,
+        });
+    }
+    let v = u16::from_le_bytes(body[*cursor..*cursor + 2].try_into().expect("2 bytes"));
+    *cursor += 2;
+    Ok(v)
 }
 
 /// Read a 32-byte array at `*cursor`, advancing it.
@@ -1957,6 +2215,84 @@ mod tests {
             seq: 300,
         };
         assert_eq!(decode_entry(&encode_entry(&rr).unwrap()).unwrap(), rr);
+
+        // v7 (PR-2c-2): ReplanRound — with failed steps + an escalation ref.
+        let rp = JournalEntry::ReplanRound {
+            round: 2,
+            shaper_mote_id: MoteId::from_bytes([0x7c; 32]),
+            base_prompt_ref: ContentRef::from_bytes([0x11; 32]),
+            corrected_prompt_ref: ContentRef::from_bytes([0x22; 32]),
+            warrant_ref: ContentRef::from_bytes([0x33; 32]),
+            model_id: "kx-serve:qwen3-4b".to_string(),
+            failed_steps: smallvec::smallvec![
+                MoteId::from_bytes([0x44; 32]),
+                MoteId::from_bytes([0x55; 32]),
+            ],
+            escalation_reason_ref: Some(ContentRef::from_bytes([0x66; 32])),
+            seq: 400,
+        };
+        assert_eq!(decode_entry(&encode_entry(&rp).unwrap()).unwrap(), rp);
+
+        // v7: ReplanRound — the round-0 anchor shape (no failures, no escalation).
+        let anchor = JournalEntry::ReplanRound {
+            round: 0,
+            shaper_mote_id: MoteId::from_bytes([0x7d; 32]),
+            base_prompt_ref: ContentRef::from_bytes([0x11; 32]),
+            corrected_prompt_ref: ContentRef::from_bytes([0x11; 32]),
+            warrant_ref: ContentRef::from_bytes([0x33; 32]),
+            model_id: String::new(),
+            failed_steps: smallvec::smallvec![],
+            escalation_reason_ref: None,
+            seq: 401,
+        };
+        assert_eq!(
+            decode_entry(&encode_entry(&anchor).unwrap()).unwrap(),
+            anchor
+        );
+    }
+
+    #[test]
+    fn replan_round_rejects_over_cap_failed_steps() {
+        let failed: SmallVec<[MoteId; 4]> = (0..=MAX_REPLAN_FAILED_STEPS)
+            .map(|i| MoteId::from_bytes([u8::try_from(i % 256).unwrap(); 32]))
+            .collect();
+        let e = JournalEntry::ReplanRound {
+            round: 1,
+            shaper_mote_id: MoteId::from_bytes([1u8; 32]),
+            base_prompt_ref: ContentRef::from_bytes([0u8; 32]),
+            corrected_prompt_ref: ContentRef::from_bytes([0u8; 32]),
+            warrant_ref: ContentRef::from_bytes([0u8; 32]),
+            model_id: "m".to_string(),
+            failed_steps: failed,
+            escalation_reason_ref: None,
+            seq: 0,
+        };
+        assert!(matches!(
+            encode_entry(&e),
+            Err(EncodeError::ReplanRoundTooManyFailedSteps { .. })
+        ));
+    }
+
+    #[test]
+    fn replan_round_is_excluded_from_dedup_and_is_off_metadata() {
+        // kind 8 is not in the dedup index {1,2,4}; its idempotency_key is the ZERO
+        // sentinel and its mote_id slot carries the shaper id directly.
+        let shaper = MoteId::from_bytes([0x9a; 32]);
+        let e = JournalEntry::ReplanRound {
+            round: 3,
+            shaper_mote_id: shaper,
+            base_prompt_ref: ContentRef::from_bytes([0u8; 32]),
+            corrected_prompt_ref: ContentRef::from_bytes([0u8; 32]),
+            warrant_ref: ContentRef::from_bytes([0u8; 32]),
+            model_id: "m".to_string(),
+            failed_steps: smallvec::smallvec![],
+            escalation_reason_ref: None,
+            seq: 9,
+        };
+        assert_eq!(e.kind(), KIND_REPLAN_ROUND);
+        assert_eq!(e.idempotency_key(), &[0u8; 32]);
+        assert_eq!(e.mote_id(), shaper);
+        assert_eq!(e.seq(), 9);
     }
 
     #[test]

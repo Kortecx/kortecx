@@ -141,6 +141,34 @@ pub struct RunResolvedVersions {
     pub capability: Option<kx_journal::ResolvedCapabilityRecord>,
 }
 
+/// One re-plan-round run-metadata record (v7, PR-2c-2, re-plan-live), folded from a
+/// `ReplanRound` entry. **Audit/lineage + recovery metadata, never identity** — no
+/// scheduling/identity/digest decision reads it. Off the Mote-DAG. The coordinator's
+/// `recover_replan_chain` reads these to rebuild the round's shaper Mote
+/// deterministically from committed facts. Surfaced by
+/// [`crate::Projection::replan_rounds`] / [`crate::Projection::latest_replan_round`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReplanRoundRecord {
+    /// The re-plan round index (`0` = the run's initial-plan anchor; `1..` corrective).
+    pub round: u32,
+    /// The round's shaper `MoteId`.
+    pub shaper_mote_id: MoteId,
+    /// `ContentRef` of the run's immutable base planning prompt.
+    pub base_prompt_ref: ContentRef,
+    /// `ContentRef` of this round's corrected planning prompt.
+    pub corrected_prompt_ref: ContentRef,
+    /// The round's shaper `warrant_ref` (run-fixed ceiling).
+    pub warrant_ref: ContentRef,
+    /// The resolved model id the round's shaper runs.
+    pub model_id: String,
+    /// The step ids that failed and triggered this round (MoteId-byte-sorted, frozen).
+    pub failed_steps: Vec<MoteId>,
+    /// `Some(ref)` iff the model escalated (flag-a-human) for this round.
+    pub escalation_reason_ref: Option<ContentRef>,
+    /// The entry's journal seq (audit/order).
+    pub seq: u64,
+}
+
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct State {
     /// Per-MoteId info — declared, committed, and any in-flight state.
@@ -158,6 +186,10 @@ pub(crate) struct State {
     /// entry folds (one per resolved capability). Off-DAG; O(1) per append.
     /// Audit/lineage only — never an identity/scheduling/digest input.
     pub(crate) run_resolved_versions: Vec<RunResolvedVersions>,
+    /// Re-plan-round metadata (PR-2c-2), appended as each `ReplanRound` entry folds.
+    /// Off-DAG; O(1) per append. Recovery + audit only — never an
+    /// identity/scheduling/digest input.
+    pub(crate) replan_rounds: Vec<ReplanRoundRecord>,
 }
 
 impl State {

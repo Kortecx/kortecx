@@ -24,12 +24,15 @@ use kx_journal::{
     FailureReason, IdempotencyClassTag, Journal, JournalEntry, RepudiationReason,
     ResolvedCapabilityRecord, ResolvedKindTag, INSTANCE_ID_LEN,
 };
-use kx_mote::{EdgeKind, Mote, MoteDef, MoteId, NdClass};
-use kx_projection::{MoteState, Projection};
+use kx_mote::{ConfigKey, EdgeKind, ModelId, Mote, MoteDef, MoteId, NdClass, PROMPT_KEY};
+use kx_projection::{MoteState, Projection, RegisterMote, ReplanRoundRecord};
 use kx_refusal::{validate_mote_submission, ToolResolution};
 use kx_scheduler::{LocalPlacement, Placement, Scheduler, SchedulerError, WorkerId};
 use kx_tool_registry::{IdempotencyClass, ToolKind, ToolRegistry, ToolResolutionEvent};
-use kx_warrant::{warrant_ref_of, ExecutorClass, RoleRegistry, WarrantSpec};
+use kx_warrant::{
+    decode_warrant, encode_warrant, warrant_ref_of, ExecutorClass, RoleRegistry, WarrantSpec,
+};
+use smallvec::SmallVec;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::clock::Clock;
@@ -968,6 +971,18 @@ fn core_loop<J: Journal>(
         defs: BTreeMap::new(),
         tracker: LeaseTracker::default(),
     };
+    // PR-2c-2: re-derive the live re-plan chain from committed facts (re-materialize
+    // committed round shapers' children, re-insert the in-flight round shaper, and
+    // complete any round interrupted by the crash). A no-op when no run has driven a
+    // re-plan round (no round-0 anchor) — the canonical demo path is untouched.
+    recover_replan_chain(
+        journal,
+        store,
+        shaper_roles,
+        &mut projection,
+        &mut folded_through,
+        &mut dispatch,
+    );
 
     while let Some(first) = inbox.blocking_recv() {
         // Drain everything immediately available (up to MAX_DRAIN) so consecutive
@@ -1028,6 +1043,16 @@ fn core_loop<J: Journal>(
             &mut folded_through,
             &mut dispatch,
             &mut pending,
+        );
+        // PR-2c-2: after this drain's commits + dead-letters fold, drive any re-plan
+        // round that just settled (a shaper's children all reached a terminal state
+        // with ≥1 failure). Idempotent + O(rounds≤4); a no-op without a round-0 anchor.
+        settle_replan_rounds(
+            journal,
+            store,
+            &mut projection,
+            &mut folded_through,
+            &mut dispatch,
         );
     }
 }
@@ -1329,6 +1354,20 @@ fn submit_and_capture<J: Journal>(
                 events,
             );
         }
+        // PR-2c-2: enable the live re-plan loop for a prompt-carrying topology shaper by
+        // writing its run-fixed round-0 anchor (a no-op for non-shapers / prompt-less
+        // shapers / runs with no content store). FRESH-submit only — a re-submit re-derives.
+        if let (Some(def), Some(store)) = (shaper_def.as_ref(), store) {
+            write_replan_anchor(
+                journal,
+                store,
+                projection,
+                folded_through,
+                shaper_mote_id,
+                def,
+                &shaper_warrant,
+            );
+        }
     }
 
     // PR-2b recovery: if this submit is a shaper that is ALREADY committed (a re-submit
@@ -1398,6 +1437,313 @@ fn materialize_committed_shaper(
             );
         }
     }
+}
+
+/// The bounded re-plan round budget (PR-2c-2): round 0 (the recipe's own shaper) +
+/// up to 3 corrective rounds = 4 TOTAL shaper invocations, mirroring the harness
+/// `LoopBudget::max_rounds` default (4) byte-for-byte so the live coordinator and the
+/// harness drive identical-length chains (the cross-impl equivalence pin, R49).
+const MAX_SHAPER_ROUNDS: u32 = 4;
+
+/// A Mote is **terminal** (no longer in-flight) once it is not `Pending`/`Scheduled`
+/// — i.e. it committed, failed (dead-lettered), was repudiated, or went inconsistent.
+/// A round settles once every declared child is terminal.
+fn is_terminal(state: MoteState) -> bool {
+    !matches!(state, MoteState::Pending | MoteState::Scheduled)
+}
+
+/// Register + admit a re-plan round's shaper Mote into the projection (so it enters
+/// `ready_set`) and the dispatch admission set (`Dispatch.defs`, so `lease_ready` can
+/// hand it to a worker). The shaper is EDGE-FREE (empty parents) — immediately ready
+/// — exactly like a client-submitted root shaper. Idempotent: `register_mote`
+/// overwrites and the id-keyed dispatch inserts are no-ops on a repeat.
+fn materialize_replan_shaper(
+    projection: &mut Projection,
+    dispatch: &mut Dispatch,
+    shaper: &Mote,
+    warrant_ref: ContentRef,
+    warrant: WarrantSpec,
+) {
+    projection.register_mote(RegisterMote {
+        mote_id: shaper.id,
+        nd_class: shaper.def.nd_class,
+        effect_pattern: shaper.def.effect_pattern,
+        critic_for: None,
+        is_topology_shaper: true,
+        parents: SmallVec::new(),
+        warrant_ref,
+    });
+    dispatch.submitted.insert(shaper.id);
+    dispatch.defs.insert(shaper.id, (shaper.clone(), warrant));
+}
+
+/// Write the run's round-0 re-plan ANCHOR (PR-2c-2) for a freshly-submitted, prompt-carrying
+/// topology shaper: content-store the run-fixed base prompt + warrant and append a durable
+/// `ReplanRound{round:0}`. This ENABLES the live re-plan-on-failure loop for the run (the
+/// settle pass is inert without an anchor) and makes the chain crash-recoverable from
+/// committed facts alone. Idempotent — an existing round-0 anchor for this shaper is a no-op
+/// (a re-submit / replay re-derives the same content refs). A shaper carrying no planning
+/// prompt is not anchored (re-plan needs the immutable base prompt); the demo + non-shaper
+/// submits are untouched (this is gated on `is_topology_shaper` + a present prompt).
+fn write_replan_anchor<J: Journal>(
+    journal: &J,
+    store: &LocalFsContentStore,
+    projection: &mut Projection,
+    folded_through: &mut u64,
+    shaper_id: MoteId,
+    shaper_def: &MoteDef,
+    warrant: &WarrantSpec,
+) {
+    if !shaper_def.is_topology_shaper {
+        return;
+    }
+    if projection
+        .replan_rounds()
+        .iter()
+        .any(|r| r.round == 0 && r.shaper_mote_id == shaper_id)
+    {
+        return; // already anchored (idempotent)
+    }
+    let Some(prompt) = shaper_def
+        .config_subset
+        .get(&ConfigKey(PROMPT_KEY.to_string()))
+    else {
+        return; // no planning prompt ⇒ this shaper is not re-plan-able
+    };
+    let (Ok(base_ref), Ok(warrant_ref)) =
+        (store.put(&prompt.0), store.put(&encode_warrant(warrant)))
+    else {
+        return; // a store fault leaves the run un-anchored (re-plan simply stays off) — fail-safe
+    };
+    let entry = JournalEntry::ReplanRound {
+        round: 0,
+        shaper_mote_id: shaper_id,
+        base_prompt_ref: base_ref,
+        corrected_prompt_ref: base_ref,
+        warrant_ref,
+        model_id: shaper_def.model_id.0.clone(),
+        failed_steps: SmallVec::new(),
+        escalation_reason_ref: None,
+        seq: 0,
+    };
+    match journal.append(entry) {
+        Ok(durable) => {
+            let seq = durable.seq();
+            if seq > *folded_through && projection.fold(&durable).is_ok() {
+                *folded_through = seq;
+            }
+        }
+        Err(error) => tracing::error!(%error, "failed to append round-0 ReplanRound anchor"),
+    }
+}
+
+/// Drive any newly-settled re-plan round (PR-2c-2). **Idempotent + deterministic**:
+/// when the latest tracked round's shaper has fully settled with ≥1 failed child,
+/// it commits a durable `ReplanRound` fact (the crash-safety anchor) and materializes
+/// the next round's shaper. Runs LIVE (after each drain's commits + dead-letters) AND
+/// as the recovery catch-up (completing a round interrupted by a crash — the fact +
+/// the rebuilt shaper are a pure function of committed facts, so re-driving converges
+/// to the same chain). A no-op unless a round-0 anchor exists (the gateway writes it at
+/// provision), so non-replan runs + the canonical demo are byte-untouched.
+fn settle_replan_rounds<J: Journal>(
+    journal: &J,
+    store: Option<&LocalFsContentStore>,
+    projection: &mut Projection,
+    folded_through: &mut u64,
+    dispatch: &mut Dispatch,
+) {
+    let Some(store) = store else {
+        return;
+    };
+    let rounds: Vec<ReplanRoundRecord> = projection.replan_rounds().to_vec();
+    // The run-fixed anchor (round 0) carries base_prompt_ref / warrant_ref / model_id.
+    let Some(anchor) = rounds.iter().find(|r| r.round == 0) else {
+        return; // no anchor ⇒ re-plan not enabled for this run
+    };
+    // Only the latest round can newly-settle (an earlier round was already settled
+    // when it spawned its successor). Budget + dedup off the highest round.
+    let Some(latest) = rounds.iter().max_by_key(|r| r.round) else {
+        return;
+    };
+    let round = latest.round;
+    let shaper_id = latest.shaper_mote_id;
+
+    // Budget: round N may spawn N+1 only while N+1 < MAX_SHAPER_ROUNDS.
+    if round + 1 >= MAX_SHAPER_ROUNDS {
+        return;
+    }
+    // Dedup: a successor round already exists (live double-settle or a recovery re-run).
+    if rounds.iter().any(|r| r.round == round + 1) {
+        return;
+    }
+    // The shaper must have committed its TopologyDecision (else no children exist yet).
+    if projection.state_of(&shaper_id) != MoteState::Committed {
+        return;
+    }
+    // The round settles only once EVERY declared child is terminal. (A cold re-fold
+    // restores failed children's parent edges via the recovery pass BEFORE this runs,
+    // so `children_of` is complete here.)
+    let children = projection.children_of(&shaper_id);
+    if children.is_empty() {
+        return; // a shaper with zero children (an inert FlagHuman / empty plan) quiesces
+    }
+    if !children
+        .iter()
+        .all(|(c, _)| is_terminal(projection.state_of(c)))
+    {
+        return; // round still in flight
+    }
+
+    // This round's failures, MoteId-byte-sorted (deterministic corrected prompt → a
+    // replay-stable next-round shaper identity, R49).
+    let mut failures: Vec<(MoteId, Option<FailureReason>)> = children
+        .iter()
+        .map(|(c, _)| *c)
+        .filter(|c| projection.state_of(c) == MoteState::Failed)
+        .map(|c| (c, projection.failure_reason_of(&c)))
+        .collect();
+    failures.sort_by(|a, b| a.0.as_bytes().cmp(b.0.as_bytes()));
+    if failures.is_empty() {
+        return; // every step committed — success, no re-plan
+    }
+
+    // Build the next round (N+1) from the run-fixed anchor. Any I/O fault fails closed
+    // (the round simply doesn't advance this pass; a later pass retries).
+    let Ok(base_bytes) = store.get(&anchor.base_prompt_ref) else {
+        return;
+    };
+    let Ok(base_prompt) = std::str::from_utf8(base_bytes.as_ref()) else {
+        return;
+    };
+    let Ok(warrant_bytes) = store.get(&anchor.warrant_ref) else {
+        return;
+    };
+    let Ok(warrant) = decode_warrant(warrant_bytes.as_ref()) else {
+        return;
+    };
+    let next_round = round + 1;
+    let corrected = crate::replan_shape::corrected_prompt(base_prompt, &failures);
+    let Ok(corrected_ref) = store.put(corrected.as_bytes()) else {
+        return;
+    };
+    let model_id = ModelId(anchor.model_id.clone());
+    let shaper = crate::replan_shape::build_replan_shaper(&model_id, &corrected, next_round);
+    let failed_steps: SmallVec<[MoteId; 4]> = failures.iter().map(|(id, _)| *id).collect();
+
+    // Commit the durable ReplanRound fact + fold it in-hand (the crash-safety anchor —
+    // recovery re-derives this round from it). Append failures BEFORE materializing so
+    // a crash after this point resumes from the fact.
+    let entry = JournalEntry::ReplanRound {
+        round: next_round,
+        shaper_mote_id: shaper.id,
+        base_prompt_ref: anchor.base_prompt_ref,
+        corrected_prompt_ref: corrected_ref,
+        warrant_ref: anchor.warrant_ref,
+        model_id: anchor.model_id.clone(),
+        failed_steps,
+        escalation_reason_ref: None,
+        seq: 0,
+    };
+    let durable = match journal.append(entry) {
+        Ok(d) => d,
+        Err(error) => {
+            tracing::error!(%error, round = next_round, "failed to append ReplanRound fact");
+            return;
+        }
+    };
+    let seq = durable.seq();
+    if seq > *folded_through {
+        if let Err(error) = projection.fold(&durable) {
+            tracing::error!(%error, "failed to fold ReplanRound fact");
+            return;
+        }
+        *folded_through = seq;
+    }
+    // Materialize the round-(N+1) shaper (empty parents ⇒ immediately leasable). The
+    // worker runs the model → commits a TopologyDecision → `flush_commits` materializes
+    // its children, and a later settle pass drives the round after THIS one.
+    materialize_replan_shaper(projection, dispatch, &shaper, anchor.warrant_ref, warrant);
+    tracing::info!(round = next_round, shaper = ?shaper.id, "re-plan round materialized");
+}
+
+/// Recover the live re-plan chain from committed facts after a restart (PR-2c-2).
+/// Ordered because a `Failed` fold registers no parent edge, so `children_of(shaper)`
+/// is EMPTY for a failed (never-committed) child on a cold re-fold until its edge is
+/// restored: **Phase A** re-materializes every committed round≥1 shaper's children
+/// (restoring the edges settlement reads); **Phase B** re-inserts the latest, still
+/// in-flight round shaper into the dispatch admission set (re-leased afresh);
+/// **Phase C** drives any un-acted settled round (a crash after the children failed but
+/// before the next `ReplanRound` fact). A no-op unless a round-0 anchor exists.
+///
+/// (Round 0 = the client's own shaper; its `config_subset` is not journaled, so its
+/// children re-materialize via the existing idempotent client re-submit path — exactly
+/// as PR-2b recovery. Rounds ≥1 are fully self-contained here.)
+fn recover_replan_chain<J: Journal>(
+    journal: &J,
+    store: Option<&LocalFsContentStore>,
+    shaper_roles: Option<&dyn RoleRegistry>,
+    projection: &mut Projection,
+    folded_through: &mut u64,
+    dispatch: &mut Dispatch,
+) {
+    let (Some(store), Some(roles)) = (store, shaper_roles) else {
+        return;
+    };
+    let rounds: Vec<ReplanRoundRecord> = projection.replan_rounds().to_vec();
+    if rounds.is_empty() {
+        return;
+    }
+
+    // Phase A — re-materialize committed round≥1 shapers' children (restore edges).
+    for r in rounds.iter().filter(|r| r.round >= 1) {
+        if projection.state_of(&r.shaper_mote_id) != MoteState::Committed {
+            continue;
+        }
+        match crate::materialize::rebuild_replan_shaper(store, r) {
+            Ok((shaper, warrant)) => {
+                materialize_committed_shaper(
+                    projection,
+                    dispatch,
+                    store,
+                    roles,
+                    shaper.id,
+                    &shaper.def,
+                    &warrant,
+                );
+            }
+            Err(reason) => {
+                tracing::error!(round = r.round, %reason, "re-plan shaper rebuild failed on recovery");
+            }
+        }
+    }
+
+    // Phase B — the latest round shaper, if still in-flight (not committed), is
+    // re-inserted so a worker can re-lease it (it was lost from dispatch.defs on restart).
+    if let Some(latest) = rounds
+        .iter()
+        .filter(|r| r.round >= 1)
+        .max_by_key(|r| r.round)
+    {
+        if projection.state_of(&latest.shaper_mote_id) != MoteState::Committed {
+            match crate::materialize::rebuild_replan_shaper(store, latest) {
+                Ok((shaper, warrant)) => {
+                    materialize_replan_shaper(
+                        projection,
+                        dispatch,
+                        &shaper,
+                        latest.warrant_ref,
+                        warrant,
+                    );
+                }
+                Err(reason) => {
+                    tracing::error!(round = latest.round, %reason, "in-flight re-plan shaper rebuild failed on recovery");
+                }
+            }
+        }
+    }
+
+    // Phase C — complete an interrupted settle (idempotent; dedups on the durable fact).
+    settle_replan_rounds(journal, Some(store), projection, folded_through, dispatch);
 }
 
 /// Resolve the warrant's tool grants ONCE per fresh submit (canonical

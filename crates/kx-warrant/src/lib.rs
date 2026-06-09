@@ -102,7 +102,7 @@ pub use classes::{ExecutorClass, FsMode, MoteClass};
 pub use errors::{NarrowingError, ToolDenied};
 pub use fields::{Host, WarrantField};
 pub use narrow::{intersect, narrow};
-pub use refs::{role_id_of, warrant_ref_of};
+pub use refs::{decode_warrant, encode_warrant, role_id_of, warrant_ref_of};
 pub use registry::{InMemoryRoleRegistry, RoleRegistry};
 pub use scope::{FsScope, NetScope};
 pub use secret::{SecretRef, SecretScope};

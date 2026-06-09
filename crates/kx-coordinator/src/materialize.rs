@@ -19,11 +19,11 @@
 
 use kx_content::{ContentRef, ContentStore, LocalFsContentStore};
 use kx_mote::{
-    EdgeKind, EdgeMeta, GraphPosition, InputDataId, Mote, MoteDef, MoteId, ParentRef,
+    EdgeKind, EdgeMeta, GraphPosition, InputDataId, ModelId, Mote, MoteDef, MoteId, ParentRef,
     TopologyDecision,
 };
-use kx_projection::{ChildResolver, InheritFromShaperResolver, RegisterMote};
-use kx_warrant::{intersect, warrant_ref_of, RoleRegistry, WarrantSpec};
+use kx_projection::{ChildResolver, InheritFromShaperResolver, RegisterMote, ReplanRoundRecord};
+use kx_warrant::{decode_warrant, intersect, warrant_ref_of, RoleRegistry, WarrantSpec};
 use smallvec::smallvec;
 
 /// One materialized shaper child, ready for BOTH projection registration (so it enters
@@ -127,4 +127,49 @@ pub(crate) fn derive_shaper_children(
         });
     }
     Ok(children)
+}
+
+/// Re-derive a re-plan round's shaper `(Mote, WarrantSpec)` from its durable
+/// [`ReplanRoundRecord`] (PR-2c-2) using ONLY committed facts + the content store —
+/// the crash-safe reconstruction the live settle path AND the recovery pass share.
+///
+/// Fetches the round's corrected prompt + the run-fixed warrant (both content-stored
+/// at trigger/provision under their refs), rebuilds the round-namespaced shaper Mote
+/// via [`crate::replan_shape::build_replan_shaper`] (byte-identical to the harness
+/// oracle), and **fails closed on any identity mismatch** — the rebuilt `MoteId` MUST
+/// equal the recorded `shaper_mote_id` (a tampered/corrupt record, a prompt that no
+/// longer hashes to the same id, etc.). Pure over its inputs save two `store.get`s.
+pub(crate) fn rebuild_replan_shaper(
+    store: &LocalFsContentStore,
+    record: &ReplanRoundRecord,
+) -> Result<(Mote, WarrantSpec), String> {
+    let prompt_bytes = store.get(&record.corrected_prompt_ref).map_err(|e| {
+        format!(
+            "fetch corrected prompt {:?}: {e:?}",
+            record.corrected_prompt_ref
+        )
+    })?;
+    let prompt = std::str::from_utf8(prompt_bytes.as_ref())
+        .map_err(|_| "corrected prompt is not valid UTF-8".to_string())?;
+
+    let warrant_bytes = store
+        .get(&record.warrant_ref)
+        .map_err(|e| format!("fetch run-fixed warrant {:?}: {e:?}", record.warrant_ref))?;
+    let warrant = decode_warrant(warrant_bytes.as_ref())
+        .map_err(|e| format!("decode run-fixed warrant: {e}"))?;
+    // The record's `warrant_ref` MUST content-address the bytes we fetched (the
+    // store is content-addressed, but assert it so a swapped ref fails closed).
+    if warrant_ref_of(&warrant) != record.warrant_ref {
+        return Err("run-fixed warrant content-ref mismatch".to_string());
+    }
+
+    let model_id = ModelId(record.model_id.clone());
+    let mote = crate::replan_shape::build_replan_shaper(&model_id, prompt, record.round);
+    if mote.id != record.shaper_mote_id {
+        return Err(format!(
+            "rebuilt re-plan shaper id {:?} != recorded {:?} (round {})",
+            mote.id, record.shaper_mote_id, record.round
+        ));
+    }
+    Ok((mote, warrant))
 }
