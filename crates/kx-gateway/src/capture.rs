@@ -44,7 +44,9 @@ use kx_gateway_core::GatewayError as CoreError;
 /// The capture-projection schema version. A bump (or any decode failure) makes
 /// the load path drop-and-rebuild from the journal — capture is a cache, so
 /// there is NEVER a migration, only a rebuild.
-const SCHEMA_VERSION: i64 = 1;
+// v2: the durable `run_meta` instance-id row (the multi-tick stamping fix —
+// an old v1 sidecar drops-and-rebuilds with correct stamping; capture is a cache).
+const SCHEMA_VERSION: i64 = 2;
 
 /// The durable schema (idempotent). `capture_records` is the action projection;
 /// `react_turns` is the incremental turn→branch join source; `meta` holds the
@@ -67,7 +69,12 @@ CREATE TABLE IF NOT EXISTS react_turns (
     branch       TEXT NOT NULL,
     seq          INTEGER NOT NULL
 );
-CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value INTEGER NOT NULL);";
+CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value INTEGER NOT NULL);
+-- The run instance id (single-node: one RunRegistered per journal) is DURABLE
+-- across fold ticks, so an action committed in a LATER tick is still stamped
+-- even though RunRegistered (seq=1) folded in an EARLIER tick. A blob, so it
+-- cannot live in `meta` (INTEGER values).
+CREATE TABLE IF NOT EXISTS run_meta (id INTEGER PRIMARY KEY CHECK (id = 0), instance_id BLOB NOT NULL);";
 
 /// The closed `nd_class` wire vocabulary (the `ReactTurnSummary.branch` style:
 /// a string, so a future class is additive on the wire).
@@ -136,6 +143,7 @@ impl CaptureLedger {
             conn.execute_batch(
                 "DROP TABLE IF EXISTS capture_records;
                  DROP TABLE IF EXISTS react_turns;
+                 DROP TABLE IF EXISTS run_meta;
                  DROP TABLE IF EXISTS meta;",
             )
             .map_err(|e| GatewayError::Catalog(format!("capture rebuild: {e}")))?;
@@ -226,9 +234,11 @@ impl CaptureLedger {
         };
         let mut inserted = 0usize;
         // The serve session's instance id (single-node: one RunRegistered per
-        // journal). Seeded from a prior fold if present; updated if this range
-        // carries the registration. Every action row is stamped with it.
-        let mut instance: Option<Vec<u8>> = Self::known_instance(&tx).ok().flatten();
+        // journal). Seeded from the DURABLE run_meta row — so an action committed
+        // in a later tick is stamped even though RunRegistered (seq=1) folded in
+        // an earlier tick (the bug the installed-runtime sweep caught: relying on
+        // a same-tick registration left every later action's instance empty).
+        let mut instance: Option<Vec<u8>> = Self::run_instance(&tx).ok().flatten();
         // The react facts seen THIS tick (turn_mote_id → highest-seq turn/branch),
         // applied to both new and already-captured rows after the inserts.
         let mut react_updates: HashMap<[u8; 32], (i64, String)> = HashMap::new();
@@ -236,6 +246,11 @@ impl CaptureLedger {
             match entry {
                 JournalEntry::RunRegistered { instance_id, .. } => {
                     instance = Some(instance_id.to_vec());
+                    // Persist it DURABLY so later ticks stamp without re-seeing it.
+                    let _ = tx.execute(
+                        "INSERT OR REPLACE INTO run_meta(id, instance_id) VALUES (0, ?1)",
+                        params![instance_id.to_vec()],
+                    );
                 }
                 JournalEntry::Committed {
                     mote_id,
@@ -318,13 +333,12 @@ impl CaptureLedger {
         inserted
     }
 
-    /// The serve session's instance id, if any captured row already carries one.
-    fn known_instance(tx: &rusqlite::Transaction<'_>) -> rusqlite::Result<Option<Vec<u8>>> {
-        tx.query_row(
-            "SELECT instance_id FROM capture_records WHERE length(instance_id) = 16 LIMIT 1",
-            [],
-            |r| r.get(0),
-        )
+    /// The serve session's instance id from the DURABLE `run_meta` row (set when
+    /// `RunRegistered` first folds), or `None` before any run registered.
+    fn run_instance(tx: &rusqlite::Transaction<'_>) -> rusqlite::Result<Option<Vec<u8>>> {
+        tx.query_row("SELECT instance_id FROM run_meta WHERE id = 0", [], |r| {
+            r.get(0)
+        })
         .map(Some)
         .or_else(|e| match e {
             rusqlite::Error::QueryReturnedNoRows => Ok(None),
@@ -474,6 +488,92 @@ mod tests {
         // Stamped with the run instance; newest-first by seq.
         assert!(records.iter().all(|r| r.instance_id == [5; 16]));
         assert!(records[0].seq > records[1].seq);
+    }
+
+    /// A test-only [`JournalReader`] whose contents GROW between reads — modeling
+    /// a live journal that the background poller folds incrementally across ticks.
+    /// (We cannot reuse `ReadOnly<InMemoryJournal>`: the seam deliberately exposes
+    /// no write surface, and `InMemoryJournal` is not `Clone`, so there is no way
+    /// to append to the folded handle between ticks. This reader stays a pure test
+    /// fixture — no production seam is weakened for the test's sake.)
+    struct GrowableReader {
+        entries: std::sync::RwLock<Vec<JournalEntry>>,
+    }
+
+    impl GrowableReader {
+        fn new() -> Self {
+            Self {
+                entries: std::sync::RwLock::new(Vec::new()),
+            }
+        }
+
+        fn push(&self, entry: JournalEntry) {
+            self.entries.write().unwrap().push(entry);
+        }
+    }
+
+    impl JournalReader for GrowableReader {
+        fn read_entries_by_seq(
+            &self,
+            range: std::ops::Range<u64>,
+        ) -> Result<Box<dyn Iterator<Item = JournalEntry> + '_>, kx_journal::JournalError> {
+            let hit: Vec<JournalEntry> = self
+                .entries
+                .read()
+                .unwrap()
+                .iter()
+                .filter(|e| range.contains(&e.seq()))
+                .cloned()
+                .collect();
+            Ok(Box::new(hit.into_iter()))
+        }
+
+        fn current_seq(&self) -> Result<u64, kx_journal::JournalError> {
+            Ok(self
+                .entries
+                .read()
+                .unwrap()
+                .iter()
+                .map(JournalEntry::seq)
+                .max()
+                .unwrap_or(0))
+        }
+    }
+
+    #[test]
+    fn instance_is_stamped_across_separate_fold_ticks() {
+        // The installed-runtime-sweep regression (F9): in a real serve the
+        // RunRegistered fact (seq=1) folds in an EARLY tick, before any action
+        // commits. A later tick that folds a Committed action must STILL stamp
+        // it with the run instance — via the durable run_meta row, not a
+        // same-tick registration.
+        let dir = tempfile::TempDir::new().unwrap();
+        let ledger = CaptureLedger::open(dir.path()).unwrap();
+        let reader = GrowableReader::new();
+        // Tick 1: only the registration is in the journal.
+        reader.push(JournalEntry::RunRegistered {
+            instance_id: [7; 16],
+            recipe_fingerprint: [6; 32],
+            ts: 0,
+            seq: 1,
+        });
+        assert_eq!(
+            ledger.fold(&reader),
+            0,
+            "registration tick captures no action"
+        );
+        // Tick 2: an action commits LATER (the registration is already past the
+        // watermark, so the run instance comes only from the durable run_meta row).
+        reader.push(committed(2, 0x10, 0x20));
+        assert_eq!(ledger.fold(&reader), 1);
+
+        let (records, _) = ledger.list(10, Some([7; 16])).unwrap();
+        assert_eq!(
+            records.len(),
+            1,
+            "the later action is stamped with the run instance from a PRIOR tick"
+        );
+        assert_eq!(records[0].instance_id, [7; 16]);
     }
 
     #[test]
