@@ -120,6 +120,51 @@ async fn captured_actions_reconcile_with_the_projection() {
 }
 
 #[tokio::test]
+async fn a_later_action_is_stamped_from_the_durable_run_meta() {
+    // The installed-runtime-sweep regression (F9), end-to-end. The original
+    // reconcile test drives the WHOLE run before the first 250 ms poll, so
+    // RunRegistered (seq=1) and every Committed action fold in ONE tick — where
+    // same-tick stamping happened to work. A real serve trickles actions in over
+    // many ticks: an action committed AFTER the watermark has already advanced
+    // past the registration must STILL be stamped (from the durable run_meta
+    // row). This forces that ordering: await the first capture (advancing the
+    // watermark past RunRegistered), THEN submit a second action and prove the
+    // later fold tick — whose range no longer contains RunRegistered — stamps it.
+    let dir = tempfile::TempDir::new().unwrap();
+    let running = start(common::gateway_config(&dir, true, HashMap::new()))
+        .await
+        .unwrap();
+    let mut c = client(running.local_addr()).await;
+
+    let instance = common::submit_pure_run(&mut c, 0x44).await;
+    let first = await_captures(&mut c, Some(instance.clone()), 1).await;
+    assert!(first.iter().all(|r| r.instance_id == instance));
+
+    // A second Mote JOINS the same single-node run (F4: RunRegistered is seq=1,
+    // idempotent) and commits LATER — its fold range starts past the watermark,
+    // so RunRegistered is NOT in it. Stamping can only come from run_meta.
+    let _ = common::submit_pure_run(&mut c, 0x45).await;
+    let after = await_captures(&mut c, Some(instance.clone()), first.len() + 1).await;
+    assert!(
+        after.len() > first.len(),
+        "the second action was captured in a later poll tick"
+    );
+    for r in &after {
+        assert_eq!(
+            r.instance_id, instance,
+            "a later-tick action is stamped from the durable run_meta row, not zeros"
+        );
+        assert_ne!(
+            r.instance_id,
+            vec![0u8; 16],
+            "instance must never be all-zeros (the F9 bug)"
+        );
+    }
+
+    running.shutdown().await.unwrap();
+}
+
+#[tokio::test]
 async fn capture_survives_restart_and_rebuilds_from_the_journal() {
     let dir = tempfile::TempDir::new().unwrap();
     let captured_first: Vec<Vec<u8>>;
