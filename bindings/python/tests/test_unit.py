@@ -238,3 +238,82 @@ def test_result_binary_payload_has_no_utf8():
     )
     r = Result.from_outcome(out)
     assert r.text is None and "result_utf8" not in r.to_dict()
+
+
+# --- F13: react invoke(wait=True) settles via ListReactTurns ------------------
+
+
+class _FakeReactStub:
+    """A minimal stub for the react-wait path: ListReactTurns drives settlement,
+    GetProjection resolves the settled turn's result_ref, GetContent its bytes.
+    Models the F13 reality — the gateway's returned terminal_mote_id never commits;
+    the settled answer turn (a DIFFERENT, run-salted id) carries the answer."""
+
+    def __init__(self, turns, answer_mote=None, answer_ref=None, payload=b""):
+        self._turns = turns
+        self._answer_mote = answer_mote
+        self._answer_ref = answer_ref
+        self._payload = payload
+
+    def ListReactTurns(self, req, metadata=None):  # noqa: N802 (gRPC stub name)
+        return g.ListReactTurnsResponse(turns=self._turns, has_more=False)
+
+    def GetProjection(self, req, metadata=None):  # noqa: N802
+        motes = []
+        if self._answer_mote is not None:
+            m = g.MoteSnapshot(
+                mote_id=self._answer_mote,
+                state=g.MoteSnapshotState.MOTE_SNAPSHOT_STATE_COMMITTED,
+            )
+            if self._answer_ref is not None:
+                m.result_ref = self._answer_ref
+            motes.append(m)
+        return g.ProjectionView(instance_id=req.instance_id, motes=motes)
+
+    def GetContent(self, req, metadata=None):  # noqa: N802
+        return g.ContentBlob(payload=self._payload)
+
+
+def test_react_wait_settles_on_answer_via_list_react_turns():
+    from kortecx.wait import poll_react_result
+
+    inst = b"\x07" * 16
+    seed = b"\x99" * 32  # the gateway's returned terminal — NEVER commits (F13)
+    answer = b"\x42" * 32  # the run-salted settled answer turn id
+    stub = _FakeReactStub(
+        turns=[
+            g.ReactTurnSummary(turn=0, turn_mote_id=answer, branch="answer"),
+            g.ReactTurnSummary(turn=0, turn_mote_id=answer, branch="pending"),
+        ],
+        answer_mote=answer,
+        answer_ref=b"\x03" * 32,
+        payload=b"the final answer",
+    )
+    out = poll_react_result(stub, [], inst, seed, timeout=5)
+    assert out.state == WaitState.COMMITTED
+    assert out.terminal_mote_id == answer  # NOT the never-committing seed
+    assert out.payload == b"the final answer"
+
+
+def test_react_wait_dead_letter_is_failed():
+    from kortecx.wait import poll_react_result
+
+    inst = b"\x07" * 16
+    seed = b"\x99" * 32
+    dead = b"\x55" * 32
+    stub = _FakeReactStub(
+        turns=[g.ReactTurnSummary(turn=2, turn_mote_id=dead, branch="dead_lettered")]
+    )
+    out = poll_react_result(stub, [], inst, seed, timeout=5)
+    assert out.state == WaitState.FAILED
+    assert out.terminal_mote_id == dead
+
+
+def test_react_wait_times_out_while_pending():
+    from kortecx.wait import poll_react_result
+
+    inst = b"\x07" * 16
+    seed = b"\x99" * 32
+    stub = _FakeReactStub(turns=[g.ReactTurnSummary(turn=0, turn_mote_id=seed, branch="pending")])
+    out = poll_react_result(stub, [], inst, seed, timeout=0.01)
+    assert out.state == WaitState.RUNNING  # still in progress (resumable), no false commit
