@@ -109,6 +109,51 @@ def poll_result(stub, md, instance_id, terminal_mote_id, timeout) -> WaitOutcome
         time.sleep(POLL_INTERVAL)
 
 
+#: The branches a ReAct turn settles to (vs the live "pending"/"tool" states).
+_REACT_ANSWER = "answer"
+_REACT_DEAD = "dead_lettered"
+
+
+def _list_react_turns(stub, md, instance_id: bytes):
+    try:
+        resp = stub.ListReactTurns(_g.ListReactTurnsRequest(instance_id=instance_id), metadata=md)
+        return list(resp.turns)
+    except grpc.RpcError as e:
+        raise from_rpc_error(e) from e
+
+
+def _projection_result_ref(stub, md, instance_id: bytes, mote_id: bytes) -> Optional[bytes]:
+    view = _get_projection(stub, md, instance_id)
+    m = next((x for x in view.motes if x.mote_id == mote_id), None)
+    return _snapshot_result_ref(m) if m is not None else None
+
+
+def poll_react_result(stub, md, instance_id, terminal_mote_id, timeout) -> WaitOutcome:
+    """Wait for a ReAct CHAIN to settle (the ``invoke`` react path).
+
+    A react chain has no statically-known terminal Mote: the run-salted turn-0 id
+    the gateway hands back never matches the committed turn id, and the settled
+    Answer turn isn't known until the model emits it. So completion is observed via
+    ``ListReactTurns`` — the chain is done when a turn settles to ``answer`` (the
+    final answer; resolve its committed content) or ``dead_lettered`` (terminal
+    failure). This is the durable, server-derived signal (the runtime's own
+    "resume with get_projection / events" hint, made the default for react).
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        turns = _list_react_turns(stub, md, instance_id)
+        answer = next((t for t in turns if t.branch == _REACT_ANSWER), None)
+        if answer is not None:
+            rr = _projection_result_ref(stub, md, instance_id, answer.turn_mote_id)
+            return _committed_outcome(stub, md, instance_id, answer.turn_mote_id, rr)
+        dead = next((t for t in turns if t.branch == _REACT_DEAD), None)
+        if dead is not None:
+            return _terminal(instance_id, dead.turn_mote_id, WaitState.FAILED)
+        if time.monotonic() >= deadline:
+            return _terminal(instance_id, terminal_mote_id, WaitState.RUNNING)
+        time.sleep(POLL_INTERVAL)
+
+
 def poll_any(stub, md, instance_id, timeout) -> WaitOutcome:
     """Poll until ANY Mote commits (the ``submit`` path — no terminal id)."""
     deadline = time.monotonic() + timeout
@@ -210,6 +255,40 @@ async def apoll_result(stub, md, instance_id, terminal_mote_id, timeout) -> Wait
                 )
             if not types.is_pending(m.state):
                 return _terminal(instance_id, terminal_mote_id, WaitState.FAILED)
+        if loop.time() >= deadline:
+            return _terminal(instance_id, terminal_mote_id, WaitState.RUNNING)
+        await asyncio.sleep(POLL_INTERVAL)
+
+
+async def _alist_react_turns(stub, md, instance_id: bytes):
+    try:
+        resp = await stub.ListReactTurns(
+            _g.ListReactTurnsRequest(instance_id=instance_id), metadata=md
+        )
+        return list(resp.turns)
+    except grpc.RpcError as e:
+        raise from_rpc_error(e) from e
+
+
+async def _aprojection_result_ref(stub, md, instance_id: bytes, mote_id: bytes) -> Optional[bytes]:
+    view = await _aget_projection(stub, md, instance_id)
+    m = next((x for x in view.motes if x.mote_id == mote_id), None)
+    return _snapshot_result_ref(m) if m is not None else None
+
+
+async def apoll_react_result(stub, md, instance_id, terminal_mote_id, timeout) -> WaitOutcome:
+    """Async mirror of :func:`poll_react_result` (the react ``invoke`` path)."""
+    loop = asyncio.get_event_loop()
+    deadline = loop.time() + timeout
+    while True:
+        turns = await _alist_react_turns(stub, md, instance_id)
+        answer = next((t for t in turns if t.branch == _REACT_ANSWER), None)
+        if answer is not None:
+            rr = await _aprojection_result_ref(stub, md, instance_id, answer.turn_mote_id)
+            return await _acommitted_outcome(stub, md, instance_id, answer.turn_mote_id, rr)
+        dead = next((t for t in turns if t.branch == _REACT_DEAD), None)
+        if dead is not None:
+            return _terminal(instance_id, dead.turn_mote_id, WaitState.FAILED)
         if loop.time() >= deadline:
             return _terminal(instance_id, terminal_mote_id, WaitState.RUNNING)
         await asyncio.sleep(POLL_INTERVAL)

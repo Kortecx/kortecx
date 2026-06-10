@@ -31,7 +31,7 @@ import {
   warnIfPlaintext,
 } from "../src/transport.js";
 import { Delta, MoteView, Projection, isCommitted, isPending, stateName } from "../src/types.js";
-import type { WaitOutcome } from "../src/wait.js";
+import { type WaitOutcome, WaitState, pollReactResult } from "../src/wait.js";
 
 const fill = (v: number, n: number): Uint8Array => new Uint8Array(n).fill(v);
 const dec = (b: Uint8Array): string => new TextDecoder().decode(b);
@@ -252,5 +252,63 @@ describe("Result", () => {
     const r = Result.fromOutcome(o);
     expect(r.text).toBeNull();
     expect(r.toJSON().result_utf8).toBeUndefined();
+  });
+});
+
+// --- F13: react invoke(wait) settles via ListReactTurns ----------------------
+
+describe("pollReactResult (F13 — react wait via ListReactTurns)", () => {
+  // A minimal fake gateway: ListReactTurns drives settlement, GetProjection
+  // resolves the settled turn's resultRef, GetContent its bytes. Models F13 — the
+  // returned terminal_mote_id (seed) never commits; the run-salted answer turn does.
+  const fakeGateway = (
+    turns: Array<{ branch: string; turnMoteId: Uint8Array }>,
+    ans?: {
+      moteId: Uint8Array;
+      resultRef: Uint8Array;
+      payload: Uint8Array;
+    },
+  ) =>
+    ({
+      listReactTurns: (_req: unknown) => Promise.resolve({ turns, hasMore: false }),
+      getProjection: (_req: unknown) =>
+        Promise.resolve({
+          motes: ans
+            ? [{ moteId: ans.moteId, state: MoteSnapshotState.COMMITTED, resultRef: ans.resultRef }]
+            : [],
+        }),
+      getContent: (_req: unknown) =>
+        Promise.resolve({ payload: ans?.payload ?? new Uint8Array(0) }),
+    }) as unknown as Parameters<typeof pollReactResult>[0];
+
+  it("settles COMMITTED on an answer branch, resolving the run-salted turn's content", async () => {
+    const seed = fill(0x99, 32); // gateway's returned terminal — never commits
+    const answer = fill(0x42, 32); // the run-salted settled answer turn
+    const gw = fakeGateway(
+      [
+        { branch: "answer", turnMoteId: answer },
+        { branch: "pending", turnMoteId: answer },
+      ],
+      { moteId: answer, resultRef: fill(0x03, 32), payload: new TextEncoder().encode("final") },
+    );
+    const out = await pollReactResult(gw, fill(0x07, 16), seed, 5_000);
+    expect(out.state).toBe(WaitState.Committed);
+    expect(encode(out.terminalMoteId)).toBe(encode(answer)); // NOT the seed
+    expect(dec(out.payload as Uint8Array)).toBe("final");
+  });
+
+  it("settles FAILED on a dead_lettered branch", async () => {
+    const dead = fill(0x55, 32);
+    const gw = fakeGateway([{ branch: "dead_lettered", turnMoteId: dead }]);
+    const out = await pollReactResult(gw, fill(0x07, 16), fill(0x99, 32), 5_000);
+    expect(out.state).toBe(WaitState.Failed);
+    expect(encode(out.terminalMoteId)).toBe(encode(dead));
+  });
+
+  it("returns RUNNING (resumable) while only pending — no false commit", async () => {
+    const seed = fill(0x99, 32);
+    const gw = fakeGateway([{ branch: "pending", turnMoteId: seed }]);
+    const out = await pollReactResult(gw, fill(0x07, 16), seed, 10);
+    expect(out.state).toBe(WaitState.Running);
   });
 });

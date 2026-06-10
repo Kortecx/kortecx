@@ -27,7 +27,22 @@ import { type RunPage, RunSummary } from "./runs.js";
 import { TeamMembers, type TeamSummary, teamsFromProto } from "./teams.js";
 import { type Args, encodeArgs } from "./transport.js";
 import { type Delta, Projection, SignatureSummary } from "./types.js";
-import { type WaitMode, type WaitOutcome, eventsResult, pollAny, pollResult } from "./wait.js";
+import {
+  type WaitMode,
+  type WaitOutcome,
+  eventsResult,
+  pollAny,
+  pollReactResult,
+  pollResult,
+} from "./wait.js";
+
+/**
+ * The canonical ReAct recipe handle. A react run has NO statically-known terminal
+ * Mote (the gateway returns a run-salted turn-0 id that never commits, and the
+ * settled Answer turn isn't known until the model emits it), so `invoke({ wait })`
+ * on this handle settles via `ListReactTurns` instead of a terminal Mote (F13).
+ */
+export const REACT_RECIPE_HANDLE = "kx/recipes/react";
 
 /** An id argument: hex string OR raw server-derived bytes. */
 export type Id = string | Uint8Array;
@@ -82,12 +97,23 @@ export abstract class KxClientBase {
     const resp = await rpc(this.grpc.invoke({ handle, args: argBytes }));
     const run = new Run(this, resp.instanceId, resp.terminalMoteId, resp.recipeFingerprint);
     if (!opts.wait) return run;
-    const result = await this._awaitTerminal(
-      resp.instanceId,
-      resp.terminalMoteId,
-      opts.timeoutMs ?? 120_000,
-      opts.waitMode ?? "poll",
-    );
+    const result =
+      handle === REACT_RECIPE_HANDLE
+        ? // F13: a react chain settles via ListReactTurns, not a terminal Mote.
+          this._finish(
+            await pollReactResult(
+              this.grpc,
+              resp.instanceId,
+              resp.terminalMoteId,
+              opts.timeoutMs ?? 120_000,
+            ),
+          )
+        : await this._awaitTerminal(
+            resp.instanceId,
+            resp.terminalMoteId,
+            opts.timeoutMs ?? 120_000,
+            opts.waitMode ?? "poll",
+          );
     if (opts.out !== undefined && result.payload !== null) {
       await this.writeOut(opts.out, result.payload);
     }

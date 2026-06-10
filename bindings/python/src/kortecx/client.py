@@ -40,8 +40,21 @@ from .v1 import gateway_pb2_grpc as _gg
 #: The conventional gateway endpoint (matches ``kx serve`` / the CLI default).
 DEFAULT_ENDPOINT = "http://127.0.0.1:50151"
 
+#: The canonical ReAct recipe handle. A react run has NO statically-known terminal
+#: Mote (the gateway hands back a run-salted turn-0 id that never commits, and the
+#: settled Answer turn isn't known until the model emits it), so ``invoke(wait=True)``
+#: on this handle waits on chain SETTLEMENT via ``ListReactTurns`` instead of a
+#: single terminal Mote (campaign finding F13).
+REACT_RECIPE_HANDLE = "kx/recipes/react"
+
 ArgsType = Union[dict, bytes, bytearray, str]
 IdType = Union[str, bytes]
+
+
+def _is_react_handle(handle: str) -> bool:
+    """True for the ReAct recipe — its ``invoke(wait=True)`` settles via the chain
+    (``ListReactTurns``), not a terminal Mote (F13)."""
+    return handle == REACT_RECIPE_HANDLE
 
 
 # --- shared credential + channel helpers -------------------------------------
@@ -174,7 +187,16 @@ class KxClient:
         run = Run(self, resp.instance_id, resp.terminal_mote_id, resp.recipe_fingerprint)
         if not wait:
             return run
-        result = self._await_terminal(resp.instance_id, resp.terminal_mote_id, timeout, wait_mode)
+        if _is_react_handle(handle):
+            # F13: a react chain settles via ListReactTurns, not a terminal Mote.
+            outcome = _wait.poll_react_result(
+                self._stub, self._md, resp.instance_id, resp.terminal_mote_id, timeout
+            )
+            result = self._finish(outcome)
+        else:
+            result = self._await_terminal(
+                resp.instance_id, resp.terminal_mote_id, timeout, wait_mode
+            )
         if out is not None and result.payload is not None:
             with open(out, "wb") as fh:
                 fh.write(result.payload)
@@ -481,9 +503,16 @@ class AsyncKxClient:
         run = AsyncRun(self, resp.instance_id, resp.terminal_mote_id, resp.recipe_fingerprint)
         if not wait:
             return run
-        result = await self._await_terminal(
-            resp.instance_id, resp.terminal_mote_id, timeout, wait_mode
-        )
+        if _is_react_handle(handle):
+            # F13: a react chain settles via ListReactTurns, not a terminal Mote.
+            outcome = await _wait.apoll_react_result(
+                self._stub, self._md, resp.instance_id, resp.terminal_mote_id, timeout
+            )
+            result = KxClient._finish(outcome)
+        else:
+            result = await self._await_terminal(
+                resp.instance_id, resp.terminal_mote_id, timeout, wait_mode
+            )
         if out is not None and result.payload is not None:
             with open(out, "wb") as fh:
                 fh.write(result.payload)

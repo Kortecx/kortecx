@@ -112,6 +112,46 @@ export async function pollResult(
   }
 }
 
+/** The branches a ReAct turn settles to (vs the live "pending"/"tool" states). */
+const REACT_ANSWER = "answer";
+const REACT_DEAD = "dead_lettered";
+
+/**
+ * Wait for a ReAct CHAIN to settle (the `invoke` react path).
+ *
+ * A react chain has no statically-known terminal Mote: the run-salted turn-0 id
+ * the gateway hands back never matches the committed turn id, and the settled
+ * Answer turn isn't known until the model emits it. So completion is observed via
+ * `ListReactTurns` — done when a turn settles to `answer` (resolve its committed
+ * content) or `dead_lettered` (terminal failure). Mirrors the runtime's own
+ * "resume with get_projection / events" hint (campaign finding F13).
+ */
+export async function pollReactResult(
+  gw: Gateway,
+  instance: Uint8Array,
+  terminal: Uint8Array,
+  timeoutMs: number,
+): Promise<WaitOutcome> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const resp = await rpc(gw.listReactTurns({ instanceId: instance }));
+    const answer = resp.turns.find((t) => t.branch === REACT_ANSWER);
+    if (answer !== undefined) {
+      const view = await rpc(gw.getProjection({ instanceId: instance }));
+      const m = view.motes.find((x) => eq(x.moteId, answer.turnMoteId));
+      return committedOutcome(gw, instance, answer.turnMoteId, m?.resultRef);
+    }
+    const dead = resp.turns.find((t) => t.branch === REACT_DEAD);
+    if (dead !== undefined) {
+      return { instanceId: instance, terminalMoteId: dead.turnMoteId, state: WaitState.Failed };
+    }
+    if (Date.now() >= deadline) {
+      return { instanceId: instance, terminalMoteId: terminal, state: WaitState.Running };
+    }
+    await sleep(POLL_INTERVAL_MS);
+  }
+}
+
 /** Poll until ANY Mote commits (the `submit` path — no terminal id). */
 export async function pollAny(
   gw: Gateway,
