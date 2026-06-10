@@ -107,23 +107,23 @@ hnsw_rs            = { version = "0.3", default-features = false }
 # field also takes effect on `cargo publish` — replacing the path during
 # publish with the version requirement here. All paths point under
 # `crates/` per the workspace's parent-folder layout convention.
-kx-mote              = { path = "crates/kx-mote",              version = "0.1.0" }
-kx-content           = { path = "crates/kx-content",           version = "0.1.0" }
-kx-journal           = { path = "crates/kx-journal",           version = "0.1.0" }
-kx-projection        = { path = "crates/kx-projection",        version = "0.1.0" }
-kx-llamacpp-sys      = { path = "crates/kx-llamacpp-sys",      version = "0.1.0" }
-kx-llamacpp          = { path = "crates/kx-llamacpp",          version = "0.1.0" }
-kx-model-validator   = { path = "crates/kx-model-validator",   version = "0.1.0" }
-kx-warrant           = { path = "crates/kx-warrant",           version = "0.1.0" }
+kx-mote              = { path = "crates/kx-mote",              version = "0.1.1" }
+kx-content           = { path = "crates/kx-content",           version = "0.1.1" }
+kx-journal           = { path = "crates/kx-journal",           version = "0.1.1" }
+kx-projection        = { path = "crates/kx-projection",        version = "0.1.1" }
+kx-llamacpp-sys      = { path = "crates/kx-llamacpp-sys",      version = "0.1.1" }
+kx-llamacpp          = { path = "crates/kx-llamacpp",          version = "0.1.1" }
+kx-model-validator   = { path = "crates/kx-model-validator",   version = "0.1.1" }
+kx-warrant           = { path = "crates/kx-warrant",           version = "0.1.1" }
 # The model-proposed tool-call AUTHORITY GATE (IMP-5, extracted PR-2d-1) — pure
 # leaf shared by the harness ReAct loop, the gateway pre-commit fence, and the
 # coordinator settle decode. Extracted (moved), never forked: a byte-mirror that
 # drifted would silently admit an ungranted tool (SN-8).
-kx-toolcall          = { path = "crates/kx-toolcall",          version = "0.1.0" }
-kx-tool-registry     = { path = "crates/kx-tool-registry",     version = "0.1.0" }
-kx-context-assembler = { path = "crates/kx-context-assembler", version = "0.1.0" }
-kx-memoizer          = { path = "crates/kx-memoizer",          version = "0.1.0" }
-kx-normalizer        = { path = "crates/kx-normalizer",        version = "0.1.0" }
+kx-toolcall          = { path = "crates/kx-toolcall",          version = "0.1.1" }
+kx-tool-registry     = { path = "crates/kx-tool-registry",     version = "0.1.1" }
+kx-context-assembler = { path = "crates/kx-context-assembler", version = "0.1.1" }
+kx-memoizer          = { path = "crates/kx-memoizer",          version = "0.1.1" }
+kx-normalizer        = { path = "crates/kx-normalizer",        version = "0.1.1" }
 # `default-features = false` (no llama.cpp FFI) is the WORKSPACE default for every
 # crate that depends on kx-inference, so the runtime's closure builds with no C++
 # toolchain (`cargo install kx-runtime`). It must live here, not on a member edge —
@@ -131,87 +131,87 @@ kx-normalizer        = { path = "crates/kx-normalizer",        version = "0.1.0"
 # one crate that needs the in-process backend, kx-model-harness, opts back in with
 # `features = ["llamacpp"]`. kx-inference's own `default = ["llamacpp"]` keeps its
 # own build/test/doctests on the FFI when it is itself the target.
-kx-inference         = { path = "crates/kx-inference",         version = "0.1.0", default-features = false }
-kx-capability        = { path = "crates/kx-capability",        version = "0.1.0" }
-kx-executor          = { path = "crates/kx-executor",          version = "0.1.0" }
-kx-scheduler         = { path = "crates/kx-scheduler",         version = "0.1.0" }
-kx-proto             = { path = "crates/kx-proto",             version = "0.1.0" }
-kx-coordinator       = { path = "crates/kx-coordinator",       version = "0.1.0" }
-kx-worker            = { path = "crates/kx-worker",            version = "0.1.0" }
+kx-inference         = { path = "crates/kx-inference",         version = "0.1.1", default-features = false }
+kx-capability        = { path = "crates/kx-capability",        version = "0.1.1" }
+kx-executor          = { path = "crates/kx-executor",          version = "0.1.1" }
+kx-scheduler         = { path = "crates/kx-scheduler",         version = "0.1.1" }
+kx-proto             = { path = "crates/kx-proto",             version = "0.1.1" }
+kx-coordinator       = { path = "crates/kx-coordinator",       version = "0.1.1" }
+kx-worker            = { path = "crates/kx-worker",            version = "0.1.1" }
 # The single-node engine — kx-chaos reuses its topology helpers (`derive_child_motes`,
 # `demo_topology_decision`) to check child-identity determinism under a shaper death.
-kx-runtime           = { path = "crates/kx-runtime",           version = "0.1.0" }
+kx-runtime           = { path = "crates/kx-runtime",           version = "0.1.1" }
 # The workflow engine (codename Morphic, P4.1) — compiles a WorkflowDef to a
 # Mote DAG. Sits above the scheduler; emits kx-mote + kx-warrant types only.
-kx-workflow          = { path = "crates/kx-workflow",          version = "0.1.0" }
+kx-workflow          = { path = "crates/kx-workflow",          version = "0.1.1" }
 # The data-management seam (P4.1c) — typed (tensor/vector/blob/multi-modal)
 # DataStore/Dataset/RetrievalIndex over committed content; journal-authoritative.
-kx-dataset           = { path = "crates/kx-dataset",           version = "0.1.0" }
+kx-dataset           = { path = "crates/kx-dataset",           version = "0.1.1" }
 # The opt-in SCALE retrieval backend (DP3, T2.3) — a file-backed in-process HNSW
 # index implementing kx-dataset::RetrievalIndex via the pure-Rust hnsw_rs crate.
 # Off the truth path (SN-8); the exact InMemory index stays the reproducible
 # default. Consumed only behind an opt-in feature (kx-gateway's `hnsw`, T3.7).
-kx-dataset-hnsw      = { path = "crates/kx-dataset-hnsw",      version = "0.1.0" }
+kx-dataset-hnsw      = { path = "crates/kx-dataset-hnsw",      version = "0.1.1" }
 # Deterministic-critic vocabulary (P4.2) — CriticVerdict / CriticReason / CheckSpec.
 # Parser-free + dataset-free so kx-mote can embed a CheckSpec in MoteDef without a
 # dependency cycle or inheriting regex/serde_json.
-kx-critic-types      = { path = "crates/kx-critic-types",      version = "0.1.0" }
+kx-critic-types      = { path = "crates/kx-critic-types",      version = "0.1.1" }
 # Deterministic-critic evaluator (P4.2) — the pure/total evaluate(spec, bytes) ->
 # CriticVerdict over the four checks (schema / dedup / stat-bounds / PII-leakage).
-kx-critic            = { path = "crates/kx-critic",            version = "0.1.0" }
+kx-critic            = { path = "crates/kx-critic",            version = "0.1.1" }
 # Step-capture projection (P4.2 pivot) — opt-in, off-truth-path per-Mote capture of
 # input/output/reasoning/thinking in blob storage; reuse the action, never the thinking.
-kx-capture           = { path = "crates/kx-capture",           version = "0.1.0" }
+kx-capture           = { path = "crates/kx-capture",           version = "0.1.1" }
 # Runtime audit sink (R4, D127 step 2.1) — append-only, off-truth-path, best-effort/
 # non-fatal lifecycle trail (AuditSink trait + AuditEvent + JsonlAuditSink/InMemory).
 # Join keys only (no payload/secrets); timestamps live only on the JSONL wire and
 # never feed the digest; SN-8 integer/crypto-equality. The guarantee-path crates
 # (frozen trio + journal/projection/memoizer) NEVER depend on it (a dep-wall test pins it).
-kx-audit             = { path = "crates/kx-audit",             version = "0.1.0" }
+kx-audit             = { path = "crates/kx-audit",             version = "0.1.1" }
 # Submission-time refusal vocabulary + predicates (M1.3) — a dependency-light LEAF
 # (kx-mote / kx-tool-registry / kx-warrant only) so the control-plane kx-coordinator
 # can enforce R-1..R-15 + D66 at SubmitMote WITHOUT linking kx-executor's inference
 # stack. kx-executor re-exports it for back-compat.
-kx-refusal           = { path = "crates/kx-refusal",           version = "0.1.0" }
+kx-refusal           = { path = "crates/kx-refusal",           version = "0.1.1" }
 # MCP adapter (M5.2, D80) — McpCapability, the first production Capability impl, the
 # concrete ToolKind::Mcp dispatch. A thin SYNC client (stdio now; ureq HTTP in M5.2b)
 # so the broker trait + kx-tool-registry stay dependency-clean (no tokio/rmcp).
-kx-mcp               = { path = "crates/kx-mcp",               version = "0.1.0" }
+kx-mcp               = { path = "crates/kx-mcp",               version = "0.1.1" }
 # The planner (M6, D73) — lowers an untrusted model PROPOSAL into a registered
 # Mote DAG (decode fail-closed; select ROLES not permissions; compile is the
 # structural gate). Sits above the scheduler; PURE lowering lib — depends only on
 # kx-workflow/kx-mote/kx-warrant/kx-critic-types (NEVER scheduler/projection/
 # executor/inference — the thesis dependency-ban, asserted in kx-model-harness).
-kx-planner           = { path = "crates/kx-planner",           version = "0.1.0" }
+kx-planner           = { path = "crates/kx-planner",           version = "0.1.1" }
 # The sharable catalog (M7, D82/D83) — the TaskSignature verdict-reuse foundation
 # + a content-addressed, idempotent, immutable signature registry. A SEPARATE
 # TRUTH (authoritative for WHAT recipes exist); off-journal + off the identity
 # path (composes kx-mote/kx-workflow identities, never bumps MoteDef). Depends
 # only on kx-mote/kx-workflow/kx-dataset — NEVER the journal or the frozen trio.
-kx-catalog           = { path = "crates/kx-catalog",           version = "0.1.0" }
+kx-catalog           = { path = "crates/kx-catalog",           version = "0.1.1" }
 # Teams / fleets (M7, D112) — journaled membership facts + a fail-closed fold +
 # composed warrant resolution. Membership is one-level-up delegation
 # (intersect(team_warrant, member_role)); nested fleet-of-teams = a bounded multi-hop
 # narrow. A SEPARATE TRUTH (off-journal, off the trust path, SN-8). Depends ONLY on
 # kx-catalog/kx-warrant; the journal + frozen trio NEVER depend on it (one-way edge).
-kx-fleet             = { path = "crates/kx-fleet",             version = "0.1.0" }
+kx-fleet             = { path = "crates/kx-fleet",             version = "0.1.1" }
 # M8 (D120) gateway backend: read-fold (journal -> ProjectionView / GetContent /
 # StreamEvents) + propose-proxy (SubmitRun -> coordinator). No journal write path;
 # never links the frozen-trio writers (a dep-wall test pins it).
-kx-gateway-core      = { path = "crates/kx-gateway-core",      version = "0.1.0" }
+kx-gateway-core      = { path = "crates/kx-gateway-core",      version = "0.1.1" }
 # R1 (D130) gateway dev BINARY: hosts the FROZEN KxGateway proto over kx-gateway-core
 # with an embedded single-system coordinator + local worker; the first network server
 # that binds a port outside tests. Deny-all auth stub (R2 fills it). FFI-free by default.
-kx-gateway           = { path = "crates/kx-gateway",           version = "0.1.0" }
+kx-gateway           = { path = "crates/kx-gateway",           version = "0.1.1" }
 # M8 (D121) inbound execution: resolve a published recipe by handle, validate +
 # bind args, compile, and submit under intersect(use, step) via the gateway
 # RunSubmitter. A composition over the catalog + gateway; adds no new write path.
-kx-invoke            = { path = "crates/kx-invoke",            version = "0.1.0" }
+kx-invoke            = { path = "crates/kx-invoke",            version = "0.1.1" }
 # M4 (D108.2) model lifecycle: backend-agnostic, FFI-FREE registry of model
 # identity + declared modalities + projector path + fail-closed GGUF validation.
 # An InferenceBackend resolves paths/capabilities through its ModelResolver seam;
 # the live loaded-model handle cache (kx-inference) keys on its identity_digest.
-kx-model-store       = { path = "crates/kx-model-store",       version = "0.1.0" }
+kx-model-store       = { path = "crates/kx-model-store",       version = "0.1.1" }
 bindgen            = "0.70"
 cmake              = "0.1"
 ureq               = { version = "2", default-features = false, features = ["tls"] }

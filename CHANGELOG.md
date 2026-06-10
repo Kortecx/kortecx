@@ -6,6 +6,28 @@ development; interfaces may change before 1.0 — pin a commit if you build on i
 
 ## [Unreleased]
 
+## [0.1.1] — 2026-06-10
+
+A patch release from the clean-install verification campaign — two bugs caught
+by testing the **installed** runtime end-to-end across all four surfaces (CLI,
+Python SDK, TypeScript SDK, UI).
+
+### Fixed
+
+- **Morphic Data Engine: capture records are now correctly stamped with the run
+  instance** (was all-zeros in a real `kx serve`). The serve-path capture poller
+  folds the journal in ~250 ms ticks; the run instance is now persisted durably
+  (`capture.db` `run_meta`, schema v1→v2) so an action committed in any later tick
+  is stamped, not only one folded in the same tick as `RunRegistered`. `capture.db`
+  is a rebuildable cache, so an old sidecar drops-and-rebuilds on first open.
+  (gateway; OSS #172)
+- **SDKs: `invoke(wait=True)` on `kx/recipes/react` no longer spuriously times
+  out.** A ReAct chain has no statically-known terminal Mote (the run-salted
+  turn-0 id is server-derived), so both SDKs now wait on chain **settlement via
+  `ListReactTurns`** (answer → committed, dead-lettered → failed). Drive a react
+  run's completion from a client/UI via `ListReactTurns`/events. (Python +
+  TypeScript SDKs; OSS #173)
+
 ## [0.1.0] — 2026-06-10
 
 The first public release: a single-system durable agentic-execution runtime
