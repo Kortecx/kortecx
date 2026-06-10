@@ -6,6 +6,20 @@ development; interfaces may change before 1.0 — pin a commit if you build on i
 
 ## [Unreleased]
 
+## [0.1.0] — 2026-06-10
+
+The first public release: a single-system durable agentic-execution runtime
+(`kx run` / `kx serve`) with the live agentic loop (plan, re-plan, critic,
+ReAct-with-tools), the Morphic Data Engine (durable serve-path capture), the
+Datasets/RAG data-plane, teams/grants viewers, a React+Vite console, and
+Python + TypeScript client SDKs. Install the FFI-free `kx` binary via
+`curl -fsSL https://raw.githubusercontent.com/Kortecx/kortecx/main/scripts/install.sh | sh`
+(SHA-256-verified prebuilt for linux-x86_64 / linux-aarch64 / macos-arm64), or
+`cargo install --path crates/kx-cli` from source. The canonical demo digest is
+`7d22d4bdfc6f68a4311f40b20f3fe7c67f4c5d2b352f3bff8722b439e94a5af9` (exactly-once
+across a clean run and a crash-then-replay). Highlights since the pre-release
+work — the entries below were developed under `[Unreleased]` and ship in 0.1.0:
+
 ### Added
 
 - **Morphic Data Engine — durable serve-path capture** (`crates/kx-gateway`,
