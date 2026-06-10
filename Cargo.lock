@@ -1814,6 +1814,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "kx-profile"
+version = "0.0.1"
+dependencies = [
+ "kx-gateway",
+ "kx-proto",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tonic",
+ "tonic-health",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "kx-projection"
 version = "0.0.1"
 dependencies = [
