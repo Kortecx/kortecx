@@ -7,7 +7,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use kx_capability::{CapabilityBroker, INSTANCE_ID_LEN};
 use kx_content::{ContentRef, ContentStore, LocalFsContentStore};
 use kx_executor::{LocalResourceManager, MoteExecutor};
-use kx_mote::{Mote, MoteId, NdClass};
+use kx_mote::{ConfigKey, Mote, MoteId, NdClass, REACT_TURN_KEY};
 use kx_proto::proto;
 use kx_warrant::{ExecutorClass, WarrantSpec};
 use tokio::task::JoinHandle;
@@ -223,7 +223,25 @@ impl Worker {
             // next item. Transport/RPC errors on the lease/commit calls stay batch-level.
             let exec = if mote.nd_class() == NdClass::Pure {
                 run::run_pure(&mote, &warrant, &*self.executor, &self.resource_manager)
+            } else if is_react_turn(&mote) {
+                // PR-2d-2: a coordinator-materialized ReAct TURN (the identity-
+                // bearing marker, NO tool_contract) is a prompt-carrying ROND
+                // model Mote — it dispatches through the hosted EXECUTOR (whose
+                // react arm decodes + fences pre-commit), never the capability
+                // broker (it proposes; the observation Mote fires). Direct
+                // dispatch matches the IdempotentByConstruction pattern.
+                run::run_react_turn(&mote, &warrant, &*self.executor)
             } else {
+                // PR-2d-2: the coordinator-validated args + egress for a ReAct
+                // observation (`WorkItem.tool_args`) — decoded here, consumed by
+                // `run_wm` into the `EffectRequest`. A malformed wire NetScope
+                // decodes to `None` args, which `run_wm` then REFUSES for a
+                // granted-tool Mote (fail-closed — never fire empty/garbled).
+                let tool_args: Option<(Vec<u8>, kx_warrant::NetScope)> =
+                    item.tool_args.and_then(|ta| {
+                        let net_scope = ta.net_scope?.try_into().ok()?;
+                        Some((ta.args_bytes, net_scope))
+                    });
                 run_wm::run_wm(
                     &mut self.client,
                     &*self.broker,
@@ -231,6 +249,7 @@ impl Worker {
                     &warrant,
                     self.id,
                     instance_id,
+                    tool_args,
                 )
                 .await
             };
@@ -374,6 +393,21 @@ impl Worker {
             }
         })
     }
+}
+
+/// PR-2d-2: `true` iff `mote` is a coordinator-materialized ReAct TURN — the
+/// identity-bearing [`REACT_TURN_KEY`] marker (D53: in `config_subset`, so it
+/// folds into the `MoteId` and can never be dropped in transit) with NO
+/// `tool_contract` (a turn PROPOSES; the marker-less observation Mote, which
+/// DOES declare a contract, fires through the broker arm as usual). A
+/// client-crafted marker reaches a strictly STRICTER path: the executor's react
+/// arm decodes + fences the output pre-commit and fires nothing.
+fn is_react_turn(mote: &Mote) -> bool {
+    mote.def.tool_contract.is_empty()
+        && mote
+            .def
+            .config_subset
+            .contains_key(&ConfigKey(REACT_TURN_KEY.to_string()))
 }
 
 /// Wall-clock milliseconds since the Unix epoch (liveness only; never hashed).

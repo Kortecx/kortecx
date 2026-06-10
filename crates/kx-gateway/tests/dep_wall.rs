@@ -5,23 +5,20 @@
 //! `default-features = false` at the workspace root), so `cargo install kx-gateway`
 //! needs no C++ toolchain. This is the binary's analogue of `build-no-inference`.
 //!
-//! PR-2d-1 hardens the wall with `kx-model-harness` (the react decode gate is the
+//! PR-2d-1 hardened the wall with `kx-model-harness` (the react decode gate is the
 //! pure leaf `kx-toolcall`; the harness would drag the whole engine + the FFI back
-//! in via its `llamacpp` opt-in) and `kx-mcp` (tool egress lands as an explicit,
-//! OPTIONAL edge in PR-2d-2 — at which point its check moves to the optional-edge
-//! pattern below, the `hnsw` precedent).
+//! in via its `llamacpp` opt-in). PR-2d-2 lands the MCP adapter as an explicit,
+//! OPTIONAL edge behind `inference` (the live ReAct tool round), so its check
+//! moved from FORBIDDEN to the optional-edge pattern below (the `hnsw` precedent):
+//! the edge must exist, must be `optional = true` (absent from the default-feature
+//! tree), and its own subtree must be FFI-free.
 //!
 //! Two independent proofs: a manifest `[dependencies]` scan + a `cargo tree` over
 //! the normal edges.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
 
-const FORBIDDEN: &[&str] = &[
-    "kx-llamacpp",
-    "kx-llamacpp-sys",
-    "kx-model-harness",
-    "kx-mcp",
-];
+const FORBIDDEN: &[&str] = &["kx-llamacpp", "kx-llamacpp-sys", "kx-model-harness"];
 
 #[test]
 fn cargo_manifest_dependencies_exclude_the_ffi() {
@@ -109,6 +106,55 @@ fn cargo_manifest_wires_the_dataset_hnsw_edge_optionally() {
         assert!(
             line.contains("optional = true"),
             "{edge} must be an OPTIONAL edge (behind the `hnsw` feature)"
+        );
+    }
+}
+
+#[test]
+fn cargo_manifest_wires_the_mcp_edge_optionally() {
+    // PR-2d-2 wires the MCP adapter (the live ReAct tool round) behind the OPT-IN
+    // `inference` feature. Assert the edge exists AND is optional — so it is
+    // absent from the default-feature tree the FFI check above scans — and that
+    // the typed tool-registry edge that rides with it is optional too.
+    let manifest = include_str!("../Cargo.toml");
+    let deps = manifest
+        .split("[dependencies]")
+        .nth(1)
+        .expect("a [dependencies] section")
+        .split("\n[")
+        .next()
+        .expect("the end of the [dependencies] section");
+    for edge in ["kx-mcp", "kx-tool-registry"] {
+        let line = deps
+            .lines()
+            .find(|l| l.trim_start().starts_with(edge))
+            .unwrap_or_else(|| panic!("PR-2d-2 wires {edge}"));
+        assert!(
+            line.contains("optional = true"),
+            "{edge} must be an OPTIONAL edge (behind the `inference` feature)"
+        );
+    }
+}
+
+#[test]
+fn mcp_subtree_excludes_the_ffi() {
+    // Defense-in-depth: prove the MCP adapter does not, on its own normal tree,
+    // drag in the llama.cpp FFI or the harness — so the optional edge can never
+    // re-open the hole the FORBIDDEN list closes.
+    let output = std::process::Command::new(env!("CARGO"))
+        .args([
+            "tree", "-p", "kx-mcp", "--edges", "normal", "--prefix", "none",
+        ])
+        .output();
+    let output = match output {
+        Ok(o) if o.status.success() => o,
+        _ => return,
+    };
+    let tree = String::from_utf8_lossy(&output.stdout);
+    for forbidden in FORBIDDEN {
+        assert!(
+            !tree.lines().any(|l| l.trim_start().starts_with(forbidden)),
+            "{forbidden} appeared in the normal dependency tree of the MCP adapter:\n{tree}"
         );
     }
 }

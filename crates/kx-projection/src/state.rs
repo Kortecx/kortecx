@@ -4,7 +4,7 @@
 //! crate's public API; [`crate::Projection`] and [`crate::Snapshot`] are the
 //! exposed handles.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use kx_content::ContentRef;
 use kx_journal::{FailureReason, ParentEntry};
@@ -228,11 +228,43 @@ pub(crate) struct State {
     /// identity/scheduling/digest input. Emptiness is the `has_react_turn`
     /// sentinel that keeps react-free runs (and the demo) zero-cost.
     pub(crate) react_rounds: Vec<ReactRoundRecord>,
+    /// PR-2d-2 — DERIVED per-instance index over `react_rounds`: `instance_id`
+    /// → indices into the Vec, in append (= seq) order. `react_rounds` only
+    /// ever GROWS in serve's shared journal, so without this every per-chain
+    /// settle/recover/trajectory query is a scan over EVERY chain's facts
+    /// forever (the PR-2d-1 O(runs²) adversarial finding — the coordinator's
+    /// `ReactSettleCache` bounds the settle; this bounds the per-chain reads).
+    /// Maintained by the fold; RE-DERIVED on checkpoint load — NEVER serialized
+    /// (it is not in `CheckpointState`), so `encode_state`, the
+    /// `state_content_digest`, and the v4 checkpoint format are byte-unchanged.
+    pub(crate) react_index: BTreeMap<[u8; kx_journal::INSTANCE_ID_LEN], Vec<usize>>,
+    /// PR-2d-2 — DERIVED set of every react TURN's `MoteId` (each
+    /// `ReactRound.turn_mote_id`). O(log n) membership for the coordinator's
+    /// lease-time "is this Mote's parent a react turn?" check (the observation
+    /// args-or-skip rule). Same derived/never-serialized contract as
+    /// [`Self::react_index`].
+    pub(crate) react_turn_motes: BTreeSet<MoteId>,
 }
 
 impl State {
     pub(crate) fn moteinfo_mut(&mut self, id: &MoteId) -> &mut MoteInfo {
         self.motes.entry(*id).or_default()
+    }
+
+    /// Index the LAST-pushed `react_rounds` record (PR-2d-2 — called by the
+    /// fold right after the push, and by the checkpoint-load re-derivation, so
+    /// both construction paths produce identical derived state and
+    /// `State: PartialEq` comparisons hold).
+    pub(crate) fn index_last_react_round(&mut self) {
+        let Some(idx) = self.react_rounds.len().checked_sub(1) else {
+            return;
+        };
+        let record = &self.react_rounds[idx];
+        self.react_index
+            .entry(record.instance_id)
+            .or_default()
+            .push(idx);
+        self.react_turn_motes.insert(record.turn_mote_id);
     }
 
     /// `true` iff any declared Mote is a deterministic critic (`critic_for =

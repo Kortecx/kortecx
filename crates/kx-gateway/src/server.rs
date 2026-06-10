@@ -386,10 +386,14 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     let coordinator = match shaper_runtime.as_ref() {
         Some(rt) => {
             tracing::info!("PR-2b: live model-driven topology loop enabled (kx/recipes/plan)");
-            CoordinatorService::with_store_and_shaper_materialization(
+            // PR-2d-2: the coordinator shares the serve tool registry (built-ins
+            // + the bundled stdio tool) so its settle validates a model-proposed
+            // call's args against the SAME typed schema the broker dispatch sees.
+            CoordinatorService::with_store_shaper_and_tools(
                 writer,
                 content.clone(),
                 rt.role_registry.clone(),
+                Arc::new(crate::mcp_tool::registry_with_echo()),
             )
         }
         None => CoordinatorService::with_store(writer, content.clone()),
@@ -470,8 +474,20 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     let context_sink: Option<Arc<dyn kx_worker::ContextSink>> = None;
     #[cfg(not(feature = "inference"))]
     let serve_model: Option<kx_mote::ModelId> = None;
-    let broker: Arc<dyn CapabilityBroker> =
-        Arc::new(LocalCapabilityBroker::new((*content).clone()));
+    let local_broker = LocalCapabilityBroker::new((*content).clone());
+    // PR-2d-2 (react-tools-live): register the bundled deterministic stdio tool's
+    // capability — the live ReAct loop's "Act" step — when its binary is present
+    // AND a fit serve model resolved (no model ⇒ no react chain can drive it).
+    // Fail-soft: no binary ⇒ no capability, no `kx/recipes/react`; unchanged serve.
+    #[cfg(feature = "inference")]
+    let react_tool: Option<(kx_mote::ToolName, kx_mote::ToolVersion)> = if serve_model.is_some() {
+        crate::mcp_tool::register_echo_capability(&local_broker)
+    } else {
+        None
+    };
+    #[cfg(not(feature = "inference"))]
+    let react_tool: Option<(kx_mote::ToolName, kx_mote::ToolVersion)> = None;
+    let broker: Arc<dyn CapabilityBroker> = Arc::new(local_broker);
     let worker = Worker::register(
         client,
         default_executor_class(),
@@ -524,12 +540,22 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     // gateway advertises critic support iff it is present — `SubmitRun` refuses a
     // critic-bearing workflow otherwise (rather than admitting an exit-gate deadlock).
     let critics_supported = serve_model.is_some();
-    let demo = Arc::new(DemoLibrary::open_full(
+    // PR-2d-2: react support mirrors critic support — the react decode/fence arm
+    // lives in the same inference-build executor. Tool FIRING additionally needs
+    // the bundled capability (`react_tool`), which gates the recipe seeding below;
+    // an answer-only react chain needs only the executor.
+    let react_supported = serve_model.is_some();
+    let registered_tools: std::collections::BTreeSet<(String, String)> = react_tool
+        .iter()
+        .map(|(id, ver)| (id.0.clone(), ver.0.clone()))
+        .collect();
+    let demo = Arc::new(DemoLibrary::open_complete(
         &catalog_dir,
         default_executor_class(),
         &parties,
         real_body_ref,
-        serve_model,
+        serve_model.as_ref(),
+        react_tool.as_ref(),
     )?);
     // One seed, two seams: the binder (Invoke) and the recipe catalog (ListRecipes
     // / GetRecipeForm) share the SAME library, so the published form and the
@@ -578,6 +604,8 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         .with_membership_view(membership_view)
         .with_grant_view(grant_view)
         .with_critics_supported(critics_supported)
+        .with_react_supported(react_supported)
+        .with_registered_tools(registered_tools)
         .with_event_tailer(Arc::new(crate::live_tail::LiveTailer::new(
             live_shutdown_rx.clone(),
         )));

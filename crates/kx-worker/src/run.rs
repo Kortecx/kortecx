@@ -30,3 +30,35 @@ where
     let commit = run_pure_mote(mote, warrant, &scratch, resource_manager, executor)?;
     Ok(commit.result_ref)
 }
+
+/// Run a coordinator-materialized ReAct TURN (PR-2d-2) — a ROND,
+/// `IdempotentByConstruction`, prompt-carrying model Mote (the identity-bearing
+/// `REACT_TURN_KEY` marker, empty `tool_contract`) — DIRECTLY through the
+/// hosted executor and return its `result_ref` to PROPOSE via `ReportCommit`.
+///
+/// A turn fits NEITHER existing worker arm: it is not PURE (the frozen
+/// `run_pure_mote` enforces the class), and the broker arm (`run_wm`) resolves a
+/// capability from `tool_contract` — a turn deliberately declares none (it
+/// PROPOSES; the separate observation Mote fires). In the HARNESS the model
+/// lives behind the broker (`ModelBroker` runs prompt-carrying ROND Motes); in
+/// serve it lives behind the EXECUTOR (`ModelRouterExecutor`, whose react arm
+/// decodes + fences the output pre-commit), so the distributed mirror is a
+/// direct `executor.run`. Dispatch semantics match `run_wm`'s
+/// `IdempotentByConstruction` arm: fire directly (no `EffectStaged` — a greedy
+/// decode is serve-once via the coordinator's first-wins commit dedup, R49) and
+/// propose the staged `result_ref`. Warrant ceilings are enforced INSIDE the
+/// model dispatch (`inference_params_from_mote` refuses a widening, D35).
+pub(crate) fn run_react_turn<E>(
+    mote: &Mote,
+    warrant: &WarrantSpec,
+    executor: &E,
+) -> Result<ContentRef, WorkerError>
+where
+    E: MoteExecutor + ?Sized,
+{
+    // A react turn never carries an environment_ref (minimal-base sandbox).
+    let result = executor
+        .run(mote, warrant, None)
+        .map_err(kx_executor::LifecycleError::from)?;
+    Ok(result.result_ref)
+}

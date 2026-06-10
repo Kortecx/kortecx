@@ -183,6 +183,30 @@ impl CoordinatorService {
         )
     }
 
+    /// As [`with_store_and_shaper_materialization`], but injects the
+    /// [`ToolRegistry`] (PR-2d-2): the live `kx serve` registers the bundled
+    /// stdio tool's `ToolDef` so the settle's validate-at-freeze and the
+    /// lease-time args re-derivation resolve it. Every other caller keeps the
+    /// built-ins default.
+    ///
+    /// [`with_store_and_shaper_materialization`]: CoordinatorService::with_store_and_shaper_materialization
+    pub fn with_store_shaper_and_tools<J: Journal + Send + 'static>(
+        journal: J,
+        store: Arc<LocalFsContentStore>,
+        shaper_roles: Arc<dyn kx_warrant::RoleRegistry>,
+        tool_registry: Arc<dyn ToolRegistry>,
+    ) -> Self {
+        Self::with_shaper_materialization(
+            journal,
+            Arc::new(InMemoryWorkerRegistry::new()),
+            store,
+            Arc::new(SystemClock),
+            Arc::new(OsRandomNonce),
+            tool_registry,
+            shaper_roles,
+        )
+    }
+
     fn build<J: Journal + Send + 'static>(
         journal: J,
         registry: Arc<dyn WorkerRegistry>,
@@ -503,6 +527,17 @@ impl Coordinator for CoordinatorService {
                         result_ref: result_ref.as_bytes().to_vec(),
                     })
                     .collect(),
+                // PR-2d-2 (react-tools-live): the coordinator-validated args +
+                // the resolved tool's declared egress for a ReAct observation,
+                // re-derived on the sole-writer thread at lease time
+                // (`resolve_tool_args`). `None` for every other Mote — the
+                // legacy WM/leaf wire payload is byte-identical.
+                tool_args: item
+                    .tool_args
+                    .map(|(args_bytes, net_scope)| proto::ToolArgs {
+                        args_bytes,
+                        net_scope: Some(net_scope.into()),
+                    }),
             })
             .collect();
         Ok(Response::new(proto::LeaseWorkResponse {

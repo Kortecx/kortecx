@@ -44,7 +44,7 @@
 //! the single-node trust model. (Distributed/untrusted-storage journals need
 //! *signed* seals — the deferred coordinator-parity follow-on.)
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use kx_content::ContentRef;
 use kx_journal::{FailureReason, ParentEntry, ResolvedCapabilityRecord, INSTANCE_ID_LEN};
@@ -531,6 +531,10 @@ struct ReactRoundRecordDto {
 impl From<&State> for CheckpointState {
     fn from(state: &State) -> Self {
         // Destructure WITHOUT `..` — a new `State` field breaks this build.
+        // `react_index` / `react_turn_motes` are DERIVED views over
+        // `react_rounds` (PR-2d-2): deliberately NOT serialized — the load path
+        // re-derives them, so the checkpoint format (v4), `encode_state`, and
+        // the `state_content_digest` are byte-unchanged by their existence.
         let State {
             motes,
             children,
@@ -539,6 +543,8 @@ impl From<&State> for CheckpointState {
             run_resolved_versions,
             replan_rounds,
             react_rounds,
+            react_index: _,
+            react_turn_motes: _,
         } = state;
         Self {
             motes: motes
@@ -741,7 +747,7 @@ impl TryFrom<CheckpointState> for State {
         for (id, mi) in motes {
             decoded_motes.insert(id, MoteInfo::try_from(mi)?);
         }
-        Ok(State {
+        let mut state = State {
             motes: decoded_motes,
             children,
             last_seq,
@@ -758,7 +764,32 @@ impl TryFrom<CheckpointState> for State {
                 .into_iter()
                 .map(ReactRoundRecord::from)
                 .collect(),
-        })
+            react_index: BTreeMap::new(),
+            react_turn_motes: BTreeSet::new(),
+        };
+        // PR-2d-2: RE-DERIVE the react index/turn-set from the deserialized
+        // facts — the same shape the fold maintains incrementally, so both
+        // construction paths produce identical derived state and
+        // `State: PartialEq` holds between a folded and a checkpoint-loaded
+        // projection.
+        derive_react_index(&mut state);
+        Ok(state)
+    }
+}
+
+/// Re-derive the PR-2d-2 react index + turn-set over an already-populated
+/// `react_rounds` (the checkpoint-load path; the fold path maintains them
+/// incrementally via `State::index_last_react_round`).
+fn derive_react_index(state: &mut State) {
+    state.react_index.clear();
+    state.react_turn_motes.clear();
+    for (idx, record) in state.react_rounds.iter().enumerate() {
+        state
+            .react_index
+            .entry(record.instance_id)
+            .or_default()
+            .push(idx);
+        state.react_turn_motes.insert(record.turn_mote_id);
     }
 }
 
@@ -1066,6 +1097,12 @@ mod tests {
             max_tool_calls: 8,
             seq: 4,
         });
+        // PR-2d-2: a real State's derived react index/turn-set is ALWAYS
+        // consistent with `react_rounds` (the fold maintains it; the load path
+        // re-derives it) — the fixture must uphold the same invariant or the
+        // lossless-roundtrip assert would compare an unindexed source against
+        // a re-derived decode.
+        derive_react_index(&mut s);
         s
     }
 

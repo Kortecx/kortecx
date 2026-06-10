@@ -74,10 +74,36 @@ pub const PROMPT_KEY: &str = "prompt";
 /// → `MoteId` (D53): it cannot be dropped in transit without changing the
 /// identity the coordinator re-derives — structurally fail-closed, unlike a
 /// droppable wire flag. A client-crafted marker is STRICTLY STRICTER: the react
-/// arm raw-commits like a leaf and additionally fences tool-shaped output (the
-/// answer-only fence), and the coordinator's settle keys only off
-/// coordinator-written `ReactRound` facts — the marker alone fires nothing.
+/// arm raw-commits like a leaf and additionally dead-letters malformed/
+/// UNGRANTED tool-shaped output pre-commit (the decode fence), and the
+/// coordinator's settle keys only off coordinator-written `ReactRound` facts —
+/// the marker alone fires nothing.
 pub const REACT_TURN_KEY: &str = "kx.react.turn";
+
+/// The [`ConfigKey`] *name* under which a ReAct SEED Mote may carry its
+/// instruction (PR-2d-2) — the `kx/recipes/react` free-param slot name (the
+/// recipe binder writes a bound arg into `config_subset[<slot name>]`, so the
+/// slot name IS the config key). The coordinator's seed-swap reads the
+/// instruction from [`PROMPT_KEY`] first (the direct-submission contract,
+/// PR-2d-1), then this key — both JSON-string-or-raw decoded (the
+/// `prompt_from_config` precedent: a recipe-bound `Str` arrives JSON-quoted, a
+/// directly-built seed carries raw bytes). Read off the SEED only — the seed is
+/// validated then SWAPPED, so the key never reaches an admitted identity.
+pub const REACT_INSTRUCTION_KEY: &str = "instruction";
+
+/// The [`ConfigKey`] *name* under which a ReAct SEED Mote may carry its
+/// per-run turn budget (PR-2d-2, the `kx/recipes/react` `max_turns` slot; a
+/// canonical-JSON unsigned integer). Seed-only (see
+/// [`REACT_INSTRUCTION_KEY`]); validated `0 < max_tool_calls < max_turns ≤ 8`
+/// at the seed-swap, then recorded DURABLY on the turn-0 `ReactRound` anchor —
+/// the admitted budget never depends on a default that could drift across
+/// binary versions (red-team BLOCKER #4).
+pub const REACT_MAX_TURNS_KEY: &str = "max_turns";
+
+/// The [`ConfigKey`] *name* under which a ReAct SEED Mote may carry its per-run
+/// tool-call (observation) budget (PR-2d-2, the `kx/recipes/react`
+/// `max_tool_calls` slot). See [`REACT_MAX_TURNS_KEY`].
+pub const REACT_MAX_TOOL_CALLS_KEY: &str = "max_tool_calls";
 
 /// The stable position of a Mote in its DAG.
 ///

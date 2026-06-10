@@ -368,13 +368,32 @@ message ParentResult {
   bytes result_ref = 2;                 // 32B — its committed result's content address
 }
 
+// The model-PROPOSED, coordinator-VALIDATED tool arguments for a leased ReAct
+// observation Mote (PR-2d-2, additive). The coordinator (the sole writer) decodes
+// the parent turn's COMMITTED output through the ONE authority gate
+// (kx-toolcall) + validates the args against the tool's typed inputSchema, then
+// re-derives this pair at EVERY (re-)lease — a pure function of committed facts,
+// so a crash/re-lease carries byte-identical args (nothing staged, nothing to
+// recover). Args travel OUT-OF-BAND of the Mote (never `config_subset`) so the
+// observation's MoteId never moves with the args. `net_scope` is the RESOLVED
+// tool's declared egress requirement (the broker's precheck still enforces
+// request ⊆ warrant — this is the request, not the authority).
+message ToolArgs {
+  bytes args_bytes = 1;                 // the decoded call's args, verbatim (RawValue bytes)
+  NetScope net_scope = 2;               // the resolved ToolDef's net_scope_required
+}
+
 // One unit of work: the Mote to run plus the warrant it runs under. `parent_results`
 // (field 3, additive) is the forward-ready F-7 context seam (RESERVED — empty until PR-2c;
 // an older worker that ignores it assembles an empty leaf context, byte-identical to today).
+// `tool_args` (field 4, additive, PR-2d-2) carries the coordinator-validated args for a
+// ReAct observation; a worker that finds it ABSENT on a tool-granted StageThenCommit Mote
+// refuses to fire (fail-closed — never an empty-args effect).
 message WorkItem {
   Mote mote = 1;
   WarrantSpec warrant = 2;
   repeated ParentResult parent_results = 3;
+  ToolArgs tool_args = 4;
 }
 
 message LeaseWorkResponse {

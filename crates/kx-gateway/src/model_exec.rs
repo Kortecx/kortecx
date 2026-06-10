@@ -463,30 +463,34 @@ impl<B: InferenceBackend> ModelRouterExecutor<B> {
     /// [`kx_mote::REACT_TURN_KEY`] routing marker the run-salted builders insert.
     /// The marker is identity-bearing (`config_subset` → `MoteId`, D53), so it can
     /// never be dropped in transit; a client-crafted marker reaches a strictly
-    /// STRICTER path (the answer-only fence below), never a wider one.
+    /// STRICTER path (the pre-commit decode fence below — malformed/ungranted
+    /// output dead-letters), never a wider one.
     fn is_react_turn(mote: &Mote) -> bool {
         mote.def
             .config_subset
             .contains_key(&kx_mote::ConfigKey(kx_mote::REACT_TURN_KEY.to_string()))
     }
 
-    /// Run a ReAct TURN Mote (PR-2d-1, answer-only substrate): `dispatch_model`
-    /// verbatim (the F-7 trajectory prepend + ChatML — the committed prompt
-    /// contract is byte-identical to the harness loop), then the pre-commit
-    /// DEFENSE-IN-DEPTH fence over the raw output via the ONE authority gate
-    /// ([`kx_toolcall::parse_tool_call`] — the same crate the coordinator settle
-    /// and the harness decode through):
+    /// Run a ReAct TURN Mote: `dispatch_model` verbatim (the F-7 trajectory
+    /// prepend + ChatML — the committed prompt contract is byte-identical to the
+    /// harness loop), then the pre-commit DEFENSE-IN-DEPTH fence over the raw
+    /// output via the ONE authority gate ([`kx_toolcall::parse_tool_call`] — the
+    /// same crate the coordinator settle and the harness decode through):
     ///
     /// - `Err` (malformed / ungranted / oversize proposal) ⇒ TERMINAL — the worker
     ///   dead-letters the turn (F4) and the chain settles `DeadLettered`. A
-    ///   half-formed proposal never commits (the harness fresh-turn contract).
-    /// - `Ok(Some(_))` ⇒ TERMINAL — **the PR-2d-1 answer-only fence**: tool firing
-    ///   lands in PR-2d-2 (`ToolArgsSink` + the MCP broker edge); committing a
-    ///   tool-proposal turn now would half-fire the chain (a committed decision
-    ///   with no observation path). Unreachable under the empty-grant warrants
-    ///   every PR-2d-1 serve role issues (`parse_tool_call` is `Ok(None)` for ANY
-    ///   bytes when no tools are granted) — the fence is the structural backstop
-    ///   a PR-2d-2 grant cannot accidentally bypass.
+    ///   half-formed proposal never commits (the harness fresh-turn contract) and
+    ///   a prompt-injected, warrant-UNGRANTED tool name never reaches the journal
+    ///   (SN-8 — injection cannot escalate).
+    /// - `Ok(Some(_))` ⇒ the RAW envelope COMMITS as the turn's `result_ref`
+    ///   (PR-2d-2 — the PR-2d-1 answer-only fence is replaced by the live tool
+    ///   round): the committed turn IS the frozen decision's source; the
+    ///   COORDINATOR settle re-decodes it on the sole writer, validates the args
+    ///   against the tool's typed schema, freezes the durable `Tool` fact, and
+    ///   materializes the OBSERVATION the worker fires through the broker's
+    ///   warrant gate. The gateway never fires anything (no half-fire — the
+    ///   decision and the effect live in separate Motes, the harness two-Mote
+    ///   contract).
     /// - `Ok(None)` ⇒ the RAW completion commits as the turn's `result_ref` (the
     ///   harness two-fact contract: the committed turn output IS the served fact,
     ///   re-decoded — never re-sampled — on every replay, R49).
@@ -496,27 +500,24 @@ impl<B: InferenceBackend> ModelRouterExecutor<B> {
         warrant: &WarrantSpec,
     ) -> Result<MoteExecutionResult, MoteExecutorError> {
         let bytes = self.dispatch_model(mote, warrant)?;
-        match kx_toolcall::parse_tool_call(&bytes, warrant, kx_toolcall::max_args_bytes(warrant)) {
-            Err(reason) => Err(internal(&format!(
+        // A warrant-GRANTED proposal (`Ok(Some)`) and a final answer (`Ok(None)`)
+        // both commit RAW — the coordinator settle owns the decision (PR-2d-2).
+        if let Err(reason) =
+            kx_toolcall::parse_tool_call(&bytes, warrant, kx_toolcall::max_args_bytes(warrant))
+        {
+            return Err(internal(&format!(
                 "react turn proposal refused (fail-closed): {reason:?}"
-            ))),
-            Ok(Some(call)) => Err(internal(&format!(
-                "react tool proposal fenced: tool firing lands in PR-2d-2 \
-                 (proposed {}@{})",
-                call.name.0, call.version.0
-            ))),
-            Ok(None) => {
-                let result_ref = self
-                    .store
-                    .put(&bytes)
-                    .map_err(|e| internal(&format!("content store put: {e}")))?;
-                Ok(MoteExecutionResult {
-                    result_ref,
-                    started_at_epoch_ms: 0,
-                    finished_at_epoch_ms: 0,
-                })
-            }
+            )));
         }
+        let result_ref = self
+            .store
+            .put(&bytes)
+            .map_err(|e| internal(&format!("content store put: {e}")))?;
+        Ok(MoteExecutionResult {
+            result_ref,
+            started_at_epoch_ms: 0,
+            finished_at_epoch_ms: 0,
+        })
     }
 
     /// Run a leaf model Mote: greedy decode the ChatML-wrapped prompt, publish the

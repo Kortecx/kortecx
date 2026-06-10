@@ -348,10 +348,12 @@ pub enum ReactBranch {
     /// The turn's committed output was a final answer (no tool envelope) — the
     /// chain is terminal at this turn.
     Answer,
-    /// The turn's committed output proposed a warrant-granted tool call. In
-    /// PR-2d-1 (answer-only substrate) this branch is recorded for harness-parity
-    /// settles but the gateway fences live tool proposals pre-commit; firing
-    /// lands in PR-2d-2.
+    /// The turn's committed output proposed a warrant-granted tool call —
+    /// frozen AFTER the settle also resolved the tool against the registry and
+    /// validated the args against its typed `inputSchema` (PR-2d-2), so a
+    /// recorded `Tool` decision is always fireable. The coordinator then
+    /// materializes the OBSERVATION Mote that fires it; the chain advances
+    /// once the observation commits.
     Tool {
         /// The proposed tool's name (already grant-checked at decode).
         tool_id: String,

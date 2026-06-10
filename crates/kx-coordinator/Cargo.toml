@@ -51,6 +51,11 @@ tokio = { workspace = true, features = ["sync"] }
 smallvec = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
+# PR-2d-2: decode the react SEED's free params at the seed-swap — a recipe-bound
+# `Str`/`Int` arg arrives canonical-JSON-encoded (the kx-invoke binder contract),
+# a directly-built seed carries raw bytes; the swap tries JSON first then raw
+# (the gateway `prompt_from_config` precedent). Already in the lock graph.
+serde_json = { workspace = true }
 # OS entropy for the registered run-id nonce (M1.1, D64): a run identity must be
 # unpredictable to serve as a cross-boundary idempotency-token root. Version 0.3
 # is already in the lock graph (no new major added); `getrandom::fill` only.

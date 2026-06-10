@@ -26,21 +26,28 @@ use std::collections::BTreeMap;
 use kx_content::ContentRef;
 use kx_journal::INSTANCE_ID_LEN;
 use kx_mote::{
-    ConfigKey, ConfigVal, EffectPattern, GraphPosition, InferenceParams, InputDataId, LogicRef,
-    ModelId, Mote, MoteDef, NdClass, PromptTemplateHash, MOTE_DEF_SCHEMA_VERSION, PROMPT_KEY,
-    REACT_TURN_KEY,
+    ConfigKey, ConfigVal, EdgeMeta, EffectPattern, GraphPosition, InferenceParams, InputDataId,
+    LogicRef, ModelId, Mote, MoteDef, MoteId, NdClass, ParentRef, PromptTemplateHash, ToolName,
+    ToolVersion, MOTE_DEF_SCHEMA_VERSION, PROMPT_KEY, REACT_TURN_KEY,
 };
 use smallvec::SmallVec;
 
-/// The durable per-run ReAct budget caps recorded on the turn-0 anchor — a
-/// byte-mirror of the harness `ReactBudget::default()` (8 turns / 8 tool calls),
-/// so the live coordinator and the harness drive identical-length chains (the
-/// cross-impl equivalence pin, R49). Recorded DURABLY at anchor time so a
-/// recovered coordinator enforces the budget the run was admitted under, never a
-/// default that drifted across binary versions (red-team BLOCKER #4).
+/// The default per-run ReAct turn budget recorded on the turn-0 anchor, and the
+/// HARD CEILING both caps are validated against at seed time (a seed-supplied
+/// cap above it is refused LOUDLY — `ReactSeedRefused`). 8 is the harness
+/// `ReactBudget::default()` turn count, so default-cap serve chains and harness
+/// chains are identical-length (the cross-impl equivalence pin, R49). Caps are
+/// recorded DURABLY at anchor time so a recovered coordinator enforces the
+/// budget the run was admitted under, never a default that drifted across
+/// binary versions (red-team BLOCKER #4).
 pub(crate) const REACT_MAX_TURNS: u32 = 8;
-/// See [`REACT_MAX_TURNS`].
-pub(crate) const REACT_MAX_TOOL_CALLS: u32 = 8;
+/// The default per-run tool-call (observation) budget (PR-2d-2). Deliberately
+/// `< REACT_MAX_TURNS`: the harness `ReactBudget` docs pin that a useful loop
+/// leaves at least one turn to READ the last observation and answer — an 8/8
+/// budget is degenerate (the harness default predates live tool firing). Seed
+/// caps are validated `0 < max_tool_calls < max_turns ≤ 8`; chains anchored
+/// under the old 8/8 default keep their recorded caps (durable per-anchor).
+pub(crate) const REACT_DEFAULT_MAX_TOOL_CALLS: u32 = 6;
 
 /// The run-salted 32-byte identity material for a ReAct turn:
 /// `blake3(b"kx-react-turn" ‖ instance_id ‖ turn.to_le_bytes())`. Deterministic +
@@ -96,7 +103,7 @@ pub(crate) fn build_react_turn(
         logic_ref: LogicRef::from_bytes(id_bytes),
         model_id: model_id.clone(),
         prompt_template_hash: PromptTemplateHash::from_bytes(id_bytes),
-        // No tool_contract: the turn PROPOSES; firing is PR-2d-2's tool Mote.
+        // No tool_contract: the turn PROPOSES; the OBSERVATION Mote fires.
         tool_contract: BTreeMap::new(),
         nd_class: NdClass::ReadOnlyNondet,
         config_subset,
@@ -114,6 +121,78 @@ pub(crate) fn build_react_turn(
         InputDataId::from_bytes(id_bytes),
         GraphPosition(id_bytes.to_vec()),
         SmallVec::new(),
+    )
+}
+
+/// The run-salted 32-byte identity material for a ReAct OBSERVATION (the tool
+/// Mote that fires the model's frozen `Tool` decision at `turn`):
+/// `blake3(b"kx-react-tool" ‖ instance_id ‖ turn.to_le_bytes())`. The TOOL
+/// identity is deliberately NOT in the material — it enters the `MoteId` via
+/// `tool_contract` (def-hash), exactly like the harness
+/// `kx_model_harness::workflows::react_tool_mote_salted`.
+#[must_use]
+pub(crate) fn react_tool_id_material(instance_id: &[u8; INSTANCE_ID_LEN], turn: u32) -> [u8; 32] {
+    let mut material = b"kx-react-tool".to_vec();
+    material.extend_from_slice(instance_id);
+    material.extend_from_slice(&turn.to_le_bytes());
+    *ContentRef::of(&material).as_bytes()
+}
+
+/// Re-derive a ReAct OBSERVATION `Mote` from the frozen `Tool` branch fact —
+/// byte-for-byte identical (FULL Mote equality, parents included) to the harness
+/// `workflows::react_tool_mote_salted`, so the observation the live coordinator
+/// materializes is the observation the harness oracle derives (R49; the
+/// cross-impl golden below pins it on both sides of the dep wall).
+///
+/// The observation is WorldMutating `StageThenCommit` (D66 — a crash-recovery
+/// re-dispatch is exactly-once via the content-addressed stage + the run-scoped
+/// idempotency token), declares `(tool_id, tool_version)` in its `tool_contract`
+/// (the broker's `precheck` re-verifies it against `warrant.tool_grants` at
+/// dispatch — SN-8), carries ONE Data edge to its proposing turn (durable
+/// lineage; the ready-set releases it when the turn commits), and keeps its
+/// `config_subset` EMPTY — the PR-2d-2 args contract: the model-proposed args
+/// travel OUT-OF-BAND (`WorkItem.tool_args`, re-derived at lease time from the
+/// committed turn output), so the observation's identity never moves with the
+/// args. Everything here is a pure function of `(model_id, tool, turn,
+/// instance_id, turn_mote_id)` — recovery re-derives the SAME Mote from the
+/// frozen fact, which is why no "materialized" marker needs to be durable.
+#[must_use]
+pub(crate) fn build_react_tool(
+    model_id: &ModelId,
+    tool_id: &ToolName,
+    tool_version: &ToolVersion,
+    turn: u32,
+    instance_id: &[u8; INSTANCE_ID_LEN],
+    turn_mote_id: MoteId,
+) -> Mote {
+    let id_bytes = react_tool_id_material(instance_id, turn);
+
+    let mut tool_contract = BTreeMap::new();
+    tool_contract.insert(tool_id.clone(), tool_version.clone());
+    let def = MoteDef {
+        critic_check: None,
+        logic_ref: LogicRef::from_bytes(id_bytes),
+        model_id: model_id.clone(),
+        prompt_template_hash: PromptTemplateHash::from_bytes(id_bytes),
+        tool_contract,
+        nd_class: NdClass::WorldMutating,
+        // EMPTY — the out-of-band args contract (see the fn doc).
+        config_subset: BTreeMap::new(),
+        effect_pattern: EffectPattern::StageThenCommit,
+        critic_for: None,
+        is_topology_shaper: false,
+        inference_params: InferenceParams::default(),
+        schema_version: MOTE_DEF_SCHEMA_VERSION,
+    };
+    Mote::new(
+        def,
+        InputDataId::from_bytes(id_bytes),
+        GraphPosition(id_bytes.to_vec()),
+        std::iter::once(ParentRef {
+            parent_id: turn_mote_id,
+            edge: EdgeMeta::data(),
+        })
+        .collect::<SmallVec<[ParentRef; 4]>>(),
     )
 }
 
@@ -153,6 +232,57 @@ mod tests {
                 .map(|v| v.0.clone()),
             Some(vec![0x4d; 16])
         );
+    }
+
+    /// The CROSS-IMPL frozen golden for the OBSERVATION builder (PR-2d-2): the
+    /// EXACT salted `MoteId` the harness `react_tool_mote_salted` derives for
+    /// the same inputs — the same hex is pinned in
+    /// `kx-model-harness::workflows::react_identity_tests`, so a drift on
+    /// EITHER copy fails CI. Inputs: model `kx-test:q8:deadbeef`, tool
+    /// `mcp-echo@1`, turn 0, salt `[0x4d; 16]`, turn_mote_id = the salted
+    /// turn-0 golden.
+    const SALTED_TOOL0_GOLDEN: &str =
+        "0797b93286b999344db0ba9a458a83105c6a6b55c29760e510311ae45ff68048";
+
+    #[test]
+    fn salted_observation_matches_the_harness_golden() {
+        let model = ModelId("kx-test:q8:deadbeef".to_string());
+        let salt = [0x4d_u8; 16];
+        let turn = build_react_turn(&model, "list the files", 0, &salt, 64);
+        let obs = build_react_tool(
+            &model,
+            &ToolName("mcp-echo".to_string()),
+            &ToolVersion("1".to_string()),
+            0,
+            &salt,
+            turn.id,
+        );
+        assert_eq!(hex(obs.id.as_bytes()), SALTED_TOOL0_GOLDEN);
+        // FULL-Mote contract (not just the id): one Data edge to the turn,
+        // empty config (out-of-band args), WM + StageThenCommit, the declared
+        // tool contract — byte-for-byte the harness observation.
+        assert_eq!(obs.parents.len(), 1);
+        assert_eq!(obs.parents[0].parent_id, turn.id);
+        assert!(obs.def.config_subset.is_empty());
+        assert_eq!(obs.def.nd_class, NdClass::WorldMutating);
+        assert_eq!(obs.def.effect_pattern, EffectPattern::StageThenCommit);
+        assert_eq!(
+            obs.def
+                .tool_contract
+                .get(&ToolName("mcp-echo".to_string()))
+                .map(|v| v.0.clone()),
+            Some("1".to_string())
+        );
+    }
+
+    #[test]
+    fn react_tool_id_is_deterministic_and_run_isolated() {
+        let a = react_tool_id_material(&[1; 16], 0);
+        assert_eq!(a, react_tool_id_material(&[1; 16], 0));
+        assert_ne!(a, react_tool_id_material(&[1; 16], 1));
+        assert_ne!(a, react_tool_id_material(&[2; 16], 0));
+        // Distinct from the TURN namespace at the same coordinates.
+        assert_ne!(a, react_turn_id_material(&[1; 16], 0));
     }
 
     #[test]

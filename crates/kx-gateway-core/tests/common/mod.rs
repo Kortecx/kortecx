@@ -69,9 +69,15 @@ impl RunSubmitter for MockSubmitter {
         mote: Mote,
         _warrant: WarrantSpec,
         _accept_at_least_once: bool,
-        _react_seed: bool,
+        react_seed: bool,
     ) -> Result<SubmitMoteOutcome, SubmitterError> {
-        self.calls.lock().unwrap().push("submit_mote".to_string());
+        // Record the react flag so the PR-2d-2 Invoke-forwards-react_seed test
+        // can assert it without a second mock.
+        self.calls.lock().unwrap().push(if react_seed {
+            "submit_mote(react_seed)".to_string()
+        } else {
+            "submit_mote".to_string()
+        });
         Ok(SubmitMoteOutcome {
             // The re-derived identity (the wire advisory id was discarded at
             // TryFrom) — the SN-8 property at the submit boundary.

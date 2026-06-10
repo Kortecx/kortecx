@@ -25,7 +25,9 @@ use kx_journal::{
     ResolvedCapabilityRecord, ResolvedKindTag, INSTANCE_ID_LEN,
 };
 use kx_mote::{
-    ConfigKey, EdgeKind, ModelId, Mote, MoteDef, MoteId, NdClass, PROMPT_KEY, REACT_TURN_KEY,
+    ConfigKey, EdgeKind, ModelId, Mote, MoteDef, MoteId, NdClass, ToolName, ToolVersion,
+    PROMPT_KEY, REACT_INSTRUCTION_KEY, REACT_MAX_TOOL_CALLS_KEY, REACT_MAX_TURNS_KEY,
+    REACT_TURN_KEY,
 };
 use kx_projection::{
     ContentStoreVerdicts, MoteState, Projection, ReactRoundRecord, RegisterMote, ReplanRoundRecord,
@@ -90,6 +92,14 @@ pub(crate) struct LeasedItem {
     pub(crate) mote: Mote,
     pub(crate) warrant: WarrantSpec,
     pub(crate) parent_results: Vec<(MoteId, ContentRef)>,
+    /// PR-2d-2 (react-tools-live): the coordinator-VALIDATED tool args + the
+    /// resolved tool's declared egress for a ReAct OBSERVATION — re-derived at
+    /// every (re-)lease as a PURE function of committed facts (decode the parent
+    /// turn's committed output through the ONE authority gate, validate against
+    /// the tool's typed `inputSchema`), so a crash/re-lease carries byte-identical
+    /// args with nothing staged. `None` for every non-observation Mote (the
+    /// legacy WM/leaf paths are byte-unchanged).
+    pub(crate) tool_args: Option<(Vec<u8>, kx_warrant::NetScope)>,
 }
 
 /// Leased work plus the run's `instance_id` (if registered) — the `LeaseWork`
@@ -496,6 +506,9 @@ struct LeaseReq {
 /// (ready ∪ rescheduleable), and record the new lease assignments for the next reap.
 /// Returns the leased work plus the run's `instance_id` (M1.2: the worker derives
 /// the run-scoped idempotency token from it; `None` for an unregistered run).
+// One more arg than the clippy default (the PR-2d-2 tool registry for
+// observation-args resolution); an internal sole-writer helper, not a public seam.
+#[allow(clippy::too_many_arguments)]
 fn serve_lease<J: Journal>(
     journal: &J,
     projection: &mut Projection,
@@ -504,6 +517,7 @@ fn serve_lease<J: Journal>(
     dispatch: &mut Dispatch,
     req: &LeaseReq,
     store: Option<&LocalFsContentStore>,
+    tool_registry: &dyn ToolRegistry,
 ) -> LeasedWork {
     reap_dead_workers(
         journal,
@@ -521,6 +535,7 @@ fn serve_lease<J: Journal>(
         req.executor_class,
         req.max,
         store,
+        tool_registry,
     );
     dispatch
         .tracker
@@ -561,8 +576,9 @@ fn gated_ready_set(projection: &Projection, store: Option<&LocalFsContentStore>)
     }
 }
 
-// One more arg than the clippy default (the optional content store for the
-// PR-2c-3 critic exit gate); an internal sole-writer helper, not a public seam.
+// More args than the clippy default (the optional content store for the
+// PR-2c-3 critic exit gate + the PR-2d-2 tool registry for observation-args
+// resolution); an internal sole-writer helper, not a public seam.
 #[allow(clippy::too_many_arguments)]
 fn lease_ready(
     projection: &Projection,
@@ -573,6 +589,7 @@ fn lease_ready(
     executor_class: ExecutorClass,
     max: usize,
     store: Option<&LocalFsContentStore>,
+    tool_registry: &dyn ToolRegistry,
 ) -> Vec<LeasedItem> {
     let placement = LoadAwarePlacement::new(registry, executor_class);
     let mut preferred: Vec<MoteId> = Vec::new();
@@ -625,16 +642,91 @@ fn lease_ready(
         .chain(rest)
         .take(max)
         .filter_map(|id| {
-            submitted_defs.get(&id).map(|(mote, warrant)| {
+            submitted_defs.get(&id).and_then(|(mote, warrant)| {
                 let parent_results = resolve_parent_context(mote, projection, submitted_defs);
-                LeasedItem {
+                // PR-2d-2: a ReAct OBSERVATION leases WITH its coordinator-
+                // validated args or NOT AT ALL — a transient resolution fault
+                // (store I/O) skips the item this poll (fail-safe retry, the
+                // settle pass's `Active` mirror); the worker never sees a react
+                // observation without args. Every other Mote: `None`, unchanged.
+                let tool_args = if is_react_observation(mote, projection) {
+                    match resolve_tool_args(mote, warrant, projection, store, tool_registry) {
+                        Some(args) => Some(args),
+                        None => return None,
+                    }
+                } else {
+                    None
+                };
+                Some(LeasedItem {
                     mote: mote.clone(),
                     warrant: warrant.clone(),
                     parent_results,
-                }
+                    tool_args,
+                })
             })
         })
         .collect()
+}
+
+/// PR-2d-2: `true` iff `mote` is a coordinator-materialized ReAct OBSERVATION —
+/// a tool-contract Mote whose single Data parent is a folded react TURN. Scoped
+/// deliberately tight (the durable fact log is the witness, never the contract
+/// alone) so the args-or-skip lease rule can NEVER wedge an ordinary WM Mote:
+/// anything that isn't an observation leases exactly as before.
+fn is_react_observation(mote: &Mote, projection: &Projection) -> bool {
+    if mote.def.tool_contract.is_empty() || mote.parents.len() != 1 {
+        return false;
+    }
+    // O(log n) off the projection's derived turn-Mote set (PR-2d-2 index).
+    projection.is_react_turn_mote(&mote.parents[0].parent_id)
+}
+
+/// PR-2d-2: re-derive a ReAct observation's `(args_bytes, net_scope)` — a PURE
+/// function of committed facts, run on the sole-writer thread at every
+/// (re-)lease:
+///
+/// 1. read the parent TURN's committed bytes (`result_ref_of` + store);
+/// 2. decode through the ONE authority gate ([`kx_toolcall::parse_tool_call`] —
+///    grant-checked against the chain warrant, size-capped);
+/// 3. require the decoded call to name EXACTLY the observation's declared
+///    `tool_contract` entry (the frozen `Tool` fact and the contract were both
+///    derived from this same decode at settle time — a mismatch means the
+///    committed facts changed underneath us, so we refuse);
+/// 4. resolve the tool def + validate the args against its typed `inputSchema`
+///    FAIL-CLOSED (the harness `dispatch_decoded_call` recipe, D110.4) and take
+///    the tool's DECLARED egress requirement as the request's `net_scope` (the
+///    broker's `precheck` still enforces request ⊆ warrant at dispatch).
+///
+/// `None` on ANY fault — the caller skips the lease this poll and a later poll
+/// retries (the settle already validated these args once, so a persistent
+/// `None` here is a store/registry fault, not a decode disagreement).
+fn resolve_tool_args(
+    mote: &Mote,
+    warrant: &WarrantSpec,
+    projection: &Projection,
+    store: Option<&LocalFsContentStore>,
+    tool_registry: &dyn ToolRegistry,
+) -> Option<(Vec<u8>, kx_warrant::NetScope)> {
+    let store = store?;
+    let parent = mote.parents.first()?.parent_id;
+    let result_ref = projection.result_ref_of(&parent)?;
+    let raw = store.get(&result_ref).ok()?;
+    let call =
+        kx_toolcall::parse_tool_call(raw.as_ref(), warrant, kx_toolcall::max_args_bytes(warrant))
+            .ok()
+            .flatten()?;
+    let declared_version = mote.def.tool_contract.get(&call.name)?;
+    if declared_version != &call.version {
+        return None;
+    }
+    let def = tool_registry.lookup(&call.name, &call.version)?;
+    if let Some(schema) = &def.input_schema {
+        kx_tool_registry::validate_args(schema, &call.args_bytes).ok()?;
+    }
+    Some((
+        call.args_bytes,
+        def.required_capability.net_scope_required.clone(),
+    ))
 }
 
 /// F-7 (assemble-into-serve): resolve, on the sole-writer thread, the committed
@@ -682,23 +774,64 @@ fn resolve_parent_context(
         .config_subset
         .contains_key(&ConfigKey(REACT_TURN_KEY.to_string()))
     {
-        if let Some(this) = projection
-            .react_rounds()
-            .iter()
-            .find(|r| r.turn_mote_id == mote.id)
-        {
-            let mut turns: Vec<(u32, MoteId)> = projection
-                .react_rounds()
-                .iter()
-                .filter(|r| r.instance_id == this.instance_id && r.turn < this.turn)
-                .map(|r| (r.turn, r.turn_mote_id))
-                .collect();
-            turns.sort_unstable_by_key(|(t, _)| *t);
-            turns.dedup_by_key(|(t, _)| *t);
-            return turns
-                .into_iter()
-                .filter_map(|(_, id)| projection.result_ref_of(&id).map(|r| (id, r)))
-                .collect();
+        // The marker VALUE is the run-salt (= the registered `instance_id`),
+        // so the chain is addressed DIRECTLY off the per-instance index
+        // (PR-2d-2) — never a scan across every chain's facts.
+        let instance: Option<[u8; INSTANCE_ID_LEN]> = mote
+            .def
+            .config_subset
+            .get(&ConfigKey(REACT_TURN_KEY.to_string()))
+            .and_then(|v| v.0.as_slice().try_into().ok());
+        if let Some(this) = instance.as_ref().and_then(|i| {
+            projection
+                .react_rounds_of(i)
+                .find(|r| r.turn_mote_id == mote.id)
+        }) {
+            // One entry per prior turn: its Mote id + its SETTLED branch (the
+            // highest-seq fact — a turn's facts are `Pending` then a frozen
+            // branch). PR-2d-2: a `Tool` turn ALSO contributes its OBSERVATION
+            // immediately after it — the harness transcript shape
+            // `[turn0, obs0, turn1, …]` (`react.rs` pushes turn + obs pairs), so
+            // the model reads tool results in time order. The observation's Mote
+            // is re-derived from the frozen fact (pure — `build_react_tool`); an
+            // uncommitted/absent observation (a PR-2d-1 substrate-only journal,
+            // or one still in flight) contributes nothing (fail-safe filter).
+            let mut turns: Vec<&ReactRoundRecord> = Vec::new();
+            for r in projection
+                .react_rounds_of(&this.instance_id)
+                .filter(|r| r.turn < this.turn)
+            {
+                match turns.iter_mut().find(|t| t.turn == r.turn) {
+                    Some(slot) if r.seq > slot.seq => *slot = r,
+                    Some(_) => {}
+                    None => turns.push(r),
+                }
+            }
+            turns.sort_unstable_by_key(|r| r.turn);
+            let mut out: Vec<(MoteId, ContentRef)> = Vec::new();
+            for r in turns {
+                if let Some(turn_ref) = projection.result_ref_of(&r.turn_mote_id) {
+                    out.push((r.turn_mote_id, turn_ref));
+                }
+                if let ReactBranch::Tool {
+                    tool_id,
+                    tool_version,
+                } = &r.branch
+                {
+                    let obs = crate::react_shape::build_react_tool(
+                        &ModelId(r.model_id.clone()),
+                        &ToolName(tool_id.clone()),
+                        &ToolVersion(tool_version.clone()),
+                        r.turn,
+                        &this.instance_id,
+                        r.turn_mote_id,
+                    );
+                    if let Some(obs_ref) = projection.result_ref_of(&obs.id) {
+                        out.push((obs.id, obs_ref));
+                    }
+                }
+            }
+            return out;
         }
         return Vec::new(); // a marker without folded facts: no context (fail-closed)
     }
@@ -1070,6 +1203,7 @@ fn core_loop<J: Journal>(
         &mut folded_through,
         &mut dispatch,
         &mut react_cache,
+        tool_registry,
     );
 
     while let Some(first) = inbox.blocking_recv() {
@@ -1154,6 +1288,7 @@ fn core_loop<J: Journal>(
             &mut folded_through,
             &mut dispatch,
             &mut react_cache,
+            tool_registry,
         );
     }
 }
@@ -1233,6 +1368,7 @@ fn handle_command<J: Journal>(
                     max,
                 },
                 store,
+                tool_registry,
             );
             let _ = reply.send(leased);
         }
@@ -1435,6 +1571,7 @@ fn submit_and_capture<J: Journal>(
     // unlike replan's silent non-anchor): a promptless seed cannot reason; a
     // storeless coordinator cannot write the durable anchor, so the chain could
     // never crash-recover (the durability law).
+    let mut react_caps: Option<(u32, u32)> = None;
     let mote = if react_seed {
         if store.is_none() {
             return Err(CoordinatorError::ReactSeedRefused(
@@ -1442,16 +1579,11 @@ fn submit_and_capture<J: Journal>(
                  anchor (crash recovery) is impossible",
             ));
         }
-        let Some(instruction) = mote
-            .def
-            .config_subset
-            .get(&ConfigKey(PROMPT_KEY.to_string()))
-            .and_then(|v| std::str::from_utf8(&v.0).ok().map(str::to_owned))
-        else {
-            return Err(CoordinatorError::ReactSeedRefused(
-                "the seed Mote carries no utf-8 instruction prompt",
-            ));
-        };
+        // Decode + validate the seed's free params (instruction + budget caps)
+        // BEFORE the swap discards the seed — the swapped turn 0 carries only
+        // the clean instruction; the caps go to the durable anchor.
+        let (instruction, caps) = react_seed_params(&mote)?;
+        react_caps = Some(caps);
         crate::react_shape::build_react_turn(
             &mote.def.model_id,
             &instruction,
@@ -1514,7 +1646,9 @@ fn submit_and_capture<J: Journal>(
         // PR-2d-1: anchor the live ReAct chain — the durable turn-0 ReactRound fact
         // (base prompt + warrant + budget caps) the settle/recover trio re-derives
         // the chain from. FRESH-submit only; idempotent on the folded facts.
-        if let (Some(turn0), Some(store)) = (turn0_for_anchor.as_ref(), store) {
+        if let (Some(turn0), Some(store), Some((max_turns, max_tool_calls))) =
+            (turn0_for_anchor.as_ref(), store, react_caps)
+        {
             write_react_anchor(
                 journal,
                 store,
@@ -1523,6 +1657,8 @@ fn submit_and_capture<J: Journal>(
                 instance_id,
                 turn0,
                 &shaper_warrant,
+                max_turns,
+                max_tool_calls,
             )?;
         }
     }
@@ -1903,15 +2039,68 @@ fn recover_replan_chain<J: Journal>(
     settle_replan_rounds(journal, Some(store), projection, folded_through, dispatch);
 }
 
+/// Decode + validate a ReAct SEED's free params (PR-2d-2): the instruction and
+/// the per-run budget caps. The instruction comes from `PROMPT_KEY` (the direct
+/// submission contract, PR-2d-1) or `REACT_INSTRUCTION_KEY` (the
+/// `kx/recipes/react` slot), each tried JSON-string-first then raw UTF-8 — the
+/// `prompt_from_config` precedent: a recipe-bound `Str` arrives JSON-quoted, a
+/// directly-built seed carries raw bytes. The caps come from
+/// `REACT_MAX_TURNS_KEY` / `REACT_MAX_TOOL_CALLS_KEY` (canonical-JSON unsigned
+/// ints), defaulting to `8` turns / `6` tool calls, and are validated
+/// `0 < max_tool_calls < max_turns ≤ 8` — a violation is a LOUD
+/// `ReactSeedRefused` (the flag/recipe is explicit intent; a malformed budget
+/// must never silently anchor). Everything is read off the SEED, which is then
+/// SWAPPED — none of these keys reach an admitted identity.
+fn react_seed_params(seed: &Mote) -> Result<(String, (u32, u32)), CoordinatorError> {
+    let text_param = |key: &str| -> Option<String> {
+        let raw = &seed.def.config_subset.get(&ConfigKey(key.to_string()))?.0;
+        serde_json::from_slice::<String>(raw)
+            .ok()
+            .or_else(|| std::str::from_utf8(raw).ok().map(str::to_owned))
+    };
+    let Some(instruction) = text_param(PROMPT_KEY).or_else(|| text_param(REACT_INSTRUCTION_KEY))
+    else {
+        return Err(CoordinatorError::ReactSeedRefused(
+            "the seed Mote carries no utf-8 instruction prompt",
+        ));
+    };
+    let cap_param = |key: &str, default: u32| -> Result<u32, CoordinatorError> {
+        match seed.def.config_subset.get(&ConfigKey(key.to_string())) {
+            None => Ok(default),
+            Some(v) => serde_json::from_slice::<u32>(&v.0).map_err(|_| {
+                CoordinatorError::ReactSeedRefused(
+                    "a react budget cap is not a canonical-JSON unsigned integer",
+                )
+            }),
+        }
+    };
+    let max_turns = cap_param(REACT_MAX_TURNS_KEY, crate::react_shape::REACT_MAX_TURNS)?;
+    let max_tool_calls = cap_param(
+        REACT_MAX_TOOL_CALLS_KEY,
+        crate::react_shape::REACT_DEFAULT_MAX_TOOL_CALLS,
+    )?;
+    if max_tool_calls == 0
+        || max_tool_calls >= max_turns
+        || max_turns > crate::react_shape::REACT_MAX_TURNS
+    {
+        return Err(CoordinatorError::ReactSeedRefused(
+            "react budget caps must satisfy 0 < max_tool_calls < max_turns <= 8 \
+             (a chain needs a turn left to read its last observation and answer)",
+        ));
+    }
+    Ok((instruction, (max_turns, max_tool_calls)))
+}
+
 /// Write the run's turn-0 ReAct ANCHOR (PR-2d-1): content-store the run-fixed base
 /// instruction + warrant and append a durable `ReactRound{turn:0, branch:Pending}`
-/// carrying the durable budget caps. This ENABLES the live ReAct chain for the run
-/// (the settle pass is inert without folded react facts — the `has_react_turn`
-/// sentinel) and makes the chain crash-recoverable from committed facts alone
-/// (red-team BLOCKER #2: `Committed` stores only `mote_def_hash`). Idempotent —
-/// an existing turn-0 anchor for this `instance_id` is a no-op. LOUD on a store
-/// or journal fault (unlike replan's fail-safe non-anchor): the client explicitly
-/// asked for a react chain, and an un-anchored chain cannot recover.
+/// carrying the durable budget caps (validated at the seed-swap, PR-2d-2). This
+/// ENABLES the live ReAct chain for the run (the settle pass is inert without
+/// folded react facts — the `has_react_turn` sentinel) and makes the chain
+/// crash-recoverable from committed facts alone (red-team BLOCKER #2:
+/// `Committed` stores only `mote_def_hash`). Idempotent — an existing turn-0
+/// anchor for this `instance_id` is a no-op. LOUD on a store or journal fault
+/// (unlike replan's fail-safe non-anchor): the client explicitly asked for a
+/// react chain, and an un-anchored chain cannot recover.
 #[allow(clippy::too_many_arguments)]
 fn write_react_anchor<J: Journal>(
     journal: &J,
@@ -1921,6 +2110,8 @@ fn write_react_anchor<J: Journal>(
     instance_id: [u8; INSTANCE_ID_LEN],
     turn0: &Mote,
     warrant: &WarrantSpec,
+    max_turns: u32,
+    max_tool_calls: u32,
 ) -> Result<(), CoordinatorError> {
     if projection
         .react_rounds()
@@ -1956,8 +2147,8 @@ fn write_react_anchor<J: Journal>(
         warrant_ref,
         model_id: turn0.def.model_id.0.clone(),
         branch: ReactBranch::Pending,
-        max_turns: crate::react_shape::REACT_MAX_TURNS,
-        max_tool_calls: crate::react_shape::REACT_MAX_TOOL_CALLS,
+        max_turns,
+        max_tool_calls,
         seq: 0,
     };
     let durable = journal.append(entry)?;
@@ -1995,13 +2186,34 @@ fn materialize_react_turn(
     dispatch.defs.insert(turn.id, (turn.clone(), warrant));
 }
 
-/// The distinct `instance_id`s with folded react facts — each is an independent
-/// chain in serve's SHARED journal (the run-salt keying, red-team BLOCKER #1).
-fn react_instances(rounds: &[ReactRoundRecord]) -> Vec<[u8; INSTANCE_ID_LEN]> {
-    let mut out: Vec<[u8; INSTANCE_ID_LEN]> = rounds.iter().map(|r| r.instance_id).collect();
-    out.sort_unstable();
-    out.dedup();
-    out
+/// Register + admit a coordinator-materialized ReAct OBSERVATION (PR-2d-2) —
+/// the WM tool Mote that fires a frozen `Tool` decision. Unlike a turn it
+/// carries its ONE Data edge (to the proposing turn), so the ready-set releases
+/// it exactly when the turn is committed — which it already is by the time the
+/// settle freezes the `Tool` fact, so the observation is immediately leasable.
+/// Idempotent (the `materialize_react_turn` contract): `register_mote`
+/// overwrites only the DECLARED info (fold-derived flags — `effect_staged`,
+/// failure markers — live separately and survive), and the id-keyed dispatch
+/// inserts are no-ops on a repeat, so the settle may call this on every pass
+/// until the observation commits, and recovery may call it again after a crash.
+fn materialize_react_tool(
+    projection: &mut Projection,
+    dispatch: &mut Dispatch,
+    obs: &Mote,
+    warrant_ref: ContentRef,
+    warrant: WarrantSpec,
+) {
+    projection.register_mote(RegisterMote {
+        mote_id: obs.id,
+        nd_class: obs.def.nd_class,
+        effect_pattern: obs.def.effect_pattern,
+        critic_for: None,
+        is_topology_shaper: false,
+        parents: obs.parents.clone(),
+        warrant_ref,
+    });
+    dispatch.submitted.insert(obs.id);
+    dispatch.defs.insert(obs.id, (obs.clone(), warrant));
 }
 
 /// The settle pass's incremental working set (adversarial-review finding,
@@ -2054,6 +2266,7 @@ fn settle_react_rounds<J: Journal>(
     folded_through: &mut u64,
     dispatch: &mut Dispatch,
     cache: &mut ReactSettleCache,
+    tool_registry: &dyn ToolRegistry,
 ) {
     if !projection.has_react_turn() {
         return; // the zero-cost sentinel: react-free runs pay one bool read
@@ -2065,9 +2278,10 @@ fn settle_react_rounds<J: Journal>(
     // pass (anchors, settles, advances). Between appends the pass touches ONLY
     // the (usually tiny) active list — never the full accumulated fact log.
     if projection.react_rounds().len() != cache.seen_facts {
-        cache.active = react_instances(projection.react_rounds())
-            .into_iter()
-            .filter(|i| !cache.settled.contains(i))
+        cache.active = projection
+            .react_instances()
+            .filter(|i| !cache.settled.contains(*i))
+            .copied()
             .collect();
         cache.seen_facts = projection.react_rounds().len();
     }
@@ -2080,6 +2294,7 @@ fn settle_react_rounds<J: Journal>(
             folded_through,
             dispatch,
             instance_id,
+            tool_registry,
         );
         if status == ReactChainStatus::Settled {
             cache.settled.insert(instance_id);
@@ -2096,7 +2311,7 @@ fn settle_react_rounds<J: Journal>(
 /// Settle ONE run's chain (see [`settle_react_rounds`]). Bounded: at most one
 /// branch fact + one advance per pass per chain (the next pass continues).
 /// Returns whether the chain can ever settle again (the cache classification).
-#[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_lines, clippy::too_many_arguments)]
 fn settle_react_chain<J: Journal>(
     journal: &J,
     store: &LocalFsContentStore,
@@ -2104,13 +2319,9 @@ fn settle_react_chain<J: Journal>(
     folded_through: &mut u64,
     dispatch: &mut Dispatch,
     instance_id: [u8; INSTANCE_ID_LEN],
+    tool_registry: &dyn ToolRegistry,
 ) -> ReactChainStatus {
-    let rounds: Vec<ReactRoundRecord> = projection
-        .react_rounds()
-        .iter()
-        .filter(|r| r.instance_id == instance_id)
-        .cloned()
-        .collect();
+    let rounds: Vec<ReactRoundRecord> = projection.react_rounds_of(&instance_id).cloned().collect();
     // The run-fixed anchor (turn 0) carries base_prompt_ref / warrant_ref /
     // model_id / the durable budget caps.
     let Some(anchor) = rounds.iter().find(|r| r.turn == 0) else {
@@ -2132,10 +2343,14 @@ fn settle_react_chain<J: Journal>(
         // Branches are frozen and a terminal chain accepts no new facts — skip
         // it on every later pass (the cache classification).
         ReactBranch::Answer | ReactBranch::DeadLettered => ReactChainStatus::Settled,
-        // A frozen Tool decision whose advance was interrupted (crash between the
-        // Tool fact and the next Pending fact) — or just decided this pass:
-        // continue the advance under the budget gate.
-        ReactBranch::Tool { .. } => advance_react_chain(
+        // A frozen Tool decision (just decided this pass on an earlier drain, or
+        // an advance interrupted by a crash): PR-2d-2 — drive the OBSERVATION
+        // lifecycle (materialize → fire via the worker → commit), then advance
+        // to the next turn under the budget gate.
+        ReactBranch::Tool {
+            tool_id,
+            tool_version,
+        } => progress_tool_round(
             journal,
             store,
             projection,
@@ -2144,6 +2359,11 @@ fn settle_react_chain<J: Journal>(
             anchor,
             &rounds,
             turn,
+            &ToolRound {
+                tool_id: tool_id.clone(),
+                tool_version: tool_version.clone(),
+                turn_mote_id: latest.turn_mote_id,
+            },
         ),
         // The in-flight turn: settle it once its Mote reaches a terminal state.
         ReactBranch::Pending => {
@@ -2210,19 +2430,46 @@ fn settle_react_chain<J: Journal>(
                 // A normal completion IS the final answer — the committed turn
                 // fact is the answer (the harness two-fact contract).
                 Ok(None) => ReactBranch::Answer,
-                // A warrant-granted tool proposal: freeze the decision. (In
-                // PR-2d-1 the live gateway fences tool proposals pre-commit, so
-                // this arm is reached only by staged/model-free drivers — the
-                // substrate is exercised; firing lands in PR-2d-2.)
-                Ok(Some(call)) => ReactBranch::Tool {
-                    tool_id: call.name.0,
-                    tool_version: call.version.0,
+                // A warrant-granted tool proposal. PR-2d-2: this is the ONE
+                // decode/validate authority site — resolve the tool and validate
+                // the args against its typed `inputSchema` FAIL-CLOSED (the
+                // harness `dispatch_decoded_call` gate, D110.4) BEFORE freezing
+                // the irreversible branch, so a frozen `Tool` fact GUARANTEES
+                // registered, schema-valid args (the lease-time re-derivation
+                // can then only fail on I/O, never on a decode disagreement).
+                Ok(Some(call)) => match tool_registry.lookup(&call.name, &call.version) {
+                    None => ReactBranch::DeadLettered,
+                    Some(def) => {
+                        let args_valid = def.input_schema.as_ref().is_none_or(|schema| {
+                            kx_tool_registry::validate_args(schema, &call.args_bytes).is_ok()
+                        });
+                        if args_valid {
+                            ReactBranch::Tool {
+                                tool_id: call.name.0,
+                                tool_version: call.version.0,
+                            }
+                        } else {
+                            ReactBranch::DeadLettered
+                        }
+                    }
                 },
                 // Malformed / ungranted / oversize ⇒ the chain dead-letters
                 // (fail-closed; the committed turn fact remains, the CHAIN ends).
                 Err(_) => ReactBranch::DeadLettered,
             };
-            let advanced = matches!(branch, ReactBranch::Tool { .. });
+            let advanced = if let ReactBranch::Tool {
+                tool_id,
+                tool_version,
+            } = &branch
+            {
+                Some(ToolRound {
+                    tool_id: tool_id.clone(),
+                    tool_version: tool_version.clone(),
+                    turn_mote_id: latest.turn_mote_id,
+                })
+            } else {
+                None
+            };
             append_react_branch(
                 journal,
                 projection,
@@ -2232,16 +2479,14 @@ fn settle_react_chain<J: Journal>(
                 turn,
                 branch,
             );
-            if advanced {
+            if let Some(round) = advanced {
                 // Re-read the folded rounds (the Tool fact just folded) and
-                // continue the advance in the same pass (no wasted drain).
-                let rounds: Vec<ReactRoundRecord> = projection
-                    .react_rounds()
-                    .iter()
-                    .filter(|r| r.instance_id == instance_id)
-                    .cloned()
-                    .collect();
-                advance_react_chain(
+                // start the tool round in the same pass (no wasted drain) —
+                // materializes the observation; the advance to the next turn
+                // happens on a later pass, once the observation commits.
+                let rounds: Vec<ReactRoundRecord> =
+                    projection.react_rounds_of(&instance_id).cloned().collect();
+                progress_tool_round(
                     journal,
                     store,
                     projection,
@@ -2250,6 +2495,7 @@ fn settle_react_chain<J: Journal>(
                     anchor,
                     &rounds,
                     turn,
+                    &round,
                 )
             } else {
                 // Answer / DeadLettered just froze — the chain is done.
@@ -2257,6 +2503,115 @@ fn settle_react_chain<J: Journal>(
             }
         }
     }
+}
+
+/// The frozen `Tool` decision a settle pass is driving: which tool fires at
+/// which turn (from the durable branch fact) and the proposing turn's Mote id
+/// (the observation's Data parent + the source of its committed args).
+struct ToolRound {
+    tool_id: String,
+    tool_version: String,
+    turn_mote_id: MoteId,
+}
+
+/// PR-2d-2 — drive ONE tool round past its frozen `Tool` fact: the OBSERVATION
+/// lifecycle. The observation Mote is a PURE function of the durable facts
+/// (`react_shape::build_react_tool` over the anchor's model + the branch's
+/// tool + the turn ids), so this function is idempotent across passes,
+/// crashes, and recovery — the frozen fact IS the durable marker.
+///
+/// - **not yet committed** ⇒ (re-)materialize it (idempotent) and stay
+///   `Active`: the ready-set releases it (its parent turn is committed by
+///   construction — the settle only freezes `Tool` on a committed turn), the
+///   worker leases it WITH the coordinator-validated args
+///   (`resolve_tool_args`), fires through the broker's warrant gate, and
+///   commits the staged result.
+/// - **Committed** ⇒ the observation is the trajectory's next entry (the F-7
+///   react interleave serves it) — advance to the next turn under the budget
+///   gate (the harness order: fire the tool, THEN bound the loop,
+///   `react.rs:334-341`).
+/// - **Failed, crash flavor** (`failure_reason` unrecorded ⇒ a pre-commit
+///   `WorkerCrashed`/`TimedOut` reap) ⇒ stay `Active` — the reaped worker's
+///   late commit may still land (the fold lets a later `Committed` win), and a
+///   genuinely dead worker leaves the observation stuck-but-operator-
+///   recoverable (the standing non-PURE crash semantics) — never an
+///   auto-dead-letter (the PR-2d-1 adversarial-review flavor guard, mirrored).
+/// - **Failed, terminal flavor** (an F4 `ReportFailure` dead-letter — e.g. the
+///   MCP tool returned an error / did not resolve) — or a repudiation/anomaly —
+///   ⇒ freeze a same-turn `DeadLettered` fact and settle: the harness
+///   fail-closed stop ("tool dispatch did not commit", `react.rs:326-332`); a
+///   non-existent observation is never fed into a next turn's assemble.
+#[allow(clippy::too_many_arguments)]
+fn progress_tool_round<J: Journal>(
+    journal: &J,
+    store: &LocalFsContentStore,
+    projection: &mut Projection,
+    folded_through: &mut u64,
+    dispatch: &mut Dispatch,
+    anchor: &ReactRoundRecord,
+    rounds: &[ReactRoundRecord],
+    turn: u32,
+    round: &ToolRound,
+) -> ReactChainStatus {
+    let obs = crate::react_shape::build_react_tool(
+        &ModelId(anchor.model_id.clone()),
+        &ToolName(round.tool_id.clone()),
+        &ToolVersion(round.tool_version.clone()),
+        turn,
+        &anchor.instance_id,
+        round.turn_mote_id,
+    );
+    let obs_state = projection.state_of(&obs.id);
+    if obs_state == MoteState::Committed {
+        return advance_react_chain(
+            journal,
+            store,
+            projection,
+            folded_through,
+            dispatch,
+            anchor,
+            rounds,
+            turn,
+        );
+    }
+    if is_terminal(obs_state) {
+        // The flavor guard, line-for-line the turn arm's: only a recorded
+        // TERMINAL failure reason (or a non-Failed anomaly) kills the chain.
+        let crash_retryable = obs_state == MoteState::Failed
+            && projection
+                .failure_reason_of(&obs.id)
+                .is_none_or(kx_journal::is_pre_commit_crash);
+        if crash_retryable {
+            return ReactChainStatus::Active;
+        }
+        append_react_branch(
+            journal,
+            projection,
+            folded_through,
+            anchor,
+            round.turn_mote_id,
+            turn,
+            ReactBranch::DeadLettered,
+        );
+        return ReactChainStatus::Settled;
+    }
+    // Pending / Scheduled (including never-materialized — a fresh decision, a
+    // crash before materialization, or a restart that emptied dispatch.defs):
+    // (re-)materialize, idempotently, and wait for the commit.
+    let Ok(warrant_bytes) = store.get(&anchor.warrant_ref) else {
+        return ReactChainStatus::Active; // store fault — retry next pass
+    };
+    let Ok(warrant) = decode_warrant(warrant_bytes.as_ref()) else {
+        return ReactChainStatus::Active;
+    };
+    materialize_react_tool(projection, dispatch, &obs, anchor.warrant_ref, warrant);
+    tracing::info!(
+        turn,
+        observation = ?obs.id,
+        tool = %round.tool_id,
+        "react observation materialized"
+    );
+    ReactChainStatus::Active
 }
 
 /// Append one FROZEN branch fact for `turn` (idempotent: an identical settled
@@ -2271,9 +2626,8 @@ fn append_react_branch<J: Journal>(
     branch: ReactBranch,
 ) {
     if projection
-        .react_rounds()
-        .iter()
-        .any(|r| r.instance_id == anchor.instance_id && r.turn == turn && r.branch == branch)
+        .react_rounds_of(&anchor.instance_id)
+        .any(|r| r.turn == turn && r.branch == branch)
     {
         return; // already recorded (recovery re-drive)
     }
@@ -2394,6 +2748,7 @@ fn recover_react_chain<J: Journal>(
     folded_through: &mut u64,
     dispatch: &mut Dispatch,
     cache: &mut ReactSettleCache,
+    tool_registry: &dyn ToolRegistry,
 ) {
     if !projection.has_react_turn() {
         return;
@@ -2402,18 +2757,11 @@ fn recover_react_chain<J: Journal>(
         return;
     };
     // Phase B — re-insert each chain's in-flight turn (its fact is Pending and its
-    // Mote is not yet terminal) so a worker can re-lease it.
-    for instance_id in react_instances(projection.react_rounds()) {
-        let rounds: Vec<ReactRoundRecord> = projection
-            .react_rounds()
-            .iter()
-            .filter(|r| r.instance_id == instance_id)
-            .cloned()
-            .collect();
-        let Some(latest) = rounds
-            .iter()
-            .max_by(|a, b| a.turn.cmp(&b.turn).then(a.seq.cmp(&b.seq)))
-        else {
+    // Mote is not yet terminal) so a worker can re-lease it. Per-chain reads off
+    // the projection's derived index (PR-2d-2).
+    let instances: Vec<[u8; INSTANCE_ID_LEN]> = projection.react_instances().copied().collect();
+    for instance_id in instances {
+        let Some(latest) = projection.latest_react_round(&instance_id).cloned() else {
             continue;
         };
         if !matches!(latest.branch, ReactBranch::Pending) {
@@ -2454,8 +2802,11 @@ fn recover_react_chain<J: Journal>(
         materialize_react_turn(projection, dispatch, &rebuilt, latest.warrant_ref, warrant);
     }
     // Phase C — complete any interrupted settle/advance (idempotent; dedups on
-    // the durable facts; re-decodes the committed tail). The cache starts empty
-    // at recovery; this first pass re-derives the settled set from the facts.
+    // the durable facts; re-decodes the committed tail; PR-2d-2: re-enters the
+    // tool round, re-materializing an in-flight OBSERVATION from its frozen
+    // `Tool` fact — the deterministic re-derivation IS the durable marker).
+    // The cache starts empty at recovery; this first pass re-derives the
+    // settled set from the facts.
     settle_react_rounds(
         journal,
         Some(store),
@@ -2463,6 +2814,7 @@ fn recover_react_chain<J: Journal>(
         folded_through,
         dispatch,
         cache,
+        tool_registry,
     );
 }
 

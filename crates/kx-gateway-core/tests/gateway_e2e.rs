@@ -348,6 +348,189 @@ async fn submit_run_admits_critic_free_run_unchanged_when_unsupported() {
     assert!(mock.calls().iter().any(|c| c == "submit_mote"));
 }
 
+// --- PR-2d-2 react-tools-live: SubmitRun tool-authority + react ADMISSION ---
+
+#[tokio::test]
+async fn submit_run_refuses_client_warrant_with_tool_grants() {
+    // Red-team BLOCKER #5 (the standing Morphic finding): SubmitRun takes the
+    // client warrant VERBATIM, so a client-minted `tool_grants` would widen tool
+    // authority the server never issued. Refused fail-closed BEFORE register_run
+    // (no orphan run) — tool authority enters serve ONLY via the server-built
+    // react warrant on the Invoke path.
+    let mock = MockSubmitter::default();
+    let svc = service_from(build_run(), Arc::new(mock.clone()));
+    let mut client = spawn(svc).await;
+
+    let mut warrant = sample_warrant();
+    warrant.tool_grants.insert(kx_warrant::ToolGrant {
+        tool_id: kx_mote::ToolName("mcp-echo".into()),
+        tool_version: kx_mote::ToolVersion("1".into()),
+    });
+    let err = client
+        .submit_run(proto::SubmitRunRequest {
+            recipe_fingerprint: RECIPE_FP.to_vec(),
+            motes: vec![proto::SubmitMoteSpec {
+                mote: Some(sample_mote().into()),
+                warrant: Some(warrant.into()),
+                accept_at_least_once: false,
+                react_seed: false,
+            }],
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(err.code(), Code::FailedPrecondition);
+    assert!(
+        err.message().contains("tool_grants"),
+        "reason surfaced: {}",
+        err.message()
+    );
+    assert!(
+        mock.calls().is_empty(),
+        "refused BEFORE register_run — no orphan run, nothing submitted"
+    );
+}
+
+#[tokio::test]
+async fn submit_run_refuses_react_seed_when_unsupported() {
+    // The critics_supported twin (B3/H5 mirror): a react seed on a serve without
+    // the inference executor's react decode arm would echo-commit fake turns and
+    // settle a meaningless Answer — refused loudly, before register_run.
+    let mock = MockSubmitter::default();
+    let svc = service_from(build_run(), Arc::new(mock.clone()));
+    let mut client = spawn(svc).await;
+    let err = client
+        .submit_run(proto::SubmitRunRequest {
+            recipe_fingerprint: RECIPE_FP.to_vec(),
+            motes: vec![proto::SubmitMoteSpec {
+                mote: Some(sample_mote().into()),
+                warrant: Some(sample_warrant().into()),
+                accept_at_least_once: false,
+                react_seed: true,
+            }],
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(err.code(), Code::FailedPrecondition);
+    assert!(
+        err.message().contains("ReAct"),
+        "reason surfaced: {}",
+        err.message()
+    );
+    assert!(mock.calls().is_empty(), "no orphan run");
+}
+
+#[tokio::test]
+async fn submit_run_admits_react_seed_when_supported() {
+    // With the executor wired the same submission flows through to the verbatim
+    // propose-proxy (the coordinator's seed-swap takes it from there).
+    let mock = MockSubmitter::default();
+    let svc = service_from(build_run(), Arc::new(mock.clone())).with_react_supported(true);
+    let mut client = spawn(svc).await;
+    let handle = client
+        .submit_run(proto::SubmitRunRequest {
+            recipe_fingerprint: RECIPE_FP.to_vec(),
+            motes: vec![proto::SubmitMoteSpec {
+                mote: Some(sample_mote().into()),
+                warrant: Some(sample_warrant().into()),
+                accept_at_least_once: false,
+                react_seed: true,
+            }],
+        })
+        .await
+        .expect("react admitted on a react-capable serve")
+        .into_inner();
+    assert_eq!(handle.instance_id, INSTANCE_ID.to_vec());
+    assert!(mock.calls().iter().any(|c| c == "submit_mote(react_seed)"));
+}
+
+#[tokio::test]
+async fn invoke_refuses_recipe_granting_unregistered_tool() {
+    // PR-2d-2 belt-and-braces: a bound warrant granting a tool the serve broker
+    // never registered would dead-letter every observation it fires — refused at
+    // ingress (provisioning drift surfaces loudly, never as a stuck chain).
+    struct GrantingBinder;
+    #[tonic::async_trait]
+    impl RecipeBinder for GrantingBinder {
+        async fn bind(
+            &self,
+            _party: &str,
+            _handle: &str,
+            _args: &[u8],
+        ) -> Result<BoundRecipe, BinderError> {
+            let mut warrant = sample_warrant();
+            warrant.tool_grants.insert(kx_warrant::ToolGrant {
+                tool_id: kx_mote::ToolName("mcp-ghost".into()),
+                tool_version: kx_mote::ToolVersion("1".into()),
+            });
+            Ok(BoundRecipe {
+                recipe_fingerprint: RECIPE_FP,
+                motes: vec![(sample_mote(), warrant)],
+                terminal_mote_id: sample_mote().id,
+                react_seed: true,
+            })
+        }
+    }
+    let mock = MockSubmitter::default();
+    let svc = service_from(build_run(), Arc::new(mock.clone()))
+        .with_recipe_binder(Arc::new(GrantingBinder))
+        .with_react_supported(true); // the tool check fires first
+    let mut client = spawn_with_party(svc, "alice").await;
+    let err = client
+        .invoke(proto::InvokeRequest {
+            handle: "kx/recipes/react".into(),
+            args: b"{}".to_vec(),
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(err.code(), Code::FailedPrecondition);
+    assert!(
+        err.message().contains("registered no such capability"),
+        "reason surfaced: {}",
+        err.message()
+    );
+    assert!(mock.calls().is_empty(), "no orphan run");
+}
+
+#[tokio::test]
+async fn invoke_forwards_react_seed_to_the_submitter() {
+    // The react recipe's bound Mote submits with react_seed = true — the flag
+    // that triggers the coordinator's run-salted seed-swap + durable anchor.
+    struct ReactBinder;
+    #[tonic::async_trait]
+    impl RecipeBinder for ReactBinder {
+        async fn bind(
+            &self,
+            _party: &str,
+            _handle: &str,
+            _args: &[u8],
+        ) -> Result<BoundRecipe, BinderError> {
+            Ok(BoundRecipe {
+                recipe_fingerprint: RECIPE_FP,
+                motes: vec![(sample_mote(), sample_warrant())],
+                terminal_mote_id: sample_mote().id,
+                react_seed: true,
+            })
+        }
+    }
+    let mock = MockSubmitter::default();
+    let svc = service_from(build_run(), Arc::new(mock.clone()))
+        .with_recipe_binder(Arc::new(ReactBinder))
+        .with_react_supported(true);
+    let mut client = spawn_with_party(svc, "alice").await;
+    client
+        .invoke(proto::InvokeRequest {
+            handle: "kx/recipes/react".into(),
+            args: b"{}".to_vec(),
+        })
+        .await
+        .expect("react recipe admitted");
+    assert!(
+        mock.calls().iter().any(|c| c == "submit_mote(react_seed)"),
+        "the submitter saw react_seed = true: {:?}",
+        mock.calls()
+    );
+}
+
 // --- SN-8 — the client never computes a MoteId -----------------------------
 
 #[test]
@@ -507,6 +690,7 @@ impl RecipeBinder for MockBinder {
             recipe_fingerprint: RECIPE_FP,
             motes: vec![(sample_mote(), sample_warrant())],
             terminal_mote_id: sample_mote().id,
+            react_seed: false,
         })
     }
 }

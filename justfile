@@ -426,8 +426,11 @@ bench-ceiling:
 # — SN-2). Absolute latencies are platform-sensitive (macOS fsync ≠ Linux) — the
 # report's `env` block labels every number. `--release` is REQUIRED for honest
 # numbers. M1 warm-up (start→SERVING) + M2 submit→Committed come from kx-profile;
-# M3 fold curve + M4 commit ceiling + M5 catalog discovery come from the spikes.
+# M3 fold curve + M4 commit ceiling + M5 catalog discovery come from the spikes;
+# M7a react answer-settle + M7b react tool-round (PR-2d-2) need the bundled
+# stdio tool bin, built first so M7b is never silently skipped.
 profile iterations="8":
+    cargo build --release -p kx-mcp
     cargo run --release -p kx-profile -- --iterations {{iterations}}
     cargo test -p kx-coordinator --release --test ceiling_e2e -- --ignored --nocapture --test-threads=1
     cargo test -p kx-projection --release --test fold_curve_scale -- --ignored --nocapture --test-threads=1
