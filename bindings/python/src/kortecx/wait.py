@@ -116,9 +116,7 @@ _REACT_DEAD = "dead_lettered"
 
 def _list_react_turns(stub, md, instance_id: bytes):
     try:
-        resp = stub.ListReactTurns(
-            _g.ListReactTurnsRequest(instance_id=instance_id), metadata=md
-        )
+        resp = stub.ListReactTurns(_g.ListReactTurnsRequest(instance_id=instance_id), metadata=md)
         return list(resp.turns)
     except grpc.RpcError as e:
         raise from_rpc_error(e) from e
