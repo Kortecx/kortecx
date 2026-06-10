@@ -83,6 +83,15 @@ pub enum CoordinatorError {
     #[error("submission refused: {0}")]
     SubmissionRefused(#[from] kx_refusal::SubmissionRefusal),
 
+    /// A `react_seed` submit (PR-2d-1) could not seed a live ReAct chain: the seed
+    /// Mote carries no instruction prompt, the coordinator has no content store
+    /// (the durable anchor — and therefore crash recovery — would be impossible),
+    /// or the anchor write failed. LOUD by design (the flag is explicit intent,
+    /// unlike replan's silent non-anchor): a chain that silently could not recover
+    /// would violate the durability law.
+    #[error("react seed refused: {0}")]
+    ReactSeedRefused(&'static str),
+
     /// A `ReportCommit` proposed a `result_ref` whose bytes are not present in the
     /// shared content store (D55 phantom-ref guard). When the coordinator is built
     /// with a store handle, it verifies `store.contains(result_ref)` before
@@ -155,7 +164,8 @@ impl From<CoordinatorError> for tonic::Status {
             CoordinatorError::RunAlreadyStarted
             | CoordinatorError::RunNotRegistered
             | CoordinatorError::NotLeased { .. }
-            | CoordinatorError::SubmissionRefused(_) => Self::failed_precondition(message),
+            | CoordinatorError::SubmissionRefused(_)
+            | CoordinatorError::ReactSeedRefused(_) => Self::failed_precondition(message),
             CoordinatorError::Journal(_)
             | CoordinatorError::Projection(_)
             | CoordinatorError::CommitFailed(_) => Self::internal(message),

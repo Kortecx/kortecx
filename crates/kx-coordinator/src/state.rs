@@ -21,11 +21,15 @@ use std::sync::Arc;
 
 use kx_content::{ContentRef, ContentStore, LocalFsContentStore};
 use kx_journal::{
-    FailureReason, IdempotencyClassTag, Journal, JournalEntry, RepudiationReason,
+    FailureReason, IdempotencyClassTag, Journal, JournalEntry, ReactBranch, RepudiationReason,
     ResolvedCapabilityRecord, ResolvedKindTag, INSTANCE_ID_LEN,
 };
-use kx_mote::{ConfigKey, EdgeKind, ModelId, Mote, MoteDef, MoteId, NdClass, PROMPT_KEY};
-use kx_projection::{ContentStoreVerdicts, MoteState, Projection, RegisterMote, ReplanRoundRecord};
+use kx_mote::{
+    ConfigKey, EdgeKind, ModelId, Mote, MoteDef, MoteId, NdClass, PROMPT_KEY, REACT_TURN_KEY,
+};
+use kx_projection::{
+    ContentStoreVerdicts, MoteState, Projection, ReactRoundRecord, RegisterMote, ReplanRoundRecord,
+};
 use kx_refusal::{validate_mote_submission, ToolResolution};
 use kx_scheduler::{LocalPlacement, Placement, Scheduler, SchedulerError, WorkerId};
 use kx_tool_registry::{IdempotencyClass, ToolKind, ToolRegistry, ToolResolutionEvent};
@@ -108,6 +112,9 @@ pub(crate) enum Command {
         warrant: Box<WarrantSpec>,
         // M1.3/D38 §2c: the per-Mote opt-in to dispatch an AtLeastOnce WM tool.
         accept_at_least_once: bool,
+        // PR-2d-1: seed a live ReAct chain — the coordinator swaps in the
+        // run-salted turn 0 and anchors a durable ReactRound fact.
+        react_seed: bool,
         // M1.3: the submit is now fallible — registration-before-submit + the
         // submission-refusal predicates can reject before anything is written.
         reply: oneshot::Sender<Result<SubmitOutcome, CoordinatorError>>,
@@ -220,12 +227,14 @@ impl CoreHandle {
         mote: Mote,
         warrant: WarrantSpec,
         accept_at_least_once: bool,
+        react_seed: bool,
     ) -> Result<SubmitOutcome, CoordinatorError> {
         let (reply, response) = oneshot::channel();
         self.dispatch(Command::Submit {
             mote: Box::new(mote),
             warrant: Box::new(warrant),
             accept_at_least_once,
+            react_seed,
             reply,
         })
         .await?;
@@ -662,6 +671,37 @@ fn resolve_parent_context(
             None => Vec::new(),
         };
     }
+    // PR-2d-1 (the F-7 react special-case): a coordinator-materialized ReAct turn
+    // is EDGE-FREE, so its trajectory cannot come from parents — turn T receives
+    // the committed `(turn_mote_id, result_ref)` of turns 0..T of ITS run, in
+    // TURN-ascending (transcript) order (D78 — deliberately not MoteId order: the
+    // model must read the conversation in time order). Guarded by the marker key
+    // (cheap) + the folded facts; a react-free run never enters this branch.
+    if mote
+        .def
+        .config_subset
+        .contains_key(&ConfigKey(REACT_TURN_KEY.to_string()))
+    {
+        if let Some(this) = projection
+            .react_rounds()
+            .iter()
+            .find(|r| r.turn_mote_id == mote.id)
+        {
+            let mut turns: Vec<(u32, MoteId)> = projection
+                .react_rounds()
+                .iter()
+                .filter(|r| r.instance_id == this.instance_id && r.turn < this.turn)
+                .map(|r| (r.turn, r.turn_mote_id))
+                .collect();
+            turns.sort_unstable_by_key(|(t, _)| *t);
+            turns.dedup_by_key(|(t, _)| *t);
+            return turns
+                .into_iter()
+                .filter_map(|(_, id)| projection.result_ref_of(&id).map(|r| (id, r)))
+                .collect();
+        }
+        return Vec::new(); // a marker without folded facts: no context (fail-closed)
+    }
     let mut out: Vec<(MoteId, ContentRef)> = Vec::new();
     for parent in &mote.parents {
         match parent.edge.kind {
@@ -1019,6 +1059,16 @@ fn core_loop<J: Journal>(
         &mut folded_through,
         &mut dispatch,
     );
+    // PR-2d-1: re-derive the live ReAct chains from committed facts (re-insert the
+    // in-flight turn, re-decode + settle the committed tail). A no-op when no run
+    // has anchored a chain (the has_react_turn sentinel) — the demo is untouched.
+    recover_react_chain(
+        journal,
+        store,
+        &mut projection,
+        &mut folded_through,
+        &mut dispatch,
+    );
 
     while let Some(first) = inbox.blocking_recv() {
         // Drain everything immediately available (up to MAX_DRAIN) so consecutive
@@ -1090,6 +1140,16 @@ fn core_loop<J: Journal>(
             &mut folded_through,
             &mut dispatch,
         );
+        // PR-2d-1: after this drain's commits + dead-letters fold, settle any ReAct
+        // turn that just reached a terminal state (decode → freeze the branch →
+        // advance under budget). Idempotent; a one-bool no-op without react facts.
+        settle_react_rounds(
+            journal,
+            store,
+            &mut projection,
+            &mut folded_through,
+            &mut dispatch,
+        );
     }
 }
 
@@ -1122,6 +1182,7 @@ fn handle_command<J: Journal>(
             mote,
             warrant,
             accept_at_least_once,
+            react_seed,
             reply,
         } => {
             let outcome = submit_and_capture(
@@ -1136,6 +1197,7 @@ fn handle_command<J: Journal>(
                 *mote,
                 *warrant,
                 accept_at_least_once,
+                react_seed,
             );
             let _ = reply.send(outcome);
         }
@@ -1339,6 +1401,7 @@ fn submit_and_capture<J: Journal>(
     mote: Mote,
     warrant: WarrantSpec,
     accept_at_least_once: bool,
+    react_seed: bool,
 ) -> Result<SubmitOutcome, CoordinatorError> {
     // GATE 1 — registration-before-submit (M1.3, D64/D98). An unregistered run
     // has no journaled identity to anchor capture (M1.2) or the run-scoped
@@ -1358,10 +1421,48 @@ fn submit_and_capture<J: Journal>(
     validate_mote_submission(&mote, accept_at_least_once, &resolution)
         .map_err(CoordinatorError::SubmissionRefused)?;
 
+    // PR-2d-1 — the react SEED-SWAP. The client's seed Mote is validated above
+    // (strictly stricter) but never admitted: the coordinator builds the
+    // RUN-SALTED turn-0 Mote from the seed's instruction + model route (the salt
+    // is the server-assigned `instance_id`, unknowable client-side — SN-8: the
+    // admitted identity is server-derived) and substitutes it before the
+    // verbatim scheduler path below. LOUD refusals (the flag is explicit intent,
+    // unlike replan's silent non-anchor): a promptless seed cannot reason; a
+    // storeless coordinator cannot write the durable anchor, so the chain could
+    // never crash-recover (the durability law).
+    let mote = if react_seed {
+        if store.is_none() {
+            return Err(CoordinatorError::ReactSeedRefused(
+                "this coordinator has no content store; the durable ReactRound \
+                 anchor (crash recovery) is impossible",
+            ));
+        }
+        let Some(instruction) = mote
+            .def
+            .config_subset
+            .get(&ConfigKey(PROMPT_KEY.to_string()))
+            .and_then(|v| std::str::from_utf8(&v.0).ok().map(str::to_owned))
+        else {
+            return Err(CoordinatorError::ReactSeedRefused(
+                "the seed Mote carries no utf-8 instruction prompt",
+            ));
+        };
+        crate::react_shape::build_react_turn(
+            &mote.def.model_id,
+            &instruction,
+            0,
+            &instance_id,
+            warrant.model_route.max_output_tokens,
+        )
+    } else {
+        mote
+    };
+
     // PR-2b: capture the shaper identity BEFORE `handle_submit` consumes `mote`/`warrant`,
     // so a re-submitted-but-already-committed shaper (recovery: the in-memory dispatch.defs
     // + materialized children are gone on restart, but the journal still has the committed
     // shaper fact) can re-materialize its children below.
+    let turn0_for_anchor = react_seed.then(|| mote.clone());
     let shaper_def = mote.def.is_topology_shaper.then(|| mote.def.clone());
     let shaper_mote_id = mote.id;
     let shaper_warrant = warrant.clone();
@@ -1404,6 +1505,20 @@ fn submit_and_capture<J: Journal>(
                 def,
                 &shaper_warrant,
             );
+        }
+        // PR-2d-1: anchor the live ReAct chain — the durable turn-0 ReactRound fact
+        // (base prompt + warrant + budget caps) the settle/recover trio re-derives
+        // the chain from. FRESH-submit only; idempotent on the folded facts.
+        if let (Some(turn0), Some(store)) = (turn0_for_anchor.as_ref(), store) {
+            write_react_anchor(
+                journal,
+                store,
+                projection,
+                folded_through,
+                instance_id,
+                turn0,
+                &shaper_warrant,
+            )?;
         }
     }
 
@@ -1781,6 +1896,472 @@ fn recover_replan_chain<J: Journal>(
 
     // Phase C — complete an interrupted settle (idempotent; dedups on the durable fact).
     settle_replan_rounds(journal, Some(store), projection, folded_through, dispatch);
+}
+
+/// Write the run's turn-0 ReAct ANCHOR (PR-2d-1): content-store the run-fixed base
+/// instruction + warrant and append a durable `ReactRound{turn:0, branch:Pending}`
+/// carrying the durable budget caps. This ENABLES the live ReAct chain for the run
+/// (the settle pass is inert without folded react facts — the `has_react_turn`
+/// sentinel) and makes the chain crash-recoverable from committed facts alone
+/// (red-team BLOCKER #2: `Committed` stores only `mote_def_hash`). Idempotent —
+/// an existing turn-0 anchor for this `instance_id` is a no-op. LOUD on a store
+/// or journal fault (unlike replan's fail-safe non-anchor): the client explicitly
+/// asked for a react chain, and an un-anchored chain cannot recover.
+#[allow(clippy::too_many_arguments)]
+fn write_react_anchor<J: Journal>(
+    journal: &J,
+    store: &LocalFsContentStore,
+    projection: &mut Projection,
+    folded_through: &mut u64,
+    instance_id: [u8; INSTANCE_ID_LEN],
+    turn0: &Mote,
+    warrant: &WarrantSpec,
+) -> Result<(), CoordinatorError> {
+    if projection
+        .react_rounds()
+        .iter()
+        .any(|r| r.instance_id == instance_id && r.turn == 0)
+    {
+        return Ok(()); // already anchored (idempotent re-submit / replay)
+    }
+    let Some(instruction) = turn0
+        .def
+        .config_subset
+        .get(&ConfigKey(PROMPT_KEY.to_string()))
+    else {
+        // Unreachable for a seed-swapped turn (the swap requires the prompt) —
+        // kept total + loud rather than panicking on the sole-writer thread.
+        return Err(CoordinatorError::ReactSeedRefused(
+            "turn 0 carries no instruction prompt",
+        ));
+    };
+    let (Ok(base_ref), Ok(warrant_ref)) = (
+        store.put(&instruction.0),
+        store.put(&encode_warrant(warrant)),
+    ) else {
+        return Err(CoordinatorError::ReactSeedRefused(
+            "content store fault while writing the react anchor",
+        ));
+    };
+    let entry = JournalEntry::ReactRound {
+        turn: 0,
+        turn_mote_id: turn0.id,
+        instance_id,
+        base_prompt_ref: base_ref,
+        warrant_ref,
+        model_id: turn0.def.model_id.0.clone(),
+        branch: ReactBranch::Pending,
+        max_turns: crate::react_shape::REACT_MAX_TURNS,
+        max_tool_calls: crate::react_shape::REACT_MAX_TOOL_CALLS,
+        seq: 0,
+    };
+    let durable = journal.append(entry)?;
+    let seq = durable.seq();
+    if seq > *folded_through {
+        projection.fold(&durable)?;
+        *folded_through = seq;
+    }
+    Ok(())
+}
+
+/// Register + admit a coordinator-materialized ReAct turn into the projection (so
+/// it enters `ready_set`) and the dispatch admission set (`Dispatch.defs`, so
+/// `lease_ready` can hand it to a worker). The turn is EDGE-FREE (empty parents)
+/// — immediately ready; its trajectory context is served out-of-band by the F-7
+/// react special-case in [`resolve_parent_context`]. Idempotent: `register_mote`
+/// overwrites and the id-keyed dispatch inserts are no-ops on a repeat.
+fn materialize_react_turn(
+    projection: &mut Projection,
+    dispatch: &mut Dispatch,
+    turn: &Mote,
+    warrant_ref: ContentRef,
+    warrant: WarrantSpec,
+) {
+    projection.register_mote(RegisterMote {
+        mote_id: turn.id,
+        nd_class: turn.def.nd_class,
+        effect_pattern: turn.def.effect_pattern,
+        critic_for: None,
+        is_topology_shaper: false,
+        parents: SmallVec::new(),
+        warrant_ref,
+    });
+    dispatch.submitted.insert(turn.id);
+    dispatch.defs.insert(turn.id, (turn.clone(), warrant));
+}
+
+/// The distinct `instance_id`s with folded react facts — each is an independent
+/// chain in serve's SHARED journal (the run-salt keying, red-team BLOCKER #1).
+fn react_instances(rounds: &[ReactRoundRecord]) -> Vec<[u8; INSTANCE_ID_LEN]> {
+    let mut out: Vec<[u8; INSTANCE_ID_LEN]> = rounds.iter().map(|r| r.instance_id).collect();
+    out.sort_unstable();
+    out.dedup();
+    out
+}
+
+/// Drive every newly-settled ReAct turn (PR-2d-1). **Idempotent + deterministic**:
+/// for each run's chain, when the latest turn's Mote has reached a terminal state,
+/// decode its committed output ON the sole writer via [`kx_toolcall::parse_tool_call`]
+/// (the ONE authority gate — the same crate the gateway fence and the harness call)
+/// and append the turn's FROZEN branch fact; a `Tool` branch advances the chain
+/// (budget permitting) by appending the next `Pending` fact BEFORE materializing the
+/// next turn (crash-safety order — recovery resumes from the fact). Runs LIVE
+/// (after each drain's commits + dead-letters) AND as the recovery catch-up
+/// (Phase C). The FIRST line is the zero-cost gate: a react-free run (and the
+/// canonical demo) folds no `ReactRound` facts, so this returns immediately.
+///
+/// Budget counters are FOLD-RE-DERIVED from the recorded branches (never an
+/// in-memory count, red-team BLOCKER #4), and the gate is a line-for-line mirror
+/// of the harness `react.rs` (`>=`, tool-budget-then-turn-budget).
+fn settle_react_rounds<J: Journal>(
+    journal: &J,
+    store: Option<&LocalFsContentStore>,
+    projection: &mut Projection,
+    folded_through: &mut u64,
+    dispatch: &mut Dispatch,
+) {
+    if !projection.has_react_turn() {
+        return; // the zero-cost sentinel: react-free runs pay one bool read
+    }
+    let Some(store) = store else {
+        return; // anchored chains need a store (the anchor write guaranteed one)
+    };
+    for instance_id in react_instances(projection.react_rounds()) {
+        settle_react_chain(
+            journal,
+            store,
+            projection,
+            folded_through,
+            dispatch,
+            instance_id,
+        );
+    }
+}
+
+/// Settle ONE run's chain (see [`settle_react_rounds`]). Bounded: at most one
+/// branch fact + one advance per pass per chain (the next pass continues).
+#[allow(clippy::too_many_lines)]
+fn settle_react_chain<J: Journal>(
+    journal: &J,
+    store: &LocalFsContentStore,
+    projection: &mut Projection,
+    folded_through: &mut u64,
+    dispatch: &mut Dispatch,
+    instance_id: [u8; INSTANCE_ID_LEN],
+) {
+    let rounds: Vec<ReactRoundRecord> = projection
+        .react_rounds()
+        .iter()
+        .filter(|r| r.instance_id == instance_id)
+        .cloned()
+        .collect();
+    // The run-fixed anchor (turn 0) carries base_prompt_ref / warrant_ref /
+    // model_id / the durable budget caps.
+    let Some(anchor) = rounds.iter().find(|r| r.turn == 0) else {
+        return; // facts without an anchor (defensive) — nothing recoverable
+    };
+    // The work frontier: the latest fact for the highest turn (a turn's facts are
+    // anchor/advance `Pending` then a settled branch; highest seq wins).
+    let Some(latest) = rounds
+        .iter()
+        .max_by(|a, b| a.turn.cmp(&b.turn).then(a.seq.cmp(&b.seq)))
+    else {
+        return;
+    };
+    let turn = latest.turn;
+
+    match &latest.branch {
+        // Terminal branches: the chain is done (Answer) or dead (DeadLettered).
+        ReactBranch::Answer | ReactBranch::DeadLettered => {}
+        // A frozen Tool decision whose advance was interrupted (crash between the
+        // Tool fact and the next Pending fact) — or just decided this pass:
+        // continue the advance under the budget gate.
+        ReactBranch::Tool { .. } => {
+            advance_react_chain(
+                journal,
+                store,
+                projection,
+                folded_through,
+                dispatch,
+                anchor,
+                &rounds,
+                turn,
+            );
+        }
+        // The in-flight turn: settle it once its Mote reaches a terminal state.
+        ReactBranch::Pending => {
+            let turn_state = projection.state_of(&latest.turn_mote_id);
+            if !is_terminal(turn_state) {
+                return; // still in flight (Pending/Scheduled)
+            }
+            if turn_state != MoteState::Committed {
+                // Dead-lettered / repudiated / inconsistent ⇒ the chain is dead.
+                append_react_branch(
+                    journal,
+                    projection,
+                    folded_through,
+                    anchor,
+                    latest.turn_mote_id,
+                    turn,
+                    ReactBranch::DeadLettered,
+                );
+                return;
+            }
+            // Committed: decode the RAW output via the ONE authority gate.
+            let Some(result_ref) = projection.result_ref_of(&latest.turn_mote_id) else {
+                return; // defensive: committed without a result_ref
+            };
+            let Ok(raw) = store.get(&result_ref) else {
+                return; // store fault — retry next pass (fail-safe)
+            };
+            let Ok(warrant_bytes) = store.get(&anchor.warrant_ref) else {
+                return;
+            };
+            let Ok(warrant) = decode_warrant(warrant_bytes.as_ref()) else {
+                return;
+            };
+            let max_args = kx_toolcall::max_args_bytes(&warrant);
+            let branch = match kx_toolcall::parse_tool_call(raw.as_ref(), &warrant, max_args) {
+                // A normal completion IS the final answer — the committed turn
+                // fact is the answer (the harness two-fact contract).
+                Ok(None) => ReactBranch::Answer,
+                // A warrant-granted tool proposal: freeze the decision. (In
+                // PR-2d-1 the live gateway fences tool proposals pre-commit, so
+                // this arm is reached only by staged/model-free drivers — the
+                // substrate is exercised; firing lands in PR-2d-2.)
+                Ok(Some(call)) => ReactBranch::Tool {
+                    tool_id: call.name.0,
+                    tool_version: call.version.0,
+                },
+                // Malformed / ungranted / oversize ⇒ the chain dead-letters
+                // (fail-closed; the committed turn fact remains, the CHAIN ends).
+                Err(_) => ReactBranch::DeadLettered,
+            };
+            let advanced = matches!(branch, ReactBranch::Tool { .. });
+            append_react_branch(
+                journal,
+                projection,
+                folded_through,
+                anchor,
+                latest.turn_mote_id,
+                turn,
+                branch,
+            );
+            if advanced {
+                // Re-read the folded rounds (the Tool fact just folded) and
+                // continue the advance in the same pass (no wasted drain).
+                let rounds: Vec<ReactRoundRecord> = projection
+                    .react_rounds()
+                    .iter()
+                    .filter(|r| r.instance_id == instance_id)
+                    .cloned()
+                    .collect();
+                advance_react_chain(
+                    journal,
+                    store,
+                    projection,
+                    folded_through,
+                    dispatch,
+                    anchor,
+                    &rounds,
+                    turn,
+                );
+            }
+        }
+    }
+}
+
+/// Append one FROZEN branch fact for `turn` (idempotent: an identical settled
+/// branch already folded for this `(instance_id, turn)` is a no-op).
+fn append_react_branch<J: Journal>(
+    journal: &J,
+    projection: &mut Projection,
+    folded_through: &mut u64,
+    anchor: &ReactRoundRecord,
+    turn_mote_id: MoteId,
+    turn: u32,
+    branch: ReactBranch,
+) {
+    if projection
+        .react_rounds()
+        .iter()
+        .any(|r| r.instance_id == anchor.instance_id && r.turn == turn && r.branch == branch)
+    {
+        return; // already recorded (recovery re-drive)
+    }
+    let entry = JournalEntry::ReactRound {
+        turn,
+        turn_mote_id,
+        instance_id: anchor.instance_id,
+        base_prompt_ref: anchor.base_prompt_ref,
+        warrant_ref: anchor.warrant_ref,
+        model_id: anchor.model_id.clone(),
+        branch,
+        max_turns: anchor.max_turns,
+        max_tool_calls: anchor.max_tool_calls,
+        seq: 0,
+    };
+    match journal.append(entry) {
+        Ok(durable) => {
+            let seq = durable.seq();
+            if seq > *folded_through && projection.fold(&durable).is_ok() {
+                *folded_through = seq;
+            }
+        }
+        Err(error) => tracing::error!(%error, turn, "failed to append ReactRound branch fact"),
+    }
+}
+
+/// Advance the chain past a frozen `Tool` decision at `turn`: run the budget gate
+/// (a line-for-line mirror of the harness `react.rs:336-342` — `>=`,
+/// tool-budget-then-turn-budget, counters FOLD-RE-DERIVED from the recorded
+/// branches) and, under budget, append the next turn's `Pending` fact BEFORE
+/// materializing its Mote (crash-safety order: recovery resumes from the fact).
+#[allow(clippy::too_many_arguments)]
+fn advance_react_chain<J: Journal>(
+    journal: &J,
+    store: &LocalFsContentStore,
+    projection: &mut Projection,
+    folded_through: &mut u64,
+    dispatch: &mut Dispatch,
+    anchor: &ReactRoundRecord,
+    rounds: &[ReactRoundRecord],
+    turn: u32,
+) {
+    // Dedup: the successor turn already exists (live double-settle or recovery).
+    if rounds.iter().any(|r| r.turn == turn + 1) {
+        return;
+    }
+    // FOLD-RE-DERIVED counters (BLOCKER #4): tool_calls = the Tool-branch facts
+    // recorded so far (this turn's included — it folded before this call);
+    // turns_used = turns 0..=turn ran. Then the harness gate, line-for-line.
+    let tool_calls = u32::try_from(
+        rounds
+            .iter()
+            .filter(|r| matches!(r.branch, ReactBranch::Tool { .. }))
+            .count(),
+    )
+    .unwrap_or(u32::MAX);
+    let turns_used = turn.saturating_add(1);
+    if tool_calls >= anchor.max_tool_calls {
+        return; // BudgetExhausted (the harness ReactStop semantics)
+    }
+    if turns_used >= anchor.max_turns {
+        return; // BudgetExhausted
+    }
+    // Build the next turn from the run-fixed anchor. Any I/O fault fails safe
+    // (the chain simply doesn't advance this pass; a later pass retries).
+    let Ok(base_bytes) = store.get(&anchor.base_prompt_ref) else {
+        return;
+    };
+    let Ok(instruction) = std::str::from_utf8(base_bytes.as_ref()) else {
+        return;
+    };
+    let Ok(warrant_bytes) = store.get(&anchor.warrant_ref) else {
+        return;
+    };
+    let Ok(warrant) = decode_warrant(warrant_bytes.as_ref()) else {
+        return;
+    };
+    let next_turn = turn + 1;
+    let model_id = ModelId(anchor.model_id.clone());
+    let next = crate::react_shape::build_react_turn(
+        &model_id,
+        instruction,
+        next_turn,
+        &anchor.instance_id,
+        warrant.model_route.max_output_tokens,
+    );
+    // Fact BEFORE materialize (crash-safety order, the replan precedent).
+    append_react_branch(
+        journal,
+        projection,
+        folded_through,
+        anchor,
+        next.id,
+        next_turn,
+        ReactBranch::Pending,
+    );
+    materialize_react_turn(projection, dispatch, &next, anchor.warrant_ref, warrant);
+    tracing::info!(turn = next_turn, mote = ?next.id, "react turn materialized");
+}
+
+/// Recover the live ReAct chains from committed facts after a restart (PR-2d-1).
+/// **Phase A** is a structural no-op (turns are childless — nothing to
+/// re-materialize); **Phase B** re-inserts each chain's in-flight `Pending` turn
+/// into the dispatch admission set (it was lost from `dispatch.defs` on restart;
+/// rebuilt from the anchor via `react_shape` — identical bytes, R49);
+/// **Phase C** re-drives the settle pass, which re-DECODES the committed tail
+/// (never trusts a count) and completes any interrupted advance. A no-op without
+/// folded react facts (the `has_react_turn` sentinel).
+fn recover_react_chain<J: Journal>(
+    journal: &J,
+    store: Option<&LocalFsContentStore>,
+    projection: &mut Projection,
+    folded_through: &mut u64,
+    dispatch: &mut Dispatch,
+) {
+    if !projection.has_react_turn() {
+        return;
+    }
+    let Some(store) = store else {
+        return;
+    };
+    // Phase B — re-insert each chain's in-flight turn (its fact is Pending and its
+    // Mote is not yet terminal) so a worker can re-lease it.
+    for instance_id in react_instances(projection.react_rounds()) {
+        let rounds: Vec<ReactRoundRecord> = projection
+            .react_rounds()
+            .iter()
+            .filter(|r| r.instance_id == instance_id)
+            .cloned()
+            .collect();
+        let Some(latest) = rounds
+            .iter()
+            .max_by(|a, b| a.turn.cmp(&b.turn).then(a.seq.cmp(&b.seq)))
+        else {
+            continue;
+        };
+        if !matches!(latest.branch, ReactBranch::Pending) {
+            continue; // settled tail — Phase C re-drives it
+        }
+        if is_terminal(projection.state_of(&latest.turn_mote_id)) {
+            continue; // committed/failed — Phase C decodes/settles it
+        }
+        let Ok(base_bytes) = store.get(&latest.base_prompt_ref) else {
+            continue;
+        };
+        let Ok(instruction) = std::str::from_utf8(base_bytes.as_ref()) else {
+            continue;
+        };
+        let Ok(warrant_bytes) = store.get(&latest.warrant_ref) else {
+            continue;
+        };
+        let Ok(warrant) = decode_warrant(warrant_bytes.as_ref()) else {
+            continue;
+        };
+        let model_id = ModelId(latest.model_id.clone());
+        let rebuilt = crate::react_shape::build_react_turn(
+            &model_id,
+            instruction,
+            latest.turn,
+            &instance_id,
+            warrant.model_route.max_output_tokens,
+        );
+        if rebuilt.id != latest.turn_mote_id {
+            tracing::error!(
+                turn = latest.turn,
+                expected = ?latest.turn_mote_id,
+                rebuilt = ?rebuilt.id,
+                "react turn rebuild diverged from the durable fact — not re-inserting (fail-closed)"
+            );
+            continue;
+        }
+        materialize_react_turn(projection, dispatch, &rebuilt, latest.warrant_ref, warrant);
+    }
+    // Phase C — complete any interrupted settle/advance (idempotent; dedups on
+    // the durable facts; re-decodes the committed tail).
+    settle_react_rounds(journal, Some(store), projection, folded_through, dispatch);
 }
 
 /// Resolve the warrant's tool grants ONCE per fresh submit (canonical

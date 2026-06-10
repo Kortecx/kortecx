@@ -51,11 +51,15 @@ pub trait RunSubmitter: Send + Sync {
 
     /// Submit one Mote under the (already-registered) run. The coordinator
     /// re-derives identity; the returned `mote_id` is authoritative (D53).
+    /// `react_seed` (PR-2d-1) marks the Mote as a live ReAct-chain seed — the
+    /// coordinator swaps in the run-salted turn 0 and anchors a `ReactRound`
+    /// fact (wire/admission flag only, never identity).
     async fn submit_mote(
         &self,
         mote: kx_mote::Mote,
         warrant: kx_warrant::WarrantSpec,
         accept_at_least_once: bool,
+        react_seed: bool,
     ) -> Result<SubmitMoteOutcome, SubmitterError>;
 }
 
@@ -102,6 +106,7 @@ impl RunSubmitter for TonicCoordinatorSubmitter {
         mote: kx_mote::Mote,
         warrant: kx_warrant::WarrantSpec,
         accept_at_least_once: bool,
+        react_seed: bool,
     ) -> Result<SubmitMoteOutcome, SubmitterError> {
         let mut client = self.client.clone();
         let resp = client
@@ -109,6 +114,7 @@ impl RunSubmitter for TonicCoordinatorSubmitter {
                 mote: Some(mote.into()),
                 warrant: Some(warrant.into()),
                 accept_at_least_once,
+                react_seed,
             })
             .await
             .map_err(|s| SubmitterError::Transport(s.to_string()))?

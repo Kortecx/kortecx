@@ -157,20 +157,42 @@ use smallvec::SmallVec;
 ///   a `replan_rounds` record), never an identity input, never folded into the
 ///   run-identity product digest. Strictly additive; `MAX_ENTRY_LEN` is unchanged.
 ///
+/// **v8 (PR-2d-1, react-substrate) changes** vs v7:
+/// - New `ReactRound` entry kind (=9) — the durable record of a coordinator-driven
+///   ReAct turn, so a crash-then-recover re-derives the in-flight (not-yet-committed)
+///   turn AND the spent turn/tool budget ONLY from committed journal facts (the
+///   `Committed` entry stores only `mote_def_hash`, never the turn's prompt — the
+///   same durability finding that produced `ReplanRound`). Carries the turn index
+///   (0 = the submit anchor), the turn's `MoteId` (the header slot), the run's
+///   `instance_id` (the run-salt that keys every settle/recover query in serve's
+///   SHARED journal — a deliberate difference from `ReplanRound`'s
+///   shaper-id+round keying), the `ContentRef`s of the immutable base prompt +
+///   the turn warrant, the resolved `model_id`, the turn's settled branch
+///   ([`ReactBranch`]: `Answer` / `Tool` / `DeadLettered` / `Pending` — FROZEN at
+///   append so recovery never re-decodes a re-sampled tail), and the run's durable
+///   `max_turns`/`max_tool_calls` caps. Body is variable-length. The header
+///   `mote_id` slot carries the turn's id directly (a real Mote id, like
+///   `Proposed`/`Committed`); the `idempotency_key` slot is the all-zero sentinel.
+/// - `ReactRound` does NOT participate in dedup-by-key (the dedup index stays
+///   `{1, 2, 4}`); it is an off-DAG metadata fact (folded as a `last_seq` advance +
+///   a `react_rounds` record), never an identity input, never folded into the
+///   run-identity product digest. Strictly additive; `MAX_ENTRY_LEN` is unchanged.
+///
 /// The strict [`crate::SqliteJournal::open`] refuses any file whose
-/// `schema_version` is not exactly v7 (the loud-refusal contract is unchanged).
+/// `schema_version` is not exactly v8 (the loud-refusal contract is unchanged).
 ///
 /// **Migration (IMP-2, M2.x-E).** As of the schema-migration work, an older
 /// still-supported version is no longer a dead end: [`crate::migrate_entry`] /
 /// [`crate::ReplayJournal`] up-convert old entries to the current shape for
 /// replay/recovery, and [`crate::migrate_to`] rewrites an old journal into a fresh
-/// v7 one for resume-and-append. v6 → v7 is a pure pass-through (kinds 0..7 are
-/// byte-identical under v7; `ReplanRound` is purely additive); v5 → v7 appends the
-/// safe-default `idempotency_class` byte (the lone v5→v6 delta) and is then v7-valid.
+/// v8 one for resume-and-append. v7 → v8 is a pure pass-through (kinds 0..8 are
+/// byte-identical under v8; `ReactRound` is purely additive), as is v6 → v7
+/// (`ReplanRound` purely additive); v5 → v8 appends the safe-default
+/// `idempotency_class` byte (the lone v5→v6 delta) and is then v8-valid.
 /// The product identity digest is invariant across migration; see
 /// [`crate::migrate_entry`] for the full contract and the supported version window
-/// ([`crate::MIN_SUPPORTED_SCHEMA_VERSION`]..=v7).
-pub const JOURNAL_SCHEMA_VERSION: u16 = 7;
+/// ([`crate::MIN_SUPPORTED_SCHEMA_VERSION`]..=v8).
+pub const JOURNAL_SCHEMA_VERSION: u16 = 8;
 
 /// Fixed entry-header length in bytes (`journal-entry.md` §3).
 pub const HEADER_LEN: usize = 74;
@@ -271,6 +293,21 @@ pub const KIND_DIGEST_SEALED: u8 = 7;
 /// off-DAG metadata, never an identity input, never folded into any digest.
 pub const KIND_REPLAN_ROUND: u8 = 8;
 
+/// `ReactRound` entry-kind byte (NEW in v8; PR-2d-1, react-substrate).
+///
+/// The durable record of a coordinator-driven **ReAct turn**: enough to re-derive
+/// the turn's Mote (its id, the run's base prompt `ContentRef`, `warrant_ref`,
+/// `model_id`, the run-salt `instance_id`) AND the spent turn/tool budget ONLY
+/// from committed journal facts on a cold recovery. Variable-length body:
+/// `turn(u32 LE) ‖ instance_id(16) ‖ base_prompt_ref(32) ‖ warrant_ref(32) ‖
+/// u16-prefixed model_id ‖ branch_tag(u8) ‖ [if Tool: u16-prefixed tool_id ‖
+/// u16-prefixed tool_version] ‖ max_turns(u32 LE) ‖ max_tool_calls(u32 LE)`.
+/// The header `mote_id` slot carries the turn's id directly (a real Mote id, like
+/// `Proposed`/`Committed`); the `idempotency_key` slot is the all-zero sentinel.
+/// Does NOT participate in dedup-by-key (the dedup index stays `{1, 2, 4}`);
+/// off-DAG metadata, never an identity input, never folded into any digest.
+pub const KIND_REACT_ROUND: u8 = 9;
+
 /// Length in bytes of a run's `instance_id` (the registered run nonce).
 pub const INSTANCE_ID_LEN: usize = 16;
 
@@ -292,6 +329,54 @@ const REPLAN_ROUND_PREFIX_LEN: usize = 4 + 32 + 32 + 32 + 2 + 2;
 /// fan-out budget (`LoopBudget::max_children`, typically ≤ 8); 64 is generous
 /// headroom and keeps the entry far under [`MAX_ENTRY_LEN`].
 pub const MAX_REPLAN_FAILED_STEPS: usize = 64;
+
+/// `ReactRound` body fixed-prefix length: `turn(u32, 4) + instance_id(16) +
+/// base_prompt_ref(32) + warrant_ref(32) + model_id_len(u16, 2)` = 86 bytes
+/// (before the variable model_id, the branch tag + its optional tool fields,
+/// and the trailing budget caps).
+const REACT_ROUND_PREFIX_LEN: usize = 4 + INSTANCE_ID_LEN + 32 + 32 + 2;
+
+/// The settled branch of a ReAct turn, FROZEN into the durable [`JournalEntry::ReactRound`]
+/// fact at append time (v8, PR-2d-1) so recovery re-reads the committed decision and
+/// never re-decodes a tail a re-sampled model output could perturb.
+///
+/// Serde derives serve the checkpoint DTO only (the `ResolvedCapabilityRecord`
+/// precedent); the journal's canonical on-disk encoding is the hand-rolled
+/// [`Self::as_u8`] tag, never serde.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ReactBranch {
+    /// The turn's committed output was a final answer (no tool envelope) — the
+    /// chain is terminal at this turn.
+    Answer,
+    /// The turn's committed output proposed a warrant-granted tool call. In
+    /// PR-2d-1 (answer-only substrate) this branch is recorded for harness-parity
+    /// settles but the gateway fences live tool proposals pre-commit; firing
+    /// lands in PR-2d-2.
+    Tool {
+        /// The proposed tool's name (already grant-checked at decode).
+        tool_id: String,
+        /// The proposed tool's pinned version.
+        tool_version: String,
+    },
+    /// The turn dead-lettered (malformed proposal / dispatch failure) — terminal.
+    DeadLettered,
+    /// The turn is materialized but not yet settled (the anchor state of every
+    /// turn). Recovery treats a trailing `Pending` as the work frontier.
+    Pending,
+}
+
+impl ReactBranch {
+    /// The branch's closed `u8` tag (the on-disk discriminant).
+    #[must_use]
+    pub fn as_u8(&self) -> u8 {
+        match self {
+            Self::Answer => 0,
+            Self::Tool { .. } => 1,
+            Self::DeadLettered => 2,
+            Self::Pending => 3,
+        }
+    }
+}
 
 /// The kind of tool a capability resolved as, mirrored as a closed `u8`-tagged
 /// enum so `kx-journal` need not depend on `kx-tool-registry` (the journal must
@@ -907,6 +992,71 @@ pub enum JournalEntry {
         /// Journal-assigned sequence (0 until appended).
         seq: u64,
     },
+
+    /// The durable record of a coordinator-driven **ReAct turn** (v8, PR-2d-1,
+    /// react-substrate) — an append-only, off-DAG coordinator-metadata fact.
+    ///
+    /// The live ReAct chain (turn → settle → next turn) is coordinator-materialized;
+    /// the `Committed` entry stores only `mote_def_hash`, never the turn's prompt or
+    /// the run's budget, so without this fact an in-flight turn AND the spent budget
+    /// are lost on a crash (the durability finding that produced `ReplanRound`).
+    /// `recover()` re-derives the entire chain ONLY from committed facts: the latest
+    /// turn's Mote is rebuilt from `(instance_id, turn, base_prompt_ref, warrant_ref,
+    /// model_id)` and re-inserted into dispatch admission if not yet `Committed`;
+    /// budget counters are re-derived by folding the recorded branches (never an
+    /// in-memory count).
+    ///
+    /// Two fact shapes share the kind: the **anchor** (`turn = 0`, written at
+    /// submit, `branch = Pending`) and per-turn **resolutions/advances** (a settled
+    /// branch for turn N, or the next `Pending` turn N+1). The branch is FROZEN at
+    /// append so recovery re-reads decisions, never re-decodes a re-sampled tail.
+    ///
+    /// **Keyed by `instance_id`** (the run-salt): serve's journal is SHARED across
+    /// runs, so every settle/recover query scopes by the registered run identity —
+    /// a deliberate difference from `ReplanRound`'s shaper-id+round keying.
+    ///
+    /// **Metadata, never identity** — never folded into `MoteId`/`input_data_id`/any
+    /// content-addressed digest; the projection folds it as a `last_seq`-advance plus
+    /// a `react_rounds` record. Does NOT participate in dedup-by-key (the dedup index
+    /// stays `{1, 2, 4}`); the coordinator de-dups by `(instance_id, turn, branch)`.
+    /// The header `mote_id` slot carries `turn_mote_id` directly; the
+    /// `idempotency_key` slot is the all-zero sentinel; `nondeterminism` is the 0
+    /// sentinel.
+    ReactRound {
+        /// The turn index. `0` is the run's submit anchor (records the immutable
+        /// base prompt + the run-fixed warrant + the durable budget caps); settles
+        /// and successor turns reference `1..` bounded by `max_turns`.
+        turn: u32,
+        /// The turn's `MoteId` (also the header `mote_id` slot) — the RUN-SALTED
+        /// id (`blake3("kx-react-turn" ‖ instance_id ‖ turn)`). Recovery looks up
+        /// its `state_of` to decide whether to re-materialize it.
+        turn_mote_id: MoteId,
+        /// The registered run identity (the run-salt). Keys every settle/recover
+        /// query in the shared serve journal.
+        instance_id: [u8; INSTANCE_ID_LEN],
+        /// `ContentRef` of the run's IMMUTABLE base instruction prompt — the
+        /// after-recovery source for rebuilding the in-flight turn's Mote (the
+        /// trajectory itself is served from committed turn outputs via F-7).
+        base_prompt_ref: ContentRef,
+        /// `blake3(canonical_bincode(WarrantSpec))` of the run-fixed turn warrant.
+        /// Replay re-derives the warrant bit-for-bit (the settle decode gates the
+        /// proposal against THIS warrant's `tool_grants`).
+        warrant_ref: ContentRef,
+        /// The resolved model id the turns run (audit + reconstruction).
+        model_id: String,
+        /// The turn's settled branch, FROZEN at append. The anchor and a freshly
+        /// advanced turn record [`ReactBranch::Pending`]; a settle appends a
+        /// resolution fact with the terminal/advancing branch.
+        branch: ReactBranch,
+        /// The run's durable turn cap (mirrors the harness `ReactBudget`). Recorded
+        /// on the anchor so a recovered coordinator enforces the SAME budget the
+        /// run was admitted under (never a default that drifted across versions).
+        max_turns: u32,
+        /// The run's durable tool-call cap (see `max_turns`).
+        max_tool_calls: u32,
+        /// Journal-assigned sequence (0 until appended).
+        seq: u64,
+    },
 }
 
 /// The all-zero sentinel returned as the dedupe key of a `RunRegistered` entry,
@@ -958,7 +1108,8 @@ impl JournalEntry {
             | Self::RunRegistered { seq, .. }
             | Self::RunVersionsResolved { seq, .. }
             | Self::DigestSealed { seq, .. }
-            | Self::ReplanRound { seq, .. } => *seq,
+            | Self::ReplanRound { seq, .. }
+            | Self::ReactRound { seq, .. } => *seq,
         }
     }
 
@@ -981,13 +1132,14 @@ impl JournalEntry {
             | Self::EffectStaged {
                 idempotency_key, ..
             } => idempotency_key,
-            // RunRegistered / RunVersionsResolved / DigestSealed / ReplanRound do
-            // not dedup; return the all-zero sentinel (kinds 5, 6, 7, 8 are excluded
-            // from the dedup gate).
+            // RunRegistered / RunVersionsResolved / DigestSealed / ReplanRound /
+            // ReactRound do not dedup; return the all-zero sentinel (kinds 5, 6,
+            // 7, 8, 9 are excluded from the dedup gate).
             Self::RunRegistered { .. }
             | Self::RunVersionsResolved { .. }
             | Self::DigestSealed { .. }
-            | Self::ReplanRound { .. } => &ZERO_IDEMPOTENCY_KEY,
+            | Self::ReplanRound { .. }
+            | Self::ReactRound { .. } => &ZERO_IDEMPOTENCY_KEY,
         }
     }
 
@@ -1010,6 +1162,9 @@ impl JournalEntry {
             // real Mote id, like Proposed/Committed) — recovery uses it to look up
             // the shaper's `state_of`.
             Self::ReplanRound { shaper_mote_id, .. } => *shaper_mote_id,
+            // Same anchoring for a ReAct turn: the header slot IS the turn's
+            // (run-salted) Mote id.
+            Self::ReactRound { turn_mote_id, .. } => *turn_mote_id,
         }
     }
 
@@ -1026,6 +1181,7 @@ impl JournalEntry {
             Self::RunVersionsResolved { .. } => KIND_RUN_VERSIONS_RESOLVED,
             Self::DigestSealed { .. } => KIND_DIGEST_SEALED,
             Self::ReplanRound { .. } => KIND_REPLAN_ROUND,
+            Self::ReactRound { .. } => KIND_REACT_ROUND,
         }
     }
 }
@@ -1128,6 +1284,10 @@ pub enum DecodeError {
     /// A `ReplanRound` entry's `has_escalation` flag is neither 0 nor 1 (v7).
     #[error("ReplanRound has_escalation flag is not boolean: {0}")]
     NonBooleanHasEscalation(u8),
+    /// A `ReactRound` entry's `branch` tag byte is not one of the four known
+    /// [`ReactBranch`] tags (v8, PR-2d-1).
+    #[error("unknown ReactRound branch tag: {0}")]
+    UnknownReactBranch(u8),
     /// Trailing bytes after a complete entry (§2 no-trailing-data rule).
     #[error("trailing bytes after entry: {0} extra")]
     TrailingBytes(usize),
@@ -1181,6 +1341,16 @@ pub enum EncodeError {
         MAX_ENTRY_LEN
     )]
     ReplanRoundTooLarge {
+        /// The encoded entry's byte length.
+        got: usize,
+    },
+    /// A `ReactRound` entry would exceed the absolute size cap ([`MAX_ENTRY_LEN`])
+    /// — a pathologically large model/tool id (v8, PR-2d-1).
+    #[error(
+        "ReactRound entry exceeds size cap: {got} bytes > {} max",
+        MAX_ENTRY_LEN
+    )]
+    ReactRoundTooLarge {
         /// The encoded entry's byte length.
         got: usize,
     },
@@ -1272,6 +1442,12 @@ pub fn encode_entry(entry: &JournalEntry) -> Result<Vec<u8>, EncodeError> {
             seq,
             ..
         } => (*shaper_mote_id, ZERO_IDEMPOTENCY_KEY, *seq, 0),
+        // v8 (PR-2d-1): the header `mote_id` slot carries the turn's (run-salted)
+        // id directly; all-zero idempotency key (kind 9 does not dedup), 0 nd (a
+        // react-round fact is not a Mote).
+        JournalEntry::ReactRound {
+            turn_mote_id, seq, ..
+        } => (*turn_mote_id, ZERO_IDEMPOTENCY_KEY, *seq, 0),
     };
     out.extend_from_slice(mote_id_for_header.as_bytes());
     out.extend_from_slice(&idempotency_key);
@@ -1432,6 +1608,43 @@ pub fn encode_entry(entry: &JournalEntry) -> Result<Vec<u8>, EncodeError> {
             // than over-cap a single oversize entry.
             if out.len() > MAX_ENTRY_LEN {
                 return Err(EncodeError::ReplanRoundTooLarge { got: out.len() });
+            }
+        }
+        JournalEntry::ReactRound {
+            turn,
+            instance_id,
+            base_prompt_ref,
+            warrant_ref,
+            model_id,
+            branch,
+            max_turns,
+            max_tool_calls,
+            ..
+        } => {
+            // v8 (PR-2d-1): body = turn(u32 LE) ‖ instance_id(16) ‖
+            // base_prompt_ref(32) ‖ warrant_ref(32) ‖ u16-prefixed model_id ‖
+            // branch_tag(u8) ‖ [if Tool: u16-prefixed tool_id ‖ u16-prefixed
+            // tool_version] ‖ max_turns(u32 LE) ‖ max_tool_calls(u32 LE).
+            out.extend_from_slice(&turn.to_le_bytes());
+            out.extend_from_slice(instance_id);
+            out.extend_from_slice(base_prompt_ref.as_bytes());
+            out.extend_from_slice(warrant_ref.as_bytes());
+            push_len_prefixed_str(&mut out, model_id)?;
+            out.push(branch.as_u8());
+            if let ReactBranch::Tool {
+                tool_id,
+                tool_version,
+            } = branch
+            {
+                push_len_prefixed_str(&mut out, tool_id)?;
+                push_len_prefixed_str(&mut out, tool_version)?;
+            }
+            out.extend_from_slice(&max_turns.to_le_bytes());
+            out.extend_from_slice(&max_tool_calls.to_le_bytes());
+            // Pathological-id guard (mirrors ReplanRound) — refuse rather than
+            // over-cap a single oversize entry.
+            if out.len() > MAX_ENTRY_LEN {
+                return Err(EncodeError::ReactRoundTooLarge { got: out.len() });
             }
         }
     }
@@ -1810,6 +2023,59 @@ pub fn decode_entry_with_def_hash(
                 seq,
             })
         }
+        KIND_REACT_ROUND => {
+            // v8 (PR-2d-1): variable-length body. Cursor-based parse with strict
+            // bounds at every read; reject trailing bytes at the end. The header
+            // `mote_id` slot IS the turn's (run-salted) id (read directly, like
+            // ReplanRound — no synthetic root to re-derive).
+            if body.len() < REACT_ROUND_PREFIX_LEN {
+                return Err(DecodeError::BodyTooShort {
+                    kind,
+                    got: body.len(),
+                    expected: REACT_ROUND_PREFIX_LEN,
+                });
+            }
+            let turn_mote_id = mote_id;
+            let turn = u32::from_le_bytes(body[..4].try_into().expect("4 bytes"));
+            let mut cursor = 4usize;
+            let mut instance_id = [0u8; INSTANCE_ID_LEN];
+            instance_id.copy_from_slice(&body[cursor..cursor + INSTANCE_ID_LEN]);
+            cursor += INSTANCE_ID_LEN;
+            let base_prompt_ref = ContentRef::from_bytes(read_array32(body, &mut cursor, kind)?);
+            let warrant_ref = ContentRef::from_bytes(read_array32(body, &mut cursor, kind)?);
+            let model_id = read_len_prefixed_str(body, &mut cursor, kind)?;
+            let branch = match read_u8(body, &mut cursor, kind)? {
+                0 => ReactBranch::Answer,
+                1 => {
+                    let tool_id = read_len_prefixed_str(body, &mut cursor, kind)?;
+                    let tool_version = read_len_prefixed_str(body, &mut cursor, kind)?;
+                    ReactBranch::Tool {
+                        tool_id,
+                        tool_version,
+                    }
+                }
+                2 => ReactBranch::DeadLettered,
+                3 => ReactBranch::Pending,
+                other => return Err(DecodeError::UnknownReactBranch(other)),
+            };
+            let max_turns = read_u32(body, &mut cursor, kind)?;
+            let max_tool_calls = read_u32(body, &mut cursor, kind)?;
+            if cursor != body.len() {
+                return Err(DecodeError::TrailingBytes(body.len() - cursor));
+            }
+            Ok(JournalEntry::ReactRound {
+                turn,
+                turn_mote_id,
+                instance_id,
+                base_prompt_ref,
+                warrant_ref,
+                model_id,
+                branch,
+                max_turns,
+                max_tool_calls,
+                seq,
+            })
+        }
         other => Err(DecodeError::UnknownKind(other)),
     }
 }
@@ -1874,6 +2140,20 @@ fn read_u16(body: &[u8], cursor: &mut usize, kind: u8) -> Result<u16, DecodeErro
     }
     let v = u16::from_le_bytes(body[*cursor..*cursor + 2].try_into().expect("2 bytes"));
     *cursor += 2;
+    Ok(v)
+}
+
+/// Read a little-endian `u32` at `*cursor`, advancing it (v8 `ReactRound` bodies).
+fn read_u32(body: &[u8], cursor: &mut usize, kind: u8) -> Result<u32, DecodeError> {
+    if body.len() < *cursor + 4 {
+        return Err(DecodeError::BodyTooShort {
+            kind,
+            got: body.len(),
+            expected: *cursor + 4,
+        });
+    }
+    let v = u32::from_le_bytes(body[*cursor..*cursor + 4].try_into().expect("4 bytes"));
+    *cursor += 4;
     Ok(v)
 }
 
@@ -2249,6 +2529,90 @@ mod tests {
             decode_entry(&encode_entry(&anchor).unwrap()).unwrap(),
             anchor
         );
+
+        // v8 (PR-2d-1): ReactRound — every branch shape round-trips.
+        for (branch, seq) in [
+            (ReactBranch::Pending, 500u64),
+            (ReactBranch::Answer, 501),
+            (
+                ReactBranch::Tool {
+                    tool_id: "mcp-echo".to_string(),
+                    tool_version: "1".to_string(),
+                },
+                502,
+            ),
+            (ReactBranch::DeadLettered, 503),
+        ] {
+            let rt = JournalEntry::ReactRound {
+                turn: 2,
+                turn_mote_id: MoteId::from_bytes([0x8e; 32]),
+                instance_id: [0x4d; INSTANCE_ID_LEN],
+                base_prompt_ref: ContentRef::from_bytes([0x12; 32]),
+                warrant_ref: ContentRef::from_bytes([0x34; 32]),
+                model_id: "kx-serve:qwen3-4b".to_string(),
+                branch,
+                max_turns: 8,
+                max_tool_calls: 8,
+                seq,
+            };
+            assert_eq!(decode_entry(&encode_entry(&rt).unwrap()).unwrap(), rt);
+        }
+    }
+
+    #[test]
+    fn react_round_is_excluded_from_dedup_and_is_off_metadata() {
+        // kind 9 is not in the dedup index {1,2,4}; its idempotency_key is the ZERO
+        // sentinel and its mote_id slot carries the turn's (run-salted) id directly.
+        let turn_id = MoteId::from_bytes([0xa1; 32]);
+        let e = JournalEntry::ReactRound {
+            turn: 0,
+            turn_mote_id: turn_id,
+            instance_id: [0x4d; INSTANCE_ID_LEN],
+            base_prompt_ref: ContentRef::from_bytes([0u8; 32]),
+            warrant_ref: ContentRef::from_bytes([0u8; 32]),
+            model_id: "m".to_string(),
+            branch: ReactBranch::Pending,
+            max_turns: 8,
+            max_tool_calls: 8,
+            seq: 11,
+        };
+        assert_eq!(e.kind(), KIND_REACT_ROUND);
+        assert_eq!(e.idempotency_key(), &[0u8; 32]);
+        assert_eq!(e.mote_id(), turn_id);
+        assert_eq!(e.seq(), 11);
+    }
+
+    #[test]
+    fn react_round_rejects_unknown_branch_tag_and_trailing_bytes() {
+        let e = JournalEntry::ReactRound {
+            turn: 1,
+            turn_mote_id: MoteId::from_bytes([0xa2; 32]),
+            instance_id: [0x4e; INSTANCE_ID_LEN],
+            base_prompt_ref: ContentRef::from_bytes([1u8; 32]),
+            warrant_ref: ContentRef::from_bytes([2u8; 32]),
+            model_id: "m".to_string(),
+            branch: ReactBranch::Answer,
+            max_turns: 8,
+            max_tool_calls: 8,
+            seq: 12,
+        };
+        let bytes = encode_entry(&e).unwrap();
+        // Corrupt the branch tag (it sits right after the u16-prefixed model_id;
+        // body offset = 4 + 16 + 32 + 32 + 2 + 1 = 87 from the body start).
+        let tag_at = HEADER_LEN + REACT_ROUND_PREFIX_LEN + 1;
+        let mut corrupt = bytes.clone();
+        corrupt[tag_at] = 0xee;
+        assert!(matches!(
+            decode_entry(&corrupt),
+            Err(DecodeError::UnknownReactBranch(0xee))
+        ));
+        // Trailing garbage after a complete entry is fail-closed (§2).
+        let mut trailing = bytes;
+        trailing.push(0);
+        assert!(matches!(
+            decode_entry(&trailing),
+            Err(DecodeError::TrailingBytes(1))
+        ));
     }
 
     #[test]

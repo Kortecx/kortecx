@@ -350,6 +350,7 @@ impl kx_gateway_core::RunSubmitter for MockSubmitter {
         mote: kx_mote::Mote,
         _warrant: WarrantSpec,
         _accept: bool,
+        _react_seed: bool,
     ) -> Result<kx_gateway_core::SubmitMoteOutcome, kx_gateway_core::SubmitterError> {
         self.calls.lock().unwrap().push("submit".into());
         Ok(kx_gateway_core::SubmitMoteOutcome {

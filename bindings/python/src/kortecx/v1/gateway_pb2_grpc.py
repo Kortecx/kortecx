@@ -128,6 +128,11 @@ class KxGatewayStub(object):
                 request_serializer=kortecx_dot_v1_dot_gateway__pb2.ListReplanRoundsRequest.SerializeToString,
                 response_deserializer=kortecx_dot_v1_dot_gateway__pb2.ListReplanRoundsResponse.FromString,
                 _registered_method=True)
+        self.ListReactTurns = channel.unary_unary(
+                '/kortecx.v1.KxGateway/ListReactTurns',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.ListReactTurnsRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.ListReactTurnsResponse.FromString,
+                _registered_method=True)
 
 
 class KxGatewayServicer(object):
@@ -249,6 +254,13 @@ class KxGatewayServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def ListReactTurns(self, request, context):
+        """PR-2d-1 additive (D120.6): ReAct-turn observability (read-only).
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_KxGatewayServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -341,6 +353,11 @@ def add_KxGatewayServicer_to_server(servicer, server):
                     servicer.ListReplanRounds,
                     request_deserializer=kortecx_dot_v1_dot_gateway__pb2.ListReplanRoundsRequest.FromString,
                     response_serializer=kortecx_dot_v1_dot_gateway__pb2.ListReplanRoundsResponse.SerializeToString,
+            ),
+            'ListReactTurns': grpc.unary_unary_rpc_method_handler(
+                    servicer.ListReactTurns,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.ListReactTurnsRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.ListReactTurnsResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -833,6 +850,33 @@ class KxGateway(object):
             '/kortecx.v1.KxGateway/ListReplanRounds',
             kortecx_dot_v1_dot_gateway__pb2.ListReplanRoundsRequest.SerializeToString,
             kortecx_dot_v1_dot_gateway__pb2.ListReplanRoundsResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ListReactTurns(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/ListReactTurns',
+            kortecx_dot_v1_dot_gateway__pb2.ListReactTurnsRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.ListReactTurnsResponse.FromString,
             options,
             channel_credentials,
             insecure,

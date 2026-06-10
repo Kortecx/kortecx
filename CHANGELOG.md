@@ -8,6 +8,34 @@ development; interfaces may change before 1.0 — pin a commit if you build on i
 
 ### Added
 
+- **Live ReAct substrate in `kx serve` (PR-2d-1, answer-only)** (`crates/kx-toolcall`
+  NEW, `crates/kx-journal`, `crates/kx-projection`, `crates/kx-coordinator`,
+  `crates/kx-gateway`, `crates/kx-gateway-core`, `crates/kx-model-harness`). The
+  harness ReAct loop's substrate now runs LIVE: a `SubmitMoteSpec.react_seed` flag
+  (additive, default-false) makes the coordinator swap in a **run-salted** turn-0
+  model Mote (`blake3("kx-react-turn" ‖ instance_id ‖ turn)` — server-derived
+  identity, collision-free in serve's shared journal) and anchor a durable
+  **`ReactRound`** fact (journal schema **v7→v8**, kind 9; off-DAG, never a digest
+  input) recording the chain's base prompt, warrant, and budget caps. The
+  sole-writer coordinator settles each committed turn by decoding its RAW output
+  through the new **`kx-toolcall`** pure leaf (the tool-call authority gate,
+  EXTRACTED from `kx-model-harness` so the gateway fence, the coordinator settle,
+  and the harness loop share ONE implementation), freezes the branch
+  (`Answer`/`Tool`/`DeadLettered`/`Pending`) as a durable fact, advances the chain
+  under the fold-re-derived budget (the harness `>=`/tool-then-turn gate,
+  line-for-line), and serves the trajectory to the next turn via the F-7 seam in
+  transcript order. Crash recovery re-derives the whole chain from committed facts
+  alone (the in-flight turn rebuilds to the SAME salted identity — R49; committed
+  turns are served, never re-sampled). The gateway's model router gains a
+  `react_turn` arm: raw-commit on a normal completion, fail-closed on a malformed
+  proposal, and an **answer-only fence** that dead-letters any tool proposal (tool
+  *firing* lands in PR-2d-2). New read-only `ListReactTurns` RPC (instance-scoped,
+  paginated) mirrors `ListReplanRounds`. Checkpoint format **v3→v4** (carries
+  `react_rounds`; a v3 sidecar is refused and recovery full-folds, self-healing).
+  Journal v7→v8 is a pure pass-through migration; the canonical demo digest
+  `7d22d4bd…` is byte-invariant; the dep walls now also forbid `kx-model-harness`
+  and `kx-mcp` below the gateway line.
+
 - **GPU/Metal + decoding tuning for the in-process backend** (`crates/kx-llamacpp`).
   Env-driven knobs applied inside `ModelParams::new` / `ContextParams::new` — the
   exact constructors the runtime's dispatch path already calls — so they take effect

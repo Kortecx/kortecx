@@ -122,6 +122,7 @@ pub fn demo_submit_run_request() -> kx_proto::proto::SubmitRunRequest {
             mote: Some(demo_pure_mote(1).into()),
             warrant: Some(demo_pure_warrant().into()),
             accept_at_least_once: false,
+            react_seed: false,
         }],
     }
 }

@@ -459,6 +459,66 @@ impl<B: InferenceBackend> ModelRouterExecutor<B> {
         Ok(out.bytes)
     }
 
+    /// `true` iff `mote` is a coordinator-materialized ReAct TURN (PR-2d-1) — the
+    /// [`kx_mote::REACT_TURN_KEY`] routing marker the run-salted builders insert.
+    /// The marker is identity-bearing (`config_subset` → `MoteId`, D53), so it can
+    /// never be dropped in transit; a client-crafted marker reaches a strictly
+    /// STRICTER path (the answer-only fence below), never a wider one.
+    fn is_react_turn(mote: &Mote) -> bool {
+        mote.def
+            .config_subset
+            .contains_key(&kx_mote::ConfigKey(kx_mote::REACT_TURN_KEY.to_string()))
+    }
+
+    /// Run a ReAct TURN Mote (PR-2d-1, answer-only substrate): `dispatch_model`
+    /// verbatim (the F-7 trajectory prepend + ChatML — the committed prompt
+    /// contract is byte-identical to the harness loop), then the pre-commit
+    /// DEFENSE-IN-DEPTH fence over the raw output via the ONE authority gate
+    /// ([`kx_toolcall::parse_tool_call`] — the same crate the coordinator settle
+    /// and the harness decode through):
+    ///
+    /// - `Err` (malformed / ungranted / oversize proposal) ⇒ TERMINAL — the worker
+    ///   dead-letters the turn (F4) and the chain settles `DeadLettered`. A
+    ///   half-formed proposal never commits (the harness fresh-turn contract).
+    /// - `Ok(Some(_))` ⇒ TERMINAL — **the PR-2d-1 answer-only fence**: tool firing
+    ///   lands in PR-2d-2 (`ToolArgsSink` + the MCP broker edge); committing a
+    ///   tool-proposal turn now would half-fire the chain (a committed decision
+    ///   with no observation path). Unreachable under the empty-grant warrants
+    ///   every PR-2d-1 serve role issues (`parse_tool_call` is `Ok(None)` for ANY
+    ///   bytes when no tools are granted) — the fence is the structural backstop
+    ///   a PR-2d-2 grant cannot accidentally bypass.
+    /// - `Ok(None)` ⇒ the RAW completion commits as the turn's `result_ref` (the
+    ///   harness two-fact contract: the committed turn output IS the served fact,
+    ///   re-decoded — never re-sampled — on every replay, R49).
+    fn run_react_turn(
+        &self,
+        mote: &Mote,
+        warrant: &WarrantSpec,
+    ) -> Result<MoteExecutionResult, MoteExecutorError> {
+        let bytes = self.dispatch_model(mote, warrant)?;
+        match kx_toolcall::parse_tool_call(&bytes, warrant, kx_toolcall::max_args_bytes(warrant)) {
+            Err(reason) => Err(internal(&format!(
+                "react turn proposal refused (fail-closed): {reason:?}"
+            ))),
+            Ok(Some(call)) => Err(internal(&format!(
+                "react tool proposal fenced: tool firing lands in PR-2d-2 \
+                 (proposed {}@{})",
+                call.name.0, call.version.0
+            ))),
+            Ok(None) => {
+                let result_ref = self
+                    .store
+                    .put(&bytes)
+                    .map_err(|e| internal(&format!("content store put: {e}")))?;
+                Ok(MoteExecutionResult {
+                    result_ref,
+                    started_at_epoch_ms: 0,
+                    finished_at_epoch_ms: 0,
+                })
+            }
+        }
+    }
+
     /// Run a leaf model Mote: greedy decode the ChatML-wrapped prompt, publish the
     /// completion bytes, return their content ref.
     fn run_model(
@@ -578,11 +638,15 @@ impl<B: InferenceBackend> MoteExecutor for ModelRouterExecutor<B> {
             return self.run_critic(mote);
         }
         // Shaper FIRST (a shaper is also a model Mote — has a prompt): the model proposes
-        // topology, lowered + committed as a TopologyDecision. Then leaf-model (greedy
-        // completion). Everything else → the inner real-body / PURE-echo router.
+        // topology, lowered + committed as a TopologyDecision. Then the ReAct TURN arm
+        // (PR-2d-1: a turn is also a model Mote — raw-commit + the answer-only fence).
+        // Then leaf-model (greedy completion). Everything else → the inner real-body /
+        // PURE-echo router.
         if self.is_model_mote(mote) {
             if mote.def.is_topology_shaper {
                 self.run_shaper(mote, warrant)
+            } else if Self::is_react_turn(mote) {
+                self.run_react_turn(mote, warrant)
             } else {
                 self.run_model(mote, warrant)
             }
@@ -1203,5 +1267,148 @@ mod tests {
         let err = run_critic_with_context(&exec, &critic, vec![])
             .expect_err("a critic with no delivered producer fails closed");
         assert!(matches!(err, MoteExecutorError::Internal { .. }));
+    }
+
+    // ------------------------------------------------------------------
+    // PR-2d-1 — the ReAct turn arm (raw-commit + the answer-only fence)
+    // ------------------------------------------------------------------
+
+    /// A coordinator-shaped react TURN Mote: the `REACT_TURN_KEY` routing marker
+    /// (value = a 16-byte salt) + an instruction prompt, NOT a shaper.
+    fn react_turn_mote() -> Mote {
+        let mut cfg = BTreeMap::new();
+        cfg.insert(
+            ConfigKey(PROMPT_KEY.to_string()),
+            ConfigVal(b"list the files".to_vec()),
+        );
+        cfg.insert(
+            ConfigKey(kx_mote::REACT_TURN_KEY.to_string()),
+            ConfigVal(vec![0x4d; 16]),
+        );
+        let def = MoteDef {
+            critic_check: None,
+            logic_ref: LogicRef::from_bytes([2u8; 32]),
+            model_id: model_id(),
+            prompt_template_hash: PromptTemplateHash::from_bytes([2u8; 32]),
+            tool_contract: BTreeMap::new(),
+            nd_class: NdClass::ReadOnlyNondet,
+            config_subset: cfg,
+            effect_pattern: EffectPattern::IdempotentByConstruction,
+            critic_for: None,
+            is_topology_shaper: false,
+            inference_params: InferenceParams::default(),
+            schema_version: MOTE_DEF_SCHEMA_VERSION,
+        };
+        Mote::new(
+            def,
+            InputDataId::from_bytes([2u8; 32]),
+            GraphPosition(vec![2u8]),
+            SmallVec::new(),
+        )
+    }
+
+    /// The PR-2d-2 shape of a react warrant (a granted tool) — used here to prove
+    /// the fence: a grant makes `parse_tool_call` able to return `Ok(Some)`/`Err`.
+    fn granted_warrant() -> WarrantSpec {
+        let mut w = shaper_warrant(&model_id(), ExecutorClass::MacOsSandbox);
+        w.tool_grants.insert(kx_warrant::ToolGrant {
+            tool_id: kx_mote::ToolName("mcp-echo".into()),
+            tool_version: kx_mote::ToolVersion("1".into()),
+        });
+        w
+    }
+
+    #[test]
+    fn react_arm_commits_a_prose_answer_raw() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = LocalFsContentStore::open(dir.path()).unwrap();
+        let (exec, backend) = executor(&store, b"The answer is blue.", None);
+        let warrant = shaper_warrant(&model_id(), ExecutorClass::MacOsSandbox);
+
+        let out = exec
+            .run(&react_turn_mote(), &warrant, None)
+            .expect("a prose answer commits");
+        assert_eq!(backend.calls.load(Ordering::SeqCst), 1);
+        // The committed fact is the RAW model output (the harness two-fact
+        // contract) — byte-identical, content-addressed.
+        let bytes = store.get(&out.result_ref).unwrap();
+        assert_eq!(bytes.as_ref(), b"The answer is blue.");
+        assert_eq!(out.result_ref, ContentRef::of(b"The answer is blue."));
+    }
+
+    #[test]
+    fn react_arm_fences_a_granted_tool_proposal() {
+        // The PR-2d-1 ANSWER-ONLY FENCE: a well-formed, warrant-GRANTED tool
+        // proposal must NOT commit (no half-fire) — terminal error ⇒ F4 dead-letter.
+        let dir = tempfile::tempdir().unwrap();
+        let store = LocalFsContentStore::open(dir.path()).unwrap();
+        let env = br#"{"tool_call":{"name":"mcp-echo","version":"1","args":{"q":"x"}}}"#;
+        let (exec, _) = executor(&store, env, None);
+
+        let err = exec
+            .run(&react_turn_mote(), &granted_warrant(), None)
+            .expect_err("a tool proposal is fenced in PR-2d-1");
+        assert!(
+            err.to_string().contains("tool firing lands in PR-2d-2"),
+            "the fence names the boundary: {err}"
+        );
+    }
+
+    #[test]
+    fn react_arm_dead_letters_a_malformed_proposal() {
+        // A committed-to-but-garbled envelope is fail-closed (never raw-committed
+        // as if it were an answer) — the harness fresh-turn contract.
+        let dir = tempfile::tempdir().unwrap();
+        let store = LocalFsContentStore::open(dir.path()).unwrap();
+        let env = br#"{"tool_call":{"name":"mcp-echo","version":"#;
+        let (exec, _) = executor(&store, env, None);
+
+        let err = exec
+            .run(&react_turn_mote(), &granted_warrant(), None)
+            .expect_err("a malformed proposal dead-letters");
+        assert!(err.to_string().contains("fail-closed"), "{err}");
+    }
+
+    #[test]
+    fn react_arm_with_empty_grants_commits_anything_raw() {
+        // The PR-2d-1 serve reality: every role grants NO tools, so ANY output —
+        // even a perfectly-formed envelope — is a normal completion (the SN-8
+        // security default) and raw-commits.
+        let dir = tempfile::tempdir().unwrap();
+        let store = LocalFsContentStore::open(dir.path()).unwrap();
+        let env = br#"{"tool_call":{"name":"mcp-echo","version":"1","args":{}}}"#;
+        let (exec, _) = executor(&store, env, None);
+        let warrant = shaper_warrant(&model_id(), ExecutorClass::MacOsSandbox);
+
+        let out = exec
+            .run(&react_turn_mote(), &warrant, None)
+            .expect("empty grants => everything is an answer");
+        assert_eq!(store.get(&out.result_ref).unwrap().as_ref(), env.as_slice());
+    }
+
+    #[test]
+    fn react_routing_takes_precedence_over_leaf_but_not_shaper_or_critic() {
+        // A marker-bearing NON-shaper routes to the react arm (proved above by the
+        // fence tests); a marker-LESS model Mote still routes to the leaf arm
+        // (raw commit without the fence — a granted envelope would commit).
+        let dir = tempfile::tempdir().unwrap();
+        let store = LocalFsContentStore::open(dir.path()).unwrap();
+        let env = br#"{"tool_call":{"name":"mcp-echo","version":"1","args":{}}}"#;
+        let (exec, _) = executor(&store, env, None);
+
+        let mut leaf = react_turn_mote();
+        leaf.def
+            .config_subset
+            .remove(&ConfigKey(kx_mote::REACT_TURN_KEY.to_string()));
+        let leaf = Mote::new(
+            leaf.def,
+            InputDataId::from_bytes([3u8; 32]),
+            GraphPosition(vec![3u8]),
+            SmallVec::new(),
+        );
+        let out = exec
+            .run(&leaf, &granted_warrant(), None)
+            .expect("a leaf model Mote has no fence");
+        assert_eq!(store.get(&out.result_ref).unwrap().as_ref(), env.as_slice());
     }
 }

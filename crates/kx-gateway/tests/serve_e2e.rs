@@ -90,6 +90,7 @@ async fn committed_run_is_observable_end_to_end() {
                 mote: Some(mote.into()),
                 warrant: Some(warrant.into()),
                 accept_at_least_once: false,
+                react_seed: false,
             }],
         })
         .await
@@ -212,6 +213,7 @@ async fn restart_recovers_the_committed_run() {
                     mote: Some(common::pure_mote(7, &[]).into()),
                     warrant: Some(common::pure_warrant().into()),
                     accept_at_least_once: false,
+                    react_seed: false,
                 }],
             })
             .await

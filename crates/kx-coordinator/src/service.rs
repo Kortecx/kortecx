@@ -298,6 +298,9 @@ impl Coordinator for CoordinatorService {
         let req = request.into_inner();
         // M1.3/D38 §2c: per-Mote opt-in to dispatch an AtLeastOnce WM tool.
         let accept_at_least_once = req.accept_at_least_once;
+        // PR-2d-1: seed a live ReAct chain (the coordinator swaps in the
+        // run-salted turn 0 + anchors a durable ReactRound fact).
+        let react_seed = req.react_seed;
         // IDENTITY INVARIANT (D53): `TryFrom<proto::Mote>` re-derives the MoteId
         // Rust-side; the wire `mote_id` is advisory and never trusted.
         let mote: Mote = req
@@ -314,7 +317,11 @@ impl Coordinator for CoordinatorService {
         // it can ride a REJECTED response when the submit is refused (M1.3).
         let mote_id = mote.id.as_bytes().to_vec();
 
-        match self.core.submit(mote, warrant, accept_at_least_once).await {
+        match self
+            .core
+            .submit(mote, warrant, accept_at_least_once, react_seed)
+            .await
+        {
             Ok(outcome) => {
                 let status = if outcome.duplicate {
                     proto::SubmitStatus::Duplicate

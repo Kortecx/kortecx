@@ -14,6 +14,7 @@ members = [
     "crates/kx-llamacpp",
     "crates/kx-model-validator",
     "crates/kx-warrant",
+    "crates/kx-toolcall",
     "crates/kx-tool-registry",
     "crates/kx-context-assembler",
     "crates/kx-memoizer",
@@ -114,6 +115,11 @@ kx-llamacpp-sys      = { path = "crates/kx-llamacpp-sys",      version = "0.0.1"
 kx-llamacpp          = { path = "crates/kx-llamacpp",          version = "0.0.1" }
 kx-model-validator   = { path = "crates/kx-model-validator",   version = "0.0.1" }
 kx-warrant           = { path = "crates/kx-warrant",           version = "0.0.1" }
+# The model-proposed tool-call AUTHORITY GATE (IMP-5, extracted PR-2d-1) — pure
+# leaf shared by the harness ReAct loop, the gateway pre-commit fence, and the
+# coordinator settle decode. Extracted (moved), never forked: a byte-mirror that
+# drifted would silently admit an ungranted tool (SN-8).
+kx-toolcall          = { path = "crates/kx-toolcall",          version = "0.0.1" }
 kx-tool-registry     = { path = "crates/kx-tool-registry",     version = "0.0.1" }
 kx-context-assembler = { path = "crates/kx-context-assembler", version = "0.0.1" }
 kx-memoizer          = { path = "crates/kx-memoizer",          version = "0.0.1" }

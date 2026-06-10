@@ -52,6 +52,7 @@ pub async fn submit_pure_run(client: &mut KxGatewayClient<Channel>, seed: u8) ->
                 mote: Some(pure_mote(seed, &[]).into()),
                 warrant: Some(pure_warrant().into()),
                 accept_at_least_once: false,
+                react_seed: false,
             }],
         })
         .await

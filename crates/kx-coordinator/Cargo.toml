@@ -30,6 +30,10 @@ kx-warrant = { workspace = true }
 # is a NEW dep edge but does NOT touch the frozen trio
 # (kx-scheduler/kx-executor/kx-inference) — the P2 thesis test holds.
 kx-tool-registry = { workspace = true }
+# PR-2d-1: the model-proposed tool-call AUTHORITY GATE (the ONE decode shared with
+# the harness loop + the gateway fence) — the settle pass decodes a committed
+# turn's output on the sole writer. A pure leaf (kx-mote/kx-warrant/serde only).
+kx-toolcall = { workspace = true }
 # Submission-refusal predicates at SubmitMote (M1.3): R-1/R-7/R-8/R-14/R-15 +
 # R-10 + the D66 fail-closed-on-resolution-miss gate. A dependency-LIGHT leaf
 # (kx-mote/kx-tool-registry/kx-warrant only) — deliberately NOT kx-executor, so

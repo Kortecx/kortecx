@@ -148,7 +148,7 @@ pub use promotion::{ContentStoreVerdicts, VerdictLookup};
 pub use register::RegisterMote;
 pub use run_metadata::{fold_run_metadata, RunMetadata, RunMetadataFold, RunRecord};
 pub use snapshot::Snapshot;
-pub use state::{ReplanRoundRecord, RunResolvedVersions};
+pub use state::{ReactRoundRecord, ReplanRoundRecord, RunResolvedVersions};
 
 #[cfg(test)]
 mod tests;

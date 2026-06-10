@@ -34,6 +34,7 @@ impl RunSubmitter for NullSubmitter {
         _m: kx_mote::Mote,
         _w: kx_warrant::WarrantSpec,
         _a: bool,
+        _react_seed: bool,
     ) -> Result<kx_gateway_core::SubmitMoteOutcome, kx_gateway_core::SubmitterError> {
         unreachable!()
     }

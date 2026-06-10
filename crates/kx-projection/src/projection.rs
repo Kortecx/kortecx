@@ -540,11 +540,13 @@ impl Projection {
             // it names no Mote, registers no `MoteInfo`, and is verified at
             // recovery (in `try_seed_state`), never materialized into state.
             // `ReplanRound` (PR-2c-2) appends a recovery/audit record + advances
-            // `last_seq`; it is NOT folded into any digest.
+            // `last_seq`; it is NOT folded into any digest. `ReactRound` (PR-2d-1)
+            // is its ReAct-chain sibling — same off-DAG, never-a-digest-input law.
             JournalEntry::RunRegistered { .. }
             | JournalEntry::RunVersionsResolved { .. }
             | JournalEntry::DigestSealed { .. }
-            | JournalEntry::ReplanRound { .. } => {
+            | JournalEntry::ReplanRound { .. }
+            | JournalEntry::ReactRound { .. } => {
                 self.fold_run_metadata(entry);
             }
         }
@@ -552,7 +554,7 @@ impl Projection {
     }
 
     /// Fold an off-DAG run-metadata fact (`RunRegistered` / `RunVersionsResolved`
-    /// / `DigestSealed` / `ReplanRound`).
+    /// / `DigestSealed` / `ReplanRound` / `ReactRound`).
     ///
     /// None of these name a Mote, so this registers NO `MoteInfo` and does NOT
     /// call `rebuild_children_index` — O(1), off the Mote-DAG. The data is
@@ -630,6 +632,40 @@ impl Projection {
                         model_id: model_id.clone(),
                         failed_steps: failed_steps.to_vec(),
                         escalation_reason_ref: *escalation_reason_ref,
+                        seq: *seq,
+                    });
+                self.state.last_seq = self.state.last_seq.max(*seq);
+            }
+            JournalEntry::ReactRound {
+                turn,
+                turn_mote_id,
+                instance_id,
+                base_prompt_ref,
+                warrant_ref,
+                model_id,
+                branch,
+                max_turns,
+                max_tool_calls,
+                seq,
+            } => {
+                // v8 (PR-2d-1). Append-many: a run accrues one record per turn
+                // anchor/settle/advance. Replay rebuilds the same Vec from scratch
+                // (each journaled entry folds exactly once). Off-DAG: names a turn
+                // Mote but registers NO `MoteInfo` and touches NO children index —
+                // pure recovery/audit metadata, never an identity/scheduling/digest
+                // input. Vec non-emptiness IS the `has_react_turn` sentinel.
+                self.state
+                    .react_rounds
+                    .push(crate::state::ReactRoundRecord {
+                        turn: *turn,
+                        turn_mote_id: *turn_mote_id,
+                        instance_id: *instance_id,
+                        base_prompt_ref: *base_prompt_ref,
+                        warrant_ref: *warrant_ref,
+                        model_id: model_id.clone(),
+                        branch: branch.clone(),
+                        max_turns: *max_turns,
+                        max_tool_calls: *max_tool_calls,
                         seq: *seq,
                     });
                 self.state.last_seq = self.state.last_seq.max(*seq);
@@ -1033,6 +1069,46 @@ impl Projection {
             .replan_rounds
             .iter()
             .max_by(|a, b| a.round.cmp(&b.round).then(b.seq.cmp(&a.seq)))
+    }
+
+    /// The ReAct-turn metadata (PR-2d-1) folded so far — one record per
+    /// `ReactRound` entry, in journal (seq) order.
+    ///
+    /// **Recovery + audit metadata, never identity.** Off the Mote-DAG: no
+    /// scheduling/identity/digest decision reads it, so it can never move the
+    /// projection digest. Reconstructed verbatim on replay. The coordinator's
+    /// `settle_react_rounds` / `recover_react_chain` read these to settle the
+    /// latest turn, re-derive budget counters from branches, and rebuild an
+    /// in-flight turn's Mote deterministically from committed facts.
+    #[must_use]
+    pub fn react_rounds(&self) -> &[crate::state::ReactRoundRecord] {
+        &self.state.react_rounds
+    }
+
+    /// The highest-`turn` `ReactRound` record for `instance_id` folded so far, or
+    /// `None` if that run has anchored no ReAct chain. Scoped by `instance_id`
+    /// (the run-salt) because serve's journal is SHARED across runs. On a turn
+    /// tie the highest-`seq` record wins — the LATEST fact for a turn is its
+    /// settled branch (anchor `Pending` then a resolution), so recovery reads
+    /// the freshest decision deterministically.
+    #[must_use]
+    pub fn latest_react_round(
+        &self,
+        instance_id: &[u8; kx_journal::INSTANCE_ID_LEN],
+    ) -> Option<&crate::state::ReactRoundRecord> {
+        self.state
+            .react_rounds
+            .iter()
+            .filter(|r| &r.instance_id == instance_id)
+            .max_by(|a, b| a.turn.cmp(&b.turn).then(a.seq.cmp(&b.seq)))
+    }
+
+    /// `true` iff any `ReactRound` fact has folded (PR-2d-1). Gates the
+    /// coordinator's react settle/recover/F-7 special-cases so a react-free run
+    /// pays zero cost — the `has_declared_critic` precedent, but O(1).
+    #[must_use]
+    pub fn has_react_turn(&self) -> bool {
+        self.state.has_react_turn()
     }
 
     /// The durable resolved [`kx_journal::IdempotencyClassTag`] for a tool, folded

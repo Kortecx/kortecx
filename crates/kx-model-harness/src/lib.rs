@@ -60,7 +60,11 @@ pub mod prompt;
 pub mod rag;
 pub mod react;
 pub mod registration;
-pub mod toolcall;
+/// The model-proposed tool-call authority gate (IMP-5) — extracted to the pure
+/// leaf `kx-toolcall` in PR-2d-1 (gateway + coordinator share the ONE gate;
+/// SN-8: a forked mirror would drift silently). Re-exported under the original
+/// path so every harness call site (`crate::toolcall::…`) is unchanged.
+pub use kx_toolcall as toolcall;
 pub mod topology_provider;
 pub mod workflows;
 

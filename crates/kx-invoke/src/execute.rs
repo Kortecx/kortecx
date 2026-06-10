@@ -34,7 +34,7 @@ where
     let instance_id = submitter.register_run(bound.recipe_fingerprint).await?;
     for (mote, warrant) in &bound.motes {
         submitter
-            .submit_mote(mote.clone(), warrant.clone(), false)
+            .submit_mote(mote.clone(), warrant.clone(), false, false)
             .await?;
     }
     Ok(Submitted {

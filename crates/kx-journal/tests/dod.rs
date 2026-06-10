@@ -260,7 +260,8 @@ fn set_seq(entry: &mut JournalEntry, new_seq: u64) {
         | JournalEntry::RunRegistered { seq, .. }
         | JournalEntry::RunVersionsResolved { seq, .. }
         | JournalEntry::DigestSealed { seq, .. }
-        | JournalEntry::ReplanRound { seq, .. } => *seq = new_seq,
+        | JournalEntry::ReplanRound { seq, .. }
+        | JournalEntry::ReactRound { seq, .. } => *seq = new_seq,
     }
 }
 
@@ -302,14 +303,16 @@ fn obligation_13_schema_version_mismatch_loud_refusal() {
     }
 }
 
-/// PR-2c-2 (re-plan-live): pin the schema version so the v6→v7 bump (the additive
-/// `ReplanRound` entry kind) is an intentional, reviewable change — a future edit
-/// that touches the entry encoding must bump this in lock-step. (Prior bumps:
-/// v3→v4 added `RunVersionsResolved`, M1.2/D79; v4→v5 added `DigestSealed`,
-/// M2.2c/D104; v5→v6 added `ResolvedCapabilityRecord.idempotency_class`, M2.3b/D105.4.)
+/// PR-2d-1 (react-substrate): pin the schema version so the v7→v8 bump (the
+/// additive `ReactRound` entry kind) is an intentional, reviewable change — a
+/// future edit that touches the entry encoding must bump this in lock-step.
+/// (Prior bumps: v3→v4 added `RunVersionsResolved`, M1.2/D79; v4→v5 added
+/// `DigestSealed`, M2.2c/D104; v5→v6 added
+/// `ResolvedCapabilityRecord.idempotency_class`, M2.3b/D105.4; v6→v7 added
+/// `ReplanRound`, PR-2c-2.)
 #[test]
-fn schema_version_is_v7() {
-    assert_eq!(JOURNAL_SCHEMA_VERSION, 7);
+fn schema_version_is_v8() {
+    assert_eq!(JOURNAL_SCHEMA_VERSION, 8);
 }
 
 /// IMP-2 (M2.x-E): pin the migration floor. The schema-migration ladder

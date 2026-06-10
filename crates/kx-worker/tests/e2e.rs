@@ -62,6 +62,7 @@ async fn submit(svc: &CoordinatorService, mote: &Mote, warrant: &kx_warrant::War
         mote: Some(mote.clone().into()),
         warrant: Some(warrant.clone().into()),
         accept_at_least_once: false,
+        react_seed: false,
     }))
     .await
     .unwrap();

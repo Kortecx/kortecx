@@ -74,10 +74,19 @@ message SubmitRunRequest {
 
 // One Mote to admit, mirrors SubmitMoteRequest (coordinator.proto). `mote_id`
 // inside `mote` is advisory only; the coordinator re-derives identity Rust-side.
+//
+// `react_seed` (PR-2d-1, additive, default-false): mark this Mote as the SEED of
+// a live ReAct chain. The coordinator swaps in a RUN-SALTED turn-0 Mote built
+// from the seed's prompt + warrant + model route (the salt is the server-assigned
+// `instance_id`, unknowable client-side — SN-8: no client-controlled identity)
+// and anchors a durable `ReactRound` fact. A wire/admission flag ONLY — it never
+// enters `MoteId`/any digest; old clients send `false` and behave byte-
+// identically (the `accept_at_least_once` precedent).
 message SubmitMoteSpec {
   Mote mote = 1;
   WarrantSpec warrant = 2;
   bool accept_at_least_once = 3;
+  bool react_seed = 4;
 }
 
 message RunHandle {
@@ -486,6 +495,39 @@ message ListReplanRoundsResponse {
 }
 
 // ---------------------------------------------------------------------------
+// PR-2d-1 — ReAct-turn observability (read-only). Enumerate the durable
+// `ReactRound` facts the live ReAct chain commits (the turn-0 anchor, settled
+// branches, budget caps), so an operator can SEE the chain unfold (which turns
+// ran, how each settled, what budget the run was admitted under). A read-only
+// fold over off-DAG metadata facts — never a write, never identity, never the
+// projection digest. Additive (D120.6).
+//
+// SCOPE (single-node OSS): operator-global, like ListReplanRounds; an optional
+// `instance_id` filter scopes to one run (serve's journal is shared).
+// ---------------------------------------------------------------------------
+
+message ListReactTurnsRequest {
+  optional uint32 limit = 1;             // page size; server clamps to a max (absent = the default page)
+  optional bytes instance_id = 2;        // 16B — scope to one run's chain (absent = all runs)
+}
+message ReactTurnSummary {
+  uint32 turn             = 1;           // 0 = the run's submit anchor; settles/advances reference 1..
+  bytes  turn_mote_id     = 2;           // 32B — the turn's RUN-SALTED Mote id
+  bytes  instance_id      = 3;           // 16B — the run this fact belongs to (the salt)
+  string model_id         = 4;           // the resolved model the turns run
+  string branch           = 5;           // "pending" | "answer" | "tool" | "dead_lettered" (frozen at append)
+  string tool_id          = 6;           // set iff branch == "tool"
+  string tool_version     = 7;           // set iff branch == "tool"
+  uint32 max_turns        = 8;           // the run's durable turn cap (anchor-recorded)
+  uint32 max_tool_calls   = 9;           // the run's durable tool-call cap
+  uint64 seq              = 10;          // journal seq of the ReactRound fact (ordering)
+}
+message ListReactTurnsResponse {
+  repeated ReactTurnSummary turns = 1;   // newest-first (descending seq)
+  bool has_more = 2;                     // a further page exists beyond the last returned turn
+}
+
+// ---------------------------------------------------------------------------
 // Service — the external client-facing gateway (distinct from Coordinator).
 // ---------------------------------------------------------------------------
 
@@ -512,4 +554,6 @@ service KxGateway {
   rpc QueryDataset(QueryDatasetRequest) returns (QueryDatasetResponse);
   // PR-2c-2 additive (D120.6): re-plan-round observability (read-only).
   rpc ListReplanRounds(ListReplanRoundsRequest) returns (ListReplanRoundsResponse);
+  // PR-2d-1 additive (D120.6): ReAct-turn observability (read-only).
+  rpc ListReactTurns(ListReactTurnsRequest) returns (ListReactTurnsResponse);
 }

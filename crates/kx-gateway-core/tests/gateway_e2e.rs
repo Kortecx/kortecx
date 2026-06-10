@@ -220,6 +220,7 @@ async fn submit_run_registers_first_then_submits() {
                 mote: Some(sample_mote().into()),
                 warrant: Some(sample_warrant().into()),
                 accept_at_least_once: false,
+                react_seed: false,
             }],
         })
         .await
@@ -275,6 +276,7 @@ fn critic_mote_spec(critic_for: [u8; 32]) -> proto::SubmitMoteSpec {
         mote: Some(mote.into()),
         warrant: Some(sample_warrant().into()),
         accept_at_least_once: false,
+        react_seed: false,
     }
 }
 
@@ -336,6 +338,7 @@ async fn submit_run_admits_critic_free_run_unchanged_when_unsupported() {
                 mote: Some(sample_mote().into()),
                 warrant: Some(sample_warrant().into()),
                 accept_at_least_once: false,
+                react_seed: false,
             }],
         })
         .await

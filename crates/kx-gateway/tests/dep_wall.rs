@@ -5,12 +5,23 @@
 //! `default-features = false` at the workspace root), so `cargo install kx-gateway`
 //! needs no C++ toolchain. This is the binary's analogue of `build-no-inference`.
 //!
+//! PR-2d-1 hardens the wall with `kx-model-harness` (the react decode gate is the
+//! pure leaf `kx-toolcall`; the harness would drag the whole engine + the FFI back
+//! in via its `llamacpp` opt-in) and `kx-mcp` (tool egress lands as an explicit,
+//! OPTIONAL edge in PR-2d-2 — at which point its check moves to the optional-edge
+//! pattern below, the `hnsw` precedent).
+//!
 //! Two independent proofs: a manifest `[dependencies]` scan + a `cargo tree` over
 //! the normal edges.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
 
-const FORBIDDEN: &[&str] = &["kx-llamacpp", "kx-llamacpp-sys"];
+const FORBIDDEN: &[&str] = &[
+    "kx-llamacpp",
+    "kx-llamacpp-sys",
+    "kx-model-harness",
+    "kx-mcp",
+];
 
 #[test]
 fn cargo_manifest_dependencies_exclude_the_ffi() {

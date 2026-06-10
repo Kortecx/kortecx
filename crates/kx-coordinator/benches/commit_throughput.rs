@@ -159,6 +159,7 @@ fn setup(
                 mote: Some(m.clone().into()),
                 warrant: Some(w.clone().into()),
                 accept_at_least_once: false,
+                react_seed: false,
             }))
             .await
             .unwrap();

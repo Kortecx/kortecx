@@ -89,7 +89,7 @@ pub use inference_params::{Grammar, InferenceParams};
 pub use mote::Mote;
 pub use ndclass::NdClass;
 pub use strings::{
-    ConfigKey, ConfigVal, GraphPosition, ModelId, ToolName, ToolVersion, PROMPT_KEY,
+    ConfigKey, ConfigVal, GraphPosition, ModelId, ToolName, ToolVersion, PROMPT_KEY, REACT_TURN_KEY,
 };
 pub use topology::{ChildDescriptor, RoleId, TopologyDecision};
 
