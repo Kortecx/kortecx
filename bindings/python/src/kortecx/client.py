@@ -27,7 +27,9 @@ from .datasets import (
 )
 from .errors import KxUsage, from_rpc_error
 from .grants import AssetGrants
+from .react import ReactTurn, ReactTurnPage
 from .recipes import RecipeForm
+from .replan import ReplanRound, ReplanRoundPage
 from .run import AsyncRun, Result, Run
 from .runs import RunPage, RunSummary
 from .teams import TeamMembers, TeamSummary
@@ -260,6 +262,34 @@ class KxClient:
             req.before_seq = before_seq
         resp = self._call(lambda: self._stub.ListRuns(req, metadata=self._md))
         return RunPage(runs=[RunSummary.from_proto(r) for r in resp.runs], has_more=resp.has_more)
+
+    def list_react_turns(
+        self, *, instance_id: Optional[str] = None, limit: Optional[int] = None
+    ) -> ReactTurnPage:
+        """Enumerate a live ReAct chain's durable turn facts (newest-first,
+        paginated) — the queryable Reason→Act→Observe history. ``instance_id``
+        (hex) scopes to one run; absent enumerates every chain. The server
+        clamps ``limit`` to its max page."""
+        req = _g.ListReactTurnsRequest()
+        if instance_id is not None:
+            req.instance_id = hexids.decode(instance_id)
+        if limit is not None:
+            req.limit = limit
+        resp = self._call(lambda: self._stub.ListReactTurns(req, metadata=self._md))
+        return ReactTurnPage(
+            turns=[ReactTurn.from_proto(t) for t in resp.turns], has_more=resp.has_more
+        )
+
+    def list_replan_rounds(self, *, limit: Optional[int] = None) -> ReplanRoundPage:
+        """Enumerate a run's model-driven re-plan rounds (newest-first,
+        paginated). The server clamps ``limit`` to its max page."""
+        req = _g.ListReplanRoundsRequest()
+        if limit is not None:
+            req.limit = limit
+        resp = self._call(lambda: self._stub.ListReplanRounds(req, metadata=self._md))
+        return ReplanRoundPage(
+            rounds=[ReplanRound.from_proto(r) for r in resp.rounds], has_more=resp.has_more
+        )
 
     def list_recipes(self) -> List[str]:
         """List the invocable recipe handles the gateway provisions (the public
@@ -506,6 +536,30 @@ class AsyncKxClient:
             req.before_seq = before_seq
         resp = await self._acall(self._stub.ListRuns(req, metadata=self._md))
         return RunPage(runs=[RunSummary.from_proto(r) for r in resp.runs], has_more=resp.has_more)
+
+    async def list_react_turns(
+        self, *, instance_id: Optional[str] = None, limit: Optional[int] = None
+    ) -> ReactTurnPage:
+        """Async :meth:`KxClient.list_react_turns`."""
+        req = _g.ListReactTurnsRequest()
+        if instance_id is not None:
+            req.instance_id = hexids.decode(instance_id)
+        if limit is not None:
+            req.limit = limit
+        resp = await self._acall(self._stub.ListReactTurns(req, metadata=self._md))
+        return ReactTurnPage(
+            turns=[ReactTurn.from_proto(t) for t in resp.turns], has_more=resp.has_more
+        )
+
+    async def list_replan_rounds(self, *, limit: Optional[int] = None) -> ReplanRoundPage:
+        """Async :meth:`KxClient.list_replan_rounds`."""
+        req = _g.ListReplanRoundsRequest()
+        if limit is not None:
+            req.limit = limit
+        resp = await self._acall(self._stub.ListReplanRounds(req, metadata=self._md))
+        return ReplanRoundPage(
+            rounds=[ReplanRound.from_proto(r) for r in resp.rounds], has_more=resp.has_more
+        )
 
     async def list_recipes(self) -> List[str]:
         resp = await self._acall(self._stub.ListRecipes(_g.ListRecipesRequest(), metadata=self._md))

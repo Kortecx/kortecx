@@ -339,6 +339,23 @@ mod tests {
         assert!(matches!(Cli::from_args(["-V"]).unwrap(), Cli::Version));
     }
 
+    /// The released binary self-reports the WORKSPACE version (the v0.1.0
+    /// release-prep bump): `kx --version` prints `kx <CARGO_PKG_VERSION>` —
+    /// version-agnostic (refactor-proof), but pins that the manifest version is
+    /// the single source the banner reads, never a hand-mirrored literal.
+    #[test]
+    fn version_banner_reads_the_manifest_version() {
+        let banner = format!("kx {}", env!("CARGO_PKG_VERSION"));
+        assert!(
+            banner.starts_with("kx 0."),
+            "the banner derives from CARGO_PKG_VERSION: {banner}"
+        );
+        assert!(
+            !env!("CARGO_PKG_VERSION").is_empty(),
+            "the manifest version is the banner's single source"
+        );
+    }
+
     #[test]
     fn runtime_forwarding_preserves_verb_and_strips_json() {
         let Cli::Runtime { argv, json } = Cli::from_args([

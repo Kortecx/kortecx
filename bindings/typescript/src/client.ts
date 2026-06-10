@@ -18,7 +18,9 @@ import { streamDeltas, wsDeltasFromMessages, wsUrl } from "./events.js";
 import { KxGateway, type SubmitRunRequestSchema } from "./gen/kortecx/v1/gateway_pb.js";
 import { AssetGrants } from "./grants.js";
 import { INSTANCE_LEN, REF_LEN, asBytes, encode } from "./hexids.js";
+import { ReactTurn, type ReactTurnPage } from "./react.js";
 import { RecipeForm } from "./recipes.js";
+import { ReplanRound, type ReplanRoundPage } from "./replan.js";
 import { Result, Run } from "./run.js";
 import { type RunPage, RunSummary } from "./runs.js";
 import { TeamMembers, type TeamSummary, teamsFromProto } from "./teams.js";
@@ -168,6 +170,29 @@ export abstract class KxClientBase {
   async listRuns(opts: { limit?: number; beforeSeq?: bigint } = {}): Promise<RunPage> {
     const resp = await rpc(this.grpc.listRuns({ limit: opts.limit, beforeSeq: opts.beforeSeq }));
     return { runs: resp.runs.map((r) => RunSummary.fromProto(r)), hasMore: resp.hasMore };
+  }
+
+  /**
+   * Enumerate a live ReAct chain's durable turn facts (newest-first, paginated)
+   * — the queryable Reason→Act→Observe history (PR-2d-1/2). `instanceId` (hex)
+   * scopes to one run; absent enumerates every chain. The server clamps `limit`
+   * to its max page. An old gateway without this RPC throws {@link KxUnimplemented}.
+   */
+  async listReactTurns(opts: { instanceId?: string; limit?: number } = {}): Promise<ReactTurnPage> {
+    const instanceId =
+      opts.instanceId === undefined ? undefined : asBytes(opts.instanceId, INSTANCE_LEN);
+    const resp = await rpc(this.grpc.listReactTurns({ instanceId, limit: opts.limit }));
+    return { turns: resp.turns.map((t) => ReactTurn.fromProto(t)), hasMore: resp.hasMore };
+  }
+
+  /**
+   * Enumerate a run's model-driven re-plan rounds (newest-first, paginated;
+   * PR-2c-2). The server clamps `limit` to its max page. An old gateway without
+   * this RPC throws {@link KxUnimplemented}.
+   */
+  async listReplanRounds(opts: { limit?: number } = {}): Promise<ReplanRoundPage> {
+    const resp = await rpc(this.grpc.listReplanRounds({ limit: opts.limit }));
+    return { rounds: resp.rounds.map((r) => ReplanRound.fromProto(r)), hasMore: resp.hasMore };
   }
 
   /**
