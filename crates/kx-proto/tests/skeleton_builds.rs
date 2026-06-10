@@ -206,6 +206,7 @@ async fn coordinator_skeleton_serves_all_rpcs() {
             mote: Some(sample_mote().into()),
             warrant: Some(sample_warrant().into()),
             accept_at_least_once: false,
+            react_seed: false,
         })
         .await
         .unwrap()

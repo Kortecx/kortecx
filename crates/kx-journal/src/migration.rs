@@ -97,14 +97,18 @@ pub fn migrate_entry(
     // double-append its `idempotency_class` byte). `from_version` is guaranteed in
     // [MIN_SUPPORTED, CURRENT] by the guard above.
     match from_version {
-        // v7 (current): no transform, the single source of truth for decode.
+        // v8 (current): no transform, the single source of truth for decode.
         JOURNAL_SCHEMA_VERSION => Ok(decode_entry_with_def_hash(bytes, def_hash)?),
-        // v6 → v7: a PURE pass-through. Kinds 0..7 are byte-identical under v7 and
-        // `ReplanRound` (kind 8) is purely additive, so a v6 journal's existing
-        // bytes already decode correctly under v7 — no transform.
+        // v7 → v8: a PURE pass-through. Kinds 0..8 are byte-identical under v8 and
+        // `ReactRound` (kind 9) is purely additive, so a v7 journal's existing
+        // bytes already decode correctly under v8 — no transform.
+        7 => Ok(decode_entry_with_def_hash(bytes, def_hash)?),
+        // v6 → v8: a PURE pass-through. Kinds 0..7 are byte-identical and
+        // `ReplanRound` (kind 8) / `ReactRound` (kind 9) are purely additive, so a
+        // v6 journal's existing bytes already decode correctly — no transform.
         6 => Ok(decode_entry_with_def_hash(bytes, def_hash)?),
-        // v5 → v7: append the safe-default `idempotency_class` byte (the lone v5→v6
-        // delta); the result is v6-shaped, which decodes identically under v7.
+        // v5 → v8: append the safe-default `idempotency_class` byte (the lone v5→v6
+        // delta); the result is v6-shaped, which decodes identically under v8.
         5 => upconvert_v5_to_current(bytes, def_hash),
         // Unreachable (guarded above); kept total + fail-closed.
         other => Err(JournalError::SchemaVersionMismatch {

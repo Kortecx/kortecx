@@ -509,7 +509,7 @@ impl KxGateway for GatewayService {
         // admission below needs every Mote of the run together, and converting before
         // `register_run` means a malformed / refused submission never leaves an orphan
         // registered run behind.
-        let mut collected: Vec<(kx_mote::Mote, kx_warrant::WarrantSpec, bool)> =
+        let mut collected: Vec<(kx_mote::Mote, kx_warrant::WarrantSpec, bool, bool)> =
             Vec::with_capacity(req.motes.len());
         for spec in req.motes {
             let mote_proto = spec
@@ -526,14 +526,14 @@ impl KxGateway for GatewayService {
             let warrant: kx_warrant::WarrantSpec = warrant_proto
                 .try_into()
                 .map_err(|e: kx_proto::ConvertError| Status::invalid_argument(e.to_string()))?;
-            collected.push((mote, warrant, spec.accept_at_least_once));
+            collected.push((mote, warrant, spec.accept_at_least_once, spec.react_seed));
         }
 
         // PR-2c-3 critic-live — cross-Mote critic ADMISSION (only when the run carries a
         // critic, so a critic-free workflow is byte-for-byte unaffected).
         if collected
             .iter()
-            .any(|(m, _, _)| m.def.critic_check.is_some())
+            .any(|(m, _, _, _)| m.def.critic_check.is_some())
         {
             // H5: a native critic's verdict is computed ONLY by the inference-build
             // executor. On a serve that cannot, a critic would commit echo bytes and the
@@ -552,9 +552,9 @@ impl KxGateway for GatewayService {
             // checks, so placeholder values are sound.
             let motes: std::collections::BTreeMap<kx_mote::MoteId, kx_mote::Mote> = collected
                 .iter()
-                .map(|(m, _, _)| (m.id, m.clone()))
+                .map(|(m, _, _, _)| (m.id, m.clone()))
                 .collect();
-            let accept_at_least_once = collected.iter().map(|(m, _, a)| (m.id, *a)).collect();
+            let accept_at_least_once = collected.iter().map(|(m, _, a, _)| (m.id, *a)).collect();
             let submission = kx_refusal::WorkflowSubmission {
                 run_id: [0u8; 32],
                 master_warrant: kx_warrant::WarrantSpec::default(),
@@ -573,9 +573,9 @@ impl KxGateway for GatewayService {
             .register_run(recipe_fp)
             .await
             .map_err(submit_status)?;
-        for (mote, warrant, accept) in collected {
+        for (mote, warrant, accept, react_seed) in collected {
             self.submitter
-                .submit_mote(mote, warrant, accept)
+                .submit_mote(mote, warrant, accept, react_seed)
                 .await
                 .map_err(submit_status)?;
         }
@@ -624,7 +624,7 @@ impl KxGateway for GatewayService {
             .map_err(submit_status)?;
         for (mote, warrant) in bound.motes {
             self.submitter
-                .submit_mote(mote, warrant, false)
+                .submit_mote(mote, warrant, false, false)
                 .await
                 .map_err(submit_status)?;
         }
@@ -765,6 +765,21 @@ impl KxGateway for GatewayService {
         // PR-2c-2: a read-only fold over the off-DAG ReplanRound facts (the live
         // re-plan loop's self-correction trail). Always available (no seam).
         let resp = crate::replan::list_replan_rounds(self.reader.as_ref(), req.limit)?;
+        Ok(Response::new(resp))
+    }
+
+    async fn list_react_turns(
+        &self,
+        request: Request<proto::ListReactTurnsRequest>,
+    ) -> Result<Response<proto::ListReactTurnsResponse>, Status> {
+        let req = request.into_inner();
+        // PR-2d-1: a read-only fold over the off-DAG ReactRound facts (the live
+        // ReAct chain's anchor + settled branches). Always available (no seam).
+        let resp = crate::react::list_react_turns(
+            self.reader.as_ref(),
+            req.limit,
+            req.instance_id.as_deref(),
+        )?;
         Ok(Response::new(resp))
     }
 

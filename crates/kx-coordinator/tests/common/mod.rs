@@ -303,6 +303,7 @@ pub async fn submit(
             mote: Some(mote.clone().into()),
             warrant: Some(warrant.clone().into()),
             accept_at_least_once: false,
+            react_seed: false,
         }))
         .await
         .unwrap()
@@ -322,6 +323,7 @@ pub async fn submit_accepting(
             mote: Some(mote.clone().into()),
             warrant: Some(warrant.clone().into()),
             accept_at_least_once: true,
+            react_seed: false,
         }))
         .await
         .unwrap()
@@ -343,6 +345,7 @@ pub async fn submit_unregistered(
             mote: Some(mote.clone().into()),
             warrant: Some(warrant.clone().into()),
             accept_at_least_once: false,
+            react_seed: false,
         }))
         .await
         .map(tonic::Response::into_inner)

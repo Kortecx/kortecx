@@ -60,6 +60,25 @@ pub struct ConfigVal(pub Vec<u8>);
 /// or referencing it cannot move any digest.
 pub const PROMPT_KEY: &str = "prompt";
 
+/// The single canonical [`ConfigKey`] *name* marking a Mote as a live ReAct
+/// TURN (PR-2d-1, react-substrate). The value is the run-salt (the registered
+/// `instance_id`) — the same bytes salted into the turn's identity material.
+///
+/// Inserted ONLY by the run-salted react-turn builders (the harness's
+/// `react_turn_salted` and the coordinator's `react_shape::build_react_turn`,
+/// pinned byte-equivalent by frozen goldens); the unsalted harness builders
+/// never write it, so every existing identity is byte-unchanged. The gateway's
+/// `ModelRouterExecutor` routes on key PRESENCE to the react decode arm.
+///
+/// Because the key lives in `config_subset` it folds into [`crate::MoteDef::hash`]
+/// → `MoteId` (D53): it cannot be dropped in transit without changing the
+/// identity the coordinator re-derives — structurally fail-closed, unlike a
+/// droppable wire flag. A client-crafted marker is STRICTLY STRICTER: the react
+/// arm raw-commits like a leaf and additionally fences tool-shaped output (the
+/// answer-only fence), and the coordinator's settle keys only off
+/// coordinator-written `ReactRound` facts — the marker alone fires nothing.
+pub const REACT_TURN_KEY: &str = "kx.react.turn";
+
 /// The stable position of a Mote in its DAG.
 ///
 /// Assigned at DAG-compile time (workflow SDK) or derived from a topology

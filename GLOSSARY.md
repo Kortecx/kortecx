@@ -123,6 +123,15 @@ fan-out). The **materializer** deterministically derives the child Motes from th
 shaper's committed decision, so a re-fold reconstructs the identical children.
 `kx-projection/src/materializer.rs`.
 
+### ReAct chain / ReactRound / react seed
+The live multi-turn Reason→Act→Observe loop (PR-2d-1, answer-only substrate). A
+`react_seed` submit makes the coordinator swap in a run-salted turn-0 model Mote
+and anchor a durable `ReactRound` journal fact (turn index, frozen branch, budget
+caps — off-DAG, never identity). The settle pass decodes each committed turn via
+`kx-toolcall` (the tool-call authority gate) and advances or terminates the chain;
+recovery re-derives it from the facts alone. `kx-journal/src/entry.rs`,
+`kx-coordinator/src/react_shape.rs`, `kx-toolcall/`.
+
 ### Submission refusal
 The runtime *refuses unsafe constructions at submit*, before any dispatch — e.g.
 a world-mutating Mote with no idempotency-supporting tool, or a run that wasn't

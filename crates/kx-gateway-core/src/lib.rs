@@ -49,6 +49,7 @@ mod datasets;
 mod error;
 mod events;
 mod identity;
+mod react;
 mod reader;
 mod replan;
 mod runs;

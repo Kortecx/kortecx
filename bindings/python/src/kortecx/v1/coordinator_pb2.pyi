@@ -291,14 +291,16 @@ class WarrantSpec(_message.Message):
     def __init__(self, mote_class: _Optional[_Union[MoteClass, str]] = ..., nd_class: _Optional[_Union[MoteClass, str]] = ..., fs_scope: _Optional[_Union[FsScope, _Mapping]] = ..., net_scope: _Optional[_Union[NetScope, _Mapping]] = ..., syscall_profile_ref: _Optional[bytes] = ..., tool_grants: _Optional[_Iterable[_Union[ToolGrant, _Mapping]]] = ..., model_route: _Optional[_Union[ModelRoute, _Mapping]] = ..., resource_ceiling: _Optional[_Union[ResourceCeiling, _Mapping]] = ..., environment_ref: _Optional[bytes] = ..., executor_class: _Optional[_Union[ExecutorClass, str]] = ...) -> None: ...
 
 class SubmitMoteRequest(_message.Message):
-    __slots__ = ("mote", "warrant", "accept_at_least_once")
+    __slots__ = ("mote", "warrant", "accept_at_least_once", "react_seed")
     MOTE_FIELD_NUMBER: _ClassVar[int]
     WARRANT_FIELD_NUMBER: _ClassVar[int]
     ACCEPT_AT_LEAST_ONCE_FIELD_NUMBER: _ClassVar[int]
+    REACT_SEED_FIELD_NUMBER: _ClassVar[int]
     mote: Mote
     warrant: WarrantSpec
     accept_at_least_once: bool
-    def __init__(self, mote: _Optional[_Union[Mote, _Mapping]] = ..., warrant: _Optional[_Union[WarrantSpec, _Mapping]] = ..., accept_at_least_once: bool = ...) -> None: ...
+    react_seed: bool
+    def __init__(self, mote: _Optional[_Union[Mote, _Mapping]] = ..., warrant: _Optional[_Union[WarrantSpec, _Mapping]] = ..., accept_at_least_once: bool = ..., react_seed: bool = ...) -> None: ...
 
 class SubmitMoteResponse(_message.Message):
     __slots__ = ("mote_id", "status", "detail", "instance_id")

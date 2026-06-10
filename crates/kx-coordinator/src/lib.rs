@@ -54,6 +54,7 @@ mod error;
 mod materialize;
 mod nonce;
 mod placement;
+mod react_shape;
 mod registry;
 mod replan_shape;
 mod repudiation;

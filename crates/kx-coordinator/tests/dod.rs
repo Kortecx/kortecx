@@ -95,6 +95,7 @@ async fn o1_coordinator_is_sole_journal_writer() {
             mote: Some(mote.clone().into()),
             warrant: Some(common::sample_warrant().into()),
             accept_at_least_once: false,
+            react_seed: false,
         })
         .await
         .unwrap()
@@ -241,6 +242,7 @@ async fn o3_mote_id_rederived_server_side() {
             mote: Some(wire),
             warrant: Some(common::sample_warrant().into()),
             accept_at_least_once: false,
+            react_seed: false,
         })
         .await
         .unwrap()
@@ -265,6 +267,7 @@ async fn o4_unknown_worker_rejected_no_write() {
             mote: Some(mote.clone().into()),
             warrant: Some(common::sample_warrant().into()),
             accept_at_least_once: false,
+            react_seed: false,
         })
         .await
         .unwrap();
@@ -315,6 +318,7 @@ async fn o4_bad_hash_length_rejected_no_write() {
             mote: Some(mote.clone().into()),
             warrant: Some(common::sample_warrant().into()),
             accept_at_least_once: false,
+            react_seed: false,
         })
         .await
         .unwrap();
@@ -343,6 +347,7 @@ async fn o4_unspecified_nd_class_rejected_no_write() {
             mote: Some(mote.clone().into()),
             warrant: Some(common::sample_warrant().into()),
             accept_at_least_once: false,
+            react_seed: false,
         })
         .await
         .unwrap();

@@ -1,60 +1,13 @@
-//! IMP-5 — the fail-closed decode of a **model-proposed** tool call.
-//!
-//! M5.1 put a tool *menu* in front of the model; M5.2 lets the model *pick* one.
-//! Model output is untrusted: [`parse_tool_call`] decodes it into a validated
-//! [`ToolCall`] (or `None` for a normal completion) and is **total + panic-free**
-//! over arbitrary bytes. "Model proposes, runtime enforces" (SN-8): the only tools
-//! a proposal may name are those already in `warrant.tool_grants` — selection is
-//! exact (crypto-equality of the `(name, version)` grant), never fuzzy. The broker
-//! re-checks the grant at dispatch; this is the first, defense-in-depth gate.
-//!
-//! The decoded `args_bytes` are carried VERBATIM (the args object's bytes) into the
-//! `EffectRequest.payload` — validated for *shape* (well-formed JSON), never
-//! executed, never interpreted into a dynamic value here.
+//! The fail-closed parse: [`parse_tool_call`] + the args-size cap
+//! [`max_args_bytes`]. Moved verbatim from `kx-model-harness::toolcall`
+//! (PR-2d-1); the 13 gate tests moved with it and pin the behavior.
 
 use kx_mote::{ToolName, ToolVersion};
 use kx_warrant::{ToolGrant, WarrantSpec};
 use serde::Deserialize;
 use serde_json::value::RawValue;
 
-/// A validated, warrant-granted tool call the model proposed.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ToolCall {
-    /// The tool's name — guaranteed `∈ warrant.tool_grants`.
-    pub name: ToolName,
-    /// The tool's pinned version — matched exactly against the grant.
-    pub version: ToolVersion,
-    /// The proposed arguments, verbatim JSON bytes (size-capped, never executed).
-    pub args_bytes: Vec<u8>,
-}
-
-/// Why a model output that *looked like* a tool call was refused. (A normal
-/// completion is `Ok(None)`, not an error.)
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DecodeError {
-    /// The output began as a JSON object but the tool-call envelope was malformed,
-    /// truncated, or carried trailing garbage. Fail-closed — a half-formed proposal
-    /// never fires an effect.
-    Malformed {
-        /// A short structural diagnostic (never the raw payload).
-        diagnostic: String,
-    },
-    /// The model named a tool that is not in `warrant.tool_grants` (SN-8: the model
-    /// cannot authorize an action the runtime did not grant).
-    UngrantedTool {
-        /// The proposed (ungranted) tool name.
-        name: ToolName,
-        /// The proposed version.
-        version: ToolVersion,
-    },
-    /// The proposed arguments exceed the per-call size cap (IMP-16).
-    Oversize {
-        /// Observed args size in bytes.
-        got: usize,
-        /// The cap.
-        max: usize,
-    },
-}
+use crate::types::{DecodeError, ToolCall};
 
 /// The JSON envelope a model uses to propose a tool call:
 /// `{"tool_call": {"name": "...", "version": "...", "args": { ... }}}`.
@@ -114,6 +67,13 @@ fn strip_reasoning_preamble(text: &str) -> &str {
 /// strict parse; everything after it is still gated by `starts_with('{')`.
 ///
 /// Total + panic-free over arbitrary `bytes`.
+///
+/// # Errors
+///
+/// [`DecodeError::Malformed`] when the output committed to a JSON object but the
+/// envelope is malformed/truncated/trailing-garbage; [`DecodeError::UngrantedTool`]
+/// when the proposal names a tool outside `warrant.tool_grants` (SN-8);
+/// [`DecodeError::Oversize`] when the args exceed `max_args_bytes` (IMP-16).
 pub fn parse_tool_call(
     bytes: &[u8],
     warrant: &WarrantSpec,
@@ -342,5 +302,19 @@ mod tests {
     fn non_utf8_is_a_normal_completion_not_a_panic() {
         let w = warrant_granting(Some(("mcp-echo", "1")));
         assert_eq!(parse_tool_call(&[0xff, 0xfe, 0x00], &w, 4096), Ok(None));
+    }
+
+    #[test]
+    fn args_bytes_are_byte_identical_to_the_envelope_substring() {
+        // PR-2d-1 pin: the decoded args are the EXACT bytes of the envelope's
+        // args object — no re-serialization, no normalization (RawValue carry).
+        let w = warrant_granting(Some(("mcp-echo", "1")));
+        let args_src = r#"{"q":"x","n":  7,"nested":{"a":[1,2,3]}}"#;
+        let env =
+            format!(r#"{{"tool_call":{{"name":"mcp-echo","version":"1","args":{args_src}}}}}"#);
+        let call = parse_tool_call(env.as_bytes(), &w, 4096)
+            .unwrap()
+            .expect("a call");
+        assert_eq!(call.args_bytes, args_src.as_bytes().to_vec());
     }
 }

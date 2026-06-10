@@ -16,6 +16,10 @@ kx-projection.workspace = true
 kx-executor.workspace = true
 kx-capability.workspace = true
 kx-warrant.workspace = true
+# The model-proposed tool-call authority gate (IMP-5) — EXTRACTED to a pure leaf
+# in PR-2d-1 so gateway + coordinator share the one gate; re-exported below as
+# `toolcall` so every harness call site is unchanged.
+kx-toolcall.workspace = true
 # The harness is the only crate that constructs the concrete in-process
 # `LlamaInferenceBackend`, so it opts back into the FFI (the workspace default is
 # `default-features = false` / no llama.cpp, to keep `cargo install kx-runtime`

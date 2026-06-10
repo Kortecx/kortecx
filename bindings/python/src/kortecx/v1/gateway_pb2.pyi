@@ -68,14 +68,16 @@ class SubmitRunRequest(_message.Message):
     def __init__(self, recipe_fingerprint: _Optional[bytes] = ..., motes: _Optional[_Iterable[_Union[SubmitMoteSpec, _Mapping]]] = ...) -> None: ...
 
 class SubmitMoteSpec(_message.Message):
-    __slots__ = ("mote", "warrant", "accept_at_least_once")
+    __slots__ = ("mote", "warrant", "accept_at_least_once", "react_seed")
     MOTE_FIELD_NUMBER: _ClassVar[int]
     WARRANT_FIELD_NUMBER: _ClassVar[int]
     ACCEPT_AT_LEAST_ONCE_FIELD_NUMBER: _ClassVar[int]
+    REACT_SEED_FIELD_NUMBER: _ClassVar[int]
     mote: _coordinator_pb2.Mote
     warrant: _coordinator_pb2.WarrantSpec
     accept_at_least_once: bool
-    def __init__(self, mote: _Optional[_Union[_coordinator_pb2.Mote, _Mapping]] = ..., warrant: _Optional[_Union[_coordinator_pb2.WarrantSpec, _Mapping]] = ..., accept_at_least_once: bool = ...) -> None: ...
+    react_seed: bool
+    def __init__(self, mote: _Optional[_Union[_coordinator_pb2.Mote, _Mapping]] = ..., warrant: _Optional[_Union[_coordinator_pb2.WarrantSpec, _Mapping]] = ..., accept_at_least_once: bool = ..., react_seed: bool = ...) -> None: ...
 
 class RunHandle(_message.Message):
     __slots__ = ("instance_id", "recipe_fingerprint")
@@ -563,3 +565,43 @@ class ListReplanRoundsResponse(_message.Message):
     rounds: _containers.RepeatedCompositeFieldContainer[ReplanRoundSummary]
     has_more: bool
     def __init__(self, rounds: _Optional[_Iterable[_Union[ReplanRoundSummary, _Mapping]]] = ..., has_more: bool = ...) -> None: ...
+
+class ListReactTurnsRequest(_message.Message):
+    __slots__ = ("limit", "instance_id")
+    LIMIT_FIELD_NUMBER: _ClassVar[int]
+    INSTANCE_ID_FIELD_NUMBER: _ClassVar[int]
+    limit: int
+    instance_id: bytes
+    def __init__(self, limit: _Optional[int] = ..., instance_id: _Optional[bytes] = ...) -> None: ...
+
+class ReactTurnSummary(_message.Message):
+    __slots__ = ("turn", "turn_mote_id", "instance_id", "model_id", "branch", "tool_id", "tool_version", "max_turns", "max_tool_calls", "seq")
+    TURN_FIELD_NUMBER: _ClassVar[int]
+    TURN_MOTE_ID_FIELD_NUMBER: _ClassVar[int]
+    INSTANCE_ID_FIELD_NUMBER: _ClassVar[int]
+    MODEL_ID_FIELD_NUMBER: _ClassVar[int]
+    BRANCH_FIELD_NUMBER: _ClassVar[int]
+    TOOL_ID_FIELD_NUMBER: _ClassVar[int]
+    TOOL_VERSION_FIELD_NUMBER: _ClassVar[int]
+    MAX_TURNS_FIELD_NUMBER: _ClassVar[int]
+    MAX_TOOL_CALLS_FIELD_NUMBER: _ClassVar[int]
+    SEQ_FIELD_NUMBER: _ClassVar[int]
+    turn: int
+    turn_mote_id: bytes
+    instance_id: bytes
+    model_id: str
+    branch: str
+    tool_id: str
+    tool_version: str
+    max_turns: int
+    max_tool_calls: int
+    seq: int
+    def __init__(self, turn: _Optional[int] = ..., turn_mote_id: _Optional[bytes] = ..., instance_id: _Optional[bytes] = ..., model_id: _Optional[str] = ..., branch: _Optional[str] = ..., tool_id: _Optional[str] = ..., tool_version: _Optional[str] = ..., max_turns: _Optional[int] = ..., max_tool_calls: _Optional[int] = ..., seq: _Optional[int] = ...) -> None: ...
+
+class ListReactTurnsResponse(_message.Message):
+    __slots__ = ("turns", "has_more")
+    TURNS_FIELD_NUMBER: _ClassVar[int]
+    HAS_MORE_FIELD_NUMBER: _ClassVar[int]
+    turns: _containers.RepeatedCompositeFieldContainer[ReactTurnSummary]
+    has_more: bool
+    def __init__(self, turns: _Optional[_Iterable[_Union[ReactTurnSummary, _Mapping]]] = ..., has_more: bool = ...) -> None: ...

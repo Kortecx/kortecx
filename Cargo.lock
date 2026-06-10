@@ -1405,6 +1405,7 @@ dependencies = [
  "kx-refusal",
  "kx-scheduler",
  "kx-tool-registry",
+ "kx-toolcall",
  "kx-warrant",
  "kx-worker",
  "smallvec",
@@ -1539,6 +1540,7 @@ dependencies = [
  "kx-planner",
  "kx-proto",
  "kx-refusal",
+ "kx-toolcall",
  "kx-warrant",
  "kx-worker",
  "kx-workflow",
@@ -1731,6 +1733,7 @@ dependencies = [
  "kx-projection",
  "kx-runtime",
  "kx-tool-registry",
+ "kx-toolcall",
  "kx-warrant",
  "kx-workflow",
  "serde",
@@ -1952,6 +1955,17 @@ dependencies = [
  "thiserror 1.0.69",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "kx-toolcall"
+version = "0.0.1"
+dependencies = [
+ "kx-content",
+ "kx-mote",
+ "kx-warrant",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

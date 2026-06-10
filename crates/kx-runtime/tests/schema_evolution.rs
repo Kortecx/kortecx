@@ -141,11 +141,12 @@ fn migrate_and_verify_preserves_product_identity() {
 
     let report = migrate_and_verify(&src, &dst).unwrap();
     assert_eq!(report.from_version, 5);
-    // The migration target tracks the current schema (v7 as of PR-2c-2's additive
-    // `ReplanRound`); the v5→current up-conversion still appends exactly the lone
-    // `idempotency_class` byte. Pinned as a reviewable change — the PRODUCT identity
-    // digest below is the real invariant (unchanged across the bump).
-    assert_eq!(report.to_version, 7);
+    // The migration target tracks the current schema (v8 as of PR-2d-1's additive
+    // `ReactRound`; v7 was PR-2c-2's `ReplanRound`); the v5→current up-conversion
+    // still appends exactly the lone `idempotency_class` byte. Pinned as a
+    // reviewable change — the PRODUCT identity digest below is the real invariant
+    // (unchanged across the bump).
+    assert_eq!(report.to_version, 8);
     assert_eq!(report.entries_upconverted, 1);
 
     // The up-converted source and the migrated destination fold to the same

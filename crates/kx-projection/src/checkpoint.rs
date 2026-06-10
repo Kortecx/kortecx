@@ -53,8 +53,8 @@ use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 
 use crate::state::{
-    CommittedInfo, DeclaredInfo, MoteInfo, ReplanRoundRecord, RunRegistration, RunResolvedVersions,
-    State,
+    CommittedInfo, DeclaredInfo, MoteInfo, ReactRoundRecord, ReplanRoundRecord, RunRegistration,
+    RunResolvedVersions, State,
 };
 
 /// The on-disk format version. Bump on **any** change to the envelope layout or
@@ -69,7 +69,15 @@ use crate::state::{
 /// coordinator re-derives its in-flight replan chain from. A grown payload shifts
 /// the bincoded bytes AND the sealed `state_digest()` of every state, so the bump
 /// is mandatory; a stale v2 sidecar is rejected and recovery full-folds (self-healing).
-pub const CURRENT_FORMAT_VERSION: u16 = 3;
+///
+/// `4` (PR-2d-1, react-substrate): `CheckpointState` gained `react_rounds` so a
+/// checkpoint-seeded recovery preserves the durable ReAct-turn records (anchor,
+/// settled branches, budget caps) the live coordinator re-derives its in-flight
+/// react chain + spent budget from. Same deliberate-break contract as v3: the
+/// payload AND `state_digest()` move for every state, a stale v3 sidecar is
+/// rejected, recovery full-folds and re-seals (self-healing). Only the PRODUCT
+/// run-identity digest is invariant.
+pub const CURRENT_FORMAT_VERSION: u16 = 4;
 
 /// Payload codec tag. `0` = canonical-bincode (LE + fixed-int, the house
 /// [`kx_mote::canonical_config`]). Reserved for a future rkyv zero-copy payload
@@ -433,6 +441,7 @@ struct CheckpointState {
     run_registration: Option<RunRegistrationDto>,
     run_resolved_versions: Vec<RunResolvedVersionsDto>,
     replan_rounds: Vec<ReplanRoundRecordDto>,
+    react_rounds: Vec<ReactRoundRecordDto>,
 }
 
 // Mirrors `MoteInfo`'s flags 1:1 — same `struct_excessive_bools` allow.
@@ -500,6 +509,23 @@ struct ReplanRoundRecordDto {
     seq: u64,
 }
 
+#[derive(Serialize, Deserialize)]
+struct ReactRoundRecordDto {
+    turn: u32,
+    turn_mote_id: MoteId,
+    instance_id: [u8; INSTANCE_ID_LEN],
+    base_prompt_ref: ContentRef,
+    warrant_ref: ContentRef,
+    model_id: String,
+    /// `kx_journal::ReactBranch` is serde-derived for exactly this DTO (the
+    /// `ResolvedCapabilityRecord` precedent); the journal's canonical on-disk
+    /// encoding stays the hand-rolled tag.
+    branch: kx_journal::ReactBranch,
+    max_turns: u32,
+    max_tool_calls: u32,
+    seq: u64,
+}
+
 // ----- State -> DTO (infallible; destructure-without-`..` drift guard) -----
 
 impl From<&State> for CheckpointState {
@@ -512,6 +538,7 @@ impl From<&State> for CheckpointState {
             run_registration,
             run_resolved_versions,
             replan_rounds,
+            react_rounds,
         } = state;
         Self {
             motes: motes
@@ -529,6 +556,7 @@ impl From<&State> for CheckpointState {
                 .iter()
                 .map(ReplanRoundRecordDto::from)
                 .collect(),
+            react_rounds: react_rounds.iter().map(ReactRoundRecordDto::from).collect(),
         }
     }
 }
@@ -664,6 +692,35 @@ impl From<&ReplanRoundRecord> for ReplanRoundRecordDto {
     }
 }
 
+impl From<&ReactRoundRecord> for ReactRoundRecordDto {
+    fn from(r: &ReactRoundRecord) -> Self {
+        let ReactRoundRecord {
+            turn,
+            turn_mote_id,
+            instance_id,
+            base_prompt_ref,
+            warrant_ref,
+            model_id,
+            branch,
+            max_turns,
+            max_tool_calls,
+            seq,
+        } = r;
+        Self {
+            turn: *turn,
+            turn_mote_id: *turn_mote_id,
+            instance_id: *instance_id,
+            base_prompt_ref: *base_prompt_ref,
+            warrant_ref: *warrant_ref,
+            model_id: model_id.clone(),
+            branch: branch.clone(),
+            max_turns: *max_turns,
+            max_tool_calls: *max_tool_calls,
+            seq: *seq,
+        }
+    }
+}
+
 // ----- DTO -> State (fallible: revalidates each parent edge) -----
 
 impl TryFrom<CheckpointState> for State {
@@ -678,6 +735,7 @@ impl TryFrom<CheckpointState> for State {
             run_registration,
             run_resolved_versions,
             replan_rounds,
+            react_rounds,
         } = dto;
         let mut decoded_motes = BTreeMap::new();
         for (id, mi) in motes {
@@ -695,6 +753,10 @@ impl TryFrom<CheckpointState> for State {
             replan_rounds: replan_rounds
                 .into_iter()
                 .map(ReplanRoundRecord::from)
+                .collect(),
+            react_rounds: react_rounds
+                .into_iter()
+                .map(ReactRoundRecord::from)
                 .collect(),
         })
     }
@@ -849,6 +911,35 @@ impl From<ReplanRoundRecordDto> for ReplanRoundRecord {
     }
 }
 
+impl From<ReactRoundRecordDto> for ReactRoundRecord {
+    fn from(dto: ReactRoundRecordDto) -> Self {
+        let ReactRoundRecordDto {
+            turn,
+            turn_mote_id,
+            instance_id,
+            base_prompt_ref,
+            warrant_ref,
+            model_id,
+            branch,
+            max_turns,
+            max_tool_calls,
+            seq,
+        } = dto;
+        ReactRoundRecord {
+            turn,
+            turn_mote_id,
+            instance_id,
+            base_prompt_ref,
+            warrant_ref,
+            model_id,
+            branch,
+            max_turns,
+            max_tool_calls,
+            seq,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -932,7 +1023,69 @@ mod tests {
             model_id: "qwen-0.5b".to_string(),
             capability: None,
         });
+        // PR-2c-2 (v3): a replan-round record, so the round-trip proves the v3
+        // payload field is preserved (closes a coverage gap — the v3 bump's point).
+        s.replan_rounds.push(ReplanRoundRecord {
+            round: 1,
+            shaper_mote_id: mid(30),
+            base_prompt_ref: ContentRef::from_bytes([0xe1; 32]),
+            corrected_prompt_ref: ContentRef::from_bytes([0xe2; 32]),
+            warrant_ref: ContentRef::from_bytes([0xe3; 32]),
+            model_id: "qwen-0.5b".to_string(),
+            failed_steps: vec![mid(31)],
+            escalation_reason_ref: None,
+            seq: 4,
+        });
+        // PR-2d-1 (v4): react-turn records covering an anchor + a Tool settle, so
+        // the round-trip proves the v4 payload field (incl. the enum branch with
+        // payload) is preserved — the v4 bump's point.
+        s.react_rounds.push(ReactRoundRecord {
+            turn: 0,
+            turn_mote_id: mid(40),
+            instance_id: [5; INSTANCE_ID_LEN],
+            base_prompt_ref: ContentRef::from_bytes([0xf1; 32]),
+            warrant_ref: ContentRef::from_bytes([0xf2; 32]),
+            model_id: "qwen-0.5b".to_string(),
+            branch: kx_journal::ReactBranch::Pending,
+            max_turns: 8,
+            max_tool_calls: 8,
+            seq: 4,
+        });
+        s.react_rounds.push(ReactRoundRecord {
+            turn: 0,
+            turn_mote_id: mid(40),
+            instance_id: [5; INSTANCE_ID_LEN],
+            base_prompt_ref: ContentRef::from_bytes([0xf1; 32]),
+            warrant_ref: ContentRef::from_bytes([0xf2; 32]),
+            model_id: "qwen-0.5b".to_string(),
+            branch: kx_journal::ReactBranch::Tool {
+                tool_id: "mcp-echo".to_string(),
+                tool_version: "1".to_string(),
+            },
+            max_turns: 8,
+            max_tool_calls: 8,
+            seq: 4,
+        });
         s
+    }
+
+    /// PR-2d-1: pin the checkpoint format version so the v3→v4 bump (the
+    /// additive `react_rounds` payload field) is an intentional, reviewable
+    /// change — and so a v3 sidecar written by the previous binary is REFUSED
+    /// (decode error → full-fold self-heal), never misread.
+    #[test]
+    fn format_version_is_v4_and_v3_blobs_are_refused() {
+        assert_eq!(CURRENT_FORMAT_VERSION, 4);
+        let mut bytes = FoldCheckpoint::from_state(&sample_state()).to_bytes();
+        // Stamp the envelope version back to v3 (bytes 0..2, LE u16).
+        bytes[0..2].copy_from_slice(&3u16.to_le_bytes());
+        assert!(matches!(
+            FoldCheckpoint::from_bytes(&bytes),
+            // The version is part of the digest preimage, so a re-stamped v3
+            // envelope fails as UnsupportedVersion or DigestMismatch — both are
+            // fail-safe discards (full fold).
+            Err(CheckpointError::UnsupportedVersion { got: 3 } | CheckpointError::DigestMismatch)
+        ));
     }
 
     #[test]

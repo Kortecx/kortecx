@@ -114,6 +114,7 @@ async fn submit_missing_mote_or_warrant_is_rejected() {
             mote: None,
             warrant: Some(warrant.clone().into()),
             accept_at_least_once: false,
+            react_seed: false,
         }))
         .await
         .unwrap_err();
@@ -124,6 +125,7 @@ async fn submit_missing_mote_or_warrant_is_rejected() {
             mote: Some(mote.into()),
             warrant: None,
             accept_at_least_once: false,
+            react_seed: false,
         }))
         .await
         .unwrap_err();

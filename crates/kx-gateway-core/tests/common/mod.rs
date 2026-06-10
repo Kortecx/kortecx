@@ -69,6 +69,7 @@ impl RunSubmitter for MockSubmitter {
         mote: Mote,
         _warrant: WarrantSpec,
         _accept_at_least_once: bool,
+        _react_seed: bool,
     ) -> Result<SubmitMoteOutcome, SubmitterError> {
         self.calls.lock().unwrap().push("submit_mote".to_string());
         Ok(SubmitMoteOutcome {

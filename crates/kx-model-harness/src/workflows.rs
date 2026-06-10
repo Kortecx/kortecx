@@ -513,14 +513,51 @@ pub fn react_turn(
     turn: u32,
     prior_trajectory: &[MoteId],
 ) -> DemoWorkflow {
+    react_turn_salted(model_id, warrant, instruction, turn, prior_trajectory, &[])
+}
+
+/// **PR-2d-1 (react-substrate) — the RUN-SALTED [`react_turn`].** Identical to
+/// the unsalted builder except the identity material becomes
+/// `blake3("kx-react-turn" ‖ salt ‖ turn)` and a non-empty salt additionally
+/// writes [`kx_mote::REACT_TURN_KEY`] (value = the salt) into `config_subset`
+/// — the routing marker the live gateway's `ModelRouterExecutor` reads.
+///
+/// The harness drives ONE journal per run, so `blake3("kx-react-turn" ‖ turn)`
+/// is collision-free there — but live serve SHARES one journal across runs,
+/// where an unsalted turn 0 of run B would dedup-collide with run A's
+/// (red-team BLOCKER #1). The salt is the run's registered `instance_id`
+/// (server-assigned, unknowable client-side — SN-8), mirroring
+/// `kx_journal::run_root_id`'s `blake3("kx-run-root" ‖ instance_id)`.
+///
+/// An EMPTY salt is byte-identical to the pre-PR-2d-1 builder (same material,
+/// no marker key) — pinned by `react_identity_goldens`, so every existing
+/// harness golden is unchanged. The coordinator's `react_shape::build_react_turn`
+/// re-implements this builder below the dep wall; the two are pinned
+/// byte-equivalent by a shared frozen golden (the `replan_shape` precedent).
+#[must_use]
+pub fn react_turn_salted(
+    model_id: &ModelId,
+    warrant: &WarrantSpec,
+    instruction: &str,
+    turn: u32,
+    prior_trajectory: &[MoteId],
+    salt: &[u8],
+) -> DemoWorkflow {
     // Round-namespaced 32-byte identity — deterministic + distinct per turn, and
     // cryptographically distinct from a `loop_shaper`/`replan_shaper` namespace.
     let mut material = b"kx-react-turn".to_vec();
+    material.extend_from_slice(salt);
     material.extend_from_slice(&turn.to_le_bytes());
     let id_bytes = *blake3::hash(&material).as_bytes();
 
     let mut config_subset = BTreeMap::new();
     prompt::put_prompt(&mut config_subset, instruction);
+    if !salt.is_empty() {
+        config_subset.insert(
+            kx_mote::ConfigKey(kx_mote::REACT_TURN_KEY.to_string()),
+            kx_mote::ConfigVal(salt.to_vec()),
+        );
+    }
     let def = MoteDef {
         critic_check: None,
         logic_ref: LogicRef::from_bytes(id_bytes),
@@ -584,7 +621,35 @@ pub fn react_tool_mote(
     turn: u32,
     turn_mote_id: MoteId,
 ) -> WorkflowMote {
+    react_tool_mote_salted(
+        model_id,
+        warrant,
+        tool_id,
+        tool_version,
+        turn,
+        turn_mote_id,
+        &[],
+    )
+}
+
+/// **PR-2d-1 (react-substrate) — the RUN-SALTED [`react_tool_mote`].** Identity
+/// material becomes `blake3("kx-react-tool" ‖ salt ‖ turn)`; an EMPTY salt is
+/// byte-identical to the pre-PR-2d-1 builder (see [`react_turn_salted`] for the
+/// shared-journal collision rationale). The observation Mote carries NO marker
+/// key — its `config_subset` stays EMPTY (the PR-2d-2 `ToolArgsSink` contract:
+/// args travel out-of-band so the observation identity never moves).
+#[must_use]
+pub fn react_tool_mote_salted(
+    model_id: &ModelId,
+    warrant: &WarrantSpec,
+    tool_id: &ToolName,
+    tool_version: &ToolVersion,
+    turn: u32,
+    turn_mote_id: MoteId,
+    salt: &[u8],
+) -> WorkflowMote {
     let mut material = b"kx-react-tool".to_vec();
+    material.extend_from_slice(salt);
     material.extend_from_slice(&turn.to_le_bytes());
     let id_bytes = *blake3::hash(&material).as_bytes();
 
@@ -644,5 +709,102 @@ pub fn from_compiled(compiled: &CompiledWorkflow) -> DemoWorkflow {
         stc_crash_target: sentinel_shaper(),
         vtc_crash_target: sentinel_shaper(),
         shaper_id: sentinel_shaper(),
+    }
+}
+
+#[cfg(test)]
+mod react_identity_tests {
+    use super::*;
+    use crate::harness_warrant;
+
+    fn mid() -> ModelId {
+        ModelId("kx-test:q8:deadbeef".to_string())
+    }
+
+    fn hex(id: &MoteId) -> String {
+        use std::fmt::Write as _;
+        id.as_bytes().iter().fold(String::new(), |mut s, b| {
+            let _ = write!(s, "{b:02x}");
+            s
+        })
+    }
+
+    /// PR-2d-1 frozen goldens: (a) the EMPTY-salt builders produce the exact
+    /// pre-PR-2d-1 identities (every existing harness golden is byte-unchanged);
+    /// (b) the salted identities are the cross-impl contract the coordinator's
+    /// `react_shape::build_react_turn` must reproduce byte-for-byte (the
+    /// `replan_shape` precedent — the same hex is pinned on BOTH sides of the
+    /// dep wall, so silent drift between the two builders fails a test).
+    #[test]
+    fn react_identity_goldens() {
+        let m = mid();
+        let w = harness_warrant(&m, 64, 5_000);
+
+        // (a) empty salt == the pre-change builder (material has no salt bytes,
+        //     no marker key) — the unsalted wrapper IS the salted fn with [].
+        let unsalted = react_turn(&m, &w, "list the files", 0, &[]);
+        let via_salted = react_turn_salted(&m, &w, "list the files", 0, &[], &[]);
+        assert_eq!(unsalted.motes[0].mote.id, via_salted.motes[0].mote.id);
+        assert!(
+            !unsalted.motes[0]
+                .mote
+                .def
+                .config_subset
+                .contains_key(&kx_mote::ConfigKey(kx_mote::REACT_TURN_KEY.to_string())),
+            "an unsalted turn must NOT carry the react marker"
+        );
+        assert_eq!(
+            hex(&unsalted.motes[0].mote.id),
+            "9aa916e81e26e54f6f35f0cd009e4dbf901d6d8da0f93aa7e548d7cc27c16257",
+            "the empty-salt react_turn identity moved — every harness golden breaks"
+        );
+
+        // (b) the salted identity (the harness↔serve byte-equivalence contract).
+        let salt = [0x4d_u8; 16];
+        let salted = react_turn_salted(&m, &w, "list the files", 0, &[], &salt);
+        assert_ne!(salted.motes[0].mote.id, unsalted.motes[0].mote.id);
+        assert_eq!(
+            salted.motes[0]
+                .mote
+                .def
+                .config_subset
+                .get(&kx_mote::ConfigKey(kx_mote::REACT_TURN_KEY.to_string()))
+                .map(|v| v.0.clone()),
+            Some(salt.to_vec()),
+            "a salted turn carries the marker key with the salt as value"
+        );
+        assert_eq!(
+            hex(&salted.motes[0].mote.id),
+            "f2e465451f434a861090109d336c39a8307e5d539963fd48b3470df84458a5cb",
+            "the salted react_turn identity moved — the coordinator react_shape \
+             golden (pinned to the same hex) must move in lock-step"
+        );
+
+        // Cross-run isolation: distinct salts ⇒ distinct identities; same salt
+        // ⇒ the same identity (replay-stable).
+        let other = react_turn_salted(&m, &w, "list the files", 0, &[], &[0x4e; 16]);
+        assert_ne!(other.motes[0].mote.id, salted.motes[0].mote.id);
+        let again = react_turn_salted(&m, &w, "list the files", 0, &[], &salt);
+        assert_eq!(again.motes[0].mote.id, salted.motes[0].mote.id);
+
+        // The tool-observation builder mirrors all of the above (no marker key —
+        // its config_subset stays EMPTY per the ToolArgsSink contract).
+        let turn_id = salted.motes[0].mote.id;
+        let tool = ToolName("mcp-echo".to_string());
+        let ver = ToolVersion("1".to_string());
+        let obs_unsalted = react_tool_mote(&m, &w, &tool, &ver, 0, turn_id);
+        let obs_salted = react_tool_mote_salted(&m, &w, &tool, &ver, 0, turn_id, &salt);
+        assert_ne!(obs_unsalted.mote.id, obs_salted.mote.id);
+        assert!(obs_salted.mote.def.config_subset.is_empty());
+        assert_eq!(
+            hex(&obs_unsalted.mote.id),
+            "3837994781ee3a5e9254a634adc55e5eafbe354fcaafb9487445f1537840a59f",
+            "the empty-salt react_tool_mote identity moved"
+        );
+        assert_eq!(
+            hex(&obs_salted.mote.id),
+            "0797b93286b999344db0ba9a458a83105c6a6b55c29760e510311ae45ff68048",
+            "the salted react_tool_mote identity moved"
+        );
     }
 }

@@ -1,6 +1,10 @@
 //! The dependency wall (D120.5). gateway-core is a read-fold + propose-proxy; it
 //! MUST NOT link the journal-writer / effect components in its NORMAL (non-dev)
 //! dependency tree: `kx-executor`, `kx-scheduler`, `kx-coordinator`, `kx-capture`.
+//! PR-2d-1 hardens the wall with `kx-model-harness` (the tool-call authority gate
+//! moved to the pure leaf `kx-toolcall`; reaching it THROUGH the harness would
+//! drag the engine + FFI tree below the wall) and `kx-mcp` (tool egress lands as
+//! an explicit, optional gateway edge in PR-2d-2 — never here).
 //! Two independent proofs: a manifest `[dependencies]` scan and a `cargo tree`
 //! over the normal edges. (`kx-journal` IS linked — but only as a READER, via the
 //! `JournalReader`/`ReadOnly` seam that has no `append`; that is a type-level
@@ -13,6 +17,8 @@ const FORBIDDEN: &[&str] = &[
     "kx-scheduler",
     "kx-coordinator",
     "kx-capture",
+    "kx-model-harness",
+    "kx-mcp",
 ];
 
 #[test]

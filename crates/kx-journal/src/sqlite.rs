@@ -482,7 +482,8 @@ fn set_seq(entry: &mut JournalEntry, new_seq: u64) {
         | JournalEntry::RunRegistered { seq, .. }
         | JournalEntry::RunVersionsResolved { seq, .. }
         | JournalEntry::DigestSealed { seq, .. }
-        | JournalEntry::ReplanRound { seq, .. } => *seq = new_seq,
+        | JournalEntry::ReplanRound { seq, .. }
+        | JournalEntry::ReactRound { seq, .. } => *seq = new_seq,
     }
 }
 
@@ -786,7 +787,10 @@ fn migrate_into_temp(
         let head = replay.current_seq()?;
         for entry in replay.read_entries_by_seq(0..head + 1)? {
             let src_seq = entry.seq();
-            let upconverted = from_version < JOURNAL_SCHEMA_VERSION
+            // Only the v5 arm TRANSFORMS bytes (appends the idempotency_class
+            // byte to a capability-present record); v6/v7 → current are pure
+            // pass-throughs (additive kinds only), so nothing "up-converts".
+            let upconverted = from_version < 6
                 && matches!(
                     &entry,
                     JournalEntry::RunVersionsResolved {

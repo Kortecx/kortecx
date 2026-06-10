@@ -124,6 +124,7 @@ impl Cluster {
                 mote: Some(mote.clone().into()),
                 warrant: Some(warrant.clone().into()),
                 accept_at_least_once: false,
+                react_seed: false,
             }))
             .await
             .map_err(|s| format!("submit_mote: {s}"))?;

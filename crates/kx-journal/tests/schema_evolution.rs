@@ -25,7 +25,7 @@ use std::time::Instant;
 use kx_content::ContentRef;
 use kx_journal::{
     decode_entry_with_def_hash, migrate_to, FailureReason, IdempotencyClassTag, Journal,
-    JournalEntry, JournalError, ParentEntry, ReplayJournal, ResolvedCapabilityRecord,
+    JournalEntry, JournalError, ParentEntry, ReactBranch, ReplayJournal, ResolvedCapabilityRecord,
     ResolvedKindTag, SqliteJournal, INSTANCE_ID_LEN, JOURNAL_SCHEMA_VERSION,
     MIN_SUPPORTED_SCHEMA_VERSION, V5_ABSENT_IDEMPOTENCY_CLASS,
 };
@@ -270,6 +270,167 @@ fn set_schema_version(path: &Path, v: u16) {
         params![&v.to_le_bytes()[..]],
     )
     .unwrap();
+}
+
+// ---------------------------------------------------------------------------
+// The frozen v7 representation (PR-2d-1): v7 = v8 minus ReactRound entries.
+// Kinds 0..8 are byte-identical under v8; v7→v8 is a pure pass-through.
+// ---------------------------------------------------------------------------
+
+/// Build the v7 fixture journal: the curated entry set PLUS a `ReplanRound`
+/// (kind 8, the v7 addition), with NO `ReactRound` (kind 9 — the v8 addition),
+/// then stamp `metadata.schema_version = 7`. Since kinds 0..8 encode byte-
+/// identically under v7 and v8, the stamp alone defines the v7 shape.
+fn build_v7_journal(dir: &Path) -> PathBuf {
+    let path = dir.join("sample_v7.kxjournal");
+    {
+        let j = SqliteJournal::open(&path).unwrap();
+        let mut entries = curated_v6_entries();
+        entries.push(JournalEntry::ReplanRound {
+            round: 1,
+            shaper_mote_id: MoteId::from_bytes([0x7c; 32]),
+            base_prompt_ref: ContentRef::from_bytes([0x11; 32]),
+            corrected_prompt_ref: ContentRef::from_bytes([0x22; 32]),
+            warrant_ref: ContentRef::from_bytes([0xaa; 32]),
+            model_id: "qwen2-0_5b".to_string(),
+            failed_steps: SmallVec::new(),
+            escalation_reason_ref: None,
+            seq: 0,
+        });
+        j.append_batch(entries).unwrap();
+    }
+    set_schema_version(&path, 7);
+    path
+}
+
+#[test]
+fn open_still_refuses_v7_loudly() {
+    // The strict open() contract is unchanged by the v8 bump: a v7 journal is
+    // refused loudly (migration is the separate, additive path) — the same
+    // contract that makes an OLD binary refuse a v8 journal rather than
+    // misread it (forward-compat = refusal, never corruption).
+    let tmp = tempfile::tempdir().unwrap();
+    let path = build_v7_journal(tmp.path());
+    let err = SqliteJournal::open(&path).unwrap_err();
+    assert!(matches!(
+        err,
+        JournalError::SchemaVersionMismatch { found: 7, expected } if expected == JOURNAL_SCHEMA_VERSION
+    ));
+}
+
+#[test]
+fn replay_reads_v7_as_pure_passthrough() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = build_v7_journal(tmp.path());
+
+    let replay = ReplayJournal::open(&path).unwrap();
+    assert_eq!(replay.from_version(), 7);
+    assert_eq!(replay.count_entries().unwrap(), 8);
+
+    // The v7 ReplanRound (kind 8) decodes unchanged, capability classes are
+    // PRESERVED (not defaulted — that is the v5 path), and no ReactRound exists.
+    let entries = read_all(&replay);
+    assert!(entries
+        .iter()
+        .any(|e| matches!(e, JournalEntry::ReplanRound { round: 1, .. })));
+    let cap = entries
+        .iter()
+        .find_map(|e| match e {
+            JournalEntry::RunVersionsResolved {
+                capability: Some(c),
+                ..
+            } => Some(c),
+            _ => None,
+        })
+        .expect("a capability-present RunVersionsResolved");
+    assert_eq!(cap.idempotency_class, IdempotencyClassTag::Token);
+    assert!(!entries
+        .iter()
+        .any(|e| matches!(e, JournalEntry::ReactRound { .. })));
+}
+
+#[test]
+fn migrate_v7_to_v8_upconverts_nothing_and_preserves_committed_facts() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = build_v7_journal(tmp.path());
+    let dst = tmp.path().join("migrated_v8.kxjournal");
+
+    let report = migrate_to(&src, &dst).unwrap();
+    assert_eq!(report.from_version, 7);
+    assert_eq!(report.to_version, JOURNAL_SCHEMA_VERSION);
+    assert_eq!(report.entries_migrated, 8);
+    assert_eq!(report.entries_upconverted, 0); // pure pass-through
+
+    // Strict open accepts the result; committed facts are byte-identical
+    // (product identity invariant — the durability law).
+    let j = SqliteJournal::open(&dst).unwrap();
+    assert_eq!(j.count_entries().unwrap(), 8);
+    let committed_bytes = |p: &Path| -> Vec<Vec<u8>> {
+        let conn = Connection::open(p).unwrap();
+        let mut stmt = conn
+            .prepare("SELECT entry_bytes FROM entries WHERE kind = 1 ORDER BY seq")
+            .unwrap();
+        stmt.query_map([], |r| r.get::<_, Vec<u8>>(0))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect()
+    };
+    assert_eq!(committed_bytes(&src), committed_bytes(&dst));
+}
+
+#[test]
+fn v8_react_round_persists_and_resumes() {
+    // A fresh (v8) journal carrying ReactRound facts round-trips the strict
+    // open + resume path: the anchor and a settled branch read back verbatim.
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("react_v8.kxjournal");
+    let anchor = JournalEntry::ReactRound {
+        turn: 0,
+        turn_mote_id: MoteId::from_bytes([0x8e; 32]),
+        instance_id: [0x4d; INSTANCE_ID_LEN],
+        base_prompt_ref: ContentRef::from_bytes([0x12; 32]),
+        warrant_ref: ContentRef::from_bytes([0x34; 32]),
+        model_id: "qwen2-0_5b".to_string(),
+        branch: ReactBranch::Pending,
+        max_turns: 8,
+        max_tool_calls: 8,
+        seq: 0,
+    };
+    let settle = JournalEntry::ReactRound {
+        turn: 0,
+        turn_mote_id: MoteId::from_bytes([0x8e; 32]),
+        instance_id: [0x4d; INSTANCE_ID_LEN],
+        base_prompt_ref: ContentRef::from_bytes([0x12; 32]),
+        warrant_ref: ContentRef::from_bytes([0x34; 32]),
+        model_id: "qwen2-0_5b".to_string(),
+        branch: ReactBranch::Answer,
+        max_turns: 8,
+        max_tool_calls: 8,
+        seq: 0,
+    };
+    {
+        let j = SqliteJournal::open(&path).unwrap();
+        j.append_batch(vec![anchor, settle]).unwrap();
+    }
+    let j = SqliteJournal::open(&path).unwrap(); // resume
+    let entries = read_all(&j);
+    assert_eq!(entries.len(), 2);
+    assert!(matches!(
+        &entries[0],
+        JournalEntry::ReactRound {
+            turn: 0,
+            branch: ReactBranch::Pending,
+            max_turns: 8,
+            ..
+        }
+    ));
+    assert!(matches!(
+        &entries[1],
+        JournalEntry::ReactRound {
+            branch: ReactBranch::Answer,
+            ..
+        }
+    ));
 }
 
 // ---------------------------------------------------------------------------

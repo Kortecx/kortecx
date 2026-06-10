@@ -1,0 +1,29 @@
+[package]
+name         = "kx-toolcall"
+version      = "0.0.1"
+edition      = { workspace = true }
+rust-version = { workspace = true }
+license      = { workspace = true }
+authors      = { workspace = true }
+repository   = { workspace = true }
+description  = "kortecx model-proposed tool-call AUTHORITY GATE (IMP-5/PR-2d-1) — the pure, fail-closed decode of untrusted model output into a warrant-granted ToolCall. SN-8: the only tools a proposal may name are those already in `warrant.tool_grants`, matched by EXACT (name, version) crypto-equality — never fuzzy. Extracted from kx-model-harness as a pure leaf so the live-serve gateway and coordinator share the ONE gate (a byte-mirror would drift silently and admit an ungranted tool); kx-model-harness re-exports it unchanged. Total + panic-free over arbitrary bytes; args carried VERBATIM via serde_json RawValue, size-capped (IMP-16), never executed."
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+# ToolName / ToolVersion — the exact-equality identity of a grant.
+kx-mote    = { workspace = true }
+# ToolGrant / WarrantSpec — the authority set the proposal is gated against.
+kx-warrant = { workspace = true }
+serde      = { workspace = true }
+# `raw_value` is LOAD-BEARING: args are carried as verbatim RawValue bytes,
+# never decoded into a dynamic value (no float/NaN on any path).
+serde_json = { workspace = true, features = ["raw_value"] }
+
+[dev-dependencies]
+# Test-only: WarrantSpec construction needs a ContentRef for syscall_profile_ref.
+kx-content = { workspace = true }
+
+[lints]
+workspace = true

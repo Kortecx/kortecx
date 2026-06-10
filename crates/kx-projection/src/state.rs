@@ -169,6 +169,39 @@ pub struct ReplanRoundRecord {
     pub seq: u64,
 }
 
+/// One ReAct-turn run-metadata record (v8, PR-2d-1, react-substrate), folded from
+/// a `ReactRound` entry. **Audit/lineage + recovery metadata, never identity** — no
+/// scheduling/identity/digest decision reads it. Off the Mote-DAG. The coordinator's
+/// `settle_react_rounds` / `recover_react_chain` read these to settle the latest
+/// turn and rebuild an in-flight turn's Mote deterministically from committed
+/// facts; budget counters are RE-DERIVED by folding the recorded branches (never
+/// an in-memory count). Surfaced by [`crate::Projection::react_rounds`] /
+/// [`crate::Projection::latest_react_round`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReactRoundRecord {
+    /// The turn index (`0` = the run's submit anchor).
+    pub turn: u32,
+    /// The turn's (run-salted) `MoteId`.
+    pub turn_mote_id: MoteId,
+    /// The registered run identity (the run-salt) — keys every settle/recover
+    /// query in serve's shared journal.
+    pub instance_id: [u8; kx_journal::INSTANCE_ID_LEN],
+    /// `ContentRef` of the run's immutable base instruction prompt.
+    pub base_prompt_ref: ContentRef,
+    /// The run-fixed turn `warrant_ref`.
+    pub warrant_ref: ContentRef,
+    /// The resolved model id the turns run.
+    pub model_id: String,
+    /// The turn's settled branch, frozen at append.
+    pub branch: kx_journal::ReactBranch,
+    /// The run's durable turn cap (recorded on the anchor).
+    pub max_turns: u32,
+    /// The run's durable tool-call cap (recorded on the anchor).
+    pub max_tool_calls: u32,
+    /// The entry's journal seq (audit/order).
+    pub seq: u64,
+}
+
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct State {
     /// Per-MoteId info — declared, committed, and any in-flight state.
@@ -190,6 +223,11 @@ pub(crate) struct State {
     /// Off-DAG; O(1) per append. Recovery + audit only — never an
     /// identity/scheduling/digest input.
     pub(crate) replan_rounds: Vec<ReplanRoundRecord>,
+    /// ReAct-turn metadata (PR-2d-1), appended as each `ReactRound` entry folds.
+    /// Off-DAG; O(1) per append. Recovery + audit only — never an
+    /// identity/scheduling/digest input. Emptiness is the `has_react_turn`
+    /// sentinel that keeps react-free runs (and the demo) zero-cost.
+    pub(crate) react_rounds: Vec<ReactRoundRecord>,
 }
 
 impl State {
@@ -205,6 +243,14 @@ impl State {
         self.motes
             .values()
             .any(|i| i.declared.as_ref().is_some_and(|d| d.critic_for.is_some()))
+    }
+
+    /// `true` iff any `ReactRound` fact has folded — the run is (or was) a live
+    /// ReAct chain. Gates the coordinator's `settle_react_rounds` and the F-7
+    /// react trajectory special-case so react-free runs (and the demo) pay ZERO
+    /// cost (PR-2d-1 react-substrate). O(1) — a Vec emptiness read.
+    pub(crate) fn has_react_turn(&self) -> bool {
+        !self.react_rounds.is_empty()
     }
 
     /// Compute the per-identity state per `projection.md` §4 (v2 derivation
