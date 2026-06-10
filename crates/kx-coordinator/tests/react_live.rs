@@ -653,3 +653,93 @@ async fn ungranted_proposal_dead_letters_the_chain() {
         }
     ));
 }
+
+/// A PRE-COMMIT-CRASH flavor failure (the heartbeat REAP's `WorkerCrashed`) must
+/// NOT dead-letter the chain: the reaped worker's commit may still be in flight
+/// (the fold deliberately lets a later Committed win), and a genuinely dead
+/// worker leaves the turn stuck-but-operator-recoverable (the standing non-PURE
+/// semantics). The adversarial-review race, end-to-end through the REAL reap
+/// path: lease → heartbeat-timeout reap (a fake clock) → assert no DeadLettered
+/// → the "late" commit lands → the chain settles `Answer`, never discarded.
+#[tokio::test]
+async fn worker_crash_does_not_dead_letter_and_a_late_commit_still_settles() {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::Duration;
+
+    #[derive(Debug)]
+    struct FakeClock(AtomicU64);
+    impl kx_coordinator::Clock for FakeClock {
+        fn now_ms(&self) -> u64 {
+            self.0.load(Ordering::Relaxed)
+        }
+    }
+
+    let dir = TempDir::new().unwrap();
+    let clock = Arc::new(FakeClock(AtomicU64::new(1_000)));
+    let store = Arc::new(LocalFsContentStore::open(dir.path().join("content")).unwrap());
+    let journal = SqliteJournal::open(dir.path().join("journal.db")).unwrap();
+    let registry: Arc<dyn WorkerRegistry> = Arc::new(
+        kx_coordinator::InMemoryWorkerRegistry::with_clock_and_timeout(
+            clock.clone(),
+            Duration::from_secs(6),
+        ),
+    );
+    let svc = CoordinatorService::with_shaper_materialization(
+        journal,
+        registry,
+        store.clone(),
+        clock.clone(),
+        Arc::new(kx_coordinator::OsRandomNonce),
+        Arc::new(kx_tool_registry::InMemoryToolRegistry::with_builtins()),
+        Arc::new(kx_warrant::InMemoryRoleRegistry::new()),
+    );
+    let w = warrant(false);
+
+    let (_, _) = submit_react(&svc, &seed_mote(), &w).await;
+    let dying = common::register(&svc, "dying").await;
+    let leased = common::lease_work(&svc, dying, MAC, 16).await;
+    assert_eq!(leased.len(), 1);
+    let turn0: Mote = leased[0].mote.clone().unwrap().try_into().unwrap();
+
+    // Time passes the liveness window; the next lease poll REAPS the dying
+    // worker → Failed{WorkerCrashed} folds (failed_pending_reattempt, NOT
+    // terminal) and the drain-end settle runs. The chain must stay Pending.
+    clock.0.store(1_000 + 6_001, Ordering::Relaxed);
+    let live = common::register(&svc, "live").await;
+    let released = common::lease_work(&svc, live, MAC, 16).await;
+    assert!(
+        released.is_empty(),
+        "a crash-failed ROND turn is NOT auto-re-leased (standing non-PURE semantics)"
+    );
+    assert_eq!(svc.state_of(turn0.id).await.unwrap(), MoteState::Failed);
+    let facts = react_facts(&svc, &dir).await;
+    assert_eq!(
+        facts.len(),
+        1,
+        "no DeadLettered fact for a crash flavor — the frontier stays Pending"
+    );
+    assert!(matches!(
+        facts.last().unwrap(),
+        JournalEntry::ReactRound {
+            turn: 0,
+            branch: ReactBranch::Pending,
+            ..
+        }
+    ));
+
+    // The "late" commit (the reaped-but-alive worker's in-flight result) lands —
+    // Committed wins over the crash flag, and the chain settles the ANSWER.
+    commit_raw(&svc, &store, &turn0, &w, b"the answer survived", dying).await;
+    let facts = react_facts(&svc, &dir).await;
+    assert!(
+        matches!(
+            facts.last().unwrap(),
+            JournalEntry::ReactRound {
+                turn: 0,
+                branch: ReactBranch::Answer,
+                ..
+            }
+        ),
+        "the committed answer settles the chain — never discarded"
+    );
+}

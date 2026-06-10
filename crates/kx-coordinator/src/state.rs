@@ -1062,12 +1062,14 @@ fn core_loop<J: Journal>(
     // PR-2d-1: re-derive the live ReAct chains from committed facts (re-insert the
     // in-flight turn, re-decode + settle the committed tail). A no-op when no run
     // has anchored a chain (the has_react_turn sentinel) — the demo is untouched.
+    let mut react_cache = ReactSettleCache::default();
     recover_react_chain(
         journal,
         store,
         &mut projection,
         &mut folded_through,
         &mut dispatch,
+        &mut react_cache,
     );
 
     while let Some(first) = inbox.blocking_recv() {
@@ -1142,13 +1144,16 @@ fn core_loop<J: Journal>(
         );
         // PR-2d-1: after this drain's commits + dead-letters fold, settle any ReAct
         // turn that just reached a terminal state (decode → freeze the branch →
-        // advance under budget). Idempotent; a one-bool no-op without react facts.
+        // advance under budget). Idempotent; a one-bool no-op without react facts;
+        // proportional to the ACTIVE chains only (the settle cache — settled
+        // chains are skipped, the fact log is re-scanned only when it grows).
         settle_react_rounds(
             journal,
             store,
             &mut projection,
             &mut folded_through,
             &mut dispatch,
+            &mut react_cache,
         );
     }
 }
@@ -1999,6 +2004,35 @@ fn react_instances(rounds: &[ReactRoundRecord]) -> Vec<[u8; INSTANCE_ID_LEN]> {
     out
 }
 
+/// The settle pass's incremental working set (adversarial-review finding,
+/// PR-2d-1): `react_rounds` only ever GROWS in serve's shared journal, so a
+/// naive per-drain pass over every fact of every chain is O(total-runs²) at the
+/// drain rate, forever. This cache keeps the pass proportional to the ACTIVE
+/// working set instead:
+///
+/// - `settled` — chains whose latest branch can never change again (a terminal
+///   `Answer`/`DeadLettered`, or a budget-exhausted `Tool` tail). Branches are
+///   FROZEN at append and a settled chain accepts no new facts, so membership is
+///   monotonic — skipping is always sound. Purely in-memory: recovery starts
+///   empty and the first pass re-derives it from the durable facts.
+/// - `active` — the distinct unsettled instances, REBUILT only when the folded
+///   fact count changes (`seen_facts`); between fact-appends the pass iterates
+///   this (usually tiny) list and touches nothing else.
+#[derive(Default)]
+struct ReactSettleCache {
+    seen_facts: usize,
+    active: Vec<[u8; INSTANCE_ID_LEN]>,
+    settled: BTreeSet<[u8; INSTANCE_ID_LEN]>,
+}
+
+/// Whether one settle pass left a chain able to settle again ([`ReactChainStatus::Active`])
+/// or permanently frozen ([`ReactChainStatus::Settled`] — skip on every later pass).
+#[derive(PartialEq, Eq)]
+enum ReactChainStatus {
+    Active,
+    Settled,
+}
+
 /// Drive every newly-settled ReAct turn (PR-2d-1). **Idempotent + deterministic**:
 /// for each run's chain, when the latest turn's Mote has reached a terminal state,
 /// decode its committed output ON the sole writer via [`kx_toolcall::parse_tool_call`]
@@ -2019,6 +2053,7 @@ fn settle_react_rounds<J: Journal>(
     projection: &mut Projection,
     folded_through: &mut u64,
     dispatch: &mut Dispatch,
+    cache: &mut ReactSettleCache,
 ) {
     if !projection.has_react_turn() {
         return; // the zero-cost sentinel: react-free runs pay one bool read
@@ -2026,8 +2061,19 @@ fn settle_react_rounds<J: Journal>(
     let Some(store) = store else {
         return; // anchored chains need a store (the anchor write guaranteed one)
     };
-    for instance_id in react_instances(projection.react_rounds()) {
-        settle_react_chain(
+    // Rebuild the active working set only when new facts folded since the last
+    // pass (anchors, settles, advances). Between appends the pass touches ONLY
+    // the (usually tiny) active list — never the full accumulated fact log.
+    if projection.react_rounds().len() != cache.seen_facts {
+        cache.active = react_instances(projection.react_rounds())
+            .into_iter()
+            .filter(|i| !cache.settled.contains(i))
+            .collect();
+        cache.seen_facts = projection.react_rounds().len();
+    }
+    let mut still_active: Vec<[u8; INSTANCE_ID_LEN]> = Vec::with_capacity(cache.active.len());
+    for instance_id in std::mem::take(&mut cache.active) {
+        let status = settle_react_chain(
             journal,
             store,
             projection,
@@ -2035,11 +2081,21 @@ fn settle_react_rounds<J: Journal>(
             dispatch,
             instance_id,
         );
+        if status == ReactChainStatus::Settled {
+            cache.settled.insert(instance_id);
+        } else {
+            still_active.push(instance_id);
+        }
     }
+    cache.active = still_active;
+    // The pass itself may have appended facts; refresh so the next drain does
+    // not rebuild for our own appends.
+    cache.seen_facts = projection.react_rounds().len();
 }
 
 /// Settle ONE run's chain (see [`settle_react_rounds`]). Bounded: at most one
 /// branch fact + one advance per pass per chain (the next pass continues).
+/// Returns whether the chain can ever settle again (the cache classification).
 #[allow(clippy::too_many_lines)]
 fn settle_react_chain<J: Journal>(
     journal: &J,
@@ -2048,7 +2104,7 @@ fn settle_react_chain<J: Journal>(
     folded_through: &mut u64,
     dispatch: &mut Dispatch,
     instance_id: [u8; INSTANCE_ID_LEN],
-) {
+) -> ReactChainStatus {
     let rounds: Vec<ReactRoundRecord> = projection
         .react_rounds()
         .iter()
@@ -2058,7 +2114,8 @@ fn settle_react_chain<J: Journal>(
     // The run-fixed anchor (turn 0) carries base_prompt_ref / warrant_ref /
     // model_id / the durable budget caps.
     let Some(anchor) = rounds.iter().find(|r| r.turn == 0) else {
-        return; // facts without an anchor (defensive) — nothing recoverable
+        // Facts without an anchor (defensive) — nothing recoverable, ever.
+        return ReactChainStatus::Settled;
     };
     // The work frontier: the latest fact for the highest turn (a turn's facts are
     // anchor/advance `Pending` then a settled branch; highest seq wins).
@@ -2066,36 +2123,64 @@ fn settle_react_chain<J: Journal>(
         .iter()
         .max_by(|a, b| a.turn.cmp(&b.turn).then(a.seq.cmp(&b.seq)))
     else {
-        return;
+        return ReactChainStatus::Settled;
     };
     let turn = latest.turn;
 
     match &latest.branch {
         // Terminal branches: the chain is done (Answer) or dead (DeadLettered).
-        ReactBranch::Answer | ReactBranch::DeadLettered => {}
+        // Branches are frozen and a terminal chain accepts no new facts — skip
+        // it on every later pass (the cache classification).
+        ReactBranch::Answer | ReactBranch::DeadLettered => ReactChainStatus::Settled,
         // A frozen Tool decision whose advance was interrupted (crash between the
         // Tool fact and the next Pending fact) — or just decided this pass:
         // continue the advance under the budget gate.
-        ReactBranch::Tool { .. } => {
-            advance_react_chain(
-                journal,
-                store,
-                projection,
-                folded_through,
-                dispatch,
-                anchor,
-                &rounds,
-                turn,
-            );
-        }
+        ReactBranch::Tool { .. } => advance_react_chain(
+            journal,
+            store,
+            projection,
+            folded_through,
+            dispatch,
+            anchor,
+            &rounds,
+            turn,
+        ),
         // The in-flight turn: settle it once its Mote reaches a terminal state.
         ReactBranch::Pending => {
             let turn_state = projection.state_of(&latest.turn_mote_id);
             if !is_terminal(turn_state) {
-                return; // still in flight (Pending/Scheduled)
+                return ReactChainStatus::Active; // still in flight (Pending/Scheduled)
             }
             if turn_state != MoteState::Committed {
-                // Dead-lettered / repudiated / inconsistent ⇒ the chain is dead.
+                // Distinguish the failure FLAVORS before freezing an irreversible
+                // branch (adversarial-review finding, PR-2d-1):
+                //
+                // - A pre-commit CRASH flavor (`WorkerCrashed`/`TimedOut`, the
+                //   `is_pre_commit_crash` set) is NOT chain-death: the reaped
+                //   worker's `ReportCommit` may still be in flight (the fold
+                //   deliberately lets a LATER Committed win over
+                //   `failed_pending_reattempt` for exactly this race), and a
+                //   genuinely dead worker leaves the turn STUCK-but-operator-
+                //   recoverable — the standing non-PURE crash semantics
+                //   (`redispatch_admissible`), never an auto-dead-letter. So we
+                //   LEAVE the frontier Pending: a late commit settles normally on
+                //   a later pass; a stuck turn is visible via `ListReactTurns`.
+                // - A TERMINAL failure (F4 `ReportFailure` dead-letter /
+                //   validator-rejected / …), a repudiation, or an inconsistency
+                //   IS chain-death ⇒ freeze `DeadLettered`.
+                // The fold records `failure_reason` ONLY for terminal flavors
+                // (`is_pre_commit_crash` reasons leave it `None`), so a Failed
+                // state with no recorded reason IS the crash flavor; a recorded
+                // reason is re-checked defensively against the classifier.
+                let crash_retryable = turn_state == MoteState::Failed
+                    && projection
+                        .failure_reason_of(&latest.turn_mote_id)
+                        .is_none_or(kx_journal::is_pre_commit_crash);
+                if crash_retryable {
+                    // The commit may still land; never discard it. Stays ACTIVE
+                    // so a later pass re-examines the frontier.
+                    return ReactChainStatus::Active;
+                }
                 append_react_branch(
                     journal,
                     projection,
@@ -2105,20 +2190,20 @@ fn settle_react_chain<J: Journal>(
                     turn,
                     ReactBranch::DeadLettered,
                 );
-                return;
+                return ReactChainStatus::Settled;
             }
             // Committed: decode the RAW output via the ONE authority gate.
             let Some(result_ref) = projection.result_ref_of(&latest.turn_mote_id) else {
-                return; // defensive: committed without a result_ref
+                return ReactChainStatus::Active; // defensive: committed without a result_ref
             };
             let Ok(raw) = store.get(&result_ref) else {
-                return; // store fault — retry next pass (fail-safe)
+                return ReactChainStatus::Active; // store fault — retry next pass (fail-safe)
             };
             let Ok(warrant_bytes) = store.get(&anchor.warrant_ref) else {
-                return;
+                return ReactChainStatus::Active;
             };
             let Ok(warrant) = decode_warrant(warrant_bytes.as_ref()) else {
-                return;
+                return ReactChainStatus::Active;
             };
             let max_args = kx_toolcall::max_args_bytes(&warrant);
             let branch = match kx_toolcall::parse_tool_call(raw.as_ref(), &warrant, max_args) {
@@ -2165,7 +2250,10 @@ fn settle_react_chain<J: Journal>(
                     anchor,
                     &rounds,
                     turn,
-                );
+                )
+            } else {
+                // Answer / DeadLettered just froze — the chain is done.
+                ReactChainStatus::Settled
             }
         }
     }
@@ -2227,10 +2315,10 @@ fn advance_react_chain<J: Journal>(
     anchor: &ReactRoundRecord,
     rounds: &[ReactRoundRecord],
     turn: u32,
-) {
+) -> ReactChainStatus {
     // Dedup: the successor turn already exists (live double-settle or recovery).
     if rounds.iter().any(|r| r.turn == turn + 1) {
-        return;
+        return ReactChainStatus::Active;
     }
     // FOLD-RE-DERIVED counters (BLOCKER #4): tool_calls = the Tool-branch facts
     // recorded so far (this turn's included — it folded before this call);
@@ -2244,24 +2332,28 @@ fn advance_react_chain<J: Journal>(
     .unwrap_or(u32::MAX);
     let turns_used = turn.saturating_add(1);
     if tool_calls >= anchor.max_tool_calls {
-        return; // BudgetExhausted (the harness ReactStop semantics)
+        // BudgetExhausted (the harness ReactStop semantics). The gate is a pure
+        // function of frozen facts — it fires identically on every later pass,
+        // so the chain is permanently done: skip it (the cache classification).
+        return ReactChainStatus::Settled;
     }
     if turns_used >= anchor.max_turns {
-        return; // BudgetExhausted
+        return ReactChainStatus::Settled; // BudgetExhausted
     }
     // Build the next turn from the run-fixed anchor. Any I/O fault fails safe
     // (the chain simply doesn't advance this pass; a later pass retries).
     let Ok(base_bytes) = store.get(&anchor.base_prompt_ref) else {
-        return;
+        return ReactChainStatus::Active;
     };
     let Ok(instruction) = std::str::from_utf8(base_bytes.as_ref()) else {
-        return;
+        // Non-UTF-8 anchor prompt can never become valid — permanently stuck.
+        return ReactChainStatus::Settled;
     };
     let Ok(warrant_bytes) = store.get(&anchor.warrant_ref) else {
-        return;
+        return ReactChainStatus::Active;
     };
     let Ok(warrant) = decode_warrant(warrant_bytes.as_ref()) else {
-        return;
+        return ReactChainStatus::Active;
     };
     let next_turn = turn + 1;
     let model_id = ModelId(anchor.model_id.clone());
@@ -2284,6 +2376,7 @@ fn advance_react_chain<J: Journal>(
     );
     materialize_react_turn(projection, dispatch, &next, anchor.warrant_ref, warrant);
     tracing::info!(turn = next_turn, mote = ?next.id, "react turn materialized");
+    ReactChainStatus::Active
 }
 
 /// Recover the live ReAct chains from committed facts after a restart (PR-2d-1).
@@ -2300,6 +2393,7 @@ fn recover_react_chain<J: Journal>(
     projection: &mut Projection,
     folded_through: &mut u64,
     dispatch: &mut Dispatch,
+    cache: &mut ReactSettleCache,
 ) {
     if !projection.has_react_turn() {
         return;
@@ -2360,8 +2454,16 @@ fn recover_react_chain<J: Journal>(
         materialize_react_turn(projection, dispatch, &rebuilt, latest.warrant_ref, warrant);
     }
     // Phase C — complete any interrupted settle/advance (idempotent; dedups on
-    // the durable facts; re-decodes the committed tail).
-    settle_react_rounds(journal, Some(store), projection, folded_through, dispatch);
+    // the durable facts; re-decodes the committed tail). The cache starts empty
+    // at recovery; this first pass re-derives the settled set from the facts.
+    settle_react_rounds(
+        journal,
+        Some(store),
+        projection,
+        folded_through,
+        dispatch,
+        cache,
+    );
 }
 
 /// Resolve the warrant's tool grants ONCE per fresh submit (canonical
