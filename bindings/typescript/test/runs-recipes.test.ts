@@ -2,6 +2,7 @@
 
 import { create } from "@bufbuild/protobuf";
 import { describe, expect, it } from "vitest";
+import { CaptureRecord } from "../src/capture.js";
 import {
   CaptureRecordSummarySchema,
   GetRecipeFormResponseSchema,
@@ -11,7 +12,6 @@ import {
   ReplanRoundSummarySchema,
   RunSummarySchema,
 } from "../src/gen/kortecx/v1/gateway_pb.js";
-import { CaptureRecord } from "../src/capture.js";
 import { ReactTurn } from "../src/react.js";
 import { RecipeForm, RecipeFormField, recipeParamTypeName } from "../src/recipes.js";
 import { ReplanRound } from "../src/replan.js";
