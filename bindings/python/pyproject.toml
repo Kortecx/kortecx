@@ -12,7 +12,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "kortecx"
-version = "0.1.0"
+version = "0.1.1"
 description = "Python client SDK for the kortecx durable agentic-execution runtime (gRPC over the KxGateway contract)."
 readme = "README.md"
 requires-python = ">=3.9"
