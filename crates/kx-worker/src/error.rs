@@ -59,6 +59,13 @@ pub enum WorkerError {
     /// the worker cannot resolve which effect to fire.
     #[error("cannot resolve a capability from the tool_contract of mote {0:?}")]
     CapabilityResolution(kx_mote::MoteId),
+
+    /// PR-2d-2 (react-tools-live): a WARRANT-GRANTED `StageThenCommit` tool Mote
+    /// (a ReAct observation) was leased WITHOUT its coordinator-validated
+    /// `tool_args`. The worker NEVER fires a granted tool with an empty payload
+    /// — a dropped/absent args field must fail closed, not fire a wrong effect.
+    #[error("mote {0:?} grants a tool but carried no coordinator-validated tool_args")]
+    MissingToolArgs(kx_mote::MoteId),
 }
 
 impl From<kx_capability::BrokerError> for WorkerError {
@@ -123,10 +130,13 @@ pub(crate) fn classify_worker_failure(err: &WorkerError) -> FailureClass {
         | WorkerError::Transport(_)
         | WorkerError::Rpc(_) => TransientInfra,
         // Everything else is deterministic — a malformed lease item, an unresolvable
-        // capability, a rejected commit, a not-committed peer read: dead-letter now.
+        // capability, missing coordinator-validated tool args (PR-2d-2: never fire a
+        // granted tool empty), a rejected commit, a not-committed peer read:
+        // dead-letter now.
         WorkerError::Convert(_)
         | WorkerError::MissingField(_)
         | WorkerError::CapabilityResolution(_)
+        | WorkerError::MissingToolArgs(_)
         | WorkerError::CommitRejected(_)
         | WorkerError::NotCommitted(_) => TerminalLogic,
     }

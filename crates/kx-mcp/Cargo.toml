@@ -48,5 +48,12 @@ proptest   = { workspace = true }
 name = "kx-mcp-mock-stdio"
 path = "tests/support/mock_stdio_server.rs"
 
+# PR-2d-2 (react-tools-live): the BUNDLED deterministic stdio tool the live
+# `kx serve` ReAct loop fires (tool id `mcp-echo@1`, no egress, no chaos modes —
+# the production distillation of the mock's echo arm).
+[[bin]]
+name = "kx-mcp-echo"
+path = "src/bin/kx_mcp_echo.rs"
+
 [lints]
 workspace = true

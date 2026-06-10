@@ -120,6 +120,7 @@ fn obligation_1_lease_work_response_round_trips() {
                 parent_mote_id: vec![0x11; 32],
                 result_ref: vec![0x22; 32],
             }],
+            tool_args: None,
         }],
         instance_id: vec![0xEF; 16],
     };
@@ -273,6 +274,7 @@ fn obligation_3_work_item_preserves_identity() {
             mote: Some(mote.clone().into()),
             warrant: Some(warrant.clone().into()),
             parent_results: vec![],
+            tool_args: None,
         }],
         instance_id: vec![0x01; 16],
     };

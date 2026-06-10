@@ -8,6 +8,54 @@ development; interfaces may change before 1.0 — pin a commit if you build on i
 
 ### Added
 
+- **Live ReAct TOOL FIRING in `kx serve` (PR-2d-2, react-tools-live)**
+  (`crates/kx-mcp`, `crates/kx-coordinator`, `crates/kx-worker`,
+  `crates/kx-gateway`, `crates/kx-gateway-core`, `crates/kx-projection`,
+  `crates/kx-proto`, `crates/kx-profile`). The PR-2d-1 answer-only fence is
+  replaced by the live tool round: a committed turn that proposes a
+  warrant-granted tool now has its decision **validated at the freeze** (the
+  sole-writer settle resolves the tool against the registry and checks the args
+  against its typed `inputSchema`, fail-closed — a frozen `Tool` fact is always
+  fireable), then the coordinator **materializes the OBSERVATION Mote**
+  (byte-identical to the harness `react_tool_mote_salted`, cross-impl golden
+  pinned on both sides of the dep wall) whose commit gates the next turn — the
+  harness fire-then-bound order, crash-flavor guard included (a reaped worker's
+  late observation commit still advances the chain). Args travel **out-of-band**
+  of the Mote identity: an additive `WorkItem.tool_args` carries the
+  coordinator-validated `(args_bytes, net_scope)`, **re-derived at every
+  (re-)lease as a pure function of committed facts** (nothing staged, crash-safe
+  by construction); the worker consumes it into the `EffectRequest` and
+  **refuses to fire a granted tool without args** (terminal, F4). The first
+  `kx-gateway→kx-mcp` edge lands as an OPTIONAL dep behind `inference` (the
+  dep wall moves it from FORBIDDEN to the hnsw-style optional-edge proof), with
+  a new bundled deterministic stdio tool (`[[bin]] kx-mcp-echo`, `mcp-echo@1`,
+  no egress) registered on the serve broker, and **`kx/recipes/react`**
+  (free-params `instruction`/`max_turns`/`max_tool_calls`, validated
+  `0 < max_tool_calls < max_turns ≤ 8`; the durable anchor records the bound
+  caps) provisioned under the SERVER-constructed tool-granting react warrant —
+  the first non-empty `tool_grants` in serve. Admission hardening: `SubmitRun`
+  now **refuses any client warrant carrying `tool_grants`** (tool authority is
+  server-issued only — the red-team BLOCKER #5 / Morphic finding), refuses
+  `react_seed` on a serve without the inference executor (the
+  `critics_supported` twin), and `Invoke` refuses a recipe granting a tool the
+  broker never registered. The F-7 react trajectory now interleaves
+  observations in transcript order (`[turn0, obs0, turn1, …]`). `kx-projection`
+  gains a DERIVED per-instance `react_rounds` index (+ a react-turn-Mote set)
+  — settle/recover/trajectory reads are now per-chain, closing the PR-2d-1
+  O(runs²) finding at the source; the index is never serialized (checkpoint
+  stays **v4**; `encode_state` and the canonical demo digest `7d22d4bd…` are
+  byte-invariant; **no journal schema bump** — observations commit as ordinary
+  entries). `kx-profile` gains M7a (react answer-settle) + M7b (full tool round
+  firing the real bundled tool) spikes. The worker gains the **react-turn
+  routing arm** the substrate was missing in a real serve: a coordinator-
+  materialized TURN (ROND, the identity-bearing marker, no `tool_contract`)
+  dispatches directly through the hosted executor (whose react arm decodes +
+  fences pre-commit) — previously every non-PURE Mote routed to the capability
+  broker, so a live react turn could never reach the model (caught by the new
+  `react_serve` e2e, the first to drive the chain through the real serve stack:
+  Invoke → real Qwen3 inference per turn → settle → `Answer` via
+  `ListReactTurns`).
+
 - **Live ReAct substrate in `kx serve` (PR-2d-1, answer-only)** (`crates/kx-toolcall`
   NEW, `crates/kx-journal`, `crates/kx-projection`, `crates/kx-coordinator`,
   `crates/kx-gateway`, `crates/kx-gateway-core`, `crates/kx-model-harness`). The

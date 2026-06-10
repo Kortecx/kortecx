@@ -89,6 +89,17 @@ kx-planner         = { workspace = true, optional = true }
 # `inference` because that arm lives in the inference-gated executor (a critic DAG
 # is refused on a non-inference serve, H5). Pure-Rust — the dep-wall stays green.
 kx-critic          = { workspace = true, optional = true }
+# PR-2d-2 (react-tools-live): the FIRST gateway→MCP edge — the hand-rolled sync
+# MCP adapter whose `McpCapability` + `StdioTransport` fire the bundled
+# deterministic stdio tool (`mcp-echo@1`) for the live ReAct loop. Pure-Rust /
+# FFI-free (ureq/serde_json/url only — the dep-wall subtree check pins it);
+# OPTIONAL + behind `inference` (the react decode arm lives in the
+# inference-gated executor), so the DEFAULT build is byte-unchanged.
+kx-mcp             = { workspace = true, optional = true }
+# PR-2d-2: the typed ToolDef/inputSchema vocabulary for the bundled tool's
+# registry entry (shared with the coordinator so the settle's validate-at-freeze
+# and the broker dispatch see the SAME schema). FFI-free; behind `inference`.
+kx-tool-registry   = { workspace = true, optional = true }
 # T3.7: the FFI-free durable vector substrate (the Datasets data-plane). kx-dataset
 # (the RetrievalIndex trait + Hit) + kx-dataset-hnsw (the in-process HNSW ANN index).
 # Both pure-Rust (hnsw_rs / thiserror only) — NO llama.cpp, so the dep-wall holds.
@@ -170,6 +181,8 @@ inference = [
     "dep:kx-model-validator",
     "dep:kx-planner",
     "dep:kx-critic",
+    "dep:kx-mcp",
+    "dep:kx-tool-registry",
 ]
 # T3.7: the Datasets data-plane (RAG) read/write surface. The client-provided-vector
 # path is FFI-FREE + deterministic (CI-exercisable on Linux with no model). Pulls only

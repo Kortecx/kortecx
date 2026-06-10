@@ -254,6 +254,13 @@ pub struct BoundRecipe {
     pub motes: Vec<(kx_mote::Mote, kx_warrant::WarrantSpec)>,
     /// The terminal (sink) Mote whose committed result is the invocation output.
     pub terminal_mote_id: kx_mote::MoteId,
+    /// PR-2d-2 (react-tools-live): `true` iff this recipe seeds a live ReAct
+    /// chain (`kx/recipes/react`) — the Invoke arm then submits the bound Mote
+    /// with `react_seed = true`, triggering the coordinator's seed-swap (the
+    /// run-salted turn 0 + the durable anchor). Set ONLY by the host binder for
+    /// the react handle (a single-step recipe); every other recipe is `false`
+    /// and submits exactly as before.
+    pub react_seed: bool,
 }
 
 /// A bind failure the host's [`RecipeBinder`] surfaces. The gateway collapses
@@ -386,6 +393,21 @@ pub struct GatewayService {
     /// [`GatewayService::with_critics_supported`] only when it wires the critic-capable
     /// executor. Defaults to `false` (conservative).
     critics_supported: bool,
+    /// Whether this serve build can DRIVE a live ReAct chain (PR-2d-2 — the
+    /// `critics_supported` twin, the B3/H5 mirror). The react decode/fence arm
+    /// lives in the inference-build executor; on a serve that lacks it, a
+    /// `react_seed` submit would echo-commit fake turns and the chain would
+    /// settle a meaningless Answer. `false` ⇒ `SubmitRun` REFUSES react seeds
+    /// fail-closed. Set via [`GatewayService::with_react_supported`]; defaults
+    /// to `false` (conservative).
+    react_supported: bool,
+    /// The `(tool_id, tool_version)` pairs whose capabilities the host has
+    /// ACTUALLY registered on the serve broker (PR-2d-2). The Invoke admission
+    /// refuses a bound warrant granting a tool outside this set — a grant the
+    /// broker cannot honour would dead-letter every observation (belt-and-braces
+    /// over the provisioning invariant; the react recipe is only seeded when its
+    /// tool registered). Empty by default (no tools — every grant refused).
+    registered_tools: std::collections::BTreeSet<(String, String)>,
 }
 
 impl GatewayService {
@@ -409,6 +431,8 @@ impl GatewayService {
             datasets: None,
             tailer: Arc::new(SnapshotTailer),
             critics_supported: false,
+            react_supported: false,
+            registered_tools: std::collections::BTreeSet::new(),
         }
     }
 
@@ -420,6 +444,30 @@ impl GatewayService {
     #[must_use]
     pub fn with_critics_supported(mut self, supported: bool) -> Self {
         self.critics_supported = supported;
+        self
+    }
+
+    /// Declare that this serve can DRIVE live ReAct chains (PR-2d-2) — the host
+    /// has wired the inference-build executor whose react arm decodes/fences a
+    /// turn's output. Until set, `SubmitRun` refuses `react_seed` submissions
+    /// fail-closed (a chain whose turns echo-commit settles a meaningless
+    /// Answer — the critic-admission B3/H5 mirror).
+    #[must_use]
+    pub fn with_react_supported(mut self, supported: bool) -> Self {
+        self.react_supported = supported;
+        self
+    }
+
+    /// Declare the `(tool_id, tool_version)` capabilities the host ACTUALLY
+    /// registered on the serve broker (PR-2d-2). The Invoke admission refuses a
+    /// bound warrant granting anything outside this set — a grant the broker
+    /// cannot honour would dead-letter every observation it fires.
+    #[must_use]
+    pub fn with_registered_tools(
+        mut self,
+        tools: std::collections::BTreeSet<(String, String)>,
+    ) -> Self {
+        self.registered_tools = tools;
         self
     }
 
@@ -529,6 +577,33 @@ impl KxGateway for GatewayService {
             collected.push((mote, warrant, spec.accept_at_least_once, spec.react_seed));
         }
 
+        // PR-2d-2 — the SubmitRun TOOL-AUTHORITY gate (red-team BLOCKER #5 + the
+        // standing Morphic finding): SubmitRun accepts the client warrant VERBATIM
+        // (unlike Invoke, whose warrants are server-derived via bind → intersect),
+        // so a client-supplied `tool_grants` would mint tool authority the server
+        // never issued. Refused fail-closed BEFORE `register_run` (no orphan run).
+        // Tool authority enters serve ONLY via the server-constructed react
+        // warrant on the Invoke path.
+        if collected
+            .iter()
+            .any(|(_, w, _, _)| !w.tool_grants.is_empty())
+        {
+            return Err(Status::failed_precondition(
+                "SubmitRun refuses client warrants with tool_grants: tool authority \
+                 is server-issued only (use Invoke with a tool-granting recipe)",
+            ));
+        }
+
+        // PR-2d-2 — react ADMISSION (the critics_supported twin, B3/H5): a react
+        // seed on a serve without the inference executor's react arm would
+        // echo-commit fake turns and settle a meaningless Answer. Refuse loudly.
+        if collected.iter().any(|(_, _, _, react)| *react) && !self.react_supported {
+            return Err(Status::failed_precondition(
+                "this serve cannot drive a live ReAct chain (no inference executor \
+                 wired); a react_seed submission is refused",
+            ));
+        }
+
         // PR-2c-3 critic-live — cross-Mote critic ADMISSION (only when the run carries a
         // critic, so a critic-free workflow is byte-for-byte unaffected).
         if collected
@@ -614,6 +689,34 @@ impl KxGateway for GatewayService {
                 BinderError::Internal(detail) => Status::internal(detail),
             })?;
 
+        // PR-2d-2 — Invoke tool-grant admission: every bound warrant's grants must
+        // name capabilities the host ACTUALLY registered on the serve broker (a
+        // grant the broker cannot honour dead-letters every observation it fires).
+        // Server-derived warrants make this a provisioning invariant; the check is
+        // the fail-closed backstop against drift.
+        for (_, warrant) in &bound.motes {
+            if let Some(grant) = warrant.tool_grants.iter().find(|g| {
+                !self
+                    .registered_tools
+                    .contains(&(g.tool_id.0.clone(), g.tool_version.0.clone()))
+            }) {
+                return Err(Status::failed_precondition(format!(
+                    "recipe grants tool {}@{} but this serve registered no such \
+                     capability",
+                    grant.tool_id.0, grant.tool_version.0
+                )));
+            }
+        }
+        // PR-2d-2 — the react recipe needs the inference executor's react arm
+        // (the SubmitRun react admission, mirrored; unreachable when provisioning
+        // seeds the recipe only on a react-capable serve — the fail-closed backstop).
+        if bound.react_seed && !self.react_supported {
+            return Err(Status::failed_precondition(
+                "this serve cannot drive a live ReAct chain (no inference executor \
+                 wired); the react recipe is refused",
+            ));
+        }
+
         // The SAME propose-proxy as SubmitRun: register first (returns only after
         // the journaled instance_id), then submit each bound Mote. No new write
         // path; the coordinator stays the sole journal writer.
@@ -622,9 +725,10 @@ impl KxGateway for GatewayService {
             .register_run(bound.recipe_fingerprint)
             .await
             .map_err(submit_status)?;
+        let react_seed = bound.react_seed;
         for (mote, warrant) in bound.motes {
             self.submitter
-                .submit_mote(mote, warrant, false, false)
+                .submit_mote(mote, warrant, false, react_seed)
                 .await
                 .map_err(submit_status)?;
         }

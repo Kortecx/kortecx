@@ -24,7 +24,9 @@ use kx_gateway_core::{
     RecipeParamKind, RegisteredSignature, SignatureCatalog, SignatureSummaryEntry,
 };
 use kx_invoke::{bind_snapshot, InvokeError, UseWarrantResolver};
-use kx_mote::{ConfigKey, ConfigVal, EdgeMeta, LogicRef, ModelId, ToolName, PROMPT_KEY};
+use kx_mote::{
+    ConfigKey, ConfigVal, EdgeMeta, LogicRef, ModelId, ToolName, ToolVersion, PROMPT_KEY,
+};
 use kx_warrant::{
     ExecutorClass, FsMode, FsScope, Host, ModelRoute, MoteClass, NetScope, ResourceCeiling, Role,
     WarrantSpec,
@@ -154,6 +156,29 @@ const MODEL_PROMPT_SCHEMA_REF: [u8; 32] = [0x3d; 32];
 /// so the two recipe bodies get distinct manifests).
 const MODEL_LOGIC_REF: [u8; 32] = [0x3c; 32];
 
+/// The wire handle of the PR-2d-2 live-ReAct recipe: a SEED Mote carrying an
+/// `instruction` + the per-run budget caps; the Invoke arm submits it with
+/// `react_seed = true`, so the coordinator swaps in the run-salted turn 0 and
+/// drives the durable Reason→Act→Observe chain — firing the bundled
+/// deterministic stdio tool (`mcp-echo@1`) under the SERVER-constructed
+/// tool-granting warrant (the first non-empty `tool_grants` in serve; tool
+/// authority NEVER enters via a client warrant — red-team BLOCKER #5).
+/// Provisioned only when a fit serve model resolved AND the bundled tool's
+/// capability registered on the broker.
+pub const REACT_RECIPE_HANDLE: &str = "kx/recipes/react";
+
+/// A placeholder `logic_ref` for the react seed step (a distinct sentinel so the
+/// recipe body gets a distinct manifest; the seed is validated then SWAPPED, so
+/// the ref never reaches an admitted identity).
+const REACT_LOGIC_REF: [u8; 32] = [0x4e; 32];
+
+/// Schema-refs of the react recipe's typed free-params.
+const REACT_INSTRUCTION_SCHEMA_REF: [u8; 32] = [0x4f; 32];
+/// See [`REACT_INSTRUCTION_SCHEMA_REF`].
+const REACT_MAX_TURNS_SCHEMA_REF: [u8; 32] = [0x50; 32];
+/// See [`REACT_INSTRUCTION_SCHEMA_REF`].
+const REACT_MAX_TOOL_CALLS_SCHEMA_REF: [u8; 32] = [0x51; 32];
+
 /// A server-provisioned recipe library backing the `Invoke` path, over the
 /// durable G1a SQLite ledgers (so a registered recipe survives restart). R2b
 /// seeds ONE PURE demo recipe whose step warrant uses the embedded worker's
@@ -196,7 +221,7 @@ impl DemoLibrary {
         exec_class: ExecutorClass,
         parties: &[String],
     ) -> Result<Self, GatewayError> {
-        Self::seed(dir, exec_class, parties, None, None)
+        Self::seed(dir, exec_class, parties, None, None, None)
     }
 
     /// Like [`DemoLibrary::open`], plus (when `real_body_ref` is `Some`) seeds the
@@ -211,7 +236,7 @@ impl DemoLibrary {
         parties: &[String],
         real_body_ref: Option<ContentRef>,
     ) -> Result<Self, GatewayError> {
-        Self::seed(dir, exec_class, parties, real_body_ref, None)
+        Self::seed(dir, exec_class, parties, real_body_ref, None, None)
     }
 
     /// Like [`DemoLibrary::open_with_real_exec`], plus (when `serve_model` is
@@ -221,6 +246,9 @@ impl DemoLibrary {
     ///
     /// # Errors
     /// [`GatewayError::Catalog`] on a ledger open / seed failure.
+    // Signature stability: this pre-PR-2d-2 public opener keeps its owned
+    // `Option<ModelId>` even though the seeding now borrows.
+    #[allow(clippy::needless_pass_by_value)]
     pub fn open_full(
         dir: &Path,
         exec_class: ExecutorClass,
@@ -228,19 +256,57 @@ impl DemoLibrary {
         real_body_ref: Option<ContentRef>,
         serve_model: Option<ModelId>,
     ) -> Result<Self, GatewayError> {
-        Self::seed(dir, exec_class, parties, real_body_ref, serve_model)
+        Self::seed(
+            dir,
+            exec_class,
+            parties,
+            real_body_ref,
+            serve_model.as_ref(),
+            None,
+        )
+    }
+
+    /// Like [`DemoLibrary::open_full`], plus (when `react_tool` is `Some` AND a
+    /// serve model resolved) the PR-2d-2 live-ReAct recipe
+    /// [`REACT_RECIPE_HANDLE`], whose SERVER-constructed step warrant grants
+    /// exactly `react_tool` (the bundled `mcp-echo@1` capability the host
+    /// registered on the broker). `None` ⇒ byte-identical to
+    /// [`DemoLibrary::open_full`].
+    ///
+    /// # Errors
+    /// [`GatewayError::Catalog`] on a ledger open / seed failure.
+    pub fn open_complete(
+        dir: &Path,
+        exec_class: ExecutorClass,
+        parties: &[String],
+        real_body_ref: Option<ContentRef>,
+        serve_model: Option<&ModelId>,
+        react_tool: Option<&(ToolName, ToolVersion)>,
+    ) -> Result<Self, GatewayError> {
+        Self::seed(
+            dir,
+            exec_class,
+            parties,
+            real_body_ref,
+            serve_model,
+            react_tool,
+        )
     }
 
     /// Open the durable ledgers under `dir` and idempotently seed the demo `echo`
     /// recipe (always) plus the real-exec `exec-demo` recipe (when `real_body_ref`
     /// is `Some`). Re-opening on restart is a no-op (content-addressed bodies +
     /// guarded version publish + idempotent grants).
+    // A flat, sequential one-block-per-recipe seeding fn — the length is the
+    // recipe count, not cognitive complexity (the `start_impl` precedent).
+    #[allow(clippy::too_many_lines)]
     fn seed(
         dir: &Path,
         exec_class: ExecutorClass,
         parties: &[String],
         real_body_ref: Option<ContentRef>,
-        serve_model: Option<ModelId>,
+        serve_model: Option<&ModelId>,
+        react_tool: Option<&(ToolName, ToolVersion)>,
     ) -> Result<Self, GatewayError> {
         let cat = |e: String| GatewayError::Catalog(e);
         let versions =
@@ -311,7 +377,7 @@ impl DemoLibrary {
         // to the served model, with a `prompt` free-param. Seeded only when a fit
         // serve model is configured (`kx serve --features inference`).
         if let Some(model_id) = serve_model {
-            let model_w = model_warrant(exec_class, &model_id);
+            let model_w = model_warrant(exec_class, model_id);
             let model_h = model_handle()?;
             seed_recipe(
                 &versions,
@@ -332,6 +398,42 @@ impl DemoLibrary {
                 RecipeMeta {
                     owner_root: model_w,
                     free_params: prompt_contract(),
+                },
+            ));
+        }
+
+        // (react) the PR-2d-2 live-ReAct recipe — a SEED step with `instruction`
+        // + budget-cap free-params, under the SERVER-constructed tool-granting
+        // warrant (the only source of tool authority in serve). Seeded only when
+        // BOTH a fit serve model resolved AND the bundled tool's capability is
+        // registered on the broker (a grant the broker cannot honour would
+        // dead-letter every observation).
+        if let (Some(model_id), Some(tool)) = (serve_model, react_tool) {
+            let react_w = react_warrant(exec_class, model_id, tool);
+            let react_h = react_handle()?;
+            seed_recipe(
+                &versions,
+                &bodies,
+                &grants,
+                &owner,
+                parties,
+                &react_h,
+                recipe_body(
+                    LogicRef::from_bytes(REACT_LOGIC_REF),
+                    &react_w,
+                    &[
+                        kx_mote::REACT_INSTRUCTION_KEY,
+                        kx_mote::REACT_MAX_TURNS_KEY,
+                        kx_mote::REACT_MAX_TOOL_CALLS_KEY,
+                    ],
+                ),
+                &react_w,
+            )?;
+            recipes.push((
+                react_h,
+                RecipeMeta {
+                    owner_root: react_w,
+                    free_params: react_contract(),
                 },
             ));
         }
@@ -615,6 +717,10 @@ impl RecipeBinder for HostRecipeBinder {
             recipe_fingerprint: bound.recipe_fingerprint,
             motes: bound.motes,
             terminal_mote_id: bound.terminal_mote_id,
+            // PR-2d-2: the react recipe seeds a live ReAct chain — the Invoke
+            // arm submits its (single) bound Mote with `react_seed = true`,
+            // triggering the coordinator's run-salted seed-swap + durable anchor.
+            react_seed: parse_handle(REACT_RECIPE_HANDLE).is_some_and(|h| h == asset_path),
         })
     }
 }
@@ -796,15 +902,53 @@ fn model_handle() -> Result<AssetPath, GatewayError> {
         .ok_or_else(|| GatewayError::Catalog("invalid model recipe handle".into()))
 }
 
-/// Resolves the demo `topic` and the model `prompt` schema-refs to `Str` schemas.
+/// The react recipe's free-param contract (PR-2d-2): `instruction` (`Str`) plus
+/// the per-run budget caps `max_turns` / `max_tool_calls` (`Int`, 1..=8). The
+/// slot names ARE the seed's config keys (the binder writes a bound arg into
+/// `config_subset[<slot name>]`), which the coordinator's seed-swap reads —
+/// and re-validates `0 < max_tool_calls < max_turns ≤ 8` fail-closed.
+fn react_contract() -> FreeParamContract {
+    FreeParamContract::new()
+        .with_slot(
+            kx_mote::REACT_INSTRUCTION_KEY,
+            FreeParamSlot::variable(Some(REACT_INSTRUCTION_SCHEMA_REF)),
+        )
+        .with_slot(
+            kx_mote::REACT_MAX_TURNS_KEY,
+            FreeParamSlot::variable(Some(REACT_MAX_TURNS_SCHEMA_REF)),
+        )
+        .with_slot(
+            kx_mote::REACT_MAX_TOOL_CALLS_KEY,
+            FreeParamSlot::variable(Some(REACT_MAX_TOOL_CALLS_SCHEMA_REF)),
+        )
+}
+
+fn react_handle() -> Result<AssetPath, GatewayError> {
+    parse_handle(REACT_RECIPE_HANDLE)
+        .ok_or_else(|| GatewayError::Catalog("invalid react recipe handle".into()))
+}
+
+/// Resolves the demo `topic`, the model `prompt`, and the react free-param
+/// schema-refs to their typed schemas.
 struct DemoSchemaResolver;
 
 impl SchemaResolver for DemoSchemaResolver {
     fn resolve_schema(&self, schema_ref: &[u8; 32]) -> Option<Vec<u8>> {
         if *schema_ref == TOPIC_SCHEMA_REF {
             Some(encode_param_schema(&ParamType::Str { max_len: 4096 }))
-        } else if *schema_ref == MODEL_PROMPT_SCHEMA_REF {
+        } else if *schema_ref == MODEL_PROMPT_SCHEMA_REF
+            || *schema_ref == REACT_INSTRUCTION_SCHEMA_REF
+        {
             Some(encode_param_schema(&ParamType::Str { max_len: 8192 }))
+        } else if *schema_ref == REACT_MAX_TURNS_SCHEMA_REF
+            || *schema_ref == REACT_MAX_TOOL_CALLS_SCHEMA_REF
+        {
+            // The hard ceiling 8 matches the coordinator's seed-swap validation
+            // (`react_seed_params`) — the form refuses what the swap would refuse.
+            Some(encode_param_schema(&ParamType::Int {
+                min: Some(1),
+                max: Some(8),
+            }))
         } else {
             None
         }
@@ -835,6 +979,54 @@ fn model_warrant(exec_class: ExecutorClass, model_id: &ModelId) -> WarrantSpec {
             mem_bytes: 0,
             // The dispatch uses this as the inference wall-clock; CPU decode of a
             // few-B model can take many seconds, so keep it generous.
+            wall_clock_ms: 120_000,
+            fd_count: 0,
+            disk_bytes: 0,
+        },
+        environment_ref: None,
+        executor_class: exec_class,
+        ..Default::default()
+    }
+}
+
+/// The PR-2d-2 react-chain warrant — the FIRST non-empty `tool_grants` in serve,
+/// SERVER-constructed (never accepted from a client — `SubmitRun` refuses any
+/// client warrant carrying grants, red-team BLOCKER #5). Grants EXACTLY the
+/// bundled deterministic stdio tool (`mcp-echo@1` — `net_scope: None`, so the
+/// SSRF/egress surface is N/A); ReadOnlyNondet classes (a turn is a sampling
+/// model Mote; the observation's WM dispatch authority is the grant itself, and
+/// the broker's 6-gate `precheck` re-verifies every axis at fire time, SN-8).
+/// `executor_class` MUST equal the embedded worker's so the chain leases; the
+/// model route's `max_output_tokens` is both the turn decode budget and the
+/// `max_args_bytes` cap (×4) the tool-call gate enforces.
+fn react_warrant(
+    exec_class: ExecutorClass,
+    model_id: &ModelId,
+    tool: &(ToolName, ToolVersion),
+) -> WarrantSpec {
+    let mut tool_grants = BTreeSet::new();
+    tool_grants.insert(kx_warrant::ToolGrant {
+        tool_id: tool.0.clone(),
+        tool_version: tool.1.clone(),
+    });
+    WarrantSpec {
+        mote_class: MoteClass::ReadOnlyNondet,
+        nd_class: MoteClass::ReadOnlyNondet,
+        fs_scope: FsScope::empty(),
+        net_scope: NetScope::None,
+        syscall_profile_ref: ContentRef::from_bytes([0u8; 32]),
+        tool_grants,
+        model_route: ModelRoute {
+            model_id: model_id.clone(),
+            max_input_tokens: 4_096,
+            max_output_tokens: 512,
+            max_calls: 8,
+        },
+        resource_ceiling: ResourceCeiling {
+            cpu_milli: 0,
+            mem_bytes: 0,
+            // The dispatch uses this as the inference wall-clock; CPU decode of a
+            // few-B model can take many seconds per TURN, so keep it generous.
             wall_clock_ms: 120_000,
             fd_count: 0,
             disk_bytes: 0,

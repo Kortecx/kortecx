@@ -12,7 +12,9 @@
 
 use std::path::PathBuf;
 
-use kx_profile::{capture_git_sha, percentile, spikes, Environment, Metric, ProfileError, Report};
+use kx_profile::{
+    capture_git_sha, percentile, react_spikes, spikes, Environment, Metric, ProfileError, Report,
+};
 
 #[tokio::main]
 async fn main() {
@@ -49,7 +51,7 @@ async fn run() -> Result<(), ProfileError> {
     );
 
     let samples = spikes::measure(args.iterations).await?;
-    let metrics = vec![
+    let mut metrics = vec![
         Metric::spike(
             "warmup_to_serving_p50",
             percentile(&samples.warmup_ms, 50),
@@ -66,6 +68,33 @@ async fn run() -> Result<(), ProfileError> {
             "ms",
         ),
     ];
+
+    // PR-2d-2 — M7a/M7b: the live react chain's settle machinery, model-free at
+    // the coordinator layer (M7b fires the REAL bundled stdio tool; skipped —
+    // empty samples — when the bin is absent).
+    let react = react_spikes::measure(args.iterations).await?;
+    metrics.push(Metric::spike(
+        "react_answer_settle_p50",
+        percentile(&react.answer_ms, 50),
+        "ms",
+    ));
+    metrics.push(Metric::spike(
+        "react_answer_settle_p99",
+        percentile(&react.answer_ms, 99),
+        "ms",
+    ));
+    if !react.tool_round_ms.is_empty() {
+        metrics.push(Metric::spike(
+            "react_tool_round_p50",
+            percentile(&react.tool_round_ms, 50),
+            "ms",
+        ));
+        metrics.push(Metric::spike(
+            "react_tool_round_p99",
+            percentile(&react.tool_round_ms, 99),
+            "ms",
+        ));
+    }
 
     let report = Report::new(git_sha.clone(), env, metrics);
     let json = report

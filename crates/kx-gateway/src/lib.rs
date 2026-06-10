@@ -65,6 +65,11 @@ mod config;
 mod datasets;
 mod error;
 mod live_tail;
+// PR-2d-2: the bundled deterministic stdio MCP tool's wiring (locate the bin,
+// register the capability + the typed ToolDef). Behind `inference` (the react
+// decode arm lives in the inference-gated executor; the MCP adapter is FFI-free).
+#[cfg(feature = "inference")]
+mod mcp_tool;
 // AL1: the in-process model executor for `kx serve` (live LLM dispatch). Pulls
 // the inference FFI, so it's behind the off-by-default `inference` feature.
 #[cfg(feature = "inference")]
@@ -90,7 +95,7 @@ pub use error::GatewayError;
 pub use live_tail::LiveTailer;
 pub use provision::{
     DemoLibrary, HostRecipeBinder, HostRecipeCatalog, HostSignatureCatalog, DEMO_RECIPE_HANDLE,
-    EXEC_RECIPE_HANDLE, FANOUT_RECIPE_HANDLE, MODEL_RECIPE_HANDLE,
+    EXEC_RECIPE_HANDLE, FANOUT_RECIPE_HANDLE, MODEL_RECIPE_HANDLE, REACT_RECIPE_HANDLE,
 };
 pub use server::{serve, start, RunningGateway};
 pub use teams::{seed_demo_team, HostGrantView, HostMembershipView, DEMO_TEAM_HANDLE};

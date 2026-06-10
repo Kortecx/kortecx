@@ -36,6 +36,20 @@ tempfile     = { workspace = true }
 thiserror    = { workspace = true }
 tracing            = { workspace = true }
 tracing-subscriber = { workspace = true }
+# PR-2d-2 (M7a/M7b react spikes): drive the LIVE react chain at the COORDINATOR
+# layer, model-free (the react_live.rs pattern — turn outputs staged directly),
+# with the M7b observation FIRED through the REAL LocalCapabilityBroker +
+# StdioTransport over the bundled kx-mcp-echo bin. All in-workspace, FFI-free
+# edges (the adapter is sync ureq/serde_json only).
+kx-coordinator   = { workspace = true }
+kx-journal       = { workspace = true }
+kx-content       = { workspace = true }
+kx-mote          = { workspace = true }
+kx-warrant       = { workspace = true }
+kx-capability    = { workspace = true }
+kx-mcp           = { workspace = true }
+kx-tool-registry = { workspace = true }
+smallvec         = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["time", "macros", "rt-multi-thread"] }

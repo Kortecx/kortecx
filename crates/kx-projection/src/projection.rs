@@ -668,6 +668,9 @@ impl Projection {
                         max_tool_calls: *max_tool_calls,
                         seq: *seq,
                     });
+                // PR-2d-2: maintain the DERIVED per-instance index + turn-Mote
+                // set (never serialized — checkpoint/digest byte-unchanged).
+                self.state.index_last_react_round();
                 self.state.last_seq = self.state.last_seq.max(*seq);
             }
             _ => unreachable!("fold_run_metadata called with a non-run-metadata kind"),
@@ -1085,6 +1088,37 @@ impl Projection {
         &self.state.react_rounds
     }
 
+    /// The `ReactRound` records of ONE chain (`instance_id`), in journal (seq)
+    /// order — served off the DERIVED per-instance index (PR-2d-2), so a
+    /// per-chain read costs O(that chain's facts), never a scan over every
+    /// chain in serve's shared journal (the PR-2d-1 O(runs²) finding).
+    pub fn react_rounds_of(
+        &self,
+        instance_id: &[u8; kx_journal::INSTANCE_ID_LEN],
+    ) -> impl Iterator<Item = &crate::state::ReactRoundRecord> + '_ {
+        self.state
+            .react_index
+            .get(instance_id)
+            .into_iter()
+            .flatten()
+            .map(|&idx| &self.state.react_rounds[idx])
+    }
+
+    /// The distinct `instance_id`s with folded react facts, ascending — each an
+    /// independent chain in serve's SHARED journal. Served off the index keys
+    /// (PR-2d-2): O(chains), not O(total facts).
+    pub fn react_instances(&self) -> impl Iterator<Item = &[u8; kx_journal::INSTANCE_ID_LEN]> + '_ {
+        self.state.react_index.keys()
+    }
+
+    /// `true` iff `id` is a react TURN's `MoteId` (some folded `ReactRound`
+    /// names it as its `turn_mote_id`). O(log n) off the derived set (PR-2d-2)
+    /// — the coordinator's lease-time observation check.
+    #[must_use]
+    pub fn is_react_turn_mote(&self, id: &kx_mote::MoteId) -> bool {
+        self.state.react_turn_motes.contains(id)
+    }
+
     /// The highest-`turn` `ReactRound` record for `instance_id` folded so far, or
     /// `None` if that run has anchored no ReAct chain. Scoped by `instance_id`
     /// (the run-salt) because serve's journal is SHARED across runs. On a turn
@@ -1096,10 +1130,7 @@ impl Projection {
         &self,
         instance_id: &[u8; kx_journal::INSTANCE_ID_LEN],
     ) -> Option<&crate::state::ReactRoundRecord> {
-        self.state
-            .react_rounds
-            .iter()
-            .filter(|r| &r.instance_id == instance_id)
+        self.react_rounds_of(instance_id)
             .max_by(|a, b| a.turn.cmp(&b.turn).then(a.seq.cmp(&b.seq)))
     }
 
