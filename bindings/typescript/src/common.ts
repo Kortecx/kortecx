@@ -48,6 +48,9 @@ export type { ReactTurnPage } from "./react.js";
 export { ReplanRound } from "./replan.js";
 export type { ReplanRoundPage } from "./replan.js";
 
+export { CaptureRecord } from "./capture.js";
+export type { CaptureRecordPage } from "./capture.js";
+
 export { RecipeForm, RecipeFormField, recipeParamTypeName } from "./recipes.js";
 export type { RecipeParamTypeName } from "./recipes.js";
 

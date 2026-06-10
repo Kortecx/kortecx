@@ -1523,6 +1523,7 @@ dependencies = [
  "bincode 2.0.1",
  "futures-util",
  "kx-capability",
+ "kx-capture",
  "kx-catalog",
  "kx-content",
  "kx-coordinator",

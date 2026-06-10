@@ -527,6 +527,30 @@ message ListReactTurnsResponse {
   bool has_more = 2;                     // a further page exists beyond the last returned turn
 }
 
+// The Morphic Data Engine read surface (campaign Batch 2): one durably-captured
+// ACTION record — a committed Mote's join keys, mirrored into the gateway's
+// capture.db sidecar (a rebuildable cache folded from the journal; the journal
+// stays truth). JOIN-KEY-ONLY by construction (no payload/reasoning fields) —
+// the default ActionsOnly capture scope. `react_turn`/`react_branch` are set
+// when the captured Mote is a ReAct turn (joined from its ReactRound fact).
+message ListCaptureRecordsRequest {
+  optional uint32 limit = 1;             // page size; server clamps to a max (absent = the default page)
+  optional bytes instance_id = 2;        // 16B — scope to one run; absent = every captured action
+}
+message CaptureRecordSummary {
+  bytes  mote_id      = 1;               // 32B — the captured Mote (the action's identity)
+  bytes  instance_id  = 2;               // 16B — the run this action belongs to
+  bytes  result_ref   = 3;               // 32B — the committed action's content address (the truth join key)
+  string nd_class     = 4;               // "pure" | "read_only_nondet" | "world_mutating"
+  uint64 seq          = 5;               // journal seq of the Committed fact (ordering)
+  optional uint32 react_turn = 6;        // set iff the Mote is a ReAct turn
+  string react_branch = 7;               // the turn's settled branch iff a ReAct turn (else empty)
+}
+message ListCaptureRecordsResponse {
+  repeated CaptureRecordSummary records = 1; // newest-first (descending seq)
+  bool has_more = 2;                         // a further page exists beyond the last returned record
+}
+
 // ---------------------------------------------------------------------------
 // Service — the external client-facing gateway (distinct from Coordinator).
 // ---------------------------------------------------------------------------
@@ -556,4 +580,7 @@ service KxGateway {
   rpc ListReplanRounds(ListReplanRoundsRequest) returns (ListReplanRoundsResponse);
   // PR-2d-1 additive (D120.6): ReAct-turn observability (read-only).
   rpc ListReactTurns(ListReactTurnsRequest) returns (ListReactTurnsResponse);
+  // Campaign Batch 2 additive (D120.6): the Morphic Data Engine capture read
+  // surface (durable action exhaust; read-only, off-truth-path).
+  rpc ListCaptureRecords(ListCaptureRecordsRequest) returns (ListCaptureRecordsResponse);
 }

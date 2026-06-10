@@ -63,6 +63,10 @@ mod config;
 // `hnsw` feature (the default build + the dep-wall stay unchanged).
 #[cfg(feature = "hnsw")]
 mod datasets;
+// The Morphic Data Engine (campaign Batch 2): the durable serve-path capture
+// projection (capture.db sidecar folded from the read-only journal handle).
+// Always-on, off-truth-path; FFI-free (rusqlite is already in the closure).
+mod capture;
 mod error;
 mod live_tail;
 // PR-2d-2: the bundled deterministic stdio MCP tool's wiring (locate the bin,

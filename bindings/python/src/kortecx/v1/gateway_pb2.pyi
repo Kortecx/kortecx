@@ -605,3 +605,37 @@ class ListReactTurnsResponse(_message.Message):
     turns: _containers.RepeatedCompositeFieldContainer[ReactTurnSummary]
     has_more: bool
     def __init__(self, turns: _Optional[_Iterable[_Union[ReactTurnSummary, _Mapping]]] = ..., has_more: bool = ...) -> None: ...
+
+class ListCaptureRecordsRequest(_message.Message):
+    __slots__ = ("limit", "instance_id")
+    LIMIT_FIELD_NUMBER: _ClassVar[int]
+    INSTANCE_ID_FIELD_NUMBER: _ClassVar[int]
+    limit: int
+    instance_id: bytes
+    def __init__(self, limit: _Optional[int] = ..., instance_id: _Optional[bytes] = ...) -> None: ...
+
+class CaptureRecordSummary(_message.Message):
+    __slots__ = ("mote_id", "instance_id", "result_ref", "nd_class", "seq", "react_turn", "react_branch")
+    MOTE_ID_FIELD_NUMBER: _ClassVar[int]
+    INSTANCE_ID_FIELD_NUMBER: _ClassVar[int]
+    RESULT_REF_FIELD_NUMBER: _ClassVar[int]
+    ND_CLASS_FIELD_NUMBER: _ClassVar[int]
+    SEQ_FIELD_NUMBER: _ClassVar[int]
+    REACT_TURN_FIELD_NUMBER: _ClassVar[int]
+    REACT_BRANCH_FIELD_NUMBER: _ClassVar[int]
+    mote_id: bytes
+    instance_id: bytes
+    result_ref: bytes
+    nd_class: str
+    seq: int
+    react_turn: int
+    react_branch: str
+    def __init__(self, mote_id: _Optional[bytes] = ..., instance_id: _Optional[bytes] = ..., result_ref: _Optional[bytes] = ..., nd_class: _Optional[str] = ..., seq: _Optional[int] = ..., react_turn: _Optional[int] = ..., react_branch: _Optional[str] = ...) -> None: ...
+
+class ListCaptureRecordsResponse(_message.Message):
+    __slots__ = ("records", "has_more")
+    RECORDS_FIELD_NUMBER: _ClassVar[int]
+    HAS_MORE_FIELD_NUMBER: _ClassVar[int]
+    records: _containers.RepeatedCompositeFieldContainer[CaptureRecordSummary]
+    has_more: bool
+    def __init__(self, records: _Optional[_Iterable[_Union[CaptureRecordSummary, _Mapping]]] = ..., has_more: bool = ...) -> None: ...

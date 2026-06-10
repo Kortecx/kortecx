@@ -12,6 +12,7 @@ use kx_proto::proto::kx_gateway_server::KxGateway;
 use tokio_stream::Stream;
 use tonic::{Request, Response, Status};
 
+use crate::capture_view::CaptureView;
 use crate::datasets::DatasetView;
 use crate::error::{hash_32, instance_id_16};
 use crate::identity::CallerParty;
@@ -381,6 +382,10 @@ pub struct GatewayService {
     /// view behind the `hnsw` feature). `None` ⇒ `ListDatasets` / `IngestDocuments`
     /// / `QueryDataset` return `unimplemented`.
     datasets: Option<Arc<dyn DatasetView>>,
+    /// The optional capture-view seam (the Morphic Data Engine — the host injects
+    /// a `capture.db`-backed view folded from the journal). `None` ⇒
+    /// `ListCaptureRecords` returns `unimplemented`. Read-only, off-truth-path.
+    capture: Option<Arc<dyn CaptureView>>,
     /// The `StreamEvents` tailer. Defaults to [`SnapshotTailer`]; the host injects
     /// a live tailer via [`GatewayService::with_event_tailer`].
     tailer: Arc<dyn EventTailer>,
@@ -429,6 +434,7 @@ impl GatewayService {
             membership: None,
             grants_view: None,
             datasets: None,
+            capture: None,
             tailer: Arc::new(SnapshotTailer),
             critics_supported: false,
             react_supported: false,
@@ -521,6 +527,16 @@ impl GatewayService {
     #[must_use]
     pub fn with_dataset_view(mut self, datasets: Arc<dyn DatasetView>) -> Self {
         self.datasets = Some(datasets);
+        self
+    }
+
+    /// Wire the capture-view seam (the Morphic Data Engine — the host's
+    /// `capture.db`-backed action projection, folded from the journal). Enables
+    /// `ListCaptureRecords`. Read-only, off-truth-path: capture is a rebuildable
+    /// cache, never journaled, never identity (D40).
+    #[must_use]
+    pub fn with_capture_view(mut self, capture: Arc<dyn CaptureView>) -> Self {
+        self.capture = Some(capture);
         self
     }
 
@@ -885,6 +901,44 @@ impl KxGateway for GatewayService {
             req.instance_id.as_deref(),
         )?;
         Ok(Response::new(resp))
+    }
+
+    async fn list_capture_records(
+        &self,
+        request: Request<proto::ListCaptureRecordsRequest>,
+    ) -> Result<Response<proto::ListCaptureRecordsResponse>, Status> {
+        // Campaign Batch 2 (the Morphic Data Engine): a read-only page over the
+        // host's durable capture.db action projection. A serve without the
+        // sidecar wired degrades forward-compatibly to `unimplemented`.
+        let capture = self.capture.as_ref().ok_or_else(|| {
+            Status::unimplemented("ListCaptureRecords: no capture view wired (capture.db absent)")
+        })?;
+        let req = request.into_inner();
+        let instance_id: Option<[u8; 16]> = match req.instance_id {
+            None => None,
+            Some(raw) => Some(<[u8; 16]>::try_from(raw.as_slice()).map_err(|_| {
+                Status::invalid_argument("capture instance_id filter must be 16 bytes")
+            })?),
+        };
+        // Clamp to the same page bounds the read-fold RPCs use (1..=500, default 200).
+        let page = req.limit.map_or(200usize, |l| (l as usize).clamp(1, 500));
+        let (records, has_more) = capture.list(page, instance_id)?;
+        let records = records
+            .into_iter()
+            .map(|r| proto::CaptureRecordSummary {
+                mote_id: r.mote_id.to_vec(),
+                instance_id: r.instance_id.to_vec(),
+                result_ref: r.result_ref.to_vec(),
+                nd_class: r.nd_class,
+                seq: r.seq,
+                react_turn: r.react_turn,
+                react_branch: r.react_branch,
+            })
+            .collect();
+        Ok(Response::new(proto::ListCaptureRecordsResponse {
+            records,
+            has_more,
+        }))
     }
 
     async fn list_recipes(

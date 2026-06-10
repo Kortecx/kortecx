@@ -8,6 +8,37 @@ development; interfaces may change before 1.0 — pin a commit if you build on i
 
 ### Added
 
+- **Morphic Data Engine — durable serve-path capture** (`crates/kx-gateway`,
+  `crates/kx-gateway-core`, `crates/kx-proto`, SDKs). On-by-default step capture
+  (`kx-capture`) previously ran ONLY in the single-node `kx run` engine and held
+  its records in memory; `kx serve` captured nothing. It now logs in serve: a
+  background poll-fold of the gateway's **read-only** journal handle into a
+  durable `capture.db` sidecar under `--catalog-dir` — off the sole-writer commit
+  path (zero added commit latency; the canonical digest `7d22d4bd…` is
+  byte-invariant, I1.c-proven) and off the truth path (a **rebuildable cache**:
+  on a stale schema, a torn DB, or a deleted sidecar it drops-and-rebuilds from
+  the journal, which stays truth — D40). Records are **join-key-only** by
+  construction (the schema has no payload/reasoning columns — the privacy-safe
+  ActionsOnly scope made structural; `Full` stays code-gated): a committed Mote's
+  `mote_id` / `instance_id` / `result_ref` / `nd_class` / `seq`, plus the ReAct
+  `turn`/`branch` joined from the chain's off-DAG `ReactRound` facts. Queryable
+  via the additive read-only **`ListCaptureRecords`** RPC (instance-scoped,
+  paginated, newest-first) and the new `list_capture_records` wrappers in both
+  SDKs. The capture ledger lives in the `kx-gateway` host (the dep walls forbid
+  `kx-capture` in `kx-gateway-core`); gateway-core gets only a capture-free
+  `CaptureView` seam. `rusqlite` (already in the default closure via
+  kx-catalog/kx-fleet; pure-Rust C, not the llama.cpp FFI) is now a direct
+  non-optional dependency. FFI-free build unaffected.
+
+- **SDK ReAct / re-plan / capture queryability + v0.1.0** (`bindings/python`,
+  `bindings/typescript`, all crates). `ListReactTurns` / `ListReplanRounds` /
+  `ListCaptureRecords` gained high-level client wrappers (Python sync + async;
+  TypeScript) with frozen page types and from-proto tests — the UI extension can
+  now surface a chain's Reason→Act→Observe history, a run's re-plan rounds, and
+  the action exhaust. All crates bumped `0.0.1` → `0.1.0` for the first public
+  release; a new `just features-guard` keeps the installed-binary feature matrix
+  (`--features hnsw`, `--features inference,hnsw`) buildable + FFI-free.
+
 - **Live ReAct TOOL FIRING in `kx serve` (PR-2d-2, react-tools-live)**
   (`crates/kx-mcp`, `crates/kx-coordinator`, `crates/kx-worker`,
   `crates/kx-gateway`, `crates/kx-gateway-core`, `crates/kx-projection`,

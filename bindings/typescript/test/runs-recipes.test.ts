@@ -2,7 +2,9 @@
 
 import { create } from "@bufbuild/protobuf";
 import { describe, expect, it } from "vitest";
+import { CaptureRecord } from "../src/capture.js";
 import {
+  CaptureRecordSummarySchema,
   GetRecipeFormResponseSchema,
   ReactTurnSummarySchema,
   RecipeFormFieldSchema,
@@ -160,6 +162,50 @@ describe("ReplanRound.fromProto", () => {
       escalated: false,
       seq: 9,
     });
+  });
+});
+
+describe("CaptureRecord.fromProto", () => {
+  it("hex-encodes the action join keys + the react join, with a snake_case toJSON", () => {
+    const r = create(CaptureRecordSummarySchema, {
+      moteId: fill(0x28, 32),
+      instanceId: fill(0x05, 16),
+      resultRef: fill(0x30, 32),
+      ndClass: "read_only_nondet",
+      seq: 7n,
+      reactTurn: 2,
+      reactBranch: "tool",
+    });
+    const rec = CaptureRecord.fromProto(r);
+    expect(rec.moteId).toBe("28".repeat(32));
+    expect(rec.instanceId).toBe("05".repeat(16));
+    expect(rec.resultRef).toBe("30".repeat(32));
+    expect(rec.ndClass).toBe("read_only_nondet");
+    expect(rec.seq).toBe(7);
+    expect(rec.reactTurn).toBe(2);
+    expect(rec.reactBranch).toBe("tool");
+    expect(rec.toJSON()).toEqual({
+      mote_id: "28".repeat(32),
+      instance_id: "05".repeat(16),
+      result_ref: "30".repeat(32),
+      nd_class: "read_only_nondet",
+      seq: 7,
+      react_turn: 2,
+      react_branch: "tool",
+    });
+  });
+
+  it("maps a non-react action with a null react_turn", () => {
+    const r = create(CaptureRecordSummarySchema, {
+      moteId: fill(0x01, 32),
+      instanceId: fill(0x02, 16),
+      resultRef: fill(0x03, 32),
+      ndClass: "pure",
+      seq: 1n,
+    });
+    const rec = CaptureRecord.fromProto(r);
+    expect(rec.reactTurn).toBeNull();
+    expect(rec.reactBranch).toBe("");
   });
 });
 
