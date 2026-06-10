@@ -42,6 +42,12 @@ export type { EdgeKindName } from "./parents.js";
 export { RunSummary } from "./runs.js";
 export type { RunPage } from "./runs.js";
 
+export { ReactTurn } from "./react.js";
+export type { ReactTurnPage } from "./react.js";
+
+export { ReplanRound } from "./replan.js";
+export type { ReplanRoundPage } from "./replan.js";
+
 export { RecipeForm, RecipeFormField, recipeParamTypeName } from "./recipes.js";
 export type { RecipeParamTypeName } from "./recipes.js";
 

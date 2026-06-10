@@ -1,8 +1,15 @@
-"""UI-2 run-summary + recipe-form views — pure unit tests (no server)."""
+"""UI-2 run-summary + recipe-form + react/replan views — pure unit tests."""
 
 from __future__ import annotations
 
-from kortecx import RecipeForm, RecipeFormField, RunSummary, recipe_param_type_name
+from kortecx import (
+    ReactTurn,
+    RecipeForm,
+    RecipeFormField,
+    ReplanRound,
+    RunSummary,
+    recipe_param_type_name,
+)
 from kortecx.v1 import gateway_pb2 as g
 
 
@@ -48,6 +55,63 @@ def test_recipe_form_field_enum_has_allowed_and_no_max_len():
     assert field.type == "enum"
     assert field.max_len is None
     assert field.allowed == ["fast", "slow"]
+
+
+def test_react_turn_from_proto_hex_encodes_branch_tool_caps():
+    t = g.ReactTurnSummary(
+        turn=2,
+        turn_mote_id=b"\x28" * 32,
+        instance_id=b"\x05" * 16,
+        model_id="react-v1",
+        branch="tool",
+        tool_id="mcp-echo",
+        tool_version="1",
+        max_turns=8,
+        max_tool_calls=6,
+        seq=42,
+    )
+    r = ReactTurn.from_proto(t)
+    assert r.turn == 2
+    assert r.turn_mote_id == "28" * 32
+    assert r.instance_id == "05" * 16
+    assert r.branch == "tool"
+    assert r.tool_id == "mcp-echo"
+    assert r.max_tool_calls == 6
+    assert r.seq == 42
+
+
+def test_react_turn_answer_branch_has_empty_tool_fields():
+    t = g.ReactTurnSummary(
+        turn=0,
+        turn_mote_id=b"\x01" * 32,
+        instance_id=b"\x02" * 16,
+        model_id="m",
+        branch="answer",
+        max_turns=8,
+        max_tool_calls=6,
+        seq=3,
+    )
+    r = ReactTurn.from_proto(t)
+    assert r.branch == "answer"
+    assert r.tool_id == ""
+    assert r.tool_version == ""
+
+
+def test_replan_round_from_proto_hex_encodes_shaper_and_failed_steps():
+    rr = g.ReplanRoundSummary(
+        round=1,
+        shaper_mote_id=b"\x1e" * 32,
+        model_id="plan-v1",
+        failed_step_ids=[b"\x1f" * 32, b"\x20" * 32],
+        escalated=False,
+        seq=9,
+    )
+    round_ = ReplanRound.from_proto(rr)
+    assert round_.round == 1
+    assert round_.shaper_mote_id == "1e" * 32
+    assert round_.failed_step_ids == ["1f" * 32, "20" * 32]
+    assert round_.escalated is False
+    assert round_.seq == 9
 
 
 def test_recipe_form_wraps_handle_and_fields():

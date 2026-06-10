@@ -1,14 +1,18 @@
-/** UI-2 run-summary + recipe-form views — pure, no server. */
+/** UI-2 run-summary + recipe-form + react/replan views — pure, no server. */
 
 import { create } from "@bufbuild/protobuf";
 import { describe, expect, it } from "vitest";
 import {
   GetRecipeFormResponseSchema,
+  ReactTurnSummarySchema,
   RecipeFormFieldSchema,
   RecipeParamType,
+  ReplanRoundSummarySchema,
   RunSummarySchema,
 } from "../src/gen/kortecx/v1/gateway_pb.js";
+import { ReactTurn } from "../src/react.js";
 import { RecipeForm, RecipeFormField, recipeParamTypeName } from "../src/recipes.js";
+import { ReplanRound } from "../src/replan.js";
 import { RunSummary } from "../src/runs.js";
 
 const fill = (v: number, n: number): Uint8Array => new Uint8Array(n).fill(v);
@@ -75,6 +79,87 @@ describe("RecipeFormField.fromProto", () => {
     expect(field.type).toBe("enum");
     expect(field.maxLen).toBeNull();
     expect(field.allowed).toEqual(["fast", "slow"]);
+  });
+});
+
+describe("ReactTurn.fromProto", () => {
+  it("hex-encodes ids + carries the branch/tool/caps, with a snake_case toJSON", () => {
+    const t = create(ReactTurnSummarySchema, {
+      turn: 2,
+      turnMoteId: fill(0x28, 32),
+      instanceId: fill(0x05, 16),
+      modelId: "react-v1",
+      branch: "tool",
+      toolId: "mcp-echo",
+      toolVersion: "1",
+      maxTurns: 8,
+      maxToolCalls: 6,
+      seq: 42n,
+    });
+    const r = ReactTurn.fromProto(t);
+    expect(r.turn).toBe(2);
+    expect(r.turnMoteId).toBe("28".repeat(32));
+    expect(r.instanceId).toBe("05".repeat(16));
+    expect(r.branch).toBe("tool");
+    expect(r.toolId).toBe("mcp-echo");
+    expect(r.maxToolCalls).toBe(6);
+    expect(r.seq).toBe(42);
+    expect(r.toJSON()).toEqual({
+      turn: 2,
+      turn_mote_id: "28".repeat(32),
+      instance_id: "05".repeat(16),
+      model_id: "react-v1",
+      branch: "tool",
+      tool_id: "mcp-echo",
+      tool_version: "1",
+      max_turns: 8,
+      max_tool_calls: 6,
+      seq: 42,
+    });
+  });
+
+  it("carries an answer branch with empty tool fields", () => {
+    const t = create(ReactTurnSummarySchema, {
+      turn: 0,
+      turnMoteId: fill(0x01, 32),
+      instanceId: fill(0x02, 16),
+      modelId: "m",
+      branch: "answer",
+      maxTurns: 8,
+      maxToolCalls: 6,
+      seq: 3n,
+    });
+    const r = ReactTurn.fromProto(t);
+    expect(r.branch).toBe("answer");
+    expect(r.toolId).toBe("");
+    expect(r.toolVersion).toBe("");
+  });
+});
+
+describe("ReplanRound.fromProto", () => {
+  it("hex-encodes the shaper + failed steps, with a snake_case toJSON", () => {
+    const r = create(ReplanRoundSummarySchema, {
+      round: 1,
+      shaperMoteId: fill(0x1e, 32),
+      modelId: "plan-v1",
+      failedStepIds: [fill(0x1f, 32), fill(0x20, 32)],
+      escalated: false,
+      seq: 9n,
+    });
+    const round = ReplanRound.fromProto(r);
+    expect(round.round).toBe(1);
+    expect(round.shaperMoteId).toBe("1e".repeat(32));
+    expect(round.failedStepIds).toEqual(["1f".repeat(32), "20".repeat(32)]);
+    expect(round.escalated).toBe(false);
+    expect(round.seq).toBe(9);
+    expect(round.toJSON()).toEqual({
+      round: 1,
+      shaper_mote_id: "1e".repeat(32),
+      model_id: "plan-v1",
+      failed_step_ids: ["1f".repeat(32), "20".repeat(32)],
+      escalated: false,
+      seq: 9,
+    });
   });
 });
 

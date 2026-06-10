@@ -142,6 +142,19 @@ jobs:
       - name: cargo clippy --workspace --all-targets -- -D warnings
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+      # The installed-binary feature matrix (the v0.1.0 campaign guard): the
+      # Tier-2 `cargo install -p kx-cli --features inference,hnsw` and the
+      # FFI-free `--features hnsw` must both stay buildable. Lives in this job
+      # because the inference check runs the llama.cpp build script (needs the
+      # submodule + cmake this job already has).
+      - name: feature matrix guard (kx-cli hnsw / inference,hnsw)
+        run: |
+          if cargo tree -p kx-cli --features hnsw -e normal | grep -qE 'kx-llamacpp'; then
+            echo "::error::the hnsw feature dragged the FFI into kx-cli"; exit 1
+          fi
+          cargo check -p kx-cli --features hnsw
+          cargo check -p kx-cli --features inference,hnsw
+
   # ---------------------------------------------------------------------------
   # test — full workspace test pass.
   # ---------------------------------------------------------------------------

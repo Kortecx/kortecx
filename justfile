@@ -21,7 +21,7 @@ check: fmt-check clippy test
 # Exact mirror of the CI workflow's gates (in dependency order). Runs every
 # job .github/workflows/ci.yml runs in parallel, here sequentially. Modify
 # this recipe in lock-step with ci.yml.
-ci: fmt-check clippy test deny doc ffi-link build-no-inference check-reproducible scale-smoke
+ci: fmt-check clippy test deny doc ffi-link build-no-inference features-guard check-reproducible scale-smoke
 
 # Verify code is formatted per rustfmt.toml. Fails on any drift.
 fmt-check:
@@ -310,6 +310,25 @@ build-no-inference:
     cargo build -p kx-cli
     cargo build -p kx-inference --no-default-features
     echo " ✓ build-no-inference: PASS"
+
+# The installed-binary feature matrix stays buildable (the v0.1.0 campaign
+# guard): `cargo install -p kx-cli --features hnsw` (Datasets, FFI-free) and
+# `--features inference,hnsw` (the full Tier-2 install) must both CHECK, and
+# the hnsw-alone closure must stay FFI-free (a C++-toolchain-less user can
+# install Datasets support). The inference half only type-checks here — the
+# real FFI link is `ffi-link`/`smoke-test-with-model`.
+features-guard:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "Asserting kx-cli --features hnsw stays FFI-free..."
+    if cargo tree -p kx-cli --features hnsw -e normal | grep -qE 'kx-llamacpp'; then
+        echo " ✗ FAIL: the hnsw feature dragged the FFI into kx-cli"
+        exit 1
+    fi
+    echo " ✓ hnsw closure is FFI-free"
+    cargo check -p kx-cli --features hnsw
+    cargo check -p kx-cli --features inference,hnsw
+    echo " ✓ features-guard: hnsw + inference,hnsw both build"
 
 # Byte-determinism check (I1.c). Two consecutive release builds must produce
 # bit-identical artifacts. Failure indicates the build is nondeterministic and

@@ -1259,7 +1259,7 @@ dependencies = [
 
 [[package]]
 name = "kx-audit"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "kx-content",
  "kx-mote",
@@ -1273,7 +1273,7 @@ dependencies = [
 
 [[package]]
 name = "kx-capability"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "blake3",
  "kx-content",
@@ -1289,7 +1289,7 @@ dependencies = [
 
 [[package]]
 name = "kx-capture"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "kx-content",
  "kx-mote",
@@ -1298,7 +1298,7 @@ dependencies = [
 
 [[package]]
 name = "kx-catalog"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "bincode 2.0.1",
  "blake3",
@@ -1319,7 +1319,7 @@ dependencies = [
 
 [[package]]
 name = "kx-chaos"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "blake3",
  "kx-capability",
@@ -1338,7 +1338,7 @@ dependencies = [
 
 [[package]]
 name = "kx-cli"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "kx-gateway",
  "kx-proto",
@@ -1355,7 +1355,7 @@ dependencies = [
 
 [[package]]
 name = "kx-content"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "blake3",
  "bytes",
@@ -1371,7 +1371,7 @@ dependencies = [
 
 [[package]]
 name = "kx-context-assembler"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "bincode 2.0.1",
  "blake3",
@@ -1393,7 +1393,7 @@ dependencies = [
 
 [[package]]
 name = "kx-coordinator"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "criterion",
  "getrandom 0.3.4",
@@ -1419,7 +1419,7 @@ dependencies = [
 
 [[package]]
 name = "kx-critic"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "criterion",
  "kx-critic-types",
@@ -1433,7 +1433,7 @@ dependencies = [
 
 [[package]]
 name = "kx-critic-types"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "bincode 2.0.1",
  "blake3",
@@ -1445,7 +1445,7 @@ dependencies = [
 
 [[package]]
 name = "kx-dataset"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "blake3",
  "kx-content",
@@ -1457,7 +1457,7 @@ dependencies = [
 
 [[package]]
 name = "kx-dataset-hnsw"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "hnsw_rs",
  "kx-content",
@@ -1468,7 +1468,7 @@ dependencies = [
 
 [[package]]
 name = "kx-executor"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "bincode 2.0.1",
  "blake3",
@@ -1500,7 +1500,7 @@ dependencies = [
 
 [[package]]
 name = "kx-fleet"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "bincode 2.0.1",
  "blake3",
@@ -1518,7 +1518,7 @@ dependencies = [
 
 [[package]]
 name = "kx-gateway"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "bincode 2.0.1",
  "futures-util",
@@ -1569,7 +1569,7 @@ dependencies = [
 
 [[package]]
 name = "kx-gateway-core"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "kx-content",
  "kx-critic-types",
@@ -1590,7 +1590,7 @@ dependencies = [
 
 [[package]]
 name = "kx-inference"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "bytes",
  "kx-content",
@@ -1615,7 +1615,7 @@ dependencies = [
 
 [[package]]
 name = "kx-invoke"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "kx-catalog",
  "kx-content",
@@ -1638,7 +1638,7 @@ dependencies = [
 
 [[package]]
 name = "kx-journal"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "bincode 2.0.1",
  "blake3",
@@ -1656,7 +1656,7 @@ dependencies = [
 
 [[package]]
 name = "kx-llamacpp"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "kx-llamacpp-sys",
  "proptest",
@@ -1670,7 +1670,7 @@ dependencies = [
 
 [[package]]
 name = "kx-llamacpp-sys"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "bindgen",
  "cmake",
@@ -1678,7 +1678,7 @@ dependencies = [
 
 [[package]]
 name = "kx-mcp"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "kx-capability",
  "kx-content",
@@ -1697,7 +1697,7 @@ dependencies = [
 
 [[package]]
 name = "kx-memoizer"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "kx-content",
  "kx-journal",
@@ -1713,7 +1713,7 @@ dependencies = [
 
 [[package]]
 name = "kx-model-harness"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "bincode 2.0.1",
  "blake3",
@@ -1751,7 +1751,7 @@ dependencies = [
 
 [[package]]
 name = "kx-model-store"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "blake3",
  "kx-content",
@@ -1765,7 +1765,7 @@ dependencies = [
 
 [[package]]
 name = "kx-model-validator"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "kx-mote",
  "proptest",
@@ -1777,7 +1777,7 @@ dependencies = [
 
 [[package]]
 name = "kx-mote"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "bincode 2.0.1",
  "blake3",
@@ -1792,7 +1792,7 @@ dependencies = [
 
 [[package]]
 name = "kx-normalizer"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "bytes",
  "kx-mote",
@@ -1805,7 +1805,7 @@ dependencies = [
 
 [[package]]
 name = "kx-planner"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "blake3",
  "kx-content",
@@ -1821,7 +1821,7 @@ dependencies = [
 
 [[package]]
 name = "kx-profile"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "kx-capability",
  "kx-content",
@@ -1847,7 +1847,7 @@ dependencies = [
 
 [[package]]
 name = "kx-projection"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "bincode 2.0.1",
  "blake3",
@@ -1868,7 +1868,7 @@ dependencies = [
 
 [[package]]
 name = "kx-proto"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "bincode 2.0.1",
  "kx-content",
@@ -1887,7 +1887,7 @@ dependencies = [
 
 [[package]]
 name = "kx-refusal"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "kx-content",
  "kx-mote",
@@ -1900,7 +1900,7 @@ dependencies = [
 
 [[package]]
 name = "kx-runtime"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "bincode 2.0.1",
  "blake3",
@@ -1925,7 +1925,7 @@ dependencies = [
 
 [[package]]
 name = "kx-scheduler"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "kx-content",
  "kx-executor",
@@ -1941,7 +1941,7 @@ dependencies = [
 
 [[package]]
 name = "kx-tiering"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "kx-content",
  "kx-journal",
@@ -1954,7 +1954,7 @@ dependencies = [
 
 [[package]]
 name = "kx-tool-registry"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "bincode 2.0.1",
  "blake3",
@@ -1971,7 +1971,7 @@ dependencies = [
 
 [[package]]
 name = "kx-toolcall"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "kx-content",
  "kx-mote",
@@ -1982,7 +1982,7 @@ dependencies = [
 
 [[package]]
 name = "kx-warrant"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "bincode 2.0.1",
  "blake3",
@@ -1998,7 +1998,7 @@ dependencies = [
 
 [[package]]
 name = "kx-worker"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "kx-capability",
  "kx-content",
@@ -2018,7 +2018,7 @@ dependencies = [
 
 [[package]]
 name = "kx-workflow"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "bincode 2.0.1",
  "blake3",
