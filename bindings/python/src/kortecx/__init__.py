@@ -12,6 +12,7 @@ go::
 
 from __future__ import annotations
 
+from .capture import CaptureRecord, CaptureRecordPage
 from .client import DEFAULT_ENDPOINT, AsyncKxClient, KxClient
 from .datasets import DatasetHit, DatasetSummary, IngestDocument, IngestResult
 from .errors import (
@@ -67,6 +68,8 @@ __all__ = [
     "ReactTurnPage",
     "ReplanRound",
     "ReplanRoundPage",
+    "CaptureRecord",
+    "CaptureRecordPage",
     "RecipeForm",
     "RecipeFormField",
     "recipe_param_type_name",

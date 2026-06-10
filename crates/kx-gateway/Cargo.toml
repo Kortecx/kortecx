@@ -24,6 +24,12 @@ kx-proto        = { workspace = true }
 # Read-only seams the gateway folds over (a SECOND journal handle + the content store).
 kx-journal      = { workspace = true }
 kx-content      = { workspace = true }
+# The Morphic Data Engine (campaign Batch 2): the OFF-TRUTH-PATH, ActionsOnly
+# capture scope discipline (StepRecord::action / CaptureConsent::actions_only).
+# The HOST folds the journal into a durable capture.db sidecar through this — the
+# crate's `tests/boundary.rs` forbids only the GUARANTEE-path crates from
+# depending on it; kx-gateway (the host) is allowed. Pure-Rust (no FFI).
+kx-capture      = { workspace = true }
 # ExecutorClass (worker registration + the platform-default class). A tiny FFI-free leaf.
 kx-warrant      = { workspace = true }
 # R2a: the signature catalog (the 3 catalog RPCs) — FFI-free (pulls kx-dataset /
@@ -109,7 +115,11 @@ kx-tool-registry   = { workspace = true, optional = true }
 # path works under `hnsw` ALONE (no inference / no model / no Metal).
 kx-dataset         = { workspace = true, optional = true }
 kx-dataset-hnsw    = { workspace = true, optional = true }
-rusqlite           = { workspace = true, optional = true }
+# rusqlite is NON-optional: the always-on Morphic Data Engine capture.db sidecar
+# (campaign Batch 2) needs it unconditionally, and it is ALREADY in the default
+# closure (kx-catalog/kx-fleet pull it for the durable ledgers). Pure-Rust C
+# (SQLite), NOT the llama.cpp FFI — the `build-no-inference` gate stays green.
+rusqlite           = { workspace = true }
 # A1: `tls` enables in-binary rustls TLS on the gRPC listener (reuses the rustls
 # 0.23 + ring already in the lock via ureq — no new crypto provider). Server cert/
 # key via `--tls-cert`/`--tls-key`; plaintext stays the default (TLS opt-in).
@@ -189,7 +199,7 @@ inference = [
 # pure-Rust crates (the dep-wall + `build-no-inference` stay green). The server-embed
 # path ADDITIONALLY needs `inference` (an EmbeddingBackend); without it, server-embed
 # requests return FAILED_PRECONDITION. Independent of `inference` — they compose.
-hnsw = ["dep:kx-dataset", "dep:kx-dataset-hnsw", "dep:rusqlite"]
+hnsw = ["dep:kx-dataset", "dep:kx-dataset-hnsw"]
 
 [lints]
 workspace = true

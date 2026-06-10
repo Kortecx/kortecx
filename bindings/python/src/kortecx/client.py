@@ -18,6 +18,7 @@ import grpc
 from . import events as _events
 from . import hexids, types
 from . import wait as _wait  # aliased: `wait` is also a public kwarg name
+from .capture import CaptureRecord, CaptureRecordPage
 from .datasets import (
     DatasetHit,
     DatasetSummary,
@@ -291,6 +292,24 @@ class KxClient:
             rounds=[ReplanRound.from_proto(r) for r in resp.rounds], has_more=resp.has_more
         )
 
+    def list_capture_records(
+        self, *, instance_id: Optional[str] = None, limit: Optional[int] = None
+    ) -> CaptureRecordPage:
+        """Enumerate the Morphic Data Engine's durably-captured ACTION records
+        (newest-first, paginated) — the serve-path action exhaust. ``instance_id``
+        (hex) scopes to one run; absent enumerates every captured action. The
+        server clamps ``limit`` to its max page. An old gateway (or one without
+        the capture sidecar) raises ``KxUnimplemented``."""
+        req = _g.ListCaptureRecordsRequest()
+        if instance_id is not None:
+            req.instance_id = hexids.decode(instance_id)
+        if limit is not None:
+            req.limit = limit
+        resp = self._call(lambda: self._stub.ListCaptureRecords(req, metadata=self._md))
+        return CaptureRecordPage(
+            records=[CaptureRecord.from_proto(r) for r in resp.records], has_more=resp.has_more
+        )
+
     def list_recipes(self) -> List[str]:
         """List the invocable recipe handles the gateway provisions (the public
         recipe catalog)."""
@@ -559,6 +578,20 @@ class AsyncKxClient:
         resp = await self._acall(self._stub.ListReplanRounds(req, metadata=self._md))
         return ReplanRoundPage(
             rounds=[ReplanRound.from_proto(r) for r in resp.rounds], has_more=resp.has_more
+        )
+
+    async def list_capture_records(
+        self, *, instance_id: Optional[str] = None, limit: Optional[int] = None
+    ) -> CaptureRecordPage:
+        """Async :meth:`KxClient.list_capture_records`."""
+        req = _g.ListCaptureRecordsRequest()
+        if instance_id is not None:
+            req.instance_id = hexids.decode(instance_id)
+        if limit is not None:
+            req.limit = limit
+        resp = await self._acall(self._stub.ListCaptureRecords(req, metadata=self._md))
+        return CaptureRecordPage(
+            records=[CaptureRecord.from_proto(r) for r in resp.records], has_more=resp.has_more
         )
 
     async def list_recipes(self) -> List[str]:

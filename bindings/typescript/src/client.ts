@@ -12,6 +12,7 @@
 import type { MessageInitShape } from "@bufbuild/protobuf";
 import { createClient } from "@connectrpc/connect";
 import type { Client, Transport } from "@connectrpc/connect";
+import { CaptureRecord, type CaptureRecordPage } from "./capture.js";
 import { DatasetHit, DatasetSummary, type IngestDoc, IngestResult } from "./datasets.js";
 import { KxRunFailed, KxWaitTimeout, rpc } from "./errors.js";
 import { streamDeltas, wsDeltasFromMessages, wsUrl } from "./events.js";
@@ -193,6 +194,22 @@ export abstract class KxClientBase {
   async listReplanRounds(opts: { limit?: number } = {}): Promise<ReplanRoundPage> {
     const resp = await rpc(this.grpc.listReplanRounds({ limit: opts.limit }));
     return { rounds: resp.rounds.map((r) => ReplanRound.fromProto(r)), hasMore: resp.hasMore };
+  }
+
+  /**
+   * Enumerate the Morphic Data Engine's durably-captured ACTION records
+   * (newest-first, paginated) — the serve-path action exhaust. `instanceId`
+   * (hex) scopes to one run; absent enumerates every captured action. The
+   * server clamps `limit` to its max page. An old gateway (or one without the
+   * capture sidecar) throws {@link KxUnimplemented}.
+   */
+  async listCaptureRecords(
+    opts: { instanceId?: string; limit?: number } = {},
+  ): Promise<CaptureRecordPage> {
+    const instanceId =
+      opts.instanceId === undefined ? undefined : asBytes(opts.instanceId, INSTANCE_LEN);
+    const resp = await rpc(this.grpc.listCaptureRecords({ instanceId, limit: opts.limit }));
+    return { records: resp.records.map((r) => CaptureRecord.fromProto(r)), hasMore: resp.hasMore };
   }
 
   /**

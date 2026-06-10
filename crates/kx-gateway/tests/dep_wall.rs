@@ -98,7 +98,12 @@ fn cargo_manifest_wires_the_dataset_hnsw_edge_optionally() {
         .split("\n[")
         .next()
         .expect("the end of the [dependencies] section");
-    for edge in ["kx-dataset-hnsw", "kx-dataset", "rusqlite"] {
+    // The HNSW ANN crates stay OPTIONAL behind `hnsw`. (rusqlite is NO LONGER in
+    // this list: the always-on Morphic Data Engine capture.db sidecar — campaign
+    // Batch 2 — makes it a non-optional dep; it was already in the default
+    // closure via kx-catalog/kx-fleet, and it is pure-Rust C, NOT the llama.cpp
+    // FFI, so `build-no-inference` stays green.)
+    for edge in ["kx-dataset-hnsw", "kx-dataset"] {
         let line = deps
             .lines()
             .find(|l| l.trim_start().starts_with(edge))
@@ -108,6 +113,15 @@ fn cargo_manifest_wires_the_dataset_hnsw_edge_optionally() {
             "{edge} must be an OPTIONAL edge (behind the `hnsw` feature)"
         );
     }
+    // rusqlite is present + non-optional (the capture sidecar).
+    let rusqlite = deps
+        .lines()
+        .find(|l| l.trim_start().starts_with("rusqlite"))
+        .expect("rusqlite is a (non-optional) capture dependency");
+    assert!(
+        !rusqlite.contains("optional = true"),
+        "rusqlite is now always-on (the Morphic Data Engine capture sidecar)"
+    );
 }
 
 #[test]

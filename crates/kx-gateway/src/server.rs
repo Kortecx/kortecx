@@ -596,6 +596,35 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         }
         Arc::new(view)
     };
+    // (3f) The Morphic Data Engine (campaign Batch 2): the durable serve-path
+    //      capture projection. A `capture.db` sidecar under the catalog dir,
+    //      folded from the gateway's read-only journal handle (off the
+    //      sole-writer thread ⇒ zero commit-latency / digest impact). Always-on
+    //      (FFI-free); ActionsOnly scope (the join-key-only action exhaust).
+    //      Reconciles on open (rebuild-from-journal on a stale/corrupt sidecar)
+    //      then a background poller folds the journal forward until shutdown.
+    let capture_ledger = Arc::new(crate::capture::CaptureLedger::open(&catalog_dir)?);
+    capture_ledger.fold(reader.as_ref()); // initial backfill before serving reads
+    let capture_task = {
+        let ledger = capture_ledger.clone();
+        let reader = reader.clone();
+        let mut shutdown = live_shutdown_rx.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(Duration::from_millis(250));
+            loop {
+                tokio::select! {
+                    _ = tick.tick() => { ledger.fold(reader.as_ref()); }
+                    _ = shutdown.changed() => {
+                        if *shutdown.borrow() {
+                            ledger.fold(reader.as_ref()); // final catch-up
+                            break;
+                        }
+                    }
+                }
+            }
+        })
+    };
+
     #[cfg_attr(not(feature = "hnsw"), allow(unused_mut))]
     let mut gateway = GatewayService::new(reader.clone(), submitter, content)
         .with_signature_catalog(signature_catalog)
@@ -603,6 +632,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         .with_recipe_catalog(recipe_catalog)
         .with_membership_view(membership_view)
         .with_grant_view(grant_view)
+        .with_capture_view(capture_ledger)
         .with_critics_supported(critics_supported)
         .with_react_supported(react_supported)
         .with_registered_tools(registered_tools)
@@ -722,7 +752,13 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         shutdown,
         live_shutdown,
         gateway,
-        aux: vec![coord_task, worker_task, heartbeat_task, ws_task],
+        aux: vec![
+            coord_task,
+            worker_task,
+            heartbeat_task,
+            ws_task,
+            capture_task,
+        ],
     })
 }
 

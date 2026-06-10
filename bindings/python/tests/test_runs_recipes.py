@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from kortecx import (
+    CaptureRecord,
     ReactTurn,
     RecipeForm,
     RecipeFormField,
@@ -133,3 +134,36 @@ def test_recipe_form_empty_is_valid():
     resp = g.GetRecipeFormResponse(handle="kx/recipes/fanout-demo")
     form = RecipeForm.from_proto(resp)
     assert form.fields == []
+
+
+def test_capture_record_from_proto_hex_encodes_and_react_join():
+    r = g.CaptureRecordSummary(
+        mote_id=b"\x28" * 32,
+        instance_id=b"\x05" * 16,
+        result_ref=b"\x30" * 32,
+        nd_class="read_only_nondet",
+        seq=7,
+        react_turn=2,
+        react_branch="tool",
+    )
+    rec = CaptureRecord.from_proto(r)
+    assert rec.mote_id == "28" * 32
+    assert rec.instance_id == "05" * 16
+    assert rec.result_ref == "30" * 32
+    assert rec.nd_class == "read_only_nondet"
+    assert rec.seq == 7
+    assert rec.react_turn == 2
+    assert rec.react_branch == "tool"
+
+
+def test_capture_record_non_react_action_has_none_turn():
+    r = g.CaptureRecordSummary(
+        mote_id=b"\x01" * 32,
+        instance_id=b"\x02" * 16,
+        result_ref=b"\x03" * 32,
+        nd_class="pure",
+        seq=1,
+    )
+    rec = CaptureRecord.from_proto(r)
+    assert rec.react_turn is None
+    assert rec.react_branch == ""
