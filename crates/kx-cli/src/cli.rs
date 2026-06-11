@@ -36,6 +36,7 @@ usage: kx <command> [args]
     kx content --ref <hex32> --instance <hex16> [--out <file>]
     kx events --instance <hex16> [--since N] [--follow]
     kx signatures list | get --id <hex32> | register --manifest-file <path>
+    kx tools list | score --intent <text> --tool <id>@<ver>... [--language-tag <t>]... [--tolerance-threshold-bp N]
     kx health                                   (grpc.health.v1 liveness; exit 0 iff SERVING)
 
     --endpoint defaults to http://127.0.0.1:50151
@@ -70,6 +71,8 @@ pub enum Cli {
     Events(verbs::events::EventsArgs),
     /// Catalog signature RPCs.
     Signatures(verbs::signatures::SignaturesArgs),
+    /// Advisory toolscout RPCs (tool discovery + TaskBundle preview).
+    Tools(verbs::tools::ToolsArgs),
     /// Liveness/readiness probe (grpc.health.v1).
     Health(verbs::health::HealthArgs),
 }
@@ -110,6 +113,7 @@ impl Cli {
             Some("content") => Ok(Cli::Content(verbs::content::parse(args)?)),
             Some("events") => Ok(Cli::Events(verbs::events::parse(args)?)),
             Some("signatures") => Ok(Cli::Signatures(verbs::signatures::parse(args)?)),
+            Some("tools") => Ok(Cli::Tools(verbs::tools::parse(args)?)),
             Some("health") => Ok(Cli::Health(verbs::health::parse(args)?)),
             Some(other) => Err(CliError::Usage(format!(
                 "unknown command {other:?} (try `kx --help`)"
@@ -167,6 +171,7 @@ async fn dispatch(cli: Cli) -> Result<(), CliError> {
         Cli::Content(a) => verbs::content::execute(a).await,
         Cli::Events(a) => verbs::events::execute(a).await,
         Cli::Signatures(a) => verbs::signatures::execute(a).await,
+        Cli::Tools(a) => verbs::tools::execute(a).await,
         Cli::Health(a) => verbs::health::execute(a).await,
     }
 }
@@ -305,6 +310,17 @@ kx events --instance <hex16> [--since N] [--follow] [client flags]
         "signatures" => "\
 kx signatures list | get --id <hex32> | register --manifest-file <path> [client flags]
   Browse / fetch / register catalog task signatures over the gateway."
+            .into(),
+        "tools" => "\
+kx tools list [client flags]
+kx tools score --intent <text> --tool <id>@<ver> [--tool <id>@<ver>]... [--language-tag <t>]...
+               [--tolerance-threshold-bp N] [client flags]
+  Advisory MCP-tool discovery + TaskBundle preview (W1.A5). `list` shows the
+  gateway's registered tool manifests; `score` ranks every manifest against an
+  intent (integer basis points: 10000 = exact keyword hit; lower = similar) and
+  dry-runs the real lowering gate (verdict: would-lower / unavailable / refused).
+  ADVISORY ONLY (SN-8): scores and the verdict NEVER authorize a tool — the
+  exact (name, version) grant gate stays the broker's. No warrant is sent."
             .into(),
         "health" => "\
 kx health [client flags]

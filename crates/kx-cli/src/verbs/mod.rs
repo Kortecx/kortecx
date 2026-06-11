@@ -9,6 +9,7 @@ pub mod invoke;
 pub mod projection;
 pub mod signatures;
 pub mod submit;
+pub mod tools;
 
 use std::io::Write;
 use std::path::Path;

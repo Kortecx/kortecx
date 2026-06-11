@@ -309,6 +309,120 @@ pub fn render_signature_register(resp: &proto::RegisterSignatureResponse, json: 
     }
 }
 
+/// Map a [`proto::LowerVerdict`] discriminant to a stable display name. An
+/// out-of-range value renders `unknown` (forward-compatible). Matches the SDK
+/// verdict names cross-surface.
+#[must_use]
+pub fn lower_verdict_name(verdict: i32) -> &'static str {
+    use proto::LowerVerdict as V;
+    if verdict == V::Unavailable as i32 {
+        "unavailable"
+    } else if verdict == V::WouldLower as i32 {
+        "would-lower"
+    } else if verdict == V::Refused as i32 {
+        "refused"
+    } else {
+        "unknown"
+    }
+}
+
+/// Render `tools list` — the registered manifests. ADVISORY discovery (SN-8):
+/// listing a tool never grants it.
+#[must_use]
+pub fn render_tools_list(resp: &proto::ListToolManifestsResponse, json: bool) -> String {
+    if json {
+        let manifests: Vec<Value> = resp
+            .manifests
+            .iter()
+            .map(|m| {
+                json!({
+                    "tool_id": m.tool_id,
+                    "tool_version": m.tool_version,
+                    "kind": m.kind,
+                    "description": m.description,
+                    "fingerprint_hash": hex::encode(&m.fingerprint_hash),
+                    "keywords": m.keywords.iter().map(|k| json!({
+                        "lang": k.lang,
+                        "words": k.words,
+                    })).collect::<Vec<_>>(),
+                })
+            })
+            .collect();
+        json!({ "manifests": manifests }).to_string()
+    } else if resp.manifests.is_empty() {
+        "(no tools registered)".to_string()
+    } else {
+        resp.manifests
+            .iter()
+            .map(|m| {
+                format!(
+                    "{}@{}  [{}]  {}",
+                    m.tool_id, m.tool_version, m.kind, m.description
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+}
+
+/// Render `tools score` — the advisory rank ladder + the lowering dry-run
+/// verdict. Every number is DISPLAY-ONLY (SN-8): a score can surface a tool,
+/// never grant one.
+#[must_use]
+pub fn render_tools_score(resp: &proto::ScoreTaskBundleResponse, json: bool) -> String {
+    let verdict = lower_verdict_name(resp.verdict);
+    if json {
+        let ranked: Vec<Value> = resp
+            .ranked
+            .iter()
+            .map(|r| {
+                json!({
+                    "tool_id": r.tool_id,
+                    "tool_version": r.tool_version,
+                    "score_bp": r.score_bp,
+                    "fingerprint_hash": hex::encode(&r.fingerprint_hash),
+                })
+            })
+            .collect();
+        json!({
+            "bundle_fingerprint": hex::encode(&resp.bundle_fingerprint),
+            "ranked": ranked,
+            "verdict": verdict,
+            "verdict_detail": resp.verdict_detail,
+            "advisory": "scores never authorize a tool",
+        })
+        .to_string()
+    } else {
+        let mut out = format!(
+            "bundle           {}\n",
+            hex::encode(&resp.bundle_fingerprint)
+        );
+        let _ = writeln!(out, "verdict          {verdict}");
+        if !resp.verdict_detail.is_empty() {
+            let _ = writeln!(out, "                 ({})", resp.verdict_detail);
+        }
+        out.push_str("ranked (advisory — scores never authorize):");
+        for r in &resp.ranked {
+            // Only the 10000 ceiling proves an exact keyword/phrase hit; the
+            // sub-ceiling fuzzy/vector bands overlap on the wire, so anything
+            // else is honestly just "similar".
+            let rung = if r.score_bp == 10_000 {
+                "exact"
+            } else if r.score_bp > 0 {
+                "similar"
+            } else {
+                "-"
+            };
+            let _ = write!(
+                out,
+                "\n  {:>5} bp  {:<8} {}@{}",
+                r.score_bp, rung, r.tool_id, r.tool_version
+            );
+        }
+        out
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
