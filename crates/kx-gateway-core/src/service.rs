@@ -300,6 +300,83 @@ pub trait RecipeBinder: Send + Sync {
     ) -> Result<BoundRecipe, BinderError>;
 }
 
+/// The VETTED step palette for `SubmitWorkflow` (Tier-1 authoring). gateway-core's
+/// own vocabulary — the host translates each to a `kx_workflow::StepDef`, assigning
+/// the `logic_ref` SERVER-SIDE (the client never supplies executable bytes).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuthorStepKind {
+    /// Deterministic transform; the host derives a content sentinel `logic_ref`.
+    Pure,
+    /// Greedy model step routed by `model_id` + `prompt` (must equal the served model).
+    Model,
+    /// References a REGISTERED body by its signature id; the host maps it to that
+    /// body's content `logic_ref`. The client cannot inject bytes (Tier-1 invariant).
+    Exec,
+}
+
+/// One authored step in gateway-core's vocabulary (no `kx_workflow` dep here).
+#[derive(Debug, Clone)]
+pub struct AuthorStep {
+    /// The palette kind (PURE / MODEL / EXEC).
+    pub kind: AuthorStepKind,
+    /// MODEL: the model id (must equal the served model); ignored otherwise.
+    pub model_id: String,
+    /// MODEL: the prompt text (bound into the step's config); empty otherwise.
+    pub prompt: String,
+    /// EXEC: the registered body's content/signature id.
+    pub body_signature_id: Option<[u8; 32]>,
+    /// The per-step tool contract (`tool_id → tool_version`); authority is the warrant's.
+    pub tool_contract: std::collections::BTreeMap<String, String>,
+    /// Free config entries that land in the step's `config_subset` (identity-bearing).
+    pub params: std::collections::BTreeMap<String, Vec<u8>>,
+}
+
+/// One authored edge (parent/child are indices into the authored `steps`).
+#[derive(Debug, Clone, Copy)]
+pub struct AuthorEdge {
+    /// The parent step's index in `steps`.
+    pub parent: u32,
+    /// The child step's index in `steps`.
+    pub child: u32,
+    /// `true` = a DATA edge (parent result feeds the child); `false` = a CONTROL edge.
+    pub data: bool,
+    /// CONTROL-only cascade opt-out (`EdgeMeta::non_cascade`).
+    pub non_cascade: bool,
+}
+
+/// The blueprint execution mode (`blueprint-execution-modes.md`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuthorExecutionMode {
+    /// Memoize/reuse the content-addressed DAG (today's behavior).
+    Frozen,
+    /// Re-plan-fresh each run (reserved — PR-1 refuses it fail-closed).
+    Dynamic,
+}
+
+/// The DAG-authoring seam (the `SubmitWorkflow` path). The host compiles an
+/// authored Tier-1 DAG via `kx_workflow::compile`, assigns each step's `logic_ref`
+/// from its [`AuthorStepKind`], and resolves + INTERSECTS every warrant SERVER-SIDE
+/// from the party's grants (never a client warrant — the SubmitRun BLOCKER #5
+/// lesson). It does NO journal write (that is the [`RunSubmitter`]'s job). A `None`
+/// seam ⇒ `SubmitWorkflow` returns `unimplemented`. Reuses [`BoundRecipe`] (the
+/// `react_seed` field is always `false`) + [`BinderError`].
+#[tonic::async_trait]
+pub trait WorkflowAuthor: Send + Sync {
+    /// Compile + warrant-resolve an authored DAG for the SERVER-DERIVED `party`.
+    ///
+    /// # Errors
+    /// [`BinderError`] — `NotAuthorized` (uniform, no oracle), `InvalidArgs`
+    /// (malformed shape / over-cap / unknown body / wrong model / dynamic mode).
+    async fn author(
+        &self,
+        party: &str,
+        seed: u32,
+        steps: &[AuthorStep],
+        edges: &[AuthorEdge],
+        mode: AuthorExecutionMode,
+    ) -> Result<BoundRecipe, BinderError>;
+}
+
 /// The boxed server-streaming type the `StreamEvents` RPC returns.
 pub type EventStream =
     Pin<Box<dyn Stream<Item = Result<proto::EventFrame, Status>> + Send + 'static>>;
@@ -417,6 +494,9 @@ pub struct GatewayService {
     /// registry-backed manifest index). `None` ⇒ `ListToolManifests` /
     /// `ScoreTaskBundle` return `unimplemented`. Read-only, display-only.
     toolscout: Option<Arc<dyn crate::toolscout_view::ToolScoutView>>,
+    /// The optional DAG-authoring seam (the Blueprint builder — the host injects a
+    /// `kx-workflow`-backed author). `None` ⇒ `SubmitWorkflow` returns `unimplemented`.
+    author: Option<Arc<dyn WorkflowAuthor>>,
 }
 
 impl GatewayService {
@@ -444,6 +524,7 @@ impl GatewayService {
             react_supported: false,
             registered_tools: std::collections::BTreeSet::new(),
             toolscout: None,
+            author: None,
         }
     }
 
@@ -495,6 +576,14 @@ impl GatewayService {
     #[must_use]
     pub fn with_recipe_binder(mut self, binder: Arc<dyn RecipeBinder>) -> Self {
         self.binder = Some(binder);
+        self
+    }
+
+    /// Wire the DAG-authoring seam (the host's `kx-workflow`-backed author).
+    /// Enables `SubmitWorkflow` (Tier-1 Blueprint authoring + run).
+    #[must_use]
+    pub fn with_workflow_author(mut self, author: Arc<dyn WorkflowAuthor>) -> Self {
+        self.author = Some(author);
         self
     }
 
@@ -772,6 +861,128 @@ impl KxGateway for GatewayService {
             recipe_fingerprint: bound.recipe_fingerprint.to_vec(),
             // SERVER-DERIVED (from bind → compile, never client-supplied — SN-8).
             terminal_mote_id: bound.terminal_mote_id.as_bytes().to_vec(),
+        }))
+    }
+
+    async fn submit_workflow(
+        &self,
+        request: Request<proto::SubmitWorkflowRequest>,
+    ) -> Result<Response<proto::RunHandle>, Status> {
+        let author = self.author.as_ref().ok_or_else(|| {
+            Status::unimplemented("SubmitWorkflow: no workflow author wired on this gateway")
+        })?;
+        // SERVER-DERIVED identity (SN-8): the party the auth interceptor resolved.
+        // The wire carries no party field, so a caller cannot assert who it is.
+        let party = request
+            .extensions()
+            .get::<CallerParty>()
+            .map(|p| p.0.clone())
+            .ok_or_else(|| Status::unauthenticated("no resolved caller identity"))?;
+        let req = request.into_inner();
+
+        // Map the wire palette → gateway-core's vocabulary. The client supplies
+        // TOPOLOGY + PARAMS only; UNSPECIFIED kinds are refused at the boundary.
+        let mut steps: Vec<AuthorStep> = Vec::with_capacity(req.steps.len());
+        for s in req.steps {
+            let kind = match proto::WorkflowStepKind::try_from(s.kind) {
+                Ok(proto::WorkflowStepKind::Pure) => AuthorStepKind::Pure,
+                Ok(proto::WorkflowStepKind::Model) => AuthorStepKind::Model,
+                Ok(proto::WorkflowStepKind::Exec) => AuthorStepKind::Exec,
+                _ => {
+                    return Err(Status::invalid_argument(
+                        "WorkflowStep.kind must be PURE, MODEL, or EXEC",
+                    ));
+                }
+            };
+            let body_signature_id = if s.body_signature_id.is_empty() {
+                None
+            } else {
+                Some(hash_32(
+                    &s.body_signature_id,
+                    "WorkflowStep.body_signature_id must be 32 bytes",
+                )?)
+            };
+            steps.push(AuthorStep {
+                kind,
+                model_id: s.model_id,
+                prompt: s.prompt,
+                body_signature_id,
+                tool_contract: s.tool_contract.into_iter().collect(),
+                params: s.params.into_iter().collect(),
+            });
+        }
+        let mut edges: Vec<AuthorEdge> = Vec::with_capacity(req.edges.len());
+        for e in req.edges {
+            let data = match proto::EdgeKind::try_from(e.edge_kind) {
+                Ok(proto::EdgeKind::Data) => true,
+                Ok(proto::EdgeKind::Control) => false,
+                _ => {
+                    return Err(Status::invalid_argument(
+                        "WorkflowEdge.edge_kind must be DATA or CONTROL",
+                    ));
+                }
+            };
+            edges.push(AuthorEdge {
+                parent: e.parent,
+                child: e.child,
+                data,
+                non_cascade: e.non_cascade,
+            });
+        }
+        // UNSPECIFIED + FROZEN → Frozen (default-safe); DYNAMIC is reserved and the
+        // host refuses it fail-closed (PR-1 frozen-only).
+        let mode = match proto::WorkflowExecutionMode::try_from(req.execution_mode) {
+            Ok(proto::WorkflowExecutionMode::Dynamic) => AuthorExecutionMode::Dynamic,
+            _ => AuthorExecutionMode::Frozen,
+        };
+
+        // Compile + warrant-resolve SERVER-SIDE (identity + warrants derived from the
+        // party's grants, never the client — the BLOCKER #5 fix). `BoundRecipe`
+        // (react_seed = false) is reused; every Mote then flows the SAME admission as
+        // Invoke/SubmitRun.
+        let bound = author
+            .author(&party, req.seed, &steps, &edges, mode)
+            .await
+            .map_err(|e| match e {
+                BinderError::NotAuthorized => Status::permission_denied("not authorized"),
+                BinderError::InvalidArgs(detail) => Status::invalid_argument(detail),
+                BinderError::Internal(detail) => Status::internal(detail),
+            })?;
+
+        // The Invoke tool-grant backstop: every server-built warrant's grants must
+        // name a capability the host ACTUALLY registered on the broker (fail-closed
+        // against provisioning drift).
+        for (_, warrant) in &bound.motes {
+            if let Some(grant) = warrant.tool_grants.iter().find(|g| {
+                !self
+                    .registered_tools
+                    .contains(&(g.tool_id.0.clone(), g.tool_version.0.clone()))
+            }) {
+                return Err(Status::failed_precondition(format!(
+                    "authored step grants tool {}@{} but this serve registered no such \
+                     capability",
+                    grant.tool_id.0, grant.tool_version.0
+                )));
+            }
+        }
+
+        // The SAME propose-proxy as Invoke/SubmitRun: register first, then submit each
+        // compiled Mote (react_seed always false — no react kind in the Tier-1 palette).
+        let instance_id = self
+            .submitter
+            .register_run(bound.recipe_fingerprint)
+            .await
+            .map_err(submit_status)?;
+        for (mote, warrant) in bound.motes {
+            self.submitter
+                .submit_mote(mote, warrant, false, false)
+                .await
+                .map_err(submit_status)?;
+        }
+
+        Ok(Response::new(proto::RunHandle {
+            instance_id: instance_id.to_vec(),
+            recipe_fingerprint: bound.recipe_fingerprint.to_vec(),
         }))
     }
 

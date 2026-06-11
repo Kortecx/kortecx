@@ -1353,6 +1353,7 @@ dependencies = [
  "kx-gateway",
  "kx-proto",
  "kx-runtime",
+ "serde",
  "serde_json",
  "tempfile",
  "thiserror 1.0.69",

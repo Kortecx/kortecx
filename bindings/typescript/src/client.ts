@@ -16,7 +16,11 @@ import { CaptureRecord, type CaptureRecordPage } from "./capture.js";
 import { DatasetHit, DatasetSummary, type IngestDoc, IngestResult } from "./datasets.js";
 import { KxRunFailed, KxWaitTimeout, rpc } from "./errors.js";
 import { streamDeltas, wsDeltasFromMessages, wsUrl } from "./events.js";
-import { KxGateway, type SubmitRunRequestSchema } from "./gen/kortecx/v1/gateway_pb.js";
+import {
+  KxGateway,
+  type SubmitRunRequestSchema,
+  type SubmitWorkflowRequestSchema,
+} from "./gen/kortecx/v1/gateway_pb.js";
 import { AssetGrants } from "./grants.js";
 import { INSTANCE_LEN, REF_LEN, asBytes, encode } from "./hexids.js";
 import { ReactTurn, type ReactTurnPage } from "./react.js";
@@ -131,6 +135,23 @@ export abstract class KxClientBase {
     opts: { wait?: boolean; timeoutMs?: number } = {},
   ): Promise<{ instanceId: Uint8Array; recipeFingerprint: Uint8Array } | Result> {
     const handle = await rpc(this.grpc.submitRun(request));
+    if (!opts.wait) return handle;
+    const outcome = await pollAny(this.grpc, handle.instanceId, opts.timeoutMs ?? 120_000);
+    return this._finish(outcome);
+  }
+
+  /**
+   * Author a Tier-1 DAG (a {@link BlueprintBuilder}'s `build()`) and run it. The
+   * server COMPILES the DAG, derives all identity, and builds every warrant from the
+   * party's grants (SN-8) — the client sends only the topology + params. Returns the
+   * run handle, or — with `wait: true` — the first committed {@link Result}. An old
+   * gateway without the seam throws {@link KxUnimplemented}.
+   */
+  async submitWorkflow(
+    request: MessageInitShape<typeof SubmitWorkflowRequestSchema>,
+    opts: { wait?: boolean; timeoutMs?: number } = {},
+  ): Promise<{ instanceId: Uint8Array; recipeFingerprint: Uint8Array } | Result> {
+    const handle = await rpc(this.grpc.submitWorkflow(request));
     if (!opts.wait) return handle;
     const outcome = await pollAny(this.grpc, handle.instanceId, opts.timeoutMs ?? 120_000);
     return this._finish(outcome);

@@ -63,6 +63,8 @@ pub enum Cli {
     Invoke(verbs::invoke::InvokeArgs),
     /// `submit` a built-in demo run.
     Submit(verbs::submit::SubmitArgs),
+    /// `blueprint run` — author a Tier-1 DAG and run it (SubmitWorkflow).
+    Blueprint(verbs::blueprint::BlueprintArgs),
     /// Render a run as a DAG of Mote states.
     Projection(verbs::projection::ProjectionArgs),
     /// Fetch a committed result.
@@ -109,6 +111,7 @@ impl Cli {
             Some("serve") => Ok(Cli::Serve(args.collect())),
             Some("invoke") => Ok(Cli::Invoke(verbs::invoke::parse(args)?)),
             Some("submit") => Ok(Cli::Submit(verbs::submit::parse(args)?)),
+            Some("blueprint") => Ok(Cli::Blueprint(verbs::blueprint::parse(args)?)),
             Some("projection") => Ok(Cli::Projection(verbs::projection::parse(args)?)),
             Some("content") => Ok(Cli::Content(verbs::content::parse(args)?)),
             Some("events") => Ok(Cli::Events(verbs::events::parse(args)?)),
@@ -167,6 +170,7 @@ async fn dispatch(cli: Cli) -> Result<(), CliError> {
         Cli::Serve(rest) => serve(rest).await,
         Cli::Invoke(a) => verbs::invoke::execute(a).await,
         Cli::Submit(a) => verbs::submit::execute(a).await,
+        Cli::Blueprint(a) => verbs::blueprint::execute(a).await,
         Cli::Projection(a) => verbs::projection::execute(a).await,
         Cli::Content(a) => verbs::content::execute(a).await,
         Cli::Events(a) => verbs::events::execute(a).await,
@@ -291,6 +295,15 @@ kx invoke <handle> --args <json> [--args-file <path>] [--wait] [--timeout-secs N
         "submit" => "\
 kx submit --demo [--wait] [--timeout-secs N] [--out <file>] [client flags]
   Submit a built-in PURE demo run via the low-level SubmitRun path."
+            .into(),
+        "blueprint" => "\
+kx blueprint run --file <dag.json> [--wait] [--timeout-secs N] [--out <file>] [client flags]
+  Author a Tier-1 DAG (a vetted palette of PURE / MODEL steps + DATA/CONTROL edges)
+  and run it via SubmitWorkflow. The server COMPILES the DAG, derives all identity,
+  and builds every warrant from the party's grants (SN-8) — the client sends only the
+  topology + params. The authored run is then viewable in the console (Runs, Monitoring).
+  JSON: { \"seed\": N, \"steps\": [{\"kind\":\"pure\"|\"model\", \"prompt\":..., \"params\":{..}}],
+          \"edges\": [{\"parent\":i, \"child\":j, \"edge\":\"data\"|\"control\"}], \"execution_mode\":\"frozen\" }"
             .into(),
         "projection" => "\
 kx projection --instance <hex16> [--at-seq N] [client flags]

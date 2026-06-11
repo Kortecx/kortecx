@@ -71,11 +71,11 @@ pub use events::{check_run_ownership, frames_for_range};
 pub use identity::CallerParty;
 pub use reader::{ContentReader, JournalReader, ReadOnly};
 pub use service::{
-    AssetGrantsView, BinderError, BoundRecipe, CatalogSeamError, EventStream, EventTailer,
-    GatewayService, GrantEntry, GrantView, MembershipView, RecipeBinder, RecipeCatalog,
-    RecipeFormFieldEntry, RecipeParamKind, RegisteredSignature, SignatureCatalog,
-    SignatureSummaryEntry, SnapshotTailer, TeamMemberEntry, TeamMembersView, TeamSummaryEntry,
-    WarrantProjection,
+    AssetGrantsView, AuthorEdge, AuthorExecutionMode, AuthorStep, AuthorStepKind, BinderError,
+    BoundRecipe, CatalogSeamError, EventStream, EventTailer, GatewayService, GrantEntry, GrantView,
+    MembershipView, RecipeBinder, RecipeCatalog, RecipeFormFieldEntry, RecipeParamKind,
+    RegisteredSignature, SignatureCatalog, SignatureSummaryEntry, SnapshotTailer, TeamMemberEntry,
+    TeamMembersView, TeamSummaryEntry, WarrantProjection, WorkflowAuthor,
 };
 pub use submit::{
     RunSubmitter, SubmitMoteOutcome, SubmitStatus, SubmitterError, TonicCoordinatorSubmitter,

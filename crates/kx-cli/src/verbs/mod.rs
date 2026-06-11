@@ -2,6 +2,7 @@
 //! `parse(...)`, and an async `execute(...)`. Shared `--wait` finishing lives
 //! here (used by `invoke` + `submit`).
 
+pub mod blueprint;
 pub mod content;
 pub mod events;
 pub mod health;

@@ -12,6 +12,7 @@ go::
 
 from __future__ import annotations
 
+from .blueprints import BlueprintBuilder, EdgeInput, StepInput
 from .capture import CaptureRecord, CaptureRecordPage
 from .client import DEFAULT_ENDPOINT, AsyncKxClient, KxClient
 from .datasets import DatasetHit, DatasetSummary, IngestDocument, IngestResult
@@ -93,6 +94,10 @@ __all__ = [
     "BlueprintForm",
     "BlueprintFormField",
     "blueprint_param_type_name",
+    # The Blueprint BUILDER (SubmitWorkflow) — author a Tier-1 DAG to run.
+    "BlueprintBuilder",
+    "StepInput",
+    "EdgeInput",
     "TeamSummary",
     "TeamMember",
     "TeamMembers",

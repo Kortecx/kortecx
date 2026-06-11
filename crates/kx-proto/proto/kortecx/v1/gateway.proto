@@ -624,6 +624,63 @@ message ScoreTaskBundleResponse {
 }
 
 // ---------------------------------------------------------------------------
+// SubmitWorkflow — author a Tier-1 DAG from a VETTED palette and run it.
+// Additive RPC (D120.6). The caller's party is SERVER-DERIVED from the auth
+// interceptor (NO party field on the wire — SN-8). Unlike SubmitRun (which takes
+// pre-derived Motes + a client warrant), the client here sends only TOPOLOGY +
+// PARAMS: the server assigns each step's logic_ref from its StepKind (the client
+// CANNOT inject an executable body — that is Tier 2 / W3, needs a D-number),
+// builds every per-step warrant SERVER-SIDE from the party's grants (intersect;
+// never a client warrant — the SubmitRun BLOCKER #5 lesson), derives all identity
+// via kx_workflow::compile, then register-then-submits through the SAME
+// propose-proxy + R-1..R-15 admission as Invoke. Returns RunHandle. An old
+// gateway without the seam returns UNIMPLEMENTED.
+// ---------------------------------------------------------------------------
+
+// The VETTED step palette. +1-shifted with a 0 sentinel; the Rust boundary
+// REJECTS UNSPECIFIED. New kinds are additive (append only). No critic/shaper
+// kind in Tier-1 (keeps the cross-Mote refusal surface vacuous).
+enum WorkflowStepKind {
+  WORKFLOW_STEP_KIND_UNSPECIFIED = 0;
+  WORKFLOW_STEP_KIND_PURE        = 1;  // deterministic transform; server logic_ref = content-derived sentinel
+  WORKFLOW_STEP_KIND_MODEL       = 2;  // greedy model step routed by model_id + prompt (server logic_ref = MODEL sentinel)
+  WORKFLOW_STEP_KIND_EXEC        = 3;  // references a REGISTERED body by signature id; server logic_ref = that body's content ref
+}
+
+// Execution mode (blueprint-execution-modes.md). Additive, default = FROZEN.
+enum WorkflowExecutionMode {
+  WORKFLOW_EXECUTION_MODE_UNSPECIFIED = 0; // boundary maps to FROZEN (default-safe)
+  WORKFLOW_EXECUTION_MODE_FROZEN      = 1; // memoize/reuse (content-addressed dedup — today's behavior)
+  WORKFLOW_EXECUTION_MODE_DYNAMIC     = 2; // re-plan-fresh (reserved; PR-1 frozen-only, refused at the boundary)
+}
+
+// One authored step. The client supplies the kind + params; the server controls
+// the logic_ref + identity + warrant.
+message WorkflowStep {
+  WorkflowStepKind kind    = 1;
+  string model_id          = 2;          // required for MODEL (must equal the served model); ignored for PURE/EXEC
+  string prompt            = 3;          // MODEL prompt (bound into config_subset[PROMPT_KEY]); empty otherwise
+  bytes  body_signature_id = 4;          // 32B — EXEC only: the REGISTERED body's content/signature id
+  map<string, string> tool_contract = 5; // tool_id -> tool_version; AUTHORITY still comes only from the party's grant
+  map<string, bytes>  params        = 6; // free config_subset entries (size-capped server-side)
+}
+
+// One authored edge between two steps (by their insertion index in steps[]).
+message WorkflowEdge {
+  uint32 parent      = 1;                // index into steps[] (the StepRef insertion order)
+  uint32 child       = 2;                // index into steps[]
+  EdgeKind edge_kind = 3;                // reuses coordinator.proto EdgeKind (DATA / CONTROL)
+  bool   non_cascade = 4;                // EdgeMeta.non_cascade (control-only cascade opt-out)
+}
+
+message SubmitWorkflowRequest {
+  uint32 seed                          = 1; // workflow-input seed (folds into entrypoint identity, D50)
+  repeated WorkflowStep steps          = 2; // authored steps, in StepRef order (count-capped server-side)
+  repeated WorkflowEdge edges          = 3; // authored edges (count-capped; acyclicity enforced by compile)
+  WorkflowExecutionMode execution_mode = 4; // default FROZEN
+}
+
+// ---------------------------------------------------------------------------
 // Service — the external client-facing gateway (distinct from Coordinator).
 // ---------------------------------------------------------------------------
 
@@ -659,4 +716,7 @@ service KxGateway {
   // preview (read-only, display-only — scores/verdicts never authorize).
   rpc ListToolManifests(ListToolManifestsRequest) returns (ListToolManifestsResponse);
   rpc ScoreTaskBundle(ScoreTaskBundleRequest) returns (ScoreTaskBundleResponse);
+  // Blueprint-builder additive (D120.6): author a Tier-1 DAG (vetted palette) and
+  // run it — server-compiled identity + server-built warrants + R-1..R-15 admission.
+  rpc SubmitWorkflow(SubmitWorkflowRequest) returns (RunHandle);
 }
