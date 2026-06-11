@@ -262,6 +262,15 @@ tonic-web          = "0.12"
 # only; `tower`/`http`/`hyper` are already locked transitively via tonic, so this
 # adds the CORS layer alone. MIT. In the `kx-gateway` binary only.
 tower-http         = { version = "0.5", features = ["cors"] }
+# D139: the embedded web console's HTTP/1.1 static server (the `console` feature in
+# kx-gateway ONLY). Every crate below is ALREADY in the lock at this version as a
+# tonic transitive — promoting them to direct optional deps adds ZERO new lock
+# entries and leaves deny.toml untouched. hyper serves GET/HEAD over the
+# compile-time-embedded SPA bytes; never a runtime filesystem.
+hyper              = { version = "1", features = ["http1", "server"] }
+hyper-util         = { version = "0.1", features = ["tokio"] }
+http-body-util     = "0.1"
+http               = "1"
 prost              = "0.13"
 tokio              = { version = "1", features = ["rt-multi-thread", "macros", "net"] }
 # Server-streaming adapter for the KxGateway `StreamEvents` RPC (M8/D120). Already

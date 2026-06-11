@@ -136,6 +136,16 @@ tonic-web          = { workspace = true }
 # allowlist; never a wildcard). `cors` feature only; tower/http already locked via
 # tonic. Outermost layer so OPTIONS preflight is answered before the auth interceptor.
 tower-http         = { workspace = true }
+# D139 (the embedded web console, `console` feature): hyper serves the
+# compile-time-embedded SPA (build.rs `include_bytes!` codegen of `ui/dist`) on a
+# THIRD loopback listener — GET/HEAD only, no runtime filesystem (path traversal
+# structurally impossible). All four are tonic transitives already in the lock:
+# zero new entries, deny.toml untouched, the dep wall holds (no FFI).
+hyper              = { workspace = true, optional = true }
+hyper-util         = { workspace = true, optional = true }
+http-body-util     = { workspace = true, optional = true }
+http               = { workspace = true, optional = true }
+bytes              = { workspace = true, optional = true }
 # Additive feature bump over the workspace tokio (rt-multi-thread/macros/net):
 # `signal` for graceful Ctrl-C shutdown, `time` for the worker poll/backoff +
 # connect-retry + the R5 live-tail poll interval, `sync` for the R5 per-subscriber
@@ -200,6 +210,13 @@ inference = [
 # path ADDITIONALLY needs `inference` (an EmbeddingBackend); without it, server-embed
 # requests return FAILED_PRECONDITION. Independent of `inference` — they compose.
 hnsw = ["dep:kx-dataset", "dep:kx-dataset-hnsw"]
+# D139: `kx serve` hosts the embedded web console (the built React SPA) on a third
+# loopback listener (default 127.0.0.1:50180). OFF by default: the dist is embedded
+# at COMPILE time by build.rs, so a console build needs `ui/dist` (a repo checkout
+# with node, or the prebuilt release which ships it) — plain `cargo build/install`
+# stays node-free and byte-identical. FFI-free (hyper stack only); composes with
+# `hnsw`/`inference`. Release binaries ship `--features console,hnsw` (D139.4).
+console = ["dep:hyper", "dep:hyper-util", "dep:http-body-util", "dep:http", "dep:bytes"]
 
 [lints]
 workspace = true

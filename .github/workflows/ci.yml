@@ -632,11 +632,8 @@ jobs:
             cargo-ui-${{ runner.os }}-
             cargo-${{ runner.os }}-
 
-      # `--features hnsw` (FFI-FREE — no llama.cpp) wires the Datasets data-plane so
-      # the Playwright e2e can drive the section against a real `kx serve`.
-      - name: Build the FFI-free kx (serve) for the contract + E2E tests
-        run: cargo build -p kx-cli --features hnsw
-
+      # D139: node + the SPA build come FIRST — the `console` feature embeds
+      # `ui/dist` at compile time, so the dist must exist before cargo builds kx.
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
@@ -658,19 +655,33 @@ jobs:
           npx biome ci .
           npx tsc --noEmit
 
-      - name: Unit + component + contract tests (vitest; contract vs a real `kx serve`)
-        working-directory: ui
-        env:
-          KX_BIN: ${{ github.workspace }}/target/debug/kx
-        run: npx vitest run
-
-      - name: Production build (proves the SPA bundles)
+      - name: Production build (proves the SPA bundles; the console embed input)
         working-directory: ui
         run: npm run build
 
       - name: Eager-JS bundle gate (entry + modulepreload ≤ 600 KiB)
         working-directory: ui
         run: npm run size
+
+      # `--features console,hnsw` (BOTH FFI-FREE — no llama.cpp): hnsw wires the
+      # Datasets data-plane; console (D139) embeds the dist built above so the
+      # Playwright suite can ALSO drive the real installed flow (no vite server).
+      - name: Build kx (serve) with the embedded console for the contract + E2E tests
+        run: cargo build -p kx-cli --features console,hnsw
+
+      # The ONLY job that can lint/test the console feature (it needs the dist) —
+      # this IS the console feature-guard; the justfile features-guard stays
+      # node-free by design.
+      - name: Clippy + tests for the console feature (kx-gateway)
+        run: |
+          cargo clippy -p kx-gateway --features console --all-targets -- -D warnings
+          cargo test -p kx-gateway --features console
+
+      - name: Unit + component + contract tests (vitest; contract vs a real `kx serve`)
+        working-directory: ui
+        env:
+          KX_BIN: ${{ github.workspace }}/target/debug/kx
+        run: npx vitest run
 
       - name: Install the Playwright browser (chromium only)
         working-directory: ui
@@ -680,6 +691,9 @@ jobs:
         working-directory: ui
         env:
           KX_BIN: ${{ github.workspace }}/target/debug/kx
+          # The kx above carries the console feature → also run the embedded-
+          # console spec (the REAL installed flow: kx serves the SPA, no vite).
+          KX_CONSOLE_E2E: "1"
         run: npx playwright test
 
       - name: Upload the Playwright report on failure

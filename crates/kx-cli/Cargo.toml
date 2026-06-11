@@ -52,6 +52,12 @@ inference = ["kx-gateway/inference"]
 # llama.cpp), so the `build-no-inference` gate + the dep-wall stay green. Opt in with
 # `cargo build -p kx-cli --features hnsw` (the client-vector path needs no model).
 hnsw = ["kx-gateway/hnsw"]
+# D139: build `kx serve` with the EMBEDDED WEB CONSOLE — forwards to the kx-gateway
+# `console` feature (compile-time embed of the built `ui/dist`; needs a repo
+# checkout with the dist built — `just console-dist` — or use the prebuilt release
+# binary, which ships `console,hnsw`). FFI-free (hyper stack only); the default
+# build stays node-free and byte-identical.
+console = ["kx-gateway/console"]
 
 [dev-dependencies]
 # E2E: host an in-process gateway (kx_gateway::start) + drive CLIENT verbs as subprocesses.

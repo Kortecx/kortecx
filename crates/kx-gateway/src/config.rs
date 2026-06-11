@@ -17,6 +17,42 @@ pub const DEFAULT_MAX_LEASE: u32 = 16;
 /// `--ws-listen`. A `:0` port asks the OS for an ephemeral one (used by tests).
 pub const DEFAULT_WS_LISTEN: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 50152);
 
+/// Default address for the embedded web console (D139) — the third loopback
+/// listener serving the compile-time-embedded SPA when the binary carries the
+/// `console` feature. Override with `--console-listen`; opt out with
+/// `--no-console`. Loopback ONLY (a non-loopback console bind is refused: the
+/// CORS self-grant derives from this origin, and remote browsers have the
+/// supported static-host + explicit `--cors-origin` path instead).
+pub const DEFAULT_CONSOLE_LISTEN: SocketAddr =
+    SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 50180);
+
+/// How the embedded web console should run (D139). Parsed feature-free so the
+/// SAME flags are accepted by every build: on a console-less binary `Default`
+/// and `Disabled` are no-ops while an explicit `--console-listen` is a loud
+/// config error (the user asked for a surface this binary cannot serve).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConsoleMode {
+    /// No flag: serve the console at [`DEFAULT_CONSOLE_LISTEN`] when the
+    /// binary has the `console` feature; otherwise do nothing.
+    Default,
+    /// `--no-console`: never serve the console.
+    Disabled,
+    /// `--console-listen <addr:port>`: serve at this (loopback) address.
+    Listen(SocketAddr),
+}
+
+impl ConsoleMode {
+    /// The address the console should bind, or `None` when disabled.
+    #[must_use]
+    pub fn resolve(self) -> Option<SocketAddr> {
+        match self {
+            ConsoleMode::Default => Some(DEFAULT_CONSOLE_LISTEN),
+            ConsoleMode::Disabled => None,
+            ConsoleMode::Listen(addr) => Some(addr),
+        }
+    }
+}
+
 /// Resolved `serve` configuration.
 #[derive(Debug, Clone)]
 pub struct GatewayConfig {
@@ -56,6 +92,11 @@ pub struct GatewayConfig {
     /// CORS is a browser same-origin-policy mechanism). A wildcard (`*`) is refused
     /// at parse time — the allowlist is always explicit (SN-8 fail-closed posture).
     pub cors_origins: Vec<String>,
+    /// The embedded web console (D139): default / `--no-console` /
+    /// `--console-listen <addr:port>`. Loopback-only; served only by a
+    /// `console`-feature binary (the gRPC-web allowlist then auto-extends with
+    /// the console's OWN bound loopback origins, never anything wider).
+    pub console_listen: ConsoleMode,
 }
 
 /// PEM paths for the gRPC listener's server TLS (A1). The embedded loopback
@@ -88,7 +129,8 @@ pub enum Cli {
 /// One-line usage string (printed on `--help` and on a parse error).
 pub const USAGE: &str =
     "usage: kx-gateway serve --listen <addr:port> --journal <path> --content <dir> \
-[--ws-listen <addr:port>] [--max-lease <N>] [--dev-allow-local] \
+[--ws-listen <addr:port>] [--console-listen <addr:port> | --no-console] \
+[--max-lease <N>] [--dev-allow-local] \
 [--auth-token <token>=<party>]... [--auth-token-file <path>] [--catalog-dir <dir>] \
 [--tls-cert <path> --tls-key <path>] [--cors-origin <scheme://host[:port]>]...\n       \
 kx-gateway --help | --version";
@@ -128,6 +170,8 @@ fn parse_serve(mut args: impl Iterator<Item = String>) -> Result<GatewayConfig, 
     let mut tls_cert: Option<PathBuf> = None;
     let mut tls_key: Option<PathBuf> = None;
     let mut cors_origins: Vec<String> = Vec::new();
+    let mut console_listen = ConsoleMode::Default;
+    let mut console_flag_seen = false;
 
     while let Some(flag) = args.next() {
         let mut take_value = |name: &str| -> Result<String, GatewayError> {
@@ -182,6 +226,11 @@ fn parse_serve(mut args: impl Iterator<Item = String>) -> Result<GatewayConfig, 
                 let v = take_value("--cors-origin")?;
                 cors_origins.push(validate_cors_origin(&v)?);
             }
+            "--console-listen" => {
+                let v = take_value("--console-listen")?;
+                console_listen = apply_console_flag(&mut console_flag_seen, Some(v.as_str()))?;
+            }
+            "--no-console" => console_listen = apply_console_flag(&mut console_flag_seen, None)?,
             other => return Err(GatewayError::Config(format!("unknown flag {other:?}"))),
         }
     }
@@ -202,6 +251,8 @@ fn parse_serve(mut args: impl Iterator<Item = String>) -> Result<GatewayConfig, 
 
     let tls = pair_tls(tls_cert, tls_key)?;
 
+    refuse_console_without_feature(console_listen)?;
+
     Ok(GatewayConfig {
         listen,
         ws_listen,
@@ -213,6 +264,7 @@ fn parse_serve(mut args: impl Iterator<Item = String>) -> Result<GatewayConfig, 
         catalog_dir,
         tls,
         cors_origins,
+        console_listen,
     })
 }
 
@@ -232,6 +284,54 @@ fn pair_tls(
             "--tls-cert and --tls-key must be given together".into(),
         )),
     }
+}
+
+/// Parse ONE console flag occurrence (D139): `Some(addr)` for
+/// `--console-listen <addr:port>`, `None` for `--no-console`. The two flags
+/// are mutually exclusive, and a `--console-listen` address must be loopback —
+/// its origin is what the gRPC-web CORS allowlist auto-grants, and a public
+/// bind cannot soundly self-derive a grantable public origin (remote browsers
+/// use the static-host + explicit `--cors-origin` path instead).
+fn apply_console_flag(seen: &mut bool, value: Option<&str>) -> Result<ConsoleMode, GatewayError> {
+    if *seen {
+        return Err(GatewayError::Config(
+            "--console-listen and --no-console are mutually exclusive".into(),
+        ));
+    }
+    *seen = true;
+    let Some(v) = value else {
+        return Ok(ConsoleMode::Disabled);
+    };
+    let addr = v.parse::<SocketAddr>().map_err(|_| {
+        GatewayError::Config(format!(
+            "--console-listen expects an addr:port (IP literal), got {v:?}"
+        ))
+    })?;
+    if !addr.ip().is_loopback() {
+        return Err(GatewayError::Config(format!(
+            "--console-listen must bind a loopback address (got {addr}); for \
+             remote browsers, static-host the SPA and grant its origin via \
+             --cors-origin"
+        )));
+    }
+    Ok(ConsoleMode::Listen(addr))
+}
+
+/// D139: an EXPLICIT console request on a binary that cannot serve one is a
+/// loud error (never a silent no-op); the default/`--no-console` modes parse
+/// everywhere so shared fixtures can pass `--no-console` unconditionally.
+fn refuse_console_without_feature(mode: ConsoleMode) -> Result<(), GatewayError> {
+    if !cfg!(feature = "console") {
+        if let ConsoleMode::Listen(_) = mode {
+            return Err(GatewayError::Config(
+                "this kx was built without the web console (`console` feature); \
+                 use the prebuilt release binary, or build from a repo checkout with \
+                 `--features console` after `just console-dist`"
+                    .into(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Validate a `--cors-origin` value fail-closed: it must be a concrete origin
@@ -551,6 +651,98 @@ mod tests {
         assert!(base("").is_err());
         // A concrete origin is accepted.
         assert!(base("https://app.example.com").is_ok());
+    }
+
+    #[test]
+    fn console_defaults_and_no_console_parse_everywhere() {
+        // No flag → Default (the console serves iff the binary has the feature).
+        let c = serve(
+            Cli::from_args([
+                "serve",
+                "--listen",
+                "127.0.0.1:0",
+                "--journal",
+                "/tmp/j",
+                "--content",
+                "/tmp/c",
+            ])
+            .unwrap(),
+        );
+        assert_eq!(c.console_listen, ConsoleMode::Default);
+        assert_eq!(
+            ConsoleMode::Default.resolve(),
+            Some(DEFAULT_CONSOLE_LISTEN),
+            "default mode binds the well-known console port"
+        );
+
+        // --no-console → Disabled, on EVERY build (fixtures pass it blindly).
+        let c = serve(
+            Cli::from_args([
+                "serve",
+                "--listen",
+                "127.0.0.1:0",
+                "--journal",
+                "/tmp/j",
+                "--content",
+                "/tmp/c",
+                "--no-console",
+            ])
+            .unwrap(),
+        );
+        assert_eq!(c.console_listen, ConsoleMode::Disabled);
+        assert_eq!(ConsoleMode::Disabled.resolve(), None);
+    }
+
+    #[cfg(feature = "console")]
+    #[test]
+    fn console_listen_parses_loopback_and_refuses_public_and_conflicts() {
+        let base = |extra: &[&str]| {
+            let mut a = vec![
+                "serve",
+                "--listen",
+                "127.0.0.1:0",
+                "--journal",
+                "/tmp/j",
+                "--content",
+                "/tmp/c",
+            ];
+            a.extend_from_slice(extra);
+            Cli::from_args(a)
+        };
+        let c = serve(base(&["--console-listen", "127.0.0.1:0"]).unwrap());
+        assert_eq!(
+            c.console_listen,
+            ConsoleMode::Listen("127.0.0.1:0".parse().unwrap())
+        );
+        // D139.3: non-loopback console binds are refused outright.
+        assert!(base(&["--console-listen", "0.0.0.0:50180"]).is_err());
+        assert!(base(&["--console-listen", "192.168.1.10:50180"]).is_err());
+        // The two console flags are mutually exclusive, in either order.
+        assert!(base(&["--no-console", "--console-listen", "127.0.0.1:0"]).is_err());
+        assert!(base(&["--console-listen", "127.0.0.1:0", "--no-console"]).is_err());
+        // Malformed addr.
+        assert!(base(&["--console-listen", "not-an-addr"]).is_err());
+    }
+
+    #[cfg(not(feature = "console"))]
+    #[test]
+    fn explicit_console_listen_is_a_loud_error_without_the_feature() {
+        let err = Cli::from_args([
+            "serve",
+            "--listen",
+            "127.0.0.1:0",
+            "--journal",
+            "/tmp/j",
+            "--content",
+            "/tmp/c",
+            "--console-listen",
+            "127.0.0.1:50180",
+        ])
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("without the web console"),
+            "the error names the remedy: {err}"
+        );
     }
 
     #[test]
