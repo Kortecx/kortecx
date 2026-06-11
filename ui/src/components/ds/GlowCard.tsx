@@ -1,4 +1,4 @@
-import { type HTMLMotionProps, motion } from "framer-motion";
+import { type HTMLMotionProps, m } from "framer-motion";
 import type { CSSProperties } from "react";
 
 export interface GlowCardProps extends HTMLMotionProps<"div"> {
@@ -24,13 +24,13 @@ export function GlowCard({
   const classes = `glow-card${hover ? " glow-card--hover" : ""}${className ? ` ${className}` : ""}`;
   const styles = { ...style, "--glow": glowColor } as CSSProperties;
   return (
-    <motion.div
+    <m.div
       className={classes}
       style={styles}
       whileHover={hover ? { scale: 1.005, y: -1 } : undefined}
       {...rest}
     >
       {children}
-    </motion.div>
+    </m.div>
   );
 }

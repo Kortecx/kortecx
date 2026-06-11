@@ -1,4 +1,4 @@
-import { motion } from "framer-motion";
+import { m } from "framer-motion";
 import { statePulse } from "../app/motion";
 import { stateVisual } from "../lib/colors";
 
@@ -6,7 +6,7 @@ import { stateVisual } from "../lib/colors";
 export function StatePill({ stateCode }: { stateCode: number }) {
   const { label, tone } = stateVisual(stateCode);
   return (
-    <motion.span
+    <m.span
       key={stateCode}
       className={`pill pill--${tone}`}
       data-testid="state-pill"
@@ -16,6 +16,6 @@ export function StatePill({ stateCode }: { stateCode: number }) {
       transition={statePulse.transition}
     >
       {label}
-    </motion.span>
+    </m.span>
   );
 }

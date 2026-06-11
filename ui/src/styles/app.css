@@ -1488,3 +1488,60 @@ select {
     background-position: 200px 0;
   }
 }
+
+/* ---- DevTools dock (phase 1; lazy, mounted only while open) ---- */
+.devtools {
+  position: fixed;
+  left: var(--sidebar-w, 200px);
+  right: 0;
+  bottom: 0;
+  z-index: 40;
+  height: 280px;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border-top: 2px solid var(--primary);
+  box-shadow: 0 -8px 24px rgba(13, 13, 13, 0.08);
+}
+.shell--collapsed .devtools {
+  left: var(--sidebar-w-collapsed);
+}
+.devtools__bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.25rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+}
+.devtools__tabs {
+  display: flex;
+  gap: 0.25rem;
+}
+.devtools__tab {
+  background: none;
+  box-shadow: none;
+  border: none;
+  margin: 0;
+  padding: 0.3rem 0.7rem;
+  border-radius: var(--radius);
+  color: var(--fg-muted);
+  font-weight: 500;
+  cursor: pointer;
+}
+.devtools__tab[aria-selected="true"] {
+  background: var(--primary-dim);
+  color: var(--primary-h);
+}
+.devtools__close {
+  margin-left: auto;
+  font-size: 1rem;
+}
+.devtools__body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0.5rem 0.75rem;
+}
+.devtools__context {
+  margin: 0 0 0.4rem;
+  font-size: 0.78rem;
+}

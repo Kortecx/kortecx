@@ -48,6 +48,22 @@ export function mergeServerRuns(local: RunRecord[], server: ServerRun[]): RunRec
 /** Keep the session history bounded (newest-first). */
 const MAX_RUNS = 50;
 
+/**
+ * Fired on `window` whenever the persisted history changes. The browser's
+ * `storage` event only fires in OTHER tabs, so two `useRuns` instances in the
+ * SAME tab (e.g. the Blueprints submit + the DevTools dock tail) would go stale
+ * without it.
+ */
+export const RUNS_CHANGED_EVENT = "kortecx:runs-changed";
+
+function notifyRunsChanged(): void {
+  try {
+    window.dispatchEvent(new Event(RUNS_CHANGED_EVENT));
+  } catch {
+    /* non-browser env (unit tests without a window) */
+  }
+}
+
 function keyFor(endpoint: string): string {
   return `kortecx.ui.runs:${endpoint}`;
 }
@@ -77,6 +93,7 @@ export function recordRun(endpoint: string, run: RunRecord): RunRecord[] {
   } catch {
     /* best-effort */
   }
+  notifyRunsChanged();
   return next;
 }
 
@@ -86,6 +103,7 @@ export function clearRuns(endpoint: string): void {
   } catch {
     /* best-effort */
   }
+  notifyRunsChanged();
 }
 
 function isRunRecord(v: unknown): v is RunRecord {

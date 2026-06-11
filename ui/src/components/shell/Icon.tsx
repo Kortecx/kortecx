@@ -19,7 +19,8 @@ export type Glyph =
   | "refresh"
   | "search"
   | "send"
-  | "settings";
+  | "settings"
+  | "terminal";
 
 // 24×24 viewBox, stroke = currentColor. Multi-subpath `d` is fine.
 const PATHS: Record<Glyph, string> = {
@@ -38,6 +39,7 @@ const PATHS: Record<Glyph, string> = {
   send: "M4 12l16-7-7 16-2-7z",
   settings:
     "M12 9a3 3 0 100 6 3 3 0 000-6zM19 12a7 7 0 00-.1-1l2-1.5-2-3.4-2.3 1a7 7 0 00-1.7-1l-.3-2.6h-4l-.3 2.6a7 7 0 00-1.7 1l-2.3-1-2 3.4 2 1.5a7 7 0 000 2l-2 1.5 2 3.4 2.3-1a7 7 0 001.7 1l.3 2.6h4l.3-2.6a7 7 0 001.7-1l2.3 1 2-3.4-2-1.5a7 7 0 00.1-1z",
+  terminal: "M4 17l6-5-6-5M12 19h8",
 };
 
 const FALLBACK = "M12 12h.01";

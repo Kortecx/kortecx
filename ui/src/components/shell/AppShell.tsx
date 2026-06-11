@@ -1,8 +1,9 @@
 import { Outlet, useRouterState } from "@tanstack/react-router";
-import { AnimatePresence, motion } from "framer-motion";
-import { useCallback, useEffect, useState } from "react";
+import { AnimatePresence, m } from "framer-motion";
+import { Suspense, useCallback, useEffect, useState } from "react";
 import { pageFade } from "../../app/motion";
 import { useConnection } from "../../kx/connection-context";
+import { DevToolsDock } from "../devtools";
 import { Brand } from "./Brand";
 import { CommandPalette } from "./CommandPalette";
 import { ConnectionStatus } from "./ConnectionStatus";
@@ -10,18 +11,19 @@ import { Navbar } from "./Navbar";
 import { Sidebar } from "./Sidebar";
 
 const SIDEBAR_KEY = "kortecx.ui.sidebar";
+const DEVTOOLS_KEY = "kortecx.ui.devtools";
 
-function loadCollapsed(): boolean {
+function loadFlag(key: string): boolean {
   try {
-    return localStorage.getItem(SIDEBAR_KEY) === "1";
+    return localStorage.getItem(key) === "1";
   } catch {
     return false;
   }
 }
 
-function persistCollapsed(collapsed: boolean): void {
+function persistFlag(key: string, value: boolean): void {
   try {
-    localStorage.setItem(SIDEBAR_KEY, collapsed ? "1" : "0");
+    localStorage.setItem(key, value ? "1" : "0");
   } catch {
     /* best-effort */
   }
@@ -32,7 +34,7 @@ function RouteOutlet() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   return (
     <AnimatePresence mode="wait">
-      <motion.div
+      <m.div
         key={pathname}
         initial={pageFade.initial}
         animate={pageFade.animate}
@@ -40,7 +42,7 @@ function RouteOutlet() {
         transition={pageFade.transition}
       >
         <Outlet />
-      </motion.div>
+      </m.div>
     </AnimatePresence>
   );
 }
@@ -54,14 +56,23 @@ function RouteOutlet() {
  */
 export function AppShell() {
   const { status } = useConnection();
-  const [collapsed, setCollapsed] = useState<boolean>(() => loadCollapsed());
+  const [collapsed, setCollapsed] = useState<boolean>(() => loadFlag(SIDEBAR_KEY));
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [devtoolsOpen, setDevtoolsOpen] = useState<boolean>(() => loadFlag(DEVTOOLS_KEY));
   const connected = status === "connected";
 
   const toggle = useCallback(() => {
     setCollapsed((c) => {
       const next = !c;
-      persistCollapsed(next);
+      persistFlag(SIDEBAR_KEY, next);
+      return next;
+    });
+  }, []);
+
+  const toggleDevtools = useCallback(() => {
+    setDevtoolsOpen((open) => {
+      const next = !open;
+      persistFlag(DEVTOOLS_KEY, next);
       return next;
     });
   }, []);
@@ -107,12 +118,17 @@ export function AppShell() {
       <a href="#main" className="skip-link">
         Skip to content
       </a>
-      <Navbar onOpenPalette={openPalette} />
+      <Navbar onOpenPalette={openPalette} onToggleDevtools={toggleDevtools} />
       <Sidebar collapsed={collapsed} onToggle={toggle} />
       <main className="shell__main" id="main">
         <RouteOutlet />
       </main>
       <CommandPalette open={paletteOpen} onClose={closePalette} />
+      {devtoolsOpen ? (
+        <Suspense fallback={null}>
+          <DevToolsDock onClose={toggleDevtools} />
+        </Suspense>
+      ) : null}
     </div>
   );
 }

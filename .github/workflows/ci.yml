@@ -656,6 +656,10 @@ jobs:
         working-directory: ui
         run: npm run build
 
+      - name: Eager-JS bundle gate (entry + modulepreload ≤ 600 KiB)
+        working-directory: ui
+        run: npm run size
+
       - name: Install the Playwright browser (chromium only)
         working-directory: ui
         run: npx playwright install --with-deps chromium
