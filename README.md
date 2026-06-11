@@ -11,108 +11,97 @@
 [![MSRV](https://img.shields.io/badge/MSRV-1.94.0-orange.svg)](rust-toolchain.toml)
 [![Rust Edition](https://img.shields.io/badge/Rust-2021-orange.svg)](https://doc.rust-lang.org/edition-guide/rust-2021/index.html)
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS-blue.svg)](#)
-[![Status](https://img.shields.io/badge/status-early%20development-yellow.svg)](#status--roadmap)
+[![Status](https://img.shields.io/badge/status-early%20development-yellow.svg)](#)
 
-kortecx is an **execution kernel for AI agents** — a runtime that turns clever
-agent scripts into production software you can trust with real work. It dispatches
-steps across workers, survives crashes by replaying from a durable log, and
-guarantees a step that touches the world takes effect **exactly once**. Not a
-model, not a database, not a chat app: the execution kernel beneath them.
+kortecx runs AI agents you can trust with real work. One small binary gives you
+**durable, exactly-once agentic execution** — live agent loops that plan,
+re-plan, self-check, and call tools; reusable **Blueprints**; **RAG datasets**;
+**local LLM inference**; a built-in **web console**; and **Python/TypeScript
+SDKs** — all over an append-only journal that survives crashes and never runs a
+world-touching step twice.
 
 ```bash
-cargo install --path crates/kx-cli      # the `kx` binary — Rust only, no C++ toolchain
-kx run    --journal /tmp/kx.db --content /tmp/kx-content      # → 7d22d4bd… (8/8 committed)
+curl -fsSL https://raw.githubusercontent.com/Kortecx/kortecx/main/scripts/install.sh | sh
+kx serve --journal /tmp/kx.db --content /tmp/kx-content --dev-allow-local
+# → gRPC 127.0.0.1:50151 · events ws://127.0.0.1:50152 · web console http://127.0.0.1:50180
 ```
 
 ---
 
-## Contents
-
-- [The gap we're closing](#the-gap-were-closing)
-- [Prerequisites](#prerequisites)
-- [Install & quick start](#install--quick-start) — prove exactly-once in 60 seconds
-- [Getting started](#getting-started) — run the runtime as a server, like a function
-- [Commands](#commands) — the full `kx` reference
-- [Blueprints](#blueprints) — reusable agentic workflows
-- [Local LLM inference](#local-llm-inference) — bring your own GGUF model
-- [How it works](#how-it-works) — the architecture in one read
-- [Extending](#extending) — bring your own journal, store, broker, backend
-- [Production notes & known limitations](#production-notes--known-limitations)
-- [Status & roadmap](#status--roadmap)
+- [What you get](#what-you-get)
+- [Install](#install) · [Prerequisites](#prerequisites)
+- [Quick start: prove exactly-once](#quick-start-prove-exactly-once)
+- [Start the runtime locally](#start-the-runtime-locally) — serve, run blueprints, chat, ReAct with tools
+- [The web console](#the-web-console)
+- [CLI reference](#cli-reference) — every command, flag, and environment variable
+- [Blueprints](#blueprints) · [Datasets & RAG](#datasets--rag) · [SDKs](#sdks)
+- [Security defaults](#security-defaults) · [Run in Docker](#run-in-docker)
+- [Production notes](#production-notes)
 - [Contributing](#contributing) · [License](#license) · [Links](#links)
 
 ---
 
-## The gap we're closing
+## What you get
 
-AI agents work in the demo and fall over in production. The gap is **reliable
-orchestration** — dispatching tasks across workers, retrying on failure, surviving
-crashes, and never re-running a step that already touched the outside world.
-
-Agents are non-deterministic and they act on the world — they call models, hit
-APIs, move money, change state. Run that at scale and the failure modes compound:
-a retry double-charges a customer, a crash loses half a job, a redistributed task
-silently runs twice. Today every team rebuilds the same fragile glue to cope, and
-most never get past the demo. kortecx makes reliability a property of the runtime:
-
-- **Trustable.** A step that touches the world takes effect exactly once. Crashes,
-  retries, and redistribution never double-apply or silently drop work.
-- **Durable & resumable.** The single source of truth is an append-only log;
-  workflows survive process death and resume from committed work, never starting
-  over or stalling. *This is the headline guarantee.*
-- **Scales without a rewrite.** The same workflow runs on a laptop or across a
-  fleet, with the same guarantees. Scale is a deployment choice, not a re-architecture.
-- **No infrastructure tax.** Durability, recovery, and coordination are built in,
-  so teams ship agents instead of the plumbing beneath them.
-- **Bring your own data + tools.** Read from any store, call any API or MCP tool —
-  the runtime records what happened, captures the result, and serves it durably.
-- **Reusable, not rebuilt.** Actions, workflows, and tools live in a sharable
-  catalog: publish a guaranteed action once, reuse it with new parameters.
-
-The core guarantee — *exactly once, even across crashes* — is something you can
-verify for yourself in the [quick start](#install--quick-start) below, and every
-change to the project is gated by an automated suite that crashes live workflows
-and checks that no work is ever lost, duplicated, or double-applied.
-
-## Prerequisites
-
-kortecx has a **two-tier** setup. Most of the runtime needs only Rust.
-
-| Tier | You get | You need |
+| Capability | What it does | Where |
 |---|---|---|
-| **Tier 0 — the runtime** *(required)* | `kx run` / `replay` / `serve`, the durability demo, blueprints, the full CLI & gateway | **Rust 1.94.0+** only — **no C++ toolchain**. The `kx` binary is FFI-free. |
-| **Tier 1 — local LLM inference** *(optional)* | real on-device model inference via llama.cpp | a **C++ toolchain** (CMake, clang/libclang, a C++ compiler) + the `llama.cpp` submodule + a **GGUF** model |
+| **Exactly-once agentic runs** | Every step (a *Mote*) commits durably to an append-only journal; crashes replay from committed work — a step that touched the world is re-read, never re-run | CLI · SDKs · console |
+| **The live agent loop** | Models **plan** topology, **re-plan** on failure, pass **critic** gates, and run **ReAct turns with real MCP tools** — all inside `kx serve`, all crash-safe | `kx/recipes/react` + the console Chat |
+| **Blueprints** | Reusable, parameterized workflows published by handle — pick one, fill its typed inputs, run it, watch the live DAG | CLI `kx invoke` · SDKs · console |
+| **Local LLM inference** | Bring any fit GGUF model; on-device llama.cpp (Metal/CPU) drives chat + the agent loop — no API keys, no egress | `kx serve` (inference build) |
+| **Datasets & RAG** | Ingest documents, search by vector similarity, ground agent runs — durable, content-addressed corpora | CLI/SDK/console Datasets |
+| **Live events & time-travel** | Stream every state change as it commits; scrub any run back to any point in its history | `kx events --follow` · console Activity |
+| **Run capture (Morphic)** | Every serve-path run's actions are captured to a durable sidecar — your agents' exhaust becomes queryable data | SDKs (`ListCaptureRecords`) |
+| **Teams & grants** | Durable membership + asset grants with resolved-warrant views | console Systems · SDKs |
+| **Audit trail** | An off-the-truth-path JSONL record of the run lifecycle | `kx run --audit-log` |
+| **The web console** | All of the above in a browser — served by `kx` itself, zero extra setup | `http://127.0.0.1:50180` |
 
-[Rust](https://rustup.rs) honors the pinned toolchain in `rust-toolchain.toml`
-automatically. Run **`just doctor`** ([`just`](https://github.com/casey/just)) for
-a tiered preflight that checks both tiers and prints the exact install command for
-anything missing on your OS.
+Every capability is reachable from the **CLI**, the **Python and TypeScript
+SDKs**, and the **web console** — same wire, same guarantees.
 
-> Tier 1 install hints — macOS: `xcode-select --install && brew install cmake`;
-> Debian/Ubuntu: `sudo apt-get install -y cmake clang libclang-dev build-essential`.
-> Then `just setup-inference`.
-
-## Install & quick start
-
-Install the FFI-free `kx` binary — no toolchain, no clone:
+## Install
 
 ```bash
 # Prebuilt binary (Linux x86_64/arm64, macOS arm64) — SHA-256 verified, no sudo,
-# installs to ~/.local/bin (override with KX_INSTALL_DIR):
+# installs to ~/.local/bin. The prebuilt ships the web console + Datasets built in.
 curl -fsSL https://raw.githubusercontent.com/Kortecx/kortecx/main/scripts/install.sh | sh
 ```
 
-Or from source (Rust 1.94+ only — no C++ toolchain), or via Docker:
+| Installer env | Meaning |
+|---|---|
+| `KX_VERSION` | install a specific release tag (default: latest) |
+| `KX_INSTALL_DIR` | install directory (default `~/.local/bin`) |
+
+From source (Rust 1.94+; each variant adds a capability):
 
 ```bash
 git clone https://github.com/Kortecx/kortecx.git && cd kortecx
-just setup            # installs `kx` (or: cargo install --path crates/kx-cli)
-# …or run it containerized — see "Run in Docker" below.
+cargo install --path crates/kx-cli                          # the core runtime — no C++, no node
+cargo install --path crates/kx-cli --features hnsw          # + Datasets/RAG (still no C++)
+cargo install --path crates/kx-cli --features inference,hnsw  # + local LLM inference (needs a C++ toolchain)
+just console-build                                          # + the embedded web console (needs node 22; repo checkout only)
 ```
 
-Now **prove exactly-once end to end** — run the canonical demo workflow, crash it
-mid-commit, and replay. The digest is identical across the clean run and the
-crash-then-replay run:
+> The web console is embedded at **compile time**, so `--features console` needs
+> the built SPA (`just console-dist`) — use the prebuilt binary if you don't want
+> node. Plain `cargo install` never needs node or C++.
+
+## Prerequisites
+
+| Tier | You get | You need |
+|---|---|---|
+| **Tier 0 — the runtime** | everything except on-device inference | nothing (prebuilt) or **Rust 1.94+** (source) |
+| **Tier 1 — local LLM inference** | on-device model inference via llama.cpp | a **C++ toolchain** (CMake, clang/libclang) + a **GGUF** model |
+
+Run **`just doctor`** (repo checkout) for a tiered preflight that prints the
+exact install command for anything missing. Tier 1 hints — macOS:
+`xcode-select --install && brew install cmake`; Debian/Ubuntu:
+`sudo apt-get install -y cmake clang libclang-dev build-essential`.
+
+## Quick start: prove exactly-once
+
+Run the canonical demo workflow, crash it mid-commit, and replay. The digest is
+identical across the clean run and the crash-then-replay run:
 
 ```bash
 # 1. Run the demo to completion, capturing its deterministic digest.
@@ -131,335 +120,290 @@ kx replay --journal /tmp/kx.db --content /tmp/kx-content
 Same digest = the exactly-once property, demonstrated. (`just verify-quickstart`
 runs exactly this and asserts the digest, so these docs can't silently drift.)
 
-## Getting started
+## Start the runtime locally
 
-The same engine runs as a **server**, so an agent can call the runtime like a
-function. In one terminal, start it on loopback with dev auth:
+**1. Serve.** One command starts the gateway, the embedded worker, the live-event
+bridge, and (prebuilt binaries) the web console:
 
 ```bash
 kx serve --journal /tmp/kx.db --content /tmp/kx-content --dev-allow-local
-#    gRPC on 127.0.0.1:50151 · live-event WebSocket on 127.0.0.1:50152
+#    gRPC on 127.0.0.1:50151 · events on ws://127.0.0.1:50152
+#    web console at http://127.0.0.1:50180  ← open this in your browser
 ```
 
-In another terminal, **submit a run and wait for the committed result**:
+**2. Run your first blueprints** (another terminal):
 
 ```bash
-# A built-in pure demo run (the lowest-level entry point).
-kx submit --demo --wait
-
-# Invoke a PUBLISHED blueprint (wire-legacy: recipe) by handle, bound to JSON args — run-to-result.
+# A single-step echo — the canonical hello-world (typed input: topic).
 kx invoke kx/recipes/echo --args '{"topic":"durable agents"}' --wait
 
-# A multi-node DAG, model-free: root → 3 children → gather (5 Motes, all committed).
+# A real multi-node DAG, model-free: root → 3 children → gather (5 steps, all committed).
 kx invoke kx/recipes/fanout-demo --args '{}' --wait
 ```
 
-**Inspect** any run — its DAG, a committed result, and its event stream:
+**3. Inspect anything** — the DAG, a committed result, the live event stream:
 
 ```bash
-kx projection --instance <instance-id>                       # the run as a DAG of Mote states
-kx content    --ref <content-ref> --instance <instance-id>   # fetch a committed result (raw bytes)
-kx events     --instance <instance-id> --follow              # live-tail the run's event deltas
+kx projection --instance <instance-id>                       # the run as a DAG of step states
+kx projection --instance <instance-id> --at-seq 3            # …time-traveled to any point
+kx content    --ref <content-ref> --instance <instance-id>   # a committed result (raw bytes)
+kx events     --instance <instance-id> --follow              # live-tail the run's events
 ```
 
-Every run can write an **audit trail** — an off-the-truth-path JSONL record of the
-run lifecycle that never changes the digest:
+**4. Add a local model** (inference build — `--features inference,hnsw`). Download
+any **fit** GGUF from Hugging Face and point the server at it. The runtime
+validates fitness at startup: a chat template (ChatML), **native tool-calling**,
+a commercial-friendly license, `q4_k_m`/`q8_0`/`f16` quantization, and a context
+window ≥ 2048. The Qwen3 family fits; the 0.6B stand-in below runs on ~0.5 GB:
 
 ```bash
-kx run --journal /tmp/kx.db --content /tmp/kx-content --audit-log /tmp/audit.jsonl
+curl -fsSL -o qwen3-0.6b-q4_k_m.gguf \
+  https://huggingface.co/unsloth/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B-Q4_K_M.gguf
+shasum -a 256 qwen3-0.6b-q4_k_m.gguf
+#    → ac2d97712095a558e31573f62f466a3f9d93990898b0ec79d7c974c1780d524a
+
+KX_SERVE_MODEL_GGUF="$PWD/qwen3-0.6b-q4_k_m.gguf" \
+  kx serve --journal /tmp/kx.db --content /tmp/kx-content --dev-allow-local
 ```
 
-Auth is **deny-all by default**: `--dev-allow-local` trusts loopback only; for
-real principals use `--auth-token <token>=<party>` (or `--auth-token-file`), and
-pass `--token`/`--token-file` on the client. Identity is always derived
-server-side — never asserted by the client.
-
-### Web console (live DAG)
-
-A static-hostable React + Vite single-page app ([`ui/`](ui/)) talks **gRPC-web** to
-the same `kx serve` and lets you **watch the Mote DAG execute** in the browser —
-nodes light up as the run commits, edges are the `parents[]` lineage. Build the
-TypeScript SDK, start a CORS-allowed gateway, then the dev server:
+**5. Chat and run the live agent loop** — real on-device inference, durable every
+turn:
 
 ```bash
-npm --prefix bindings/typescript ci && npm --prefix bindings/typescript run build
-kx serve --journal /tmp/kx.db --content /tmp/kx-content \
-  --dev-allow-local --cors-origin http://localhost:5173 &
-npm --prefix ui ci && npm --prefix ui run dev   # http://localhost:5173
+# One-shot chat: greedy decode over your model, committed like any other step.
+kx invoke kx/recipes/chat --args '{"prompt":"What is the capital of France?"}' --wait
+
+# A full ReAct agent: reason → call a tool → observe → answer, every turn a
+# durable fact. The bundled mcp-echo@1 tool is wired in; budgets are yours:
+kx invoke kx/recipes/react \
+  --args '{"instruction":"Echo the word kortecx via your tool, then summarize.","max_turns":4,"max_tool_calls":2}' \
+  --wait
 ```
 
-Connect to `http://127.0.0.1:50151`, then submit `kx/recipes/echo` (one node) or
-`kx/recipes/fanout-demo` (a 5-node graph). See [`ui/README.md`](ui/README.md) for
-the full walkthrough.
+Crash the server mid-run and start it again: the loop resumes from its committed
+turns — that's the whole point.
 
-## Run in Docker
+## The web console
 
-The `kx` binary is FFI-free, so the runtime ships as a small container image — no
-C++ toolchain, no CUDA, no model baked in. The durability guarantee is proven
-*through* the container, not just asserted:
+`kx serve` (prebuilt binaries) hosts the full console at
+**`http://127.0.0.1:50180`** — no node, no separate install. Connect to your
+gateway endpoint (pre-filled: `http://127.0.0.1:50151`; the bearer token, if you
+use one, stays in browser memory and is never stored).
+
+| Section | What you do there |
+|---|---|
+| **Chat** *(default)* | converse with the runtime — every turn a durable run |
+| **Activity** | the live event feed, run metrics, and **time-travel** (scrub any run's history) |
+| **Runs** | session + durable run history; open any run as a **live DAG** |
+| **Blueprints** | the catalog — pick a blueprint, fill its typed form, run it |
+| **Artifacts** | browse + review committed outputs |
+| **Datasets** | ingest documents, search by similarity (RAG) |
+| **Systems** | gateway health, teams, members, asset grants + resolved warrants |
+| **Settings** | connection profile + console preferences |
+
+Plus: **⌘K** jumps anywhere; the **DevTools dock** (navbar toggle) tails live
+events and gateway health from any screen. Override the console address with
+`--console-listen <addr:port>` (loopback only) or turn it off with
+`--no-console`. For a remote browser, static-host `ui/dist` and grant its origin
+with `--cors-origin`.
+
+## CLI reference
+
+`kx <command> --help` prints per-command usage. **Exit codes:** `0` success ·
+`2` usage/config error · `3` `--wait` timed out (the run is still in progress
+and resumable) · `1` everything else.
+
+### Local engine (no server)
+
+| Command | What it does |
+|---|---|
+| `kx run` | drive the canonical demo workflow from scratch |
+| `kx replay` | recover an existing journal and finish the run |
+| `kx digest` | print the projection digest of a journal |
+
+All three take: `--journal <path>` (the SQLite journal) · `--content <dir>` (the
+content store) · `--crash-at <point>` (deterministic crash injection, e.g.
+`post-commit-vtc`) · `--checkpoint-every <N>` · `--audit-log <path>` (JSONL audit
+trail) · `--json`.
 
 ```bash
-# Build the FFI-free image + reproduce the canonical digest IN-CONTAINER
-# (clean run · crash-then-replay over a persisted volume · read-only rootfs):
-just docker-smoke
-
-# Or bring up the server stack — embedded coordinator + worker + gateway — with the
-# journal & content on named volumes that survive a restart:
-docker compose up --build
+kx run --journal /tmp/kx.db --content /tmp/kx-content --audit-log /tmp/kx-audit.jsonl
 ```
 
-With the stack up, drive it from the host (the compose dev token is `kx-dev-token`):
+### `kx serve` — the runtime as a server
 
 ```bash
-kx submit --demo --wait --endpoint http://127.0.0.1:50151 --token kx-dev-token
-kx invoke kx/recipes/echo --args '{"topic":"durable agents"}' --wait \
-    --endpoint http://127.0.0.1:50151 --token kx-dev-token
-
-docker compose restart kx     # journal + content persist on the named volumes
-docker compose down           # SIGTERM → graceful drain, not a hard kill
+kx serve --journal <path> --content <dir> [flags]
 ```
 
-**Images.** `Dockerfile` builds the FFI-free runtime (`kortecx/kx:dev`); the
-container runs as a **non-root** user (uid 10001), keeps durable state under
-`/var/lib/kortecx/{journal,content,catalog}`, and is `--read-only`-rootfs
-compatible (only the mounted volumes + `/tmp` are writable). `Dockerfile.inference`
-adds the CPU llama.cpp link + a `kx-generate` example for a real CPU inference run.
-
-**Auth + TLS on a published port.** A non-loopback bind refuses `--dev-allow-local`, so
-the compose uses **bearer-token auth** (a Docker secret). Bearer-over-plaintext travels
-in cleartext, so enable **in-binary TLS** with `kx serve --tls-cert <pem> --tls-key
-<pem>` (rustls) and dial it with `kx … --endpoint https://… --tls-ca <pem>` (or a
-public CA via the OS trust store) — or front with a TLS reverse proxy. Replace the dev
-tokens in `deploy/secrets/` for anything real.
-
-**GPU posture.** OSS GPU inference today is **Metal, on an Apple host** — not in a
-Linux container (Metal is macOS-host-only). On Apple the runtime now **offloads all
-layers to Metal by default** (`KX_N_GPU_LAYERS` overrides; see [Local LLM
-inference](#local-llm-inference)); on Linux it is CPU. NVIDIA **CUDA inference is
-cloud-tier** (decision D28): `Dockerfile.cuda` is a *documented seam* (the intended
-image shape + an `nvidia-smi` detection hook), not a buildable OSS image; multi-tenant
-GPU-batched serving lives in the cloud offering.
-
-## Commands
-
-The `kx` CLI is one binary. `run`/`replay`/`digest` drive the engine locally;
-`serve` hosts the gateway; the rest are gRPC clients of a running gateway.
-
-| Command | What it does | Key flags |
+| Flag | Default | Meaning |
 |---|---|---|
-| `kx run` | Drive the canonical demo workflow from scratch | `--journal` `--content` · `--crash-at <pt>` · `--checkpoint-every N` · `--audit-log <path>` · `--json` |
-| `kx replay` | Recover an existing journal and finish the run | `--journal` `--content` · `--audit-log` · `--json` |
-| `kx digest` | Print the projection digest of a journal | `--journal` `--content` · `--json` |
-| `kx serve` | Host the embedded single-system gateway | `--journal` `--content` · `--listen` *(default `127.0.0.1:50151`)* · `--ws-listen` *(default `:50152`)* · `--dev-allow-local` · `--auth-token <t>=<party>` · `--auth-token-file` · `--tls-cert <path> --tls-key <path>` *(in-binary TLS)* · `--max-lease N` · `--catalog-dir` |
-| `kx invoke <handle>` | Bind a published blueprint to JSON args and run it | `--args <json>` / `--args-file` · `--wait` · `--timeout-secs N` · `--out <file>` |
-| `kx submit --demo` | Submit a built-in pure demo run | `--wait` · `--timeout-secs N` · `--out` |
-| `kx projection` | Render a run as a DAG of Mote states | `--instance <id>` · `--at-seq N` |
-| `kx content` | Fetch a committed result by ref (binary-safe) | `--ref <r>` · `--instance <id>` · `--out <file>` |
-| `kx events` | Print / live-tail a run's event deltas | `--instance <id>` · `--since N` · `--follow` |
-| `kx signatures` | Browse / fetch / register catalog task signatures | `list` · `get --id <id>` · `register --manifest-file <path>` |
-| `kx health` | Probe gateway liveness (`grpc.health.v1`); exit 0 iff SERVING | `--endpoint` · `--tls-ca` · `--json` |
+| `--listen <addr:port>` | `127.0.0.1:50151` | the gRPC + gRPC-web endpoint |
+| `--ws-listen <addr:port>` | `127.0.0.1:50152` | the live-event WebSocket bridge |
+| `--console-listen <addr:port>` | `127.0.0.1:50180` | the embedded web console (loopback only) |
+| `--no-console` | — | disable the web console |
+| `--dev-allow-local` | off | dev auth: allow loopback callers (loopback binds only) |
+| `--auth-token <token>=<party>` | — | accept a bearer token as a party (repeatable) |
+| `--auth-token-file <path>` | — | `token=party` per line (`#` comments) |
+| `--cors-origin <origin>` | deny all | allow a browser origin on the gRPC-web shim (repeatable, never a wildcard) |
+| `--tls-cert <pem> --tls-key <pem>` | plaintext | in-binary TLS for the gRPC listener |
+| `--catalog-dir <dir>` | beside the journal | durable catalog (blueprints, signatures, teams) |
+| `--max-lease <N>` | `16` | embedded-worker lease batch size |
 
-Client verbs share `--endpoint <url>` *(default `http://127.0.0.1:50151`)*,
-`--token <t>` / `--token-file <p>`, and `--json`.
+**Auth is deny-all by default** — pass `--dev-allow-local` (local development) or
+bearer tokens. With no flags a `kx serve` answers nobody.
 
-**Exit codes:** `0` success · `2` usage/config error · `3` `--wait` timed out (the
-run is still in progress and resumable) · `1` everything else (RPC, IO, a failed
-Mote). `kx --help` and `kx help <command>` print usage.
+### Client commands
+
+Every client command takes the **shared flags**: `--endpoint <url>` (default
+`http://127.0.0.1:50151`) · `--token <t>` / `--token-file <p>` (bearer auth;
+prefer the file — `--token` is visible in `ps`) · `--tls-ca <pem>` (for
+`https://` endpoints) · `--json` (machine-readable output).
+
+| Command | What it does | Flags |
+|---|---|---|
+| `kx invoke <handle>` | run a published blueprint to a committed result | `--args <json>` / `--args-file <path>` (exactly one) · `--wait` · `--timeout-secs <N>` (default 120) · `--out <file>` |
+| `kx submit --demo` | submit the built-in pure demo run | `--wait` · `--timeout-secs` · `--out` |
+| `kx projection` | render a run as a DAG of step states | `--instance <hex>` · `--at-seq <N>` (time-travel) |
+| `kx content` | fetch a committed result (raw bytes, binary-safe) | `--ref <hex>` · `--instance <hex>` · `--out <file>` |
+| `kx events` | print or live-tail a run's event deltas | `--instance <hex>` · `--since <N>` · `--follow` |
+| `kx signatures` | the sharable task-signature catalog | `list` · `get --id <hex>` · `register --manifest-file <path>` |
+| `kx health` | gateway liveness (the standard gRPC health probe) | shared flags |
+| `kx help [command]` / `kx --version` | usage / version | — |
+
+```bash
+# Run a blueprint and save the committed result bytes:
+kx invoke kx/recipes/echo --args '{"topic":"hello"}' --wait --out /tmp/result.bin
+
+# Everything speaks JSON for scripting:
+kx invoke kx/recipes/echo --args '{"topic":"hello"}' --wait --json | jq .
+```
+
+### Environment variables
+
+| Variable | Used by | Meaning |
+|---|---|---|
+| `KX_SERVE_MODEL_GGUF` | `kx serve` (inference build) | absolute path to the GGUF model; enables `kx/recipes/chat` + `kx/recipes/react` |
+| `KX_N_GPU_LAYERS` | inference | GPU offload layers (Metal/CUDA; default: all that fit) |
+| `KX_FLASH_ATTN` | inference | enable flash attention |
+| `KX_KV_TYPE` | inference | KV-cache quantization type |
+| `KX_N_THREADS` | inference | CPU threads for inference |
+| `KX_MCP_ECHO_PATH` | `kx serve` | override the bundled `mcp-echo` tool binary path |
+| `KX_DEMO_BODY_PATH` | `kx serve` | override the `exec-demo` sandboxed body binary path |
+| `KX_VERSION` / `KX_INSTALL_DIR` | installer | release tag / install directory |
 
 ## Blueprints
 
-A **Blueprint** (wire-legacy: *recipe* — the `kx/recipes/*` handles and RPC names
-never rename) is a reusable, parameterized workflow that compiles to a Mote DAG.
-Five are shipped (all deterministic, statically shaped), composable from pure
-building blocks plus a fail-closed prompt-template engine:
+A **Blueprint** is a reusable, parameterized workflow published by handle. The
+server validates your typed inputs, compiles the workflow to a step DAG, and runs
+it with the full durability guarantee. Five ship with `kx serve`:
 
-| Blueprint | Shape |
-|---|---|
-| `map_reduce` | N mappers → one pure reduce |
-| `fan_out_gather` | N parallel non-deterministic workers → one pure gather |
-| `retry_until_critic` | N independent attempts, each critic-gated → one selector (bounded best-of-N) |
-| `react_tool_loop` | one ReAct turn: reason → act (tool) → observe |
-| `image_batch_describe_reduce` | one describe step per image → one pure reduce |
+| Handle | What it runs | Inputs | Available |
+|---|---|---|---|
+| `kx/recipes/echo` | one deterministic step | `topic` (str) | always |
+| `kx/recipes/fanout-demo` | a 5-step fan-out → gather DAG | — | always |
+| `kx/recipes/exec-demo` | a real sandboxed process step | — | when the demo body binary is present |
+| `kx/recipes/chat` | one LLM completion over your model | `prompt` (str) | inference build + `KX_SERVE_MODEL_GGUF` |
+| `kx/recipes/react` | the live ReAct agent loop with tools | `instruction` (str) · `max_turns` (1–8, default 8) · `max_tool_calls` (< max_turns, default 6) | inference build + model + tool |
 
-Author and run your own end to end — author a workflow → compile to a Mote DAG →
-run → fold the journal:
+List what your gateway offers from any surface: the console's **Blueprints**
+section, `client.listRecipes()` (SDKs), or the connect-time catalog.
+
+**Author your own** — workflows are composed from pure building blocks
+(map-reduce, fan-out/gather, critic-gated retry, ReAct tool loops, image
+batch-describe) plus a fail-closed prompt-template engine, then compiled and
+submitted like any blueprint. A complete, runnable walkthrough:
 
 ```bash
 cargo run -p kx-workflow --example author_a_workflow
 ```
 
-## Local LLM inference
+## Datasets & RAG
 
-Inference is **Tier 1** (opt-in). Set up the native backend and fetch a tiny demo
-model, then point any GGUF through the examples:
+Durable, content-addressed document corpora with vector search — ground your
+agents in your data (`hnsw` builds; included in the prebuilt binary):
+
+- **Ingest** documents with client-supplied embedding vectors (FFI-free, works
+  with any embedder you run) — or let an inference build embed server-side.
+- **Search** by similarity; results carry exact content hashes, so anything a
+  run consumes is pinned to the exact bytes it read.
+- Surfaces: the console's **Datasets** section, the SDK `datasets` module
+  (`ListDatasets` / `IngestDocuments` / `QueryDataset`).
+
+## SDKs
+
+Both SDKs speak the same wire as the CLI and console — every capability above is
+callable from code, with identities always server-derived.
+
+**Python** — `pip install kortecx` (`pip install 'kortecx[ws]'` for live event
+streaming):
+
+```python
+from kortecx import KxClient
+
+with KxClient("http://127.0.0.1:50151") as kx:
+    result = kx.invoke("kx/recipes/echo", {"topic": "hello"}, wait=True)
+    print(result.text)
+```
+
+Async twin (`AsyncKxClient`), typed errors with stable codes, run handles with
+`.projection(at_seq=…)` / `.events(follow=True)` / `.content(ref)`, plus wrappers
+for runs, react turns, replans, capture records, datasets, teams, and grants.
+
+**TypeScript/JavaScript** — `npm install @kortecx/sdk` (node + browser entry
+points; `npm install ws` for node live-tail):
+
+```ts
+import { KxClient } from "@kortecx/sdk";
+
+const kx = new KxClient("http://127.0.0.1:50151");
+const result = await kx.invoke("kx/recipes/echo", { topic: "hello" }, { wait: true });
+console.log(result.text);
+```
+
+## Security defaults
+
+Closed by default, opened explicitly: the server answers **nobody** until you
+pass `--dev-allow-local` (loopback-only) or bearer tokens; every listener binds
+loopback unless you say otherwise; browser access is **deny-by-default** CORS
+(the embedded console auto-grants only its own loopback origin — never a
+wildcard); bearer tokens are never persisted by the console or SDKs beyond
+memory; all run identities are derived server-side; and any step that touches
+the world runs under an explicit grant checked by exact equality — a model can
+propose an action, but only the runtime's checks can let it happen.
+
+## Run in Docker
+
+The runtime ships as a small FFI-free container image; durability is proven
+*through* the container:
 
 ```bash
-just setup-inference          # init the llama.cpp submodule + build the FFI link (needs a C++ toolchain)
-just fetch-demo-model         # download a ~1.2 MB GGUF to target/models/ (SHA-256 verified)
+just docker-smoke            # build + reproduce the canonical digest in-container
+docker compose up --build    # the server stack on named volumes (dev token: kx-dev-token)
 
-cargo run -p kx-llamacpp --example generate -- target/models/stories260K.gguf "Once upon a time"
-cargo run -p kx-llamacpp --example chat     -- /path/to/your-model.gguf
-cargo run -p kx-llamacpp --example embed    -- /path/to/your-model.gguf "embed this"
+kx invoke kx/recipes/echo --args '{"topic":"durable agents"}' --wait \
+    --endpoint http://127.0.0.1:50151 --token kx-dev-token
+docker compose restart kx    # journal + content persist across restarts
 ```
 
-In the runtime, model inference is a trait seam (`InferenceBackend`); the llama.cpp
-backend is one implementation, and you point it at a GGUF file by path.
+## Production notes
 
-### GPU + decoding tuning (env knobs)
-
-The in-process backend reads a few env vars at model/context construction, so they
-apply with no code change. Unset = llama.cpp defaults (byte-identical to before on
-non-Apple), so determinism + the canonical digest are preserved:
-
-| Env var | Effect | Default |
-|---|---|---|
-| `KX_N_GPU_LAYERS` | transformer layers to offload to the GPU (`-1`/`all` = all) | **all on Apple/Metal**, `0` (CPU) elsewhere — CUDA is cloud-only (D28) |
-| `KX_FLASH_ATTN` | `auto` / `on` / `off` Flash Attention | `auto` (llama.cpp decides) |
-| `KX_KV_TYPE` | KV-cache element type: `f16` or `q8_0` (≈½ the KV memory) | `f16`. NOTE: a quantized **V** cache needs Flash-Attention support on the model/backend |
-| `KX_N_THREADS` | generation/batch thread count | `0` (llama.cpp auto) |
-
-Verify Metal offload locally with `just metal-smoke` (look for `offloaded N/N layers
-to GPU`).
-
-### Live model dispatch in `kx serve` (AL1, opt-in)
-
-By default `kx serve` runs the durable spine + the deterministic/sandboxed demo
-blueprints (and is **FFI-free**). Built with the inference feature, the embedded worker
-can run **real model Motes**:
-
-```bash
-just fetch-agent-model        # fetch a public Qwen3 stand-in GGUF (SHA-256 verified)
-cargo build -p kx-cli --features inference   # a `kx` that links the llama.cpp backend
-
-KX_SERVE_MODEL_GGUF="$(pwd)/target/models/qwen3-0.6b-q4_k_m.gguf" \
-  kx serve --dev-allow-local --journal /tmp/kx.db --content /tmp/kx-content
-
-# in another shell — the model blueprint runs greedy inference and commits the completion:
-kx invoke kx/recipes/chat --args '{"prompt":"What is the capital of France?"}' --wait --json
-```
-
-The default model is the finetuned **Qwen3-4B** agent (Apache-2.0, q4_k_m, ChatML,
-native tool-calling) once published; until then any ChatML GGUF works as a stand-in
-(`KX_SERVE_MODEL_GGUF` + `KX_MODEL_NAME`). Greedy decoding is deterministic, so a
-model Mote is recomputable (exactly-once-per-input).
-
-## How it works
-
-kortecx is an **execution kernel**. The unit of work is a **Mote** — one step,
-content-addressed by its definition + inputs, so identical work has an identical
-identity. The single source of truth is an append-only **journal**: the runtime
-never holds authoritative state in memory, it *appends facts* (`Proposed`,
-`Committed`, `Failed`, `Repudiated`, `EffectStaged`, …) to the log. All live state
-is a **projection** — a pure *fold* of the journal, re-derived from scratch on
-restart. A crash loses no truth, because the truth is the log, and recovery is
-just folding it again. A step that changes the world is driven through a **commit
-protocol** that records intent before it acts, so the effect lands exactly once.
-
-```
-  submit ─► register run (immutable instance id)
-         ─► submit Mote ─► REFUSAL GATE (refuse unsafe constructions up front)
-         ─► journal.append(Proposed)
-                 │
-   scheduler ◄───┴── reads the ready set from the projection fold
-         │           (a Mote is ready when its parents are committed)
-         ▼
-   executor ── dispatches under a commit protocol:
-         │       • IdempotentByConstruction → effect → append(Committed)
-         │       • StageThenCommit          → append(EffectStaged) → effect → append(Committed)
-         │       • ValidateThenCommit       → effect → critic verdict → append(Committed|Repudiated)
-         │     (world effects go ONLY through the CapabilityBroker)
-         ▼
-   journal ── append(Committed)  ─►  projection folds it  ─►  consumers unblock
-```
-
-**Recovery** runs the same machinery in reverse: on restart the runtime re-folds
-the journal; an `EffectStaged` with no matching `Committed` tells an oracle a crash
-landed mid-effect, and it decides whether re-dispatch is safe or the effect must be
-quarantined — that is how exactly-once survives a crash inside a world-mutating step.
-
-**The crates** — 39 in a clean layered DAG (no cycles). The foundation is a narrow
-waist almost everything depends on; the engine and the optional distributed layer
-stack on top:
-
-- **Waist (the guarantee path):** `kx-mote` → `kx-content` → `kx-journal` →
-  `kx-warrant` → `kx-projection`. The load-bearing invariants live here.
-- **Engine:** `kx-capability` (the single door to world effects), `kx-scheduler`,
-  `kx-executor` (lifecycle + commit protocols + recovery), `kx-inference`,
-  `kx-critic`, `kx-runtime` (the single-node engine + `run`/`replay`/`digest`).
-- **Reach (v0.1.0):** `kx-gateway`/`kx-gateway-core` (the gRPC server),
-  `kx-cli` (the `kx` binary), `kx-invoke` (blueprint → guaranteed run),
-  `kx-workflow` (the blueprint library + prompt templating), `kx-catalog` (sharable signatures),
-  `kx-fleet` (teams), `kx-audit` (off-path audit trail).
-- **Distributed (optional):** `kx-coordinator` (sole journal writer) +
-  `kx-worker` + `kx-proto` — same guarantees, wiring on the same seams, not a rewrite.
-- **Forward seams (off the guarantee path):** `kx-capture`, `kx-dataset`,
-  `kx-memoizer`, `kx-tiering`, `kx-normalizer`.
-
-See [GLOSSARY.md](GLOSSARY.md) for the vocabulary, and the doc-comments on the core
-types for the deeper *why*. **New to the code? Start at a leaf or an example, not
-the executor.**
-
-## Extending
-
-Deployment and customization happen at **trait seams** — the same trait is
-implemented one way locally and another for a hosted/distributed deployment, so
-distribution and cloud are new implementations, not a rewrite of the engine.
-
-| Seam | Trait | Defined in | Abstracts |
-|---|---|---|---|
-| Journal | `Journal` | `kx-journal/src/lib.rs` | the append-only log of facts (local: SQLite) |
-| Content store | `ContentStore` | `kx-content/src/lib.rs` | content-addressed bytes (local: filesystem) |
-| Capability broker | `CapabilityBroker` | `kx-capability/src/broker.rs` | the single door to world effects + idempotency |
-| Inference backend | `InferenceBackend` | `kx-inference/src/backend.rs` | model inference (local: llama.cpp) |
-| Resource manager | `ResourceManager` | `kx-executor/src/resource_manager.rs` | admission/slots for dispatch |
-| Secret store | `SecretStore` | `kx-mcp/src/secret_store.rs` | secret resolution for capabilities (never journaled) |
-| Worker registry | `WorkerRegistry` | `kx-coordinator/src/registry.rs` | worker liveness (distributed only) |
-
-Implement a trait, swap it in at construction — the guarantee machinery is unchanged.
-
-## Production notes & known limitations
-
-kortecx is in early development; the durability spine is real and tested, but the
-reach surface is young. We name the boundaries plainly rather than hide them:
-
-- **Transport: in-binary TLS or plaintext.** `kx serve --tls-cert/--tls-key` serves
-  rustls TLS on the gRPC listener (clients dial `https://…` with `--tls-ca` for a
-  self-signed cert, or the OS trust store for a public CA); the bearer-over-plaintext
-  path is still warned about. The **WebSocket bridge stays plaintext** for now — front
-  it (or the whole server) with a TLS proxy if you need `wss`. **mTLS** client-cert auth
-  is a follow-on.
-- **Auth is bearer-token + deny-all.** Identity is server-derived; the
-  `PrincipalResolver` seam is where OIDC/mTLS plug in later. There is no
-  multi-tenant isolation or per-tenant quota yet.
-- **Single-system scale.** One process is the sole journal writer (SQLite); a
-  25k-Mote journal folds sub-linearly on cold recovery (gated in CI), but
-  multi-node orchestration is the distributed layer / hosted offering, not the
-  default single-system runtime.
-- **Inference is single-stream** (N=1, serialized) and models are referenced by
-  path — there is no model registry or auto-download in the runtime yet.
-- **Observability**: liveness/readiness is the standard `grpc.health.v1` service
-  (probe it with `kx health`, `grpc_health_probe`, or a k8s gRPC probe), plus the
-  audit log + the event stream. A **Prometheus/OTel metrics** export seam is the
-  next step.
-
-Interfaces will change before 1.0 — **pin a commit** if you build on it now.
-
-## Status & roadmap
-
-**Early development, built in the open.** Today (v0.1.0): a durable single-system
-runtime with exactly-once world effects and crash recovery, a gateway server, the
-unified `kx` CLI, a blueprint library + prompt templating, an audit trail, a live
-event stream, TypeScript & Python client SDKs over gRPC, and a React + Vite **web
-console** that renders the live execution DAG (gRPC-web). Next: event timeline /
-time-travel + multi-modal artifact review in the console, audio multi-modal
-inference, and an opt-in cluster layer for managed multi-node.
+- **TLS**: in-binary TLS covers the gRPC listener (`--tls-cert/--tls-key`); the
+  WebSocket bridge and web console are loopback plaintext — front them with a
+  TLS proxy for remote browsers.
+- **Scale**: single-system by default (one journal writer, ~18k commits/sec
+  ceiling); the same workflows run unchanged when distributed deployment lands.
+- **Inference**: one model, single-stream decoding per server today.
+- **Observability**: `kx health`, the live event stream, the audit log, and the
+  console's Activity/DevTools surfaces.
+- **Versions**: pre-1.0 — pin a release tag (`KX_VERSION`) for anything you keep.
 
 ## Contributing
 
 Contributions are welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.md) for the
-build/test/gate path and where to begin, the [How it works](#how-it-works) section
-for the architecture, and [GLOSSARY.md](GLOSSARY.md) for the vocabulary. Please
-open an issue to discuss substantial changes before sending a pull request.
+build/test/gate path and [GLOSSARY.md](GLOSSARY.md) for the vocabulary; the
+design notes live in [`docs/`](docs/). Please open an issue to discuss
+substantial changes before sending a pull request.
 
 ## License
 
