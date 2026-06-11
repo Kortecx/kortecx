@@ -35,4 +35,13 @@ export const queryKeys = {
     ["kx", endpoint, "dataset-query", dataset, text, k] as const,
   /** Gateway liveness probe (endpoint-scoped). */
   health: (endpoint: string) => ["kx", endpoint, "health"] as const,
+  /** The re-plan-round trail (`ListReplanRounds`), scoped by page size. */
+  replanRounds: (endpoint: string, limit: number) =>
+    ["kx", endpoint, "replan-rounds", limit] as const,
+  /** The ReAct-turn trail (`ListReactTurns`); `instanceId` scopes to one run. */
+  reactTurns: (endpoint: string, instanceId: string | undefined, limit: number) =>
+    ["kx", endpoint, "react-turns", instanceId ?? "all", limit] as const,
+  /** The capture-record stream (`ListCaptureRecords`); `instanceId` scopes to one run. */
+  captureRecords: (endpoint: string, instanceId: string | undefined, limit: number) =>
+    ["kx", endpoint, "capture-records", instanceId ?? "all", limit] as const,
 };

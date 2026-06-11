@@ -6,6 +6,7 @@ import { chatRoute } from "./routes/chat";
 import { connectRoute } from "./routes/connect";
 import { datasetsRoute } from "./routes/datasets";
 import { indexRoute } from "./routes/index";
+import { monitorRoute } from "./routes/monitor";
 import { recipesRoute } from "./routes/recipes";
 import { runDetailRoute } from "./routes/run-detail";
 import { runsRoute } from "./routes/runs";
@@ -24,6 +25,7 @@ const routeTree = rootRoute.addChildren([
   artifactsRoute,
   datasetsRoute,
   toolsRoute,
+  monitorRoute,
   systemsRoute,
   settingsRoute,
 ]);

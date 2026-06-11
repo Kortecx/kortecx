@@ -56,6 +56,20 @@ vi.mock("framer-motion", () => {
   };
 });
 
+// Belt-and-suspenders: jsdom has no `Worker`, so `MonacoMount` renders its plain
+// `<textarea>`/`<pre>` fallback and NEVER lazy-loads the multi-MB Monaco graph. This
+// stub guarantees that even if a test env ever exposed `Worker`, importing
+// `@monaco-editor/react` resolves to a light textarea instead of the real editor.
+vi.mock("@monaco-editor/react", () => ({
+  default: (props: { value?: string; onChange?: (v: string) => void }) =>
+    React.createElement("textarea", {
+      "data-testid": "monaco-stub",
+      value: props.value ?? "",
+      onChange: (e: { target: { value: string } }) => props.onChange?.(e.target.value),
+    }),
+  loader: { config: () => {}, init: () => Promise.resolve({}) },
+}));
+
 // DOM-only setup (jsdom). Skipped in the node-environment contract test.
 if (typeof document !== "undefined") {
   await import("@testing-library/jest-dom/vitest");

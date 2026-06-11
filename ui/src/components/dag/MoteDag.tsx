@@ -1,11 +1,20 @@
-import { Background, Controls, ReactFlow, ReactFlowProvider, useReactFlow } from "@xyflow/react";
-import { useEffect, useMemo } from "react";
+import {
+  Background,
+  Controls,
+  MiniMap,
+  ReactFlow,
+  ReactFlowProvider,
+  useReactFlow,
+} from "@xyflow/react";
+import { useEffect, useMemo, useState } from "react";
 import type { ProjectionVM } from "../../kx/use-projection";
 import { EmptyState } from "../EmptyState";
 import { MoteTable } from "../MoteTable";
 import { MoteNode } from "./MoteNode";
+import { NodeDetailDrawer } from "./NodeDetailDrawer";
 import { buildEdges, topologyHash } from "./dag-graph";
-import { buildFlowEdges, buildFlowNodes } from "./flow";
+import { buildFlowEdges, buildFlowNodes, miniMapColor } from "./flow";
+import type { MoteFlowNode } from "./flow";
 import { layoutGraph } from "./layout";
 
 /**
@@ -24,6 +33,10 @@ const nodeTypes = { mote: MoteNode };
 function DagFlow({ projection }: { projection: ProjectionVM }) {
   const motes = projection.motes;
   const topoHash = useMemo(() => topologyHash(motes), [motes]);
+  // The clicked Mote (drawer). Selection is for the DETAIL overlay only — reactflow's
+  // own `elementsSelectable` stays OFF, so this never perturbs nodes/edges/layout.
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const selected = selectedId ? (motes.find((mm) => mm.moteId === selectedId) ?? null) : null;
 
   // Relayout ONLY when the topology hash changes; a state-only poll reuses the
   // cached positions (the no-thrash invariant — see dag-graph.topologyHash).
@@ -58,21 +71,38 @@ function DagFlow({ projection }: { projection: ProjectionVM }) {
   }, [topoHash, fitView]);
 
   return (
-    <ReactFlow
-      nodes={nodes}
-      edges={edges}
-      nodeTypes={nodeTypes}
-      fitView
-      nodesDraggable={false}
-      nodesConnectable={false}
-      elementsSelectable={false}
-      proOptions={{ hideAttribution: true }}
-      minZoom={0.1}
-      maxZoom={1.5}
-    >
-      <Background gap={20} />
-      <Controls showInteractive={false} />
-    </ReactFlow>
+    <>
+      <ReactFlow
+        nodes={nodes}
+        edges={edges}
+        nodeTypes={nodeTypes}
+        fitView
+        nodesDraggable={false}
+        nodesConnectable={false}
+        elementsSelectable={false}
+        onNodeClick={(_e, node: MoteFlowNode) => setSelectedId(node.id)}
+        proOptions={{ hideAttribution: true }}
+        minZoom={0.1}
+        maxZoom={1.5}
+      >
+        <Background gap={20} />
+        <Controls showInteractive={false} />
+        <MiniMap
+          pannable
+          zoomable
+          nodeColor={(n) => miniMapColor((n.data as MoteFlowNode["data"]).mote.stateCode)}
+          nodeStrokeWidth={2}
+          className="dag-minimap"
+        />
+      </ReactFlow>
+      {selected ? (
+        <NodeDetailDrawer
+          mote={selected}
+          instanceId={projection.instanceId}
+          onClose={() => setSelectedId(null)}
+        />
+      ) : null}
+    </>
   );
 }
 

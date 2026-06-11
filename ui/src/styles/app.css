@@ -383,6 +383,7 @@ button:disabled {
 
 /* ---- live DAG ---- */
 .dag-canvas {
+  position: relative; /* containing block for the node-detail drawer + scrim overlay */
   height: 520px;
   margin-top: 0.75rem;
   border: 1px solid var(--border);
@@ -1843,4 +1844,296 @@ select {
 .score-ladder__detail {
   margin: 0.3rem 0 0;
   font-size: 0.82rem;
+}
+
+/* ---- editor surfaces (Monaco + the headless fallback) ---- */
+.editor-surface {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--surface);
+}
+.editor-surface--edit {
+  margin: 0.25rem 0 0.6rem;
+}
+.editor-surface--view {
+  margin-top: 0.4rem;
+}
+.monaco-host {
+  width: 100%;
+}
+/* the jsdom/loading fallback shares the framed look so there's no layout jump */
+.editor-surface__fallback {
+  display: block;
+  width: 100%;
+  min-height: 120px;
+  margin: 0;
+  padding: 0.6rem 0.7rem;
+  border: 0;
+  resize: vertical;
+  font-size: 0.82rem;
+  line-height: 1.5;
+  color: var(--text-1);
+  background: var(--surface);
+  white-space: pre;
+  overflow: auto;
+}
+.editor-surface__fallback:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+/* ---- DAG node: reference accent bar + status dot ---- */
+.dag-node {
+  position: relative;
+}
+.dag-node--pending {
+  --node-tone: var(--t-pending);
+}
+.dag-node--scheduled {
+  --node-tone: var(--t-scheduled);
+}
+.dag-node--committed {
+  --node-tone: var(--t-committed);
+}
+.dag-node--failed {
+  --node-tone: var(--t-failed);
+}
+.dag-node--repudiated {
+  --node-tone: var(--t-repudiated);
+}
+.dag-node--inconsistent {
+  --node-tone: var(--t-inconsistent);
+}
+.dag-node--unknown {
+  --node-tone: var(--t-unknown);
+}
+.dag-node__accent {
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 3px;
+  border-radius: 8px 8px 0 0;
+  background: var(--node-tone, var(--t-unknown));
+}
+.dag-node__head {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.dag-node__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  flex: none;
+  background: var(--node-tone, var(--t-unknown));
+}
+.dag-node__dot--pulse {
+  animation: dag-dot-pulse 1.8s ease-in-out infinite;
+}
+@keyframes dag-dot-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.5);
+    opacity: 0.45;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dag-node__dot--pulse {
+    animation: none;
+  }
+}
+/* ---- DAG minimap (reference framing) ---- */
+.dag-minimap.react-flow__minimap {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+/* ---- DAG node-detail drawer (overlay; no layout thrash) ---- */
+.node-drawer__scrim {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  padding: 0;
+  background: rgba(13, 13, 13, 0.04);
+  cursor: pointer;
+}
+.node-drawer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(380px, 86%);
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: 0.85rem 1rem;
+  overflow: auto;
+  background: var(--surface);
+  border-left: 1px solid var(--border-md);
+  box-shadow: -8px 0 28px rgba(13, 13, 13, 0.1);
+}
+.node-drawer__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+.node-drawer__id {
+  font-size: 0.95rem;
+}
+.node-drawer__badges {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.node-drawer__meta {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.5rem;
+  margin: 0;
+}
+.node-drawer__meta dt {
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.node-drawer__meta dd {
+  margin: 0.1rem 0 0;
+  font-size: 0.85rem;
+}
+.node-drawer__result {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+/* ---- section header (reference: title + subtitle + right-aligned actions) ---- */
+.section-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.5rem;
+}
+.section-head h1 {
+  margin-bottom: 0.15rem;
+}
+.section-head .muted {
+  margin: 0;
+}
+
+/* ---- dashboard hero band (Activity landing) ---- */
+.dashboard-hero {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem 1.25rem;
+  margin-bottom: 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: radial-gradient(120% 140% at 0% 0%, var(--primary-dim), transparent 55%),
+    var(--surface);
+}
+.dashboard-hero__text h1 {
+  margin: 0 0 0.2rem;
+}
+.dashboard-hero__text .muted {
+  margin: 0;
+  max-width: 56ch;
+}
+.dashboard-hero__aside {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.3rem;
+}
+.dashboard-hero__label {
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+/* ---- Monitoring dashboard ---- */
+.monitor-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 0.75rem;
+  margin-top: 0.85rem;
+}
+.monitor-panel {
+  padding: 0.85rem 1rem 0.95rem;
+}
+.monitor-panel__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.6rem;
+  margin-bottom: 0.45rem;
+}
+.monitor-panel__head h2 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+.monitor-health {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.tally {
+  list-style: none;
+  margin: 0.2rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+.tally__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  padding: 0.18rem 0;
+  border-bottom: 1px dashed var(--border);
+}
+.tally__label {
+  font-size: 0.8rem;
+  overflow-wrap: anywhere;
+}
+.tally__count {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  color: var(--text-2);
+}
+.trail-table {
+  width: 100%;
+  margin-top: 0.5rem;
+  border-collapse: collapse;
+  font-size: 0.78rem;
+}
+.trail-table th {
+  text-align: left;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  padding: 0.2rem 0.4rem;
+  border-bottom: 1px solid var(--border);
+}
+.trail-table td {
+  padding: 0.22rem 0.4rem;
+  border-bottom: 1px solid var(--border);
+  overflow-wrap: anywhere;
 }

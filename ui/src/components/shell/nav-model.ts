@@ -9,6 +9,7 @@
 
 export type IconName =
   | "activity"
+  | "monitor"
   | "chat"
   | "runs"
   | "recipes"
@@ -25,6 +26,7 @@ export type IconName =
  */
 export type RoutePath =
   | "/activity"
+  | "/monitor"
   | "/chat"
   | "/runs"
   | "/recipes"
@@ -48,9 +50,9 @@ export interface NavSection {
 }
 
 /**
- * The seven operational sections plus the agentic Chat. Activity is the dashboard
- * landing (live feed + per-run metrics + time-travel). Datasets/Systems are present
- * as destinations now; their data viewers arrive in UI-2/UI-3 (forward-compatible).
+ * The operational sections plus the agentic Chat. Activity is the run-scoped landing
+ * (live feed + per-run metrics + time-travel); Monitoring is the gateway-wide
+ * dashboard (cross-run metrics + self-correction trails + the action-capture stream).
  */
 export const NAV_SECTIONS: readonly NavSection[] = [
   {
@@ -59,6 +61,13 @@ export const NAV_SECTIONS: readonly NavSection[] = [
     path: "/activity",
     icon: "activity",
     hint: "Live events, metrics & time-travel",
+  },
+  {
+    id: "monitor",
+    label: "Monitoring",
+    path: "/monitor",
+    icon: "monitor",
+    hint: "Gateway-wide metrics & self-correction trails",
   },
   { id: "chat", label: "Chat", path: "/chat", icon: "chat", hint: "Agentic chat over the runtime" },
   { id: "runs", label: "Runs", path: "/runs", icon: "runs", hint: "Run history (this session)" },
@@ -103,7 +112,7 @@ export const NAV_SECTIONS: readonly NavSection[] = [
 
 /**
  * Settings is pinned shell chrome (bottom-left of the sidebar), NOT a scroll
- * section — so it lives outside {@link NAV_SECTIONS} (whose eight ids are pinned
+ * section — so it lives outside {@link NAV_SECTIONS} (whose ids are pinned
  * by the nav-model unit test and iterated by the shell e2e).
  */
 export const SETTINGS_SECTION: NavSection = {

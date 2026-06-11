@@ -8,6 +8,7 @@ import { useRecipeForm, useRecipes } from "../../kx/use-recipes";
 import { useRuns } from "../../kx/use-runs";
 import { EmptyState } from "../EmptyState";
 import { ErrorNotice } from "../ErrorNotice";
+import { JsonEditor } from "../editor/JsonEditor";
 import { RecipeForm } from "../recipes/RecipeForm";
 
 const FALLBACK_HANDLE = "kx/recipes/echo";
@@ -198,13 +199,7 @@ function ManualInvokeForm({
           autoComplete="off"
         />
         <label htmlFor="args">Args (JSON object)</label>
-        <textarea
-          id="args"
-          value={argsText}
-          onChange={(e) => setArgsText(e.target.value)}
-          rows={5}
-          spellCheck={false}
-        />
+        <JsonEditor id="args" value={argsText} onChange={setArgsText} />
         {argsError ? (
           <p className="field-error" role="alert">
             {argsError}
