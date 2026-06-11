@@ -3,6 +3,7 @@ import { useEventStream } from "../../kx/use-event-stream";
 import { useProjection } from "../../kx/use-projection";
 import { EmptyState } from "../EmptyState";
 import { ErrorNotice } from "../ErrorNotice";
+import { HealthIndicator } from "../metrics/HealthIndicator";
 import { MetricsPanel } from "../metrics/MetricsPanel";
 import { ActivityFeed } from "./ActivityFeed";
 import { RunPicker } from "./RunPicker";
@@ -38,7 +39,19 @@ export function ActivityPanel({
 
   return (
     <section className="screen" data-testid="activity-panel">
-      <h1>Activity</h1>
+      <div className="dashboard-hero">
+        <div className="dashboard-hero__text">
+          <h1>Activity</h1>
+          <p className="muted">
+            Live run telemetry — pick a run to watch its Motes commit, scrub its history, and tail
+            its events.
+          </p>
+        </div>
+        <div className="dashboard-hero__aside">
+          <span className="dashboard-hero__label">Gateway</span>
+          <HealthIndicator />
+        </div>
+      </div>
       <RunPicker selected={instance} onSelect={onSelectInstance} />
       {instance == null ? (
         <EmptyState

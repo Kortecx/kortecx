@@ -2,9 +2,10 @@ import { describe, expect, it } from "vitest";
 import { NAV_SECTIONS, SETTINGS_SECTION } from "../../src/components/shell/nav-model";
 
 describe("NAV_SECTIONS", () => {
-  it("has the eight console sections", () => {
+  it("has the console sections in order", () => {
     expect(NAV_SECTIONS.map((s) => s.id)).toEqual([
       "activity",
+      "monitor",
       "chat",
       "runs",
       "recipes",

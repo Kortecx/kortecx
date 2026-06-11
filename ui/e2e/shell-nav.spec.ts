@@ -31,6 +31,7 @@ test("the app shell navigates to every section (brand + favicon present)", async
     ["nav-systems", "systems-section", "Systems"],
     ["nav-settings", "settings-section", "Settings"],
     ["nav-activity", "activity-panel", "Activity"],
+    ["nav-monitor", "monitoring-section", "Monitoring"],
   ];
   for (const [nav, panel, crumb] of sections) {
     await page.getByTestId(nav).click();

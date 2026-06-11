@@ -31,6 +31,10 @@ export default defineConfig({
   plugins: [react()],
   server: { port: 5173, strictPort: true },
   preview: { port: 4173, strictPort: true },
+  // Monaco's `?worker` chunks (editor.worker / json.worker — see lib/monaco/setup.ts)
+  // are ES modules; emit ES-format workers so they tree-shake + load same-origin in
+  // the offline embedded console (a default IIFE worker would inline the whole graph).
+  worker: { format: "es" },
   build: {
     rollupOptions: {
       output: { manualChunks: vendorChunk },

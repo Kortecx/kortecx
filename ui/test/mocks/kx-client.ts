@@ -17,6 +17,9 @@ export interface MockClientImpl {
   listTeams?: (...args: unknown[]) => Promise<unknown>;
   listTeamMembers?: (...args: unknown[]) => Promise<unknown>;
   listAssetGrants?: (...args: unknown[]) => Promise<unknown>;
+  listReplanRounds?: (...args: unknown[]) => Promise<unknown>;
+  listReactTurns?: (...args: unknown[]) => Promise<unknown>;
+  listCaptureRecords?: (...args: unknown[]) => Promise<unknown>;
 }
 
 export function makeMockClient(impl: MockClientImpl = {}) {
@@ -53,6 +56,15 @@ export function makeMockClient(impl: MockClientImpl = {}) {
   const listTeams = vi.fn(impl.listTeams ?? (async () => []));
   const listTeamMembers = vi.fn(impl.listTeamMembers ?? (async () => ({ owner: "", members: [] })));
   const listAssetGrants = vi.fn(impl.listAssetGrants ?? (async () => ({ owner: "", grants: [] })));
+  const listReplanRounds = vi.fn(
+    impl.listReplanRounds ?? (async () => ({ rounds: [], hasMore: false })),
+  );
+  const listReactTurns = vi.fn(
+    impl.listReactTurns ?? (async () => ({ turns: [], hasMore: false })),
+  );
+  const listCaptureRecords = vi.fn(
+    impl.listCaptureRecords ?? (async () => ({ records: [], hasMore: false })),
+  );
   const close = vi.fn();
   const client = {
     listSignatures,
@@ -67,6 +79,9 @@ export function makeMockClient(impl: MockClientImpl = {}) {
     listTeams,
     listTeamMembers,
     listAssetGrants,
+    listReplanRounds,
+    listReactTurns,
+    listCaptureRecords,
     close,
     submitRun: vi.fn(),
     registerSignature: vi.fn(),
@@ -87,6 +102,9 @@ export function makeMockClient(impl: MockClientImpl = {}) {
     listTeams,
     listTeamMembers,
     listAssetGrants,
+    listReplanRounds,
+    listReactTurns,
+    listCaptureRecords,
     close,
   };
 }

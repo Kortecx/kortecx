@@ -9,6 +9,7 @@ import type { SVGProps } from "react";
 
 export type Glyph =
   | "activity"
+  | "monitor"
   | "chat"
   | "chevron-right"
   | "runs"
@@ -27,6 +28,7 @@ export type Glyph =
 // 24×24 viewBox, stroke = currentColor. Multi-subpath `d` is fine.
 const PATHS: Record<Glyph, string> = {
   activity: "M3 12h4l2 6 4-15 2 9h6",
+  monitor: "M3 3v18h18M8 16V9m4 7V5m4 11v-4",
   chat: "M4 5h16v11H9l-4 4v-4H4z",
   "chevron-right": "M9 6l6 6-6 6",
   runs: "M6 4v16l13-8z",
