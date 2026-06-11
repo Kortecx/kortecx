@@ -268,6 +268,7 @@ prefer the file — `--token` is visible in `ps`) · `--tls-ca <pem>` (for
 | `kx content` | fetch a committed result (raw bytes, binary-safe) | `--ref <hex>` · `--instance <hex>` · `--out <file>` |
 | `kx events` | print or live-tail a run's event deltas | `--instance <hex>` · `--since <N>` · `--follow` |
 | `kx signatures` | the sharable task-signature catalog | `list` · `get --id <hex>` · `register --manifest-file <path>` |
+| `kx tools` | advisory MCP-tool discovery + TaskBundle preview (scores never authorize) | `list` · `score --intent <text> --tool <id>@<ver>… [--language-tag <t>]… [--tolerance-threshold-bp <N>]` |
 | `kx health` | gateway liveness (the standard gRPC health probe) | shared flags |
 | `kx help [command]` / `kx --version` | usage / version | — |
 
@@ -277,6 +278,10 @@ kx invoke kx/recipes/echo --args '{"topic":"hello"}' --wait --out /tmp/result.bi
 
 # Everything speaks JSON for scripting:
 kx invoke kx/recipes/echo --args '{"topic":"hello"}' --wait --json | jq .
+
+# Discover the registered tools and preview a task bundle (advisory — never runs anything):
+kx tools list --json | jq '.manifests[].tool_id'
+kx tools score --intent "read a file from disk" --tool fs-read@1 --json | jq '.ranked, .verdict'
 ```
 
 ### Environment variables
