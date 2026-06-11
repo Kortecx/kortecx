@@ -37,6 +37,9 @@ tonic-health = { workspace = true }
 tokio        = { workspace = true, features = ["rt-multi-thread", "macros", "time", "signal"] }
 # --json machine output (a workspace dep; no new dependency).
 serde_json   = { workspace = true }
+# `kx blueprint run --file` deserializes the author-side DAG JSON (serde + derive;
+# already in the lock via serde_json — an edge, not a new node).
+serde        = { workspace = true }
 tracing            = { workspace = true }
 tracing-subscriber = { workspace = true }
 thiserror          = { workspace = true }

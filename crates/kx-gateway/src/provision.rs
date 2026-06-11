@@ -20,18 +20,19 @@ use kx_catalog::{
 };
 use kx_content::ContentRef;
 use kx_gateway_core::{
-    BinderError, BoundRecipe, CatalogSeamError, RecipeBinder, RecipeCatalog, RecipeFormFieldEntry,
-    RecipeParamKind, RegisteredSignature, SignatureCatalog, SignatureSummaryEntry,
+    AuthorEdge, AuthorExecutionMode, AuthorStep, AuthorStepKind, BinderError, BoundRecipe,
+    CatalogSeamError, RecipeBinder, RecipeCatalog, RecipeFormFieldEntry, RecipeParamKind,
+    RegisteredSignature, SignatureCatalog, SignatureSummaryEntry, WorkflowAuthor,
 };
 use kx_invoke::{bind_snapshot, InvokeError, UseWarrantResolver};
 use kx_mote::{
     ConfigKey, ConfigVal, EdgeMeta, LogicRef, ModelId, ToolName, ToolVersion, PROMPT_KEY,
 };
 use kx_warrant::{
-    ExecutorClass, FsMode, FsScope, Host, ModelRoute, MoteClass, NetScope, ResourceCeiling, Role,
-    WarrantSpec,
+    intersect, ExecutorClass, FsMode, FsScope, Host, ModelRoute, MoteClass, NetScope,
+    ResourceCeiling, Role, WarrantSpec,
 };
-use kx_workflow::{transform, WorkflowDef};
+use kx_workflow::{compile, transform, StepDef, WorkflowDef};
 
 use crate::error::GatewayError;
 
@@ -179,6 +180,18 @@ const REACT_MAX_TURNS_SCHEMA_REF: [u8; 32] = [0x50; 32];
 /// See [`REACT_INSTRUCTION_SCHEMA_REF`].
 const REACT_MAX_TOOL_CALLS_SCHEMA_REF: [u8; 32] = [0x51; 32];
 
+/// The blueprint-authoring asset (`SubmitWorkflow` / the Blueprint builder). Each
+/// party is granted `Use` on it at provision time, so [`HostWorkflowAuthor`]
+/// resolves the party's effective authority from the SAME grant ledger as Invoke —
+/// the ceiling each authored step's warrant is intersected against (SN-8). It owns
+/// no body/version (authoring submits one-off DAGs; nothing is published here).
+const BLUEPRINT_AUTHOR_HANDLE: &str = "kx/blueprints/author";
+
+/// Tier-1 authoring caps (GR8 DoS bound — the new client-authored-topology surface).
+const MAX_BLUEPRINT_STEPS: usize = 64;
+/// See [`MAX_BLUEPRINT_STEPS`].
+const MAX_BLUEPRINT_EDGES: usize = 256;
+
 /// A server-provisioned recipe library backing the `Invoke` path, over the
 /// durable G1a SQLite ledgers (so a registered recipe survives restart). R2b
 /// seeds ONE PURE demo recipe whose step warrant uses the embedded worker's
@@ -197,6 +210,13 @@ pub struct DemoLibrary {
     /// `bind` looks the handle up here for its owner-root warrant + free-param
     /// contract; an unknown handle is a uniform `NotAuthorized` (no oracle).
     recipes: Vec<(AssetPath, RecipeMeta)>,
+    /// The owner-root warrant on the `kx/blueprints/author` asset — the base
+    /// each authored step's warrant uses AND the ceiling the party's resolved Use
+    /// authority intersects against ([`HostWorkflowAuthor`]).
+    blueprint_base: WarrantSpec,
+    /// The served model id, if this serve resolved one (`kx serve --features
+    /// inference`). Authored MODEL steps require it (else they are refused).
+    serve_model: Option<ModelId>,
 }
 
 /// Per-recipe binding metadata: the owner's base warrant the grant fold narrows
@@ -438,11 +458,25 @@ impl DemoLibrary {
             ));
         }
 
+        // (blueprints/author) the Tier-1 DAG-authoring asset — granted Use to each
+        // party so `SubmitWorkflow` resolves the party's authority from this same
+        // ledger (no body/version; authoring submits one-off DAGs). Always seeded.
+        let blueprint_base = demo_warrant(exec_class);
+        seed_blueprint_asset(
+            &grants,
+            &owner,
+            parties,
+            &blueprint_author_handle()?,
+            &blueprint_base,
+        )?;
+
         Ok(Self {
             versions,
             bodies,
             grants: std::sync::Arc::new(grants),
             recipes,
+            blueprint_base,
+            serve_model: serve_model.cloned(),
         })
     }
 
@@ -741,6 +775,199 @@ impl UseWarrantResolver for HostUseResolver<'_> {
     }
 }
 
+/// A [`WorkflowAuthor`] over a [`DemoLibrary`]: compiles a Tier-1 authored DAG
+/// (PURE / MODEL palette) server-side, assigns each step's `logic_ref` from its
+/// kind (the client never supplies executable bytes), and resolves + INTERSECTS
+/// every warrant from the party's grant on `kx/blueprints/author` (never a
+/// client warrant — SN-8). Shares the library `Arc` with the binder/catalog.
+pub struct HostWorkflowAuthor {
+    lib: std::sync::Arc<DemoLibrary>,
+}
+
+impl HostWorkflowAuthor {
+    /// Wrap a [`DemoLibrary`] shared with the binder/catalog (one seed, many seams).
+    #[must_use]
+    pub fn from_shared(lib: std::sync::Arc<DemoLibrary>) -> Self {
+        Self { lib }
+    }
+
+    /// Map one authored step → a `kx_workflow::StepDef`, server-assigning `logic_ref`.
+    fn step_def(&self, index: usize, s: &AuthorStep) -> Result<StepDef, BinderError> {
+        let base = &self.lib.blueprint_base;
+        let cap = ToolName("blueprint".into());
+        let mut def = match s.kind {
+            // PURE: a deterministic transform; its identity comes from a content
+            // sentinel over (index, params), so distinct steps get distinct ids.
+            AuthorStepKind::Pure => {
+                let mut buf = Vec::with_capacity(64);
+                buf.extend_from_slice(b"kx-blueprint/pure/v1");
+                buf.extend_from_slice(&(index as u64).to_le_bytes());
+                for (k, v) in &s.params {
+                    buf.extend_from_slice(k.as_bytes());
+                    buf.extend_from_slice(v);
+                }
+                let logic_ref = LogicRef::from_bytes(*ContentRef::of(&buf).as_bytes());
+                transform(
+                    logic_ref,
+                    base.model_route.model_id.clone(),
+                    base.clone(),
+                    cap,
+                )
+            }
+            // MODEL: a greedy model step routed to the SERVED model (the executor
+            // recognizes it by config_subset[PROMPT_KEY] + a supported model_id).
+            AuthorStepKind::Model => {
+                let served = self.lib.serve_model.as_ref().ok_or_else(|| {
+                    BinderError::InvalidArgs(
+                        "MODEL steps require a served model (run `kx serve --features inference`)"
+                            .into(),
+                    )
+                })?;
+                if !s.model_id.is_empty() && s.model_id != served.0 {
+                    return Err(BinderError::InvalidArgs(format!(
+                        "MODEL step model_id must equal the served model '{}'",
+                        served.0
+                    )));
+                }
+                transform(
+                    LogicRef::from_bytes(MODEL_LOGIC_REF),
+                    served.clone(),
+                    base.clone(),
+                    cap,
+                )
+            }
+            // EXEC: references a registered body — reserved for a follow-up (Tier-1
+            // PR-1 ships PURE + MODEL; EXEC needs the body-registry lookup wiring).
+            AuthorStepKind::Exec => {
+                return Err(BinderError::InvalidArgs(
+                    "EXEC step authoring is reserved (PR-1 supports PURE + MODEL)".into(),
+                ));
+            }
+        };
+        // Free params land in config_subset (identity-bearing); MODEL also binds the
+        // prompt into config_subset[PROMPT_KEY] — the key the model executor reads.
+        for (k, v) in &s.params {
+            def.config_subset
+                .insert(ConfigKey(k.clone()), ConfigVal(v.clone()));
+        }
+        if s.kind == AuthorStepKind::Model {
+            def.config_subset.insert(
+                ConfigKey(PROMPT_KEY.to_string()),
+                ConfigVal(s.prompt.clone().into_bytes()),
+            );
+        }
+        Ok(def)
+    }
+}
+
+#[tonic::async_trait]
+impl WorkflowAuthor for HostWorkflowAuthor {
+    async fn author(
+        &self,
+        party: &str,
+        seed: u32,
+        steps: &[AuthorStep],
+        edges: &[AuthorEdge],
+        mode: AuthorExecutionMode,
+    ) -> Result<BoundRecipe, BinderError> {
+        // DYNAMIC is reserved (PR-1 frozen-only); refuse rather than silently treat
+        // it as frozen so the contract never misleads.
+        if mode == AuthorExecutionMode::Dynamic {
+            return Err(BinderError::InvalidArgs(
+                "dynamic execution mode is reserved (PR-1 is frozen-only)".into(),
+            ));
+        }
+        // Caps first (fail-closed, BEFORE any compile) — the DoS bound on the new
+        // client-authored-topology surface.
+        if steps.is_empty() {
+            return Err(BinderError::InvalidArgs(
+                "a blueprint needs at least one step".into(),
+            ));
+        }
+        if steps.len() > MAX_BLUEPRINT_STEPS {
+            return Err(BinderError::InvalidArgs(format!(
+                "too many steps (max {MAX_BLUEPRINT_STEPS})"
+            )));
+        }
+        if edges.len() > MAX_BLUEPRINT_EDGES {
+            return Err(BinderError::InvalidArgs(format!(
+                "too many edges (max {MAX_BLUEPRINT_EDGES})"
+            )));
+        }
+
+        // Build the WorkflowDef (server-assigned logic_ref per step).
+        let mut wf = WorkflowDef::new(seed);
+        let mut refs = Vec::with_capacity(steps.len());
+        for (i, s) in steps.iter().enumerate() {
+            refs.push(wf.add_step(self.step_def(i, s)?));
+        }
+        for e in edges {
+            let parent = *refs.get(e.parent as usize).ok_or_else(|| {
+                BinderError::InvalidArgs(format!("edge parent index {} out of range", e.parent))
+            })?;
+            let child = *refs.get(e.child as usize).ok_or_else(|| {
+                BinderError::InvalidArgs(format!("edge child index {} out of range", e.child))
+            })?;
+            let meta = if e.data {
+                EdgeMeta::data()
+            } else if e.non_cascade {
+                EdgeMeta::control_non_cascading()
+            } else {
+                EdgeMeta::control()
+            };
+            wf.add_edge(parent, child, meta)
+                .map_err(|err| BinderError::InvalidArgs(format!("edge: {err}")))?;
+        }
+
+        // Resolve the party's effective Use authority on the authoring asset (SN-8:
+        // server-derived from the grant ledger, never a client warrant).
+        let party_id = PartyId::new(party);
+        let handle = blueprint_author_handle().map_err(|e| BinderError::Internal(e.to_string()))?;
+        let resolver = HostUseResolver {
+            grants: &self.lib.grants,
+            owner_root: self.lib.blueprint_base.clone(),
+        };
+        let effective = resolver
+            .resolve_use(&party_id, &AssetRef::Path(handle))
+            .ok_or(BinderError::NotAuthorized)?;
+
+        // Compile (acyclicity refusal lands here) + narrow each Mote's warrant to the
+        // party's authority (the no-widen boundary: a step requesting more than the
+        // grant → AttemptedWiden → NotAuthorized — identical to the Invoke binder).
+        let compiled =
+            compile(&wf).map_err(|e| BinderError::InvalidArgs(format!("compile: {e}")))?;
+        let terminal_mote_id = compiled
+            .motes
+            .last()
+            .map(|m| m.mote.id)
+            .ok_or_else(|| BinderError::InvalidArgs("empty blueprint".into()))?;
+        let mut motes = Vec::with_capacity(compiled.motes.len());
+        // recipe_fingerprint = content hash of the compiled Mote ids → same authored
+        // DAG yields the same fingerprint (FROZEN dedup; discovery only, never identity).
+        let mut fp_buf = Vec::with_capacity(compiled.motes.len() * 32);
+        for cm in &compiled.motes {
+            let step_role = Role {
+                name: "blueprint-step".to_string(),
+                version: 0,
+                spec: cm.warrant.clone(),
+                description: String::new(),
+            };
+            let warrant =
+                intersect(&effective, &step_role).map_err(|_| BinderError::NotAuthorized)?;
+            fp_buf.extend_from_slice(cm.mote.id.as_bytes());
+            motes.push((cm.mote.clone(), warrant));
+        }
+        let recipe_fingerprint = *ContentRef::of(&fp_buf).as_bytes();
+
+        Ok(BoundRecipe {
+            recipe_fingerprint,
+            motes,
+            terminal_mote_id,
+            react_seed: false,
+        })
+    }
+}
+
 /// Map a `kx-invoke` bind failure to the gateway seam vocabulary: existence /
 /// authority → uniform `NotAuthorized` (no oracle); bad args → `InvalidArgs`;
 /// a broken provisioned recipe / submit failure → `Internal`.
@@ -790,6 +1017,55 @@ fn exec_handle() -> Result<AssetPath, GatewayError> {
 fn fanout_handle() -> Result<AssetPath, GatewayError> {
     parse_handle(FANOUT_RECIPE_HANDLE)
         .ok_or_else(|| GatewayError::Catalog("invalid fanout recipe handle".into()))
+}
+
+fn blueprint_author_handle() -> Result<AssetPath, GatewayError> {
+    parse_handle(BLUEPRINT_AUTHOR_HANDLE)
+        .ok_or_else(|| GatewayError::Catalog("invalid blueprint author handle".into()))
+}
+
+/// Grant `Use`+`Read` on the `kx/blueprints/author` asset to each party (the
+/// authoring authority ceiling). Unlike [`seed_recipe`], publishes NO body/version —
+/// authoring submits one-off DAGs; this asset only carries the grant fold the
+/// [`HostWorkflowAuthor`] resolves the party's effective warrant from.
+fn seed_blueprint_asset(
+    grants: &SqliteGrantLedger,
+    owner: &PartyId,
+    parties: &[String],
+    handle: &AssetPath,
+    warrant: &WarrantSpec,
+) -> Result<(), GatewayError> {
+    let cat = |e: String| GatewayError::Catalog(e);
+    let asset = AssetRef::Path(handle.clone());
+    grants
+        .append_binding(AssetBinding::new(asset.clone(), owner.clone()))
+        .map_err(|e| cat(e.to_string()))?;
+    let role = Role {
+        name: "blueprint-use".to_string(),
+        version: 1,
+        spec: warrant.clone(),
+        description: String::new(),
+    };
+    let mut granted: BTreeSet<&str> = BTreeSet::new();
+    for party in parties
+        .iter()
+        .map(String::as_str)
+        .chain(std::iter::once("local-dev"))
+    {
+        if !granted.insert(party) {
+            continue;
+        }
+        grants
+            .append_grant(Grant::root(
+                asset.clone(),
+                owner.clone(),
+                PartyId::new(party),
+                CatalogActionSet::allow([CatalogAction::Read, CatalogAction::Use]),
+                role.clone(),
+            ))
+            .map_err(|e| cat(e.to_string()))?;
+    }
+    Ok(())
 }
 
 /// Seed the T3.3 PURE multi-node `fanout-demo` recipe and return its
@@ -1339,6 +1615,121 @@ mod tests {
         assert!(matches!(
             binder.bind("alice@acme", DEMO_RECIPE_HANDLE, b"{}").await,
             Err(BinderError::InvalidArgs(_))
+        ));
+    }
+
+    // --- Blueprint authoring (SubmitWorkflow / HostWorkflowAuthor) ----------
+
+    fn demo_author(dir: &std::path::Path) -> HostWorkflowAuthor {
+        let lib =
+            DemoLibrary::open(dir, ExecutorClass::Bwrap, &["alice@acme".to_string()]).unwrap();
+        HostWorkflowAuthor::from_shared(std::sync::Arc::new(lib))
+    }
+
+    fn pure_step() -> AuthorStep {
+        AuthorStep {
+            kind: AuthorStepKind::Pure,
+            model_id: String::new(),
+            prompt: String::new(),
+            body_signature_id: None,
+            tool_contract: std::collections::BTreeMap::new(),
+            params: std::collections::BTreeMap::new(),
+        }
+    }
+
+    fn data_edge(parent: u32, child: u32) -> AuthorEdge {
+        AuthorEdge {
+            parent,
+            child,
+            data: true,
+            non_cascade: false,
+        }
+    }
+
+    /// An authored DAG compiles to STABLE, content-addressed identity (same bytes →
+    /// same MoteIds + fingerprint), and a distinct seed yields a distinct identity.
+    #[tokio::test]
+    async fn blueprint_authoring_is_deterministic_and_content_addressed() {
+        let dir = tempfile::tempdir().unwrap();
+        let author = demo_author(dir.path());
+        let steps = [pure_step(), pure_step()];
+        let edges = [data_edge(0, 1)];
+
+        let a = author
+            .author("alice@acme", 7, &steps, &edges, AuthorExecutionMode::Frozen)
+            .await
+            .expect("authored");
+        let b = author
+            .author("alice@acme", 7, &steps, &edges, AuthorExecutionMode::Frozen)
+            .await
+            .expect("authored again");
+
+        assert_eq!(a.motes.len(), 2, "two compiled Motes");
+        let ids_a: Vec<_> = a.motes.iter().map(|(m, _)| m.id).collect();
+        let ids_b: Vec<_> = b.motes.iter().map(|(m, _)| m.id).collect();
+        assert_eq!(
+            ids_a, ids_b,
+            "same authored bytes → same server-derived ids"
+        );
+        assert_eq!(
+            a.recipe_fingerprint, b.recipe_fingerprint,
+            "content-addressed"
+        );
+        assert!(!a.react_seed, "authored runs never seed a ReAct chain");
+
+        let c = author
+            .author("alice@acme", 8, &steps, &edges, AuthorExecutionMode::Frozen)
+            .await
+            .expect("authored with a new seed");
+        assert_ne!(
+            a.terminal_mote_id, c.terminal_mote_id,
+            "a distinct seed → a distinct identity"
+        );
+    }
+
+    /// The refusal boundary: a cyclic / empty DAG, the reserved DYNAMIC mode, and an
+    /// unauthorized party are each refused (no orphan run) — the design-doc-mandated
+    /// admission coverage for client-authored DAGs.
+    #[tokio::test]
+    async fn blueprint_authoring_refuses_bad_shapes_and_unauthorized() {
+        let dir = tempfile::tempdir().unwrap();
+        let author = demo_author(dir.path());
+        let steps = [pure_step(), pure_step()];
+
+        // A cycle is refused at compile.
+        let cyclic = [data_edge(0, 1), data_edge(1, 0)];
+        assert!(matches!(
+            author
+                .author(
+                    "alice@acme",
+                    1,
+                    &steps,
+                    &cyclic,
+                    AuthorExecutionMode::Frozen
+                )
+                .await,
+            Err(BinderError::InvalidArgs(_))
+        ));
+        // DYNAMIC mode is reserved (PR-1 frozen-only).
+        assert!(matches!(
+            author
+                .author("alice@acme", 1, &steps, &[], AuthorExecutionMode::Dynamic)
+                .await,
+            Err(BinderError::InvalidArgs(_))
+        ));
+        // An empty DAG is refused.
+        assert!(matches!(
+            author
+                .author("alice@acme", 1, &[], &[], AuthorExecutionMode::Frozen)
+                .await,
+            Err(BinderError::InvalidArgs(_))
+        ));
+        // An ungranted party gets a UNIFORM NotAuthorized (no existence oracle).
+        assert!(matches!(
+            author
+                .author("mallory@evil", 1, &steps, &[], AuthorExecutionMode::Frozen)
+                .await,
+            Err(BinderError::NotAuthorized)
         ));
     }
 

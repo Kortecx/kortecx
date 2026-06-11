@@ -56,6 +56,9 @@ export type { RecipeParamTypeName } from "./recipes.js";
 // Blueprint = the display name for the frozen `recipe` wire (D136; additive aliases).
 export { BlueprintForm, BlueprintFormField, blueprintParamTypeName } from "./recipes.js";
 export type { BlueprintParamTypeName } from "./recipes.js";
+// The Blueprint BUILDER (SubmitWorkflow) — author a Tier-1 DAG to run.
+export { BlueprintBuilder } from "./blueprints.js";
+export type { StepKind, ExecutionMode, EdgeType, StepInput, EdgeInput } from "./blueprints.js";
 
 export { TeamSummary, TeamMember, TeamMembers, WarrantView, teamsFromProto } from "./teams.js";
 export { GrantView, AssetGrants } from "./grants.js";

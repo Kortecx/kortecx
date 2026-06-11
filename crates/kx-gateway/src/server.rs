@@ -29,7 +29,9 @@ use std::sync::Arc;
 use std::time::Duration;
 #[cfg(feature = "embedded-worker")]
 use {
-    crate::provision::{DemoLibrary, HostRecipeBinder, HostRecipeCatalog, HostSignatureCatalog},
+    crate::provision::{
+        DemoLibrary, HostRecipeBinder, HostRecipeCatalog, HostSignatureCatalog, HostWorkflowAuthor,
+    },
     crate::teams::{seed_demo_team, HostGrantView, HostMembershipView},
     kx_capability::{CapabilityBroker, LocalCapabilityBroker},
     kx_catalog::SqliteCatalog,
@@ -39,7 +41,7 @@ use {
     kx_fleet::SqliteMembershipLedger,
     kx_gateway_core::{
         EventTailer, GatewayService, GrantView, JournalReader, MembershipView, ReadOnly,
-        RecipeBinder, RecipeCatalog, SignatureCatalog, TonicCoordinatorSubmitter,
+        RecipeBinder, RecipeCatalog, SignatureCatalog, TonicCoordinatorSubmitter, WorkflowAuthor,
     },
     kx_journal::SqliteJournal,
     kx_proto::proto::coordinator_server::CoordinatorServer,
@@ -572,6 +574,10 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     // executable bind agree by construction.
     let binder: Arc<dyn RecipeBinder> = Arc::new(HostRecipeBinder::from_shared(demo.clone()));
     let recipe_catalog: Arc<dyn RecipeCatalog> = Arc::new(HostRecipeCatalog::new(demo.clone()));
+    // The Blueprint-builder author seam (SubmitWorkflow) — shares the same library
+    // `Arc` (one seed, many seams), so the authoring authority resolves from the
+    // SAME grant ledger Invoke uses.
+    let author: Arc<dyn WorkflowAuthor> = Arc::new(HostWorkflowAuthor::from_shared(demo.clone()));
     // (3d) UI-3: a durable membership ledger (teams) under the SAME catalog dir,
     //      idempotently seeded with one demo team (owner = the gateway principal;
     //      members = each --auth-token party + the dev principal, one a Delegate) +
@@ -666,6 +672,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     let mut gateway = GatewayService::new(reader.clone(), submitter, content)
         .with_signature_catalog(signature_catalog)
         .with_recipe_binder(binder)
+        .with_workflow_author(author)
         .with_recipe_catalog(recipe_catalog)
         .with_membership_view(membership_view)
         .with_grant_view(grant_view)

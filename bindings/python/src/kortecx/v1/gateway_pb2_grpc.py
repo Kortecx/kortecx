@@ -148,6 +148,11 @@ class KxGatewayStub(object):
                 request_serializer=kortecx_dot_v1_dot_gateway__pb2.ScoreTaskBundleRequest.SerializeToString,
                 response_deserializer=kortecx_dot_v1_dot_gateway__pb2.ScoreTaskBundleResponse.FromString,
                 _registered_method=True)
+        self.SubmitWorkflow = channel.unary_unary(
+                '/kortecx.v1.KxGateway/SubmitWorkflow',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.SubmitWorkflowRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.RunHandle.FromString,
+                _registered_method=True)
 
 
 class KxGatewayServicer(object):
@@ -298,6 +303,14 @@ class KxGatewayServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def SubmitWorkflow(self, request, context):
+        """Blueprint-builder additive (D120.6): author a Tier-1 DAG (vetted palette) and
+        run it — server-compiled identity + server-built warrants + R-1..R-15 admission.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_KxGatewayServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -410,6 +423,11 @@ def add_KxGatewayServicer_to_server(servicer, server):
                     servicer.ScoreTaskBundle,
                     request_deserializer=kortecx_dot_v1_dot_gateway__pb2.ScoreTaskBundleRequest.FromString,
                     response_serializer=kortecx_dot_v1_dot_gateway__pb2.ScoreTaskBundleResponse.SerializeToString,
+            ),
+            'SubmitWorkflow': grpc.unary_unary_rpc_method_handler(
+                    servicer.SubmitWorkflow,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.SubmitWorkflowRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.RunHandle.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -1010,6 +1028,33 @@ class KxGateway(object):
             '/kortecx.v1.KxGateway/ScoreTaskBundle',
             kortecx_dot_v1_dot_gateway__pb2.ScoreTaskBundleRequest.SerializeToString,
             kortecx_dot_v1_dot_gateway__pb2.ScoreTaskBundleResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def SubmitWorkflow(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/SubmitWorkflow',
+            kortecx_dot_v1_dot_gateway__pb2.SubmitWorkflowRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.RunHandle.FromString,
             options,
             channel_credentials,
             insecure,

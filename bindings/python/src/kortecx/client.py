@@ -215,6 +215,20 @@ class KxClient:
         outcome = _wait.poll_any(self._stub, self._md, handle.instance_id, timeout)
         return self._finish(outcome)
 
+    def submit_workflow(
+        self, request: "_g.SubmitWorkflowRequest", *, wait: bool = False, timeout: float = 120.0
+    ) -> Union["_g.RunHandle", Result]:
+        """Author a Tier-1 DAG (a :class:`BlueprintBuilder` ``build()``) and run it.
+        The server COMPILES the DAG, derives all identity, and builds every warrant
+        from the party's grants (SN-8) — the client sends only the topology + params.
+        Returns the ``RunHandle``, or — with ``wait=True`` — the first committed
+        :class:`Result`. An old gateway without the seam raises ``KxUnimplemented``."""
+        handle = self._call(lambda: self._stub.SubmitWorkflow(request, metadata=self._md))
+        if not wait:
+            return handle
+        outcome = _wait.poll_any(self._stub, self._md, handle.instance_id, timeout)
+        return self._finish(outcome)
+
     def get_projection(
         self, instance_id: IdType, *, at_seq: Optional[int] = None
     ) -> types.Projection:
@@ -544,6 +558,15 @@ class AsyncKxClient:
         self, request: "_g.SubmitRunRequest", *, wait: bool = False, timeout: float = 120.0
     ) -> Union["_g.RunHandle", Result]:
         handle = await self._acall(self._stub.SubmitRun(request, metadata=self._md))
+        if not wait:
+            return handle
+        outcome = await _wait.apoll_any(self._stub, self._md, handle.instance_id, timeout)
+        return KxClient._finish(outcome)
+
+    async def submit_workflow(
+        self, request: "_g.SubmitWorkflowRequest", *, wait: bool = False, timeout: float = 120.0
+    ) -> Union["_g.RunHandle", Result]:
+        handle = await self._acall(self._stub.SubmitWorkflow(request, metadata=self._md))
         if not wait:
             return handle
         outcome = await _wait.apoll_any(self._stub, self._md, handle.instance_id, timeout)

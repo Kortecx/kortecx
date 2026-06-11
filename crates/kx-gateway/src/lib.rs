@@ -109,8 +109,9 @@ pub use datasets::HostEmbedder;
 pub use error::GatewayError;
 pub use live_tail::LiveTailer;
 pub use provision::{
-    DemoLibrary, HostRecipeBinder, HostRecipeCatalog, HostSignatureCatalog, DEMO_RECIPE_HANDLE,
-    EXEC_RECIPE_HANDLE, FANOUT_RECIPE_HANDLE, MODEL_RECIPE_HANDLE, REACT_RECIPE_HANDLE,
+    DemoLibrary, HostRecipeBinder, HostRecipeCatalog, HostSignatureCatalog, HostWorkflowAuthor,
+    DEMO_RECIPE_HANDLE, EXEC_RECIPE_HANDLE, FANOUT_RECIPE_HANDLE, MODEL_RECIPE_HANDLE,
+    REACT_RECIPE_HANDLE,
 };
 pub use server::{serve, start, RunningGateway};
 pub use teams::{seed_demo_team, HostGrantView, HostMembershipView, DEMO_TEAM_HANDLE};

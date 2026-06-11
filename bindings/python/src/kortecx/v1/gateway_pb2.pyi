@@ -45,6 +45,19 @@ class LowerVerdict(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     LOWER_VERDICT_UNAVAILABLE: _ClassVar[LowerVerdict]
     LOWER_VERDICT_WOULD_LOWER: _ClassVar[LowerVerdict]
     LOWER_VERDICT_REFUSED: _ClassVar[LowerVerdict]
+
+class WorkflowStepKind(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    WORKFLOW_STEP_KIND_UNSPECIFIED: _ClassVar[WorkflowStepKind]
+    WORKFLOW_STEP_KIND_PURE: _ClassVar[WorkflowStepKind]
+    WORKFLOW_STEP_KIND_MODEL: _ClassVar[WorkflowStepKind]
+    WORKFLOW_STEP_KIND_EXEC: _ClassVar[WorkflowStepKind]
+
+class WorkflowExecutionMode(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    WORKFLOW_EXECUTION_MODE_UNSPECIFIED: _ClassVar[WorkflowExecutionMode]
+    WORKFLOW_EXECUTION_MODE_FROZEN: _ClassVar[WorkflowExecutionMode]
+    WORKFLOW_EXECUTION_MODE_DYNAMIC: _ClassVar[WorkflowExecutionMode]
 MOTE_SNAPSHOT_STATE_UNSPECIFIED: MoteSnapshotState
 MOTE_SNAPSHOT_STATE_PENDING: MoteSnapshotState
 MOTE_SNAPSHOT_STATE_SCHEDULED: MoteSnapshotState
@@ -69,6 +82,13 @@ LOWER_VERDICT_UNSPECIFIED: LowerVerdict
 LOWER_VERDICT_UNAVAILABLE: LowerVerdict
 LOWER_VERDICT_WOULD_LOWER: LowerVerdict
 LOWER_VERDICT_REFUSED: LowerVerdict
+WORKFLOW_STEP_KIND_UNSPECIFIED: WorkflowStepKind
+WORKFLOW_STEP_KIND_PURE: WorkflowStepKind
+WORKFLOW_STEP_KIND_MODEL: WorkflowStepKind
+WORKFLOW_STEP_KIND_EXEC: WorkflowStepKind
+WORKFLOW_EXECUTION_MODE_UNSPECIFIED: WorkflowExecutionMode
+WORKFLOW_EXECUTION_MODE_FROZEN: WorkflowExecutionMode
+WORKFLOW_EXECUTION_MODE_DYNAMIC: WorkflowExecutionMode
 
 class SubmitRunRequest(_message.Message):
     __slots__ = ("recipe_fingerprint", "motes")
@@ -732,3 +752,57 @@ class ScoreTaskBundleResponse(_message.Message):
     verdict: LowerVerdict
     verdict_detail: str
     def __init__(self, bundle_fingerprint: _Optional[bytes] = ..., ranked: _Optional[_Iterable[_Union[ManifestScore, _Mapping]]] = ..., verdict: _Optional[_Union[LowerVerdict, str]] = ..., verdict_detail: _Optional[str] = ...) -> None: ...
+
+class WorkflowStep(_message.Message):
+    __slots__ = ("kind", "model_id", "prompt", "body_signature_id", "tool_contract", "params")
+    class ToolContractEntry(_message.Message):
+        __slots__ = ("key", "value")
+        KEY_FIELD_NUMBER: _ClassVar[int]
+        VALUE_FIELD_NUMBER: _ClassVar[int]
+        key: str
+        value: str
+        def __init__(self, key: _Optional[str] = ..., value: _Optional[str] = ...) -> None: ...
+    class ParamsEntry(_message.Message):
+        __slots__ = ("key", "value")
+        KEY_FIELD_NUMBER: _ClassVar[int]
+        VALUE_FIELD_NUMBER: _ClassVar[int]
+        key: str
+        value: bytes
+        def __init__(self, key: _Optional[str] = ..., value: _Optional[bytes] = ...) -> None: ...
+    KIND_FIELD_NUMBER: _ClassVar[int]
+    MODEL_ID_FIELD_NUMBER: _ClassVar[int]
+    PROMPT_FIELD_NUMBER: _ClassVar[int]
+    BODY_SIGNATURE_ID_FIELD_NUMBER: _ClassVar[int]
+    TOOL_CONTRACT_FIELD_NUMBER: _ClassVar[int]
+    PARAMS_FIELD_NUMBER: _ClassVar[int]
+    kind: WorkflowStepKind
+    model_id: str
+    prompt: str
+    body_signature_id: bytes
+    tool_contract: _containers.ScalarMap[str, str]
+    params: _containers.ScalarMap[str, bytes]
+    def __init__(self, kind: _Optional[_Union[WorkflowStepKind, str]] = ..., model_id: _Optional[str] = ..., prompt: _Optional[str] = ..., body_signature_id: _Optional[bytes] = ..., tool_contract: _Optional[_Mapping[str, str]] = ..., params: _Optional[_Mapping[str, bytes]] = ...) -> None: ...
+
+class WorkflowEdge(_message.Message):
+    __slots__ = ("parent", "child", "edge_kind", "non_cascade")
+    PARENT_FIELD_NUMBER: _ClassVar[int]
+    CHILD_FIELD_NUMBER: _ClassVar[int]
+    EDGE_KIND_FIELD_NUMBER: _ClassVar[int]
+    NON_CASCADE_FIELD_NUMBER: _ClassVar[int]
+    parent: int
+    child: int
+    edge_kind: _coordinator_pb2.EdgeKind
+    non_cascade: bool
+    def __init__(self, parent: _Optional[int] = ..., child: _Optional[int] = ..., edge_kind: _Optional[_Union[_coordinator_pb2.EdgeKind, str]] = ..., non_cascade: bool = ...) -> None: ...
+
+class SubmitWorkflowRequest(_message.Message):
+    __slots__ = ("seed", "steps", "edges", "execution_mode")
+    SEED_FIELD_NUMBER: _ClassVar[int]
+    STEPS_FIELD_NUMBER: _ClassVar[int]
+    EDGES_FIELD_NUMBER: _ClassVar[int]
+    EXECUTION_MODE_FIELD_NUMBER: _ClassVar[int]
+    seed: int
+    steps: _containers.RepeatedCompositeFieldContainer[WorkflowStep]
+    edges: _containers.RepeatedCompositeFieldContainer[WorkflowEdge]
+    execution_mode: WorkflowExecutionMode
+    def __init__(self, seed: _Optional[int] = ..., steps: _Optional[_Iterable[_Union[WorkflowStep, _Mapping]]] = ..., edges: _Optional[_Iterable[_Union[WorkflowEdge, _Mapping]]] = ..., execution_mode: _Optional[_Union[WorkflowExecutionMode, str]] = ...) -> None: ...
