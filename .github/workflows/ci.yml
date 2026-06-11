@@ -178,6 +178,18 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libclang-dev clang cmake build-essential
 
+      # The full-workspace debug target (incl. the llama.cpp FFI build) plus
+      # the restored cargo-test cache (~4 GiB compressed, 3-5x extracted) no
+      # longer fit in a standard runner's ~14 GB free disk — the job died with
+      # "No space left on device" at cache restore. Drop the preinstalled
+      # bundles this job never uses (~25-30 GB reclaimed in under a minute).
+      - name: Free runner disk space (the test target + cache need the headroom)
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force > /dev/null 2>&1 || true
+          df -h /
+
       - name: Cache Cargo registry + target
         uses: actions/cache@v5
         with:
