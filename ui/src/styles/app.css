@@ -383,6 +383,7 @@ button:disabled {
 
 /* ---- live DAG ---- */
 .dag-canvas {
+  position: relative; /* containing block for the node-detail drawer + scrim overlay */
   height: 520px;
   margin-top: 0.75rem;
   border: 1px solid var(--border);

@@ -22,11 +22,18 @@ test("dag: clicking a Mote opens the detail drawer with its committed result", a
     .toBe(5);
 
   const nodes = page.getByTestId("mote-node");
-  const first = nodes.first();
-  // Capture a node bounding box before opening the drawer (no-thrash assertion).
-  const before = await first.boundingBox();
+  const clickTarget = nodes.first();
+  // The clicked node's reactflow translate transform — its LAYOUT position within the
+  // pane. This is immune to the entrance fitView's viewport pan AND to reactflow's
+  // on-click DOM reorder (read by the node's own element); it changes ONLY on a relayout.
+  const nodeTransform = (loc: typeof clickTarget) =>
+    loc.evaluate((el) => {
+      const node = el.closest(".react-flow__node");
+      return node ? getComputedStyle(node).transform : "";
+    });
+  const layoutBefore = await nodeTransform(clickTarget);
 
-  await first.click();
+  await clickTarget.click();
   const drawer = page.getByTestId("node-detail-drawer");
   await expect(drawer).toBeVisible({ timeout: 15_000 });
   // It shows the Mote's state + its committed result in the read-only Monaco viewer.
@@ -36,10 +43,9 @@ test("dag: clicking a Mote opens the detail drawer with its committed result", a
     timeout: 30_000,
   });
 
-  // The graph did NOT relayout: the same node sits at the same position.
-  const after = await first.boundingBox();
-  expect(Math.abs((after?.x ?? 0) - (before?.x ?? 0))).toBeLessThan(2);
-  expect(Math.abs((after?.y ?? 0) - (before?.y ?? 0))).toBeLessThan(2);
+  // The graph did NOT relayout: the node's layout transform is byte-identical (a relayout
+  // would change its translate; a benign viewport pan/scrollbar leaves it untouched).
+  expect(await nodeTransform(clickTarget)).toBe(layoutBefore);
 
   // Escape closes the drawer.
   await page.keyboard.press("Escape");
