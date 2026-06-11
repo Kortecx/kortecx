@@ -1,4 +1,6 @@
+import { m } from "framer-motion";
 import type { ReactNode } from "react";
+import { fadeUp } from "../../app/motion";
 
 /** One labelled stat. `tone` tints the value (reuses the `--t-*` palette). */
 export function MetricCard({
@@ -11,12 +13,13 @@ export function MetricCard({
   tone?: string;
 }) {
   return (
-    <div
+    <m.div
       className={tone ? `metric-card metric-card--${tone}` : "metric-card"}
       data-testid="metric-card"
+      variants={fadeUp}
     >
       <span className="metric-card__value">{value}</span>
       <span className="metric-card__label">{label}</span>
-    </div>
+    </m.div>
   );
 }

@@ -1,12 +1,13 @@
-import { Brand } from "./Brand";
+import { Breadcrumb } from "./Breadcrumb";
 import { ConnectionStatus } from "./ConnectionStatus";
 import { GlobalControls } from "./GlobalControls";
 import { Icon } from "./Icon";
 import { SearchTrigger } from "./SearchTrigger";
 
 /**
- * The top bar: brand · ⌘K search trigger · devtools toggle · global controls ·
- * connection status. The sidebar hamburger lives in the Sidebar header (D137).
+ * The top bar: breadcrumb · ⌘K search trigger · devtools toggle · global
+ * controls · connection status. The brand lives ONLY in the sidebar (the navbar
+ * duplicate was a bug); the sidebar hamburger lives in the Sidebar header (D137).
  */
 export function Navbar({
   onOpenPalette,
@@ -17,7 +18,7 @@ export function Navbar({
 }) {
   return (
     <header className="navbar" data-testid="navbar">
-      <Brand />
+      <Breadcrumb />
       <div className="navbar__spacer" />
       <SearchTrigger onOpen={onOpenPalette} />
       <div className="navbar__spacer" />

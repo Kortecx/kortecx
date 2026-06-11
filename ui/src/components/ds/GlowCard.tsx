@@ -6,6 +6,8 @@ export interface GlowCardProps extends HTMLMotionProps<"div"> {
   glowColor?: string;
   /** Disable the hover lift/glow for purely static cards. */
   hover?: boolean;
+  /** Draw the reference 2px top accent stripe in this color (any CSS color). */
+  stripe?: string;
 }
 
 /**
@@ -16,13 +18,14 @@ export interface GlowCardProps extends HTMLMotionProps<"div"> {
 export function GlowCard({
   glowColor = "var(--primary)",
   hover = true,
+  stripe,
   className,
   style,
   children,
   ...rest
 }: GlowCardProps) {
-  const classes = `glow-card${hover ? " glow-card--hover" : ""}${className ? ` ${className}` : ""}`;
-  const styles = { ...style, "--glow": glowColor } as CSSProperties;
+  const classes = `glow-card${hover ? " glow-card--hover" : ""}${stripe ? " glow-card--stripe" : ""}${className ? ` ${className}` : ""}`;
+  const styles = { ...style, "--glow": glowColor, "--stripe": stripe } as CSSProperties;
   return (
     <m.div
       className={classes}

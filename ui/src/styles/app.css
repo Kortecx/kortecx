@@ -736,21 +736,55 @@ select {
   gap: 0.6rem;
 }
 .metric-card {
-  background: var(--bg-elev);
+  background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 0.6rem 0.75rem;
+  border-radius: var(--radius);
+  padding: 0.85rem 1rem 0.75rem;
   display: flex;
   flex-direction: column;
   gap: 0.2rem;
+  position: relative;
+  overflow: hidden;
+}
+/* the reference 2px top accent bar; tone modifiers re-point it (decorative — the
+ * AA contrast lock is unaffected: #F04500 never carries text here) */
+.metric-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 2px;
+  background: var(--metric-accent, var(--primary));
 }
 .metric-card__value {
-  font-size: 1.3rem;
+  font-size: 1.6rem;
   font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
 }
 .metric-card__label {
-  font-size: 0.78rem;
-  color: var(--fg-muted);
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.metric-card--committed {
+  --metric-accent: var(--t-committed);
+}
+.metric-card--committed .metric-card__value {
+  color: var(--t-committed);
+}
+.metric-card--failed {
+  --metric-accent: var(--t-failed);
+}
+.metric-card--failed .metric-card__value {
+  color: var(--t-failed);
+}
+.metric-card--scheduled {
+  --metric-accent: var(--t-scheduled);
+}
+.metric-card--scheduled .metric-card__value {
+  color: var(--t-scheduled);
 }
 .state-bar {
   display: flex;
@@ -870,6 +904,28 @@ select {
   border-color: var(--accent);
   color: var(--accent);
   background: color-mix(in srgb, var(--accent) 12%, var(--bg-input));
+}
+/* Blueprints: catalog pick tiles — a striped GlowCard wraps the native chip
+ * button; the inner button goes borderless so the card reads as the tile. */
+.recipe-tile {
+  padding: 0;
+}
+.recipe-tile > .recipe-chip {
+  display: block;
+  width: 100%;
+  margin: 0;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-lg);
+  padding: 0.8rem 1rem;
+  text-align: left;
+  box-shadow: none;
+}
+.recipe-tile > .recipe-chip--active {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+.recipe-tile--active {
+  border-color: var(--accent);
 }
 .form-field {
   display: flex;
@@ -1169,6 +1225,17 @@ select {
 .warrant-row dd {
   margin: 0;
 }
+/* W1 design pass: the gateway facts tile + inline status dots in the systems tables. */
+.systems-facts-card {
+  margin-top: 1rem;
+  max-width: 720px;
+}
+.systems-facts-card .facts {
+  margin: 0;
+}
+.data-table .status-dot {
+  margin-right: 0.4rem;
+}
 
 /* ---- T3.7: Datasets (RAG) data-plane ---- */
 .datasets-grid {
@@ -1268,24 +1335,15 @@ select {
   flex-direction: column;
   gap: 0.3rem;
 }
-.sidebar__logo {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-  font-weight: 700;
-  letter-spacing: 0.02em;
-  color: var(--fg);
+/* the Brand (shared with the login gate) is the sidebar's single logo anchor */
+.sidebar__head .brand {
   min-width: 0;
   flex: 1;
 }
-.sidebar--collapsed .sidebar__logo {
+.sidebar--collapsed .sidebar__head .brand {
   flex: initial;
 }
-.sidebar__logo img {
-  display: block;
-  border-radius: var(--radius);
-}
-.sidebar__logoword {
+.sidebar__head .brand__word {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1458,6 +1516,135 @@ select {
 }
 .ds-badge__dot--pulse {
   animation: pulse-dot 2s ease-in-out infinite;
+}
+
+/* ---- reference design language: tiles, dots, textures ----
+ * Ported from the reference globals.css. Color note: the AA lock holds — flat
+ * white-text surfaces keep the darkened #D83C00 gradient (see `button`);
+ * #F04500 appears only on borders, bars, glows, and other non-text accents. */
+.card-hover {
+  transition: border-color 0.15s ease, box-shadow 0.2s ease;
+}
+.card-hover:hover {
+  border-color: var(--primary);
+  box-shadow: 0 4px 20px rgba(240, 69, 0, 0.08);
+}
+/* per-category top accent stripe for GlowCard tiles (color via `--stripe`) */
+.glow-card--stripe {
+  position: relative;
+  overflow: hidden;
+}
+.glow-card--stripe::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 2px;
+  background: linear-gradient(
+    90deg,
+    var(--stripe, var(--primary)),
+    color-mix(in srgb, var(--stripe, var(--primary)) 35%, transparent)
+  );
+}
+.status-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--dot, var(--text-3));
+}
+.status-dot--online {
+  --dot: var(--success);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--success) 15%, transparent);
+}
+.status-dot--busy {
+  --dot: var(--warning);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--warning) 15%, transparent);
+}
+.status-dot--error {
+  --dot: var(--error);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--error) 15%, transparent);
+}
+.status-dot--offline {
+  --dot: transparent;
+  border: 1px solid var(--border-strong);
+}
+.status-dot--pulse {
+  animation: pulse-dot 2s ease-in-out infinite;
+}
+.dot-grid {
+  background-image: radial-gradient(circle, rgba(13, 13, 13, 0.1) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--surface-elev) 25%,
+    var(--bg) 50%,
+    var(--surface-elev) 75%
+  );
+  background-size: 400px 100%;
+  animation: shimmer 1.5s infinite;
+  border-radius: var(--radius-sm);
+}
+.progress {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--bg);
+  overflow: hidden;
+}
+.progress-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #f04500, #d83c00);
+}
+.progress-fill--success {
+  background: linear-gradient(90deg, var(--success), #047857);
+}
+.progress-fill--warning {
+  background: linear-gradient(90deg, var(--warning), #b45309);
+}
+.progress-fill--error {
+  background: linear-gradient(90deg, var(--error), #b91c1c);
+}
+.section-label {
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.metric-value {
+  font-size: 2rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.04em;
+  color: var(--text-1);
+}
+
+/* ---- navbar breadcrumb (the logo's old slot; brand lives in the sidebar) ---- */
+.breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: var(--text-2);
+  font-size: 0.85rem;
+  min-width: 0;
+}
+.breadcrumb__crumb {
+  white-space: nowrap;
+}
+.breadcrumb__crumb--current {
+  color: var(--text-1);
+  font-weight: 600;
+}
+.breadcrumb__sep {
+  display: inline-flex;
+  color: var(--text-3);
+}
+.breadcrumb__sep svg {
+  width: 14px;
+  height: 14px;
 }
 
 /* ---- shared keyframes (reference motion language) ---- */

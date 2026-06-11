@@ -1,7 +1,10 @@
+import { m } from "framer-motion";
 import { type FormEvent, useState } from "react";
+import { fadeUp, rowEntrance } from "../../app/motion";
 import { toUiError } from "../../kx/errors";
 import { useDatasetQuery } from "../../kx/use-datasets";
 import { EmptyState } from "../EmptyState";
+import { GlowCard } from "../ds/GlowCard";
 import { EmbedderNotice, isNoEmbedder } from "./EmbedderNotice";
 
 /**
@@ -21,7 +24,7 @@ export function QueryPanel({ dataset }: { dataset: string | null }) {
   };
 
   return (
-    <div data-testid="dataset-query-panel">
+    <GlowCard hover={false} variants={fadeUp} data-testid="dataset-query-panel">
       <h2>Search</h2>
       <form onSubmit={onSubmit} className="dataset-query-form">
         <input
@@ -55,8 +58,13 @@ export function QueryPanel({ dataset }: { dataset: string | null }) {
       ) : null}
       {hits.data && hits.data.length > 0 ? (
         <ol className="dataset-hits" data-testid="dataset-hits">
-          {hits.data.map((h) => (
-            <li key={h.contentRef} className="dataset-hit" data-testid="dataset-hit">
+          {hits.data.map((h, i) => (
+            <m.li
+              key={h.contentRef}
+              className="dataset-hit"
+              data-testid="dataset-hit"
+              {...rowEntrance(i, 0)}
+            >
               <span
                 className="dataset-hit__score"
                 title="Display-only similarity (never an identity input — SN-8)"
@@ -64,10 +72,10 @@ export function QueryPanel({ dataset }: { dataset: string | null }) {
                 {h.score.toFixed(3)}
               </span>
               <span className="dataset-hit__text">{h.text}</span>
-            </li>
+            </m.li>
           ))}
         </ol>
       ) : null}
-    </div>
+    </GlowCard>
   );
 }

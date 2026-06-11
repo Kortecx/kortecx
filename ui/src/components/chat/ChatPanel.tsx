@@ -1,4 +1,6 @@
+import { m } from "framer-motion";
 import { useState } from "react";
+import { fadeUp } from "../../app/motion";
 import { useChat } from "../../kx/use-chat";
 import { type ChatSettings, loadChatSettings, saveChatSettings } from "../../lib/chat-settings";
 import { ChatSettingsPanel } from "./ChatSettings";
@@ -22,7 +24,13 @@ export function ChatPanel() {
   }
 
   return (
-    <section className="screen chat" data-testid="chat-panel">
+    <m.section
+      className="screen chat"
+      data-testid="chat-panel"
+      variants={fadeUp}
+      initial="hidden"
+      animate="show"
+    >
       <div className="screen__head">
         <h1>Chat</h1>
         {chat.thread.messages.length > 0 ? (
@@ -52,6 +60,6 @@ export function ChatPanel() {
       />
 
       <Composer disabled={chat.busy} onSend={(t) => void chat.send(t)} />
-    </section>
+    </m.section>
   );
 }

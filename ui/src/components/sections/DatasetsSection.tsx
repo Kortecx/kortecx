@@ -1,4 +1,6 @@
+import { m } from "framer-motion";
 import { useState } from "react";
+import { stagger } from "../../app/motion";
 import { DatasetsPanel } from "../datasets/DatasetsPanel";
 import { IngestPanel } from "../datasets/IngestPanel";
 import { QueryPanel } from "../datasets/QueryPanel";
@@ -19,11 +21,11 @@ export function DatasetsSection() {
       <p className="muted">
         Retrieval corpora for grounding agentic runs — ingest documents, then search by meaning.
       </p>
-      <div className="datasets-grid">
+      <m.div className="datasets-grid" variants={stagger()} initial="hidden" animate="show">
         <DatasetsPanel selectedDataset={selected} onSelect={setSelected} />
         <QueryPanel dataset={selected} />
         <IngestPanel />
-      </div>
+      </m.div>
     </section>
   );
 }

@@ -28,8 +28,12 @@ export function ActivityFeed({
         </p>
       ) : null}
       <ul className="feed__list">
-        {events.map((d) => (
-          <EventRow key={`${d.seq}:${d.kind}:${d.moteId ?? d.targetMoteId ?? ""}`} delta={d} />
+        {events.map((d, i) => (
+          <EventRow
+            key={`${d.seq}:${d.kind}:${d.moteId ?? d.targetMoteId ?? ""}`}
+            delta={d}
+            index={i}
+          />
         ))}
       </ul>
     </div>

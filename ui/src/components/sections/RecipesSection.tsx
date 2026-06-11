@@ -1,5 +1,7 @@
 import { useNavigate } from "@tanstack/react-router";
-import { type FormEvent, useState } from "react";
+import { m } from "framer-motion";
+import { type CSSProperties, type FormEvent, useState } from "react";
+import { fadeUp, hoverLiftLarge, stagger } from "../../app/motion";
 import { toUiError } from "../../kx/errors";
 import { useInvoke } from "../../kx/use-invoke";
 import { useRecipeForm, useRecipes } from "../../kx/use-recipes";
@@ -10,6 +12,15 @@ import { RecipeForm } from "../recipes/RecipeForm";
 
 const FALLBACK_HANDLE = "kx/recipes/echo";
 const FALLBACK_ARGS = '{\n  "topic": "hello"\n}';
+
+/** The tile's top accent stripe, keyed by the blueprint category in the handle. */
+function stripeColorFor(handle: string): string {
+  if (handle.includes("echo")) return "var(--primary)";
+  if (handle.includes("plan")) return "var(--info)";
+  if (handle.includes("react")) return "var(--violet)";
+  if (handle.includes("exec")) return "var(--teal)";
+  return "var(--primary)";
+}
 
 /**
  * The Blueprint catalog + submit (display name for the frozen `recipe` wire — the
@@ -97,20 +108,36 @@ function RecipeCatalog({
 
   return (
     <div data-testid="recipe-catalog">
-      <div className="recipe-picker" role="radiogroup" aria-label="Blueprint">
+      <m.div
+        className="recipe-picker"
+        role="radiogroup"
+        aria-label="Blueprint"
+        variants={stagger()}
+        initial="hidden"
+        animate="show"
+      >
         {handles.map((h) => (
-          <button
+          <m.div
             key={h}
-            type="button"
-            data-testid={`recipe-pick-${h}`}
-            className={`recipe-chip${h === handle ? " recipe-chip--active" : ""}`}
-            aria-pressed={h === handle}
-            onClick={() => setSelected(h)}
+            className={`glow-card glow-card--stripe card-hover recipe-tile${
+              h === handle ? " recipe-tile--active" : ""
+            }`}
+            style={{ "--stripe": stripeColorFor(h) } as CSSProperties}
+            variants={fadeUp}
+            {...hoverLiftLarge}
           >
-            {h}
-          </button>
+            <button
+              type="button"
+              data-testid={`recipe-pick-${h}`}
+              className={`recipe-chip${h === handle ? " recipe-chip--active" : ""}`}
+              aria-pressed={h === handle}
+              onClick={() => setSelected(h)}
+            >
+              {h}
+            </button>
+          </m.div>
         ))}
-      </div>
+      </m.div>
 
       {form.isLoading ? <EmptyState title="Loading form…" /> : null}
       {form.error ? (

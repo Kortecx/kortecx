@@ -26,6 +26,8 @@ describe("Sidebar", () => {
     // The display rename (D136): the frozen `recipes` id shows "Blueprints".
     expect(screen.getByTestId("nav-recipes")).toHaveTextContent("Blueprints");
     expect(screen.getByTestId("sidebar")).toHaveAttribute("data-collapsed", "false");
+    // The sidebar hosts the console's single brand anchor (icon + wordmark).
+    expect(screen.getByTestId("brand")).toHaveTextContent("kortecx");
   });
 
   it("hides labels (icon rail) when collapsed", () => {
@@ -34,6 +36,9 @@ describe("Sidebar", () => {
     expect(screen.getByTestId("nav-activity")).toBeInTheDocument();
     expect(screen.queryByText("Activity")).not.toBeInTheDocument();
     expect(screen.getByTestId("sidebar")).toHaveAttribute("data-collapsed", "true");
+    // Collapsed rail keeps the brand icon, drops the wordmark.
+    expect(screen.getByTestId("brand")).toBeInTheDocument();
+    expect(screen.queryByText("kortecx")).not.toBeInTheDocument();
   });
 
   it("pins Settings at the bottom and hosts the collapse toggle", () => {

@@ -1,5 +1,7 @@
 import { Link } from "@tanstack/react-router";
+import { m } from "framer-motion";
 import { useMemo, useState } from "react";
+import { rowEntrance } from "../../app/motion";
 import { useRuns } from "../../kx/use-runs";
 import { shortHex } from "../../lib/format";
 import { EmptyState } from "../EmptyState";
@@ -66,8 +68,12 @@ export function RunsSection() {
         <EmptyState title="No matching runs" detail="Adjust the filter above." />
       ) : (
         <ul className="run-list" data-testid="run-list">
-          {shown.map((r) => (
-            <li className="run-list__item" key={`${r.instanceId}:${r.terminalMoteId ?? ""}`}>
+          {shown.map((r, i) => (
+            <m.li
+              className="run-list__item card-hover"
+              key={`${r.instanceId}:${r.terminalMoteId ?? ""}`}
+              {...rowEntrance(i)}
+            >
               <Link
                 to="/runs/$instanceId"
                 params={{ instanceId: r.instanceId }}
@@ -78,7 +84,7 @@ export function RunsSection() {
               </Link>
               <span className="muted">{r.handle ?? "run"}</span>
               <span className="muted">{new Date(r.startedAt).toLocaleTimeString()}</span>
-            </li>
+            </m.li>
           ))}
         </ul>
       )}

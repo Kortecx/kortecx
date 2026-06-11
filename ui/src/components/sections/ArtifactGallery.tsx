@@ -6,7 +6,9 @@
  * never innerHTML); download saves the rendered text.
  */
 
+import { m } from "framer-motion";
 import { useState } from "react";
+import { fadeUp, hoverLift, stagger } from "../../app/motion";
 import { toUiError } from "../../kx/errors";
 import { useContent } from "../../kx/use-content";
 import { useRunArtifacts } from "../../kx/use-run-artifacts";
@@ -51,11 +53,16 @@ export function ArtifactGallery({ instanceId }: { instanceId: string }) {
         {artifacts.length} committed {artifacts.length === 1 ? "output" : "outputs"} · select one to
         review
       </p>
-      <ul className="artifact-list">
+      <m.ul className="artifact-list" variants={stagger()} initial="hidden" animate="show">
         {artifacts.map((a) => {
           const open = openRef === a.resultRef;
           return (
-            <li className="artifact-list__item" key={a.resultRef}>
+            <m.li
+              className="artifact-list__item card-hover"
+              key={a.resultRef}
+              variants={fadeUp}
+              {...hoverLift}
+            >
               <button
                 type="button"
                 className="artifact-list__row mono"
@@ -68,10 +75,10 @@ export function ArtifactGallery({ instanceId }: { instanceId: string }) {
                 <span className="artifact-list__ref">{shortHex(a.resultRef)}</span>
               </button>
               {open ? <ArtifactCard instanceId={instanceId} contentRef={a.resultRef} /> : null}
-            </li>
+            </m.li>
           );
         })}
-      </ul>
+      </m.ul>
     </div>
   );
 }

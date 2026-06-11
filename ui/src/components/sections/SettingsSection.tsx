@@ -1,3 +1,5 @@
+import { m } from "framer-motion";
+import { fadeUp, stagger } from "../../app/motion";
 import { useConnection } from "../../kx/connection-context";
 import { Badge } from "../ds/Badge";
 import { GlowCard } from "../ds/GlowCard";
@@ -17,8 +19,8 @@ export function SettingsSection() {
         Console preferences & the connection profile. Everything here lives in this browser —
         nothing is stored on the gateway.
       </p>
-      <div className="settings-grid">
-        <GlowCard>
+      <m.div className="settings-grid" variants={stagger()} initial="hidden" animate="show">
+        <GlowCard variants={fadeUp}>
           <h2>Connection</h2>
           <dl className="facts">
             <dt>Status</dt>
@@ -38,7 +40,7 @@ export function SettingsSection() {
             <dd>kept in memory only — never persisted</dd>
           </dl>
         </GlowCard>
-        <GlowCard>
+        <GlowCard variants={fadeUp}>
           <h2>Appearance</h2>
           <dl className="facts">
             <dt>Theme</dt>
@@ -51,7 +53,7 @@ export function SettingsSection() {
             <dd>honors your reduced-motion preference</dd>
           </dl>
         </GlowCard>
-      </div>
+      </m.div>
     </section>
   );
 }
