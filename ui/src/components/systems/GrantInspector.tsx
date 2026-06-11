@@ -114,6 +114,10 @@ function GrantTable({ grants }: { grants: ReturnType<typeof useAssetGrants> }) {
             <td className="mono">{g.grantor}</td>
             <td>{g.runtimeScope}</td>
             <td>
+              <span
+                className={`status-dot status-dot--${g.revoked ? "offline" : "online"}`}
+                aria-hidden="true"
+              />
               <span className={`grant-status grant-status--${g.status}`}>
                 {grantStatusLabel(g)}
               </span>

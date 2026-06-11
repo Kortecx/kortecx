@@ -54,16 +54,22 @@ export function MemberTable({ teamId, assetRef }: { teamId: string; assetRef?: s
               {assetRef ? (
                 <td data-testid={`member-warrant-${m.party}`}>
                   {m.resolvedWarrant ? (
-                    <dl className="warrant-rows">
-                      {warrantRows(m.resolvedWarrant).map((row) => (
-                        <div className="warrant-row" key={row.label}>
-                          <dt>{row.label}</dt>
-                          <dd className="mono">{row.value}</dd>
-                        </div>
-                      ))}
-                    </dl>
+                    <>
+                      <span className="status-dot status-dot--online" aria-hidden="true" />
+                      <dl className="warrant-rows">
+                        {warrantRows(m.resolvedWarrant).map((row) => (
+                          <div className="warrant-row" key={row.label}>
+                            <dt>{row.label}</dt>
+                            <dd className="mono">{row.value}</dd>
+                          </div>
+                        ))}
+                      </dl>
+                    </>
                   ) : (
-                    <span className="muted">— (no path resolves)</span>
+                    <>
+                      <span className="status-dot status-dot--offline" aria-hidden="true" />
+                      <span className="muted">— (no path resolves)</span>
+                    </>
                   )}
                 </td>
               ) : null}

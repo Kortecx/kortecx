@@ -1,7 +1,9 @@
 import { useEffect } from "react";
+import { fadeUp } from "../../app/motion";
 import { toUiError } from "../../kx/errors";
 import { useDatasets } from "../../kx/use-datasets";
 import { EmptyState } from "../EmptyState";
+import { GlowCard } from "../ds/GlowCard";
 
 /**
  * The corpora panel: a CHIP picker over the datasets the gateway holds (button
@@ -34,7 +36,7 @@ export function DatasetsPanel({
   const notWired = datasets.isError && toUiError(datasets.error).kind === "not-wired";
 
   return (
-    <div data-testid="datasets-panel">
+    <GlowCard hover={false} variants={fadeUp} data-testid="datasets-panel">
       <h2>Corpora</h2>
       {datasets.isLoading ? <EmptyState title="Loading datasets…" /> : null}
       {notWired ? (
@@ -72,6 +74,6 @@ export function DatasetsPanel({
           ))}
         </div>
       ) : null}
-    </div>
+    </GlowCard>
   );
 }

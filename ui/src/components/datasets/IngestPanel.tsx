@@ -1,7 +1,9 @@
 import { type FormEvent, useState } from "react";
+import { fadeUp } from "../../app/motion";
 import { toUiError } from "../../kx/errors";
 import { useIngestDocuments } from "../../kx/use-datasets";
 import { EmptyState } from "../EmptyState";
+import { GlowCard } from "../ds/GlowCard";
 import { EmbedderNotice, isNoEmbedder } from "./EmbedderNotice";
 
 /**
@@ -28,7 +30,7 @@ export function IngestPanel() {
   };
 
   return (
-    <div data-testid="dataset-ingest-panel">
+    <GlowCard hover={false} variants={fadeUp} data-testid="dataset-ingest-panel">
       <h2>Ingest</h2>
       <p className="muted">One document per line — the gateway embeds + indexes each.</p>
       <form onSubmit={onSubmit} className="dataset-ingest-form">
@@ -70,6 +72,6 @@ export function IngestPanel() {
           {ingest.data.docCount} total, dim {ingest.data.dim}).
         </p>
       ) : null}
-    </div>
+    </GlowCard>
   );
 }

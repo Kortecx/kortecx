@@ -1,10 +1,12 @@
+import { Brand } from "./Brand";
 import { Icon } from "./Icon";
 import { NavItem } from "./NavItem";
 import { NAV_SECTIONS, SETTINGS_SECTION } from "./nav-model";
 
 /**
- * The persistent section navigation. Header = logo + hamburger (collapse →
- * logo-only rail); Settings is pinned bottom-left (D137); the seven sections
+ * The persistent section navigation. Header = the brand (the console's SINGLE
+ * logo anchor — the navbar shows a breadcrumb instead) + hamburger (collapse →
+ * icon-only rail); Settings is pinned bottom-left (D137); the seven sections
  * scroll in between.
  */
 export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
@@ -16,10 +18,7 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
       data-collapsed={collapsed}
     >
       <div className="sidebar__head">
-        <span className="sidebar__logo">
-          <img src="/kortecx-icon.png" alt="" width={24} height={24} />
-          {collapsed ? null : <span className="sidebar__logoword">kortecx</span>}
-        </span>
+        <Brand compact={collapsed} />
         <button
           type="button"
           className="iconbtn"

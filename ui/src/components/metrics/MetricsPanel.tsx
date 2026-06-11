@@ -1,3 +1,5 @@
+import { m } from "framer-motion";
+import { stagger } from "../../app/motion";
 import type { ProjectionVM } from "../../kx/use-projection";
 import { formatSeq } from "../../lib/format";
 import { asPercent, deriveMetrics } from "../../lib/metrics";
@@ -12,28 +14,28 @@ import { StateBreakdown } from "./StateBreakdown";
  * projection, only health + a hint render.
  */
 export function MetricsPanel({ projection }: { projection?: ProjectionVM }) {
-  const m = projection ? deriveMetrics(projection) : null;
+  const metrics = projection ? deriveMetrics(projection) : null;
   return (
     <section className="metrics" data-testid="metrics-panel">
-      <div className="metrics-grid">
+      <m.div className="metrics-grid" variants={stagger()} initial="hidden" animate="show">
         <MetricCard label="Gateway" value={<HealthIndicator />} />
-        {m ? (
+        {metrics ? (
           <>
-            <MetricCard label="Motes" value={m.total} />
-            <MetricCard label="Committed" value={m.committed} tone="committed" />
-            <MetricCard label="Failed" value={m.failed} tone="failed" />
-            <MetricCard label="In flight" value={m.inFlight} tone="scheduled" />
-            <MetricCard label="Success rate" value={asPercent(m.successRate)} />
-            <MetricCard label="Frontier" value={formatSeq(m.currentSeq)} />
+            <MetricCard label="Motes" value={metrics.total} />
+            <MetricCard label="Committed" value={metrics.committed} tone="committed" />
+            <MetricCard label="Failed" value={metrics.failed} tone="failed" />
+            <MetricCard label="In flight" value={metrics.inFlight} tone="scheduled" />
+            <MetricCard label="Success rate" value={asPercent(metrics.successRate)} />
+            <MetricCard label="Frontier" value={formatSeq(metrics.currentSeq)} />
             <MetricCard
               label="Commit-seq span"
-              value={m.latencySeqSpan == null ? "—" : m.latencySeqSpan}
+              value={metrics.latencySeqSpan == null ? "—" : metrics.latencySeqSpan}
             />
           </>
         ) : null}
-      </div>
-      {m ? (
-        <StateBreakdown metrics={m} />
+      </m.div>
+      {metrics ? (
+        <StateBreakdown metrics={metrics} />
       ) : (
         <p className="muted">Select a run to see its metrics.</p>
       )}

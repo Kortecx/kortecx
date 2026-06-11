@@ -10,6 +10,7 @@ import type { SVGProps } from "react";
 export type Glyph =
   | "activity"
   | "chat"
+  | "chevron-right"
   | "runs"
   | "recipes"
   | "artifacts"
@@ -26,6 +27,7 @@ export type Glyph =
 const PATHS: Record<Glyph, string> = {
   activity: "M3 12h4l2 6 4-15 2 9h6",
   chat: "M4 5h16v11H9l-4 4v-4H4z",
+  "chevron-right": "M9 6l6 6-6 6",
   runs: "M6 4v16l13-8z",
   recipes: "M6 3h9l3 3v15H6zM9 9h6M9 13h6M9 17h4",
   artifacts: "M3 7l9-4 9 4-9 4-9-4zm0 0v10l9 4 9-4V7M12 11v10",
