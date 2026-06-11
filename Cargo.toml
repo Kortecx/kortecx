@@ -40,6 +40,8 @@ members = [
     "crates/kx-mcp",
     "crates/kx-planner",
     "crates/kx-catalog",
+    "crates/kx-bundle",
+    "crates/kx-toolscout",
     "crates/kx-fleet",
     "crates/kx-model-harness",
     "crates/kx-gateway-core",
@@ -189,6 +191,22 @@ kx-planner           = { path = "crates/kx-planner",           version = "0.1.1"
 # path (composes kx-mote/kx-workflow identities, never bumps MoteDef). Depends
 # only on kx-mote/kx-workflow/kx-dataset — NEVER the journal or the frozen trio.
 kx-catalog           = { path = "crates/kx-catalog",           version = "0.1.1" }
+# The W1.A5 MCP-intelligence AUTHORING SHAPE (the extension-library roadmap) —
+# TaskBundle, the content-addressed multi-tool task template that LOWERS to a
+# WorkflowDef. A thin TYPE crate (the TaskSignature precedent) so future
+# consumers (kx-mcp-gateway, wave 3) take the type without the toolscout
+# machinery. Pure leaf: kx-mote + serde/bincode/blake3 only; off-journal, off
+# the identity path until the lowered DAG passes the frozen compile.
+kx-bundle            = { path = "crates/kx-bundle",            version = "0.1.1" }
+# W1.A5 advisory tool discovery (the MCP-intelligence core) — multilingual
+# ToolFingerprints + the integer-bp tolerance ladder + a manifest index over
+# kx-dataset::RetrievalIndex + TaskBundle→WorkflowDef lowering behind the
+# planner-style EXACT (name, version) tool_grants gate. ADVISORY-ONLY BY
+# CONSTRUCTION (SN-8): scores order and retrieve, never authorize — lowering
+# takes no score input; the broker exact-equality gate stays the sole authority.
+# Depends only on kx-bundle/kx-mote/kx-warrant/kx-workflow/kx-dataset/kx-content
+# — NEVER the journal, the gateway, or the frozen trio.
+kx-toolscout         = { path = "crates/kx-toolscout",         version = "0.1.1" }
 # Teams / fleets (M7, D112) — journaled membership facts + a fail-closed fold +
 # composed warrant resolution. Membership is one-level-up delegation
 # (intersect(team_warrant, member_role)); nested fleet-of-teams = a bounded multi-hop
