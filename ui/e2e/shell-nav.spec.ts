@@ -27,6 +27,7 @@ test("the app shell navigates to every section (brand + favicon present)", async
     ["nav-recipes", "recipes-section", "Blueprints"],
     ["nav-artifacts", "artifacts-section", "Artifacts"],
     ["nav-datasets", "datasets-section", "Datasets"],
+    ["nav-tools", "tools-section", "Tools"],
     ["nav-systems", "systems-section", "Systems"],
     ["nav-settings", "settings-section", "Settings"],
     ["nav-activity", "activity-panel", "Activity"],

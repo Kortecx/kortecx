@@ -413,6 +413,10 @@ pub struct GatewayService {
     /// over the provisioning invariant; the react recipe is only seeded when its
     /// tool registered). Empty by default (no tools — every grant refused).
     registered_tools: std::collections::BTreeSet<(String, String)>,
+    /// The optional advisory toolscout seam (W1.A5 — the host injects a
+    /// registry-backed manifest index). `None` ⇒ `ListToolManifests` /
+    /// `ScoreTaskBundle` return `unimplemented`. Read-only, display-only.
+    toolscout: Option<Arc<dyn crate::toolscout_view::ToolScoutView>>,
 }
 
 impl GatewayService {
@@ -439,6 +443,7 @@ impl GatewayService {
             critics_supported: false,
             react_supported: false,
             registered_tools: std::collections::BTreeSet::new(),
+            toolscout: None,
         }
     }
 
@@ -546,6 +551,19 @@ impl GatewayService {
     #[must_use]
     pub fn with_event_tailer(mut self, tailer: Arc<dyn EventTailer>) -> Self {
         self.tailer = tailer;
+        self
+    }
+
+    /// Wire the advisory toolscout seam (W1.A5 — the host's registry-backed
+    /// manifest index). Enables `ListToolManifests` / `ScoreTaskBundle`.
+    /// Read-only, display-only — never a journal write, a digest change, or an
+    /// authorization (the SN-8 advisory boundary).
+    #[must_use]
+    pub fn with_toolscout_view(
+        mut self,
+        toolscout: Arc<dyn crate::toolscout_view::ToolScoutView>,
+    ) -> Self {
+        self.toolscout = Some(toolscout);
         self
     }
 }
@@ -939,6 +957,44 @@ impl KxGateway for GatewayService {
             records,
             has_more,
         }))
+    }
+
+    async fn list_tool_manifests(
+        &self,
+        _request: Request<proto::ListToolManifestsRequest>,
+    ) -> Result<Response<proto::ListToolManifestsResponse>, Status> {
+        let view = self
+            .toolscout
+            .as_ref()
+            .ok_or_else(|| Status::unimplemented("ListToolManifests: no toolscout view wired"))?;
+        let manifests = view
+            .list_manifests()
+            .into_iter()
+            .map(crate::toolscout_view::tool_manifest_to_proto)
+            .collect();
+        Ok(Response::new(proto::ListToolManifestsResponse {
+            manifests,
+        }))
+    }
+
+    async fn score_task_bundle(
+        &self,
+        request: Request<proto::ScoreTaskBundleRequest>,
+    ) -> Result<Response<proto::ScoreTaskBundleResponse>, Status> {
+        let view = self
+            .toolscout
+            .as_ref()
+            .ok_or_else(|| Status::unimplemented("ScoreTaskBundle: no toolscout view wired"))?;
+        // Fail-closed caps BEFORE the seam — the host never sees an unbounded,
+        // empty, or duplicate-bearing spec (`invalid_argument` on violation).
+        let spec = crate::toolscout_view::validate_bundle_spec(&request.into_inner())
+            .map_err(Status::invalid_argument)?;
+        // ADVISORY end to end (SN-8): the view ranks + dry-runs the real
+        // lowering gate; no journal write, no digest change, no authorization.
+        let score = view.score_bundle(&spec);
+        Ok(Response::new(crate::toolscout_view::bundle_score_to_proto(
+            score,
+        )))
     }
 
     async fn list_recipes(

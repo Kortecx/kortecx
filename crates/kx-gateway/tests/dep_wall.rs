@@ -98,12 +98,14 @@ fn cargo_manifest_wires_the_dataset_hnsw_edge_optionally() {
         .split("\n[")
         .next()
         .expect("the end of the [dependencies] section");
-    // The HNSW ANN crates stay OPTIONAL behind `hnsw`. (rusqlite is NO LONGER in
-    // this list: the always-on Morphic Data Engine capture.db sidecar — campaign
-    // Batch 2 — makes it a non-optional dep; it was already in the default
-    // closure via kx-catalog/kx-fleet, and it is pure-Rust C, NOT the llama.cpp
-    // FFI, so `build-no-inference` stays green.)
-    for edge in ["kx-dataset-hnsw", "kx-dataset"] {
+    // The HNSW ANN backend stays OPTIONAL behind `hnsw`. (kx-dataset is NO
+    // LONGER in this list: the always-on W1.A5 toolscout view composes its
+    // exact `InMemoryRetrievalIndex`, making it a non-optional dep; it was
+    // already in the default closure via kx-catalog and is pure Rust, so
+    // `build-no-inference` stays green. rusqlite likewise left earlier for the
+    // Morphic capture sidecar.)
+    {
+        let edge = "kx-dataset-hnsw";
         let line = deps
             .lines()
             .find(|l| l.trim_start().starts_with(edge))
@@ -113,6 +115,21 @@ fn cargo_manifest_wires_the_dataset_hnsw_edge_optionally() {
             "{edge} must be an OPTIONAL edge (behind the `hnsw` feature)"
         );
     }
+    // kx-dataset is present + non-optional (the toolscout manifest index).
+    let dataset = deps
+        .lines()
+        .find(|l| {
+            l.trim_start().starts_with("kx-dataset ") || l.trim_start().starts_with("kx-dataset=")
+        })
+        .or_else(|| {
+            deps.lines()
+                .find(|l| l.trim_start().starts_with("kx-dataset") && !l.contains("hnsw"))
+        })
+        .expect("kx-dataset is a (non-optional) toolscout dependency");
+    assert!(
+        !dataset.contains("optional = true"),
+        "kx-dataset is now always-on (the W1.A5 toolscout manifest index)"
+    );
     // rusqlite is present + non-optional (the capture sidecar).
     let rusqlite = deps
         .lines()
@@ -128,8 +145,11 @@ fn cargo_manifest_wires_the_dataset_hnsw_edge_optionally() {
 fn cargo_manifest_wires_the_mcp_edge_optionally() {
     // PR-2d-2 wires the MCP adapter (the live ReAct tool round) behind the OPT-IN
     // `inference` feature. Assert the edge exists AND is optional — so it is
-    // absent from the default-feature tree the FFI check above scans — and that
-    // the typed tool-registry edge that rides with it is optional too.
+    // absent from the default-feature tree the FFI check above scans. (The typed
+    // kx-tool-registry edge that originally rode with it is NON-optional since
+    // W1.A5: the always-on toolscout view lists the registry's builtin
+    // manifests; it was already in the default closure via kx-catalog and is
+    // pure Rust, so the FFI wall holds — pinned below + by the subtree checks.)
     let manifest = include_str!("../Cargo.toml");
     let deps = manifest
         .split("[dependencies]")
@@ -138,14 +158,75 @@ fn cargo_manifest_wires_the_mcp_edge_optionally() {
         .split("\n[")
         .next()
         .expect("the end of the [dependencies] section");
-    for edge in ["kx-mcp", "kx-tool-registry"] {
+    let mcp = deps
+        .lines()
+        .find(|l| l.trim_start().starts_with("kx-mcp ") || l.trim_start().starts_with("kx-mcp="))
+        .expect("PR-2d-2 wires kx-mcp");
+    assert!(
+        mcp.contains("optional = true"),
+        "kx-mcp must be an OPTIONAL edge (behind the `inference` feature)"
+    );
+    let registry = deps
+        .lines()
+        .find(|l| l.trim_start().starts_with("kx-tool-registry"))
+        .expect("the toolscout view wires kx-tool-registry");
+    assert!(
+        !registry.contains("optional = true"),
+        "kx-tool-registry is now always-on (the W1.A5 toolscout manifests)"
+    );
+}
+
+#[test]
+fn cargo_manifest_wires_the_toolscout_edges_always_on() {
+    // W1.A5: the advisory MCP-intelligence surface is ALWAYS-ON (manifests +
+    // bundle scoring answer on every build). Both crates are pure Rust; the
+    // `toolscout_subtree_excludes_the_ffi` check below proves the edge can
+    // never re-open the FFI hole.
+    let manifest = include_str!("../Cargo.toml");
+    let deps = manifest
+        .split("[dependencies]")
+        .nth(1)
+        .expect("a [dependencies] section")
+        .split("\n[")
+        .next()
+        .expect("the end of the [dependencies] section");
+    for edge in ["kx-bundle", "kx-toolscout"] {
         let line = deps
             .lines()
             .find(|l| l.trim_start().starts_with(edge))
-            .unwrap_or_else(|| panic!("PR-2d-2 wires {edge}"));
+            .unwrap_or_else(|| panic!("W1.A5 wires {edge}"));
         assert!(
-            line.contains("optional = true"),
-            "{edge} must be an OPTIONAL edge (behind the `inference` feature)"
+            !line.contains("optional = true"),
+            "{edge} is always-on (the W1.A5 advisory toolscout surface)"
+        );
+    }
+}
+
+#[test]
+fn toolscout_subtree_excludes_the_ffi() {
+    // Defense-in-depth: prove the advisory toolscout crate does not, on its own
+    // normal tree, drag in the llama.cpp FFI or the harness — the always-on
+    // edge can never re-open the hole the FORBIDDEN list closes.
+    let output = std::process::Command::new(env!("CARGO"))
+        .args([
+            "tree",
+            "-p",
+            "kx-toolscout",
+            "--edges",
+            "normal",
+            "--prefix",
+            "none",
+        ])
+        .output();
+    let output = match output {
+        Ok(o) if o.status.success() => o,
+        _ => return, // cargo tree unavailable in this environment — the CI run covers it
+    };
+    let tree = String::from_utf8_lossy(&output.stdout);
+    for forbidden in FORBIDDEN {
+        assert!(
+            !tree.contains(forbidden),
+            "kx-toolscout's normal tree must not contain {forbidden}"
         );
     }
 }

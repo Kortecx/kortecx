@@ -56,6 +56,7 @@ mod replan;
 mod runs;
 mod service;
 mod submit;
+mod toolscout_view;
 mod view;
 
 pub use capture_view::{CaptureRecordEntry, CaptureView};
@@ -78,4 +79,8 @@ pub use service::{
 };
 pub use submit::{
     RunSubmitter, SubmitMoteOutcome, SubmitStatus, SubmitterError, TonicCoordinatorSubmitter,
+};
+pub use toolscout_view::{
+    BundleScoreView, BundleSpecEntry, BundleToolSpecEntry, KeywordSetEntry, LowerVerdictEntry,
+    ManifestScoreEntry, ToolManifestEntry, ToolScoutView,
 };

@@ -11,6 +11,7 @@ import { runDetailRoute } from "./routes/run-detail";
 import { runsRoute } from "./routes/runs";
 import { settingsRoute } from "./routes/settings";
 import { systemsRoute } from "./routes/systems";
+import { toolsRoute } from "./routes/tools";
 
 const routeTree = rootRoute.addChildren([
   indexRoute,
@@ -22,6 +23,7 @@ const routeTree = rootRoute.addChildren([
   recipesRoute,
   artifactsRoute,
   datasetsRoute,
+  toolsRoute,
   systemsRoute,
   settingsRoute,
 ]);

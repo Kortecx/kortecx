@@ -38,6 +38,13 @@ class RecipeParamType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     RECIPE_PARAM_TYPE_BOOL: _ClassVar[RecipeParamType]
     RECIPE_PARAM_TYPE_BYTES: _ClassVar[RecipeParamType]
     RECIPE_PARAM_TYPE_ENUM: _ClassVar[RecipeParamType]
+
+class LowerVerdict(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    LOWER_VERDICT_UNSPECIFIED: _ClassVar[LowerVerdict]
+    LOWER_VERDICT_UNAVAILABLE: _ClassVar[LowerVerdict]
+    LOWER_VERDICT_WOULD_LOWER: _ClassVar[LowerVerdict]
+    LOWER_VERDICT_REFUSED: _ClassVar[LowerVerdict]
 MOTE_SNAPSHOT_STATE_UNSPECIFIED: MoteSnapshotState
 MOTE_SNAPSHOT_STATE_PENDING: MoteSnapshotState
 MOTE_SNAPSHOT_STATE_SCHEDULED: MoteSnapshotState
@@ -58,6 +65,10 @@ RECIPE_PARAM_TYPE_INT: RecipeParamType
 RECIPE_PARAM_TYPE_BOOL: RecipeParamType
 RECIPE_PARAM_TYPE_BYTES: RecipeParamType
 RECIPE_PARAM_TYPE_ENUM: RecipeParamType
+LOWER_VERDICT_UNSPECIFIED: LowerVerdict
+LOWER_VERDICT_UNAVAILABLE: LowerVerdict
+LOWER_VERDICT_WOULD_LOWER: LowerVerdict
+LOWER_VERDICT_REFUSED: LowerVerdict
 
 class SubmitRunRequest(_message.Message):
     __slots__ = ("recipe_fingerprint", "motes")
@@ -639,3 +650,85 @@ class ListCaptureRecordsResponse(_message.Message):
     records: _containers.RepeatedCompositeFieldContainer[CaptureRecordSummary]
     has_more: bool
     def __init__(self, records: _Optional[_Iterable[_Union[CaptureRecordSummary, _Mapping]]] = ..., has_more: bool = ...) -> None: ...
+
+class ListToolManifestsRequest(_message.Message):
+    __slots__ = ()
+    def __init__(self) -> None: ...
+
+class KeywordSet(_message.Message):
+    __slots__ = ("lang", "words")
+    LANG_FIELD_NUMBER: _ClassVar[int]
+    WORDS_FIELD_NUMBER: _ClassVar[int]
+    lang: str
+    words: _containers.RepeatedScalarFieldContainer[str]
+    def __init__(self, lang: _Optional[str] = ..., words: _Optional[_Iterable[str]] = ...) -> None: ...
+
+class ToolManifest(_message.Message):
+    __slots__ = ("tool_id", "tool_version", "description", "keywords", "fingerprint_hash", "kind")
+    TOOL_ID_FIELD_NUMBER: _ClassVar[int]
+    TOOL_VERSION_FIELD_NUMBER: _ClassVar[int]
+    DESCRIPTION_FIELD_NUMBER: _ClassVar[int]
+    KEYWORDS_FIELD_NUMBER: _ClassVar[int]
+    FINGERPRINT_HASH_FIELD_NUMBER: _ClassVar[int]
+    KIND_FIELD_NUMBER: _ClassVar[int]
+    tool_id: str
+    tool_version: str
+    description: str
+    keywords: _containers.RepeatedCompositeFieldContainer[KeywordSet]
+    fingerprint_hash: bytes
+    kind: str
+    def __init__(self, tool_id: _Optional[str] = ..., tool_version: _Optional[str] = ..., description: _Optional[str] = ..., keywords: _Optional[_Iterable[_Union[KeywordSet, _Mapping]]] = ..., fingerprint_hash: _Optional[bytes] = ..., kind: _Optional[str] = ...) -> None: ...
+
+class ListToolManifestsResponse(_message.Message):
+    __slots__ = ("manifests",)
+    MANIFESTS_FIELD_NUMBER: _ClassVar[int]
+    manifests: _containers.RepeatedCompositeFieldContainer[ToolManifest]
+    def __init__(self, manifests: _Optional[_Iterable[_Union[ToolManifest, _Mapping]]] = ...) -> None: ...
+
+class BundleToolSpec(_message.Message):
+    __slots__ = ("tool_id", "tool_version", "description", "keywords")
+    TOOL_ID_FIELD_NUMBER: _ClassVar[int]
+    TOOL_VERSION_FIELD_NUMBER: _ClassVar[int]
+    DESCRIPTION_FIELD_NUMBER: _ClassVar[int]
+    KEYWORDS_FIELD_NUMBER: _ClassVar[int]
+    tool_id: str
+    tool_version: str
+    description: str
+    keywords: _containers.RepeatedCompositeFieldContainer[KeywordSet]
+    def __init__(self, tool_id: _Optional[str] = ..., tool_version: _Optional[str] = ..., description: _Optional[str] = ..., keywords: _Optional[_Iterable[_Union[KeywordSet, _Mapping]]] = ...) -> None: ...
+
+class ScoreTaskBundleRequest(_message.Message):
+    __slots__ = ("intent", "language_tags", "tool_sequence", "tolerance_threshold_bp")
+    INTENT_FIELD_NUMBER: _ClassVar[int]
+    LANGUAGE_TAGS_FIELD_NUMBER: _ClassVar[int]
+    TOOL_SEQUENCE_FIELD_NUMBER: _ClassVar[int]
+    TOLERANCE_THRESHOLD_BP_FIELD_NUMBER: _ClassVar[int]
+    intent: str
+    language_tags: _containers.RepeatedScalarFieldContainer[str]
+    tool_sequence: _containers.RepeatedCompositeFieldContainer[BundleToolSpec]
+    tolerance_threshold_bp: int
+    def __init__(self, intent: _Optional[str] = ..., language_tags: _Optional[_Iterable[str]] = ..., tool_sequence: _Optional[_Iterable[_Union[BundleToolSpec, _Mapping]]] = ..., tolerance_threshold_bp: _Optional[int] = ...) -> None: ...
+
+class ManifestScore(_message.Message):
+    __slots__ = ("tool_id", "tool_version", "score_bp", "fingerprint_hash")
+    TOOL_ID_FIELD_NUMBER: _ClassVar[int]
+    TOOL_VERSION_FIELD_NUMBER: _ClassVar[int]
+    SCORE_BP_FIELD_NUMBER: _ClassVar[int]
+    FINGERPRINT_HASH_FIELD_NUMBER: _ClassVar[int]
+    tool_id: str
+    tool_version: str
+    score_bp: int
+    fingerprint_hash: bytes
+    def __init__(self, tool_id: _Optional[str] = ..., tool_version: _Optional[str] = ..., score_bp: _Optional[int] = ..., fingerprint_hash: _Optional[bytes] = ...) -> None: ...
+
+class ScoreTaskBundleResponse(_message.Message):
+    __slots__ = ("bundle_fingerprint", "ranked", "verdict", "verdict_detail")
+    BUNDLE_FINGERPRINT_FIELD_NUMBER: _ClassVar[int]
+    RANKED_FIELD_NUMBER: _ClassVar[int]
+    VERDICT_FIELD_NUMBER: _ClassVar[int]
+    VERDICT_DETAIL_FIELD_NUMBER: _ClassVar[int]
+    bundle_fingerprint: bytes
+    ranked: _containers.RepeatedCompositeFieldContainer[ManifestScore]
+    verdict: LowerVerdict
+    verdict_detail: str
+    def __init__(self, bundle_fingerprint: _Optional[bytes] = ..., ranked: _Optional[_Iterable[_Union[ManifestScore, _Mapping]]] = ..., verdict: _Optional[_Union[LowerVerdict, str]] = ..., verdict_detail: _Optional[str] = ...) -> None: ...

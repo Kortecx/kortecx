@@ -46,6 +46,15 @@ from .replan import ReplanRound, ReplanRoundPage
 from .run import AsyncRun, Result, Run
 from .runs import RunPage, RunSummary
 from .teams import TeamMember, TeamMembers, TeamSummary, WarrantView
+from .toolscout import (
+    BundleScore,
+    BundleSpec,
+    BundleTool,
+    KeywordSet,
+    ManifestScore,
+    ToolManifest,
+    lower_verdict_name,
+)
 from .types import Delta, Frame, MoteView, Projection, SignatureSummary, state_name
 from .wait import WaitOutcome, WaitState
 
@@ -94,6 +103,14 @@ __all__ = [
     "DatasetHit",
     "IngestResult",
     "IngestDocument",
+    # W1.A5 toolscout (advisory/display-only — scores never authorize, SN-8)
+    "ToolManifest",
+    "KeywordSet",
+    "ManifestScore",
+    "BundleScore",
+    "BundleSpec",
+    "BundleTool",
+    "lower_verdict_name",
     "state_name",
     # errors
     "ErrorCode",

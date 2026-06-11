@@ -26,6 +26,8 @@ export const queryKeys = {
   /** The active grants on an asset (`ListAssetGrants`), scoped by asset ref. */
   assetGrants: (endpoint: string, assetRef: string) =>
     ["kx", endpoint, "asset-grants", assetRef] as const,
+  /** The advisory tool manifests (`ListToolManifests`) — display-only, never authority. */
+  toolManifests: (endpoint: string) => ["kx", endpoint, "tool-manifests"] as const,
   /** The datasets (RAG corpora) the gateway holds (`ListDatasets`). */
   datasets: (endpoint: string) => ["kx", endpoint, "datasets"] as const,
   /** A dataset query (`QueryDataset`), scoped by dataset + query text + k. */

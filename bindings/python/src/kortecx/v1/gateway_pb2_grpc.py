@@ -138,6 +138,16 @@ class KxGatewayStub(object):
                 request_serializer=kortecx_dot_v1_dot_gateway__pb2.ListCaptureRecordsRequest.SerializeToString,
                 response_deserializer=kortecx_dot_v1_dot_gateway__pb2.ListCaptureRecordsResponse.FromString,
                 _registered_method=True)
+        self.ListToolManifests = channel.unary_unary(
+                '/kortecx.v1.KxGateway/ListToolManifests',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.ListToolManifestsRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.ListToolManifestsResponse.FromString,
+                _registered_method=True)
+        self.ScoreTaskBundle = channel.unary_unary(
+                '/kortecx.v1.KxGateway/ScoreTaskBundle',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.ScoreTaskBundleRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.ScoreTaskBundleResponse.FromString,
+                _registered_method=True)
 
 
 class KxGatewayServicer(object):
@@ -274,6 +284,20 @@ class KxGatewayServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def ListToolManifests(self, request, context):
+        """W1.A5 toolscout additive (D120.6): advisory tool discovery + TaskBundle
+        preview (read-only, display-only — scores/verdicts never authorize).
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ScoreTaskBundle(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_KxGatewayServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -376,6 +400,16 @@ def add_KxGatewayServicer_to_server(servicer, server):
                     servicer.ListCaptureRecords,
                     request_deserializer=kortecx_dot_v1_dot_gateway__pb2.ListCaptureRecordsRequest.FromString,
                     response_serializer=kortecx_dot_v1_dot_gateway__pb2.ListCaptureRecordsResponse.SerializeToString,
+            ),
+            'ListToolManifests': grpc.unary_unary_rpc_method_handler(
+                    servicer.ListToolManifests,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.ListToolManifestsRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.ListToolManifestsResponse.SerializeToString,
+            ),
+            'ScoreTaskBundle': grpc.unary_unary_rpc_method_handler(
+                    servicer.ScoreTaskBundle,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.ScoreTaskBundleRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.ScoreTaskBundleResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -922,6 +956,60 @@ class KxGateway(object):
             '/kortecx.v1.KxGateway/ListCaptureRecords',
             kortecx_dot_v1_dot_gateway__pb2.ListCaptureRecordsRequest.SerializeToString,
             kortecx_dot_v1_dot_gateway__pb2.ListCaptureRecordsResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ListToolManifests(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/ListToolManifests',
+            kortecx_dot_v1_dot_gateway__pb2.ListToolManifestsRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.ListToolManifestsResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ScoreTaskBundle(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/ScoreTaskBundle',
+            kortecx_dot_v1_dot_gateway__pb2.ScoreTaskBundleRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.ScoreTaskBundleResponse.FromString,
             options,
             channel_credentials,
             insecure,

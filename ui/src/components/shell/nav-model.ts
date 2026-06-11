@@ -14,6 +14,7 @@ export type IconName =
   | "recipes"
   | "artifacts"
   | "datasets"
+  | "tools"
   | "systems"
   | "settings";
 
@@ -29,6 +30,7 @@ export type RoutePath =
   | "/recipes"
   | "/artifacts"
   | "/datasets"
+  | "/tools"
   | "/systems"
   | "/settings";
 
@@ -46,7 +48,7 @@ export interface NavSection {
 }
 
 /**
- * The six operational sections plus the agentic Chat. Activity is the dashboard
+ * The seven operational sections plus the agentic Chat. Activity is the dashboard
  * landing (live feed + per-run metrics + time-travel). Datasets/Systems are present
  * as destinations now; their data viewers arrive in UI-2/UI-3 (forward-compatible).
  */
@@ -84,6 +86,13 @@ export const NAV_SECTIONS: readonly NavSection[] = [
     hint: "RAG corpora — ingest & search",
   },
   {
+    id: "tools",
+    label: "Tools",
+    path: "/tools",
+    icon: "tools",
+    hint: "MCP tool discovery & bundle preview",
+  },
+  {
     id: "systems",
     label: "Systems",
     path: "/systems",
@@ -94,7 +103,7 @@ export const NAV_SECTIONS: readonly NavSection[] = [
 
 /**
  * Settings is pinned shell chrome (bottom-left of the sidebar), NOT a scroll
- * section — so it lives outside {@link NAV_SECTIONS} (whose seven ids are pinned
+ * section — so it lives outside {@link NAV_SECTIONS} (whose eight ids are pinned
  * by the nav-model unit test and iterated by the shell e2e).
  */
 export const SETTINGS_SECTION: NavSection = {

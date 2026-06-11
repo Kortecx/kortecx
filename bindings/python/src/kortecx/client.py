@@ -34,6 +34,7 @@ from .replan import ReplanRound, ReplanRoundPage
 from .run import AsyncRun, Result, Run
 from .runs import RunPage, RunSummary
 from .teams import TeamMembers, TeamSummary
+from .toolscout import BundleScore, BundleSpec, ToolManifest
 from .v1 import gateway_pb2 as _g
 from .v1 import gateway_pb2_grpc as _gg
 
@@ -413,6 +414,27 @@ class KxClient:
         resp = self._call(lambda: self._stub.QueryDataset(req, metadata=self._md))
         return [DatasetHit.from_proto(h) for h in resp.hits]
 
+    def list_tool_manifests(self) -> List[ToolManifest]:
+        """Enumerate the registered tools' ADVISORY manifests (W1.A5 toolscout),
+        in deterministic ``(tool_id, tool_version)`` order — ranking/display
+        material ONLY (SN-8): a manifest can surface a tool, never grant one; the
+        sole grant gate stays exact ``(name, version)`` equality in lowering + the
+        broker. An old gateway raises ``KxUnimplemented``."""
+        resp = self._call(
+            lambda: self._stub.ListToolManifests(_g.ListToolManifestsRequest(), metadata=self._md)
+        )
+        return [ToolManifest.from_proto(m) for m in resp.manifests]
+
+    def score_task_bundle(self, spec: BundleSpec) -> BundleScore:
+        """Score a client-authored :class:`BundleSpec` against every registered
+        manifest (W1.A5 toolscout) — ADVISORY/DISPLAY-ONLY (SN-8): integer
+        basis-point ranks that never authorize. The verdict is a server-side
+        DRY-RUN of the real lowering gate against the SERVER-built react warrant
+        (no client warrant input); the lowered WorkflowDef is discarded — nothing
+        submits, nothing journals. An old gateway raises ``KxUnimplemented``."""
+        resp = self._call(lambda: self._stub.ScoreTaskBundle(spec.to_proto(), metadata=self._md))
+        return BundleScore.from_proto(resp)
+
     # -- wait plumbing --
     def _await_terminal(
         self, instance: bytes, terminal: bytes, timeout: float, mode: str
@@ -680,6 +702,18 @@ class AsyncKxClient:
             req.query_embedding.extend(embedding)
         resp = await self._acall(self._stub.QueryDataset(req, metadata=self._md))
         return [DatasetHit.from_proto(h) for h in resp.hits]
+
+    async def list_tool_manifests(self) -> List[ToolManifest]:
+        """Async :meth:`KxClient.list_tool_manifests`."""
+        resp = await self._acall(
+            self._stub.ListToolManifests(_g.ListToolManifestsRequest(), metadata=self._md)
+        )
+        return [ToolManifest.from_proto(m) for m in resp.manifests]
+
+    async def score_task_bundle(self, spec: BundleSpec) -> BundleScore:
+        """Async :meth:`KxClient.score_task_bundle`."""
+        resp = await self._acall(self._stub.ScoreTaskBundle(spec.to_proto(), metadata=self._md))
+        return BundleScore.from_proto(resp)
 
     async def _await_terminal(
         self, instance: bytes, terminal: bytes, timeout: float, mode: str

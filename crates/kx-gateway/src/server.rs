@@ -635,6 +635,33 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         })
     };
 
+    // (3g) W1.A5: the always-on advisory toolscout view — manifests from the
+    //      SAME registry surface the serve path resolves against (built-ins
+    //      always; `mcp-echo@1` only when its capability actually registered),
+    //      ranked by a startup-built index. The verdict dry-runs the REAL
+    //      lowering gate against the SERVER react warrant when the react
+    //      runtime is live; otherwise it degrades to UNAVAILABLE. Read-only,
+    //      display-only — never an authorization (SN-8).
+    #[cfg(feature = "inference")]
+    let toolscout_defs = if react_tool.is_some() {
+        crate::mcp_tool::registry_with_echo().defs()
+    } else {
+        kx_tool_registry::InMemoryToolRegistry::with_builtins().defs()
+    };
+    #[cfg(not(feature = "inference"))]
+    let toolscout_defs = kx_tool_registry::InMemoryToolRegistry::with_builtins().defs();
+    let toolscout_verdict = match (serve_model.as_ref(), react_tool.as_ref()) {
+        (Some(model_id), Some(tool)) => Some(crate::toolscout::VerdictCtx {
+            warrant: crate::provision::react_warrant(default_executor_class(), model_id, tool),
+            model_id: model_id.clone(),
+            capability: tool.0.clone(),
+        }),
+        _ => None,
+    };
+    let toolscout_view: Arc<dyn kx_gateway_core::ToolScoutView> = Arc::new(
+        crate::toolscout::HostToolScout::new(&toolscout_defs, toolscout_verdict),
+    );
+
     #[cfg_attr(not(feature = "hnsw"), allow(unused_mut))]
     let mut gateway = GatewayService::new(reader.clone(), submitter, content)
         .with_signature_catalog(signature_catalog)
@@ -646,6 +673,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         .with_critics_supported(critics_supported)
         .with_react_supported(react_supported)
         .with_registered_tools(registered_tools)
+        .with_toolscout_view(toolscout_view)
         .with_event_tailer(Arc::new(crate::live_tail::LiveTailer::new(
             live_shutdown_rx.clone(),
         )));
