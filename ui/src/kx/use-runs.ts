@@ -17,6 +17,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  RUNS_CHANGED_EVENT,
   type RunRecord,
   clearRuns,
   loadRuns,
@@ -54,6 +55,17 @@ export function useRuns(): UseRuns {
   useEffect(() => {
     setLocal(loadRuns(endpoint));
     setLimit(PAGE);
+  }, [endpoint]);
+
+  // Stay fresh across hook INSTANCES in the same tab: another component's
+  // `add`/`clear` (e.g. a Blueprints submit while the DevTools dock tails)
+  // dispatches RUNS_CHANGED_EVENT — re-read the persisted history.
+  useEffect(() => {
+    function onRunsChanged(): void {
+      setLocal(loadRuns(endpoint));
+    }
+    window.addEventListener(RUNS_CHANGED_EVENT, onRunsChanged);
+    return () => window.removeEventListener(RUNS_CHANGED_EVENT, onRunsChanged);
   }, [endpoint]);
 
   const server = useQuery({

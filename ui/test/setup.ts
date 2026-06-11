@@ -47,8 +47,12 @@ vi.mock("framer-motion", () => {
   );
   return {
     motion,
+    // The LazyMotion `m.*` components share the same plain-element stub.
+    m: motion,
     AnimatePresence: ({ children }: { children: unknown }) => children,
     MotionConfig: ({ children }: { children: unknown }) => children,
+    LazyMotion: ({ children }: { children: unknown }) => children,
+    domAnimation: {},
   };
 });
 

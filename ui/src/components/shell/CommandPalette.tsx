@@ -1,5 +1,5 @@
 import { useNavigate } from "@tanstack/react-router";
-import { AnimatePresence, motion } from "framer-motion";
+import { AnimatePresence, m } from "framer-motion";
 import { type KeyboardEvent, useEffect, useMemo, useState } from "react";
 import { paletteIn } from "../../app/motion";
 import { Icon } from "./Icon";
@@ -66,7 +66,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
     <AnimatePresence>
       {open ? (
         <>
-          <motion.div
+          <m.div
             className="palette__backdrop"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -75,7 +75,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
             onClick={onClose}
             aria-hidden="true"
           />
-          <motion.div
+          <m.div
             className="palette"
             // biome-ignore lint/a11y/useSemanticElements: a native <dialog> can't ride AnimatePresence exit animations; dialog semantics are declared via role+aria-modal
             role="dialog"
@@ -123,7 +123,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
                 ))}
               </nav>
             )}
-          </motion.div>
+          </m.div>
         </>
       ) : null}
     </AnimatePresence>

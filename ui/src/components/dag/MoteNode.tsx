@@ -1,6 +1,6 @@
 import { Handle, Position } from "@xyflow/react";
 import type { NodeProps } from "@xyflow/react";
-import { motion } from "framer-motion";
+import { m } from "framer-motion";
 import { memo } from "react";
 import { statePulse } from "../../app/motion";
 import { stateVisual } from "../../lib/colors";
@@ -20,7 +20,7 @@ function MoteNodeImpl({ data }: NodeProps<MoteFlowNode>) {
   const { mote } = data;
   const { tone } = stateVisual(mote.stateCode);
   return (
-    <motion.div
+    <m.div
       className={`dag-node dag-node--${tone}`}
       data-testid="mote-node"
       data-mote={mote.moteId}
@@ -40,7 +40,7 @@ function MoteNodeImpl({ data }: NodeProps<MoteFlowNode>) {
       </div>
       <AnomalyBadge anomaly={mote.anomaly} />
       <Handle type="source" position={Position.Bottom} className="dag-handle" />
-    </motion.div>
+    </m.div>
   );
 }
 
