@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { NAV_SECTIONS } from "../../src/components/shell/nav-model";
+import { NAV_SECTIONS, SETTINGS_SECTION } from "../../src/components/shell/nav-model";
 
 describe("NAV_SECTIONS", () => {
   it("has the seven console sections", () => {
@@ -12,6 +12,14 @@ describe("NAV_SECTIONS", () => {
       "datasets",
       "systems",
     ]);
+  });
+
+  it("displays Blueprints over the frozen recipes wire (D136)", () => {
+    const recipes = NAV_SECTIONS.find((s) => s.id === "recipes");
+    expect(recipes?.label).toBe("Blueprints");
+    // The wire surface never renames: id, path, icon stay `recipes`.
+    expect(recipes?.path).toBe("/recipes");
+    expect(recipes?.icon).toBe("recipes");
   });
 
   it("ids and paths are unique", () => {
@@ -28,5 +36,14 @@ describe("NAV_SECTIONS", () => {
       expect(s.hint.length).toBeGreaterThan(0);
       expect(s.icon.length).toBeGreaterThan(0);
     }
+  });
+});
+
+describe("SETTINGS_SECTION", () => {
+  it("is pinned shell chrome, not an eighth nav section", () => {
+    expect(SETTINGS_SECTION.id).toBe("settings");
+    expect(SETTINGS_SECTION.path).toBe("/settings");
+    expect(SETTINGS_SECTION.icon).toBe("settings");
+    expect(NAV_SECTIONS.some((s) => s.id === SETTINGS_SECTION.id)).toBe(false);
   });
 });

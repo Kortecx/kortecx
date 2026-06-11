@@ -43,7 +43,7 @@ export function GrantInspector({
       {catalogNotWired ? (
         <EmptyState
           title="Sharing not available here"
-          detail="This gateway does not expose the recipe catalog, so there are no assets to inspect."
+          detail="This gateway does not expose the blueprint catalog, so there are no assets to inspect."
         />
       ) : null}
 

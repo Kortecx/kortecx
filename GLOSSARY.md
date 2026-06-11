@@ -157,11 +157,24 @@ The inbound execution path: bind a **published recipe** by handle (e.g.
 committed terminal Mote — exactly-once, no new write path. The runtime as a
 callable function. `kx-invoke`.
 
+### Blueprint / plan / recipe (terminology)
+Three words, three meanings — fixed so they never collide:
+**Blueprint** is the *user-facing* name for a reusable, shareable workflow
+template (what you pick, fill in, and run from the console/SDKs/CLI).
+**plan** is the *agentic topology step* — the planner/shaper's committed
+`TopologyDecision` in the live plan/re-plan loop (never a template).
+**recipe** is the *frozen wire-legacy* term for a Blueprint: `recipe_fingerprint`,
+`ListRecipes`/`GetRecipeForm`, and `kx/recipes/*` handles are durable,
+identity-load-bearing wire data and are **never renamed** (old clients +
+persisted runs keep working). Display layers say "Blueprint"; the wire says
+`recipe`; SDKs export additive `Blueprint*` aliases over the same types.
+
 ### Recipe / WorkflowDef
-A reusable, parameterized **workflow** that compiles to a Mote DAG. Authored as a
-`WorkflowDef` (steps + typed edges + free params), bound to args, then compiled.
-The shipped library (`map_reduce`, `fan_out_gather`, `retry_until_critic`,
-`react_tool_loop`, `image_batch_describe_reduce`) is composed from pure builders.
+A reusable, parameterized **workflow** that compiles to a Mote DAG (displayed as
+a **Blueprint**; `recipe` on the frozen wire). Authored as a `WorkflowDef`
+(steps + typed edges + free params), bound to args, then compiled. The shipped
+library (`map_reduce`, `fan_out_gather`, `retry_until_critic`, `react_tool_loop`,
+`image_batch_describe_reduce`) is composed from pure builders.
 `kx-workflow/src/recipes.rs`.
 
 ### Prompt template

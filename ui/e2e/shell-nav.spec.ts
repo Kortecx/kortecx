@@ -24,6 +24,7 @@ test("the app shell navigates to every section (brand + favicon present)", async
     ["nav-artifacts", "artifacts-section"],
     ["nav-datasets", "datasets-section"],
     ["nav-systems", "systems-section"],
+    ["nav-settings", "settings-section"],
     ["nav-activity", "activity-panel"],
   ];
   for (const [nav, panel] of sections) {

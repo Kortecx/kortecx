@@ -14,7 +14,8 @@ export type IconName =
   | "recipes"
   | "artifacts"
   | "datasets"
-  | "systems";
+  | "systems"
+  | "settings";
 
 /**
  * The section route paths. This is a subset of the routes registered in
@@ -28,7 +29,8 @@ export type RoutePath =
   | "/recipes"
   | "/artifacts"
   | "/datasets"
-  | "/systems";
+  | "/systems"
+  | "/settings";
 
 export interface NavSection {
   /** Stable id (test/telemetry handle). */
@@ -59,11 +61,13 @@ export const NAV_SECTIONS: readonly NavSection[] = [
   { id: "chat", label: "Chat", path: "/chat", icon: "chat", hint: "Agentic chat over the runtime" },
   { id: "runs", label: "Runs", path: "/runs", icon: "runs", hint: "Run history (this session)" },
   {
+    // Display says "Blueprints" (D136); the id/path/icon stay on the frozen
+    // `recipes` wire-legacy handle (route, test-ids, RPC names never rename).
     id: "recipes",
-    label: "Recipes",
+    label: "Blueprints",
     path: "/recipes",
     icon: "recipes",
-    hint: "Catalog & submit a recipe",
+    hint: "Catalog & run a blueprint",
   },
   {
     id: "artifacts",
@@ -87,3 +91,16 @@ export const NAV_SECTIONS: readonly NavSection[] = [
     hint: "Gateway, health & teams",
   },
 ] as const;
+
+/**
+ * Settings is pinned shell chrome (bottom-left of the sidebar), NOT a scroll
+ * section — so it lives outside {@link NAV_SECTIONS} (whose seven ids are pinned
+ * by the nav-model unit test and iterated by the shell e2e).
+ */
+export const SETTINGS_SECTION: NavSection = {
+  id: "settings",
+  label: "Settings",
+  path: "/settings",
+  icon: "settings",
+  hint: "Profile & console preferences",
+} as const;

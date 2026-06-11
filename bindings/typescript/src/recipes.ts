@@ -73,3 +73,22 @@ export class RecipeForm {
     );
   }
 }
+
+/*
+ * Display-layer aliases (D136): the user-facing name is **Blueprint** — a
+ * reusable, shareable workflow template. The WIRE stays the frozen `recipe`
+ * vocabulary (`ListRecipes`/`GetRecipeForm`, `kx/recipes/*` handles), so these
+ * are pure additive aliases; nothing is renamed or deprecated.
+ */
+
+/** Display alias for {@link RecipeForm} (wire: recipe). */
+export const BlueprintForm = RecipeForm;
+export type BlueprintForm = RecipeForm;
+
+/** Display alias for {@link RecipeFormField} (wire: recipe). */
+export const BlueprintFormField = RecipeFormField;
+export type BlueprintFormField = RecipeFormField;
+
+/** Display alias for {@link recipeParamTypeName} (wire: recipe). */
+export const blueprintParamTypeName = recipeParamTypeName;
+export type BlueprintParamTypeName = RecipeParamTypeName;

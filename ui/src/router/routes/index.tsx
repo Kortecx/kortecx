@@ -4,7 +4,8 @@ import { rootRoute } from "./__root";
 
 function IndexRedirect() {
   const { status } = useConnection();
-  return <Navigate to={status === "connected" ? "/activity" : "/connect"} />;
+  // Chat is the connected default (D137); disconnected lands on the login gate.
+  return <Navigate to={status === "connected" ? "/chat" : "/connect"} />;
 }
 
 export const indexRoute = createRoute({

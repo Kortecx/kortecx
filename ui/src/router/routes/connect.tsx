@@ -23,7 +23,7 @@ function ConnectScreen() {
         onConnect={async (ep, token, ws) => {
           const ok = await connect(ep, token, ws);
           if (ok) {
-            navigate({ to: "/activity" });
+            navigate({ to: "/chat" });
           }
         }}
       />

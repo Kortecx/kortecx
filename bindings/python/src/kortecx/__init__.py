@@ -34,7 +34,14 @@ from .errors import (
 )
 from .grants import AssetGrants, GrantView
 from .react import ReactTurn, ReactTurnPage
-from .recipes import RecipeForm, RecipeFormField, recipe_param_type_name
+from .recipes import (
+    BlueprintForm,
+    BlueprintFormField,
+    RecipeForm,
+    RecipeFormField,
+    blueprint_param_type_name,
+    recipe_param_type_name,
+)
 from .replan import ReplanRound, ReplanRoundPage
 from .run import AsyncRun, Result, Run
 from .runs import RunPage, RunSummary
@@ -73,6 +80,10 @@ __all__ = [
     "RecipeForm",
     "RecipeFormField",
     "recipe_param_type_name",
+    # Blueprint = the display name for the frozen `recipe` wire (D136; aliases)
+    "BlueprintForm",
+    "BlueprintFormField",
+    "blueprint_param_type_name",
     "TeamSummary",
     "TeamMember",
     "TeamMembers",

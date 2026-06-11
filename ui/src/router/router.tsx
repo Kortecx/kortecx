@@ -9,6 +9,7 @@ import { indexRoute } from "./routes/index";
 import { recipesRoute } from "./routes/recipes";
 import { runDetailRoute } from "./routes/run-detail";
 import { runsRoute } from "./routes/runs";
+import { settingsRoute } from "./routes/settings";
 import { systemsRoute } from "./routes/systems";
 
 const routeTree = rootRoute.addChildren([
@@ -22,6 +23,7 @@ const routeTree = rootRoute.addChildren([
   artifactsRoute,
   datasetsRoute,
   systemsRoute,
+  settingsRoute,
 ]);
 
 export const router = createRouter({

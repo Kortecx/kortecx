@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import React from "react";
 import { describe, expect, it, vi } from "vitest";
 
@@ -17,20 +17,30 @@ import { Sidebar } from "../../src/components/shell/Sidebar";
 
 describe("Sidebar", () => {
   it("renders an item with a label for every section when expanded", () => {
-    render(<Sidebar collapsed={false} />);
+    render(<Sidebar collapsed={false} onToggle={() => {}} />);
     for (const id of ["activity", "chat", "runs", "recipes", "artifacts", "datasets", "systems"]) {
       expect(screen.getByTestId(`nav-${id}`)).toBeInTheDocument();
     }
     expect(screen.getByText("Activity")).toBeInTheDocument();
     expect(screen.getByText("Chat")).toBeInTheDocument();
+    // The display rename (D136): the frozen `recipes` id shows "Blueprints".
+    expect(screen.getByTestId("nav-recipes")).toHaveTextContent("Blueprints");
     expect(screen.getByTestId("sidebar")).toHaveAttribute("data-collapsed", "false");
   });
 
   it("hides labels (icon rail) when collapsed", () => {
-    render(<Sidebar collapsed={true} />);
+    render(<Sidebar collapsed={true} onToggle={() => {}} />);
     // The items remain (icons), but the text labels are not rendered.
     expect(screen.getByTestId("nav-activity")).toBeInTheDocument();
     expect(screen.queryByText("Activity")).not.toBeInTheDocument();
     expect(screen.getByTestId("sidebar")).toHaveAttribute("data-collapsed", "true");
+  });
+
+  it("pins Settings at the bottom and hosts the collapse toggle", () => {
+    const onToggle = vi.fn();
+    render(<Sidebar collapsed={false} onToggle={onToggle} />);
+    expect(screen.getByTestId("nav-settings")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("sidebar-toggle"));
+    expect(onToggle).toHaveBeenCalledTimes(1);
   });
 });

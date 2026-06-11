@@ -58,7 +58,7 @@ pub enum Cli {
     },
     /// Forward to the gateway server: the `serve` args (verb stripped).
     Serve(Vec<String>),
-    /// `invoke` a published recipe by handle.
+    /// `invoke` a published blueprint by handle (wire-legacy: recipe).
     Invoke(verbs::invoke::InvokeArgs),
     /// `submit` a built-in demo run.
     Submit(verbs::submit::SubmitArgs),
@@ -276,7 +276,7 @@ kx serve --journal <path> --content <dir> [--listen <addr:port>] [--ws-listen <a
             .into(),
         "invoke" => "\
 kx invoke <handle> --args <json> [--args-file <path>] [--wait] [--timeout-secs N] [--out <file>] [client flags]
-  Bind a PUBLISHED recipe by handle (e.g. kx/recipes/echo) to JSON args and run it.
+  Bind a PUBLISHED blueprint (wire-legacy: recipe) by handle (e.g. kx/recipes/echo) to JSON args and run it.
   With --wait, poll to completion and print the committed result (run the runtime like
   a function). Without --wait, print the async handle (instance_id/terminal_mote_id)."
             .into(),

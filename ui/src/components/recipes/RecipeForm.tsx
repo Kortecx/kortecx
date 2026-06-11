@@ -1,9 +1,9 @@
 /**
- * Render a recipe's free-param form (UI-2). Pure presentation over the
- * `lib/recipe-form` logic: each field is a typed input (text / number / checkbox /
- * enum select); on submit we validate + build the args object and hand it up. The
- * gateway re-validates server-side, so a stray value surfaces as an Invoke error,
- * not a silent bad run.
+ * Render a blueprint's free-param form (UI-2; `RecipeForm` on the frozen wire).
+ * Pure presentation over the `lib/recipe-form` logic: each field is a typed input
+ * (text / number / checkbox / enum select); on submit we validate + build the args
+ * object and hand it up. The gateway re-validates server-side, so a stray value
+ * surfaces as an Invoke error, not a silent bad run.
  */
 
 import type { RecipeForm as RecipeFormDef, RecipeFormField } from "@kortecx/sdk/web";
@@ -86,7 +86,7 @@ export function RecipeForm({
       onSubmit={submit}
     >
       {form.fields.length === 0 ? (
-        <p className="muted">This recipe takes no inputs — run it directly.</p>
+        <p className="muted">This blueprint takes no inputs — run it directly.</p>
       ) : (
         form.fields.map((field) => (
           <div className="form-field" key={field.name}>
@@ -109,7 +109,7 @@ export function RecipeForm({
         ))
       )}
       <button type="submit" disabled={pending}>
-        {pending ? "Submitting…" : "Run recipe"}
+        {pending ? "Submitting…" : "Run blueprint"}
       </button>
     </form>
   );

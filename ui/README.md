@@ -5,7 +5,7 @@ contract, talking **gRPC-web** to a running `kx serve` via the existing
 [`@kortecx/sdk`](../bindings/typescript) browser client. No server tier: the
 journal is the source of truth and the client is stateless (D119).
 
-Connect to a gateway, submit a recipe, and **watch its Motes execute** — as a live
+Connect to a gateway, run a blueprint, and **watch its Motes execute** — as a live
 **XYFlow (reactflow) DAG** (nodes = Motes colored by state/`nd_class`, edges =
 `parents[]`) or a status table, both polled live from `GetProjection`. This is the
 T3.3 milestone on the OSS UI critical path (the live-DAG viewer over the T3.2 shell).
@@ -15,7 +15,7 @@ T3.3 milestone on the OSS UI critical path (the live-DAG viewer over the T3.2 sh
 - **Routing/state:** TanStack Router (typed routes + search params) + TanStack
   Query (server-state, polling, caching, retry).
 - **Live updates:** poll `GetProjection` over gRPC-web on an interval (TanStack
-  Query `refetchInterval`). Polling stops authoritatively when the recipe's
+  Query `refetchInterval`). Polling stops authoritatively when the blueprint's
   **terminal (sink) Mote** commits — its id is threaded from the `Invoke` response
   through the route (`?terminal=…`) — so a multi-node run keeps updating while its
   Mote set is still growing (a naïve "all visible Motes terminal" check stops too
@@ -70,7 +70,7 @@ npm run dev            # Vite dev server on http://localhost:5173
 ```
 
 **3. In the browser** open <http://localhost:5173>, connect to
-`http://127.0.0.1:50151`, then run a recipe and watch the DAG execute:
+`http://127.0.0.1:50151`, then run a blueprint and watch the DAG execute:
 
 - **`kx/recipes/echo`** (pre-filled, args `{"topic":"hello"}`) — a single COMMITTED node.
 - **`kx/recipes/fanout-demo`** (args `{}`) — a **5-node** fan-out → gather DAG

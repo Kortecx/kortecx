@@ -1,22 +1,18 @@
 import { Brand } from "./Brand";
 import { ConnectionStatus } from "./ConnectionStatus";
 import { GlobalControls } from "./GlobalControls";
-import { Icon } from "./Icon";
+import { SearchTrigger } from "./SearchTrigger";
 
-/** The top bar: sidebar toggle · brand · global controls · connection status. */
-export function Navbar({ onToggleSidebar }: { onToggleSidebar: () => void }) {
+/**
+ * The top bar: brand · ⌘K search trigger · global controls · connection status.
+ * The sidebar hamburger lives in the Sidebar header (logo+hamburger, D137).
+ */
+export function Navbar({ onOpenPalette }: { onOpenPalette: () => void }) {
   return (
     <header className="navbar" data-testid="navbar">
-      <button
-        type="button"
-        className="iconbtn navbar__toggle"
-        onClick={onToggleSidebar}
-        aria-label="Toggle sidebar"
-        data-testid="sidebar-toggle"
-      >
-        <Icon name="menu" />
-      </button>
       <Brand />
+      <div className="navbar__spacer" />
+      <SearchTrigger onOpen={onOpenPalette} />
       <div className="navbar__spacer" />
       <GlobalControls />
       <ConnectionStatus />

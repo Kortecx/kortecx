@@ -19,3 +19,11 @@ export const statePulse = {
   animate: { scale: 1, opacity: 1 },
   transition: { duration: 0.25 } as Transition,
 };
+
+/** The ⌘K command palette entrance (subtle scale+fade; exits symmetrically). */
+export const paletteIn = {
+  initial: { opacity: 0, scale: 0.98, x: "-50%" },
+  animate: { opacity: 1, scale: 1, x: "-50%" },
+  exit: { opacity: 0, scale: 0.98, x: "-50%" },
+  transition: { duration: 0.12 } as Transition,
+};

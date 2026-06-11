@@ -12,11 +12,12 @@ const FALLBACK_HANDLE = "kx/recipes/echo";
 const FALLBACK_ARGS = '{\n  "topic": "hello"\n}';
 
 /**
- * The recipe catalog + submit. When the gateway wires the recipe catalog (UI-2),
- * we list the invocable handles and render each recipe's GENERATED free-param form
- * (`GetRecipeForm`). When it does not (an older gateway → UNIMPLEMENTED), we fall
- * back to the manual handle + JSON-args form. Either way, submitting records the
- * run in the session history and routes to the live run-detail DAG.
+ * The Blueprint catalog + submit (display name for the frozen `recipe` wire — the
+ * RPCs stay `ListRecipes`/`GetRecipeForm`, handles stay `kx/recipes/*`). When the
+ * gateway wires the catalog (UI-2), we list the invocable handles and render each
+ * blueprint's GENERATED free-param form. When it does not (an older gateway →
+ * UNIMPLEMENTED), we fall back to the manual handle + JSON-args form. Either way,
+ * submitting records the run in the session history and routes to the live DAG.
  */
 export function RecipesSection() {
   const navigate = useNavigate();
@@ -51,12 +52,12 @@ export function RecipesSection() {
 
   return (
     <section className="screen" data-testid="recipes-section">
-      <h1>Recipes</h1>
+      <h1>Blueprints</h1>
       <p className="muted">
-        Pick a recipe, fill its inputs, and run it — watch the run execute as a live DAG.
+        Pick a blueprint, fill its inputs, and run it — watch the run execute as a live DAG.
       </p>
 
-      {recipes.isLoading ? <EmptyState title="Loading recipes…" /> : null}
+      {recipes.isLoading ? <EmptyState title="Loading blueprints…" /> : null}
 
       {recipes.data ? (
         <RecipeCatalog handles={recipes.data} pending={invoke.isPending} onRun={start} />
@@ -71,7 +72,7 @@ export function RecipesSection() {
   );
 }
 
-/** The catalog-driven path: a recipe picker + the selected recipe's generated form. */
+/** The catalog-driven path: a blueprint picker + the selected blueprint's generated form. */
 function RecipeCatalog({
   handles,
   pending,
@@ -88,15 +89,15 @@ function RecipeCatalog({
   if (handles.length === 0) {
     return (
       <EmptyState
-        title="No recipes provisioned"
-        detail="This gateway exposes the recipe catalog but provisions no recipes."
+        title="No blueprints provisioned"
+        detail="This gateway exposes the blueprint catalog but provisions no blueprints."
       />
     );
   }
 
   return (
     <div data-testid="recipe-catalog">
-      <div className="recipe-picker" role="radiogroup" aria-label="Recipe">
+      <div className="recipe-picker" role="radiogroup" aria-label="Blueprint">
         {handles.map((h) => (
           <button
             key={h}
@@ -157,11 +158,11 @@ function ManualInvokeForm({
     <div data-testid="manual-invoke">
       {degraded ? (
         <p className="muted">
-          This gateway does not expose the recipe catalog — enter a handle + JSON args directly.
+          This gateway does not expose the blueprint catalog — enter a handle + JSON args directly.
         </p>
       ) : null}
       <form className="invoke-form" onSubmit={submit}>
-        <label htmlFor="handle">Recipe handle</label>
+        <label htmlFor="handle">Blueprint handle</label>
         <input
           id="handle"
           value={handle}

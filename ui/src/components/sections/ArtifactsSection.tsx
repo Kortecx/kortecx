@@ -44,7 +44,7 @@ function GalleryBrowser({ runId }: { runId?: string }) {
       {runs.length === 0 ? (
         <EmptyState
           title="No runs to browse"
-          detail="Submit a recipe from the Recipes section, then review its outputs here."
+          detail="Submit a blueprint from the Blueprints section, then review its outputs here."
         />
       ) : (
         <>
