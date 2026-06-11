@@ -19,7 +19,7 @@ use tonic_health::pb::health_check_response::ServingStatus;
 use tonic_health::pb::health_client::HealthClient;
 use tonic_health::pb::HealthCheckRequest;
 
-use kx_gateway::{demo_submit_run_request, start, GatewayConfig};
+use kx_gateway::{demo_submit_run_request, start, ConsoleMode, GatewayConfig};
 use kx_proto::proto;
 use kx_proto::proto::kx_gateway_client::KxGatewayClient;
 
@@ -98,6 +98,7 @@ fn config(dir: &Path) -> Result<GatewayConfig, ProfileError> {
         catalog_dir: None,
         tls: None,
         cors_origins: Vec::new(),
+        console_listen: ConsoleMode::Disabled,
     })
 }
 

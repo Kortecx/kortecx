@@ -58,6 +58,11 @@
 mod assemble_serve;
 mod auth;
 mod config;
+// D139: the embedded web console — hyper serving the compile-time-embedded SPA
+// on a third loopback listener. Behind the off-by-default `console` feature so
+// plain builds never need node or a built `ui/dist` (build.rs embeds it).
+#[cfg(feature = "console")]
+mod console;
 // T3.7: the host-side Datasets data-plane (the kx-dataset-hnsw-backed DatasetView
 // seam). Pulls the FFI-free dataset crates, so it's behind the off-by-default
 // `hnsw` feature (the default build + the dep-wall stay unchanged).
@@ -90,7 +95,10 @@ mod tls;
 mod ws;
 
 pub use auth::{DenyAll, DevAllowLocal, Principal, PrincipalResolver, TokenResolver};
-pub use config::{Cli, GatewayConfig, TlsPaths, DEFAULT_MAX_LEASE, DEFAULT_WS_LISTEN, USAGE};
+pub use config::{
+    Cli, ConsoleMode, GatewayConfig, TlsPaths, DEFAULT_CONSOLE_LISTEN, DEFAULT_MAX_LEASE,
+    DEFAULT_WS_LISTEN, USAGE,
+};
 #[cfg(feature = "hnsw")]
 pub use datasets::HostDatasetView;
 #[cfg(all(feature = "hnsw", feature = "inference"))]

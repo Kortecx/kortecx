@@ -208,6 +208,9 @@ fn demo_pure_warrant() -> kx_warrant::WarrantSpec {
 pub struct RunningGateway {
     local_addr: SocketAddr,
     ws_local_addr: SocketAddr,
+    /// Where the embedded web console (D139) is bound, when this binary carries
+    /// the `console` feature and the config did not disable it.
+    console_local_addr: Option<SocketAddr>,
     shutdown: oneshot::Sender<()>,
     /// Flips the live-tail poll loops off so their (otherwise endless) streams end
     /// and the gateway's graceful drain can complete (R5). Signalled BEFORE the
@@ -232,6 +235,13 @@ impl RunningGateway {
     #[must_use]
     pub fn ws_local_addr(&self) -> SocketAddr {
         self.ws_local_addr
+    }
+
+    /// The address the embedded web console (D139) is bound to, or `None` when
+    /// the binary lacks the `console` feature or `--no-console` was given.
+    #[must_use]
+    pub fn console_local_addr(&self) -> Option<SocketAddr> {
+        self.console_local_addr
     }
 
     /// Stop accepting new gateway RPCs, drain in-flight ones, then abort the
@@ -677,13 +687,47 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     }
     let ws_tailer: Arc<dyn EventTailer> =
         Arc::new(crate::live_tail::LiveTailer::new(live_shutdown_rx));
-    let ws_task = tokio::spawn(crate::ws::serve_ws(
-        ws_tcp,
-        reader.clone(),
-        ws_tailer,
-        resolver.clone(),
-    ));
 
+    // (5b) D139: the embedded web console — a THIRD loopback listener serving the
+    //     compile-time-embedded SPA (no runtime filesystem). BOUND here (before the
+    //     CORS layer is built, so the gRPC-web allowlist can auto-extend with the
+    //     console's OWN bound loopback origins — and ONLY those; deny-by-default
+    //     for everything else is untouched) but SERVED only after every fallible
+    //     start step below succeeds: spawning the accept loop now would leak an
+    //     orphaned forever-task if TLS/CORS construction errored (the
+    //     adversarial-review finding — the ws accept loop is deferred the same
+    //     way). The OS backlog queues any early connections until then.
+    //     Loopback-ness is enforced at parse time (config.rs); a console-less
+    //     build resolves to None here.
+    #[cfg(feature = "console")]
+    let (console_local_addr, console_tcp) = match cfg.console_listen.resolve() {
+        Some(addr) => {
+            let tcp = tokio::net::TcpListener::bind(addr).await.map_err(|e| {
+                GatewayError::Bind(format!(
+                    "console listener {addr}: {e} (another kx serve on this port? \
+                     pick one with --console-listen <addr:port> or pass --no-console)"
+                ))
+            })?;
+            let local = tcp
+                .local_addr()
+                .map_err(|e| GatewayError::Bind(e.to_string()))?;
+            if cfg.tls.is_some() {
+                tracing::warn!(
+                    console = %local,
+                    "gRPC TLS is enabled but the web console serves PLAINTEXT http:// \
+                     on loopback — front it with a TLS proxy if browsers need https"
+                );
+            }
+            (Some(local), Some(tcp))
+        }
+        None => (None, None),
+    };
+    #[cfg(not(feature = "console"))]
+    let (console_local_addr, console_tcp): (Option<SocketAddr>, Option<()>) = (None, None);
+
+    // Cloned for the ws accept loop, which spawns LAST (after every fallible
+    // start step) so a failed start never orphans it.
+    let ws_resolver = resolver.clone();
     let svc = KxGatewayServer::with_interceptor(gateway, crate::auth::interceptor(resolver));
     let local_addr = resolve_listen(cfg.listen).await?;
     // A1: build the (optional) server TLS config up front so a missing/unreadable
@@ -714,10 +758,19 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     // fail-fast). An empty allowlist installs a layer that matches no origin ⇒ a
     // browser is never granted cross-origin access (deny-by-default); a native
     // client carries no `Origin` header and is unaffected.
-    let cors = build_cors_layer(&cfg.cors_origins)?;
-    if !cfg.cors_origins.is_empty() {
+    // D139: when the console is live, its OWN loopback origins (and only those)
+    // join the user's allowlist — a same-machine browser served by the console
+    // can reach the gRPC-web port with zero flags. The user-listed origins keep
+    // their exact semantics; the posture stays deny-by-default for everyone else.
+    let mut cors_origins = cfg.cors_origins.clone();
+    if let Some(addr) = console_local_addr {
+        cors_origins.push(format!("http://127.0.0.1:{}", addr.port()));
+        cors_origins.push(format!("http://localhost:{}", addr.port()));
+    }
+    let cors = build_cors_layer(&cors_origins)?;
+    if !cors_origins.is_empty() {
         tracing::info!(
-            origins = ?cfg.cors_origins,
+            origins = ?cors_origins,
             "gRPC-web CORS enabled for the listed browser origins"
         );
     }
@@ -746,19 +799,42 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
             .map_err(|e| GatewayError::Bind(e.to_string()))
     });
 
+    // Every fallible start step has now succeeded — the auxiliary accept loops
+    // (ws bridge + console) can spawn without any orphan-on-error hazard (the
+    // adversarial-review fix: bind early, serve late).
+    let ws_task = tokio::spawn(crate::ws::serve_ws(
+        ws_tcp,
+        reader.clone(),
+        ws_tailer,
+        ws_resolver,
+    ));
+    // `mut` is consumed only by the console push below (feature-gated).
+    #[cfg_attr(not(feature = "console"), allow(unused_mut))]
+    let mut aux = vec![
+        coord_task,
+        worker_task,
+        heartbeat_task,
+        ws_task,
+        capture_task,
+    ];
+    #[cfg(feature = "console")]
+    if let Some(tcp) = console_tcp {
+        aux.push(tokio::spawn(crate::console::serve_console(tcp)));
+        if let Some(local) = console_local_addr {
+            tracing::info!(url = %format!("http://{local}/"), "web console ready");
+        }
+    }
+    #[cfg(not(feature = "console"))]
+    let _ = console_tcp;
+
     Ok(RunningGateway {
         local_addr,
         ws_local_addr,
+        console_local_addr,
         shutdown,
         live_shutdown,
         gateway,
-        aux: vec![
-            coord_task,
-            worker_task,
-            heartbeat_task,
-            ws_task,
-            capture_task,
-        ],
+        aux,
     })
 }
 

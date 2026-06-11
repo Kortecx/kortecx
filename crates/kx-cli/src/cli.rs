@@ -270,6 +270,9 @@ kx run|replay|digest --journal <path> --content <dir> [--crash-at <pt>] [--check
 kx serve --journal <path> --content <dir> [--listen <addr:port>] [--ws-listen <addr:port>] [--dev-allow-local] ...
   Hosts the embedded single-system gateway. --listen (gRPC) defaults to 127.0.0.1:50151;
   --ws-listen (the R5 live-event WebSocket bridge) defaults to 127.0.0.1:50152.
+  Web console: a console-build kx (the prebuilt release) also serves the embedded
+  browser console at http://127.0.0.1:50180 — override with --console-listen
+  <addr:port> (loopback only) or disable with --no-console.
   Deny-all by default: pass --dev-allow-local (loopback only) or --auth-token(-file).
   Browser SPAs: --cors-origin <scheme://host[:port]> (repeatable, deny-by-default) enables the
   gRPC-web shim for the listed origins (pair with --tls-cert/--tls-key for https)."

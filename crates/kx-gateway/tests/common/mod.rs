@@ -16,7 +16,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use kx_gateway::GatewayConfig;
+use kx_gateway::{ConsoleMode, GatewayConfig};
 use kx_mote::{
     EdgeMeta, EffectPattern, GraphPosition, InferenceParams, InputDataId, LogicRef, ModelId, Mote,
     MoteDef, MoteId, NdClass, ParentRef, PromptTemplateHash, MOTE_DEF_SCHEMA_VERSION,
@@ -115,6 +115,7 @@ pub fn gateway_config(
         catalog_dir: None,
         tls: None,
         cors_origins: Vec::new(),
+        console_listen: ConsoleMode::Disabled,
     }
 }
 

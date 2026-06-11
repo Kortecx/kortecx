@@ -1531,7 +1531,12 @@ name = "kx-gateway"
 version = "0.1.1"
 dependencies = [
  "bincode 2.0.1",
+ "bytes",
  "futures-util",
+ "http",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
  "kx-capability",
  "kx-capture",
  "kx-catalog",

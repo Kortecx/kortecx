@@ -17,7 +17,7 @@ use std::collections::HashMap;
 use std::process::Output;
 use std::time::Duration;
 
-use kx_gateway::{start, GatewayConfig, RunningGateway};
+use kx_gateway::{start, ConsoleMode, GatewayConfig, RunningGateway};
 use tempfile::TempDir;
 
 /// A gateway config rooted at `dir` (ephemeral journal + content + catalog).
@@ -38,6 +38,7 @@ pub fn gateway_config(
         catalog_dir: None,
         tls: None,
         cors_origins: Vec::new(),
+        console_listen: ConsoleMode::Disabled,
     }
 }
 

@@ -93,17 +93,25 @@ export interface Gateway {
   endpoint: string;
   /** The R5 WS-bridge endpoint (for the Activity live tail). */
   wsEndpoint: string;
+  /** The embedded web console origin (only when spawned with `console: true`). */
+  consoleOrigin?: string;
   stop(): void;
 }
 
 export interface SpawnOpts {
   /** Allowed browser origin (omit to test deny-by-default). */
   corsOrigin?: string;
+  /**
+   * Serve the embedded web console (D139) on a free loopback port. Needs a
+   * `--features console` kx (the CI ui job builds one); everything else passes
+   * `--no-console` so a default-on console build can never collide on 50180.
+   */
+  console?: boolean;
 }
 
 export async function spawnGateway(opts: SpawnOpts = {}): Promise<Gateway> {
   const kxBin = findOrBuildKx();
-  const [port, wsPort] = await Promise.all([freePort(), freePort()]);
+  const [port, wsPort, consolePort] = await Promise.all([freePort(), freePort(), freePort()]);
   const tmp = await mkdtemp(path.join(tmpdir(), "kxe2e-"));
   const endpoint = `http://127.0.0.1:${port}`;
   const args = [
@@ -118,6 +126,14 @@ export async function spawnGateway(opts: SpawnOpts = {}): Promise<Gateway> {
     `127.0.0.1:${wsPort}`,
     "--dev-allow-local",
   ];
+  // `--no-console` parses as a no-op on console-less builds, so it is safe to
+  // pass unconditionally — and REQUIRED for console builds (default-on 50180
+  // would collide across parallel spawns).
+  if (opts.console) {
+    args.push("--console-listen", `127.0.0.1:${consolePort}`);
+  } else {
+    args.push("--no-console");
+  }
   if (opts.corsOrigin) {
     args.push("--cors-origin", opts.corsOrigin);
   }
@@ -130,7 +146,12 @@ export async function spawnGateway(opts: SpawnOpts = {}): Promise<Gateway> {
     }
   };
   await waitReady(endpoint, proc);
-  return { endpoint, wsEndpoint: `ws://127.0.0.1:${wsPort}`, stop };
+  return {
+    endpoint,
+    wsEndpoint: `ws://127.0.0.1:${wsPort}`,
+    consoleOrigin: opts.console ? `http://127.0.0.1:${consolePort}` : undefined,
+    stop,
+  };
 }
 
 /** The pinned origin the SPA is served from (must match playwright webServer). */

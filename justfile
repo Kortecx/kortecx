@@ -178,6 +178,21 @@ fetch-agent-model:
     echo "     export KX_MODEL_NAME=qwen3-0.6b"
     echo "     export KX_MODEL_HARNESS_GGUF=\"$(pwd)/$DEST\""
 
+# D139: build the web console's embed input — the TS SDK (the UI's file: dep)
+# then the SPA production bundle into ui/dist. The exact sequence release.yml
+# runs; needed BEFORE any `--features console` cargo build (build.rs embeds the
+# dist at compile time and fails loudly when it's missing). Needs node >= 22.
+console-dist:
+    npm --prefix bindings/typescript ci
+    npm --prefix bindings/typescript run build
+    npm --prefix ui ci
+    npm --prefix ui run build
+
+# D139: a release-grade kx with the embedded console + the Datasets data-plane —
+# exactly what the prebuilt release ships (`--features console,hnsw`; FFI-free).
+console-build: console-dist
+    cargo build --release -p kx-cli --features console,hnsw
+
 # Docs-as-test gate: run the README quickstart end to end and assert the canonical
 # projection digest. Builds the FFI-free `kx` binary (no C++ toolchain) and drives
 # run → crash → replay → digest over temp dirs, asserting the canonical digest
