@@ -1,6 +1,7 @@
-//! `kx invoke <handle> --args <json> [--wait] ...` — bind a PUBLISHED recipe by
-//! handle to JSON args and run it. The CLI sends only `handle` + raw args bytes;
-//! the server does resolve → validate → bind → intersect → submit (fail-closed).
+//! `kx invoke <handle> --args <json> [--wait] ...` — bind a PUBLISHED blueprint
+//! (wire-legacy: recipe) by handle to JSON args and run it. The CLI sends only
+//! `handle` + raw args bytes; the server does resolve → validate → bind →
+//! intersect → submit (fail-closed).
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -17,7 +18,7 @@ const DEFAULT_TIMEOUT_SECS: u64 = 120;
 /// Parsed `invoke` arguments.
 #[derive(Debug)]
 pub struct InvokeArgs {
-    /// The recipe handle (`namespace/collection/name`).
+    /// The blueprint handle (`namespace/collection/name`; wire-legacy: recipe).
     pub handle: String,
     /// Opaque JSON args bytes (validated server-side; sanity-checked client-side).
     pub args_json: Vec<u8>,
@@ -77,7 +78,7 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<InvokeArgs, CliEr
     }
 
     let handle = handle.ok_or_else(|| {
-        CliError::Usage("invoke requires a recipe handle (e.g. kx/recipes/echo)".into())
+        CliError::Usage("invoke requires a blueprint handle (e.g. kx/recipes/echo)".into())
     })?;
     let args_json = args_json.ok_or_else(|| {
         CliError::Usage("invoke requires --args <json> (or --args-file <path>)".into())

@@ -3,7 +3,8 @@ import type { Gateway } from "./serve";
 
 /**
  * Drive the connect screen to a connected console. Optionally set the advanced WS
- * endpoint (for the Activity live tail). Resolves once the Activity dashboard shows.
+ * endpoint (for the Activity live tail). Resolves once the Chat default shows
+ * (chat is the connected landing — D137).
  */
 export async function connectConsole(
   page: Page,
@@ -17,14 +18,14 @@ export async function connectConsole(
     await page.getByLabel(/ws bridge endpoint/i).fill(opts.wsEndpoint);
   }
   await page.getByRole("button", { name: /^connect$/i }).click();
-  await expect(page.getByTestId("activity-panel")).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId("chat-panel")).toBeVisible({ timeout: 30_000 });
 }
 
 /**
- * Submit a recipe via the UI-2 recipe catalog: navigate to Recipes, select the
- * handle, fill any free-param fields, and click "Run recipe". Controlled inputs
+ * Submit a blueprint via the UI-2 catalog: navigate to Blueprints, select the
+ * handle, fill any free-param fields, and click "Run blueprint". Controlled inputs
  * are filled with click + pressSequentially (a bulk fill() can leave React state
- * stale — the recorded e2e gotcha). Defaults to the echo recipe with a topic.
+ * stale — the recorded e2e gotcha). Defaults to the echo blueprint with a topic.
  */
 export async function runRecipe(
   page: Page,
@@ -35,9 +36,9 @@ export async function runRecipe(
   await page.getByTestId("nav-recipes").click();
   await expect(page.getByTestId("recipe-catalog")).toBeVisible({ timeout: 30_000 });
   await page.getByTestId(`recipe-pick-${handle}`).click();
-  // Wait for the form to reflect the SELECTED recipe before interacting — switching
-  // handles re-fetches GetRecipeForm, and clicking too early would submit the old
-  // recipe's (still-visible) form.
+  // Wait for the form to reflect the SELECTED blueprint before interacting —
+  // switching handles re-fetches GetRecipeForm, and clicking too early would
+  // submit the old blueprint's (still-visible) form.
   await expect(page.locator(`[data-testid="recipe-form"][data-recipe="${handle}"]`)).toBeVisible({
     timeout: 30_000,
   });
@@ -46,5 +47,5 @@ export async function runRecipe(
     await input.click();
     await input.pressSequentially(value);
   }
-  await page.getByRole("button", { name: /run recipe/i }).click();
+  await page.getByRole("button", { name: /run blueprint/i }).click();
 }

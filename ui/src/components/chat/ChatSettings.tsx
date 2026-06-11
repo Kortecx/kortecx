@@ -1,6 +1,6 @@
 import { ECHO_PRESET, type ChatSettings as Settings } from "../../lib/chat-settings";
 
-/** Chat settings: which recipe backs chat, its prompt param, + display toggles. */
+/** Chat settings: which blueprint backs chat, its prompt param, + display toggles. */
 export function ChatSettingsPanel({
   settings,
   onChange,
@@ -11,7 +11,7 @@ export function ChatSettingsPanel({
   return (
     <details className="chat-settings" data-testid="chat-settings">
       <summary>Settings</summary>
-      <label htmlFor="chat-handle">Recipe handle</label>
+      <label htmlFor="chat-handle">Blueprint handle</label>
       <input
         id="chat-handle"
         value={settings.handle}

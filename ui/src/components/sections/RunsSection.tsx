@@ -48,7 +48,7 @@ export function RunsSection() {
         <input
           className="filter-input"
           data-testid="runs-filter"
-          placeholder="Filter by id or recipe…"
+          placeholder="Filter by id or blueprint…"
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
           spellCheck={false}
@@ -60,7 +60,7 @@ export function RunsSection() {
       {runs.length === 0 ? (
         <EmptyState
           title="No runs yet"
-          detail="Submit a recipe from the Recipes section to start one."
+          detail="Submit a blueprint from the Blueprints section to start one."
         />
       ) : shown.length === 0 ? (
         <EmptyState title="No matching runs" detail="Adjust the filter above." />

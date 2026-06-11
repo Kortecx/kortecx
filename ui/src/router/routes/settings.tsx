@@ -5,24 +5,26 @@ import { EmptyState } from "../../components/EmptyState";
 import { useConnection } from "../../kx/connection-context";
 import { rootRoute } from "./__root";
 
-const RecipesSection = lazy(() =>
-  import("../../components/sections/RecipesSection").then((m) => ({ default: m.RecipesSection })),
+const SettingsSection = lazy(() =>
+  import("../../components/sections/SettingsSection").then((m) => ({
+    default: m.SettingsSection,
+  })),
 );
 
-function RecipesScreen() {
+function SettingsScreen() {
   const { status } = useConnection();
   if (status !== "connected") {
     return <ConnectGate />;
   }
   return (
-    <Suspense fallback={<EmptyState title="Loading blueprints…" />}>
-      <RecipesSection />
+    <Suspense fallback={<EmptyState title="Loading settings…" />}>
+      <SettingsSection />
     </Suspense>
   );
 }
 
-export const recipesRoute = createRoute({
+export const settingsRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: "/recipes",
-  component: RecipesScreen,
+  path: "/settings",
+  component: SettingsScreen,
 });

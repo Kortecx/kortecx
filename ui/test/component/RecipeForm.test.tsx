@@ -14,7 +14,7 @@ describe("RecipeForm", () => {
 
     fireEvent.change(screen.getByTestId("field-topic"), { target: { value: "hello" } });
     fireEvent.change(screen.getByTestId("field-count"), { target: { value: "3" } });
-    fireEvent.click(screen.getByRole("button", { name: /run recipe/i }));
+    fireEvent.click(screen.getByRole("button", { name: /run blueprint/i }));
 
     expect(onSubmit).toHaveBeenCalledWith({ topic: "hello", count: 3 });
   });
@@ -26,7 +26,7 @@ describe("RecipeForm", () => {
     const onSubmit = vi.fn();
     render(<RecipeForm form={form} pending={false} onSubmit={onSubmit} />);
     fireEvent.change(screen.getByTestId("field-mode"), { target: { value: "slow" } });
-    fireEvent.click(screen.getByRole("button", { name: /run recipe/i }));
+    fireEvent.click(screen.getByRole("button", { name: /run blueprint/i }));
     expect(onSubmit).toHaveBeenCalledWith({ mode: "slow" });
   });
 
@@ -36,7 +36,7 @@ describe("RecipeForm", () => {
     ]);
     const onSubmit = vi.fn();
     render(<RecipeForm form={form} pending={false} onSubmit={onSubmit} />);
-    fireEvent.click(screen.getByRole("button", { name: /run recipe/i }));
+    fireEvent.click(screen.getByRole("button", { name: /run blueprint/i }));
     expect(screen.getByRole("alert")).toHaveTextContent("required");
     expect(onSubmit).not.toHaveBeenCalled();
   });
@@ -45,7 +45,7 @@ describe("RecipeForm", () => {
     const form = new RecipeFormDef("kx/recipes/fanout-demo", []);
     const onSubmit = vi.fn();
     render(<RecipeForm form={form} pending={false} onSubmit={onSubmit} />);
-    fireEvent.click(screen.getByRole("button", { name: /run recipe/i }));
+    fireEvent.click(screen.getByRole("button", { name: /run blueprint/i }));
     expect(onSubmit).toHaveBeenCalledWith({});
   });
 });

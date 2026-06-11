@@ -62,3 +62,12 @@ class RecipeForm:
             handle=r.handle,
             fields=[RecipeFormField.from_proto(f) for f in r.fields],
         )
+
+
+# Display-layer aliases (D136): the user-facing name is **Blueprint** — a
+# reusable, shareable workflow template. The WIRE stays the frozen `recipe`
+# vocabulary (``ListRecipes``/``GetRecipeForm``, ``kx/recipes/*`` handles), so
+# these are pure additive aliases; nothing is renamed or deprecated.
+BlueprintForm = RecipeForm
+BlueprintFormField = RecipeFormField
+blueprint_param_type_name = recipe_param_type_name

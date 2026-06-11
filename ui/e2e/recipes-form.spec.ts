@@ -9,7 +9,7 @@ test.afterEach(() => {
   gw = undefined;
 });
 
-test("recipe catalog: pick echo, fill its generated form, run → COMMITTED", async ({ page }) => {
+test("blueprint catalog: pick echo, fill its generated form, run → COMMITTED", async ({ page }) => {
   gw = await spawnGateway({ corsOrigin: SPA_ORIGIN });
   await connectConsole(page, gw);
 
@@ -23,7 +23,7 @@ test("recipe catalog: pick echo, fill its generated form, run → COMMITTED", as
   const topic = page.getByTestId("field-topic");
   await topic.click();
   await topic.pressSequentially("incident review");
-  await page.getByRole("button", { name: /run recipe/i }).click();
+  await page.getByRole("button", { name: /run blueprint/i }).click();
 
   // Routes to the live run-detail DAG; the run commits over the real gRPC-web path.
   await expect(page.getByTestId("mote-dag")).toBeVisible({ timeout: 30_000 });
@@ -32,7 +32,7 @@ test("recipe catalog: pick echo, fill its generated form, run → COMMITTED", as
   );
 });
 
-test("recipe form validation: a required field blocks submit until filled", async ({ page }) => {
+test("blueprint form validation: a required field blocks submit until filled", async ({ page }) => {
   gw = await spawnGateway({ corsOrigin: SPA_ORIGIN });
   await connectConsole(page, gw);
 
@@ -42,7 +42,7 @@ test("recipe form validation: a required field blocks submit until filled", asyn
   await expect(page.getByTestId("field-topic")).toBeVisible();
 
   // Submit with the required `topic` blank → an inline validation error, no run.
-  await page.getByRole("button", { name: /run recipe/i }).click();
+  await page.getByRole("button", { name: /run blueprint/i }).click();
   await expect(page.getByRole("alert")).toContainText(/required/i);
   await expect(page.getByTestId("mote-dag")).toHaveCount(0);
 
@@ -50,6 +50,6 @@ test("recipe form validation: a required field blocks submit until filled", asyn
   const topic = page.getByTestId("field-topic");
   await topic.click();
   await topic.pressSequentially("ok now");
-  await page.getByRole("button", { name: /run recipe/i }).click();
+  await page.getByRole("button", { name: /run blueprint/i }).click();
   await expect(page.getByTestId("mote-dag")).toBeVisible({ timeout: 30_000 });
 });

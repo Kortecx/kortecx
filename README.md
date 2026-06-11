@@ -33,7 +33,7 @@ kx run    --journal /tmp/kx.db --content /tmp/kx-content      # → 7d22d4bd… 
 - [Install & quick start](#install--quick-start) — prove exactly-once in 60 seconds
 - [Getting started](#getting-started) — run the runtime as a server, like a function
 - [Commands](#commands) — the full `kx` reference
-- [Recipes](#recipes) — reusable agentic workflows
+- [Blueprints](#blueprints) — reusable agentic workflows
 - [Local LLM inference](#local-llm-inference) — bring your own GGUF model
 - [How it works](#how-it-works) — the architecture in one read
 - [Extending](#extending) — bring your own journal, store, broker, backend
@@ -80,7 +80,7 @@ kortecx has a **two-tier** setup. Most of the runtime needs only Rust.
 
 | Tier | You get | You need |
 |---|---|---|
-| **Tier 0 — the runtime** *(required)* | `kx run` / `replay` / `serve`, the durability demo, recipes, the full CLI & gateway | **Rust 1.94.0+** only — **no C++ toolchain**. The `kx` binary is FFI-free. |
+| **Tier 0 — the runtime** *(required)* | `kx run` / `replay` / `serve`, the durability demo, blueprints, the full CLI & gateway | **Rust 1.94.0+** only — **no C++ toolchain**. The `kx` binary is FFI-free. |
 | **Tier 1 — local LLM inference** *(optional)* | real on-device model inference via llama.cpp | a **C++ toolchain** (CMake, clang/libclang, a C++ compiler) + the `llama.cpp` submodule + a **GGUF** model |
 
 [Rust](https://rustup.rs) honors the pinned toolchain in `rust-toolchain.toml`
@@ -147,7 +147,7 @@ In another terminal, **submit a run and wait for the committed result**:
 # A built-in pure demo run (the lowest-level entry point).
 kx submit --demo --wait
 
-# Invoke a PUBLISHED recipe by handle, bound to JSON args — run-to-result.
+# Invoke a PUBLISHED blueprint (wire-legacy: recipe) by handle, bound to JSON args — run-to-result.
 kx invoke kx/recipes/echo --args '{"topic":"durable agents"}' --wait
 
 # A multi-node DAG, model-free: root → 3 children → gather (5 Motes, all committed).
@@ -251,7 +251,7 @@ The `kx` CLI is one binary. `run`/`replay`/`digest` drive the engine locally;
 | `kx replay` | Recover an existing journal and finish the run | `--journal` `--content` · `--audit-log` · `--json` |
 | `kx digest` | Print the projection digest of a journal | `--journal` `--content` · `--json` |
 | `kx serve` | Host the embedded single-system gateway | `--journal` `--content` · `--listen` *(default `127.0.0.1:50151`)* · `--ws-listen` *(default `:50152`)* · `--dev-allow-local` · `--auth-token <t>=<party>` · `--auth-token-file` · `--tls-cert <path> --tls-key <path>` *(in-binary TLS)* · `--max-lease N` · `--catalog-dir` |
-| `kx invoke <handle>` | Bind a published recipe to JSON args and run it | `--args <json>` / `--args-file` · `--wait` · `--timeout-secs N` · `--out <file>` |
+| `kx invoke <handle>` | Bind a published blueprint to JSON args and run it | `--args <json>` / `--args-file` · `--wait` · `--timeout-secs N` · `--out <file>` |
 | `kx submit --demo` | Submit a built-in pure demo run | `--wait` · `--timeout-secs N` · `--out` |
 | `kx projection` | Render a run as a DAG of Mote states | `--instance <id>` · `--at-seq N` |
 | `kx content` | Fetch a committed result by ref (binary-safe) | `--ref <r>` · `--instance <id>` · `--out <file>` |
@@ -266,13 +266,14 @@ Client verbs share `--endpoint <url>` *(default `http://127.0.0.1:50151`)*,
 run is still in progress and resumable) · `1` everything else (RPC, IO, a failed
 Mote). `kx --help` and `kx help <command>` print usage.
 
-## Recipes
+## Blueprints
 
-A **recipe** is a reusable, parameterized workflow that compiles to a Mote DAG.
+A **Blueprint** (wire-legacy: *recipe* — the `kx/recipes/*` handles and RPC names
+never rename) is a reusable, parameterized workflow that compiles to a Mote DAG.
 Five are shipped (all deterministic, statically shaped), composable from pure
 building blocks plus a fail-closed prompt-template engine:
 
-| Recipe | Shape |
+| Blueprint | Shape |
 |---|---|
 | `map_reduce` | N mappers → one pure reduce |
 | `fan_out_gather` | N parallel non-deterministic workers → one pure gather |
@@ -323,7 +324,7 @@ to GPU`).
 ### Live model dispatch in `kx serve` (AL1, opt-in)
 
 By default `kx serve` runs the durable spine + the deterministic/sandboxed demo
-recipes (and is **FFI-free**). Built with the inference feature, the embedded worker
+blueprints (and is **FFI-free**). Built with the inference feature, the embedded worker
 can run **real model Motes**:
 
 ```bash
@@ -333,7 +334,7 @@ cargo build -p kx-cli --features inference   # a `kx` that links the llama.cpp b
 KX_SERVE_MODEL_GGUF="$(pwd)/target/models/qwen3-0.6b-q4_k_m.gguf" \
   kx serve --dev-allow-local --journal /tmp/kx.db --content /tmp/kx-content
 
-# in another shell — the model recipe runs greedy inference and commits the completion:
+# in another shell — the model blueprint runs greedy inference and commits the completion:
 kx invoke kx/recipes/chat --args '{"prompt":"What is the capital of France?"}' --wait --json
 ```
 
@@ -386,8 +387,8 @@ stack on top:
   `kx-executor` (lifecycle + commit protocols + recovery), `kx-inference`,
   `kx-critic`, `kx-runtime` (the single-node engine + `run`/`replay`/`digest`).
 - **Reach (v0.1.0):** `kx-gateway`/`kx-gateway-core` (the gRPC server),
-  `kx-cli` (the `kx` binary), `kx-invoke` (recipe → guaranteed run),
-  `kx-workflow` (recipes + prompt templating), `kx-catalog` (sharable signatures),
+  `kx-cli` (the `kx` binary), `kx-invoke` (blueprint → guaranteed run),
+  `kx-workflow` (the blueprint library + prompt templating), `kx-catalog` (sharable signatures),
   `kx-fleet` (teams), `kx-audit` (off-path audit trail).
 - **Distributed (optional):** `kx-coordinator` (sole journal writer) +
   `kx-worker` + `kx-proto` — same guarantees, wiring on the same seams, not a rewrite.
@@ -447,7 +448,7 @@ Interfaces will change before 1.0 — **pin a commit** if you build on it now.
 
 **Early development, built in the open.** Today (v0.1.0): a durable single-system
 runtime with exactly-once world effects and crash recovery, a gateway server, the
-unified `kx` CLI, a recipe library + prompt templating, an audit trail, a live
+unified `kx` CLI, a blueprint library + prompt templating, an audit trail, a live
 event stream, TypeScript & Python client SDKs over gRPC, and a React + Vite **web
 console** that renders the live execution DAG (gRPC-web). Next: event timeline /
 time-travel + multi-modal artifact review in the console, audio multi-modal

@@ -53,6 +53,9 @@ export type { CaptureRecordPage } from "./capture.js";
 
 export { RecipeForm, RecipeFormField, recipeParamTypeName } from "./recipes.js";
 export type { RecipeParamTypeName } from "./recipes.js";
+// Blueprint = the display name for the frozen `recipe` wire (D136; additive aliases).
+export { BlueprintForm, BlueprintFormField, blueprintParamTypeName } from "./recipes.js";
+export type { BlueprintParamTypeName } from "./recipes.js";
 
 export { TeamSummary, TeamMember, TeamMembers, WarrantView, teamsFromProto } from "./teams.js";
 export { GrantView, AssetGrants } from "./grants.js";
