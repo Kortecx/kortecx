@@ -552,6 +552,78 @@ message ListCaptureRecordsResponse {
 }
 
 // ---------------------------------------------------------------------------
+// W1.A5 toolscout additive (D120.6): ADVISORY tool discovery + TaskBundle
+// preview. SN-8: every score/verdict below is DISPLAY-ONLY — never a committed
+// fact, never an authorization. The sole grant gate stays the exact
+// (name, version) equality check in lowering + the broker; a score can surface
+// a tool, never grant one (advisory-never-authorizes is structural in
+// kx-toolscout: the lowering signature admits no score).
+// ---------------------------------------------------------------------------
+
+message ListToolManifestsRequest {}
+// Normalized intent keywords under one BCP-47-ish language tag.
+message KeywordSet {
+  string lang           = 1;             // e.g. "en", "hi", "ja"
+  repeated string words = 2;             // pre-normalized (trim / lowercase / collapse whitespace)
+}
+// One registered tool's advisory manifest (ranking/display material ONLY —
+// the broker never reads manifests; like the recipe catalog, registration is
+// the public discovery surface, so listing it leaks no authority).
+message ToolManifest {
+  string tool_id               = 1;      // the grant-set identity half (exact)
+  string tool_version          = 2;      // the other identity half (exact)
+  string description           = 3;      // free-form human text; NEVER parsed for enforcement
+  repeated KeywordSet keywords = 4;      // per language tag (sorted, deduplicated)
+  bytes  fingerprint_hash      = 5;      // 32B blake3 ToolFingerprint content hash (display/join key)
+  string kind                  = 6;      // "Builtin" | "Mcp" (display)
+}
+message ListToolManifestsResponse {
+  repeated ToolManifest manifests = 1;   // deterministic (tool_id, tool_version) order
+}
+
+// One sequenced tool in a client-authored TaskBundle spec. Advisory metadata
+// rides along; identity is the exact (tool_id, tool_version) pair.
+message BundleToolSpec {
+  string tool_id               = 1;
+  string tool_version          = 2;
+  string description           = 3;      // advisory ToolMeta description
+  repeated KeywordSet keywords = 4;      // advisory ToolMeta keywords
+}
+message ScoreTaskBundleRequest {
+  string intent                         = 1; // the task instruction (size-capped; validated fail-closed)
+  repeated string language_tags         = 2; // advisory BCP-47-ish tags (count/size-capped)
+  repeated BundleToolSpec tool_sequence = 3; // ordered; non-empty, count-capped, duplicate names refused
+  uint32 tolerance_threshold_bp         = 4; // advisory ranking cut, 0..=10000 (an integer — never a float)
+}
+// One manifest's advisory rank against the bundle intent, in integer basis
+// points (floats never cross this wire — the SN-8 no-persisted-confidence
+// rule): exact keyword/phrase = 10000 > Jaro-Winkler fuzz ≤ 9000 > embedding
+// cosine ≤ 8000 (absent without a server embedder — string rungs alone decide).
+message ManifestScore {
+  string tool_id          = 1;
+  string tool_version     = 2;
+  uint32 score_bp         = 3;
+  bytes  fingerprint_hash = 4;           // joins back to ListToolManifests
+}
+// What the REAL lowering gate said about the bundle: a dry-run of
+// kx-toolscout's lower_to_workflow_def against the SERVER-built react warrant
+// (never a caller-supplied one — the Invoke binder precedent). The lowered
+// WorkflowDef is DISCARDED: nothing submits, nothing journals, no identity is
+// derived. The broker re-gates any future real dispatch.
+enum LowerVerdict {
+  LOWER_VERDICT_UNSPECIFIED = 0;
+  LOWER_VERDICT_UNAVAILABLE = 1;         // no live react runtime on this serve (no server warrant to gate against)
+  LOWER_VERDICT_WOULD_LOWER = 2;         // the grant gate passed; the bundle lowers to a valid WorkflowDef
+  LOWER_VERDICT_REFUSED     = 3;         // the gate refused (verdict_detail names the reason)
+}
+message ScoreTaskBundleResponse {
+  bytes bundle_fingerprint      = 1;     // 32B blake3 TaskBundle content fingerprint
+  repeated ManifestScore ranked = 2;     // EVERY registered manifest, best-first (deterministic tiebreak)
+  LowerVerdict verdict          = 3;
+  string verdict_detail         = 4;     // display-only availability/refusal prose
+}
+
+// ---------------------------------------------------------------------------
 // Service — the external client-facing gateway (distinct from Coordinator).
 // ---------------------------------------------------------------------------
 
@@ -583,4 +655,8 @@ service KxGateway {
   // Campaign Batch 2 additive (D120.6): the Morphic Data Engine capture read
   // surface (durable action exhaust; read-only, off-truth-path).
   rpc ListCaptureRecords(ListCaptureRecordsRequest) returns (ListCaptureRecordsResponse);
+  // W1.A5 toolscout additive (D120.6): advisory tool discovery + TaskBundle
+  // preview (read-only, display-only — scores/verdicts never authorize).
+  rpc ListToolManifests(ListToolManifestsRequest) returns (ListToolManifestsResponse);
+  rpc ScoreTaskBundle(ScoreTaskBundleRequest) returns (ScoreTaskBundleResponse);
 }

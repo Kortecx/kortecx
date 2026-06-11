@@ -998,8 +998,10 @@ fn model_warrant(exec_class: ExecutorClass, model_id: &ModelId) -> WarrantSpec {
 /// the broker's 6-gate `precheck` re-verifies every axis at fire time, SN-8).
 /// `executor_class` MUST equal the embedded worker's so the chain leases; the
 /// model route's `max_output_tokens` is both the turn decode budget and the
-/// `max_args_bytes` cap (×4) the tool-call gate enforces.
-fn react_warrant(
+/// `max_args_bytes` cap (×4) the tool-call gate enforces. `pub(crate)` since
+/// W1.A5: the toolscout view's lowering DRY-RUN gates against this same
+/// server-built warrant (read-only; the lowered output is discarded).
+pub(crate) fn react_warrant(
     exec_class: ExecutorClass,
     model_id: &ModelId,
     tool: &(ToolName, ToolVersion),

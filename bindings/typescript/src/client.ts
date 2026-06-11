@@ -25,6 +25,7 @@ import { ReplanRound, type ReplanRoundPage } from "./replan.js";
 import { Result, Run } from "./run.js";
 import { type RunPage, RunSummary } from "./runs.js";
 import { TeamMembers, type TeamSummary, teamsFromProto } from "./teams.js";
+import { BundleScore, type BundleSpec, ToolManifest, bundleSpecToProto } from "./toolscout.js";
 import { type Args, encodeArgs } from "./transport.js";
 import { type Delta, Projection, SignatureSummary } from "./types.js";
 import {
@@ -337,6 +338,30 @@ export abstract class KxClientBase {
       }),
     );
     return resp.hits.map((h) => DatasetHit.fromProto(h));
+  }
+
+  /**
+   * Enumerate the registered tools' advisory manifests (W1.A5; deterministic
+   * (toolId, toolVersion) order). DISPLAY-ONLY (SN-8): manifests rank/describe,
+   * never authorize — the broker never reads them. An old gateway without this
+   * RPC throws {@link KxUnimplemented}.
+   */
+  async listToolManifests(): Promise<ToolManifest[]> {
+    const resp = await rpc(this.grpc.listToolManifests({}));
+    return resp.manifests.map((m) => ToolManifest.fromProto(m));
+  }
+
+  /**
+   * Score a client-authored TaskBundle `spec` against every registered manifest
+   * (W1.A5): advisory basis-point ranks + a server-side DRY-RUN of the real
+   * lowering gate (the SERVER-built warrant — no client warrant input; nothing
+   * submits, nothing journals). ADVISORY/DISPLAY-ONLY (SN-8): a score can surface
+   * a tool, never grant one. An invalid spec throws {@link KxInvalidArgument}; an
+   * old gateway without this RPC throws {@link KxUnimplemented}.
+   */
+  async scoreTaskBundle(spec: BundleSpec): Promise<BundleScore> {
+    const resp = await rpc(this.grpc.scoreTaskBundle(bundleSpecToProto(spec)));
+    return BundleScore.fromProto(resp);
   }
 
   /** Connect transports manage their own connections; there is nothing to close. */

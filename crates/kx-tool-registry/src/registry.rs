@@ -402,6 +402,22 @@ impl InMemoryToolRegistry {
         reg
     }
 
+    /// Every **`Approved`** tool definition, in deterministic
+    /// `(tool_id, tool_version)` order (the `BTreeMap` iteration order).
+    ///
+    /// The advisory discovery surface (W1.A5 `ListToolManifests`): pending
+    /// registrations stay invisible here exactly as they do in
+    /// [`ToolRegistry::lookup`] — a tool a warrant could never resolve is not
+    /// advertised.
+    #[must_use]
+    pub fn defs(&self) -> Vec<ToolDef> {
+        self.by_key
+            .values()
+            .filter(|rec| matches!(rec.status, RegistrationStatus::Approved))
+            .map(|rec| rec.def.clone())
+            .collect()
+    }
+
     /// Count of registrations in the registry (any status).
     pub fn len(&self) -> usize {
         self.by_key.len()

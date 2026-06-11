@@ -15,6 +15,7 @@ export type Glyph =
   | "recipes"
   | "artifacts"
   | "datasets"
+  | "tools"
   | "systems"
   | "menu"
   | "refresh"
@@ -33,6 +34,8 @@ const PATHS: Record<Glyph, string> = {
   artifacts: "M3 7l9-4 9 4-9 4-9-4zm0 0v10l9 4 9-4V7M12 11v10",
   datasets:
     "M4 6c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3zm0 0v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3",
+  tools:
+    "M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z",
   systems:
     "M6 7a2 2 0 100-4 2 2 0 000 4zm12 0a2 2 0 100-4 2 2 0 000 4zM12 21a2 2 0 100-4 2 2 0 000 4zM7.5 6.5l3.5 9M16.5 6.5L13 15.5",
   menu: "M4 6h16M4 12h16M4 18h16",

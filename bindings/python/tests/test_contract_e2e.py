@@ -17,6 +17,8 @@ import pytest
 
 from kortecx import (
     AsyncKxClient,
+    BundleSpec,
+    BundleTool,
     IngestDocument,
     KxClient,
     KxFailedPrecondition,
@@ -373,3 +375,34 @@ def test_dataset_unknown_is_not_found_and_text_without_embedder_fails_preconditi
         kx.ingest_documents("c", [IngestDocument(content=b"x", embedding=[1.0, 0.0])])
         with pytest.raises(KxFailedPrecondition):
             kx.query_dataset("c", text="find x")
+
+
+# --- W1.A5: toolscout advisory discovery + bundle preview -------------------------
+
+
+def test_toolscout_lists_builtins_and_scores_exact_keyword_at_ceiling(dev_server):
+    with KxClient(dev_server.endpoint) as kx:
+        manifests = kx.list_tool_manifests()
+        assert [m.tool_id for m in manifests] == ["fs-read", "fs-write", "text-summarize"]
+        assert all(m.kind == "Builtin" for m in manifests)
+        assert all(len(m.fingerprint_hash) == 64 for m in manifests)  # 32B hex
+
+        score = kx.score_task_bundle(
+            BundleSpec(
+                intent="read a file from disk",
+                tools=[BundleTool(tool_id="fs-read", tool_version="1")],
+                language_tags=["en"],
+            )
+        )
+        assert len(score.ranked) == 3
+        assert score.ranked[0].tool_id == "fs-read"
+        assert score.ranked[0].score_bp == 10_000  # deterministic exact-keyword hit
+        assert len(score.bundle_fingerprint) == 64
+        # The FFI-free server has no react runtime → the dry-run verdict degrades.
+        assert score.verdict == "unavailable"
+
+
+def test_toolscout_invalid_spec_is_invalid_argument(dev_server):
+    with KxClient(dev_server.endpoint) as kx:
+        with pytest.raises(KxInvalidArgument):
+            kx.score_task_bundle(BundleSpec(intent="x", tools=[]))

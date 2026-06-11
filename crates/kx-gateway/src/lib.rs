@@ -91,6 +91,9 @@ mod server;
 // idempotent demo-team seed.
 mod teams;
 mod tls;
+// W1.A5: the host-side advisory toolscout view (manifests + bundle scoring +
+// the lowering dry-run verdict). Always-on; display-only by construction.
+mod toolscout;
 #[cfg(feature = "embedded-worker")]
 mod ws;
 

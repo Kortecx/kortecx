@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { NAV_SECTIONS, SETTINGS_SECTION } from "../../src/components/shell/nav-model";
 
 describe("NAV_SECTIONS", () => {
-  it("has the seven console sections", () => {
+  it("has the eight console sections", () => {
     expect(NAV_SECTIONS.map((s) => s.id)).toEqual([
       "activity",
       "chat",
@@ -10,6 +10,7 @@ describe("NAV_SECTIONS", () => {
       "recipes",
       "artifacts",
       "datasets",
+      "tools",
       "systems",
     ]);
   });
@@ -40,7 +41,7 @@ describe("NAV_SECTIONS", () => {
 });
 
 describe("SETTINGS_SECTION", () => {
-  it("is pinned shell chrome, not an eighth nav section", () => {
+  it("is pinned shell chrome, not a ninth nav section", () => {
     expect(SETTINGS_SECTION.id).toBe("settings");
     expect(SETTINGS_SECTION.path).toBe("/settings");
     expect(SETTINGS_SECTION.icon).toBe("settings");

@@ -464,3 +464,41 @@ describe("datasets (RAG) data-plane — client-vector path (FFI-free)", () => {
     kx.close();
   });
 });
+
+// --- W1.A5: toolscout advisory discovery + bundle preview ---------------------
+
+describe("toolscout (advisory — scores never authorize)", () => {
+  it("lists the builtin manifests and scores an exact-keyword intent at 10000 bp", async () => {
+    const s = await devServer();
+    const kx = new KxClient(s.endpoint);
+
+    const manifests = await kx.listToolManifests();
+    expect(manifests.map((m) => m.toolId)).toEqual(["fs-read", "fs-write", "text-summarize"]);
+    for (const m of manifests) {
+      expect(m.kind).toBe("Builtin");
+      expect(m.fingerprintHash).toHaveLength(64); // 32B hex
+    }
+
+    const score = await kx.scoreTaskBundle({
+      intent: "read a file from disk",
+      languageTags: ["en"],
+      tools: [{ toolId: "fs-read", toolVersion: "1" }],
+    });
+    expect(score.ranked).toHaveLength(3);
+    expect(score.ranked[0]?.toolId).toBe("fs-read");
+    expect(score.ranked[0]?.scoreBp).toBe(10_000); // deterministic exact-keyword hit
+    expect(score.bundleFingerprint).toHaveLength(64);
+    // The FFI-free server has no react runtime → the dry-run verdict degrades.
+    expect(score.verdict).toBe("unavailable");
+    kx.close();
+  });
+
+  it("an invalid spec (no tools) is invalid-argument", async () => {
+    const s = await devServer();
+    const kx = new KxClient(s.endpoint);
+    await expect(kx.scoreTaskBundle({ intent: "x", tools: [] })).rejects.toBeInstanceOf(
+      KxInvalidArgument,
+    );
+    kx.close();
+  });
+});

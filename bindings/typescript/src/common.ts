@@ -63,6 +63,21 @@ export { GrantView, AssetGrants } from "./grants.js";
 export { DatasetSummary, DatasetHit, IngestResult } from "./datasets.js";
 export type { IngestDoc } from "./datasets.js";
 
+export {
+  ToolManifest,
+  KeywordSet,
+  ManifestScore,
+  BundleScore,
+  lowerVerdictName,
+  bundleSpecToProto,
+} from "./toolscout.js";
+export type {
+  LowerVerdictName,
+  BundleSpec,
+  BundleToolInput,
+  KeywordSetInput,
+} from "./toolscout.js";
+
 export { WaitState } from "./wait.js";
 export type { WaitOutcome, WaitMode } from "./wait.js";
 

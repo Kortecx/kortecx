@@ -104,17 +104,31 @@ kx-critic          = { workspace = true, optional = true }
 kx-mcp             = { workspace = true, optional = true }
 # PR-2d-2: the typed ToolDef/inputSchema vocabulary for the bundled tool's
 # registry entry (shared with the coordinator so the settle's validate-at-freeze
-# and the broker dispatch see the SAME schema). FFI-free; behind `inference`.
-kx-tool-registry   = { workspace = true, optional = true }
+# and the broker dispatch see the SAME schema). FFI-free. NON-optional since
+# W1.A5: the always-on advisory toolscout view lists the registry's builtin
+# manifests on every build (it was ALREADY in the default closure via
+# kx-catalog, so this adds no build edge).
+kx-tool-registry   = { workspace = true }
 # T3.7: the FFI-free durable vector substrate (the Datasets data-plane). kx-dataset
-# (the RetrievalIndex trait + Hit) + kx-dataset-hnsw (the in-process HNSW ANN index).
-# Both pure-Rust (hnsw_rs / thiserror only) — NO llama.cpp, so the dep-wall holds.
-# `rusqlite` (already in the closure via kx-catalog/kx-fleet) is the durable,
-# crash-safe store; the HNSW graph is rebuilt from the rows on open. All OPTIONAL +
-# behind the `hnsw` feature so the DEFAULT build is byte-unchanged. The client-vector
-# path works under `hnsw` ALONE (no inference / no model / no Metal).
-kx-dataset         = { workspace = true, optional = true }
+# (the RetrievalIndex trait + Hit + the exact InMemoryRetrievalIndex) +
+# kx-dataset-hnsw (the in-process HNSW ANN index). Both pure-Rust (hnsw_rs /
+# thiserror only) — NO llama.cpp, so the dep-wall holds. `rusqlite` (already in
+# the closure via kx-catalog/kx-fleet) is the durable, crash-safe store; the
+# HNSW graph is rebuilt from the rows on open. kx-dataset is NON-optional since
+# W1.A5 (the toolscout ToolManifestIndex composes its exact in-memory index;
+# already in the default closure via kx-catalog — no new build edge);
+# kx-dataset-hnsw stays OPTIONAL behind the `hnsw` feature so the DEFAULT build
+# is byte-unchanged. The client-vector path works under `hnsw` ALONE.
+kx-dataset         = { workspace = true }
 kx-dataset-hnsw    = { workspace = true, optional = true }
+# W1.A5: the advisory MCP-intelligence surface — TaskBundle (kx-bundle) +
+# manifest ranking / the fail-closed lowering dry-run (kx-toolscout). Both
+# pure-Rust, FFI-free, ALWAYS-ON (the manifests/score RPCs answer on every
+# build; the verdict degrades to UNAVAILABLE without a react runtime).
+# SN-8: both crates are advisory by construction — neither is reachable from
+# the broker/admission authority path.
+kx-bundle          = { workspace = true }
+kx-toolscout       = { workspace = true }
 # rusqlite is NON-optional: the always-on Morphic Data Engine capture.db sidecar
 # (campaign Batch 2) needs it unconditionally, and it is ALREADY in the default
 # closure (kx-catalog/kx-fleet pull it for the durable ledgers). Pure-Rust C
@@ -202,14 +216,13 @@ inference = [
     "dep:kx-planner",
     "dep:kx-critic",
     "dep:kx-mcp",
-    "dep:kx-tool-registry",
 ]
 # T3.7: the Datasets data-plane (RAG) read/write surface. The client-provided-vector
 # path is FFI-FREE + deterministic (CI-exercisable on Linux with no model). Pulls only
 # pure-Rust crates (the dep-wall + `build-no-inference` stay green). The server-embed
 # path ADDITIONALLY needs `inference` (an EmbeddingBackend); without it, server-embed
 # requests return FAILED_PRECONDITION. Independent of `inference` — they compose.
-hnsw = ["dep:kx-dataset", "dep:kx-dataset-hnsw"]
+hnsw = ["dep:kx-dataset-hnsw"]
 # D139: `kx serve` hosts the embedded web console (the built React SPA) on a third
 # loopback listener (default 127.0.0.1:50180). OFF by default: the dist is embedded
 # at COMPILE time by build.rs, so a console build needs `ui/dist` (a repo checkout

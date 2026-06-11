@@ -6,7 +6,7 @@ import { NAV_SECTIONS, SETTINGS_SECTION } from "./nav-model";
 /**
  * The persistent section navigation. Header = the brand (the console's SINGLE
  * logo anchor — the navbar shows a breadcrumb instead) + hamburger (collapse →
- * icon-only rail); Settings is pinned bottom-left (D137); the seven sections
+ * icon-only rail); Settings is pinned bottom-left (D137); the eight sections
  * scroll in between.
  */
 export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
