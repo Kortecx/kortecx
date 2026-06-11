@@ -1,0 +1,38 @@
+[package]
+name         = "kx-toolscout"
+version      = "0.1.1"
+edition      = { workspace = true }
+rust-version = { workspace = true }
+license      = { workspace = true }
+authors      = { workspace = true }
+repository   = { workspace = true }
+description  = "kortecx ADVISORY tool discovery (W1.A5, the MCP-intelligence core) — multilingual ToolFingerprints, the exact-kw → Jaro-Winkler → embedding-cosine tolerance ladder (integer basis points, no floats persisted), a tool-manifest index over kx-dataset::RetrievalIndex, and TaskBundle → WorkflowDef lowering behind the planner-style EXACT (name, version) tool_grants gate. SN-8 by construction: scores ORDER and RETRIEVE, never AUTHORIZE — lowering takes no score input and the broker's exact-equality gate stays the sole authority. Pure leaf: never the journal, the gateway, or the frozen trio."
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+# The TaskBundle authoring shape this crate ranks + lowers.
+kx-bundle   = { workspace = true }
+# ToolName/ToolVersion/LogicRef/ConfigKey/ConfigVal/EdgeMeta/PROMPT_KEY + the
+# canonical bincode config (fingerprint bytes).
+kx-mote     = { workspace = true }
+# WarrantSpec/ToolGrant — the authority set lowering is gated against.
+kx-warrant  = { workspace = true }
+# WorkflowDef/StepDef builders + the FROZEN compile (the structural gate).
+kx-workflow = { workspace = true }
+# RetrievalIndex/Hit — the SN-8-confined similarity seam the manifest index
+# composes (embedding rung 3).
+kx-dataset  = { workspace = true }
+# ContentRef — the fingerprint-hash key type shared with the retrieval index.
+kx-content  = { workspace = true }
+serde       = { workspace = true }
+bincode     = { workspace = true }
+blake3      = { workspace = true }
+thiserror   = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+
+[lints]
+workspace = true

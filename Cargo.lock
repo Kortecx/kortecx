@@ -1272,6 +1272,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "kx-bundle"
+version = "0.1.1"
+dependencies = [
+ "bincode 2.0.1",
+ "blake3",
+ "kx-mote",
+ "serde",
+]
+
+[[package]]
 name = "kx-capability"
 version = "0.1.1"
 dependencies = [
@@ -1979,6 +1989,23 @@ dependencies = [
  "kx-warrant",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "kx-toolscout"
+version = "0.1.1"
+dependencies = [
+ "bincode 2.0.1",
+ "blake3",
+ "kx-bundle",
+ "kx-content",
+ "kx-dataset",
+ "kx-mote",
+ "kx-warrant",
+ "kx-workflow",
+ "proptest",
+ "serde",
+ "thiserror 1.0.69",
 ]
 
 [[package]]

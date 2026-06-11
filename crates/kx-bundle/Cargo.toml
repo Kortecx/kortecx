@@ -1,0 +1,23 @@
+[package]
+name         = "kx-bundle"
+version      = "0.1.1"
+edition      = { workspace = true }
+rust-version = { workspace = true }
+license      = { workspace = true }
+authors      = { workspace = true }
+repository   = { workspace = true }
+description  = "kortecx TaskBundle (W1.A5 MCP-intelligence) — the content-addressed, multi-tool task template a user or model AUTHORS and kx-toolscout LOWERS to a WorkflowDef. A thin TYPE crate (the TaskSignature precedent): fingerprint = blake3(domain-tag ‖ canonical bincode), all-BTree canonical field order, integer-scaled tolerance (no floats, SN-8). Pure leaf — kx-mote + serde/bincode/blake3 only; never the journal, the gateway, or the frozen trio."
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+# ToolName / ToolVersion (the exact-equality tool identity) + the canonical
+# bincode config (the ONE encoding identity-bearing bytes use).
+kx-mote = { workspace = true }
+serde   = { workspace = true }
+bincode = { workspace = true }
+blake3  = { workspace = true }
+
+[lints]
+workspace = true
