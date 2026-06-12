@@ -553,6 +553,22 @@ impl DemoLibrary {
         self.recipes.iter().map(|(h, _)| h.to_string()).collect()
     }
 
+    /// The published workflow fingerprint a bound run of `handle` registers
+    /// under (PR-2.1 run naming): resolved from the SAME versions ledger the
+    /// binder resolves through, so the catalog and `RunSummary.recipe_fingerprint`
+    /// agree by construction. Display/join only — never identity.
+    pub fn recipe_fingerprint(&self, handle: &str) -> Option<[u8; 32]> {
+        let path = self
+            .recipes
+            .iter()
+            .map(|(h, _)| h)
+            .find(|h| h.to_string() == handle)?;
+        match self.versions.resolve(path)? {
+            (VersionedContent::Workflow(manifest_id), _) => Some(manifest_id.0),
+            _ => None,
+        }
+    }
+
     /// The principal that owns every demo-provisioned asset + founds the demo team
     /// (UI-3). A fixed single-node operator identity; cloud multi-tenant identity is
     /// the OIDC layer (D129).
@@ -784,6 +800,10 @@ impl HostRecipeCatalog {
 impl RecipeCatalog for HostRecipeCatalog {
     fn list_recipes(&self) -> Vec<String> {
         self.lib.recipe_handles()
+    }
+
+    fn recipe_fingerprint(&self, handle: &str) -> Option<[u8; 32]> {
+        self.lib.recipe_fingerprint(handle)
     }
 
     fn get_recipe_form(&self, handle: &str) -> Option<Vec<RecipeFormFieldEntry>> {

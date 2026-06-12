@@ -59,12 +59,27 @@ export function RecipeForm({
   form,
   pending,
   onSubmit,
+  initial,
 }: {
   form: RecipeFormDef;
   pending: boolean;
   onSubmit: (args: Record<string, unknown>) => void;
+  /** Prefill values (the PR-2.1 clone-lite landing: a run's prior args). Keys
+   *  not in the form contract are ignored; the server re-validates at bind. */
+  initial?: Record<string, unknown>;
 }) {
-  const [values, setValues] = useState<FormValues>(() => initialValues(form));
+  const [values, setValues] = useState<FormValues>(() => {
+    const base = initialValues(form);
+    if (initial) {
+      for (const field of form.fields) {
+        const v = initial[field.name];
+        if (v !== undefined && v !== null) {
+          base[field.name] = String(v);
+        }
+      }
+    }
+    return base;
+  });
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   function submit(e: FormEvent<HTMLFormElement>): void {

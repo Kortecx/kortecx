@@ -33,13 +33,15 @@ async fn invoke_wait_returns_committed_result() {
     let terminal = v["terminal_mote_id"].as_str().unwrap();
     let mote_bytes = kx_cli::hex::decode_fixed::<32>(terminal).unwrap();
     let expected = kx_gateway::demo_pure_result(&mote_bytes);
-    // The demo result is an ASCII prefix + the raw 32-byte mote id, so it is NOT
-    // valid UTF-8: result_hex is always present; result_utf8 is absent here.
+    // PR-2.1: the demo result is FULLY PRINTABLE (the mote id rides as hex),
+    // so result_utf8 is PRESENT alongside result_hex — the console renders
+    // demo outputs as text, never a binary dump.
     assert_eq!(v["result_len"].as_u64().unwrap() as usize, expected.len());
     assert_eq!(v["result_hex"], kx_cli::hex::encode(&expected));
-    assert!(
-        v.get("result_utf8").is_none(),
-        "binary payload ⇒ no result_utf8"
+    assert_eq!(
+        v["result_utf8"].as_str().unwrap(),
+        String::from_utf8(expected).unwrap(),
+        "printable payload ⇒ result_utf8 carries the text"
     );
 
     running.shutdown().await.unwrap();

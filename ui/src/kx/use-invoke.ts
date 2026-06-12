@@ -15,10 +15,12 @@ export interface InvokeVars {
   args: Record<string, unknown>;
 }
 
-/** The server-derived handles for a started run (both hex; the client never derives an id). */
+/** The server-derived handles for a started run (all hex; the client never derives an id). */
 export interface StartedRun {
   instanceId: string;
   terminalMoteId: string;
+  /** The resolved recipe identity — the PR-2.1 fingerprint→handle naming join. */
+  recipeFingerprint: string;
 }
 
 export function useInvoke() {
@@ -29,7 +31,11 @@ export function useInvoke() {
         throw new Error("not connected");
       }
       const run = (await client.invoke(handle, args)) as Run;
-      return { instanceId: run.instanceId, terminalMoteId: run.terminalMoteId };
+      return {
+        instanceId: run.instanceId,
+        terminalMoteId: run.terminalMoteId,
+        recipeFingerprint: run.recipeFingerprint,
+      };
     },
   });
 }

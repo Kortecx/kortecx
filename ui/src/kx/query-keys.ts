@@ -15,6 +15,8 @@ export const queryKeys = {
   runs: (endpoint: string, limit: number) => ["kx", endpoint, "runs", limit] as const,
   /** The invocable recipe catalog (`ListRecipes`). */
   recipes: (endpoint: string) => ["kx", endpoint, "recipes"] as const,
+  /** The fingerprint→handle naming map (`ListRecipes` summaries, PR-2.1). */
+  recipeNames: (endpoint: string) => ["kx", endpoint, "recipe-names"] as const,
   /** One recipe's free-param form (`GetRecipeForm`), scoped by handle. */
   recipeForm: (endpoint: string, handle: string) =>
     ["kx", endpoint, "recipe-form", handle] as const,

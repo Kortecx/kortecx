@@ -25,6 +25,37 @@ export function useRecipes() {
   });
 }
 
+/**
+ * The fingerprint→handle naming map (PR-2.1): durable `RunSummary` rows carry
+ * only a `recipeFingerprint`, so the Workflows list joins it here to label runs
+ * by their recipe handle. Tolerant: a gateway predating the field (or without
+ * the catalog) yields an EMPTY map — rows degrade to hex ids, never an error.
+ */
+export function useRecipeNames() {
+  const { client, endpoint, status } = useConnection();
+  return useQuery({
+    queryKey: queryKeys.recipeNames(endpoint),
+    enabled: status === "connected" && client !== null,
+    queryFn: async (): Promise<Record<string, string>> => {
+      if (!client) {
+        throw new Error("not connected");
+      }
+      try {
+        const summaries = await client.listRecipeSummaries();
+        const map: Record<string, string> = {};
+        for (const s of summaries) {
+          if (s.recipeFingerprint !== "") {
+            map[s.recipeFingerprint] = s.handle;
+          }
+        }
+        return map;
+      } catch {
+        return {}; // not wired / old gateway — unlabeled rows are honest
+      }
+    },
+  });
+}
+
 export function useRecipeForm(handle: string | undefined) {
   const { client, endpoint, status } = useConnection();
   return useQuery({

@@ -1,37 +1,37 @@
 import { useNavigate } from "@tanstack/react-router";
 import { m } from "framer-motion";
-import { type CSSProperties, type FormEvent, useState } from "react";
-import { fadeUp, hoverLiftLarge, stagger } from "../../app/motion";
+import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { rowEntrance } from "../../app/motion";
 import { toUiError } from "../../kx/errors";
 import { useInvoke } from "../../kx/use-invoke";
 import { useRecipeForm, useRecipes } from "../../kx/use-recipes";
 import { useRuns } from "../../kx/use-runs";
 import { EmptyState } from "../EmptyState";
 import { ErrorNotice } from "../ErrorNotice";
+import { CodeViewer } from "../editor/CodeViewer";
 import { JsonEditor } from "../editor/JsonEditor";
 import { RecipeForm } from "../recipes/RecipeForm";
 
 const FALLBACK_HANDLE = "kx/recipes/echo";
 const FALLBACK_ARGS = '{\n  "topic": "hello"\n}';
 
-/** The tile's top accent stripe, keyed by the blueprint category in the handle. */
-function stripeColorFor(handle: string): string {
-  if (handle.includes("echo")) return "var(--primary)";
-  if (handle.includes("plan")) return "var(--info)";
-  if (handle.includes("react")) return "var(--violet)";
-  if (handle.includes("exec")) return "var(--teal)";
-  return "var(--primary)";
-}
-
 /**
- * The Blueprint catalog + submit (display name for the frozen `recipe` wire — the
- * RPCs stay `ListRecipes`/`GetRecipeForm`, handles stay `kx/recipes/*`). When the
- * gateway wires the catalog (UI-2), we list the invocable handles and render each
- * blueprint's GENERATED free-param form. When it does not (an older gateway →
- * UNIMPLEMENTED), we fall back to the manual handle + JSON-args form. Either way,
- * submitting records the run in the session history and routes to the live DAG.
+ * The Blueprint catalog + submit (display name for the frozen `recipe` wire).
+ * PR-2.1: the catalog is a TABLE — one blueprint per row with per-row controls
+ * (Run → the form below; View → the contract in a read-only Monaco popup) —
+ * and the route accepts `?handle=&args=` to land with a prior run's inputs
+ * PREFILLED (the clone-lite flow from Workflows). Sharing across parties is a
+ * cloud capability (D129) — no fake control here.
  */
-export function RecipesSection() {
+export function RecipesSection({
+  initialHandle,
+  initialArgs,
+}: {
+  /** Preselect this blueprint (the `?handle=` search param). */
+  initialHandle?: string;
+  /** Prefill the form with these args (JSON text — the `?args=` search param). */
+  initialArgs?: string;
+}) {
   const navigate = useNavigate();
   const { add } = useRuns();
   const invoke = useInvoke();
@@ -41,13 +41,15 @@ export function RecipesSection() {
     invoke.mutate(
       { handle, args },
       {
-        onSuccess: ({ instanceId, terminalMoteId }) => {
+        onSuccess: ({ instanceId, terminalMoteId, recipeFingerprint }) => {
           add({
             instanceId,
             terminalMoteId,
-            recipeFingerprint: null,
+            recipeFingerprint,
             handle,
             startedAt: Date.now(),
+            // PR-2.1: keep the args so the Workflows row can Run-again/Clone.
+            args: JSON.stringify(args),
           });
           navigate({
             to: "/workflows/$instanceId",
@@ -72,7 +74,13 @@ export function RecipesSection() {
       {recipes.isLoading ? <EmptyState title="Loading blueprints…" /> : null}
 
       {recipes.data ? (
-        <RecipeCatalog handles={recipes.data} pending={invoke.isPending} onRun={start} />
+        <RecipeTable
+          handles={recipes.data}
+          pending={invoke.isPending}
+          onRun={start}
+          initialHandle={initialHandle}
+          initialArgs={initialArgs}
+        />
       ) : null}
 
       {catalogUnavailable || (recipes.isError && !recipes.data) ? (
@@ -84,19 +92,50 @@ export function RecipesSection() {
   );
 }
 
-/** The catalog-driven path: a blueprint picker + the selected blueprint's generated form. */
-function RecipeCatalog({
+/** Parse the prefill args JSON (fail-closed: bad text prefills nothing). */
+function parsePrefill(argsText: string | undefined): Record<string, unknown> | undefined {
+  if (!argsText) {
+    return undefined;
+  }
+  try {
+    const parsed: unknown = JSON.parse(argsText);
+    if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    /* ignore — the form starts empty */
+  }
+  return undefined;
+}
+
+/** The catalog table: one blueprint per row + per-row Run/View controls. */
+function RecipeTable({
   handles,
   pending,
   onRun,
+  initialHandle,
+  initialArgs,
 }: {
   handles: string[];
   pending: boolean;
   onRun: (handle: string, args: Record<string, unknown>) => void;
+  initialHandle?: string;
+  initialArgs?: string;
 }) {
-  const [selected, setSelected] = useState(() => handles[0] ?? FALLBACK_HANDLE);
+  const [selected, setSelected] = useState(() =>
+    initialHandle && handles.includes(initialHandle)
+      ? initialHandle
+      : (handles[0] ?? FALLBACK_HANDLE),
+  );
   const handle = handles.includes(selected) ? selected : (handles[0] ?? FALLBACK_HANDLE);
   const form = useRecipeForm(handle);
+  const [viewing, setViewing] = useState<string | null>(null);
+  const formRef = useRef<HTMLDivElement | null>(null);
+  // Only the clone-lite landing's TARGET blueprint gets the prefill.
+  const prefill = useMemo(
+    () => (handle === initialHandle ? parsePrefill(initialArgs) : undefined),
+    [handle, initialHandle, initialArgs],
+  );
 
   if (handles.length === 0) {
     return (
@@ -109,45 +148,159 @@ function RecipeCatalog({
 
   return (
     <div data-testid="recipe-catalog">
-      <m.div
-        className="recipe-picker"
-        role="radiogroup"
-        aria-label="Blueprint"
-        variants={stagger()}
-        initial="hidden"
-        animate="show"
-      >
-        {handles.map((h) => (
-          <m.div
-            key={h}
-            className={`glow-card glow-card--stripe card-hover recipe-tile${
-              h === handle ? " recipe-tile--active" : ""
-            }`}
-            style={{ "--stripe": stripeColorFor(h) } as CSSProperties}
-            variants={fadeUp}
-            {...hoverLiftLarge}
-          >
-            <button
-              type="button"
-              data-testid={`recipe-pick-${h}`}
-              className={`recipe-chip${h === handle ? " recipe-chip--active" : ""}`}
-              aria-pressed={h === handle}
-              onClick={() => setSelected(h)}
+      <table className="recipe-table" data-testid="recipe-table">
+        <thead>
+          <tr>
+            <th scope="col">Blueprint</th>
+            <th scope="col" className="recipe-table__actions">
+              Actions
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {handles.map((h, i) => (
+            <m.tr
+              key={h}
+              className={h === handle ? "recipe-row recipe-row--active" : "recipe-row"}
+              data-testid={`recipe-row-${h}`}
+              {...rowEntrance(i)}
             >
-              {h}
-            </button>
-          </m.div>
-        ))}
-      </m.div>
+              <td>
+                <button
+                  type="button"
+                  data-testid={`recipe-pick-${h}`}
+                  className={`recipe-chip${h === handle ? " recipe-chip--active" : ""}`}
+                  aria-pressed={h === handle}
+                  onClick={() => setSelected(h)}
+                >
+                  {h}
+                </button>
+              </td>
+              <td className="recipe-table__actions">
+                <button
+                  type="button"
+                  className="linkbtn"
+                  data-testid={`recipe-run-${h}`}
+                  title="Open this blueprint's input form below"
+                  onClick={() => {
+                    setSelected(h);
+                    formRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+                  }}
+                >
+                  Run
+                </button>
+                <button
+                  type="button"
+                  className="linkbtn"
+                  data-testid={`recipe-view-${h}`}
+                  title="View the blueprint's contract (inputs + types)"
+                  onClick={() => setViewing(h)}
+                >
+                  View
+                </button>
+              </td>
+            </m.tr>
+          ))}
+        </tbody>
+      </table>
 
-      {form.isLoading ? <EmptyState title="Loading form…" /> : null}
-      {form.error ? (
-        <ErrorNotice error={toUiError(form.error)} onRetry={() => void form.refetch()} />
-      ) : null}
-      {form.data ? (
-        <RecipeForm form={form.data} pending={pending} onSubmit={(args) => onRun(handle, args)} />
-      ) : null}
+      <div ref={formRef}>
+        {form.isLoading ? <EmptyState title="Loading form…" /> : null}
+        {form.error ? (
+          <ErrorNotice error={toUiError(form.error)} onRetry={() => void form.refetch()} />
+        ) : null}
+        {form.data ? (
+          <RecipeForm
+            // Re-key per handle+prefill so a clone-landing remount prefills.
+            key={`${handle}:${prefill ? "prefilled" : "blank"}`}
+            form={form.data}
+            pending={pending}
+            onSubmit={(args) => onRun(handle, args)}
+            initial={prefill}
+          />
+        ) : null}
+      </div>
+
+      {viewing ? <BlueprintViewer handle={viewing} onClose={() => setViewing(null)} /> : null}
     </div>
+  );
+}
+
+/**
+ * The blueprint-contract popup (PR-2.1): the handle + its full free-param
+ * contract rendered as JSON in the read-only Monaco viewer (D141.2). Pure
+ * display — the contract is exactly what `GetRecipeForm` declares.
+ */
+function BlueprintViewer({ handle, onClose }: { handle: string; onClose: () => void }) {
+  const form = useRecipeForm(handle);
+
+  // Close on Escape (the drawer convention).
+  useEffect(() => {
+    function onKey(e: KeyboardEvent): void {
+      if (e.key === "Escape") {
+        onClose();
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const contract = form.data
+    ? JSON.stringify(
+        {
+          handle: form.data.handle,
+          inputs: form.data.fields.map((f) => ({
+            name: f.name,
+            type: f.type,
+            required: f.required,
+            ...(f.maxLen ? { max_len: f.maxLen } : {}),
+            ...(f.allowed.length > 0 ? { allowed: f.allowed } : {}),
+          })),
+        },
+        null,
+        2,
+      )
+    : null;
+
+  return (
+    <>
+      <button
+        type="button"
+        className="node-drawer__scrim"
+        aria-label="Close blueprint view"
+        onClick={onClose}
+      />
+      <m.aside
+        className="node-drawer"
+        data-testid="blueprint-viewer"
+        // biome-ignore lint/a11y/useSemanticElements: a native <dialog> can't ride framer-motion animations; non-modal side panel semantics declared via role+aria-label (the NodeDetailDrawer precedent)
+        role="dialog"
+        aria-label={`Blueprint ${handle}`}
+        initial={{ x: 24, opacity: 0 }}
+        animate={{ x: 0, opacity: 1 }}
+        transition={{ type: "spring", stiffness: 420, damping: 34 }}
+      >
+        <div className="node-drawer__head">
+          <code className="mono node-drawer__id" title={handle}>
+            {handle}
+          </code>
+          <button type="button" className="linkbtn" onClick={onClose} aria-label="Close">
+            ✕
+          </button>
+        </div>
+        {form.isLoading ? <EmptyState title="Loading contract…" /> : null}
+        {form.error ? <ErrorNotice error={toUiError(form.error)} /> : null}
+        {contract ? (
+          <CodeViewer
+            value={contract}
+            language="json"
+            testId="blueprint-contract"
+            ariaLabel={`Blueprint contract ${handle}`}
+            height={Math.min(420, Math.max(140, contract.split("\n").length * 19 + 24))}
+          />
+        ) : null}
+      </m.aside>
+    </>
   );
 }
 
