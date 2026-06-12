@@ -33,10 +33,12 @@ usage: kx <command> [args]
     kx invoke <handle> --args <json> [--args-file <path>] [--wait] [--timeout-secs N] [--out <file>]
     kx submit --demo [--wait] [--timeout-secs N] [--out <file>]
     kx projection --instance <hex16> [--at-seq N]
-    kx content --ref <hex32> --instance <hex16> [--out <file>]
+    kx content get --ref <hex32> [--instance <hex16>] [--out <file>]   (no --instance = the uploads scope)
+    kx content put <file> [--media-type <mime>] [--filename <name>]
     kx events --instance <hex16> [--since N] [--follow]
     kx signatures list | get --id <hex32> | register --manifest-file <path>
     kx tools list | score --intent <text> --tool <id>@<ver>... [--language-tag <t>]... [--tolerance-threshold-bp N]
+    kx models list                              (display-only model discovery)
     kx health                                   (grpc.health.v1 liveness; exit 0 iff SERVING)
 
     --endpoint defaults to http://127.0.0.1:50151
@@ -75,6 +77,8 @@ pub enum Cli {
     Signatures(verbs::signatures::SignaturesArgs),
     /// Advisory toolscout RPCs (tool discovery + TaskBundle preview).
     Tools(verbs::tools::ToolsArgs),
+    /// Model discovery (Batch A `ListModels`; display-only).
+    Models(verbs::models::ModelsArgs),
     /// Liveness/readiness probe (grpc.health.v1).
     Health(verbs::health::HealthArgs),
 }
@@ -117,6 +121,7 @@ impl Cli {
             Some("events") => Ok(Cli::Events(verbs::events::parse(args)?)),
             Some("signatures") => Ok(Cli::Signatures(verbs::signatures::parse(args)?)),
             Some("tools") => Ok(Cli::Tools(verbs::tools::parse(args)?)),
+            Some("models") => Ok(Cli::Models(verbs::models::parse(args)?)),
             Some("health") => Ok(Cli::Health(verbs::health::parse(args)?)),
             Some(other) => Err(CliError::Usage(format!(
                 "unknown command {other:?} (try `kx --help`)"
@@ -176,6 +181,7 @@ async fn dispatch(cli: Cli) -> Result<(), CliError> {
         Cli::Events(a) => verbs::events::execute(a).await,
         Cli::Signatures(a) => verbs::signatures::execute(a).await,
         Cli::Tools(a) => verbs::tools::execute(a).await,
+        Cli::Models(a) => verbs::models::execute(a).await,
         Cli::Health(a) => verbs::health::execute(a).await,
     }
 }
@@ -310,9 +316,16 @@ kx projection --instance <hex16> [--at-seq N] [client flags]
   Render a run as a DAG: each Mote's state, nd-class, result ref, and committed seq."
             .into(),
         "content" => "\
-kx content --ref <hex32> --instance <hex16> [--out <file>] [client flags]
-  Fetch a committed result. Writes RAW bytes to stdout (binary-safe, no newline);
-  use --out <file> to save, or --json for a hex-encoded object (terminal-safe)."
+kx content get --ref <hex32> [--instance <hex16>] [--out <file>] [client flags]
+kx content put <file> [--media-type <mime>] [--filename <name>] [client flags]
+  get: fetch a blob. With --instance the run scope (the run's committed result
+  refs); WITHOUT it the UPLOADS scope (refs you uploaded). Writes RAW bytes to
+  stdout (binary-safe, no newline); --out <file> saves; --json hex-encodes.
+  The original flag-form `kx content --ref … --instance …` still works.
+  put: upload a file to the gateway's content store (a content-store write,
+  never a journal write). Prints the SERVER-derived blake3 ref + whether the
+  blob already existed; --media-type/--filename are advisory audit fields.
+  The server caps the payload fail-closed (kx serve --content-max-bytes)."
             .into(),
         "events" => "\
 kx events --instance <hex16> [--since N] [--follow] [client flags]
@@ -334,6 +347,13 @@ kx tools score --intent <text> --tool <id>@<ver> [--tool <id>@<ver>]... [--langu
   dry-runs the real lowering gate (verdict: would-lower / unavailable / refused).
   ADVISORY ONLY (SN-8): scores and the verdict NEVER authorize a tool — the
   exact (name, version) grant gate stays the broker's. No warrant is sent."
+            .into(),
+        "models" => "\
+kx models list [client flags]
+  Display-only model discovery (Batch A): the models the connected gateway
+  serves (id, modalities, context window, serving flag). An FFI-free serve
+  lists nothing. SN-8: listing a model never routes one — model selection
+  stays a recipe ENUM free-param validated server-side at binding."
             .into(),
         "health" => "\
 kx health [client flags]
