@@ -561,11 +561,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     // Typed as `Arc<dyn JournalReader>` so the SAME read-only handle backs both the
     // gateway read-fold and the R5 WebSocket bridge (cheap clone, one fold source).
     let reader: Arc<dyn JournalReader> = Arc::new(ReadOnly::new(read_journal));
-    let submitter = Arc::new(
-        TonicCoordinatorSubmitter::connect(coord_endpoint.clone())
-            .await
-            .map_err(|e| GatewayError::Coordinator(e.to_string()))?,
-    );
+    let submitter = Arc::new(connect_submitter_with_retry(&coord_endpoint).await?);
 
     // (3b) Durable catalog directory (R2a/R2b): `--catalog-dir` (default:
     //      alongside the journal), holding the signature registry + recipe ledgers
@@ -955,6 +951,28 @@ async fn start_impl(_cfg: GatewayConfig) -> Result<RunningGateway, GatewayError>
          Rebuild with default features."
             .into(),
     ))
+}
+
+/// Dial the EMBEDDED coordinator with a bounded retry (≤ 5 s of 10 ms
+/// attempts). Its loopback listener was spawned moments ago in this same
+/// process; on a contended host the accept loop can lag the gateway's eager
+/// single dial — the CI-observed `committed_run_survives_a_restart` race. A
+/// real failure (wrong port, dead task) still surfaces, just bounded-late.
+#[cfg(feature = "embedded-worker")]
+async fn connect_submitter_with_retry(
+    endpoint: &str,
+) -> Result<TonicCoordinatorSubmitter, GatewayError> {
+    let mut last = String::from("never attempted");
+    for _ in 0..500 {
+        match TonicCoordinatorSubmitter::connect(endpoint.to_string()).await {
+            Ok(submitter) => return Ok(submitter),
+            Err(e) => last = e.to_string(),
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    Err(GatewayError::Coordinator(format!(
+        "embedded coordinator never accepted at {endpoint}: {last}"
+    )))
 }
 
 /// Resolve (creating if absent) the durable catalog directory: `--catalog-dir`
