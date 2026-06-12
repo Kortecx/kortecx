@@ -13,7 +13,8 @@
 use std::path::PathBuf;
 
 use kx_profile::{
-    capture_git_sha, percentile, react_spikes, spikes, Environment, Metric, ProfileError, Report,
+    capture_git_sha, content_spikes, percentile, react_spikes, spikes, Environment, Metric,
+    ProfileError, Report,
 };
 
 #[tokio::main]
@@ -95,6 +96,30 @@ async fn run() -> Result<(), ProfileError> {
             "ms",
         ));
     }
+
+    // Batch A — the content path: a 1 MiB client upload (the first client
+    // write path) + the full 64-ref × 4 KiB batch read (the N+1 collapse).
+    let content = content_spikes::measure(args.iterations).await?;
+    metrics.push(Metric::spike(
+        "put_content_1mib_p50",
+        percentile(&content.put_1mib_ms, 50),
+        "ms",
+    ));
+    metrics.push(Metric::spike(
+        "put_content_1mib_p95",
+        percentile(&content.put_1mib_ms, 95),
+        "ms",
+    ));
+    metrics.push(Metric::spike(
+        "content_batch_64x4k_p50",
+        percentile(&content.batch_64x4k_ms, 50),
+        "ms",
+    ));
+    metrics.push(Metric::spike(
+        "content_batch_64x4k_p95",
+        percentile(&content.batch_64x4k_ms, 95),
+        "ms",
+    ));
 
     let report = Report::new(git_sha.clone(), env, metrics);
     let json = report
