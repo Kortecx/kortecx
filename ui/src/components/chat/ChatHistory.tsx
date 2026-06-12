@@ -46,8 +46,13 @@ export function ChatHistory({
 
   return (
     <>
-      {/* biome-ignore lint/a11y/noStaticElementInteractions: scrim click-to-close, with Escape as the keyboard path */}
-      <div className="chat-history__backdrop" onClick={onClose} data-testid="chat-history-close" />
+      <button
+        type="button"
+        className="chat-history__backdrop"
+        aria-label="Close chat history"
+        onClick={onClose}
+        data-testid="chat-history-close"
+      />
       <aside className="chat-history" data-testid="chat-history" aria-label="Chat history">
         <div className="chat-history__head">
           <h2>Chat history</h2>
