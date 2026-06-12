@@ -8,6 +8,12 @@ duplicated. Sync and async generators are provided.
 
 An optional WebSocket client (`pip install 'kortecx[ws]'`) consumes the same live
 tail over the R5 browser/firewall-friendly JSON bridge.
+
+The Batch C GLOBAL twins (``stream_all_deltas`` / ``ws_stream_all_deltas``)
+consume the cross-run tail (``StreamAllEvents`` / the WS ``/v1/events/all``
+channel): every run on the node over one stream, each delta stamped with its
+registration-watermark ``instance_id`` plus the ``run_registered`` kind the
+per-run cursor never surfaces.
 """
 
 from __future__ import annotations
@@ -34,6 +40,31 @@ def stream_deltas(stub, md, instance_id: bytes, since: int, follow: bool) -> Ite
                     view = types.Delta.from_proto(d)
                     if view is not None:
                         yield view
+                cursor = frame.next_seq
+                if not follow and frame.journal_boundary:
+                    return
+        except grpc.RpcError as e:
+            if follow and e.code() == grpc.StatusCode.RESOURCE_EXHAUSTED:
+                continue  # CatchupRequired: resume from the last cursor
+            raise from_rpc_error(e) from e
+        if not follow:
+            return
+
+
+def stream_all_deltas(stub, md, since: int, follow: bool) -> Iterator[types.GlobalDelta]:
+    """Yield the cross-run GLOBAL event tail (one snapshot, or the live tail with
+    ``follow``) — Batch C ``StreamAllEvents``. Same cursor semantics as the
+    per-run stream, incl. the ``RESOURCE_EXHAUSTED`` resume on a slow-consumer
+    drop."""
+    cursor = since
+    while True:
+        req = _g.StreamAllEventsRequest(since_seq=cursor)
+        try:
+            for frame in stub.StreamAllEvents(req, metadata=md):
+                for d in frame.deltas:
+                    # Every delta surfaces — an unrecognized kind arrives as
+                    # ``"unknown"`` (the global-tail contract; TS/CLI parity).
+                    yield types.GlobalDelta.from_proto(d)
                 cursor = frame.next_seq
                 if not follow and frame.journal_boundary:
                     return
@@ -72,24 +103,56 @@ async def astream_deltas(
             return
 
 
+async def astream_all_deltas(
+    stub, md, since: int, follow: bool
+) -> AsyncIterator[types.GlobalDelta]:
+    cursor = since
+    while True:
+        req = _g.StreamAllEventsRequest(since_seq=cursor)
+        try:
+            call = stub.StreamAllEvents(req, metadata=md)
+            async for frame in call:
+                for d in frame.deltas:
+                    # Every delta surfaces — an unrecognized kind arrives as
+                    # ``"unknown"`` (the global-tail contract; TS/CLI parity).
+                    yield types.GlobalDelta.from_proto(d)
+                cursor = frame.next_seq
+                if not follow and frame.journal_boundary:
+                    return
+        except grpc.RpcError as e:
+            if follow and e.code() == grpc.StatusCode.RESOURCE_EXHAUSTED:
+                continue
+            raise from_rpc_error(e) from e
+        if not follow:
+            return
+
+
 # --- optional WebSocket bridge (R5) ------------------------------------------
 
 
-def _ws_url(grpc_endpoint: str, ws_endpoint: Optional[str], instance_hex: str, since: int) -> str:
-    """Derive the ``/v1/events`` WS URL from an explicit ws endpoint, or by mapping
-    the gRPC endpoint's scheme/host to the conventional WS port (50152)."""
+def _ws_base(grpc_endpoint: str, ws_endpoint: Optional[str]) -> str:
+    """The WS bridge base URL: an explicit ws endpoint, or the gRPC endpoint's
+    scheme/host mapped to the conventional WS port (50152)."""
     if ws_endpoint:
-        base = ws_endpoint.rstrip("/")
-    else:
-        rest = grpc_endpoint
-        scheme = "wss"
-        if rest.startswith("http://"):
-            scheme, rest = "ws", rest[len("http://") :]
-        elif rest.startswith("https://"):
-            scheme, rest = "wss", rest[len("https://") :]
-        host = rest.split("/")[0].rsplit(":", 1)[0]
-        base = f"{scheme}://{host}:50152"
-    return f"{base}/v1/events?instance={instance_hex}&since={since}"
+        return ws_endpoint.rstrip("/")
+    rest = grpc_endpoint
+    scheme = "wss"
+    if rest.startswith("http://"):
+        scheme, rest = "ws", rest[len("http://") :]
+    elif rest.startswith("https://"):
+        scheme, rest = "wss", rest[len("https://") :]
+    host = rest.split("/")[0].rsplit(":", 1)[0]
+    return f"{scheme}://{host}:50152"
+
+
+def _ws_url(grpc_endpoint: str, ws_endpoint: Optional[str], instance_hex: str, since: int) -> str:
+    """Derive the per-run ``/v1/events`` WS URL."""
+    return f"{_ws_base(grpc_endpoint, ws_endpoint)}/v1/events?instance={instance_hex}&since={since}"
+
+
+def _ws_all_url(grpc_endpoint: str, ws_endpoint: Optional[str], since: int) -> str:
+    """Derive the GLOBAL ``/v1/events/all`` WS URL (Batch C — no instance param)."""
+    return f"{_ws_base(grpc_endpoint, ws_endpoint)}/v1/events/all?since={since}"
 
 
 def _ws_delta(obj: dict) -> Optional[types.Delta]:
@@ -143,3 +206,78 @@ def ws_stream_deltas(
                 view = _ws_delta(d)
                 if view is not None:
                     yield view
+
+
+def _ws_global_delta(obj: dict) -> types.GlobalDelta:
+    """Map one global WS JSON delta (``type`` discriminant, hex ids, per-delta
+    ``instance_id`` attribution) to a :class:`GlobalDelta`. An unknown/future
+    ``type`` SURFACES as ``"unknown"`` (never dropped — the global-tail
+    contract, matching the TS parser + the CLI renderer; the per-run parser's
+    silent skip is deliberately NOT mirrored here)."""
+    kind = obj.get("type")
+    seq = int(obj.get("seq", 0))
+    inst = obj.get("instance_id") or ""  # "" before any registration
+    if kind == "run_registered":
+        return types.GlobalDelta(
+            seq=seq,
+            kind="run_registered",
+            instance_id=inst,
+            recipe_fingerprint=obj.get("recipe_fingerprint"),
+            registered_unix_ms=obj.get("registered_unix_ms"),
+        )
+    if kind == "committed":
+        return types.GlobalDelta(
+            seq=seq,
+            kind="committed",
+            instance_id=inst,
+            mote_id=obj.get("mote_id"),
+            result_ref=obj.get("result_ref"),
+            nd_class=obj.get("nd_class"),
+        )
+    if kind == "failed":
+        return types.GlobalDelta(
+            seq=seq,
+            kind="failed",
+            instance_id=inst,
+            mote_id=obj.get("mote_id"),
+            reason_class=obj.get("reason_class"),
+        )
+    if kind == "repudiated":
+        return types.GlobalDelta(
+            seq=seq,
+            kind="repudiated",
+            instance_id=inst,
+            target_mote_id=obj.get("target_mote_id"),
+            target_committed_seq=obj.get("target_committed_seq"),
+        )
+    if kind == "effect_staged":
+        return types.GlobalDelta(
+            seq=seq, kind="effect_staged", instance_id=inst, mote_id=obj.get("mote_id")
+        )
+    return types.GlobalDelta(seq=seq, kind="unknown", instance_id=inst)
+
+
+def ws_stream_all_deltas(
+    grpc_endpoint: str,
+    *,
+    since: int = 0,
+    token: Optional[str] = None,
+    ws_endpoint: Optional[str] = None,
+) -> Iterator[types.GlobalDelta]:
+    """Consume the GLOBAL live tail over the WS bridge (requires ``kortecx[ws]``)."""
+    import json
+
+    try:
+        from websockets.sync.client import connect
+    except Exception as e:  # pragma: no cover
+        raise ImportError(
+            "the WebSocket events client needs the 'ws' extra: pip install 'kortecx[ws]'"
+        ) from e
+
+    url = _ws_all_url(grpc_endpoint, ws_endpoint, since)
+    headers = {"Authorization": f"Bearer {token}"} if token else None
+    with connect(url, additional_headers=headers) as ws:
+        for message in ws:
+            frame = json.loads(message)
+            for d in frame.get("deltas", []):
+                yield _ws_global_delta(d)

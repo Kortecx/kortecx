@@ -211,6 +211,100 @@ class Frame:
 
 
 @dataclass(frozen=True)
+class GlobalDelta:
+    """One cross-run event delta from the Batch C global tail (``StreamAllEvents``).
+
+    ``kind`` is the stable lowercase discriminant — the four per-run kinds plus
+    ``run_registered`` (a run came into existence; the per-run cursor never
+    surfaces it). ``instance_id`` is the registration-WATERMARK attribution
+    (display/observability only, never identity) — ``""`` before any run
+    registers. Fields not relevant to the kind are ``None``. Mirrors the WS
+    ``/v1/events/all`` JSON shape.
+    """
+
+    seq: int
+    kind: str
+    instance_id: str = ""  # hex; "" before any registration (watermark attribution)
+    mote_id: Optional[str] = None
+    result_ref: Optional[str] = None
+    nd_class: Optional[int] = None
+    reason_class: Optional[int] = None
+    target_mote_id: Optional[str] = None
+    target_committed_seq: Optional[int] = None
+    recipe_fingerprint: Optional[str] = None
+    registered_unix_ms: Optional[int] = None
+
+    @classmethod
+    def from_proto(cls, d: "_g.GlobalEventDelta") -> "GlobalDelta":
+        """Build a view; a delta with no recognized kind becomes ``"unknown"``
+        (never ``None``, never a throw — the global-tail contract: a future
+        delta kind SURFACES on every SDK, exactly like the TS/CLI surfaces,
+        deliberately diverging from the per-run ``Delta`` skip)."""
+        which = d.WhichOneof("kind")
+        inst = hexids.encode(d.instance_id)
+        if which == "committed":
+            c = d.committed
+            return cls(
+                seq=d.seq,
+                kind="committed",
+                instance_id=inst,
+                mote_id=hexids.encode(c.mote_id),
+                result_ref=hexids.encode(c.result_ref),
+                nd_class=c.nd_class,
+            )
+        if which == "failed":
+            f = d.failed
+            return cls(
+                seq=d.seq,
+                kind="failed",
+                instance_id=inst,
+                mote_id=hexids.encode(f.mote_id),
+                reason_class=f.reason_class,
+            )
+        if which == "repudiated":
+            r = d.repudiated
+            return cls(
+                seq=d.seq,
+                kind="repudiated",
+                instance_id=inst,
+                target_mote_id=hexids.encode(r.target_mote_id),
+                target_committed_seq=r.target_committed_seq,
+            )
+        if which == "effect_staged":
+            e = d.effect_staged
+            return cls(
+                seq=d.seq, kind="effect_staged", instance_id=inst, mote_id=hexids.encode(e.mote_id)
+            )
+        if which == "run_registered":
+            rr = d.run_registered
+            return cls(
+                seq=d.seq,
+                kind="run_registered",
+                instance_id=inst,
+                recipe_fingerprint=hexids.encode(rr.recipe_fingerprint),
+                registered_unix_ms=rr.registered_unix_ms,
+            )
+        return cls(seq=d.seq, kind="unknown", instance_id=inst)
+
+    def to_dict(self) -> dict:
+        out: dict = {"seq": self.seq, "kind": self.kind, "instance_id": self.instance_id}
+        for key in (
+            "mote_id",
+            "result_ref",
+            "nd_class",
+            "reason_class",
+            "target_mote_id",
+            "target_committed_seq",
+            "recipe_fingerprint",
+            "registered_unix_ms",
+        ):
+            val = getattr(self, key)
+            if val is not None:
+                out[key] = val
+        return out
+
+
+@dataclass(frozen=True)
 class SignatureSummary:
     """One registered task signature (id + name)."""
 

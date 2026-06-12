@@ -79,6 +79,7 @@ export function ActivityDrawer({ open, onClose }: { open: boolean; onClose: () =
                     setAtSeq(undefined);
                   }}
                   onAtSeq={setAtSeq}
+                  onNavigate={onClose}
                 />
               </Suspense>
             </div>

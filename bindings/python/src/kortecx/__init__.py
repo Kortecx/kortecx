@@ -51,6 +51,7 @@ from .replan import ReplanRound, ReplanRoundPage
 from .run import AsyncRun, Result, Run
 from .runs import RunPage, RunSummary
 from .teams import TeamMember, TeamMembers, TeamSummary, WarrantView
+from .telemetry import MoteTelemetryRow, TelemetryPage
 from .toolscout import (
     BundleScore,
     BundleSpec,
@@ -60,7 +61,7 @@ from .toolscout import (
     ToolManifest,
     lower_verdict_name,
 )
-from .types import Delta, Frame, MoteView, Projection, SignatureSummary, state_name
+from .types import Delta, Frame, GlobalDelta, MoteView, Projection, SignatureSummary, state_name
 from .wait import WaitOutcome, WaitState
 
 __version__ = "0.1.0"
@@ -118,6 +119,11 @@ __all__ = [
     "MoteConfigItem",
     "nd_class_name",
     "effect_pattern_name",
+    # Batch C: the cross-run global event tail + mote execution telemetry
+    # (monitoring; audit/display only — never truth, never identity)
+    "GlobalDelta",
+    "MoteTelemetryRow",
+    "TelemetryPage",
     "DatasetHit",
     "IngestResult",
     "IngestDocument",

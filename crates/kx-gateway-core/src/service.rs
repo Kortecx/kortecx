@@ -437,6 +437,50 @@ impl EventTailer for SnapshotTailer {
     }
 }
 
+/// The boxed server-streaming type the `StreamAllEvents` RPC returns (Batch C).
+pub type GlobalEventStream =
+    Pin<Box<dyn Stream<Item = Result<proto::GlobalEventFrame, Status>> + Send + 'static>>;
+
+/// The GLOBAL event-tailing seam behind `StreamAllEvents` (Batch C — the
+/// [`EventTailer`] twin, run-unscoped). The default [`SnapshotGlobalTailer`]
+/// emits `(since_seq, head]` once and ends; the host injects a live tailer
+/// (`kx-gateway`'s `GlobalLiveTailer`) that keeps the stream open. NO ownership
+/// gate by design: the surface is operator-global on single-node OSS (the host
+/// auth interceptor is the gate; CLOUD must party-scope or deny — the proto
+/// flag on `StreamAllEventsRequest`).
+pub trait GlobalEventTailer: Send + Sync {
+    /// Open the global event stream from `since_seq`. `reader` is owned (`Arc`)
+    /// so a tailer that spawns a poller can outlive the handler call.
+    ///
+    /// # Errors
+    /// `internal` on a read/fold failure.
+    // Same `result_large_err` rationale as `EventTailer::stream`.
+    #[allow(clippy::result_large_err)]
+    fn stream_all(
+        &self,
+        reader: Arc<dyn JournalReader>,
+        since_seq: u64,
+    ) -> Result<GlobalEventStream, Status>;
+}
+
+/// The default, dependency-free global tailer: emit `(since_seq, head]` once,
+/// then END (snapshot-to-head — the [`SnapshotTailer`] twin). A live tail is
+/// opt-in via [`GatewayService::with_global_event_tailer`].
+#[derive(Clone, Copy, Debug, Default)]
+pub struct SnapshotGlobalTailer;
+
+impl GlobalEventTailer for SnapshotGlobalTailer {
+    #[allow(clippy::result_large_err)] // see the trait method.
+    fn stream_all(
+        &self,
+        reader: Arc<dyn JournalReader>,
+        since_seq: u64,
+    ) -> Result<GlobalEventStream, Status> {
+        let frames = events::build_global_frames(reader.as_ref(), since_seq)?;
+        Ok(Box::pin(tokio_stream::iter(frames.into_iter().map(Ok))))
+    }
+}
+
 /// The backend behind the external `KxGateway` service: a read-only journal +
 /// content reader (the read-fold) and a [`RunSubmitter`] (the propose-proxy).
 /// Holds no writer; auth/ownership stay cloud-side (the host wraps this with
@@ -473,6 +517,15 @@ pub struct GatewayService {
     /// The `StreamEvents` tailer. Defaults to [`SnapshotTailer`]; the host injects
     /// a live tailer via [`GatewayService::with_event_tailer`].
     tailer: Arc<dyn EventTailer>,
+    /// The `StreamAllEvents` GLOBAL tailer (Batch C). Defaults to
+    /// [`SnapshotGlobalTailer`]; the host injects a live tailer via
+    /// [`GatewayService::with_global_event_tailer`].
+    global_tailer: Arc<dyn GlobalEventTailer>,
+    /// The optional telemetry-view seam (Batch C — the host injects a
+    /// `telemetry.db`-backed view of execution exhaust). `None` ⇒
+    /// `ListMoteTelemetry` returns `unimplemented`. Read-only, off-truth-path,
+    /// rebuildable-to-empty.
+    telemetry: Option<Arc<dyn crate::telemetry_view::TelemetryView>>,
     /// Whether this serve build can EVALUATE a native deterministic critic
     /// (PR-2c-3 critic-live, H5). The verdict arm lives in the inference-build
     /// executor; on a serve that lacks it, a critic Mote would commit echo bytes and
@@ -561,6 +614,8 @@ impl GatewayService {
             datasets: None,
             capture: None,
             tailer: Arc::new(SnapshotTailer),
+            global_tailer: Arc::new(SnapshotGlobalTailer),
+            telemetry: None,
             critics_supported: false,
             react_supported: false,
             registered_tools: std::collections::BTreeSet::new(),
@@ -686,6 +741,30 @@ impl GatewayService {
     #[must_use]
     pub fn with_event_tailer(mut self, tailer: Arc<dyn EventTailer>) -> Self {
         self.tailer = tailer;
+        self
+    }
+
+    /// Wire a live `StreamAllEvents` GLOBAL tailer (Batch C — `kx-gateway`'s
+    /// `GlobalLiveTailer`), replacing the default snapshot-to-head
+    /// [`SnapshotGlobalTailer`]. Read-side only; it never changes the journal or
+    /// the digest. Operator-global: cloud must party-scope or deny (the proto
+    /// flag).
+    #[must_use]
+    pub fn with_global_event_tailer(mut self, global_tailer: Arc<dyn GlobalEventTailer>) -> Self {
+        self.global_tailer = global_tailer;
+        self
+    }
+
+    /// Wire the telemetry-view seam (Batch C — the host's `telemetry.db`-backed
+    /// execution-exhaust view). Enables `ListMoteTelemetry`. Read-only,
+    /// off-truth-path, rebuildable-to-empty: telemetry is host-measured exhaust,
+    /// never journaled, never identity, never a digest input.
+    #[must_use]
+    pub fn with_telemetry_view(
+        mut self,
+        telemetry: Arc<dyn crate::telemetry_view::TelemetryView>,
+    ) -> Self {
+        self.telemetry = Some(telemetry);
         self
     }
 
@@ -1286,6 +1365,22 @@ impl KxGateway for GatewayService {
         Ok(Response::new(stream))
     }
 
+    type StreamAllEventsStream = GlobalEventStream;
+
+    async fn stream_all_events(
+        &self,
+        request: Request<proto::StreamAllEventsRequest>,
+    ) -> Result<Response<Self::StreamAllEventsStream>, Status> {
+        let req = request.into_inner();
+        // Batch C: the GLOBAL cross-run tail. No ownership gate by design —
+        // operator-global on single-node OSS, gated solely by the host auth
+        // interceptor; CLOUD must party-scope or deny (the proto flag).
+        let stream = self
+            .global_tailer
+            .stream_all(self.reader.clone(), req.since_seq)?;
+        Ok(Response::new(stream))
+    }
+
     async fn list_signatures(
         &self,
         _request: Request<proto::ListSignaturesRequest>,
@@ -1423,6 +1518,54 @@ impl KxGateway for GatewayService {
             .collect();
         Ok(Response::new(proto::ListCaptureRecordsResponse {
             records,
+            has_more,
+        }))
+    }
+
+    async fn list_mote_telemetry(
+        &self,
+        request: Request<proto::ListMoteTelemetryRequest>,
+    ) -> Result<Response<proto::ListMoteTelemetryResponse>, Status> {
+        // Batch C: a read-only page over the host's telemetry.db execution
+        // exhaust. A serve without the sidecar wired degrades forward-compatibly
+        // to `unimplemented`.
+        let telemetry = self.telemetry.as_ref().ok_or_else(|| {
+            Status::unimplemented(
+                "ListMoteTelemetry: no telemetry view wired (telemetry.db absent)",
+            )
+        })?;
+        let req = request.into_inner();
+        let instance_id: Option<[u8; 16]> = match req.instance_id {
+            None => None,
+            Some(raw) => Some(<[u8; 16]>::try_from(raw.as_slice()).map_err(|_| {
+                Status::invalid_argument("telemetry instance_id filter must be 16 bytes")
+            })?),
+        };
+        let mote_id: Option<[u8; 32]> = match req.mote_id {
+            None => None,
+            Some(raw) => Some(<[u8; 32]>::try_from(raw.as_slice()).map_err(|_| {
+                Status::invalid_argument("telemetry mote_id filter must be 32 bytes")
+            })?),
+        };
+        // Clamp to the same page bounds the read-fold RPCs use (1..=500, default 200).
+        let page = req.limit.map_or(200usize, |l| (l as usize).clamp(1, 500));
+        let (rows, has_more) = telemetry.list(page, instance_id, mote_id, req.before_seq)?;
+        let rows = rows
+            .into_iter()
+            .map(|r| proto::MoteTelemetryRow {
+                mote_id: r.mote_id.to_vec(),
+                instance_id: r.instance_id.to_vec(),
+                wall_clock_ms: r.wall_clock_ms,
+                input_tokens: r.input_tokens,
+                output_tokens: r.output_tokens,
+                model_id: r.model_id,
+                tool_id: r.tool_id,
+                started_unix_ms: r.started_unix_ms,
+                seq: r.seq,
+            })
+            .collect();
+        Ok(Response::new(proto::ListMoteTelemetryResponse {
+            rows,
             has_more,
         }))
     }

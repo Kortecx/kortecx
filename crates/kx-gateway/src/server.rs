@@ -40,8 +40,9 @@ use {
     kx_executor::{LocalResourceManager, MoteExecutor, TestMoteExecutor},
     kx_fleet::SqliteMembershipLedger,
     kx_gateway_core::{
-        EventTailer, GatewayService, GrantView, JournalReader, MembershipView, ReadOnly,
-        RecipeBinder, RecipeCatalog, SignatureCatalog, TonicCoordinatorSubmitter, WorkflowAuthor,
+        EventTailer, GatewayService, GlobalEventTailer, GrantView, JournalReader, MembershipView,
+        ReadOnly, RecipeBinder, RecipeCatalog, SignatureCatalog, TonicCoordinatorSubmitter,
+        WorkflowAuthor,
     },
     kx_journal::SqliteJournal,
     kx_proto::proto::coordinator_server::CoordinatorServer,
@@ -458,6 +459,17 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     // (2) Embedded local worker — leases ready PURE Motes, runs them through the
     //     deterministic content-storing executor (publishes bytes into the shared
     //     store BEFORE proposing, so D55 holds), and proposes the commit.
+    //
+    // The durable catalog directory is resolved HERE (it only needs cfg) because
+    // the Batch C telemetry ledger must exist before the executor chain is
+    // composed below — its sidecar lives beside the catalog ledgers, and its
+    // sink rides the executor wrapper. Section (3b) reuses the same path.
+    let catalog_dir = resolve_catalog_dir(&cfg)?;
+    // Batch C: the telemetry.db sidecar (host-measured execution exhaust —
+    // wall-clock / model usage / fired tool). Rebuildable-to-EMPTY, off-journal,
+    // off-digest; the hot-path sink is bounded + fail-open (drop-on-full), so it
+    // can never block, slow, or fail a run.
+    let telemetry_ledger = Arc::new(crate::telemetry::TelemetryLedger::open(&catalog_dir)?);
     let client = connect_worker(&coord_endpoint).await?;
     // PR-9b: locate + register the sandbox demo body. `None` ⇒ no body binary on
     // this host/image, so the `exec-demo` recipe is not provisioned and the router
@@ -501,12 +513,18 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     let (executor, context_sink, serve_model): WiredExecutor = match shaper_runtime {
         Some(rt) => {
             tracing::info!(model = %rt.model_id.0, "AL1+PR-2b: live model + topology loop enabled");
-            let model_exec = Arc::new(crate::model_exec::ModelRouterExecutor::new(
-                executor,
-                rt.backend,
-                (*content).clone(),
-                Some(rt.recipes),
-            ));
+            let model_exec = Arc::new(
+                crate::model_exec::ModelRouterExecutor::new(
+                    executor,
+                    rt.backend,
+                    (*content).clone(),
+                    Some(rt.recipes),
+                )
+                // Batch C: the usage hook — every model arm funnels through
+                // dispatch_model, so this records the model that ACTUALLY ran +
+                // its output tokens (fail-open; dispatch unchanged).
+                .with_usage_sink(Arc::new(telemetry_ledger.sink())),
+            );
             let sink: Arc<dyn kx_worker::ContextSink> = model_exec.clone();
             let wrapped: Arc<dyn MoteExecutor> = model_exec;
             (wrapped, Some(sink), Some(rt.model_id))
@@ -517,6 +535,14 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     let context_sink: Option<Arc<dyn kx_worker::ContextSink>> = None;
     #[cfg(not(feature = "inference"))]
     let serve_model: Option<kx_mote::ModelId> = None;
+    // Batch C: the OUTERMOST executor wrapper — every leased mote (echo /
+    // real-exec / model / shaper / react turn / critic) gets a wall-clock row.
+    // Structurally fail-open: the wrapper returns the inner result verbatim on
+    // every path and records via a bounded try_send.
+    let executor: Arc<dyn MoteExecutor> = Arc::new(crate::telemetry::TelemetryExecutor::new(
+        executor,
+        telemetry_ledger.sink(),
+    ));
     let local_broker = LocalCapabilityBroker::new((*content).clone());
     // PR-2d-2 (react-tools-live): register the bundled deterministic stdio tool's
     // capability — the live ReAct loop's "Act" step — when its binary is present
@@ -565,8 +591,8 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
 
     // (3b) Durable catalog directory (R2a/R2b): `--catalog-dir` (default:
     //      alongside the journal), holding the signature registry + recipe ledgers
-    //      so registered signatures + recipes survive restart.
-    let catalog_dir = resolve_catalog_dir(&cfg)?;
+    //      so registered signatures + recipes survive restart. Resolved up in
+    //      section (2) — the telemetry ledger needed it before the executor chain.
     let signature_catalog = open_signature_catalog(&catalog_dir)?;
     // (3c) Server-provisioned demo recipe library (R2b) so `Invoke` runs E2E.
     //      Grant `Use` to every configured token party (+ the dev principal); the
@@ -681,6 +707,29 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
             }
         })
     };
+    // (3f-ter) Batch C: the telemetry join tick — drains the bounded hot-path
+    //      event queue and joins rows to the journal's Committed facts (seq +
+    //      watermark instance), mirroring the capture tick's cadence + shutdown
+    //      catch-up. Off the sole-writer thread; read-only journal handle.
+    let telemetry_task = {
+        let ledger = telemetry_ledger.clone();
+        let reader = reader.clone();
+        let mut shutdown = live_shutdown_rx.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(Duration::from_millis(250));
+            loop {
+                tokio::select! {
+                    _ = tick.tick() => { ledger.join_fold(reader.as_ref()); }
+                    _ = shutdown.changed() => {
+                        if *shutdown.borrow() {
+                            ledger.join_fold(reader.as_ref()); // final catch-up
+                            break;
+                        }
+                    }
+                }
+            }
+        })
+    };
 
     // (3g) W1.A5: the always-on advisory toolscout view — manifests from the
     //      SAME registry surface the serve path resolves against (built-ins
@@ -737,7 +786,11 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         .with_put_content_cap(cfg.content_max_bytes)
         .with_model_catalog_view(models_view)
         .with_mote_def_view(mote_defs_view)
+        .with_telemetry_view(telemetry_ledger.clone())
         .with_event_tailer(Arc::new(crate::live_tail::LiveTailer::new(
+            live_shutdown_rx.clone(),
+        )))
+        .with_global_event_tailer(Arc::new(crate::live_tail::GlobalLiveTailer::new(
             live_shutdown_rx.clone(),
         )));
     #[cfg(feature = "hnsw")]
@@ -777,7 +830,11 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         );
     }
     let ws_tailer: Arc<dyn EventTailer> =
-        Arc::new(crate::live_tail::LiveTailer::new(live_shutdown_rx));
+        Arc::new(crate::live_tail::LiveTailer::new(live_shutdown_rx.clone()));
+    // Batch C: the GLOBAL live tailer behind the WS `/events/all` channel (the
+    // same journal handle + shutdown discipline as the per-run bridge tailer).
+    let ws_global_tailer: Arc<dyn GlobalEventTailer> =
+        Arc::new(crate::live_tail::GlobalLiveTailer::new(live_shutdown_rx));
 
     // (5b) D139: the embedded web console — a THIRD loopback listener serving the
     //     compile-time-embedded SPA (no runtime filesystem). BOUND here (before the
@@ -910,6 +967,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         ws_tcp,
         reader.clone(),
         ws_tailer,
+        ws_global_tailer,
         ws_resolver,
     ));
     // `mut` is consumed only by the console push below (feature-gated).
@@ -920,6 +978,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         heartbeat_task,
         ws_task,
         capture_task,
+        telemetry_task,
     ];
     #[cfg(feature = "console")]
     if let Some(tcp) = console_tcp {

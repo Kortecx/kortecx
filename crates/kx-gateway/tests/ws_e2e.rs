@@ -145,11 +145,88 @@ async fn ws_missing_instance_is_rejected() {
     let running = start(gateway_config(&dir, true, HashMap::new()))
         .await
         .unwrap();
-    // No ?instance → a malformed-query handshake rejection.
+    // No ?instance → a malformed-query handshake rejection. (This 400 is ALSO
+    // what an old server answers on the Batch C `/events/all` path — the
+    // client's honest not-wired signal.)
     let url = format!("ws://{}/v1/events?since=0", running.ws_local_addr());
     assert!(
         connect_async(url).await.is_err(),
         "a missing ?instance is a handshake error"
+    );
+    running.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn ws_all_channel_streams_global_json_with_attribution() {
+    // Batch C: the run-unscoped `/v1/events/all` channel — same listener, same
+    // auth, the GLOBAL JSON wire (per-delta instance attribution + the
+    // run_registered variant the per-run wire never has).
+    let dir = TempDir::new().unwrap();
+    let running = start(gateway_config(&dir, true, HashMap::new()))
+        .await
+        .unwrap();
+    let mut c = connect_client(running.local_addr()).await;
+    let instance = submit_pure_run(&mut c, 2).await;
+    let (mote_id, _) = await_committed(&mut c, &instance).await;
+
+    let url = format!("ws://{}/v1/events/all?since=0", running.ws_local_addr());
+    let (mut ws, _resp) = connect_async(url)
+        .await
+        .expect("dev-allow-local accepts the global WS handshake");
+
+    let (saw_reg, saw_commit) = timeout(Duration::from_secs(5), async {
+        let (mut reg, mut commit) = (false, false);
+        while let Some(message) = ws.next().await {
+            if let Ok(Message::Text(text)) = message {
+                let frame: Value =
+                    serde_json::from_str(&text).expect("each WS frame is valid JSON");
+                if let Some(deltas) = frame["deltas"].as_array() {
+                    for delta in deltas {
+                        if delta["type"] == "run_registered"
+                            && delta["instance_id"] == hex(&instance)
+                        {
+                            assert_eq!(
+                                delta["recipe_fingerprint"].as_str().unwrap().len(),
+                                64,
+                                "the fingerprint rides as 64-char hex"
+                            );
+                            reg = true;
+                        }
+                        if delta["type"] == "committed" && delta["mote_id"] == hex(&mote_id) {
+                            // Attribution: the commit is stamped with ITS run.
+                            assert_eq!(delta["instance_id"], hex(&instance));
+                            assert_eq!(delta["nd_class"], "pure");
+                            commit = true;
+                        }
+                    }
+                }
+                if reg && commit {
+                    break;
+                }
+            }
+        }
+        (reg, commit)
+    })
+    .await
+    .expect("did not time out reading global WS frames");
+    assert!(saw_reg, "the global wire surfaces run_registered");
+    assert!(saw_commit, "the global wire delivers the attributed commit");
+
+    running.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn ws_all_handshake_denied_without_auth() {
+    let dir = TempDir::new().unwrap();
+    // Deny-all: the operator-global channel is still OPERATOR-gated (the same
+    // resolver as the per-run channel; cloud must party-scope or deny).
+    let running = start(gateway_config(&dir, false, HashMap::new()))
+        .await
+        .unwrap();
+    let url = format!("ws://{}/v1/events/all?since=0", running.ws_local_addr());
+    assert!(
+        connect_async(url).await.is_err(),
+        "deny-all rejects the global WS handshake"
     );
     running.shutdown().await.unwrap();
 }

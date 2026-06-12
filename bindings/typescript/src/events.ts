@@ -13,7 +13,7 @@ import { Code, ConnectError } from "@connectrpc/connect";
 import type { Client } from "@connectrpc/connect";
 import { KxConnectError, fromRpcError } from "./errors.js";
 import type { KxGateway } from "./gen/kortecx/v1/gateway_pb.js";
-import { Delta } from "./types.js";
+import { Delta, GlobalDelta } from "./types.js";
 
 type Gateway = Client<typeof KxGateway>;
 
@@ -47,34 +47,77 @@ export async function* streamDeltas(
 }
 
 /**
- * Derive the `/v1/events` WS URL from an explicit ws endpoint, or by mapping the
- * gRPC endpoint's scheme/host to the conventional WS port (50152). Mirrors the
- * Python SDK's `_ws_url`.
+ * Yield the operator-global cross-run event tail (Batch C `StreamAllEvents`):
+ * one snapshot, or the live tail with `follow`. Same frame/cursor contract as
+ * {@link streamDeltas} — transparently reconnects from the last `next_seq` on a
+ * `CatchupRequired` (`RESOURCE_EXHAUSTED`) drop, no delta lost or duplicated.
  */
+export async function* streamAllDeltas(
+  gw: Gateway,
+  since: bigint,
+  follow: boolean,
+  signal?: AbortSignal,
+): AsyncIterable<GlobalDelta> {
+  let cursor = since;
+  for (;;) {
+    try {
+      const opts = signal ? { signal } : undefined;
+      for await (const frame of gw.streamAllEvents({ sinceSeq: cursor }, opts)) {
+        for (const d of frame.deltas) {
+          yield GlobalDelta.fromProto(d);
+        }
+        cursor = frame.nextSeq;
+        if (!follow && frame.journalBoundary) return;
+      }
+    } catch (e) {
+      const ce = ConnectError.from(e);
+      if (follow && ce.code === Code.ResourceExhausted) continue; // resume from cursor
+      throw fromRpcError(e);
+    }
+    if (!follow) return;
+  }
+}
+
+/**
+ * The WS bridge base URL: an explicit ws endpoint, or the gRPC endpoint's
+ * scheme/host mapped to the conventional WS port (50152). Mirrors the Python
+ * SDK's `_ws_url`.
+ */
+function wsBase(grpcEndpoint: string, wsEndpoint: string | undefined): string {
+  if (wsEndpoint) {
+    return wsEndpoint.replace(/\/+$/, "");
+  }
+  let rest = grpcEndpoint;
+  let scheme = "wss";
+  if (rest.startsWith("http://")) {
+    scheme = "ws";
+    rest = rest.slice("http://".length);
+  } else if (rest.startsWith("https://")) {
+    scheme = "wss";
+    rest = rest.slice("https://".length);
+  }
+  const hostPort = rest.split("/")[0] ?? "";
+  const host = hostPort.split(":").slice(0, -1).join(":") || hostPort.split(":")[0] || hostPort;
+  return `${scheme}://${host}:50152`;
+}
+
+/** Derive the per-run `/v1/events` WS URL (see {@link wsBase}). */
 export function wsUrl(
   grpcEndpoint: string,
   wsEndpoint: string | undefined,
   instanceHex: string,
   since: bigint,
 ): string {
-  let base: string;
-  if (wsEndpoint) {
-    base = wsEndpoint.replace(/\/+$/, "");
-  } else {
-    let rest = grpcEndpoint;
-    let scheme = "wss";
-    if (rest.startsWith("http://")) {
-      scheme = "ws";
-      rest = rest.slice("http://".length);
-    } else if (rest.startsWith("https://")) {
-      scheme = "wss";
-      rest = rest.slice("https://".length);
-    }
-    const hostPort = rest.split("/")[0] ?? "";
-    const host = hostPort.split(":").slice(0, -1).join(":") || hostPort.split(":")[0] || hostPort;
-    base = `${scheme}://${host}:50152`;
-  }
-  return `${base}/v1/events?instance=${instanceHex}&since=${since.toString()}`;
+  return `${wsBase(grpcEndpoint, wsEndpoint)}/v1/events?instance=${instanceHex}&since=${since.toString()}`;
+}
+
+/** Derive the global `/v1/events/all` WS URL (Batch C — no instance param). */
+export function wsAllUrl(
+  grpcEndpoint: string,
+  wsEndpoint: string | undefined,
+  since: bigint,
+): string {
+  return `${wsBase(grpcEndpoint, wsEndpoint)}/v1/events/all?since=${since.toString()}`;
 }
 
 /** Map one R5 WS JSON delta (`type` discriminant, hex ids) to a {@link Delta}. */
@@ -119,6 +162,81 @@ export async function* wsDeltasFromMessages(messages: AsyncIterable<string>): As
     for (const d of frame.deltas ?? []) {
       const view = wsDelta(d);
       if (view !== null) yield view;
+    }
+  }
+}
+
+/**
+ * Map one global-channel WS JSON delta (Batch C `/v1/events/all`; `type`
+ * discriminant, hex ids) to a {@link GlobalDelta}. An unrecognized `type` maps
+ * to `"unknown"` — forward-compat: a future delta kind never throws.
+ */
+export function wsAllDelta(obj: Record<string, unknown>): GlobalDelta {
+  const kind = obj.type as string | undefined;
+  const seq = Number(obj.seq ?? 0);
+  const str = (k: string): string | null =>
+    typeof obj[k] === "string" ? (obj[k] as string) : null;
+  const num = (k: string): number | null => (obj[k] != null ? Number(obj[k]) : null);
+  const instanceId = str("instance_id") ?? ""; // "" pre-registration (honest)
+  switch (kind) {
+    case "run_registered":
+      return new GlobalDelta(
+        seq,
+        "run_registered",
+        instanceId,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        str("recipe_fingerprint"),
+        num("registered_unix_ms"),
+      );
+    case "committed":
+      return new GlobalDelta(seq, "committed", instanceId, str("mote_id"), str("result_ref"));
+    case "failed":
+      return new GlobalDelta(
+        seq,
+        "failed",
+        instanceId,
+        str("mote_id"),
+        null,
+        null,
+        num("reason_class"),
+      );
+    case "repudiated":
+      return new GlobalDelta(
+        seq,
+        "repudiated",
+        instanceId,
+        null,
+        null,
+        null,
+        null,
+        str("target_mote_id"),
+        num("target_committed_seq"),
+      );
+    case "effect_staged":
+      return new GlobalDelta(seq, "effect_staged", instanceId, str("mote_id"));
+    default:
+      return new GlobalDelta(seq, "unknown", instanceId);
+  }
+}
+
+/** Parse a stream of global-channel WS JSON frame messages into deltas. */
+export async function* wsAllDeltasFromMessages(
+  messages: AsyncIterable<string>,
+): AsyncIterable<GlobalDelta> {
+  for await (const message of messages) {
+    let frame: { deltas?: Record<string, unknown>[] };
+    try {
+      frame = JSON.parse(message);
+    } catch {
+      continue;
+    }
+    for (const d of frame.deltas ?? []) {
+      yield wsAllDelta(d);
     }
   }
 }

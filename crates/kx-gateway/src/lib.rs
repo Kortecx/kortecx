@@ -93,6 +93,13 @@ mod provision;
 #[cfg(feature = "embedded-worker")]
 mod real_exec;
 mod server;
+// Batch C: the telemetry.db sidecar (the TelemetryView seam) — host-measured
+// execution exhaust (wall-clock / model usage / fired tool), joined to the
+// journal's Committed facts by a background tick. Rebuildable-to-EMPTY,
+// off-journal, off-digest; the hot-path sink is bounded + fail-open. Needs the
+// embedded worker (the executor wrapper measures the worker's mote loop).
+#[cfg(feature = "embedded-worker")]
+mod telemetry;
 // UI-3: the host-side teams (MembershipView) + grants (GrantView) read seams + the
 // idempotent demo-team seed.
 mod teams;
@@ -117,7 +124,7 @@ pub use datasets::HostDatasetView;
 #[cfg(all(feature = "hnsw", feature = "inference"))]
 pub use datasets::HostEmbedder;
 pub use error::GatewayError;
-pub use live_tail::LiveTailer;
+pub use live_tail::{GlobalLiveTailer, LiveTailer};
 pub use provision::{
     DemoLibrary, HostRecipeBinder, HostRecipeCatalog, HostSignatureCatalog, HostWorkflowAuthor,
     DEMO_RECIPE_HANDLE, EXEC_RECIPE_HANDLE, FANOUT_RECIPE_HANDLE, MODEL_RECIPE_HANDLE,

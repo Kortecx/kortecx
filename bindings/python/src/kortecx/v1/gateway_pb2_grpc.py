@@ -173,6 +173,16 @@ class KxGatewayStub(object):
                 request_serializer=kortecx_dot_v1_dot_gateway__pb2.GetMoteDetailRequest.SerializeToString,
                 response_deserializer=kortecx_dot_v1_dot_gateway__pb2.MoteDetail.FromString,
                 _registered_method=True)
+        self.StreamAllEvents = channel.unary_stream(
+                '/kortecx.v1.KxGateway/StreamAllEvents',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.StreamAllEventsRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.GlobalEventFrame.FromString,
+                _registered_method=True)
+        self.ListMoteTelemetry = channel.unary_unary(
+                '/kortecx.v1.KxGateway/ListMoteTelemetry',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.ListMoteTelemetryRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.ListMoteTelemetryResponse.FromString,
+                _registered_method=True)
 
 
 class KxGatewayServicer(object):
@@ -359,6 +369,24 @@ class KxGatewayServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def StreamAllEvents(self, request, context):
+        """Batch C additive (D120.6): the global cross-run event tail.
+        *** CLOUD MUST PARTY-SCOPE OR DENY (see the StreamAllEventsRequest block):
+        *** operator-global on single-node OSS; never serve unscoped multi-tenant.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ListMoteTelemetry(self, request, context):
+        """Batch C additive (D120.6): mote execution telemetry (rebuildable-to-empty
+        sidecar; audit/display only — never truth/identity/digest; never a journal
+        change).
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_KxGatewayServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -496,6 +524,16 @@ def add_KxGatewayServicer_to_server(servicer, server):
                     servicer.GetMoteDetail,
                     request_deserializer=kortecx_dot_v1_dot_gateway__pb2.GetMoteDetailRequest.FromString,
                     response_serializer=kortecx_dot_v1_dot_gateway__pb2.MoteDetail.SerializeToString,
+            ),
+            'StreamAllEvents': grpc.unary_stream_rpc_method_handler(
+                    servicer.StreamAllEvents,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.StreamAllEventsRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.GlobalEventFrame.SerializeToString,
+            ),
+            'ListMoteTelemetry': grpc.unary_unary_rpc_method_handler(
+                    servicer.ListMoteTelemetry,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.ListMoteTelemetryRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.ListMoteTelemetryResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -1231,6 +1269,60 @@ class KxGateway(object):
             '/kortecx.v1.KxGateway/GetMoteDetail',
             kortecx_dot_v1_dot_gateway__pb2.GetMoteDetailRequest.SerializeToString,
             kortecx_dot_v1_dot_gateway__pb2.MoteDetail.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def StreamAllEvents(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_stream(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/StreamAllEvents',
+            kortecx_dot_v1_dot_gateway__pb2.StreamAllEventsRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.GlobalEventFrame.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ListMoteTelemetry(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/ListMoteTelemetry',
+            kortecx_dot_v1_dot_gateway__pb2.ListMoteTelemetryRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.ListMoteTelemetryResponse.FromString,
             options,
             channel_credentials,
             insecure,

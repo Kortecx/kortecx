@@ -23,7 +23,7 @@ use std::borrow::Cow;
 use std::sync::{Arc, Mutex};
 
 use futures_util::{SinkExt, StreamExt};
-use kx_gateway_core::{EventTailer, JournalReader};
+use kx_gateway_core::{EventTailer, GlobalEventTailer, JournalReader};
 use kx_proto::proto;
 use tokio::net::{TcpListener, TcpStream};
 use tokio_tungstenite::tungstenite::handshake::server::{
@@ -45,6 +45,7 @@ pub(crate) async fn serve_ws(
     listener: TcpListener,
     reader: Arc<dyn JournalReader>,
     tailer: Arc<dyn EventTailer>,
+    global_tailer: Arc<dyn GlobalEventTailer>,
     resolver: Arc<dyn PrincipalResolver>,
 ) {
     loop {
@@ -57,17 +58,25 @@ pub(crate) async fn serve_ws(
         };
         let reader = reader.clone();
         let tailer = tailer.clone();
+        let global_tailer = global_tailer.clone();
         let resolver = resolver.clone();
         tokio::spawn(async move {
-            if let Err(error) = handle_conn(stream, reader, tailer, resolver).await {
+            if let Err(error) = handle_conn(stream, reader, tailer, global_tailer, resolver).await {
                 tracing::debug!(%error, "ws-bridge connection ended");
             }
         });
     }
 }
 
-/// The `(instance_id, since_seq)` the handshake parsed from the upgrade request.
-type StreamTarget = ([u8; 16], u64);
+/// What the handshake parsed from the upgrade request: the frozen per-run
+/// channel (`?instance=<hex16>&since=N`) or — Batch C — the run-unscoped GLOBAL
+/// channel (a path ending in `/events/all`, `?since=N` only). Same token auth
+/// either way; an OLD server 400s the new path ("missing ?instance"), which is
+/// the client's honest not-wired signal.
+enum StreamTarget {
+    Run([u8; 16], u64),
+    All(u64),
+}
 
 /// Handshake (auth + parse) then stream live frames to one client.
 // The tungstenite handshake closure returns `Result<_, ErrorResponse>`; that error
@@ -77,6 +86,7 @@ async fn handle_conn(
     stream: TcpStream,
     reader: Arc<dyn JournalReader>,
     tailer: Arc<dyn EventTailer>,
+    global_tailer: Arc<dyn GlobalEventTailer>,
     resolver: Arc<dyn PrincipalResolver>,
 ) -> Result<(), tokio_tungstenite::tungstenite::Error> {
     // The handshake callback runs synchronously during the upgrade; it stashes the
@@ -90,8 +100,8 @@ async fn handle_conn(
         move |req: &HsRequest, mut resp: HsResponse| {
             // Auth (uniform reject; no existence oracle) + selected subprotocol.
             let selected = authorize(req, resolver.as_ref())?;
-            // instance_id + since_seq from the query string.
-            let target = parse_query(req).map_err(|msg| bad_request(&msg))?;
+            // The channel (per-run vs global) + cursor from the path + query.
+            let target = parse_target(req).map_err(|msg| bad_request(&msg))?;
             *parsed_cb
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(target);
@@ -108,12 +118,23 @@ async fn handle_conn(
     )
     .await?;
 
-    let (instance_id, since_seq) = parsed
+    // The handshake callback always sets the target on success; an empty slot
+    // can only mean a handshake path we don't expect — close quietly rather
+    // than panic a connection task.
+    let Some(target) = parsed
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .expect("handshake set the target on success");
+        .take()
+    else {
+        return Ok(());
+    };
 
-    pump(ws, reader, tailer, instance_id, since_seq).await
+    match target {
+        StreamTarget::Run(instance_id, since_seq) => {
+            pump(ws, reader, tailer, instance_id, since_seq).await
+        }
+        StreamTarget::All(since_seq) => pump_global(ws, reader, global_tailer, since_seq).await,
+    }
 }
 
 /// Drive the live tailer → JSON-over-WS, while reacting to the client's Close/Ping.
@@ -199,6 +220,48 @@ fn authorize(
     Ok(selected)
 }
 
+/// Drive the GLOBAL live tailer → JSON-over-WS (the Batch C `/events/all`
+/// channel) — the [`pump`] twin over [`WsGlobalFrame`]. Same Close/Ping
+/// handling and CatchupRequired close protocol.
+async fn pump_global(
+    ws: tokio_tungstenite::WebSocketStream<TcpStream>,
+    reader: Arc<dyn JournalReader>,
+    global_tailer: Arc<dyn GlobalEventTailer>,
+    since_seq: u64,
+) -> Result<(), tokio_tungstenite::tungstenite::Error> {
+    let (mut write, mut read) = ws.split();
+
+    let mut events = match global_tailer.stream_all(reader, since_seq) {
+        Ok(stream) => stream,
+        Err(status) => {
+            let _ = write.send(Message::Close(Some(close_for(&status)))).await;
+            return write.close().await;
+        }
+    };
+
+    loop {
+        tokio::select! {
+            frame = events.next() => match frame {
+                Some(Ok(frame)) => {
+                    let json = serde_json::to_string(&WsGlobalFrame::from_proto(frame))
+                        .unwrap_or_else(|_| "{}".to_string());
+                    write.send(Message::Text(json)).await?;
+                }
+                Some(Err(status)) => {
+                    let _ = write.send(Message::Close(Some(close_for(&status)))).await;
+                    return write.close().await;
+                }
+                None => return write.close().await,
+            },
+            incoming = read.next() => match incoming {
+                Some(Ok(Message::Close(_))) | None => return Ok(()),
+                Some(Ok(_)) => {}
+                Some(Err(error)) => return Err(error),
+            },
+        }
+    }
+}
+
 /// Extract the token from `Sec-WebSocket-Protocol: bearer, <token>` (the browser
 /// path — browsers cannot set an `Authorization` header on a WebSocket).
 fn subprotocol_bearer(req: &HsRequest) -> Option<String> {
@@ -211,8 +274,12 @@ fn subprotocol_bearer(req: &HsRequest) -> Option<String> {
     }
 }
 
-/// `instance` (hex16) + optional `since` (u64, default 0) from the request query.
-fn parse_query(req: &HsRequest) -> Result<([u8; 16], u64), String> {
+/// Route the upgrade request to its channel and parse the cursor:
+/// - a path ending in `/events/all` → the GLOBAL channel (Batch C), `?since=N`
+///   only (no `instance` — the stream is run-unscoped by design);
+/// - every other path → the frozen per-run channel, `?instance=<hex16>&since=N`
+///   (byte-identical behavior, including the 400 on a missing instance).
+fn parse_target(req: &HsRequest) -> Result<StreamTarget, String> {
     let query = req.uri().query().unwrap_or("");
     let mut instance: Option<[u8; 16]> = None;
     let mut since: u64 = 0;
@@ -223,8 +290,16 @@ fn parse_query(req: &HsRequest) -> Result<([u8; 16], u64), String> {
             _ => {}
         }
     }
+    if req
+        .uri()
+        .path()
+        .trim_end_matches('/')
+        .ends_with("/events/all")
+    {
+        return Ok(StreamTarget::All(since));
+    }
     let instance = instance.ok_or_else(|| "missing or malformed ?instance=<hex16>".to_string())?;
-    Ok((instance, since))
+    Ok(StreamTarget::Run(instance, since))
 }
 
 /// Map a resolver `Status` to a handshake rejection (uniform — no oracle).
@@ -339,6 +414,111 @@ impl WsDelta {
     }
 }
 
+// --- The GLOBAL JSON wire DTO (Batch C `/events/all`) — the WsFrame twin with
+// --- per-delta `instance_id` attribution + the `run_registered` variant. The
+// --- per-run wire above is NOT touched.
+
+#[derive(serde::Serialize)]
+struct WsGlobalFrame {
+    seq: u64,
+    deltas: Vec<WsGlobalDelta>,
+    next_seq: u64,
+    journal_boundary: bool,
+}
+
+#[derive(serde::Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum WsGlobalDelta {
+    RunRegistered {
+        seq: u64,
+        instance_id: String,
+        recipe_fingerprint: String,
+        registered_unix_ms: u64,
+    },
+    Committed {
+        seq: u64,
+        instance_id: String,
+        mote_id: String,
+        result_ref: String,
+        nd_class: &'static str,
+    },
+    Failed {
+        seq: u64,
+        instance_id: String,
+        mote_id: String,
+        reason_class: u32,
+    },
+    Repudiated {
+        seq: u64,
+        instance_id: String,
+        target_mote_id: String,
+        target_committed_seq: u64,
+    },
+    EffectStaged {
+        seq: u64,
+        instance_id: String,
+        mote_id: String,
+    },
+    /// An unrecognized delta kind (forward-compat: a future proto variant).
+    Unknown { seq: u64, instance_id: String },
+}
+
+impl WsGlobalFrame {
+    fn from_proto(frame: proto::GlobalEventFrame) -> Self {
+        Self {
+            seq: frame.seq,
+            deltas: frame
+                .deltas
+                .into_iter()
+                .map(WsGlobalDelta::from_proto)
+                .collect(),
+            next_seq: frame.next_seq,
+            journal_boundary: frame.journal_boundary,
+        }
+    }
+}
+
+impl WsGlobalDelta {
+    fn from_proto(delta: proto::GlobalEventDelta) -> Self {
+        let seq = delta.seq;
+        // EMPTY before any registration → an empty hex string (honest).
+        let instance_id = hex_encode(&delta.instance_id);
+        match delta.kind {
+            Some(proto::global_event_delta::Kind::RunRegistered(rr)) => Self::RunRegistered {
+                seq,
+                instance_id,
+                recipe_fingerprint: hex_encode(&rr.recipe_fingerprint),
+                registered_unix_ms: rr.registered_unix_ms,
+            },
+            Some(proto::global_event_delta::Kind::Committed(c)) => Self::Committed {
+                seq,
+                instance_id,
+                mote_id: hex_encode(&c.mote_id),
+                result_ref: hex_encode(&c.result_ref),
+                nd_class: nd_str(c.nd_class),
+            },
+            Some(proto::global_event_delta::Kind::Failed(f)) => Self::Failed {
+                seq,
+                instance_id,
+                mote_id: hex_encode(&f.mote_id),
+                reason_class: f.reason_class,
+            },
+            Some(proto::global_event_delta::Kind::Repudiated(r)) => Self::Repudiated {
+                seq,
+                instance_id,
+                target_mote_id: hex_encode(&r.target_mote_id),
+                target_committed_seq: r.target_committed_seq,
+            },
+            Some(proto::global_event_delta::Kind::EffectStaged(e)) => Self::EffectStaged {
+                seq,
+                instance_id,
+                mote_id: hex_encode(&e.mote_id),
+            },
+            None => Self::Unknown { seq, instance_id },
+        }
+    }
+}
+
 /// Stable lowercase nd-class tag (matches the kx-audit wire vocabulary).
 fn nd_str(nd: i32) -> &'static str {
     match proto::NdClass::try_from(nd) {
@@ -410,6 +590,58 @@ mod tests {
             "world_mutating"
         );
         assert_eq!(nd_str(999), "unspecified");
+    }
+
+    #[test]
+    fn global_frame_serializes_with_instance_hex_and_run_registered() {
+        // Pins the Batch C global wire: per-delta instance attribution (hex16,
+        // EMPTY-honest) + the run_registered variant the per-run wire never has.
+        let frame = proto::GlobalEventFrame {
+            seq: 3,
+            deltas: vec![
+                proto::GlobalEventDelta {
+                    seq: 1,
+                    instance_id: vec![0x5a; 16],
+                    kind: Some(proto::global_event_delta::Kind::RunRegistered(
+                        proto::RunRegisteredDelta {
+                            recipe_fingerprint: vec![0x6b; 32],
+                            registered_unix_ms: 1234,
+                        },
+                    )),
+                },
+                proto::GlobalEventDelta {
+                    seq: 2,
+                    instance_id: vec![0x5a; 16],
+                    kind: Some(proto::global_event_delta::Kind::Committed(
+                        proto::CommittedDelta {
+                            mote_id: vec![0xcd; 32],
+                            result_ref: vec![0xef; 32],
+                            nd_class: proto::NdClass::Pure as i32,
+                        },
+                    )),
+                },
+                proto::GlobalEventDelta {
+                    seq: 3,
+                    instance_id: Vec::new(), // pre-registration: EMPTY, honest
+                    kind: None,              // forward-compat: unknown kind
+                },
+            ],
+            next_seq: 3,
+            journal_boundary: true,
+        };
+        let json = serde_json::to_value(WsGlobalFrame::from_proto(frame)).unwrap();
+        assert_eq!(json["seq"], 3);
+        assert_eq!(json["journal_boundary"], true);
+        assert_eq!(json["deltas"][0]["type"], "run_registered");
+        assert_eq!(json["deltas"][0]["instance_id"], "5a".repeat(16));
+        assert_eq!(json["deltas"][0]["recipe_fingerprint"], "6b".repeat(32));
+        assert_eq!(json["deltas"][0]["registered_unix_ms"], 1234);
+        assert_eq!(json["deltas"][1]["type"], "committed");
+        assert_eq!(json["deltas"][1]["instance_id"], "5a".repeat(16));
+        assert_eq!(json["deltas"][1]["mote_id"], "cd".repeat(32));
+        assert_eq!(json["deltas"][1]["nd_class"], "pure");
+        assert_eq!(json["deltas"][2]["type"], "unknown");
+        assert_eq!(json["deltas"][2]["instance_id"], "");
     }
 
     #[test]

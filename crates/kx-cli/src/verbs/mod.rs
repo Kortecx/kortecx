@@ -3,6 +3,7 @@
 //! here (used by `invoke` + `submit`).
 
 pub mod blueprint;
+pub mod capture;
 pub mod content;
 pub mod events;
 pub mod health;
@@ -10,9 +11,12 @@ pub mod invoke;
 pub mod models;
 pub mod mote;
 pub mod projection;
+pub mod react;
+pub mod replan;
 pub mod runs;
 pub mod signatures;
 pub mod submit;
+pub mod telemetry;
 pub mod tools;
 
 use std::io::Write;

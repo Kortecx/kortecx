@@ -38,6 +38,11 @@ usage: kx <command> [args]
     kx content get --ref <hex32> [--instance <hex16>] [--out <file>]   (no --instance = the uploads scope)
     kx content put <file> [--media-type <mime>] [--filename <name>]
     kx events --instance <hex16> [--since N] [--follow]
+    kx events --all [--since N] [--follow]       (the global cross-run event tail)
+    kx telemetry list [--instance <hex16>] [--mote <hex32>] [--limit N] [--before-seq N]
+    kx replan list [--limit N]                   (re-plan rounds, newest-first)
+    kx react list [--instance <hex16>] [--limit N]     (ReAct turns, newest-first)
+    kx capture list [--instance <hex16>] [--limit N]   (captured actions, newest-first)
     kx signatures list | get --id <hex32> | register --manifest-file <path>
     kx tools list | score --intent <text> --tool <id>@<ver>... [--language-tag <t>]... [--tolerance-threshold-bp N]
     kx models list                              (display-only model discovery)
@@ -77,8 +82,16 @@ pub enum Cli {
     Mote(verbs::mote::MoteArgs),
     /// Fetch a committed result.
     Content(verbs::content::ContentArgs),
-    /// Stream/poll a run's event deltas.
+    /// Stream/poll a run's event deltas (or the global cross-run tail).
     Events(verbs::events::EventsArgs),
+    /// Mote execution telemetry (Batch C `ListMoteTelemetry`; display-only).
+    Telemetry(verbs::telemetry::TelemetryArgs),
+    /// Re-plan-round observability (PR-2c-2 `ListReplanRounds`; read-only).
+    Replan(verbs::replan::ReplanArgs),
+    /// ReAct-turn observability (PR-2d-1 `ListReactTurns`; read-only).
+    React(verbs::react::ReactArgs),
+    /// Captured-action records (`ListCaptureRecords`; read-only join keys).
+    Capture(verbs::capture::CaptureArgs),
     /// Catalog signature RPCs.
     Signatures(verbs::signatures::SignaturesArgs),
     /// Advisory toolscout RPCs (tool discovery + TaskBundle preview).
@@ -127,6 +140,10 @@ impl Cli {
             Some("mote") => Ok(Cli::Mote(verbs::mote::parse(args)?)),
             Some("content") => Ok(Cli::Content(verbs::content::parse(args)?)),
             Some("events") => Ok(Cli::Events(verbs::events::parse(args)?)),
+            Some("telemetry") => Ok(Cli::Telemetry(verbs::telemetry::parse(args)?)),
+            Some("replan") => Ok(Cli::Replan(verbs::replan::parse(args)?)),
+            Some("react") => Ok(Cli::React(verbs::react::parse(args)?)),
+            Some("capture") => Ok(Cli::Capture(verbs::capture::parse(args)?)),
             Some("signatures") => Ok(Cli::Signatures(verbs::signatures::parse(args)?)),
             Some("tools") => Ok(Cli::Tools(verbs::tools::parse(args)?)),
             Some("models") => Ok(Cli::Models(verbs::models::parse(args)?)),
@@ -189,6 +206,10 @@ async fn dispatch(cli: Cli) -> Result<(), CliError> {
         Cli::Mote(a) => verbs::mote::execute(a).await,
         Cli::Content(a) => verbs::content::execute(a).await,
         Cli::Events(a) => verbs::events::execute(a).await,
+        Cli::Telemetry(a) => verbs::telemetry::execute(a).await,
+        Cli::Replan(a) => verbs::replan::execute(a).await,
+        Cli::React(a) => verbs::react::execute(a).await,
+        Cli::Capture(a) => verbs::capture::execute(a).await,
         Cli::Signatures(a) => verbs::signatures::execute(a).await,
         Cli::Tools(a) => verbs::tools::execute(a).await,
         Cli::Models(a) => verbs::models::execute(a).await,
@@ -356,9 +377,49 @@ kx content put <file> [--media-type <mime>] [--filename <name>] [client flags]
             .into(),
         "events" => "\
 kx events --instance <hex16> [--since N] [--follow] [client flags]
-  Print the run's event deltas. StreamEvents is snapshot-to-head today: this catches
-  up to the current journal boundary and stops. --follow re-polls from the last cursor
-  (~250ms) until Ctrl-C; true live-tail arrives in a later release."
+kx events --all [--since N] [--follow] [client flags]
+  Print event deltas. --instance streams ONE run's deltas (the frozen per-run
+  cursor); --all streams the operator-global cross-run tail (Batch C) — every
+  delta stamped with its run's instance_id (watermark attribution; empty before
+  any registration) plus the run_registered \"run started\" marker the per-run
+  cursor never carries. The two forms are mutually exclusive. Without --follow
+  this catches up to the current journal boundary and stops; --follow keeps the
+  live tail open until Ctrl-C, transparently resuming from the last next_seq if
+  the server drops a slow consumer."
+            .into(),
+        "telemetry" => "\
+kx telemetry list [--instance <hex16>] [--mote <hex32>] [--limit N] [--before-seq N] [client flags]
+  Mote execution telemetry (Batch C): host-recorded exhaust as motes actually
+  ran — wall-clock, model usage, the fired tool. Newest-first; --limit caps the
+  page (server clamps 1..=500, default 200); --before-seq pages older rows
+  (pass the last page's lowest seq). Lives in a rebuildable-to-empty sidecar:
+  AUDIT/DISPLAY ONLY — never truth, identity, or a digest input. input_tokens
+  is never set in OSS (the frozen backend seam reports no input count). A
+  gateway without the sidecar answers Unimplemented (upgrade the serve)."
+            .into(),
+        "replan" => "\
+kx replan list [--limit N] [client flags]
+  Re-plan-round observability (read-only): the durable ReplanRound facts the
+  live re-plan-on-failure loop commits — round index (0 = the initial-plan
+  anchor), the shaper Mote, the resolved model, the failed steps that triggered
+  the round, and whether the model escalated to a human (the run quiesces).
+  Newest-first; operator-global on single-node OSS."
+            .into(),
+        "react" => "\
+kx react list [--instance <hex16>] [--limit N] [client flags]
+  ReAct-turn observability (read-only): the durable ReactRound facts the live
+  ReAct chain commits — each turn's run-salted Mote id, its settled branch
+  (pending | answer | tool | dead_lettered), the fired tool for a tool branch,
+  and the run's durable budget caps. Newest-first; --instance scopes to one
+  run's chain."
+            .into(),
+        "capture" => "\
+kx capture list [--instance <hex16>] [--limit N] [client flags]
+  The Morphic Data Engine capture read surface (read-only): durably-captured
+  ACTION records — a committed Mote's join keys (mote / instance / result_ref /
+  nd-class / seq), plus the ReAct turn/branch when the Mote is a ReAct turn.
+  JOIN-KEY-ONLY by construction (no payload/reasoning fields). Newest-first;
+  --instance scopes to one run."
             .into(),
         "signatures" => "\
 kx signatures list | get --id <hex32> | register --manifest-file <path> [client flags]

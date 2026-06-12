@@ -37,6 +37,7 @@ from .replan import ReplanRound, ReplanRoundPage
 from .run import AsyncRun, Result, Run
 from .runs import RunPage, RunSummary
 from .teams import TeamMembers, TeamSummary
+from .telemetry import MoteTelemetryRow, TelemetryPage
 from .toolscout import BundleScore, BundleSpec, ToolManifest
 from .v1 import gateway_pb2 as _g
 from .v1 import gateway_pb2_grpc as _gg
@@ -331,6 +332,26 @@ class KxClient:
             self.endpoint, inst_hex, since=since, token=self._token, ws_endpoint=ws_endpoint
         )
 
+    def stream_all_events(
+        self, *, since: int = 0, follow: bool = False
+    ) -> Iterator[types.GlobalDelta]:
+        """The cross-run GLOBAL event tail (Batch C) — every run on the node over
+        ONE stream, each delta stamped with its registration-watermark
+        ``instance_id`` (display attribution, never identity) plus the
+        ``run_registered`` kind the per-run cursor never surfaces.
+        OPERATOR-GLOBAL on single-node OSS. Same cursor semantics as
+        :meth:`stream_events`. An old gateway raises ``KxUnimplemented``."""
+        return _events.stream_all_deltas(self._stub, self._md, since, follow)
+
+    def ws_all_events(
+        self, *, since: int = 0, ws_endpoint: Optional[str] = None
+    ) -> Iterator[types.GlobalDelta]:
+        """Consume the GLOBAL live tail over the optional WebSocket bridge
+        (``kortecx[ws]``) — the ``/v1/events/all`` channel (Batch C)."""
+        return _events.ws_stream_all_deltas(
+            self.endpoint, since=since, token=self._token, ws_endpoint=ws_endpoint
+        )
+
     def list_signatures(self) -> List[types.SignatureSummary]:
         resp = self._call(
             lambda: self._stub.ListSignatures(_g.ListSignaturesRequest(), metadata=self._md)
@@ -428,6 +449,35 @@ class KxClient:
         resp = self._call(lambda: self._stub.ListCaptureRecords(req, metadata=self._md))
         return CaptureRecordPage(
             records=[CaptureRecord.from_proto(r) for r in resp.records], has_more=resp.has_more
+        )
+
+    def list_mote_telemetry(
+        self,
+        *,
+        instance_id: Optional[str] = None,
+        mote_id: Optional[str] = None,
+        limit: Optional[int] = None,
+        before_seq: Optional[int] = None,
+    ) -> TelemetryPage:
+        """Enumerate the host-recorded mote execution telemetry (newest-first,
+        paginated) — wall-clock, model usage, the fired tool (Batch C). AUDIT/
+        DISPLAY only: lives in a rebuildable-to-empty ``telemetry.db`` sidecar,
+        never truth, never identity. ``instance_id``/``mote_id`` (hex) scope the
+        page; ``before_seq`` resumes below the last row's seq. The server clamps
+        ``limit`` to its max page. An old gateway (or one without the sidecar)
+        raises ``KxUnimplemented``."""
+        req = _g.ListMoteTelemetryRequest()
+        if instance_id is not None:
+            req.instance_id = hexids.decode(instance_id)
+        if mote_id is not None:
+            req.mote_id = hexids.decode(mote_id)
+        if limit is not None:
+            req.limit = limit
+        if before_seq is not None:
+            req.before_seq = before_seq
+        resp = self._call(lambda: self._stub.ListMoteTelemetry(req, metadata=self._md))
+        return TelemetryPage(
+            rows=[MoteTelemetryRow.from_proto(r) for r in resp.rows], has_more=resp.has_more
         )
 
     def list_recipes(self) -> List[str]:
@@ -729,6 +779,12 @@ class AsyncKxClient:
         inst = hexids.as_bytes(instance_id, hexids.INSTANCE_LEN)
         return _events.astream_deltas(self._stub, self._md, inst, since, follow)
 
+    def stream_all_events(
+        self, *, since: int = 0, follow: bool = False
+    ) -> AsyncIterator[types.GlobalDelta]:
+        """Async :meth:`KxClient.stream_all_events` (the Batch C global tail)."""
+        return _events.astream_all_deltas(self._stub, self._md, since, follow)
+
     async def list_signatures(self) -> List[types.SignatureSummary]:
         resp = await self._acall(
             self._stub.ListSignatures(_g.ListSignaturesRequest(), metadata=self._md)
@@ -808,6 +864,29 @@ class AsyncKxClient:
         resp = await self._acall(self._stub.ListCaptureRecords(req, metadata=self._md))
         return CaptureRecordPage(
             records=[CaptureRecord.from_proto(r) for r in resp.records], has_more=resp.has_more
+        )
+
+    async def list_mote_telemetry(
+        self,
+        *,
+        instance_id: Optional[str] = None,
+        mote_id: Optional[str] = None,
+        limit: Optional[int] = None,
+        before_seq: Optional[int] = None,
+    ) -> TelemetryPage:
+        """Async :meth:`KxClient.list_mote_telemetry`."""
+        req = _g.ListMoteTelemetryRequest()
+        if instance_id is not None:
+            req.instance_id = hexids.decode(instance_id)
+        if mote_id is not None:
+            req.mote_id = hexids.decode(mote_id)
+        if limit is not None:
+            req.limit = limit
+        if before_seq is not None:
+            req.before_seq = before_seq
+        resp = await self._acall(self._stub.ListMoteTelemetry(req, metadata=self._md))
+        return TelemetryPage(
+            rows=[MoteTelemetryRow.from_proto(r) for r in resp.rows], has_more=resp.has_more
         )
 
     async def list_recipes(self) -> List[str]:

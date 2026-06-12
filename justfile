@@ -374,6 +374,24 @@ check-reproducible:
     # own value (using $GITHUB_WORKSPACE) is preserved when already set.
     : "${RUSTFLAGS:=--remap-path-prefix={{justfile_directory()}}= -Cmetadata=kortecx-v0}"
     export RUSTFLAGS
+    # GUARDRAIL (§2.194 deterministic-homes): `cargo clean` wipes ALL of
+    # target/ — including target/models/, the checksum-verified model cache the
+    # fetch recipes maintain (a 2+ GB re-download per `just ci` otherwise).
+    # Stash the cache across the two clean builds; restore even on failure.
+    MODELS_STASH=""
+    if [ -d target/models ]; then
+        MODELS_STASH="$(mktemp -d)"
+        mv target/models "$MODELS_STASH/models"
+    fi
+    restore_models() {
+        if [ -n "$MODELS_STASH" ] && [ -d "$MODELS_STASH/models" ]; then
+            mkdir -p target
+            rm -rf target/models
+            mv "$MODELS_STASH/models" target/models
+            rmdir "$MODELS_STASH" 2>/dev/null || true
+        fi
+    }
+    trap restore_models EXIT
     cargo clean
     cargo build --release --workspace
     find target/release -maxdepth 1 -type f \( -name "*.rlib" -o -name "*.a" \) -print0 \
@@ -451,6 +469,7 @@ scale-smoke:
     cargo test -p kx-gateway-core --release --test scale -- --ignored --nocapture --test-threads=1
     cargo test -p kx-workflow --release --test stress_fanout -- --ignored --nocapture --test-threads=1
     cargo test -p kx-dataset-hnsw --release --test scale -- --ignored --nocapture --test-threads=1
+    cargo test -p kx-gateway --release --test global_tail_stress -- --ignored --nocapture --test-threads=1
 
 # IMP-4 (D116) single-writer scale-readiness measurement spike — publish the
 # single-writer journal commit ceiling + the projection-fold curve so a real number
