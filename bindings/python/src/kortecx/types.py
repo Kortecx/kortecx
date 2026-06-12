@@ -235,8 +235,11 @@ class GlobalDelta:
     registered_unix_ms: Optional[int] = None
 
     @classmethod
-    def from_proto(cls, d: "_g.GlobalEventDelta") -> "Optional[GlobalDelta]":
-        """Build a view, or ``None`` for a delta with no recognized kind (skip)."""
+    def from_proto(cls, d: "_g.GlobalEventDelta") -> "GlobalDelta":
+        """Build a view; a delta with no recognized kind becomes ``"unknown"``
+        (never ``None``, never a throw — the global-tail contract: a future
+        delta kind SURFACES on every SDK, exactly like the TS/CLI surfaces,
+        deliberately diverging from the per-run ``Delta`` skip)."""
         which = d.WhichOneof("kind")
         inst = hexids.encode(d.instance_id)
         if which == "committed":
@@ -281,7 +284,7 @@ class GlobalDelta:
                 recipe_fingerprint=hexids.encode(rr.recipe_fingerprint),
                 registered_unix_ms=rr.registered_unix_ms,
             )
-        return None
+        return cls(seq=d.seq, kind="unknown", instance_id=inst)
 
     def to_dict(self) -> dict:
         out: dict = {"seq": self.seq, "kind": self.kind, "instance_id": self.instance_id}

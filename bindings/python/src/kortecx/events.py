@@ -62,9 +62,9 @@ def stream_all_deltas(stub, md, since: int, follow: bool) -> Iterator[types.Glob
         try:
             for frame in stub.StreamAllEvents(req, metadata=md):
                 for d in frame.deltas:
-                    view = types.GlobalDelta.from_proto(d)
-                    if view is not None:
-                        yield view
+                    # Every delta surfaces — an unrecognized kind arrives as
+                    # ``"unknown"`` (the global-tail contract; TS/CLI parity).
+                    yield types.GlobalDelta.from_proto(d)
                 cursor = frame.next_seq
                 if not follow and frame.journal_boundary:
                     return
@@ -113,9 +113,9 @@ async def astream_all_deltas(
             call = stub.StreamAllEvents(req, metadata=md)
             async for frame in call:
                 for d in frame.deltas:
-                    view = types.GlobalDelta.from_proto(d)
-                    if view is not None:
-                        yield view
+                    # Every delta surfaces — an unrecognized kind arrives as
+                    # ``"unknown"`` (the global-tail contract; TS/CLI parity).
+                    yield types.GlobalDelta.from_proto(d)
                 cursor = frame.next_seq
                 if not follow and frame.journal_boundary:
                     return
@@ -208,10 +208,12 @@ def ws_stream_deltas(
                     yield view
 
 
-def _ws_global_delta(obj: dict) -> Optional[types.GlobalDelta]:
+def _ws_global_delta(obj: dict) -> types.GlobalDelta:
     """Map one global WS JSON delta (``type`` discriminant, hex ids, per-delta
     ``instance_id`` attribution) to a :class:`GlobalDelta`. An unknown/future
-    ``type`` maps to ``None`` (skip — forward-tolerant, like the per-run parser)."""
+    ``type`` SURFACES as ``"unknown"`` (never dropped — the global-tail
+    contract, matching the TS parser + the CLI renderer; the per-run parser's
+    silent skip is deliberately NOT mirrored here)."""
     kind = obj.get("type")
     seq = int(obj.get("seq", 0))
     inst = obj.get("instance_id") or ""  # "" before any registration
@@ -252,7 +254,7 @@ def _ws_global_delta(obj: dict) -> Optional[types.GlobalDelta]:
         return types.GlobalDelta(
             seq=seq, kind="effect_staged", instance_id=inst, mote_id=obj.get("mote_id")
         )
-    return None
+    return types.GlobalDelta(seq=seq, kind="unknown", instance_id=inst)
 
 
 def ws_stream_all_deltas(
@@ -278,6 +280,4 @@ def ws_stream_all_deltas(
         for message in ws:
             frame = json.loads(message)
             for d in frame.get("deltas", []):
-                view = _ws_global_delta(d)
-                if view is not None:
-                    yield view
+                yield _ws_global_delta(d)

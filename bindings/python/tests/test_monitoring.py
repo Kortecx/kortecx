@@ -87,8 +87,13 @@ def test_global_delta_empty_instance_pre_registration():
     assert GlobalDelta.from_proto(d).instance_id == ""
 
 
-def test_global_delta_no_kind_is_skipped():
-    assert GlobalDelta.from_proto(g.GlobalEventDelta(seq=1, instance_id=b"\x01" * 16)) is None
+def test_global_delta_no_kind_surfaces_as_unknown():
+    # The global-tail contract (TS/CLI parity): a future delta kind SURFACES as
+    # "unknown" — never silently dropped (unlike the per-run Delta skip).
+    view = GlobalDelta.from_proto(g.GlobalEventDelta(seq=1, instance_id=b"\x01" * 16))
+    assert view.kind == "unknown"
+    assert view.seq == 1
+    assert view.instance_id == "01" * 16
 
 
 def test_global_delta_to_dict_keeps_relevant_fields_only():
@@ -172,10 +177,13 @@ def test_ws_global_delta_empty_instance_and_unknown_tolerance():
         }
     )
     assert d.instance_id == ""
-    # The server's explicit `unknown` variant AND any future tag are skipped.
-    assert _ws_global_delta({"type": "unknown", "seq": 9, "instance_id": ""}) is None
-    assert _ws_global_delta({"type": "telemetry_flushed", "seq": 10}) is None
-    assert _ws_global_delta({}) is None
+    # The server's explicit `unknown` variant AND any future tag SURFACE as
+    # "unknown" (never dropped — TS/CLI parity on the global tail).
+    assert _ws_global_delta({"type": "unknown", "seq": 9, "instance_id": ""}).kind == "unknown"
+    future = _ws_global_delta({"type": "telemetry_flushed", "seq": 10})
+    assert future.kind == "unknown"
+    assert future.seq == 10
+    assert _ws_global_delta({}).kind == "unknown"
 
 
 # --- telemetry mappers ----------------------------------------------------------
