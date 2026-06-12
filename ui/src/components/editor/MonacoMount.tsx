@@ -29,6 +29,8 @@ function Fallback({
   ariaLabel,
   id,
   height,
+  onSubmit,
+  placeholder,
 }: EditorSurfaceProps) {
   const style = { height: typeof height === "number" ? `${height}px` : height };
   if (readOnly) {
@@ -48,7 +50,20 @@ function Fallback({
       style={style}
       spellCheck={false}
       autoComplete="off"
+      placeholder={placeholder}
       onChange={(e) => onChange?.(e.target.value)}
+      onKeyDown={
+        onSubmit === undefined
+          ? undefined
+          : (e) => {
+              // The same contract as the real editor's Enter command: plain
+              // Enter submits, Shift+Enter inserts the newline.
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                onSubmit();
+              }
+            }
+      }
     />
   );
 }

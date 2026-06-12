@@ -18,6 +18,7 @@
 import type { RecipeForm } from "@kortecx/sdk/web";
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import {
+  type ChatMessage,
   type ChatThread,
   EMPTY_THREAD,
   type MessageAttachment,
@@ -64,6 +65,8 @@ export interface UseChat {
   send(text: string, attachments?: readonly MessageAttachment[]): Promise<void>;
   /** Re-dispatch a FAILED turn with its identical args. */
   retry(assistantId: string): Promise<void>;
+  /** Restore a saved thread (chat history) — replaces the live one. */
+  loadThread(messages: readonly ChatMessage[]): void;
   reset(): void;
 }
 
@@ -268,6 +271,13 @@ export function useChat({ handle, promptKey, modelId }: UseChatOptions): UseChat
     [thread, startTurn],
   );
 
+  const loadThread = useCallback((messages: readonly ChatMessage[]): void => {
+    setActive(null);
+    setDegraded(null);
+    finalizedRef.current = null;
+    dispatch({ type: "load_thread", messages });
+  }, []);
+
   const reset = useCallback((): void => {
     setActive(null);
     setDegraded(null);
@@ -283,6 +293,7 @@ export function useChat({ handle, promptKey, modelId }: UseChatOptions): UseChat
     activeAssistantId: active?.assistantId,
     send,
     retry,
+    loadThread,
     reset,
   };
 }

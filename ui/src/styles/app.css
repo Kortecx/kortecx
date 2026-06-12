@@ -1116,18 +1116,6 @@ select {
 .thinking-trace {
   margin-top: 0.5rem;
 }
-.composer {
-  display: flex;
-  gap: 0.5rem;
-  align-items: flex-end;
-  border-top: 1px solid var(--border);
-  padding-top: 0.6rem;
-}
-.composer textarea {
-  flex: 1;
-  margin: 0;
-  resize: vertical;
-}
 .chat-settings {
   margin: 0.5rem 0;
 }
@@ -1152,6 +1140,120 @@ select {
   display: flex;
   justify-content: flex-end;
   padding-top: 0.4rem;
+}
+.composer {
+  display: flex;
+  gap: 0.5rem;
+  align-items: stretch;
+  border-top: 1px solid var(--border);
+  padding-top: 0.6rem;
+}
+.composer__editor {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.composer__editor .editor-surface__fallback {
+  width: 100%;
+  margin: 0;
+  border: 0;
+  resize: vertical;
+}
+/* The action column: send on top, attach BELOW it (user-directed 2026-06-12). */
+.composer__actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  justify-content: flex-start;
+}
+.chat-history__backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  border: 0;
+  padding: 0;
+  background: var(--backdrop-color);
+  cursor: pointer;
+}
+.chat-history {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 80;
+  width: min(420px, 94vw);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  border-left: 1px solid var(--border-md);
+  box-shadow: -16px 0 48px rgba(0, 0, 0, 0.25);
+  overflow-y: auto;
+  padding: 1rem;
+}
+.chat-history__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.chat-history__head h2 {
+  margin: 0;
+}
+.chat-history__note {
+  margin-top: 0.2rem;
+}
+.chat-history__list {
+  list-style: none;
+  margin: 0.6rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.chat-history__item {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.chat-history__load {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.15rem;
+  text-align: left;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.5rem 0.65rem;
+  cursor: pointer;
+  color: var(--fg);
+  font-size: 0.88rem;
+}
+.chat-history__load:hover {
+  border-color: var(--fg-muted);
+}
+.chat-history__title {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+.chat-history__delete {
+  padding: 0 0.35rem;
+}
+.modelpicker--empty {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.screen__head-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
 }
 .modelpicker {
   display: inline-flex;

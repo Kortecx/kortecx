@@ -1,11 +1,15 @@
 import { m } from "framer-motion";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { fadeUp } from "../../app/motion";
+import { useConnection } from "../../kx/connection-context";
 import { useAttachments } from "../../kx/use-attachments";
 import { useChat } from "../../kx/use-chat";
+import { type SavedChat, saveChat } from "../../lib/chat-history";
 import { type ChatSettings, loadChatSettings, saveChatSettings } from "../../lib/chat-settings";
 import type { MessageAttachment } from "../../lib/chat-thread";
+import { Icon } from "../shell/Icon";
 import { AttachmentStrip } from "./AttachmentStrip";
+import { ChatHistory } from "./ChatHistory";
 import { ChatSettingsPanel } from "./ChatSettings";
 import { Composer } from "./Composer";
 import { DegradeNotice } from "./DegradeNotice";
@@ -18,10 +22,13 @@ import { ThinkingTrace } from "./ThinkingTrace";
  * committed result; the DAG-of-thought shows the run executing. Batch A: attach
  * images (uploaded via PutContent; they ride the vision recipe when the serve
  * is image-capable, display-only otherwise) and pick the model (a server-
- * validated free-param). Degrades to a guidance notice when no chat recipe /
- * model is provisioned.
+ * validated free-param). PR-1.1: every thread autosaves to the client-local
+ * per-endpoint history (restorable from the History slide-over) and the
+ * composer is a Monaco markdown surface. Degrades to a guidance notice when no
+ * chat recipe/model is provisioned.
  */
 export function ChatPanel() {
+  const { endpoint } = useConnection();
   const [settings, setSettings] = useState<ChatSettings>(() => loadChatSettings());
   const chat = useChat({
     handle: settings.handle,
@@ -29,10 +36,29 @@ export function ChatPanel() {
     modelId: settings.modelId,
   });
   const attach = useAttachments();
+  const [historyOpen, setHistoryOpen] = useState(false);
+  // The identity the autosave upserts under; a new id per fresh/restored thread.
+  const chatIdRef = useRef<string>(crypto.randomUUID());
+
+  // Autosave: every thread change upserts this chat (empty threads are a no-op).
+  useEffect(() => {
+    saveChat(endpoint, chatIdRef.current, chat.thread.messages);
+  }, [endpoint, chat.thread]);
 
   function updateSettings(next: ChatSettings): void {
     setSettings(next);
     saveChatSettings(next);
+  }
+
+  function newChat(): void {
+    chatIdRef.current = crypto.randomUUID();
+    chat.reset();
+  }
+
+  function loadSaved(saved: SavedChat): void {
+    chatIdRef.current = saved.id;
+    chat.loadThread(saved.messages);
+    setHistoryOpen(false);
   }
 
   function sendWithAttachments(text: string): void {
@@ -60,11 +86,23 @@ export function ChatPanel() {
     >
       <div className="screen__head">
         <h1>New Chat</h1>
-        {chat.thread.messages.length > 0 ? (
-          <button type="button" className="linkbtn" onClick={chat.reset}>
-            New chat
+        <div className="screen__head-actions">
+          <button
+            type="button"
+            className="iconbtn"
+            onClick={() => setHistoryOpen(true)}
+            aria-label="Chat history"
+            title="Chat history"
+            data-testid="chat-history-toggle"
+          >
+            <Icon name="history" />
           </button>
-        ) : null}
+          {chat.thread.messages.length > 0 ? (
+            <button type="button" className="linkbtn" onClick={newChat}>
+              New chat
+            </button>
+          ) : null}
+        </div>
       </div>
       <p className="muted">
         Each message runs <code>{settings.handle}</code>; the reply is the run's committed result.
@@ -99,6 +137,13 @@ export function ChatPanel() {
         sendBlocked={attach.uploading}
         onSend={sendWithAttachments}
         onPickFiles={attach.addFiles}
+      />
+
+      <ChatHistory
+        endpoint={endpoint}
+        open={historyOpen}
+        onClose={() => setHistoryOpen(false)}
+        onLoad={loadSaved}
       />
     </m.section>
   );

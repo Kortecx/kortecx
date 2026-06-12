@@ -18,6 +18,9 @@ import { loader } from "@monaco-editor/react";
 // The tree-shakeable ESM API entry (NOT the `monaco-editor` barrel, which drags
 // every language). The JSON contribution adds the JSON language + diagnostics.
 import * as monaco from "monaco-editor/esm/vs/editor/editor.api";
+// The markdown BASIC language (tokenizer only, no worker/diagnostics) — the chat
+// composer's syntax highlighting. Tiny; rides this same lazy chunk.
+import "monaco-editor/esm/vs/basic-languages/markdown/markdown.contribution";
 import "monaco-editor/esm/vs/language/json/monaco.contribution";
 // `?worker` makes Vite emit each worker as its OWN hash-named chunk, loaded at
 // runtime by the editor — never a modulepreload, never in the eager set.

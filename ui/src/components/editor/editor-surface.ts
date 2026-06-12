@@ -22,4 +22,9 @@ export interface EditorSurfaceProps {
   readonly ariaLabel?: string;
   /** DOM id forwarded to the editable fallback `<textarea>` (label association). */
   readonly id?: string;
+  /** Plain-Enter submit (the chat composer). Shift+Enter keeps inserting a
+   *  newline in BOTH the real editor and the fallback textarea. */
+  readonly onSubmit?: () => void;
+  /** Ghost text shown while empty (Monaco `placeholder` option / textarea attr). */
+  readonly placeholder?: string;
 }

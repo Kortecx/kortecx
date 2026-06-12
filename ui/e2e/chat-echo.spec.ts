@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { typeMessage } from "./fixtures/chat";
 import { connectConsole } from "./fixtures/connect";
 import { type Gateway, SPA_ORIGIN, spawnGateway } from "./fixtures/serve";
 
@@ -22,7 +23,7 @@ test("chat round-trips against the model-free echo recipe (Invoke→poll→GetCo
   await page.getByTestId("chat-settings").locator("summary").click();
   await page.getByTestId("echo-preset").click();
 
-  await page.getByLabel(/^message$/i).fill("hello there");
+  await typeMessage(page, "hello there");
   await page.getByTestId("send").click();
 
   // The user's message + an assistant turn that reaches a committed result.
@@ -44,12 +45,13 @@ test("a chat turn fails gracefully when the gateway is unreachable", async ({ pa
   gw.stop();
   gw = undefined;
 
-  await page.getByLabel(/^message$/i).fill("are you there?");
+  await typeMessage(page, "are you there?");
   await page.getByTestId("send").click();
 
   await expect(page.getByTestId("bubble-assistant")).toHaveAttribute("data-status", "failed", {
     timeout: 30_000,
   });
-  // The composer is still interactive (the app did not crash).
-  await expect(page.getByLabel(/^message$/i)).toBeEnabled();
+  // The composer is still interactive (the app did not crash): typing re-arms send.
+  await typeMessage(page, "still alive");
+  await expect(page.getByTestId("send")).toBeEnabled();
 });

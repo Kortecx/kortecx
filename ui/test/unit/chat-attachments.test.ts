@@ -111,3 +111,18 @@ describe("planVisionArgs (form-gated — never send an undeclared arg)", () => {
     });
   });
 });
+
+describe("chatReducer load_thread (chat history restore)", () => {
+  it("replaces the whole message list", () => {
+    const live = sendWithAttachment(EMPTY_THREAD);
+    const restored = chatReducer(live, {
+      type: "load_thread",
+      messages: [
+        { id: "x1", role: "user", text: "from history", status: "done" },
+        { id: "x2", role: "assistant", text: "the saved reply", status: "done", forUserId: "x1" },
+      ],
+    });
+    expect(restored.messages.map((m) => m.id)).toEqual(["x1", "x2"]);
+    expect(restored.messages[1]?.text).toBe("the saved reply");
+  });
+});
