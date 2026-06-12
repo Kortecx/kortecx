@@ -24,14 +24,17 @@ import "monaco-editor/esm/vs/language/json/monaco.contribution";
 import EditorWorker from "monaco-editor/esm/vs/editor/editor.worker?worker";
 import JsonWorker from "monaco-editor/esm/vs/language/json/json.worker?worker";
 
-/** The console's light Monaco theme, mapped to the app's locked light tokens
- *  (hard-coded hexes from `app.css` — reading CSS vars at define time is fragile). */
+/** The console's Monaco themes, mapped to the app's locked palettes (hard-coded
+ *  hexes from `app.css` — reading CSS vars at define time is fragile). One per
+ *  data-theme; MonacoEditorImpl picks by the resolved theme. */
 const KX_LIGHT = "kx-light";
+const KX_DARK = "kx-dark";
 
 let configured = false;
 
 /** Idempotent: wire the offline workers, point `@monaco-editor/react` at the bundled
- *  instance, and register the `kx-light` theme. Safe to call from every editor mount. */
+ *  instance, and register the `kx-light`/`kx-dark` themes. Safe to call from every
+ *  editor mount. */
 export function configureMonacoOnce(): void {
   if (configured) {
     return;
@@ -63,8 +66,27 @@ export function configureMonacoOnce(): void {
     },
   });
 
+  // The dark twin, on the app.css dark surface (#111113) with the brightened
+  // text-bearing orange (#ff7033) for the cursor.
+  monaco.editor.defineTheme(KX_DARK, {
+    base: "vs-dark",
+    inherit: true,
+    rules: [],
+    colors: {
+      "editor.background": "#111113",
+      "editor.foreground": "#f4f4f5",
+      "editorLineNumber.foreground": "#f4f4f546",
+      "editorLineNumber.activeForeground": "#f4f4f5ad",
+      "editor.selectionBackground": "#f0450033",
+      "editor.lineHighlightBackground": "#f4f4f50a",
+      "editorCursor.foreground": "#ff7033",
+      "editorIndentGuide.background1": "#f4f4f514",
+      focusBorder: "#f04500",
+    },
+  });
+
   // THE switch: use the bundled monaco, never the CDN.
   loader.config({ monaco });
 }
 
-export { KX_LIGHT, monaco };
+export { KX_DARK, KX_LIGHT, monaco };

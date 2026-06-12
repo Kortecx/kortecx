@@ -47,11 +47,16 @@ describe("SystemsSection", () => {
 
     expect(screen.getByTestId("teams-panel")).toBeInTheDocument();
     await waitFor(() => expect(screen.getByTestId("team-pick-kx/teams/demo")).toBeInTheDocument());
-    await waitFor(() => expect(screen.getByTestId("member-table")).toBeInTheDocument());
-    expect(screen.getByTestId("member-row-alice@acme")).toBeInTheDocument();
-    // alice is a delegate → the delegate badge.
-    const delegates = document.querySelectorAll(".role-badge--delegate");
-    expect(delegates).toHaveLength(1);
+    // The row assertions must be EVENTUAL, not just gated on the table: the grant
+    // inspector's asset auto-select RE-KEYS useTeamMembers(team, assetRef), which
+    // briefly swaps the already-rendered table back to "Loading members…" — a bare
+    // getByTestId after the table waitFor races that window (a CI-reproduced flake).
+    await waitFor(() => {
+      expect(screen.getByTestId("member-table")).toBeInTheDocument();
+      expect(screen.getByTestId("member-row-alice@acme")).toBeInTheDocument();
+      // alice is a delegate → the delegate badge.
+      expect(document.querySelectorAll(".role-badge--delegate")).toHaveLength(1);
+    });
   });
 
   it("shows the grants inspector with the team grant on echo", async () => {
