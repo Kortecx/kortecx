@@ -14,6 +14,9 @@ export interface ChatSettings {
   readonly showThinking: boolean;
   /** Auto-scroll the thread to the newest message. */
   readonly autoscroll: boolean;
+  /** The picked model id (Batch A). Only ever sent as a recipe ENUM free-param
+   *  the SERVER validates — never authority. `undefined` = the gateway default. */
+  readonly modelId?: string;
 }
 
 export const DEFAULT_CHAT_SETTINGS: ChatSettings = {
@@ -59,6 +62,7 @@ export function loadChatSettings(): ChatSettings {
           : DEFAULT_CHAT_SETTINGS.promptKey,
       showThinking: isBool(p.showThinking) ? p.showThinking : DEFAULT_CHAT_SETTINGS.showThinking,
       autoscroll: isBool(p.autoscroll) ? p.autoscroll : DEFAULT_CHAT_SETTINGS.autoscroll,
+      modelId: isString(p.modelId) && p.modelId.trim() !== "" ? p.modelId : undefined,
     };
   } catch {
     return DEFAULT_CHAT_SETTINGS;

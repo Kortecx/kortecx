@@ -1147,6 +1147,114 @@ select {
   accent-color: var(--accent);
 }
 
+/* ---- Batch A: attachments + model picker + digest chips ---- */
+.composer__bar {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 0.4rem;
+}
+.modelpicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.modelpicker__label {
+  color: var(--fg-muted);
+  font-size: 0.85rem;
+}
+.modelpicker select {
+  margin: 0;
+  width: auto;
+  font-size: 0.85rem;
+}
+.attachstrip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding: 0.4rem 0;
+}
+.attachstrip__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elev);
+  padding: 0.3rem 0.5rem;
+  font-size: 0.85rem;
+}
+.attachstrip__chip--failed {
+  border-color: var(--t-failed);
+}
+.attachstrip__preview {
+  width: 36px;
+  height: 36px;
+  object-fit: cover;
+  border-radius: 5px;
+}
+.attachstrip__name {
+  max-width: 12rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.attachstrip__error {
+  color: var(--t-failed);
+}
+.attachstrip__dedup {
+  color: var(--fg-muted);
+  font-size: 0.78rem;
+}
+.attachstrip__remove {
+  padding: 0 0.3rem;
+}
+.digestchip {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: 0.75rem;
+  padding: 0.05rem 0.5rem;
+  cursor: pointer;
+}
+.digestchip:hover {
+  color: var(--fg);
+  border-color: var(--fg-muted);
+}
+.bubble__attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.4rem;
+}
+.bubble__attachment {
+  margin: 0;
+}
+.bubble__attachment img {
+  max-width: 240px;
+  max-height: 180px;
+  border-radius: 8px;
+  display: block;
+}
+.bubble__attachment figcaption {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.78rem;
+  margin-top: 0.2rem;
+}
+/* The chip sits on the ACCENT user bubble — inherit its readable fg. */
+.bubble--user .digestchip,
+.bubble--user .bubble__attachment figcaption {
+  color: var(--accent-fg);
+  border-color: color-mix(in srgb, var(--accent-fg) 50%, transparent);
+}
+.bubble__retry {
+  margin-top: 0.4rem;
+}
+
 /* ---- systems facts / artifact ---- */
 .facts {
   display: grid;

@@ -44,4 +44,10 @@ export const queryKeys = {
   /** The capture-record stream (`ListCaptureRecords`); `instanceId` scopes to one run. */
   captureRecords: (endpoint: string, instanceId: string | undefined, limit: number) =>
     ["kx", endpoint, "capture-records", instanceId ?? "all", limit] as const,
+  /** The discoverable models (`ListModels`) — display-only (SN-8). */
+  models: (endpoint: string) => ["kx", endpoint, "models"] as const,
+  /** A batched content fetch (`GetContentBatch`), scoped by run + a stable refs key.
+   *  Content-addressed ⇒ immutable (cache forever). `scope` = instanceId or "uploads". */
+  contentBatch: (endpoint: string, scope: string, refsKey: string) =>
+    ["kx", endpoint, "content-batch", scope, refsKey] as const,
 };
