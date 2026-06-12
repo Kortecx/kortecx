@@ -21,17 +21,17 @@ test("the app shell navigates to every section (brand + favicon present)", async
   await expect(page.getByTestId("navbar").getByTestId("brand")).toHaveCount(0);
   await expect(page.locator('link[rel="icon"]')).toHaveCount(1);
 
+  // The eight spec-IA sections in the spec's order (+ pinned Settings).
   const sections: Array<[string, string, string]> = [
-    ["nav-chat", "chat-panel", "Chat"],
-    ["nav-runs", "runs-section", "Runs"],
+    ["nav-chat", "chat-panel", "New Chat"],
+    ["nav-runs", "runs-section", "Workflows"],
     ["nav-recipes", "recipes-section", "Blueprints"],
-    ["nav-artifacts", "artifacts-section", "Artifacts"],
     ["nav-datasets", "datasets-section", "Datasets"],
     ["nav-tools", "tools-section", "Tools"],
-    ["nav-systems", "systems-section", "Systems"],
-    ["nav-settings", "settings-section", "Settings"],
-    ["nav-activity", "activity-panel", "Activity"],
+    ["nav-context", "context-section", "Context"],
     ["nav-monitor", "monitoring-section", "Monitoring"],
+    ["nav-systems", "systems-section", "Security"],
+    ["nav-settings", "settings-section", "Settings"],
   ];
   for (const [nav, panel, crumb] of sections) {
     await page.getByTestId(nav).click();
@@ -39,4 +39,18 @@ test("the app shell navigates to every section (brand + favicon present)", async
     // The navbar breadcrumb tracks the active section.
     await expect(page.getByTestId("breadcrumb")).toContainText(crumb);
   }
+
+  // Activity is a navbar drawer (the spec's top-bar control), not a section.
+  await expect(page.getByTestId("nav-activity")).toHaveCount(0);
+  await page.getByTestId("activity-toggle").click();
+  await expect(page.getByTestId("activity-drawer")).toBeVisible();
+  await expect(page.getByTestId("activity-panel")).toBeVisible({ timeout: 15_000 });
+  await page.getByTestId("activity-close").click();
+  await expect(page.getByTestId("activity-drawer")).toHaveCount(0);
+
+  // The navbar hosts the quick theme switch next to the controls.
+  await page.getByTestId("theme-toggle").click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  await page.getByTestId("theme-toggle").click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
 });

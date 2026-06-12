@@ -6,7 +6,7 @@
  */
 
 import { shortHex } from "../../lib/format";
-import { NAV_SECTIONS, type RoutePath, SETTINGS_SECTION } from "./nav-model";
+import { HIDDEN_SECTIONS, NAV_SECTIONS, type RoutePath, SETTINGS_SECTION } from "./nav-model";
 
 export interface Crumb {
   readonly label: string;
@@ -14,7 +14,8 @@ export interface Crumb {
   readonly path?: RoutePath;
 }
 
-const ALL_SECTIONS = [...NAV_SECTIONS, SETTINGS_SECTION];
+// HIDDEN_SECTIONS (deep-link-only routes like /artifacts) still breadcrumb.
+const ALL_SECTIONS = [...NAV_SECTIONS, ...HIDDEN_SECTIONS, SETTINGS_SECTION];
 
 /** A server-derived 32-byte id rendered as 64 hex chars (run instance ids). */
 const HEX_ID = /^[0-9a-f]{64}$/;
