@@ -14,7 +14,7 @@ use tonic::{Request, Response, Status};
 
 use crate::capture_view::CaptureView;
 use crate::datasets::DatasetView;
-use crate::error::{hash_32, instance_id_16};
+use crate::error::{hash_32, instance_id_16, GatewayError};
 use crate::identity::CallerParty;
 use crate::reader::{ContentReader, JournalReader};
 use crate::submit::{RunSubmitter, SubmitterError};
@@ -497,7 +497,37 @@ pub struct GatewayService {
     /// The optional DAG-authoring seam (the Blueprint builder — the host injects a
     /// `kx-workflow`-backed author). `None` ⇒ `SubmitWorkflow` returns `unimplemented`.
     author: Option<Arc<dyn WorkflowAuthor>>,
+    /// The optional content-write seam (Batch A `PutContent` — a content-store
+    /// write, NEVER a journal write). `None` ⇒ `PutContent` returns
+    /// `unimplemented`.
+    content_writer: Option<Arc<dyn crate::writer::ContentWriter>>,
+    /// The optional uploads ledger (the Batch A advisory audit sidecar + the
+    /// EMPTY-`instance_id` uploads-scope authorized set). `None` ⇒ `PutContent`
+    /// returns `unimplemented` and uploads-scope reads uniformly deny.
+    uploads: Option<Arc<dyn crate::uploads::UploadsLedger>>,
+    /// The fail-closed `PutContent` payload cap in bytes (checked BEFORE the
+    /// store is touched). Defaults to [`DEFAULT_PUT_CAP_BYTES`]; the host wires
+    /// `kx serve --content-max-bytes`.
+    put_cap_bytes: u64,
+    /// The optional model-discovery seam (Batch A `ListModels` — display only,
+    /// the toolscout advisory precedent). `None` ⇒ `ListModels` returns
+    /// `unimplemented`; an EMPTY catalog is the honest FFI-free answer.
+    models: Option<Arc<dyn crate::models_view::ModelCatalogView>>,
 }
+
+/// The default fail-closed `PutContent` payload cap (32 MiB).
+pub const DEFAULT_PUT_CAP_BYTES: u64 = 32 * 1024 * 1024;
+
+/// The `GetContentBatch` ref-count cap: more refs ⇒ `invalid_argument`
+/// (fail-closed, never silent truncation).
+pub const MAX_BATCH_REFS: usize = 64;
+
+/// The server-side per-item payload clamp on `GetContentBatch` (512 KiB). The
+/// effective clamp is `min(client max_bytes_per_item, this)` — a full batch can
+/// never exceed `64 × 512 KiB = 32 MiB` on the wire, so the response always
+/// fits the transport budget; `truncated` + `full_size` stay honest and the
+/// full blob remains fetchable via single `GetContent`.
+pub const BATCH_ITEM_CLAMP_BYTES: u64 = 512 * 1024;
 
 impl GatewayService {
     /// Wire a gateway over a read-only journal seam, a propose-proxy, and a
@@ -525,6 +555,10 @@ impl GatewayService {
             registered_tools: std::collections::BTreeSet::new(),
             toolscout: None,
             author: None,
+            content_writer: None,
+            uploads: None,
+            put_cap_bytes: DEFAULT_PUT_CAP_BYTES,
+            models: None,
         }
     }
 
@@ -653,6 +687,46 @@ impl GatewayService {
         toolscout: Arc<dyn crate::toolscout_view::ToolScoutView>,
     ) -> Self {
         self.toolscout = Some(toolscout);
+        self
+    }
+
+    /// Wire the content-write seam (Batch A — the host exposes its content
+    /// store for client uploads). Enables `PutContent` together with
+    /// [`GatewayService::with_uploads_ledger`] — BOTH are required (an upload
+    /// that cannot be recorded would be unreachable through the uploads scope).
+    /// A content-store write only: the journal seam still has no write surface.
+    #[must_use]
+    pub fn with_content_writer(mut self, writer: Arc<dyn crate::writer::ContentWriter>) -> Self {
+        self.content_writer = Some(writer);
+        self
+    }
+
+    /// Wire the uploads ledger (Batch A — the host's `uploads.db` sidecar:
+    /// advisory audit rows + the uploads-scope authorized set). Rebuildable-
+    /// to-empty audit state, off-journal, off-digest.
+    #[must_use]
+    pub fn with_uploads_ledger(mut self, uploads: Arc<dyn crate::uploads::UploadsLedger>) -> Self {
+        self.uploads = Some(uploads);
+        self
+    }
+
+    /// Set the fail-closed `PutContent` payload cap (the host wires
+    /// `kx serve --content-max-bytes`; defaults to [`DEFAULT_PUT_CAP_BYTES`]).
+    #[must_use]
+    pub fn with_put_content_cap(mut self, cap_bytes: u64) -> Self {
+        self.put_cap_bytes = cap_bytes;
+        self
+    }
+
+    /// Wire the model-discovery seam (Batch A — the host's provisioned model
+    /// catalog). Enables `ListModels`. Display/discovery only: model selection
+    /// stays a recipe ENUM free-param validated server-side (SN-8).
+    #[must_use]
+    pub fn with_model_catalog_view(
+        mut self,
+        models: Arc<dyn crate::models_view::ModelCatalogView>,
+    ) -> Self {
+        self.models = Some(models);
         self
     }
 }
@@ -1001,15 +1075,131 @@ impl KxGateway for GatewayService {
         request: Request<proto::GetContentRequest>,
     ) -> Result<Response<proto::ContentBlob>, Status> {
         let req = request.into_inner();
-        let instance_id = instance_id_16(&req.instance_id)?;
         let content_ref = hash_32(&req.content_ref, "content_ref must be 32 bytes")?;
-        let payload = view::get_owned_content(
+        // Batch A: an EMPTY instance_id selects the UPLOADS scope (previously a
+        // hard invalid_argument — additive-safe). A 16-byte ticket takes the
+        // original run-scope path byte-identically.
+        let payload = if req.instance_id.is_empty() {
+            view::get_uploaded_content(self.content.as_ref(), self.uploads.as_deref(), content_ref)?
+        } else {
+            let instance_id = instance_id_16(&req.instance_id)?;
+            view::get_owned_content(
+                self.reader.as_ref(),
+                self.content.as_ref(),
+                instance_id,
+                content_ref,
+            )?
+        };
+        Ok(Response::new(proto::ContentBlob { payload }))
+    }
+
+    async fn put_content(
+        &self,
+        request: Request<proto::PutContentRequest>,
+    ) -> Result<Response<proto::PutContentResponse>, Status> {
+        // BOTH seams are required: an upload the ledger cannot record would be
+        // unreachable through the uploads scope (a silent blob leak).
+        let (Some(writer), Some(uploads)) = (self.content_writer.as_ref(), self.uploads.as_ref())
+        else {
+            return Err(Status::unimplemented(
+                "PutContent: no content writer / uploads ledger wired on this gateway",
+            ));
+        };
+        // SERVER-DERIVED identity (SN-8): the party the auth interceptor stashed.
+        let principal = request
+            .extensions()
+            .get::<CallerParty>()
+            .map(|p| p.0.clone())
+            .ok_or_else(|| Status::unauthenticated("no resolved caller identity"))?;
+        let req = request.into_inner();
+
+        // Fail-closed cap BEFORE hashing or touching the store (Rule 8c — the
+        // first client write path never does unbounded work on oversized input).
+        if req.payload.len() as u64 > self.put_cap_bytes {
+            return Err(GatewayError::ResourceExhausted(
+                "payload exceeds the server content cap (--content-max-bytes)",
+            )
+            .into());
+        }
+
+        let (content_ref, deduplicated) = writer.put(&req.payload)?;
+        // Advisory audit row + the uploads-scope authorization. Wall-clock is
+        // audit-only (off-digest, off-identity). Recorded AFTER the store write
+        // so the ledger never names a ref the store does not hold.
+        let uploaded_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX));
+        uploads.record(crate::uploads::UploadRecord {
+            content_ref,
+            media_type: req.media_type,
+            filename: req.filename,
+            principal,
+            uploaded_ms,
+        })?;
+
+        Ok(Response::new(proto::PutContentResponse {
+            content_ref: content_ref.to_vec(),
+            size: req.payload.len() as u64,
+            deduplicated,
+        }))
+    }
+
+    async fn get_content_batch(
+        &self,
+        request: Request<proto::GetContentBatchRequest>,
+    ) -> Result<Response<proto::GetContentBatchResponse>, Status> {
+        let req = request.into_inner();
+        // Fail-closed ref-count cap — refuse, never silently truncate.
+        if req.content_refs.len() > MAX_BATCH_REFS {
+            return Err(Status::invalid_argument(
+                "GetContentBatch accepts at most 64 content_refs",
+            ));
+        }
+        // EMPTY = uploads scope; 16 bytes = run scope; anything else is malformed.
+        let instance_id = if req.instance_id.is_empty() {
+            None
+        } else {
+            Some(instance_id_16(&req.instance_id)?)
+        };
+        // The effective per-item clamp: the client may only LOWER the server's
+        // bound, so a full 64-item batch always fits the transport budget.
+        let item_clamp = req
+            .max_bytes_per_item
+            .map_or(BATCH_ITEM_CLAMP_BYTES, |m| m.min(BATCH_ITEM_CLAMP_BYTES));
+        let items = view::get_content_batch(
             self.reader.as_ref(),
             self.content.as_ref(),
+            self.uploads.as_deref(),
             instance_id,
-            content_ref,
+            &req.content_refs,
+            item_clamp,
         )?;
-        Ok(Response::new(proto::ContentBlob { payload }))
+        Ok(Response::new(proto::GetContentBatchResponse { items }))
+    }
+
+    async fn list_models(
+        &self,
+        _request: Request<proto::ListModelsRequest>,
+    ) -> Result<Response<proto::ListModelsResponse>, Status> {
+        // Display/discovery ONLY (SN-8): selection stays a recipe ENUM
+        // free-param. An EMPTY catalog is the honest FFI-free answer; only a
+        // gateway with no seam at all degrades to `unimplemented`.
+        let models = self
+            .models
+            .as_ref()
+            .ok_or_else(|| Status::unimplemented("ListModels: no model catalog wired"))?;
+        let models = models
+            .list()?
+            .into_iter()
+            .map(|m| proto::ModelSummary {
+                model_id: m.model_id,
+                modalities: m.modalities,
+                description: m.description,
+                serving: m.serving,
+                context_len: m.context_len,
+            })
+            .collect();
+        Ok(Response::new(proto::ListModelsResponse { models }))
     }
 
     type StreamEventsStream = EventStream;
