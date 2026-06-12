@@ -70,7 +70,10 @@ async fn an_executed_mote_gets_a_joined_honest_row() {
     // Joined: the Committed fact's seq + the watermark instance are stamped.
     assert!(row.seq > 0);
     assert_eq!(row.instance_id, instance);
-    assert!(row.started_unix_ms > 0, "the host stamped a start wall clock");
+    assert!(
+        row.started_unix_ms > 0,
+        "the host stamped a start wall clock"
+    );
     // The FFI-free degrade is HONEST: no model ran, so no model fields — the
     // row never falls back to a def's model id, and the token counts stay
     // absent (`input_tokens` is absent in OSS by design).
@@ -147,7 +150,10 @@ async fn filters_and_before_seq_paginate_newest_first() {
         }
     }
     assert!(walked.len() >= 3);
-    assert!(walked.windows(2).all(|w| w[0] > w[1]), "no dup/miss: {walked:?}");
+    assert!(
+        walked.windows(2).all(|w| w[0] > w[1]),
+        "no dup/miss: {walked:?}"
+    );
 
     running.shutdown().await.unwrap();
 }

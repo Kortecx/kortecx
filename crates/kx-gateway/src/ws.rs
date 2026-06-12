@@ -61,8 +61,7 @@ pub(crate) async fn serve_ws(
         let global_tailer = global_tailer.clone();
         let resolver = resolver.clone();
         tokio::spawn(async move {
-            if let Err(error) = handle_conn(stream, reader, tailer, global_tailer, resolver).await
-            {
+            if let Err(error) = handle_conn(stream, reader, tailer, global_tailer, resolver).await {
                 tracing::debug!(%error, "ws-bridge connection ended");
             }
         });
@@ -291,7 +290,12 @@ fn parse_target(req: &HsRequest) -> Result<StreamTarget, String> {
             _ => {}
         }
     }
-    if req.uri().path().trim_end_matches('/').ends_with("/events/all") {
+    if req
+        .uri()
+        .path()
+        .trim_end_matches('/')
+        .ends_with("/events/all")
+    {
         return Ok(StreamTarget::All(since));
     }
     let instance = instance.ok_or_else(|| "missing or malformed ?instance=<hex16>".to_string())?;
@@ -456,10 +460,7 @@ enum WsGlobalDelta {
         mote_id: String,
     },
     /// An unrecognized delta kind (forward-compat: a future proto variant).
-    Unknown {
-        seq: u64,
-        instance_id: String,
-    },
+    Unknown { seq: u64, instance_id: String },
 }
 
 impl WsGlobalFrame {

@@ -90,7 +90,8 @@ async fn fan_out_holds_the_envelope_with_a_stalled_subscriber() {
             seq: 0,
         })
         .unwrap();
-    let reader: Arc<dyn JournalReader> = Arc::new(ReadOnly::new(SqliteJournal::open(&path).unwrap()));
+    let reader: Arc<dyn JournalReader> =
+        Arc::new(ReadOnly::new(SqliteJournal::open(&path).unwrap()));
     let (_shutdown_tx, shutdown_rx) = watch::channel(false);
     let tailer = GlobalLiveTailer::new(shutdown_rx);
 
@@ -224,7 +225,9 @@ async fn m8a_commit_to_frame_latency() {
     let tailer = GlobalLiveTailer::new(shutdown_rx);
     let mut stream = tailer.stream_all(reader, 0).unwrap();
     // Drain the catch-up boundary.
-    let _ = timeout(Duration::from_secs(5), stream.next()).await.unwrap();
+    let _ = timeout(Duration::from_secs(5), stream.next())
+        .await
+        .unwrap();
 
     // M8a: one commit per round, time append→frame-delivery.
     let mut lat = Vec::with_capacity(40);

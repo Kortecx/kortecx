@@ -370,6 +370,9 @@ mod tests {
             kx_gateway_core::global_frames_for_range(reader.as_ref(), &mut resume, head).unwrap();
         let resumed: u64 = frames.iter().map(|f| f.deltas.len() as u64).sum();
         let total: u64 = first.deltas.len() as u64 + resumed;
-        assert_eq!(total, head, "delivered + resumed = every delta exactly once");
+        assert_eq!(
+            total, head,
+            "delivered + resumed = every delta exactly once"
+        );
     }
 }

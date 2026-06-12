@@ -96,10 +96,10 @@ pub use service::{
 pub use submit::{
     RunSubmitter, SubmitMoteOutcome, SubmitStatus, SubmitterError, TonicCoordinatorSubmitter,
 };
+pub use telemetry_view::{MoteTelemetryEntry, TelemetryView};
 pub use toolscout_view::{
     BundleScoreView, BundleSpecEntry, BundleToolSpecEntry, KeywordSetEntry, LowerVerdictEntry,
     ManifestScoreEntry, ToolManifestEntry, ToolScoutView,
 };
-pub use telemetry_view::{MoteTelemetryEntry, TelemetryView};
 pub use uploads::{UploadRecord, UploadsLedger};
 pub use writer::ContentWriter;

@@ -434,28 +434,31 @@ impl TelemetryView for TelemetryLedger {
             .prepare(&sql)
             .map_err(|e| CoreError::Internal(format!("telemetry query prep: {e}")))?;
         let mapped = stmt
-            .query_map(rusqlite::params_from_iter(args.iter().map(std::convert::AsRef::as_ref)), |r| {
-                let mote: Vec<u8> = r.get(0)?;
-                let inst: Vec<u8> = r.get(1)?;
-                let wall: i64 = r.get(2)?;
-                let input_tokens: Option<i64> = r.get(3)?;
-                let output_tokens: Option<i64> = r.get(4)?;
-                let model_id: String = r.get(5)?;
-                let tool_id: String = r.get(6)?;
-                let started: i64 = r.get(7)?;
-                let seq: i64 = r.get(8)?;
-                Ok(MoteTelemetryEntry {
-                    mote_id: <[u8; 32]>::try_from(mote.as_slice()).unwrap_or([0; 32]),
-                    instance_id: <[u8; 16]>::try_from(inst.as_slice()).unwrap_or([0; 16]),
-                    wall_clock_ms: u64::try_from(wall).unwrap_or(0),
-                    input_tokens: input_tokens.map(|t| u64::try_from(t).unwrap_or(0)),
-                    output_tokens: output_tokens.map(|t| u64::try_from(t).unwrap_or(0)),
-                    model_id,
-                    tool_id,
-                    started_unix_ms: u64::try_from(started).unwrap_or(0),
-                    seq: u64::try_from(seq).unwrap_or(0),
-                })
-            })
+            .query_map(
+                rusqlite::params_from_iter(args.iter().map(std::convert::AsRef::as_ref)),
+                |r| {
+                    let mote: Vec<u8> = r.get(0)?;
+                    let inst: Vec<u8> = r.get(1)?;
+                    let wall: i64 = r.get(2)?;
+                    let input_tokens: Option<i64> = r.get(3)?;
+                    let output_tokens: Option<i64> = r.get(4)?;
+                    let model_id: String = r.get(5)?;
+                    let tool_id: String = r.get(6)?;
+                    let started: i64 = r.get(7)?;
+                    let seq: i64 = r.get(8)?;
+                    Ok(MoteTelemetryEntry {
+                        mote_id: <[u8; 32]>::try_from(mote.as_slice()).unwrap_or([0; 32]),
+                        instance_id: <[u8; 16]>::try_from(inst.as_slice()).unwrap_or([0; 16]),
+                        wall_clock_ms: u64::try_from(wall).unwrap_or(0),
+                        input_tokens: input_tokens.map(|t| u64::try_from(t).unwrap_or(0)),
+                        output_tokens: output_tokens.map(|t| u64::try_from(t).unwrap_or(0)),
+                        model_id,
+                        tool_id,
+                        started_unix_ms: u64::try_from(started).unwrap_or(0),
+                        seq: u64::try_from(seq).unwrap_or(0),
+                    })
+                },
+            )
             .map_err(|e| CoreError::Internal(format!("telemetry query: {e}")))?;
         let mut rows = Vec::new();
         for row in mapped {
@@ -582,8 +585,7 @@ mod tests {
         fn read_entries_by_seq(
             &self,
             range: std::ops::Range<u64>,
-        ) -> Result<Box<dyn Iterator<Item = JournalEntry> + '_>, kx_journal::JournalError>
-        {
+        ) -> Result<Box<dyn Iterator<Item = JournalEntry> + '_>, kx_journal::JournalError> {
             let hit: Vec<JournalEntry> = self
                 .entries
                 .read()
@@ -876,12 +878,7 @@ mod tests {
         assert_eq!(p3.len(), 1);
         assert!(!more3);
         // No dup/miss across the walk; strictly descending seq.
-        let walked: Vec<u64> = p1
-            .iter()
-            .chain(&p2)
-            .chain(&p3)
-            .map(|r| r.seq)
-            .collect();
+        let walked: Vec<u64> = p1.iter().chain(&p2).chain(&p3).map(|r| r.seq).collect();
         let mut sorted = walked.clone();
         sorted.sort_unstable_by(|a, b| b.cmp(a));
         sorted.dedup();

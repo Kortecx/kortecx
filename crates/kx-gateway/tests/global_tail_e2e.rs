@@ -77,14 +77,15 @@ async fn global_tail_surfaces_run_registered_and_stamps_the_instance() {
     let committed = deltas
         .iter()
         .find(|d| match &d.kind {
-            Some(proto::global_event_delta::Kind::Committed(cd)) => {
-                cd.mote_id == mote_id.to_vec()
-            }
+            Some(proto::global_event_delta::Kind::Committed(cd)) => cd.mote_id == mote_id.to_vec(),
             _ => false,
         })
         .expect("the run's commit streams on the global tail");
     assert_eq!(committed.instance_id, instance);
-    assert!(committed.seq > reg.seq, "the commit follows the registration");
+    assert!(
+        committed.seq > reg.seq,
+        "the commit follows the registration"
+    );
 
     running.shutdown().await.unwrap();
 }
@@ -193,9 +194,7 @@ async fn resume_from_next_seq_is_loss_free_with_attribution() {
     let commit_b = second
         .iter()
         .find(|d| match &d.kind {
-            Some(proto::global_event_delta::Kind::Committed(cd)) => {
-                committed.contains(&cd.mote_id)
-            }
+            Some(proto::global_event_delta::Kind::Committed(cd)) => committed.contains(&cd.mote_id),
             _ => false,
         })
         .expect("the post-cursor commit arrives on the resumed stream");

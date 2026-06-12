@@ -1530,7 +1530,9 @@ impl KxGateway for GatewayService {
         // exhaust. A serve without the sidecar wired degrades forward-compatibly
         // to `unimplemented`.
         let telemetry = self.telemetry.as_ref().ok_or_else(|| {
-            Status::unimplemented("ListMoteTelemetry: no telemetry view wired (telemetry.db absent)")
+            Status::unimplemented(
+                "ListMoteTelemetry: no telemetry view wired (telemetry.db absent)",
+            )
         })?;
         let req = request.into_inner();
         let instance_id: Option<[u8; 16]> = match req.instance_id {
