@@ -30,6 +30,7 @@ from .datasets import (
 from .errors import KxUsage, from_rpc_error
 from .grants import AssetGrants
 from .models import ModelSummary
+from .motes import MoteDetail
 from .react import ReactTurn, ReactTurnPage
 from .recipes import RecipeForm
 from .replan import ReplanRound, ReplanRoundPage
@@ -366,6 +367,22 @@ class KxClient:
             req.before_seq = before_seq
         resp = self._call(lambda: self._stub.ListRuns(req, metadata=self._md))
         return RunPage(runs=[RunSummary.from_proto(r) for r in resp.runs], has_more=resp.has_more)
+
+    def get_mote_detail(self, instance_id: IdType, mote_id: IdType) -> MoteDetail:
+        """Resolve one Mote's admitted definition (Batch B) — the node-inspector
+        read: step kind, model, prompt, capped params, tool contract. DISPLAY
+        ONLY (SN-8). Commit-gated: an uncommitted mote (or one admitted by a
+        pre-Batch-B binary) answers ``def_found=False`` honestly; an unknown
+        mote in an owned run raises ``KxNotFound``; a wrong ticket raises the
+        uniform ``KxPermissionDenied``. An old gateway raises ``KxUnimplemented``."""
+        inst = hexids.as_bytes(instance_id, hexids.INSTANCE_LEN)
+        mote = hexids.as_bytes(mote_id, hexids.REF_LEN)
+        resp = self._call(
+            lambda: self._stub.GetMoteDetail(
+                _g.GetMoteDetailRequest(instance_id=inst, mote_id=mote), metadata=self._md
+            )
+        )
+        return MoteDetail.from_proto(resp)
 
     def list_react_turns(
         self, *, instance_id: Optional[str] = None, limit: Optional[int] = None
@@ -733,6 +750,17 @@ class AsyncKxClient:
             req.before_seq = before_seq
         resp = await self._acall(self._stub.ListRuns(req, metadata=self._md))
         return RunPage(runs=[RunSummary.from_proto(r) for r in resp.runs], has_more=resp.has_more)
+
+    async def get_mote_detail(self, instance_id: IdType, mote_id: IdType) -> MoteDetail:
+        """Async :meth:`KxClient.get_mote_detail`."""
+        inst = hexids.as_bytes(instance_id, hexids.INSTANCE_LEN)
+        mote = hexids.as_bytes(mote_id, hexids.REF_LEN)
+        resp = await self._acall(
+            self._stub.GetMoteDetail(
+                _g.GetMoteDetailRequest(instance_id=inst, mote_id=mote), metadata=self._md
+            )
+        )
+        return MoteDetail.from_proto(resp)
 
     async def list_react_turns(
         self, *, instance_id: Optional[str] = None, limit: Optional[int] = None

@@ -36,6 +36,7 @@ from .errors import (
 )
 from .grants import AssetGrants, GrantView
 from .models import ModelSummary
+from .motes import MoteConfigItem, MoteDetail, effect_pattern_name, nd_class_name
 from .react import ReactTurn, ReactTurnPage
 from .recipes import (
     BlueprintForm,
@@ -110,6 +111,11 @@ __all__ = [
     "ContentItem",
     "PutResult",
     "ModelSummary",
+    # Batch B: per-mote definition inspection (display-only)
+    "MoteDetail",
+    "MoteConfigItem",
+    "nd_class_name",
+    "effect_pattern_name",
     "DatasetHit",
     "IngestResult",
     "IngestDocument",

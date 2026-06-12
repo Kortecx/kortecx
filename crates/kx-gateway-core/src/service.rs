@@ -513,6 +513,10 @@ pub struct GatewayService {
     /// the toolscout advisory precedent). `None` ⇒ `ListModels` returns
     /// `unimplemented`; an EMPTY catalog is the honest FFI-free answer.
     models: Option<Arc<dyn crate::models_view::ModelCatalogView>>,
+    /// The optional def-resolution seam (Batch B `GetMoteDetail` — display
+    /// only). `None` ⇒ `GetMoteDetail` returns `unimplemented`; an absent def
+    /// blob through a WIRED seam is the honest `def_found = false`.
+    mote_defs: Option<Arc<dyn crate::mote_def_view::MoteDefView>>,
 }
 
 /// The default fail-closed `PutContent` payload cap (32 MiB).
@@ -559,6 +563,7 @@ impl GatewayService {
             uploads: None,
             put_cap_bytes: DEFAULT_PUT_CAP_BYTES,
             models: None,
+            mote_defs: None,
         }
     }
 
@@ -729,11 +734,41 @@ impl GatewayService {
         self.models = Some(models);
         self
     }
+
+    /// Wire the def-resolution seam (Batch B — the host's content-store-backed
+    /// def reader). Enables `GetMoteDetail`. Display only (SN-8).
+    #[must_use]
+    pub fn with_mote_def_view(
+        mut self,
+        mote_defs: Arc<dyn crate::mote_def_view::MoteDefView>,
+    ) -> Self {
+        self.mote_defs = Some(mote_defs);
+        self
+    }
+}
+
+/// The structured-refusal metadata key (PR-2). The value is
+/// `SubmissionRefusal::code()` — static ASCII by construction.
+pub const REFUSAL_CODE_METADATA_KEY: &str = "kx-refusal-code";
+
+/// Attach the structured refusal code to a refusal `Status` (PR-2). A code
+/// that fails ASCII metadata parsing (theoretical — codes are static ASCII)
+/// degrades to the bare status rather than failing the error path.
+fn with_refusal_code(mut status: Status, code: &str) -> Status {
+    if let Ok(value) = code.parse() {
+        status
+            .metadata_mut()
+            .insert(REFUSAL_CODE_METADATA_KEY, value);
+    }
+    status
 }
 
 fn submit_status(err: SubmitterError) -> Status {
     match err {
         SubmitterError::Rejected(detail) => Status::failed_precondition(detail),
+        SubmitterError::Refused { code, detail } => {
+            with_refusal_code(Status::failed_precondition(detail), &code)
+        }
         SubmitterError::Transport(detail) => Status::unavailable(detail),
     }
 }
@@ -834,7 +869,10 @@ impl KxGateway for GatewayService {
                 accept_at_least_once,
             };
             kx_refusal::validate_submission(&submission).map_err(|e| {
-                Status::failed_precondition(format!("critic admission refused: {e}"))
+                with_refusal_code(
+                    Status::failed_precondition(format!("critic admission refused: {e}")),
+                    e.code(),
+                )
             })?;
         }
 
@@ -1200,6 +1238,28 @@ impl KxGateway for GatewayService {
             })
             .collect();
         Ok(Response::new(proto::ListModelsResponse { models }))
+    }
+
+    async fn get_mote_detail(
+        &self,
+        request: Request<proto::GetMoteDetailRequest>,
+    ) -> Result<Response<proto::MoteDetail>, Status> {
+        // Display ONLY (SN-8): the def is read back for inspection — nothing
+        // here authorizes anything. Only a gateway with no seam at all
+        // degrades to `unimplemented` (the ListModels pattern).
+        let defs = self.mote_defs.as_ref().ok_or_else(|| {
+            Status::unimplemented("GetMoteDetail: no mote-def view wired on this gateway")
+        })?;
+        let req = request.into_inner();
+        let instance_id = instance_id_16(&req.instance_id)?;
+        let mote_id = hash_32(&req.mote_id, "mote_id must be 32 bytes")?;
+        let detail = crate::mote_detail::mote_detail(
+            self.reader.as_ref(),
+            defs.as_ref(),
+            instance_id,
+            mote_id,
+        )?;
+        Ok(Response::new(detail))
     }
 
     type StreamEventsStream = EventStream;

@@ -17,6 +17,15 @@ export function ErrorNotice({ error, onRetry, onReauth }: ErrorNoticeProps) {
     >
       <div className="notice__head">
         <strong className="notice__title">{error.title}</strong>
+        {error.refusalCode ? (
+          <code
+            className="notice__code"
+            data-testid="refusal-code"
+            title="The runtime's structured refusal code"
+          >
+            refusal {error.refusalCode}
+          </code>
+        ) : null}
         <code className="notice__code">[{error.code}]</code>
       </div>
       <p className="notice__message">{error.message}</p>

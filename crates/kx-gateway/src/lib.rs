@@ -86,6 +86,9 @@ mod model_exec;
 // Batch A: the host-side model catalog (the ModelCatalogView seam) — always
 // wired so an FFI-free serve answers ListModels with an honest empty list.
 mod models;
+// Batch B: the host-side def resolver (the MoteDefView seam) — always wired
+// over the SAME content store the coordinator persists admitted defs into.
+mod mote_defs;
 mod provision;
 #[cfg(feature = "embedded-worker")]
 mod real_exec;

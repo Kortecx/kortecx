@@ -34,12 +34,17 @@ pub enum CliError {
         detail: String,
     },
     /// The gateway returned a gRPC error status. Exit `1`.
-    #[error("{code:?}: {message}")]
+    #[error("{code:?}: {message}{}", refusal_suffix(refusal_code.as_deref()))]
     Rpc {
         /// The gRPC status code (e.g. `Unauthenticated`, `PermissionDenied`).
         code: tonic::Code,
         /// The status message.
         message: String,
+        /// The structured refusal code from the `kx-refusal-code` gRPC
+        /// metadata (PR-2: `"R-1"`…`"R-15"` / `"D66"` / …), when the gateway
+        /// attached one to a refused submit. Machine-actionable — scripts
+        /// branch on this, never on the prose.
+        refusal_code: Option<String>,
     },
     /// The forwarded [`kx_runtime`] engine returned an error. Exit `1`.
     #[error("{0}")]
@@ -67,6 +72,11 @@ impl CliError {
         CliError::Rpc {
             code: status.code(),
             message: status.message().to_string(),
+            refusal_code: status
+                .metadata()
+                .get("kx-refusal-code")
+                .and_then(|v| v.to_str().ok())
+                .map(str::to_string),
         }
     }
 
@@ -90,5 +100,43 @@ impl CliError {
 impl From<HexError> for CliError {
     fn from(e: HexError) -> Self {
         CliError::Usage(e.to_string())
+    }
+}
+
+/// The ` (refusal R-n)` Display suffix when a structured code is present.
+fn refusal_suffix(code: Option<&str>) -> String {
+    code.map_or_else(String::new, |c| format!(" (refusal {c})"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rpc_display_appends_the_refusal_code_when_present() {
+        let plain = CliError::Rpc {
+            code: tonic::Code::FailedPrecondition,
+            message: "nope".into(),
+            refusal_code: None,
+        };
+        assert_eq!(plain.to_string(), "FailedPrecondition: nope");
+        let coded = CliError::Rpc {
+            code: tonic::Code::FailedPrecondition,
+            message: "nope".into(),
+            refusal_code: Some("R-10".into()),
+        };
+        assert_eq!(coded.to_string(), "FailedPrecondition: nope (refusal R-10)");
+    }
+
+    #[test]
+    fn from_status_reads_the_refusal_metadata() {
+        let mut status = tonic::Status::failed_precondition("refused");
+        status
+            .metadata_mut()
+            .insert("kx-refusal-code", "R-1".parse().unwrap());
+        let CliError::Rpc { refusal_code, .. } = CliError::from_status(status) else {
+            panic!("expected Rpc");
+        };
+        assert_eq!(refusal_code.as_deref(), Some("R-1"));
     }
 }

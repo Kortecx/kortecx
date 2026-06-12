@@ -233,6 +233,7 @@ message SubmitMoteResponse {
   SubmitStatus status = 2;
   string detail = 3;                    // human-readable; empty on accept
   bytes instance_id = 4;                // 16B — the registered run this Mote was admitted under (M1.2/D64; the resume key clients hand back to M2)
+  string refusal_code = 5;              // PR-2 additive (D120.6): SubmissionRefusal::code() ("R-1".."R-15"/"D66"/...) on REJECTED; empty otherwise — the gateway surfaces it as `kx-refusal-code` gRPC metadata
 }
 
 // ---------------------------------------------------------------------------

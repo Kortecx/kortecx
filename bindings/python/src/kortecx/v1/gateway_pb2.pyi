@@ -878,3 +878,64 @@ class ListModelsResponse(_message.Message):
     MODELS_FIELD_NUMBER: _ClassVar[int]
     models: _containers.RepeatedCompositeFieldContainer[ModelSummary]
     def __init__(self, models: _Optional[_Iterable[_Union[ModelSummary, _Mapping]]] = ...) -> None: ...
+
+class GetMoteDetailRequest(_message.Message):
+    __slots__ = ("instance_id", "mote_id")
+    INSTANCE_ID_FIELD_NUMBER: _ClassVar[int]
+    MOTE_ID_FIELD_NUMBER: _ClassVar[int]
+    instance_id: bytes
+    mote_id: bytes
+    def __init__(self, instance_id: _Optional[bytes] = ..., mote_id: _Optional[bytes] = ...) -> None: ...
+
+class MoteConfigEntry(_message.Message):
+    __slots__ = ("key", "value", "truncated", "full_len")
+    KEY_FIELD_NUMBER: _ClassVar[int]
+    VALUE_FIELD_NUMBER: _ClassVar[int]
+    TRUNCATED_FIELD_NUMBER: _ClassVar[int]
+    FULL_LEN_FIELD_NUMBER: _ClassVar[int]
+    key: str
+    value: bytes
+    truncated: bool
+    full_len: int
+    def __init__(self, key: _Optional[str] = ..., value: _Optional[bytes] = ..., truncated: bool = ..., full_len: _Optional[int] = ...) -> None: ...
+
+class MoteDetail(_message.Message):
+    __slots__ = ("mote_id", "mote_def_hash", "def_found", "step_kind", "model_id", "prompt", "prompt_truncated", "config_subset", "tool_contract", "logic_ref", "nd_class", "effect_pattern", "critic_for", "is_topology_shaper", "schema_version")
+    class ToolContractEntry(_message.Message):
+        __slots__ = ("key", "value")
+        KEY_FIELD_NUMBER: _ClassVar[int]
+        VALUE_FIELD_NUMBER: _ClassVar[int]
+        key: str
+        value: str
+        def __init__(self, key: _Optional[str] = ..., value: _Optional[str] = ...) -> None: ...
+    MOTE_ID_FIELD_NUMBER: _ClassVar[int]
+    MOTE_DEF_HASH_FIELD_NUMBER: _ClassVar[int]
+    DEF_FOUND_FIELD_NUMBER: _ClassVar[int]
+    STEP_KIND_FIELD_NUMBER: _ClassVar[int]
+    MODEL_ID_FIELD_NUMBER: _ClassVar[int]
+    PROMPT_FIELD_NUMBER: _ClassVar[int]
+    PROMPT_TRUNCATED_FIELD_NUMBER: _ClassVar[int]
+    CONFIG_SUBSET_FIELD_NUMBER: _ClassVar[int]
+    TOOL_CONTRACT_FIELD_NUMBER: _ClassVar[int]
+    LOGIC_REF_FIELD_NUMBER: _ClassVar[int]
+    ND_CLASS_FIELD_NUMBER: _ClassVar[int]
+    EFFECT_PATTERN_FIELD_NUMBER: _ClassVar[int]
+    CRITIC_FOR_FIELD_NUMBER: _ClassVar[int]
+    IS_TOPOLOGY_SHAPER_FIELD_NUMBER: _ClassVar[int]
+    SCHEMA_VERSION_FIELD_NUMBER: _ClassVar[int]
+    mote_id: bytes
+    mote_def_hash: bytes
+    def_found: bool
+    step_kind: str
+    model_id: str
+    prompt: str
+    prompt_truncated: bool
+    config_subset: _containers.RepeatedCompositeFieldContainer[MoteConfigEntry]
+    tool_contract: _containers.ScalarMap[str, str]
+    logic_ref: bytes
+    nd_class: _coordinator_pb2.NdClass
+    effect_pattern: _coordinator_pb2.EffectPattern
+    critic_for: bytes
+    is_topology_shaper: bool
+    schema_version: int
+    def __init__(self, mote_id: _Optional[bytes] = ..., mote_def_hash: _Optional[bytes] = ..., def_found: bool = ..., step_kind: _Optional[str] = ..., model_id: _Optional[str] = ..., prompt: _Optional[str] = ..., prompt_truncated: bool = ..., config_subset: _Optional[_Iterable[_Union[MoteConfigEntry, _Mapping]]] = ..., tool_contract: _Optional[_Mapping[str, str]] = ..., logic_ref: _Optional[bytes] = ..., nd_class: _Optional[_Union[_coordinator_pb2.NdClass, str]] = ..., effect_pattern: _Optional[_Union[_coordinator_pb2.EffectPattern, str]] = ..., critic_for: _Optional[bytes] = ..., is_topology_shaper: bool = ..., schema_version: _Optional[int] = ...) -> None: ...

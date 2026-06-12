@@ -8,12 +8,13 @@
  *
  * The EIGHT sections follow the product-spec IA in its order (§2.186 plan; D141.1
  * disjointness): New Chat · Workflows · Blueprints · Datasets · Tools · Context ·
- * Monitoring · Security. Display labels rename freely; ids/paths/icons stay on the
- * frozen wire-legacy handles (`chat`/`runs`/`recipes`/`systems` — route, test-ids,
+ * Monitoring · Security. Display labels rename freely; section IDS/icons stay on
+ * the frozen wire-legacy handles (`chat`/`runs`/`recipes`/`systems` — test-ids,
  * RPC names never rename, the D136 Blueprints precedent). Activity is no longer a
- * section: it is the navbar's activity drawer. Artifacts folds into Workflows
- * (PR-2); until then the route stays reachable from a run's detail page and is
- * breadcrumb-mapped via {@link HIDDEN_SECTIONS}.
+ * section: it is the navbar's activity drawer. PR-2 completed the D141.1 route
+ * merge: the `runs` section LIVES at `/workflows` (old `/runs`, `/runs/$id`,
+ * `/artifacts`, `/activity` deep links redirect there) and Artifacts is a TAB of
+ * a run's detail page — one capability, one home.
  */
 
 export type IconName =
@@ -35,12 +36,10 @@ export type IconName =
  * `<Link to>` (no cast) — and a typo here is a compile error, not a dead link.
  */
 export type RoutePath =
-  | "/activity"
   | "/monitor"
   | "/chat"
-  | "/runs"
+  | "/workflows"
   | "/recipes"
-  | "/artifacts"
   | "/context"
   | "/datasets"
   | "/tools"
@@ -70,13 +69,14 @@ export const NAV_SECTIONS: readonly NavSection[] = [
     hint: "A fresh agentic conversation over the runtime",
   },
   {
-    // Display says "Workflows"; the id/path stay on the frozen `runs` handle
-    // (the PR-2 route merge adopts /workflows with redirects).
+    // Display says "Workflows" and the route merged to /workflows (PR-2,
+    // D141.1); the id/icon stay on the frozen `runs` handle (test-ids,
+    // telemetry never rename) and /runs redirects here.
     id: "runs",
     label: "Workflows",
-    path: "/runs",
+    path: "/workflows",
     icon: "runs",
-    hint: "Your runs — list, DAG & telemetry",
+    hint: "Your runs — list, DAG, artifacts & telemetry",
   },
   {
     // Display says "Blueprints" (D136); the id/path/icon stay on the frozen
@@ -128,18 +128,11 @@ export const NAV_SECTIONS: readonly NavSection[] = [
 
 /**
  * Routes that are REACHABLE but not sidebar sections (deep links + breadcrumbs
- * only). Artifacts folds into Workflows at PR-2; until then a run's detail page
- * links here.
+ * only). EMPTY since PR-2 folded Artifacts into the Workflows run-detail tabs
+ * (D141.1 — one capability, one home); the const stays so the breadcrumb/nav
+ * APIs keep one shape when a future hidden route lands.
  */
-export const HIDDEN_SECTIONS: readonly NavSection[] = [
-  {
-    id: "artifacts",
-    label: "Artifacts",
-    path: "/artifacts",
-    icon: "artifacts",
-    hint: "Committed run outputs",
-  },
-] as const;
+export const HIDDEN_SECTIONS: readonly NavSection[] = [] as const;
 
 /**
  * Settings is pinned shell chrome (bottom-left of the sidebar), NOT a scroll

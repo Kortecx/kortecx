@@ -97,7 +97,11 @@ function DagFlow({ projection }: { projection: ProjectionVM }) {
       </ReactFlow>
       {selected ? (
         <NodeDetailDrawer
+          // Keyed by the Mote so switching nodes REMOUNTS the drawer — the
+          // pane selection resets to Result instead of leaking across motes.
+          key={selected.moteId}
           mote={selected}
+          motes={motes}
           instanceId={projection.instanceId}
           onClose={() => setSelectedId(null)}
         />

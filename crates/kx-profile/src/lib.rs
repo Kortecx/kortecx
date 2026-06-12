@@ -26,6 +26,7 @@
 pub mod content_spikes;
 pub mod env;
 pub mod error;
+pub mod mote_detail_spikes;
 pub mod react_spikes;
 pub mod report;
 pub mod spikes;
@@ -33,6 +34,7 @@ pub mod spikes;
 pub use content_spikes::ContentSamples;
 pub use env::{capture_git_sha, Environment};
 pub use error::ProfileError;
+pub use mote_detail_spikes::MoteDetailSamples;
 pub use react_spikes::ReactSamples;
 pub use report::{Metric, MetricKind, Report, SCHEMA_VERSION};
 pub use spikes::{percentile, LatencySamples};

@@ -25,6 +25,7 @@ import {
 import { AssetGrants } from "./grants.js";
 import { INSTANCE_LEN, REF_LEN, asBytes, encode } from "./hexids.js";
 import { ModelSummary } from "./models.js";
+import { MoteDetail } from "./motes.js";
 import { ReactTurn, type ReactTurnPage } from "./react.js";
 import { RecipeForm } from "./recipes.js";
 import { ReplanRound, type ReplanRoundPage } from "./replan.js";
@@ -284,6 +285,22 @@ export abstract class KxClientBase {
   async listRuns(opts: { limit?: number; beforeSeq?: bigint } = {}): Promise<RunPage> {
     const resp = await rpc(this.grpc.listRuns({ limit: opts.limit, beforeSeq: opts.beforeSeq }));
     return { runs: resp.runs.map((r) => RunSummary.fromProto(r)), hasMore: resp.hasMore };
+  }
+
+  /**
+   * Resolve one Mote's admitted definition (Batch B) — the node-inspector
+   * read: step kind, model, prompt, capped params, tool contract. DISPLAY
+   * ONLY (SN-8). The detail is commit-gated: an uncommitted mote (or one
+   * admitted by a pre-Batch-B binary) answers `defFound: false` honestly; an
+   * unknown mote in an owned run throws {@link KxNotFound}; a wrong ticket
+   * throws the uniform {@link KxPermissionDenied}. An old gateway without
+   * this RPC throws {@link KxUnimplemented}.
+   */
+  async getMoteDetail(instanceId: Id, moteId: Id): Promise<MoteDetail> {
+    const inst = asBytes(instanceId, INSTANCE_LEN);
+    const mote = asBytes(moteId, REF_LEN);
+    const resp = await rpc(this.grpc.getMoteDetail({ instanceId: inst, moteId: mote }));
+    return MoteDetail.fromProto(resp);
   }
 
   /**

@@ -709,6 +709,10 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     let content_writer: Arc<dyn kx_gateway_core::ContentWriter> = content.clone();
     let models_view: Arc<dyn kx_gateway_core::ModelCatalogView> =
         Arc::new(crate::models::HostModelCatalog::new(model_catalog_entries));
+    // Batch B: the def resolver reads the SAME store the coordinator persists
+    // admitted defs into (always wired — an absent blob is `def_found = false`).
+    let mote_defs_view: Arc<dyn kx_gateway_core::MoteDefView> =
+        Arc::new(crate::mote_defs::HostMoteDefView::new(content.clone()));
     #[cfg_attr(not(feature = "hnsw"), allow(unused_mut))]
     let mut gateway = GatewayService::new(reader.clone(), submitter, content)
         .with_signature_catalog(signature_catalog)
@@ -726,6 +730,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         .with_uploads_ledger(uploads_db)
         .with_put_content_cap(cfg.content_max_bytes)
         .with_model_catalog_view(models_view)
+        .with_mote_def_view(mote_defs_view)
         .with_event_tailer(Arc::new(crate::live_tail::LiveTailer::new(
             live_shutdown_rx.clone(),
         )));

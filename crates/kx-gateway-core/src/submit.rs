@@ -35,6 +35,19 @@ pub enum SubmitterError {
     /// run is not registered). Carries the coordinator's detail.
     #[error("submission rejected: {0}")]
     Rejected(String),
+    /// The coordinator refused the submission WITH its structured refusal code
+    /// (PR-2, additive — a coordinator predating `SubmitMoteResponse.refusal_code`
+    /// still surfaces [`SubmitterError::Rejected`]). `code` is
+    /// `SubmissionRefusal::code()` (`"R-1"`…`"R-15"` / `"D66"` / …); the gateway
+    /// forwards it as `kx-refusal-code` gRPC metadata so clients never parse
+    /// the prose.
+    #[error("submission refused [{code}]: {detail}")]
+    Refused {
+        /// The stable refusal code.
+        code: String,
+        /// The human-readable refusal prose.
+        detail: String,
+    },
     /// The submit could not reach / be served by the coordinator.
     #[error("coordinator unavailable: {0}")]
     Transport(String),
@@ -130,7 +143,15 @@ impl RunSubmitter for TonicCoordinatorSubmitter {
             }
         };
         if status == SubmitStatus::Rejected {
-            return Err(SubmitterError::Rejected(resp.detail));
+            // PR-2: prefer the structured code when the coordinator sent one;
+            // an older coordinator (empty field) degrades to the prose-only path.
+            if resp.refusal_code.is_empty() {
+                return Err(SubmitterError::Rejected(resp.detail));
+            }
+            return Err(SubmitterError::Refused {
+                code: resp.refusal_code,
+                detail: resp.detail,
+            });
         }
         let mote_id = resp
             .mote_id

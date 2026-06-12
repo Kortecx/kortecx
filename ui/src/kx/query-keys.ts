@@ -50,4 +50,8 @@ export const queryKeys = {
    *  Content-addressed ⇒ immutable (cache forever). `scope` = instanceId or "uploads". */
   contentBatch: (endpoint: string, scope: string, refsKey: string) =>
     ["kx", endpoint, "content-batch", scope, refsKey] as const,
+  /** One Mote's admitted definition (`GetMoteDetail`, Batch B). Keyed by the
+   *  COMMITTED def hash — content-addressed ⇒ immutable (cache forever). */
+  moteDetail: (endpoint: string, instanceId: string, moteId: string, defHash: string) =>
+    ["kx", endpoint, "mote-detail", instanceId, moteId, defHash] as const,
 };

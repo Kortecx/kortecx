@@ -19,18 +19,20 @@ describe("NAV_SECTIONS", () => {
     ]);
   });
 
-  it("display labels rename; ids/paths stay on the frozen wire-legacy handles", () => {
+  it("display labels rename; ids/icons stay on the frozen wire-legacy handles", () => {
     const byId = new Map(NAV_SECTIONS.map((s) => [s.id, s]));
     // D136 precedent: recipes displays Blueprints.
     expect(byId.get("recipes")?.label).toBe("Blueprints");
     expect(byId.get("recipes")?.path).toBe("/recipes");
     expect(byId.get("recipes")?.icon).toBe("recipes");
     // The spec IA renames (§2.186 / D141): chat → New Chat, runs → Workflows,
-    // systems → Security — paths/ids untouched.
+    // systems → Security — ids/icons untouched. PR-2 moved the `runs`
+    // section's ROUTE to /workflows (the D141.1 merge; /runs redirects).
     expect(byId.get("chat")?.label).toBe("New Chat");
     expect(byId.get("chat")?.path).toBe("/chat");
     expect(byId.get("runs")?.label).toBe("Workflows");
-    expect(byId.get("runs")?.path).toBe("/runs");
+    expect(byId.get("runs")?.path).toBe("/workflows");
+    expect(byId.get("runs")?.icon).toBe("runs");
     expect(byId.get("systems")?.label).toBe("Security");
     expect(byId.get("systems")?.path).toBe("/systems");
   });
@@ -56,9 +58,8 @@ describe("NAV_SECTIONS", () => {
 });
 
 describe("HIDDEN_SECTIONS", () => {
-  it("keeps Artifacts reachable (deep links + breadcrumbs) until the PR-2 merge", () => {
-    expect(HIDDEN_SECTIONS.map((s) => s.id)).toEqual(["artifacts"]);
-    expect(HIDDEN_SECTIONS[0]?.path).toBe("/artifacts");
+  it("is empty since PR-2 folded Artifacts into the Workflows tabs (D141.1)", () => {
+    expect(HIDDEN_SECTIONS).toEqual([]);
   });
 });
 

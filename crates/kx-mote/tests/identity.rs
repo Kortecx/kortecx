@@ -313,3 +313,41 @@ proptest! {
         prop_assert_eq!(a, b);
     }
 }
+
+// ---------------------------------------------------------------------------
+// PR-2: encode/decode + the content-address pin
+// ---------------------------------------------------------------------------
+
+/// `MoteDef::decode` is the exact inverse of `MoteDef::encode`.
+#[test]
+fn encode_decode_round_trips() {
+    let mut def = base_def();
+    def.config_subset
+        .insert(ConfigKey("prompt".into()), ConfigVal(b"hello".to_vec()));
+    def.tool_contract
+        .insert(ToolName("echo".into()), ToolVersion("1".into()));
+    let decoded = MoteDef::decode(&def.encode()).unwrap();
+    assert_eq!(decoded, def);
+    assert_eq!(decoded.hash(), def.hash());
+}
+
+/// THE LOAD-BEARING PIN for the PR-2 def-persistence design: the content
+/// store names objects `blake3(bytes)`, so persisting `def.encode()` files
+/// the definition at an address byte-equal to `def.hash()` — a committed
+/// Mote's `mote_def_hash` doubles as the content ref of its definition.
+#[test]
+fn encoded_def_blake3_equals_mote_def_hash() {
+    let mut def = base_def();
+    def.config_subset
+        .insert(ConfigKey("prompt".into()), ConfigVal(b"pin".to_vec()));
+    assert_eq!(
+        blake3::hash(&def.encode()).as_bytes(),
+        def.hash().as_bytes(),
+    );
+}
+
+/// Malformed bytes fail closed (the reader treats this as an absent def).
+#[test]
+fn decode_rejects_garbage() {
+    assert!(MoteDef::decode(&[0xff; 7]).is_err());
+}

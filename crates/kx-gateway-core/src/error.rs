@@ -28,6 +28,13 @@ pub enum GatewayError {
     /// `PutContent` payload cap). Checked BEFORE any store/journal touch.
     #[error("resource exhausted: {0}")]
     ResourceExhausted(&'static str),
+
+    /// A named entity does not exist WITHIN a scope the caller already owns
+    /// (Batch B: an unknown `mote_id` in an owned run). Only reachable AFTER
+    /// an ownership check passes — the owner can already enumerate the scope
+    /// (`GetProjection`), so this is honest, never an existence oracle.
+    #[error("not found: {0}")]
+    NotFound(&'static str),
 }
 
 impl From<GatewayError> for Status {
@@ -38,6 +45,7 @@ impl From<GatewayError> for Status {
             GatewayError::InvalidArgument(msg) => Status::invalid_argument(msg),
             GatewayError::Internal(msg) => Status::internal(msg),
             GatewayError::ResourceExhausted(msg) => Status::resource_exhausted(msg),
+            GatewayError::NotFound(msg) => Status::not_found(msg),
         }
     }
 }

@@ -565,3 +565,103 @@ describe("Batch A content uploads + model discovery", () => {
     kx.close();
   });
 });
+
+// --- Batch B (PR-2): mote detail parity + the structured refusal code --------
+
+describe("Batch B: GetMoteDetail + runs list + refusal code", () => {
+  it("getMoteDetail and runs list match the CLI field-for-field", async () => {
+    const s = await devServer();
+    const kx = new KxClient(s.endpoint);
+    const result = (await kx.invoke(ECHO_HANDLE, { topic: "inspect" }, { wait: true })) as Result;
+    const detail = await kx.getMoteDetail(result.instanceId, result.terminalMoteId);
+    const runs = await kx.listRuns();
+    kx.close();
+
+    expect(detail.defFound).toBe(true);
+    expect(detail.moteDefHash).toHaveLength(64);
+    expect(detail.stepKind).not.toBe("");
+
+    const cliDetail = cli(s.endpoint, "mote", "show", result.instanceId, result.terminalMoteId);
+    expect(detail.toJSON()).toEqual(cliDetail);
+
+    const cliRuns = cli(s.endpoint, "runs", "list");
+    expect({
+      runs: runs.runs.map((r) => r.toJSON()),
+      has_more: runs.hasMore,
+    }).toEqual(cliRuns);
+  });
+
+  it("an uncommitted/unknown mote stays honest (NOT_FOUND in an owned run)", async () => {
+    const s = await devServer();
+    const kx = new KxClient(s.endpoint);
+    const result = (await kx.invoke(ECHO_HANDLE, { topic: "owned" }, { wait: true })) as Result;
+    await expect(kx.getMoteDetail(result.instanceId, "ee".repeat(32))).rejects.toBeInstanceOf(
+      KxNotFound,
+    );
+    // The wrong ticket is the UNIFORM denial (no oracle).
+    await expect(kx.getMoteDetail("99".repeat(16), result.terminalMoteId)).rejects.toBeInstanceOf(
+      KxPermissionDenied,
+    );
+    kx.close();
+  });
+
+  it("a refused submitRun carries the structured kx-refusal-code (the trailer proof)", async () => {
+    const s = await devServer();
+    const kx = new KxClient(s.endpoint);
+    const fill = (v: number, n: number) => new Uint8Array(n).fill(v);
+    // R-1 by construction: WORLD_MUTATING + IdempotentByConstruction + an
+    // EMPTY tool_contract (nothing to dedup against). Mirrors the demo mote
+    // shape (server.rs demo_pure_mote) with the nd-class flipped.
+    await expect(
+      kx.submitRun({
+        recipeFingerprint: fill(0x5a, 32),
+        motes: [
+          {
+            mote: {
+              moteId: fill(0, 32), // advisory — the coordinator re-derives (D53)
+              def: {
+                logicRef: fill(7, 32),
+                modelId: "m",
+                promptTemplateHash: fill(9, 32),
+                toolContract: {},
+                ndClass: 3, // WORLD_MUTATING
+                configSubset: {},
+                effectPattern: 1, // IDEMPOTENT_BY_CONSTRUCTION
+                isTopologyShaper: false,
+                inferenceParams: {},
+                schemaVersion: 5, // MOTE_DEF_SCHEMA_VERSION (frozen wire)
+              },
+              inputDataId: fill(5, 32),
+              graphPosition: fill(1, 1),
+              parents: [],
+            },
+            warrant: {
+              moteClass: 3,
+              ndClass: 3,
+              fsScope: { mounts: [] },
+              netScope: { scope: { case: "none", value: {} } },
+              syscallProfileRef: fill(4, 32),
+              toolGrants: [],
+              modelRoute: { modelId: "m", maxInputTokens: 1, maxOutputTokens: 1, maxCalls: 1 },
+              resourceCeiling: {
+                cpuMilli: 1,
+                memBytes: 1n,
+                wallClockMs: 1n,
+                fdCount: 1,
+                diskBytes: 1n,
+              },
+              executorClass: 4, // MACOS_SANDBOX (any registered class — refusal fires first)
+            },
+            acceptAtLeastOnce: false,
+            reactSeed: false,
+          },
+        ],
+      }),
+    ).rejects.toSatisfy((e: unknown) => {
+      expect(e).toBeInstanceOf(KxFailedPrecondition);
+      expect((e as KxFailedPrecondition).refusalCode).toBe("R-1");
+      return true;
+    });
+    kx.close();
+  });
+});

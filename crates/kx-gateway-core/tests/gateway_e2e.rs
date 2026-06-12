@@ -322,6 +322,15 @@ async fn submit_run_refuses_critic_with_dangling_critic_for() {
         "reason surfaced: {}",
         err.message()
     );
+    // PR-2: the STRUCTURED refusal code rides the gRPC metadata so no client
+    // ever parses the prose.
+    assert_eq!(
+        err.metadata()
+            .get(kx_gateway_core::REFUSAL_CODE_METADATA_KEY)
+            .and_then(|v| v.to_str().ok()),
+        Some("R-4"),
+        "kx-refusal-code metadata carries the code"
+    );
 }
 
 #[tokio::test]

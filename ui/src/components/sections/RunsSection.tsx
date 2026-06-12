@@ -75,7 +75,7 @@ export function RunsSection() {
               {...rowEntrance(i)}
             >
               <Link
-                to="/runs/$instanceId"
+                to="/workflows/$instanceId"
                 params={{ instanceId: r.instanceId }}
                 search={r.terminalMoteId ? { terminal: r.terminalMoteId } : {}}
                 className="run-list__link mono"

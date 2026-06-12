@@ -23,7 +23,7 @@ test("Activity time-travel: scrub a run back to seq 0 and resume live", async ({
 
   // Grab the instance id, then open the navbar ACTIVITY DRAWER (in-app — a reload
   // would drop the in-memory connection) and select the run.
-  const m = page.url().match(/\/runs\/([0-9a-f]{32})/);
+  const m = page.url().match(/\/workflows\/([0-9a-f]{32})/);
   expect(m).not.toBeNull();
   const instance = m?.[1] ?? "";
   await page.getByTestId("activity-toggle").click();

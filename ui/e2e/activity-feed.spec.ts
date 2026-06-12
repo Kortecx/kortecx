@@ -25,7 +25,7 @@ test("Activity feed tails events over the WS bridge (real browser WebSocket)", a
   // Open the run in the navbar ACTIVITY DRAWER (in-app, keeps the connection); the
   // feed connects to the WS bridge (since=0 replays the run's committed delta) and
   // renders an event row.
-  const m = page.url().match(/\/runs\/([0-9a-f]{32})/);
+  const m = page.url().match(/\/workflows\/([0-9a-f]{32})/);
   const instance = m?.[1] ?? "";
   await page.getByTestId("activity-toggle").click();
   await expect(page.getByTestId("activity-drawer")).toBeVisible();

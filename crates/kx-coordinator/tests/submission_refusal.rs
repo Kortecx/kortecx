@@ -205,6 +205,10 @@ async fn d66_refuses_world_mutating_with_unregistered_tool() {
         "detail names the D66 refusal: {}",
         resp.detail
     );
+    assert_eq!(
+        resp.refusal_code, "D66",
+        "PR-2: the STRUCTURED code rides the response alongside the prose"
+    );
     assert!(
         resp.instance_id.is_empty(),
         "a refused submit surfaces no instance_id"
@@ -289,10 +293,18 @@ async fn r10_refuses_at_least_once_without_accept_then_accepts() {
         "detail names R-10: {}",
         refused.detail
     );
+    assert_eq!(
+        refused.refusal_code, "R-10",
+        "PR-2: the STRUCTURED code rides the response alongside the prose"
+    );
     assert_eq!(svc.committed_count().await.unwrap(), 0);
 
     // The operator opts in → accepted.
     let accepted = common::submit_accepting(&svc, &mote, &warrant).await;
+    assert!(
+        accepted.refusal_code.is_empty(),
+        "an accepted submit carries no refusal code"
+    );
     assert_eq!(
         accepted.status,
         proto::SubmitStatus::Accepted as i32,

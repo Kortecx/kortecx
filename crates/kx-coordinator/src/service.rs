@@ -363,6 +363,7 @@ impl Coordinator for CoordinatorService {
                         .instance_id
                         .map(|id| id.to_vec())
                         .unwrap_or_default(),
+                    refusal_code: String::new(),
                 }))
             }
             // M1.3: a submission-refusal predicate fired on a WELL-FORMED request
@@ -375,6 +376,10 @@ impl Coordinator for CoordinatorService {
                     status: proto::SubmitStatus::Rejected as i32,
                     detail: refusal.to_string(),
                     instance_id: Vec::new(),
+                    // PR-2: the STRUCTURED code alongside the prose — the
+                    // gateway forwards it as `kx-refusal-code` metadata so no
+                    // client ever parses the detail string.
+                    refusal_code: refusal.code().to_string(),
                 }))
             }
             // RunNotRegistered → failed_precondition (an ordering violation, sibling

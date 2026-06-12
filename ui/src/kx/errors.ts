@@ -21,6 +21,9 @@ export interface UiError {
   readonly title: string;
   readonly message: string;
   readonly retryable: boolean;
+  /** The structured refusal code (`kx-refusal-code` metadata, PR-2 —
+   *  `"R-1"`…`"R-15"`/`"D66"`) when a submit was refused by a predicate. */
+  readonly refusalCode?: string;
 }
 
 /**
@@ -38,6 +41,18 @@ function errorCode(err: unknown): string {
     }
   }
   return fromRpcError(err).code;
+}
+
+/** Duck-type the SDK's `refusalCode` (same cross-entry-point rationale as
+ *  {@link errorCode} — `instanceof KxFailedPrecondition` would silently miss). */
+function refusalCode(err: unknown): string | undefined {
+  if (err !== null && typeof err === "object" && "refusalCode" in err) {
+    const c = (err as { refusalCode?: unknown }).refusalCode;
+    if (typeof c === "string" && c !== "") {
+      return c;
+    }
+  }
+  return undefined;
 }
 
 export function toUiError(err: unknown): UiError {
@@ -80,14 +95,17 @@ export function toUiError(err: unknown): UiError {
       };
     case ErrorCode.InvalidArgument:
     case ErrorCode.Usage:
-    case ErrorCode.FailedPrecondition:
+    case ErrorCode.FailedPrecondition: {
+      const refusal = refusalCode(err);
       return {
         code,
         kind: "bad-input",
-        title: "Invalid request",
+        title: refusal ? "Submission refused" : "Invalid request",
         message: message || "The request was rejected as invalid.",
         retryable: false,
+        ...(refusal ? { refusalCode: refusal } : {}),
       };
+    }
     case ErrorCode.Unavailable:
     case ErrorCode.Connect:
     case ErrorCode.CatchupRequired:

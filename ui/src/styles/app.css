@@ -2358,6 +2358,30 @@ select {
   gap: 0.3rem;
 }
 
+/* PR-2 inspector: the Inputs pane's per-edge rows (resolved parent text). */
+.inspector-inputs {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+.inspector-inputs li {
+  border-top: 1px solid var(--border);
+  padding-top: 0.5rem;
+}
+.inspector-inputs li:first-child {
+  border-top: none;
+  padding-top: 0;
+}
+.inspector-inputs__head {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.3rem;
+}
+
 /* ---- section header (reference: title + subtitle + right-aligned actions) ---- */
 .section-head {
   display: flex;
