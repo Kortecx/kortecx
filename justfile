@@ -178,6 +178,21 @@ fetch-agent-model:
     echo "     export KX_MODEL_NAME=qwen3-0.6b"
     echo "     export KX_MODEL_HARNESS_GGUF=\"$(pwd)/$DEST\""
 
+# The ONE-COMMAND inference serve (§2.194 guardrail): fetch the stand-in model
+# if absent (idempotent, checksum-verified), then start `kx serve` with it +
+# the embedded console at :50180. Model paths are DETERMINISTIC
+# (target/models/ via the fetch recipes, or the KX_AGENT_MODEL_* overrides) —
+# never hunt the filesystem for GGUFs. Journal/content default under
+# target/serve/ (override: `just serve-inference /path/kx.db /path/blobs`).
+serve-inference journal="target/serve/kx.db" content="target/serve/blobs": fetch-agent-model
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p "$(dirname "{{journal}}")" "{{content}}"
+    export KX_SERVE_MODEL_GGUF="${KX_AGENT_MODEL_DEST:-$(pwd)/target/models/qwen3-0.6b-q4_k_m.gguf}"
+    echo " ▶ inference serve (model: $KX_SERVE_MODEL_GGUF)"
+    cargo run --release -p kx-cli --features inference,hnsw,console --bin kx -- \
+        serve --journal "{{journal}}" --content "{{content}}" --dev-allow-local
+
 # D139: build the web console's embed input — the TS SDK (the UI's file: dep)
 # then the SPA production bundle into ui/dist. The exact sequence release.yml
 # runs; needed BEFORE any `--features console` cargo build (build.rs embeds the
