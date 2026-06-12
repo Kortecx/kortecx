@@ -19,6 +19,7 @@ from . import events as _events
 from . import hexids, types
 from . import wait as _wait  # aliased: `wait` is also a public kwarg name
 from .capture import CaptureRecord, CaptureRecordPage
+from .content import ContentItem, PutResult
 from .datasets import (
     DatasetHit,
     DatasetSummary,
@@ -28,6 +29,7 @@ from .datasets import (
 )
 from .errors import KxUsage, from_rpc_error
 from .grants import AssetGrants
+from .models import ModelSummary
 from .react import ReactTurn, ReactTurnPage
 from .recipes import RecipeForm
 from .replan import ReplanRound, ReplanRoundPage
@@ -50,6 +52,19 @@ REACT_RECIPE_HANDLE = "kx/recipes/react"
 
 ArgsType = Union[dict, bytes, bytearray, str]
 IdType = Union[str, bytes]
+
+#: Default channel message-size options (Batch A): receive covers large committed
+#: results + full content batches; send covers a default-cap (32 MiB) PutContent
+#: with headroom. Appended BEFORE user ``channel_options`` so an explicit user
+#: value for the same key wins (gRPC takes the last occurrence).
+_DEFAULT_CHANNEL_OPTIONS = [
+    ("grpc.max_receive_message_length", 0x40000000),  # 1 GiB
+    ("grpc.max_send_message_length", 0x04000000),  # 64 MiB
+]
+
+
+def _merged_options(channel_options: Optional[list]) -> list:
+    return _DEFAULT_CHANNEL_OPTIONS + (channel_options or [])
 
 
 def _is_react_handle(handle: str) -> bool:
@@ -140,10 +155,14 @@ class KxClient:
         self._md = [("authorization", f"Bearer {self._token}")] if self._token else []
         if endpoint.startswith("https://"):
             self._channel = grpc.secure_channel(
-                _target(endpoint), grpc.ssl_channel_credentials(), options=channel_options
+                _target(endpoint),
+                grpc.ssl_channel_credentials(),
+                options=_merged_options(channel_options),
             )
         else:
-            self._channel = grpc.insecure_channel(_target(endpoint), options=channel_options)
+            self._channel = grpc.insecure_channel(
+                _target(endpoint), options=_merged_options(channel_options)
+            )
         self._stub = _gg.KxGatewayStub(self._channel)
 
     # -- lifecycle --
@@ -239,15 +258,62 @@ class KxClient:
         view = self._call(lambda: self._stub.GetProjection(req, metadata=self._md))
         return types.Projection.from_proto(view)
 
-    def get_content(self, ref: IdType, instance_id: IdType) -> bytes:
+    def get_content(self, ref: IdType, instance_id: Optional[IdType] = None) -> bytes:
+        """Fetch content by ref. With an ``instance_id`` (the run ownership
+        ticket) it reads the run scope; ``None`` reads the UPLOADS scope (refs
+        this party uploaded via :meth:`put_content`) — Batch A. Denials are
+        uniform (no existence oracle)."""
         cref = hexids.as_bytes(ref, hexids.REF_LEN)
-        inst = hexids.as_bytes(instance_id, hexids.INSTANCE_LEN)
+        inst = b"" if instance_id is None else hexids.as_bytes(instance_id, hexids.INSTANCE_LEN)
         blob = self._call(
             lambda: self._stub.GetContent(
                 _g.GetContentRequest(content_ref=cref, instance_id=inst), metadata=self._md
             )
         )
         return blob.payload
+
+    def put_content(self, payload: bytes, *, media_type: str = "", filename: str = "") -> PutResult:
+        """Upload bytes to the gateway's content store (Batch A). A CONTENT-STORE
+        write, never a journal write: the returned ref is SERVER-DERIVED blake3
+        (SN-8). ``media_type``/``filename`` are advisory audit fields. The server
+        caps the payload fail-closed (``kx serve --content-max-bytes``, default
+        32 MiB). An old gateway raises ``KxUnimplemented``."""
+        resp = self._call(
+            lambda: self._stub.PutContent(
+                _g.PutContentRequest(payload=payload, media_type=media_type, filename=filename),
+                metadata=self._md,
+            )
+        )
+        return PutResult.from_proto(resp)
+
+    def get_content_batch(
+        self,
+        refs: Sequence[IdType],
+        *,
+        instance_id: Optional[IdType] = None,
+        max_bytes_per_item: Optional[int] = None,
+    ) -> List[ContentItem]:
+        """Fetch up to 64 refs in ONE round trip (Batch A — the N+1 collapse), in
+        request order. ``instance_id`` scopes to a run; ``None`` reads the uploads
+        scope. Unauthorized/missing/malformed refs come back as UNIFORM empty
+        items (:attr:`ContentItem.missing`) — no existence oracle. Payloads
+        truncate at ``min(max_bytes_per_item, the server's per-item clamp)`` with
+        ``truncated`` set and ``full_size`` honest. More than 64 refs is refused."""
+        content_refs = [hexids.as_bytes(r, hexids.REF_LEN) for r in refs]
+        inst = b"" if instance_id is None else hexids.as_bytes(instance_id, hexids.INSTANCE_LEN)
+        req = _g.GetContentBatchRequest(instance_id=inst, content_refs=content_refs)
+        if max_bytes_per_item is not None:
+            req.max_bytes_per_item = max_bytes_per_item
+        resp = self._call(lambda: self._stub.GetContentBatch(req, metadata=self._md))
+        return [ContentItem.from_proto(i) for i in resp.items]
+
+    def list_models(self) -> List[ModelSummary]:
+        """Discover the models the connected gateway serves (Batch A). Display
+        only (SN-8): selection stays a recipe ENUM free-param validated
+        server-side. An FFI-free gateway returns an EMPTY list; an old gateway
+        raises ``KxUnimplemented``."""
+        resp = self._call(lambda: self._stub.ListModels(_g.ListModelsRequest(), metadata=self._md))
+        return [ModelSummary.from_proto(m) for m in resp.models]
 
     def stream_events(
         self, instance_id: IdType, *, since: int = 0, follow: bool = False
@@ -500,10 +566,14 @@ class AsyncKxClient:
         self._md = [("authorization", f"Bearer {self._token}")] if self._token else []
         if endpoint.startswith("https://"):
             self._channel = grpc.aio.secure_channel(
-                _target(endpoint), grpc.ssl_channel_credentials(), options=channel_options
+                _target(endpoint),
+                grpc.ssl_channel_credentials(),
+                options=_merged_options(channel_options),
             )
         else:
-            self._channel = grpc.aio.insecure_channel(_target(endpoint), options=channel_options)
+            self._channel = grpc.aio.insecure_channel(
+                _target(endpoint), options=_merged_options(channel_options)
+            )
         self._stub = _gg.KxGatewayStub(self._channel)
 
     async def close(self) -> None:
@@ -582,15 +652,49 @@ class AsyncKxClient:
         view = await self._acall(self._stub.GetProjection(req, metadata=self._md))
         return types.Projection.from_proto(view)
 
-    async def get_content(self, ref: IdType, instance_id: IdType) -> bytes:
+    async def get_content(self, ref: IdType, instance_id: Optional[IdType] = None) -> bytes:
+        """As :meth:`KxClient.get_content` — ``None`` reads the uploads scope."""
         cref = hexids.as_bytes(ref, hexids.REF_LEN)
-        inst = hexids.as_bytes(instance_id, hexids.INSTANCE_LEN)
+        inst = b"" if instance_id is None else hexids.as_bytes(instance_id, hexids.INSTANCE_LEN)
         blob = await self._acall(
             self._stub.GetContent(
                 _g.GetContentRequest(content_ref=cref, instance_id=inst), metadata=self._md
             )
         )
         return blob.payload
+
+    async def put_content(
+        self, payload: bytes, *, media_type: str = "", filename: str = ""
+    ) -> PutResult:
+        """As :meth:`KxClient.put_content` (Batch A client upload)."""
+        resp = await self._acall(
+            self._stub.PutContent(
+                _g.PutContentRequest(payload=payload, media_type=media_type, filename=filename),
+                metadata=self._md,
+            )
+        )
+        return PutResult.from_proto(resp)
+
+    async def get_content_batch(
+        self,
+        refs: Sequence[IdType],
+        *,
+        instance_id: Optional[IdType] = None,
+        max_bytes_per_item: Optional[int] = None,
+    ) -> List[ContentItem]:
+        """As :meth:`KxClient.get_content_batch` (Batch A batch read)."""
+        content_refs = [hexids.as_bytes(r, hexids.REF_LEN) for r in refs]
+        inst = b"" if instance_id is None else hexids.as_bytes(instance_id, hexids.INSTANCE_LEN)
+        req = _g.GetContentBatchRequest(instance_id=inst, content_refs=content_refs)
+        if max_bytes_per_item is not None:
+            req.max_bytes_per_item = max_bytes_per_item
+        resp = await self._acall(self._stub.GetContentBatch(req, metadata=self._md))
+        return [ContentItem.from_proto(i) for i in resp.items]
+
+    async def list_models(self) -> List[ModelSummary]:
+        """As :meth:`KxClient.list_models` (Batch A model discovery)."""
+        resp = await self._acall(self._stub.ListModels(_g.ListModelsRequest(), metadata=self._md))
+        return [ModelSummary.from_proto(m) for m in resp.models]
 
     def stream_events(
         self, instance_id: IdType, *, since: int = 0, follow: bool = False

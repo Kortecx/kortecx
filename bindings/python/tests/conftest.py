@@ -108,6 +108,9 @@ def _spawn(kx_bin: str, tmp: pathlib.Path, extra: List[str]) -> Server:
         f"127.0.0.1:{port}",
         "--ws-listen",
         f"127.0.0.1:{ws_port}",
+        # A console-enabled binary would otherwise bind the DEFAULT :50180 and
+        # concurrent test servers collide (no-op flag on console-less builds).
+        "--no-console",
         *extra,
     ]
     proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)

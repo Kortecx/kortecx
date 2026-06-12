@@ -13,6 +13,7 @@ import type { MessageInitShape } from "@bufbuild/protobuf";
 import { createClient } from "@connectrpc/connect";
 import type { Client, Transport } from "@connectrpc/connect";
 import { CaptureRecord, type CaptureRecordPage } from "./capture.js";
+import { ContentItem, PutResult } from "./content.js";
 import { DatasetHit, DatasetSummary, type IngestDoc, IngestResult } from "./datasets.js";
 import { KxRunFailed, KxWaitTimeout, rpc } from "./errors.js";
 import { streamDeltas, wsDeltasFromMessages, wsUrl } from "./events.js";
@@ -23,6 +24,7 @@ import {
 } from "./gen/kortecx/v1/gateway_pb.js";
 import { AssetGrants } from "./grants.js";
 import { INSTANCE_LEN, REF_LEN, asBytes, encode } from "./hexids.js";
+import { ModelSummary } from "./models.js";
 import { ReactTurn, type ReactTurnPage } from "./react.js";
 import { RecipeForm } from "./recipes.js";
 import { ReplanRound, type ReplanRoundPage } from "./replan.js";
@@ -163,11 +165,74 @@ export abstract class KxClientBase {
     return Projection.fromProto(view);
   }
 
-  async getContent(ref: Id, instanceId: Id): Promise<Uint8Array> {
+  /**
+   * Fetch content by ref. With an `instanceId` (the run ownership ticket) it
+   * reads the run scope; OMITTED, it reads the UPLOADS scope (refs this party
+   * uploaded via {@link putContent}) — Batch A. Denials are uniform (no
+   * existence oracle).
+   */
+  async getContent(ref: Id, instanceId?: Id): Promise<Uint8Array> {
     const cref = asBytes(ref, REF_LEN);
-    const inst = asBytes(instanceId, INSTANCE_LEN);
+    const inst = instanceId === undefined ? new Uint8Array() : asBytes(instanceId, INSTANCE_LEN);
     const blob = await rpc(this.grpc.getContent({ contentRef: cref, instanceId: inst }));
     return blob.payload;
+  }
+
+  /**
+   * Upload bytes to the gateway's content store (Batch A). A CONTENT-STORE
+   * write, never a journal write: the returned ref is SERVER-DERIVED blake3
+   * (SN-8). `mediaType`/`filename` are advisory audit fields. The server caps
+   * the payload fail-closed (`kx serve --content-max-bytes`, default 32 MiB).
+   * An old gateway without this RPC throws {@link KxUnimplemented}.
+   */
+  async putContent(
+    payload: Uint8Array,
+    opts: { mediaType?: string; filename?: string } = {},
+  ): Promise<PutResult> {
+    const resp = await rpc(
+      this.grpc.putContent({
+        payload,
+        mediaType: opts.mediaType ?? "",
+        filename: opts.filename ?? "",
+      }),
+    );
+    return PutResult.fromProto(resp);
+  }
+
+  /**
+   * Fetch up to 64 refs in ONE round trip (Batch A — the N+1 collapse), in
+   * request order. `instanceId` scopes to a run; omitted reads the uploads
+   * scope. Unauthorized/missing/malformed refs come back as UNIFORM empty
+   * items ({@link ContentItem.missing}) — no existence oracle. Payloads
+   * truncate at `min(maxBytesPerItem, the server's per-item clamp)` with
+   * `truncated` set and `fullSize` honest. More than 64 refs is refused.
+   */
+  async getContentBatch(
+    refs: readonly Id[],
+    opts: { instanceId?: Id; maxBytesPerItem?: bigint } = {},
+  ): Promise<ContentItem[]> {
+    const contentRefs = refs.map((r) => asBytes(r, REF_LEN));
+    const instanceId =
+      opts.instanceId === undefined ? new Uint8Array() : asBytes(opts.instanceId, INSTANCE_LEN);
+    const resp = await rpc(
+      this.grpc.getContentBatch({
+        instanceId,
+        contentRefs,
+        maxBytesPerItem: opts.maxBytesPerItem,
+      }),
+    );
+    return resp.items.map((i) => ContentItem.fromProto(i));
+  }
+
+  /**
+   * Discover the models the connected gateway serves (Batch A). Display only
+   * (SN-8): selection stays a recipe ENUM free-param validated server-side.
+   * An FFI-free gateway returns an EMPTY list; an old gateway without this
+   * RPC throws {@link KxUnimplemented}.
+   */
+  async listModels(): Promise<ModelSummary[]> {
+    const resp = await rpc(this.grpc.listModels({}));
+    return resp.models.map((m) => ModelSummary.fromProto(m));
   }
 
   /** Native gRPC server-streaming event tail (Node + browser via Connect). */

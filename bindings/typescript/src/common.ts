@@ -66,6 +66,10 @@ export { GrantView, AssetGrants } from "./grants.js";
 export { DatasetSummary, DatasetHit, IngestResult } from "./datasets.js";
 export type { IngestDoc } from "./datasets.js";
 
+// Batch A: client uploads + batch content reads + model discovery.
+export { PutResult, ContentItem } from "./content.js";
+export { ModelSummary } from "./models.js";
+
 export {
   ToolManifest,
   KeywordSet,
