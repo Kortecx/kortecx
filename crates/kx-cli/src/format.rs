@@ -259,6 +259,67 @@ pub fn render_content_json(content_ref: &[u8], payload: &[u8]) -> String {
     .to_string()
 }
 
+/// Render `content put` — the server-derived ref + dedup flag (Batch A). SN-8:
+/// the ref printed here came from the SERVER (blake3 over the payload), never a
+/// client computation.
+#[must_use]
+pub fn render_put_content(resp: &proto::PutContentResponse, json: bool) -> String {
+    if json {
+        json!({
+            "content_ref": hex::encode(&resp.content_ref),
+            "size": resp.size,
+            "deduplicated": resp.deduplicated,
+        })
+        .to_string()
+    } else {
+        format!(
+            "ref={} size={} deduplicated={}",
+            hex::encode(&resp.content_ref),
+            resp.size,
+            resp.deduplicated
+        )
+    }
+}
+
+/// Render `models list` — DISPLAY-ONLY discovery (SN-8: listing a model never
+/// routes one; selection stays a recipe ENUM free-param).
+#[must_use]
+pub fn render_models(resp: &proto::ListModelsResponse, json: bool) -> String {
+    if json {
+        let models: Vec<Value> = resp
+            .models
+            .iter()
+            .map(|m| {
+                json!({
+                    "model_id": m.model_id,
+                    "modalities": m.modalities,
+                    "description": m.description,
+                    "serving": m.serving,
+                    "context_len": m.context_len,
+                })
+            })
+            .collect();
+        json!({ "models": models }).to_string()
+    } else if resp.models.is_empty() {
+        "(no models on this serve)".to_string()
+    } else {
+        resp.models
+            .iter()
+            .map(|m| {
+                format!(
+                    "{}  [{}]  ctx={}  {}{}",
+                    m.model_id,
+                    m.modalities.join("+"),
+                    m.context_len,
+                    m.description,
+                    if m.serving { "  (serving)" } else { "" }
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+}
+
 /// Render `signatures list`.
 #[must_use]
 pub fn render_signatures_list(resp: &proto::ListSignaturesResponse, json: bool) -> String {

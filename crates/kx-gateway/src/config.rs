@@ -17,6 +17,12 @@ pub const DEFAULT_MAX_LEASE: u32 = 16;
 /// `--ws-listen`. A `:0` port asks the OS for an ephemeral one (used by tests).
 pub const DEFAULT_WS_LISTEN: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 50152);
 
+/// Default fail-closed `PutContent` payload cap (Batch A): 32 MiB. Checked in
+/// the handler BEFORE the store is touched; override with `--content-max-bytes`.
+/// The transport decode limit is sized from this (cap + headroom), so an
+/// oversized upload is refused, never transport-mangled.
+pub const DEFAULT_CONTENT_MAX_BYTES: u64 = 32 * 1024 * 1024;
+
 /// Default address for the embedded web console (D139) — the third loopback
 /// listener serving the compile-time-embedded SPA when the binary carries the
 /// `console` feature. Override with `--console-listen`; opt out with
@@ -97,6 +103,9 @@ pub struct GatewayConfig {
     /// `console`-feature binary (the gRPC-web allowlist then auto-extends with
     /// the console's OWN bound loopback origins, never anything wider).
     pub console_listen: ConsoleMode,
+    /// The fail-closed `PutContent` payload cap in bytes (Batch A). Default
+    /// [`DEFAULT_CONTENT_MAX_BYTES`]; `--content-max-bytes <BYTES>` overrides.
+    pub content_max_bytes: u64,
 }
 
 /// PEM paths for the gRPC listener's server TLS (A1). The embedded loopback
@@ -132,7 +141,8 @@ pub const USAGE: &str =
 [--ws-listen <addr:port>] [--console-listen <addr:port> | --no-console] \
 [--max-lease <N>] [--dev-allow-local] \
 [--auth-token <token>=<party>]... [--auth-token-file <path>] [--catalog-dir <dir>] \
-[--tls-cert <path> --tls-key <path>] [--cors-origin <scheme://host[:port]>]...\n       \
+[--tls-cert <path> --tls-key <path>] [--cors-origin <scheme://host[:port]>]... \
+[--content-max-bytes <BYTES>]\n       \
 kx-gateway --help | --version";
 
 impl Cli {
@@ -172,6 +182,7 @@ fn parse_serve(mut args: impl Iterator<Item = String>) -> Result<GatewayConfig, 
     let mut cors_origins: Vec<String> = Vec::new();
     let mut console_listen = ConsoleMode::Default;
     let mut console_flag_seen = false;
+    let mut content_max_bytes: u64 = DEFAULT_CONTENT_MAX_BYTES;
 
     while let Some(flag) = args.next() {
         let mut take_value = |name: &str| -> Result<String, GatewayError> {
@@ -179,22 +190,8 @@ fn parse_serve(mut args: impl Iterator<Item = String>) -> Result<GatewayConfig, 
                 .ok_or_else(|| GatewayError::Config(format!("{name} requires a value")))
         };
         match flag.as_str() {
-            "--listen" => {
-                let v = take_value("--listen")?;
-                listen = Some(v.parse::<SocketAddr>().map_err(|_| {
-                    GatewayError::Config(format!(
-                        "--listen expects an addr:port (IP literal), got {v:?}"
-                    ))
-                })?);
-            }
-            "--ws-listen" => {
-                let v = take_value("--ws-listen")?;
-                ws_listen = v.parse::<SocketAddr>().map_err(|_| {
-                    GatewayError::Config(format!(
-                        "--ws-listen expects an addr:port (IP literal), got {v:?}"
-                    ))
-                })?;
-            }
+            "--listen" => listen = Some(parse_addr("--listen", &take_value("--listen")?)?),
+            "--ws-listen" => ws_listen = parse_addr("--ws-listen", &take_value("--ws-listen")?)?,
             "--journal" => journal_path = Some(PathBuf::from(take_value("--journal")?)),
             "--content" => content_root = Some(PathBuf::from(take_value("--content")?)),
             "--max-lease" => {
@@ -231,6 +228,14 @@ fn parse_serve(mut args: impl Iterator<Item = String>) -> Result<GatewayConfig, 
                 console_listen = apply_console_flag(&mut console_flag_seen, Some(v.as_str()))?;
             }
             "--no-console" => console_listen = apply_console_flag(&mut console_flag_seen, None)?,
+            "--content-max-bytes" => {
+                let v = take_value("--content-max-bytes")?;
+                content_max_bytes = v.parse::<u64>().ok().filter(|n| *n > 0).ok_or_else(|| {
+                    GatewayError::Config(format!(
+                        "--content-max-bytes expects a positive byte count, got {v:?}"
+                    ))
+                })?;
+            }
             other => return Err(GatewayError::Config(format!("unknown flag {other:?}"))),
         }
     }
@@ -265,6 +270,16 @@ fn parse_serve(mut args: impl Iterator<Item = String>) -> Result<GatewayConfig, 
         tls,
         cors_origins,
         console_listen,
+        content_max_bytes,
+    })
+}
+
+/// Parse an `addr:port` flag value (IP literal), naming the flag on failure.
+fn parse_addr(name: &str, v: &str) -> Result<SocketAddr, GatewayError> {
+    v.parse::<SocketAddr>().map_err(|_| {
+        GatewayError::Config(format!(
+            "{name} expects an addr:port (IP literal), got {v:?}"
+        ))
     })
 }
 
@@ -548,6 +563,34 @@ mod tests {
         );
         assert_eq!(c.catalog_dir, Some(PathBuf::from("/tmp/cat")));
         assert!(!c.dev_allow_local);
+    }
+
+    #[test]
+    fn content_max_bytes_defaults_overrides_and_rejects_garbage() {
+        let base = |extra: &[&str]| {
+            let mut a = vec![
+                "serve",
+                "--listen",
+                "127.0.0.1:0",
+                "--journal",
+                "/tmp/j",
+                "--content",
+                "/tmp/c",
+            ];
+            a.extend_from_slice(extra);
+            Cli::from_args(a)
+        };
+        // Default.
+        let c = serve(base(&[]).unwrap());
+        assert_eq!(c.content_max_bytes, DEFAULT_CONTENT_MAX_BYTES);
+        // Override.
+        let c = serve(base(&["--content-max-bytes", "1048576"]).unwrap());
+        assert_eq!(c.content_max_bytes, 1_048_576);
+        // Zero and garbage are refused (a 0-byte cap would refuse every upload
+        // silently — fail loudly at parse instead).
+        assert!(base(&["--content-max-bytes", "0"]).is_err());
+        assert!(base(&["--content-max-bytes", "lots"]).is_err());
+        assert!(base(&["--content-max-bytes"]).is_err());
     }
 
     #[test]

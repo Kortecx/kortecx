@@ -14,11 +14,25 @@ export type ChatRole = "user" | "assistant";
 /** pending = invoking; thinking = run in flight; done/failed = terminal. */
 export type ChatStatus = "pending" | "thinking" | "done" | "failed";
 
+/** One attachment riding a user message (Batch A): the SERVER-derived upload
+ *  ref + advisory display fields. `objectUrl` is the session-local `blob:`
+ *  preview of the user's own picked file (never untrusted server bytes). */
+export interface MessageAttachment {
+  readonly ref: string;
+  readonly filename: string;
+  readonly mediaType: string;
+  readonly objectUrl?: string;
+}
+
 export interface ChatMessage {
   readonly id: string;
   readonly role: ChatRole;
   readonly text: string;
   readonly status: ChatStatus;
+  /** The uploads attached to a user message (display + the vision arg source). */
+  readonly attachments?: readonly MessageAttachment[];
+  /** The paired user message id on an assistant turn (the retry join key). */
+  readonly forUserId?: string;
   /** The run backing an assistant turn (set once Invoke returns). */
   readonly instanceId?: string;
   readonly terminalMoteId?: string;
@@ -33,11 +47,20 @@ export interface ChatThread {
 export const EMPTY_THREAD: ChatThread = { messages: [] };
 
 export type ChatAction =
-  | { type: "user_send"; userId: string; assistantId: string; text: string }
+  | {
+      type: "user_send";
+      userId: string;
+      assistantId: string;
+      text: string;
+      attachments?: readonly MessageAttachment[];
+    }
   | { type: "turn_started"; assistantId: string; instanceId: string; terminalMoteId: string }
   | { type: "turn_thinking"; assistantId: string }
   | { type: "turn_done"; assistantId: string; text: string }
   | { type: "turn_failed"; assistantId: string; error: UiError }
+  /** Re-dispatch a FAILED turn with its identical args (Batch A idempotent-run
+   *  UX: content-addressed refs + server dedup make the re-run safe). */
+  | { type: "turn_retry"; assistantId: string }
   | { type: "reset" };
 
 /** Replace the message with `id` via `fn` (identity if not found). */
@@ -53,12 +76,14 @@ export function chatReducer(state: ChatThread, action: ChatAction): ChatThread {
         role: "user",
         text: action.text,
         status: "done",
+        attachments: action.attachments,
       };
       const assistant: ChatMessage = {
         id: action.assistantId,
         role: "assistant",
         text: "",
         status: "pending",
+        forUserId: action.userId,
       };
       return { messages: [...state.messages, user, assistant] };
     }
@@ -85,11 +110,32 @@ export function chatReducer(state: ChatThread, action: ChatAction): ChatThread {
         status: "failed",
         error: action.error,
       }));
+    case "turn_retry":
+      // Only a FAILED turn re-arms (a done/in-flight turn is not retryable).
+      return patch(state, action.assistantId, (m) =>
+        m.status === "failed" ? { ...m, status: "pending", error: undefined, text: "" } : m,
+      );
     case "reset":
       return EMPTY_THREAD;
     default:
       return state;
   }
+}
+
+/** The user message a FAILED assistant turn replays (the retry args source). */
+export function retrySource(
+  state: ChatThread,
+  assistantId: string,
+): { text: string; attachments: readonly MessageAttachment[] } | null {
+  const assistant = state.messages.find((m) => m.id === assistantId);
+  if (!assistant || assistant.role !== "assistant" || assistant.status !== "failed") {
+    return null;
+  }
+  const user = state.messages.find((m) => m.id === assistant.forUserId);
+  if (!user) {
+    return null;
+  }
+  return { text: user.text, attachments: user.attachments ?? [] };
 }
 
 /** True while any assistant turn is still in flight (composer stays disabled). */

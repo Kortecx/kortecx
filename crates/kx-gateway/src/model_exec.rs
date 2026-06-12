@@ -26,6 +26,7 @@ use kx_content::{ContentStore, LocalFsContentStore};
 use kx_executor::{MoteExecutionResult, MoteExecutor, MoteExecutorError, Rootfs};
 use kx_inference::{
     inference_params_from_mote, InferenceBackend, InferenceInput, LlamaInferenceBackend,
+    MEDIA_MARKER,
 };
 use kx_model_store::{read_context_length, ModelDescriptor, ModelRegistry};
 use kx_model_validator::{
@@ -193,6 +194,15 @@ pub(crate) fn resolve_serve_model() -> Option<std::path::PathBuf> {
     p.is_file().then_some(p)
 }
 
+/// Resolve the OPTIONAL vision projector (`mmproj`) GGUF: the
+/// `KX_SERVE_MMPROJ_GGUF` env path, iff it exists (Batch A — the serve vision
+/// path). `None` ⇒ the serve model registers TEXT-only and the vision recipe is
+/// not provisioned; the chat path is byte-identical to pre-vision.
+pub(crate) fn resolve_serve_mmproj() -> Option<std::path::PathBuf> {
+    let p = std::path::PathBuf::from(std::env::var_os("KX_SERVE_MMPROJ_GGUF")?);
+    p.is_file().then_some(p)
+}
+
 /// A stable [`ModelId`] for the served model, derived from the GGUF file stem so
 /// a different model file yields a different id (hence distinct Mote identities).
 /// Used identically by [`build_serve_backend`] (registration) and the model
@@ -205,6 +215,36 @@ pub(crate) fn serve_model_id(gguf: &Path) -> ModelId {
         .and_then(|s| s.to_str())
         .unwrap_or("kx-serve-model");
     ModelId(format!("kx-serve:{stem}"))
+}
+
+/// The Batch A `ListModels` display entry for the resolved serve model — built
+/// from the SAME facts the backend registers (the stem-derived id, the resolved
+/// `n_ctx`, the vision-projector presence) plus a display-only description from
+/// the GGUF `general.name` (file stem fallback). Display/discovery ONLY (SN-8):
+/// nothing here authorizes a model route — selection stays a recipe ENUM
+/// free-param.
+#[must_use]
+pub(crate) fn catalog_entry(
+    gguf: &Path,
+    model_id: &ModelId,
+    vision: bool,
+) -> kx_gateway_core::ModelSummaryEntry {
+    let mut modalities = vec!["text".to_string()];
+    if vision {
+        modalities.push("image".to_string());
+    }
+    kx_gateway_core::ModelSummaryEntry {
+        model_id: model_id.0.clone(),
+        modalities,
+        description: kx_model_store::read_model_name(gguf).unwrap_or_else(|| {
+            gguf.file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("kx-serve-model")
+                .to_string()
+        }),
+        serving: true,
+        context_len: resolve_n_ctx(gguf),
+    }
 }
 
 /// The kortecx agent's required model signature (mirrors the harness's
@@ -259,6 +299,8 @@ fn resolve_n_ctx(gguf: &Path) -> u32 {
 pub(crate) fn build_serve_backend(
     gguf: &Path,
     model_id: &ModelId,
+    mmproj: Option<&Path>,
+    store: Arc<LocalFsContentStore>,
 ) -> Result<Arc<LlamaInferenceBackend>, String> {
     let n_ctx = resolve_n_ctx(gguf);
     let provided = agent_provided(n_ctx);
@@ -271,10 +313,22 @@ pub(crate) fn build_serve_backend(
         }
     }
     let mut registry = ModelRegistry::new();
+    // Batch A (vision): with a resolved projector the SAME weights register as
+    // an IMAGE descriptor (Text + Image, mmproj attached) and the backend gets
+    // the shared content store so a Multimodal dispatch can fetch image bytes
+    // by `content_ref`. Without one, the registration is byte-identical to
+    // pre-vision (TEXT-only descriptor, no fetcher).
+    let descriptor = match mmproj {
+        Some(proj) => ModelDescriptor::image(model_id.clone(), gguf, proj, n_ctx),
+        None => ModelDescriptor::text(model_id.clone(), gguf, n_ctx),
+    };
     registry
-        .register(ModelDescriptor::text(model_id.clone(), gguf, n_ctx))
+        .register(descriptor)
         .map_err(|e| format!("model registry rejected the descriptor: {e}"))?;
-    let backend = LlamaInferenceBackend::with_resolver(Arc::new(registry)).with_n_ctx(n_ctx);
+    let mut backend = LlamaInferenceBackend::with_resolver(Arc::new(registry)).with_n_ctx(n_ctx);
+    if mmproj.is_some() {
+        backend = backend.with_content_store(store);
+    }
     Ok(Arc::new(backend))
 }
 
@@ -449,7 +503,20 @@ impl<B: InferenceBackend> ModelRouterExecutor<B> {
             }
             _ => instruction,
         };
-        let input = InferenceInput::text(chatml(&instruction));
+        // Batch A (vision): a Mote carrying `config_subset[IMAGE_REF_KEY]` (the
+        // bound `kx/recipes/vision` arg) dispatches MULTIMODAL — the media
+        // marker heads the user turn (the projector splices the image in marker
+        // order, the harness contract) and the image BYTES never enter the
+        // text; they ride as a content_ref the backend fetches through its
+        // bound store. A present-but-malformed ref fails CLOSED (silently
+        // answering without the attached image would be a lie).
+        let input = match image_ref_from_config(mote).map_err(|e| internal(&e))? {
+            Some(image) => InferenceInput::Multimodal {
+                text: chatml(&format!("{MEDIA_MARKER}{instruction}")),
+                content_refs: std::iter::once(image).collect(),
+            },
+            None => InferenceInput::text(chatml(&instruction)),
+        };
         let params = inference_params_from_mote(mote, warrant)
             .map_err(|e| internal(&format!("inference params: {e}")))?;
         let out = self
@@ -694,6 +761,45 @@ fn prompt_from_config(mote: &Mote) -> Option<String> {
     )
 }
 
+/// The vision recipe's image slot key (`config_subset["image_ref"]`, Batch A) —
+/// the SAME const the recipe seeds with (one source, no drift). Defined in the
+/// feature-free `provision` so the recipe contract exists on every build.
+use crate::provision::IMAGE_REF_KEY;
+
+/// Extract + decode the OPTIONAL image content-ref from
+/// `config_subset[`[`IMAGE_REF_KEY`]`]`. The binder stores the bound `Bytes`
+/// arg as a JSON string of 64 hex chars (the uploaded blob's `PutContent` ref).
+/// `Ok(None)` ⇒ a plain text Mote; a PRESENT but malformed value is an error
+/// (fail-closed — the attached image must never be silently dropped).
+fn image_ref_from_config(mote: &Mote) -> Result<Option<ContentRef>, String> {
+    let Some(raw) = mote
+        .def
+        .config_subset
+        .get(&ConfigKey(IMAGE_REF_KEY.to_string()))
+    else {
+        return Ok(None);
+    };
+    let hex = serde_json::from_slice::<String>(&raw.0)
+        .map_err(|_| "image_ref is not a JSON string".to_string())?;
+    let bytes = decode_hex_32(&hex).ok_or_else(|| "image_ref must be 64 hex chars".to_string())?;
+    Ok(Some(ContentRef::from_bytes(bytes)))
+}
+
+/// Decode a 64-char lowercase/uppercase hex string into 32 bytes.
+fn decode_hex_32(s: &str) -> Option<[u8; 32]> {
+    let b = s.as_bytes();
+    if b.len() != 64 {
+        return None;
+    }
+    let mut out = [0u8; 32];
+    for (i, pair) in b.chunks_exact(2).enumerate() {
+        let hi = (pair[0] as char).to_digit(16)?;
+        let lo = (pair[1] as char).to_digit(16)?;
+        out[i] = u8::try_from(hi * 16 + lo).ok()?;
+    }
+    Some(out)
+}
+
 /// A fail-closed [`MoteExecutorError::Internal`] from a `&str` diagnostic.
 fn internal(reason: &str) -> MoteExecutorError {
     MoteExecutorError::Internal {
@@ -726,6 +832,68 @@ mod tests {
         // A missing GGUF → default, clamped within [min, max].
         let n = resolve_n_ctx(Path::new("/nonexistent.gguf"));
         assert!((AGENT_MIN_CTX_TOKENS..=MAX_SERVE_N_CTX).contains(&n));
+    }
+
+    #[test]
+    fn decode_hex_32_round_trips_and_refuses_garbage() {
+        let r = ContentRef::of(b"image bytes");
+        let hex = r.to_hex();
+        assert_eq!(decode_hex_32(&hex), Some(r.0), "hex round-trips the ref");
+        assert_eq!(decode_hex_32("zz"), None, "wrong length");
+        assert_eq!(decode_hex_32(&"g".repeat(64)), None, "non-hex chars");
+    }
+
+    #[test]
+    fn image_ref_from_config_is_none_absent_some_valid_err_malformed() {
+        use std::collections::BTreeMap;
+
+        let mote = |image: Option<&[u8]>| {
+            let mut cfg = BTreeMap::new();
+            cfg.insert(
+                ConfigKey(PROMPT_KEY.to_string()),
+                kx_mote::ConfigVal(b"\"hi\"".to_vec()),
+            );
+            if let Some(v) = image {
+                cfg.insert(
+                    ConfigKey(IMAGE_REF_KEY.to_string()),
+                    kx_mote::ConfigVal(v.to_vec()),
+                );
+            }
+            let def = kx_mote::MoteDef {
+                critic_check: None,
+                logic_ref: LogicRef::from_bytes([7; 32]),
+                model_id: ModelId("m".into()),
+                prompt_template_hash: PromptTemplateHash::from_bytes([9; 32]),
+                tool_contract: BTreeMap::new(),
+                nd_class: NdClass::Pure,
+                config_subset: cfg,
+                effect_pattern: EffectPattern::IdempotentByConstruction,
+                critic_for: None,
+                is_topology_shaper: false,
+                inference_params: InferenceParams::default(),
+                schema_version: kx_mote::MOTE_DEF_SCHEMA_VERSION,
+            };
+            Mote::new(
+                def,
+                kx_mote::InputDataId::from_bytes([5; 32]),
+                kx_mote::GraphPosition(vec![0]),
+                smallvec::SmallVec::new(),
+            )
+        };
+
+        // Absent ⇒ a plain text Mote.
+        assert_eq!(image_ref_from_config(&mote(None)).unwrap(), None);
+        // The binder's canonical JSON string of a valid 64-hex ref ⇒ decoded.
+        let r = ContentRef::of(b"png");
+        let json = serde_json::to_vec(&r.to_hex()).unwrap();
+        assert_eq!(
+            image_ref_from_config(&mote(Some(&json))).unwrap(),
+            Some(r),
+            "the bound vision arg decodes to the uploaded ref"
+        );
+        // Present-but-malformed fails CLOSED (the image is never silently dropped).
+        assert!(image_ref_from_config(&mote(Some(b"\"nothex\""))).is_err());
+        assert!(image_ref_from_config(&mote(Some(b"42"))).is_err());
     }
 
     #[test]
@@ -1338,21 +1506,29 @@ mod tests {
     }
 
     #[test]
-    fn react_arm_fences_a_granted_tool_proposal() {
-        // The PR-2d-1 ANSWER-ONLY FENCE: a well-formed, warrant-GRANTED tool
-        // proposal must NOT commit (no half-fire) — terminal error ⇒ F4 dead-letter.
+    fn react_arm_commits_a_granted_tool_proposal_raw() {
+        // PR-2d-2 (the live tool round): a well-formed, warrant-GRANTED proposal
+        // COMMITS RAW — the COORDINATOR settle re-decodes it on the sole writer,
+        // freezes the Tool fact, and materializes the observation. The gateway
+        // executor never fires anything (no half-fire; the decision and the
+        // effect live in separate Motes). [This test previously asserted the
+        // PR-2d-1 answer-only fence; it was stale — the inference-gated lib
+        // tests are not in the FFI-free CI matrix, so it sat latent.]
         let dir = tempfile::tempdir().unwrap();
         let store = LocalFsContentStore::open(dir.path()).unwrap();
         let env = br#"{"tool_call":{"name":"mcp-echo","version":"1","args":{"q":"x"}}}"#;
         let (exec, _) = executor(&store, env, None);
 
-        let err = exec
+        let out = exec
             .run(&react_turn_mote(), &granted_warrant(), None)
-            .expect_err("a tool proposal is fenced in PR-2d-1");
-        assert!(
-            err.to_string().contains("tool firing lands in PR-2d-2"),
-            "the fence names the boundary: {err}"
+            .expect("a granted proposal commits raw (the settle owns the decision)");
+        let bytes = store.get(&out.result_ref).unwrap();
+        assert_eq!(
+            bytes.as_ref(),
+            env.as_slice(),
+            "byte-identical raw envelope"
         );
+        assert_eq!(out.result_ref, ContentRef::of(env));
     }
 
     #[test]

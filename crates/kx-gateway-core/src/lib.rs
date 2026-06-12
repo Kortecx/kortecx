@@ -50,6 +50,7 @@ mod datasets;
 mod error;
 mod events;
 mod identity;
+mod models_view;
 mod react;
 mod reader;
 mod replan;
@@ -57,7 +58,9 @@ mod runs;
 mod service;
 mod submit;
 mod toolscout_view;
+mod uploads;
 mod view;
+mod writer;
 
 pub use capture_view::{CaptureRecordEntry, CaptureView};
 pub use datasets::{
@@ -69,13 +72,15 @@ pub use error::GatewayError;
 // crate-private (it backs the default `SnapshotTailer`).
 pub use events::{check_run_ownership, frames_for_range};
 pub use identity::CallerParty;
+pub use models_view::{ModelCatalogView, ModelSummaryEntry};
 pub use reader::{ContentReader, JournalReader, ReadOnly};
 pub use service::{
     AssetGrantsView, AuthorEdge, AuthorExecutionMode, AuthorStep, AuthorStepKind, BinderError,
     BoundRecipe, CatalogSeamError, EventStream, EventTailer, GatewayService, GrantEntry, GrantView,
     MembershipView, RecipeBinder, RecipeCatalog, RecipeFormFieldEntry, RecipeParamKind,
     RegisteredSignature, SignatureCatalog, SignatureSummaryEntry, SnapshotTailer, TeamMemberEntry,
-    TeamMembersView, TeamSummaryEntry, WarrantProjection, WorkflowAuthor,
+    TeamMembersView, TeamSummaryEntry, WarrantProjection, WorkflowAuthor, BATCH_ITEM_CLAMP_BYTES,
+    DEFAULT_PUT_CAP_BYTES, MAX_BATCH_REFS,
 };
 pub use submit::{
     RunSubmitter, SubmitMoteOutcome, SubmitStatus, SubmitterError, TonicCoordinatorSubmitter,
@@ -84,3 +89,5 @@ pub use toolscout_view::{
     BundleScoreView, BundleSpecEntry, BundleToolSpecEntry, KeywordSetEntry, LowerVerdictEntry,
     ManifestScoreEntry, ToolManifestEntry, ToolScoutView,
 };
+pub use uploads::{UploadRecord, UploadsLedger};
+pub use writer::ContentWriter;

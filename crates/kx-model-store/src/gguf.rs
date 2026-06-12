@@ -175,6 +175,33 @@ pub fn read_context_length(path: &Path) -> Option<u32> {
     None
 }
 
+/// Read the model's display name from the GGUF metadata (`general.name`),
+/// fail-soft — the same bounded, panic-free walk as [`read_context_length`].
+/// Returns `None` for any difficulty so the caller falls back to its own
+/// display default (e.g. the file stem).
+#[must_use]
+pub fn read_model_name(path: &Path) -> Option<String> {
+    let header = validate_gguf_header(path).ok()?;
+    if header.metadata_kv_count > MAX_KV_ENTRIES {
+        return None;
+    }
+    let mut r = BufReader::new(File::open(path).ok()?);
+    r.seek(SeekFrom::Start(GGUF_HEADER_LEN as u64)).ok()?;
+
+    for _ in 0..header.metadata_kv_count {
+        let key = read_gguf_string(&mut r)?;
+        let vtype = read_u32(&mut r)?;
+        if key == "general.name" {
+            if vtype != T_STRING {
+                return None;
+            }
+            return read_gguf_string(&mut r);
+        }
+        skip_value(&mut r, vtype)?;
+    }
+    None
+}
+
 /// Read exactly `n` bytes, or `None` on EOF / error.
 fn read_n<R: Read>(r: &mut R, n: usize) -> Option<Vec<u8>> {
     let mut buf = vec![0u8; n];

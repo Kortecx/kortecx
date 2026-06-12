@@ -15,6 +15,7 @@ from __future__ import annotations
 from .blueprints import BlueprintBuilder, EdgeInput, StepInput
 from .capture import CaptureRecord, CaptureRecordPage
 from .client import DEFAULT_ENDPOINT, AsyncKxClient, KxClient
+from .content import ContentItem, PutResult
 from .datasets import DatasetHit, DatasetSummary, IngestDocument, IngestResult
 from .errors import (
     ErrorCode,
@@ -34,6 +35,7 @@ from .errors import (
     KxWaitTimeout,
 )
 from .grants import AssetGrants, GrantView
+from .models import ModelSummary
 from .react import ReactTurn, ReactTurnPage
 from .recipes import (
     BlueprintForm,
@@ -105,6 +107,9 @@ __all__ = [
     "GrantView",
     "AssetGrants",
     "DatasetSummary",
+    "ContentItem",
+    "PutResult",
+    "ModelSummary",
     "DatasetHit",
     "IngestResult",
     "IngestDocument",

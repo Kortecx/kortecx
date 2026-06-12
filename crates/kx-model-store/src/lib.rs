@@ -67,5 +67,5 @@ pub mod registry;
 
 pub use descriptor::{Modality, ModelDescriptor};
 pub use errors::ModelStoreError;
-pub use gguf::{read_context_length, GgufHeader};
+pub use gguf::{read_context_length, read_model_name, GgufHeader};
 pub use registry::{ModelRegistry, ModelResolver};

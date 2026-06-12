@@ -82,7 +82,7 @@ pub async fn measure(iterations: usize) -> Result<LatencySamples, ProfileError> 
 }
 
 /// An ephemeral loopback, dev-auth gateway config rooted at `dir`.
-fn config(dir: &Path) -> Result<GatewayConfig, ProfileError> {
+pub(crate) fn config(dir: &Path) -> Result<GatewayConfig, ProfileError> {
     let parse = |s: &str| -> Result<SocketAddr, ProfileError> {
         s.parse()
             .map_err(|e| ProfileError::Gateway(format!("bad listen addr {s}: {e}")))
@@ -99,11 +99,12 @@ fn config(dir: &Path) -> Result<GatewayConfig, ProfileError> {
         tls: None,
         cors_origins: Vec::new(),
         console_listen: ConsoleMode::Disabled,
+        content_max_bytes: kx_gateway::DEFAULT_CONTENT_MAX_BYTES,
     })
 }
 
 /// Wait for the listener to accept, then build a channel.
-async fn connect(addr: SocketAddr) -> Result<Channel, ProfileError> {
+pub(crate) async fn connect(addr: SocketAddr) -> Result<Channel, ProfileError> {
     for _ in 0..ACCEPT_TRIES {
         if tokio::net::TcpStream::connect(addr).await.is_ok() {
             let uri = format!("http://{addr}");

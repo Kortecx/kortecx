@@ -20,6 +20,7 @@ import {
 } from "./transport.js";
 
 const READ_MAX_BYTES = 0x40000000; // 1 GiB — accommodate large committed results.
+const WRITE_MAX_BYTES = 0x04000000; // 64 MiB — headroom over the default 32 MiB PutContent cap.
 
 function resolveToken(endpoint: string, opts: KxClientOptions): string | undefined {
   if (opts.token !== undefined && opts.tokenFile !== undefined) {
@@ -51,6 +52,7 @@ export class KxClient extends KxClientBase {
         baseUrl: normalizeBaseUrl(endpoint),
         interceptors: [bearerInterceptor(token)],
         readMaxBytes: READ_MAX_BYTES,
+        writeMaxBytes: WRITE_MAX_BYTES,
       });
     super(endpoint, transport, { token, wsEndpoint: opts.wsEndpoint });
   }

@@ -502,3 +502,66 @@ describe("toolscout (advisory — scores never authorize)", () => {
     kx.close();
   });
 });
+
+// --- Batch A: client uploads + batch reads + model discovery ------------------
+
+describe("Batch A content uploads + model discovery", () => {
+  it("put → uploads-scope get → batch round-trips; the ref is server-derived", async () => {
+    const s = await devServer();
+    const kx = new KxClient(s.endpoint);
+
+    const bytes = new TextEncoder().encode("batch-a contract blob");
+    const put = await kx.putContent(bytes, { mediaType: "text/plain", filename: "a.txt" });
+    expect(put.contentRef).toHaveLength(64);
+    expect(put.size).toBe(BigInt(bytes.length));
+    expect(put.deduplicated).toBe(false);
+
+    // Identical bytes dedup at the SAME server-derived ref.
+    const again = await kx.putContent(bytes);
+    expect(again.contentRef).toBe(put.contentRef);
+    expect(again.deduplicated).toBe(true);
+
+    // Uploads scope (no instanceId): the single get serves the bytes back.
+    const got = await kx.getContent(put.contentRef);
+    expect(new TextDecoder().decode(got)).toBe("batch-a contract blob");
+
+    // The batch path: one real + one never-existed ref → the latter is the
+    // UNIFORM empty item (no existence oracle).
+    const items = await kx.getContentBatch([put.contentRef, "77".repeat(32)]);
+    expect(items).toHaveLength(2);
+    expect(items[0]?.missing).toBe(false);
+    expect(items[0]?.text).toBe("batch-a contract blob");
+    expect(items[1]?.missing).toBe(true);
+    kx.close();
+  });
+
+  it("kx content put parity: the CLI ref byte-equals the SDK ref", async () => {
+    const { mkdtempSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const path = await import("node:path");
+    const s = await devServer();
+    const kx = new KxClient(s.endpoint);
+
+    const dir = mkdtempSync(path.join(tmpdir(), "kx-put-"));
+    const file = path.join(dir, "parity.bin");
+    const bytes = new TextEncoder().encode("cross-surface parity payload");
+    writeFileSync(file, bytes);
+
+    const cliOut = cli(s.endpoint, "content", "put", file);
+    const sdk = await kx.putContent(bytes, { filename: "parity.bin" });
+    expect(cliOut.content_ref).toBe(sdk.contentRef);
+    // The CLI uploaded first, so the SDK put reports dedup — same blob, one store.
+    expect(sdk.deduplicated).toBe(true);
+    kx.close();
+  });
+
+  it("kx models list parity: an FFI-free serve answers an honest empty list", async () => {
+    const s = await devServer();
+    const kx = new KxClient(s.endpoint);
+    const sdk = await kx.listModels();
+    expect(sdk).toEqual([]);
+    const cliOut = cli(s.endpoint, "models", "list");
+    expect(cliOut.models).toEqual([]);
+    kx.close();
+  });
+});

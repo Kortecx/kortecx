@@ -406,3 +406,47 @@ def test_toolscout_invalid_spec_is_invalid_argument(dev_server):
     with KxClient(dev_server.endpoint) as kx:
         with pytest.raises(KxInvalidArgument):
             kx.score_task_bundle(BundleSpec(intent="x", tools=[]))
+
+
+# --- Batch A: client uploads + batch reads + model discovery -----------------
+
+
+def test_put_content_round_trips_and_dedups(serve):
+    s = serve("--dev-allow-local")
+    with KxClient(s.endpoint) as kx:
+        payload = b"batch-a python contract blob"
+        put = kx.put_content(payload, media_type="text/plain", filename="a.txt")
+        assert len(put.content_ref) == 64  # server-derived blake3, hex
+        assert put.size == len(payload)
+        assert put.deduplicated is False
+
+        again = kx.put_content(payload)
+        assert again.content_ref == put.content_ref
+        assert again.deduplicated is True
+
+        # Uploads scope (no instance_id): the bytes come back.
+        assert kx.get_content(put.content_ref) == payload
+
+        # The batch path: a never-existed ref is the UNIFORM empty item.
+        items = kx.get_content_batch([put.content_ref, "77" * 32])
+        assert [i.missing for i in items] == [False, True]
+        assert items[0].payload == payload
+
+
+def test_put_content_cli_parity(serve, kx_bin, tmp_path):
+    s = serve("--dev-allow-local")
+    payload = b"py cross-surface parity payload"
+    f = tmp_path / "parity.bin"
+    f.write_bytes(payload)
+    cli_out = _cli(kx_bin, s.endpoint, "content", "put", str(f))
+    with KxClient(s.endpoint) as kx:
+        sdk = kx.put_content(payload, filename="parity.bin")
+    assert cli_out["content_ref"] == sdk.content_ref
+    assert sdk.deduplicated is True  # the CLI stored it first — one store, one ref
+
+
+def test_list_models_is_empty_and_cli_agrees(serve, kx_bin):
+    s = serve("--dev-allow-local")
+    with KxClient(s.endpoint) as kx:
+        assert kx.list_models() == []
+    assert _cli(kx_bin, s.endpoint, "models", "list")["models"] == []

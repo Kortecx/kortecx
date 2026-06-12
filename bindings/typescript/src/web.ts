@@ -36,6 +36,8 @@ function resolveToken(endpoint: string, opts: KxClientOptions): string | undefin
 export class KxClient extends KxClientBase {
   constructor(endpoint: string = DEFAULT_ENDPOINT, opts: KxClientOptions = {}) {
     const token = resolveToken(endpoint, opts);
+    // (No write-size option on the fetch-based gRPC-web transport — a Batch A
+    // PutContent rides a plain fetch body; the SERVER cap is the only limit.)
     const transport =
       opts.transport ??
       createGrpcWebTransport({

@@ -83,6 +83,9 @@ mod mcp_tool;
 // the inference FFI, so it's behind the off-by-default `inference` feature.
 #[cfg(feature = "inference")]
 mod model_exec;
+// Batch A: the host-side model catalog (the ModelCatalogView seam) — always
+// wired so an FFI-free serve answers ListModels with an honest empty list.
+mod models;
 mod provision;
 #[cfg(feature = "embedded-worker")]
 mod real_exec;
@@ -94,13 +97,17 @@ mod tls;
 // W1.A5: the host-side advisory toolscout view (manifests + bundle scoring +
 // the lowering dry-run verdict). Always-on; display-only by construction.
 mod toolscout;
+// Batch A: the uploads.db sidecar (the UploadsLedger seam) — the PutContent
+// audit rows + the uploads-scope authorized set. Rebuildable-to-empty (truth
+// stays in the content store), off-journal, off-digest.
+mod uploads;
 #[cfg(feature = "embedded-worker")]
 mod ws;
 
 pub use auth::{DenyAll, DevAllowLocal, Principal, PrincipalResolver, TokenResolver};
 pub use config::{
-    Cli, ConsoleMode, GatewayConfig, TlsPaths, DEFAULT_CONSOLE_LISTEN, DEFAULT_MAX_LEASE,
-    DEFAULT_WS_LISTEN, USAGE,
+    Cli, ConsoleMode, GatewayConfig, TlsPaths, DEFAULT_CONSOLE_LISTEN, DEFAULT_CONTENT_MAX_BYTES,
+    DEFAULT_MAX_LEASE, DEFAULT_WS_LISTEN, USAGE,
 };
 #[cfg(feature = "hnsw")]
 pub use datasets::HostDatasetView;
@@ -111,7 +118,7 @@ pub use live_tail::LiveTailer;
 pub use provision::{
     DemoLibrary, HostRecipeBinder, HostRecipeCatalog, HostSignatureCatalog, HostWorkflowAuthor,
     DEMO_RECIPE_HANDLE, EXEC_RECIPE_HANDLE, FANOUT_RECIPE_HANDLE, MODEL_RECIPE_HANDLE,
-    REACT_RECIPE_HANDLE,
+    REACT_RECIPE_HANDLE, VISION_RECIPE_HANDLE,
 };
 pub use server::{serve, start, RunningGateway};
 pub use teams::{seed_demo_team, HostGrantView, HostMembershipView, DEMO_TEAM_HANDLE};

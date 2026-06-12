@@ -8,10 +8,12 @@ export function MessageList({
   thread,
   autoscroll,
   renderTrace,
+  onRetry,
 }: {
   thread: ChatThread;
   autoscroll: boolean;
   renderTrace?: (assistantId: string) => ReactNode;
+  onRetry?: (assistantId: string) => void;
 }) {
   const endRef = useRef<HTMLDivElement>(null);
 
@@ -38,6 +40,7 @@ export function MessageList({
           key={m.id}
           message={m}
           trace={m.role === "assistant" ? renderTrace?.(m.id) : undefined}
+          onRetry={m.role === "assistant" ? onRetry : undefined}
         />
       ))}
       <div ref={endRef} />

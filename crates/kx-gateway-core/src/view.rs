@@ -3,7 +3,7 @@
 //! from the read API of the fold — the client never computes a `MoteId` (SN-8).
 //! Also hosts the read-only fold helper and the `GetContent` authorization.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use kx_content::ContentRef;
 use kx_journal::JournalEntry;
@@ -13,6 +13,7 @@ use kx_proto::proto;
 
 use crate::error::{internal, GatewayError};
 use crate::reader::{ContentReader, JournalReader};
+use crate::uploads::UploadsLedger;
 
 /// Fold the run's journal up to and including `at_seq` through the read-only
 /// seam (never exposing a writer), returning the [`Projection`] plus a side-map
@@ -80,6 +81,24 @@ pub(crate) fn build_view(
     })
 }
 
+/// The run-scope authorized set: every committed (non-repudiated) result ref of
+/// the run owned by `instance_id`, from ONE fold. Any ownership failure yields
+/// the uniform `NotAuthorized` (no existence oracle).
+pub(crate) fn run_authorized_refs(
+    reader: &dyn JournalReader,
+    instance_id: [u8; 16],
+) -> Result<BTreeSet<[u8; 32]>, GatewayError> {
+    let head = reader.current_seq().map_err(internal)?;
+    let (projection, _) = fold_through(reader, head)?;
+    check_ownership(&projection, instance_id)?;
+    Ok(projection
+        .iter_motes()
+        .filter(|(_, state)| *state == MoteState::Committed)
+        .filter_map(|(id, _)| projection.result_ref_of(&id))
+        .map(|r| r.0)
+        .collect())
+}
+
 /// `GetContent`: return a committed result by ref, but ONLY if `content_ref` is
 /// a committed (non-repudiated) result of the run owned by `instance_id`. Any
 /// failure of ownership or the authorized-set check yields the uniform
@@ -90,16 +109,7 @@ pub(crate) fn get_owned_content(
     instance_id: [u8; 16],
     content_ref: [u8; 32],
 ) -> Result<Vec<u8>, GatewayError> {
-    let head = reader.current_seq().map_err(internal)?;
-    let (projection, _) = fold_through(reader, head)?;
-    check_ownership(&projection, instance_id)?;
-
-    let authorized = projection
-        .iter_motes()
-        .filter(|(_, state)| *state == MoteState::Committed)
-        .filter_map(|(id, _)| projection.result_ref_of(&id))
-        .any(|r| r.0 == content_ref);
-    if !authorized {
+    if !run_authorized_refs(reader, instance_id)?.contains(&content_ref) {
         return Err(GatewayError::NotAuthorized);
     }
 
@@ -108,6 +118,97 @@ pub(crate) fn get_owned_content(
     content
         .get(&ContentRef::from_bytes(content_ref))
         .ok_or_else(|| internal("committed result missing from the content store"))
+}
+
+/// `GetContent`, uploads scope (Batch A — the EMPTY `instance_id`): return an
+/// uploaded blob by ref, but ONLY if the uploads ledger recorded it. An absent
+/// ledger authorizes nothing, and an unknown ref denies — both as the SAME
+/// uniform `NotAuthorized` (no oracle about refs OR about sidecar wiring).
+pub(crate) fn get_uploaded_content(
+    content: &dyn ContentReader,
+    uploads: Option<&dyn UploadsLedger>,
+    content_ref: [u8; 32],
+) -> Result<Vec<u8>, GatewayError> {
+    let ledger = uploads.ok_or(GatewayError::NotAuthorized)?;
+    if !ledger.contains(&content_ref)? {
+        return Err(GatewayError::NotAuthorized);
+    }
+    // Reachable only for a recorded upload — the ledger only records refs the
+    // store accepted, so a miss is a real internal inconsistency, not an oracle.
+    content
+        .get(&ContentRef::from_bytes(content_ref))
+        .ok_or_else(|| internal("uploaded blob missing from the content store"))
+}
+
+/// `GetContentBatch`: resolve up to the handler-capped ref list against ONE
+/// authorized set (run scope folds the journal ONCE — the N+1 collapse), in
+/// request order. Per-item failures are UNIFORM: an unauthorized, missing, or
+/// malformed (non-32-byte) ref yields an empty `payload` + `full_size == 0`,
+/// indistinguishable from one another (D120.1). Payloads are truncated at
+/// `item_clamp` with `truncated` set and `full_size` honest.
+///
+/// A bad run TICKET (`instance_id` not owning the run) fails the whole call
+/// with the uniform `NotAuthorized` — the same contract as every other
+/// run-scoped RPC. `instance_id == None` selects the uploads scope; an absent
+/// uploads ledger simply authorizes nothing (all items uniformly empty).
+pub(crate) fn get_content_batch(
+    reader: &dyn JournalReader,
+    content: &dyn ContentReader,
+    uploads: Option<&dyn UploadsLedger>,
+    instance_id: Option<[u8; 16]>,
+    refs: &[Vec<u8>],
+    item_clamp: u64,
+) -> Result<Vec<proto::ContentBatchItem>, GatewayError> {
+    // Run scope: ONE fold for the whole batch. Uploads scope: per-ref ledger
+    // membership (point lookups).
+    let run_set = match instance_id {
+        Some(id) => Some(run_authorized_refs(reader, id)?),
+        None => None,
+    };
+
+    let empty_item = |raw: &[u8]| proto::ContentBatchItem {
+        content_ref: raw.to_vec(),
+        payload: Vec::new(),
+        truncated: false,
+        full_size: 0,
+    };
+
+    let mut items = Vec::with_capacity(refs.len());
+    for raw in refs {
+        let Ok(r) = <[u8; 32]>::try_from(raw.as_slice()) else {
+            items.push(empty_item(raw));
+            continue;
+        };
+        let authorized = match &run_set {
+            Some(set) => set.contains(&r),
+            None => match uploads {
+                Some(ledger) => ledger.contains(&r)?,
+                None => false,
+            },
+        };
+        if !authorized {
+            items.push(empty_item(raw));
+            continue;
+        }
+        // A store miss for an authorized ref degrades to the SAME uniform empty
+        // item (batch semantics: per-item, total, no oracle).
+        let Some(mut payload) = content.get(&ContentRef::from_bytes(r)) else {
+            items.push(empty_item(raw));
+            continue;
+        };
+        let full_size = payload.len() as u64;
+        let truncated = full_size > item_clamp;
+        if truncated {
+            payload.truncate(usize::try_from(item_clamp).unwrap_or(usize::MAX));
+        }
+        items.push(proto::ContentBatchItem {
+            content_ref: raw.clone(),
+            payload,
+            truncated,
+            full_size,
+        });
+    }
+    Ok(items)
 }
 
 fn mote_snapshot(

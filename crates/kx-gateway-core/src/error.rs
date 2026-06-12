@@ -23,6 +23,11 @@ pub enum GatewayError {
     /// reachable AFTER an ownership check passes, so it is never an oracle.
     #[error("internal gateway error: {0}")]
     Internal(String),
+
+    /// A request exceeded a fail-closed server resource cap (the Batch A
+    /// `PutContent` payload cap). Checked BEFORE any store/journal touch.
+    #[error("resource exhausted: {0}")]
+    ResourceExhausted(&'static str),
 }
 
 impl From<GatewayError> for Status {
@@ -32,6 +37,7 @@ impl From<GatewayError> for Status {
             GatewayError::NotAuthorized => Status::permission_denied("not authorized"),
             GatewayError::InvalidArgument(msg) => Status::invalid_argument(msg),
             GatewayError::Internal(msg) => Status::internal(msg),
+            GatewayError::ResourceExhausted(msg) => Status::resource_exhausted(msg),
         }
     }
 }
