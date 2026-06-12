@@ -1,7 +1,13 @@
 import { useConnection } from "../../kx/connection-context";
 import { useHealth } from "../../kx/use-health";
+import { Icon } from "./Icon";
 
-/** Connection + liveness pill: a dot (live/degraded/down), endpoint, disconnect. */
+/**
+ * Connection control: a single POWER button (user-directed 2026-06-12 — the
+ * endpoint text + "disconnect" link left the navbar). The button carries the
+ * liveness as its color (live/degraded/down); the endpoint + health stay
+ * discoverable on hover (title). Clicking disconnects (back to the login gate).
+ */
 export function ConnectionStatus() {
   const { status, endpoint, disconnect } = useConnection();
   const health = useHealth();
@@ -16,15 +22,20 @@ export function ConnectionStatus() {
   }
 
   const h = health.data ?? "live";
-  const dotClass = h === "live" ? "dot--ok" : h === "degraded" ? "dot--degraded" : "dot--off";
+  const tone =
+    h === "live" ? "var(--success)" : h === "degraded" ? "var(--warning)" : "var(--error)";
   return (
     <span className="connstatus" data-testid="conn-status" data-status={status} data-health={h}>
-      <span className={`dot ${dotClass}`} title={`gateway ${h}`} />
-      <span className="mono connstatus__ep" title={endpoint}>
-        {endpoint}
-      </span>
-      <button type="button" className="linkbtn" onClick={disconnect}>
-        disconnect
+      <button
+        type="button"
+        className="iconbtn connstatus__power"
+        style={{ color: tone }}
+        onClick={disconnect}
+        title={`gateway ${h} · ${endpoint} — disconnect`}
+        aria-label="Disconnect"
+        data-testid="disconnect-btn"
+      >
+        <Icon name="power" />
       </button>
     </span>
   );

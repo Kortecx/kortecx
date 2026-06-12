@@ -2269,3 +2269,9 @@ select {
   border-bottom: 1px solid var(--border);
   overflow-wrap: anywhere;
 }
+
+/* the navbar power/disconnect button (the endpoint text + link left the bar);
+ * color = liveness, set inline by ConnectionStatus */
+.connstatus__power:hover {
+  background: color-mix(in srgb, currentColor 12%, transparent);
+}
