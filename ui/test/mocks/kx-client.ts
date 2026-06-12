@@ -20,6 +20,8 @@ export interface MockClientImpl {
   listReplanRounds?: (...args: unknown[]) => Promise<unknown>;
   listReactTurns?: (...args: unknown[]) => Promise<unknown>;
   listCaptureRecords?: (...args: unknown[]) => Promise<unknown>;
+  getMoteDetail?: (...args: unknown[]) => Promise<unknown>;
+  getContentBatch?: (...args: unknown[]) => Promise<unknown>;
 }
 
 export function makeMockClient(impl: MockClientImpl = {}) {
@@ -65,6 +67,13 @@ export function makeMockClient(impl: MockClientImpl = {}) {
   const listCaptureRecords = vi.fn(
     impl.listCaptureRecords ?? (async () => ({ records: [], hasMore: false })),
   );
+  const getMoteDetail = vi.fn(
+    impl.getMoteDetail ??
+      (async () => {
+        throw new Error("getMoteDetail not stubbed");
+      }),
+  );
+  const getContentBatch = vi.fn(impl.getContentBatch ?? (async () => []));
   const close = vi.fn();
   const client = {
     listSignatures,
@@ -82,6 +91,8 @@ export function makeMockClient(impl: MockClientImpl = {}) {
     listReplanRounds,
     listReactTurns,
     listCaptureRecords,
+    getMoteDetail,
+    getContentBatch,
     close,
     submitRun: vi.fn(),
     registerSignature: vi.fn(),
@@ -105,6 +116,8 @@ export function makeMockClient(impl: MockClientImpl = {}) {
     listReplanRounds,
     listReactTurns,
     listCaptureRecords,
+    getMoteDetail,
+    getContentBatch,
     close,
   };
 }

@@ -23,8 +23,9 @@ test("artifacts: a committed output renders in the offline Monaco code viewer", 
     })
     .toBe(5);
 
-  await page.getByTestId("run-artifacts-link").click();
-  await expect(page.getByTestId("artifacts-section")).toBeVisible();
+  // PR-2 merge (D141.1): Artifacts is a TAB of the run's detail page.
+  await page.getByTestId("run-tab-artifacts").click();
+  await expect(page.getByTestId("artifacts-tab")).toBeVisible();
   await expect(page.getByTestId("artifact-gallery")).toBeVisible({ timeout: 30_000 });
   const rows = page.locator(".artifact-list__row");
   await expect.poll(() => rows.count(), { timeout: 30_000 }).toBeGreaterThan(0);

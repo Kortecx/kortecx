@@ -70,6 +70,9 @@ export type { IngestDoc } from "./datasets.js";
 export { PutResult, ContentItem } from "./content.js";
 export { ModelSummary } from "./models.js";
 
+// Batch B: per-mote definition inspection (display-only).
+export { MoteDetail, MoteConfigItem, ndClassName, effectPatternName } from "./motes.js";
+
 export {
   ToolManifest,
   KeywordSet,

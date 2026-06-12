@@ -55,6 +55,7 @@ impl Coordinator for NoopCoordinator {
             status: SubmitStatus::Accepted as i32,
             detail: String::new(),
             instance_id: vec![0u8; 16],
+            refusal_code: String::new(),
         }))
     }
 

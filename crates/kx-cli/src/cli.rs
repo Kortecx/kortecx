@@ -33,6 +33,8 @@ usage: kx <command> [args]
     kx invoke <handle> --args <json> [--args-file <path>] [--wait] [--timeout-secs N] [--out <file>]
     kx submit --demo [--wait] [--timeout-secs N] [--out <file>]
     kx projection --instance <hex16> [--at-seq N]
+    kx runs list [--limit N] [--before-seq N]    (durable run history, newest-first)
+    kx mote show <instance-hex16> <mote-hex32>   (display-only definition inspection)
     kx content get --ref <hex32> [--instance <hex16>] [--out <file>]   (no --instance = the uploads scope)
     kx content put <file> [--media-type <mime>] [--filename <name>]
     kx events --instance <hex16> [--since N] [--follow]
@@ -69,6 +71,10 @@ pub enum Cli {
     Blueprint(verbs::blueprint::BlueprintArgs),
     /// Render a run as a DAG of Mote states.
     Projection(verbs::projection::ProjectionArgs),
+    /// Durable run history (Batch B `ListRuns`; read-only).
+    Runs(verbs::runs::RunsArgs),
+    /// Per-mote definition inspection (Batch B `GetMoteDetail`; display-only).
+    Mote(verbs::mote::MoteArgs),
     /// Fetch a committed result.
     Content(verbs::content::ContentArgs),
     /// Stream/poll a run's event deltas.
@@ -117,6 +123,8 @@ impl Cli {
             Some("submit") => Ok(Cli::Submit(verbs::submit::parse(args)?)),
             Some("blueprint") => Ok(Cli::Blueprint(verbs::blueprint::parse(args)?)),
             Some("projection") => Ok(Cli::Projection(verbs::projection::parse(args)?)),
+            Some("runs") => Ok(Cli::Runs(verbs::runs::parse(args)?)),
+            Some("mote") => Ok(Cli::Mote(verbs::mote::parse(args)?)),
             Some("content") => Ok(Cli::Content(verbs::content::parse(args)?)),
             Some("events") => Ok(Cli::Events(verbs::events::parse(args)?)),
             Some("signatures") => Ok(Cli::Signatures(verbs::signatures::parse(args)?)),
@@ -177,6 +185,8 @@ async fn dispatch(cli: Cli) -> Result<(), CliError> {
         Cli::Submit(a) => verbs::submit::execute(a).await,
         Cli::Blueprint(a) => verbs::blueprint::execute(a).await,
         Cli::Projection(a) => verbs::projection::execute(a).await,
+        Cli::Runs(a) => verbs::runs::execute(a).await,
+        Cli::Mote(a) => verbs::mote::execute(a).await,
         Cli::Content(a) => verbs::content::execute(a).await,
         Cli::Events(a) => verbs::events::execute(a).await,
         Cli::Signatures(a) => verbs::signatures::execute(a).await,
@@ -269,7 +279,10 @@ fn inject_listen_default(mut rest: Vec<String>) -> Vec<String> {
     rest
 }
 
-/// Longer help for a single command (`kx help <command>`).
+/// Longer help for a single command (`kx help <command>`). A flat text table —
+/// one arm per verb; splitting it would scatter the help corpus for no clarity
+/// gain (the `start_impl` precedent). Allow the length.
+#[allow(clippy::too_many_lines)]
 fn help_for(cmd: &str) -> String {
     match cmd {
         "run" | "replay" | "digest" => "\
@@ -314,6 +327,20 @@ kx blueprint run --file <dag.json> [--wait] [--timeout-secs N] [--out <file>] [c
         "projection" => "\
 kx projection --instance <hex16> [--at-seq N] [client flags]
   Render a run as a DAG: each Mote's state, nd-class, result ref, and committed seq."
+            .into(),
+        "runs" => "\
+kx runs list [--limit N] [--before-seq N] [client flags]
+  Durable run history (Batch B): every registered run, newest-first, from one
+  server-side journal fold. --limit caps the page (server max 500); --before-seq
+  pages older runs (pass the last page's lowest registered_seq). Read-only."
+            .into(),
+        "mote" => "\
+kx mote show <instance-hex16> <mote-hex32> [client flags]
+  Display-only definition inspection (Batch B): resolve a committed Mote's
+  def hash to its admitted definition — step kind, model, prompt, params
+  (capped), tool contract, nd-class, effect pattern. An uncommitted mote (or
+  one admitted by a pre-Batch-B binary) answers def_found: false honestly.
+  SN-8: nothing shown here authorizes anything."
             .into(),
         "content" => "\
 kx content get --ref <hex32> [--instance <hex16>] [--out <file>] [client flags]

@@ -35,6 +35,9 @@ export interface MoteVM {
   readonly resultRef: string | null;
   readonly committedSeq: number | null;
   readonly anomaly: number | null;
+  /** The committed def hash (hex); EMPTY until the Mote commits — the
+   *  inspector's `GetMoteDetail` gate (PR-2). Off the DAG layout hash. */
+  readonly moteDefHash: string;
   /** Inbound DAG edges — the source of the live graph's links (empty for a root). */
   readonly parents: readonly ParentEdgeVM[];
 }
@@ -60,6 +63,7 @@ export function toProjectionVM(p: Projection): ProjectionVM {
       resultRef: m.resultRef,
       committedSeq: m.committedSeq,
       anomaly: m.anomaly,
+      moteDefHash: m.moteDefHash,
       parents: m.parents.map((e) => ({
         parentId: e.parentId,
         edgeKind: e.edgeKind,

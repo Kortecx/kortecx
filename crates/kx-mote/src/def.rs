@@ -134,10 +134,32 @@ impl MoteDef {
     /// `schema_version`) re-derives the hash.
     #[must_use]
     pub fn hash(&self) -> MoteDefHash {
-        let bytes = bincode::serde::encode_to_vec(self, canonical_config())
-            .expect("MoteDef serialization is infallible (no floats, no non-encodable types)");
-        let digest = blake3::hash(&bytes);
+        let digest = blake3::hash(&self.encode());
         MoteDefHash::from_bytes(*digest.as_bytes())
+    }
+
+    /// Canonical-bincode bytes of this definition — the exact payload the
+    /// coordinator persists content-addressed at admission (PR-2), so
+    /// `ContentRef::of(def.encode())` equals `def.hash()` byte-for-byte and a
+    /// committed Mote's `mote_def_hash` doubles as the content-store address
+    /// of its definition. The inverse of [`Self::decode`]. Mirrors
+    /// [`TopologyDecision::encode`](crate::TopologyDecision::encode).
+    #[must_use]
+    pub fn encode(&self) -> Vec<u8> {
+        bincode::serde::encode_to_vec(self, canonical_config())
+            .expect("MoteDef serialization is infallible (no floats, no non-encodable types)")
+    }
+
+    /// Decode a `MoteDef` from the canonical-bincode bytes persisted at
+    /// admission (the inverse of [`Self::encode`]). Read by display-only
+    /// surfaces (the gateway's `GetMoteDetail`); never on the identity path —
+    /// identity is always re-derived from a constructed `MoteDef`, not parsed
+    /// bytes. Returns the bincode error message on a malformed/foreign payload
+    /// (fail-closed — the caller treats a decode failure as an absent def).
+    pub fn decode(bytes: &[u8]) -> Result<Self, String> {
+        bincode::serde::decode_from_slice::<Self, _>(bytes, canonical_config())
+            .map(|(def, _consumed)| def)
+            .map_err(|e| e.to_string())
     }
 }
 

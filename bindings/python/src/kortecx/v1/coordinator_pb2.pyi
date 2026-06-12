@@ -303,16 +303,18 @@ class SubmitMoteRequest(_message.Message):
     def __init__(self, mote: _Optional[_Union[Mote, _Mapping]] = ..., warrant: _Optional[_Union[WarrantSpec, _Mapping]] = ..., accept_at_least_once: bool = ..., react_seed: bool = ...) -> None: ...
 
 class SubmitMoteResponse(_message.Message):
-    __slots__ = ("mote_id", "status", "detail", "instance_id")
+    __slots__ = ("mote_id", "status", "detail", "instance_id", "refusal_code")
     MOTE_ID_FIELD_NUMBER: _ClassVar[int]
     STATUS_FIELD_NUMBER: _ClassVar[int]
     DETAIL_FIELD_NUMBER: _ClassVar[int]
     INSTANCE_ID_FIELD_NUMBER: _ClassVar[int]
+    REFUSAL_CODE_FIELD_NUMBER: _ClassVar[int]
     mote_id: bytes
     status: SubmitStatus
     detail: str
     instance_id: bytes
-    def __init__(self, mote_id: _Optional[bytes] = ..., status: _Optional[_Union[SubmitStatus, str]] = ..., detail: _Optional[str] = ..., instance_id: _Optional[bytes] = ...) -> None: ...
+    refusal_code: str
+    def __init__(self, mote_id: _Optional[bytes] = ..., status: _Optional[_Union[SubmitStatus, str]] = ..., detail: _Optional[str] = ..., instance_id: _Optional[bytes] = ..., refusal_code: _Optional[str] = ...) -> None: ...
 
 class ReportCommitRequest(_message.Message):
     __slots__ = ("mote_id", "idempotency_key", "result_ref", "warrant_ref", "mote_def_hash", "nd_class", "parents", "worker_id")

@@ -235,6 +235,37 @@ pub enum SubmissionRefusal {
     },
 }
 
+impl SubmissionRefusal {
+    /// The stable short code of this refusal — exactly the prefix each
+    /// variant's `Display` message opens with (`"R-1"` … `"R-15"`,
+    /// `"ValidatorTypeError"`, `"AttemptedWiden"`, `"D66"`). PR-2 surfaces it
+    /// as structured gRPC error metadata (`kx-refusal-code`) so clients act on
+    /// the code without parsing prose. The vocabulary is CLOSED — a new code
+    /// here means a new refusal variant, which the corpus forbids without its
+    /// own D-number.
+    #[must_use]
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::R1NoIdempotentTool { .. } => "R-1",
+            Self::R2NoCritic { .. } => "R-2",
+            Self::R3EffectPatternMissing { .. } => "R-3",
+            Self::R4CriticTargetMissing { .. } => "R-4",
+            Self::R5CriticTargetWrongClass { .. } => "R-5",
+            Self::R6MultiCritic { .. } => "R-6",
+            Self::R7WorldMutatingCritic { .. } => "R-7",
+            Self::R8ShaperAndCritic { .. } => "R-8",
+            Self::R8bShaperImperativeSpawn { .. } => "R-8b",
+            Self::R9CriticChainNotTerminating { .. } => "R-9",
+            Self::ValidatorTypeError { .. } => "ValidatorTypeError",
+            Self::AttemptedWiden { .. } => "AttemptedWiden",
+            Self::R10AtLeastOnceWithoutAccept { .. } => "R-10",
+            Self::R14WorldMutatingShaper { .. } => "R-14",
+            Self::R15NativeCheckShape { .. } => "R-15",
+            Self::D66UnresolvableWorldMutatingTools { .. } => "D66",
+        }
+    }
+}
+
 /// A workflow submission — the shape `validate_submission` reasons over.
 /// **kx-executor owns this type at PR 9a** until P4 ships the SDK + the
 /// authoritative `workflow-submission.md` spec.

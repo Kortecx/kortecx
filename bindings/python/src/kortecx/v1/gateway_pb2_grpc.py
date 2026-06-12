@@ -168,6 +168,11 @@ class KxGatewayStub(object):
                 request_serializer=kortecx_dot_v1_dot_gateway__pb2.ListModelsRequest.SerializeToString,
                 response_deserializer=kortecx_dot_v1_dot_gateway__pb2.ListModelsResponse.FromString,
                 _registered_method=True)
+        self.GetMoteDetail = channel.unary_unary(
+                '/kortecx.v1.KxGateway/GetMoteDetail',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.GetMoteDetailRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.MoteDetail.FromString,
+                _registered_method=True)
 
 
 class KxGatewayServicer(object):
@@ -346,6 +351,14 @@ class KxGatewayServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def GetMoteDetail(self, request, context):
+        """Batch B additive (D120.6): per-mote definition inspection (display only —
+        the committed def_hash resolved to capped summary fields, never authority).
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_KxGatewayServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -478,6 +491,11 @@ def add_KxGatewayServicer_to_server(servicer, server):
                     servicer.ListModels,
                     request_deserializer=kortecx_dot_v1_dot_gateway__pb2.ListModelsRequest.FromString,
                     response_serializer=kortecx_dot_v1_dot_gateway__pb2.ListModelsResponse.SerializeToString,
+            ),
+            'GetMoteDetail': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetMoteDetail,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.GetMoteDetailRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.MoteDetail.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -1186,6 +1204,33 @@ class KxGateway(object):
             '/kortecx.v1.KxGateway/ListModels',
             kortecx_dot_v1_dot_gateway__pb2.ListModelsRequest.SerializeToString,
             kortecx_dot_v1_dot_gateway__pb2.ListModelsResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GetMoteDetail(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/GetMoteDetail',
+            kortecx_dot_v1_dot_gateway__pb2.GetMoteDetailRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.MoteDetail.FromString,
             options,
             channel_credentials,
             insecure,

@@ -113,9 +113,21 @@ class KxUnavailable(KxError):
 
 
 class KxFailedPrecondition(KxError):
-    """A precondition failed (e.g. a refusal predicate fired, immutable conflict)."""
+    """A precondition failed (e.g. a refusal predicate fired, immutable conflict).
+
+    Attributes
+    ----------
+    refusal_code:
+        The structured refusal code from the ``kx-refusal-code`` gRPC metadata
+        (PR-2: ``"R-1"``…``"R-15"`` / ``"D66"`` / …) when the gateway refused a
+        submit. Machine-actionable — branch on this, never on the prose.
+    """
 
     code = ErrorCode.FAILED_PRECONDITION
+
+    def __init__(self, message: str, *, refusal_code: Optional[str] = None, **kw: object) -> None:
+        super().__init__(message, **kw)  # type: ignore[arg-type]
+        self.refusal_code = refusal_code
 
 
 class KxCatchupRequired(KxError):
@@ -222,4 +234,22 @@ def from_rpc_error(err: "grpc.RpcError") -> KxError:
     message = details or (status.name if status is not None else "rpc error")
     cls = _status_map().get(status, KxError)
     grpc_code = status.name if status is not None else None
+    if cls is KxFailedPrecondition:
+        return KxFailedPrecondition(message, grpc_code=grpc_code, refusal_code=_refusal_code(err))
     return cls(message, grpc_code=grpc_code)
+
+
+def _refusal_code(err: "grpc.RpcError") -> Optional[str]:
+    """Extract the PR-2 ``kx-refusal-code`` trailer (sync ``grpc.Call`` and
+    ``aio.AioRpcError`` both expose ``trailing_metadata()``; defensive — an
+    error without trailers simply has no code)."""
+    try:
+        trailers = err.trailing_metadata()
+    except Exception:  # pragma: no cover - non-call RpcError
+        return None
+    if trailers is None:
+        return None
+    for key, value in trailers:
+        if key == "kx-refusal-code":
+            return value if isinstance(value, str) else value.decode("ascii", "replace")
+    return None

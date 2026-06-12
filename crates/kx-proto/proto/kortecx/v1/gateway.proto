@@ -746,6 +746,52 @@ message ListModelsResponse {
 }
 
 // ---------------------------------------------------------------------------
+// Batch B — Mote definition inspection (PR-2). Additive RPC (D120.6).
+// GetMoteDetail is a per-mote unary DISPLAY read: it resolves a committed
+// Mote's `mote_def_hash` to the definition bytes the coordinator persisted
+// content-addressed at admission (the def's blake3 IS its content ref) and
+// returns a CAPPED, display-only summary. Deliberately NOT folded into
+// MoteSnapshot — that would bloat every GetProjection poll by the def payload.
+// `instance_id` is the same ownership ticket as GetProjection/GetContent
+// (uniform "not authorized", no existence oracle — D120.1). A mote that has
+// not committed, or one admitted by a pre-Batch-B binary, answers
+// `def_found = false` (honest empty, never an error). Nothing in this message
+// is authority: config values are OPAQUE bytes for display (SN-8 — secrets
+// cannot reach config_subset by construction, D81; the caps are defensive
+// bounds, not redaction).
+// ---------------------------------------------------------------------------
+
+message GetMoteDetailRequest {
+  bytes instance_id = 1;                 // 16B ownership ticket
+  bytes mote_id = 2;                     // 32B — the Mote to inspect
+}
+
+message MoteConfigEntry {
+  string key = 1;                        // ConfigKey (curated allowlist; "prompt" excluded — it has a dedicated field)
+  bytes value = 2;                       // OPAQUE display bytes, capped server-side
+  bool truncated = 3;                    // true iff value was cut at the server cap
+  uint64 full_len = 4;                   // stored value length (honest under truncation)
+}
+
+message MoteDetail {
+  bytes mote_id = 1;                     // echoed
+  bytes mote_def_hash = 2;               // 32B; EMPTY until the Mote commits
+  bool def_found = 3;                    // false: uncommitted, or admitted pre-Batch-B
+  string step_kind = 4;                  // display vocabulary: "pure"|"model"|"exec"|"shaper"|"critic"|"react-turn"
+  string model_id = 5;
+  string prompt = 6;                     // config_subset["prompt"], UTF-8 lossy, capped
+  bool prompt_truncated = 7;
+  repeated MoteConfigEntry config_subset = 8;  // canonical key order; entry-count capped
+  map<string, string> tool_contract = 9; // tool name -> pinned version
+  bytes logic_ref = 10;                  // 32B
+  NdClass nd_class = 11;                 // reuses coordinator.proto NdClass
+  EffectPattern effect_pattern = 12;     // reuses coordinator.proto EffectPattern
+  optional bytes critic_for = 13;        // 32B producer this Mote critiques; absent if none
+  bool is_topology_shaper = 14;
+  uint32 schema_version = 15;            // MoteDef schema version the def was admitted under
+}
+
+// ---------------------------------------------------------------------------
 // Service — the external client-facing gateway (distinct from Coordinator).
 // ---------------------------------------------------------------------------
 
@@ -789,4 +835,7 @@ service KxGateway {
   rpc PutContent(PutContentRequest) returns (PutContentResponse);
   rpc GetContentBatch(GetContentBatchRequest) returns (GetContentBatchResponse);
   rpc ListModels(ListModelsRequest) returns (ListModelsResponse);
+  // Batch B additive (D120.6): per-mote definition inspection (display only —
+  // the committed def_hash resolved to capped summary fields, never authority).
+  rpc GetMoteDetail(GetMoteDetailRequest) returns (MoteDetail);
 }

@@ -2,7 +2,7 @@
  * Pure pathname → breadcrumb derivation (no React) — the navbar trail that took
  * the brand's old slot (the logo now lives only in the sidebar). Matches the
  * current pathname against the nav model; an extra path segment (today only
- * `/runs/$instanceId`) becomes a second crumb, hex-shortened when id-shaped.
+ * `/workflows/$instanceId`) becomes a second crumb, hex-shortened when id-shaped.
  */
 
 import { shortHex } from "../../lib/format";
@@ -14,11 +14,12 @@ export interface Crumb {
   readonly path?: RoutePath;
 }
 
-// HIDDEN_SECTIONS (deep-link-only routes like /artifacts) still breadcrumb.
+// HIDDEN_SECTIONS (deep-link-only routes) still breadcrumb (empty since PR-2).
 const ALL_SECTIONS = [...NAV_SECTIONS, ...HIDDEN_SECTIONS, SETTINGS_SECTION];
 
-/** A server-derived 32-byte id rendered as 64 hex chars (run instance ids). */
-const HEX_ID = /^[0-9a-f]{64}$/;
+/** A server-derived id rendered as hex: 16-byte run instance ids (32 chars)
+ *  and 32-byte mote/content ids (64 chars). */
+const HEX_ID = /^[0-9a-f]{32}$|^[0-9a-f]{64}$/;
 
 export function deriveCrumbs(pathname: string): Crumb[] {
   const section = ALL_SECTIONS.find(

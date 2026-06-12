@@ -284,3 +284,62 @@ fn narrow_path_does_not_run_sibling_dependent_predicates() {
         "full-graph path runs R-4"
     );
 }
+
+// ---------------------------------------------------------------------------
+// PR-2: code() ↔ Display-prefix pin
+// ---------------------------------------------------------------------------
+
+/// Every refusal's `code()` is exactly the prefix its `Display` message opens
+/// with (`"{code}:"`). The gateway surfaces `code()` as `kx-refusal-code` gRPC
+/// metadata; this pin guarantees the structured code can never drift from the
+/// prose the same client reads in the Status detail.
+#[test]
+fn refusal_code_matches_display_prefix_for_every_variant() {
+    let id = MoteId::from_bytes([0xcd; 32]);
+    let other = MoteId::from_bytes([0xce; 32]);
+    let variants: Vec<SubmissionRefusal> = vec![
+        SubmissionRefusal::R1NoIdempotentTool { mote_id: id },
+        SubmissionRefusal::R2NoCritic { mote_id: id },
+        SubmissionRefusal::R3EffectPatternMissing { mote_id: id },
+        SubmissionRefusal::R4CriticTargetMissing {
+            mote_id: id,
+            target: other,
+        },
+        SubmissionRefusal::R5CriticTargetWrongClass {
+            mote_id: id,
+            target: other,
+            target_class: NdClass::Pure,
+        },
+        SubmissionRefusal::R6MultiCritic {
+            first_critic: id,
+            second_critic: other,
+            target: id,
+        },
+        SubmissionRefusal::R7WorldMutatingCritic { mote_id: id },
+        SubmissionRefusal::R8ShaperAndCritic { mote_id: id },
+        SubmissionRefusal::R8bShaperImperativeSpawn { mote_id: id },
+        SubmissionRefusal::R9CriticChainNotTerminating { mote_id: id },
+        SubmissionRefusal::ValidatorTypeError {
+            mote_id: id,
+            missing_summary: "x".into(),
+        },
+        SubmissionRefusal::AttemptedWiden {
+            mote_id: id,
+            narrowing_error: "x".into(),
+        },
+        SubmissionRefusal::R10AtLeastOnceWithoutAccept { mote_id: id },
+        SubmissionRefusal::R14WorldMutatingShaper { mote_id: id },
+        SubmissionRefusal::R15NativeCheckShape { mote_id: id },
+        SubmissionRefusal::D66UnresolvableWorldMutatingTools { mote_id: id },
+    ];
+    assert_eq!(variants.len(), 16, "the refusal vocabulary is CLOSED at 16");
+    for refusal in &variants {
+        let prose = refusal.to_string();
+        let expected_prefix = format!("{}:", refusal.code());
+        assert!(
+            prose.starts_with(&expected_prefix),
+            "Display for {:?} must open with '{expected_prefix}', got '{prose}'",
+            refusal.code(),
+        );
+    }
+}

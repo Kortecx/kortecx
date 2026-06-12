@@ -1,46 +1,22 @@
-import { createRoute, useSearch } from "@tanstack/react-router";
-import { Suspense, lazy } from "react";
-import { ConnectGate } from "../../components/ConnectGate";
-import { EmptyState } from "../../components/EmptyState";
-import { useConnection } from "../../kx/connection-context";
+import { createRoute, redirect } from "@tanstack/react-router";
 import { rootRoute } from "./__root";
 
-const ROUTE_ID = "/artifacts";
-
-const ArtifactsSection = lazy(() =>
-  import("../../components/sections/ArtifactsSection").then((m) => ({
-    default: m.ArtifactsSection,
-  })),
-);
-
 interface ArtifactsSearch {
-  /** Gallery mode: browse all of this run's committed artifacts. */
+  /** Gallery mode (legacy): browse all of this run's committed artifacts. */
   run?: string;
-  /** Deep-link mode: one committed artifact (`instance` + `ref`). */
+  /** Deep-link mode (legacy): one committed artifact (`instance` + `ref`). */
   instance?: string;
   ref?: string;
 }
 
-function ArtifactsScreen() {
-  const { status } = useConnection();
-  if (status !== "connected") {
-    return <ConnectGate />;
-  }
-  return <ArtifactsRouter />;
-}
-
-function ArtifactsRouter() {
-  const { run, instance, ref } = useSearch({ from: ROUTE_ID });
-  return (
-    <Suspense fallback={<EmptyState title="Loading…" />}>
-      <ArtifactsSection runId={run} instanceId={instance} contentRef={ref} />
-    </Suspense>
-  );
-}
-
+/**
+ * PR-2 route merge (D141.1): Artifacts is a TAB of a run's detail page. Old
+ * deep links map onto it — `?run=` opens the run's gallery tab; `?instance=`
+ * + `?ref=` focuses the single artifact; a bare visit lands on the run list.
+ */
 export const artifactsRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: ROUTE_ID,
+  path: "/artifacts",
   validateSearch: (search: Record<string, unknown>): ArtifactsSearch => {
     const out: ArtifactsSearch = {};
     // A run instance id is a 16-byte (32 hex char) server-derived id.
@@ -56,5 +32,21 @@ export const artifactsRoute = createRoute({
     }
     return out;
   },
-  component: ArtifactsScreen,
+  beforeLoad: ({ search }) => {
+    if (search.instance && search.ref) {
+      throw redirect({
+        to: "/workflows/$instanceId",
+        params: { instanceId: search.instance },
+        search: { tab: "artifacts", ref: search.ref },
+      });
+    }
+    if (search.run) {
+      throw redirect({
+        to: "/workflows/$instanceId",
+        params: { instanceId: search.run },
+        search: { tab: "artifacts" },
+      });
+    }
+    throw redirect({ to: "/workflows" });
+  },
 });

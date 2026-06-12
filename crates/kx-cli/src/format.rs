@@ -484,6 +484,184 @@ pub fn render_tools_score(resp: &proto::ScoreTaskBundleResponse, json: bool) -> 
     }
 }
 
+/// Map a [`proto::NdClass`] discriminant to a stable display name.
+#[must_use]
+pub fn nd_class_name(nd: i32) -> &'static str {
+    use proto::NdClass as N;
+    if nd == N::Pure as i32 {
+        "PURE"
+    } else if nd == N::ReadOnlyNondet as i32 {
+        "READ_ONLY_NONDET"
+    } else if nd == N::WorldMutating as i32 {
+        "WORLD_MUTATING"
+    } else {
+        "UNKNOWN"
+    }
+}
+
+/// Map a [`proto::EffectPattern`] discriminant to a stable display name.
+#[must_use]
+pub fn effect_pattern_name(ep: i32) -> &'static str {
+    use proto::EffectPattern as E;
+    if ep == E::IdempotentByConstruction as i32 {
+        "IdempotentByConstruction"
+    } else if ep == E::StageThenCommit as i32 {
+        "StageThenCommit"
+    } else if ep == E::ValidateThenCommit as i32 {
+        "ValidateThenCommit"
+    } else {
+        "UNKNOWN"
+    }
+}
+
+/// Render `runs list` (Batch B): newest-first run summaries + the pagination
+/// cursor hint. `--json` field names mirror the TS `RunSummary.toJSON` /
+/// Py `to_dict` snake_case shape (the tri-surface parity contract).
+#[must_use]
+pub fn render_runs(resp: &proto::ListRunsResponse, json: bool) -> String {
+    if json {
+        let runs: Vec<Value> = resp
+            .runs
+            .iter()
+            .map(|r| {
+                json!({
+                    "instance_id": hex::encode(&r.instance_id),
+                    "recipe_fingerprint": hex::encode(&r.recipe_fingerprint),
+                    "registered_seq": r.registered_seq,
+                    "registered_unix_ms": r.registered_unix_ms,
+                })
+            })
+            .collect();
+        json!({ "runs": runs, "has_more": resp.has_more }).to_string()
+    } else if resp.runs.is_empty() {
+        "(no runs)".to_string()
+    } else {
+        let mut out = String::new();
+        for r in &resp.runs {
+            let _ = write!(
+                out,
+                "{}{}  recipe {}  seq {}  registered_ms {}",
+                if out.is_empty() { "" } else { "\n" },
+                hex::encode(&r.instance_id),
+                hex::encode(&r.recipe_fingerprint),
+                r.registered_seq,
+                r.registered_unix_ms,
+            );
+        }
+        if resp.has_more {
+            let last = resp.runs.last().map_or(0, |r| r.registered_seq);
+            let _ = write!(out, "\n(more — continue with --before-seq {last})");
+        }
+        out
+    }
+}
+
+/// Render `mote show` (Batch B): the capped, display-only definition summary.
+/// `--json` field names mirror the TS `MoteDetail.toJSON` / Py `to_dict`
+/// snake_case shape (the tri-surface parity contract).
+#[must_use]
+pub fn render_mote_detail(detail: &proto::MoteDetail, json: bool) -> String {
+    if json {
+        let config: Vec<Value> = detail
+            .config_subset
+            .iter()
+            .map(|e| {
+                json!({
+                    "key": e.key,
+                    "value_hex": hex::encode(&e.value),
+                    "truncated": e.truncated,
+                    "full_len": e.full_len,
+                })
+            })
+            .collect();
+        let tools: std::collections::BTreeMap<_, _> = detail.tool_contract.iter().collect();
+        json!({
+            "mote_id": hex::encode(&detail.mote_id),
+            "mote_def_hash": hex::encode(&detail.mote_def_hash),
+            "def_found": detail.def_found,
+            "step_kind": detail.step_kind,
+            "model_id": detail.model_id,
+            "prompt": detail.prompt,
+            "prompt_truncated": detail.prompt_truncated,
+            "config_subset": config,
+            "tool_contract": tools,
+            "logic_ref": hex::encode(&detail.logic_ref),
+            "nd_class": nd_class_name(detail.nd_class),
+            "effect_pattern": effect_pattern_name(detail.effect_pattern),
+            "critic_for": detail.critic_for.as_deref().map(hex::encode),
+            "is_topology_shaper": detail.is_topology_shaper,
+            "schema_version": detail.schema_version,
+        })
+        .to_string()
+    } else if !detail.def_found {
+        format!(
+            "mote {}\n  def_found: false{}",
+            hex::encode(&detail.mote_id),
+            if detail.mote_def_hash.is_empty() {
+                "  (not committed yet — the def hash only exists on a Committed fact)"
+            } else {
+                "  (definition not retained — admitted by a pre-Batch-B binary)"
+            }
+        )
+    } else {
+        let mut out = format!(
+            "mote {}\n  def      {}\n  kind     {}\n  nd       {}\n  effect   {}",
+            hex::encode(&detail.mote_id),
+            hex::encode(&detail.mote_def_hash),
+            detail.step_kind,
+            nd_class_name(detail.nd_class),
+            effect_pattern_name(detail.effect_pattern),
+        );
+        if !detail.model_id.is_empty() {
+            let _ = write!(out, "\n  model    {}", detail.model_id);
+        }
+        let _ = write!(out, "\n  logic    {}", hex::encode(&detail.logic_ref));
+        if detail.is_topology_shaper {
+            out.push_str("\n  shaper   true");
+        }
+        if let Some(target) = detail.critic_for.as_deref() {
+            let _ = write!(out, "\n  critic_for {}", hex::encode(target));
+        }
+        if !detail.tool_contract.is_empty() {
+            let tools: std::collections::BTreeMap<_, _> = detail.tool_contract.iter().collect();
+            let listed = tools
+                .iter()
+                .map(|(name, version)| format!("{name}@{version}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let _ = write!(out, "\n  tools    {listed}");
+        }
+        if !detail.prompt.is_empty() {
+            let _ = write!(
+                out,
+                "\n  prompt{}:\n    {}",
+                if detail.prompt_truncated {
+                    " (truncated)"
+                } else {
+                    ""
+                },
+                detail.prompt.replace('\n', "\n    "),
+            );
+        }
+        for e in &detail.config_subset {
+            let shown = String::from_utf8(e.value.clone())
+                .unwrap_or_else(|_| format!("0x{}", hex::encode(&e.value)));
+            let _ = write!(
+                out,
+                "\n  param    {} = {}{}",
+                e.key,
+                shown,
+                if e.truncated {
+                    format!(" (+{} bytes truncated)", e.full_len - e.value.len() as u64)
+                } else {
+                    String::new()
+                }
+            );
+        }
+        out
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

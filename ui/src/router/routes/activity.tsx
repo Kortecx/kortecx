@@ -11,6 +11,6 @@ export const activityRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/activity",
   beforeLoad: () => {
-    throw redirect({ to: "/runs" });
+    throw redirect({ to: "/workflows" });
   },
 });

@@ -50,7 +50,7 @@ export function RecipesSection() {
             startedAt: Date.now(),
           });
           navigate({
-            to: "/runs/$instanceId",
+            to: "/workflows/$instanceId",
             params: { instanceId },
             search: { terminal: terminalMoteId },
           });

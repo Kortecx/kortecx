@@ -107,9 +107,17 @@ export class KxUnavailable extends KxError {
 
 /** A precondition failed (e.g. a refusal predicate fired, immutable conflict). */
 export class KxFailedPrecondition extends KxError {
-  constructor(message: string, opts: { grpcCode?: string } = {}) {
+  /**
+   * The structured refusal code from the `kx-refusal-code` gRPC metadata
+   * (PR-2: `"R-1"`…`"R-15"` / `"D66"` / …) when the gateway refused a submit.
+   * Machine-actionable — branch on this, never on the message prose.
+   */
+  readonly refusalCode?: string;
+
+  constructor(message: string, opts: { grpcCode?: string; refusalCode?: string } = {}) {
     super(message, { code: ErrorCode.FailedPrecondition, grpcCode: opts.grpcCode });
     this.name = "KxFailedPrecondition";
+    this.refusalCode = opts.refusalCode;
   }
 }
 
@@ -231,7 +239,12 @@ export function fromRpcError(err: unknown): KxError {
     case Code.Unavailable:
       return new KxUnavailable(message, { grpcCode });
     case Code.FailedPrecondition:
-      return new KxFailedPrecondition(message, { grpcCode });
+      return new KxFailedPrecondition(message, {
+        grpcCode,
+        // Connect merges trailers into `metadata` on both grpc and grpc-web
+        // transports — the PR-2 structured refusal code rides there.
+        refusalCode: ce.metadata.get("kx-refusal-code") ?? undefined,
+      });
     case Code.ResourceExhausted:
       return new KxCatchupRequired(message, { grpcCode });
     case Code.Internal:

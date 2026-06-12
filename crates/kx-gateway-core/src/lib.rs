@@ -51,6 +51,8 @@ mod error;
 mod events;
 mod identity;
 mod models_view;
+mod mote_def_view;
+mod mote_detail;
 mod react;
 mod reader;
 mod replan;
@@ -73,6 +75,8 @@ pub use error::GatewayError;
 pub use events::{check_run_ownership, frames_for_range};
 pub use identity::CallerParty;
 pub use models_view::{ModelCatalogView, ModelSummaryEntry};
+pub use mote_def_view::MoteDefView;
+pub use mote_detail::{MAX_CONFIG_ENTRIES, MAX_CONFIG_VALUE_BYTES, MAX_PROMPT_BYTES};
 pub use reader::{ContentReader, JournalReader, ReadOnly};
 pub use service::{
     AssetGrantsView, AuthorEdge, AuthorExecutionMode, AuthorStep, AuthorStepKind, BinderError,
@@ -80,7 +84,7 @@ pub use service::{
     MembershipView, RecipeBinder, RecipeCatalog, RecipeFormFieldEntry, RecipeParamKind,
     RegisteredSignature, SignatureCatalog, SignatureSummaryEntry, SnapshotTailer, TeamMemberEntry,
     TeamMembersView, TeamSummaryEntry, WarrantProjection, WorkflowAuthor, BATCH_ITEM_CLAMP_BYTES,
-    DEFAULT_PUT_CAP_BYTES, MAX_BATCH_REFS,
+    DEFAULT_PUT_CAP_BYTES, MAX_BATCH_REFS, REFUSAL_CODE_METADATA_KEY,
 };
 pub use submit::{
     RunSubmitter, SubmitMoteOutcome, SubmitStatus, SubmitterError, TonicCoordinatorSubmitter,

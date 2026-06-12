@@ -13,8 +13,8 @@
 use std::path::PathBuf;
 
 use kx_profile::{
-    capture_git_sha, content_spikes, percentile, react_spikes, spikes, Environment, Metric,
-    ProfileError, Report,
+    capture_git_sha, content_spikes, mote_detail_spikes, percentile, react_spikes, spikes,
+    Environment, Metric, ProfileError, Report,
 };
 
 #[tokio::main]
@@ -51,75 +51,82 @@ async fn run() -> Result<(), ProfileError> {
         n = args.iterations,
     );
 
+    let mut metrics = Vec::new();
+    // Warm-up + submit→Committed (the latter doubles as the PR-2 admission-
+    // persist overhead measurement against the pre-PR-2 baseline).
     let samples = spikes::measure(args.iterations).await?;
-    let mut metrics = vec![
-        Metric::spike(
-            "warmup_to_serving_p50",
-            percentile(&samples.warmup_ms, 50),
-            "ms",
-        ),
-        Metric::spike(
-            "submit_to_committed_p50",
-            percentile(&samples.submit_ms, 50),
-            "ms",
-        ),
-        Metric::spike(
-            "submit_to_committed_p99",
-            percentile(&samples.submit_ms, 99),
-            "ms",
-        ),
-    ];
+    push_spikes(
+        &mut metrics,
+        &[
+            ("warmup_to_serving_p50", percentile(&samples.warmup_ms, 50)),
+            (
+                "submit_to_committed_p50",
+                percentile(&samples.submit_ms, 50),
+            ),
+            (
+                "submit_to_committed_p99",
+                percentile(&samples.submit_ms, 99),
+            ),
+        ],
+    );
 
     // PR-2d-2 — M7a/M7b: the live react chain's settle machinery, model-free at
     // the coordinator layer (M7b fires the REAL bundled stdio tool; skipped —
     // empty samples — when the bin is absent).
     let react = react_spikes::measure(args.iterations).await?;
-    metrics.push(Metric::spike(
-        "react_answer_settle_p50",
-        percentile(&react.answer_ms, 50),
-        "ms",
-    ));
-    metrics.push(Metric::spike(
-        "react_answer_settle_p99",
-        percentile(&react.answer_ms, 99),
-        "ms",
-    ));
+    push_spikes(
+        &mut metrics,
+        &[
+            ("react_answer_settle_p50", percentile(&react.answer_ms, 50)),
+            ("react_answer_settle_p99", percentile(&react.answer_ms, 99)),
+        ],
+    );
     if !react.tool_round_ms.is_empty() {
-        metrics.push(Metric::spike(
-            "react_tool_round_p50",
-            percentile(&react.tool_round_ms, 50),
-            "ms",
-        ));
-        metrics.push(Metric::spike(
-            "react_tool_round_p99",
-            percentile(&react.tool_round_ms, 99),
-            "ms",
-        ));
+        push_spikes(
+            &mut metrics,
+            &[
+                ("react_tool_round_p50", percentile(&react.tool_round_ms, 50)),
+                ("react_tool_round_p99", percentile(&react.tool_round_ms, 99)),
+            ],
+        );
     }
 
     // Batch A — the content path: a 1 MiB client upload (the first client
     // write path) + the full 64-ref × 4 KiB batch read (the N+1 collapse).
     let content = content_spikes::measure(args.iterations).await?;
-    metrics.push(Metric::spike(
-        "put_content_1mib_p50",
-        percentile(&content.put_1mib_ms, 50),
-        "ms",
-    ));
-    metrics.push(Metric::spike(
-        "put_content_1mib_p95",
-        percentile(&content.put_1mib_ms, 95),
-        "ms",
-    ));
-    metrics.push(Metric::spike(
-        "content_batch_64x4k_p50",
-        percentile(&content.batch_64x4k_ms, 50),
-        "ms",
-    ));
-    metrics.push(Metric::spike(
-        "content_batch_64x4k_p95",
-        percentile(&content.batch_64x4k_ms, 95),
-        "ms",
-    ));
+    push_spikes(
+        &mut metrics,
+        &[
+            ("put_content_1mib_p50", percentile(&content.put_1mib_ms, 50)),
+            ("put_content_1mib_p95", percentile(&content.put_1mib_ms, 95)),
+            (
+                "content_batch_64x4k_p50",
+                percentile(&content.batch_64x4k_ms, 50),
+            ),
+            (
+                "content_batch_64x4k_p95",
+                percentile(&content.batch_64x4k_ms, 95),
+            ),
+        ],
+    );
+
+    // Batch B — the inspector path: GetMoteDetail cold (fold + store get +
+    // decode) and warm (the host's def cache).
+    let detail = mote_detail_spikes::measure(args.iterations).await?;
+    push_spikes(
+        &mut metrics,
+        &[
+            ("mote_detail_cold", percentile(&detail.detail_cold_ms, 50)),
+            (
+                "mote_detail_warm_p50",
+                percentile(&detail.detail_warm_ms, 50),
+            ),
+            (
+                "mote_detail_warm_p95",
+                percentile(&detail.detail_warm_ms, 95),
+            ),
+        ],
+    );
 
     let report = Report::new(git_sha.clone(), env, metrics);
     let json = report
@@ -139,6 +146,13 @@ async fn run() -> Result<(), ProfileError> {
     // private trend record.
     println!("{json}");
     Ok(())
+}
+
+/// Push a batch of millisecond spike metrics (one `Metric::spike` per pair).
+fn push_spikes(metrics: &mut Vec<Metric>, spikes: &[(&str, f64)]) {
+    for (id, value) in spikes {
+        metrics.push(Metric::spike(*id, *value, "ms"));
+    }
 }
 
 /// Parsed CLI arguments (hand-rolled, no clap — the FFI-free `kx` convention).

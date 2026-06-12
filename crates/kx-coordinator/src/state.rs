@@ -1606,7 +1606,7 @@ fn submit_and_capture<J: Journal>(
 
     // Admit through the hosted scheduler (verbatim — the P2 thesis test).
     let warrant_for_capture = warrant.clone();
-    let mut outcome = handle_submit(scheduler, projection, dispatch, mote, warrant);
+    let mut outcome = handle_submit(scheduler, projection, dispatch, store, mote, warrant);
 
     // The run's instance_id is known (Gate 1 guarantees registration) for BOTH a
     // fresh AND a duplicate submit — surface it ALWAYS (the M2 resume key / server-
@@ -1694,6 +1694,26 @@ fn submit_and_capture<J: Journal>(
 /// recovery re-submit (`submit_and_capture`); idempotent — `register_mote` overwrites and
 /// the dispatch inserts are keyed by id, so re-running is a no-op. A derivation error is
 /// logged (the children just do not dispatch — the shaper's commit stands, degraded-safe).
+/// Persist an admitted Mote's definition bytes content-addressed (PR-2): the
+/// canonical encode's blake3 IS `def.hash()`, so the blob lands at the exact
+/// `mote_def_hash` a committed fact carries and `GetMoteDetail` resolves it
+/// with no sidecar and no journal write (digest-invariant by construction;
+/// rebuildable — a re-submit/recovery re-put is an idempotent no-op).
+/// BEST-EFFORT: the blob feeds a display-only read surface, so a store fault
+/// must never fail admission (the read side answers `def_found = false`).
+fn persist_def(store: Option<&LocalFsContentStore>, def: &MoteDef) {
+    let Some(store) = store else {
+        return; // storeless coordinator (harness/tests) — nothing to persist
+    };
+    if let Err(error) = store.put(&def.encode()) {
+        tracing::warn!(
+            %error,
+            def_hash = ?def.hash(),
+            "def blob persist failed; GetMoteDetail will answer def_found=false"
+        );
+    }
+}
+
 fn materialize_committed_shaper(
     projection: &mut Projection,
     dispatch: &mut Dispatch,
@@ -1717,6 +1737,7 @@ fn materialize_committed_shaper(
         Ok(children) => {
             for child in children {
                 let child_id = child.mote.id;
+                persist_def(Some(store), &child.mote.def);
                 projection.register_mote(child.register);
                 dispatch.submitted.insert(child_id);
                 dispatch.defs.insert(child_id, (child.mote, child.warrant));
@@ -1753,10 +1774,12 @@ fn is_terminal(state: MoteState) -> bool {
 fn materialize_replan_shaper(
     projection: &mut Projection,
     dispatch: &mut Dispatch,
+    store: Option<&LocalFsContentStore>,
     shaper: &Mote,
     warrant_ref: ContentRef,
     warrant: WarrantSpec,
 ) {
+    persist_def(store, &shaper.def);
     projection.register_mote(RegisterMote {
         mote_id: shaper.id,
         nd_class: shaper.def.nd_class,
@@ -1955,7 +1978,14 @@ fn settle_replan_rounds<J: Journal>(
     // Materialize the round-(N+1) shaper (empty parents ⇒ immediately leasable). The
     // worker runs the model → commits a TopologyDecision → `flush_commits` materializes
     // its children, and a later settle pass drives the round after THIS one.
-    materialize_replan_shaper(projection, dispatch, &shaper, anchor.warrant_ref, warrant);
+    materialize_replan_shaper(
+        projection,
+        dispatch,
+        Some(store),
+        &shaper,
+        anchor.warrant_ref,
+        warrant,
+    );
     tracing::info!(round = next_round, shaper = ?shaper.id, "re-plan round materialized");
 }
 
@@ -2023,6 +2053,7 @@ fn recover_replan_chain<J: Journal>(
                     materialize_replan_shaper(
                         projection,
                         dispatch,
+                        Some(store),
                         &shaper,
                         latest.warrant_ref,
                         warrant,
@@ -2169,10 +2200,12 @@ fn write_react_anchor<J: Journal>(
 fn materialize_react_turn(
     projection: &mut Projection,
     dispatch: &mut Dispatch,
+    store: Option<&LocalFsContentStore>,
     turn: &Mote,
     warrant_ref: ContentRef,
     warrant: WarrantSpec,
 ) {
+    persist_def(store, &turn.def);
     projection.register_mote(RegisterMote {
         mote_id: turn.id,
         nd_class: turn.def.nd_class,
@@ -2199,10 +2232,12 @@ fn materialize_react_turn(
 fn materialize_react_tool(
     projection: &mut Projection,
     dispatch: &mut Dispatch,
+    store: Option<&LocalFsContentStore>,
     obs: &Mote,
     warrant_ref: ContentRef,
     warrant: WarrantSpec,
 ) {
+    persist_def(store, &obs.def);
     projection.register_mote(RegisterMote {
         mote_id: obs.id,
         nd_class: obs.def.nd_class,
@@ -2604,7 +2639,14 @@ fn progress_tool_round<J: Journal>(
     let Ok(warrant) = decode_warrant(warrant_bytes.as_ref()) else {
         return ReactChainStatus::Active;
     };
-    materialize_react_tool(projection, dispatch, &obs, anchor.warrant_ref, warrant);
+    materialize_react_tool(
+        projection,
+        dispatch,
+        Some(store),
+        &obs,
+        anchor.warrant_ref,
+        warrant,
+    );
     tracing::info!(
         turn,
         observation = ?obs.id,
@@ -2728,7 +2770,14 @@ fn advance_react_chain<J: Journal>(
         next_turn,
         ReactBranch::Pending,
     );
-    materialize_react_turn(projection, dispatch, &next, anchor.warrant_ref, warrant);
+    materialize_react_turn(
+        projection,
+        dispatch,
+        Some(store),
+        &next,
+        anchor.warrant_ref,
+        warrant,
+    );
     tracing::info!(turn = next_turn, mote = ?next.id, "react turn materialized");
     ReactChainStatus::Active
 }
@@ -2799,7 +2848,14 @@ fn recover_react_chain<J: Journal>(
             );
             continue;
         }
-        materialize_react_turn(projection, dispatch, &rebuilt, latest.warrant_ref, warrant);
+        materialize_react_turn(
+            projection,
+            dispatch,
+            Some(store),
+            &rebuilt,
+            latest.warrant_ref,
+            warrant,
+        );
     }
     // Phase C — complete any interrupted settle/advance (idempotent; dedups on
     // the durable facts; re-decodes the committed tail; PR-2d-2: re-enters the
@@ -2854,10 +2910,15 @@ fn handle_submit(
     scheduler: &mut Scheduler<LocalPlacement>,
     projection: &mut Projection,
     dispatch: &mut Dispatch,
+    store: Option<&LocalFsContentStore>,
     mote: Mote,
     warrant: WarrantSpec,
 ) -> SubmitOutcome {
     let mote_id = mote.id;
+    // Persist on BOTH the fresh and the duplicate arm: the put is idempotent
+    // (same def ⇒ same bytes ⇒ same address) and the duplicate path SELF-HEALS
+    // a def first admitted by a pre-Batch-B binary (whose blob never existed).
+    persist_def(store, &mote.def);
     let duplicate = match scheduler.submit(mote.clone(), warrant.clone(), projection) {
         Ok(()) => {
             dispatch.submitted.insert(mote_id);

@@ -470,6 +470,17 @@ async fn tool_branch_advances_the_chain_with_trajectory() {
     let (obs, args) = lease_observation(&svc, worker, &turn0).await;
     assert_eq!(args, br#"{"q":"x"}"#.to_vec());
 
+    // PR-2 def persistence: every coordinator-materialized Mote's definition
+    // lands content-addressed at exactly def.hash() (the GetMoteDetail read).
+    let obs_def_blob = store
+        .get(&ContentRef::from_bytes(*obs.def.hash().as_bytes()))
+        .expect("observation def blob persisted at admission");
+    assert_eq!(
+        kx_mote::MoteDef::decode(&obs_def_blob).unwrap(),
+        obs.def,
+        "observation def bytes round-trip"
+    );
+
     // The observation commits (the worker fired the tool) ⇒ turn 1 spawns.
     commit_raw(&svc, &store, &obs, &w, br#"{"echoed":{"q":"x"}}"#, worker).await;
     let facts = react_facts(&svc, &dir).await;
@@ -491,6 +502,14 @@ async fn tool_branch_advances_the_chain_with_trajectory() {
     let turn1: Mote = leased[0].mote.clone().unwrap().try_into().unwrap();
     assert_ne!(turn1.id.as_bytes().to_vec(), turn0_id);
     assert!(turn1.parents.is_empty());
+    // PR-2 def persistence: the ADVANCED turn's def blob too.
+    let turn1_def_blob = store
+        .get(&ContentRef::from_bytes(*turn1.def.hash().as_bytes()))
+        .expect("advanced turn def blob persisted at admission");
+    assert_eq!(
+        kx_mote::MoteDef::decode(&turn1_def_blob).unwrap(),
+        turn1.def
+    );
     let parents = &leased[0].parent_results;
     assert_eq!(parents.len(), 2, "F-7 serves [turn0, obs0]");
     assert_eq!(parents[0].parent_mote_id, turn0_id);

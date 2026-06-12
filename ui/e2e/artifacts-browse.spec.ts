@@ -22,12 +22,10 @@ test("artifacts: browse a run's committed outputs and review one", async ({ page
     })
     .toBe(5);
 
-  // In-app navigate to Artifacts via the run-detail link (Artifacts left the
-  // sidebar with the 8-section IA; a full page.goto would drop the connection).
-  await page.getByTestId("run-artifacts-link").click();
-  await expect(page.getByTestId("artifacts-section")).toBeVisible();
-  // The just-run instance is selectable; its gallery lists the committed outputs.
-  await expect(page.getByTestId("artifact-run-pick")).toBeVisible();
+  // PR-2 merge (D141.1): Artifacts is a TAB of the run's detail page — the
+  // run is already in scope, so there is no run picker.
+  await page.getByTestId("run-tab-artifacts").click();
+  await expect(page.getByTestId("artifacts-tab")).toBeVisible();
   await expect(page.getByTestId("artifact-gallery")).toBeVisible({ timeout: 30_000 });
   const rows = page.locator(".artifact-list__row");
   await expect.poll(() => rows.count(), { timeout: 30_000 }).toBeGreaterThan(0);

@@ -190,3 +190,101 @@ async fn content_out_writes_committed_bytes_to_file() {
 
     running.shutdown().await.unwrap();
 }
+
+/// Batch B (PR-2): `kx runs list` + `kx mote show` over a REAL gateway — and
+/// the def blob (persisted content-addressed at admission) SURVIVES a restart,
+/// so the inspector keeps answering on a recovered serve.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn runs_list_and_mote_show_flow() {
+    let dir = TempDir::new().unwrap();
+    let (instance, terminal) = {
+        let running = start_gateway(&dir, true, HashMap::new()).await;
+        let ep = endpoint(&running);
+        let inv = json_ok(
+            &run_kx(argv(&[
+                "invoke",
+                "kx/recipes/echo",
+                "--args",
+                r#"{"topic":"inspect-me"}"#,
+                "--wait",
+                "--endpoint",
+                &ep,
+                "--json",
+            ]))
+            .await,
+        );
+        assert_eq!(inv["state"], "COMMITTED");
+        let instance = inv["instance_id"].as_str().unwrap().to_string();
+        let terminal = inv["terminal_mote_id"].as_str().unwrap().to_string();
+
+        // runs list: the registered run shows up, newest-first, no more pages.
+        let runs = json_ok(&run_kx(argv(&["runs", "list", "--endpoint", &ep, "--json"])).await);
+        let listed = runs["runs"].as_array().unwrap();
+        assert!(
+            listed.iter().any(|r| r["instance_id"] == instance.as_str()),
+            "the invoked run is listed: {runs}"
+        );
+        assert_eq!(runs["has_more"], false);
+
+        // mote show: the committed terminal Mote resolves its admitted def.
+        let detail = json_ok(
+            &run_kx(argv(&[
+                "mote",
+                "show",
+                &instance,
+                &terminal,
+                "--endpoint",
+                &ep,
+                "--json",
+            ]))
+            .await,
+        );
+        assert_eq!(detail["def_found"], true, "detail: {detail}");
+        assert_eq!(detail["mote_id"], terminal.as_str());
+        assert_eq!(detail["mote_def_hash"].as_str().unwrap().len(), 64);
+        assert!(
+            !detail["step_kind"].as_str().unwrap().is_empty(),
+            "a classified step kind"
+        );
+        assert!(
+            detail["nd_class"].as_str().unwrap() != "UNKNOWN",
+            "a real nd-class"
+        );
+
+        running.shutdown().await.unwrap();
+        (instance, terminal)
+    };
+
+    // Restart on the same journal + content: the def blob is durable (blobs are
+    // truth) — the inspector answers identically on the recovered serve.
+    let running = start_gateway(&dir, true, HashMap::new()).await;
+    let ep = endpoint(&running);
+    let detail = json_ok(
+        &run_kx(argv(&[
+            "mote",
+            "show",
+            &instance,
+            &terminal,
+            "--endpoint",
+            &ep,
+            "--json",
+        ]))
+        .await,
+    );
+    assert_eq!(detail["def_found"], true, "def survives the restart");
+
+    // The ownership gate: a wrong instance ticket is uniformly denied.
+    let denied = run_kx(argv(&[
+        "mote",
+        "show",
+        "99999999999999999999999999999999",
+        &terminal,
+        "--endpoint",
+        &ep,
+        "--json",
+    ]))
+    .await;
+    assert!(!denied.status.success(), "wrong ticket denied");
+
+    running.shutdown().await.unwrap();
+}

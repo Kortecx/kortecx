@@ -51,6 +51,7 @@ fn obligation_1_submit_mote_response_round_trips() {
         status: proto::SubmitStatus::Accepted as i32,
         detail: String::new(),
         instance_id: vec![0xCD; 16],
+        refusal_code: "R-1".to_string(),
     });
 }
 

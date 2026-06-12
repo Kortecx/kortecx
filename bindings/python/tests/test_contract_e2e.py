@@ -450,3 +450,105 @@ def test_list_models_is_empty_and_cli_agrees(serve, kx_bin):
     with KxClient(s.endpoint) as kx:
         assert kx.list_models() == []
     assert _cli(kx_bin, s.endpoint, "models", "list")["models"] == []
+
+
+# --- Batch B (PR-2): mote detail parity + the structured refusal code --------
+
+
+def test_get_mote_detail_and_runs_list_match_cli(dev_server, kx_bin):
+    """Tri-surface parity: the SDK's MoteDetail.to_dict() and RunPage equal the
+    CLI ``mote show`` / ``runs list`` ``--json`` output field-for-field."""
+    with KxClient(dev_server.endpoint) as kx:
+        result = kx.invoke(ECHO_HANDLE, {"topic": "inspect"}, wait=True)
+        detail = kx.get_mote_detail(result.instance_id, result.terminal_mote_id)
+        runs = kx.list_runs()
+
+    assert detail.def_found is True
+    assert len(detail.mote_def_hash) == 64
+    assert detail.step_kind != ""
+
+    cli_detail = _cli(
+        kx_bin, dev_server.endpoint, "mote", "show", result.instance_id, result.terminal_mote_id
+    )
+    assert detail.to_dict() == cli_detail
+
+    cli_runs = _cli(kx_bin, dev_server.endpoint, "runs", "list")
+    assert {
+        "runs": [r.__dict__ for r in runs.runs],
+        "has_more": runs.has_more,
+    } == cli_runs
+
+
+def test_get_mote_detail_honest_misses(dev_server):
+    """An unknown mote in an OWNED run is NOT_FOUND (honest — the owner can
+    already enumerate motes); a wrong ticket is the UNIFORM denial."""
+    with KxClient(dev_server.endpoint) as kx:
+        result = kx.invoke(ECHO_HANDLE, {"topic": "owned"}, wait=True)
+        with pytest.raises(KxNotFound):
+            kx.get_mote_detail(result.instance_id, "ee" * 32)
+        with pytest.raises(KxPermissionDenied):
+            kx.get_mote_detail("99" * 16, result.terminal_mote_id)
+
+
+def _r1_submit_request():
+    """An R-1 mote by construction: WORLD_MUTATING + IdempotentByConstruction +
+    an EMPTY tool_contract (nothing to dedup against). Mirrors the demo mote
+    shape with the nd-class flipped."""
+    from kortecx.v1 import coordinator_pb2 as c
+    from kortecx.v1 import gateway_pb2 as g
+
+    def_pb = c.MoteDef(
+        logic_ref=b"\x07" * 32,
+        model_id="m",
+        prompt_template_hash=b"\x09" * 32,
+        nd_class=c.ND_CLASS_WORLD_MUTATING,
+        effect_pattern=c.EFFECT_PATTERN_IDEMPOTENT_BY_CONSTRUCTION,
+        is_topology_shaper=False,
+        inference_params=c.InferenceParams(),
+        schema_version=5,  # MOTE_DEF_SCHEMA_VERSION (frozen wire)
+    )
+    # NOTE: the wire field is literally `def` (a Python keyword) — pass it via
+    # the kwargs-dict form (protobuf supports keyword-named fields this way).
+    mote = c.Mote(
+        mote_id=b"\x00" * 32,  # advisory — the coordinator re-derives (D53)
+        input_data_id=b"\x05" * 32,
+        graph_position=b"\x01",
+        **{"def": def_pb},
+    )
+    warrant = c.WarrantSpec(
+        mote_class=c.MOTE_CLASS_WORLD_MUTATING,
+        nd_class=c.MOTE_CLASS_WORLD_MUTATING,
+        fs_scope=c.FsScope(),
+        net_scope=c.NetScope(none=c.NetScopeNone()),
+        syscall_profile_ref=b"\x04" * 32,
+        model_route=c.ModelRoute(
+            model_id="m", max_input_tokens=1, max_output_tokens=1, max_calls=1
+        ),
+        resource_ceiling=c.ResourceCeiling(
+            cpu_milli=1, mem_bytes=1, wall_clock_ms=1, fd_count=1, disk_bytes=1
+        ),
+        executor_class=c.EXECUTOR_CLASS_MACOS_SANDBOX,
+    )
+    return g.SubmitRunRequest(
+        recipe_fingerprint=b"\x5a" * 32,
+        motes=[g.SubmitMoteSpec(mote=mote, warrant=warrant)],
+    )
+
+
+def test_refused_submit_carries_the_refusal_code_sync(dev_server):
+    """The PR-2 trailer proof (sync grpc): a refused submit surfaces the
+    structured ``kx-refusal-code`` on the typed error."""
+    with KxClient(dev_server.endpoint) as kx:
+        with pytest.raises(KxFailedPrecondition) as exc:
+            kx.submit_run(_r1_submit_request())
+    assert exc.value.refusal_code == "R-1"
+    assert "R-1" in str(exc.value)  # the prose stays human
+
+
+@pytest.mark.asyncio
+async def test_refused_submit_carries_the_refusal_code_aio(dev_server):
+    """The PR-2 trailer proof (grpc.aio): AioRpcError trailing metadata."""
+    async with AsyncKxClient(dev_server.endpoint) as kx:
+        with pytest.raises(KxFailedPrecondition) as exc:
+            await kx.submit_run(_r1_submit_request())
+    assert exc.value.refusal_code == "R-1"
