@@ -15,8 +15,15 @@ import type { Client, Transport } from "@connectrpc/connect";
 import { CaptureRecord, type CaptureRecordPage } from "./capture.js";
 import { ContentItem, PutResult } from "./content.js";
 import { DatasetHit, DatasetSummary, type IngestDoc, IngestResult } from "./datasets.js";
-import { KxRunFailed, KxWaitTimeout, rpc } from "./errors.js";
-import { streamDeltas, wsDeltasFromMessages, wsUrl } from "./events.js";
+import { KxConnectError, KxRunFailed, KxUnimplemented, KxWaitTimeout, rpc } from "./errors.js";
+import {
+  streamAllDeltas,
+  streamDeltas,
+  wsAllDeltasFromMessages,
+  wsAllUrl,
+  wsDeltasFromMessages,
+  wsUrl,
+} from "./events.js";
 import {
   KxGateway,
   type SubmitRunRequestSchema,
@@ -32,9 +39,10 @@ import { ReplanRound, type ReplanRoundPage } from "./replan.js";
 import { Result, Run } from "./run.js";
 import { type RunPage, RunSummary } from "./runs.js";
 import { TeamMembers, type TeamSummary, teamsFromProto } from "./teams.js";
+import { type MoteTelemetryPage, MoteTelemetryRow } from "./telemetry.js";
 import { BundleScore, type BundleSpec, ToolManifest, bundleSpecToProto } from "./toolscout.js";
 import { type Args, encodeArgs } from "./transport.js";
-import { type Delta, Projection, SignatureSummary } from "./types.js";
+import { type Delta, type GlobalDelta, Projection, SignatureSummary } from "./types.js";
 import {
   type WaitMode,
   type WaitOutcome,
@@ -260,6 +268,41 @@ export abstract class KxClientBase {
     yield* wsDeltasFromMessages(this.openWsMessages(url, this.token));
   }
 
+  /**
+   * The operator-global cross-run event tail (Batch C `StreamAllEvents`): every
+   * run's deltas plus `run_registered` narration, watermark-attributed by
+   * `instanceId` (`""` before any registration). Same cursor contract as
+   * {@link streamEvents} (resumes from `next_seq` on a slow-consumer drop when
+   * `follow`). An old gateway without this RPC throws {@link KxUnimplemented}.
+   */
+  streamAllEvents(
+    opts: { since?: bigint; follow?: boolean; signal?: AbortSignal } = {},
+  ): AsyncIterable<GlobalDelta> {
+    return streamAllDeltas(this.grpc, opts.since ?? 0n, opts.follow ?? false, opts.signal);
+  }
+
+  /** Consume the operator-global live tail over the WS bridge (Batch C
+   *  `/v1/events/all` — browser-friendly, same bearer auth as {@link wsEvents}). */
+  async *wsAllEvents(
+    opts: { since?: bigint; wsEndpoint?: string } = {},
+  ): AsyncIterable<GlobalDelta> {
+    const url = wsAllUrl(this.endpoint, opts.wsEndpoint ?? this.wsEndpoint, opts.since ?? 0n);
+    try {
+      yield* wsAllDeltasFromMessages(this.openWsMessages(url, this.token));
+    } catch (e) {
+      // An OLD bridge rejects the global handshake with HTTP 400 (the channel
+      // didn't exist) — surface the SDK's not-wired signal, not a raw socket
+      // error. (Node `ws` reports the status; a browser error event carries
+      // none, so there it stays a KxConnectError.)
+      if (e instanceof KxConnectError && e.message.includes("Unexpected server response: 400")) {
+        throw new KxUnimplemented(
+          "the gateway's WS bridge has no /v1/events/all channel (old server)",
+        );
+      }
+      throw e;
+    }
+  }
+
   async listSignatures(): Promise<SignatureSummary[]> {
     const resp = await rpc(this.grpc.listSignatures({}));
     return resp.signatures.map((s) => SignatureSummary.fromProto(s));
@@ -340,6 +383,32 @@ export abstract class KxClientBase {
       opts.instanceId === undefined ? undefined : asBytes(opts.instanceId, INSTANCE_LEN);
     const resp = await rpc(this.grpc.listCaptureRecords({ instanceId, limit: opts.limit }));
     return { records: resp.records.map((r) => CaptureRecord.fromProto(r)), hasMore: resp.hasMore };
+  }
+
+  /**
+   * Enumerate the host-measured mote execution telemetry (newest-first,
+   * paginated; Batch C) — wall-clock, model usage, the fired tool, from the
+   * gateway's rebuildable-to-empty `telemetry.db` sidecar (audit/display only,
+   * never truth). `instanceId` (hex) scopes to one run, `moteId` (hex) to one
+   * mote; `beforeSeq` resumes from the `seq` of the last row seen. The server
+   * clamps `limit` to its max page. An old gateway (or one without the sidecar)
+   * throws {@link KxUnimplemented}.
+   */
+  async listMoteTelemetry(
+    opts: { instanceId?: string; moteId?: string; limit?: number; beforeSeq?: bigint } = {},
+  ): Promise<MoteTelemetryPage> {
+    const instanceId =
+      opts.instanceId === undefined ? undefined : asBytes(opts.instanceId, INSTANCE_LEN);
+    const moteId = opts.moteId === undefined ? undefined : asBytes(opts.moteId, REF_LEN);
+    const resp = await rpc(
+      this.grpc.listMoteTelemetry({
+        instanceId,
+        moteId,
+        limit: opts.limit,
+        beforeSeq: opts.beforeSeq,
+      }),
+    );
+    return { rows: resp.rows.map((r) => MoteTelemetryRow.fromProto(r)), hasMore: resp.hasMore };
   }
 
   /**

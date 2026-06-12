@@ -608,6 +608,15 @@ button:disabled {
 .empty-state__detail {
   margin: 0.35rem 0 0;
 }
+.empty-state__action {
+  margin-top: 0.6rem;
+}
+/* The Activity landing's quick actions (Batch C) — token-only, both themes. */
+.quick-actions {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+}
 .sig-list {
   list-style: none;
   padding: 0;

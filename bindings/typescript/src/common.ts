@@ -30,6 +30,7 @@ export {
   MoteView,
   Delta,
   Frame,
+  GlobalDelta,
   SignatureSummary,
   stateName,
   isCommitted,
@@ -50,6 +51,10 @@ export type { ReplanRoundPage } from "./replan.js";
 
 export { CaptureRecord } from "./capture.js";
 export type { CaptureRecordPage } from "./capture.js";
+
+// Batch C: mote execution telemetry (audit/display-only exhaust).
+export { MoteTelemetryRow } from "./telemetry.js";
+export type { MoteTelemetryPage } from "./telemetry.js";
 
 export { RecipeForm, RecipeFormField, RecipeInfo, recipeParamTypeName } from "./recipes.js";
 export type { RecipeParamTypeName } from "./recipes.js";

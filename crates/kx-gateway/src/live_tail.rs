@@ -292,3 +292,84 @@ async fn emit_range(
     }
     true
 }
+
+#[cfg(test)]
+mod tests {
+    use kx_content::ContentRef;
+    use kx_gateway_core::ReadOnly;
+    use kx_journal::{InMemoryJournal, Journal, JournalEntry, INSTANCE_ID_LEN};
+    use kx_mote::{MoteDefHash, MoteId, NdClass};
+    use smallvec::SmallVec;
+
+    use super::*;
+
+    /// The queue-overflow terminal, pinned directly: a tiny channel + a range
+    /// that yields MORE frames than its capacity forces `try_send` Full — the
+    /// emit must stop with the CatchupRequired `resource_exhausted`, and the
+    /// cursor must have advanced only through the DELIVERED frames so a resume
+    /// from it is loss-free. (The e2e stress envelope can't reach overflow:
+    /// 4096-delta chunking keeps real frame counts far under the 256 cap.)
+    #[tokio::test]
+    async fn overflow_terminates_with_catchup_required_and_a_resumable_cursor() {
+        let j = InMemoryJournal::new();
+        j.append(JournalEntry::RunRegistered {
+            instance_id: [7; INSTANCE_ID_LEN],
+            recipe_fingerprint: [8; 32],
+            ts: 1,
+            seq: 0,
+        })
+        .unwrap();
+        // > MAX_FRAME_DELTAS surfaced deltas ⇒ the range builds 2+ frames.
+        for i in 0..4_100u32 {
+            let mut id = [0u8; 32];
+            id[..4].copy_from_slice(&i.to_le_bytes());
+            j.append(JournalEntry::Committed {
+                mote_id: MoteId::from_bytes(id),
+                idempotency_key: id,
+                seq: 0,
+                nondeterminism: NdClass::Pure,
+                result_ref: ContentRef::from_bytes(id),
+                parents: SmallVec::new(),
+                warrant_ref: ContentRef::from_bytes([0xaa; 32]),
+                mote_def_hash: MoteDefHash::from_bytes([0x09; 32]),
+            })
+            .unwrap();
+        }
+        let reader: Arc<dyn JournalReader> = Arc::new(ReadOnly::new(j));
+        let head = reader.current_seq().unwrap();
+
+        // Capacity 1: the first frame fills the queue, the second overflows.
+        // The emit runs in its OWN task (the production shape — the poller and
+        // the consumer are concurrent): the terminal-error `send().await` only
+        // completes once the consumer drains the buffered frame.
+        let (tx, mut rx) = mpsc::channel::<Result<proto::GlobalEventFrame, Status>>(1);
+        let emit = {
+            let reader = reader.clone();
+            tokio::spawn(async move {
+                let mut cursor = kx_gateway_core::seed_global_cursor(reader.as_ref(), 0).unwrap();
+                let delivered = emit_global_range(&reader, &mut cursor, head, &tx).await;
+                (delivered, cursor)
+            })
+        };
+
+        // The one buffered frame drains first…
+        let first = rx.recv().await.unwrap().unwrap();
+        // …then the CatchupRequired terminal.
+        let terminal = rx.recv().await.unwrap().unwrap_err();
+        assert_eq!(terminal.code(), tonic::Code::ResourceExhausted);
+        let (delivered, cursor) = emit.await.unwrap();
+        assert!(!delivered, "an overflow stops the emit");
+        assert_eq!(
+            cursor.seq, first.next_seq,
+            "the cursor advanced ONLY through the delivered frame (resume-safe)"
+        );
+
+        // A resume from the delivered cursor covers the rest exactly once.
+        let mut resume = kx_gateway_core::seed_global_cursor(reader.as_ref(), cursor.seq).unwrap();
+        let frames =
+            kx_gateway_core::global_frames_for_range(reader.as_ref(), &mut resume, head).unwrap();
+        let resumed: u64 = frames.iter().map(|f| f.deltas.len() as u64).sum();
+        let total: u64 = first.deltas.len() as u64 + resumed;
+        assert_eq!(total, head, "delivered + resumed = every delta exactly once");
+    }
+}

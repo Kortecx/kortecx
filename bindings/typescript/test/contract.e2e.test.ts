@@ -19,7 +19,7 @@ import {
   KxUnauthenticated,
   KxWaitTimeout,
 } from "../src/node.js";
-import type { Delta, Result, Run } from "../src/node.js";
+import type { Delta, GlobalDelta, Result, Run } from "../src/node.js";
 import {
   ECHO_HANDLE,
   authServer,
@@ -663,5 +663,79 @@ describe("Batch B: GetMoteDetail + runs list + refusal code", () => {
       return true;
     });
     kx.close();
+  });
+});
+
+// --- Batch C (PR-3): the global event tail + mote execution telemetry --------
+
+describe("Batch C: global event tail + telemetry", () => {
+  it("streamAllEvents narrates the run registration + the attributed commit", async () => {
+    const s = await devServer();
+    const kx = new KxClient(s.endpoint);
+    const run = (await kx.invoke(ECHO_HANDLE, { topic: "global" })) as Run;
+    await run.wait({ timeoutMs: 30_000 });
+    const deltas: GlobalDelta[] = [];
+    for await (const d of kx.streamAllEvents({ since: 0n, follow: false })) {
+      deltas.push(d);
+    }
+    kx.close();
+    // The run came into existence on the global tail (the per-run cursor never
+    // surfaces this), fingerprint-joined and instance-attributed.
+    const reg = deltas.find((d) => d.kind === "run_registered");
+    expect(reg?.instanceId).toBe(run.instanceId);
+    expect(reg?.recipeFingerprint).toBe(run.recipeFingerprint);
+    expect(reg?.registeredUnixMs).toBeGreaterThan(0);
+    // The terminal commit rides the same stream, watermark-attributed.
+    const committed = deltas.filter((d) => d.kind === "committed");
+    expect(
+      committed.some((d) => d.moteId === run.terminalMoteId && d.instanceId === run.instanceId),
+    ).toBe(true);
+  });
+
+  it("the global WS channel sees the attributed terminal commit", async () => {
+    const s = await devServer();
+    const kx = new KxClient(s.endpoint);
+    const run = (await kx.invoke(ECHO_HANDLE, { topic: "ws-all" }, { wait: true })) as Result;
+    let found = false;
+    let i = 0;
+    for await (const d of kx.wsAllEvents({ since: 0n, wsEndpoint: s.wsEndpoint })) {
+      if (d.kind === "committed" && d.moteId === run.terminalMoteId) {
+        expect(d.instanceId).toBe(run.instanceId);
+        found = true;
+        break;
+      }
+      if (i++ > 200) break; // the catch-up replay carries it in the first frames
+    }
+    kx.close();
+    expect(found).toBe(true);
+  });
+
+  it("listMoteTelemetry pages the execution exhaust, scoped by instance and mote", async () => {
+    const s = await devServer();
+    const kx = new KxClient(s.endpoint);
+    const result = (await kx.invoke(ECHO_HANDLE, { topic: "telemetry" }, { wait: true })) as Result;
+    // The sidecar joins rows on a 250 ms background tick — poll briefly.
+    let page = await kx.listMoteTelemetry();
+    for (let i = 0; page.rows.length === 0 && i < 40; i++) {
+      await new Promise((r) => setTimeout(r, 250));
+      page = await kx.listMoteTelemetry();
+    }
+    expect(page.rows.length).toBeGreaterThan(0);
+    const row = page.rows.find((r) => r.moteId === result.terminalMoteId);
+    expect(row?.instanceId).toBe(result.instanceId);
+    expect(row?.seq).toBeGreaterThan(0);
+    expect(row?.startedUnixMs).toBeGreaterThan(0);
+    expect(row?.inputTokens).toBeNull(); // NEVER set in OSS
+    expect(row?.modelId).toBe(""); // echo is not a model mote (FFI-free)
+
+    // Scoping filters narrow to the same row; rows come newest-first.
+    const scoped = await kx.listMoteTelemetry({
+      instanceId: result.instanceId,
+      moteId: result.terminalMoteId,
+    });
+    kx.close();
+    expect(scoped.rows.map((r) => r.moteId)).toContain(result.terminalMoteId);
+    const seqs = page.rows.map((r) => r.seq);
+    expect([...seqs].sort((a, b) => b - a)).toEqual(seqs);
   });
 });

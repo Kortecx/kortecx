@@ -941,3 +941,89 @@ class MoteDetail(_message.Message):
     is_topology_shaper: bool
     schema_version: int
     def __init__(self, mote_id: _Optional[bytes] = ..., mote_def_hash: _Optional[bytes] = ..., def_found: bool = ..., step_kind: _Optional[str] = ..., model_id: _Optional[str] = ..., prompt: _Optional[str] = ..., prompt_truncated: bool = ..., config_subset: _Optional[_Iterable[_Union[MoteConfigEntry, _Mapping]]] = ..., tool_contract: _Optional[_Mapping[str, str]] = ..., logic_ref: _Optional[bytes] = ..., nd_class: _Optional[_Union[_coordinator_pb2.NdClass, str]] = ..., effect_pattern: _Optional[_Union[_coordinator_pb2.EffectPattern, str]] = ..., critic_for: _Optional[bytes] = ..., is_topology_shaper: bool = ..., schema_version: _Optional[int] = ...) -> None: ...
+
+class StreamAllEventsRequest(_message.Message):
+    __slots__ = ("since_seq",)
+    SINCE_SEQ_FIELD_NUMBER: _ClassVar[int]
+    since_seq: int
+    def __init__(self, since_seq: _Optional[int] = ...) -> None: ...
+
+class RunRegisteredDelta(_message.Message):
+    __slots__ = ("recipe_fingerprint", "registered_unix_ms")
+    RECIPE_FINGERPRINT_FIELD_NUMBER: _ClassVar[int]
+    REGISTERED_UNIX_MS_FIELD_NUMBER: _ClassVar[int]
+    recipe_fingerprint: bytes
+    registered_unix_ms: int
+    def __init__(self, recipe_fingerprint: _Optional[bytes] = ..., registered_unix_ms: _Optional[int] = ...) -> None: ...
+
+class GlobalEventDelta(_message.Message):
+    __slots__ = ("seq", "instance_id", "committed", "failed", "repudiated", "effect_staged", "run_registered")
+    SEQ_FIELD_NUMBER: _ClassVar[int]
+    INSTANCE_ID_FIELD_NUMBER: _ClassVar[int]
+    COMMITTED_FIELD_NUMBER: _ClassVar[int]
+    FAILED_FIELD_NUMBER: _ClassVar[int]
+    REPUDIATED_FIELD_NUMBER: _ClassVar[int]
+    EFFECT_STAGED_FIELD_NUMBER: _ClassVar[int]
+    RUN_REGISTERED_FIELD_NUMBER: _ClassVar[int]
+    seq: int
+    instance_id: bytes
+    committed: CommittedDelta
+    failed: FailedDelta
+    repudiated: RepudiatedDelta
+    effect_staged: EffectStagedDelta
+    run_registered: RunRegisteredDelta
+    def __init__(self, seq: _Optional[int] = ..., instance_id: _Optional[bytes] = ..., committed: _Optional[_Union[CommittedDelta, _Mapping]] = ..., failed: _Optional[_Union[FailedDelta, _Mapping]] = ..., repudiated: _Optional[_Union[RepudiatedDelta, _Mapping]] = ..., effect_staged: _Optional[_Union[EffectStagedDelta, _Mapping]] = ..., run_registered: _Optional[_Union[RunRegisteredDelta, _Mapping]] = ...) -> None: ...
+
+class GlobalEventFrame(_message.Message):
+    __slots__ = ("seq", "deltas", "next_seq", "journal_boundary")
+    SEQ_FIELD_NUMBER: _ClassVar[int]
+    DELTAS_FIELD_NUMBER: _ClassVar[int]
+    NEXT_SEQ_FIELD_NUMBER: _ClassVar[int]
+    JOURNAL_BOUNDARY_FIELD_NUMBER: _ClassVar[int]
+    seq: int
+    deltas: _containers.RepeatedCompositeFieldContainer[GlobalEventDelta]
+    next_seq: int
+    journal_boundary: bool
+    def __init__(self, seq: _Optional[int] = ..., deltas: _Optional[_Iterable[_Union[GlobalEventDelta, _Mapping]]] = ..., next_seq: _Optional[int] = ..., journal_boundary: bool = ...) -> None: ...
+
+class ListMoteTelemetryRequest(_message.Message):
+    __slots__ = ("limit", "instance_id", "mote_id", "before_seq")
+    LIMIT_FIELD_NUMBER: _ClassVar[int]
+    INSTANCE_ID_FIELD_NUMBER: _ClassVar[int]
+    MOTE_ID_FIELD_NUMBER: _ClassVar[int]
+    BEFORE_SEQ_FIELD_NUMBER: _ClassVar[int]
+    limit: int
+    instance_id: bytes
+    mote_id: bytes
+    before_seq: int
+    def __init__(self, limit: _Optional[int] = ..., instance_id: _Optional[bytes] = ..., mote_id: _Optional[bytes] = ..., before_seq: _Optional[int] = ...) -> None: ...
+
+class MoteTelemetryRow(_message.Message):
+    __slots__ = ("mote_id", "instance_id", "wall_clock_ms", "input_tokens", "output_tokens", "model_id", "tool_id", "started_unix_ms", "seq")
+    MOTE_ID_FIELD_NUMBER: _ClassVar[int]
+    INSTANCE_ID_FIELD_NUMBER: _ClassVar[int]
+    WALL_CLOCK_MS_FIELD_NUMBER: _ClassVar[int]
+    INPUT_TOKENS_FIELD_NUMBER: _ClassVar[int]
+    OUTPUT_TOKENS_FIELD_NUMBER: _ClassVar[int]
+    MODEL_ID_FIELD_NUMBER: _ClassVar[int]
+    TOOL_ID_FIELD_NUMBER: _ClassVar[int]
+    STARTED_UNIX_MS_FIELD_NUMBER: _ClassVar[int]
+    SEQ_FIELD_NUMBER: _ClassVar[int]
+    mote_id: bytes
+    instance_id: bytes
+    wall_clock_ms: int
+    input_tokens: int
+    output_tokens: int
+    model_id: str
+    tool_id: str
+    started_unix_ms: int
+    seq: int
+    def __init__(self, mote_id: _Optional[bytes] = ..., instance_id: _Optional[bytes] = ..., wall_clock_ms: _Optional[int] = ..., input_tokens: _Optional[int] = ..., output_tokens: _Optional[int] = ..., model_id: _Optional[str] = ..., tool_id: _Optional[str] = ..., started_unix_ms: _Optional[int] = ..., seq: _Optional[int] = ...) -> None: ...
+
+class ListMoteTelemetryResponse(_message.Message):
+    __slots__ = ("rows", "has_more")
+    ROWS_FIELD_NUMBER: _ClassVar[int]
+    HAS_MORE_FIELD_NUMBER: _ClassVar[int]
+    rows: _containers.RepeatedCompositeFieldContainer[MoteTelemetryRow]
+    has_more: bool
+    def __init__(self, rows: _Optional[_Iterable[_Union[MoteTelemetryRow, _Mapping]]] = ..., has_more: bool = ...) -> None: ...

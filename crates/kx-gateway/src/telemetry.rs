@@ -769,6 +769,89 @@ mod tests {
         );
     }
 
+    /// GR10 M8b — the per-event hot-path cost of the telemetry sink (two clock
+    /// reads happen in the executor wrapper; this measures the `try_send` +
+    /// construction, including the drop-on-full path once the queue caps —
+    /// exactly the overloaded-worker shape). Run in release via `just
+    /// scale-smoke`'s suite or directly with `--ignored`.
+    #[test]
+    #[ignore = "GR10 measurement — meaningful in release only"]
+    fn m8b_sink_per_event_cost() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let ledger = TelemetryLedger::open(dir.path()).unwrap();
+        let sink = ledger.sink();
+        let n = 100_000u32;
+        let t = std::time::Instant::now();
+        for i in 0..n {
+            #[allow(clippy::cast_possible_truncation)]
+            sink.send(exec_event((i % 256) as u8, 1));
+        }
+        let per_event = t.elapsed() / n;
+        println!("GR10 M8b telemetry sink per-event {per_event:?}");
+        assert!(
+            per_event < std::time::Duration::from_micros(5),
+            "the hot-path sink stays sub-5µs per event"
+        );
+    }
+
+    #[test]
+    fn pagination_envelope_walks_1500_rows_without_dup_or_miss() {
+        // The GR12 scale envelope for the read path: ≥1k rows paged by
+        // before_seq cursors stay strictly descending, no dup, no miss.
+        let dir = tempfile::TempDir::new().unwrap();
+        let ledger = TelemetryLedger::open(dir.path()).unwrap();
+        let reader = GrowableReader::new();
+        reader.push(registered(1), 1);
+        let sink = ledger.sink();
+        let total = 1_500u32;
+        for i in 0..total {
+            let mut id = [0u8; 32];
+            id[..4].copy_from_slice(&i.to_le_bytes());
+            sink.send(TelemetryEvent::Exec {
+                mote_id: id,
+                started_unix_ms: 1,
+                wall_clock_ms: 1,
+                tool_id: String::new(),
+            });
+            reader.push(
+                JournalEntry::Committed {
+                    mote_id: MoteId::from_bytes(id),
+                    idempotency_key: id,
+                    seq: 0,
+                    nondeterminism: NdClass::Pure,
+                    result_ref: ContentRef::from_bytes(id),
+                    parents: SmallVec::new(),
+                    warrant_ref: ContentRef::from_bytes([0xaa; 32]),
+                    mote_def_hash: MoteDefHash::from_bytes([0x09; 32]),
+                },
+                u64::from(i) + 2,
+            );
+            // The bounded queue (EVENT_QUEUE) caps a single burst — drain as we
+            // go, exactly as the production 250 ms tick interleaves.
+            if i % 500 == 499 {
+                ledger.join_fold(&reader);
+            }
+        }
+        ledger.join_fold(&reader);
+
+        let mut walked: Vec<u64> = Vec::new();
+        let mut cursor: Option<u64> = None;
+        loop {
+            let (page, has_more) = ledger.list(200, None, None, cursor).unwrap();
+            let Some(last) = page.last() else { break };
+            cursor = Some(last.seq);
+            walked.extend(page.iter().map(|r| r.seq));
+            if !has_more {
+                break;
+            }
+        }
+        assert_eq!(walked.len(), total as usize, "every row paged exactly once");
+        assert!(
+            walked.windows(2).all(|w| w[0] > w[1]),
+            "strictly descending — no dup, no miss"
+        );
+    }
+
     #[test]
     fn before_seq_paginates_newest_first_to_exhaustion() {
         let dir = tempfile::TempDir::new().unwrap();

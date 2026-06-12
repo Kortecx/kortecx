@@ -451,6 +451,7 @@ scale-smoke:
     cargo test -p kx-gateway-core --release --test scale -- --ignored --nocapture --test-threads=1
     cargo test -p kx-workflow --release --test stress_fanout -- --ignored --nocapture --test-threads=1
     cargo test -p kx-dataset-hnsw --release --test scale -- --ignored --nocapture --test-threads=1
+    cargo test -p kx-gateway --release --test global_tail_stress -- --ignored --nocapture --test-threads=1
 
 # IMP-4 (D116) single-writer scale-readiness measurement spike — publish the
 # single-writer journal commit ceiling + the projection-fold curve so a real number

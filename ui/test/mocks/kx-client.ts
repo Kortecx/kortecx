@@ -11,6 +11,9 @@ export interface MockClientImpl {
   getSignature?: (...args: unknown[]) => Promise<unknown>;
   /** An async-iterable of `Delta`s (the live WS tail). */
   wsEvents?: (...args: unknown[]) => AsyncIterable<unknown>;
+  /** An async-iterable of `GlobalDelta`s (the Batch C global tail). */
+  wsAllEvents?: (...args: unknown[]) => AsyncIterable<unknown>;
+  listMoteTelemetry?: (...args: unknown[]) => Promise<unknown>;
   listRuns?: (...args: unknown[]) => Promise<unknown>;
   listRecipes?: (...args: unknown[]) => Promise<unknown>;
   getRecipeForm?: (...args: unknown[]) => Promise<unknown>;
@@ -67,6 +70,16 @@ export function makeMockClient(impl: MockClientImpl = {}) {
   const listCaptureRecords = vi.fn(
     impl.listCaptureRecords ?? (async () => ({ records: [], hasMore: false })),
   );
+  // Default: an empty, immediately-ending global stream.
+  const wsAllEvents = vi.fn(
+    impl.wsAllEvents ??
+      async function* () {
+        /* no events */
+      },
+  );
+  const listMoteTelemetry = vi.fn(
+    impl.listMoteTelemetry ?? (async () => ({ rows: [], hasMore: false })),
+  );
   const getMoteDetail = vi.fn(
     impl.getMoteDetail ??
       (async () => {
@@ -82,6 +95,8 @@ export function makeMockClient(impl: MockClientImpl = {}) {
     getContent,
     getSignature,
     wsEvents,
+    wsAllEvents,
+    listMoteTelemetry,
     listRuns,
     listRecipes,
     getRecipeForm,

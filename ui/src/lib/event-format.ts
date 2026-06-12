@@ -8,7 +8,8 @@
 import type { StateTone } from "./colors";
 import { shortHex } from "./format";
 
-/** The minimal shape of an SDK `Delta` the feed needs (structurally compatible). */
+/** The minimal shape of an SDK `Delta` the feed needs (structurally compatible
+ *  with both the per-run `Delta` and the Batch C `GlobalDelta`). */
 export interface EventLike {
   readonly seq: number;
   readonly kind: string;
@@ -16,6 +17,7 @@ export interface EventLike {
   readonly resultRef?: string | null;
   readonly targetMoteId?: string | null;
   readonly reasonClass?: number | null;
+  readonly recipeFingerprint?: string | null;
 }
 
 export interface EventVisual {
@@ -29,6 +31,8 @@ const KIND_VISUAL: Readonly<Record<string, EventVisual>> = {
   failed: { label: "FAILED", tone: "failed" },
   repudiated: { label: "REPUDIATED", tone: "repudiated" },
   effect_staged: { label: "EFFECT STAGED", tone: "scheduled" },
+  // Batch C: the global tail surfaces run starts (the per-run cursor never does).
+  run_registered: { label: "RUN STARTED", tone: "scheduled" },
 };
 const UNKNOWN_VISUAL: EventVisual = { label: "EVENT", tone: "unknown" };
 
@@ -36,8 +40,10 @@ export function eventVisual(kind: string): EventVisual {
   return KIND_VISUAL[kind] ?? UNKNOWN_VISUAL;
 }
 
-/** A one-line human summary of a delta (the Mote it concerns + its effect). */
-export function eventSummary(d: EventLike): string {
+/** A one-line human summary of a delta (the Mote it concerns + its effect).
+ *  `recipeName` labels a `run_registered` row when the fingerprint→handle join
+ *  resolved one (else the row degrades to the fingerprint hex). */
+export function eventSummary(d: EventLike, recipeName?: string): string {
   switch (d.kind) {
     case "committed":
       return `Mote ${shortHex(d.moteId ?? "")} committed${
@@ -49,6 +55,10 @@ export function eventSummary(d: EventLike): string {
       return `Mote ${shortHex(d.targetMoteId ?? "")} repudiated`;
     case "effect_staged":
       return `Mote ${shortHex(d.moteId ?? "")} staged an effect`;
+    case "run_registered":
+      return recipeName
+        ? `Run started — ${recipeName}`
+        : `Run started${d.recipeFingerprint ? ` — ${shortHex(d.recipeFingerprint)}` : ""}`;
     default:
       return `event ${d.kind}`;
   }

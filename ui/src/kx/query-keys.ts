@@ -56,4 +56,8 @@ export const queryKeys = {
    *  COMMITTED def hash — content-addressed ⇒ immutable (cache forever). */
   moteDetail: (endpoint: string, instanceId: string, moteId: string, defHash: string) =>
     ["kx", endpoint, "mote-detail", instanceId, moteId, defHash] as const,
+  /** The mote execution-telemetry pages (`ListMoteTelemetry`, Batch C);
+   *  `instanceId` scopes to one run; cursor pages live inside the one key. */
+  telemetry: (endpoint: string, instanceId: string | undefined, pageSize: number) =>
+    ["kx", endpoint, "telemetry", instanceId ?? "all", pageSize] as const,
 };

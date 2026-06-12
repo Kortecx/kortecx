@@ -183,6 +183,114 @@ pub fn render_delta(delta: &proto::EventDelta, json: bool) -> Option<String> {
     Some(line)
 }
 
+/// Human display of a watermark-attribution instance hex: `-` when the delta
+/// predates any registration (the wire keeps the honest empty string).
+fn inst_display(inst_hex: &str) -> &str {
+    if inst_hex.is_empty() {
+        "-"
+    } else {
+        inst_hex
+    }
+}
+
+/// Render one GLOBAL event delta (Batch C `StreamAllEvents`) as one human line /
+/// one NDJSON object. `--json` field names mirror the WS `/events/all` wire
+/// (the tri-surface parity contract): a `type` tag, a per-delta `instance_id`
+/// (lowercase hex, EMPTY before any registration), lowercase `nd_class`, and an
+/// honest `unknown` for a future delta kind (the per-run renderer skips those;
+/// the global wire surfaces them).
+#[must_use]
+pub fn render_global_delta(delta: &proto::GlobalEventDelta, json: bool) -> String {
+    use proto::global_event_delta::Kind;
+    let seq = delta.seq;
+    let inst = hex::encode(&delta.instance_id);
+    match delta.kind.as_ref() {
+        Some(Kind::Committed(c)) => {
+            if json {
+                json!({"seq": seq, "instance_id": inst, "type": "committed",
+                       "mote_id": hex::encode(&c.mote_id),
+                       "result_ref": hex::encode(&c.result_ref),
+                       "nd_class": nd_class_tag(c.nd_class)})
+                .to_string()
+            } else {
+                format!(
+                    "seq {seq} COMMITTED  inst={} mote={} result={} nd={}",
+                    inst_display(&inst),
+                    hex::encode(&c.mote_id),
+                    hex::encode(&c.result_ref),
+                    nd_class_tag(c.nd_class)
+                )
+            }
+        }
+        Some(Kind::Failed(fd)) => {
+            if json {
+                json!({"seq": seq, "instance_id": inst, "type": "failed",
+                       "mote_id": hex::encode(&fd.mote_id),
+                       "reason_class": fd.reason_class})
+                .to_string()
+            } else {
+                format!(
+                    "seq {seq} FAILED     inst={} mote={} reason={}",
+                    inst_display(&inst),
+                    hex::encode(&fd.mote_id),
+                    fd.reason_class
+                )
+            }
+        }
+        Some(Kind::Repudiated(r)) => {
+            if json {
+                json!({"seq": seq, "instance_id": inst, "type": "repudiated",
+                       "target_mote_id": hex::encode(&r.target_mote_id),
+                       "target_committed_seq": r.target_committed_seq})
+                .to_string()
+            } else {
+                format!(
+                    "seq {seq} REPUDIATED inst={} mote={} target_seq={}",
+                    inst_display(&inst),
+                    hex::encode(&r.target_mote_id),
+                    r.target_committed_seq
+                )
+            }
+        }
+        Some(Kind::EffectStaged(e)) => {
+            if json {
+                json!({"seq": seq, "instance_id": inst, "type": "effect_staged",
+                       "mote_id": hex::encode(&e.mote_id)})
+                .to_string()
+            } else {
+                format!(
+                    "seq {seq} EFFECT_STAGED inst={} mote={}",
+                    inst_display(&inst),
+                    hex::encode(&e.mote_id)
+                )
+            }
+        }
+        Some(Kind::RunRegistered(rr)) => {
+            if json {
+                json!({"seq": seq, "instance_id": inst, "type": "run_registered",
+                       "recipe_fingerprint": hex::encode(&rr.recipe_fingerprint),
+                       "registered_unix_ms": rr.registered_unix_ms})
+                .to_string()
+            } else {
+                format!(
+                    "seq {seq} RUN_STARTED inst={} recipe={} registered_ms={}",
+                    inst_display(&inst),
+                    hex::encode(&rr.recipe_fingerprint),
+                    rr.registered_unix_ms
+                )
+            }
+        }
+        // A future delta kind: surface it honestly (the WS wire does the same).
+        None => {
+            if json {
+                json!({"seq": seq, "instance_id": inst, "type": "unknown"}).to_string()
+            } else {
+                format!("seq {seq} UNKNOWN    inst={}", inst_display(&inst))
+            }
+        }
+    }
+}
+
 /// Render the result of a `--wait` run. `include_payload` is `false` when the
 /// caller wrote the payload to `--out` (then only metadata is emitted).
 #[must_use]
@@ -499,6 +607,24 @@ pub fn nd_class_name(nd: i32) -> &'static str {
     }
 }
 
+/// Map a [`proto::NdClass`] discriminant to the stable lowercase wire tag the
+/// WS/SDK surfaces speak (`"pure"` / `"read_only_nondet"` / `"world_mutating"`;
+/// out-of-range → `"unspecified"`). Distinct from the uppercase display
+/// [`nd_class_name`] — the global event tail's `--json` parity needs this form.
+#[must_use]
+pub fn nd_class_tag(nd: i32) -> &'static str {
+    use proto::NdClass as N;
+    if nd == N::Pure as i32 {
+        "pure"
+    } else if nd == N::ReadOnlyNondet as i32 {
+        "read_only_nondet"
+    } else if nd == N::WorldMutating as i32 {
+        "world_mutating"
+    } else {
+        "unspecified"
+    }
+}
+
 /// Map a [`proto::EffectPattern`] discriminant to a stable display name.
 #[must_use]
 pub fn effect_pattern_name(ep: i32) -> &'static str {
@@ -662,6 +788,233 @@ pub fn render_mote_detail(detail: &proto::MoteDetail, json: bool) -> String {
     }
 }
 
+/// Hex of a telemetry attribution id; the ALL-ZERO (or empty) unattributed
+/// sentinel renders as the empty string (wire parity with the WS/SDK).
+fn telemetry_instance_hex(id: &[u8]) -> String {
+    if id.iter().all(|&b| b == 0) {
+        String::new()
+    } else {
+        hex::encode(id)
+    }
+}
+
+/// Render `telemetry list` (Batch C): newest-first mote execution exhaust +
+/// the pagination cursor hint. `--json` field names mirror the SDK snake_case
+/// shape (the tri-surface parity contract); absent token counts are `null`
+/// (`input_tokens` is never set in OSS).
+#[must_use]
+pub fn render_telemetry(resp: &proto::ListMoteTelemetryResponse, json: bool) -> String {
+    if json {
+        let rows: Vec<Value> = resp
+            .rows
+            .iter()
+            .map(|r| {
+                json!({
+                    "mote_id": hex::encode(&r.mote_id),
+                    "instance_id": telemetry_instance_hex(&r.instance_id),
+                    "wall_clock_ms": r.wall_clock_ms,
+                    "input_tokens": r.input_tokens,
+                    "output_tokens": r.output_tokens,
+                    "model_id": r.model_id,
+                    "tool_id": r.tool_id,
+                    "started_unix_ms": r.started_unix_ms,
+                    "seq": r.seq,
+                })
+            })
+            .collect();
+        json!({ "rows": rows, "has_more": resp.has_more }).to_string()
+    } else if resp.rows.is_empty() {
+        "(no telemetry rows)".to_string()
+    } else {
+        let dash = |s: &str| {
+            if s.is_empty() {
+                "-".to_string()
+            } else {
+                s.to_string()
+            }
+        };
+        let opt = |v: Option<u64>| v.map_or_else(|| "-".to_string(), |n| n.to_string());
+        let mut out = String::new();
+        for r in &resp.rows {
+            let _ = write!(
+                out,
+                "{}{}  inst {}  {}ms  model {}  tool {}  tokens {}/{}  started_ms {}  seq {}",
+                if out.is_empty() { "" } else { "\n" },
+                hex::encode(&r.mote_id),
+                dash(&telemetry_instance_hex(&r.instance_id)),
+                r.wall_clock_ms,
+                dash(&r.model_id),
+                dash(&r.tool_id),
+                opt(r.input_tokens),
+                opt(r.output_tokens),
+                r.started_unix_ms,
+                r.seq,
+            );
+        }
+        if resp.has_more {
+            let last = resp.rows.last().map_or(0, |r| r.seq);
+            let _ = write!(out, "\n(more — continue with --before-seq {last})");
+        }
+        out
+    }
+}
+
+/// Render `replan list` (PR-2c-2 observability): newest-first re-plan rounds.
+/// `--json` field names mirror the SDK snake_case shape; byte ids are hex.
+#[must_use]
+pub fn render_replan_rounds(resp: &proto::ListReplanRoundsResponse, json: bool) -> String {
+    if json {
+        let rounds: Vec<Value> = resp
+            .rounds
+            .iter()
+            .map(|r| {
+                json!({
+                    "round": r.round,
+                    "shaper_mote_id": hex::encode(&r.shaper_mote_id),
+                    "model_id": r.model_id,
+                    "failed_step_ids": r.failed_step_ids.iter().map(|s| hex::encode(s)).collect::<Vec<_>>(),
+                    "escalated": r.escalated,
+                    "seq": r.seq,
+                })
+            })
+            .collect();
+        json!({ "rounds": rounds, "has_more": resp.has_more }).to_string()
+    } else if resp.rounds.is_empty() {
+        "(no replan rounds)".to_string()
+    } else {
+        let mut out = String::new();
+        for r in &resp.rounds {
+            let failed = if r.failed_step_ids.is_empty() {
+                "-".to_string()
+            } else {
+                r.failed_step_ids
+                    .iter()
+                    .map(|s| hex::encode(s))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            };
+            let _ = write!(
+                out,
+                "{}round {}  shaper {}  model {}  failed {}  escalated={}  seq {}",
+                if out.is_empty() { "" } else { "\n" },
+                r.round,
+                hex::encode(&r.shaper_mote_id),
+                r.model_id,
+                failed,
+                r.escalated,
+                r.seq,
+            );
+        }
+        if resp.has_more {
+            out.push_str("\n(more — raise --limit)");
+        }
+        out
+    }
+}
+
+/// Render `react list` (PR-2d-1 observability): newest-first ReAct turns.
+/// `--json` field names mirror the SDK snake_case shape; byte ids are hex.
+#[must_use]
+pub fn render_react_turns(resp: &proto::ListReactTurnsResponse, json: bool) -> String {
+    if json {
+        let turns: Vec<Value> = resp
+            .turns
+            .iter()
+            .map(|t| {
+                json!({
+                    "turn": t.turn,
+                    "turn_mote_id": hex::encode(&t.turn_mote_id),
+                    "instance_id": hex::encode(&t.instance_id),
+                    "model_id": t.model_id,
+                    "branch": t.branch,
+                    "tool_id": t.tool_id,
+                    "tool_version": t.tool_version,
+                    "max_turns": t.max_turns,
+                    "max_tool_calls": t.max_tool_calls,
+                    "seq": t.seq,
+                })
+            })
+            .collect();
+        json!({ "turns": turns, "has_more": resp.has_more }).to_string()
+    } else if resp.turns.is_empty() {
+        "(no react turns)".to_string()
+    } else {
+        let mut out = String::new();
+        for t in &resp.turns {
+            let _ = write!(
+                out,
+                "{}turn {}  inst {}  branch {}{}  model {}  caps {}/{}  seq {}",
+                if out.is_empty() { "" } else { "\n" },
+                t.turn,
+                hex::encode(&t.instance_id),
+                t.branch,
+                if t.tool_id.is_empty() {
+                    String::new()
+                } else {
+                    format!(" tool {}@{}", t.tool_id, t.tool_version)
+                },
+                t.model_id,
+                t.max_turns,
+                t.max_tool_calls,
+                t.seq,
+            );
+        }
+        if resp.has_more {
+            out.push_str("\n(more — raise --limit)");
+        }
+        out
+    }
+}
+
+/// Render `capture list` (the Morphic Data Engine read surface): newest-first
+/// captured-action join keys. `--json` field names mirror the SDK snake_case
+/// shape; an absent `react_turn` is `null` (the Mote is not a ReAct turn).
+#[must_use]
+pub fn render_capture_records(resp: &proto::ListCaptureRecordsResponse, json: bool) -> String {
+    if json {
+        let records: Vec<Value> = resp
+            .records
+            .iter()
+            .map(|r| {
+                json!({
+                    "mote_id": hex::encode(&r.mote_id),
+                    "instance_id": hex::encode(&r.instance_id),
+                    "result_ref": hex::encode(&r.result_ref),
+                    "nd_class": r.nd_class,
+                    "seq": r.seq,
+                    "react_turn": r.react_turn,
+                    "react_branch": r.react_branch,
+                })
+            })
+            .collect();
+        json!({ "records": records, "has_more": resp.has_more }).to_string()
+    } else if resp.records.is_empty() {
+        "(no capture records)".to_string()
+    } else {
+        let mut out = String::new();
+        for r in &resp.records {
+            let _ = write!(
+                out,
+                "{}{}  inst {}  result {}  nd {}  seq {}{}",
+                if out.is_empty() { "" } else { "\n" },
+                hex::encode(&r.mote_id),
+                hex::encode(&r.instance_id),
+                hex::encode(&r.result_ref),
+                r.nd_class,
+                r.seq,
+                r.react_turn.map_or_else(String::new, |turn| format!(
+                    "  react turn {turn} {}",
+                    r.react_branch
+                )),
+            );
+        }
+        if resp.has_more {
+            out.push_str("\n(more — raise --limit)");
+        }
+        out
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -750,6 +1103,202 @@ mod tests {
         let v: Value = serde_json::from_str(&render_wait(&outcome, true, true)).unwrap();
         assert_eq!(v["state"], "RUNNING");
         assert_eq!(v["timed_out"], true);
+    }
+
+    #[test]
+    fn global_delta_json_uses_type_tag_instance_hex_and_nd_strings() {
+        use proto::global_event_delta::Kind;
+        // committed: attributed, nd_class as the lowercase wire tag.
+        let committed = proto::GlobalEventDelta {
+            seq: 9,
+            instance_id: vec![0x5a; 16],
+            kind: Some(Kind::Committed(proto::CommittedDelta {
+                mote_id: vec![7u8; 32],
+                result_ref: vec![8u8; 32],
+                nd_class: proto::NdClass::Pure as i32,
+            })),
+        };
+        let v: Value = serde_json::from_str(&render_global_delta(&committed, true)).unwrap();
+        assert_eq!(v["type"], "committed");
+        assert_eq!(v["seq"], 9);
+        assert_eq!(v["instance_id"], "5a".repeat(16));
+        assert_eq!(v["nd_class"], "pure");
+        assert_eq!(v["mote_id"].as_str().unwrap().len(), 64);
+        // run_registered: the kind the per-run wire never carries.
+        let registered = proto::GlobalEventDelta {
+            seq: 3,
+            instance_id: vec![0x5a; 16],
+            kind: Some(Kind::RunRegistered(proto::RunRegisteredDelta {
+                recipe_fingerprint: vec![0xcd; 32],
+                registered_unix_ms: 1_700_000_000_000,
+            })),
+        };
+        let v: Value = serde_json::from_str(&render_global_delta(&registered, true)).unwrap();
+        assert_eq!(v["type"], "run_registered");
+        assert_eq!(v["recipe_fingerprint"], "cd".repeat(32));
+        assert_eq!(v["registered_unix_ms"], 1_700_000_000_000u64);
+        // The human form narrates a run start and shows the attribution.
+        let human = render_global_delta(&registered, false);
+        assert!(human.contains("RUN_STARTED") && human.contains(&"5a".repeat(16)));
+        // pre-registration: instance_id is the honest empty string (JSON) / `-` (human).
+        let unknown = proto::GlobalEventDelta {
+            seq: 1,
+            instance_id: Vec::new(),
+            kind: None,
+        };
+        let v: Value = serde_json::from_str(&render_global_delta(&unknown, true)).unwrap();
+        assert_eq!(v["type"], "unknown");
+        assert_eq!(v["instance_id"], "");
+        assert!(render_global_delta(&unknown, false).contains("inst=-"));
+    }
+
+    #[test]
+    fn telemetry_json_parity_null_tokens_and_zero_instance() {
+        let resp = proto::ListMoteTelemetryResponse {
+            rows: vec![
+                proto::MoteTelemetryRow {
+                    mote_id: vec![1u8; 32],
+                    instance_id: vec![0x5a; 16],
+                    wall_clock_ms: 42,
+                    input_tokens: None,
+                    output_tokens: Some(17),
+                    model_id: "qwen3".into(),
+                    tool_id: String::new(),
+                    started_unix_ms: 1_700_000_000_000,
+                    seq: 11,
+                },
+                proto::MoteTelemetryRow {
+                    mote_id: vec![2u8; 32],
+                    instance_id: vec![0u8; 16], // all-zero = unattributed
+                    wall_clock_ms: 5,
+                    input_tokens: None,
+                    output_tokens: None,
+                    model_id: String::new(),
+                    tool_id: "mcp-echo".into(),
+                    started_unix_ms: 1_700_000_000_001,
+                    seq: 7,
+                },
+            ],
+            has_more: true,
+        };
+        let v: Value = serde_json::from_str(&render_telemetry(&resp, true)).unwrap();
+        assert_eq!(v["rows"][0]["instance_id"], "5a".repeat(16));
+        assert!(v["rows"][0]["input_tokens"].is_null());
+        assert_eq!(v["rows"][0]["output_tokens"], 17);
+        assert_eq!(v["rows"][0]["wall_clock_ms"], 42);
+        assert_eq!(v["rows"][0]["model_id"], "qwen3");
+        assert_eq!(v["rows"][0]["started_unix_ms"], 1_700_000_000_000u64);
+        // The all-zero attribution renders as the honest empty string.
+        assert_eq!(v["rows"][1]["instance_id"], "");
+        assert_eq!(v["rows"][1]["tool_id"], "mcp-echo");
+        assert_eq!(v["has_more"], true);
+        // Human form: the cursor hint names the last row's seq.
+        let human = render_telemetry(&resp, false);
+        assert!(human.contains("--before-seq 7"));
+        assert!(
+            human.contains("inst -"),
+            "all-zero attribution shows a dash"
+        );
+        // Empty: an honest placeholder, not an empty string.
+        let empty = proto::ListMoteTelemetryResponse {
+            rows: vec![],
+            has_more: false,
+        };
+        assert_eq!(render_telemetry(&empty, false), "(no telemetry rows)");
+    }
+
+    #[test]
+    fn replan_react_capture_json_mirror_proto_field_names() {
+        let replan = proto::ListReplanRoundsResponse {
+            rounds: vec![proto::ReplanRoundSummary {
+                round: 1,
+                shaper_mote_id: vec![3u8; 32],
+                model_id: "qwen3".into(),
+                failed_step_ids: vec![vec![4u8; 32]],
+                escalated: false,
+                seq: 21,
+            }],
+            has_more: false,
+        };
+        let v: Value = serde_json::from_str(&render_replan_rounds(&replan, true)).unwrap();
+        assert_eq!(v["rounds"][0]["round"], 1);
+        assert_eq!(v["rounds"][0]["shaper_mote_id"], "03".repeat(32));
+        assert_eq!(v["rounds"][0]["failed_step_ids"][0], "04".repeat(32));
+        assert_eq!(v["rounds"][0]["escalated"], false);
+        assert_eq!(v["has_more"], false);
+
+        let react = proto::ListReactTurnsResponse {
+            turns: vec![proto::ReactTurnSummary {
+                turn: 2,
+                turn_mote_id: vec![5u8; 32],
+                instance_id: vec![6u8; 16],
+                model_id: "qwen3".into(),
+                branch: "tool".into(),
+                tool_id: "mcp-echo".into(),
+                tool_version: "1".into(),
+                max_turns: 8,
+                max_tool_calls: 6,
+                seq: 33,
+            }],
+            has_more: true,
+        };
+        let v: Value = serde_json::from_str(&render_react_turns(&react, true)).unwrap();
+        assert_eq!(v["turns"][0]["turn_mote_id"], "05".repeat(32));
+        assert_eq!(v["turns"][0]["instance_id"], "06".repeat(16));
+        assert_eq!(v["turns"][0]["branch"], "tool");
+        assert_eq!(v["turns"][0]["max_tool_calls"], 6);
+        assert_eq!(v["has_more"], true);
+        let human = render_react_turns(&react, false);
+        assert!(human.contains("tool mcp-echo@1") && human.contains("caps 8/6"));
+
+        let capture = proto::ListCaptureRecordsResponse {
+            records: vec![proto::CaptureRecordSummary {
+                mote_id: vec![7u8; 32],
+                instance_id: vec![8u8; 16],
+                result_ref: vec![9u8; 32],
+                nd_class: "pure".into(),
+                seq: 44,
+                react_turn: None,
+                react_branch: String::new(),
+            }],
+            has_more: false,
+        };
+        let v: Value = serde_json::from_str(&render_capture_records(&capture, true)).unwrap();
+        assert_eq!(v["records"][0]["mote_id"], "07".repeat(32));
+        assert_eq!(v["records"][0]["nd_class"], "pure");
+        assert!(v["records"][0]["react_turn"].is_null());
+        assert_eq!(v["records"][0]["react_branch"], "");
+        // Empty placeholders are honest.
+        assert_eq!(
+            render_replan_rounds(
+                &proto::ListReplanRoundsResponse {
+                    rounds: vec![],
+                    has_more: false
+                },
+                false
+            ),
+            "(no replan rounds)"
+        );
+        assert_eq!(
+            render_react_turns(
+                &proto::ListReactTurnsResponse {
+                    turns: vec![],
+                    has_more: false
+                },
+                false
+            ),
+            "(no react turns)"
+        );
+        assert_eq!(
+            render_capture_records(
+                &proto::ListCaptureRecordsResponse {
+                    records: vec![],
+                    has_more: false
+                },
+                false
+            ),
+            "(no capture records)"
+        );
     }
 
     #[test]

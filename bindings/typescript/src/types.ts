@@ -10,6 +10,7 @@
 import type {
   EventDelta,
   EventFrame,
+  GlobalEventDelta,
   MoteSnapshot,
   SignatureSummary as PbSignatureSummary,
   ProjectionView,
@@ -207,6 +208,114 @@ export class Frame {
       if (view !== null) deltas.push(view);
     }
     return new Frame(Number(f.seq), deltas, Number(f.nextSeq), f.journalBoundary);
+  }
+}
+
+/**
+ * One operator-global event delta (Batch C `StreamAllEvents`): the per-run
+ * {@link Delta} kinds PLUS `run_registered` (a run came into existence), each
+ * stamped with its watermark `instanceId` attribution (`""` before any
+ * registration — honest, never fabricated). Unlike {@link Delta.fromProto},
+ * an unrecognized kind maps to `"unknown"` rather than being skipped — the
+ * global tail narrates everything, it never throws and never silently drops.
+ */
+export class GlobalDelta {
+  constructor(
+    readonly seq: number,
+    readonly kind: string,
+    readonly instanceId: string,
+    readonly moteId: string | null = null,
+    readonly resultRef: string | null = null,
+    readonly ndClass: number | null = null,
+    readonly reasonClass: number | null = null,
+    readonly targetMoteId: string | null = null,
+    readonly targetCommittedSeq: number | null = null,
+    readonly recipeFingerprint: string | null = null,
+    readonly registeredUnixMs: number | null = null,
+  ) {}
+
+  /** Build a view; a delta with no recognized kind becomes `"unknown"` (never `null`). */
+  static fromProto(d: GlobalEventDelta): GlobalDelta {
+    const seq = Number(d.seq);
+    const instanceId = encode(d.instanceId); // EMPTY bytes pre-registration → ""
+    switch (d.kind.case) {
+      case "committed": {
+        const c = d.kind.value;
+        return new GlobalDelta(
+          seq,
+          "committed",
+          instanceId,
+          encode(c.moteId),
+          encode(c.resultRef),
+          c.ndClass,
+        );
+      }
+      case "failed": {
+        const f = d.kind.value;
+        return new GlobalDelta(
+          seq,
+          "failed",
+          instanceId,
+          encode(f.moteId),
+          null,
+          null,
+          f.reasonClass,
+        );
+      }
+      case "repudiated": {
+        const r = d.kind.value;
+        return new GlobalDelta(
+          seq,
+          "repudiated",
+          instanceId,
+          null,
+          null,
+          null,
+          null,
+          encode(r.targetMoteId),
+          Number(r.targetCommittedSeq),
+        );
+      }
+      case "effectStaged": {
+        const e = d.kind.value;
+        return new GlobalDelta(seq, "effect_staged", instanceId, encode(e.moteId));
+      }
+      case "runRegistered": {
+        const rr = d.kind.value;
+        return new GlobalDelta(
+          seq,
+          "run_registered",
+          instanceId,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          encode(rr.recipeFingerprint),
+          Number(rr.registeredUnixMs),
+        );
+      }
+      default:
+        return new GlobalDelta(seq, "unknown", instanceId);
+    }
+  }
+
+  toJSON(): Record<string, unknown> {
+    const out: Record<string, unknown> = {
+      seq: this.seq,
+      kind: this.kind,
+      instance_id: this.instanceId,
+    };
+    if (this.moteId !== null) out.mote_id = this.moteId;
+    if (this.resultRef !== null) out.result_ref = this.resultRef;
+    if (this.ndClass !== null) out.nd_class = this.ndClass;
+    if (this.reasonClass !== null) out.reason_class = this.reasonClass;
+    if (this.targetMoteId !== null) out.target_mote_id = this.targetMoteId;
+    if (this.targetCommittedSeq !== null) out.target_committed_seq = this.targetCommittedSeq;
+    if (this.recipeFingerprint !== null) out.recipe_fingerprint = this.recipeFingerprint;
+    if (this.registeredUnixMs !== null) out.registered_unix_ms = this.registeredUnixMs;
+    return out;
   }
 }
 

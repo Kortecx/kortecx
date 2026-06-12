@@ -5,14 +5,21 @@
  * action-capture stream (`ListCaptureRecords`), and liveness. Pure renderer: every
  * number comes from `lib/monitoring.ts` over the hooks; each panel degrades to an
  * honest "not wired here" note when its RPC is unimplemented (never a hollow placeholder).
+ *
+ * Batch C adds two URL-addressable views beside the overview (the run-detail tab
+ * precedent): **Live feed** — the continuous cross-run event tail with run
+ * click-through — and **Telemetry** — the host-measured execution exhaust
+ * (`ListMoteTelemetry`: wall-clock / model usage / fired tool), cursor-paged.
  */
 
+import { Link } from "@tanstack/react-router";
 import { m } from "framer-motion";
 import { fadeUp, stagger } from "../../app/motion";
 import { useCaptureRecords } from "../../kx/use-capture-records";
 import { useReactTurns } from "../../kx/use-react-turns";
 import { useReplanRounds } from "../../kx/use-replan-rounds";
 import { useRuns } from "../../kx/use-runs";
+import { useTelemetry } from "../../kx/use-telemetry";
 import { shortHex } from "../../lib/format";
 import {
   type Tally,
@@ -22,9 +29,20 @@ import {
   summarizeRuns,
   tallyRows,
 } from "../../lib/monitoring";
+import type { MonitorTab } from "../../router/routes/monitor";
+import { EmptyState } from "../EmptyState";
+import { ErrorNotice } from "../ErrorNotice";
+import { GlobalFeed } from "../activity/GlobalFeed";
 import { GlowCard } from "../ds/GlowCard";
 import { HealthIndicator } from "../metrics/HealthIndicator";
 import { MetricCard } from "../metrics/MetricCard";
+
+const MONITOR_VIEWS = [undefined, "feed", "telemetry"] as const;
+const VIEW_LABEL: Record<string, string> = {
+  overview: "Overview",
+  feed: "Live feed",
+  telemetry: "Telemetry",
+};
 
 function TallyList({ tally, empty }: { tally: Tally; empty: string }) {
   const rows = tallyRows(tally);
@@ -66,11 +84,153 @@ function Panel({
   );
 }
 
-export function MonitoringSection() {
+/** Tab state rides the route's validated search params (the run-detail
+ *  precedent) — the ROUTE owns the router coupling and passes it down, so the
+ *  section stays a pure renderer (component-testable without a router). */
+export function MonitoringSection({
+  tab,
+  onTab,
+}: {
+  tab?: MonitorTab;
+  onTab?: (tab: MonitorTab | undefined) => void;
+} = {}) {
+  return (
+    <section className="screen" data-testid="monitoring-section">
+      <div className="section-head">
+        <div>
+          <h1>Monitoring</h1>
+          <p className="muted">
+            Gateway-wide metrics, the live cross-run feed & per-mote execution telemetry.
+          </p>
+        </div>
+      </div>
+
+      <fieldset className="view-toggle" aria-label="Monitoring view" data-testid="monitor-tabs">
+        {MONITOR_VIEWS.map((v) => (
+          <button
+            key={v ?? "overview"}
+            type="button"
+            aria-pressed={tab === v}
+            data-testid={`monitor-tab-${v ?? "overview"}`}
+            onClick={() => onTab?.(v)}
+          >
+            {VIEW_LABEL[v ?? "overview"]}
+          </button>
+        ))}
+      </fieldset>
+
+      {tab === "feed" ? <FeedView /> : tab === "telemetry" ? <TelemetryView /> : <OverviewView />}
+    </section>
+  );
+}
+
+/** The Batch C continuous cross-run feed — one GlowCard hosting the same
+ *  GlobalFeed the Activity drawer lands on; rows link to the run detail. */
+function FeedView() {
+  return (
+    <GlowCard hover={false} className="monitor-panel" data-testid="monitor-feed">
+      <div className="monitor-panel__head">
+        <h2>Live feed</h2>
+        <span className="muted">every run on this node, newest first</span>
+      </div>
+      <GlobalFeed />
+    </GlowCard>
+  );
+}
+
+/** The Batch C execution-telemetry table: host-measured wall-clock + model
+ *  usage + the fired tool per committed mote, cursor-paged newest-first. */
+function TelemetryView() {
+  const t = useTelemetry();
+  return (
+    <GlowCard hover={false} className="monitor-panel" data-testid="monitor-telemetry">
+      <div className="monitor-panel__head">
+        <h2>Execution telemetry</h2>
+        <span className="muted">wall-clock · model usage · fired tool (audit-only exhaust)</span>
+      </div>
+      {t.notWired ? (
+        <p className="muted">
+          Not wired on this gateway — telemetry needs a Batch-C serve with its telemetry.db sidecar
+          (upgrade the serve to see execution metrics).
+        </p>
+      ) : t.error ? (
+        <ErrorNotice error={t.error} />
+      ) : t.isLoading ? (
+        <EmptyState title="Loading telemetry…" />
+      ) : t.rows.length === 0 ? (
+        <EmptyState
+          title="No telemetry yet"
+          detail="Rows appear as motes execute and commit — invoke a recipe to generate some."
+        />
+      ) : (
+        <>
+          <table className="trail-table" data-testid="telemetry-table">
+            <thead>
+              <tr>
+                <th>Mote</th>
+                <th>Run</th>
+                <th>Model</th>
+                <th>Tool</th>
+                <th>Out&nbsp;tokens</th>
+                <th>Wall&nbsp;ms</th>
+                <th>Started</th>
+                <th>seq</th>
+              </tr>
+            </thead>
+            <tbody>
+              {t.rows.map((r) => (
+                <tr key={`${r.seq}-${r.moteId}`} data-testid="telemetry-row">
+                  <td className="mono">{shortHex(r.moteId)}</td>
+                  <td className="mono">
+                    {r.instanceId ? (
+                      <Link
+                        to="/workflows/$instanceId"
+                        params={{ instanceId: r.instanceId }}
+                        className="linkbtn mono"
+                        title="Open this run"
+                      >
+                        {shortHex(r.instanceId)}
+                      </Link>
+                    ) : (
+                      "—"
+                    )}
+                  </td>
+                  <td className="mono">{r.modelId || "—"}</td>
+                  <td className="mono">{r.toolId || "—"}</td>
+                  <td className="mono">{r.outputTokens ?? "—"}</td>
+                  <td className="mono">{r.wallClockMs}</td>
+                  <td className="muted">
+                    {r.startedUnixMs > 0 ? new Date(r.startedUnixMs).toLocaleTimeString() : "—"}
+                  </td>
+                  <td className="mono">#{r.seq}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {t.hasMore ? (
+            <button
+              type="button"
+              className="linkbtn"
+              onClick={t.loadMore}
+              disabled={t.isLoadingMore}
+              data-testid="telemetry-load-more"
+            >
+              {t.isLoadingMore ? "Loading…" : "Load more"}
+            </button>
+          ) : null}
+        </>
+      )}
+    </GlowCard>
+  );
+}
+
+/** The pre-Batch-C overview panels, unchanged. */
+function OverviewView() {
   const runs = useRuns();
   const replan = useReplanRounds();
   const react = useReactTurns();
   const capture = useCaptureRecords();
+  const telemetry = useTelemetry({ pageSize: 1 });
 
   const runRollup = summarizeRuns(runs.runs);
   const replanSummary = summarizeReplan(replan.rounds);
@@ -82,28 +242,27 @@ export function MonitoringSection() {
     void replan.refetch();
     void react.refetch();
     void capture.refetch();
+    telemetry.refetch();
   }
 
   return (
-    <section className="screen" data-testid="monitoring-section">
+    <>
       <div className="section-head">
-        <div>
-          <h1>Monitoring</h1>
-          <p className="muted">
-            Gateway-wide metrics, self-correction trails & the action-capture stream.
-          </p>
-        </div>
+        <div />
         <button type="button" className="linkbtn" onClick={refreshAll}>
           Refresh
         </button>
       </div>
-
       <m.div className="metrics-grid" variants={stagger()} initial="hidden" animate="show">
         <MetricCard label="Runs" value={runRollup.total} tone="committed" />
         <MetricCard label="Re-plan rounds" value={replanSummary.total} tone="scheduled" />
         <MetricCard label="ReAct turns" value={reactSummary.total} />
         <MetricCard label="Tool calls" value={reactSummary.toolCalls} />
         <MetricCard label="Captured actions" value={captureSummary.total} />
+        <MetricCard
+          label="Last mote wall ms"
+          value={telemetry.rows[0] ? telemetry.rows[0].wallClockMs : "—"}
+        />
       </m.div>
 
       <m.div className="monitor-grid" variants={stagger()} initial="hidden" animate="show">
@@ -209,6 +368,6 @@ export function MonitoringSection() {
           </div>
         </Panel>
       </m.div>
-    </section>
+    </>
   );
 }
