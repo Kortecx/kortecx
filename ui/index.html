@@ -6,6 +6,28 @@
     <meta name="color-scheme" content="light dark" />
     <link rel="icon" type="image/png" href="/favicon.png" />
     <title>kortecx — runtime console</title>
+    <!-- Pre-paint theme stamp (PR-0 dual theme): resolve the stored preference
+         before first paint so a dark-mode reload never flashes light. Keep the
+         key + semantics in sync with src/lib/theme.ts (raw string, not JSON). -->
+    <script>
+      (function () {
+        var theme = "light";
+        try {
+          var pref = localStorage.getItem("kortecx.ui.theme");
+          if (
+            pref === "dark" ||
+            (pref !== "light" &&
+              window.matchMedia &&
+              window.matchMedia("(prefers-color-scheme: dark)").matches)
+          ) {
+            theme = "dark";
+          }
+        } catch (e) {
+          /* storage unavailable — light default */
+        }
+        document.documentElement.dataset.theme = theme;
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

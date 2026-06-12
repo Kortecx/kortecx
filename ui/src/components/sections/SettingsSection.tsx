@@ -1,16 +1,19 @@
 import { m } from "framer-motion";
 import { fadeUp, stagger } from "../../app/motion";
+import { useTheme } from "../../app/use-theme";
 import { useConnection } from "../../kx/connection-context";
+import { THEME_PREFERENCES } from "../../lib/theme";
 import { Badge } from "../ds/Badge";
 import { GlowCard } from "../ds/GlowCard";
 
 /**
  * Settings/Profile (W1 shell placeholder per the section taxonomy): the connection
- * profile + console appearance facts. Read-only over existing client state — no new
- * RPCs; preferences persist locally in this browser, never on the gateway.
+ * profile + console appearance controls. No new RPCs; preferences persist locally
+ * in this browser (theme via lib/theme.ts), never on the gateway.
  */
 export function SettingsSection() {
   const { status, endpoint, wsEndpoint } = useConnection();
+  const { preference, resolved, setPreference } = useTheme();
   const connected = status === "connected";
   return (
     <section className="screen" data-testid="settings-section">
@@ -44,7 +47,26 @@ export function SettingsSection() {
           <h2>Appearance</h2>
           <dl className="facts">
             <dt>Theme</dt>
-            <dd>kortecx light (orange · black · white)</dd>
+            <dd>
+              {/* chip buttons, not a <select> — the recorded controlled-select e2e gotcha */}
+              <div className="chip-row">
+                {THEME_PREFERENCES.map((pref) => (
+                  <button
+                    key={pref}
+                    type="button"
+                    className={`chip${preference === pref ? " chip--active" : ""}`}
+                    aria-pressed={preference === pref}
+                    data-testid={`theme-chip-${pref}`}
+                    onClick={() => setPreference(pref)}
+                  >
+                    <span className="chip__label">{pref}</span>
+                  </button>
+                ))}
+              </div>
+              <span className="muted" data-testid="theme-resolved">
+                rendering: kortecx {resolved}
+              </span>
+            </dd>
             <dt>Type</dt>
             <dd>Geist Sans · Geist Mono</dd>
             <dt>Sidebar</dt>

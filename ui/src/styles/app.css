@@ -53,13 +53,20 @@
   --mono: var(--font-mono);
 
   /* legacy aliases — the pre-W1 token names ~120 rules still consume. Values map
-   * onto the light palette; remove in a later sweep, never re-point to dark. */
+   * onto the active palette via var() so the dark theme re-points them wholesale. */
   --bg-elev: var(--surface);
   --bg-input: #ffffff;
   --fg: var(--text-1);
   --fg-muted: var(--text-2);
   --accent: var(--primary-h);
   --accent-fg: #ffffff;
+
+  /* theme-flipping companions (PR-0 dual theme): text over state-tone pills, the
+   * dot-grid texture ink, and the overlay backdrops/scrims. */
+  --pill-fg: #ffffff;
+  --dot-grid-color: rgba(13, 13, 13, 0.1);
+  --backdrop-color: rgba(13, 13, 13, 0.32);
+  --scrim-color: rgba(13, 13, 13, 0.04);
 
   /* Mote state tones (re-mapped for light surfaces: each ≥4.5:1 as text on white
    * AND under white pill text — the dark-theme hexes fail on light) */
@@ -84,6 +91,80 @@
   --n-not-wired: #4b5563;
   --n-not-found: #4b5563;
   --n-generic: #dc2626;
+}
+
+/* ===========================================================================
+ * PR-0 dual theme (2026-06-12 user decision): the dark, terminal-flavored
+ * #09090b palette from the product brief, behind `data-theme="dark"` on <html>
+ * (set pre-paint by the index.html inline script; driven by lib/theme.ts).
+ *
+ * The D136/D137 AA contrast lock applies to BOTH palettes — every text-bearing
+ * pair here holds ≥4.5:1, audited by test/unit/theme-contrast.test.ts. #F04500
+ * stays a non-text accent in dark too; the TEXT-BEARING orange brightens to
+ * #FF7033 and carries near-black text (--accent-fg), never white. State tones
+ * brighten for dark surfaces, so pill text flips dark via --pill-fg.
+ * =========================================================================== */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --primary: #f04500;
+  --primary-h: #ff7033;
+  --primary-dim: rgba(240, 69, 0, 0.14);
+
+  --bg: #09090b;
+  --surface: #111113;
+  --surface-elev: #1a1a1e;
+  --text-1: #f4f4f5;
+  --text-2: rgba(244, 244, 245, 0.72);
+  --text-3: rgba(244, 244, 245, 0.55);
+  --border: rgba(244, 244, 245, 0.14);
+  --border-md: rgba(244, 244, 245, 0.2);
+  --border-strong: rgba(244, 244, 245, 0.3);
+  --focus: #f04500;
+
+  --success: #34d399;
+  --warning: #fbbf24;
+  --error: #f87171;
+  --info: #60a5fa;
+  --teal: #2dd4bf;
+  --violet: #a78bfa;
+  --rose: #fb7185;
+  --indigo: #818cf8;
+  --teal-dim: rgba(45, 212, 191, 0.12);
+  --violet-dim: rgba(167, 139, 250, 0.12);
+  --rose-dim: rgba(251, 113, 133, 0.12);
+  --indigo-dim: rgba(129, 140, 248, 0.12);
+
+  --bg-input: #141417;
+  --accent-fg: #1a0a00;
+  --pill-fg: #0d0d0d;
+  --dot-grid-color: rgba(244, 244, 245, 0.08);
+  --backdrop-color: rgba(0, 0, 0, 0.55);
+  --scrim-color: rgba(0, 0, 0, 0.3);
+
+  /* Mote state tones, brightened for dark surfaces: each ≥4.5:1 as text on
+   * --bg/--surface AND under the dark --pill-fg pill text. */
+  --t-pending: #94a3b8;
+  --t-scheduled: #fbbf24;
+  --t-committed: #34d399;
+  --t-failed: #f87171;
+  --t-repudiated: #fb923c;
+  --t-inconsistent: #a78bfa;
+  --t-unknown: #9ca3af;
+
+  /* nd_class tones */
+  --t-pure: #60a5fa;
+  --t-read-only-nondet: #2dd4bf;
+  --t-world-mutating: #fb7185;
+
+  /* notice tones */
+  --n-retry: #fbbf24;
+  --n-reauth: #60a5fa;
+  --n-forbidden: #f87171;
+  --n-bad-input: #fb923c;
+  --n-not-wired: #9ca3af;
+  --n-not-found: #9ca3af;
+  --n-generic: #f87171;
 }
 
 * {
@@ -231,9 +312,11 @@ textarea {
 }
 button {
   /* primary action: white on the darkened-orange gradient (AA ≥4.5:1; the locked
-   * contrast decision — #F04500 stays on borders/focus/glows, never under text) */
+   * contrast decision — #F04500 stays on borders/focus/glows, never under text).
+   * The gradient is theme-independent, so its text stays literal white — it must
+   * NOT follow --accent-fg, which flips dark with the brightened dark-theme orange. */
   background: linear-gradient(135deg, #d83c00 0%, #c03500 100%);
-  color: var(--accent-fg);
+  color: #ffffff;
   border: none;
   border-radius: var(--radius);
   padding: 0.5rem 0.9rem;
@@ -280,8 +363,9 @@ button:disabled {
   border-radius: 999px;
   font-size: 0.78rem;
   font-weight: 600;
-  /* white text on every state tone — the light-palette tones are AA under white */
-  color: #fff;
+  /* pill text flips per theme: white over the deep light-palette tones, near-black
+   * over the brightened dark-palette tones — AA in both (the contrast audit test) */
+  color: var(--pill-fg);
   background: var(--t-unknown);
 }
 .pill--pending {
@@ -331,7 +415,7 @@ button:disabled {
   border-color: var(--border);
 }
 .badge--anomaly {
-  color: #fff;
+  color: var(--pill-fg);
   background: var(--t-failed);
 }
 
@@ -1395,7 +1479,7 @@ select {
   position: fixed;
   inset: 0;
   z-index: 90;
-  background: rgba(13, 13, 13, 0.32);
+  background: var(--backdrop-color);
   backdrop-filter: blur(2px);
 }
 .palette {
@@ -1574,7 +1658,7 @@ select {
   animation: pulse-dot 2s ease-in-out infinite;
 }
 .dot-grid {
-  background-image: radial-gradient(circle, rgba(13, 13, 13, 0.1) 1px, transparent 1px);
+  background-image: radial-gradient(circle, var(--dot-grid-color) 1px, transparent 1px);
   background-size: 24px 24px;
 }
 .skeleton {
@@ -1810,7 +1894,7 @@ select {
   height: 1.1rem;
   border-radius: 999px;
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-fg);
   font-size: 0.7rem;
   font-weight: 700;
 }
@@ -1959,7 +2043,7 @@ select {
   inset: 0;
   border: 0;
   padding: 0;
-  background: rgba(13, 13, 13, 0.04);
+  background: var(--scrim-color);
   cursor: pointer;
 }
 .node-drawer {

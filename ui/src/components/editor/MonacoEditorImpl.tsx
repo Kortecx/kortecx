@@ -7,7 +7,8 @@
  */
 
 import Editor from "@monaco-editor/react";
-import { KX_LIGHT, configureMonacoOnce } from "../../lib/monaco/setup";
+import { useTheme } from "../../app/use-theme";
+import { KX_DARK, KX_LIGHT, configureMonacoOnce } from "../../lib/monaco/setup";
 import type { EditorSurfaceProps } from "./editor-surface";
 
 // Point @monaco-editor/react at the bundled (offline) instance + theme before any
@@ -38,12 +39,13 @@ export default function MonacoEditorImpl({
   testId,
   ariaLabel,
 }: EditorSurfaceProps) {
+  const { resolved } = useTheme();
   return (
     <div className="monaco-host" data-testid={testId} aria-label={ariaLabel}>
       <Editor
         value={value}
         language={language}
-        theme={KX_LIGHT}
+        theme={resolved === "dark" ? KX_DARK : KX_LIGHT}
         height={height}
         onChange={(v) => onChange?.(v ?? "")}
         options={{
