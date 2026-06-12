@@ -158,11 +158,18 @@ message MoteSnapshot {
 // GetContent — fetch a committed result. instance_id = ownership ticket; the
 // run's committed result_refs are the authorized set. Uniform "not authorized"
 // (no existence oracle). D120.1.
+//
+// Batch A (D120.6): an EMPTY (zero-length) instance_id selects the UPLOADS
+// scope — the caller-uploaded refs recorded by PutContent. Additive-safe: a
+// zero-length instance_id was a hard invalid_argument since the freeze, so no
+// conforming request changes behavior; 16-byte tickets take the old path
+// byte-identically. The uploads authorized set lives in an off-journal sidecar,
+// never the projection fold.
 // ---------------------------------------------------------------------------
 
 message GetContentRequest {
   bytes content_ref = 1;                 // 32B
-  bytes instance_id = 2;                 // 16B — ownership ticket
+  bytes instance_id = 2;                 // 16B — ownership ticket; EMPTY = uploads scope (Batch A)
 }
 
 message ContentBlob {
@@ -681,6 +688,64 @@ message SubmitWorkflowRequest {
 }
 
 // ---------------------------------------------------------------------------
+// Batch A — client uploads + batch content reads + model discovery. Additive
+// RPCs (D120.6). PutContent is a CONTENT-STORE write, never a journal write:
+// the returned ref is SERVER-DERIVED blake3 over the payload bytes (SN-8 — the
+// client cannot name an identity), media_type/filename are ADVISORY audit
+// fields only (recorded in an off-journal uploads sidecar that is rebuildable-
+// to-empty; truth stays in the content store). The server caps the payload
+// fail-closed (`kx serve --content-max-bytes`, default 32 MiB). GetContent and
+// GetContentBatch accept the EMPTY instance_id as the uploads scope (see the
+// GetContent block). Unauthorized / missing / malformed batch refs return a
+// UNIFORMLY EMPTY item — no existence oracle (D120.1).
+// ---------------------------------------------------------------------------
+
+message PutContentRequest {
+  bytes payload = 1;                     // raw bytes; server size-cap fail-closed
+  string media_type = 2;                 // ADVISORY mime (audit/display only; never identity)
+  string filename = 3;                   // ADVISORY display name (audit/display only)
+}
+
+message PutContentResponse {
+  bytes content_ref = 1;                 // 32B — SERVER-DERIVED blake3 of payload (SN-8)
+  uint64 size = 2;                       // stored byte count
+  bool deduplicated = 3;                 // true iff the blob already existed in the store
+}
+
+message GetContentBatchRequest {
+  bytes instance_id = 1;                 // 16B ownership ticket; EMPTY = uploads scope
+  repeated bytes content_refs = 2;       // 32B each; >64 refs ⇒ INVALID_ARGUMENT (fail-closed)
+  optional uint64 max_bytes_per_item = 3;// truncate payloads beyond this (full_size stays honest)
+}
+
+message ContentBatchItem {
+  bytes content_ref = 1;                 // echoed; response preserves request order
+  bytes payload = 2;                     // EMPTY when unauthorized/missing/malformed (uniform)
+  bool truncated = 3;                    // true iff payload was cut at max_bytes_per_item
+  uint64 full_size = 4;                  // stored size; 0 when unauthorized/missing (uniform)
+}
+
+message GetContentBatchResponse {
+  repeated ContentBatchItem items = 1;   // one per requested ref, request order
+}
+
+// Model discovery is DISPLAY ONLY: model *selection* stays a recipe ENUM
+// free-param validated server-side at binding (never a client warrant axis).
+message ListModelsRequest {}
+
+message ModelSummary {
+  string model_id = 1;
+  repeated string modalities = 2;        // display strings: "text" | "image" | "audio" | "video"
+  string description = 3;                // host-synthesized display prose (GGUF name / file stem)
+  bool serving = 4;                      // true iff this model backs the live serve loop
+  uint32 context_len = 5;                // served context window (tokens)
+}
+
+message ListModelsResponse {
+  repeated ModelSummary models = 1;      // empty on an FFI-free build (honest, not an error)
+}
+
+// ---------------------------------------------------------------------------
 // Service — the external client-facing gateway (distinct from Coordinator).
 // ---------------------------------------------------------------------------
 
@@ -719,4 +784,9 @@ service KxGateway {
   // Blueprint-builder additive (D120.6): author a Tier-1 DAG (vetted palette) and
   // run it — server-compiled identity + server-built warrants + R-1..R-15 admission.
   rpc SubmitWorkflow(SubmitWorkflowRequest) returns (RunHandle);
+  // Batch A additive (D120.6): client uploads (content-store write, never a
+  // journal write) + batch content reads + model discovery (display only).
+  rpc PutContent(PutContentRequest) returns (PutContentResponse);
+  rpc GetContentBatch(GetContentBatchRequest) returns (GetContentBatchResponse);
+  rpc ListModels(ListModelsRequest) returns (ListModelsResponse);
 }

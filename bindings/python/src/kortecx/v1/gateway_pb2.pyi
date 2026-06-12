@@ -806,3 +806,75 @@ class SubmitWorkflowRequest(_message.Message):
     edges: _containers.RepeatedCompositeFieldContainer[WorkflowEdge]
     execution_mode: WorkflowExecutionMode
     def __init__(self, seed: _Optional[int] = ..., steps: _Optional[_Iterable[_Union[WorkflowStep, _Mapping]]] = ..., edges: _Optional[_Iterable[_Union[WorkflowEdge, _Mapping]]] = ..., execution_mode: _Optional[_Union[WorkflowExecutionMode, str]] = ...) -> None: ...
+
+class PutContentRequest(_message.Message):
+    __slots__ = ("payload", "media_type", "filename")
+    PAYLOAD_FIELD_NUMBER: _ClassVar[int]
+    MEDIA_TYPE_FIELD_NUMBER: _ClassVar[int]
+    FILENAME_FIELD_NUMBER: _ClassVar[int]
+    payload: bytes
+    media_type: str
+    filename: str
+    def __init__(self, payload: _Optional[bytes] = ..., media_type: _Optional[str] = ..., filename: _Optional[str] = ...) -> None: ...
+
+class PutContentResponse(_message.Message):
+    __slots__ = ("content_ref", "size", "deduplicated")
+    CONTENT_REF_FIELD_NUMBER: _ClassVar[int]
+    SIZE_FIELD_NUMBER: _ClassVar[int]
+    DEDUPLICATED_FIELD_NUMBER: _ClassVar[int]
+    content_ref: bytes
+    size: int
+    deduplicated: bool
+    def __init__(self, content_ref: _Optional[bytes] = ..., size: _Optional[int] = ..., deduplicated: bool = ...) -> None: ...
+
+class GetContentBatchRequest(_message.Message):
+    __slots__ = ("instance_id", "content_refs", "max_bytes_per_item")
+    INSTANCE_ID_FIELD_NUMBER: _ClassVar[int]
+    CONTENT_REFS_FIELD_NUMBER: _ClassVar[int]
+    MAX_BYTES_PER_ITEM_FIELD_NUMBER: _ClassVar[int]
+    instance_id: bytes
+    content_refs: _containers.RepeatedScalarFieldContainer[bytes]
+    max_bytes_per_item: int
+    def __init__(self, instance_id: _Optional[bytes] = ..., content_refs: _Optional[_Iterable[bytes]] = ..., max_bytes_per_item: _Optional[int] = ...) -> None: ...
+
+class ContentBatchItem(_message.Message):
+    __slots__ = ("content_ref", "payload", "truncated", "full_size")
+    CONTENT_REF_FIELD_NUMBER: _ClassVar[int]
+    PAYLOAD_FIELD_NUMBER: _ClassVar[int]
+    TRUNCATED_FIELD_NUMBER: _ClassVar[int]
+    FULL_SIZE_FIELD_NUMBER: _ClassVar[int]
+    content_ref: bytes
+    payload: bytes
+    truncated: bool
+    full_size: int
+    def __init__(self, content_ref: _Optional[bytes] = ..., payload: _Optional[bytes] = ..., truncated: bool = ..., full_size: _Optional[int] = ...) -> None: ...
+
+class GetContentBatchResponse(_message.Message):
+    __slots__ = ("items",)
+    ITEMS_FIELD_NUMBER: _ClassVar[int]
+    items: _containers.RepeatedCompositeFieldContainer[ContentBatchItem]
+    def __init__(self, items: _Optional[_Iterable[_Union[ContentBatchItem, _Mapping]]] = ...) -> None: ...
+
+class ListModelsRequest(_message.Message):
+    __slots__ = ()
+    def __init__(self) -> None: ...
+
+class ModelSummary(_message.Message):
+    __slots__ = ("model_id", "modalities", "description", "serving", "context_len")
+    MODEL_ID_FIELD_NUMBER: _ClassVar[int]
+    MODALITIES_FIELD_NUMBER: _ClassVar[int]
+    DESCRIPTION_FIELD_NUMBER: _ClassVar[int]
+    SERVING_FIELD_NUMBER: _ClassVar[int]
+    CONTEXT_LEN_FIELD_NUMBER: _ClassVar[int]
+    model_id: str
+    modalities: _containers.RepeatedScalarFieldContainer[str]
+    description: str
+    serving: bool
+    context_len: int
+    def __init__(self, model_id: _Optional[str] = ..., modalities: _Optional[_Iterable[str]] = ..., description: _Optional[str] = ..., serving: bool = ..., context_len: _Optional[int] = ...) -> None: ...
+
+class ListModelsResponse(_message.Message):
+    __slots__ = ("models",)
+    MODELS_FIELD_NUMBER: _ClassVar[int]
+    models: _containers.RepeatedCompositeFieldContainer[ModelSummary]
+    def __init__(self, models: _Optional[_Iterable[_Union[ModelSummary, _Mapping]]] = ...) -> None: ...

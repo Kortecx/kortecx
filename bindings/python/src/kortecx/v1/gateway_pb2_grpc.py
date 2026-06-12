@@ -153,6 +153,21 @@ class KxGatewayStub(object):
                 request_serializer=kortecx_dot_v1_dot_gateway__pb2.SubmitWorkflowRequest.SerializeToString,
                 response_deserializer=kortecx_dot_v1_dot_gateway__pb2.RunHandle.FromString,
                 _registered_method=True)
+        self.PutContent = channel.unary_unary(
+                '/kortecx.v1.KxGateway/PutContent',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.PutContentRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.PutContentResponse.FromString,
+                _registered_method=True)
+        self.GetContentBatch = channel.unary_unary(
+                '/kortecx.v1.KxGateway/GetContentBatch',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.GetContentBatchRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.GetContentBatchResponse.FromString,
+                _registered_method=True)
+        self.ListModels = channel.unary_unary(
+                '/kortecx.v1.KxGateway/ListModels',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.ListModelsRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.ListModelsResponse.FromString,
+                _registered_method=True)
 
 
 class KxGatewayServicer(object):
@@ -311,6 +326,26 @@ class KxGatewayServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def PutContent(self, request, context):
+        """Batch A additive (D120.6): client uploads (content-store write, never a
+        journal write) + batch content reads + model discovery (display only).
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def GetContentBatch(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ListModels(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_KxGatewayServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -428,6 +463,21 @@ def add_KxGatewayServicer_to_server(servicer, server):
                     servicer.SubmitWorkflow,
                     request_deserializer=kortecx_dot_v1_dot_gateway__pb2.SubmitWorkflowRequest.FromString,
                     response_serializer=kortecx_dot_v1_dot_gateway__pb2.RunHandle.SerializeToString,
+            ),
+            'PutContent': grpc.unary_unary_rpc_method_handler(
+                    servicer.PutContent,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.PutContentRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.PutContentResponse.SerializeToString,
+            ),
+            'GetContentBatch': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetContentBatch,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.GetContentBatchRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.GetContentBatchResponse.SerializeToString,
+            ),
+            'ListModels': grpc.unary_unary_rpc_method_handler(
+                    servicer.ListModels,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.ListModelsRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.ListModelsResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -1055,6 +1105,87 @@ class KxGateway(object):
             '/kortecx.v1.KxGateway/SubmitWorkflow',
             kortecx_dot_v1_dot_gateway__pb2.SubmitWorkflowRequest.SerializeToString,
             kortecx_dot_v1_dot_gateway__pb2.RunHandle.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def PutContent(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/PutContent',
+            kortecx_dot_v1_dot_gateway__pb2.PutContentRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.PutContentResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GetContentBatch(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/GetContentBatch',
+            kortecx_dot_v1_dot_gateway__pb2.GetContentBatchRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.GetContentBatchResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ListModels(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/ListModels',
+            kortecx_dot_v1_dot_gateway__pb2.ListModelsRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.ListModelsResponse.FromString,
             options,
             channel_credentials,
             insecure,
