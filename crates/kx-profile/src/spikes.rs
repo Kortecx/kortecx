@@ -99,6 +99,7 @@ fn config(dir: &Path) -> Result<GatewayConfig, ProfileError> {
         tls: None,
         cors_origins: Vec::new(),
         console_listen: ConsoleMode::Disabled,
+        content_max_bytes: kx_gateway::DEFAULT_CONTENT_MAX_BYTES,
     })
 }
 

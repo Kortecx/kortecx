@@ -355,24 +355,36 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     //     coordinator needs the role registry. Fail-soft: no/unfit model ⇒ `None` ⇒ the
     //     durable spine + AL1 leaf-model path are unaffected (no shaper loop).
     #[cfg(feature = "inference")]
-    let shaper_runtime: Option<crate::model_exec::ShaperRuntime> =
-        match crate::model_exec::resolve_serve_model() {
-            Some(gguf) => {
-                let model_id = crate::model_exec::serve_model_id(&gguf);
-                match crate::model_exec::build_serve_backend(&gguf, &model_id) {
-                    Ok(backend) => Some(crate::model_exec::build_shaper_runtime(
-                        &model_id,
-                        backend,
-                        default_executor_class(),
-                    )),
-                    Err(error) => {
-                        tracing::warn!(%error, "serve model is not fit; live loop NOT enabled");
-                        None
-                    }
+    let (shaper_runtime, model_catalog_entries): (
+        Option<crate::model_exec::ShaperRuntime>,
+        Vec<kx_gateway_core::ModelSummaryEntry>,
+    ) = match crate::model_exec::resolve_serve_model() {
+        Some(gguf) => {
+            let model_id = crate::model_exec::serve_model_id(&gguf);
+            match crate::model_exec::build_serve_backend(&gguf, &model_id) {
+                Ok(backend) => {
+                    // Batch A: the ListModels display entry — built from the
+                    // SAME facts the backend just registered (display only).
+                    let entry = crate::model_exec::catalog_entry(&gguf, &model_id);
+                    (
+                        Some(crate::model_exec::build_shaper_runtime(
+                            &model_id,
+                            backend,
+                            default_executor_class(),
+                        )),
+                        vec![entry],
+                    )
+                }
+                Err(error) => {
+                    tracing::warn!(%error, "serve model is not fit; live loop NOT enabled");
+                    (None, Vec::new())
                 }
             }
-            None => None,
-        };
+        }
+        None => (None, Vec::new()),
+    };
+    #[cfg(not(feature = "inference"))]
+    let model_catalog_entries: Vec<kx_gateway_core::ModelSummaryEntry> = Vec::new();
 
     // T3.7: capture an OPTIONAL dataset embedder from the resolved serve backend (the
     // server-embed path). `LlamaInferenceBackend` impls `EmbeddingBackend`, so datasets
@@ -621,6 +633,12 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     //      then a background poller folds the journal forward until shutdown.
     let capture_ledger = Arc::new(crate::capture::CaptureLedger::open(&catalog_dir)?);
     capture_ledger.fold(reader.as_ref()); // initial backfill before serving reads
+                                          // (3f-bis) Batch A: the uploads sidecar (uploads.db beside capture.db) — the
+                                          //      PutContent audit rows + the uploads-scope authorized set. UNLIKE
+                                          //      capture it is rebuildable-to-EMPTY (uploads never touch the journal;
+                                          //      the blobs in the content store are truth). Same hard-error posture
+                                          //      as capture on an unrecoverable open.
+    let uploads_db = Arc::new(crate::uploads::UploadsDb::open(&catalog_dir)?);
     let capture_task = {
         let ledger = capture_ledger.clone();
         let reader = reader.clone();
@@ -668,6 +686,12 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         crate::toolscout::HostToolScout::new(&toolscout_defs, toolscout_verdict),
     );
 
+    // Batch A: the content WRITE seam shares the same store Arc the read seam
+    // wraps (PutContent lands where GetContent reads); the model catalog is
+    // always wired (an FFI-free serve answers with an honest empty list).
+    let content_writer: Arc<dyn kx_gateway_core::ContentWriter> = content.clone();
+    let models_view: Arc<dyn kx_gateway_core::ModelCatalogView> =
+        Arc::new(crate::models::HostModelCatalog::new(model_catalog_entries));
     #[cfg_attr(not(feature = "hnsw"), allow(unused_mut))]
     let mut gateway = GatewayService::new(reader.clone(), submitter, content)
         .with_signature_catalog(signature_catalog)
@@ -681,6 +705,10 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         .with_react_supported(react_supported)
         .with_registered_tools(registered_tools)
         .with_toolscout_view(toolscout_view)
+        .with_content_writer(content_writer)
+        .with_uploads_ledger(uploads_db)
+        .with_put_content_cap(cfg.content_max_bytes)
+        .with_model_catalog_view(models_view)
         .with_event_tailer(Arc::new(crate::live_tail::LiveTailer::new(
             live_shutdown_rx.clone(),
         )));
@@ -763,7 +791,20 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     // Cloned for the ws accept loop, which spawns LAST (after every fallible
     // start step) so a failed start never orphans it.
     let ws_resolver = resolver.clone();
-    let svc = KxGatewayServer::with_interceptor(gateway, crate::auth::interceptor(resolver));
+    // Batch A: tonic's default 4 MiB DECODE limit would refuse a --content-max-bytes
+    // PutContent at the transport before the handler's honest RESOURCE_EXHAUSTED.
+    // Size the decode limit from the cap (+1 MiB proto/frame headroom); the ENCODE
+    // limit keeps tonic's default (unlimited) — large committed results already
+    // stream out today and lowering it would be a regression.
+    let decode_limit = usize::try_from(cfg.content_max_bytes)
+        .unwrap_or(usize::MAX)
+        .saturating_add(1024 * 1024);
+    // (`with_interceptor` is sugar that hides the sized server — compose the
+    // two layers explicitly so the limit lands on the codec.)
+    let svc = tonic::service::interceptor::InterceptedService::new(
+        KxGatewayServer::new(gateway).max_decoding_message_size(decode_limit),
+        crate::auth::interceptor(resolver),
+    );
     let local_addr = resolve_listen(cfg.listen).await?;
     // A1: build the (optional) server TLS config up front so a missing/unreadable
     // cert or key fails `start` loudly — before the port is bound — never a silent

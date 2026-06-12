@@ -207,6 +207,27 @@ pub(crate) fn serve_model_id(gguf: &Path) -> ModelId {
     ModelId(format!("kx-serve:{stem}"))
 }
 
+/// The Batch A `ListModels` display entry for the resolved serve model — built
+/// from the SAME facts the backend registers (the stem-derived id, the resolved
+/// `n_ctx`) plus a display-only description from the GGUF `general.name` (file
+/// stem fallback). Display/discovery ONLY (SN-8): nothing here authorizes a
+/// model route — selection stays a recipe ENUM free-param.
+#[must_use]
+pub(crate) fn catalog_entry(gguf: &Path, model_id: &ModelId) -> kx_gateway_core::ModelSummaryEntry {
+    kx_gateway_core::ModelSummaryEntry {
+        model_id: model_id.0.clone(),
+        modalities: vec!["text".to_string()],
+        description: kx_model_store::read_model_name(gguf).unwrap_or_else(|| {
+            gguf.file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("kx-serve-model")
+                .to_string()
+        }),
+        serving: true,
+        context_len: resolve_n_ctx(gguf),
+    }
+}
+
 /// The kortecx agent's required model signature (mirrors the harness's
 /// `kortecx_agent_requirements`): native tool-calling, Text, a chat template, a
 /// commercial-OK license, a `q4_k_m`/`q8_0`/`f16` quantization.
