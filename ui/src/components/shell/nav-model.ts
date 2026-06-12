@@ -5,6 +5,15 @@
  *
  * `path` MUST match a route registered in `router/router.tsx`; `icon` MUST be a key
  * in `shell/Icon.tsx`. The `nav-model` unit test pins both invariants.
+ *
+ * The EIGHT sections follow the product-spec IA in its order (§2.186 plan; D141.1
+ * disjointness): New Chat · Workflows · Blueprints · Datasets · Tools · Context ·
+ * Monitoring · Security. Display labels rename freely; ids/paths/icons stay on the
+ * frozen wire-legacy handles (`chat`/`runs`/`recipes`/`systems` — route, test-ids,
+ * RPC names never rename, the D136 Blueprints precedent). Activity is no longer a
+ * section: it is the navbar's activity drawer. Artifacts folds into Workflows
+ * (PR-2); until then the route stays reachable from a run's detail page and is
+ * breadcrumb-mapped via {@link HIDDEN_SECTIONS}.
  */
 
 export type IconName =
@@ -14,6 +23,7 @@ export type IconName =
   | "runs"
   | "recipes"
   | "artifacts"
+  | "context"
   | "datasets"
   | "tools"
   | "systems"
@@ -31,15 +41,16 @@ export type RoutePath =
   | "/runs"
   | "/recipes"
   | "/artifacts"
+  | "/context"
   | "/datasets"
   | "/tools"
   | "/systems"
   | "/settings";
 
 export interface NavSection {
-  /** Stable id (test/telemetry handle). */
+  /** Stable id (test/telemetry handle — wire-legacy, never renames). */
   readonly id: string;
-  /** Sidebar label. */
+  /** Sidebar label (display — renames freely). */
   readonly label: string;
   /** Route path (registered + Link-assignable). */
   readonly path: RoutePath;
@@ -49,28 +60,24 @@ export interface NavSection {
   readonly hint: string;
 }
 
-/**
- * The operational sections plus the agentic Chat. Activity is the run-scoped landing
- * (live feed + per-run metrics + time-travel); Monitoring is the gateway-wide
- * dashboard (cross-run metrics + self-correction trails + the action-capture stream).
- */
+/** The eight spec-IA sections, in the spec's order. */
 export const NAV_SECTIONS: readonly NavSection[] = [
   {
-    id: "activity",
-    label: "Activity",
-    path: "/activity",
-    icon: "activity",
-    hint: "Live events, metrics & time-travel",
+    id: "chat",
+    label: "New Chat",
+    path: "/chat",
+    icon: "chat",
+    hint: "A fresh agentic conversation over the runtime",
   },
   {
-    id: "monitor",
-    label: "Monitoring",
-    path: "/monitor",
-    icon: "monitor",
-    hint: "Gateway-wide metrics & self-correction trails",
+    // Display says "Workflows"; the id/path stay on the frozen `runs` handle
+    // (the PR-2 route merge adopts /workflows with redirects).
+    id: "runs",
+    label: "Workflows",
+    path: "/runs",
+    icon: "runs",
+    hint: "Your runs — list, DAG & telemetry",
   },
-  { id: "chat", label: "Chat", path: "/chat", icon: "chat", hint: "Agentic chat over the runtime" },
-  { id: "runs", label: "Runs", path: "/runs", icon: "runs", hint: "Run history (this session)" },
   {
     // Display says "Blueprints" (D136); the id/path/icon stay on the frozen
     // `recipes` wire-legacy handle (route, test-ids, RPC names never rename).
@@ -79,13 +86,6 @@ export const NAV_SECTIONS: readonly NavSection[] = [
     path: "/recipes",
     icon: "recipes",
     hint: "Catalog & run a blueprint",
-  },
-  {
-    id: "artifacts",
-    label: "Artifacts",
-    path: "/artifacts",
-    icon: "artifacts",
-    hint: "Committed run outputs",
   },
   {
     id: "datasets",
@@ -102,11 +102,42 @@ export const NAV_SECTIONS: readonly NavSection[] = [
     hint: "MCP tool discovery & bundle preview",
   },
   {
+    id: "context",
+    label: "Context",
+    path: "/context",
+    icon: "context",
+    hint: "Reusable instruction & file bundles",
+  },
+  {
+    id: "monitor",
+    label: "Monitoring",
+    path: "/monitor",
+    icon: "monitor",
+    hint: "Gateway-wide metrics & self-correction trails",
+  },
+  {
+    // Display says "Security"; the id/path stay on the frozen `systems` handle
+    // (teams/grants viewers today; roles + policy view land with PR-8).
     id: "systems",
-    label: "Systems",
+    label: "Security",
     path: "/systems",
     icon: "systems",
-    hint: "Gateway, health & teams",
+    hint: "Teams, grants & the policy view",
+  },
+] as const;
+
+/**
+ * Routes that are REACHABLE but not sidebar sections (deep links + breadcrumbs
+ * only). Artifacts folds into Workflows at PR-2; until then a run's detail page
+ * links here.
+ */
+export const HIDDEN_SECTIONS: readonly NavSection[] = [
+  {
+    id: "artifacts",
+    label: "Artifacts",
+    path: "/artifacts",
+    icon: "artifacts",
+    hint: "Committed run outputs",
   },
 ] as const;
 

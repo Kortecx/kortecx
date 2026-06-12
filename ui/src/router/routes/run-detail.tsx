@@ -1,4 +1,4 @@
-import { createRoute, useParams, useSearch } from "@tanstack/react-router";
+import { Link, createRoute, useParams, useSearch } from "@tanstack/react-router";
 import { Suspense, lazy, useState } from "react";
 import { ConnectGate } from "../../components/ConnectGate";
 import { EmptyState } from "../../components/EmptyState";
@@ -94,6 +94,16 @@ function RunDetailContent() {
         >
           Refresh
         </button>
+        {/* Artifacts left the sidebar (8-section IA); a run's outputs stay one
+            click away until the PR-2 Workflows merge folds the gallery in here. */}
+        <Link
+          className="btnlink"
+          to="/artifacts"
+          search={{ run: instanceId }}
+          data-testid="run-artifacts-link"
+        >
+          Artifacts →
+        </Link>
       </div>
       {atSeq != null ? (
         <p className="muted">Pinned snapshot at seq #{atSeq} (live polling paused).</p>

@@ -4,6 +4,7 @@ import { Suspense, useCallback, useEffect, useState } from "react";
 import { pageFade } from "../../app/motion";
 import { useConnection } from "../../kx/connection-context";
 import { DevToolsDock } from "../devtools";
+import { ActivityDrawer } from "./ActivityDrawer";
 import { Brand } from "./Brand";
 import { CommandPalette } from "./CommandPalette";
 import { ConnectionStatus } from "./ConnectionStatus";
@@ -58,6 +59,7 @@ export function AppShell() {
   const { status } = useConnection();
   const [collapsed, setCollapsed] = useState<boolean>(() => loadFlag(SIDEBAR_KEY));
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [activityOpen, setActivityOpen] = useState(false);
   const [devtoolsOpen, setDevtoolsOpen] = useState<boolean>(() => loadFlag(DEVTOOLS_KEY));
   const connected = status === "connected";
 
@@ -79,6 +81,8 @@ export function AppShell() {
 
   const openPalette = useCallback(() => setPaletteOpen(true), []);
   const closePalette = useCallback(() => setPaletteOpen(false), []);
+  const toggleActivity = useCallback(() => setActivityOpen((open) => !open), []);
+  const closeActivity = useCallback(() => setActivityOpen(false), []);
 
   // Global ⌘K / Ctrl+K — only meaningful once the nav exists (connected).
   useEffect(() => {
@@ -118,12 +122,17 @@ export function AppShell() {
       <a href="#main" className="skip-link">
         Skip to content
       </a>
-      <Navbar onOpenPalette={openPalette} onToggleDevtools={toggleDevtools} />
+      <Navbar
+        onOpenPalette={openPalette}
+        onToggleActivity={toggleActivity}
+        onToggleDevtools={toggleDevtools}
+      />
       <Sidebar collapsed={collapsed} onToggle={toggle} />
       <main className="shell__main" id="main">
         <RouteOutlet />
       </main>
       <CommandPalette open={paletteOpen} onClose={closePalette} />
+      <ActivityDrawer open={activityOpen} onClose={closeActivity} />
       {devtoolsOpen ? (
         <Suspense fallback={null}>
           <DevToolsDock onClose={toggleDevtools} />

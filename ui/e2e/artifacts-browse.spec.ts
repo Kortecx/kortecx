@@ -22,8 +22,9 @@ test("artifacts: browse a run's committed outputs and review one", async ({ page
     })
     .toBe(5);
 
-  // In-app navigate to Artifacts (a full page.goto would drop the in-memory connection).
-  await page.getByTestId("nav-artifacts").click();
+  // In-app navigate to Artifacts via the run-detail link (Artifacts left the
+  // sidebar with the 8-section IA; a full page.goto would drop the connection).
+  await page.getByTestId("run-artifacts-link").click();
   await expect(page.getByTestId("artifacts-section")).toBeVisible();
   // The just-run instance is selectable; its gallery lists the committed outputs.
   await expect(page.getByTestId("artifact-run-pick")).toBeVisible();

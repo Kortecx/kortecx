@@ -21,8 +21,11 @@ export function SystemsSection() {
 
   return (
     <section className="screen" data-testid="systems-section">
-      <h1>Systems</h1>
-      <p className="muted">The connected gateway, its liveness, and your teams &amp; sharing.</p>
+      <h1>Security</h1>
+      <p className="muted">
+        Teams, grants &amp; resolved warrants on the connected gateway — read-only here (authoring
+        is a managed-cloud capability).
+      </p>
       <m.div variants={stagger()} initial="hidden" animate="show">
         <GlowCard variants={fadeUp} stripe="var(--primary)" className="systems-facts-card">
           <dl className="facts">

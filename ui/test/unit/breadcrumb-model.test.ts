@@ -3,24 +3,35 @@ import { deriveCrumbs } from "../../src/components/shell/breadcrumb-model";
 
 describe("deriveCrumbs", () => {
   it("maps each nav section path to a single current crumb with its display label", () => {
-    expect(deriveCrumbs("/activity")).toEqual([{ label: "Activity" }]);
-    expect(deriveCrumbs("/chat")).toEqual([{ label: "Chat" }]);
+    // The spec-IA display renames (§2.186 / D141) over the frozen paths.
+    expect(deriveCrumbs("/chat")).toEqual([{ label: "New Chat" }]);
+    expect(deriveCrumbs("/runs")).toEqual([{ label: "Workflows" }]);
     // The display rename (D136): the frozen `recipes` path shows "Blueprints".
     expect(deriveCrumbs("/recipes")).toEqual([{ label: "Blueprints" }]);
+    expect(deriveCrumbs("/systems")).toEqual([{ label: "Security" }]);
+    expect(deriveCrumbs("/context")).toEqual([{ label: "Context" }]);
     expect(deriveCrumbs("/settings")).toEqual([{ label: "Settings" }]);
+  });
+
+  it("hidden (deep-link-only) routes still breadcrumb", () => {
+    expect(deriveCrumbs("/artifacts")).toEqual([{ label: "Artifacts" }]);
+  });
+
+  it("the retired /activity route no longer breadcrumbs (it redirects)", () => {
+    expect(deriveCrumbs("/activity")).toEqual([]);
   });
 
   it("renders a linked section crumb plus a short-hex detail crumb on run detail", () => {
     const id = "ab12cd34".repeat(8); // 64 hex chars
     expect(deriveCrumbs(`/runs/${id}`)).toEqual([
-      { label: "Runs", path: "/runs" },
+      { label: "Workflows", path: "/runs" },
       { label: "ab12cd34…cd34" },
     ]);
   });
 
   it("keeps a non-id segment verbatim", () => {
     expect(deriveCrumbs("/runs/latest")).toEqual([
-      { label: "Runs", path: "/runs" },
+      { label: "Workflows", path: "/runs" },
       { label: "latest" },
     ]);
   });

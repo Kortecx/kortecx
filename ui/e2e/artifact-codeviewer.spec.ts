@@ -23,7 +23,7 @@ test("artifacts: a committed output renders in the offline Monaco code viewer", 
     })
     .toBe(5);
 
-  await page.getByTestId("nav-artifacts").click();
+  await page.getByTestId("run-artifacts-link").click();
   await expect(page.getByTestId("artifacts-section")).toBeVisible();
   await expect(page.getByTestId("artifact-gallery")).toBeVisible({ timeout: 30_000 });
   const rows = page.locator(".artifact-list__row");

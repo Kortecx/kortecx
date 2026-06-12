@@ -18,13 +18,19 @@ import { Sidebar } from "../../src/components/shell/Sidebar";
 describe("Sidebar", () => {
   it("renders an item with a label for every section when expanded", () => {
     render(<Sidebar collapsed={false} onToggle={() => {}} />);
-    for (const id of ["activity", "chat", "runs", "recipes", "artifacts", "datasets", "systems"]) {
+    for (const id of ["chat", "runs", "recipes", "datasets", "tools", "context", "systems"]) {
       expect(screen.getByTestId(`nav-${id}`)).toBeInTheDocument();
     }
-    expect(screen.getByText("Activity")).toBeInTheDocument();
-    expect(screen.getByText("Chat")).toBeInTheDocument();
-    // The display rename (D136): the frozen `recipes` id shows "Blueprints".
+    expect(screen.getByText("New Chat")).toBeInTheDocument();
+    expect(screen.getByText("Context")).toBeInTheDocument();
+    // The display renames over frozen ids (D136 / D141): recipes shows
+    // "Blueprints", runs shows "Workflows", systems shows "Security".
     expect(screen.getByTestId("nav-recipes")).toHaveTextContent("Blueprints");
+    expect(screen.getByTestId("nav-runs")).toHaveTextContent("Workflows");
+    expect(screen.getByTestId("nav-systems")).toHaveTextContent("Security");
+    // Activity left the sidebar (it is the navbar drawer now).
+    expect(screen.queryByTestId("nav-activity")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("nav-artifacts")).not.toBeInTheDocument();
     expect(screen.getByTestId("sidebar")).toHaveAttribute("data-collapsed", "false");
     // The sidebar hosts the console's single brand anchor (icon + wordmark).
     expect(screen.getByTestId("brand")).toHaveTextContent("kortecx");
@@ -33,8 +39,8 @@ describe("Sidebar", () => {
   it("hides labels (icon rail) when collapsed", () => {
     render(<Sidebar collapsed={true} onToggle={() => {}} />);
     // The items remain (icons), but the text labels are not rendered.
-    expect(screen.getByTestId("nav-activity")).toBeInTheDocument();
-    expect(screen.queryByText("Activity")).not.toBeInTheDocument();
+    expect(screen.getByTestId("nav-chat")).toBeInTheDocument();
+    expect(screen.queryByText("New Chat")).not.toBeInTheDocument();
     expect(screen.getByTestId("sidebar")).toHaveAttribute("data-collapsed", "true");
     // Collapsed rail keeps the brand icon, drops the wordmark.
     expect(screen.getByTestId("brand")).toBeInTheDocument();
