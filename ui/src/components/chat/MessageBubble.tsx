@@ -1,7 +1,31 @@
 import type { ReactNode } from "react";
-import type { ChatMessage } from "../../lib/chat-thread";
+import { useUploadPreview } from "../../kx/use-upload-preview";
+import type { ChatMessage, MessageAttachment } from "../../lib/chat-thread";
 import { DigestChip } from "../DigestChip";
 import { ErrorNotice } from "../ErrorNotice";
+
+/** One attachment figure. A LIVE thread previews from the session-local `blob:`
+ *  URL of the user's own file; a RESTORED thread re-resolves the bytes through
+ *  the uploads scope (same server-derived ref). No URL resolves ⇒ chip only. */
+function AttachmentFigure({ attachment }: { attachment: MessageAttachment }) {
+  const restored = useUploadPreview(
+    attachment.ref,
+    attachment.mediaType,
+    attachment.objectUrl === undefined,
+  );
+  const src = attachment.objectUrl ?? restored;
+  return (
+    <figure className="bubble__attachment">
+      {src !== null && attachment.mediaType.startsWith("image/") ? (
+        <img src={src} alt={attachment.filename} />
+      ) : null}
+      <figcaption>
+        <span title={attachment.filename}>{attachment.filename}</span>
+        <DigestChip hex={attachment.ref} label={attachment.filename} />
+      </figcaption>
+    </figure>
+  );
+}
 
 /** One chat bubble (user/assistant). `trace` slots the assistant's DAG-of-thought;
  *  `onRetry` arms the failed-turn retry (identical args — the server dedups). */
@@ -30,17 +54,7 @@ export function MessageBubble({
       {message.attachments && message.attachments.length > 0 ? (
         <div className="bubble__attachments" data-testid="bubble-attachments">
           {message.attachments.map((a) => (
-            <figure key={a.ref} className="bubble__attachment">
-              {a.objectUrl && a.mediaType.startsWith("image/") ? (
-                // The session-local blob: preview of the user's OWN file —
-                // untrusted server bytes never render as media here.
-                <img src={a.objectUrl} alt={a.filename} />
-              ) : null}
-              <figcaption>
-                <span title={a.filename}>{a.filename}</span>
-                <DigestChip hex={a.ref} label={a.filename} />
-              </figcaption>
-            </figure>
+            <AttachmentFigure key={a.ref} attachment={a} />
           ))}
         </div>
       ) : null}

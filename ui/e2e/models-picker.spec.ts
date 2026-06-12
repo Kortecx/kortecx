@@ -9,7 +9,7 @@ test.afterEach(() => {
   gw = undefined;
 });
 
-test("the model picker hides on a model-less serve (honest empty — no fake knob)", async ({
+test("the model control is VISIBLE with an honest empty state on a model-less serve", async ({
   page,
 }) => {
   gw = await spawnGateway({ corsOrigin: SPA_ORIGIN });
@@ -18,10 +18,12 @@ test("the model picker hides on a model-less serve (honest empty — no fake kno
   await page.getByTestId("nav-chat").click();
   await expect(page.getByTestId("chat-panel")).toBeVisible();
 
-  // The FFI-free test serve answers ListModels with an EMPTY list — the picker
-  // must not render (and nothing crashes).
-  await expect(page.getByTestId("model-picker")).toHaveCount(0);
+  // The FFI-free test serve answers ListModels with an EMPTY list — the control
+  // stays VISIBLE (PR-1.1 review feedback) as an honest, disabled empty state;
+  // the SELECT (a knob with nothing to pick) does not render.
+  await expect(page.getByTestId("model-picker-empty")).toBeVisible();
+  await expect(page.getByTestId("model-picker-empty")).toContainText("none on this serve");
+  await expect(page.getByTestId("model-picker-select")).toHaveCount(0);
   // The chat surface stays fully usable.
-  await expect(page.getByLabel(/^message$/i)).toBeEnabled();
   await expect(page.getByTestId("attach-btn")).toBeVisible();
 });

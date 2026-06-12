@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { typeMessage } from "./fixtures/chat";
 import { connectConsole } from "./fixtures/connect";
 import { type Gateway, SPA_ORIGIN, spawnGateway } from "./fixtures/serve";
 
@@ -51,7 +52,7 @@ test("attach uploads a PNG (PutContent), previews it, dedups a re-pick, and send
 
   // Send: the user bubble carries the attachment (preview + DigestChip) and the
   // echo turn still commits (display-only path — no undeclared arg was sent).
-  await page.getByLabel(/^message$/i).fill("what is attached?");
+  await typeMessage(page, "what is attached?");
   await page.getByTestId("send").click();
   await expect(page.getByTestId("bubble-attachments")).toBeVisible();
   await expect(page.getByTestId("bubble-user").getByTestId("digest-chip")).toBeVisible();
@@ -72,7 +73,7 @@ test("a failed turn offers retry with identical args and recovers when the gatew
 
   // Fail the first turn by pointing chat at a recipe the gateway cannot run.
   await page.getByLabel(/blueprint handle/i).fill("kx/recipes/does-not-exist");
-  await page.getByLabel(/^message$/i).fill("retry me");
+  await typeMessage(page, "retry me");
   await page.getByTestId("send").click();
   await expect(page.getByTestId("bubble-assistant")).toHaveAttribute("data-status", "failed", {
     timeout: 30_000,

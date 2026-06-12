@@ -61,6 +61,8 @@ export type ChatAction =
   /** Re-dispatch a FAILED turn with its identical args (Batch A idempotent-run
    *  UX: content-addressed refs + server dedup make the re-run safe). */
   | { type: "turn_retry"; assistantId: string }
+  /** Restore a saved thread (chat history) — replaces the whole message list. */
+  | { type: "load_thread"; messages: readonly ChatMessage[] }
   | { type: "reset" };
 
 /** Replace the message with `id` via `fn` (identity if not found). */
@@ -115,6 +117,8 @@ export function chatReducer(state: ChatThread, action: ChatAction): ChatThread {
       return patch(state, action.assistantId, (m) =>
         m.status === "failed" ? { ...m, status: "pending", error: undefined, text: "" } : m,
       );
+    case "load_thread":
+      return { messages: [...action.messages] };
     case "reset":
       return EMPTY_THREAD;
     default:

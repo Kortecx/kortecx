@@ -43,7 +43,10 @@ test("blueprint form validation: a required field blocks submit until filled", a
 
   // Submit with the required `topic` blank → an inline validation error, no run.
   await page.getByRole("button", { name: /run blueprint/i }).click();
-  await expect(page.getByRole("alert")).toContainText(/required/i);
+  // Filtered: Monaco (the chat composer, PR-1.1) appends EMPTY global
+  // role="alert" aria containers to document.body that persist across SPA
+  // navigation — match the actual validation message, not "any alert".
+  await expect(page.getByRole("alert").filter({ hasText: /required/i })).toBeVisible();
   await expect(page.getByTestId("mote-dag")).toHaveCount(0);
 
   // Fill it and the run proceeds.
