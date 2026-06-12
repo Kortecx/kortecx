@@ -180,6 +180,38 @@ const REACT_MAX_TURNS_SCHEMA_REF: [u8; 32] = [0x50; 32];
 /// See [`REACT_INSTRUCTION_SCHEMA_REF`].
 const REACT_MAX_TOOL_CALLS_SCHEMA_REF: [u8; 32] = [0x51; 32];
 
+/// The wire handle of the Batch A VISION recipe: a single PURE (greedy) model
+/// step like `kx/recipes/chat` PLUS a REQUIRED `image_ref` slot (the 64-hex
+/// `PutContent` ref of an uploaded image, fetched by the multimodal backend)
+/// and a REQUIRED `model` ENUM slot (allowed = the served model id — model
+/// selection is a server-validated free-param, never a client warrant, SN-8).
+/// A separate recipe BY DESIGN: every variable slot is required at binding
+/// (`SlotMissing` otherwise), so extending `kx/recipes/chat` would break every
+/// existing `{prompt}` caller. Provisioned only when the serve model registered
+/// IMAGE-capable (`KX_SERVE_MMPROJ_GGUF` resolved).
+pub const VISION_RECIPE_HANDLE: &str = "kx/recipes/vision";
+
+/// A placeholder `logic_ref` for the vision step (a distinct sentinel ⇒ a
+/// distinct manifest; routing is by `prompt` + `model_id`, as with chat).
+const VISION_LOGIC_REF: [u8; 32] = [0x52; 32];
+
+/// Schema-ref of the vision recipe's `image_ref` slot (`Bytes`, 64 hex chars).
+const VISION_IMAGE_SCHEMA_REF: [u8; 32] = [0x53; 32];
+/// Schema-ref of the vision recipe's `model` ENUM slot (allowed = served id;
+/// resolved DYNAMICALLY by [`DemoSchemaResolver`] from the provisioned model).
+const VISION_MODEL_SCHEMA_REF: [u8; 32] = [0x54; 32];
+
+/// The vision recipe's `model` slot name (binds into `config_subset["model"]` —
+/// identity-bearing, ignored by the executor; the warrant's `model_route` is
+/// what actually routes).
+const VISION_MODEL_KEY: &str = "model";
+
+/// The vision recipe's image slot name — the binder writes the bound arg into
+/// `config_subset["image_ref"]`, the key the model executor's multimodal arm
+/// reads (exactly the [`PROMPT_KEY`] pattern). Lives here (not in the
+/// inference-gated `model_exec`) so the recipe seeds feature-free.
+pub(crate) const IMAGE_REF_KEY: &str = "image_ref";
+
 /// The blueprint-authoring asset (`SubmitWorkflow` / the Blueprint builder). Each
 /// party is granted `Use` on it at provision time, so [`HostWorkflowAuthor`]
 /// resolves the party's effective authority from the SAME grant ledger as Invoke —
@@ -241,7 +273,7 @@ impl DemoLibrary {
         exec_class: ExecutorClass,
         parties: &[String],
     ) -> Result<Self, GatewayError> {
-        Self::seed(dir, exec_class, parties, None, None, None)
+        Self::seed(dir, exec_class, parties, None, None, None, false)
     }
 
     /// Like [`DemoLibrary::open`], plus (when `real_body_ref` is `Some`) seeds the
@@ -256,7 +288,7 @@ impl DemoLibrary {
         parties: &[String],
         real_body_ref: Option<ContentRef>,
     ) -> Result<Self, GatewayError> {
-        Self::seed(dir, exec_class, parties, real_body_ref, None, None)
+        Self::seed(dir, exec_class, parties, real_body_ref, None, None, false)
     }
 
     /// Like [`DemoLibrary::open_with_real_exec`], plus (when `serve_model` is
@@ -283,6 +315,7 @@ impl DemoLibrary {
             real_body_ref,
             serve_model.as_ref(),
             None,
+            false,
         )
     }
 
@@ -302,6 +335,7 @@ impl DemoLibrary {
         real_body_ref: Option<ContentRef>,
         serve_model: Option<&ModelId>,
         react_tool: Option<&(ToolName, ToolVersion)>,
+        vision: bool,
     ) -> Result<Self, GatewayError> {
         Self::seed(
             dir,
@@ -310,6 +344,7 @@ impl DemoLibrary {
             real_body_ref,
             serve_model,
             react_tool,
+            vision,
         )
     }
 
@@ -319,7 +354,7 @@ impl DemoLibrary {
     /// guarded version publish + idempotent grants).
     // A flat, sequential one-block-per-recipe seeding fn — the length is the
     // recipe count, not cognitive complexity (the `start_impl` precedent).
-    #[allow(clippy::too_many_lines)]
+    #[allow(clippy::too_many_lines, clippy::too_many_arguments)]
     fn seed(
         dir: &Path,
         exec_class: ExecutorClass,
@@ -327,6 +362,7 @@ impl DemoLibrary {
         real_body_ref: Option<ContentRef>,
         serve_model: Option<&ModelId>,
         react_tool: Option<&(ToolName, ToolVersion)>,
+        vision: bool,
     ) -> Result<Self, GatewayError> {
         let cat = |e: String| GatewayError::Catalog(e);
         let versions =
@@ -418,6 +454,37 @@ impl DemoLibrary {
                 RecipeMeta {
                     owner_root: model_w,
                     free_params: prompt_contract(),
+                },
+            ));
+        }
+
+        // (vision) the Batch A image recipe — chat plus a REQUIRED `image_ref`
+        // slot (an uploaded blob's 64-hex ref, fetched by the multimodal
+        // backend) and a REQUIRED `model` ENUM slot (allowed = the served id —
+        // selection is a server-validated free-param, never a client warrant).
+        // Seeded only when the serve model registered IMAGE-capable.
+        if let Some(model_id) = serve_model.filter(|_| vision) {
+            let vision_w = model_warrant(exec_class, model_id);
+            let vision_h = vision_handle()?;
+            seed_recipe(
+                &versions,
+                &bodies,
+                &grants,
+                &owner,
+                parties,
+                &vision_h,
+                recipe_body(
+                    LogicRef::from_bytes(VISION_LOGIC_REF),
+                    &vision_w,
+                    &[PROMPT_KEY, IMAGE_REF_KEY, VISION_MODEL_KEY],
+                ),
+                &vision_w,
+            )?;
+            recipes.push((
+                vision_h,
+                RecipeMeta {
+                    owner_root: vision_w,
+                    free_params: vision_contract(),
                 },
             ));
         }
@@ -543,23 +610,37 @@ impl DemoLibrary {
             .iter()
             .find(|(h, _)| *h == asset_path)
             .map(|(_, m)| m)?;
+        let resolver = self.schema_resolver();
         let fields = meta
             .free_params
             .slots
             .iter()
             .filter(|(_, slot)| slot.binding == SlotBinding::Variable)
-            .map(|(name, slot)| free_param_field(name, slot))
+            .map(|(name, slot)| free_param_field(name, slot, &resolver))
             .collect();
         Some(fields)
+    }
+
+    /// The schema resolver carrying this library's live serve facts (the vision
+    /// `model` ENUM's allowed set). The SAME resolver backs the published form
+    /// (`recipe_form`) and the bind (`Invoke`), so they agree by construction.
+    fn schema_resolver(&self) -> DemoSchemaResolver {
+        DemoSchemaResolver {
+            serve_model: self.serve_model.as_ref().map(|m| m.0.clone()),
+        }
     }
 }
 
 /// Resolve one Variable free-param slot into a renderable form field. An untyped
 /// (or unresolvable/undecodable) slot becomes [`RecipeParamKind::Unspecified`].
-fn free_param_field(name: &str, slot: &FreeParamSlot) -> RecipeFormFieldEntry {
+fn free_param_field(
+    name: &str,
+    slot: &FreeParamSlot,
+    resolver: &DemoSchemaResolver,
+) -> RecipeFormFieldEntry {
     let ty = slot
         .schema_ref
-        .and_then(|r| DemoSchemaResolver.resolve_schema(&r))
+        .and_then(|r| resolver.resolve_schema(&r))
         .and_then(|bytes| {
             bincode::serde::decode_from_slice::<ParamType, _>(&bytes, canonical_config())
                 .ok()
@@ -743,7 +824,7 @@ impl RecipeBinder for HostRecipeBinder {
             &party_id,
             &asset_path,
             &meta.free_params,
-            &DemoSchemaResolver,
+            &self.lib.schema_resolver(),
             args,
         )
         .map_err(map_invoke_err)?;
@@ -1178,6 +1259,31 @@ fn model_handle() -> Result<AssetPath, GatewayError> {
         .ok_or_else(|| GatewayError::Catalog("invalid model recipe handle".into()))
 }
 
+/// The vision recipe's free-param contract (Batch A): `prompt` (`Str`, the chat
+/// slot) + `image_ref` (`Bytes` — a 64-hex `PutContent` ref the multimodal arm
+/// fetches) + `model` (`Enum`, allowed = the served id, resolved dynamically by
+/// [`DemoSchemaResolver`]). All REQUIRED at binding (every variable slot is).
+fn vision_contract() -> FreeParamContract {
+    FreeParamContract::new()
+        .with_slot(
+            PROMPT_KEY,
+            FreeParamSlot::variable(Some(MODEL_PROMPT_SCHEMA_REF)),
+        )
+        .with_slot(
+            IMAGE_REF_KEY,
+            FreeParamSlot::variable(Some(VISION_IMAGE_SCHEMA_REF)),
+        )
+        .with_slot(
+            VISION_MODEL_KEY,
+            FreeParamSlot::variable(Some(VISION_MODEL_SCHEMA_REF)),
+        )
+}
+
+fn vision_handle() -> Result<AssetPath, GatewayError> {
+    parse_handle(VISION_RECIPE_HANDLE)
+        .ok_or_else(|| GatewayError::Catalog("invalid vision recipe handle".into()))
+}
+
 /// The react recipe's free-param contract (PR-2d-2): `instruction` (`Str`) plus
 /// the per-run budget caps `max_turns` / `max_tool_calls` (`Int`, 1..=8). The
 /// slot names ARE the seed's config keys (the binder writes a bound arg into
@@ -1204,9 +1310,15 @@ fn react_handle() -> Result<AssetPath, GatewayError> {
         .ok_or_else(|| GatewayError::Catalog("invalid react recipe handle".into()))
 }
 
-/// Resolves the demo `topic`, the model `prompt`, and the react free-param
-/// schema-refs to their typed schemas.
-struct DemoSchemaResolver;
+/// Resolves the demo `topic`, the model `prompt`, the react, and the vision
+/// free-param schema-refs to their typed schemas. Carries the served model id
+/// so the vision `model` ENUM's allowed set is the LIVE serve fact (Batch A) —
+/// the only dynamic schema; everything else is static.
+struct DemoSchemaResolver {
+    /// The served model id (`None` on a model-less serve — the vision schema
+    /// then resolves to an EMPTY enum, which refuses every value, fail-closed).
+    serve_model: Option<String>,
+}
 
 impl SchemaResolver for DemoSchemaResolver {
     fn resolve_schema(&self, schema_ref: &[u8; 32]) -> Option<Vec<u8>> {
@@ -1224,6 +1336,14 @@ impl SchemaResolver for DemoSchemaResolver {
             Some(encode_param_schema(&ParamType::Int {
                 min: Some(1),
                 max: Some(8),
+            }))
+        } else if *schema_ref == VISION_IMAGE_SCHEMA_REF {
+            // A 32-byte content ref as 64 hex chars (the JSON value is a string).
+            Some(encode_param_schema(&ParamType::Bytes { max_len: 64 }))
+        } else if *schema_ref == VISION_MODEL_SCHEMA_REF {
+            // Allowed = exactly the served model id (server-validated selection).
+            Some(encode_param_schema(&ParamType::Enum {
+                allowed: self.serve_model.iter().cloned().collect(),
             }))
         } else {
             None
@@ -1945,6 +2065,56 @@ mod tests {
         assert_eq!(form[0].name, PROMPT_KEY);
         assert_eq!(form[0].kind, RecipeParamKind::Str);
         assert!(form[0].required);
+    }
+
+    #[test]
+    fn vision_recipe_seeds_only_with_vision_and_forms_the_three_typed_fields() {
+        // Without the vision flag: chat seeds, vision does NOT (no fake recipe
+        // on a text-only serve).
+        let dir = tempfile::tempdir().unwrap();
+        let lib = DemoLibrary::open_complete(
+            dir.path(),
+            ExecutorClass::Bwrap,
+            &["alice@acme".to_string()],
+            None,
+            Some(&ModelId("kx-serve:vlm".to_string())),
+            None,
+            false,
+        )
+        .unwrap();
+        assert!(!lib
+            .recipe_handles()
+            .contains(&VISION_RECIPE_HANDLE.to_string()));
+
+        // With it: the form publishes prompt(Str) + image_ref(Bytes, 64) +
+        // model(Enum, allowed = exactly the served id).
+        let dir2 = tempfile::tempdir().unwrap();
+        let lib = DemoLibrary::open_complete(
+            dir2.path(),
+            ExecutorClass::Bwrap,
+            &["alice@acme".to_string()],
+            None,
+            Some(&ModelId("kx-serve:vlm".to_string())),
+            None,
+            true,
+        )
+        .unwrap();
+        let form = lib
+            .recipe_form(VISION_RECIPE_HANDLE)
+            .expect("vision is provisioned");
+        assert_eq!(form.len(), 3);
+        let field = |n: &str| form.iter().find(|f| f.name == n).expect("field present");
+        assert_eq!(field(PROMPT_KEY).kind, RecipeParamKind::Str);
+        let image = field(IMAGE_REF_KEY);
+        assert_eq!(image.kind, RecipeParamKind::Bytes);
+        assert_eq!(image.max_len, Some(64), "a 32-byte ref as 64 hex chars");
+        let model = field(VISION_MODEL_KEY);
+        assert_eq!(model.kind, RecipeParamKind::Enum);
+        assert_eq!(
+            model.allowed,
+            vec!["kx-serve:vlm".to_string()],
+            "allowed = exactly the served id (server-validated selection)"
+        );
     }
 
     #[test]

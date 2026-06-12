@@ -361,11 +361,20 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     ) = match crate::model_exec::resolve_serve_model() {
         Some(gguf) => {
             let model_id = crate::model_exec::serve_model_id(&gguf);
-            match crate::model_exec::build_serve_backend(&gguf, &model_id) {
+            // Batch A (vision): an optional projector upgrades the SAME weights
+            // to an image-capable registration (+ the vision recipe below).
+            let mmproj = crate::model_exec::resolve_serve_mmproj();
+            match crate::model_exec::build_serve_backend(
+                &gguf,
+                &model_id,
+                mmproj.as_deref(),
+                content.clone(),
+            ) {
                 Ok(backend) => {
                     // Batch A: the ListModels display entry — built from the
                     // SAME facts the backend just registered (display only).
-                    let entry = crate::model_exec::catalog_entry(&gguf, &model_id);
+                    let entry =
+                        crate::model_exec::catalog_entry(&gguf, &model_id, mmproj.is_some());
                     (
                         Some(crate::model_exec::build_shaper_runtime(
                             &model_id,
@@ -573,6 +582,13 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         .iter()
         .map(|(id, ver)| (id.0.clone(), ver.0.clone()))
         .collect();
+    // Batch A: vision is a SERVE FACT derived from what actually registered
+    // (the catalog entry declares "image" iff the projector resolved + the
+    // backend built) — the vision recipe seeds exactly when the dispatch path
+    // can honour it.
+    let vision_supported = model_catalog_entries
+        .iter()
+        .any(|e| e.modalities.iter().any(|m| m == "image"));
     let demo = Arc::new(DemoLibrary::open_complete(
         &catalog_dir,
         default_executor_class(),
@@ -580,6 +596,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         real_body_ref,
         serve_model.as_ref(),
         react_tool.as_ref(),
+        vision_supported,
     )?);
     // One seed, two seams: the binder (Invoke) and the recipe catalog (ListRecipes
     // / GetRecipeForm) share the SAME library, so the published form and the
