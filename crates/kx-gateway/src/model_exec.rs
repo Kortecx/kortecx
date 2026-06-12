@@ -364,6 +364,12 @@ pub(crate) struct ModelRouterExecutor<B: InferenceBackend> {
     /// wrong Mote; consumed (taken) inside `dispatch_model`. The worker runs a lease
     /// batch sequentially on one thread, so the slot is set-then-consumed with no race.
     parent_ctx: Mutex<Option<(MoteId, ParentResults)>>,
+    /// Batch C: the optional telemetry usage hook — records `(mote, model that
+    /// ACTUALLY ran, output_tokens)` at the ONE place `InferenceOutput` exists
+    /// (every model arm funnels through `dispatch_model`). Non-blocking +
+    /// infallible by contract (the sink drops on a full queue); `None` ⇒
+    /// byte-identical dispatch behavior.
+    usage: Option<Arc<dyn crate::telemetry::UsageSink>>,
 }
 
 impl<B: InferenceBackend> ModelRouterExecutor<B> {
@@ -383,7 +389,15 @@ impl<B: InferenceBackend> ModelRouterExecutor<B> {
             store,
             recipes,
             parent_ctx: Mutex::new(None),
+            usage: None,
         }
+    }
+
+    /// Wire the Batch C telemetry usage hook (fail-open by the sink's contract;
+    /// the dispatch path is unchanged when unset).
+    pub(crate) fn with_usage_sink(mut self, usage: Arc<dyn crate::telemetry::UsageSink>) -> Self {
+        self.usage = Some(usage);
+        self
     }
 
     /// Take this Mote's F-7 context if the worker delivered any for it (and clear the
@@ -523,6 +537,16 @@ impl<B: InferenceBackend> ModelRouterExecutor<B> {
             .backend
             .dispatch(&mote.def.model_id, &input, &params, warrant)
             .map_err(|e| internal(&format!("model dispatch: {e}")))?;
+        // Batch C: record the usage exhaust (the model that ACTUALLY ran + its
+        // token count) — display/audit only, never identity; the sink is
+        // non-blocking + infallible (drop-on-full), so dispatch is unaffected.
+        if let Some(usage) = &self.usage {
+            usage.record_usage(
+                *mote.id.as_bytes(),
+                &out.model_id.0,
+                u64::from(out.output_tokens),
+            );
+        }
         Ok(out.bytes)
     }
 

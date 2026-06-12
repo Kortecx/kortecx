@@ -793,6 +793,90 @@ message MoteDetail {
 }
 
 // ---------------------------------------------------------------------------
+// Batch C — the GLOBAL cross-run event tail (PR-3 Monitoring). Additive RPC
+// (D120.6). A NEW RPC: the frozen per-run StreamEvents keeps its exact cursor
+// semantics. The journal is single and `seq` is global, so the global tail is
+// the natural primitive; the frame/cursor contract (`since_seq -> next_seq`,
+// resumable, bounded, `journal_boundary` at head) is identical to EventFrame.
+//
+// Each delta is stamped with the run it belongs to via the registration
+// WATERMARK (the capture.db precedent): the stamp is the latest RunRegistered
+// at-or-below the delta's seq, EMPTY before any registration. Single-node OSS
+// has no per-entry run linkage — the stamp is attribution for DISPLAY and
+// observability, never identity.
+//
+// *** CLOUD SCOPE FLAG (MANDATORY): this RPC is OPERATOR-GLOBAL — it
+// *** enumerates every run on the node over one stream. A multi-tenant
+// *** deployment MUST party-scope the delta stream in its auth layer or DENY
+// *** the RPC entirely. Serving it unscoped cross-party is a breach.
+// ---------------------------------------------------------------------------
+
+message StreamAllEventsRequest {
+  uint64 since_seq = 1;                  // resume cursor (0 = from start)
+}
+
+// A run came into existence (NEW — the frozen per-run cursor never surfaces
+// this; the global tail needs it to attribute + narrate run starts).
+message RunRegisteredDelta {
+  bytes recipe_fingerprint = 1;          // 32B — display/join only, never identity
+  uint64 registered_unix_ms = 2;         // audit-only wall clock (off every hash)
+}
+
+message GlobalEventDelta {
+  uint64 seq = 1;
+  bytes instance_id = 2;                 // 16B watermark attribution; EMPTY before any registration
+  oneof kind {
+    CommittedDelta committed = 3;        // value messages reused from the frozen per-run cursor
+    FailedDelta failed = 4;
+    RepudiatedDelta repudiated = 5;
+    EffectStagedDelta effect_staged = 6;
+    RunRegisteredDelta run_registered = 7;
+  }
+}
+
+message GlobalEventFrame {
+  uint64 seq = 1;                        // seq of the highest delta in this frame
+  repeated GlobalEventDelta deltas = 2;
+  uint64 next_seq = 3;                   // resume cursor (never > journal head)
+  bool journal_boundary = 4;             // true when the frame reached the current head
+}
+
+// ---------------------------------------------------------------------------
+// Batch C — mote execution TELEMETRY (PR-3 Monitoring). Additive RPC (D120.6).
+// Execution exhaust the HOST records as motes actually run: wall-clock, model
+// usage, the fired tool. Lives in a rebuildable-to-EMPTY `telemetry.db`
+// sidecar — AUDIT/DISPLAY ONLY, NEVER truth, NEVER identity, NEVER a digest
+// input, NEVER a journal change. Exec metrics are not journal-derivable, so
+// dropping `telemetry.db` loses observability, not truth (the uploads.db
+// posture, not the capture.db refold). A serve without the sidecar answers
+// `unimplemented` (forward-compat degrade).
+// ---------------------------------------------------------------------------
+
+message ListMoteTelemetryRequest {
+  optional uint32 limit = 1;             // page size; server clamps 1..=500 (absent = 200)
+  optional bytes instance_id = 2;        // 16B — scope to one run (watermark attribution)
+  optional bytes mote_id = 3;            // 32B — scope to one mote
+  optional uint64 before_seq = 4;        // cursor: rows with seq strictly below
+}
+
+message MoteTelemetryRow {
+  bytes mote_id = 1;                     // 32B — the executed Mote
+  bytes instance_id = 2;                 // 16B watermark attribution (may be EMPTY)
+  uint64 wall_clock_ms = 3;              // host-measured execution wall time
+  optional uint64 input_tokens = 4;      // NEVER set in OSS: the frozen backend seam reports no input count
+  optional uint64 output_tokens = 5;     // model motes on an inference build only; absent otherwise
+  string model_id = 6;                   // the model that ACTUALLY ran (empty for non-model motes / FFI-free)
+  string tool_id = 7;                    // the pinned tool of a tool-bearing mote (else empty)
+  uint64 started_unix_ms = 8;            // AUDIT-ONLY start wall clock (off every hash)
+  uint64 seq = 9;                        // the Committed fact's journal seq (join + pagination cursor)
+}
+
+message ListMoteTelemetryResponse {
+  repeated MoteTelemetryRow rows = 1;    // newest-first (descending seq)
+  bool has_more = 2;
+}
+
+// ---------------------------------------------------------------------------
 // Service — the external client-facing gateway (distinct from Coordinator).
 // ---------------------------------------------------------------------------
 
@@ -839,4 +923,12 @@ service KxGateway {
   // Batch B additive (D120.6): per-mote definition inspection (display only —
   // the committed def_hash resolved to capped summary fields, never authority).
   rpc GetMoteDetail(GetMoteDetailRequest) returns (MoteDetail);
+  // Batch C additive (D120.6): the global cross-run event tail.
+  // *** CLOUD MUST PARTY-SCOPE OR DENY (see the StreamAllEventsRequest block):
+  // *** operator-global on single-node OSS; never serve unscoped multi-tenant.
+  rpc StreamAllEvents(StreamAllEventsRequest) returns (stream GlobalEventFrame);
+  // Batch C additive (D120.6): mote execution telemetry (rebuildable-to-empty
+  // sidecar; audit/display only — never truth/identity/digest; never a journal
+  // change).
+  rpc ListMoteTelemetry(ListMoteTelemetryRequest) returns (ListMoteTelemetryResponse);
 }

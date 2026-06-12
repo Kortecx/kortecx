@@ -59,6 +59,7 @@ mod replan;
 mod runs;
 mod service;
 mod submit;
+mod telemetry_view;
 mod toolscout_view;
 mod uploads;
 mod view;
@@ -71,8 +72,13 @@ pub use datasets::{
 pub use error::GatewayError;
 // The event-source pieces a live tailer (R5, `kx-gateway`) reuses: the one-time
 // ownership gate + the per-range frame builder. The snapshot composition stays
-// crate-private (it backs the default `SnapshotTailer`).
-pub use events::{check_run_ownership, frames_for_range};
+// crate-private (it backs the default `SnapshotTailer`). Batch C adds the
+// GLOBAL twin's pieces (cursor seed + per-range builder) for the live global
+// tailer.
+pub use events::{
+    check_run_ownership, frames_for_range, global_frames_for_range, seed_global_cursor,
+    GlobalCursor,
+};
 pub use identity::CallerParty;
 pub use models_view::{ModelCatalogView, ModelSummaryEntry};
 pub use mote_def_view::MoteDefView;
@@ -80,10 +86,11 @@ pub use mote_detail::{MAX_CONFIG_ENTRIES, MAX_CONFIG_VALUE_BYTES, MAX_PROMPT_BYT
 pub use reader::{ContentReader, JournalReader, ReadOnly};
 pub use service::{
     AssetGrantsView, AuthorEdge, AuthorExecutionMode, AuthorStep, AuthorStepKind, BinderError,
-    BoundRecipe, CatalogSeamError, EventStream, EventTailer, GatewayService, GrantEntry, GrantView,
-    MembershipView, RecipeBinder, RecipeCatalog, RecipeFormFieldEntry, RecipeParamKind,
-    RegisteredSignature, SignatureCatalog, SignatureSummaryEntry, SnapshotTailer, TeamMemberEntry,
-    TeamMembersView, TeamSummaryEntry, WarrantProjection, WorkflowAuthor, BATCH_ITEM_CLAMP_BYTES,
+    BoundRecipe, CatalogSeamError, EventStream, EventTailer, GatewayService, GlobalEventStream,
+    GlobalEventTailer, GrantEntry, GrantView, MembershipView, RecipeBinder, RecipeCatalog,
+    RecipeFormFieldEntry, RecipeParamKind, RegisteredSignature, SignatureCatalog,
+    SignatureSummaryEntry, SnapshotGlobalTailer, SnapshotTailer, TeamMemberEntry, TeamMembersView,
+    TeamSummaryEntry, WarrantProjection, WorkflowAuthor, BATCH_ITEM_CLAMP_BYTES,
     DEFAULT_PUT_CAP_BYTES, MAX_BATCH_REFS, REFUSAL_CODE_METADATA_KEY,
 };
 pub use submit::{
@@ -93,5 +100,6 @@ pub use toolscout_view::{
     BundleScoreView, BundleSpecEntry, BundleToolSpecEntry, KeywordSetEntry, LowerVerdictEntry,
     ManifestScoreEntry, ToolManifestEntry, ToolScoutView,
 };
+pub use telemetry_view::{MoteTelemetryEntry, TelemetryView};
 pub use uploads::{UploadRecord, UploadsLedger};
 pub use writer::ContentWriter;
