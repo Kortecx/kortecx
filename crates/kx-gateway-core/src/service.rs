@@ -130,6 +130,13 @@ pub trait RecipeCatalog: Send + Sync {
     /// The variable free-param fields for `handle`, or `None` if no such recipe
     /// is provisioned.
     fn get_recipe_form(&self, handle: &str) -> Option<Vec<RecipeFormFieldEntry>>;
+    /// The published workflow fingerprint a bound run of `handle` registers
+    /// under (`RunSummary.recipe_fingerprint` joins on this — PR-2.1 run
+    /// naming). Display/join only, NEVER identity. Defaults to `None` so
+    /// existing impls keep compiling (the wire then carries an empty field).
+    fn recipe_fingerprint(&self, _handle: &str) -> Option<[u8; 32]> {
+        None
+    }
 }
 
 /// One team in a `ListTeams` enumeration, in gateway-core's wire vocabulary
@@ -1469,7 +1476,15 @@ impl KxGateway for GatewayService {
         let recipes = catalog
             .list_recipes()
             .into_iter()
-            .map(|handle| proto::RecipeSummary { handle })
+            .map(|handle| {
+                let recipe_fingerprint = catalog
+                    .recipe_fingerprint(&handle)
+                    .map_or_else(Vec::new, |f| f.to_vec());
+                proto::RecipeSummary {
+                    handle,
+                    recipe_fingerprint,
+                }
+            })
             .collect();
         Ok(Response::new(proto::ListRecipesResponse { recipes }))
     }

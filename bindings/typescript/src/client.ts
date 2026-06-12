@@ -27,7 +27,7 @@ import { INSTANCE_LEN, REF_LEN, asBytes, encode } from "./hexids.js";
 import { ModelSummary } from "./models.js";
 import { MoteDetail } from "./motes.js";
 import { ReactTurn, type ReactTurnPage } from "./react.js";
-import { RecipeForm } from "./recipes.js";
+import { RecipeForm, RecipeInfo } from "./recipes.js";
 import { ReplanRound, type ReplanRoundPage } from "./replan.js";
 import { Result, Run } from "./run.js";
 import { type RunPage, RunSummary } from "./runs.js";
@@ -349,6 +349,17 @@ export abstract class KxClientBase {
   async listRecipes(): Promise<string[]> {
     const resp = await rpc(this.grpc.listRecipes({}));
     return resp.recipes.map((r) => r.handle);
+  }
+
+  /**
+   * The recipe catalog WITH each recipe's published workflow fingerprint
+   * (PR-2.1) — the join key for labeling durable {@link RunSummary} rows by
+   * recipe handle. `recipeFingerprint` is `""` on a gateway predating the
+   * field (additive — degrade to unlabeled rows).
+   */
+  async listRecipeSummaries(): Promise<RecipeInfo[]> {
+    const resp = await rpc(this.grpc.listRecipes({}));
+    return resp.recipes.map((r) => new RecipeInfo(r.handle, encode(r.recipeFingerprint)));
   }
 
   /**

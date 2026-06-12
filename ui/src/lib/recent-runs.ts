@@ -16,6 +16,9 @@ export interface RunRecord {
   readonly handle: string | null;
   /** Epoch ms the run was started from this console. */
   readonly startedAt: number;
+  /** The invoke args as JSON text (PR-2.1 — powers Run-again/Clone). `null`
+   *  for durable-only rows and records written before this field existed. */
+  readonly args?: string | null;
 }
 
 /** The fields `mergeServerRuns` needs from a `ListRuns` `RunSummary` (SDK-free so

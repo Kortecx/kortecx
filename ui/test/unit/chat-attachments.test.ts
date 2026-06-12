@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 import type { UiError } from "../../src/kx/errors";
-import { planVisionArgs } from "../../src/kx/use-chat";
+import { planReactArgs, planVisionArgs } from "../../src/kx/use-chat";
 import { type ChatThread, EMPTY_THREAD, chatReducer, retrySource } from "../../src/lib/chat-thread";
 
 const ERR: UiError = {
@@ -124,5 +124,35 @@ describe("chatReducer load_thread (chat history restore)", () => {
     });
     expect(restored.messages.map((m) => m.id)).toEqual(["x1", "x2"]);
     expect(restored.messages[1]?.text).toBe("the saved reply");
+  });
+});
+
+// --- PR-2.1 agent mode: the form-gated react arg plan -------------------------
+
+describe("planReactArgs", () => {
+  const field = (name: string) => ({
+    name,
+    type: "str" as const,
+    required: true,
+    maxLen: null,
+    allowed: [] as string[],
+  });
+
+  it("binds the instruction + declared budget caps (8/6 defaults)", () => {
+    const form = { fields: [field("instruction"), field("max_turns"), field("max_tool_calls")] };
+    expect(planReactArgs(form, "summarize the incident")).toEqual({
+      instruction: "summarize the incident",
+      max_turns: 8,
+      max_tool_calls: 6,
+    });
+  });
+
+  it("sends ONLY declared slots (never an undeclared arg — fail-closed binding)", () => {
+    const form = { fields: [field("instruction")] };
+    expect(planReactArgs(form, "task")).toEqual({ instruction: "task" });
+  });
+
+  it("a form without the instruction slot yields null (fall back to chat)", () => {
+    expect(planReactArgs({ fields: [field("prompt")] }, "task")).toBeNull();
   });
 });

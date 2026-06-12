@@ -51,7 +51,7 @@ export type { ReplanRoundPage } from "./replan.js";
 export { CaptureRecord } from "./capture.js";
 export type { CaptureRecordPage } from "./capture.js";
 
-export { RecipeForm, RecipeFormField, recipeParamTypeName } from "./recipes.js";
+export { RecipeForm, RecipeFormField, RecipeInfo, recipeParamTypeName } from "./recipes.js";
 export type { RecipeParamTypeName } from "./recipes.js";
 // Blueprint = the display name for the frozen `recipe` wire (D136; additive aliases).
 export { BlueprintForm, BlueprintFormField, blueprintParamTypeName } from "./recipes.js";

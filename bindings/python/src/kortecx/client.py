@@ -32,7 +32,7 @@ from .grants import AssetGrants
 from .models import ModelSummary
 from .motes import MoteDetail
 from .react import ReactTurn, ReactTurnPage
-from .recipes import RecipeForm
+from .recipes import RecipeForm, RecipeInfo
 from .replan import ReplanRound, ReplanRoundPage
 from .run import AsyncRun, Result, Run
 from .runs import RunPage, RunSummary
@@ -438,6 +438,16 @@ class KxClient:
         )
         return [r.handle for r in resp.recipes]
 
+    def list_recipe_summaries(self) -> List[RecipeInfo]:
+        """The recipe catalog WITH each recipe's published workflow fingerprint
+        (PR-2.1) — the join key for labeling durable ``RunSummary`` rows by
+        recipe handle. ``recipe_fingerprint`` is ``""`` on a gateway predating
+        the field (additive — degrade to unlabeled rows)."""
+        resp = self._call(
+            lambda: self._stub.ListRecipes(_g.ListRecipesRequest(), metadata=self._md)
+        )
+        return [RecipeInfo.from_proto(r) for r in resp.recipes]
+
     def get_recipe_form(self, handle: str) -> RecipeForm:
         """The free-param :class:`RecipeForm` for ``handle`` (render a form, then
         :meth:`invoke`). An unknown handle raises ``KxNotFound``."""
@@ -803,6 +813,11 @@ class AsyncKxClient:
     async def list_recipes(self) -> List[str]:
         resp = await self._acall(self._stub.ListRecipes(_g.ListRecipesRequest(), metadata=self._md))
         return [r.handle for r in resp.recipes]
+
+    async def list_recipe_summaries(self) -> List[RecipeInfo]:
+        """Async :meth:`KxClient.list_recipe_summaries`."""
+        resp = await self._acall(self._stub.ListRecipes(_g.ListRecipesRequest(), metadata=self._md))
+        return [RecipeInfo.from_proto(r) for r in resp.recipes]
 
     async def get_recipe_form(self, handle: str) -> RecipeForm:
         resp = await self._acall(

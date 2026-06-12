@@ -3,7 +3,8 @@ import { useEffect, useRef, useState } from "react";
 import { fadeUp } from "../../app/motion";
 import { useConnection } from "../../kx/connection-context";
 import { useAttachments } from "../../kx/use-attachments";
-import { useChat } from "../../kx/use-chat";
+import { REACT_RECIPE_HANDLE, useChat } from "../../kx/use-chat";
+import { useRecipes } from "../../kx/use-recipes";
 import { type SavedChat, saveChat } from "../../lib/chat-history";
 import { type ChatSettings, loadChatSettings, saveChatSettings } from "../../lib/chat-settings";
 import type { MessageAttachment } from "../../lib/chat-thread";
@@ -15,6 +16,7 @@ import { Composer } from "./Composer";
 import { DegradeNotice } from "./DegradeNotice";
 import { MessageList } from "./MessageList";
 import { ModelPicker } from "./ModelPicker";
+import { ReactProgress } from "./ReactProgress";
 import { ThinkingTrace } from "./ThinkingTrace";
 
 /**
@@ -30,10 +32,16 @@ import { ThinkingTrace } from "./ThinkingTrace";
 export function ChatPanel() {
   const { endpoint } = useConnection();
   const [settings, setSettings] = useState<ChatSettings>(() => loadChatSettings());
+  const [agentMode, setAgentMode] = useState(false);
+  // The agent toggle only EXISTS when the react loop is provisioned (an
+  // inference serve with the bundled tool) — don't-fake-gaps.
+  const recipes = useRecipes();
+  const agentAvailable = (recipes.data ?? []).includes(REACT_RECIPE_HANDLE);
   const chat = useChat({
     handle: settings.handle,
     promptKey: settings.promptKey,
     modelId: settings.modelId,
+    agentMode: agentMode && agentAvailable,
   });
   const attach = useAttachments();
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -105,8 +113,40 @@ export function ChatPanel() {
         </div>
       </div>
       <p className="muted">
-        Each message runs <code>{settings.handle}</code>; the reply is the run's committed result.
+        {agentMode && agentAvailable ? (
+          <>
+            Each message is a TASK for the agent loop (<code>{REACT_RECIPE_HANDLE}</code>): the
+            model reasons and fires tools until it answers.
+          </>
+        ) : (
+          <>
+            Each message runs <code>{settings.handle}</code>; the reply is the run's committed
+            result.
+          </>
+        )}
       </p>
+
+      {agentAvailable ? (
+        <fieldset className="view-toggle" aria-label="Chat mode" data-testid="chat-mode">
+          <button
+            type="button"
+            aria-pressed={!agentMode}
+            data-testid="chat-mode-chat"
+            onClick={() => setAgentMode(false)}
+          >
+            Chat
+          </button>
+          <button
+            type="button"
+            aria-pressed={agentMode}
+            data-testid="chat-mode-agent"
+            onClick={() => setAgentMode(true)}
+            title="Give the agent a task — it loops (reason → tool → observe) until it answers"
+          >
+            Agent task
+          </button>
+        </fieldset>
+      ) : null}
 
       <ChatSettingsPanel settings={settings} onChange={updateSettings} />
       {chat.degraded ? <DegradeNotice error={chat.degraded} /> : null}
@@ -115,14 +155,19 @@ export function ChatPanel() {
         thread={chat.thread}
         autoscroll={settings.autoscroll}
         onRetry={(id) => void chat.retry(id)}
-        renderTrace={
-          settings.showThinking
-            ? (id) =>
-                id === chat.activeAssistantId && chat.activeProjection ? (
-                  <ThinkingTrace projection={chat.activeProjection} />
-                ) : null
-            : undefined
-        }
+        renderTrace={(id) => {
+          if (id !== chat.activeAssistantId) {
+            return null;
+          }
+          return (
+            <>
+              {chat.reactTurns ? <ReactProgress turns={chat.reactTurns} /> : null}
+              {settings.showThinking && chat.activeProjection ? (
+                <ThinkingTrace projection={chat.activeProjection} />
+              ) : null}
+            </>
+          );
+        }}
       />
 
       <div className="composer__bar">

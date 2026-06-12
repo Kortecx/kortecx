@@ -961,6 +961,61 @@ select {
   color: var(--accent);
   text-decoration: none;
 }
+/* PR-2.1: run rows gained a name + per-row controls. */
+.run-list__item {
+  flex-wrap: wrap;
+}
+.run-list__main {
+  display: flex;
+  gap: 0.6rem;
+  align-items: center;
+  min-width: 0;
+  flex: 1;
+}
+.run-list__name {
+  font-weight: 600;
+}
+.run-list__rename {
+  display: inline-flex;
+  gap: 0.4rem;
+  align-items: center;
+}
+.run-list__rename input {
+  max-width: 240px;
+}
+.run-list__actions {
+  display: inline-flex;
+  gap: 0.6rem;
+  align-items: center;
+}
+
+/* PR-2.1: the Blueprints catalog table. */
+.recipe-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.5rem 0 1rem;
+}
+.recipe-table th {
+  text-align: left;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-3, var(--fg));
+  padding: 0.3rem 0.5rem;
+  border-bottom: 1px solid var(--border-md, var(--border));
+}
+.recipe-table td {
+  padding: 0.35rem 0.5rem;
+  border-bottom: 1px solid var(--border);
+}
+.recipe-table__actions {
+  text-align: right;
+  white-space: nowrap;
+}
+.recipe-row--active td {
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
 
 /* ---- UI-2: runs filter + recipe catalog + artifact gallery ---- */
 .screen__actions {
@@ -2508,4 +2563,19 @@ select {
  * color = liveness, set inline by ConnectionStatus */
 .connstatus__power:hover {
   background: color-mix(in srgb, currentColor 12%, transparent);
+}
+
+/* PR-2.1: the agent loop's live progress strip (chat bubbles). */
+.react-progress {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  align-items: center;
+  margin: 0.35rem 0;
+}
+.react-progress .badge[data-branch="answer"] {
+  border-color: var(--ok, var(--accent));
+}
+.react-progress .badge[data-branch="dead_lettered"] {
+  border-color: var(--danger, currentColor);
 }

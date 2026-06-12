@@ -339,10 +339,12 @@ class ListRecipesRequest(_message.Message):
     def __init__(self) -> None: ...
 
 class RecipeSummary(_message.Message):
-    __slots__ = ("handle",)
+    __slots__ = ("handle", "recipe_fingerprint")
     HANDLE_FIELD_NUMBER: _ClassVar[int]
+    RECIPE_FINGERPRINT_FIELD_NUMBER: _ClassVar[int]
     handle: str
-    def __init__(self, handle: _Optional[str] = ...) -> None: ...
+    recipe_fingerprint: bytes
+    def __init__(self, handle: _Optional[str] = ..., recipe_fingerprint: _Optional[bytes] = ...) -> None: ...
 
 class ListRecipesResponse(_message.Message):
     __slots__ = ("recipes",)

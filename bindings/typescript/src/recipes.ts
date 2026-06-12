@@ -92,3 +92,23 @@ export type BlueprintFormField = RecipeFormField;
 /** Display alias for {@link recipeParamTypeName} (wire: recipe). */
 export const blueprintParamTypeName = recipeParamTypeName;
 export type BlueprintParamTypeName = RecipeParamTypeName;
+
+/** One catalog entry of `ListRecipes` (PR-2.1): the Invoke handle plus the
+ *  published workflow fingerprint a bound run registers under — the join key
+ *  for labeling durable `RunSummary` rows. Display/join only, never identity;
+ *  `recipeFingerprint` is "" when the gateway predates the field. */
+export class RecipeInfo {
+  constructor(
+    readonly handle: string,
+    /** Hex fingerprint (joins `RunSummary.recipeFingerprint`); "" if unknown. */
+    readonly recipeFingerprint: string,
+  ) {}
+
+  /** A plain snake_case object (the cross-SDK serialization shape). */
+  toJSON() {
+    return {
+      handle: this.handle,
+      recipe_fingerprint: this.recipeFingerprint,
+    };
+  }
+}

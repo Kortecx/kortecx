@@ -31,16 +31,24 @@ import { useConnection } from "./connection-context";
 import { type UiError, toUiError } from "./errors";
 import { useInvoke } from "./use-invoke";
 import { type ProjectionVM, runSettled, useProjection } from "./use-projection";
+import { type ReactTurnVM, useReactProgress } from "./use-react-progress";
 
 const COMMITTED = 3;
 
 /** The Batch A vision recipe (provisioned only on an image-capable serve). */
 export const VISION_RECIPE_HANDLE = "kx/recipes/vision";
 
+/** The live ReAct task-loop recipe (provisioned only on an inference serve
+ *  with the bundled tool — the PR-2.1 agent mode's backend). */
+export const REACT_RECIPE_HANDLE = "kx/recipes/react";
+
 interface ActiveTurn {
   readonly assistantId: string;
   readonly instanceId: string;
   readonly terminalMoteId: string;
+  /** An agent (react) turn — resolved via ListReactTurns, never the terminal
+   *  projection settle (the seed Mote is SWAPPED; the chain extends). */
+  readonly react: boolean;
 }
 
 export interface UseChatOptions {
@@ -50,6 +58,10 @@ export interface UseChatOptions {
   readonly promptKey: string;
   /** The picked model id (rides only when a form declares a `model` ENUM). */
   readonly modelId?: string;
+  /** Agent mode (PR-2.1): route the message as a TASK to the react loop —
+   *  the model reasons + fires tools until it answers. Only honored when the
+   *  react recipe is provisioned (the caller gates the toggle). */
+  readonly agentMode?: boolean;
 }
 
 export interface UseChat {
@@ -62,6 +74,8 @@ export interface UseChat {
   readonly activeProjection: ProjectionVM | undefined;
   /** The assistant message id the active projection belongs to. */
   readonly activeAssistantId: string | undefined;
+  /** The in-flight AGENT turn's loop progress (react turns), if any. */
+  readonly reactTurns: readonly ReactTurnVM[] | undefined;
   send(text: string, attachments?: readonly MessageAttachment[]): Promise<void>;
   /** Re-dispatch a FAILED turn with its identical args. */
   retry(assistantId: string): Promise<void>;
@@ -94,6 +108,30 @@ interface TurnPlan {
  * form doesn't declare the `image_ref` slot (then the attachment is
  * display-only). Pure over the fetched form — unit-testable.
  */
+/**
+ * Build the form-gated arg set for an AGENT (react) turn, or `null` when the
+ * react form doesn't declare the `instruction` slot. Budget caps ride only
+ * when declared (8 turns / 6 tool calls — the recipe's anchored defaults).
+ * Pure over the fetched form — unit-testable.
+ */
+export function planReactArgs(
+  form: Pick<RecipeForm, "fields">,
+  text: string,
+): Record<string, unknown> | null {
+  const byName = (n: string) => form.fields.find((f) => f.name === n);
+  if (!byName("instruction")) {
+    return null;
+  }
+  const args: Record<string, unknown> = { instruction: text };
+  if (byName("max_turns")) {
+    args.max_turns = 8;
+  }
+  if (byName("max_tool_calls")) {
+    args.max_tool_calls = 6;
+  }
+  return args;
+}
+
 export function planVisionArgs(
   form: Pick<RecipeForm, "fields">,
   text: string,
@@ -118,7 +156,7 @@ export function planVisionArgs(
   return args;
 }
 
-export function useChat({ handle, promptKey, modelId }: UseChatOptions): UseChat {
+export function useChat({ handle, promptKey, modelId, agentMode }: UseChatOptions): UseChat {
   const { client } = useConnection();
   const invoke = useInvoke();
   const [thread, dispatch] = useReducer(chatReducer, EMPTY_THREAD);
@@ -128,15 +166,73 @@ export function useChat({ handle, promptKey, modelId }: UseChatOptions): UseChat
   const finalizedRef = useRef<string | null>(null);
   // The vision form, fetched once per session (`null` = probed and absent).
   const visionFormRef = useRef<RecipeForm | null | undefined>(undefined);
+  // The react form likewise (agent mode probes the declared slots).
+  const reactFormRef = useRef<RecipeForm | null | undefined>(undefined);
 
   const projection = useProjection(
     active?.instanceId,
     active?.terminalMoteId ? { terminalMoteId: active.terminalMoteId } : {},
   );
 
-  // When the active run settles, fetch + decode the terminal result once.
+  // Agent turns: the loop's durable facts narrate progress + completion.
+  const reactProgress = useReactProgress(active?.react ? active.instanceId : undefined);
+
+  // When the active AGENT chain settles, resolve the answer turn's committed
+  // text (one imperative projection read — the poll hook's at-rest heuristic
+  // would stall BETWEEN turns, so the facts drive completion, not the poll).
   useEffect(() => {
-    if (!active || !client) {
+    if (!active?.react || !client) {
+      return;
+    }
+    const terminal = reactProgress.terminal;
+    if (!terminal || finalizedRef.current === active.assistantId) {
+      return;
+    }
+    finalizedRef.current = active.assistantId;
+    void (async () => {
+      try {
+        if (terminal.branch !== "answer") {
+          dispatch({
+            type: "turn_failed",
+            assistantId: active.assistantId,
+            error: {
+              code: "run_failed",
+              kind: "generic",
+              title: "Agent task dead-lettered",
+              message: `The loop ended without an answer (turn ${terminal.turn}).`,
+              retryable: false,
+            },
+          });
+          return;
+        }
+        const view = await client.getProjection(active.instanceId);
+        const answer = view.motes.find((m) => m.moteId === terminal.turnMoteId);
+        if (answer?.resultRef) {
+          const bytes = await client.getContent(answer.resultRef, active.instanceId);
+          const decoded = decodeContent(bytes);
+          dispatch({
+            type: "turn_done",
+            assistantId: active.assistantId,
+            text: decoded.text === "" ? "(empty answer)" : decoded.text,
+          });
+        } else {
+          dispatch({
+            type: "turn_done",
+            assistantId: active.assistantId,
+            text: "(answered with no output)",
+          });
+        }
+      } catch (e) {
+        dispatch({ type: "turn_failed", assistantId: active.assistantId, error: toUiError(e) });
+      } finally {
+        setActive(null);
+      }
+    })();
+  }, [active, reactProgress.terminal, client]);
+
+  // When the active CHAT run settles, fetch + decode the terminal result once.
+  useEffect(() => {
+    if (!active || active.react || !client) {
       return;
     }
     const data = projection.data;
@@ -193,9 +289,31 @@ export function useChat({ handle, promptKey, modelId }: UseChatOptions): UseChat
     return visionFormRef.current;
   }, [client]);
 
-  /** Plan the turn: the vision route when an image ref can bind, else plain chat. */
+  /** The react recipe's form, probed once (absent ⇒ agent mode falls back). */
+  const reactForm = useCallback(async (): Promise<RecipeForm | null> => {
+    if (reactFormRef.current !== undefined) {
+      return reactFormRef.current;
+    }
+    try {
+      reactFormRef.current = client ? await client.getRecipeForm(REACT_RECIPE_HANDLE) : null;
+    } catch {
+      reactFormRef.current = null; // not provisioned — chat handles the turn
+    }
+    return reactFormRef.current;
+  }, [client]);
+
+  /** Plan the turn: agent task → react loop; image → vision; else plain chat. */
   const planTurn = useCallback(
     async (text: string, attachments: readonly MessageAttachment[]): Promise<TurnPlan> => {
+      if (agentMode) {
+        const form = await reactForm();
+        if (form) {
+          const args = planReactArgs(form, text);
+          if (args !== null) {
+            return { handle: REACT_RECIPE_HANDLE, args };
+          }
+        }
+      }
       const image = attachments.find((a) => a.mediaType.startsWith("image/"));
       if (image) {
         const form = await visionForm();
@@ -208,7 +326,7 @@ export function useChat({ handle, promptKey, modelId }: UseChatOptions): UseChat
       }
       return { handle, args: { [promptKey]: text } };
     },
-    [handle, promptKey, modelId, visionForm],
+    [handle, promptKey, modelId, agentMode, reactForm, visionForm],
   );
 
   const startTurn = useCallback(
@@ -225,7 +343,12 @@ export function useChat({ handle, promptKey, modelId }: UseChatOptions): UseChat
         if (finalizedRef.current === assistantId) {
           finalizedRef.current = null;
         }
-        setActive({ assistantId, instanceId, terminalMoteId });
+        setActive({
+          assistantId,
+          instanceId,
+          terminalMoteId,
+          react: plan.handle === REACT_RECIPE_HANDLE,
+        });
       } catch (e) {
         const ui = toUiError(e);
         dispatch({ type: "turn_failed", assistantId, error: ui });
@@ -291,6 +414,7 @@ export function useChat({ handle, promptKey, modelId }: UseChatOptions): UseChat
     degraded,
     activeProjection: active ? projection.data : undefined,
     activeAssistantId: active?.assistantId,
+    reactTurns: active?.react ? reactProgress.turns : undefined,
     send,
     retry,
     loadThread,

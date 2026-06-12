@@ -94,12 +94,22 @@ pub fn default_executor_class() -> ExecutorClass {
 /// The deterministic payload the embedded demo executor publishes for a PURE
 /// Mote. Exposed so an end-to-end test (a separate crate) can assert the exact
 /// bytes `GetContent` returns without duplicating the format (no drift).
+///
+/// FULLY PRINTABLE (PR-2.1 review feedback): the mote id rides as lowercase
+/// hex, so every demo/echo/fanout result renders as TEXT in the console (chat
+/// bubbles, the DAG Result/Inputs panes, artifacts) instead of a binary hex
+/// dump. Display-only bytes — never identity (the canonical engine digest is
+/// the kx-runtime demo's, a different path; serve demo result REFS change with
+/// the payload, which is fine: refs are content addresses, not identity).
 #[cfg(feature = "embedded-worker")]
 #[must_use]
 pub fn demo_pure_result(mote_id: &[u8; 32]) -> Vec<u8> {
-    let mut payload = b"kx-gateway demo result for mote ".to_vec();
-    payload.extend_from_slice(mote_id);
-    payload
+    use std::fmt::Write as _;
+    let mut hex = String::with_capacity(64);
+    for b in mote_id {
+        let _ = write!(hex, "{b:02x}");
+    }
+    format!("kx demo result for mote {hex}\n").into_bytes()
 }
 
 /// A ready-to-send [`proto::SubmitRunRequest`](kx_proto::proto::SubmitRunRequest)

@@ -43,6 +43,7 @@ from .recipes import (
     BlueprintFormField,
     RecipeForm,
     RecipeFormField,
+    RecipeInfo,
     blueprint_param_type_name,
     recipe_param_type_name,
 )
@@ -91,6 +92,7 @@ __all__ = [
     "CaptureRecord",
     "CaptureRecordPage",
     "RecipeForm",
+    "RecipeInfo",
     "RecipeFormField",
     "recipe_param_type_name",
     # Blueprint = the display name for the frozen `recipe` wire (D136; aliases)

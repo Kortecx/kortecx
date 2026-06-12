@@ -71,3 +71,22 @@ class RecipeForm:
 BlueprintForm = RecipeForm
 BlueprintFormField = RecipeFormField
 blueprint_param_type_name = recipe_param_type_name
+
+
+@dataclass(frozen=True)
+class RecipeInfo:
+    """One catalog entry of ``ListRecipes`` (PR-2.1): the Invoke handle plus the
+    published workflow fingerprint a bound run registers under — the join key
+    for labeling durable ``RunSummary`` rows. Display/join only, never
+    identity; ``recipe_fingerprint`` is ``""`` when the gateway predates the
+    field."""
+
+    handle: str
+    recipe_fingerprint: str  # hex; "" if unknown
+
+    @classmethod
+    def from_proto(cls, r: "_g.RecipeSummary") -> "RecipeInfo":
+        return cls(handle=r.handle, recipe_fingerprint=r.recipe_fingerprint.hex())
+
+    def to_dict(self) -> dict:
+        return {"handle": self.handle, "recipe_fingerprint": self.recipe_fingerprint}
