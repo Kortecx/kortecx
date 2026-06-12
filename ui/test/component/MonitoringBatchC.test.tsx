@@ -51,9 +51,7 @@ describe("MonitoringSection (Batch C tabs)", () => {
   it("telemetry degrades to the honest not-wired note on an old gateway", async () => {
     const mock = makeMockClient({ listMoteTelemetry: async () => unimplemented() });
     render(<MonitoringSection tab="telemetry" />, { wrapper: connectedWrapper(mock.client) });
-    await waitFor(() =>
-      expect(screen.getByText(/Not wired on this gateway/i)).toBeInTheDocument(),
-    );
+    await waitFor(() => expect(screen.getByText(/Not wired on this gateway/i)).toBeInTheDocument());
   });
 
   it("telemetry shows the actionable empty state when no mote has executed", async () => {
@@ -80,8 +78,19 @@ describe("MonitoringSection (Batch C tabs)", () => {
 describe("GlobalFeed (Batch C)", () => {
   it("renders attributed rows — run starts labelled, commits linked to their run", async () => {
     const deltas = [
-      new GlobalDelta(1, "run_registered", "aa".repeat(16), null, null, null, null, null, null,
-        "bb".repeat(32), 123),
+      new GlobalDelta(
+        1,
+        "run_registered",
+        "aa".repeat(16),
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        "bb".repeat(32),
+        123,
+      ),
       new GlobalDelta(2, "committed", "aa".repeat(16), "cc".repeat(32), "dd".repeat(32), 0),
     ];
     const mock = makeMockClient({
@@ -128,6 +137,7 @@ describe("GlobalFeed (Batch C)", () => {
   it("degrades honestly when the stream fails before any frame (old gateway)", async () => {
     const mock = makeMockClient({
       // The old-bridge shape: the handshake rejects before any frame.
+      // biome-ignore lint/correctness/useYield: a generator that fails BEFORE its first frame is exactly the case under test.
       wsAllEvents: async function* () {
         throw new Error("Unexpected server response: 400");
       },
