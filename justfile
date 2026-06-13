@@ -419,6 +419,15 @@ check-reproducible:
 smoke-test-with-model:
     cargo test -p kx-llamacpp --features model-smoke-test -- --nocapture
 
+# GR15 real-model behavioral gate (`real-model-e2e`) — fetch the public Qwen3-0.6B
+# stand-in, then serve `kx/recipes/chat` through the full path (invoke → worker →
+# real inference → commit → GetContent) and assert the completion is CLEAN (no
+# ChatML scaffolding leak, no `kx demo result` placeholder) AND greedy decode is
+# deterministic across gateways. Builds the llama.cpp FFI; the CI `real-model-e2e`
+# job runs exactly this. Gated separately so the default `just ci` stays FFI-free.
+real-model-e2e: fetch-agent-model
+    cargo test -p kx-gateway --features inference --test al1_serve -- --ignored --nocapture
+
 # LOCAL / manual gate (NOT a CI job): exercise the safe-wrapper inference pipeline
 # with GPU offload forced ON (`KX_N_GPU_LAYERS=-1`) so an Apple-Silicon dev sees
 # Metal actually used (look for `offloaded N/N layers to GPU` + `ggml_metal_*`),

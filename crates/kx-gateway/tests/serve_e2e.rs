@@ -19,7 +19,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::time::Duration;
 
-use kx_gateway::{demo_pure_result, start, GatewayConfig};
+use kx_gateway::{start, GatewayConfig};
 use kx_proto::proto;
 use kx_proto::proto::kx_gateway_client::KxGatewayClient;
 use tempfile::TempDir;
@@ -83,6 +83,15 @@ async fn committed_run_is_observable_end_to_end() {
     // (1) SubmitRun a single PURE Mote.
     let mote = common::pure_mote(1, &[]);
     let warrant = common::pure_warrant();
+    // GR15: the PURE passthrough commits the Mote's REAL declared input — a
+    // parentless Mote with no bound free-param echoes its `InputDataId` as
+    // lowercase hex (deterministic, content-addressed, never a placeholder).
+    let expected: Vec<u8> = mote
+        .input_data_id
+        .as_bytes()
+        .iter()
+        .flat_map(|b| format!("{b:02x}").into_bytes())
+        .collect();
     let handle = c
         .submit_run(proto::SubmitRunRequest {
             recipe_fingerprint: vec![0x5a; 32],
@@ -111,9 +120,8 @@ async fn committed_run_is_observable_end_to_end() {
         .unwrap()
         .into_inner();
     assert_eq!(
-        blob.payload,
-        demo_pure_result(&mote_id),
-        "GetContent returns the bytes the embedded worker committed"
+        blob.payload, expected,
+        "GetContent returns the bytes the embedded worker committed (the declared-input passthrough)"
     );
 
     // (4) StreamEvents carries a Committed delta for the Mote, resumably.

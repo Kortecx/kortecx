@@ -30,18 +30,15 @@ async fn invoke_wait_returns_committed_result() {
     .await;
     let v = json_ok(&out);
     assert_eq!(v["state"], "COMMITTED");
-    let terminal = v["terminal_mote_id"].as_str().unwrap();
-    let mote_bytes = kx_cli::hex::decode_fixed::<32>(terminal).unwrap();
-    let expected = kx_gateway::demo_pure_result(&mote_bytes);
-    // PR-2.1: the demo result is FULLY PRINTABLE (the mote id rides as hex),
-    // so result_utf8 is PRESENT alongside result_hex — the console renders
-    // demo outputs as text, never a binary dump.
+    // GR15: `echo` is a TRUE echo — it commits its bound `topic` verbatim as
+    // text, never a fabricated placeholder. result_utf8 carries the topic.
+    let expected = b"incidents".to_vec();
     assert_eq!(v["result_len"].as_u64().unwrap() as usize, expected.len());
     assert_eq!(v["result_hex"], kx_cli::hex::encode(&expected));
     assert_eq!(
         v["result_utf8"].as_str().unwrap(),
-        String::from_utf8(expected).unwrap(),
-        "printable payload ⇒ result_utf8 carries the text"
+        "incidents",
+        "echo commits its topic verbatim as text"
     );
 
     running.shutdown().await.unwrap();
@@ -74,10 +71,9 @@ async fn invoke_wait_out_writes_raw_bytes() {
         v.get("result_hex").is_none(),
         "payload not inlined under --out"
     );
-    let terminal = v["terminal_mote_id"].as_str().unwrap();
-    let mote_bytes = kx_cli::hex::decode_fixed::<32>(terminal).unwrap();
     let written = std::fs::read(&out_path).unwrap();
-    assert_eq!(written, kx_gateway::demo_pure_result(&mote_bytes));
+    // GR15: echo commits its bound `topic` verbatim (no fabricated placeholder).
+    assert_eq!(written, b"save-me");
 
     running.shutdown().await.unwrap();
 }

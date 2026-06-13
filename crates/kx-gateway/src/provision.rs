@@ -374,8 +374,9 @@ impl DemoLibrary {
         let owner = PartyId::new("kx-gateway");
         let mut recipes: Vec<(AssetPath, RecipeMeta)> = Vec::new();
 
-        // (echo) the PURE demo recipe — a placeholder logic_ref the storing
-        // executor ignores, a `topic` free-param.
+        // (echo) the PURE echo recipe — the honest passthrough executor commits
+        // its bound `topic` free-param verbatim (GR15); the logic_ref is a stable
+        // body identity the executor does not interpret.
         let echo_warrant = demo_warrant(exec_class);
         let echo_handle = demo_handle()?;
         seed_recipe(
