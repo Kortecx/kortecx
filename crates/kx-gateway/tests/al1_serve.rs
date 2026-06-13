@@ -62,8 +62,10 @@ async fn await_mote_committed(
     instance_id: &[u8],
     mote_id: &[u8],
 ) -> [u8; 32] {
-    // CPU/Metal inference is slow; allow generously (200 × 100ms = 20s).
-    for _ in 0..200 {
+    // Real LLM inference is slow on a CPU-only CI runner (no GPU offload) — a
+    // Qwen3-0.6B turn can run toward its full output-token budget. Poll generously
+    // (1200 × 250ms = 300s); on Metal locally this returns in well under a second.
+    for _ in 0..1200 {
         let view = c
             .get_projection(proto::GetProjectionRequest {
                 instance_id: instance_id.to_vec(),
@@ -84,7 +86,7 @@ async fn await_mote_committed(
                 .try_into()
                 .unwrap();
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        tokio::time::sleep(Duration::from_millis(250)).await;
     }
     panic!("the invoked model Mote never reached Committed");
 }
