@@ -21,6 +21,7 @@ import type { MoteVM } from "../../kx/use-projection";
 import { promotionIsNotable, promotionLabel } from "../../lib/colors";
 import { formatSeq, shortHex } from "../../lib/format";
 import { AnomalyBadge } from "../AnomalyBadge";
+import { DigestChip } from "../DigestChip";
 import { EmptyState } from "../EmptyState";
 import { ErrorNotice } from "../ErrorNotice";
 import { NdClassBadge } from "../NdClassBadge";
@@ -125,8 +126,12 @@ export function NodeDetailDrawer({
           </div>
           <div>
             <dt>Result ref</dt>
-            <dd className="mono" title={mote.resultRef ?? undefined}>
-              {mote.resultRef ? shortHex(mote.resultRef) : "—"}
+            <dd>
+              {mote.resultRef ? (
+                <DigestChip hex={mote.resultRef} label="result" />
+              ) : (
+                <span className="mono">—</span>
+              )}
             </dd>
           </div>
           <div>

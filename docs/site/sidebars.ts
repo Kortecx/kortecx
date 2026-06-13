@@ -29,6 +29,7 @@ const sidebars: SidebarsConfig = {
         "tools",
         "scripts",
         "agent-runner",
+        "reading-run-outputs",
         "observability",
       ],
     },

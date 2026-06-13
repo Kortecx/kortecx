@@ -7,6 +7,7 @@ import { isTerminalState, stateVisual } from "../../lib/colors";
 import { shortHex } from "../../lib/format";
 import { AnomalyBadge } from "../AnomalyBadge";
 import { NdClassBadge } from "../NdClassBadge";
+import { ResultPreview } from "../ResultPreview";
 import { StatePill } from "../StatePill";
 import type { MoteFlowNode } from "./flow";
 
@@ -19,7 +20,7 @@ import type { MoteFlowNode } from "./flow";
  * The whole card is clickable (reactflow `onNodeClick` opens the detail drawer).
  */
 function MoteNodeImpl({ data }: NodeProps<MoteFlowNode>) {
-  const { mote } = data;
+  const { mote, resultContent, resultMissing, resultLoading } = data;
   const { tone } = stateVisual(mote.stateCode);
   const inFlight = !isTerminalState(mote.stateCode);
   return (
@@ -48,6 +49,20 @@ function MoteNodeImpl({ data }: NodeProps<MoteFlowNode>) {
         <StatePill stateCode={mote.stateCode} />
         <NdClassBadge ndClass={mote.ndClass} />
       </div>
+      {mote.resultRef ? (
+        <div className="dag-node__result">
+          {/* The resolved text glimpse; the chip + full result live in the
+              click→drawer (a chip button here would bubble to the node click). */}
+          <ResultPreview
+            resultRef={mote.resultRef}
+            content={resultContent}
+            missing={resultMissing}
+            loading={resultLoading}
+            max={64}
+            chip={false}
+          />
+        </div>
+      ) : null}
       <AnomalyBadge anomaly={mote.anomaly} />
       <Handle type="source" position={Position.Bottom} className="dag-handle" />
     </m.div>

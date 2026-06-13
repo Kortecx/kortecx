@@ -7,6 +7,7 @@ import {
   useReactFlow,
 } from "@xyflow/react";
 import { useEffect, useMemo, useState } from "react";
+import { useResultMap } from "../../kx/use-content-batch";
 import type { ProjectionVM } from "../../kx/use-projection";
 import { EmptyState } from "../EmptyState";
 import { MoteTable } from "../MoteTable";
@@ -52,8 +53,16 @@ function DagFlow({ projection }: { projection: ProjectionVM }) {
   // Edges are topology — recompute only on a topology change.
   // biome-ignore lint/correctness/useExhaustiveDependencies: edges depend on topology only (same justification as positions).
   const edges = useMemo(() => buildFlowEdges(motes), [topoHash]);
-  // Node DATA (state/anomaly) re-merges every poll WITHOUT relayout.
-  const nodes = useMemo(() => buildFlowNodes(motes, positions), [motes, positions]);
+  // Batch-resolve every committed result (one RPC, shared with the table). `byRef`
+  // is reference-stable across an unchanged poll (memoized in useResultMap), so it
+  // doesn't re-create nodes — node DATA only re-merges when results actually land.
+  const refs = useMemo(() => motes.flatMap((m) => (m.resultRef ? [m.resultRef] : [])), [motes]);
+  const { byRef, isLoading } = useResultMap(projection.instanceId, refs);
+  // Node DATA (state/anomaly + resolved result) re-merges every poll WITHOUT relayout.
+  const nodes = useMemo(
+    () => buildFlowNodes(motes, positions, { byRef, loading: isLoading }),
+    [motes, positions, byRef, isLoading],
+  );
 
   // Refit the viewport when the topology grows (dynamic children appear). Guarded
   // so a headless/jsdom flow (no measured viewport) is a harmless no-op.

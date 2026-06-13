@@ -1,12 +1,16 @@
 import type { GlobalDelta } from "@kortecx/sdk/web";
 import { Link } from "@tanstack/react-router";
 import { m } from "framer-motion";
+import { useMemo } from "react";
 import { rowEntrance } from "../../app/motion";
+import { type RunScopedRef, useResultMapMulti } from "../../kx/use-content-batch";
 import { useGlobalEvents } from "../../kx/use-global-events";
 import { useRecipeNames } from "../../kx/use-recipes";
+import type { DecodedContent } from "../../lib/content-decode";
 import { eventSummary, eventVisual } from "../../lib/event-format";
 import { shortHex } from "../../lib/format";
 import { EmptyState } from "../EmptyState";
+import { ResultPreview } from "../ResultPreview";
 
 /**
  * The GLOBAL cross-run live feed (Batch C) — every journal delta on the node,
@@ -18,6 +22,18 @@ import { EmptyState } from "../EmptyState";
 export function GlobalFeed({ onSelectRun }: { onSelectRun?: (instanceId: string) => void }) {
   const stream = useGlobalEvents();
   const recipeNames = useRecipeNames();
+  // Resolve the visible committed deltas' results, grouped by their owning run
+  // (GetContentBatch is run-scoped — one batch per distinct run in the window).
+  const pairs = useMemo<RunScopedRef[]>(
+    () =>
+      stream.events.flatMap((d) =>
+        d.kind === "committed" && d.resultRef && d.instanceId
+          ? [{ instanceId: d.instanceId, ref: d.resultRef }]
+          : [],
+      ),
+    [stream.events],
+  );
+  const { byRef, isLoading } = useResultMapMulti(pairs);
 
   if (stream.notWired) {
     return (
@@ -57,33 +73,48 @@ export function GlobalFeed({ onSelectRun }: { onSelectRun?: (instanceId: string)
         </p>
       ) : null}
       <ul className="feed__list">
-        {stream.events.map((d, i) => (
-          <GlobalEventRow
-            key={`${d.seq}:${d.kind}:${d.moteId ?? d.instanceId}`}
-            delta={d}
-            index={i}
-            recipeName={d.recipeFingerprint ? recipeNames.data?.[d.recipeFingerprint] : undefined}
-            onSelectRun={onSelectRun}
-          />
-        ))}
+        {stream.events.map((d, i) => {
+          const vm = d.resultRef ? byRef.get(d.resultRef) : undefined;
+          return (
+            <GlobalEventRow
+              key={`${d.seq}:${d.kind}:${d.moteId ?? d.instanceId}`}
+              delta={d}
+              index={i}
+              recipeName={d.recipeFingerprint ? recipeNames.data?.[d.recipeFingerprint] : undefined}
+              onSelectRun={onSelectRun}
+              content={vm?.content}
+              missing={vm?.missing ?? false}
+              resolving={isLoading}
+            />
+          );
+        })}
       </ul>
     </div>
   );
 }
 
-/** One global delta as a feed row: kind pill · summary · run link · seq. */
+/** One global delta as a feed row: kind pill · summary · resolved result · run
+ *  link · seq. A committed row shows the result TEXT (D142.2); the run link is a
+ *  sibling of the chip (both inside the row, never nested). */
 function GlobalEventRow({
   delta,
   index,
   recipeName,
   onSelectRun,
+  content,
+  missing = false,
+  resolving = false,
 }: {
   delta: GlobalDelta;
   index: number;
   recipeName?: string;
   onSelectRun?: (instanceId: string) => void;
+  content?: DecodedContent;
+  missing?: boolean;
+  resolving?: boolean;
 }) {
   const v = eventVisual(delta.kind);
+  const showResult = delta.kind === "committed" && Boolean(delta.resultRef);
   return (
     <m.li
       className="event-row"
@@ -92,7 +123,16 @@ function GlobalEventRow({
       {...rowEntrance(index)}
     >
       <span className={`pill pill--${v.tone}`}>{v.label}</span>
-      <span className="event-row__summary">{eventSummary(delta, recipeName)}</span>
+      <span className="event-row__summary">{eventSummary(delta, recipeName, showResult)}</span>
+      {showResult ? (
+        <ResultPreview
+          resultRef={delta.resultRef ?? null}
+          content={content}
+          missing={missing}
+          loading={resolving}
+          max={80}
+        />
+      ) : null}
       {delta.instanceId ? (
         onSelectRun ? (
           <button

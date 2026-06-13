@@ -14,8 +14,10 @@
 
 import { Link } from "@tanstack/react-router";
 import { m } from "framer-motion";
+import { useMemo } from "react";
 import { fadeUp, stagger } from "../../app/motion";
 import { useCaptureRecords } from "../../kx/use-capture-records";
+import { type RunScopedRef, useResultMapMulti } from "../../kx/use-content-batch";
 import { useReactTurns } from "../../kx/use-react-turns";
 import { useReplanRounds } from "../../kx/use-replan-rounds";
 import { useRuns } from "../../kx/use-runs";
@@ -32,6 +34,7 @@ import {
 import type { MonitorTab } from "../../router/routes/monitor";
 import { EmptyState } from "../EmptyState";
 import { ErrorNotice } from "../ErrorNotice";
+import { ResultPreview } from "../ResultPreview";
 import { GlobalFeed } from "../activity/GlobalFeed";
 import { GlowCard } from "../ds/GlowCard";
 import { HealthIndicator } from "../metrics/HealthIndicator";
@@ -236,6 +239,19 @@ function OverviewView() {
   const replanSummary = summarizeReplan(replan.rounds);
   const reactSummary = summarizeReact(react.turns);
   const captureSummary = summarizeCaptures(capture.records);
+  // Resolve the (bounded, 10-row) capture table's results to TEXT, grouped by
+  // run (the records span runs; GetContentBatch is run-scoped). Telemetry stays
+  // exhaust — but the Result is the headline here, not a bare hash (D142.2).
+  const capturePairs = useMemo<RunScopedRef[]>(
+    () =>
+      capture.records
+        .slice(0, 10)
+        .flatMap((r) =>
+          r.resultRef && r.instanceId ? [{ instanceId: r.instanceId, ref: r.resultRef }] : [],
+        ),
+    [capture.records],
+  );
+  const captureResults = useResultMapMulti(capturePairs);
 
   function refreshAll(): void {
     runs.refresh();
@@ -349,14 +365,25 @@ function OverviewView() {
                 </tr>
               </thead>
               <tbody>
-                {capture.records.slice(0, 10).map((r) => (
-                  <tr key={`${r.seq}-${r.moteId}`}>
-                    <td className="mono">{shortHex(r.moteId)}</td>
-                    <td className="mono">{shortHex(r.resultRef)}</td>
-                    <td className="mono">{r.ndClass || "—"}</td>
-                    <td className="mono">#{r.seq}</td>
-                  </tr>
-                ))}
+                {capture.records.slice(0, 10).map((r) => {
+                  const vm = r.resultRef ? captureResults.byRef.get(r.resultRef) : undefined;
+                  return (
+                    <tr key={`${r.seq}-${r.moteId}`}>
+                      <td className="mono">{shortHex(r.moteId)}</td>
+                      <td className="trail-table__result">
+                        <ResultPreview
+                          resultRef={r.resultRef || null}
+                          content={vm?.content}
+                          missing={vm?.missing ?? false}
+                          loading={captureResults.isLoading}
+                          max={60}
+                        />
+                      </td>
+                      <td className="mono">{r.ndClass || "—"}</td>
+                      <td className="mono">#{r.seq}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           ) : null}

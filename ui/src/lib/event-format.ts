@@ -42,12 +42,14 @@ export function eventVisual(kind: string): EventVisual {
 
 /** A one-line human summary of a delta (the Mote it concerns + its effect).
  *  `recipeName` labels a `run_registered` row when the fingerprint→handle join
- *  resolved one (else the row degrades to the fingerprint hex). */
-export function eventSummary(d: EventLike, recipeName?: string): string {
+ *  resolved one (else the row degrades to the fingerprint hex). `omitResultRef`
+ *  drops the trailing `→ <hash>` on a committed row when the caller renders the
+ *  RESOLVED result text alongside (so the hash never doubles as the headline). */
+export function eventSummary(d: EventLike, recipeName?: string, omitResultRef = false): string {
   switch (d.kind) {
     case "committed":
       return `Mote ${shortHex(d.moteId ?? "")} committed${
-        d.resultRef ? ` → ${shortHex(d.resultRef)}` : ""
+        d.resultRef && !omitResultRef ? ` → ${shortHex(d.resultRef)}` : ""
       }`;
     case "failed":
       return `Mote ${shortHex(d.moteId ?? "")} failed`;

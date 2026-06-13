@@ -7,16 +7,19 @@
  */
 
 import { m } from "framer-motion";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { fadeUp, hoverLift, stagger } from "../../app/motion";
 import { toUiError } from "../../kx/errors";
 import { useContent } from "../../kx/use-content";
+import { useResultMap } from "../../kx/use-content-batch";
 import { useRunArtifacts } from "../../kx/use-run-artifacts";
 import { artifactKindVisual } from "../../lib/artifact-kind";
 import type { DecodedContent } from "../../lib/content-decode";
 import { shortHex } from "../../lib/format";
+import { DigestChip } from "../DigestChip";
 import { EmptyState } from "../EmptyState";
 import { ErrorNotice } from "../ErrorNotice";
+import { ResultPreview } from "../ResultPreview";
 import { ArtifactView } from "./ArtifactView";
 
 function download(name: string, text: string): void {
@@ -31,6 +34,10 @@ function download(name: string, text: string): void {
 export function ArtifactGallery({ instanceId }: { instanceId: string }) {
   const { artifacts, isLoading, error, refetch } = useRunArtifacts(instanceId);
   const [openRef, setOpenRef] = useState<string | null>(null);
+  // Batch-resolve every artifact's text for the list headline (one RPC, the N+1
+  // collapse) — the full payload still opens lazily on click below.
+  const refs = useMemo(() => artifacts.map((a) => a.resultRef), [artifacts]);
+  const { byRef, isLoading: previewsLoading } = useResultMap(instanceId, refs);
 
   if (isLoading) {
     return <EmptyState title="Loading run…" />;
@@ -56,6 +63,7 @@ export function ArtifactGallery({ instanceId }: { instanceId: string }) {
       <m.ul className="artifact-list" variants={stagger()} initial="hidden" animate="show">
         {artifacts.map((a) => {
           const open = openRef === a.resultRef;
+          const vm = byRef.get(a.resultRef);
           return (
             <m.li
               className="artifact-list__item card-hover"
@@ -63,17 +71,31 @@ export function ArtifactGallery({ instanceId }: { instanceId: string }) {
               variants={fadeUp}
               {...hoverLift}
             >
-              <button
-                type="button"
-                className="artifact-list__row mono"
-                data-testid={`artifact-${a.resultRef}`}
-                aria-expanded={open}
-                onClick={() => setOpenRef(open ? null : a.resultRef)}
-              >
-                <span className="artifact-list__mote">{shortHex(a.moteId)}</span>
-                <span className="muted">→</span>
-                <span className="artifact-list__ref">{shortHex(a.resultRef)}</span>
-              </button>
+              <div className="artifact-list__row">
+                <button
+                  type="button"
+                  className="artifact-list__toggle"
+                  data-testid={`artifact-${a.resultRef}`}
+                  aria-expanded={open}
+                  onClick={() => setOpenRef(open ? null : a.resultRef)}
+                >
+                  <span className="artifact-list__mote mono">{shortHex(a.moteId)}</span>
+                  <span className="muted" aria-hidden="true">
+                    →
+                  </span>
+                  {/* Resolved text is the headline; the chip rides as a sibling
+                      (a DigestChip button can't nest in this toggle button). */}
+                  <ResultPreview
+                    resultRef={a.resultRef}
+                    content={vm?.content}
+                    missing={vm?.missing ?? false}
+                    loading={previewsLoading}
+                    max={120}
+                    chip={false}
+                  />
+                </button>
+                <DigestChip hex={a.resultRef} label="result" />
+              </div>
               {open ? <ArtifactCard instanceId={instanceId} contentRef={a.resultRef} /> : null}
             </m.li>
           );
