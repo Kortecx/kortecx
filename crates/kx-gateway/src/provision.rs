@@ -528,7 +528,20 @@ impl DemoLibrary {
         // (blueprints/author) the Tier-1 DAG-authoring asset — granted Use to each
         // party so `SubmitWorkflow` resolves the party's authority from this same
         // ledger (no body/version; authoring submits one-off DAGs). Always seeded.
-        let blueprint_base = demo_warrant(exec_class);
+        //
+        // P1.1: when a model is served, the authoring grant's `model_route` MUST
+        // name the SERVED model — otherwise an authored MODEL step (whose warrant is
+        // this same `base`) routes to the demo PLACEHOLDER model and dead-letters at
+        // dispatch (served ≠ placeholder). The other axes stay `demo_warrant`'s (the
+        // PURE/EXEC authoring scope); only the model_route id is re-pointed. Warrants
+        // are off the MoteDef/journal/digest, so this is identity-invariant.
+        let blueprint_base = {
+            let mut w = demo_warrant(exec_class);
+            if let Some(model_id) = serve_model {
+                w.model_route.model_id = model_id.clone();
+            }
+            w
+        };
         seed_blueprint_asset(
             &grants,
             &owner,
@@ -930,6 +943,13 @@ impl HostWorkflowAuthor {
                         served.0
                     )));
                 }
+                // P1.1: the step warrant is `base` — and `blueprint_base` now carries
+                // the SERVED model in its `model_route` (see `seed`), so the dispatch
+                // id (served) == the warrant route id (served) and the dispatcher's
+                // strict check passes (it used to be the demo PLACEHOLDER route ≠
+                // served → the MODEL step dead-lettered). Using `base` verbatim keeps
+                // the step warrant == the authoring grant ⇒ a guaranteed no-op
+                // narrowing at admission (no `AttemptedWiden` on the model_route ceilings).
                 transform(
                     LogicRef::from_bytes(MODEL_LOGIC_REF),
                     served.clone(),
@@ -1871,6 +1891,66 @@ mod tests {
                 .await,
             Err(BinderError::NotAuthorized)
         ));
+    }
+
+    /// P1.1 regression: an authored MODEL step's bound warrant `model_route` names
+    /// the SERVED model (not the `blueprint_base` placeholder), so the dispatcher's
+    /// strict `mote.def.model_id == warrant.model_route.model_id` check passes and
+    /// the step RUNS instead of dead-lettering. Before the fix the step warrant was
+    /// the placeholder route ≠ served, so `SubmitWorkflow` MODEL steps dead-lettered
+    /// against any non-placeholder served model.
+    #[tokio::test]
+    async fn authored_model_step_warrant_routes_to_the_served_model() {
+        let dir = tempfile::tempdir().unwrap();
+        let served = ModelId("kx-serve:test-model".into());
+        let lib = DemoLibrary::open_full(
+            dir.path(),
+            ExecutorClass::Bwrap,
+            &["alice@acme".to_string()],
+            None,
+            Some(served.clone()),
+        )
+        .unwrap();
+        let author = HostWorkflowAuthor::from_shared(std::sync::Arc::new(lib));
+        let model_step = AuthorStep {
+            kind: AuthorStepKind::Model,
+            model_id: String::new(), // empty ⇒ bind to the served model
+            prompt: "summarize the discussion".into(),
+            body_signature_id: None,
+            tool_contract: std::collections::BTreeMap::new(),
+            params: std::collections::BTreeMap::new(),
+        };
+        let bound = author
+            .author(
+                "alice@acme",
+                3,
+                &[model_step],
+                &[],
+                AuthorExecutionMode::Frozen,
+            )
+            .await
+            .expect("a single MODEL step authors");
+        let (mote, warrant) = bound
+            .motes
+            .iter()
+            .find(|(m, _)| {
+                m.def
+                    .config_subset
+                    .contains_key(&ConfigKey(PROMPT_KEY.to_string()))
+            })
+            .expect("the authored DAG has a prompt-bearing MODEL Mote");
+        assert_eq!(
+            mote.def.model_id, served,
+            "the dispatch model id is the served model"
+        );
+        assert_eq!(
+            warrant.model_route.model_id, served,
+            "P1.1: the step warrant's model_route names the SERVED model (was the placeholder)"
+        );
+        assert_eq!(
+            mote.def.model_id, warrant.model_route.model_id,
+            "dispatch id == warrant route id (the dispatcher's strict equality holds)"
+        );
     }
 
     #[tokio::test]
