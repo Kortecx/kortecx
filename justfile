@@ -426,7 +426,11 @@ smoke-test-with-model:
 # deterministic across gateways. Builds the llama.cpp FFI; the CI `real-model-e2e`
 # job runs exactly this. Gated separately so the default `just ci` stays FFI-free.
 real-model-e2e: fetch-agent-model
-    cargo test -p kx-gateway --features inference --test al1_serve -- --ignored --nocapture
+    # `--test-threads=1`: run the real-inference tests SERIALLY. Each serves a model
+    # and llama.cpp already uses every CPU core, so running them concurrently on a
+    # CPU-only CI runner starves each inference (neither commits in time). Serial =
+    # one inference at a time = full CPU each.
+    cargo test -p kx-gateway --features inference --test al1_serve -- --ignored --nocapture --test-threads=1
 
 # LOCAL / manual gate (NOT a CI job): exercise the safe-wrapper inference pipeline
 # with GPU offload forced ON (`KX_N_GPU_LAYERS=-1`) so an Apple-Silicon dev sees
