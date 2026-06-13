@@ -13,6 +13,16 @@ use crate::verbs;
 /// see [`crate::client::DEFAULT_ENDPOINT`]).
 pub const DEFAULT_LISTEN: &str = "127.0.0.1:50151";
 
+/// Env var naming the base data directory for a zero-config `kx serve`. When set
+/// (and non-empty) it overrides the `~/.kortecx` default — useful for sandboxing
+/// (tests) or pinning the runtime's durable state to a chosen disk.
+pub const KX_DATA_DIR_ENV: &str = "KX_DATA_DIR";
+
+/// Fallback base data-dir name (under `$HOME`, or the CWD when `$HOME` is unset)
+/// used by zero-config `serve` when [`KX_DATA_DIR_ENV`] is not set. Stable across
+/// restarts so a re-served runtime keeps its journal, telemetry, and content.
+pub const KX_DATA_DIR_NAME: &str = ".kortecx";
+
 /// One-line-per-section usage, printed on `--help` and on a parse error.
 pub const USAGE: &str = "\
 usage: kx <command> [args]
@@ -22,11 +32,15 @@ usage: kx <command> [args]
                          [--audit-log <path>] [--json]
 
   server:
-    kx serve --journal <path> --content <dir> [--listen <addr:port>] [--ws-listen <addr:port>]
-             [--dev-allow-local] [--auth-token <tok>=<party>]... [--auth-token-file <path>]
-             [--max-lease N] [--catalog-dir <dir>] [--tls-cert <p> --tls-key <p>]
-             [--cors-origin <scheme://host[:port]>]...
-             (--listen defaults to 127.0.0.1:50151; --ws-listen — the live-event WebSocket — to :50152;
+    kx serve --dev-allow-local [--journal <path>] [--content <dir>] [--catalog-dir <dir>]
+             [--listen <addr:port>] [--ws-listen <addr:port>]
+             [--auth-token <tok>=<party>]... [--auth-token-file <path>]
+             [--max-lease N] [--tls-cert <p> --tls-key <p>] [--cors-origin <scheme://host[:port]>]...
+             (zero-config: omit --journal/--content/--catalog-dir and they auto-resolve under
+              $KX_DATA_DIR (default ~/.kortecx), created on first run + REUSED across restarts;
+              the resolved paths + endpoints print as a startup banner. An auth posture is REQUIRED:
+              --dev-allow-local (alias --allow-local-dev, loopback only) or --auth-token(-file).
+              --listen defaults to 127.0.0.1:50151; --ws-listen — the live-event WebSocket — to :50152;
               --cors-origin enables the gRPC-web browser shim for the listed origins, deny-by-default)
 
   client verbs (gRPC over the gateway; common flags: --endpoint <url> --token <t> | --token-file <p> --tls-ca <path> --json):
@@ -272,6 +286,8 @@ async fn run_engine(argv: Vec<String>, json: bool) -> Result<(), CliError> {
 
 /// Forward to the embedded gateway server, defaulting `--listen` when absent.
 async fn serve(rest: Vec<String>) -> Result<(), CliError> {
+    require_auth_posture(&rest)?;
+    let rest = inject_data_dir_defaults(rest)?;
     let argv = inject_listen_default(rest);
     let cli = kx_gateway::Cli::from_args(std::iter::once("serve".to_string()).chain(argv))
         .map_err(|e| CliError::Config(e.to_string()))?;
@@ -306,6 +322,87 @@ fn inject_listen_default(mut rest: Vec<String>) -> Vec<String> {
     rest
 }
 
+/// Resolve the base data directory for a zero-config `kx serve`:
+/// `$KX_DATA_DIR` → else `$HOME/.kortecx` → else `./.kortecx`. STABLE across
+/// restarts (no random suffix) so a re-served runtime keeps its journal,
+/// telemetry, capture, and content. No `dirs` crate (Linux CI + Apple-Silicon
+/// targets only — SN-7).
+fn resolve_base_data_dir() -> std::path::PathBuf {
+    use std::path::PathBuf;
+    if let Some(v) = std::env::var_os(KX_DATA_DIR_ENV).filter(|v| !v.is_empty()) {
+        return PathBuf::from(v);
+    }
+    match std::env::var_os("HOME").filter(|v| !v.is_empty()) {
+        Some(home) => PathBuf::from(home).join(KX_DATA_DIR_NAME),
+        None => PathBuf::from(".").join(KX_DATA_DIR_NAME),
+    }
+}
+
+/// Inject a zero-config data layout (`--journal` / `--content` / `--catalog-dir`
+/// under a STABLE, durable base dir, [`resolve_base_data_dir`]) for the
+/// no-flags `kx serve --dev-allow-local` path.
+///
+/// ALL-OR-NOTHING: this fires ONLY when the operator gave NO data-path flag at
+/// all. If ANY of `--journal`/`--content`/`--catalog-dir` is present, the
+/// operator owns the layout and we return `rest` untouched — the gateway then
+/// applies its own defaults (notably `catalog_dir` → the journal's parent). A
+/// partial inject would be a footgun: a `--journal X --content Y` invocation
+/// (without `--catalog-dir`) would otherwise get its catalog REDIRECTED to the
+/// shared base dir, colliding the membership/telemetry sidecars across every
+/// gateway that shares the base (the cause of the test-suite breakage).
+///
+/// The base is a durable dir (never a `tempfile`, which would delete the data
+/// the operator wants to inspect); we create only the dirs we inject so the
+/// gateway's stores open cleanly (SQLite needs the journal's parent to exist).
+fn inject_data_dir_defaults(mut rest: Vec<String>) -> Result<Vec<String>, CliError> {
+    let has = |name: &str| rest.iter().any(|a| a == name);
+    // Any explicit data path ⇒ respect the operator's layout entirely.
+    if has("--journal") || has("--content") || has("--catalog-dir") {
+        return Ok(rest);
+    }
+    let base = resolve_base_data_dir();
+    let mkdir = |p: &std::path::Path| -> Result<(), CliError> {
+        std::fs::create_dir_all(p)
+            .map_err(|e| CliError::Config(format!("create data dir {}: {e}", p.display())))
+    };
+    let content = base.join("content");
+    let catalog = base.join("catalog");
+    mkdir(&base)?;
+    mkdir(&content)?;
+    mkdir(&catalog)?;
+    rest.push("--journal".to_string());
+    rest.push(base.join("kx.db").to_string_lossy().into_owned());
+    rest.push("--content".to_string());
+    rest.push(content.to_string_lossy().into_owned());
+    rest.push("--catalog-dir".to_string());
+    rest.push(catalog.to_string_lossy().into_owned());
+    Ok(rest)
+}
+
+/// Fail closed: `kx serve` must pick an explicit auth posture — we NEVER inject
+/// one. Silently defaulting to a no-auth server is a security regression (GR8),
+/// so a bare `kx serve` with neither the dev loopback flag nor a token source
+/// errors (exit 2) with the exact remediation. The gateway is likewise
+/// deny-by-default; this surfaces the requirement earlier as a clean config
+/// error instead of a server that starts and rejects every request.
+fn require_auth_posture(rest: &[String]) -> Result<(), CliError> {
+    let has_auth = rest.iter().any(|a| {
+        matches!(
+            a.as_str(),
+            "--dev-allow-local" | "--allow-local-dev" | "--auth-token" | "--auth-token-file"
+        )
+    });
+    if has_auth {
+        return Ok(());
+    }
+    Err(CliError::Config(
+        "kx serve refuses unauthenticated access. Re-run with --dev-allow-local \
+         (loopback-only dev access), or --auth-token <token>=<party> / \
+         --auth-token-file <path> for token auth."
+            .to_string(),
+    ))
+}
+
 /// Longer help for a single command (`kx help <command>`). A flat text table —
 /// one arm per verb; splitting it would scatter the help corpus for no clarity
 /// gain (the `start_impl` precedent). Allow the length.
@@ -322,13 +419,17 @@ kx run|replay|digest --journal <path> --content <dir> [--crash-at <pt>] [--check
   (off the truth path; never changes the digest). Honored by run/replay."
             .into(),
         "serve" => "\
-kx serve --journal <path> --content <dir> [--listen <addr:port>] [--ws-listen <addr:port>] [--dev-allow-local] ...
-  Hosts the embedded single-system gateway. --listen (gRPC) defaults to 127.0.0.1:50151;
-  --ws-listen (the R5 live-event WebSocket bridge) defaults to 127.0.0.1:50152.
-  Web console: a console-build kx (the prebuilt release) also serves the embedded
-  browser console at http://127.0.0.1:50180 — override with --console-listen
-  <addr:port> (loopback only) or disable with --no-console.
-  Deny-all by default: pass --dev-allow-local (loopback only) or --auth-token(-file).
+kx serve --dev-allow-local [--journal <path>] [--content <dir>] [--catalog-dir <dir>] [--listen <addr:port>] ...
+  Hosts the embedded single-system gateway. ZERO-CONFIG: omit --journal/--content/--catalog-dir
+  and they auto-resolve under $KX_DATA_DIR (default ~/.kortecx), created on first run and REUSED
+  across restarts so the journal, telemetry, capture, and content persist. The resolved data dir +
+  every store path + the gRPC/WebSocket/console endpoints print as a startup banner for reference.
+  --listen (gRPC) defaults to 127.0.0.1:50151; --ws-listen (the R5 live-event WebSocket bridge) to
+  127.0.0.1:50152. Web console: a console-build kx (the prebuilt release) also serves the embedded
+  browser console at http://127.0.0.1:50180 — override with --console-listen <addr:port> (loopback
+  only) or disable with --no-console.
+  Deny-all by default: an auth posture is REQUIRED — pass --dev-allow-local (alias --allow-local-dev,
+  loopback only) or --auth-token(-file); a bare `kx serve` with neither errors with a hint.
   Browser SPAs: --cors-origin <scheme://host[:port]> (repeatable, deny-by-default) enables the
   gRPC-web shim for the listed origins (pair with --tls-cert/--tls-key for https)."
             .into(),
@@ -583,5 +684,66 @@ mod tests {
     #[test]
     fn unknown_command_is_usage_error() {
         assert!(Cli::from_args(["frobnicate"]).is_err());
+    }
+
+    #[test]
+    fn data_dir_injection_is_noop_when_any_path_is_explicit() {
+        // ALL-OR-NOTHING: if the operator gave ANY data-path flag, injection is a
+        // no-op (NO env read, NO dir creation, argv byte-identical) — the operator
+        // owns the layout and the gateway defaults the rest. Critically, this
+        // includes the `--journal`+`--content` WITHOUT `--catalog-dir` case: a
+        // partial inject there would redirect the catalog to the shared base dir
+        // and collide every gateway's sidecars (the test-suite breakage).
+        let cases: &[&[&str]] = &[
+            &[
+                "--journal",
+                "/tmp/j",
+                "--content",
+                "/tmp/c",
+                "--catalog-dir",
+                "/tmp/cat",
+                "--dev-allow-local",
+            ],
+            &[
+                "--journal",
+                "/tmp/j",
+                "--content",
+                "/tmp/c",
+                "--dev-allow-local",
+            ], // the bug case
+            &["--journal", "/tmp/j", "--dev-allow-local"],
+            &["--catalog-dir", "/tmp/cat", "--dev-allow-local"],
+        ];
+        for case in cases {
+            let argv: Vec<String> = case.iter().map(|s| (*s).to_string()).collect();
+            let out = inject_data_dir_defaults(argv.clone()).unwrap();
+            assert_eq!(
+                out, argv,
+                "any explicit data path ⇒ argv passes through unchanged: {case:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn auth_posture_required() {
+        // No posture ⇒ a clean config error that names the remediation flag.
+        let err =
+            require_auth_posture(&["--journal".to_string(), "/tmp/j".to_string()]).unwrap_err();
+        assert!(
+            matches!(&err, CliError::Config(m) if m.contains("--dev-allow-local")),
+            "missing auth posture errors with a hint: {err:?}"
+        );
+        // Each accepted posture (incl. the alias) passes.
+        for flag in [
+            "--dev-allow-local",
+            "--allow-local-dev",
+            "--auth-token",
+            "--auth-token-file",
+        ] {
+            assert!(
+                require_auth_posture(&[flag.to_string()]).is_ok(),
+                "{flag} is an accepted auth posture"
+            );
+        }
     }
 }

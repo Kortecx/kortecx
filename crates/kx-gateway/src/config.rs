@@ -139,7 +139,7 @@ pub enum Cli {
 pub const USAGE: &str =
     "usage: kx-gateway serve --listen <addr:port> --journal <path> --content <dir> \
 [--ws-listen <addr:port>] [--console-listen <addr:port> | --no-console] \
-[--max-lease <N>] [--dev-allow-local] \
+[--max-lease <N>] [--dev-allow-local | --allow-local-dev] \
 [--auth-token <token>=<party>]... [--auth-token-file <path>] [--catalog-dir <dir>] \
 [--tls-cert <path> --tls-key <path>] [--cors-origin <scheme://host[:port]>]... \
 [--content-max-bytes <BYTES>]\n       \
@@ -202,7 +202,9 @@ fn parse_serve(mut args: impl Iterator<Item = String>) -> Result<GatewayConfig, 
                     ))
                 })?;
             }
-            "--dev-allow-local" => dev_allow_local = true,
+            // `--allow-local-dev` is an accepted alias (same loopback dev
+            // posture); a single parse site keeps the two spellings in sync.
+            "--dev-allow-local" | "--allow-local-dev" => dev_allow_local = true,
             "--auth-token" => {
                 let v = take_value("--auth-token")?;
                 let (token, party) = split_token_party(&v).ok_or_else(|| {
@@ -449,6 +451,27 @@ mod tests {
         assert_eq!(c.content_root, PathBuf::from("/tmp/blobs"));
         assert_eq!(c.max_lease, 8);
         assert!(c.dev_allow_local);
+    }
+
+    #[test]
+    fn allow_local_dev_is_an_accepted_alias() {
+        // `--allow-local-dev` resolves to the SAME loopback dev posture as the
+        // canonical `--dev-allow-local` (the zero-config `kx serve` ergonomics
+        // accept either spelling).
+        let c = serve(
+            Cli::from_args([
+                "serve",
+                "--listen",
+                "127.0.0.1:0",
+                "--journal",
+                "/tmp/j",
+                "--content",
+                "/tmp/c",
+                "--allow-local-dev",
+            ])
+            .unwrap(),
+        );
+        assert!(c.dev_allow_local, "the alias enables the dev posture");
     }
 
     #[test]

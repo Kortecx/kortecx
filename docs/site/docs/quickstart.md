@@ -54,17 +54,37 @@ Same digest = the exactly-once property, demonstrated.
 ## Start the runtime
 
 One command starts the gateway, the embedded worker, the live-event bridge, and
-(prebuilt binaries) the web console:
+(prebuilt binaries) the web console. It's **zero-config** — you only pass the
+auth posture; the journal, content store, and catalog auto-resolve:
 
 ```bash
-kx serve --journal /tmp/kx.db --content /tmp/kx-content --dev-allow-local
+kx serve --dev-allow-local
 #    gRPC on 127.0.0.1:50151 · events on ws://127.0.0.1:50152
 #    web console at http://127.0.0.1:50180  ← open this in your browser
 ```
 
-:::note Auth is deny-all by default
-With no flags a `kx serve` answers nobody. Pass `--dev-allow-local` (loopback
-development) or bearer tokens (`--auth-token <token>=<party>`). See
+On start, the server prints a banner with every resolved path and endpoint:
+
+```text
+kx-gateway STARTUP — resolved durable layout + endpoints
+  data_dir=~/.kortecx  journal=~/.kortecx/kx.db  content_dir=~/.kortecx/content
+  catalog_dir=~/.kortecx/catalog  (catalog.db · members.db · telemetry.db · capture.db · uploads.db · datasets/)
+  grpc_endpoint=http://127.0.0.1:50151  ws_endpoint=ws://127.0.0.1:50152  console_url=http://127.0.0.1:50180/
+  auth_mode=dev-allow-local  connect_hint=kx runs list --endpoint http://127.0.0.1:50151
+```
+
+The base directory is **stable across restarts** (your runs, telemetry, and
+content persist). Relocate it with `KX_DATA_DIR=/path/to/data`, or pin the
+individual paths explicitly:
+
+```bash
+kx serve --dev-allow-local --journal /tmp/kx.db --content /tmp/kx-content
+```
+
+:::note Auth is required (deny-all by default)
+A bare `kx serve` with no auth posture fails fast with a hint — it never opens
+an unauthenticated server. Pass `--dev-allow-local` (loopback development; alias
+`--allow-local-dev`) or bearer tokens (`--auth-token <token>=<party>`). See
 [Security](./security.md).
 :::
 
@@ -153,7 +173,7 @@ curl -fsSL -o qwen3-0.6b-q4_k_m.gguf \
   https://huggingface.co/unsloth/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B-Q4_K_M.gguf
 
 KX_SERVE_MODEL_GGUF="$PWD/qwen3-0.6b-q4_k_m.gguf" \
-  kx serve --journal /tmp/kx.db --content /tmp/kx-content --dev-allow-local
+  kx serve --dev-allow-local
 ```
 
 ```bash
