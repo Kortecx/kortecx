@@ -1,0 +1,13 @@
+{
+  "$schema": "https://typedoc.org/schema.json",
+  "//": "Generates the TypeScript SDK API reference into static/api/typescript/. Run via `npm run api:ts`. The entry point resolves against the in-repo SDK; adjust if the SDK moves.",
+  "entryPoints": ["../../bindings/typescript/src/index.ts"],
+  "tsconfig": "../../bindings/typescript/tsconfig.json",
+  "out": "static/api/typescript",
+  "name": "@kortecx/sdk",
+  "readme": "none",
+  "githubPages": false,
+  "hideGenerator": true,
+  "excludePrivate": true,
+  "excludeInternal": true
+}

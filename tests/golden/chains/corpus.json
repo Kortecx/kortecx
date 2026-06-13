@@ -1,0 +1,312 @@
+[
+  {
+    "name": "single",
+    "dsl": "a",
+    "seed": 0,
+    "tasks": { "a": { "kind": "pure" } },
+    "expect": {
+      "steps": [
+        { "kind": "pure", "model_id": "", "prompt": "", "body_signature_id": null, "tool_contract": {}, "params": {} }
+      ],
+      "edges": []
+    }
+  },
+  {
+    "name": "seq2",
+    "dsl": "a > b",
+    "seed": 0,
+    "tasks": { "a": { "kind": "pure" }, "b": { "kind": "pure" } },
+    "expect": {
+      "steps": [
+        { "kind": "pure", "model_id": "", "prompt": "", "body_signature_id": null, "tool_contract": {}, "params": {} },
+        { "kind": "pure", "model_id": "", "prompt": "", "body_signature_id": null, "tool_contract": {}, "params": {} }
+      ],
+      "edges": [ { "parent": 0, "child": 1, "edge": "data" } ]
+    }
+  },
+  {
+    "name": "par_pipe",
+    "dsl": "a | b",
+    "seed": 0,
+    "tasks": { "a": { "kind": "pure" }, "b": { "kind": "pure" } },
+    "expect": {
+      "steps": [
+        { "kind": "pure", "model_id": "", "prompt": "", "body_signature_id": null, "tool_contract": {}, "params": {} },
+        { "kind": "pure", "model_id": "", "prompt": "", "body_signature_id": null, "tool_contract": {}, "params": {} }
+      ],
+      "edges": []
+    }
+  },
+  {
+    "name": "par_amp",
+    "dsl": "a & b",
+    "seed": 0,
+    "tasks": { "a": { "kind": "pure" }, "b": { "kind": "pure" } },
+    "expect": {
+      "steps": [
+        { "kind": "pure", "model_id": "", "prompt": "", "body_signature_id": null, "tool_contract": {}, "params": {} },
+        { "kind": "pure", "model_id": "", "prompt": "", "body_signature_id": null, "tool_contract": {}, "params": {} }
+      ],
+      "edges": []
+    }
+  },
+  {
+    "name": "seq3",
+    "dsl": "a > b > c",
+    "seed": 0,
+    "tasks": { "a": { "kind": "pure" }, "b": { "kind": "pure" }, "c": { "kind": "pure" } },
+    "expect": {
+      "steps": [
+        { "kind": "pure", "model_id": "", "prompt": "", "body_signature_id": null, "tool_contract": {}, "params": {} },
+        { "kind": "pure", "model_id": "", "prompt": "", "body_signature_id": null, "tool_contract": {}, "params": {} },
+        { "kind": "pure", "model_id": "", "prompt": "", "body_signature_id": null, "tool_contract": {}, "params": {} }
+      ],
+      "edges": [
+        { "parent": 0, "child": 1, "edge": "data" },
+        { "parent": 1, "child": 2, "edge": "data" }
+      ]
+    }
+  },
+  {
+    "name": "seq_then_par",
+    "dsl": "a > b | c",
+    "seed": 0,
+    "tasks": { "a": { "kind": "pure" }, "b": { "kind": "pure" }, "c": { "kind": "pure" } },
+    "expect": {
+      "steps": [
+        { "kind": "pure", "model_id": "", "prompt": "", "body_signature_id": null, "tool_contract": {}, "params": {} },
+        { "kind": "pure", "model_id": "", "prompt": "", "body_signature_id": null, "tool_contract": {}, "params": {} },
+        { "kind": "pure", "model_id": "", "prompt": "", "body_signature_id": null, "tool_contract": {}, "params": {} }
+      ],
+      "edges": [ { "parent": 0, "child": 1, "edge": "data" } ]
+    }
+  },
+  {
+    "name": "fanout_group",
+    "dsl": "a > [b & c]",
+    "seed": 0,
+    "tasks": { "a": { "kind": "pure" }, "b": { "kind": "pure" }, "c": { "kind": "pure" } },
+    "expect": {
+      "steps": [
+        { "kind": "pure", "model_id": "", "prompt": "", "body_signature_id": null, "tool_contract": {}, "params": {} },
+        { "kind": "pure", "model_id": "", "prompt": "", "body_signature_id": null, "tool_contract": {}, "params": {} },
+        { "kind": "pure", "model_id": "", "prompt": "", "body_signature_id": null, "tool_contract": {}, "params": {} }
+      ],
+      "edges": [
+        { "parent": 0, "child": 1, "edge": "data" },
+        { "parent": 0, "child": 2, "edge": "data" }
+      ]
+    }
+  },
+  {
+    "name": "fanin_group",
+    "dsl": "[a & b] > c",
+    "seed": 0,
+    "tasks": { "a": { "kind": "pure" }, "b": { "kind": "pure" }, "c": { "kind": "pure" } },
+    "expect": {
+      "steps": [
+        { "kind": "pure", "model_id": "", "prompt": "", "body_signature_id": null, "tool_contract": {}, "params": {} },
+        { "kind": "pure", "model_id": "", "prompt": "", "body_signature_id": null, "tool_contract": {}, "params": {} },
+        { "kind": "pure", "model_id": "", "prompt": "", "body_signature_id": null, "tool_contract": {}, "params": {} }
+      ],
+      "edges": [
+        { "parent": 0, "child": 2, "edge": "data" },
+        { "parent": 1, "child": 2, "edge": "data" }
+      ]
+    }
+  },
+  {
+    "name": "bipartite",
+    "dsl": "[a & b] > [c & d]",
+    "seed": 0,
+    "tasks": { "a": { "kind": "pure" }, "b": { "kind": "pure" }, "c": { "kind": "pure" }, "d": { "kind": "pure" } },
+    "expect": {
+      "steps": [
+        { "kind": "pure", "model_id": "", "prompt": "", "body_signature_id": null, "tool_contract": {}, "params": {} },
+        { "kind": "pure", "model_id": "", "prompt": "", "body_signature_id": null, "tool_contract": {}, "params": {} },
+        { "kind": "pure", "model_id": "", "prompt": "", "body_signature_id": null, "tool_contract": {}, "params": {} },
+        { "kind": "pure", "model_id": "", "prompt": "", "body_signature_id": null, "tool_contract": {}, "params": {} }
+      ],
+      "edges": [
+        { "parent": 0, "child": 2, "edge": "data" },
+        { "parent": 0, "child": 3, "edge": "data" },
+        { "parent": 1, "child": 2, "edge": "data" },
+        { "parent": 1, "child": 3, "edge": "data" }
+      ]
+    }
+  },
+  {
+    "name": "prec_or_amp",
+    "dsl": "a | b & c",
+    "seed": 0,
+    "tasks": { "a": { "kind": "pure" }, "b": { "kind": "pure" }, "c": { "kind": "pure" } },
+    "expect": {
+      "steps": [
+        { "kind": "pure", "model_id": "", "prompt": "", "body_signature_id": null, "tool_contract": {}, "params": {} },
+        { "kind": "pure", "model_id": "", "prompt": "", "body_signature_id": null, "tool_contract": {}, "params": {} },
+        { "kind": "pure", "model_id": "", "prompt": "", "body_signature_id": null, "tool_contract": {}, "params": {} }
+      ],
+      "edges": []
+    }
+  },
+  {
+    "name": "prec_seq_amp",
+    "dsl": "a > b & c",
+    "seed": 0,
+    "tasks": { "a": { "kind": "pure" }, "b": { "kind": "pure" }, "c": { "kind": "pure" } },
+    "expect": {
+      "steps": [
+        { "kind": "pure", "model_id": "", "prompt": "", "body_signature_id": null, "tool_contract": {}, "params": {} },
+        { "kind": "pure", "model_id": "", "prompt": "", "body_signature_id": null, "tool_contract": {}, "params": {} },
+        { "kind": "pure", "model_id": "", "prompt": "", "body_signature_id": null, "tool_contract": {}, "params": {} }
+      ],
+      "edges": [ { "parent": 0, "child": 1, "edge": "data" } ]
+    }
+  },
+  {
+    "name": "prec_amp_seq",
+    "dsl": "a & b > c",
+    "seed": 0,
+    "tasks": { "a": { "kind": "pure" }, "b": { "kind": "pure" }, "c": { "kind": "pure" } },
+    "expect": {
+      "steps": [
+        { "kind": "pure", "model_id": "", "prompt": "", "body_signature_id": null, "tool_contract": {}, "params": {} },
+        { "kind": "pure", "model_id": "", "prompt": "", "body_signature_id": null, "tool_contract": {}, "params": {} },
+        { "kind": "pure", "model_id": "", "prompt": "", "body_signature_id": null, "tool_contract": {}, "params": {} }
+      ],
+      "edges": [ { "parent": 1, "child": 2, "edge": "data" } ]
+    }
+  },
+  {
+    "name": "nested",
+    "dsl": "[a > [b & c]] > d",
+    "seed": 0,
+    "tasks": { "a": { "kind": "pure" }, "b": { "kind": "pure" }, "c": { "kind": "pure" }, "d": { "kind": "pure" } },
+    "expect": {
+      "steps": [
+        { "kind": "pure", "model_id": "", "prompt": "", "body_signature_id": null, "tool_contract": {}, "params": {} },
+        { "kind": "pure", "model_id": "", "prompt": "", "body_signature_id": null, "tool_contract": {}, "params": {} },
+        { "kind": "pure", "model_id": "", "prompt": "", "body_signature_id": null, "tool_contract": {}, "params": {} },
+        { "kind": "pure", "model_id": "", "prompt": "", "body_signature_id": null, "tool_contract": {}, "params": {} }
+      ],
+      "edges": [
+        { "parent": 0, "child": 1, "edge": "data" },
+        { "parent": 0, "child": 2, "edge": "data" },
+        { "parent": 1, "child": 3, "edge": "data" },
+        { "parent": 2, "child": 3, "edge": "data" }
+      ]
+    }
+  },
+  {
+    "name": "reuse_fanout",
+    "dsl": "a > b | a > c",
+    "seed": 0,
+    "tasks": { "a": { "kind": "pure" }, "b": { "kind": "pure" }, "c": { "kind": "pure" } },
+    "expect": {
+      "steps": [
+        { "kind": "pure", "model_id": "", "prompt": "", "body_signature_id": null, "tool_contract": {}, "params": {} },
+        { "kind": "pure", "model_id": "", "prompt": "", "body_signature_id": null, "tool_contract": {}, "params": {} },
+        { "kind": "pure", "model_id": "", "prompt": "", "body_signature_id": null, "tool_contract": {}, "params": {} }
+      ],
+      "edges": [
+        { "parent": 0, "child": 1, "edge": "data" },
+        { "parent": 0, "child": 2, "edge": "data" }
+      ]
+    }
+  },
+  {
+    "name": "par3",
+    "dsl": "a | b | c",
+    "seed": 0,
+    "tasks": { "a": { "kind": "pure" }, "b": { "kind": "pure" }, "c": { "kind": "pure" } },
+    "expect": {
+      "steps": [
+        { "kind": "pure", "model_id": "", "prompt": "", "body_signature_id": null, "tool_contract": {}, "params": {} },
+        { "kind": "pure", "model_id": "", "prompt": "", "body_signature_id": null, "tool_contract": {}, "params": {} },
+        { "kind": "pure", "model_id": "", "prompt": "", "body_signature_id": null, "tool_contract": {}, "params": {} }
+      ],
+      "edges": []
+    }
+  },
+  {
+    "name": "model_seq",
+    "dsl": "gen > sum",
+    "seed": 0,
+    "tasks": {
+      "gen": { "kind": "model", "model_id": "kx-serve:qwen3-4b-q4_k_m", "prompt": "Summarize the input." },
+      "sum": { "kind": "pure", "params": { "label": "final" } }
+    },
+    "expect": {
+      "steps": [
+        { "kind": "model", "model_id": "kx-serve:qwen3-4b-q4_k_m", "prompt": "Summarize the input.", "body_signature_id": null, "tool_contract": {}, "params": {} },
+        { "kind": "pure", "model_id": "", "prompt": "", "body_signature_id": null, "tool_contract": {}, "params": { "label": "final" } }
+      ],
+      "edges": [ { "parent": 0, "child": 1, "edge": "data" } ]
+    }
+  },
+  {
+    "name": "seeded",
+    "dsl": "a > b",
+    "seed": 7,
+    "tasks": { "a": { "kind": "pure" }, "b": { "kind": "pure" } },
+    "expect": {
+      "steps": [
+        { "kind": "pure", "model_id": "", "prompt": "", "body_signature_id": null, "tool_contract": {}, "params": {} },
+        { "kind": "pure", "model_id": "", "prompt": "", "body_signature_id": null, "tool_contract": {}, "params": {} }
+      ],
+      "edges": [ { "parent": 0, "child": 1, "edge": "data" } ]
+    }
+  },
+  {
+    "name": "whitespace",
+    "dsl": "a>b>c",
+    "seed": 0,
+    "tasks": { "a": { "kind": "pure" }, "b": { "kind": "pure" }, "c": { "kind": "pure" } },
+    "expect": {
+      "steps": [
+        { "kind": "pure", "model_id": "", "prompt": "", "body_signature_id": null, "tool_contract": {}, "params": {} },
+        { "kind": "pure", "model_id": "", "prompt": "", "body_signature_id": null, "tool_contract": {}, "params": {} },
+        { "kind": "pure", "model_id": "", "prompt": "", "body_signature_id": null, "tool_contract": {}, "params": {} }
+      ],
+      "edges": [
+        { "parent": 0, "child": 1, "edge": "data" },
+        { "parent": 1, "child": 2, "edge": "data" }
+      ]
+    }
+  },
+  {
+    "name": "err_cycle",
+    "dsl": "a > b | b > a",
+    "seed": 0,
+    "tasks": { "a": { "kind": "pure" }, "b": { "kind": "pure" } },
+    "error": "cycle"
+  },
+  {
+    "name": "err_selfloop",
+    "dsl": "a > a",
+    "seed": 0,
+    "tasks": { "a": { "kind": "pure" } },
+    "error": "cycle"
+  },
+  {
+    "name": "err_unknown_handle",
+    "dsl": "a > z",
+    "seed": 0,
+    "tasks": { "a": { "kind": "pure" }, "b": { "kind": "pure" } },
+    "error": "unknown_handle"
+  },
+  {
+    "name": "err_empty_group",
+    "dsl": "a > []",
+    "seed": 0,
+    "tasks": { "a": { "kind": "pure" } },
+    "error": "parse"
+  },
+  {
+    "name": "err_empty",
+    "dsl": "",
+    "seed": 0,
+    "tasks": { "a": { "kind": "pure" } },
+    "error": "parse"
+  }
+]

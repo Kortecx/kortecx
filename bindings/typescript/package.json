@@ -23,6 +23,11 @@
       "types": "./dist/web.d.ts",
       "import": "./dist/web.js",
       "require": "./dist/web.cjs"
+    },
+    "./chains": {
+      "types": "./dist/chains.d.ts",
+      "import": "./dist/chains.js",
+      "require": "./dist/chains.cjs"
     }
   },
   "sideEffects": false,

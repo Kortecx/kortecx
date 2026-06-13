@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from .blueprints import BlueprintBuilder, EdgeInput, StepInput
 from .capture import CaptureRecord, CaptureRecordPage
+from .chains import Chain, Task, chain, model, pure
 from .client import DEFAULT_ENDPOINT, AsyncKxClient, KxClient
 from .content import ContentItem, PutResult
 from .datasets import DatasetHit, DatasetSummary, IngestDocument, IngestResult
@@ -104,6 +105,13 @@ __all__ = [
     "BlueprintBuilder",
     "StepInput",
     "EdgeInput",
+    # The Chains DSL — compose task handles into a DAG via operators or a string
+    # expression, then `run_chain` it (lowers to SubmitWorkflow via the builder).
+    "Chain",
+    "Task",
+    "chain",
+    "pure",
+    "model",
     "TeamSummary",
     "TeamMember",
     "TeamMembers",

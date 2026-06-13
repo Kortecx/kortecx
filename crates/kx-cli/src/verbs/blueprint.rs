@@ -34,44 +34,49 @@ use crate::{format, hex, verbs, wait};
 const DEFAULT_TIMEOUT_SECS: u64 = 120;
 
 /// The author-side DAG shape parsed from `--file`.
+///
+/// `pub(crate)` so the string-DSL lowering in [`crate::verbs::chain`] can reuse
+/// the one canonical proto assembly ([`to_request`]) instead of re-deriving the
+/// `SubmitWorkflowRequest` — a chain only changes *how* the `(steps, edges)` are
+/// authored, never how they lower to the wire.
 #[derive(Debug, Deserialize)]
-struct DagSpec {
+pub(crate) struct DagSpec {
     #[serde(default)]
-    seed: u32,
-    steps: Vec<StepSpec>,
+    pub(crate) seed: u32,
+    pub(crate) steps: Vec<StepSpec>,
     #[serde(default)]
-    edges: Vec<EdgeSpec>,
+    pub(crate) edges: Vec<EdgeSpec>,
     #[serde(default)]
-    execution_mode: Option<String>,
+    pub(crate) execution_mode: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
-struct StepSpec {
+pub(crate) struct StepSpec {
     /// `pure` | `model` | `exec` (exec reserved).
-    kind: String,
+    pub(crate) kind: String,
     #[serde(default)]
-    model_id: String,
+    pub(crate) model_id: String,
     #[serde(default)]
-    prompt: String,
+    pub(crate) prompt: String,
     /// EXEC only: the registered body's content/signature id as 64-char hex.
     #[serde(default)]
-    body_signature_id: Option<String>,
+    pub(crate) body_signature_id: Option<String>,
     #[serde(default)]
-    tool_contract: BTreeMap<String, String>,
+    pub(crate) tool_contract: BTreeMap<String, String>,
     /// Free config entries; values are UTF-8 strings.
     #[serde(default)]
-    params: BTreeMap<String, String>,
+    pub(crate) params: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Deserialize)]
-struct EdgeSpec {
-    parent: u32,
-    child: u32,
+pub(crate) struct EdgeSpec {
+    pub(crate) parent: u32,
+    pub(crate) child: u32,
     /// `data` (default) | `control`.
     #[serde(default = "default_edge")]
-    edge: String,
+    pub(crate) edge: String,
     #[serde(default)]
-    non_cascade: bool,
+    pub(crate) non_cascade: bool,
 }
 
 fn default_edge() -> String {
@@ -138,8 +143,9 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<BlueprintArgs, Cl
     })
 }
 
-/// Build the `SubmitWorkflowRequest` from a parsed `DagSpec`.
-fn to_request(spec: DagSpec) -> Result<proto::SubmitWorkflowRequest, CliError> {
+/// Build the `SubmitWorkflowRequest` from a parsed `DagSpec`. `pub(crate)` so the
+/// string-DSL lowering ([`crate::verbs::chain`]) feeds the SAME canonical assembly.
+pub(crate) fn to_request(spec: DagSpec) -> Result<proto::SubmitWorkflowRequest, CliError> {
     let mut steps = Vec::with_capacity(spec.steps.len());
     for s in spec.steps {
         let kind = match s.kind.as_str() {

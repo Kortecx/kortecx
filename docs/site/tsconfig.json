@@ -1,0 +1,9 @@
+{
+  // This config is for type-checking the Docusaurus site source (config + theme),
+  // NOT for any Rust/TS/Py product build.
+  "extends": "@docusaurus/tsconfig",
+  "compilerOptions": {
+    "baseUrl": "."
+  },
+  "exclude": [".docusaurus", "build", "static/api"]
+}
