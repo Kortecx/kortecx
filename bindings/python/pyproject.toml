@@ -38,6 +38,10 @@ dependencies = [
 # over the R5 bridge). The core SDK uses native gRPC streaming and needs none
 # of this.
 ws = ["websockets>=12.0"]
+# The Chains DSL (`kortecx.chains` — operator sugar + the string DSL). P1 is
+# pure-stdlib, so this extra carries NO runtime deps; it exists as the
+# namespace/advertise boundary (and a forward home for future chain tooling).
+chains = []
 # Tooling for regenerating stubs + running the test/lint suite. grpcio-tools is
 # PINNED so ./codegen.sh reproduces byte-identical stubs (the `codegen-fresh` CI
 # guard compares against the committed output).

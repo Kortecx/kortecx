@@ -11,9 +11,12 @@ from __future__ import annotations
 import json
 import os
 import warnings
-from typing import AsyncIterator, Iterator, List, Optional, Sequence, Union
+from typing import TYPE_CHECKING, AsyncIterator, Iterator, List, Optional, Sequence, Union
 
 import grpc
+
+if TYPE_CHECKING:
+    from . import chains as _chains
 
 from . import events as _events
 from . import hexids, types
@@ -249,6 +252,16 @@ class KxClient:
             return handle
         outcome = _wait.poll_any(self._stub, self._md, handle.instance_id, timeout)
         return self._finish(outcome)
+
+    def run_chain(
+        self, chain: "_chains.Chain", *, wait: bool = False, timeout: float = 120.0
+    ) -> Union["_g.RunHandle", Result]:
+        """Lower a :class:`~kortecx.chains.Chain` (operator sugar or the string DSL)
+        and run it. A thin convenience over :meth:`submit_workflow` — the server
+        still COMPILES the DAG + builds every warrant from the party's grants
+        (SN-8). Returns the ``RunHandle``, or — with ``wait=True`` — the first
+        committed :class:`Result`."""
+        return self.submit_workflow(chain.build(), wait=wait, timeout=timeout)
 
     def get_projection(
         self, instance_id: IdType, *, at_seq: Optional[int] = None
@@ -718,6 +731,13 @@ class AsyncKxClient:
             return handle
         outcome = await _wait.apoll_any(self._stub, self._md, handle.instance_id, timeout)
         return KxClient._finish(outcome)
+
+    async def run_chain(
+        self, chain: "_chains.Chain", *, wait: bool = False, timeout: float = 120.0
+    ) -> Union["_g.RunHandle", Result]:
+        """As :meth:`KxClient.run_chain` — lower a :class:`~kortecx.chains.Chain` and
+        run it over :meth:`submit_workflow`."""
+        return await self.submit_workflow(chain.build(), wait=wait, timeout=timeout)
 
     async def get_projection(
         self, instance_id: IdType, *, at_seq: Optional[int] = None

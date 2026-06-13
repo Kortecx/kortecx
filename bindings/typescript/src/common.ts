@@ -65,6 +65,24 @@ export type { BlueprintParamTypeName } from "./recipes.js";
 export { BlueprintBuilder } from "./blueprints.js";
 export type { StepKind, ExecutionMode, EdgeType, StepInput, EdgeInput } from "./blueprints.js";
 
+// The Chains DSL — compose task handles into a DAG (string DSL + combinators),
+// lowering to the BlueprintBuilder (the cross-surface contract; see SPEC.md).
+export {
+  Task,
+  Chain,
+  ChainFrag,
+  task,
+  seq,
+  par,
+  group,
+  chain,
+  chainFrom,
+  ChainParseError,
+  ChainUnknownHandleError,
+  ChainCycleError,
+} from "./chains.js";
+export type { Frag, ChainOptions, Lowered, LoweredStep, LoweredEdge } from "./chains.js";
+
 export { TeamSummary, TeamMember, TeamMembers, WarrantView, teamsFromProto } from "./teams.js";
 export { GrantView, AssetGrants } from "./grants.js";
 

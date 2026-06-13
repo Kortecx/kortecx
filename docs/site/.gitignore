@@ -1,0 +1,17 @@
+# Docusaurus / Node build output
+/node_modules
+/build
+/.docusaurus
+/.cache-loader
+
+# Generated SDK API references (produced by the api:* scripts; not committed).
+# Keep the landing page (static/api/index.html) checked in.
+/static/api/typescript
+/static/api/python
+
+# Misc
+.DS_Store
+*.log
+npm-debug.log*
+.env.local
+.env.*.local

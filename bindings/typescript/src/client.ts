@@ -13,6 +13,7 @@ import type { MessageInitShape } from "@bufbuild/protobuf";
 import { createClient } from "@connectrpc/connect";
 import type { Client, Transport } from "@connectrpc/connect";
 import { CaptureRecord, type CaptureRecordPage } from "./capture.js";
+import type { Chain } from "./chains.js";
 import { ContentItem, PutResult } from "./content.js";
 import { DatasetHit, DatasetSummary, type IngestDoc, IngestResult } from "./datasets.js";
 import { KxConnectError, KxRunFailed, KxUnimplemented, KxWaitTimeout, rpc } from "./errors.js";
@@ -166,6 +167,22 @@ export abstract class KxClientBase {
     if (!opts.wait) return handle;
     const outcome = await pollAny(this.grpc, handle.instanceId, opts.timeoutMs ?? 120_000);
     return this._finish(outcome);
+  }
+
+  /**
+   * Lower a {@link Chain} (the Chains DSL) to a `SubmitWorkflow` request and run it
+   * — a thin sugar over {@link KxClientBase.submitWorkflow} (`runChain(c) ==
+   * submitWorkflow(c.build())`). The server still COMPILES the lowered DAG, derives
+   * all identity, and builds every warrant from the party's grants (SN-8); the chain
+   * only changes what is PROPOSED. Returns the run handle, or — with `wait: true` —
+   * the first committed {@link Result}. An old gateway without the workflow seam
+   * throws {@link KxUnimplemented}.
+   */
+  async runChain(
+    chain: Chain,
+    opts: { wait?: boolean; timeoutMs?: number } = {},
+  ): Promise<{ instanceId: Uint8Array; recipeFingerprint: Uint8Array } | Result> {
+    return this.submitWorkflow(chain.build(), opts);
   }
 
   async getProjection(instanceId: Id, opts: { atSeq?: bigint } = {}): Promise<Projection> {

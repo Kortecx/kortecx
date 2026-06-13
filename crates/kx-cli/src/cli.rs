@@ -32,6 +32,8 @@ usage: kx <command> [args]
   client verbs (gRPC over the gateway; common flags: --endpoint <url> --token <t> | --token-file <p> --tls-ca <path> --json):
     kx invoke <handle> --args <json> [--args-file <path>] [--wait] [--timeout-secs N] [--out <file>]
     kx submit --demo [--wait] [--timeout-secs N] [--out <file>]
+    kx chain run \"<dsl>\" --tasks <tasks.json> [--seed N] [--wait] [--timeout-secs N] [--out <file>]
+                                                 (string-DSL DAG: a > [b & c]; see `kx help chain`)
     kx projection --instance <hex16> [--at-seq N]
     kx runs list [--limit N] [--before-seq N]    (durable run history, newest-first)
     kx mote show <instance-hex16> <mote-hex32>   (display-only definition inspection)
@@ -74,6 +76,8 @@ pub enum Cli {
     Submit(verbs::submit::SubmitArgs),
     /// `blueprint run` — author a Tier-1 DAG and run it (SubmitWorkflow).
     Blueprint(verbs::blueprint::BlueprintArgs),
+    /// `chain run` — author a Tier-1 DAG from the string-DSL and run it (SubmitWorkflow).
+    Chain(verbs::chain::ChainArgs),
     /// Render a run as a DAG of Mote states.
     Projection(verbs::projection::ProjectionArgs),
     /// Durable run history (Batch B `ListRuns`; read-only).
@@ -135,6 +139,7 @@ impl Cli {
             Some("invoke") => Ok(Cli::Invoke(verbs::invoke::parse(args)?)),
             Some("submit") => Ok(Cli::Submit(verbs::submit::parse(args)?)),
             Some("blueprint") => Ok(Cli::Blueprint(verbs::blueprint::parse(args)?)),
+            Some("chain") => Ok(Cli::Chain(verbs::chain::parse(args)?)),
             Some("projection") => Ok(Cli::Projection(verbs::projection::parse(args)?)),
             Some("runs") => Ok(Cli::Runs(verbs::runs::parse(args)?)),
             Some("mote") => Ok(Cli::Mote(verbs::mote::parse(args)?)),
@@ -201,6 +206,7 @@ async fn dispatch(cli: Cli) -> Result<(), CliError> {
         Cli::Invoke(a) => verbs::invoke::execute(a).await,
         Cli::Submit(a) => verbs::submit::execute(a).await,
         Cli::Blueprint(a) => verbs::blueprint::execute(a).await,
+        Cli::Chain(a) => verbs::chain::execute(a).await,
         Cli::Projection(a) => verbs::projection::execute(a).await,
         Cli::Runs(a) => verbs::runs::execute(a).await,
         Cli::Mote(a) => verbs::mote::execute(a).await,
@@ -344,6 +350,22 @@ kx blueprint run --file <dag.json> [--wait] [--timeout-secs N] [--out <file>] [c
   topology + params. The authored run is then viewable in the console (Runs, Monitoring).
   JSON: { \"seed\": N, \"steps\": [{\"kind\":\"pure\"|\"model\", \"prompt\":..., \"params\":{..}}],
           \"edges\": [{\"parent\":i, \"child\":j, \"edge\":\"data\"|\"control\"}], \"execution_mode\":\"frozen\" }"
+            .into(),
+        "chain" => "\
+kx chain run \"<dsl>\" --tasks <tasks.json> [--seed N] [--wait] [--timeout-secs N] [--out <file>] [client flags]
+  Author a Tier-1 DAG from the kortecx Chains STRING-DSL and run it via SubmitWorkflow
+  (the same compile + warrant path `blueprint run` uses — a chain only changes how the
+  topology is AUTHORED). The positional <dsl> composes task handles with operators:
+    >   sequential (a DATA edge parent -> child), tightest binary
+    &   parallel merge (no edge), tighter than |
+    |   parallel merge (no edge), loosest
+    [ ] grouping (precedence override)
+  Precedence (matches Python >> / & / |), tightest -> loosest: [ ] > `>` > & > |.
+  A handle that appears more than once is the SAME node (reuse builds DAGs). Examples:
+    \"a > [b & c]\" fans out (a->b, a->c); \"[a & b] > c\" fans in (a->c, b->c).
+  --tasks is a JSON object map { \"a\": {\"kind\":\"pure\"|\"model\", \"prompt\":..., \"params\":{..}}, ... };
+  each value is a step definition (P1 palette: pure | model). Tasks defined but unused are
+  ignored. Errors fail closed: empty/empty-group -> parse; an unknown handle; a cycle."
             .into(),
         "projection" => "\
 kx projection --instance <hex16> [--at-seq N] [client flags]
