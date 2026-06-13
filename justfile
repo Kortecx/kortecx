@@ -77,7 +77,10 @@ setup:
     echo " ✓ ready. Next steps:"
     echo "     ${BIN} run    --journal /tmp/kx.db --content /tmp/kx-content"
     echo "     ${BIN} replay --journal /tmp/kx.db --content /tmp/kx-content"
-    echo "     ${BIN} serve  --journal /tmp/kx.db --content /tmp/kx-content --dev-allow-local"
+    echo "     ${BIN} serve  --dev-allow-local                # zero-config: auto data dir under ~/.kortecx"
+    echo "     ${BIN} serve  --dev-allow-local --journal /tmp/kx.db --content /tmp/kx-content  # or pin the paths"
+    echo "       (zero-config serve prints a startup banner with the resolved journal/content/catalog +"
+    echo "        the gRPC/console endpoints; set KX_DATA_DIR to relocate the base data dir.)"
     echo ""
     echo "For REAL local LLM inference (opt-in; needs a C++ toolchain), run:"
     echo "     just doctor   # per-OS install hints   →   just setup-inference"
@@ -182,8 +185,11 @@ fetch-agent-model:
 # if absent (idempotent, checksum-verified), then start `kx serve` with it +
 # the embedded console at :50180. Model paths are DETERMINISTIC
 # (target/models/ via the fetch recipes, or the KX_AGENT_MODEL_* overrides) —
-# never hunt the filesystem for GGUFs. Journal/content default under
-# target/serve/ (override: `just serve-inference /path/kx.db /path/blobs`).
+# never hunt the filesystem for GGUFs. Journal/content are PINNED under
+# target/serve/ here for a repeatable, inspectable layout (override:
+# `just serve-inference /path/kx.db /path/blobs`). NOTE: bare `kx serve
+# --dev-allow-local` is now zero-config (auto paths under ~/.kortecx); we keep
+# the explicit paths here so the inference demo's state lives beside the repo.
 serve-inference journal="target/serve/kx.db" content="target/serve/blobs": fetch-agent-model
     #!/usr/bin/env bash
     set -euo pipefail

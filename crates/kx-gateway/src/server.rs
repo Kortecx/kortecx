@@ -990,6 +990,18 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     #[cfg(not(feature = "console"))]
     let _ = console_tcp;
 
+    // The operator-facing startup banner: every RESOLVED durable path + endpoint
+    // in one place, so a zero-config `kx serve` (auto paths under ~/.kortecx) is
+    // transparent — the operator can find the journal, inspect the sidecar DBs,
+    // and point a client at the bound port without guessing.
+    log_startup_banner(
+        &cfg,
+        &catalog_dir,
+        local_addr,
+        ws_local_addr,
+        console_local_addr,
+    );
+
     Ok(RunningGateway {
         local_addr,
         ws_local_addr,
@@ -999,6 +1011,65 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         gateway,
         aux,
     })
+}
+
+/// Emit the human-readable startup banner over `tracing` (the gateway never uses
+/// `println!`). Reports every RESOLVED durable path (the data dir + journal +
+/// content + catalog + each sidecar DB) and the actually-bound endpoints (gRPC /
+/// WebSocket / console), the auth posture, and a copy-pasteable connect hint.
+/// All values are post-resolution: the bound `local_addr` reflects an ephemeral
+/// `:0` if one was requested, and the sidecar paths mirror the gateway's own
+/// `catalog_dir` layout (catalog.db / members.db / telemetry.db / capture.db /
+/// uploads.db / datasets/).
+#[cfg(feature = "embedded-worker")]
+fn log_startup_banner(
+    cfg: &GatewayConfig,
+    catalog_dir: &Path,
+    local_addr: SocketAddr,
+    ws_local_addr: SocketAddr,
+    console_local_addr: Option<SocketAddr>,
+) {
+    let auth_mode = if cfg.dev_allow_local {
+        "dev-allow-local (loopback only, no token)"
+    } else if !cfg.auth_tokens.is_empty() {
+        "bearer-token"
+    } else {
+        "deny-all (no auth posture configured)"
+    };
+    // The base data dir is the journal's parent (== the zero-config base under
+    // ~/.kortecx); best-effort for explicit/non-sibling paths.
+    let data_dir = cfg
+        .journal_path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let console_url =
+        console_local_addr.map_or_else(|| "(disabled)".to_string(), |a| format!("http://{a}/"));
+    let connect_hint = if cfg.dev_allow_local {
+        format!("kx runs list --endpoint http://{local_addr}")
+    } else {
+        format!("kx runs list --endpoint http://{local_addr} --token <token>")
+    };
+
+    tracing::info!(
+        target: "kx_gateway::startup",
+        data_dir      = %data_dir.display(),
+        journal       = %cfg.journal_path.display(),
+        content_dir   = %cfg.content_root.display(),
+        catalog_dir   = %catalog_dir.display(),
+        catalog_db    = %catalog_dir.join("catalog.db").display(),
+        members_db    = %catalog_dir.join("members.db").display(),
+        telemetry_db  = %catalog_dir.join("telemetry.db").display(),
+        capture_db    = %catalog_dir.join("capture.db").display(),
+        uploads_db    = %catalog_dir.join("uploads.db").display(),
+        datasets_dir  = %catalog_dir.join("datasets").display(),
+        grpc_endpoint = %format!("http://{local_addr}"),
+        ws_endpoint   = %format!("ws://{ws_local_addr}"),
+        console_url   = %console_url,
+        auth_mode,
+        connect_hint  = %connect_hint,
+        "kx-gateway STARTUP — resolved durable layout + endpoints",
+    );
 }
 
 #[cfg(not(feature = "embedded-worker"))]
