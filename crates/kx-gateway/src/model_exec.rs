@@ -341,8 +341,8 @@ pub(crate) fn build_serve_backend(
 ///   FAIL-CLOSED, budget-cap the fan-out, lower it through VETTED recipes, and commit the
 ///   resulting [`TopologyDecision`] as the shaper's `result_ref` — so the coordinator's
 ///   materializer derives + dispatches the children. The model-driven agentic loop, live.
-/// - **leaf model** (`is_model_mote`, AL1): a greedy completion (recomputable) committed
-///   as content bytes — the shaper's children land here, running their per-child intent.
+/// - **leaf model** (a prompt-bearing Mote, AL1): a greedy completion (recomputable)
+///   committed as content bytes — the shaper's children land here, running their intent.
 ///
 /// A leased Mote's resolved Data context: the committed `(parent MoteId, result_ref)`
 /// pairs the worker delivers via [`kx_worker::ContextSink`] for F-7 assembly.
@@ -413,13 +413,15 @@ impl<B: InferenceBackend> ModelRouterExecutor<B> {
         }
     }
 
-    /// A model Mote: carries a `prompt` AND routes to a model this backend serves.
-    /// (The demo `echo`/`exec-demo` Motes carry no prompt, so they fall through.)
-    fn is_model_mote(&self, mote: &Mote) -> bool {
+    /// `true` iff the Mote carries a `prompt` — i.e. it is a MODEL step
+    /// (chat / shaper / ReAct turn / leaf completion), distinct from a PURE/demo
+    /// step (which carries no prompt and falls through to the inner echo/real-body
+    /// router). A prompt-bearing Mote whose `model_id` is NOT served must FAIL
+    /// CLOSED rather than fall through to the demo executor (see `run`).
+    fn has_prompt(mote: &Mote) -> bool {
         mote.def
             .config_subset
             .contains_key(&ConfigKey(PROMPT_KEY.to_string()))
-            && self.backend.supports(&mote.def.model_id)
     }
 
     /// Run a topology-SHAPER model Mote (PR-2b): the model proposes a fan-out, which is
@@ -723,28 +725,43 @@ impl<B: InferenceBackend> MoteExecutor for ModelRouterExecutor<B> {
         env: Option<Rootfs>,
     ) -> Result<MoteExecutionResult, MoteExecutorError> {
         // Native deterministic CRITIC FIRST (PR-2c-3 critic-live): a critic carries no
-        // prompt (so `is_model_mote` is false) and would otherwise fall to the inner
+        // prompt (so `has_prompt` is false) and would otherwise fall to the inner
         // echo/real-body router, committing the wrong bytes instead of a verdict. Route
         // it to the in-process check (mirrors the FROZEN `run_native_critic_mote`).
         if mote.def.critic_check.is_some() {
             return self.run_critic(mote);
         }
-        // Shaper FIRST (a shaper is also a model Mote — has a prompt): the model proposes
-        // topology, lowered + committed as a TopologyDecision. Then the ReAct TURN arm
-        // (PR-2d-1: a turn is also a model Mote — raw-commit + the answer-only fence).
-        // Then leaf-model (greedy completion). Everything else → the inner real-body /
-        // PURE-echo router.
-        if self.is_model_mote(mote) {
-            if mote.def.is_topology_shaper {
+        // A prompt-bearing Mote is a MODEL step. If the backend does NOT serve its
+        // model_id, FAIL CLOSED — never delegate to the inner demo/echo executor.
+        // The old `is_model_mote = has_prompt && supports` collapsed "unserved model"
+        // into "not a model Mote", so a misrouted model step (e.g. a warrant whose
+        // `model_route` names a model that isn't served — the P1.1 class) silently
+        // committed the demo executor's `kx demo result for mote <hex>` placeholder,
+        // which then poisoned downstream F-7/ReAct context. A misroute must dead-letter
+        // VISIBLY (F4), not produce plausible-looking garbage (SN-8 / honest failure).
+        if Self::has_prompt(mote) {
+            if !self.backend.supports(&mote.def.model_id) {
+                return Err(internal(&format!(
+                    "model Mote {:?} routes to an unserved model {:?} — refusing to fall \
+                     back to the demo executor (fail-closed). Check the step warrant's \
+                     model_route and that `kx serve --features inference` serves it.",
+                    mote.id, mote.def.model_id
+                )));
+            }
+            // Shaper FIRST (a shaper is also a model Mote — has a prompt): the model
+            // proposes topology, lowered + committed as a TopologyDecision. Then the
+            // ReAct TURN arm (PR-2d-1: a turn is also a model Mote — raw-commit + the
+            // fence). Then leaf-model (greedy completion).
+            return if mote.def.is_topology_shaper {
                 self.run_shaper(mote, warrant)
             } else if Self::is_react_turn(mote) {
                 self.run_react_turn(mote, warrant)
             } else {
                 self.run_model(mote, warrant)
-            }
-        } else {
-            self.inner.run(mote, warrant, env)
+            };
         }
+        // No prompt ⇒ a PURE/demo/exec step → the inner real-body / PURE-echo router.
+        self.inner.run(mote, warrant, env)
     }
 
     fn supports(&self, executor_class: ExecutorClass) -> bool {
@@ -1073,6 +1090,57 @@ mod tests {
         // The result_ref IS the decision's content hash (so commit's D55 guard + the
         // materializer agree on the bytes).
         assert_eq!(out.result_ref, ContentRef::of(&td.encode()));
+    }
+
+    /// A prompt-bearing (MODEL) Mote whose model the backend does NOT serve must
+    /// FAIL CLOSED (dead-letter) — never fall through to the inner demo/echo
+    /// executor. Regression for the chat "kx demo result for mote …" context leak
+    /// and the P1.1 misroute class: the old `is_model_mote = has_prompt && supports`
+    /// collapsed "unserved" into "not a model Mote", silently committing a demo
+    /// placeholder that then poisoned downstream F-7/ReAct prompts.
+    #[test]
+    fn prompt_bearing_mote_with_unserved_model_fails_closed() {
+        struct UnservedBackend;
+        impl InferenceBackend for UnservedBackend {
+            fn dispatch(
+                &self,
+                _m: &ModelId,
+                _i: &InferenceInput,
+                _p: &kx_mote::InferenceParams,
+                _w: &WarrantSpec,
+            ) -> Result<InferenceOutput, InferenceError> {
+                panic!("dispatch must not run for an unserved model")
+            }
+            fn supports(&self, _model_id: &ModelId) -> bool {
+                false
+            }
+            fn name(&self) -> &'static str {
+                "unserved"
+            }
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let store = LocalFsContentStore::open(dir.path()).unwrap();
+        // NeverInner asserts the inner (demo/echo) executor is NEVER reached.
+        let exec = ModelRouterExecutor::new(
+            Arc::new(NeverInner),
+            Arc::new(UnservedBackend),
+            store.clone(),
+            None,
+        );
+        let err = exec
+            .run(
+                &shaper_mote(),
+                &shaper_warrant(&model_id(), ExecutorClass::MacOsSandbox),
+                None,
+            )
+            .expect_err("an unserved-model MODEL Mote dead-letters (fail-closed)");
+        match err {
+            MoteExecutorError::Internal { reason, .. } => assert!(
+                reason.contains("unserved model"),
+                "fail-closed reason surfaced, not the inner-executor path: {reason}"
+            ),
+            other => panic!("expected a terminal Internal error, got {other:?}"),
+        }
     }
 
     // PR-2c-2: a re-plan round's shaper emits a `replan` envelope (its corrected prompt

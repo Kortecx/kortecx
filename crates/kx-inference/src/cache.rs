@@ -485,8 +485,18 @@ fn generate(
     let mut ctx = Context::new_with_params(model, &ctx_params).map_err(map_llama_err)?;
     let vocab = model.vocab();
 
+    // `parse_special: true` — the prompt carries ChatML control markers
+    // (`<|im_start|>`/`<|im_end|>`, rendered by the gateway's `chatml()` wrap).
+    // They MUST tokenize as the real special/control tokens, not literal text:
+    // the model was trained on the special-token turn structure, so with literal
+    // text it never emits the special EOG token (`<|im_end|>`, 151645) and runs
+    // to `max_output_tokens` re-emitting the scaffolding it was primed with. With
+    // `true` the markers become control tokens, the model emits the special EOG,
+    // and the `is_eog` check below stops generation cleanly (the EOG token renders
+    // empty under `token_to_piece_into(.., special=false)`, so it never leaks into
+    // the output). Mirrors the proven `kx-llamacpp/examples/chat.rs` + the mtmd path.
     let prompt_tokens = vocab
-        .tokenize(&job.prompt, true, false)
+        .tokenize(&job.prompt, true, true)
         .map_err(map_llama_err)?;
     check_timeout(start.elapsed(), timeout, job.wall_clock_ms)?;
 
