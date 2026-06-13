@@ -338,44 +338,44 @@ fn resolve_base_data_dir() -> std::path::PathBuf {
     }
 }
 
-/// Inject auto-resolved `--journal` / `--content` / `--catalog-dir` defaults for
-/// the flags the operator omitted (the zero-config `kx serve --dev-allow-local`
-/// path). Mirrors [`inject_listen_default`]: a flag is injected ONLY if absent,
-/// so a fully explicit invocation is untouched and a partial one (e.g. a pinned
-/// `--journal` with auto content/catalog) still works. The chosen paths live
-/// under a STABLE, durable base dir ([`resolve_base_data_dir`]) — never a
-/// `tempfile` dir, which would delete the data the operator wants to inspect.
-/// Creates only the dirs it injects so the gateway's stores open cleanly on the
-/// first run (the journal's parent must exist before SQLite opens it).
+/// Inject a zero-config data layout (`--journal` / `--content` / `--catalog-dir`
+/// under a STABLE, durable base dir, [`resolve_base_data_dir`]) for the
+/// no-flags `kx serve --dev-allow-local` path.
+///
+/// ALL-OR-NOTHING: this fires ONLY when the operator gave NO data-path flag at
+/// all. If ANY of `--journal`/`--content`/`--catalog-dir` is present, the
+/// operator owns the layout and we return `rest` untouched — the gateway then
+/// applies its own defaults (notably `catalog_dir` → the journal's parent). A
+/// partial inject would be a footgun: a `--journal X --content Y` invocation
+/// (without `--catalog-dir`) would otherwise get its catalog REDIRECTED to the
+/// shared base dir, colliding the membership/telemetry sidecars across every
+/// gateway that shares the base (the cause of the test-suite breakage).
+///
+/// The base is a durable dir (never a `tempfile`, which would delete the data
+/// the operator wants to inspect); we create only the dirs we inject so the
+/// gateway's stores open cleanly (SQLite needs the journal's parent to exist).
 fn inject_data_dir_defaults(mut rest: Vec<String>) -> Result<Vec<String>, CliError> {
     let has = |name: &str| rest.iter().any(|a| a == name);
-    let (need_journal, need_content, need_catalog) =
-        (!has("--journal"), !has("--content"), !has("--catalog-dir"));
-    if !need_journal && !need_content && !need_catalog {
-        return Ok(rest); // fully explicit — nothing to resolve
+    // Any explicit data path ⇒ respect the operator's layout entirely.
+    if has("--journal") || has("--content") || has("--catalog-dir") {
+        return Ok(rest);
     }
     let base = resolve_base_data_dir();
     let mkdir = |p: &std::path::Path| -> Result<(), CliError> {
         std::fs::create_dir_all(p)
             .map_err(|e| CliError::Config(format!("create data dir {}: {e}", p.display())))
     };
+    let content = base.join("content");
+    let catalog = base.join("catalog");
     mkdir(&base)?;
-    if need_journal {
-        rest.push("--journal".to_string());
-        rest.push(base.join("kx.db").to_string_lossy().into_owned());
-    }
-    if need_content {
-        let content = base.join("content");
-        mkdir(&content)?;
-        rest.push("--content".to_string());
-        rest.push(content.to_string_lossy().into_owned());
-    }
-    if need_catalog {
-        let catalog = base.join("catalog");
-        mkdir(&catalog)?;
-        rest.push("--catalog-dir".to_string());
-        rest.push(catalog.to_string_lossy().into_owned());
-    }
+    mkdir(&content)?;
+    mkdir(&catalog)?;
+    rest.push("--journal".to_string());
+    rest.push(base.join("kx.db").to_string_lossy().into_owned());
+    rest.push("--content".to_string());
+    rest.push(content.to_string_lossy().into_owned());
+    rest.push("--catalog-dir".to_string());
+    rest.push(catalog.to_string_lossy().into_owned());
     Ok(rest)
 }
 
@@ -687,21 +687,41 @@ mod tests {
     }
 
     #[test]
-    fn data_dir_injection_is_noop_when_fully_explicit() {
-        // All three path flags present ⇒ early return, NO env read, NO dir
-        // creation, argv byte-identical (a fully explicit invocation is
-        // untouched — the back-compat guarantee).
-        let explicit = vec![
-            "--journal".to_string(),
-            "/tmp/j".to_string(),
-            "--content".to_string(),
-            "/tmp/c".to_string(),
-            "--catalog-dir".to_string(),
-            "/tmp/cat".to_string(),
-            "--dev-allow-local".to_string(),
+    fn data_dir_injection_is_noop_when_any_path_is_explicit() {
+        // ALL-OR-NOTHING: if the operator gave ANY data-path flag, injection is a
+        // no-op (NO env read, NO dir creation, argv byte-identical) — the operator
+        // owns the layout and the gateway defaults the rest. Critically, this
+        // includes the `--journal`+`--content` WITHOUT `--catalog-dir` case: a
+        // partial inject there would redirect the catalog to the shared base dir
+        // and collide every gateway's sidecars (the test-suite breakage).
+        let cases: &[&[&str]] = &[
+            &[
+                "--journal",
+                "/tmp/j",
+                "--content",
+                "/tmp/c",
+                "--catalog-dir",
+                "/tmp/cat",
+                "--dev-allow-local",
+            ],
+            &[
+                "--journal",
+                "/tmp/j",
+                "--content",
+                "/tmp/c",
+                "--dev-allow-local",
+            ], // the bug case
+            &["--journal", "/tmp/j", "--dev-allow-local"],
+            &["--catalog-dir", "/tmp/cat", "--dev-allow-local"],
         ];
-        let out = inject_data_dir_defaults(explicit.clone()).unwrap();
-        assert_eq!(out, explicit, "explicit paths must pass through unchanged");
+        for case in cases {
+            let argv: Vec<String> = case.iter().map(|s| (*s).to_string()).collect();
+            let out = inject_data_dir_defaults(argv.clone()).unwrap();
+            assert_eq!(
+                out, argv,
+                "any explicit data path ⇒ argv passes through unchanged: {case:?}"
+            );
+        }
     }
 
     #[test]
