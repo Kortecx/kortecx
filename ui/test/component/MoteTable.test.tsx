@@ -2,6 +2,8 @@ import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { MoteTable } from "../../src/components/MoteTable";
 import { toProjectionVM } from "../../src/kx/use-projection";
+import { connectedWrapper } from "../mocks/harness";
+import { makeMockClient } from "../mocks/kx-client";
 import {
   allStatesProjection,
   largeProjection,
@@ -9,26 +11,34 @@ import {
   projection,
 } from "../mocks/projection-fixtures";
 
+// MoteTable batch-resolves its committed results (run-scoped GetContentBatch),
+// so it needs a connected connection + query client. The fixtures' Motes carry
+// no result refs by default ⇒ the batch query stays disabled (no fetch); these
+// tests assert structure/state/anomaly, not the resolved Result column.
+const wrapper = connectedWrapper(makeMockClient().client);
+
 describe("MoteTable", () => {
   it("renders one row per Mote across all states", () => {
-    render(<MoteTable projection={toProjectionVM(allStatesProjection())} />);
+    render(<MoteTable projection={toProjectionVM(allStatesProjection())} />, { wrapper });
     expect(screen.getAllByTestId("mote-row")).toHaveLength(7);
   });
 
   it("empty projection shows an empty state, not a table", () => {
-    render(<MoteTable projection={toProjectionVM(projection([]))} />);
+    render(<MoteTable projection={toProjectionVM(projection([]))} />, { wrapper });
     expect(screen.getByTestId("empty-state")).toBeInTheDocument();
     expect(screen.queryByTestId("mote-table")).not.toBeInTheDocument();
   });
 
   it("a single Mote renders one row", () => {
-    render(<MoteTable projection={toProjectionVM(projection([mote({ stateCode: 3 })]))} />);
+    render(<MoteTable projection={toProjectionVM(projection([mote({ stateCode: 3 })]))} />, {
+      wrapper,
+    });
     expect(screen.getAllByTestId("mote-row")).toHaveLength(1);
   });
 
   it("maps each state code to its pill tone (incl. UNKNOWN for out-of-range)", () => {
     const vm = toProjectionVM(projection([mote({ stateCode: 3 }), mote({ stateCode: 99 })]));
-    render(<MoteTable projection={vm} />);
+    render(<MoteTable projection={vm} />, { wrapper });
     const pills = screen.getAllByTestId("state-pill");
     expect(pills[0]).toHaveAttribute("data-tone", "committed");
     expect(pills[1]).toHaveAttribute("data-tone", "unknown");
@@ -38,14 +48,14 @@ describe("MoteTable", () => {
     const vm = toProjectionVM(
       projection([mote({ stateCode: 6, anomaly: 2 }), mote({ stateCode: 3, anomaly: null })]),
     );
-    render(<MoteTable projection={vm} />);
+    render(<MoteTable projection={vm} />, { wrapper });
     expect(screen.getAllByTestId("anomaly-badge")).toHaveLength(1);
   });
 
   it("renders 5000 Motes within the perf budget", () => {
     const vm = toProjectionVM(largeProjection(5000));
     const t0 = performance.now();
-    render(<MoteTable projection={vm} />);
+    render(<MoteTable projection={vm} />, { wrapper });
     const elapsed = performance.now() - t0;
     expect(screen.getAllByTestId("mote-row")).toHaveLength(5000);
     // Generous jsdom budget — guards against accidental O(n^2) work in the table.

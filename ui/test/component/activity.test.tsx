@@ -3,10 +3,17 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { ActivityFeed } from "../../src/components/activity/ActivityFeed";
 import { TimeTravelScrubber } from "../../src/components/activity/TimeTravelScrubber";
+import { connectedWrapper } from "../mocks/harness";
+import { makeMockClient } from "../mocks/kx-client";
+
+// ActivityFeed batch-resolves its committed results (D142.2), so it needs a
+// connected context. These tests pass no `instanceId` ⇒ no fetch; they assert
+// the feed's structure (rows/order/dropped), not the resolved Result column.
+const wrapper = connectedWrapper(makeMockClient().client);
 
 describe("ActivityFeed", () => {
   it("empty state when there are no events", () => {
-    render(<ActivityFeed events={[]} dropped={false} active={false} />);
+    render(<ActivityFeed events={[]} dropped={false} active={false} />, { wrapper });
     expect(screen.getByText(/no events yet/i)).toBeInTheDocument();
   });
 
@@ -15,7 +22,7 @@ describe("ActivityFeed", () => {
       new Delta(2, "failed", "aa".repeat(32)),
       new Delta(1, "committed", "bb".repeat(32), "cc".repeat(32)),
     ];
-    render(<ActivityFeed events={events} dropped={false} active={true} />);
+    render(<ActivityFeed events={events} dropped={false} active={true} />, { wrapper });
     const rows = screen.getAllByTestId("event-row");
     expect(rows).toHaveLength(2);
     expect(rows[0]).toHaveAttribute("data-kind", "failed");
@@ -25,6 +32,7 @@ describe("ActivityFeed", () => {
   it("shows a dropped-stream notice", () => {
     render(
       <ActivityFeed events={[new Delta(1, "committed", "aa".repeat(32))]} dropped active={false} />,
+      { wrapper },
     );
     expect(screen.getByTestId("feed-dropped")).toBeInTheDocument();
   });

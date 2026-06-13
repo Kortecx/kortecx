@@ -72,7 +72,12 @@ function EventsTab() {
   return (
     <div data-testid="devtools-events">
       <p className="muted devtools__context mono">run {latest.instanceId}</p>
-      <ActivityFeed events={stream.events} active={stream.active} dropped={stream.dropped} />
+      <ActivityFeed
+        events={stream.events}
+        active={stream.active}
+        dropped={stream.dropped}
+        instanceId={latest.instanceId}
+      />
     </div>
   );
 }

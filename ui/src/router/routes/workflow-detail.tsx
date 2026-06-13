@@ -220,7 +220,12 @@ function ActivityTab({
         <TimeTravelScrubber currentSeq={headSeq} atSeq={atSeq} onChange={onAtSeq} />
       ) : null}
       <h2>Live events</h2>
-      <ActivityFeed events={stream.events} dropped={stream.dropped} active={stream.active} />
+      <ActivityFeed
+        events={stream.events}
+        dropped={stream.dropped}
+        active={stream.active}
+        instanceId={instanceId}
+      />
     </div>
   );
 }

@@ -30,6 +30,16 @@ describe("eventSummary", () => {
     expect(s).not.toContain("→");
   });
 
+  it("omitResultRef drops the trailing hash (the row renders resolved text instead)", () => {
+    const s = eventSummary(
+      { seq: 3, kind: "committed", moteId: id, resultRef: ref },
+      undefined,
+      true,
+    );
+    expect(s).toContain("committed");
+    expect(s).not.toContain("→");
+  });
+
   it("failed / repudiated / effect_staged read naturally", () => {
     expect(eventSummary({ seq: 1, kind: "failed", moteId: id })).toContain("failed");
     expect(eventSummary({ seq: 1, kind: "repudiated", targetMoteId: id })).toContain("repudiated");

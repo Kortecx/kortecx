@@ -5,8 +5,10 @@
  */
 
 import type { Edge, Node } from "@xyflow/react";
+import type { BatchedContentVM } from "../../kx/use-content-batch";
 import type { MoteVM } from "../../kx/use-projection";
 import { stateVisual } from "../../lib/colors";
+import type { DecodedContent } from "../../lib/content-decode";
 import { buildEdges } from "./dag-graph";
 import { toRfEdge } from "./edges";
 import type { XY } from "./layout";
@@ -35,23 +37,49 @@ export function miniMapColor(stateCode: number): string {
 /** The data a `MoteNode` renders. The index signature satisfies reactflow's `Node<T>`. */
 export interface MoteNodeData {
   readonly mote: MoteVM;
+  /** The resolved committed result (D142.2: text headline on the node). */
+  readonly resultContent?: DecodedContent;
+  /** The batch returned the uniform-empty item for this result ref. */
+  readonly resultMissing?: boolean;
+  /** The batch is still resolving (show `resolving…`). */
+  readonly resultLoading?: boolean;
   readonly [key: string]: unknown;
 }
 
 export type MoteFlowNode = Node<MoteNodeData, "mote">;
 
-/** Positioned reactflow nodes (positions come from the memoized dagre layout). */
+/** A run's resolved results, indexed by content ref (the `useResultMap` shape). */
+export interface ResultLookup {
+  readonly byRef: ReadonlyMap<string, BatchedContentVM>;
+  readonly loading: boolean;
+}
+
+/**
+ * Positioned reactflow nodes (positions come from the memoized dagre layout).
+ * When `results` is provided, each node carries its RESOLVED result so the DAG
+ * node shows the text headline (D142.2) — the same `byRef` map the table uses,
+ * so the two surfaces resolve identically from one batch round trip.
+ */
 export function buildFlowNodes(
   motes: readonly MoteVM[],
   positions: ReadonlyMap<string, XY>,
+  results?: ResultLookup,
 ): MoteFlowNode[] {
-  return motes.map((m) => ({
-    id: m.moteId,
-    type: "mote",
-    position: positions.get(m.moteId) ?? { x: 0, y: 0 },
-    data: { mote: m },
-    draggable: false,
-  }));
+  return motes.map((m) => {
+    const vm = m.resultRef ? results?.byRef.get(m.resultRef) : undefined;
+    return {
+      id: m.moteId,
+      type: "mote",
+      position: positions.get(m.moteId) ?? { x: 0, y: 0 },
+      data: {
+        mote: m,
+        resultContent: vm?.content,
+        resultMissing: vm?.missing ?? false,
+        resultLoading: m.resultRef ? (results?.loading ?? false) : false,
+      },
+      draggable: false,
+    };
+  });
 }
 
 /** Styled reactflow edges from the Motes' parent links (dangling dropped). */

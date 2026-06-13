@@ -424,6 +424,10 @@ button:disabled {
   width: 100%;
   border-collapse: collapse;
   margin-top: 0.75rem;
+  table-layout: fixed; /* honour the colgroup widths so Result stays bounded */
+}
+.mote-table td {
+  overflow: hidden; /* fixed layout: clip rather than overflow the bounded cell */
 }
 .mote-table th,
 .mote-table td {
@@ -438,6 +442,17 @@ button:disabled {
 }
 .mote-table .num {
   text-align: right;
+}
+/* The Result column leads with the resolved text + a trailing digest chip. The
+   preview fills the (fixed-width) cell as a flex row; the text grows and
+   ellipsis-clips at the chip, so the chip sits flush against the text and stays
+   on screen (the cell is bounded by the colgroup). */
+.mote-table__result .result-preview {
+  display: flex;
+  width: 100%;
+}
+.mote-table__result .result-preview__text {
+  flex: 1 1 auto;
 }
 
 /* ---- view toggle (DAG / table) ---- */
@@ -513,6 +528,16 @@ button:disabled {
   gap: 0.4rem;
   align-items: center;
   flex-wrap: wrap;
+}
+/* The resolved result on the node: one clamped line + the trailing digest chip
+   (the full text is one click away in the detail drawer). */
+.dag-node__result {
+  font-size: 0.78rem;
+  color: var(--fg);
+  max-width: 100%;
+}
+.dag-node__result .result-preview {
+  max-width: 100%;
 }
 .dag-handle {
   width: 6px;
@@ -917,10 +942,19 @@ select {
   background: var(--bg-elev);
 }
 .event-row__summary {
-  flex: 1;
+  flex: 0 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+}
+/* The resolved result takes the remaining row width and clamps to one line
+   (the committed-row headline); the seq stays pinned right in every row. */
+.event-row .result-preview {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 .event-row__seq {
   color: var(--fg-muted);
+  margin-left: auto;
 }
 
 /* ---- scrubber / run picker / run list ---- */
@@ -1098,20 +1132,32 @@ select {
   border-bottom: 1px solid var(--border);
   padding: 0.3rem 0;
 }
+/* The row is now a flex container: a text-headline toggle button + a sibling
+   DigestChip (nested buttons are invalid HTML). */
 .artifact-list__row {
   display: flex;
   gap: 0.6rem;
   align-items: center;
+  padding: 0.2rem 0;
+  width: 100%;
+  min-width: 0;
+}
+.artifact-list__toggle {
+  display: flex;
+  gap: 0.5rem;
+  align-items: baseline;
   background: none;
   border: none;
   color: var(--accent);
   cursor: pointer;
-  padding: 0.2rem 0;
-  width: 100%;
+  padding: 0;
   text-align: left;
+  flex: 1 1 auto;
+  min-width: 0;
 }
 .artifact-list__mote {
   color: var(--fg);
+  flex: 0 0 auto;
 }
 .artifact-card {
   margin: 0.4rem 0 0.6rem;
@@ -1384,10 +1430,33 @@ select {
   font-size: 0.75rem;
   padding: 0.05rem 0.5rem;
   cursor: pointer;
+  /* A chip is a single hex token — never wrap it, and never let a flex parent
+     shrink it (it trails resolved text in dense rows; the text clips, not the chip). */
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 .digestchip:hover {
   color: var(--fg);
   border-color: var(--fg-muted);
+}
+
+/* ---- resolved-result preview (D142.2: text headline + digest chip) ---- */
+/* The dense-context "resolved text is the headline, the hash a secondary chip"
+   treatment — shared by the mote table, the DAG node, the artifact list and the
+   event feeds. The text gets the space; the chip trails it, the muted states
+   ((empty)/binary/unavailable/resolving) read as honest, not as a hash. */
+.result-preview {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  min-width: 0;
+  max-width: 100%;
+}
+.result-preview__text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
 .bubble__attachments {
   display: flex;
@@ -2566,6 +2635,10 @@ select {
   padding: 0.22rem 0.4rem;
   border-bottom: 1px solid var(--border);
   overflow-wrap: anywhere;
+}
+/* The capture table's Result cell holds a clamped one-line preview + chip. */
+.trail-table__result {
+  max-width: 22rem;
 }
 
 /* the navbar power/disconnect button (the endpoint text + link left the bar);
