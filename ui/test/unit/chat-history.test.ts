@@ -2,7 +2,14 @@
  *  fail-closed; objectUrls stripped; in-flight turns downgraded on save). */
 
 import { beforeEach, describe, expect, it } from "vitest";
-import { chatTitle, deleteChat, loadChats, saveChat } from "../../src/lib/chat-history";
+import {
+  chatTitle,
+  defaultChatName,
+  deleteChat,
+  loadChats,
+  renameChat,
+  saveChat,
+} from "../../src/lib/chat-history";
 import type { ChatMessage } from "../../src/lib/chat-thread";
 
 const EP = "http://127.0.0.1:50151";
@@ -23,9 +30,15 @@ beforeEach(() => {
 
 describe("saveChat / loadChats", () => {
   it("upserts by id, newest-updated first, per endpoint", () => {
-    saveChat(EP, "a", [msg({ text: "first chat" })], 100);
-    saveChat(EP, "b", [msg({ text: "second chat" })], 200);
-    saveChat(EP, "a", [msg({ text: "first chat" }), msg({ id: "u2", text: "more" })], 300);
+    saveChat(EP, "a", [msg({ text: "first chat" })], undefined, 100);
+    saveChat(EP, "b", [msg({ text: "second chat" })], undefined, 200);
+    saveChat(
+      EP,
+      "a",
+      [msg({ text: "first chat" }), msg({ id: "u2", text: "more" })],
+      undefined,
+      300,
+    );
     const chats = loadChats(EP);
     expect(chats.map((c) => c.id)).toEqual(["a", "b"]);
     expect(chats[0]?.messages).toHaveLength(2);
@@ -47,7 +60,7 @@ describe("saveChat / loadChats", () => {
       }),
       msg({ id: "a1", role: "assistant", text: "", status: "thinking", forUserId: "u1" }),
     ];
-    saveChat(EP, "a", messages, 100);
+    saveChat(EP, "a", messages, undefined, 100);
     const [chat] = loadChats(EP);
     expect(chat?.messages[0]?.attachments?.[0]?.objectUrl).toBeUndefined();
     expect(chat?.messages[0]?.attachments?.[0]?.ref).toBe("cd".repeat(32));
@@ -58,7 +71,7 @@ describe("saveChat / loadChats", () => {
 
   it("caps the history at 30 (newest kept)", () => {
     for (let i = 0; i < 35; i++) {
-      saveChat(EP, `c${i}`, [msg({ text: `chat ${i}` })], i);
+      saveChat(EP, `c${i}`, [msg({ text: `chat ${i}` })], undefined, i);
     }
     const chats = loadChats(EP);
     expect(chats).toHaveLength(30);
@@ -75,11 +88,33 @@ describe("saveChat / loadChats", () => {
 
 describe("deleteChat", () => {
   it("forgets one chat and keeps the rest", () => {
-    saveChat(EP, "a", [msg()], 1);
-    saveChat(EP, "b", [msg({ text: "other" })], 2);
+    saveChat(EP, "a", [msg()], undefined, 1);
+    saveChat(EP, "b", [msg({ text: "other" })], undefined, 2);
     const left = deleteChat(EP, "a");
     expect(left.map((c) => c.id)).toEqual(["b"]);
     expect(loadChats(EP).map((c) => c.id)).toEqual(["b"]);
+  });
+});
+
+describe("chat name (editable, default timestamp, preserved across autosaves)", () => {
+  it("persists the supplied name and PRESERVES it across a nameless autosave", () => {
+    saveChat(EP, "a", [msg({ text: "hi" })], "My chat", 100);
+    expect(loadChats(EP)[0]?.name).toBe("My chat");
+    // A later autosave WITHOUT a name keeps the prior name (never recomputed).
+    saveChat(EP, "a", [msg({ text: "hi" }), msg({ id: "u2", text: "more" })], undefined, 200);
+    expect(loadChats(EP)[0]?.name).toBe("My chat");
+  });
+
+  it("defaultChatName returns a non-empty string for a given instant", () => {
+    expect(defaultChatName(0).length).toBeGreaterThan(0);
+  });
+
+  it("renameChat updates one chat; a blank name is a no-op", () => {
+    saveChat(EP, "a", [msg()], "orig", 1);
+    renameChat(EP, "a", "  Renamed  ");
+    expect(loadChats(EP)[0]?.name).toBe("Renamed");
+    renameChat(EP, "a", "   ");
+    expect(loadChats(EP)[0]?.name).toBe("Renamed"); // blank ignored
   });
 });
 

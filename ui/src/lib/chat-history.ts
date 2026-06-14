@@ -16,11 +16,20 @@ import type { ChatMessage } from "./chat-thread";
 
 export interface SavedChat {
   readonly id: string;
-  /** Display title — the first user message, truncated. */
+  /** User-editable display name; defaults to the creation timestamp. OPTIONAL so
+   *  records written before this field (no `name`) still load — readers fall back
+   *  to `title`. */
+  readonly name?: string;
+  /** Derived first-message preview (kept as a subtitle + legacy fallback). */
   readonly title: string;
   readonly createdAt: number;
   readonly updatedAt: number;
   readonly messages: readonly ChatMessage[];
+}
+
+/** The default name for a fresh chat: a sortable, human local timestamp. */
+export function defaultChatName(now: number = Date.now()): string {
+  return new Date(now).toLocaleString();
 }
 
 /** Keep the history bounded (newest-updated first). */
@@ -94,6 +103,7 @@ export function saveChat(
   endpoint: string,
   id: string,
   messages: readonly ChatMessage[],
+  name?: string,
   now: number = Date.now(),
 ): SavedChat[] {
   if (messages.length === 0) {
@@ -101,8 +111,12 @@ export function saveChat(
   }
   const existing = loadChats(endpoint);
   const prior = existing.find((c) => c.id === id);
+  // The name is the user's (a timestamp by default) — preserved across autosaves,
+  // never recomputed from the messages (that is `title`'s job).
+  const resolvedName = name?.trim() || prior?.name || defaultChatName(prior?.createdAt ?? now);
   const next: SavedChat = {
     id,
+    name: resolvedName,
     title: chatTitle(messages),
     createdAt: prior?.createdAt ?? now,
     updatedAt: now,
@@ -113,6 +127,22 @@ export function saveChat(
     localStorage.setItem(keyFor(endpoint), JSON.stringify(list));
   } catch {
     /* best-effort (quota/private mode) */
+  }
+  notifyChatsChanged();
+  return list;
+}
+
+/** Rename a saved chat by id (no-op if absent, or the new name is blank). */
+export function renameChat(endpoint: string, id: string, name: string): SavedChat[] {
+  const trimmed = name.trim();
+  if (trimmed === "") {
+    return loadChats(endpoint);
+  }
+  const list = loadChats(endpoint).map((c) => (c.id === id ? { ...c, name: trimmed } : c));
+  try {
+    localStorage.setItem(keyFor(endpoint), JSON.stringify(list));
+  } catch {
+    /* best-effort */
   }
   notifyChatsChanged();
   return list;

@@ -5,7 +5,7 @@ import { useConnection } from "../../kx/connection-context";
 import { useAttachments } from "../../kx/use-attachments";
 import { REACT_RECIPE_HANDLE, useChat } from "../../kx/use-chat";
 import { useRecipes } from "../../kx/use-recipes";
-import { type SavedChat, saveChat } from "../../lib/chat-history";
+import { type SavedChat, defaultChatName, renameChat, saveChat } from "../../lib/chat-history";
 import {
   type ChatSettings,
   loadChatSettings,
@@ -57,10 +57,17 @@ export function ChatPanel() {
   const [historyOpen, setHistoryOpen] = useState(false);
   // The identity the autosave upserts under; a new id per fresh/restored thread.
   const chatIdRef = useRef<string>(crypto.randomUUID());
+  // The editable chat name (defaults to the creation timestamp). A ref mirrors it
+  // so the thread-keyed autosave reads the latest name without re-subscribing on
+  // every keystroke.
+  const [chatName, setChatName] = useState<string>(() => defaultChatName());
+  const chatNameRef = useRef(chatName);
+  chatNameRef.current = chatName;
 
-  // Autosave: every thread change upserts this chat (empty threads are a no-op).
+  // Autosave: every thread change upserts this chat (empty threads are a no-op),
+  // carrying the current name.
   useEffect(() => {
-    saveChat(endpoint, chatIdRef.current, chat.thread.messages);
+    saveChat(endpoint, chatIdRef.current, chat.thread.messages, chatNameRef.current);
   }, [endpoint, chat.thread]);
 
   function updateSettings(next: ChatSettings): void {
@@ -70,13 +77,22 @@ export function ChatPanel() {
 
   function newChat(): void {
     chatIdRef.current = crypto.randomUUID();
+    setChatName(defaultChatName());
     chat.reset();
   }
 
   function loadSaved(saved: SavedChat): void {
     chatIdRef.current = saved.id;
+    setChatName(saved.name ?? saved.title);
     chat.loadThread(saved.messages);
     setHistoryOpen(false);
+  }
+
+  // Persist a name edit — only once the chat actually exists in history.
+  function commitName(): void {
+    if (chat.thread.messages.length > 0) {
+      renameChat(endpoint, chatIdRef.current, chatName);
+    }
   }
 
   function sendWithAttachments(text: string): void {
@@ -102,24 +118,47 @@ export function ChatPanel() {
       initial="hidden"
       animate="show"
     >
-      <div className="screen__head">
-        <h1>New Chat</h1>
-        <div className="screen__head-actions">
+      <div className="screen__head chat__head">
+        <div className="chat__title-block">
+          <input
+            className="chat__name-input"
+            value={chatName}
+            onChange={(e) => setChatName(e.target.value)}
+            onBlur={commitName}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                e.currentTarget.blur();
+              }
+            }}
+            aria-label="Chat name"
+            data-testid="chat-name"
+            spellCheck={false}
+            autoComplete="off"
+          />
+        </div>
+        <div className="screen__head-actions chat__head-actions">
           <button
             type="button"
-            className="iconbtn"
+            className="btn-ghost"
             onClick={() => setHistoryOpen(true)}
-            aria-label="Chat history"
             title="Chat history"
             data-testid="chat-history-toggle"
           >
             <Icon name="history" />
+            <span>History</span>
           </button>
-          {chat.thread.messages.length > 0 ? (
-            <button type="button" className="linkbtn" onClick={newChat}>
-              New chat
-            </button>
-          ) : null}
+          <button
+            type="button"
+            className="btn-ghost"
+            onClick={newChat}
+            disabled={chat.thread.messages.length === 0}
+            title="Start a new chat"
+            data-testid="chat-new"
+          >
+            <Icon name="plus" />
+            <span>New chat</span>
+          </button>
         </div>
       </div>
       <p className="muted">

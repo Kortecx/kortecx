@@ -75,9 +75,10 @@ export function ChatHistory({
                   onClick={() => onLoad(c)}
                   data-testid="chat-history-load"
                 >
-                  <span className="chat-history__title">{c.title}</span>
+                  <span className="chat-history__title">{c.name ?? c.title}</span>
                   <span className="muted">
-                    {new Date(c.updatedAt).toLocaleString()} · {c.messages.length} message
+                    {c.title} · {new Date(c.updatedAt).toLocaleString()} · {c.messages.length}{" "}
+                    message
                     {c.messages.length === 1 ? "" : "s"}
                   </span>
                 </button>
@@ -85,7 +86,7 @@ export function ChatHistory({
                   type="button"
                   className="iconbtn chat-history__delete"
                   onClick={() => setChats(deleteChat(endpoint, c.id))}
-                  aria-label={`Delete chat: ${c.title}`}
+                  aria-label={`Delete chat: ${c.name ?? c.title}`}
                   data-testid="chat-history-delete"
                 >
                   ×

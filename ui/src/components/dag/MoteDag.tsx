@@ -4,6 +4,7 @@ import {
   MiniMap,
   ReactFlow,
   ReactFlowProvider,
+  useNodesInitialized,
   useReactFlow,
 } from "@xyflow/react";
 import { useEffect, useMemo, useState } from "react";
@@ -64,20 +65,24 @@ function DagFlow({ projection }: { projection: ProjectionVM }) {
     [motes, positions, byRef, isLoading],
   );
 
-  // Refit the viewport when the topology grows (dynamic children appear). Guarded
-  // so a headless/jsdom flow (no measured viewport) is a harmless no-op.
+  // Refit the viewport when the topology grows (dynamic children appear) AND once
+  // every node has been measured. `useNodesInitialized()` flips true only after
+  // reactflow measures node sizes, so the fit never runs against unmeasured
+  // (zero-size) nodes — that race is what produced the stretched/narrow first
+  // paint in the chat (T-FIX1). Guarded so a headless/jsdom flow is a no-op.
   const { fitView } = useReactFlow();
+  const nodesInitialized = useNodesInitialized();
   // biome-ignore lint/correctness/useExhaustiveDependencies: topoHash is an intentional re-fit trigger (refit when the graph grows), not read in the body.
   useEffect(() => {
-    const t = setTimeout(() => {
-      try {
-        void fitView({ padding: 0.2, duration: 200 });
-      } catch {
-        /* no measured viewport (headless) — ignore */
-      }
-    }, 0);
-    return () => clearTimeout(t);
-  }, [topoHash, fitView]);
+    if (!nodesInitialized) {
+      return;
+    }
+    try {
+      void fitView({ padding: 0.2, duration: 200 });
+    } catch {
+      /* no measured viewport (headless) — ignore */
+    }
+  }, [topoHash, nodesInitialized, fitView]);
 
   return (
     <>

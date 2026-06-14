@@ -105,11 +105,15 @@ describe("resolveChatBacking — the live-recipe reconciliation (GR15)", () => {
     });
   });
 
-  it("a persisted handle this serve does NOT expose falls back to the model chat recipe", () => {
-    const gone: ChatSettings = { ...echoSettings, handle: "kx/recipes/exec-demo", promptKey: "p" };
+  it("an unavailable NON-echo handle is honored verbatim (the invoke fails honestly — don't-fake-gaps)", () => {
+    const gone: ChatSettings = {
+      ...echoSettings,
+      handle: "kx/recipes/does-not-exist",
+      promptKey: "p",
+    };
     expect(resolveChatBacking(gone, withModel)).toEqual({
-      handle: MODEL_CHAT_HANDLE,
-      promptKey: "prompt",
+      handle: "kx/recipes/does-not-exist",
+      promptKey: "p",
     });
   });
 

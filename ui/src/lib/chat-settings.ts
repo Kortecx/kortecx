@@ -49,22 +49,14 @@ export function resolveChatBacking(
   settings: ChatSettings,
   available: readonly string[],
 ): { handle: string; promptKey: string } {
-  if (available.length === 0) {
-    return { handle: settings.handle, promptKey: settings.promptKey };
-  }
-  // Honor an explicit, available, non-echo choice.
-  if (settings.handle !== ECHO_PRESET.handle && available.includes(settings.handle)) {
-    return { handle: settings.handle, promptKey: settings.promptKey };
-  }
-  // Prefer the model chat recipe when this serve provisions it.
-  if (available.includes(MODEL_CHAT_HANDLE)) {
+  // The SINGLE reconciliation: a stale model-free `echo` handle must not silently
+  // echo the prompt when the serve provisions the model chat recipe — prefer the
+  // model. EVERY other handle is honored VERBATIM (a deliberate non-echo choice,
+  // or even an intentionally-invalid one), so the invoke surfaces real failures
+  // honestly instead of masking them (D142.3 don't-fake-gaps).
+  if (settings.handle === ECHO_PRESET.handle && available.includes(MODEL_CHAT_HANDLE)) {
     return { handle: MODEL_CHAT_HANDLE, promptKey: "prompt" };
   }
-  // Model-free serve: the honest echo fallback.
-  if (available.includes(ECHO_PRESET.handle)) {
-    return { ...ECHO_PRESET };
-  }
-  // Nothing runnable — let the configured handle degrade with a notice.
   return { handle: settings.handle, promptKey: settings.promptKey };
 }
 
