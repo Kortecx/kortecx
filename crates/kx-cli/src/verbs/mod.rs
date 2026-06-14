@@ -13,6 +13,7 @@ pub mod models;
 pub mod mote;
 pub mod projection;
 pub mod react;
+pub mod recipe;
 pub mod replan;
 pub mod runs;
 pub mod signatures;

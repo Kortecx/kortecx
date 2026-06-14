@@ -7,11 +7,14 @@ import { MessageBubble } from "./MessageBubble";
 export function MessageList({
   thread,
   autoscroll,
+  showReasoning,
   renderTrace,
   onRetry,
 }: {
   thread: ChatThread;
   autoscroll: boolean;
+  /** Show the model's `<think>` reasoning disclosure above the answer (T-FEAT1). */
+  showReasoning: boolean;
   renderTrace?: (assistantId: string) => ReactNode;
   onRetry?: (assistantId: string) => void;
 }) {
@@ -39,6 +42,7 @@ export function MessageList({
         <MessageBubble
           key={m.id}
           message={m}
+          showReasoning={showReasoning}
           trace={m.role === "assistant" ? renderTrace?.(m.id) : undefined}
           onRetry={m.role === "assistant" ? onRetry : undefined}
         />

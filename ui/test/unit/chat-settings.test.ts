@@ -13,6 +13,7 @@ const echoSettings: ChatSettings = {
   handle: ECHO_PRESET.handle,
   promptKey: ECHO_PRESET.promptKey,
   showThinking: true,
+  showReasoning: true,
   autoscroll: true,
 };
 
@@ -31,6 +32,7 @@ describe("chat settings persistence", () => {
       handle: "kx/recipes/echo",
       promptKey: "topic",
       showThinking: false,
+      showReasoning: false,
       autoscroll: false,
     };
     saveChatSettings(next);

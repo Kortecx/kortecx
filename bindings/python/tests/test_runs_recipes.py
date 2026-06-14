@@ -7,8 +7,10 @@ from kortecx import (
     ReactTurn,
     RecipeForm,
     RecipeFormField,
+    RecipeInfo,
     ReplanRound,
     RunSummary,
+    ScoredRecipe,
     recipe_param_type_name,
 )
 from kortecx.v1 import gateway_pb2 as g
@@ -128,6 +130,36 @@ def test_recipe_form_wraps_handle_and_fields():
     assert form.handle == "kx/recipes/echo"
     assert len(form.fields) == 1
     assert form.fields[0].name == "topic"
+
+
+def test_recipe_info_from_proto_carries_advisory_metadata():
+    # PR-4 Batch D: ListRecipes now carries description / tags / version.
+    s = g.RecipeSummary(
+        handle="kx/recipes/echo",
+        recipe_fingerprint=b"\xab" * 32,
+        description="Echo — passthrough",
+        tags=["passthrough", "pure"],
+        version="abc123def456",
+    )
+    ri = RecipeInfo.from_proto(s)
+    assert ri.handle == "kx/recipes/echo"
+    assert ri.recipe_fingerprint == "ab" * 32
+    assert ri.description == "Echo — passthrough"
+    assert ri.tags == ["passthrough", "pure"]
+    assert ri.version == "abc123def456"
+
+
+def test_scored_recipe_from_proto_maps_score_and_recipe():
+    # SN-8: score_bp is an integer (basis points), never a float.
+    sr = g.ScoredRecipe(
+        recipe=g.RecipeSummary(handle="kx/recipes/chat", description="Chat"),
+        score_bp=7000,
+    )
+    out = ScoredRecipe.from_proto(sr)
+    assert out.score_bp == 7000
+    assert isinstance(out.score_bp, int)
+    assert out.recipe.handle == "kx/recipes/chat"
+    assert out.recipe.description == "Chat"
 
 
 def test_recipe_form_empty_is_valid():

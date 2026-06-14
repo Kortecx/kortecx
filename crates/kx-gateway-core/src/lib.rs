@@ -88,10 +88,11 @@ pub use service::{
     AssetGrantsView, AuthorEdge, AuthorExecutionMode, AuthorStep, AuthorStepKind, BinderError,
     BoundRecipe, CatalogSeamError, EventStream, EventTailer, GatewayService, GlobalEventStream,
     GlobalEventTailer, GrantEntry, GrantView, MembershipView, RecipeBinder, RecipeCatalog,
-    RecipeFormFieldEntry, RecipeParamKind, RegisteredSignature, SignatureCatalog,
-    SignatureSummaryEntry, SnapshotGlobalTailer, SnapshotTailer, TeamMemberEntry, TeamMembersView,
-    TeamSummaryEntry, WarrantProjection, WorkflowAuthor, BATCH_ITEM_CLAMP_BYTES,
-    DEFAULT_PUT_CAP_BYTES, MAX_BATCH_REFS, REFUSAL_CODE_METADATA_KEY,
+    RecipeFormFieldEntry, RecipeMetadataEntry, RecipeParamKind, RegisteredSignature,
+    ScoredRecipeEntry, SignatureCatalog, SignatureSummaryEntry, SnapshotGlobalTailer,
+    SnapshotTailer, TeamMemberEntry, TeamMembersView, TeamSummaryEntry, WarrantProjection,
+    WorkflowAuthor, BATCH_ITEM_CLAMP_BYTES, DEFAULT_PUT_CAP_BYTES, MAX_BATCH_REFS,
+    REFUSAL_CODE_METADATA_KEY, SEARCH_RECIPES_DEFAULT_LIMIT, SEARCH_RECIPES_MAX_LIMIT,
 };
 pub use submit::{
     RunSubmitter, SubmitMoteOutcome, SubmitStatus, SubmitterError, TonicCoordinatorSubmitter,

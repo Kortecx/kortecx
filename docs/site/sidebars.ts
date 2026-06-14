@@ -25,10 +25,11 @@ const sidebars: SidebarsConfig = {
       label: "Platform",
       collapsed: false,
       items: [
+        "blueprint-builder",
+        "agent-runner",
         "security",
         "tools",
         "scripts",
-        "agent-runner",
         "reading-run-outputs",
         "observability",
       ],

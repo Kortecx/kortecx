@@ -519,6 +519,10 @@ impl<B: InferenceBackend> ModelRouterExecutor<B> {
             }
             _ => instruction,
         };
+        // PR-4 (T-FEAT1): the opt-in reasoning-mode appends the model's native
+        // think/no-think directive. ABSENT ⇒ byte-identical (the directive is a
+        // no-op for `Default`), so a no-reasoning Mote's prompt is unchanged.
+        let instruction = apply_reasoning_directive(instruction, reasoning_mode_from_config(mote));
         // Batch A (vision): a Mote carrying `config_subset[IMAGE_REF_KEY]` (the
         // bound `kx/recipes/vision` arg) dispatches MULTIMODAL — the media
         // marker heads the user turn (the projector splices the image in marker
@@ -623,6 +627,18 @@ impl<B: InferenceBackend> ModelRouterExecutor<B> {
         // The committed `result_ref` is the content hash of the completion — a
         // greedy decode ⇒ identical bytes ⇒ identical ref (exactly-once-per-input).
         let bytes = self.dispatch_model(mote, warrant)?;
+        // PR-4 (T-FEAT1): under `reasoning=off`, defensively strip a leading
+        // `<think>` block the model may still emit (a model ignoring `/no_think`)
+        // so the committed "off" answer carries no reasoning. ONLY affects
+        // off-Motes (the default path commits the raw bytes verbatim).
+        let bytes = if reasoning_mode_from_config(mote) == ReasoningMode::Off {
+            match std::str::from_utf8(&bytes) {
+                Ok(text) => strip_leading_think(text).as_bytes().to_vec(),
+                Err(_) => bytes, // non-UTF-8 completion — leave as-is
+            }
+        } else {
+            bytes
+        };
         let result_ref = self
             .store
             .put(&bytes)
@@ -802,6 +818,76 @@ fn prompt_from_config(mote: &Mote) -> Option<String> {
     )
 }
 
+/// The OPT-IN reasoning-mode (PR-4 T-FEAT1), a declared free-param read from
+/// `config_subset["reasoning"]`. ABSENT (`Default`) ⇒ the prompt + committed bytes
+/// are byte-identical to pre-PR-4 (the canonical digest is invariant by
+/// construction — a demo Mote never carries the key). A SET value yields a new,
+/// HONEST Mote identity (a different `config_subset` ⇒ a different `MoteId`), the
+/// same property `PROMPT_KEY` has.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum ReasoningMode {
+    /// Key absent — the model's own default behavior (byte-identical to pre-PR-4).
+    Default,
+    /// Native `/think`.
+    Full,
+    /// `/think` with a brief-reasoning hint.
+    Minimal,
+    /// Native `/no_think` + a defensive leading-`<think>` strip at commit.
+    Off,
+}
+
+/// The reasoning free-param key (mirrors the recipe form ENUM in `provision`).
+pub(crate) const REASONING_KEY: &str = "reasoning";
+
+/// Read the opt-in reasoning-mode from `config_subset[REASONING_KEY]`. An absent /
+/// unrecognized value is `Default` (fail-soft — never changes the default path).
+fn reasoning_mode_from_config(mote: &Mote) -> ReasoningMode {
+    let Some(raw) = mote
+        .def
+        .config_subset
+        .get(&ConfigKey(REASONING_KEY.to_string()))
+    else {
+        return ReasoningMode::Default;
+    };
+    let s = serde_json::from_slice::<String>(&raw.0)
+        .unwrap_or_else(|_| String::from_utf8_lossy(&raw.0).into_owned());
+    match s.trim() {
+        "full" => ReasoningMode::Full,
+        "minimal" => ReasoningMode::Minimal,
+        "off" => ReasoningMode::Off,
+        _ => ReasoningMode::Default,
+    }
+}
+
+/// Append the Qwen3 reasoning directive (`/think` · `/no_think`) for `mode` to the
+/// user instruction; `Default` returns it unchanged (byte-identical).
+fn apply_reasoning_directive(instruction: String, mode: ReasoningMode) -> String {
+    match mode {
+        ReasoningMode::Default => instruction,
+        ReasoningMode::Full => format!("{instruction}\n/think"),
+        ReasoningMode::Minimal => format!("{instruction}\n/think Keep your reasoning brief."),
+        ReasoningMode::Off => format!("{instruction}\n/no_think"),
+    }
+}
+
+/// Strip a single leading `<think>…</think>` block (mirrors the planner's
+/// `strip_reasoning_preamble`) — used ONLY on the `reasoning=off` commit path
+/// (defensive: a model that ignores `/no_think` must not still leak a `<think>`
+/// block into the "off" answer). An unclosed `<think>` yields `""` (the model
+/// produced only reasoning under an off request — honest empty answer).
+fn strip_leading_think(text: &str) -> &str {
+    const OPEN: &str = "<think>";
+    const CLOSE: &str = "</think>";
+    let t = text.trim_start();
+    let Some(rest) = t.strip_prefix(OPEN) else {
+        return t;
+    };
+    match rest.find(CLOSE) {
+        Some(i) => rest[i + CLOSE.len()..].trim_start(),
+        None => "",
+    }
+}
+
 /// The vision recipe's image slot key (`config_subset["image_ref"]`, Batch A) —
 /// the SAME const the recipe seeds with (one source, no drift). Defined in the
 /// feature-free `provision` so the recipe contract exists on every build.
@@ -943,6 +1029,91 @@ mod tests {
         assert!(p.starts_with("<|im_start|>system\n"));
         assert!(p.ends_with("<|im_start|>assistant\n"));
         assert!(p.contains("<|im_start|>user\nhi<|im_end|>"));
+    }
+
+    // --- PR-4 (T-FEAT1): the opt-in reasoning-mode knob (config_subset) ---
+
+    fn mote_with_reasoning(reasoning: Option<&str>) -> Mote {
+        let mut cfg = BTreeMap::new();
+        cfg.insert(
+            ConfigKey(PROMPT_KEY.to_string()),
+            kx_mote::ConfigVal(b"\"hi\"".to_vec()),
+        );
+        if let Some(r) = reasoning {
+            cfg.insert(
+                ConfigKey(REASONING_KEY.to_string()),
+                kx_mote::ConfigVal(serde_json::to_vec(r).unwrap()),
+            );
+        }
+        let def = kx_mote::MoteDef {
+            critic_check: None,
+            logic_ref: LogicRef::from_bytes([7; 32]),
+            model_id: ModelId("m".into()),
+            prompt_template_hash: PromptTemplateHash::from_bytes([9; 32]),
+            tool_contract: BTreeMap::new(),
+            nd_class: NdClass::Pure,
+            config_subset: cfg,
+            effect_pattern: EffectPattern::IdempotentByConstruction,
+            critic_for: None,
+            is_topology_shaper: false,
+            inference_params: InferenceParams::default(),
+            schema_version: kx_mote::MOTE_DEF_SCHEMA_VERSION,
+        };
+        Mote::new(
+            def,
+            kx_mote::InputDataId::from_bytes([5; 32]),
+            kx_mote::GraphPosition(vec![0]),
+            smallvec::SmallVec::new(),
+        )
+    }
+
+    #[test]
+    fn reasoning_mode_absent_is_default_and_a_no_op() {
+        // No key ⇒ Default ⇒ the directive is a no-op (byte-identical prompt).
+        let m = mote_with_reasoning(None);
+        assert_eq!(reasoning_mode_from_config(&m), ReasoningMode::Default);
+        assert_eq!(
+            apply_reasoning_directive("hi".to_string(), ReasoningMode::Default),
+            "hi",
+            "Default never changes the prompt (digest-invariant)"
+        );
+    }
+
+    #[test]
+    fn reasoning_mode_parses_each_value_and_injects_the_directive() {
+        assert_eq!(
+            reasoning_mode_from_config(&mote_with_reasoning(Some("full"))),
+            ReasoningMode::Full
+        );
+        assert_eq!(
+            reasoning_mode_from_config(&mote_with_reasoning(Some("minimal"))),
+            ReasoningMode::Minimal
+        );
+        assert_eq!(
+            reasoning_mode_from_config(&mote_with_reasoning(Some("off"))),
+            ReasoningMode::Off
+        );
+        // An unrecognized value fails soft to Default (never a hard error).
+        assert_eq!(
+            reasoning_mode_from_config(&mote_with_reasoning(Some("bogus"))),
+            ReasoningMode::Default
+        );
+        assert!(apply_reasoning_directive("q".into(), ReasoningMode::Full).contains("/think"));
+        assert!(apply_reasoning_directive("q".into(), ReasoningMode::Off).contains("/no_think"));
+    }
+
+    #[test]
+    fn strip_leading_think_only_strips_a_leading_closed_block() {
+        assert_eq!(strip_leading_think("<think>reason</think>answer"), "answer");
+        assert_eq!(strip_leading_think("  <think>r</think>\n A"), "A");
+        assert_eq!(strip_leading_think("no think here"), "no think here");
+        // Unclosed ⇒ empty (off produced only reasoning — honest empty answer).
+        assert_eq!(strip_leading_think("<think>unclosed"), "");
+        // A mid-string mention is NOT stripped.
+        assert_eq!(
+            strip_leading_think("answer with <think> literal"),
+            "answer with <think> literal"
+        );
     }
 
     // --- shaper arm (PR-2b): deterministic decode→budget→lower→commit + fail-closed ---

@@ -298,6 +298,12 @@ message ListRecipesRequest {}
 message RecipeSummary {
   string handle = 1;                     // "namespace/collection/name" — the Invoke handle (AssetPath)
   bytes recipe_fingerprint = 2;          // PR-2.1 additive (D120.6): the published workflow fingerprint a bound run registers under (RunSummary.recipe_fingerprint joins on this) — display/join only, NEVER identity; empty when unknown
+  // PR-4 Batch D additive (D120.6): ADVISORY metadata for discovery/display ONLY
+  // (kx-catalog AdvisoryMetadataStore + VersionLedger) — NEVER identity, NEVER an
+  // authorization. Empty when unknown. Invoke remains the sole authorization gate.
+  string description = 3;                // free-form human text; NEVER parsed for enforcement
+  repeated string tags = 4;             // advisory discovery tags (sorted, deduplicated)
+  string version = 5;                   // advisory published version label (VersionLedger); empty when unversioned
 }
 message ListRecipesResponse {
   repeated RecipeSummary recipes = 1;    // the provisioned, invocable recipe handles
@@ -331,6 +337,30 @@ message RecipeFormField {
 message GetRecipeFormResponse {
   string handle = 1;                     // echoed
   repeated RecipeFormField fields = 2;   // the variable free-params, in canonical (name) order
+}
+
+// ---------------------------------------------------------------------------
+// PR-4 Batch D — SearchRecipes: ADVISORY recipe discovery over the kx-catalog
+// DiscoveryIndex (fuzzy-in/exact-out) + AdvisoryMetadataStore. Additive RPC
+// (D120.6). SN-8: score_bp is DISPLAY-ONLY (integer basis points, never a float,
+// never a committed fact, never an authorization) — a search can SURFACE a
+// recipe, never invoke one. Invoke stays the sole authorization gate. An old
+// gateway without the seam returns UNIMPLEMENTED.
+// ---------------------------------------------------------------------------
+message SearchRecipesRequest {
+  string intent = 1;                     // the free-text task intent (size-capped; validated fail-closed)
+  repeated string keywords = 2;          // optional normalized keyword filters (count/size-capped)
+  optional uint32 limit = 3;             // cap on returned results (server-clamped); absent ⇒ server default
+}
+// One recipe's advisory rank against the intent, in integer basis points (floats
+// never cross this wire — the SN-8 no-persisted-confidence rule): exact handle =
+// 10000 > path-prefix > tag-match > fuzzy; absent string rungs alone decide.
+message ScoredRecipe {
+  RecipeSummary recipe = 1;              // the matched recipe (with advisory metadata)
+  uint32 score_bp = 2;                   // 0..=10000 basis points (display-only; never authorizes)
+}
+message SearchRecipesResponse {
+  repeated ScoredRecipe ranked = 1;      // best-first (deterministic tiebreak); capped by request limit
 }
 
 // ---------------------------------------------------------------------------
@@ -893,6 +923,10 @@ service KxGateway {
   rpc ListRuns(ListRunsRequest) returns (ListRunsResponse);
   rpc ListRecipes(ListRecipesRequest) returns (ListRecipesResponse);
   rpc GetRecipeForm(GetRecipeFormRequest) returns (GetRecipeFormResponse);
+  // PR-4 Batch D additive (D120.6): ADVISORY recipe discovery (DiscoveryIndex +
+  // AdvisoryMetadataStore). Display-only ranking; never authorizes. UNIMPLEMENTED
+  // on an old gateway / when the seam yields None.
+  rpc SearchRecipes(SearchRecipesRequest) returns (SearchRecipesResponse);
   // UI-3 additive (D120.6): teams (membership) + sharing (grants) read viewers.
   rpc ListTeams(ListTeamsRequest) returns (ListTeamsResponse);
   rpc ListTeamMembers(ListTeamMembersRequest) returns (ListTeamMembersResponse);
