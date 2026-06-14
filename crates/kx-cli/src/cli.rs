@@ -60,6 +60,7 @@ usage: kx <command> [args]
     kx capture list [--instance <hex16>] [--limit N]   (captured actions, newest-first)
     kx signatures list | get --id <hex32> | register --manifest-file <path>
     kx tools list | score --intent <text> --tool <id>@<ver>... [--language-tag <t>]... [--tolerance-threshold-bp N]
+    kx recipe list | search <intent> [--keyword <k>]... [--limit N]   (advisory recipe discovery)
     kx models list                              (display-only model discovery)
     kx health                                   (grpc.health.v1 liveness; exit 0 iff SERVING)
 
@@ -93,6 +94,8 @@ pub enum Cli {
     Projection(verbs::projection::ProjectionArgs),
     /// Durable run history (Batch B `ListRuns`; read-only).
     Runs(verbs::runs::RunsArgs),
+    /// Recipe catalog + advisory discovery (PR-4 Batch D `ListRecipes`/`SearchRecipes`).
+    Recipe(verbs::recipe::RecipeArgs),
     /// Per-mote definition inspection (Batch B `GetMoteDetail`; display-only).
     Mote(verbs::mote::MoteArgs),
     /// Fetch a committed result.
@@ -152,6 +155,7 @@ impl Cli {
             Some("chain") => Ok(Cli::Chain(verbs::chain::parse(args)?)),
             Some("projection") => Ok(Cli::Projection(verbs::projection::parse(args)?)),
             Some("runs") => Ok(Cli::Runs(verbs::runs::parse(args)?)),
+            Some("recipe") => Ok(Cli::Recipe(verbs::recipe::parse(args)?)),
             Some("mote") => Ok(Cli::Mote(verbs::mote::parse(args)?)),
             Some("content") => Ok(Cli::Content(verbs::content::parse(args)?)),
             Some("events") => Ok(Cli::Events(verbs::events::parse(args)?)),
@@ -218,6 +222,7 @@ async fn dispatch(cli: Cli) -> Result<(), CliError> {
         Cli::Chain(a) => verbs::chain::execute(a).await,
         Cli::Projection(a) => verbs::projection::execute(a).await,
         Cli::Runs(a) => verbs::runs::execute(a).await,
+        Cli::Recipe(a) => verbs::recipe::execute(a).await,
         Cli::Mote(a) => verbs::mote::execute(a).await,
         Cli::Content(a) => verbs::content::execute(a).await,
         Cli::Events(a) => verbs::events::execute(a).await,
@@ -549,6 +554,15 @@ kx tools score --intent <text> --tool <id>@<ver> [--tool <id>@<ver>]... [--langu
   dry-runs the real lowering gate (verdict: would-lower / unavailable / refused).
   ADVISORY ONLY (SN-8): scores and the verdict NEVER authorize a tool — the
   exact (name, version) grant gate stays the broker's. No warrant is sent."
+            .into(),
+        "recipe" => "\
+kx recipe list [client flags]
+kx recipe search <intent> [--keyword <k>]... [--limit N] [client flags]
+  Recipe catalog + advisory discovery (PR-4 Batch D). `list` shows the gateway's
+  provisioned, invocable recipe handles with their advisory metadata (description,
+  tags, version); `search` ranks them against an intent (integer basis points:
+  10000 = exact handle; lower = name/tag/description match). ADVISORY ONLY (SN-8):
+  scores NEVER authorize a recipe — `kx invoke` stays the gate. No warrant is sent."
             .into(),
         "models" => "\
 kx models list [client flags]

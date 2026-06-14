@@ -137,6 +137,55 @@ pub trait RecipeCatalog: Send + Sync {
     fn recipe_fingerprint(&self, _handle: &str) -> Option<[u8; 32]> {
         None
     }
+    /// The ADVISORY metadata (description / tags / version) for `handle` —
+    /// PR-4 Batch D, from the host's `kx_catalog` AdvisoryMetadataStore +
+    /// VersionLedger. Display/discovery ONLY, NEVER identity. Defaults to `None`
+    /// so existing impls keep compiling (the wire then carries empty fields).
+    fn recipe_metadata(&self, _handle: &str) -> Option<RecipeMetadataEntry> {
+        None
+    }
+    /// ADVISORY recipe discovery — rank the provisioned recipes against `intent`
+    /// (+ optional `keywords`), best-first, capped at `limit`. PR-4 Batch D, over
+    /// the host's `kx_catalog` DiscoveryIndex (fuzzy-in/exact-out). `score_bp` is
+    /// DISPLAY-ONLY (integer basis points; a search SURFACES a recipe, never
+    /// invokes one — `Invoke` stays the authorization gate). Defaults to `None`
+    /// so existing impls keep compiling; `None` ⇒ `SearchRecipes` returns
+    /// `unimplemented`.
+    fn search_recipes(
+        &self,
+        _intent: &str,
+        _keywords: &[String],
+        _limit: usize,
+    ) -> Option<Vec<ScoredRecipeEntry>> {
+        None
+    }
+}
+
+/// The advisory metadata for a recipe handle (PR-4 Batch D), in gateway-core's
+/// own vocabulary so the seam stays off `kx-catalog` (the dependency wall). The
+/// host folds its `kx_catalog` AdvisoryMetadataStore + VersionLedger into these.
+/// Display/discovery ONLY — never identity, never an authorization.
+#[derive(Clone, Debug, Default)]
+pub struct RecipeMetadataEntry {
+    /// Free-form human description (never parsed for enforcement).
+    pub description: String,
+    /// Advisory discovery tags (sorted, deduplicated).
+    pub tags: Vec<String>,
+    /// Advisory published version label (empty when unversioned).
+    pub version: String,
+}
+
+/// One recipe's advisory rank against a search intent (PR-4 Batch D). `score_bp`
+/// is integer basis points (0..=10000) — DISPLAY-ONLY (the SN-8
+/// no-persisted-confidence rule; never a float, never an authorization).
+#[derive(Clone, Debug)]
+pub struct ScoredRecipeEntry {
+    /// The matched recipe handle.
+    pub handle: String,
+    /// The advisory metadata (description / tags / version).
+    pub metadata: RecipeMetadataEntry,
+    /// The advisory rank, integer basis points (0..=10000).
+    pub score_bp: u32,
 }
 
 /// One team in a `ListTeams` enumeration, in gateway-core's wire vocabulary
@@ -592,6 +641,12 @@ pub const MAX_BATCH_REFS: usize = 64;
 /// fits the transport budget; `truncated` + `full_size` stay honest and the
 /// full blob remains fetchable via single `GetContent`.
 pub const BATCH_ITEM_CLAMP_BYTES: u64 = 512 * 1024;
+
+/// The default `SearchRecipes` result cap when the request omits `limit`.
+pub const SEARCH_RECIPES_DEFAULT_LIMIT: usize = 20;
+/// The hard ceiling on `SearchRecipes` results — a request `limit` is clamped to
+/// this so a huge value can never widen the host ranker's own bound.
+pub const SEARCH_RECIPES_MAX_LIMIT: usize = 100;
 
 impl GatewayService {
     /// Wire a gateway over a read-only journal seam, a propose-proxy, and a
@@ -1619,17 +1674,45 @@ impl KxGateway for GatewayService {
         let recipes = catalog
             .list_recipes()
             .into_iter()
-            .map(|handle| {
-                let recipe_fingerprint = catalog
-                    .recipe_fingerprint(&handle)
-                    .map_or_else(Vec::new, |f| f.to_vec());
-                proto::RecipeSummary {
-                    handle,
-                    recipe_fingerprint,
-                }
-            })
+            .map(|handle| recipe_summary_to_proto(catalog.as_ref(), handle))
             .collect();
         Ok(Response::new(proto::ListRecipesResponse { recipes }))
+    }
+
+    async fn search_recipes(
+        &self,
+        request: Request<proto::SearchRecipesRequest>,
+    ) -> Result<Response<proto::SearchRecipesResponse>, Status> {
+        let catalog = self
+            .catalog_recipes
+            .as_ref()
+            .ok_or_else(|| Status::unimplemented("SearchRecipes: no recipe catalog wired"))?;
+        let req = request.into_inner();
+        // The seam clamps the limit to its own cap; a None/0 request limit means
+        // "the server default" (the seam owns the policy). Capped here too so a
+        // huge value can never widen the host's own bound.
+        let limit = req
+            .limit
+            .map_or(SEARCH_RECIPES_DEFAULT_LIMIT, |l| l as usize)
+            .clamp(1, SEARCH_RECIPES_MAX_LIMIT);
+        // `None` ⇒ the host did not provision discovery ⇒ honest unimplemented
+        // (mirrors the catalog-not-wired arm). An empty Vec is a valid "no match".
+        let ranked = catalog
+            .search_recipes(&req.intent, &req.keywords, limit)
+            .ok_or_else(|| Status::unimplemented("SearchRecipes: discovery not provisioned"))?
+            .into_iter()
+            .map(|e| proto::ScoredRecipe {
+                recipe: Some(proto::RecipeSummary {
+                    handle: e.handle,
+                    recipe_fingerprint: Vec::new(),
+                    description: e.metadata.description,
+                    tags: e.metadata.tags,
+                    version: e.metadata.version,
+                }),
+                score_bp: e.score_bp,
+            })
+            .collect();
+        Ok(Response::new(proto::SearchRecipesResponse { ranked }))
     }
 
     async fn get_recipe_form(
@@ -1831,6 +1914,24 @@ fn grant_entry_to_proto(g: GrantEntry) -> proto::GrantView {
 }
 
 /// Map a gateway-core form field into the wire type.
+/// Build a wire `RecipeSummary` for `handle` from the catalog seam — the
+/// fingerprint (PR-2.1 join key) + the advisory metadata (PR-4 Batch D). Shared
+/// by `ListRecipes`; `SearchRecipes` builds its own (the ranker already carries
+/// metadata, and a search hit need not re-resolve the fingerprint).
+fn recipe_summary_to_proto(catalog: &dyn RecipeCatalog, handle: String) -> proto::RecipeSummary {
+    let recipe_fingerprint = catalog
+        .recipe_fingerprint(&handle)
+        .map_or_else(Vec::new, |f| f.to_vec());
+    let meta = catalog.recipe_metadata(&handle).unwrap_or_default();
+    proto::RecipeSummary {
+        handle,
+        recipe_fingerprint,
+        description: meta.description,
+        tags: meta.tags,
+        version: meta.version,
+    }
+}
+
 fn form_field_to_proto(f: RecipeFormFieldEntry) -> proto::RecipeFormField {
     let ty = match f.kind {
         RecipeParamKind::Unspecified => proto::RecipeParamType::Unspecified,

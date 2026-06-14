@@ -118,7 +118,10 @@ export function AppShell() {
   }
 
   return (
-    <div className={collapsed ? "shell shell--collapsed" : "shell"} data-testid="app-shell">
+    <div
+      className={`shell${collapsed ? " shell--collapsed" : ""}${devtoolsOpen ? " shell--dock-open" : ""}`}
+      data-testid="app-shell"
+    >
       <a href="#main" className="skip-link">
         Skip to content
       </a>

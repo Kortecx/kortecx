@@ -203,6 +203,7 @@ export function ChatPanel() {
       <MessageList
         thread={chat.thread}
         autoscroll={settings.autoscroll}
+        showReasoning={settings.showReasoning}
         onRetry={(id) => void chat.retry(id)}
         renderTrace={(id) => {
           if (id !== chat.activeAssistantId) {

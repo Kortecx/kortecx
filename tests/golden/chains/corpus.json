@@ -245,6 +245,22 @@
     }
   },
   {
+    "name": "model_chain_of_agents",
+    "dsl": "draft > critique",
+    "seed": 0,
+    "tasks": {
+      "draft": { "kind": "model", "model_id": "kx-serve:qwen3-4b-q4_k_m", "prompt": "Draft an answer to the task." },
+      "critique": { "kind": "model", "model_id": "kx-serve:qwen3-4b-q4_k_m", "prompt": "Critique and improve the draft." }
+    },
+    "expect": {
+      "steps": [
+        { "kind": "model", "model_id": "kx-serve:qwen3-4b-q4_k_m", "prompt": "Draft an answer to the task.", "body_signature_id": null, "tool_contract": {}, "params": {} },
+        { "kind": "model", "model_id": "kx-serve:qwen3-4b-q4_k_m", "prompt": "Critique and improve the draft.", "body_signature_id": null, "tool_contract": {}, "params": {} }
+      ],
+      "edges": [ { "parent": 0, "child": 1, "edge": "data" } ]
+    }
+  },
+  {
     "name": "seeded",
     "dsl": "a > b",
     "seed": 7,

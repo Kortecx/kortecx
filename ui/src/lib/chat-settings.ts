@@ -12,6 +12,10 @@ export interface ChatSettings {
   readonly promptKey: string;
   /** Show the DAG-of-thought (the in-flight run's Motes) under assistant turns. */
   readonly showThinking: boolean;
+  /** Show the model's `<think>` REASONING block (a collapsible disclosure above
+   *  the answer). DISTINCT from `showThinking` (the DAG): this is the model's own
+   *  textual reasoning, already committed in the result bytes (display-only). */
+  readonly showReasoning: boolean;
   /** Auto-scroll the thread to the newest message. */
   readonly autoscroll: boolean;
   /** The picked model id (Batch A). Only ever sent as a recipe ENUM free-param
@@ -23,6 +27,7 @@ export const DEFAULT_CHAT_SETTINGS: ChatSettings = {
   handle: "kx/recipes/chat",
   promptKey: "prompt",
   showThinking: true,
+  showReasoning: true,
   autoscroll: true,
 };
 
@@ -89,6 +94,9 @@ export function loadChatSettings(): ChatSettings {
           ? p.promptKey
           : DEFAULT_CHAT_SETTINGS.promptKey,
       showThinking: isBool(p.showThinking) ? p.showThinking : DEFAULT_CHAT_SETTINGS.showThinking,
+      showReasoning: isBool(p.showReasoning)
+        ? p.showReasoning
+        : DEFAULT_CHAT_SETTINGS.showReasoning,
       autoscroll: isBool(p.autoscroll) ? p.autoscroll : DEFAULT_CHAT_SETTINGS.autoscroll,
       modelId: isString(p.modelId) && p.modelId.trim() !== "" ? p.modelId : undefined,
     };

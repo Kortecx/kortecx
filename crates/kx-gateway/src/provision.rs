@@ -21,8 +21,9 @@ use kx_catalog::{
 use kx_content::ContentRef;
 use kx_gateway_core::{
     AuthorEdge, AuthorExecutionMode, AuthorStep, AuthorStepKind, BinderError, BoundRecipe,
-    CatalogSeamError, RecipeBinder, RecipeCatalog, RecipeFormFieldEntry, RecipeParamKind,
-    RegisteredSignature, SignatureCatalog, SignatureSummaryEntry, WorkflowAuthor,
+    CatalogSeamError, RecipeBinder, RecipeCatalog, RecipeFormFieldEntry, RecipeMetadataEntry,
+    RecipeParamKind, RegisteredSignature, ScoredRecipeEntry, SignatureCatalog,
+    SignatureSummaryEntry, WorkflowAuthor,
 };
 use kx_invoke::{bind_snapshot, InvokeError, UseWarrantResolver};
 use kx_mote::{
@@ -587,6 +588,48 @@ impl DemoLibrary {
         Some(fields)
     }
 
+    /// The ADVISORY metadata (description / tags / version) for a provisioned
+    /// `handle` (PR-4 Batch D), or `None` for an unprovisioned handle. The
+    /// version is the published version id (content-addressed — these recipes
+    /// carry no semver) read from the SAME versions ledger the binder resolves
+    /// through. Display/discovery ONLY — never identity, never enforcement.
+    #[must_use]
+    pub fn recipe_metadata(&self, handle: &str) -> Option<RecipeMetadataEntry> {
+        let path = parse_handle(handle)?;
+        if !self.recipes.iter().any(|(h, _)| *h == path) {
+            return None;
+        }
+        let (description, tags) = recipe_advisory(handle);
+        // The published version id (12-hex pin), iff the handle resolves a
+        // workflow version; empty otherwise (honest "unversioned", D142).
+        let version = self
+            .versions
+            .resolve(&path)
+            .map(|(_, vid)| vid.to_hex().chars().take(12).collect::<String>())
+            .unwrap_or_default();
+        Some(RecipeMetadataEntry {
+            description: description.to_string(),
+            tags: tags.iter().map(|s| (*s).to_string()).collect(),
+            version,
+        })
+    }
+
+    /// ADVISORY recipe discovery (PR-4 Batch D): rank the provisioned handles
+    /// against `intent` (+ optional `keywords`), best-first, capped at `limit`.
+    /// Pure + deterministic; `score_bp` is integer basis points, DISPLAY-ONLY
+    /// (a hit SURFACES a recipe, never invokes it — `Invoke` stays the gate).
+    #[must_use]
+    pub fn search_recipes(
+        &self,
+        intent: &str,
+        keywords: &[String],
+        limit: usize,
+    ) -> Vec<ScoredRecipeEntry> {
+        rank_recipes(&self.recipe_handles(), intent, keywords, limit, |h| {
+            self.recipe_metadata(h).unwrap_or_default()
+        })
+    }
+
     /// The schema resolver carrying this library's live serve facts (the vision
     /// `model` ENUM's allowed set). The SAME resolver backs the published form
     /// (`recipe_form`) and the bind (`Invoke`), so they agree by construction.
@@ -645,6 +688,133 @@ fn param_type_field(name: &str, ty: &ParamType) -> RecipeFormFieldEntry {
         max_len,
         allowed,
     }
+}
+
+/// The static, honest advisory copy (description + discovery tags) for a
+/// provisioned recipe handle (PR-4 Batch D). Describes the REAL recipe;
+/// display/discovery only (never parsed for enforcement). An unknown handle ⇒
+/// empty. Kept beside the recipe handle consts so the two never drift.
+fn recipe_advisory(handle: &str) -> (&'static str, &'static [&'static str]) {
+    match handle {
+        DEMO_RECIPE_HANDLE => (
+            "Echo — a true passthrough of the bound `topic` (model-free, GR15-honest).",
+            &["passthrough", "pure", "text", "echo"],
+        ),
+        PASSTHROUGH_DAG_HANDLE => (
+            "Passthrough DAG — a fan-out → gather multi-node PURE workflow (model-free).",
+            &["passthrough", "dag", "pure", "workflow"],
+        ),
+        MODEL_RECIPE_HANDLE => (
+            "Chat — a single greedy completion from the served model.",
+            &["model", "chat", "text", "agent", "completion"],
+        ),
+        REACT_RECIPE_HANDLE => (
+            "ReAct — a live tool-using agent loop (plan → act → observe → answer).",
+            &["agent", "react", "tools", "loop", "reasoning"],
+        ),
+        VISION_RECIPE_HANDLE => (
+            "Vision — a multimodal completion over an attached image.",
+            &["model", "vision", "image", "multimodal", "agent"],
+        ),
+        _ => ("", &[]),
+    }
+}
+
+/// The neutral score for an empty-query listing (so `SearchRecipes` with no
+/// intent returns the full catalog, ranked stably by handle).
+const RECIPE_SCORE_NEUTRAL: u32 = 1;
+
+/// Pure, deterministic recipe ranker (PR-4 Batch D). Tokenizes `intent` (+
+/// `keywords`) and scores each handle by the best query-token match against the
+/// handle / name / tags / description, in INTEGER basis points (≤ 10000 — never
+/// a float, the SN-8 no-persisted-confidence rule). An empty query lists every
+/// recipe at a neutral score; a non-empty query keeps only positive matches.
+/// Best-first with a deterministic handle tiebreak; capped at `limit`.
+fn rank_recipes(
+    handles: &[String],
+    intent: &str,
+    keywords: &[String],
+    limit: usize,
+    meta: impl Fn(&str) -> RecipeMetadataEntry,
+) -> Vec<ScoredRecipeEntry> {
+    let mut query: Vec<String> = intent
+        .split(|c: char| !c.is_alphanumeric())
+        .chain(keywords.iter().map(String::as_str))
+        .map(|t| t.trim().to_lowercase())
+        .filter(|t| !t.is_empty())
+        .collect();
+    query.sort();
+    query.dedup();
+
+    // The whole normalized intent (handles contain '/', which the tokenizer
+    // splits — so an exact-handle match needs the un-tokenized intent too).
+    let intent_lc = intent.trim().to_lowercase();
+    let mut scored: Vec<ScoredRecipeEntry> = handles
+        .iter()
+        .map(|h| {
+            let metadata = meta(h);
+            let score_bp = score_recipe(h, &metadata, &intent_lc, &query);
+            ScoredRecipeEntry {
+                handle: h.clone(),
+                metadata,
+                score_bp,
+            }
+        })
+        .collect();
+    if !query.is_empty() {
+        scored.retain(|s| s.score_bp > 0);
+    }
+    scored.sort_by(|a, b| {
+        b.score_bp
+            .cmp(&a.score_bp)
+            .then_with(|| a.handle.cmp(&b.handle))
+    });
+    scored.truncate(limit);
+    scored
+}
+
+/// Score one recipe against a normalized (lowercased, deduped) query. Rungs are
+/// integer basis points, exact-out > fuzzy-in: exact handle = 10000, exact name
+/// = 9500, name-substring = 9000, handle-substring = 8500, exact tag = 7000,
+/// tag-substring = 6000, description-substring = 5000, else 0. An empty query ⇒
+/// the neutral listing score.
+fn score_recipe(handle: &str, m: &RecipeMetadataEntry, intent_lc: &str, query: &[String]) -> u32 {
+    if query.is_empty() {
+        return RECIPE_SCORE_NEUTRAL;
+    }
+    let handle_lc = handle.to_lowercase();
+    // The whole intent typed as the exact handle ("kx/recipes/echo") ranks top —
+    // the tokenizer alone can't see it (it splits on '/').
+    if !intent_lc.is_empty() && handle_lc == intent_lc {
+        return 10_000;
+    }
+    let name_lc = handle_lc
+        .rsplit('/')
+        .next()
+        .unwrap_or(&handle_lc)
+        .to_string();
+    let desc_lc = m.description.to_lowercase();
+    let tags_lc: Vec<String> = m.tags.iter().map(|t| t.to_lowercase()).collect();
+    let mut best = 0u32;
+    for t in query {
+        let s = if name_lc == *t {
+            9_500
+        } else if name_lc.contains(t.as_str()) {
+            9_000
+        } else if handle_lc.contains(t.as_str()) {
+            8_500
+        } else if tags_lc.iter().any(|tag| tag == t) {
+            7_000
+        } else if tags_lc.iter().any(|tag| tag.contains(t.as_str())) {
+            6_000
+        } else if desc_lc.contains(t.as_str()) {
+            5_000
+        } else {
+            0
+        };
+        best = best.max(s);
+    }
+    best
 }
 
 /// Idempotently seed one recipe: own the asset, publish its content-addressed
@@ -758,6 +928,22 @@ impl RecipeCatalog for HostRecipeCatalog {
 
     fn get_recipe_form(&self, handle: &str) -> Option<Vec<RecipeFormFieldEntry>> {
         self.lib.recipe_form(handle)
+    }
+
+    fn recipe_metadata(&self, handle: &str) -> Option<RecipeMetadataEntry> {
+        self.lib.recipe_metadata(handle)
+    }
+
+    fn search_recipes(
+        &self,
+        intent: &str,
+        keywords: &[String],
+        limit: usize,
+    ) -> Option<Vec<ScoredRecipeEntry>> {
+        // `Some(_)` always — this host provisions discovery (the SearchRecipes
+        // RPC's `unimplemented` arm is for a catalog with no ranker). An empty
+        // Vec is a valid "no match".
+        Some(self.lib.search_recipes(intent, keywords, limit))
     }
 }
 
@@ -1907,6 +2093,94 @@ mod tests {
         assert!(handles.contains(&DEMO_RECIPE_HANDLE.to_string()));
         assert!(handles.contains(&PASSTHROUGH_DAG_HANDLE.to_string()));
         assert!(!handles.contains(&MODEL_RECIPE_HANDLE.to_string()));
+    }
+
+    // --- PR-4 Batch D: advisory metadata + the pure recipe ranker ---
+
+    #[test]
+    fn recipe_metadata_is_the_honest_advisory_for_provisioned_handles() {
+        let dir = tempfile::tempdir().unwrap();
+        let lib = DemoLibrary::open(
+            dir.path(),
+            ExecutorClass::Bwrap,
+            &["alice@acme".to_string()],
+        )
+        .unwrap();
+        let m = lib
+            .recipe_metadata(DEMO_RECIPE_HANDLE)
+            .expect("echo is provisioned");
+        assert!(m.description.contains("Echo"));
+        assert!(m.tags.contains(&"passthrough".to_string()));
+        // Content-addressed published version pin (12-hex), never a faked semver.
+        assert_eq!(
+            m.version.len(),
+            12,
+            "the version is the 12-hex version-id pin"
+        );
+        assert!(m.version.chars().all(|c| c.is_ascii_hexdigit()));
+        // An unprovisioned / unknown handle yields no metadata (no oracle).
+        assert!(lib.recipe_metadata(MODEL_RECIPE_HANDLE).is_none());
+        assert!(lib.recipe_metadata("kx/recipes/does-not-exist").is_none());
+    }
+
+    #[test]
+    fn search_recipes_ranks_exact_handle_first_and_filters_nonmatches() {
+        let dir = tempfile::tempdir().unwrap();
+        let lib = DemoLibrary::open(
+            dir.path(),
+            ExecutorClass::Bwrap,
+            &["alice@acme".to_string()],
+        )
+        .unwrap();
+        // Exact handle wins (10000 bp); only positive matches are returned.
+        let ranked = lib.search_recipes(DEMO_RECIPE_HANDLE, &[], 20);
+        assert_eq!(
+            ranked.first().map(|r| r.handle.as_str()),
+            Some(DEMO_RECIPE_HANDLE)
+        );
+        assert_eq!(ranked[0].score_bp, 10_000);
+        assert!(
+            ranked.iter().all(|r| r.score_bp > 0),
+            "a non-empty query drops zero-score recipes"
+        );
+
+        // A tag/keyword query surfaces by tag (the passthrough-dag carries it too).
+        let by_tag = lib.search_recipes("", &["passthrough".to_string()], 20);
+        let hits: Vec<&str> = by_tag.iter().map(|r| r.handle.as_str()).collect();
+        assert!(hits.contains(&DEMO_RECIPE_HANDLE));
+        assert!(hits.contains(&PASSTHROUGH_DAG_HANDLE));
+        // score_bp is always display-bounded (SN-8: never a float, ≤ 10000).
+        assert!(by_tag.iter().all(|r| r.score_bp <= 10_000));
+    }
+
+    #[test]
+    fn search_recipes_empty_query_lists_all_and_limit_caps() {
+        let dir = tempfile::tempdir().unwrap();
+        let lib = DemoLibrary::open(
+            dir.path(),
+            ExecutorClass::Bwrap,
+            &["alice@acme".to_string()],
+        )
+        .unwrap();
+        let all = lib.search_recipes("", &[], 20);
+        assert_eq!(
+            all.len(),
+            lib.recipe_handles().len(),
+            "empty query lists every recipe"
+        );
+        // Deterministic best-first → handle tiebreak (here all neutral ⇒ handle order).
+        let mut sorted = all.clone();
+        sorted.sort_by(|a, b| {
+            b.score_bp
+                .cmp(&a.score_bp)
+                .then_with(|| a.handle.cmp(&b.handle))
+        });
+        assert_eq!(
+            all.iter().map(|r| &r.handle).collect::<Vec<_>>(),
+            sorted.iter().map(|r| &r.handle).collect::<Vec<_>>(),
+        );
+        // The limit caps the result set.
+        assert_eq!(lib.search_recipes("", &[], 1).len(), 1);
     }
 
     #[test]

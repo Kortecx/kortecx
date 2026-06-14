@@ -35,7 +35,7 @@ import { INSTANCE_LEN, REF_LEN, asBytes, encode } from "./hexids.js";
 import { ModelSummary } from "./models.js";
 import { MoteDetail } from "./motes.js";
 import { ReactTurn, type ReactTurnPage } from "./react.js";
-import { RecipeForm, RecipeInfo } from "./recipes.js";
+import { RecipeForm, RecipeInfo, ScoredRecipe } from "./recipes.js";
 import { ReplanRound, type ReplanRoundPage } from "./replan.js";
 import { Result, Run } from "./run.js";
 import { type RunPage, RunSummary } from "./runs.js";
@@ -445,7 +445,28 @@ export abstract class KxClientBase {
    */
   async listRecipeSummaries(): Promise<RecipeInfo[]> {
     const resp = await rpc(this.grpc.listRecipes({}));
-    return resp.recipes.map((r) => new RecipeInfo(r.handle, encode(r.recipeFingerprint)));
+    return resp.recipes.map((r) => RecipeInfo.fromProto(r));
+  }
+
+  /**
+   * ADVISORY recipe discovery (PR-4 Batch D) — rank the provisioned recipes
+   * against `intent` (+ optional `keywords`), best-first, capped at `limit`.
+   * SN-8: each `scoreBp` is DISPLAY-ONLY (a hit SURFACES a recipe, never invokes
+   * one — {@link KxClientBase.invoke} stays the authorization gate). An old
+   * gateway / a catalog with no ranker throws {@link KxUnimplemented}.
+   */
+  async searchRecipes(
+    intent: string,
+    opts: { keywords?: readonly string[]; limit?: number } = {},
+  ): Promise<ScoredRecipe[]> {
+    const resp = await rpc(
+      this.grpc.searchRecipes({
+        intent,
+        keywords: opts.keywords ? [...opts.keywords] : [],
+        limit: opts.limit,
+      }),
+    );
+    return resp.ranked.map((s) => ScoredRecipe.fromProto(s));
   }
 
   /**

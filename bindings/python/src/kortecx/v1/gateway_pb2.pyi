@@ -339,12 +339,18 @@ class ListRecipesRequest(_message.Message):
     def __init__(self) -> None: ...
 
 class RecipeSummary(_message.Message):
-    __slots__ = ("handle", "recipe_fingerprint")
+    __slots__ = ("handle", "recipe_fingerprint", "description", "tags", "version")
     HANDLE_FIELD_NUMBER: _ClassVar[int]
     RECIPE_FINGERPRINT_FIELD_NUMBER: _ClassVar[int]
+    DESCRIPTION_FIELD_NUMBER: _ClassVar[int]
+    TAGS_FIELD_NUMBER: _ClassVar[int]
+    VERSION_FIELD_NUMBER: _ClassVar[int]
     handle: str
     recipe_fingerprint: bytes
-    def __init__(self, handle: _Optional[str] = ..., recipe_fingerprint: _Optional[bytes] = ...) -> None: ...
+    description: str
+    tags: _containers.RepeatedScalarFieldContainer[str]
+    version: str
+    def __init__(self, handle: _Optional[str] = ..., recipe_fingerprint: _Optional[bytes] = ..., description: _Optional[str] = ..., tags: _Optional[_Iterable[str]] = ..., version: _Optional[str] = ...) -> None: ...
 
 class ListRecipesResponse(_message.Message):
     __slots__ = ("recipes",)
@@ -379,6 +385,30 @@ class GetRecipeFormResponse(_message.Message):
     handle: str
     fields: _containers.RepeatedCompositeFieldContainer[RecipeFormField]
     def __init__(self, handle: _Optional[str] = ..., fields: _Optional[_Iterable[_Union[RecipeFormField, _Mapping]]] = ...) -> None: ...
+
+class SearchRecipesRequest(_message.Message):
+    __slots__ = ("intent", "keywords", "limit")
+    INTENT_FIELD_NUMBER: _ClassVar[int]
+    KEYWORDS_FIELD_NUMBER: _ClassVar[int]
+    LIMIT_FIELD_NUMBER: _ClassVar[int]
+    intent: str
+    keywords: _containers.RepeatedScalarFieldContainer[str]
+    limit: int
+    def __init__(self, intent: _Optional[str] = ..., keywords: _Optional[_Iterable[str]] = ..., limit: _Optional[int] = ...) -> None: ...
+
+class ScoredRecipe(_message.Message):
+    __slots__ = ("recipe", "score_bp")
+    RECIPE_FIELD_NUMBER: _ClassVar[int]
+    SCORE_BP_FIELD_NUMBER: _ClassVar[int]
+    recipe: RecipeSummary
+    score_bp: int
+    def __init__(self, recipe: _Optional[_Union[RecipeSummary, _Mapping]] = ..., score_bp: _Optional[int] = ...) -> None: ...
+
+class SearchRecipesResponse(_message.Message):
+    __slots__ = ("ranked",)
+    RANKED_FIELD_NUMBER: _ClassVar[int]
+    ranked: _containers.RepeatedCompositeFieldContainer[ScoredRecipe]
+    def __init__(self, ranked: _Optional[_Iterable[_Union[ScoredRecipe, _Mapping]]] = ...) -> None: ...
 
 class ListTeamsRequest(_message.Message):
     __slots__ = ()

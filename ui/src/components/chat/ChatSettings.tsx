@@ -46,6 +46,14 @@ export function ChatSettingsPanel({
       <label className="chat-settings__check">
         <input
           type="checkbox"
+          checked={settings.showReasoning}
+          onChange={(e) => onChange({ ...settings, showReasoning: e.target.checked })}
+        />
+        Show reasoning
+      </label>
+      <label className="chat-settings__check">
+        <input
+          type="checkbox"
           checked={settings.autoscroll}
           onChange={(e) => onChange({ ...settings, autoscroll: e.target.checked })}
         />

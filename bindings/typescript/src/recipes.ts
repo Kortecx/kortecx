@@ -12,8 +12,11 @@
 import type {
   GetRecipeFormResponse as PbGetRecipeFormResponse,
   RecipeFormField as PbRecipeFormField,
+  RecipeSummary as PbRecipeSummary,
+  ScoredRecipe as PbScoredRecipe,
 } from "./gen/kortecx/v1/gateway_pb.js";
 import { RecipeParamType } from "./gen/kortecx/v1/gateway_pb.js";
+import { encode } from "./hexids.js";
 
 /** A free-param's value domain. `"unspecified"` absorbs UNSPECIFIED(0) + any new value. */
 export type RecipeParamTypeName = "str" | "int" | "bool" | "bytes" | "enum" | "unspecified";
@@ -95,20 +98,58 @@ export type BlueprintParamTypeName = RecipeParamTypeName;
 
 /** One catalog entry of `ListRecipes` (PR-2.1): the Invoke handle plus the
  *  published workflow fingerprint a bound run registers under — the join key
- *  for labeling durable `RunSummary` rows. Display/join only, never identity;
- *  `recipeFingerprint` is "" when the gateway predates the field. */
+ *  for labeling durable `RunSummary` rows. PR-4 Batch D adds the ADVISORY
+ *  metadata (description / tags / version) — display/discovery ONLY, never
+ *  identity, never enforcement. `recipeFingerprint` / metadata are empty when
+ *  the gateway predates the field. */
 export class RecipeInfo {
   constructor(
     readonly handle: string,
     /** Hex fingerprint (joins `RunSummary.recipeFingerprint`); "" if unknown. */
     readonly recipeFingerprint: string,
+    /** Free-form advisory description (never parsed for enforcement); "" if unknown. */
+    readonly description: string = "",
+    /** Advisory discovery tags; empty if unknown. */
+    readonly tags: readonly string[] = [],
+    /** Advisory published version label; "" if unversioned/unknown. */
+    readonly version: string = "",
   ) {}
+
+  static fromProto(r: PbRecipeSummary): RecipeInfo {
+    return new RecipeInfo(r.handle, encode(r.recipeFingerprint), r.description, r.tags, r.version);
+  }
 
   /** A plain snake_case object (the cross-SDK serialization shape). */
   toJSON() {
     return {
       handle: this.handle,
       recipe_fingerprint: this.recipeFingerprint,
+      description: this.description,
+      tags: this.tags,
+      version: this.version,
     };
+  }
+}
+
+/** One ranked `SearchRecipes` hit (PR-4 Batch D): the matched recipe plus its
+ *  advisory rank in integer basis points (0..=10000). SN-8: `scoreBp` is
+ *  DISPLAY-ONLY — a search SURFACES a recipe, never invokes one (`Invoke` stays
+ *  the authorization gate). */
+export class ScoredRecipe {
+  constructor(
+    readonly recipe: RecipeInfo,
+    /** Advisory rank, integer basis points (0..=10000); never a float. */
+    readonly scoreBp: number,
+  ) {}
+
+  static fromProto(s: PbScoredRecipe): ScoredRecipe {
+    return new ScoredRecipe(
+      s.recipe ? RecipeInfo.fromProto(s.recipe) : new RecipeInfo("", ""),
+      s.scoreBp,
+    );
+  }
+
+  toJSON() {
+    return { recipe: this.recipe.toJSON(), score_bp: this.scoreBp };
   }
 }

@@ -2,6 +2,7 @@ import { createRouter } from "@tanstack/react-router";
 import { rootRoute } from "./routes/__root";
 import { activityRoute } from "./routes/activity";
 import { artifactsRoute } from "./routes/artifacts";
+import { blueprintsNewRoute } from "./routes/blueprints-new";
 import { chatRoute } from "./routes/chat";
 import { connectRoute } from "./routes/connect";
 import { contextRoute } from "./routes/context";
@@ -28,6 +29,7 @@ const routeTree = rootRoute.addChildren([
   runsRoute,
   runDetailRedirectRoute,
   recipesRoute,
+  blueprintsNewRoute,
   artifactsRoute,
   contextRoute,
   datasetsRoute,

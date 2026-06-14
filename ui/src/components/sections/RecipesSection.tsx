@@ -1,9 +1,10 @@
-import { useNavigate } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { m } from "framer-motion";
 import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { rowEntrance } from "../../app/motion";
 import { toUiError } from "../../kx/errors";
 import { useInvoke } from "../../kx/use-invoke";
+import { useRecipeSearch } from "../../kx/use-recipe-search";
 import { useRecipeForm, useRecipes } from "../../kx/use-recipes";
 import { useRuns } from "../../kx/use-runs";
 import { EmptyState } from "../EmptyState";
@@ -66,10 +67,19 @@ export function RecipesSection({
 
   return (
     <section className="screen" data-testid="recipes-section">
-      <h1>Blueprints</h1>
-      <p className="muted">
-        Pick a blueprint, fill its inputs, and run it — watch the run execute as a live DAG.
-      </p>
+      <div className="section-head">
+        <div>
+          <h1>Blueprints</h1>
+          <p className="muted">
+            Pick a blueprint, fill its inputs, and run it — watch the run execute as a live DAG.
+          </p>
+        </div>
+        <Link to="/blueprints/new" className="builder-newlink" data-testid="new-blueprint">
+          + New blueprint
+        </Link>
+      </div>
+
+      <BlueprintDiscovery />
 
       {recipes.isLoading ? <EmptyState title="Loading blueprints…" /> : null}
 
@@ -89,6 +99,64 @@ export function RecipesSection({
 
       {invokeError ? <ErrorNotice error={invokeError} onRetry={() => invoke.reset()} /> : null}
     </section>
+  );
+}
+
+/**
+ * Advisory recipe discovery (PR-4 Batch D `SearchRecipes`): type an intent, see
+ * the gateway's recipes ranked by match (display-only basis points — a hit
+ * surfaces a recipe, never invokes it). Selecting a result re-lands the section
+ * with that blueprint preselected. Hidden when the gateway has no ranker.
+ */
+function BlueprintDiscovery() {
+  const [intent, setIntent] = useState("");
+  const { results, unsupported, loading } = useRecipeSearch(intent);
+  if (unsupported) {
+    return null;
+  }
+  return (
+    <div className="blueprint-search" data-testid="blueprint-search">
+      <input
+        className="blueprint-search__input"
+        type="search"
+        placeholder="Search blueprints by intent (e.g. “agent loop”, “chat”)…"
+        value={intent}
+        onChange={(e) => setIntent(e.target.value)}
+        data-testid="blueprint-search-input"
+        aria-label="Search blueprints"
+      />
+      {loading ? <span className="muted blueprint-search__hint">Searching…</span> : null}
+      {results && intent.trim() ? (
+        results.length === 0 ? (
+          <p className="muted blueprint-search__hint">No matching blueprints.</p>
+        ) : (
+          <ul className="blueprint-search__results" data-testid="blueprint-search-results">
+            {results.map((r) => (
+              <li key={r.recipe.handle}>
+                <Link
+                  to="/recipes"
+                  search={{ handle: r.recipe.handle }}
+                  className="blueprint-search__hit"
+                  data-testid="blueprint-search-hit"
+                >
+                  <span className="mono blueprint-search__handle">{r.recipe.handle}</span>
+                  {r.recipe.description ? (
+                    <span className="blueprint-search__desc">{r.recipe.description}</span>
+                  ) : null}
+                  <span className="blueprint-search__tags">
+                    {r.recipe.tags.map((t) => (
+                      <span key={t} className="chip chip--tag">
+                        {t}
+                      </span>
+                    ))}
+                  </span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        )
+      ) : null}
+    </div>
   );
 }
 

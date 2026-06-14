@@ -255,6 +255,15 @@ function RunRow({ run, index, name }: { run: RunRecord; index: number; name: str
             Clone
           </Link>
         ) : null}
+        <Link
+          to="/blueprints/new"
+          search={{ clone: run.instanceId }}
+          className="linkbtn"
+          data-testid="run-remix"
+          title="Reconstruct this run's graph in the visual builder — add agents, wire steps, run as a new workflow"
+        >
+          Build from this
+        </Link>
         <button
           type="button"
           className="linkbtn"

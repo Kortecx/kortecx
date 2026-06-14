@@ -2338,6 +2338,12 @@ select {
 .shell--collapsed .devtools {
   left: var(--sidebar-w-collapsed);
 }
+/* Reserve the fixed dock's height so NO section's content is ever hidden under
+ * it (the dock is `position: fixed` — without this, bottom content sits under
+ * the 280px overlay and is unclickable). Applies to every section uniformly. */
+.shell--dock-open .shell__main {
+  padding-bottom: 296px;
+}
 .devtools__bar {
   display: flex;
   align-items: center;
@@ -2829,4 +2835,223 @@ select {
 }
 .react-progress .badge[data-branch="dead_lettered"] {
   border-color: var(--danger, currentColor);
+}
+
+/* ----------------------------------------------------------------------------
+ * PR-4 — the visual Blueprint builder (/blueprints/new). All colors come from
+ * the design tokens, so both themes + the AA contrast lock hold by construction.
+ * ------------------------------------------------------------------------- */
+.builder-canvas {
+  height: 600px;
+}
+.builder-toolbar {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+.builder-submit {
+  margin-top: 0; /* the toolbar aligns it; override the global button margin */
+  align-self: center;
+}
+.builder-newlink {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.5rem 0.9rem;
+  font-weight: 600;
+  color: #ffffff;
+  background: linear-gradient(135deg, #d83c00 0%, #c03500 100%);
+  border-radius: var(--radius);
+  text-decoration: none;
+  box-shadow: 0 1px 4px rgba(240, 69, 0, 0.25);
+}
+.builder-validation {
+  margin: 0.25rem 0;
+  padding: 0.4rem 0.7rem;
+  border-radius: 8px;
+  background: var(--primary-dim);
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
+  color: var(--fg);
+  font-size: 0.85rem;
+}
+
+/* Builder node (editable counterpart of .dag-node) */
+.builder-node {
+  width: 184px;
+  min-height: 72px;
+  cursor: grab;
+}
+.builder-node--selected {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.builder-node__kind {
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0.05rem 0.35rem;
+  border-radius: 5px;
+  border: 1px solid var(--border);
+  color: var(--fg-muted);
+}
+.builder-node__kind--model {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+}
+.builder-node__label {
+  margin-left: 0.4rem;
+  font-weight: 600;
+  font-size: 0.85rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.builder-node__row {
+  margin-top: 0.3rem;
+}
+.builder-node__model {
+  font-size: 0.72rem;
+  color: var(--fg-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: block;
+}
+.builder-node__hint {
+  font-size: 0.72rem;
+  color: var(--danger, var(--accent));
+}
+
+/* Step / edge config drawer fields (reuses .node-drawer) */
+.builder-field {
+  display: block;
+  margin: 0.6rem 0;
+}
+.builder-field__label {
+  display: block;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--fg-muted);
+  margin-bottom: 0.25rem;
+}
+.builder-field__hint {
+  display: block;
+  font-size: 0.72rem;
+  color: var(--fg-muted);
+  margin-top: 0.25rem;
+}
+.builder-field__error {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--danger, #c03500);
+  margin-top: 0.25rem;
+}
+.builder-input {
+  width: 100%;
+  padding: 0.35rem 0.5rem;
+  font: inherit;
+  color: var(--fg);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.builder-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+.builder-edge__route {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+.node-drawer__foot {
+  margin-top: 1rem;
+  padding-top: 0.6rem;
+  border-top: 1px solid var(--border);
+}
+.linkbtn.danger {
+  color: var(--danger, #c03500);
+}
+
+/* Blueprint discovery (SearchRecipes) */
+.blueprint-search {
+  margin: 0.5rem 0 1rem;
+}
+.blueprint-search__input {
+  width: 100%;
+  max-width: 32rem;
+  padding: 0.45rem 0.7rem;
+  font: inherit;
+  color: var(--fg);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.blueprint-search__hint {
+  display: inline-block;
+  margin-left: 0.5rem;
+  font-size: 0.8rem;
+}
+.blueprint-search__results {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  max-width: 40rem;
+}
+.blueprint-search__hit {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  text-decoration: none;
+  color: var(--fg);
+}
+.blueprint-search__hit:hover {
+  border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
+}
+.blueprint-search__handle {
+  font-size: 0.85rem;
+  color: var(--accent);
+}
+.blueprint-search__desc {
+  font-size: 0.8rem;
+  color: var(--fg-muted);
+}
+.blueprint-search__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin-top: 0.15rem;
+}
+.chip--tag {
+  flex-direction: row;
+  padding: 0.05rem 0.4rem;
+  font-size: 0.7rem;
+}
+
+/* T-FEAT1 — the model's `<think>` reasoning as a collapsed disclosure above the
+ * answer (display-only; the answer always renders below). */
+.bubble__reasoning {
+  margin: 0 0 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 5%, var(--surface));
+}
+.bubble__reasoning > summary {
+  cursor: pointer;
+  padding: 0.3rem 0.6rem;
+  font-size: 0.78rem;
+  color: var(--fg-muted);
+  user-select: none;
+}
+.bubble__reasoning-body {
+  padding: 0 0.6rem 0.5rem;
+  font-size: 0.85rem;
+  color: var(--fg-muted);
 }

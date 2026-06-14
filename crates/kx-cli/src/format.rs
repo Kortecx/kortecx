@@ -592,6 +592,80 @@ pub fn render_tools_score(resp: &proto::ScoreTaskBundleResponse, json: bool) -> 
     }
 }
 
+/// Render `ListRecipes` — the provisioned recipe handles + their advisory
+/// metadata (PR-4 Batch D). Display-only; `kx invoke` stays the gate.
+pub fn render_recipes_list(resp: &proto::ListRecipesResponse, json: bool) -> String {
+    if json {
+        let recipes: Vec<Value> = resp
+            .recipes
+            .iter()
+            .map(|r| {
+                json!({
+                    "handle": r.handle,
+                    "recipe_fingerprint": hex::encode(&r.recipe_fingerprint),
+                    "description": r.description,
+                    "tags": r.tags,
+                    "version": r.version,
+                })
+            })
+            .collect();
+        json!({ "recipes": recipes }).to_string()
+    } else if resp.recipes.is_empty() {
+        "(no recipes provisioned)".to_string()
+    } else {
+        resp.recipes
+            .iter()
+            .map(|r| {
+                let tags = if r.tags.is_empty() {
+                    String::new()
+                } else {
+                    format!("  [{}]", r.tags.join(", "))
+                };
+                format!("{}{}  {}", r.handle, tags, r.description)
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+}
+
+/// Render `SearchRecipes` — the advisory ranking (PR-4 Batch D). `score_bp` is
+/// display-only basis points; a hit SURFACES a recipe, never invokes one.
+pub fn render_recipes_search(resp: &proto::SearchRecipesResponse, json: bool) -> String {
+    if json {
+        let ranked: Vec<Value> = resp
+            .ranked
+            .iter()
+            .map(|s| {
+                let r = s.recipe.as_ref();
+                json!({
+                    "handle": r.map(|r| r.handle.as_str()).unwrap_or_default(),
+                    "score_bp": s.score_bp,
+                    "description": r.map(|r| r.description.as_str()).unwrap_or_default(),
+                    "tags": r.map(|r| r.tags.clone()).unwrap_or_default(),
+                    "version": r.map(|r| r.version.as_str()).unwrap_or_default(),
+                })
+            })
+            .collect();
+        json!({ "ranked": ranked, "advisory": "scores never authorize a recipe" }).to_string()
+    } else if resp.ranked.is_empty() {
+        "(no matching recipes)".to_string()
+    } else {
+        let mut out = String::from("ranked (advisory — scores never authorize):");
+        for s in &resp.ranked {
+            let handle = s.recipe.as_ref().map_or("?", |r| r.handle.as_str());
+            let rung = if s.score_bp == 10_000 {
+                "exact"
+            } else if s.score_bp > 0 {
+                "match"
+            } else {
+                "-"
+            };
+            let _ = write!(out, "\n  {:>5} bp  {:<6} {}", s.score_bp, rung, handle);
+        }
+        out
+    }
+}
+
 /// Map a [`proto::NdClass`] discriminant to a stable display name.
 #[must_use]
 pub fn nd_class_name(nd: i32) -> &'static str {

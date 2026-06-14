@@ -8,7 +8,7 @@ mislabel (mirrors the TS ``recipeParamTypeName``).
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List, Optional
 
 from .v1 import gateway_pb2 as _g
@@ -77,16 +77,50 @@ blueprint_param_type_name = recipe_param_type_name
 class RecipeInfo:
     """One catalog entry of ``ListRecipes`` (PR-2.1): the Invoke handle plus the
     published workflow fingerprint a bound run registers under — the join key
-    for labeling durable ``RunSummary`` rows. Display/join only, never
-    identity; ``recipe_fingerprint`` is ``""`` when the gateway predates the
-    field."""
+    for labeling durable ``RunSummary`` rows. PR-4 Batch D adds the ADVISORY
+    metadata (description / tags / version) — display/discovery ONLY, never
+    identity, never enforcement. ``recipe_fingerprint`` / metadata are empty
+    when the gateway predates the field."""
 
     handle: str
     recipe_fingerprint: str  # hex; "" if unknown
+    description: str = ""  # advisory; never parsed for enforcement
+    tags: List[str] = field(default_factory=list)  # advisory discovery tags
+    version: str = ""  # advisory published version label; "" if unversioned
 
     @classmethod
     def from_proto(cls, r: "_g.RecipeSummary") -> "RecipeInfo":
-        return cls(handle=r.handle, recipe_fingerprint=r.recipe_fingerprint.hex())
+        return cls(
+            handle=r.handle,
+            recipe_fingerprint=r.recipe_fingerprint.hex(),
+            description=r.description,
+            tags=list(r.tags),
+            version=r.version,
+        )
 
     def to_dict(self) -> dict:
-        return {"handle": self.handle, "recipe_fingerprint": self.recipe_fingerprint}
+        return {
+            "handle": self.handle,
+            "recipe_fingerprint": self.recipe_fingerprint,
+            "description": self.description,
+            "tags": list(self.tags),
+            "version": self.version,
+        }
+
+
+@dataclass(frozen=True)
+class ScoredRecipe:
+    """One ranked ``SearchRecipes`` hit (PR-4 Batch D): the matched recipe plus
+    its advisory rank in integer basis points (0..=10000). SN-8: ``score_bp`` is
+    DISPLAY-ONLY — a search SURFACES a recipe, never invokes one (``Invoke``
+    stays the authorization gate)."""
+
+    recipe: RecipeInfo
+    score_bp: int  # 0..=10000; never a float
+
+    @classmethod
+    def from_proto(cls, s: "_g.ScoredRecipe") -> "ScoredRecipe":
+        return cls(recipe=RecipeInfo.from_proto(s.recipe), score_bp=s.score_bp)
+
+    def to_dict(self) -> dict:
+        return {"recipe": self.recipe.to_dict(), "score_bp": self.score_bp}

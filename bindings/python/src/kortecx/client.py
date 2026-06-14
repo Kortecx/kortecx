@@ -35,7 +35,7 @@ from .grants import AssetGrants
 from .models import ModelSummary
 from .motes import MoteDetail
 from .react import ReactTurn, ReactTurnPage
-from .recipes import RecipeForm, RecipeInfo
+from .recipes import RecipeForm, RecipeInfo, ScoredRecipe
 from .replan import ReplanRound, ReplanRoundPage
 from .run import AsyncRun, Result, Run
 from .runs import RunPage, RunSummary
@@ -521,6 +521,24 @@ class KxClient:
         )
         return RecipeForm.from_proto(resp)
 
+    def search_recipes(
+        self,
+        intent: str,
+        *,
+        keywords: Optional[List[str]] = None,
+        limit: Optional[int] = None,
+    ) -> List[ScoredRecipe]:
+        """ADVISORY recipe discovery (PR-4 Batch D) — rank the provisioned
+        recipes against ``intent`` (+ optional ``keywords``), best-first, capped
+        at ``limit``. SN-8: each ``score_bp`` is DISPLAY-ONLY (a hit SURFACES a
+        recipe, never invokes one — :meth:`invoke` stays the authorization gate).
+        An old gateway / a catalog with no ranker raises ``KxUnimplemented``."""
+        req = _g.SearchRecipesRequest(intent=intent, keywords=keywords or [])
+        if limit is not None:
+            req.limit = limit
+        resp = self._call(lambda: self._stub.SearchRecipes(req, metadata=self._md))
+        return [ScoredRecipe.from_proto(s) for s in resp.ranked]
+
     def list_teams(self) -> List[TeamSummary]:
         """Enumerate the teams the gateway knows (UI-3 Systems viewer). VIEW-only."""
         resp = self._call(lambda: self._stub.ListTeams(_g.ListTeamsRequest(), metadata=self._md))
@@ -923,6 +941,20 @@ class AsyncKxClient:
             self._stub.GetRecipeForm(_g.GetRecipeFormRequest(handle=handle), metadata=self._md)
         )
         return RecipeForm.from_proto(resp)
+
+    async def search_recipes(
+        self,
+        intent: str,
+        *,
+        keywords: Optional[List[str]] = None,
+        limit: Optional[int] = None,
+    ) -> List[ScoredRecipe]:
+        """Async :meth:`KxClient.search_recipes`."""
+        req = _g.SearchRecipesRequest(intent=intent, keywords=keywords or [])
+        if limit is not None:
+            req.limit = limit
+        resp = await self._acall(self._stub.SearchRecipes(req, metadata=self._md))
+        return [ScoredRecipe.from_proto(s) for s in resp.ranked]
 
     async def list_teams(self) -> List[TeamSummary]:
         resp = await self._acall(self._stub.ListTeams(_g.ListTeamsRequest(), metadata=self._md))
