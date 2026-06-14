@@ -1659,6 +1659,101 @@ select {
   margin-top: 0.4rem;
 }
 
+/* ---- PR-4.1: the assistant action row (copy + 👍/👎 feedback) ---- */
+.msg-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 0.5rem;
+}
+.msg-feedback {
+  display: inline-flex;
+  gap: 0.2rem;
+}
+.msg-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--fg-muted);
+  border-radius: var(--radius-sm);
+  padding: 0.2rem 0.45rem;
+  font-size: 0.78rem;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+.msg-action:hover {
+  color: var(--fg);
+  border-color: var(--border-md);
+  background: var(--bg-input);
+}
+.msg-action--on,
+.msg-action[aria-pressed="true"] {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
+}
+
+/* ---- PR-4.1: the anchored popover menu (attach-menu; D-numbered pattern) ---- */
+.popover {
+  position: relative;
+  display: inline-flex;
+}
+.popover__panel {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  min-width: 184px;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 0.35rem;
+  background: var(--surface-elev, var(--bg-input));
+  border: 1px solid var(--border-md);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
+}
+.popover__panel--left {
+  left: 0;
+}
+.popover__panel--right {
+  right: 0;
+}
+.popover__item {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  width: 100%;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 0.45rem 0.6rem;
+  font-size: 0.85rem;
+  color: var(--fg);
+  text-align: left;
+  cursor: pointer;
+}
+.popover__item:hover:not(:disabled) {
+  background: var(--bg-input);
+}
+.popover__item--disabled {
+  color: var(--fg-muted);
+  cursor: not-allowed;
+}
+.popover__item .chip--soon {
+  margin-left: auto;
+}
+.chip--soon {
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--fg-muted);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.05rem 0.4rem;
+}
+
 /* ---- systems facts / artifact ---- */
 .facts {
   display: grid;

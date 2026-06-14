@@ -25,6 +25,7 @@ const sidebars: SidebarsConfig = {
       label: "Platform",
       collapsed: false,
       items: [
+        "chat",
         "blueprint-builder",
         "agent-runner",
         "security",

@@ -55,6 +55,8 @@ usage: kx <command> [args]
     kx events --instance <hex16> [--since N] [--follow]
     kx events --all [--since N] [--follow]       (the global cross-run event tail)
     kx telemetry list [--instance <hex16>] [--mote <hex32>] [--limit N] [--before-seq N]
+    kx feedback submit --rating up|down --message-id <id> [--instance <hex16>] [--comment <s>]
+    kx feedback list [--instance <hex16>] [--limit N] [--before-rowid N]
     kx replan list [--limit N]                   (re-plan rounds, newest-first)
     kx react list [--instance <hex16>] [--limit N]     (ReAct turns, newest-first)
     kx capture list [--instance <hex16>] [--limit N]   (captured actions, newest-first)
@@ -104,6 +106,8 @@ pub enum Cli {
     Events(verbs::events::EventsArgs),
     /// Mote execution telemetry (Batch C `ListMoteTelemetry`; display-only).
     Telemetry(verbs::telemetry::TelemetryArgs),
+    /// User 👍/👎 feedback on an answer (PR-4.1 `SubmitFeedback`/`ListFeedback`).
+    Feedback(verbs::feedback::FeedbackArgs),
     /// Re-plan-round observability (PR-2c-2 `ListReplanRounds`; read-only).
     Replan(verbs::replan::ReplanArgs),
     /// ReAct-turn observability (PR-2d-1 `ListReactTurns`; read-only).
@@ -160,6 +164,7 @@ impl Cli {
             Some("content") => Ok(Cli::Content(verbs::content::parse(args)?)),
             Some("events") => Ok(Cli::Events(verbs::events::parse(args)?)),
             Some("telemetry") => Ok(Cli::Telemetry(verbs::telemetry::parse(args)?)),
+            Some("feedback") => Ok(Cli::Feedback(verbs::feedback::parse(args)?)),
             Some("replan") => Ok(Cli::Replan(verbs::replan::parse(args)?)),
             Some("react") => Ok(Cli::React(verbs::react::parse(args)?)),
             Some("capture") => Ok(Cli::Capture(verbs::capture::parse(args)?)),
@@ -227,6 +232,7 @@ async fn dispatch(cli: Cli) -> Result<(), CliError> {
         Cli::Content(a) => verbs::content::execute(a).await,
         Cli::Events(a) => verbs::events::execute(a).await,
         Cli::Telemetry(a) => verbs::telemetry::execute(a).await,
+        Cli::Feedback(a) => verbs::feedback::execute(a).await,
         Cli::Replan(a) => verbs::replan::execute(a).await,
         Cli::React(a) => verbs::react::execute(a).await,
         Cli::Capture(a) => verbs::capture::execute(a).await,
@@ -514,6 +520,18 @@ kx telemetry list [--instance <hex16>] [--mote <hex32>] [--limit N] [--before-se
   (pass the last page's lowest seq). Lives in a rebuildable-to-empty sidecar:
   AUDIT/DISPLAY ONLY — never truth, identity, or a digest input. input_tokens
   is never set in OSS (the frozen backend seam reports no input count). A
+  gateway without the sidecar answers Unimplemented (upgrade the serve)."
+            .into(),
+        "feedback" => "\
+kx feedback submit --rating up|down --message-id <id> [--instance <hex16>] [--mote <hex32>] \
+[--content-ref <hex32>] [--comment <s>] [--handle <s>] [--model <s>] [client flags]
+kx feedback list [--instance <hex16>] [--limit N] [--before-rowid N] [client flags]
+  Record + read back 👍/👎 feedback on an answer (PR-4.1). The caller principal +
+  the feedback_id are server-derived (SN-8); re-rating the SAME answer overwrites.
+  --message-id is the stable per-answer key (required on submit). list is
+  newest-first; --limit caps the page (server clamps 1..=500, default 200);
+  --before-rowid pages older rows. Lives in a rebuildable-to-empty feedback.db
+  sidecar: ADVISORY/DISPLAY ONLY — never truth, identity, or a digest input. A
   gateway without the sidecar answers Unimplemented (upgrade the serve)."
             .into(),
         "replan" => "\

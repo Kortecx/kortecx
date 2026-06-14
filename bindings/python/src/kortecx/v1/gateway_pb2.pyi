@@ -58,6 +58,12 @@ class WorkflowExecutionMode(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     WORKFLOW_EXECUTION_MODE_UNSPECIFIED: _ClassVar[WorkflowExecutionMode]
     WORKFLOW_EXECUTION_MODE_FROZEN: _ClassVar[WorkflowExecutionMode]
     WORKFLOW_EXECUTION_MODE_DYNAMIC: _ClassVar[WorkflowExecutionMode]
+
+class FeedbackRating(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    FEEDBACK_RATING_UNSPECIFIED: _ClassVar[FeedbackRating]
+    FEEDBACK_RATING_UP: _ClassVar[FeedbackRating]
+    FEEDBACK_RATING_DOWN: _ClassVar[FeedbackRating]
 MOTE_SNAPSHOT_STATE_UNSPECIFIED: MoteSnapshotState
 MOTE_SNAPSHOT_STATE_PENDING: MoteSnapshotState
 MOTE_SNAPSHOT_STATE_SCHEDULED: MoteSnapshotState
@@ -89,6 +95,9 @@ WORKFLOW_STEP_KIND_EXEC: WorkflowStepKind
 WORKFLOW_EXECUTION_MODE_UNSPECIFIED: WorkflowExecutionMode
 WORKFLOW_EXECUTION_MODE_FROZEN: WorkflowExecutionMode
 WORKFLOW_EXECUTION_MODE_DYNAMIC: WorkflowExecutionMode
+FEEDBACK_RATING_UNSPECIFIED: FeedbackRating
+FEEDBACK_RATING_UP: FeedbackRating
+FEEDBACK_RATING_DOWN: FeedbackRating
 
 class SubmitRunRequest(_message.Message):
     __slots__ = ("recipe_fingerprint", "motes")
@@ -1057,3 +1066,73 @@ class ListMoteTelemetryResponse(_message.Message):
     rows: _containers.RepeatedCompositeFieldContainer[MoteTelemetryRow]
     has_more: bool
     def __init__(self, rows: _Optional[_Iterable[_Union[MoteTelemetryRow, _Mapping]]] = ..., has_more: bool = ...) -> None: ...
+
+class SubmitFeedbackRequest(_message.Message):
+    __slots__ = ("rating", "message_id", "instance_id", "mote_id", "content_ref", "comment", "recipe_handle", "model_id")
+    RATING_FIELD_NUMBER: _ClassVar[int]
+    MESSAGE_ID_FIELD_NUMBER: _ClassVar[int]
+    INSTANCE_ID_FIELD_NUMBER: _ClassVar[int]
+    MOTE_ID_FIELD_NUMBER: _ClassVar[int]
+    CONTENT_REF_FIELD_NUMBER: _ClassVar[int]
+    COMMENT_FIELD_NUMBER: _ClassVar[int]
+    RECIPE_HANDLE_FIELD_NUMBER: _ClassVar[int]
+    MODEL_ID_FIELD_NUMBER: _ClassVar[int]
+    rating: FeedbackRating
+    message_id: str
+    instance_id: bytes
+    mote_id: bytes
+    content_ref: bytes
+    comment: str
+    recipe_handle: str
+    model_id: str
+    def __init__(self, rating: _Optional[_Union[FeedbackRating, str]] = ..., message_id: _Optional[str] = ..., instance_id: _Optional[bytes] = ..., mote_id: _Optional[bytes] = ..., content_ref: _Optional[bytes] = ..., comment: _Optional[str] = ..., recipe_handle: _Optional[str] = ..., model_id: _Optional[str] = ...) -> None: ...
+
+class SubmitFeedbackResponse(_message.Message):
+    __slots__ = ("feedback_id",)
+    FEEDBACK_ID_FIELD_NUMBER: _ClassVar[int]
+    feedback_id: bytes
+    def __init__(self, feedback_id: _Optional[bytes] = ...) -> None: ...
+
+class ListFeedbackRequest(_message.Message):
+    __slots__ = ("limit", "instance_id", "before_rowid")
+    LIMIT_FIELD_NUMBER: _ClassVar[int]
+    INSTANCE_ID_FIELD_NUMBER: _ClassVar[int]
+    BEFORE_ROWID_FIELD_NUMBER: _ClassVar[int]
+    limit: int
+    instance_id: bytes
+    before_rowid: int
+    def __init__(self, limit: _Optional[int] = ..., instance_id: _Optional[bytes] = ..., before_rowid: _Optional[int] = ...) -> None: ...
+
+class FeedbackRow(_message.Message):
+    __slots__ = ("feedback_id", "rating", "message_id", "instance_id", "mote_id", "content_ref", "comment", "recipe_handle", "model_id", "submitted_unix_ms", "rowid")
+    FEEDBACK_ID_FIELD_NUMBER: _ClassVar[int]
+    RATING_FIELD_NUMBER: _ClassVar[int]
+    MESSAGE_ID_FIELD_NUMBER: _ClassVar[int]
+    INSTANCE_ID_FIELD_NUMBER: _ClassVar[int]
+    MOTE_ID_FIELD_NUMBER: _ClassVar[int]
+    CONTENT_REF_FIELD_NUMBER: _ClassVar[int]
+    COMMENT_FIELD_NUMBER: _ClassVar[int]
+    RECIPE_HANDLE_FIELD_NUMBER: _ClassVar[int]
+    MODEL_ID_FIELD_NUMBER: _ClassVar[int]
+    SUBMITTED_UNIX_MS_FIELD_NUMBER: _ClassVar[int]
+    ROWID_FIELD_NUMBER: _ClassVar[int]
+    feedback_id: bytes
+    rating: FeedbackRating
+    message_id: str
+    instance_id: bytes
+    mote_id: bytes
+    content_ref: bytes
+    comment: str
+    recipe_handle: str
+    model_id: str
+    submitted_unix_ms: int
+    rowid: int
+    def __init__(self, feedback_id: _Optional[bytes] = ..., rating: _Optional[_Union[FeedbackRating, str]] = ..., message_id: _Optional[str] = ..., instance_id: _Optional[bytes] = ..., mote_id: _Optional[bytes] = ..., content_ref: _Optional[bytes] = ..., comment: _Optional[str] = ..., recipe_handle: _Optional[str] = ..., model_id: _Optional[str] = ..., submitted_unix_ms: _Optional[int] = ..., rowid: _Optional[int] = ...) -> None: ...
+
+class ListFeedbackResponse(_message.Message):
+    __slots__ = ("rows", "has_more")
+    ROWS_FIELD_NUMBER: _ClassVar[int]
+    HAS_MORE_FIELD_NUMBER: _ClassVar[int]
+    rows: _containers.RepeatedCompositeFieldContainer[FeedbackRow]
+    has_more: bool
+    def __init__(self, rows: _Optional[_Iterable[_Union[FeedbackRow, _Mapping]]] = ..., has_more: bool = ...) -> None: ...

@@ -907,6 +907,65 @@ message ListMoteTelemetryResponse {
 }
 
 // ---------------------------------------------------------------------------
+// PR-4.1 additive (D120.6): user feedback on an answer (👍/👎 + optional note).
+// A CLIENT-ORIGIN write into a rebuildable-to-EMPTY `feedback.db` sidecar — the
+// uploads.db posture (off-journal, off-digest, off-identity). NOTHING here is
+// truth or authority: rating/comment/context are ADVISORY product-signal fields
+// the host records. The TARGET keys (instance_id / mote_id / content_ref) are
+// display/join only — feedback never gates execution, never a `MoteId` input,
+// never a digest input. The caller PARTY is SERVER-resolved (the PutContent
+// precedent), never trusted off the wire (SN-8). The `feedback_id` is SERVER-
+// derived. A serve without the sidecar answers `unimplemented` (forward-compat
+// degrade). `ListFeedback` is the read-back / inspection surface.
+// ---------------------------------------------------------------------------
+
+enum FeedbackRating {
+  FEEDBACK_RATING_UNSPECIFIED = 0;       // never persisted — a submit MUST be UP/DOWN
+  FEEDBACK_RATING_UP = 1;
+  FEEDBACK_RATING_DOWN = 2;
+}
+
+message SubmitFeedbackRequest {
+  FeedbackRating rating = 1;             // UP/DOWN; UNSPECIFIED ⇒ INVALID_ARGUMENT
+  string message_id = 2;                 // client-local chat message id (the stable per-answer key; required)
+  optional bytes instance_id = 3;        // 16B run backing the answer (absent for a local-only/restored turn)
+  optional bytes mote_id = 4;            // 32B terminal mote (advisory join)
+  optional bytes content_ref = 5;        // 32B answer content ref (advisory join/audit)
+  string comment = 6;                    // optional free note (server-capped fail-closed)
+  string recipe_handle = 7;              // advisory context: the backing blueprint handle
+  string model_id = 8;                   // advisory context: the model that answered
+}
+
+message SubmitFeedbackResponse {
+  bytes feedback_id = 1;                 // 16B SERVER-derived id (deterministic over (message_id, principal); SN-8)
+}
+
+message ListFeedbackRequest {
+  optional uint32 limit = 1;             // page size; server clamps 1..=500 (absent = 200)
+  optional bytes instance_id = 2;        // 16B — scope to one run
+  optional uint64 before_rowid = 3;      // cursor: rows with rowid strictly below (newest-first)
+}
+
+message FeedbackRow {
+  bytes feedback_id = 1;                 // 16B server-derived id
+  FeedbackRating rating = 2;
+  string message_id = 3;
+  bytes instance_id = 4;                 // 16B — EMPTY when the turn had no run
+  bytes mote_id = 5;                     // 32B (may be EMPTY)
+  bytes content_ref = 6;                 // 32B (may be EMPTY)
+  string comment = 7;
+  string recipe_handle = 8;
+  string model_id = 9;
+  uint64 submitted_unix_ms = 10;         // AUDIT-ONLY wall clock (off every hash)
+  uint64 rowid = 11;                     // pagination cursor (sqlite rowid; never identity)
+}
+
+message ListFeedbackResponse {
+  repeated FeedbackRow rows = 1;         // newest-first (descending rowid)
+  bool has_more = 2;
+}
+
+// ---------------------------------------------------------------------------
 // Service — the external client-facing gateway (distinct from Coordinator).
 // ---------------------------------------------------------------------------
 
@@ -965,4 +1024,10 @@ service KxGateway {
   // sidecar; audit/display only — never truth/identity/digest; never a journal
   // change).
   rpc ListMoteTelemetry(ListMoteTelemetryRequest) returns (ListMoteTelemetryResponse);
+  // PR-4.1 additive (D120.6): user 👍/👎 feedback on an answer — a client-origin
+  // write into a rebuildable-to-empty feedback.db sidecar (advisory; off-journal,
+  // off-digest, off-identity; SN-8 server-resolved principal). `ListFeedback` is
+  // the read-back / inspection surface. UNIMPLEMENTED when the seam yields None.
+  rpc SubmitFeedback(SubmitFeedbackRequest) returns (SubmitFeedbackResponse);
+  rpc ListFeedback(ListFeedbackRequest) returns (ListFeedbackResponse);
 }

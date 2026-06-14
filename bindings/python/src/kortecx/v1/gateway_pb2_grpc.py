@@ -188,6 +188,16 @@ class KxGatewayStub(object):
                 request_serializer=kortecx_dot_v1_dot_gateway__pb2.ListMoteTelemetryRequest.SerializeToString,
                 response_deserializer=kortecx_dot_v1_dot_gateway__pb2.ListMoteTelemetryResponse.FromString,
                 _registered_method=True)
+        self.SubmitFeedback = channel.unary_unary(
+                '/kortecx.v1.KxGateway/SubmitFeedback',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.SubmitFeedbackRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.SubmitFeedbackResponse.FromString,
+                _registered_method=True)
+        self.ListFeedback = channel.unary_unary(
+                '/kortecx.v1.KxGateway/ListFeedback',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.ListFeedbackRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.ListFeedbackResponse.FromString,
+                _registered_method=True)
 
 
 class KxGatewayServicer(object):
@@ -401,6 +411,22 @@ class KxGatewayServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def SubmitFeedback(self, request, context):
+        """PR-4.1 additive (D120.6): user 👍/👎 feedback on an answer — a client-origin
+        write into a rebuildable-to-empty feedback.db sidecar (advisory; off-journal,
+        off-digest, off-identity; SN-8 server-resolved principal). `ListFeedback` is
+        the read-back / inspection surface. UNIMPLEMENTED when the seam yields None.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ListFeedback(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_KxGatewayServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -553,6 +579,16 @@ def add_KxGatewayServicer_to_server(servicer, server):
                     servicer.ListMoteTelemetry,
                     request_deserializer=kortecx_dot_v1_dot_gateway__pb2.ListMoteTelemetryRequest.FromString,
                     response_serializer=kortecx_dot_v1_dot_gateway__pb2.ListMoteTelemetryResponse.SerializeToString,
+            ),
+            'SubmitFeedback': grpc.unary_unary_rpc_method_handler(
+                    servicer.SubmitFeedback,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.SubmitFeedbackRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.SubmitFeedbackResponse.SerializeToString,
+            ),
+            'ListFeedback': grpc.unary_unary_rpc_method_handler(
+                    servicer.ListFeedback,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.ListFeedbackRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.ListFeedbackResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -1369,6 +1405,60 @@ class KxGateway(object):
             '/kortecx.v1.KxGateway/ListMoteTelemetry',
             kortecx_dot_v1_dot_gateway__pb2.ListMoteTelemetryRequest.SerializeToString,
             kortecx_dot_v1_dot_gateway__pb2.ListMoteTelemetryResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def SubmitFeedback(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/SubmitFeedback',
+            kortecx_dot_v1_dot_gateway__pb2.SubmitFeedbackRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.SubmitFeedbackResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ListFeedback(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/ListFeedback',
+            kortecx_dot_v1_dot_gateway__pb2.ListFeedbackRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.ListFeedbackResponse.FromString,
             options,
             channel_credentials,
             insecure,

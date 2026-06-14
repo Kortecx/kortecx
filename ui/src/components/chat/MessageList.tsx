@@ -10,6 +10,8 @@ export function MessageList({
   showReasoning,
   renderTrace,
   onRetry,
+  recipeHandle,
+  modelId,
 }: {
   thread: ChatThread;
   autoscroll: boolean;
@@ -17,6 +19,9 @@ export function MessageList({
   showReasoning: boolean;
   renderTrace?: (assistantId: string) => ReactNode;
   onRetry?: (assistantId: string) => void;
+  /** The chat backing handle/model — advisory context on 👍/👎 feedback (PR-4.1). */
+  recipeHandle?: string;
+  modelId?: string;
 }) {
   const endRef = useRef<HTMLDivElement>(null);
 
@@ -45,6 +50,8 @@ export function MessageList({
           showReasoning={showReasoning}
           trace={m.role === "assistant" ? renderTrace?.(m.id) : undefined}
           onRetry={m.role === "assistant" ? onRetry : undefined}
+          recipeHandle={recipeHandle}
+          modelId={modelId}
         />
       ))}
       <div ref={endRef} />

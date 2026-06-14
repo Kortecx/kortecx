@@ -59,6 +59,21 @@ export function chatTitle(messages: readonly ChatMessage[]): string {
   return oneLine.length > TITLE_MAX ? `${oneLine.slice(0, TITLE_MAX)}…` : oneLine;
 }
 
+/** A short auto-generated name derived from a thread's first user message (the
+ *  `chatTitle` shape, capped tighter for a name-line). `null` when there is no
+ *  user message yet to name from — the caller keeps the timestamp default. */
+const AUTO_NAME_MAX = 48;
+export function autoNameFrom(messages: readonly ChatMessage[]): string | null {
+  const first = messages
+    .find((m) => m.role === "user")
+    ?.text?.replace(/\s+/g, " ")
+    .trim();
+  if (!first) {
+    return null;
+  }
+  return first.length > AUTO_NAME_MAX ? `${first.slice(0, AUTO_NAME_MAX)}…` : first;
+}
+
 /** A message as persisted: no `blob:` object URLs, no in-flight statuses. */
 function sanitizeMessage(m: ChatMessage): ChatMessage {
   const attachments = m.attachments?.map(({ objectUrl: _drop, ...rest }) => rest);

@@ -7,6 +7,7 @@ pub mod capture;
 pub mod chain;
 pub mod content;
 pub mod events;
+pub mod feedback;
 pub mod health;
 pub mod invoke;
 pub mod models;

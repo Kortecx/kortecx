@@ -626,10 +626,19 @@ pub struct GatewayService {
     /// only). `None` ⇒ `GetMoteDetail` returns `unimplemented`; an absent def
     /// blob through a WIRED seam is the honest `def_found = false`.
     mote_defs: Option<Arc<dyn crate::mote_def_view::MoteDefView>>,
+    /// The optional user-feedback store seam (PR-4.1 — the host injects a
+    /// `feedback.db`-backed 👍/👎 sidecar). `None` ⇒ `SubmitFeedback` /
+    /// `ListFeedback` return `unimplemented`. Client-origin product signal:
+    /// off-journal, off-digest, off-identity, rebuildable-to-empty.
+    feedback: Option<Arc<dyn crate::feedback_view::FeedbackStore>>,
 }
 
 /// The default fail-closed `PutContent` payload cap (32 MiB).
 pub const DEFAULT_PUT_CAP_BYTES: u64 = 32 * 1024 * 1024;
+
+/// The fail-closed `SubmitFeedback` comment cap (4 KiB). A longer note ⇒
+/// `invalid_argument` (checked BEFORE the write — never unbounded sidecar rows).
+pub const MAX_FEEDBACK_COMMENT_BYTES: usize = 4 * 1024;
 
 /// The `GetContentBatch` ref-count cap: more refs ⇒ `invalid_argument`
 /// (fail-closed, never silent truncation).
@@ -681,6 +690,7 @@ impl GatewayService {
             put_cap_bytes: DEFAULT_PUT_CAP_BYTES,
             models: None,
             mote_defs: None,
+            feedback: None,
         }
     }
 
@@ -886,6 +896,18 @@ impl GatewayService {
         self.mote_defs = Some(mote_defs);
         self
     }
+
+    /// Wire the user-feedback store (PR-4.1 — the host's `feedback.db` sidecar:
+    /// 👍/👎 product signal). Enables `SubmitFeedback` + `ListFeedback`.
+    /// Client-origin, rebuildable-to-empty, off-journal, off-digest, off-identity.
+    #[must_use]
+    pub fn with_feedback_store(
+        mut self,
+        feedback: Arc<dyn crate::feedback_view::FeedbackStore>,
+    ) -> Self {
+        self.feedback = Some(feedback);
+        self
+    }
 }
 
 /// The structured-refusal metadata key (PR-2). The value is
@@ -911,6 +933,21 @@ fn submit_status(err: SubmitterError) -> Status {
             with_refusal_code(Status::failed_precondition(detail), &code)
         }
         SubmitterError::Transport(detail) => Status::unavailable(detail),
+    }
+}
+
+/// Map an optional wire `bytes` field to a fixed `[u8; N]` — all-zero when
+/// absent, `invalid_argument` when present but the wrong length (the
+/// fail-closed posture of the telemetry/uploads id validators). The `Status`
+/// Err is the gRPC return type the calling handler already uses (the trait-impl
+/// handlers are exempt from `result_large_err`; this free helper shares the same
+/// return type by design — boxing it would only churn the call site).
+#[allow(clippy::result_large_err)]
+fn opt_fixed<const N: usize>(raw: Option<Vec<u8>>, what: &str) -> Result<[u8; N], Status> {
+    match raw {
+        None => Ok([0u8; N]),
+        Some(v) => <[u8; N]>::try_from(v.as_slice())
+            .map_err(|_| Status::invalid_argument(format!("{what} must be {N} bytes"))),
     }
 }
 
@@ -1620,6 +1657,121 @@ impl KxGateway for GatewayService {
             })
             .collect();
         Ok(Response::new(proto::ListMoteTelemetryResponse {
+            rows,
+            has_more,
+        }))
+    }
+
+    async fn submit_feedback(
+        &self,
+        request: Request<proto::SubmitFeedbackRequest>,
+    ) -> Result<Response<proto::SubmitFeedbackResponse>, Status> {
+        // PR-4.1: a client-origin write into the rebuildable-to-empty feedback.db
+        // sidecar. A serve without the seam degrades forward-compatibly.
+        let store = self.feedback.as_ref().ok_or_else(|| {
+            Status::unimplemented("SubmitFeedback: no feedback store wired (feedback.db absent)")
+        })?;
+        // SERVER-DERIVED identity (SN-8): the party the auth interceptor stashed —
+        // never the wire request.
+        let principal = request
+            .extensions()
+            .get::<CallerParty>()
+            .map(|p| p.0.clone())
+            .ok_or_else(|| Status::unauthenticated("no resolved caller identity"))?;
+        let req = request.into_inner();
+
+        // Rating MUST be UP/DOWN (UNSPECIFIED/unknown ⇒ fail-closed).
+        let rating = match proto::FeedbackRating::try_from(req.rating) {
+            Ok(proto::FeedbackRating::Up) => proto::FeedbackRating::Up as i32,
+            Ok(proto::FeedbackRating::Down) => proto::FeedbackRating::Down as i32,
+            _ => {
+                return Err(Status::invalid_argument(
+                    "feedback rating must be FEEDBACK_RATING_UP or FEEDBACK_RATING_DOWN",
+                ))
+            }
+        };
+        if req.message_id.is_empty() {
+            return Err(Status::invalid_argument("feedback message_id is required"));
+        }
+        // Fail-closed comment cap BEFORE the write (never unbounded sidecar rows).
+        if req.comment.len() > MAX_FEEDBACK_COMMENT_BYTES {
+            return Err(Status::invalid_argument(
+                "feedback comment exceeds the 4 KiB cap",
+            ));
+        }
+        let instance_id = opt_fixed::<16>(req.instance_id, "feedback instance_id")?;
+        let mote_id = opt_fixed::<32>(req.mote_id, "feedback mote_id")?;
+        let content_ref = opt_fixed::<32>(req.content_ref, "feedback content_ref")?;
+
+        // SERVER-derived, DETERMINISTIC id over (message_id, principal): a
+        // re-rating of the SAME answer by the SAME party maps to the SAME id, so
+        // the host's `INSERT OR REPLACE` overwrites (the "changed my mind" UX).
+        // SN-8: the client can neither name nor forge it.
+        let mut keyed = Vec::with_capacity(16 + req.message_id.len() + 1 + principal.len());
+        keyed.extend_from_slice(b"kx-feedback-id\0");
+        keyed.extend_from_slice(req.message_id.as_bytes());
+        keyed.push(0);
+        keyed.extend_from_slice(principal.as_bytes());
+        let mut feedback_id = [0u8; 16];
+        feedback_id.copy_from_slice(&kx_content::ContentRef::of(&keyed).0[..16]);
+
+        let submitted_unix_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX));
+
+        store.record(crate::feedback_view::FeedbackRecord {
+            feedback_id,
+            rating,
+            message_id: req.message_id,
+            instance_id,
+            mote_id,
+            content_ref,
+            comment: req.comment,
+            recipe_handle: req.recipe_handle,
+            model_id: req.model_id,
+            principal,
+            submitted_unix_ms,
+        })?;
+
+        Ok(Response::new(proto::SubmitFeedbackResponse {
+            feedback_id: feedback_id.to_vec(),
+        }))
+    }
+
+    async fn list_feedback(
+        &self,
+        request: Request<proto::ListFeedbackRequest>,
+    ) -> Result<Response<proto::ListFeedbackResponse>, Status> {
+        let store = self.feedback.as_ref().ok_or_else(|| {
+            Status::unimplemented("ListFeedback: no feedback store wired (feedback.db absent)")
+        })?;
+        let req = request.into_inner();
+        let instance_id: Option<[u8; 16]> = match req.instance_id {
+            None => None,
+            Some(raw) => Some(<[u8; 16]>::try_from(raw.as_slice()).map_err(|_| {
+                Status::invalid_argument("feedback instance_id filter must be 16 bytes")
+            })?),
+        };
+        // The same page bounds the read-fold RPCs use (1..=500, default 200).
+        let page = req.limit.map_or(200usize, |l| (l as usize).clamp(1, 500));
+        let (rows, has_more) = store.list(page, instance_id, req.before_rowid)?;
+        let rows = rows
+            .into_iter()
+            .map(|r| proto::FeedbackRow {
+                feedback_id: r.feedback_id.to_vec(),
+                rating: r.rating,
+                message_id: r.message_id,
+                instance_id: r.instance_id.to_vec(),
+                mote_id: r.mote_id.to_vec(),
+                content_ref: r.content_ref.to_vec(),
+                comment: r.comment,
+                recipe_handle: r.recipe_handle,
+                model_id: r.model_id,
+                submitted_unix_ms: r.submitted_unix_ms,
+                rowid: r.rowid,
+            })
+            .collect();
+        Ok(Response::new(proto::ListFeedbackResponse {
             rows,
             has_more,
         }))

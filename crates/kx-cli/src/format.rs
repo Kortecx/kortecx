@@ -933,6 +933,98 @@ pub fn render_telemetry(resp: &proto::ListMoteTelemetryResponse, json: bool) -> 
     }
 }
 
+/// Render `feedback submit` (PR-4.1): the server-derived `feedback_id`.
+#[must_use]
+pub fn render_feedback_submit(resp: &proto::SubmitFeedbackResponse, json: bool) -> String {
+    let id = hex::encode(&resp.feedback_id);
+    if json {
+        json!({ "feedback_id": id }).to_string()
+    } else {
+        format!("recorded feedback {id}")
+    }
+}
+
+/// Render `feedback list` (PR-4.1): newest-first 👍/👎 rows. `--json` field names
+/// mirror the SDK snake_case shape; byte ids are hex (empty targets → "").
+#[must_use]
+pub fn render_feedback_list(resp: &proto::ListFeedbackResponse, json: bool) -> String {
+    let rating_str = |r: i32| -> &'static str {
+        if r == proto::FeedbackRating::Up as i32 {
+            "up"
+        } else if r == proto::FeedbackRating::Down as i32 {
+            "down"
+        } else {
+            "?"
+        }
+    };
+    // An all-zero / empty target id renders as "" (the telemetry instance convention).
+    let opt_hex = |b: &[u8]| -> String {
+        if b.iter().all(|x| *x == 0) {
+            String::new()
+        } else {
+            hex::encode(b)
+        }
+    };
+    if json {
+        let rows: Vec<Value> = resp
+            .rows
+            .iter()
+            .map(|r| {
+                json!({
+                    "feedback_id": hex::encode(&r.feedback_id),
+                    "rating": rating_str(r.rating),
+                    "message_id": r.message_id,
+                    "instance_id": opt_hex(&r.instance_id),
+                    "mote_id": opt_hex(&r.mote_id),
+                    "content_ref": opt_hex(&r.content_ref),
+                    "comment": r.comment,
+                    "recipe_handle": r.recipe_handle,
+                    "model_id": r.model_id,
+                    "submitted_unix_ms": r.submitted_unix_ms,
+                    "rowid": r.rowid,
+                })
+            })
+            .collect();
+        json!({ "rows": rows, "has_more": resp.has_more }).to_string()
+    } else if resp.rows.is_empty() {
+        "(no feedback rows)".to_string()
+    } else {
+        let dash = |s: &str| {
+            if s.is_empty() {
+                "-".to_string()
+            } else {
+                s.to_string()
+            }
+        };
+        let mut out = String::new();
+        for r in &resp.rows {
+            let inst = opt_hex(&r.instance_id);
+            let comment = if r.comment.is_empty() {
+                String::new()
+            } else {
+                format!("\"{}\"  ", r.comment)
+            };
+            let _ = write!(
+                out,
+                "{}{}  msg {}  inst {}  model {}  {}{}  rowid {}",
+                if out.is_empty() { "" } else { "\n" },
+                rating_str(r.rating),
+                r.message_id,
+                dash(&inst),
+                dash(&r.model_id),
+                comment,
+                dash(&r.recipe_handle),
+                r.rowid,
+            );
+        }
+        if resp.has_more {
+            let last = resp.rows.last().map_or(0, |r| r.rowid);
+            let _ = write!(out, "\n(more — continue with --before-rowid {last})");
+        }
+        out
+    }
+}
+
 /// Render `replan list` (PR-2c-2 observability): newest-first re-plan rounds.
 /// `--json` field names mirror the SDK snake_case shape; byte ids are hex.
 #[must_use]

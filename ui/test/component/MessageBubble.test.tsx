@@ -1,7 +1,14 @@
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
-import { MessageBubble } from "../../src/components/chat/MessageBubble";
+import { describe, expect, it, vi } from "vitest";
 import type { ChatMessage } from "../../src/lib/chat-thread";
+
+// The assistant action row (PR-4.1) embeds FeedbackButtons → useFeedback →
+// useConnection; stub the mutation so the bubble renders without a provider.
+vi.mock("../../src/kx/use-feedback", () => ({
+  useFeedback: () => ({ mutate: vi.fn(), isError: false, error: null }),
+}));
+
+import { MessageBubble } from "../../src/components/chat/MessageBubble";
 
 const msg = (m: Partial<ChatMessage> & Pick<ChatMessage, "role" | "status">): ChatMessage => ({
   id: "1",
@@ -49,6 +56,10 @@ describe("MessageBubble", () => {
     );
     expect(screen.getByTestId("bubble-assistant")).toHaveTextContent("the answer");
     expect(screen.getByTestId("trace-slot")).toBeInTheDocument();
+    // PR-4.1: a settled assistant answer carries the copy + 👍/👎 action row.
+    expect(screen.getByTestId("msg-actions")).toBeInTheDocument();
+    expect(screen.getByTestId("msg-copy")).toBeInTheDocument();
+    expect(screen.getByTestId("msg-feedback-up")).toBeInTheDocument();
   });
 
   // T-FEAT1: split a leading <think> reasoning block into a disclosure.

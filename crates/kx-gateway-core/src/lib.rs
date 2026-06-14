@@ -49,6 +49,7 @@ mod capture_view;
 mod datasets;
 mod error;
 mod events;
+mod feedback_view;
 mod identity;
 mod models_view;
 mod mote_def_view;
@@ -70,6 +71,7 @@ pub use datasets::{
     DatasetError, DatasetHitEntry, DatasetSummaryEntry, DatasetView, IngestDoc, IngestOutcome,
 };
 pub use error::GatewayError;
+pub use feedback_view::{FeedbackEntry, FeedbackRecord, FeedbackStore};
 // The event-source pieces a live tailer (R5, `kx-gateway`) reuses: the one-time
 // ownership gate + the per-range frame builder. The snapshot composition stays
 // crate-private (it backs the default `SnapshotTailer`). Batch C adds the
@@ -92,7 +94,8 @@ pub use service::{
     ScoredRecipeEntry, SignatureCatalog, SignatureSummaryEntry, SnapshotGlobalTailer,
     SnapshotTailer, TeamMemberEntry, TeamMembersView, TeamSummaryEntry, WarrantProjection,
     WorkflowAuthor, BATCH_ITEM_CLAMP_BYTES, DEFAULT_PUT_CAP_BYTES, MAX_BATCH_REFS,
-    REFUSAL_CODE_METADATA_KEY, SEARCH_RECIPES_DEFAULT_LIMIT, SEARCH_RECIPES_MAX_LIMIT,
+    MAX_FEEDBACK_COMMENT_BYTES, REFUSAL_CODE_METADATA_KEY, SEARCH_RECIPES_DEFAULT_LIMIT,
+    SEARCH_RECIPES_MAX_LIMIT,
 };
 pub use submit::{
     RunSubmitter, SubmitMoteOutcome, SubmitStatus, SubmitterError, TonicCoordinatorSubmitter,
