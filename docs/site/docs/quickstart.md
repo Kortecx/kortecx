@@ -97,7 +97,7 @@ In another terminal:
 kx invoke kx/recipes/echo --args '{"topic":"durable agents"}' --wait
 
 # A real multi-node DAG, model-free: root → 3 children → gather (5 steps, all committed).
-kx invoke kx/recipes/fanout-demo --args '{}' --wait
+kx invoke kx/recipes/passthrough-dag --args '{}' --wait
 ```
 
 Inspect anything — the DAG, a committed result, the live event stream:

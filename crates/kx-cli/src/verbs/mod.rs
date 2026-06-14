@@ -1,6 +1,6 @@
 //! The gRPC client verbs. Each module exposes an `Args` struct, a hand-rolled
 //! `parse(...)`, and an async `execute(...)`. Shared `--wait` finishing lives
-//! here (used by `invoke` + `submit`).
+//! here (used by `invoke` + `chain`).
 
 pub mod blueprint;
 pub mod capture;
@@ -16,7 +16,6 @@ pub mod react;
 pub mod replan;
 pub mod runs;
 pub mod signatures;
-pub mod submit;
 pub mod telemetry;
 pub mod tools;
 

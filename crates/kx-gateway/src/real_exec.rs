@@ -1,29 +1,31 @@
-//! Real, sandboxed Mote body-execution for the embedded `kx serve` worker (PR-9b).
+//! Real, sandboxed Mote body-execution SEAM for the embedded `kx serve` worker.
 //!
-//! R1 wired the embedded worker to a *deterministic* content-storing executor
-//! (`server::storing_executor`) — a faithful demo of the durability
-//! spine, but it never spawns a real process. PR-9b closes that gap WITHOUT
-//! touching the frozen trio (`kx-executor`/`kx-scheduler`/`kx-inference`): it
-//! composes the EXISTING public `kx-executor` surface
+//! Composes the EXISTING public `kx-executor` surface
 //! ([`BwrapExecutor`]/[`MacOsSandboxExecutor`] + [`ContentStoreBodyResolver`])
-//! behind a router that the gateway binary owns.
+//! behind a router the gateway binary owns — WITHOUT touching the frozen trio
+//! (`kx-executor`/`kx-scheduler`/`kx-inference`).
 //!
 //! `RouterExecutor` dispatches per leased Mote:
-//! - a Mote whose `def.logic_ref` is the registered **real body** → run it inside
+//! - a Mote whose `def.logic_ref` is a registered **real body** → run it inside
 //!   the platform sandbox (bwrap on Linux, sandbox-exec/Seatbelt on macOS), then
 //!   **reconcile** its result bytes into the shared content store so the
 //!   coordinator's D55 phantom-ref guard passes at commit;
-//! - any other (the bodyless PURE demo `echo`) Mote → the deterministic
-//!   `storing` fallback — the exact R1 behavior, untouched.
+//! - any other (a bodyless PURE Mote, e.g. `echo`) → the honest passthrough
+//!   fallback (GR15 — it commits the Mote's real input, never a placeholder).
+//!
+//! In the OSS serve path the router is wired with `real_body_ref = None` (no body
+//! binary is provisioned — script/tool execution is OSS-scoped-out, D141.4), so
+//! every Mote takes the passthrough fallback. The sandbox-routing machinery is
+//! retained as a stable seam: a later tools/scripts batch re-enables body
+//! registration with ZERO change here.
 //!
 //! **Fail-closed (Golden Rule 9).** When the sandbox cannot run (no `bwrap`,
 //! blocked user-namespaces, non-matching platform), the executor returns
 //! [`MoteExecutorError`] and the worker backs off; it NEVER falls back to
-//! un-sandboxed host execution. The demo path and the canonical-digest engine
-//! path (`kx run`, a separate `TestMoteExecutor::deterministic()`) are untouched.
+//! un-sandboxed host execution. The canonical-digest engine path (`kx run`, a
+//! separate `TestMoteExecutor::deterministic()`) is untouched.
 
 use std::io::Write as _;
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use kx_content::{ContentRef, ContentStore, LocalFsContentStore};
@@ -51,16 +53,16 @@ pub(crate) struct RouterExecutor {
     /// The shared content store — clones feed [`ContentStoreBodyResolver`] (body
     /// materialization) and back the result reconciliation `put` (D55).
     store: LocalFsContentStore,
-    /// The content-ref of the registered real body (== its `logic_ref` bytes). A
+    /// The content-ref of a registered real body (== its `logic_ref` bytes). A
     /// leased Mote carrying this `logic_ref` is dispatched to the sandbox. `None`
-    /// when no body binary was located at startup (the image ran without it) — the
-    /// router then behaves exactly like the R1 storing executor.
+    /// in the OSS serve path (no body provisioned) — every Mote then takes the
+    /// honest passthrough fallback.
     real_body_ref: Option<ContentRef>,
     /// The platform executor class the embedded worker registered as
     /// ([`crate::server::default_executor_class`]).
     exec_class: ExecutorClass,
-    /// The deterministic content-storing fallback for bodyless PURE Motes (the
-    /// demo `echo`) — the unchanged R1 `server::storing_executor`.
+    /// The honest passthrough fallback for bodyless PURE Motes (e.g. `echo`) —
+    /// commits the Mote's real input (GR15), never a fabricated placeholder.
     fallback: Arc<dyn MoteExecutor>,
 }
 
@@ -104,8 +106,8 @@ impl RouterExecutor {
 /// Run `mote`'s body in the platform sandbox under `warrant`, then reconcile its
 /// output into `store`. The body program is materialized from `logic_ref` by
 /// [`ContentStoreBodyResolver`]; its per-Mote input is the Mote's identity bytes
-/// (deterministic ⇒ exactly-once-per-input). Shared by [`RouterExecutor`] and the
-/// startup [`probe_sandbox`].
+/// (deterministic ⇒ exactly-once-per-input). Used by [`RouterExecutor`] when a real
+/// body is registered.
 fn run_body_in_sandbox(
     store: &LocalFsContentStore,
     exec_class: ExecutorClass,
@@ -194,123 +196,4 @@ fn internal(reason: &str) -> MoteExecutorError {
     MoteExecutorError::Internal {
         reason: reason.to_string(),
     }
-}
-
-/// One-shot startup probe: run the registered body once through the platform
-/// sandbox under the real-exec `warrant`. Returns `true` iff it succeeds
-/// end-to-end. The gateway uses this to GATE provisioning of `exec-demo`: when the
-/// sandbox cannot run (e.g. Docker's default seccomp blocks the unprivileged user
-/// namespace bubblewrap needs, or rlimits are too tight), the recipe is NOT
-/// advertised — so an `Invoke` gets a clean refusal instead of a worker that
-/// re-leases a never-committable Mote forever. The durable spine + the `echo`
-/// recipe are unaffected either way.
-pub(crate) fn probe_sandbox(
-    store: &LocalFsContentStore,
-    body_ref: ContentRef,
-    exec_class: ExecutorClass,
-    warrant: &WarrantSpec,
-) -> bool {
-    match run_body_in_sandbox(store, exec_class, &probe_mote(body_ref), warrant, None) {
-        Ok(_) => true,
-        Err(error) => {
-            tracing::warn!(
-                %error,
-                "PR-9b: sandbox probe failed — kx/recipes/exec-demo NOT provisioned \
-                 (durable spine + echo recipe unaffected; enable real-exec per docker-compose.yml)"
-            );
-            false
-        }
-    }
-}
-
-/// A throwaway PURE Mote whose `logic_ref` is the registered body, used only by
-/// [`probe_sandbox`] (its committed output is content-addressed + discarded).
-fn probe_mote(body_ref: ContentRef) -> Mote {
-    use kx_mote::{
-        EffectPattern, GraphPosition, InferenceParams, InputDataId, LogicRef, ModelId, MoteDef,
-        NdClass, PromptTemplateHash, MOTE_DEF_SCHEMA_VERSION,
-    };
-    use smallvec::SmallVec;
-    use std::collections::BTreeMap;
-
-    let def = MoteDef {
-        critic_check: None,
-        logic_ref: LogicRef::from_bytes(*body_ref.as_bytes()),
-        model_id: ModelId("local".into()),
-        prompt_template_hash: PromptTemplateHash::from_bytes([0u8; 32]),
-        tool_contract: BTreeMap::new(),
-        nd_class: NdClass::Pure,
-        config_subset: BTreeMap::new(),
-        effect_pattern: EffectPattern::IdempotentByConstruction,
-        critic_for: None,
-        is_topology_shaper: false,
-        inference_params: InferenceParams::default(),
-        schema_version: MOTE_DEF_SCHEMA_VERSION,
-    };
-    Mote::new(
-        def,
-        InputDataId::from_bytes([0u8; 32]),
-        GraphPosition(b"kx-exec-demo-probe".to_vec()),
-        SmallVec::new(),
-    )
-}
-
-/// Locate the sandbox demo-body binary and `put` its bytes into the content
-/// store, returning the resulting ref (== the body's `logic_ref`). `None` when
-/// no body is found — the gateway then provisions only the demo `echo` recipe
-/// and the router behaves exactly like the R1 storing executor.
-///
-/// The body is the existing `kx-executor` `pure_body` example (the
-/// `64-hex-result-on-stdout` contract); reusing it keeps the frozen trio's
-/// source diff-empty.
-pub(crate) fn register_demo_body(store: &LocalFsContentStore) -> Option<ContentRef> {
-    let path = real_body_binary_path()?;
-    let bytes = std::fs::read(&path).ok()?;
-    match store.put(&bytes) {
-        Ok(body_ref) => {
-            tracing::info!(
-                body_path = %path.display(),
-                "PR-9b: real-exec demo body registered (kx/recipes/exec-demo is live)"
-            );
-            Some(body_ref)
-        }
-        Err(error) => {
-            tracing::warn!(
-                %error,
-                "PR-9b: could not register the real-exec demo body; exec-demo not provisioned"
-            );
-            None
-        }
-    }
-}
-
-/// Resolve the demo-body binary path: an explicit `KX_DEMO_BODY_PATH` override
-/// first, then the fixed in-image path the Dockerfile `COPY`s it to, then a
-/// dev/test convenience search up to the workspace `target/` dir. `None` ⇒ no
-/// body available (the FFI-free prebuilt image, e.g.).
-fn real_body_binary_path() -> Option<PathBuf> {
-    if let Some(over) = std::env::var_os("KX_DEMO_BODY_PATH") {
-        let path = PathBuf::from(over);
-        if path.exists() {
-            return Some(path);
-        }
-    }
-    let in_image = PathBuf::from("/usr/local/libexec/kx/pure_body");
-    if in_image.exists() {
-        return Some(in_image);
-    }
-    // Dev/test: walk up from the running binary to a `target` dir + look for the
-    // built example (`cargo build --example pure_body -p kx-executor`).
-    let exe = std::env::current_exe().ok()?;
-    for ancestor in exe.ancestors() {
-        if ancestor.file_name().is_some_and(|n| n == "target") {
-            for profile in ["debug", "release"] {
-                let candidate = ancestor.join(profile).join("examples").join("pure_body");
-                if candidate.exists() {
-                    return Some(candidate);
-                }
-            }
-        }
-    }
-    None
 }

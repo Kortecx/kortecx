@@ -42,7 +42,7 @@ describe("RecipeForm", () => {
   });
 
   it("a no-input recipe runs directly with empty args", () => {
-    const form = new RecipeFormDef("kx/recipes/fanout-demo", []);
+    const form = new RecipeFormDef("kx/recipes/passthrough-dag", []);
     const onSubmit = vi.fn();
     render(<RecipeForm form={form} pending={false} onSubmit={onSubmit} />);
     fireEvent.click(screen.getByRole("button", { name: /run blueprint/i }));

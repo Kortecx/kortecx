@@ -15,7 +15,7 @@ import { SystemsSection } from "../../src/components/sections/SystemsSection";
 import { connectedWrapper } from "../mocks/harness";
 import { makeMockClient } from "../mocks/kx-client";
 
-const demoTeam = new TeamSummary("kx/teams/demo", "Demo Team", "kx-gateway", 3);
+const demoTeam = new TeamSummary("kx/teams/workspace", "Workspace", "kx-gateway", 3);
 const members = new TeamMembers("kx-gateway", [
   new TeamMember(
     "alice@acme",
@@ -26,7 +26,7 @@ const members = new TeamMembers("kx-gateway", [
   new TeamMember("bob@acme", "demo-member", ["Read", "Use"], null),
 ]);
 const echoGrants = new AssetGrants("kx-gateway", [
-  new GrantView("kx-gateway", "kx/teams/demo", ["Read", "Use"], "demo", true, false),
+  new GrantView("kx-gateway", "kx/teams/workspace", ["Read", "Use"], "demo", true, false),
   new GrantView("kx-gateway", "alice@acme", ["Read", "Use"], "demo", true, false),
 ]);
 
@@ -46,7 +46,9 @@ describe("SystemsSection", () => {
     render(<SystemsSection />, { wrapper: connectedWrapper(client) });
 
     expect(screen.getByTestId("teams-panel")).toBeInTheDocument();
-    await waitFor(() => expect(screen.getByTestId("team-pick-kx/teams/demo")).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByTestId("team-pick-kx/teams/workspace")).toBeInTheDocument(),
+    );
     // The row assertions must be EVENTUAL, not just gated on the table: the grant
     // inspector's asset auto-select RE-KEYS useTeamMembers(team, assetRef), which
     // briefly swaps the already-rendered table back to "Loading members…" — a bare
@@ -68,7 +70,7 @@ describe("SystemsSection", () => {
       expect(screen.getByTestId("grant-asset-pick-kx/recipes/echo")).toBeInTheDocument(),
     );
     await waitFor(() => expect(screen.getByTestId("grant-table")).toBeInTheDocument());
-    const teamGrant = screen.getByTestId("grant-row-kx/teams/demo");
+    const teamGrant = screen.getByTestId("grant-row-kx/teams/workspace");
     expect(teamGrant).toBeInTheDocument();
     expect(teamGrant).toHaveTextContent("Root");
   });

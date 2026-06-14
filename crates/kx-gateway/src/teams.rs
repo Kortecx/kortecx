@@ -1,15 +1,15 @@
-//! UI-3 host-side governance views + the demo-team seed.
+//! UI-3 host-side governance views + the workspace-team seed.
 //!
 //! gateway-core stays off `kx-fleet` / `kx-catalog` (the dependency wall), so the
 //! concrete, ledger-backed implementations of its read-only [`MembershipView`] /
 //! [`GrantView`] seams live HERE, in the host binary. Both are VIEW-only (no fact is
 //! ever written by an RPC); the only writes are the idempotent bootstrap
-//! [`seed_demo_team`] at serve start. Managing teams/grants across parties + the
+//! [`seed_workspace_team`] at serve start. Managing teams/grants across parties + the
 //! multi-tenant identity layer are CLOUD (D129).
 //!
 //! The membership resolve path reuses `kx_fleet::GovernedFleet::resolve_member_warrant`
 //! (membership ∩ grant via the FROZEN `kx_warrant::intersect`) over the SAME durable
-//! grant ledger the demo recipes seeded — so a member's resolved warrant is the real
+//! grant ledger the recipes seeded — so a member's resolved warrant is the real
 //! composed result, never a re-derived approximation.
 
 use std::collections::BTreeSet;
@@ -30,9 +30,10 @@ use kx_warrant::{FsScope, NetScope, Role, WarrantSpec};
 use crate::error::GatewayError;
 use crate::provision::{parse_handle, DemoLibrary};
 
-/// The principal of the demo team the OSS gateway seeds at serve start so the
-/// Systems viewer is populated out-of-the-box. A team is a group `PartyId`.
-pub const DEMO_TEAM_HANDLE: &str = "kx/teams/demo";
+/// The principal of the workspace team the OSS gateway seeds at serve start, so the
+/// Systems viewer is populated with the real configured members (the `--auth-token`
+/// parties + the `local-dev` dev principal). A team is a group `PartyId`.
+pub const WORKSPACE_TEAM_HANDLE: &str = "kx/teams/workspace";
 
 /// The catalog actions, in canonical order, the renderers project to display strings.
 const ALL_ACTIONS: [CatalogAction; 4] = [
@@ -181,7 +182,7 @@ impl MembershipView for HostMembershipView {
 }
 
 /// A [`GrantView`] over the demo library's durable grant ledger (the SAME instance
-/// the recipes + the demo team grant seed). Classifies each grant fact root/delegated
+/// the recipes + the workspace team grant seed). Classifies each grant fact root/delegated
 /// + active/revoked via an authorized-revocation fold. VIEW-only.
 pub struct HostGrantView {
     lib: Arc<DemoLibrary>,
@@ -244,25 +245,31 @@ impl GrantView for HostGrantView {
     }
 }
 
-/// Idempotently seed the demo team at serve start: found `kx/teams/demo` (owner =
-/// the gateway principal), admit each `--auth-token` party (+ the dev `local-dev`
-/// principal), the FIRST a `Delegate` (role variety), and grant the team `Use`+`Read`
-/// on the demo `echo` recipe so a member's warrant resolves through membership ∩
-/// grant. Re-running on every restart is a no-op (content-addressed fact dedup +
-/// idempotent grant). Mirrors the demo-recipe grant seeding (`provision::seed_recipe`).
+/// Idempotently seed the workspace team at serve start: found `kx/teams/workspace`
+/// (owner = the gateway principal), admit each `--auth-token` party AND the dev
+/// `local-dev` principal, the FIRST a `Delegate` (role variety), and grant the team
+/// `Use`+`Read` on the `echo` recipe so a member's warrant resolves through
+/// membership ∩ grant. Re-running on every restart is a no-op (content-addressed
+/// fact dedup + idempotent grant). Mirrors the recipe grant seeding
+/// (`provision::seed_recipe`).
+///
+/// The members are the REAL configured parties (the `--auth-token` parties plus the
+/// `local-dev` dev principal) — never a fabricated/demo identity (GR15). With no
+/// auth tokens (`--dev-allow-local` only) the team is the single-member dev
+/// workspace (`local-dev`).
 ///
 /// # Errors
 /// [`GatewayError::Catalog`] on a membership/grant append failure.
-pub fn seed_demo_team(
+pub fn seed_workspace_team(
     members: &SqliteMembershipLedger,
     lib: &DemoLibrary,
     parties: &[String],
 ) -> Result<(), GatewayError> {
     let cat = |e: String| GatewayError::Catalog(e);
     let owner = DemoLibrary::owner_principal();
-    let team = PartyId::new(DEMO_TEAM_HANDLE);
+    let team = PartyId::new(WORKSPACE_TEAM_HANDLE);
     members
-        .append_founding(Team::found(team.clone(), owner.clone(), "Demo Team"))
+        .append_founding(Team::found(team.clone(), owner.clone(), "Workspace"))
         .map_err(|e| cat(e.to_string()))?;
 
     // The admit-role warrant + the team-grant runtime scope == the echo owner-root,
@@ -286,7 +293,7 @@ pub fn seed_demo_team(
     for (i, party) in admitted.iter().enumerate() {
         let (role_name, caps) = if i == 0 {
             (
-                "demo-delegate",
+                "workspace-delegate",
                 CatalogActionSet::allow([
                     CatalogAction::Read,
                     CatalogAction::Use,
@@ -295,7 +302,7 @@ pub fn seed_demo_team(
             )
         } else {
             (
-                "demo-member",
+                "workspace-member",
                 CatalogActionSet::allow([CatalogAction::Read, CatalogAction::Use]),
             )
         };
@@ -321,7 +328,7 @@ pub fn seed_demo_team(
     // grant is a root grant from the asset owner (the gateway principal). Idempotent.
     if let Some((asset, owner_root)) = target {
         let role = Role {
-            name: "demo-team-use".to_string(),
+            name: "workspace-team-use".to_string(),
             version: 1,
             spec: owner_root,
             description: String::new(),
@@ -345,13 +352,13 @@ mod tests {
     use crate::provision::DEMO_RECIPE_HANDLE;
     use kx_warrant::ExecutorClass;
 
-    /// A demo library + a freshly-seeded demo team in a scratch dir, with two
+    /// A demo library + a freshly-seeded workspace team in a scratch dir, with two
     /// auth-token parties (alice, bob).
     fn seeded(dir: &std::path::Path) -> (Arc<SqliteMembershipLedger>, Arc<DemoLibrary>) {
         let parties = vec!["alice@acme".to_string(), "bob@acme".to_string()];
         let lib = Arc::new(DemoLibrary::open(dir, ExecutorClass::Bwrap, &parties).unwrap());
         let members = Arc::new(SqliteMembershipLedger::open(dir.join("members.db")).unwrap());
-        seed_demo_team(&members, &lib, &parties).unwrap();
+        seed_workspace_team(&members, &lib, &parties).unwrap();
         (members, lib)
     }
 
@@ -362,13 +369,13 @@ mod tests {
         let view = HostMembershipView::new(members, lib);
 
         let teams = view.list_teams();
-        assert_eq!(teams.len(), 1, "exactly one demo team");
-        assert_eq!(teams[0].team_id, DEMO_TEAM_HANDLE);
+        assert_eq!(teams.len(), 1, "exactly one workspace team");
+        assert_eq!(teams[0].team_id, WORKSPACE_TEAM_HANDLE);
         assert_eq!(teams[0].owner, "kx-gateway");
         // alice + bob + local-dev = 3 members.
         assert_eq!(teams[0].member_count, 3);
 
-        let members = view.list_members(DEMO_TEAM_HANDLE, None).unwrap();
+        let members = view.list_members(WORKSPACE_TEAM_HANDLE, None).unwrap();
         assert_eq!(members.owner, "kx-gateway");
         assert_eq!(members.members.len(), 3);
         // Exactly one member is a Delegate (role variety).
@@ -392,7 +399,7 @@ mod tests {
         // grant (the team holds Use on echo; the role chain narrows to the echo
         // owner-root, max_calls 3 — never escalating past the team).
         let with_asset = view
-            .list_members(DEMO_TEAM_HANDLE, Some(DEMO_RECIPE_HANDLE))
+            .list_members(WORKSPACE_TEAM_HANDLE, Some(DEMO_RECIPE_HANDLE))
             .unwrap();
         let resolved = with_asset
             .members
@@ -420,14 +427,14 @@ mod tests {
 
         let grants = view.list_asset_grants(DEMO_RECIPE_HANDLE).unwrap();
         assert_eq!(grants.owner, "kx-gateway");
-        // The demo-recipe grants (alice, bob, local-dev) + the demo TEAM grant.
+        // The demo-recipe grants (alice, bob, local-dev) + the workspace TEAM grant.
         assert!(grants.grants.len() >= 4, "party grants + the team grant");
-        // The team grant is present (grantee == the demo team principal), root, active.
+        // The team grant is present (grantee == the workspace team principal), root, active.
         let team_grant = grants
             .grants
             .iter()
-            .find(|g| g.grantee == DEMO_TEAM_HANDLE)
-            .expect("the demo team is granted Use on echo");
+            .find(|g| g.grantee == WORKSPACE_TEAM_HANDLE)
+            .expect("the workspace team is granted Use on echo");
         assert!(team_grant.is_root);
         assert!(!team_grant.revoked);
         assert!(team_grant.actions.contains(&"Use".to_string()));
@@ -447,15 +454,15 @@ mod tests {
     }
 
     #[test]
-    fn reseed_demo_team_is_idempotent() {
+    fn reseed_workspace_team_is_idempotent() {
         let dir = tempfile::tempdir().unwrap();
         let parties = vec!["alice@acme".to_string()];
         let lib = DemoLibrary::open(dir.path(), ExecutorClass::Bwrap, &parties).unwrap();
         let members = SqliteMembershipLedger::open(dir.path().join("members.db")).unwrap();
-        seed_demo_team(&members, &lib, &parties).unwrap();
+        seed_workspace_team(&members, &lib, &parties).unwrap();
         let before = members.len();
         // Re-seeding on a "restart" (same dir + ledgers) is a no-op.
-        seed_demo_team(&members, &lib, &parties).unwrap();
+        seed_workspace_team(&members, &lib, &parties).unwrap();
         assert_eq!(
             members.len(),
             before,

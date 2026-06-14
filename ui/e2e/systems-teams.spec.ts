@@ -21,7 +21,7 @@ test("Systems: the seeded demo team, its members + roles, and the grants inspect
 
   // The bootstrap-seeded demo team renders as a CHIP (a button, NOT a controlled
   // <select> — the Playwright selectOption gotcha). Selecting it drives the member table.
-  const teamChip = page.getByTestId("team-pick-kx/teams/demo");
+  const teamChip = page.getByTestId("team-pick-kx/teams/workspace");
   await expect(teamChip).toBeVisible({ timeout: 30_000 });
   await expect(teamChip).toHaveAttribute("aria-pressed", "true"); // auto-selected
   await teamChip.click();
@@ -39,7 +39,7 @@ test("Systems: the seeded demo team, its members + roles, and the grants inspect
     timeout: 30_000,
   });
   await expect(page.getByTestId("grant-table")).toBeVisible();
-  const teamGrant = page.getByTestId("grant-row-kx/teams/demo");
+  const teamGrant = page.getByTestId("grant-row-kx/teams/workspace");
   await expect(teamGrant).toBeVisible();
   await expect(teamGrant).toContainText("Root");
 
@@ -65,11 +65,11 @@ test("Systems: switching the inspected asset updates the grants + the resolved w
   });
 
   // Switch to the fanout recipe (no team grant → its grant table differs from echo's).
-  const fanoutChip = page.getByTestId("grant-asset-pick-kx/recipes/fanout-demo");
+  const fanoutChip = page.getByTestId("grant-asset-pick-kx/recipes/passthrough-dag");
   await expect(fanoutChip).toBeVisible();
   await fanoutChip.click();
   await expect(fanoutChip).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByTestId("grant-table")).toBeVisible();
   // Echo's team grant is NOT on fanout (the team was granted only on echo).
-  await expect(page.getByTestId("grant-row-kx/teams/demo")).toHaveCount(0);
+  await expect(page.getByTestId("grant-row-kx/teams/workspace")).toHaveCount(0);
 });

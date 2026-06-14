@@ -67,7 +67,7 @@ describe("UI data path against a real kx serve", () => {
     expect(terminal?.parents).toEqual([]);
   });
 
-  it("fanout-demo → a multi-node projection whose parents[] form a real DAG", async () => {
+  it("passthrough-dag → a multi-node projection whose parents[] form a real DAG", async () => {
     const s = await devServer();
     const kx = new KxClient(s.endpoint);
     const result = (await kx.invoke(FANOUT_HANDLE, {}, { wait: true })) as Result;

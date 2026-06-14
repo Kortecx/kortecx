@@ -803,9 +803,10 @@ jobs:
   # guard at the e2e level — no `kx demo result` placeholder) AND greedy decode is
   # deterministic across independent gateways. Real inference on EVERY PR (GR15).
   # Builds the llama.cpp FFI; the GGUF is SHA-pinned + cached so it downloads at
-  # most once. NON-required until green on `main`, then promoted to a required
-  # check (Golden Rule 4) in the demo-removal follow-up PR. `build-no-inference` +
-  # `verify-quickstart` stay FFI-free (the installability proof is preserved).
+  # most once. A REQUIRED status-check context (Golden Rule 4) — promoted via branch
+  # protection once green on `main` (the job `name:` below is that context string;
+  # do not rename it). `build-no-inference` + `verify-quickstart` stay FFI-free (the
+  # installability proof is preserved).
   # ---------------------------------------------------------------------------
   real-model-e2e:
     name: real-model-e2e (Qwen3 chat behavioral gate)

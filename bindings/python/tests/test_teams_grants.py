@@ -8,10 +8,10 @@ from kortecx.v1 import gateway_pb2 as g
 
 def test_team_summary_from_proto():
     t = g.TeamSummary(
-        team_id="kx/teams/demo", display_name="Demo Team", owner="kx-gateway", member_count=3
+        team_id="kx/teams/workspace", display_name="Workspace", owner="kx-gateway", member_count=3
     )
     s = TeamSummary.from_proto(t)
-    assert s.team_id == "kx/teams/demo"
+    assert s.team_id == "kx/teams/workspace"
     assert s.owner == "kx-gateway"
     assert s.member_count == 3
 
@@ -49,7 +49,7 @@ def test_asset_grants_classify_root_delegated_revoked():
         grants=[
             g.GrantView(
                 grantor="kx-gateway",
-                grantee="kx/teams/demo",
+                grantee="kx/teams/workspace",
                 actions=["Read", "Use"],
                 runtime_scope="demo",
                 is_root=True,

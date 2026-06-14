@@ -131,7 +131,7 @@ def test_recipe_form_wraps_handle_and_fields():
 
 
 def test_recipe_form_empty_is_valid():
-    resp = g.GetRecipeFormResponse(handle="kx/recipes/fanout-demo")
+    resp = g.GetRecipeFormResponse(handle="kx/recipes/passthrough-dag")
     form = RecipeForm.from_proto(resp)
     assert form.fields == []
 

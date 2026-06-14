@@ -180,7 +180,7 @@ async fn unauthorized_and_missing_refs_are_indistinguishable() {
     // Establish a COMMITTED run so one ref EXISTS in the store but is outside
     // the uploads scope.
     let handle = c
-        .submit_run(kx_gateway::demo_submit_run_request())
+        .submit_run(kx_gateway::pure_run_request())
         .await
         .unwrap()
         .into_inner();

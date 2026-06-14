@@ -11,7 +11,7 @@ use std::time::Instant;
 use tempfile::TempDir;
 use tonic::transport::Channel;
 
-use kx_gateway::{demo_submit_run_request, start};
+use kx_gateway::{pure_run_request, start};
 use kx_proto::proto;
 use kx_proto::proto::kx_gateway_client::KxGatewayClient;
 
@@ -46,7 +46,7 @@ pub async fn measure(iterations: usize) -> Result<MoteDetailSamples, ProfileErro
     // Drive the FFI-free echo demo to Committed (the def blob persists at
     // admission; the def HASH appears on the Committed fact).
     let handle = client
-        .submit_run(demo_submit_run_request())
+        .submit_run(pure_run_request())
         .await
         .map_err(|s| ProfileError::Client(s.to_string()))?
         .into_inner();

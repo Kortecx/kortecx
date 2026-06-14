@@ -19,8 +19,8 @@ path = "src/main.rs"
 [dependencies]
 # run|replay|digest forward to the engine VERBATIM (digest invariant). FFI-free by default.
 kx-runtime = { workspace = true }
-# `serve` forwards to kx_gateway::serve; `submit --demo` uses kx_gateway::demo_submit_run_request.
-# Default features ON ⇒ the embedded-worker closure; FFI-free (the dep_wall pins it).
+# `serve` forwards to kx_gateway::serve. Default features ON ⇒ the embedded-worker
+# closure; FFI-free (the dep_wall pins it).
 kx-gateway = { workspace = true }
 # The FROZEN KxGateway client stubs + request/response messages.
 kx-proto   = { workspace = true }

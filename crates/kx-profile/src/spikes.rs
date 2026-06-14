@@ -19,7 +19,7 @@ use tonic_health::pb::health_check_response::ServingStatus;
 use tonic_health::pb::health_client::HealthClient;
 use tonic_health::pb::HealthCheckRequest;
 
-use kx_gateway::{demo_submit_run_request, start, ConsoleMode, GatewayConfig};
+use kx_gateway::{pure_run_request, start, ConsoleMode, GatewayConfig};
 use kx_proto::proto;
 use kx_proto::proto::kx_gateway_client::KxGatewayClient;
 
@@ -149,7 +149,7 @@ async fn wait_for_serving(channel: &Channel) -> Result<(), ProfileError> {
 async fn submit_demo(channel: &Channel) -> Result<Vec<u8>, ProfileError> {
     let mut client = KxGatewayClient::new(channel.clone());
     let handle = client
-        .submit_run(demo_submit_run_request())
+        .submit_run(pure_run_request())
         .await
         .map_err(|s| ProfileError::Client(s.to_string()))?
         .into_inner();

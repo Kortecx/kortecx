@@ -19,8 +19,8 @@ describe("teamsFromProto", () => {
     const r = create(ListTeamsResponseSchema, {
       teams: [
         create(TeamSummarySchema, {
-          teamId: "kx/teams/demo",
-          displayName: "Demo Team",
+          teamId: "kx/teams/workspace",
+          displayName: "Workspace",
           owner: "kx-gateway",
           memberCount: 3,
         }),
@@ -28,7 +28,7 @@ describe("teamsFromProto", () => {
     });
     const teams = teamsFromProto(r);
     expect(teams).toHaveLength(1);
-    expect(teams[0]?.teamId).toBe("kx/teams/demo");
+    expect(teams[0]?.teamId).toBe("kx/teams/workspace");
     expect(teams[0]?.owner).toBe("kx-gateway");
     expect(teams[0]?.memberCount).toBe(3);
   });
@@ -80,7 +80,7 @@ describe("AssetGrants.fromProto", () => {
       grants: [
         create(GrantViewSchema, {
           grantor: "kx-gateway",
-          grantee: "kx/teams/demo",
+          grantee: "kx/teams/workspace",
           actions: ["Read", "Use"],
           runtimeScope: "demo",
           isRoot: true,

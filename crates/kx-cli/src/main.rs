@@ -8,7 +8,6 @@
 //! kx run|replay|digest --journal <path> --content <dir> [...]      # forward to the engine
 //! kx serve --journal <path> --content <dir> [--listen addr:port] [...]   # forward to the gateway
 //! kx invoke <handle> --args <json> [--wait] [--endpoint url] [--token t]  # gRPC client verbs
-//! kx submit --demo [--wait]
 //! kx projection --instance <hex16> [--at-seq N]
 //! kx content --ref <hex32> --instance <hex16> [--out <file>]
 //! kx events --instance <hex16> [--since N] [--follow]

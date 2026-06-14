@@ -153,10 +153,12 @@ async fn zero_config_serve_auto_resolves_layout_and_runs() {
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
     // dev-allow-local ⇒ no token needed on loopback. `--wait` polls to terminal.
-    let submit = json_ok(
+    let inv = json_ok(
         &run_kx(argv(&[
-            "submit",
-            "--demo",
+            "invoke",
+            "kx/recipes/echo",
+            "--args",
+            r#"{"topic":"x"}"#,
             "--wait",
             "--endpoint",
             grpc,
@@ -165,15 +167,13 @@ async fn zero_config_serve_auto_resolves_layout_and_runs() {
         .await,
     );
     assert_eq!(
-        submit["state"].as_str(),
+        inv["state"].as_str(),
         Some("COMMITTED"),
-        "the demo run committed against the zero-config runtime: {submit}"
+        "the run committed against the zero-config runtime: {inv}"
     );
     assert!(
-        submit["instance_id"]
-            .as_str()
-            .is_some_and(|s| !s.is_empty()),
-        "the committed outcome carries the run instance_id: {submit}"
+        inv["instance_id"].as_str().is_some_and(|s| !s.is_empty()),
+        "the committed outcome carries the run instance_id: {inv}"
     );
 
     let _ = child.start_kill();

@@ -24,12 +24,23 @@ async fn events_follow_streams_the_live_committed_delta() {
     let running = start_gateway(&dir, true, HashMap::new()).await;
     let ep = endpoint(&running);
 
-    // Submit the demo run; grab its instance id (hex). The embedded worker commits
+    // Invoke the echo recipe; grab its instance id (hex). The embedded worker commits
     // the PURE Mote shortly after.
-    let submit = json_ok(&run_kx(argv(&["submit", "--demo", "--endpoint", &ep, "--json"])).await);
+    let submit = json_ok(
+        &run_kx(argv(&[
+            "invoke",
+            "kx/recipes/echo",
+            "--args",
+            r#"{"topic":"x"}"#,
+            "--endpoint",
+            &ep,
+            "--json",
+        ]))
+        .await,
+    );
     let instance = submit["instance_id"]
         .as_str()
-        .expect("submit --json carries instance_id")
+        .expect("invoke --json carries instance_id")
         .to_string();
 
     // `events --follow` opens ONE live stream and does not exit on its own.

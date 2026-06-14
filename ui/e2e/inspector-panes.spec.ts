@@ -24,7 +24,7 @@ test("inspector: def panes resolve over GetMoteDetail; Inputs resolves parent te
   await connectConsole(page, gw);
 
   // The 5-node fanout: a root with 4 children — children have inbound edges.
-  await runRecipe(page, { handle: "kx/recipes/fanout-demo" });
+  await runRecipe(page, { handle: "kx/recipes/passthrough-dag" });
   await expect(page.getByTestId("mote-dag")).toBeVisible({ timeout: 30_000 });
   await expect
     .poll(() => page.getByTestId("state-pill").filter({ hasText: "COMMITTED" }).count(), {

@@ -87,8 +87,8 @@ pub(crate) fn registry_with_echo() -> InMemoryToolRegistry {
 
 /// Locate the bundled `kx-mcp-echo` binary and register its capability on the
 /// serve broker. Returns the tool identity when registered (⇒ the react recipe
-/// can be provisioned), `None` when no binary is available (fail-soft — the
-/// `register_demo_body` precedent).
+/// can be provisioned), `None` when no binary is available (fail-soft — a missing
+/// bundled binary never breaks serve).
 pub(crate) fn register_echo_capability<S: ContentStore + Send + Sync>(
     broker: &LocalCapabilityBroker<S>,
 ) -> Option<(ToolName, ToolVersion)> {
