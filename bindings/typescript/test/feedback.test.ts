@@ -2,8 +2,8 @@
 
 import { create } from "@bufbuild/protobuf";
 import { describe, expect, it } from "vitest";
-import { FeedbackRating, FeedbackRowSchema } from "../src/gen/kortecx/v1/gateway_pb.js";
 import { FeedbackRow, ratingFromProto, ratingToProto } from "../src/feedback.js";
+import { FeedbackRating, FeedbackRowSchema } from "../src/gen/kortecx/v1/gateway_pb.js";
 
 const fill = (v: number, n: number): Uint8Array => new Uint8Array(n).fill(v);
 

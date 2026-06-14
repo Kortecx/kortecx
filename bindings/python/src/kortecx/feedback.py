@@ -20,8 +20,8 @@ from .v1 import gateway_pb2 as _g
 Rating = str  # Literal["up", "down"]
 
 
-def rating_to_proto(rating: str) -> int:
-    """Map a :data:`Rating` string to the proto enum int (UP=1, DOWN=2)."""
+def rating_to_proto(rating: str) -> "_g.FeedbackRating":
+    """Map a :data:`Rating` string to the proto rating enum (UP=1, DOWN=2)."""
     if rating == "up":
         return _g.FEEDBACK_RATING_UP
     if rating == "down":
