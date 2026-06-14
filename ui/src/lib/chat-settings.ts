@@ -32,6 +32,42 @@ export const ECHO_PRESET: Pick<ChatSettings, "handle" | "promptKey"> = {
   promptKey: "topic",
 };
 
+/** The model chat recipe — the backer whenever a serve provisions inference. */
+export const MODEL_CHAT_HANDLE = "kx/recipes/chat";
+
+/**
+ * Reconcile the (globally-)persisted chat handle against THIS serve's LIVE recipe
+ * list (GR15 + D142.3 don't-fake-gaps). The model chat recipe backs chat WHENEVER
+ * it is provisioned: a stale model-free `echo` handle — persisted from an earlier
+ * no-model session, and now an HONEST passthrough — must never silently echo the
+ * user's prompt back instead of answering it. A deliberate, available NON-echo
+ * handle (e.g. a custom recipe) is still honored; `echo` backs chat only on a
+ * model-free serve, where the DegradeNotice explains the round-trip. While the
+ * recipe list is still loading (`available` empty) the persisted handle stands.
+ */
+export function resolveChatBacking(
+  settings: ChatSettings,
+  available: readonly string[],
+): { handle: string; promptKey: string } {
+  if (available.length === 0) {
+    return { handle: settings.handle, promptKey: settings.promptKey };
+  }
+  // Honor an explicit, available, non-echo choice.
+  if (settings.handle !== ECHO_PRESET.handle && available.includes(settings.handle)) {
+    return { handle: settings.handle, promptKey: settings.promptKey };
+  }
+  // Prefer the model chat recipe when this serve provisions it.
+  if (available.includes(MODEL_CHAT_HANDLE)) {
+    return { handle: MODEL_CHAT_HANDLE, promptKey: "prompt" };
+  }
+  // Model-free serve: the honest echo fallback.
+  if (available.includes(ECHO_PRESET.handle)) {
+    return { ...ECHO_PRESET };
+  }
+  // Nothing runnable — let the configured handle degrade with a notice.
+  return { handle: settings.handle, promptKey: settings.promptKey };
+}
+
 const KEY = "kortecx.ui.chat";
 
 function isString(v: unknown): v is string {

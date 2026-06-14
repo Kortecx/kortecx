@@ -6,7 +6,12 @@ import { useAttachments } from "../../kx/use-attachments";
 import { REACT_RECIPE_HANDLE, useChat } from "../../kx/use-chat";
 import { useRecipes } from "../../kx/use-recipes";
 import { type SavedChat, saveChat } from "../../lib/chat-history";
-import { type ChatSettings, loadChatSettings, saveChatSettings } from "../../lib/chat-settings";
+import {
+  type ChatSettings,
+  loadChatSettings,
+  resolveChatBacking,
+  saveChatSettings,
+} from "../../lib/chat-settings";
 import type { MessageAttachment } from "../../lib/chat-thread";
 import { Icon } from "../shell/Icon";
 import { AttachmentStrip } from "./AttachmentStrip";
@@ -36,10 +41,15 @@ export function ChatPanel() {
   // The agent toggle only EXISTS when the react loop is provisioned (an
   // inference serve with the bundled tool) — don't-fake-gaps.
   const recipes = useRecipes();
-  const agentAvailable = (recipes.data ?? []).includes(REACT_RECIPE_HANDLE);
+  const available = recipes.data ?? [];
+  const agentAvailable = available.includes(REACT_RECIPE_HANDLE);
+  // Reconcile the persisted chat handle against the serve's LIVE recipes so a
+  // stale model-free `echo` handle can't silently echo the prompt when a model is
+  // provisioned (GR15). The model chat recipe backs chat whenever served.
+  const backing = resolveChatBacking(settings, available);
   const chat = useChat({
-    handle: settings.handle,
-    promptKey: settings.promptKey,
+    handle: backing.handle,
+    promptKey: backing.promptKey,
     modelId: settings.modelId,
     agentMode: agentMode && agentAvailable,
   });
@@ -120,7 +130,7 @@ export function ChatPanel() {
           </>
         ) : (
           <>
-            Each message runs <code>{settings.handle}</code>; the reply is the run's committed
+            Each message runs <code>{backing.handle}</code>; the reply is the run's committed
             result.
           </>
         )}
