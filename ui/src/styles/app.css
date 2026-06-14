@@ -2338,6 +2338,12 @@ select {
 .shell--collapsed .devtools {
   left: var(--sidebar-w-collapsed);
 }
+/* Reserve the fixed dock's height so NO section's content is ever hidden under
+ * it (the dock is `position: fixed` — without this, bottom content sits under
+ * the 280px overlay and is unclickable). Applies to every section uniformly. */
+.shell--dock-open .shell__main {
+  padding-bottom: 296px;
+}
 .devtools__bar {
   display: flex;
   align-items: center;
