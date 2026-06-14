@@ -116,13 +116,7 @@ export class RecipeInfo {
   ) {}
 
   static fromProto(r: PbRecipeSummary): RecipeInfo {
-    return new RecipeInfo(
-      r.handle,
-      encode(r.recipeFingerprint),
-      r.description,
-      r.tags,
-      r.version,
-    );
+    return new RecipeInfo(r.handle, encode(r.recipeFingerprint), r.description, r.tags, r.version);
   }
 
   /** A plain snake_case object (the cross-SDK serialization shape). */
