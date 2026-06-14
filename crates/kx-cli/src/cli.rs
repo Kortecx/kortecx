@@ -45,7 +45,6 @@ usage: kx <command> [args]
 
   client verbs (gRPC over the gateway; common flags: --endpoint <url> --token <t> | --token-file <p> --tls-ca <path> --json):
     kx invoke <handle> --args <json> [--args-file <path>] [--wait] [--timeout-secs N] [--out <file>]
-    kx submit --demo [--wait] [--timeout-secs N] [--out <file>]
     kx chain run \"<dsl>\" --tasks <tasks.json> [--seed N] [--wait] [--timeout-secs N] [--out <file>]
                                                  (string-DSL DAG: a > [b & c]; see `kx help chain`)
     kx projection --instance <hex16> [--at-seq N]
@@ -86,8 +85,6 @@ pub enum Cli {
     Serve(Vec<String>),
     /// `invoke` a published blueprint by handle (wire-legacy: recipe).
     Invoke(verbs::invoke::InvokeArgs),
-    /// `submit` a built-in demo run.
-    Submit(verbs::submit::SubmitArgs),
     /// `blueprint run` — author a Tier-1 DAG and run it (SubmitWorkflow).
     Blueprint(verbs::blueprint::BlueprintArgs),
     /// `chain run` — author a Tier-1 DAG from the string-DSL and run it (SubmitWorkflow).
@@ -151,7 +148,6 @@ impl Cli {
             }
             Some("serve") => Ok(Cli::Serve(args.collect())),
             Some("invoke") => Ok(Cli::Invoke(verbs::invoke::parse(args)?)),
-            Some("submit") => Ok(Cli::Submit(verbs::submit::parse(args)?)),
             Some("blueprint") => Ok(Cli::Blueprint(verbs::blueprint::parse(args)?)),
             Some("chain") => Ok(Cli::Chain(verbs::chain::parse(args)?)),
             Some("projection") => Ok(Cli::Projection(verbs::projection::parse(args)?)),
@@ -218,7 +214,6 @@ async fn dispatch(cli: Cli) -> Result<(), CliError> {
         Cli::Runtime { argv, json } => run_engine(argv, json).await,
         Cli::Serve(rest) => serve(rest).await,
         Cli::Invoke(a) => verbs::invoke::execute(a).await,
-        Cli::Submit(a) => verbs::submit::execute(a).await,
         Cli::Blueprint(a) => verbs::blueprint::execute(a).await,
         Cli::Chain(a) => verbs::chain::execute(a).await,
         Cli::Projection(a) => verbs::projection::execute(a).await,
@@ -438,10 +433,6 @@ kx invoke <handle> --args <json> [--args-file <path>] [--wait] [--timeout-secs N
   Bind a PUBLISHED blueprint (wire-legacy: recipe) by handle (e.g. kx/recipes/echo) to JSON args and run it.
   With --wait, poll to completion and print the committed result (run the runtime like
   a function). Without --wait, print the async handle (instance_id/terminal_mote_id)."
-            .into(),
-        "submit" => "\
-kx submit --demo [--wait] [--timeout-secs N] [--out <file>] [client flags]
-  Submit a built-in PURE demo run via the low-level SubmitRun path."
             .into(),
         "blueprint" => "\
 kx blueprint run --file <dag.json> [--wait] [--timeout-secs N] [--out <file>] [client flags]

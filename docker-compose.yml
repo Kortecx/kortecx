@@ -51,22 +51,10 @@ services:
     tmpfs:
       - /tmp
     user: "10001:10001"
-    # PR-9b real, sandboxed Mote body-exec (kx/recipes/exec-demo): the embedded
-    # worker runs a real body in bubblewrap, which needs an unprivileged user
-    # namespace. Docker's DEFAULT seccomp profile BLOCKS that — so `kx serve`
-    # PROBES the sandbox at startup and, finding it unavailable, simply does NOT
-    # advertise exec-demo (an Invoke gets a clean refusal; the durable spine,
-    # `kx serve`, the `echo` recipe, health, TLS + restart/SIGTERM are unaffected).
-    # To OPT IN to real-exec — a deliberate hardening trade-off — uncomment the
-    # relaxed seccomp below. ⚠ `seccomp=unconfined` removes ALL syscall filtering
-    # for the WHOLE container (not just the body), re-opening the unprivileged-
-    # user-namespace / kernel-LPE surface: acceptable for single-tenant / loopback
-    # dev, but MULTI-TENANT or hostile-workload deployments MUST NOT enable it
-    # without a NARROW custom seccomp profile (allow only the namespace/mount
-    # syscalls — the follow-on). On macOS the host path uses sandbox-exec (no
-    # namespaces), so none of this applies there.
-    # security_opt:
-    #   - seccomp=unconfined
+    # The container runs under Docker's DEFAULT seccomp profile (no relaxation). The
+    # serve path produces real output via the honest passthrough + (with an inference
+    # build + model) on-device LLM inference — no real-process body-exec is provisioned
+    # in OSS, so no syscall-filter relaxation is needed.
     # A2: a purpose-built liveness probe — `kx health` calls grpc.health.v1 and exits
     # 0 iff the gateway reports SERVING. Unauthenticated by design (the health service
     # is not behind the auth interceptor), so it needs no token.

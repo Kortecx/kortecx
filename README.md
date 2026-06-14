@@ -138,7 +138,7 @@ kx serve --journal /tmp/kx.db --content /tmp/kx-content --dev-allow-local
 kx invoke kx/recipes/echo --args '{"topic":"durable agents"}' --wait
 
 # A real multi-node DAG, model-free: root → 3 children → gather (5 steps, all committed).
-kx invoke kx/recipes/fanout-demo --args '{}' --wait
+kx invoke kx/recipes/passthrough-dag --args '{}' --wait
 ```
 
 **3. Inspect anything** — the DAG, a committed result, the live event stream:
@@ -263,7 +263,6 @@ prefer the file — `--token` is visible in `ps`) · `--tls-ca <pem>` (for
 | Command | What it does | Flags |
 |---|---|---|
 | `kx invoke <handle>` | run a published blueprint to a committed result | `--args <json>` / `--args-file <path>` (exactly one) · `--wait` · `--timeout-secs <N>` (default 120) · `--out <file>` |
-| `kx submit --demo` | submit the built-in pure demo run | `--wait` · `--timeout-secs` · `--out` |
 | `kx projection` | render a run as a DAG of step states | `--instance <hex>` · `--at-seq <N>` (time-travel) |
 | `kx content` | fetch a committed result (raw bytes, binary-safe) | `--ref <hex>` · `--instance <hex>` · `--out <file>` |
 | `kx events` | print or live-tail a run's event deltas | `--instance <hex>` · `--since <N>` · `--follow` |
@@ -294,20 +293,18 @@ kx tools score --intent "read a file from disk" --tool fs-read@1 --json | jq '.r
 | `KX_KV_TYPE` | inference | KV-cache quantization type |
 | `KX_N_THREADS` | inference | CPU threads for inference |
 | `KX_MCP_ECHO_PATH` | `kx serve` | override the bundled `mcp-echo` tool binary path |
-| `KX_DEMO_BODY_PATH` | `kx serve` | override the `exec-demo` sandboxed body binary path |
 | `KX_VERSION` / `KX_INSTALL_DIR` | installer | release tag / install directory |
 
 ## Blueprints
 
 A **Blueprint** is a reusable, parameterized workflow published by handle. The
 server validates your typed inputs, compiles the workflow to a step DAG, and runs
-it with the full durability guarantee. Five ship with `kx serve`:
+it with the full durability guarantee. Four ship with `kx serve`:
 
 | Handle | What it runs | Inputs | Available |
 |---|---|---|---|
-| `kx/recipes/echo` | one deterministic step | `topic` (str) | always |
-| `kx/recipes/fanout-demo` | a 5-step fan-out → gather DAG | — | always |
-| `kx/recipes/exec-demo` | a real sandboxed process step | — | when the demo body binary is present |
+| `kx/recipes/echo` | one deterministic step (echoes your `topic`) | `topic` (str) | always |
+| `kx/recipes/passthrough-dag` | a 5-step fan-out → gather DAG | — | always |
 | `kx/recipes/chat` | one LLM completion over your model | `prompt` (str) | inference build + `KX_SERVE_MODEL_GGUF` |
 | `kx/recipes/react` | the live ReAct agent loop with tools | `instruction` (str) · `max_turns` (1–8, default 8) · `max_tool_calls` (< max_turns, default 6) | inference build + model + tool |
 

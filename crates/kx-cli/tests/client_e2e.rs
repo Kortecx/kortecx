@@ -1,7 +1,7 @@
 //! End-to-end witnesses over a REAL bound port: the operator hosts a gateway
 //! in-process, an analyst drives the `kx` CLIENT verbs as subprocesses. Covers
 //! the real-life flow — invoke a recipe, inspect the projection, fetch the
-//! committed result, tail events — plus `submit --demo` and a restart.
+//! committed result, tail events — plus a restart.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
 
@@ -40,7 +40,7 @@ async fn invoke_projection_content_events_flow() {
     let result_ref = mote["result_ref"].as_str().unwrap().to_string();
     assert_eq!(result_ref.len(), 64);
 
-    // (3) content: the human path writes RAW bytes == the worker's demo result.
+    // (3) content: the human path writes RAW bytes == the worker's committed output.
     let content = run_kx(argv(&[
         "content",
         "--ref",
@@ -75,20 +75,6 @@ async fn invoke_projection_content_events_flow() {
             .is_some_and(|v| v["kind"] == "committed" && v["mote_id"] == terminal)
     });
     assert!(saw_committed, "events reported the Committed delta");
-
-    running.shutdown().await.unwrap();
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn submit_demo_commits() {
-    let dir = TempDir::new().unwrap();
-    let running = start_gateway(&dir, true, HashMap::new()).await;
-    let ep = endpoint(&running);
-
-    let out = run_kx(argv(&["submit", "--demo", "--endpoint", &ep, "--json"])).await;
-    let v = json_ok(&out);
-    assert_eq!(v["instance_id"].as_str().unwrap().len(), 32);
-    assert_eq!(v["recipe_fingerprint"].as_str().unwrap().len(), 64);
 
     running.shutdown().await.unwrap();
 }

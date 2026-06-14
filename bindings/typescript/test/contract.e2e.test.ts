@@ -291,7 +291,7 @@ describe("edge cases", () => {
 
 // --- UI-2: run enumeration + recipe catalog (the new additive RPCs) ----------
 
-const FANOUT_HANDLE = "kx/recipes/fanout-demo";
+const FANOUT_HANDLE = "kx/recipes/passthrough-dag";
 
 describe("UI-2 run enumeration", () => {
   it("listRuns is empty before any run, then enumerates the durable instance", async () => {
@@ -364,7 +364,7 @@ describe("UI-2 recipe catalog", () => {
 
 // --- UI-3: teams (membership) + sharing (grants) viewers ---------------------
 
-const DEMO_TEAM = "kx/teams/demo";
+const DEMO_TEAM = "kx/teams/workspace";
 
 describe("UI-3 teams viewer", () => {
   it("listTeams enumerates the bootstrap-seeded demo team", async () => {

@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::time::Duration;
 
-use kx_gateway::{start, DEMO_RECIPE_HANDLE, FANOUT_RECIPE_HANDLE};
+use kx_gateway::{start, DEMO_RECIPE_HANDLE, PASSTHROUGH_DAG_HANDLE};
 use kx_proto::proto;
 use kx_proto::proto::kx_gateway_client::KxGatewayClient;
 use tonic::transport::Channel;
@@ -50,7 +50,7 @@ async fn list_recipes_enumerates_the_provisioned_handles() {
         .recipes;
     let handles: Vec<&str> = recipes.iter().map(|r| r.handle.as_str()).collect();
     assert!(handles.contains(&DEMO_RECIPE_HANDLE));
-    assert!(handles.contains(&FANOUT_RECIPE_HANDLE));
+    assert!(handles.contains(&PASSTHROUGH_DAG_HANDLE));
 
     running.shutdown().await.unwrap();
 }
@@ -128,7 +128,7 @@ async fn list_runs_enumerates_the_durable_registered_run() {
         .into_inner();
     let fan = c
         .invoke(proto::InvokeRequest {
-            handle: FANOUT_RECIPE_HANDLE.to_string(),
+            handle: PASSTHROUGH_DAG_HANDLE.to_string(),
             args: b"{}".to_vec(),
         })
         .await

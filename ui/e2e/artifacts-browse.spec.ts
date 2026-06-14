@@ -14,7 +14,7 @@ test("artifacts: browse a run's committed outputs and review one", async ({ page
   await connectConsole(page, gw);
 
   // Run the 5-node fanout recipe so the run has several committed artifacts.
-  await runRecipe(page, { handle: "kx/recipes/fanout-demo" });
+  await runRecipe(page, { handle: "kx/recipes/passthrough-dag" });
   await expect(page.getByTestId("mote-dag")).toBeVisible({ timeout: 30_000 });
   await expect
     .poll(() => page.getByTestId("state-pill").filter({ hasText: "COMMITTED" }).count(), {

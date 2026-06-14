@@ -79,7 +79,7 @@ npm run dev            # Vite dev server on http://localhost:5173
 `http://127.0.0.1:50151`, then run a blueprint and watch the DAG execute:
 
 - **`kx/recipes/echo`** (pre-filled, args `{"topic":"hello"}`) — a single COMMITTED node.
-- **`kx/recipes/fanout-demo`** (args `{}`) — a **5-node** fan-out → gather DAG
+- **`kx/recipes/passthrough-dag`** (args `{}`) — a **5-node** fan-out → gather DAG
   (root → 3 children → gather) that runs model-free and lights up to COMMITTED. The
   best way to see the graph view.
 
@@ -100,13 +100,13 @@ npm run test:e2e       # Playwright (chromium) — builds + previews + drives a 
   the no-relayout-on-state-only-poll invariant, the dynamic-child-appearance path,
   the >500-node table fallback, error → UI mapping, and the poll-stop logic.
 - **Contract** test (`// @vitest-environment node`, gated on `KX_BIN`) drives a real
-  `kx serve`: echo's empty `parents[]` proves the edge wire end-to-end, `fanout-demo`
+  `kx serve`: echo's empty `parents[]` proves the edge wire end-to-end, `passthrough-dag`
   proves a real multi-node `parents[]` DAG, and byte-parity with the `kx` CLI holds.
 - **E2E** (Playwright) proves the real browser gRPC-web + CORS path: echo reaching
-  COMMITTED in the DAG, and the `fanout-demo` graph rendering all 5 nodes COMMITTED.
+  COMMITTED in the DAG, and the `passthrough-dag` graph rendering all 5 nodes COMMITTED.
 
 The agentic-shaper-children path needs on-device inference (Metal) and is exercised
-**locally** only; CI uses the deterministic, no-model `echo` + `fanout-demo` paths (SN-7).
+**locally** only; CI uses the deterministic, no-model `echo` + `passthrough-dag` paths (SN-7).
 
 ## Scale note
 

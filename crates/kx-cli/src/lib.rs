@@ -22,11 +22,11 @@
 //!   CLI never re-implements the orchestrator).
 //! - **`serve`** — forward to [`kx_gateway::serve`] (the embedded single-system
 //!   server). `--listen` defaults to `127.0.0.1:50151` when omitted.
-//! - **`invoke` / `submit` / `projection` / `content` / `events` /
-//!   `signatures`** — gRPC client calls over the gateway. `invoke`/`submit`
-//!   accept `--wait` to run-to-result (poll the projection, then fetch the
-//!   committed content) and print one parseable object; every verb accepts
-//!   `--json`.
+//! - **`invoke` / `projection` / `content` / `events` /
+//!   `signatures`** — gRPC client calls over the gateway. `invoke` (and the
+//!   authoring verbs `blueprint`/`chain`) accept `--wait` to run-to-result (poll
+//!   the projection, then fetch the committed content) and print one parseable
+//!   object; every verb accepts `--json`.
 //!
 //! ## Discipline
 //!

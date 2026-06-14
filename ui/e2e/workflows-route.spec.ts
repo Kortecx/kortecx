@@ -51,7 +51,7 @@ test("workflows: sidebar lands on the run list; the detail tabs are URL-addressa
   await expect(page.getByTestId("runs-section")).toBeVisible();
 
   // Run a blueprint → its detail page is /workflows/$instanceId.
-  await runRecipe(page, { handle: "kx/recipes/fanout-demo" });
+  await runRecipe(page, { handle: "kx/recipes/passthrough-dag" });
   await expect(page.getByTestId("mote-dag")).toBeVisible({ timeout: 30_000 });
   await expect(page).toHaveURL(/\/workflows\/[0-9a-f]{32}/);
   await expect

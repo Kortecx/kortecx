@@ -6,6 +6,29 @@ development; interfaces may change before 1.0 — pin a commit if you build on i
 
 ## [Unreleased]
 
+### Changed
+
+- **The bootstrap demo team is now a workspace team** (`kx/teams/workspace`) whose
+  members are the real configured parties (the `--auth-token` parties + the
+  `local-dev` dev principal) — no fabricated/demo identity. **Upgrade note:** on a
+  REUSED `kx serve` data dir the old `kx/teams/demo` rows are orphaned (the
+  membership/grant ledgers are append-only and never delete), so both the old demo
+  team and the new workspace team appear until the data dir is reset — a **fresh data
+  dir is recommended** on upgrade. (gateway/UI)
+- **`kx/recipes/fanout-demo` is renamed `kx/recipes/passthrough-dag`** — an honest
+  multi-node fan-out → gather DAG whose every node passes its real input through.
+
+### Removed
+
+- **Demo scaffolding (Golden Rule 15 — real-model integrity).** The `kx submit --demo`
+  CLI verb, the `kx/recipes/exec-demo` recipe (and its `KX_DEMO_BODY_PATH` override),
+  and the fabricated `"kx demo result for mote …"` placeholder are gone. Every runnable
+  surface now produces **real** output — an honest deterministic passthrough for PURE
+  steps, or real on-device model inference for model recipes. Use `kx invoke
+  kx/recipes/echo` (or any published blueprint) instead of `kx submit --demo`. The
+  platform sandbox machinery is retained as a stable seam for a future tools/scripts
+  capability.
+
 ## [0.1.1] — 2026-06-10
 
 A patch release from the clean-install verification campaign — two bugs caught

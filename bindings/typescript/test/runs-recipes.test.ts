@@ -224,7 +224,7 @@ describe("RecipeForm.fromProto", () => {
   });
 
   it("an empty form (no free-params) is a valid form", () => {
-    const resp = create(GetRecipeFormResponseSchema, { handle: "kx/recipes/fanout-demo" });
+    const resp = create(GetRecipeFormResponseSchema, { handle: "kx/recipes/passthrough-dag" });
     const form = RecipeForm.fromProto(resp);
     expect(form.fields).toHaveLength(0);
   });

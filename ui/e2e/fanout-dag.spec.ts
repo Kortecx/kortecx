@@ -9,14 +9,14 @@ test.afterEach(() => {
   gw = undefined;
 });
 
-test("submit fanout-demo → the live DAG renders the whole fan-out → gather graph (COMMITTED)", async ({
+test("submit passthrough-dag → the live DAG renders the whole fan-out → gather graph (COMMITTED)", async ({
   page,
 }) => {
   gw = await spawnGateway({ corsOrigin: SPA_ORIGIN });
   await connectConsole(page, gw);
 
   // Run the model-free multi-node fanout recipe (no free-params) via its catalog form.
-  await runRecipe(page, { handle: "kx/recipes/fanout-demo" });
+  await runRecipe(page, { handle: "kx/recipes/passthrough-dag" });
 
   // The live DAG materializes the entire graph: root + 3 children + gather = 5 nodes.
   await expect(page.getByTestId("mote-dag")).toBeVisible({ timeout: 30_000 });

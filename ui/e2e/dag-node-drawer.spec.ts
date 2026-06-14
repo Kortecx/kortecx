@@ -13,7 +13,7 @@ test("dag: clicking a Mote opens the detail drawer with its committed result", a
   gw = await spawnGateway({ corsOrigin: SPA_ORIGIN });
   await connectConsole(page, gw);
 
-  await runRecipe(page, { handle: "kx/recipes/fanout-demo" });
+  await runRecipe(page, { handle: "kx/recipes/passthrough-dag" });
   await expect(page.getByTestId("mote-dag")).toBeVisible({ timeout: 30_000 });
   await expect
     .poll(() => page.getByTestId("state-pill").filter({ hasText: "COMMITTED" }).count(), {

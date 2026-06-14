@@ -38,9 +38,12 @@ describe("chat settings persistence", () => {
   });
 
   it("merges a partial stored value over defaults", () => {
-    localStorage.setItem("kortecx.ui.chat", JSON.stringify({ handle: "kx/recipes/exec-demo" }));
+    localStorage.setItem(
+      "kortecx.ui.chat",
+      JSON.stringify({ handle: "kx/recipes/passthrough-dag" }),
+    );
     const s = loadChatSettings();
-    expect(s.handle).toBe("kx/recipes/exec-demo");
+    expect(s.handle).toBe("kx/recipes/passthrough-dag");
     expect(s.promptKey).toBe(DEFAULT_CHAT_SETTINGS.promptKey);
     expect(s.showThinking).toBe(DEFAULT_CHAT_SETTINGS.showThinking);
   });

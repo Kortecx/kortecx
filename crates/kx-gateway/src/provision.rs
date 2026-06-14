@@ -120,22 +120,16 @@ fn short_label(id: &[u8; 32]) -> String {
 /// library is a later PR, R6.) Shared with the e2e test (no drift).
 pub const DEMO_RECIPE_HANDLE: &str = "kx/recipes/echo";
 
-/// The wire handle of the PR-9b real-exec demo recipe: a PURE step whose body
-/// is a REAL binary the embedded worker runs inside the platform sandbox
-/// (bwrap/macOS). Provisioned only when a body binary was located at startup
-/// (see `real_exec::register_demo_body`); takes no free-params (the
-/// body's input is the Mote's identity). Shared with the e2e test (no drift).
-pub const EXEC_RECIPE_HANDLE: &str = "kx/recipes/exec-demo";
+/// The wire handle of the T3.3 deterministic MULTI-NODE recipe: a PURE fan-out →
+/// gather DAG (root → N children → gather) whose every node commits an HONEST
+/// passthrough of its declared input (GR15), so a single `Invoke` yields a real
+/// multi-node projection with DATA parent edges — the live-DAG viewer's
+/// end-to-end fixture. Always provisioned. Takes no free-params. Shared with the
+/// e2e test (no drift).
+pub const PASSTHROUGH_DAG_HANDLE: &str = "kx/recipes/passthrough-dag";
 
-/// The wire handle of the T3.3 deterministic MULTI-NODE demo recipe: a PURE
-/// fan-out → gather DAG (root → N children → gather) that runs model-free on the
-/// embedded storing executor, so a single `Invoke` yields a real multi-node
-/// projection with DATA parent edges — the live-DAG viewer's end-to-end fixture.
-/// Always provisioned. Takes no free-params. Shared with the e2e test (no drift).
-pub const FANOUT_RECIPE_HANDLE: &str = "kx/recipes/fanout-demo";
-
-/// The fan-out width of [`FANOUT_RECIPE_HANDLE`]: root + `FANOUT_WIDTH` children +
-/// gather = `FANOUT_WIDTH + 2` Motes. Three keeps the demo graph legible.
+/// The fan-out width of [`PASSTHROUGH_DAG_HANDLE`]: root + `FANOUT_WIDTH` children +
+/// gather = `FANOUT_WIDTH + 2` Motes. Three keeps the DAG legible.
 const FANOUT_WIDTH: u8 = 3;
 
 /// The content-ref of the demo recipe's single typed free-param (`topic`).
@@ -237,8 +231,9 @@ pub struct DemoLibrary {
     /// one open, three seams (binder + grant view + the membership-resolve fleet),
     /// no second `grants.db` handle racing.
     grants: std::sync::Arc<SqliteGrantLedger>,
-    /// Per-handle binding metadata — one entry per seeded recipe (the demo
-    /// `echo` always; the PR-9b real-exec `exec-demo` when a body was located).
+    /// Per-handle binding metadata — one entry per seeded recipe (the `echo`
+    /// passthrough + `passthrough-dag` always; `chat`/`react`/`vision` when a
+    /// fit serve model / bundled tool resolved).
     /// `bind` looks the handle up here for its owner-root warrant + free-param
     /// contract; an unknown handle is a uniform `NotAuthorized` (no oracle).
     recipes: Vec<(AssetPath, RecipeMeta)>,
@@ -273,28 +268,13 @@ impl DemoLibrary {
         exec_class: ExecutorClass,
         parties: &[String],
     ) -> Result<Self, GatewayError> {
-        Self::seed(dir, exec_class, parties, None, None, None, false)
+        Self::seed(dir, exec_class, parties, None, None, false)
     }
 
-    /// Like [`DemoLibrary::open`], plus (when `real_body_ref` is `Some`) seeds the
-    /// PR-9b real-exec recipe [`EXEC_RECIPE_HANDLE`] whose step body is the located
-    /// sandbox binary. `None` ⇒ byte-identical to [`DemoLibrary::open`].
-    ///
-    /// # Errors
-    /// [`GatewayError::Catalog`] on a ledger open / seed failure.
-    pub fn open_with_real_exec(
-        dir: &Path,
-        exec_class: ExecutorClass,
-        parties: &[String],
-        real_body_ref: Option<ContentRef>,
-    ) -> Result<Self, GatewayError> {
-        Self::seed(dir, exec_class, parties, real_body_ref, None, None, false)
-    }
-
-    /// Like [`DemoLibrary::open_with_real_exec`], plus (when `serve_model` is
-    /// `Some`) the AL1 model recipe [`MODEL_RECIPE_HANDLE`] — a PURE (greedy)
-    /// model step routed to `serve_model` with a `prompt` free-param. `None` ⇒
-    /// byte-identical to [`DemoLibrary::open_with_real_exec`].
+    /// Like [`DemoLibrary::open`], plus (when `serve_model` is `Some`) the AL1
+    /// model recipe [`MODEL_RECIPE_HANDLE`] — a PURE (greedy) model step routed
+    /// to `serve_model` with a `prompt` free-param. `None` ⇒ byte-identical to
+    /// [`DemoLibrary::open`].
     ///
     /// # Errors
     /// [`GatewayError::Catalog`] on a ledger open / seed failure.
@@ -305,18 +285,9 @@ impl DemoLibrary {
         dir: &Path,
         exec_class: ExecutorClass,
         parties: &[String],
-        real_body_ref: Option<ContentRef>,
         serve_model: Option<ModelId>,
     ) -> Result<Self, GatewayError> {
-        Self::seed(
-            dir,
-            exec_class,
-            parties,
-            real_body_ref,
-            serve_model.as_ref(),
-            None,
-            false,
-        )
+        Self::seed(dir, exec_class, parties, serve_model.as_ref(), None, false)
     }
 
     /// Like [`DemoLibrary::open_full`], plus (when `react_tool` is `Some` AND a
@@ -332,25 +303,17 @@ impl DemoLibrary {
         dir: &Path,
         exec_class: ExecutorClass,
         parties: &[String],
-        real_body_ref: Option<ContentRef>,
         serve_model: Option<&ModelId>,
         react_tool: Option<&(ToolName, ToolVersion)>,
         vision: bool,
     ) -> Result<Self, GatewayError> {
-        Self::seed(
-            dir,
-            exec_class,
-            parties,
-            real_body_ref,
-            serve_model,
-            react_tool,
-            vision,
-        )
+        Self::seed(dir, exec_class, parties, serve_model, react_tool, vision)
     }
 
-    /// Open the durable ledgers under `dir` and idempotently seed the demo `echo`
-    /// recipe (always) plus the real-exec `exec-demo` recipe (when `real_body_ref`
-    /// is `Some`). Re-opening on restart is a no-op (content-addressed bodies +
+    /// Open the durable ledgers under `dir` and idempotently seed the `echo`
+    /// passthrough recipe + the `passthrough-dag` multi-node recipe (always),
+    /// plus `chat`/`react`/`vision` when a fit serve model / bundled tool
+    /// resolved. Re-opening on restart is a no-op (content-addressed bodies +
     /// guarded version publish + idempotent grants).
     // A flat, sequential one-block-per-recipe seeding fn — the length is the
     // recipe count, not cognitive complexity (the `start_impl` precedent).
@@ -359,7 +322,6 @@ impl DemoLibrary {
         dir: &Path,
         exec_class: ExecutorClass,
         parties: &[String],
-        real_body_ref: Option<ContentRef>,
         serve_model: Option<&ModelId>,
         react_tool: Option<&(ToolName, ToolVersion)>,
         vision: bool,
@@ -397,38 +359,12 @@ impl DemoLibrary {
             },
         ));
 
-        // (fanout-demo) the T3.3 PURE multi-node recipe — a fan-out → gather DAG that
-        // runs model-free on the storing executor (see `seed_fanout_demo`). Always
-        // seeded; no free-params.
-        recipes.push(seed_fanout_demo(
+        // (passthrough-dag) the T3.3 PURE multi-node recipe — a fan-out → gather
+        // DAG that runs model-free on the honest passthrough executor (see
+        // `seed_passthrough_dag`). Always seeded; no free-params.
+        recipes.push(seed_passthrough_dag(
             &versions, &bodies, &grants, &owner, parties, exec_class,
         )?);
-
-        // (exec-demo) the PR-9b real-exec recipe — step logic_ref == the located
-        // body's content ref, a sandbox warrant, no free-params. Seeded only when
-        // a body binary was found.
-        if let Some(body_ref) = real_body_ref {
-            let exec_warrant = real_exec_warrant(exec_class);
-            let exec_handle = exec_handle()?;
-            let step_logic = LogicRef::from_bytes(*body_ref.as_bytes());
-            seed_recipe(
-                &versions,
-                &bodies,
-                &grants,
-                &owner,
-                parties,
-                &exec_handle,
-                recipe_body(step_logic, &exec_warrant, &[]),
-                &exec_warrant,
-            )?;
-            recipes.push((
-                exec_handle,
-                RecipeMeta {
-                    owner_root: exec_warrant,
-                    free_params: FreeParamContract::new(),
-                },
-            ));
-        }
 
         // (chat) the AL1 model recipe — a single PURE (greedy) model step routed
         // to the served model, with a `prompt` free-param. Seeded only when a fit
@@ -1131,14 +1067,9 @@ fn demo_handle() -> Result<AssetPath, GatewayError> {
         .ok_or_else(|| GatewayError::Catalog("invalid demo recipe handle".into()))
 }
 
-fn exec_handle() -> Result<AssetPath, GatewayError> {
-    parse_handle(EXEC_RECIPE_HANDLE)
-        .ok_or_else(|| GatewayError::Catalog("invalid exec recipe handle".into()))
-}
-
-fn fanout_handle() -> Result<AssetPath, GatewayError> {
-    parse_handle(FANOUT_RECIPE_HANDLE)
-        .ok_or_else(|| GatewayError::Catalog("invalid fanout recipe handle".into()))
+fn passthrough_dag_handle() -> Result<AssetPath, GatewayError> {
+    parse_handle(PASSTHROUGH_DAG_HANDLE)
+        .ok_or_else(|| GatewayError::Catalog("invalid passthrough-dag recipe handle".into()))
 }
 
 fn blueprint_author_handle() -> Result<AssetPath, GatewayError> {
@@ -1190,11 +1121,11 @@ fn seed_blueprint_asset(
     Ok(())
 }
 
-/// Seed the T3.3 PURE multi-node `fanout-demo` recipe and return its
+/// Seed the T3.3 PURE multi-node `passthrough-dag` recipe and return its
 /// `(handle, meta)` for the binder's recipe table. Factored out of
 /// [`DemoLibrary::seed`] so the orchestrator stays within the line budget and each
 /// recipe reads as a self-contained unit.
-fn seed_fanout_demo(
+fn seed_passthrough_dag(
     versions: &SqliteVersionLedger,
     bodies: &SqliteBodyLedger,
     grants: &SqliteGrantLedger,
@@ -1203,7 +1134,7 @@ fn seed_fanout_demo(
     exec_class: ExecutorClass,
 ) -> Result<(AssetPath, RecipeMeta), GatewayError> {
     let warrant = demo_warrant(exec_class);
-    let handle = fanout_handle()?;
+    let handle = passthrough_dag_handle()?;
     let body = multinode_recipe_body(&warrant)?;
     seed_recipe(
         versions, bodies, grants, owner, parties, &handle, body, &warrant,
@@ -1236,7 +1167,7 @@ fn multinode_recipe_body(warrant: &WarrantSpec) -> Result<WorkflowDef, GatewayEr
             LogicRef::from_bytes([tag; 32]),
             model_id.clone(),
             warrant.clone(),
-            ToolName("fanout-demo".into()),
+            ToolName("passthrough-dag".into()),
         )
     };
 
@@ -1514,76 +1445,6 @@ fn demo_warrant(exec_class: ExecutorClass) -> WarrantSpec {
     }
 }
 
-/// The PR-9b real-exec recipe warrant: the sandbox scope under which the embedded
-/// worker runs the located body binary. The body + its per-Mote input are
-/// materialized as tempfiles under the process temp dir, so the scope grants
-/// `ExecOnly` on the (canonicalized) temp dir — and, on macOS only, `ReadOnly` on
-/// `/` so dyld can load libsystem (mirrors the proven `kx-executor`
-/// `integration_body_resolver` warrant). Network is fully isolated
-/// (`NetScope::None`). `executor_class` MUST equal the embedded worker's so the
-/// bound run leases. NOTE: the temp dir is host-specific but stable across
-/// restarts for the same user — adequate for the single-system demo recipe.
-pub(crate) fn real_exec_warrant(exec_class: ExecutorClass) -> WarrantSpec {
-    let tempdir = std::env::temp_dir();
-    let tempdir = std::fs::canonicalize(&tempdir).unwrap_or(tempdir);
-    let mut mounts = std::collections::BTreeMap::new();
-    if exec_class == ExecutorClass::MacOsSandbox {
-        // dyld/libsystem load (SBPL file-read*); bwrap binds /usr,/lib,/lib64,/etc
-        // itself, so Linux needs no `/` mount.
-        mounts.insert(std::path::PathBuf::from("/"), FsMode::ReadOnly);
-    }
-    // process-exec on the materialized body (+ read of body/input under the same
-    // dir; on Linux ExecOnly maps to a bwrap `--ro-bind`, which permits exec).
-    mounts.insert(tempdir, FsMode::ExecOnly);
-    WarrantSpec {
-        mote_class: MoteClass::Pure,
-        nd_class: MoteClass::Pure,
-        fs_scope: FsScope { mounts },
-        net_scope: NetScope::None,
-        syscall_profile_ref: ContentRef::from_bytes([0u8; 32]),
-        tool_grants: BTreeSet::new(),
-        // The body is PURE (no model call), but the warrant-narrowing `intersect`
-        // (kx-warrant) rejects a zero model-route ceiling as structurally invalid,
-        // so declare positive ceilings (the sandbox backends ignore `model_route`).
-        model_route: ModelRoute {
-            model_id: kx_mote::ModelId("local".into()),
-            max_input_tokens: 4_096,
-            max_output_tokens: 512,
-            max_calls: 1,
-        },
-        resource_ceiling: real_exec_ceiling(exec_class),
-        environment_ref: None,
-        executor_class: exec_class,
-        ..Default::default()
-    }
-}
-
-/// The body's resource ceiling, platform-split. On Linux/bwrap, bound mem/CPU/FD
-/// so a misbehaving body can't OOM or CPU-spin the container (it only ever has a
-/// RO tempdir, so `disk_bytes`/`RLIMIT_FSIZE` stays unbounded). On macOS the axes
-/// stay 0: a tight `RLIMIT_AS` (mem_bytes) is rejected for the body's
-/// virtual-address reservation (`setrlimit` → `_exit(80)`), so the 30 s wall clock
-/// is the only backstop there. `intersect` does not validate ceiling zeros.
-fn real_exec_ceiling(exec_class: ExecutorClass) -> ResourceCeiling {
-    if exec_class == ExecutorClass::Bwrap {
-        ResourceCeiling {
-            cpu_milli: 5_000,     // ceil → 5 s of CPU time (a hash body uses ms)
-            mem_bytes: 512 << 20, // 512 MiB RLIMIT_AS — ample for a small binary
-            wall_clock_ms: 30_000,
-            fd_count: 256,
-            disk_bytes: 0,
-        }
-    } else {
-        ResourceCeiling {
-            cpu_milli: 0,
-            mem_bytes: 0,
-            wall_clock_ms: 30_000,
-            fd_count: 0,
-            disk_bytes: 0,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1709,7 +1570,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let binder = demo_lib(dir.path());
         let bound = binder
-            .bind("alice@acme", FANOUT_RECIPE_HANDLE, b"{}")
+            .bind("alice@acme", PASSTHROUGH_DAG_HANDLE, b"{}")
             .await
             .unwrap();
         // root + FANOUT_WIDTH children + gather = a genuine multi-node DAG.
@@ -1722,7 +1583,7 @@ mod tests {
         }
         // Idempotent: identical (empty) args → identical terminal identity.
         let again = binder
-            .bind("alice@acme", FANOUT_RECIPE_HANDLE, b"{}")
+            .bind("alice@acme", PASSTHROUGH_DAG_HANDLE, b"{}")
             .await
             .unwrap();
         assert_eq!(bound.terminal_mote_id, again.terminal_mote_id);
@@ -1908,7 +1769,6 @@ mod tests {
             dir.path(),
             ExecutorClass::Bwrap,
             &["alice@acme".to_string()],
-            None,
             Some(served.clone()),
         )
         .unwrap();
@@ -1972,36 +1832,6 @@ mod tests {
         assert!(b.is_ok(), "re-opening the durable demo library is a no-op");
     }
 
-    // --- PR-9b: the real-exec recipe (provisioning + bind path) -------------
-
-    /// When a body is registered, the `exec-demo` recipe binds for a granted
-    /// party (empty free-params → empty JSON args) and keeps the worker's
-    /// executor_class so the bound run leases. (The real sandboxed spawn is the
-    /// `#[ignore]` `real_exec_e2e` witness — this covers the durable bind path.)
-    #[tokio::test]
-    async fn exec_recipe_binds_when_a_body_is_registered() {
-        let dir = tempfile::tempdir().unwrap();
-        let lib = DemoLibrary::open_with_real_exec(
-            dir.path(),
-            ExecutorClass::Bwrap,
-            &["alice@acme".to_string()],
-            // The bind path resolves the recipe def + warrant only; the body bytes
-            // are fetched at EXECUTION (the resolver), so a stand-in ref binds fine.
-            Some(ContentRef::from_bytes([0x5a; 32])),
-        )
-        .unwrap();
-        let binder = HostRecipeBinder::new(lib);
-
-        let bound = binder
-            .bind("alice@acme", EXEC_RECIPE_HANDLE, b"{}")
-            .await
-            .expect("exec-demo binds for a granted party");
-        assert!(!bound.motes.is_empty());
-        for (_, w) in &bound.motes {
-            assert_eq!(w.executor_class, ExecutorClass::Bwrap);
-        }
-    }
-
     /// AL1: when a serve model is configured, the `chat` model recipe binds for a
     /// granted party — the bound model Mote carries the `prompt` (under
     /// [`PROMPT_KEY`]) + routes to the served model id, and keeps the worker's
@@ -2014,7 +1844,6 @@ mod tests {
             dir.path(),
             ExecutorClass::Bwrap,
             &["alice@acme".to_string()],
-            None,
             Some(model_id.clone()),
         )
         .unwrap();
@@ -2062,23 +1891,6 @@ mod tests {
         ));
     }
 
-    /// Without a registered body the `exec-demo` recipe is NOT provisioned, so it
-    /// is uniformly `NotAuthorized` (no existence oracle) — while `echo` still binds.
-    #[tokio::test]
-    async fn exec_recipe_absent_without_a_body() {
-        let dir = tempfile::tempdir().unwrap();
-        let binder = demo_lib(dir.path()); // open() ⇒ no real body
-        assert!(matches!(
-            binder.bind("alice@acme", EXEC_RECIPE_HANDLE, b"{}").await,
-            Err(BinderError::NotAuthorized)
-        ));
-        // The demo echo recipe is unaffected.
-        assert!(binder
-            .bind("alice@acme", DEMO_RECIPE_HANDLE, br#"{"topic":"x"}"#)
-            .await
-            .is_ok());
-    }
-
     // --- UI-2: the recipe-discovery accessors (ListRecipes / GetRecipeForm) ---
 
     #[test]
@@ -2091,9 +1903,9 @@ mod tests {
         )
         .unwrap();
         let handles = lib.recipe_handles();
-        // `echo` + `fanout-demo` are always seeded; `exec-demo`/`chat` are conditional.
+        // `echo` + `passthrough-dag` are always seeded; `chat`/`react`/`vision` are conditional.
         assert!(handles.contains(&DEMO_RECIPE_HANDLE.to_string()));
-        assert!(handles.contains(&FANOUT_RECIPE_HANDLE.to_string()));
+        assert!(handles.contains(&PASSTHROUGH_DAG_HANDLE.to_string()));
         assert!(!handles.contains(&MODEL_RECIPE_HANDLE.to_string()));
     }
 
@@ -2127,9 +1939,9 @@ mod tests {
         )
         .unwrap();
         let form = lib
-            .recipe_form(FANOUT_RECIPE_HANDLE)
-            .expect("fanout is provisioned");
-        assert!(form.is_empty(), "fanout-demo takes no free-params");
+            .recipe_form(PASSTHROUGH_DAG_HANDLE)
+            .expect("passthrough-dag is provisioned");
+        assert!(form.is_empty(), "passthrough-dag takes no free-params");
     }
 
     #[test]
@@ -2152,7 +1964,6 @@ mod tests {
             dir.path(),
             ExecutorClass::Bwrap,
             &["alice@acme".to_string()],
-            None,
             Some(ModelId("kx-serve:test-model".to_string())),
         )
         .unwrap();
@@ -2177,7 +1988,6 @@ mod tests {
             dir.path(),
             ExecutorClass::Bwrap,
             &["alice@acme".to_string()],
-            None,
             Some(&ModelId("kx-serve:vlm".to_string())),
             None,
             false,
@@ -2194,7 +2004,6 @@ mod tests {
             dir2.path(),
             ExecutorClass::Bwrap,
             &["alice@acme".to_string()],
-            None,
             Some(&ModelId("kx-serve:vlm".to_string())),
             None,
             true,

@@ -247,7 +247,7 @@ def test_submit_run_low_level_validates(dev_server):
 
 # --- UI-2: run enumeration + recipe catalog ----------------------------------
 
-FANOUT_HANDLE = "kx/recipes/fanout-demo"
+FANOUT_HANDLE = "kx/recipes/passthrough-dag"
 
 
 def test_list_runs_empty_then_enumerates_the_durable_instance(dev_server):
@@ -298,7 +298,7 @@ def test_get_recipe_form_echo_topic_and_unknown_not_found(dev_server):
 
 # --- UI-3: teams (membership) + sharing (grants) viewers --------------------
 
-DEMO_TEAM = "kx/teams/demo"
+DEMO_TEAM = "kx/teams/workspace"
 
 
 def test_list_teams_enumerates_the_seeded_demo_team(dev_server):

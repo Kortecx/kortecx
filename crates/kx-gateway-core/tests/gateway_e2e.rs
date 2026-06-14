@@ -897,7 +897,7 @@ async fn recipe_rpcs_dispatch_to_the_catalog_seam() {
 
 // --- UI-3: the teams (MembershipView) + grants (GrantView) read seams --------
 
-/// A mock [`MembershipView`] exposing one `kx/teams/demo` team with two members
+/// A mock [`MembershipView`] exposing one `kx/teams/workspace` team with two members
 /// (alice = owner-side member; bob = a delegate). `list_members` returns a resolved
 /// warrant ONLY when an `asset_ref` is supplied (the resolve-member-warrant toggle).
 struct MockMembershipView;
@@ -905,14 +905,14 @@ struct MockMembershipView;
 impl MembershipView for MockMembershipView {
     fn list_teams(&self) -> Vec<TeamSummaryEntry> {
         vec![TeamSummaryEntry {
-            team_id: "kx/teams/demo".to_string(),
-            display_name: "Demo Team".to_string(),
+            team_id: "kx/teams/workspace".to_string(),
+            display_name: "Workspace".to_string(),
             owner: "kx-gateway".to_string(),
             member_count: 2,
         }]
     }
     fn list_members(&self, team_id: &str, asset_ref: Option<&str>) -> Option<TeamMembersView> {
-        if team_id != "kx/teams/demo" {
+        if team_id != "kx/teams/workspace" {
             return None;
         }
         let warrant = asset_ref.map(|_| WarrantProjection {
@@ -997,7 +997,7 @@ async fn team_and_grant_rpcs_unimplemented_without_seams() {
     assert_eq!(
         client
             .list_team_members(proto::ListTeamMembersRequest {
-                team_id: "kx/teams/demo".to_string(),
+                team_id: "kx/teams/workspace".to_string(),
                 asset_ref: None,
             })
             .await
@@ -1072,14 +1072,14 @@ async fn team_rpcs_dispatch_to_the_membership_view() {
         .unwrap()
         .into_inner();
     assert_eq!(teams.teams.len(), 1);
-    assert_eq!(teams.teams[0].team_id, "kx/teams/demo");
+    assert_eq!(teams.teams[0].team_id, "kx/teams/workspace");
     assert_eq!(teams.teams[0].owner, "kx-gateway");
     assert_eq!(teams.teams[0].member_count, 2);
 
     // Without asset_ref: members + roles, NO resolved warrant.
     let members = client
         .list_team_members(proto::ListTeamMembersRequest {
-            team_id: "kx/teams/demo".to_string(),
+            team_id: "kx/teams/workspace".to_string(),
             asset_ref: None,
         })
         .await
@@ -1104,7 +1104,7 @@ async fn team_rpcs_dispatch_to_the_membership_view() {
     // With asset_ref: each member carries the resolved-warrant projection.
     let with_asset = client
         .list_team_members(proto::ListTeamMembersRequest {
-            team_id: "kx/teams/demo".to_string(),
+            team_id: "kx/teams/workspace".to_string(),
             asset_ref: Some("kx/recipes/echo".to_string()),
         })
         .await

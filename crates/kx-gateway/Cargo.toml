@@ -59,7 +59,7 @@ kx-refusal      = { workspace = true }
 # PR-2d-1: the model-proposed tool-call AUTHORITY GATE — the react turn arm's
 # pre-commit fence decodes through the ONE shared crate (never a byte-mirror).
 kx-toolcall     = { workspace = true }
-# Inline parent-edge storage for the demo Mote built by `demo_submit_run_request`
+# Inline parent-edge storage for the PURE Mote built by `pure_run_request`
 # (`Mote::new`'s `parents` is a `SmallVec<[ParentRef; 4]>`). Promoted from a dev-dep
 # (R3) so the helper is a NORMAL public library fn. FFI-free (the dep_wall forbids
 # only the llama.cpp FFI crates).

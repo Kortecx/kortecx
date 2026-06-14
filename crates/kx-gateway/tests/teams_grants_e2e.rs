@@ -1,6 +1,6 @@
 //! End-to-end witnesses for the UI-3 additive RPCs over a REAL bound port:
 //!
-//! - `ListTeams` enumerates the bootstrap-seeded demo team (owner + members);
+//! - `ListTeams` enumerates the bootstrap-seeded workspace team (owner + members);
 //! - `ListTeamMembers` shows each member's role + caps, with a Delegate for role
 //!   variety; with an `asset_ref` it populates the resolved warrant (membership ∩
 //!   grant, ⊆ the team) — and `not_found` for an unknown team (a public viewer);
@@ -17,7 +17,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::time::Duration;
 
-use kx_gateway::{start, DEMO_RECIPE_HANDLE, DEMO_TEAM_HANDLE};
+use kx_gateway::{start, DEMO_RECIPE_HANDLE, WORKSPACE_TEAM_HANDLE};
 use kx_proto::proto;
 use kx_proto::proto::kx_gateway_client::KxGatewayClient;
 use tonic::transport::Channel;
@@ -64,8 +64,8 @@ async fn list_teams_and_members_shows_the_seeded_demo_team() {
         .unwrap()
         .into_inner()
         .teams;
-    assert_eq!(teams.len(), 1, "exactly one bootstrap demo team");
-    assert_eq!(teams[0].team_id, DEMO_TEAM_HANDLE);
+    assert_eq!(teams.len(), 1, "exactly one bootstrap workspace team");
+    assert_eq!(teams[0].team_id, WORKSPACE_TEAM_HANDLE);
     assert_eq!(teams[0].owner, "kx-gateway");
     // alice + bob + local-dev.
     assert_eq!(teams[0].member_count, 3);
@@ -73,7 +73,7 @@ async fn list_teams_and_members_shows_the_seeded_demo_team() {
     let members = c
         .list_team_members(with_bearer(
             proto::ListTeamMembersRequest {
-                team_id: DEMO_TEAM_HANDLE.to_string(),
+                team_id: WORKSPACE_TEAM_HANDLE.to_string(),
                 asset_ref: None,
             },
             "tok-alice",
@@ -117,11 +117,11 @@ async fn resolve_member_warrant_with_asset_ref_is_bounded_by_the_team() {
     let mut c = client(running.local_addr()).await;
 
     // With the echo asset: a member resolves a warrant THROUGH the team membership
-    // (the demo team holds Use on echo); it is ⊆ the team warrant (max_calls ≤ 3, no
+    // (the workspace team holds Use on echo); it is ⊆ the team warrant (max_calls ≤ 3, no
     // escalation). The membership ∩ grant composition — the kx-fleet thesis — surfaced.
     let members = c
         .list_team_members(proto::ListTeamMembersRequest {
-            team_id: DEMO_TEAM_HANDLE.to_string(),
+            team_id: WORKSPACE_TEAM_HANDLE.to_string(),
             asset_ref: Some(DEMO_RECIPE_HANDLE.to_string()),
         })
         .await
@@ -157,12 +157,12 @@ async fn list_asset_grants_shows_recipe_and_team_grants() {
         .unwrap()
         .into_inner();
     assert_eq!(grants.owner, "kx-gateway");
-    // The demo team is granted Use on echo (root, active) — the resolve path's source.
+    // The workspace team is granted Use on echo (root, active) — the resolve path's source.
     let team_grant = grants
         .grants
         .iter()
-        .find(|g| g.grantee == DEMO_TEAM_HANDLE)
-        .expect("the demo team holds a grant on echo");
+        .find(|g| g.grantee == WORKSPACE_TEAM_HANDLE)
+        .expect("the workspace team holds a grant on echo");
     assert!(team_grant.is_root);
     assert!(!team_grant.revoked);
     assert!(team_grant.actions.contains(&"Use".to_string()));
@@ -200,7 +200,7 @@ async fn ui3_rpcs_are_gated_by_auth_under_deny_all() {
     );
     assert_eq!(
         c.list_team_members(proto::ListTeamMembersRequest {
-            team_id: DEMO_TEAM_HANDLE.to_string(),
+            team_id: WORKSPACE_TEAM_HANDLE.to_string(),
             asset_ref: None,
         })
         .await

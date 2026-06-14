@@ -15,7 +15,7 @@ test("artifacts: a committed output renders in the offline Monaco code viewer", 
   gw = await spawnGateway({ corsOrigin: SPA_ORIGIN });
   await connectConsole(page, gw);
 
-  await runRecipe(page, { handle: "kx/recipes/fanout-demo" });
+  await runRecipe(page, { handle: "kx/recipes/passthrough-dag" });
   await expect(page.getByTestId("mote-dag")).toBeVisible({ timeout: 30_000 });
   await expect
     .poll(() => page.getByTestId("state-pill").filter({ hasText: "COMMITTED" }).count(), {

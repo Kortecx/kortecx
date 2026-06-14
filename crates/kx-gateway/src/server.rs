@@ -32,7 +32,7 @@ use {
     crate::provision::{
         DemoLibrary, HostRecipeBinder, HostRecipeCatalog, HostSignatureCatalog, HostWorkflowAuthor,
     },
-    crate::teams::{seed_demo_team, HostGrantView, HostMembershipView},
+    crate::teams::{seed_workspace_team, HostGrantView, HostMembershipView},
     kx_capability::{CapabilityBroker, LocalCapabilityBroker},
     kx_catalog::SqliteCatalog,
     kx_content::{ContentRef, ContentStore, LocalFsContentStore},
@@ -92,59 +92,38 @@ pub fn default_executor_class() -> ExecutorClass {
     }
 }
 
-/// The deterministic payload the embedded demo executor publishes for a PURE
-/// Mote. Exposed so an end-to-end test (a separate crate) can assert the exact
-/// bytes `GetContent` returns without duplicating the format (no drift).
-///
-/// FULLY PRINTABLE (PR-2.1 review feedback): the mote id rides as lowercase
-/// hex, so every demo/echo/fanout result renders as TEXT in the console (chat
-/// bubbles, the DAG Result/Inputs panes, artifacts) instead of a binary hex
-/// dump. Display-only bytes — never identity (the canonical engine digest is
-/// the kx-runtime demo's, a different path; serve demo result REFS change with
-/// the payload, which is fine: refs are content addresses, not identity).
-#[cfg(feature = "embedded-worker")]
-#[must_use]
-pub fn demo_pure_result(mote_id: &[u8; 32]) -> Vec<u8> {
-    use std::fmt::Write as _;
-    let mut hex = String::with_capacity(64);
-    for b in mote_id {
-        let _ = write!(hex, "{b:02x}");
-    }
-    format!("kx demo result for mote {hex}\n").into_bytes()
-}
-
 /// A ready-to-send [`proto::SubmitRunRequest`](kx_proto::proto::SubmitRunRequest)
-/// admitting a single PURE demo Mote whose warrant names the embedded worker's
-/// [`default_executor_class`], so a bound `SubmitRun` leases → runs → reaches
-/// `Committed`.
+/// admitting a single PURE Mote whose warrant names the embedded worker's
+/// [`default_executor_class`], so a bound `SubmitRun` leases → runs (the honest
+/// passthrough) → reaches `Committed`.
 ///
-/// This is the ONE source of truth for the demo run shared by `kx submit --demo`
-/// (the R3 CLI's low-level SubmitRun path) and the gateway end-to-end tests — the
-/// shape mirrors `tests/common::{pure_mote, pure_warrant}` so the two never drift.
-/// The `recipe_fingerprint` is a fixed discovery-only sentinel (`SubmitRun` takes
-/// it as-is; it is NEVER identity — the coordinator re-derives every `MoteId`
+/// A low-level PURE-run FIXTURE shared by the gateway end-to-end tests + the
+/// `kx-profile` submit→Committed benchmarks — the shape mirrors
+/// `tests/common::{pure_mote, pure_warrant}` so the two never drift. The
+/// `recipe_fingerprint` is a fixed discovery-only sentinel (`SubmitRun` takes it
+/// as-is; it is NEVER identity — the coordinator re-derives every `MoteId`
 /// Rust-side, SN-8). The advisory `mote_id` inside the Mote is likewise re-derived.
 #[cfg(feature = "embedded-worker")]
 #[must_use]
-pub fn demo_submit_run_request() -> kx_proto::proto::SubmitRunRequest {
+pub fn pure_run_request() -> kx_proto::proto::SubmitRunRequest {
     use kx_proto::proto::{SubmitMoteSpec, SubmitRunRequest};
     SubmitRunRequest {
         // Fixed discovery/dedup sentinel — not identity (SN-8). Matches the e2e fixture.
         recipe_fingerprint: vec![0x5a; 32],
         motes: vec![SubmitMoteSpec {
-            mote: Some(demo_pure_mote(1).into()),
-            warrant: Some(demo_pure_warrant().into()),
+            mote: Some(pure_run_mote(1).into()),
+            warrant: Some(pure_run_warrant().into()),
             accept_at_least_once: false,
             react_seed: false,
         }],
     }
 }
 
-/// A parentless PURE demo Mote, made unique by `seed`. Mirrors
-/// `tests/common::pure_mote` (kept in lockstep so `submit --demo` and the e2e
+/// A parentless PURE Mote fixture, made unique by `seed`. Mirrors
+/// `tests/common::pure_mote` (kept in lockstep so `pure_run_request` and the e2e
 /// tests admit the identical Mote shape).
 #[cfg(feature = "embedded-worker")]
-fn demo_pure_mote(seed: u8) -> kx_mote::Mote {
+fn pure_run_mote(seed: u8) -> kx_mote::Mote {
     use kx_mote::{
         EffectPattern, GraphPosition, InferenceParams, InputDataId, LogicRef, ModelId, Mote,
         MoteDef, NdClass, PromptTemplateHash, MOTE_DEF_SCHEMA_VERSION,
@@ -174,10 +153,10 @@ fn demo_pure_mote(seed: u8) -> kx_mote::Mote {
     )
 }
 
-/// A warrant the embedded demo worker can lease: its `executor_class` is the
+/// A warrant the embedded worker can lease: its `executor_class` is the
 /// server's [`default_executor_class`]. Mirrors `tests/common::pure_warrant`.
 #[cfg(feature = "embedded-worker")]
-fn demo_pure_warrant() -> kx_warrant::WarrantSpec {
+fn pure_run_warrant() -> kx_warrant::WarrantSpec {
     use kx_content::ContentRef;
     use kx_mote::ModelId;
     use kx_warrant::{
@@ -471,29 +450,17 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     // can never block, slow, or fail a run.
     let telemetry_ledger = Arc::new(crate::telemetry::TelemetryLedger::open(&catalog_dir)?);
     let client = connect_worker(&coord_endpoint).await?;
-    // PR-9b: locate + register the sandbox demo body. `None` ⇒ no body binary on
-    // this host/image, so the `exec-demo` recipe is not provisioned and the router
-    // behaves exactly like the R1 storing executor.
-    let real_body_ref = crate::real_exec::register_demo_body(content.as_ref());
-    // Probe the sandbox once before advertising exec-demo: if it can't actually run
-    // here (e.g. Docker's default seccomp blocks the user namespace bubblewrap
-    // needs), DROP the body ref so exec-demo is NOT provisioned — an Invoke then
-    // gets a clean refusal instead of a worker re-leasing a never-committable Mote
-    // forever. The durable spine + the `echo` recipe are unaffected.
-    let exec_class = default_executor_class();
-    let real_body_ref = real_body_ref.filter(|&body_ref| {
-        crate::real_exec::probe_sandbox(
-            content.as_ref(),
-            body_ref,
-            exec_class,
-            &crate::provision::real_exec_warrant(exec_class),
-        )
-    });
-    // The embedded worker's executor routes a real-body Mote to the platform
-    // sandbox (bwrap on Linux / sandbox-exec on macOS) and a bodyless PURE Mote
-    // (`echo` / `fanout-demo`) to the HONEST passthrough fallback (GR15 — it
-    // commits the Mote's real input, never a fabricated placeholder). Fail-closed:
-    // a sandbox that cannot run errors (worker backs off); never host-exec.
+    // No real body is provisioned in the OSS serve path (script/tool execution is
+    // OSS-scoped-out, D141.4), so the sandbox-routing seam is wired with no body ref:
+    // every PURE Mote takes the honest passthrough fallback. The `RouterExecutor`
+    // machinery is retained as a stable seam — a later tools/scripts batch re-enables
+    // body registration with zero change here.
+    let real_body_ref: Option<kx_content::ContentRef> = None;
+    // The embedded worker's executor routes a real-body Mote to the platform sandbox
+    // (bwrap on Linux / sandbox-exec on macOS) and a bodyless PURE Mote (`echo` /
+    // `passthrough-dag`) to the HONEST passthrough fallback (GR15 — it commits the
+    // Mote's real input, never a fabricated placeholder). Fail-closed: a sandbox that
+    // cannot run errors (worker backs off); never host-exec.
     let executor: Arc<dyn MoteExecutor> = Arc::new(crate::real_exec::RouterExecutor::new(
         (*content).clone(),
         real_body_ref,
@@ -595,10 +562,10 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     //      so registered signatures + recipes survive restart. Resolved up in
     //      section (2) — the telemetry ledger needed it before the executor chain.
     let signature_catalog = open_signature_catalog(&catalog_dir)?;
-    // (3c) Server-provisioned demo recipe library (R2b) so `Invoke` runs E2E.
-    //      Grant `Use` to every configured token party (+ the dev principal); the
-    //      step warrant uses the embedded worker's executor_class so a bound run
-    //      leases (see `provision::demo_warrant`).
+    // (3c) Server-provisioned recipe library (R2b) so `Invoke` runs E2E. Grant
+    //      `Use` to every configured token party (+ the dev principal); the step
+    //      warrant uses the embedded worker's executor_class so a bound run leases
+    //      (see `provision::demo_warrant`).
     let parties: Vec<String> = cfg.auth_tokens.values().cloned().collect();
     // PR-2c-3 critic-live (H5): native deterministic critics are evaluated by the
     // inference build's `ModelRouterExecutor` (which holds `run_critic`). That executor
@@ -626,7 +593,6 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         &catalog_dir,
         default_executor_class(),
         &parties,
-        real_body_ref,
         serve_model.as_ref(),
         react_tool.as_ref(),
         vision_supported,
@@ -641,16 +607,16 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     // SAME grant ledger Invoke uses.
     let author: Arc<dyn WorkflowAuthor> = Arc::new(HostWorkflowAuthor::from_shared(demo.clone()));
     // (3d) UI-3: a durable membership ledger (teams) under the SAME catalog dir,
-    //      idempotently seeded with one demo team (owner = the gateway principal;
+    //      idempotently seeded with one workspace team (owner = the gateway principal;
     //      members = each --auth-token party + the dev principal, one a Delegate) +
     //      a team grant on `echo` so a member's warrant resolves through membership ∩
-    //      grant. The grant/membership VIEW seams read it + the SHARED demo grant
-    //      ledger; managing across parties is cloud (D129).
+    //      grant. The grant/membership VIEW seams read it + the SHARED grant ledger;
+    //      managing across parties is cloud (D129).
     let members = Arc::new(
         SqliteMembershipLedger::open(catalog_dir.join("members.db"))
             .map_err(|e| GatewayError::Catalog(e.to_string()))?,
     );
-    seed_demo_team(&members, &demo, &parties)?;
+    seed_workspace_team(&members, &demo, &parties)?;
     let membership_view: Arc<dyn MembershipView> =
         Arc::new(HostMembershipView::new(members, demo.clone()));
     let grant_view: Arc<dyn GrantView> = Arc::new(HostGrantView::new(demo.clone()));
