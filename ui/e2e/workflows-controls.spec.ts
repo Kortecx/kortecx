@@ -16,58 +16,55 @@ test.afterEach(() => {
   gw = undefined;
 });
 
-test("workflows: a run card menu clones (prefilled), renames, and clear-local-history stays honest", async ({
+test("workflows: a run row's detail popup clones (prefilled), renames, and clear-local-history stays honest", async ({
   page,
 }) => {
   gw = await spawnGateway({ corsOrigin: SPA_ORIGIN });
   await connectConsole(page, gw);
 
-  // Run echo with a distinctive topic, then land on Workflows.
+  // Run echo with a distinctive topic, then land on Workflows → Runs.
   await runRecipe(page, { handle: "kx/recipes/echo", fields: { topic: "clone-me" } });
   await expect(page.getByTestId("mote-dag")).toBeVisible({ timeout: 30_000 });
   await page.getByTestId("nav-runs").click();
   await expect(page.getByTestId("run-list")).toBeVisible();
 
-  // The card carries its recipe handle as a secondary chip (clean name = "Echo").
-  const card = page.getByTestId("run-card").first();
-  await expect(card).toContainText("kx/recipes/echo");
+  // The row carries its recipe handle (clean name = "Echo").
+  const row = page.getByTestId("run-row").first();
+  await expect(row).toContainText("kx/recipes/echo");
 
-  // Rename (client-local) via the per-card menu → the card shows the custom name.
-  await card.getByTestId("run-menu").click();
-  await card.getByTestId("run-rename").click();
-  await card.getByTestId("run-rename-input").fill("incident triage");
-  await card.getByTestId("run-rename-input").press("Enter");
-  await expect(card).toContainText("incident triage");
+  // Open the detail popup; rename (client-local) → the row shows the custom name.
+  await row.getByTestId("run-open").click();
+  const drawer = page.getByTestId("run-detail-drawer");
+  await expect(drawer).toBeVisible();
+  await drawer.getByTestId("run-rename-input").fill("incident triage");
+  await drawer.getByTestId("run-rename").click();
+  await page.keyboard.press("Escape");
+  await expect(row).toContainText("incident triage");
 
-  // Clone (menu) → the Blueprints run form opens PRE-FILLED with the prior args.
-  await card.getByTestId("run-menu").click();
-  await card.getByTestId("run-clone").click();
+  // Clone (in the popup) → the Blueprints run form opens PRE-FILLED with the args.
+  await row.getByTestId("run-open").click();
+  await drawer.getByTestId("run-clone").click();
   await expect(page.getByTestId("recipe-catalog")).toBeVisible({ timeout: 30_000 });
   await expect(
     page.locator('[data-testid="recipe-form"][data-recipe="kx/recipes/echo"]'),
   ).toBeVisible({ timeout: 30_000 });
   await expect(page.getByTestId("field-topic")).toHaveValue("clone-me");
 
-  // Back on Workflows: clearing LOCAL history keeps the durable journal row
+  // Back on Workflows → Runs: clearing LOCAL history keeps the durable journal row
   // (truth stays) — and the client-local RENAME survives too (separate store).
   await page.getByTestId("nav-runs").click();
   await page.getByTestId("clear-local-history").click();
   await expect(page.getByTestId("run-list")).toBeVisible({ timeout: 30_000 });
-  const durable = page.getByTestId("run-card").first();
+  const durable = page.getByTestId("run-row").first();
   await expect(durable).toContainText("journal"); // the recovered-from-journal badge
   await expect(durable).toContainText("incident triage"); // renames outlive the clear
 
-  // Dropping the rename falls back to the humanized handle + its raw-handle chip:
-  // the durable card is still NAMED by its recipe, not a bare hex id.
-  await durable.getByTestId("run-menu").click();
-  await durable.getByTestId("run-rename").click();
-  await durable.getByTestId("run-rename-input").fill("");
-  await durable.getByTestId("run-rename-input").press("Enter");
+  // Dropping the rename falls back to the humanized handle + its raw-handle chip.
+  await durable.getByTestId("run-open").click();
+  await drawer.getByTestId("run-rename-input").fill("");
+  await drawer.getByTestId("run-rename").click();
+  await page.keyboard.press("Escape");
   await expect(durable).toContainText("kx/recipes/echo");
-
-  // "New workflow" links to the Blueprints authoring home (D141.1).
-  await page.getByTestId("new-workflow").click();
-  await expect(page).toHaveURL(/\/recipes$/);
 });
 
 test("blueprints: the catalog is a card grid; the menu's View opens the contract in Monaco", async ({

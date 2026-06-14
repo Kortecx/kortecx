@@ -69,6 +69,7 @@ test("run outputs resolve to TEXT across table, DAG, artifacts + feed (both them
 
   await page.getByTestId("nav-runs").click();
   await page.getByTestId("run-open").first().click();
+  await page.getByTestId("run-view-full").click();
   await page.getByTestId("run-tab-table").click();
   const darkPreview = page.getByTestId("result-preview").first();
   await expect(darkPreview).toHaveAttribute("data-state", "text", { timeout: 30_000 });

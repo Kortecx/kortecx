@@ -16,7 +16,7 @@ test.afterEach(() => {
   gw = undefined;
 });
 
-test("workflows card: Export (lightweight + with-results) downloads run JSON; new-tab is rel=noopener", async ({
+test("workflows run popup: Export (lightweight + with-results) downloads JSON; new-tab is rel=noopener", async ({
   page,
 }) => {
   gw = await spawnGateway({ corsOrigin: SPA_ORIGIN });
@@ -27,27 +27,27 @@ test("workflows card: Export (lightweight + with-results) downloads run JSON; ne
   await page.getByTestId("nav-runs").click();
   await expect(page.getByTestId("run-list")).toBeVisible({ timeout: 30_000 });
 
-  const card = page.getByTestId("run-card").first();
+  // Open the run's detail popup — all export/new-window actions live there.
+  await page.getByTestId("run-open").first().click();
+  const drawer = page.getByTestId("run-detail-drawer");
+  await expect(drawer).toBeVisible();
 
   // Lightweight export → a run JSON file.
-  await card.getByTestId("run-menu").click();
   const [light] = await Promise.all([
     page.waitForEvent("download"),
-    card.getByTestId("run-export").click(),
+    drawer.getByTestId("run-export").click(),
   ]);
   expect(light.suggestedFilename()).toMatch(/^kortecx-run-.*\.json$/);
 
   // Rich export → fetches the committed projection + resolved output, then downloads.
-  await card.getByTestId("run-menu").click();
   const [rich] = await Promise.all([
     page.waitForEvent("download"),
-    card.getByTestId("run-export-rich").click(),
+    drawer.getByTestId("run-export-rich").click(),
   ]);
   expect(rich.suggestedFilename()).toMatch(/^kortecx-run-.*\.json$/);
 
-  // Open-in-new-tab is a safe external link.
-  await card.getByTestId("run-menu").click();
-  const newtab = card.getByTestId("run-open-newtab");
+  // Open-in-new-window (the ONLY one) is a safe external link, inside the popup.
+  const newtab = drawer.getByTestId("run-open-newtab");
   await expect(newtab).toHaveAttribute("target", "_blank");
   await expect(newtab).toHaveAttribute("rel", "noopener noreferrer");
 });

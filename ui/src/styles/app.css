@@ -1875,6 +1875,76 @@ select {
   font-weight: 600;
   font-size: 0.78rem;
 }
+/* ---- PR-A: Workflows|Runs tables + the row-click detail drawer ---- */
+.data-table__actions {
+  text-align: right;
+  white-space: nowrap;
+}
+.data-table__actions a,
+.data-table__actions button {
+  margin-left: 0.5rem;
+  vertical-align: middle;
+}
+.data-table__row {
+  transition: background-color 0.12s ease;
+}
+.data-table__name {
+  background: none;
+  border: none;
+  box-shadow: none;
+  padding: 0;
+  margin: 0 0.4rem 0 0;
+  font-weight: 600;
+  color: var(--fg);
+  text-align: left;
+  cursor: pointer;
+}
+.data-table__name:hover {
+  color: var(--primary-h);
+  text-decoration: underline;
+}
+.table-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0.85rem 0 0.25rem;
+}
+.table-toolbar .filter-input {
+  margin: 0;
+  flex: 1;
+  min-width: 12rem;
+  max-width: 28rem;
+}
+.drawer-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  margin: 0.2rem 0;
+}
+.drawer-actions--wrap {
+  flex-wrap: wrap;
+  gap: 0.6rem 0.9rem;
+}
+.drawer-actions a,
+.drawer-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+.drawer-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  margin: 0.3rem 0;
+  font-size: 0.85rem;
+}
+.drawer-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin: 0.3rem 0;
+}
 .role-badge {
   display: inline-block;
   padding: 0.1rem 0.5rem;

@@ -16,7 +16,8 @@ test("runs: a submitted run appears in the run list and re-opens", async ({ page
   await runRecipe(page, { fields: { topic: "for the run list" } });
   await expect(page.getByTestId("mote-dag")).toBeVisible({ timeout: 30_000 });
 
-  // In-app navigate to Runs; the run is listed (durable ListRuns + session record).
+  // In-app navigate to Workflows (defaults to the Runs tab); the run is listed
+  // as a TABLE row (durable ListRuns + session record).
   await page.getByTestId("nav-runs").click();
   await expect(page.getByTestId("runs-section")).toBeVisible();
   await expect(page.getByTestId("run-list")).toBeVisible({ timeout: 30_000 });
@@ -28,8 +29,10 @@ test("runs: a submitted run appears in the run list and re-opens", async ({ page
   await page.getByTestId("runs-filter").fill("zzz-no-match");
   await expect(page.getByTestId("run-list")).toHaveCount(0);
 
-  // Re-open the run from its card (clear the filter first).
+  // Open the run's detail popup (point 4) and re-open the full run from it.
   await page.getByTestId("runs-filter").fill("");
   await page.getByTestId("run-open").first().click();
+  await expect(page.getByTestId("run-detail-drawer")).toBeVisible();
+  await page.getByTestId("run-view-full").click();
   await expect(page.getByTestId("mote-dag")).toBeVisible({ timeout: 30_000 });
 });
