@@ -54,3 +54,33 @@ test("the app shell navigates to every section (brand + favicon present)", async
   await page.getByTestId("theme-toggle").click();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
 });
+
+test("the sidebar groups sections + a New flyout; Cloud is honest-disabled (PR-B)", async ({
+  page,
+}) => {
+  gw = await spawnGateway({ corsOrigin: SPA_ORIGIN });
+  await connectConsole(page, gw);
+
+  // The five coloured groups + the honest Cloud group render their labels.
+  for (const g of ["workspace", "data", "tools", "monitoring", "security", "cloud"]) {
+    await expect(page.getByTestId(`nav-group-${g}`)).toBeVisible();
+  }
+  await expect(page.getByTestId("nav-group-workspace")).toContainText("Workspace");
+
+  // The topbar system-status box reports REAL health (live on a reachable serve).
+  await expect(page.getByTestId("system-status")).toBeVisible();
+  await expect(page.getByTestId("system-status")).toHaveAttribute("data-health", "live");
+
+  // The New flyout opens (below the trigger) and routes to a real target.
+  await page.getByTestId("sidebar-new").click();
+  await expect(page.getByTestId("sidebar-new-menu")).toBeVisible();
+  await expect(page.getByTestId("new-blueprint")).toBeVisible();
+  await page.getByTestId("new-chat").click();
+  await expect(page.getByTestId("chat-panel")).toBeVisible();
+
+  // Cloud placeholders render but are NEVER navigable (greyed, aria-disabled, no link).
+  const cloud = page.getByTestId("cloud-sharing");
+  await expect(cloud).toBeVisible();
+  await expect(cloud).toHaveAttribute("aria-disabled", "true");
+  expect(await cloud.evaluate((el) => el.tagName)).toBe("DIV");
+});

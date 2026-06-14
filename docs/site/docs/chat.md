@@ -29,6 +29,12 @@ Pick the model with the **model picker** below the thread. The model list is
 discovered from the connected gateway (`ListModels`); an FFI-free serve shows an
 honest empty state rather than a fake menu.
 
+When the gateway has **no chat model provisioned**, chat shows an honest
+"no model — connect one" notice (start a model with
+`kx serve --features inference`) instead of silently echoing your prompt. You can
+still choose the model-free `kx/recipes/echo` recipe in chat settings for a
+deterministic round-trip — a deliberate choice the console honors as-is.
+
 ## Attach
 
 The **attach** button (next to send) opens a menu:
