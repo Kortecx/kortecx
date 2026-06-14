@@ -1701,7 +1701,6 @@ select {
 }
 .popover__panel {
   position: absolute;
-  bottom: calc(100% + 6px);
   min-width: 184px;
   z-index: 40;
   display: flex;
@@ -1712,6 +1711,14 @@ select {
   border: 1px solid var(--border-md);
   border-radius: var(--radius);
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
+}
+/* Vertical anchor: `--up` opens above the trigger (the bottom-anchored composer);
+ * `--down` opens below (top-anchored list/grid cards, so it stays on-screen). */
+.popover__panel--up {
+  bottom: calc(100% + 6px);
+}
+.popover__panel--down {
+  top: calc(100% + 6px);
 }
 .popover__panel--left {
   left: 0;
@@ -2284,6 +2291,90 @@ select {
     var(--stripe, var(--primary)),
     color-mix(in srgb, var(--stripe, var(--primary)) 35%, transparent)
   );
+}
+/* ---- PR-4.1b: Workflows + Blueprints catalog cards (reference card grid;
+ * tokens-only, both themes — every fg/bg pair is already AA-audited) ---- */
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+  margin: 0.85rem 0 1rem;
+  list-style: none;
+  padding: 0;
+}
+.card-grid__card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.9rem 1rem;
+}
+.card-grid__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.card-grid__title {
+  font-weight: 600;
+  font-size: 0.98rem;
+  color: var(--fg);
+  text-decoration: none;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+a.card-grid__title:hover {
+  color: var(--primary-h);
+  text-decoration: underline;
+}
+/* the Blueprint card title is a button (opens the form drawer) — strip the
+ * global gradient button chrome so it reads as a heading link. */
+button.card-grid__title {
+  background: none;
+  border: none;
+  box-shadow: none;
+  padding: 0;
+  margin: 0;
+  text-align: left;
+  cursor: pointer;
+}
+button.card-grid__title:hover {
+  color: var(--primary-h);
+}
+.card-grid__sub {
+  color: var(--text-2);
+  font-size: 0.85rem;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.card-grid__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+.card-grid__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: auto;
+}
+.card-grid__handle {
+  font-size: 0.72rem;
+  color: var(--text-3);
+}
+.card-grid__time {
+  color: var(--text-3);
+  font-size: 0.75rem;
+  margin-left: auto;
+}
+.card-grid__rename {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+}
+.card-grid__rename input {
+  flex: 1;
+  min-width: 0;
 }
 .status-dot {
   display: inline-block;

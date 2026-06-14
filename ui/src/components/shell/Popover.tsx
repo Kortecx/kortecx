@@ -17,6 +17,7 @@ export function Popover({
   triggerTestId,
   triggerDisabled,
   align = "left",
+  direction = "up",
   menuTestId,
   children,
 }: {
@@ -29,6 +30,10 @@ export function Popover({
   triggerDisabled?: boolean;
   /** Which edge the panel aligns to the trigger. */
   align?: "left" | "right";
+  /** Whether the panel opens above (`up`, default — the bottom-anchored composer)
+   *  or below (`down`) the trigger. Top-anchored callers (list/grid cards) MUST
+   *  use `down` so the panel does not land off the top of the viewport. */
+  direction?: "up" | "down";
   menuTestId?: string;
   children: (close: () => void) => ReactNode;
 }) {
@@ -80,7 +85,7 @@ export function Popover({
       {open ? (
         <div
           id={menuId}
-          className={`popover__panel popover__panel--${align}`}
+          className={`popover__panel popover__panel--${align} popover__panel--${direction}`}
           role="menu"
           data-testid={menuTestId}
         >

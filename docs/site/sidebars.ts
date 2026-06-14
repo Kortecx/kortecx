@@ -26,6 +26,7 @@ const sidebars: SidebarsConfig = {
       collapsed: false,
       items: [
         "chat",
+        "workflows",
         "blueprint-builder",
         "agent-runner",
         "security",

@@ -1,25 +1,33 @@
-import { Link, useNavigate } from "@tanstack/react-router";
+import { Link } from "@tanstack/react-router";
 import { m } from "framer-motion";
 import { useEffect, useMemo, useState } from "react";
-import { rowEntrance } from "../../app/motion";
+import { stagger } from "../../app/motion";
 import { useConnection } from "../../kx/connection-context";
-import { toUiError } from "../../kx/errors";
-import { useInvoke } from "../../kx/use-invoke";
 import { useRecipeNames } from "../../kx/use-recipes";
 import { useRuns } from "../../kx/use-runs";
 import { shortHex } from "../../lib/format";
+import { humanizeHandle } from "../../lib/humanize-handle";
 import type { RunRecord } from "../../lib/recent-runs";
-import { RUN_NAMES_CHANGED_EVENT, loadRunNames, setRunName } from "../../lib/run-names";
+import { RUN_NAMES_CHANGED_EVENT, loadRunNames } from "../../lib/run-names";
 import { EmptyState } from "../EmptyState";
-import { ErrorNotice } from "../ErrorNotice";
+import { RunCard } from "./RunCard";
+
+/** The display shape a Workflows card renders. */
+interface RunDisplay {
+  /** Headline: local rename > humanized handle > short id. */
+  readonly headline: string;
+  /** The raw handle (or fingerprint-joined handle), for the secondary chip. */
+  readonly rawHandle: string | null;
+  /** The client-local custom name (seeds the rename draft), or null. */
+  readonly customName: string | null;
+}
 
 /**
- * The Workflows home (PR-2.1): durable runs enumerated from the journal
- * (`ListRuns`) merged with this session's per-invocation records — labeled by
- * recipe handle (the fingerprint→handle join) or a client-local rename, with
- * per-row controls: Open · Run again (idempotent re-invoke) · Clone (prefill
- * the Blueprints form). Authoring stays in Blueprints (D141.1) — the "New
- * workflow" button LINKS there, never duplicates it.
+ * The Workflows home (PR-4.1b): durable runs enumerated from the journal
+ * (`ListRuns`) merged with this session's per-invocation records, rendered as
+ * bordered CARDS with clean display names (the raw handle stays a secondary
+ * chip) + a per-card action menu. Authoring stays in Blueprints (D141.1) — the
+ * "New workflow" button LINKS there, never duplicates it.
  */
 export function RunsSection() {
   const { endpoint } = useConnection();
@@ -40,13 +48,25 @@ export function RunsSection() {
 
   const fingerprintNames = recipeNames.data ?? {};
 
-  /** Display name precedence: local rename > session handle > fingerprint join. */
-  function nameFor(r: RunRecord): string | null {
+  /** The handle that labels a run (session handle > fingerprint join). */
+  function handleFor(r: RunRecord): string | null {
     return (
-      names[r.instanceId] ??
-      r.handle ??
-      (r.recipeFingerprint ? (fingerprintNames[r.recipeFingerprint] ?? null) : null)
+      r.handle ?? (r.recipeFingerprint ? (fingerprintNames[r.recipeFingerprint] ?? null) : null)
     );
+  }
+
+  /** Display name precedence: local rename > humanized handle > short id. */
+  function displayFor(r: RunRecord): RunDisplay {
+    const local = names[r.instanceId];
+    const handleName = handleFor(r);
+    const customName = local && local.trim() !== "" ? local : null;
+    if (customName) {
+      return { headline: customName, rawHandle: handleName, customName };
+    }
+    if (handleName) {
+      return { headline: humanizeHandle(handleName), rawHandle: handleName, customName: null };
+    }
+    return { headline: shortHex(r.instanceId), rawHandle: null, customName: null };
   }
 
   const shown = useMemo(() => {
@@ -120,16 +140,26 @@ export function RunsSection() {
       ) : shown.length === 0 ? (
         <EmptyState title="No matching runs" detail="Adjust the filter above." />
       ) : (
-        <ul className="run-list" data-testid="run-list">
-          {shown.map((r, i) => (
-            <RunRow
-              key={`${r.instanceId}:${r.terminalMoteId ?? ""}`}
-              run={r}
-              index={i}
-              name={nameFor(r)}
-            />
-          ))}
-        </ul>
+        <m.div
+          className="card-grid"
+          data-testid="run-list"
+          variants={stagger()}
+          initial="hidden"
+          animate="show"
+        >
+          {shown.map((r) => {
+            const d = displayFor(r);
+            return (
+              <RunCard
+                key={`${r.instanceId}:${r.terminalMoteId ?? ""}`}
+                run={r}
+                headline={d.headline}
+                rawHandle={d.rawHandle}
+                customName={d.customName}
+              />
+            );
+          })}
+        </m.div>
       )}
 
       {hasMore ? (
@@ -138,146 +168,5 @@ export function RunsSection() {
         </button>
       ) : null}
     </section>
-  );
-}
-
-/** One run row: name + id + time, with Open/Run-again/Clone/Rename controls. */
-function RunRow({ run, index, name }: { run: RunRecord; index: number; name: string | null }) {
-  const { endpoint } = useConnection();
-  const navigate = useNavigate();
-  const invoke = useInvoke();
-  const [renaming, setRenaming] = useState(false);
-  const [draft, setDraft] = useState(name ?? "");
-
-  // A durable-only row (recovered from the journal, not started in this browser).
-  const journalOnly = run.handle === null && (run.args ?? null) === null;
-  const canRunAgain = Boolean(run.handle && run.args);
-
-  function runAgain(): void {
-    if (!run.handle || !run.args) {
-      return;
-    }
-    let args: Record<string, unknown>;
-    try {
-      args = JSON.parse(run.args) as Record<string, unknown>;
-    } catch {
-      return;
-    }
-    // Idempotent by construction: the same recipe+args resolves to the same
-    // already-committed Mote (the memoizer) — "running again" honestly JOINS it.
-    invoke.mutate(
-      { handle: run.handle, args },
-      {
-        onSuccess: ({ instanceId, terminalMoteId }) => {
-          void navigate({
-            to: "/workflows/$instanceId",
-            params: { instanceId },
-            search: { terminal: terminalMoteId },
-          });
-        },
-      },
-    );
-  }
-
-  function saveRename(): void {
-    setRunName(endpoint, run.instanceId, draft);
-    setRenaming(false);
-  }
-
-  return (
-    <m.li className="run-list__item card-hover" {...rowEntrance(index)}>
-      <div className="run-list__main">
-        <Link
-          to="/workflows/$instanceId"
-          params={{ instanceId: run.instanceId }}
-          search={run.terminalMoteId ? { terminal: run.terminalMoteId } : {}}
-          className="run-list__link"
-          data-testid="run-open"
-        >
-          {renaming ? null : (
-            <span className="run-list__name">{name ?? shortHex(run.instanceId)}</span>
-          )}
-        </Link>
-        {renaming ? (
-          <span className="run-list__rename">
-            <input
-              value={draft}
-              data-testid="run-rename-input"
-              aria-label="Run name"
-              onChange={(e) => setDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  saveRename();
-                }
-                if (e.key === "Escape") {
-                  setRenaming(false);
-                }
-              }}
-              spellCheck={false}
-              autoComplete="off"
-            />
-            <button type="button" className="linkbtn" onClick={saveRename}>
-              Save
-            </button>
-          </span>
-        ) : null}
-        <code className="mono muted" title={run.instanceId}>
-          {shortHex(run.instanceId)}
-        </code>
-        {journalOnly ? (
-          <span className="badge" title="Recovered from the journal (not started in this browser)">
-            journal
-          </span>
-        ) : null}
-      </div>
-      <span className="muted">{new Date(run.startedAt).toLocaleTimeString()}</span>
-      <span className="run-list__actions">
-        {canRunAgain ? (
-          <button
-            type="button"
-            className="linkbtn"
-            data-testid="run-again"
-            disabled={invoke.isPending}
-            title="Re-invoke the same blueprint + args (idempotent: joins the committed result)"
-            onClick={runAgain}
-          >
-            {invoke.isPending ? "Running…" : "Run again"}
-          </button>
-        ) : null}
-        {run.handle ? (
-          <Link
-            to="/recipes"
-            search={{ handle: run.handle, ...(run.args ? { args: run.args } : {}) }}
-            className="linkbtn"
-            data-testid="run-clone"
-            title="Open this run's blueprint with its inputs prefilled — tweak and run as a new use case"
-          >
-            Clone
-          </Link>
-        ) : null}
-        <Link
-          to="/blueprints/new"
-          search={{ clone: run.instanceId }}
-          className="linkbtn"
-          data-testid="run-remix"
-          title="Reconstruct this run's graph in the visual builder — add agents, wire steps, run as a new workflow"
-        >
-          Build from this
-        </Link>
-        <button
-          type="button"
-          className="linkbtn"
-          data-testid="run-rename"
-          onClick={() => {
-            setDraft(name ?? "");
-            setRenaming((v) => !v);
-          }}
-          title="Rename (this browser only)"
-        >
-          Rename
-        </button>
-      </span>
-      {invoke.error ? <ErrorNotice error={toUiError(invoke.error)} /> : null}
-    </m.li>
   );
 }
