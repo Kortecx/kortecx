@@ -1,28 +1,42 @@
+import type { RecipeInfo } from "@kortecx/sdk/web";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { m } from "framer-motion";
-import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import { rowEntrance } from "../../app/motion";
+import { type FormEvent, useEffect, useState } from "react";
+import { stagger } from "../../app/motion";
+import { useConnection } from "../../kx/connection-context";
 import { toUiError } from "../../kx/errors";
 import { useInvoke } from "../../kx/use-invoke";
 import { useRecipeSearch } from "../../kx/use-recipe-search";
-import { useRecipeForm, useRecipes } from "../../kx/use-recipes";
+import { useRecipeForm, useRecipeSummaries, useRecipes } from "../../kx/use-recipes";
 import { useRuns } from "../../kx/use-runs";
+import { BLUEPRINT_NAMES_CHANGED_EVENT, loadBlueprintNames } from "../../lib/blueprint-names";
+import { blueprintInputs } from "../../lib/export-blueprint";
+import { humanizeHandle } from "../../lib/humanize-handle";
 import { EmptyState } from "../EmptyState";
 import { ErrorNotice } from "../ErrorNotice";
 import { CodeViewer } from "../editor/CodeViewer";
 import { JsonEditor } from "../editor/JsonEditor";
-import { RecipeForm } from "../recipes/RecipeForm";
+import { BlueprintCard } from "./BlueprintCard";
+import { BlueprintFormDrawer } from "./BlueprintFormDrawer";
 
 const FALLBACK_HANDLE = "kx/recipes/echo";
 const FALLBACK_ARGS = '{\n  "topic": "hello"\n}';
 
+/** The display shape a Blueprint card renders. */
+interface BlueprintDisplay {
+  readonly headline: string;
+  readonly customName: string | null;
+}
+
 /**
  * The Blueprint catalog + submit (display name for the frozen `recipe` wire).
- * PR-2.1: the catalog is a TABLE — one blueprint per row with per-row controls
- * (Run → the form below; View → the contract in a read-only Monaco popup) —
- * and the route accepts `?handle=&args=` to land with a prior run's inputs
- * PREFILLED (the clone-lite flow from Workflows). Sharing across parties is a
- * cloud capability (D129) — no fake control here.
+ * PR-4.1b: the catalog is a CARD GRID — one blueprint per card with a clean
+ * display name, a description subtitle + advisory tag/version chips, and a
+ * per-card action menu (Run · Open-in-new-tab · View contract · Edit in builder
+ * · Rename · Export · Share[Cloud] · Schedule[Cloud]). Clicking a card opens
+ * the run form in a slide-over drawer; `?handle=&args=` auto-opens it PREFILLED
+ * (the clone-lite flow from Workflows). Sharing across parties + scheduling are
+ * cloud capabilities (D129) — honest-disabled chips, never fake controls.
  */
 export function RecipesSection({
   initialHandle,
@@ -34,9 +48,36 @@ export function RecipesSection({
   initialArgs?: string;
 }) {
   const navigate = useNavigate();
+  const { endpoint } = useConnection();
   const { add } = useRuns();
   const invoke = useInvoke();
   const recipes = useRecipes();
+  const summaries = useRecipeSummaries();
+  const [names, setNames] = useState<Record<string, string>>(() => loadBlueprintNames(endpoint));
+  const [openForm, setOpenForm] = useState<{
+    handle: string;
+    prefill?: Record<string, unknown>;
+  } | null>(null);
+  const [viewing, setViewing] = useState<string | null>(null);
+
+  // Stay fresh across blueprint-rename events + endpoint switches.
+  useEffect(() => {
+    setNames(loadBlueprintNames(endpoint));
+    function onNamesChanged(): void {
+      setNames(loadBlueprintNames(endpoint));
+    }
+    window.addEventListener(BLUEPRINT_NAMES_CHANGED_EVENT, onNamesChanged);
+    return () => window.removeEventListener(BLUEPRINT_NAMES_CHANGED_EVENT, onNamesChanged);
+  }, [endpoint]);
+
+  // Clone-lite landing: when `?handle=` targets a provisioned blueprint, open
+  // its run form PREFILLED (fires once the catalog has loaded).
+  const catalog = recipes.data;
+  useEffect(() => {
+    if (initialHandle && catalog && catalog.includes(initialHandle)) {
+      setOpenForm({ handle: initialHandle, prefill: parsePrefill(initialArgs) });
+    }
+  }, [initialHandle, initialArgs, catalog]);
 
   function start(handle: string, args: Record<string, unknown>): void {
     invoke.mutate(
@@ -49,7 +90,7 @@ export function RecipesSection({
             recipeFingerprint,
             handle,
             startedAt: Date.now(),
-            // PR-2.1: keep the args so the Workflows row can Run-again/Clone.
+            // Keep the args so the Workflows card can Run-again/Clone.
             args: JSON.stringify(args),
           });
           navigate({
@@ -60,6 +101,13 @@ export function RecipesSection({
         },
       },
     );
+  }
+
+  /** Display name precedence: local rename > humanized handle. */
+  function nameFor(handle: string): BlueprintDisplay {
+    const local = names[handle];
+    const customName = local && local.trim() !== "" ? local : null;
+    return { headline: customName ?? humanizeHandle(handle), customName };
   }
 
   const invokeError = invoke.error ? toUiError(invoke.error) : null;
@@ -83,13 +131,13 @@ export function RecipesSection({
 
       {recipes.isLoading ? <EmptyState title="Loading blueprints…" /> : null}
 
-      {recipes.data ? (
-        <RecipeTable
-          handles={recipes.data}
-          pending={invoke.isPending}
-          onRun={start}
-          initialHandle={initialHandle}
-          initialArgs={initialArgs}
+      {catalog ? (
+        <BlueprintCatalog
+          handles={catalog}
+          summaries={summaries.data ?? {}}
+          nameFor={nameFor}
+          onRun={(handle) => setOpenForm({ handle })}
+          onView={setViewing}
         />
       ) : null}
 
@@ -98,7 +146,67 @@ export function RecipesSection({
       ) : null}
 
       {invokeError ? <ErrorNotice error={invokeError} onRetry={() => invoke.reset()} /> : null}
+
+      {openForm ? (
+        <BlueprintFormDrawer
+          handle={openForm.handle}
+          prefill={openForm.prefill}
+          pending={invoke.isPending}
+          onRun={start}
+          onClose={() => setOpenForm(null)}
+        />
+      ) : null}
+
+      {viewing ? <BlueprintViewer handle={viewing} onClose={() => setViewing(null)} /> : null}
     </section>
+  );
+}
+
+/** The catalog as a card grid — one {@link BlueprintCard} per provisioned handle. */
+function BlueprintCatalog({
+  handles,
+  summaries,
+  nameFor,
+  onRun,
+  onView,
+}: {
+  handles: string[];
+  summaries: Record<string, RecipeInfo>;
+  nameFor: (handle: string) => BlueprintDisplay;
+  onRun: (handle: string) => void;
+  onView: (handle: string) => void;
+}) {
+  if (handles.length === 0) {
+    return (
+      <EmptyState
+        title="No blueprints provisioned"
+        detail="This gateway exposes the blueprint catalog but provisions no blueprints."
+      />
+    );
+  }
+  return (
+    <m.div
+      className="card-grid"
+      data-testid="recipe-catalog"
+      variants={stagger()}
+      initial="hidden"
+      animate="show"
+    >
+      {handles.map((h) => {
+        const d = nameFor(h);
+        return (
+          <BlueprintCard
+            key={h}
+            handle={h}
+            headline={d.headline}
+            customName={d.customName}
+            summary={summaries[h]}
+            onRun={onRun}
+            onView={onView}
+          />
+        );
+      })}
+    </m.div>
   );
 }
 
@@ -176,128 +284,11 @@ function parsePrefill(argsText: string | undefined): Record<string, unknown> | u
   return undefined;
 }
 
-/** The catalog table: one blueprint per row + per-row Run/View controls. */
-function RecipeTable({
-  handles,
-  pending,
-  onRun,
-  initialHandle,
-  initialArgs,
-}: {
-  handles: string[];
-  pending: boolean;
-  onRun: (handle: string, args: Record<string, unknown>) => void;
-  initialHandle?: string;
-  initialArgs?: string;
-}) {
-  const [selected, setSelected] = useState(() =>
-    initialHandle && handles.includes(initialHandle)
-      ? initialHandle
-      : (handles[0] ?? FALLBACK_HANDLE),
-  );
-  const handle = handles.includes(selected) ? selected : (handles[0] ?? FALLBACK_HANDLE);
-  const form = useRecipeForm(handle);
-  const [viewing, setViewing] = useState<string | null>(null);
-  const formRef = useRef<HTMLDivElement | null>(null);
-  // Only the clone-lite landing's TARGET blueprint gets the prefill.
-  const prefill = useMemo(
-    () => (handle === initialHandle ? parsePrefill(initialArgs) : undefined),
-    [handle, initialHandle, initialArgs],
-  );
-
-  if (handles.length === 0) {
-    return (
-      <EmptyState
-        title="No blueprints provisioned"
-        detail="This gateway exposes the blueprint catalog but provisions no blueprints."
-      />
-    );
-  }
-
-  return (
-    <div data-testid="recipe-catalog">
-      <table className="recipe-table" data-testid="recipe-table">
-        <thead>
-          <tr>
-            <th scope="col">Blueprint</th>
-            <th scope="col" className="recipe-table__actions">
-              Actions
-            </th>
-          </tr>
-        </thead>
-        <tbody>
-          {handles.map((h, i) => (
-            <m.tr
-              key={h}
-              className={h === handle ? "recipe-row recipe-row--active" : "recipe-row"}
-              data-testid={`recipe-row-${h}`}
-              {...rowEntrance(i)}
-            >
-              <td>
-                <button
-                  type="button"
-                  data-testid={`recipe-pick-${h}`}
-                  className={`recipe-chip${h === handle ? " recipe-chip--active" : ""}`}
-                  aria-pressed={h === handle}
-                  onClick={() => setSelected(h)}
-                >
-                  {h}
-                </button>
-              </td>
-              <td className="recipe-table__actions">
-                <button
-                  type="button"
-                  className="linkbtn"
-                  data-testid={`recipe-run-${h}`}
-                  title="Open this blueprint's input form below"
-                  onClick={() => {
-                    setSelected(h);
-                    formRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-                  }}
-                >
-                  Run
-                </button>
-                <button
-                  type="button"
-                  className="linkbtn"
-                  data-testid={`recipe-view-${h}`}
-                  title="View the blueprint's contract (inputs + types)"
-                  onClick={() => setViewing(h)}
-                >
-                  View
-                </button>
-              </td>
-            </m.tr>
-          ))}
-        </tbody>
-      </table>
-
-      <div ref={formRef}>
-        {form.isLoading ? <EmptyState title="Loading form…" /> : null}
-        {form.error ? (
-          <ErrorNotice error={toUiError(form.error)} onRetry={() => void form.refetch()} />
-        ) : null}
-        {form.data ? (
-          <RecipeForm
-            // Re-key per handle+prefill so a clone-landing remount prefills.
-            key={`${handle}:${prefill ? "prefilled" : "blank"}`}
-            form={form.data}
-            pending={pending}
-            onSubmit={(args) => onRun(handle, args)}
-            initial={prefill}
-          />
-        ) : null}
-      </div>
-
-      {viewing ? <BlueprintViewer handle={viewing} onClose={() => setViewing(null)} /> : null}
-    </div>
-  );
-}
-
 /**
  * The blueprint-contract popup (PR-2.1): the handle + its full free-param
  * contract rendered as JSON in the read-only Monaco viewer (D141.2). Pure
- * display — the contract is exactly what `GetRecipeForm` declares.
+ * display — the contract is exactly what `GetRecipeForm` declares (shaped by the
+ * shared `blueprintInputs`, so the viewer + the Export file never drift).
  */
 function BlueprintViewer({ handle, onClose }: { handle: string; onClose: () => void }) {
   const form = useRecipeForm(handle);
@@ -314,20 +305,7 @@ function BlueprintViewer({ handle, onClose }: { handle: string; onClose: () => v
   }, [onClose]);
 
   const contract = form.data
-    ? JSON.stringify(
-        {
-          handle: form.data.handle,
-          inputs: form.data.fields.map((f) => ({
-            name: f.name,
-            type: f.type,
-            required: f.required,
-            ...(f.maxLen ? { max_len: f.maxLen } : {}),
-            ...(f.allowed.length > 0 ? { allowed: f.allowed } : {}),
-          })),
-        },
-        null,
-        2,
-      )
+    ? JSON.stringify({ handle: form.data.handle, inputs: blueprintInputs(form.data) }, null, 2)
     : null;
 
   return (

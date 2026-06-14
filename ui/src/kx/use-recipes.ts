@@ -6,7 +6,7 @@
  * so it caches indefinitely.
  */
 
-import type { RecipeForm } from "@kortecx/sdk/web";
+import type { RecipeForm, RecipeInfo } from "@kortecx/sdk/web";
 import { useQuery } from "@tanstack/react-query";
 import { useConnection } from "./connection-context";
 import { queryKeys } from "./query-keys";
@@ -51,6 +51,36 @@ export function useRecipeNames() {
         return map;
       } catch {
         return {}; // not wired / old gateway — unlabeled rows are honest
+      }
+    },
+  });
+}
+
+/**
+ * The handle→summary metadata map (PR-4.1b Blueprint cards): the SAME
+ * `ListRecipes` summaries `useRecipeNames` reads, but keyed by handle and
+ * keeping the advisory `description`/`tags`/`version` the cards render as a
+ * subtitle + chips. Tolerant: an old gateway (or no catalog) yields an EMPTY
+ * map — cards degrade to the handle headline, never an error.
+ */
+export function useRecipeSummaries() {
+  const { client, endpoint, status } = useConnection();
+  return useQuery({
+    queryKey: queryKeys.recipeSummaries(endpoint),
+    enabled: status === "connected" && client !== null,
+    queryFn: async (): Promise<Record<string, RecipeInfo>> => {
+      if (!client) {
+        throw new Error("not connected");
+      }
+      try {
+        const summaries = await client.listRecipeSummaries();
+        const map: Record<string, RecipeInfo> = {};
+        for (const s of summaries) {
+          map[s.handle] = s;
+        }
+        return map;
+      } catch {
+        return {}; // not wired / old gateway — handle-only cards are honest
       }
     },
   });

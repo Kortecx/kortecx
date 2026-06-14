@@ -28,8 +28,8 @@ test("runs: a submitted run appears in the run list and re-opens", async ({ page
   await page.getByTestId("runs-filter").fill("zzz-no-match");
   await expect(page.getByTestId("run-list")).toHaveCount(0);
 
-  // Re-open the run from the list (clear the filter first).
+  // Re-open the run from its card (clear the filter first).
   await page.getByTestId("runs-filter").fill("");
-  await page.getByTestId("run-list").locator("a").first().click();
+  await page.getByTestId("run-open").first().click();
   await expect(page.getByTestId("mote-dag")).toBeVisible({ timeout: 30_000 });
 });

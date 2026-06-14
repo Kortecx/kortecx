@@ -33,6 +33,9 @@ export type Glyph =
   | "terminal"
   | "copy"
   | "download"
+  | "share"
+  | "external-link"
+  | "calendar"
   | "thumb-up"
   | "thumb-down";
 
@@ -68,6 +71,10 @@ const PATHS: Record<Glyph, string> = {
   terminal: "M4 17l6-5-6-5M12 19h8",
   copy: "M9 9h11a2 2 0 012 2v9a2 2 0 01-2 2h-9a2 2 0 01-2-2v-9a2 2 0 012-2zM5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1",
   download: "M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3",
+  share:
+    "M18 8a3 3 0 100-6 3 3 0 000 6zm0 14a3 3 0 100-6 3 3 0 000 6zM6 15a3 3 0 100-6 3 3 0 000 6zm2.6-1.3l6.8 4m0-11.4l-6.8 4",
+  "external-link": "M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6M15 3h6v6M10 14L21 3",
+  calendar: "M3 6a2 2 0 012-2h14a2 2 0 012 2v13a2 2 0 01-2 2H5a2 2 0 01-2-2zm0 4h18M8 2v4m8-4v4",
   "thumb-up":
     "M14 9V5a3 3 0 00-3-3l-4 9v11h11.28a2 2 0 002-1.7l1.38-9a2 2 0 00-2-2.3zM7 22H4a2 2 0 01-2-2v-7a2 2 0 012-2h3",
   "thumb-down":

@@ -17,6 +17,8 @@ export const queryKeys = {
   recipes: (endpoint: string) => ["kx", endpoint, "recipes"] as const,
   /** The fingerprint→handle naming map (`ListRecipes` summaries, PR-2.1). */
   recipeNames: (endpoint: string) => ["kx", endpoint, "recipe-names"] as const,
+  /** The handle→summary metadata map (`ListRecipes` summaries, PR-4.1b cards). */
+  recipeSummaries: (endpoint: string) => ["kx", endpoint, "recipe-summaries"] as const,
   /** One recipe's free-param form (`GetRecipeForm`), scoped by handle. */
   recipeForm: (endpoint: string, handle: string) =>
     ["kx", endpoint, "recipe-form", handle] as const,

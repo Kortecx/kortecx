@@ -1,8 +1,8 @@
 /**
- * PR-2.1 review-feedback round: the Workflows page controls (New workflow ·
- * Clone-prefill · Rename · the honest "Clear local history"), the Blueprints
- * catalog TABLE + the Monaco contract popup, the printable demo result, and
- * the agent toggle's honest ABSENCE on an FFI-free serve.
+ * PR-4.1b card overhaul: the Workflows page CARDS + per-card action menu (New
+ * workflow · Clone-prefill · Rename · the honest "Clear local history"), the
+ * Blueprints catalog CARD GRID + the Monaco contract popup, the readable
+ * passthrough result, and the agent toggle's honest ABSENCE on an FFI-free serve.
  */
 
 import { expect, test } from "@playwright/test";
@@ -16,7 +16,7 @@ test.afterEach(() => {
   gw = undefined;
 });
 
-test("workflows: clone prefills the blueprint form; rename + clear-local-history stay honest", async ({
+test("workflows: a run card menu clones (prefilled), renames, and clear-local-history stays honest", async ({
   page,
 }) => {
   gw = await spawnGateway({ corsOrigin: SPA_ORIGIN });
@@ -28,19 +28,21 @@ test("workflows: clone prefills the blueprint form; rename + clear-local-history
   await page.getByTestId("nav-runs").click();
   await expect(page.getByTestId("run-list")).toBeVisible();
 
-  // The row is LABELED by its recipe handle (session record).
-  const row = page.locator(".run-list__item").first();
-  await expect(row).toContainText("kx/recipes/echo");
+  // The card carries its recipe handle as a secondary chip (clean name = "Echo").
+  const card = page.getByTestId("run-card").first();
+  await expect(card).toContainText("kx/recipes/echo");
 
-  // Rename (client-local) → the row shows the custom name.
-  await row.getByTestId("run-rename").click();
-  await row.getByTestId("run-rename-input").fill("incident triage");
-  await row.getByTestId("run-rename-input").press("Enter");
-  await expect(row).toContainText("incident triage");
+  // Rename (client-local) via the per-card menu → the card shows the custom name.
+  await card.getByTestId("run-menu").click();
+  await card.getByTestId("run-rename").click();
+  await card.getByTestId("run-rename-input").fill("incident triage");
+  await card.getByTestId("run-rename-input").press("Enter");
+  await expect(card).toContainText("incident triage");
 
-  // Clone → the Blueprints form opens PRE-FILLED with the prior args.
-  await row.getByTestId("run-clone").click();
-  await expect(page.getByTestId("recipe-table")).toBeVisible({ timeout: 30_000 });
+  // Clone (menu) → the Blueprints run form opens PRE-FILLED with the prior args.
+  await card.getByTestId("run-menu").click();
+  await card.getByTestId("run-clone").click();
+  await expect(page.getByTestId("recipe-catalog")).toBeVisible({ timeout: 30_000 });
   await expect(
     page.locator('[data-testid="recipe-form"][data-recipe="kx/recipes/echo"]'),
   ).toBeVisible({ timeout: 30_000 });
@@ -51,12 +53,13 @@ test("workflows: clone prefills the blueprint form; rename + clear-local-history
   await page.getByTestId("nav-runs").click();
   await page.getByTestId("clear-local-history").click();
   await expect(page.getByTestId("run-list")).toBeVisible({ timeout: 30_000 });
-  const durable = page.locator(".run-list__item").first();
+  const durable = page.getByTestId("run-card").first();
   await expect(durable).toContainText("journal"); // the recovered-from-journal badge
   await expect(durable).toContainText("incident triage"); // renames outlive the clear
 
-  // Dropping the rename falls back to the fingerprint→handle JOIN (PR-2.1):
-  // the durable row is still NAMED by its recipe, not a bare hex id.
+  // Dropping the rename falls back to the humanized handle + its raw-handle chip:
+  // the durable card is still NAMED by its recipe, not a bare hex id.
+  await durable.getByTestId("run-menu").click();
   await durable.getByTestId("run-rename").click();
   await durable.getByTestId("run-rename-input").fill("");
   await durable.getByTestId("run-rename-input").press("Enter");
@@ -67,14 +70,21 @@ test("workflows: clone prefills the blueprint form; rename + clear-local-history
   await expect(page).toHaveURL(/\/recipes$/);
 });
 
-test("blueprints: the catalog is a table; View opens the contract in Monaco", async ({ page }) => {
+test("blueprints: the catalog is a card grid; the menu's View opens the contract in Monaco", async ({
+  page,
+}) => {
   gw = await spawnGateway({ corsOrigin: SPA_ORIGIN });
   await connectConsole(page, gw);
 
   await page.getByTestId("nav-recipes").click();
-  await expect(page.getByTestId("recipe-table")).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId("recipe-catalog")).toBeVisible({ timeout: 30_000 });
 
-  await page.getByTestId("recipe-view-kx/recipes/echo").click();
+  // Open the echo card's action menu → View contract.
+  const bp = page
+    .getByTestId("blueprint-card")
+    .filter({ has: page.getByTestId("recipe-pick-kx/recipes/echo") });
+  await bp.getByTestId("blueprint-menu").click();
+  await bp.getByTestId("recipe-view-kx/recipes/echo").click();
   const viewer = page.getByTestId("blueprint-viewer");
   await expect(viewer).toBeVisible();
   await expect(viewer.getByTestId("blueprint-contract")).toContainText("kx/recipes/echo", {
