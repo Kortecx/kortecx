@@ -65,6 +65,31 @@ export function resolveChatBacking(
   return { handle: settings.handle, promptKey: settings.promptKey };
 }
 
+/**
+ * Whether to PROACTIVELY surface the "no model — connect one" guidance (GR15
+ * §2.208): true only on a no-model serve (`ListModels` resolved to an empty list,
+ * not loading, the RPC supported) AND when the backing is NOT a deliberate `echo`
+ * choice. A chosen `echo` is honored verbatim (resolveChatBacking's contract) — it
+ * is an explicit model-free round-trip, not a gap to flag. Pure (no React) so the
+ * decision is unit-tested without rendering the whole panel.
+ */
+export function shouldPromptNoModel(opts: {
+  /** `ListModels` count (`undefined` while loading / before the first response). */
+  readonly modelCount: number | undefined;
+  readonly loading: boolean;
+  /** The gateway predates `ListModels` (don't prompt — we can't know). */
+  readonly unsupported: boolean;
+  /** The reconciled chat backing handle (from {@link resolveChatBacking}). */
+  readonly backingHandle: string;
+}): boolean {
+  return (
+    opts.modelCount === 0 &&
+    !opts.loading &&
+    !opts.unsupported &&
+    opts.backingHandle !== ECHO_PRESET.handle
+  );
+}
+
 const KEY = "kortecx.ui.chat";
 
 function isString(v: unknown): v is string {

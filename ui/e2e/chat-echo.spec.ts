@@ -19,9 +19,17 @@ test("chat round-trips against the model-free echo recipe (Invoke→poll→GetCo
   await page.getByTestId("nav-chat").click();
   await expect(page.getByTestId("chat-panel")).toBeVisible();
 
+  // PR-B (GR15): on this model-free serve chat proactively shows the honest
+  // "no model — connect one" notice (instead of silently echoing).
+  await expect(page.getByTestId("degrade-notice")).toBeVisible();
+
   // Point chat at the deterministic, model-free echo recipe.
   await page.getByTestId("chat-settings").locator("summary").click();
   await page.getByTestId("echo-preset").click();
+
+  // Picking echo is a DELIBERATE model-free choice — the notice is dismissed
+  // (resolveChatBacking honors echo verbatim; it no longer masks a gap).
+  await expect(page.getByTestId("degrade-notice")).toHaveCount(0);
 
   await typeMessage(page, "hello there");
   await page.getByTestId("send").click();

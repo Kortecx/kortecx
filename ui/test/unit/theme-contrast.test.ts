@@ -191,6 +191,15 @@ const PAIRS: Pair[] = [
     min: { light: 3.0, dark: 4.5 },
     why: "semantic badge text",
   })),
+  // PR-B (D150): the sidebar group-label section accents (warning/error/success
+  // are already covered by SEMANTIC). teal/violet join at the same grandfathered
+  // light floor; dark holds the full AA bar. Pinned so they can only improve.
+  ...["--teal", "--violet"].map((fg) => ({
+    fg,
+    bg: "--surface",
+    min: { light: 3.0, dark: 4.5 },
+    why: "group-label section accent",
+  })),
 ];
 
 describe("theme contrast (the executable AA lock)", () => {

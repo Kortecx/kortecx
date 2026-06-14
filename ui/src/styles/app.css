@@ -20,6 +20,8 @@
   --text-1: #0d0d0d;
   --text-2: rgba(13, 13, 13, 0.68);
   --text-3: rgba(13, 13, 13, 0.46);
+  /* faintest tier — decoration only (separators/faint dots); never text (AA) */
+  --text-4: rgba(13, 13, 13, 0.26);
   --border: rgba(13, 13, 13, 0.12);
   --border-md: rgba(13, 13, 13, 0.18);
   --border-strong: rgba(13, 13, 13, 0.26);
@@ -117,6 +119,8 @@
   --text-1: #f4f4f5;
   --text-2: rgba(244, 244, 245, 0.72);
   --text-3: rgba(244, 244, 245, 0.55);
+  /* faintest tier — decoration only (separators/faint dots); never text (AA) */
+  --text-4: rgba(244, 244, 245, 0.32);
   --border: rgba(244, 244, 245, 0.14);
   --border-md: rgba(244, 244, 245, 0.2);
   --border-strong: rgba(244, 244, 245, 0.3);
@@ -826,6 +830,149 @@ button:disabled {
 .sidebar--collapsed .navitem {
   justify-content: center;
   padding: 0.5rem;
+}
+
+/* PR-B (D150): per-group section colour. The accent reads on the ICON + hover/
+ * active TINT + the active accent bar; the LABEL text stays high-contrast (the
+ * accent palette is < 4.5:1 as small light-theme text — the AA lock). */
+.navitem--colored:hover {
+  background: color-mix(in srgb, var(--nav-color) 8%, transparent);
+  color: var(--fg);
+}
+.navitem--colored:hover .navitem__icon,
+.navitem--colored.navitem--active .navitem__icon {
+  color: var(--nav-color);
+}
+.navitem--colored.navitem--active {
+  background: color-mix(in srgb, var(--nav-color) 12%, transparent);
+  color: var(--fg);
+  font-weight: 600;
+  box-shadow: inset 2px 0 0 var(--nav-color);
+}
+/* honest-disabled Cloud placeholders (never navigable) */
+.navitem--disabled {
+  color: var(--fg-muted);
+  cursor: default;
+  opacity: 0.72;
+}
+.navitem--disabled .chip--soon {
+  margin-left: auto;
+}
+
+/* ---- sidebar: New flyout · coloured groups · token footer (PR-B / D150) ---- */
+.sidebar__new {
+  padding: 0.1rem 0.1rem 0.35rem;
+}
+.sidebar__new .popover {
+  width: 100%;
+}
+.sidebar__new-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  width: 100%;
+  margin: 0;
+  padding: 0.4rem 0.6rem;
+  font-size: 0.85rem;
+  /* inherits the theme-independent primary gradient from the base button{} rule */
+}
+.sidebar--collapsed .sidebar__new-btn {
+  padding: 0.4rem;
+}
+/* the groups flow naturally at the top (the sidebar scrolls when tall); the footer
+ * + Settings pin to the bottom via their auto top margins — NEVER flex-grow the
+ * groups (a tight viewport would shrink the box below its content and overlap the
+ * footer/Settings, intercepting their clicks). */
+.sidebar__groups {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+.sidebar__group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+.sidebar__group + .sidebar__group {
+  margin-top: 0.35rem;
+}
+.sidebar__group-label {
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--section-color, var(--text-3));
+  margin: 0;
+  padding: 0.35rem 0.6rem 0.15rem;
+}
+.sidebar__group[data-color="warning"] {
+  --section-color: var(--warning);
+}
+.sidebar__group[data-color="teal"] {
+  --section-color: var(--teal);
+}
+.sidebar__group[data-color="violet"] {
+  --section-color: var(--violet);
+}
+.sidebar__group[data-color="error"] {
+  --section-color: var(--error);
+}
+.sidebar__group[data-color="success"] {
+  --section-color: var(--success);
+}
+.sidebar__group[data-color="neutral"] {
+  --section-color: var(--text-3);
+}
+/* collapsed rail: drop labels, keep a faint separator between groups */
+.sidebar--collapsed .sidebar__group + .sidebar__group {
+  margin-top: 0.3rem;
+  padding-top: 0.3rem;
+  border-top: 1px solid var(--text-4);
+}
+.sidebar__footer {
+  margin-top: auto;
+  padding: 0.4rem 0.6rem 0.2rem;
+}
+.sidebar__footer-label {
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  margin: 0;
+}
+.sidebar__footer-value {
+  font-size: 0.95rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-1);
+  margin: 0.1rem 0 0;
+}
+.sidebar__footer-empty {
+  font-size: 0.72rem;
+  color: var(--text-3);
+  margin: 0.1rem 0 0;
+}
+
+/* ---- topbar system-status box (PR-B / D150) ---- */
+.status-box {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.2rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-elev, var(--bg-input));
+  font-size: 0.72rem;
+  color: var(--text-2);
+}
+.status-box__label {
+  font-weight: 600;
+}
+/* navbar icon buttons pick up a gentle accent on hover (PR-B polish) */
+.navbar .iconbtn:hover {
+  color: var(--accent);
 }
 
 /* ---- main content ---- */

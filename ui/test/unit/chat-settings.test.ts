@@ -7,6 +7,7 @@ import {
   loadChatSettings,
   resolveChatBacking,
   saveChatSettings,
+  shouldPromptNoModel,
 } from "../../src/lib/chat-settings";
 
 const echoSettings: ChatSettings = {
@@ -127,5 +128,34 @@ describe("resolveChatBacking — the live-recipe reconciliation (GR15)", () => {
       handle: ECHO_PRESET.handle,
       promptKey: ECHO_PRESET.promptKey,
     });
+  });
+});
+
+describe("shouldPromptNoModel — the proactive no-model honest-empty (GR15 §2.208)", () => {
+  const base = {
+    modelCount: 0,
+    loading: false,
+    unsupported: false,
+    backingHandle: MODEL_CHAT_HANDLE,
+  };
+
+  it("prompts on a no-model serve with the default (non-echo) backing", () => {
+    expect(shouldPromptNoModel(base)).toBe(true);
+  });
+
+  it("does NOT prompt when echo is the deliberate backing (honored verbatim)", () => {
+    expect(shouldPromptNoModel({ ...base, backingHandle: ECHO_PRESET.handle })).toBe(false);
+  });
+
+  it("does NOT prompt while ListModels is still loading", () => {
+    expect(shouldPromptNoModel({ ...base, modelCount: undefined, loading: true })).toBe(false);
+  });
+
+  it("does NOT prompt when a model IS provisioned", () => {
+    expect(shouldPromptNoModel({ ...base, modelCount: 2 })).toBe(false);
+  });
+
+  it("does NOT prompt on a gateway that predates ListModels (unsupported)", () => {
+    expect(shouldPromptNoModel({ ...base, modelCount: undefined, unsupported: true })).toBe(false);
   });
 });

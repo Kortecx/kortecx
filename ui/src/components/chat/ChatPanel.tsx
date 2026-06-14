@@ -4,6 +4,7 @@ import { fadeUp } from "../../app/motion";
 import { useConnection } from "../../kx/connection-context";
 import { useAttachments } from "../../kx/use-attachments";
 import { REACT_RECIPE_HANDLE, useChat } from "../../kx/use-chat";
+import { useModels } from "../../kx/use-models";
 import { useRecipes } from "../../kx/use-recipes";
 import {
   type SavedChat,
@@ -17,6 +18,7 @@ import {
   loadChatSettings,
   resolveChatBacking,
   saveChatSettings,
+  shouldPromptNoModel,
 } from "../../lib/chat-settings";
 import type { MessageAttachment } from "../../lib/chat-thread";
 import { download } from "../../lib/download";
@@ -55,6 +57,17 @@ export function ChatPanel() {
   // stale model-free `echo` handle can't silently echo the prompt when a model is
   // provisioned (GR15). The model chat recipe backs chat whenever served.
   const backing = resolveChatBacking(settings, available);
+  // Proactively surface the honest "no model — connect one" state on a no-model
+  // serve (GR15 §2.208 backlog), BEFORE a send silently echoes. Gated on the
+  // backing NOT being a deliberate `echo` choice — that path is honored verbatim
+  // (resolveChatBacking's contract; the echo e2e + Settings preset stay green).
+  const models = useModels();
+  const promptNoModel = shouldPromptNoModel({
+    modelCount: models.models?.length,
+    loading: models.loading,
+    unsupported: models.unsupported,
+    backingHandle: backing.handle,
+  });
   const chat = useChat({
     handle: backing.handle,
     promptKey: backing.promptKey,
@@ -246,7 +259,11 @@ export function ChatPanel() {
       ) : null}
 
       <ChatSettingsPanel settings={settings} onChange={updateSettings} />
-      {chat.degraded ? <DegradeNotice error={chat.degraded} /> : null}
+      {chat.degraded ? (
+        <DegradeNotice error={chat.degraded} />
+      ) : promptNoModel ? (
+        <DegradeNotice />
+      ) : null}
 
       <MessageList
         thread={chat.thread}

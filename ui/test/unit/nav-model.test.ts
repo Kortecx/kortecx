@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  CLOUD_PLACEHOLDERS,
   HIDDEN_SECTIONS,
+  NAV_GROUPS,
   NAV_SECTIONS,
   SETTINGS_SECTION,
+  type SectionColor,
 } from "../../src/components/shell/nav-model";
 
 describe("NAV_SECTIONS", () => {
@@ -69,5 +72,65 @@ describe("SETTINGS_SECTION", () => {
     expect(SETTINGS_SECTION.path).toBe("/settings");
     expect(SETTINGS_SECTION.icon).toBe("settings");
     expect(NAV_SECTIONS.some((s) => s.id === SETTINGS_SECTION.id)).toBe(false);
+  });
+});
+
+describe("NAV_GROUPS (PR-B / D150 sidebar grouping)", () => {
+  const COLORS: readonly SectionColor[] = [
+    "warning",
+    "teal",
+    "violet",
+    "error",
+    "success",
+    "neutral",
+  ];
+
+  it("groups in the user-decided order", () => {
+    expect(NAV_GROUPS.map((g) => g.id)).toEqual([
+      "workspace",
+      "data",
+      "tools",
+      "monitoring",
+      "security",
+    ]);
+  });
+
+  it("every grouped section id references a real NAV_SECTIONS section", () => {
+    const ids = new Set(NAV_SECTIONS.map((s) => s.id));
+    for (const g of NAV_GROUPS) {
+      for (const id of g.sectionIds) {
+        expect(ids.has(id), `group ${g.id} references unknown section ${id}`).toBe(true);
+      }
+    }
+  });
+
+  it("partitions NAV_SECTIONS exactly once (none dropped, none duplicated)", () => {
+    const grouped = NAV_GROUPS.flatMap((g) => g.sectionIds);
+    expect(grouped.length).toBe(NAV_SECTIONS.length);
+    expect(new Set(grouped).size).toBe(grouped.length);
+    expect(new Set(grouped)).toEqual(new Set(NAV_SECTIONS.map((s) => s.id)));
+  });
+
+  it("uses only allowed section colours", () => {
+    for (const g of NAV_GROUPS) {
+      expect(COLORS).toContain(g.color);
+    }
+  });
+});
+
+describe("CLOUD_PLACEHOLDERS (honest-disabled — GR15/D129)", () => {
+  it("are never navigable: NO path field on any placeholder", () => {
+    for (const p of CLOUD_PLACEHOLDERS) {
+      expect(p).not.toHaveProperty("path");
+      expect(p.label.length).toBeGreaterThan(0);
+      expect(p.icon.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("do not collide with real section ids", () => {
+    const sectionIds = new Set(NAV_SECTIONS.map((s) => s.id));
+    for (const p of CLOUD_PLACEHOLDERS) {
+      expect(sectionIds.has(p.id)).toBe(false);
+    }
   });
 });

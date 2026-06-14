@@ -17,6 +17,8 @@
  * a run's detail page — one capability, one home.
  */
 
+import type { Glyph } from "./Icon";
+
 export type IconName =
   | "activity"
   | "monitor"
@@ -146,3 +148,66 @@ export const SETTINGS_SECTION: NavSection = {
   icon: "settings",
   hint: "Profile & console preferences",
 } as const;
+
+/**
+ * Section-grouping colour (PR-B reference-app adoption, D150). A TOKEN NAME, never
+ * a raw hex — `app.css` owns the per-theme flip, so the AA-lock stays the single
+ * source of truth. Maps 1:1 to a `--{color}` palette token (`neutral` → `--text-3`).
+ */
+export type SectionColor = "warning" | "teal" | "violet" | "error" | "success" | "neutral";
+
+/**
+ * A sidebar GROUP — a presentation layer OVER {@link NAV_SECTIONS} (which stays the
+ * single source of section identity). `sectionIds` reference NAV_SECTIONS ids in
+ * render order; the nav-model test asserts every section is grouped exactly once,
+ * so a new section can never silently fall out of the sidebar.
+ */
+export interface NavGroup {
+  /** Stable group id (test handle). */
+  readonly id: string;
+  /** Uppercase display label (renames freely). */
+  readonly label: string;
+  /** The group's accent colour (a palette token name). */
+  readonly color: SectionColor;
+  /** Section ids INTO {@link NAV_SECTIONS}, in render order. */
+  readonly sectionIds: readonly string[];
+}
+
+/**
+ * The sidebar groups (D150 — user-decided mapping of the eight REAL sections). The
+ * flat {@link NAV_SECTIONS} order is UNCHANGED (its unit-test assertion + flat
+ * consumers stay green); this drives the sidebar's grouped render order only.
+ */
+export const NAV_GROUPS: readonly NavGroup[] = [
+  {
+    id: "workspace",
+    label: "Workspace",
+    color: "warning",
+    sectionIds: ["chat", "runs", "recipes"],
+  },
+  { id: "data", label: "Data", color: "teal", sectionIds: ["datasets", "context"] },
+  { id: "tools", label: "Tools", color: "violet", sectionIds: ["tools"] },
+  { id: "monitoring", label: "Monitoring", color: "error", sectionIds: ["monitor"] },
+  { id: "security", label: "Security", color: "success", sectionIds: ["systems"] },
+] as const;
+
+/**
+ * An HONEST disabled "Cloud" placeholder (GR15 don't-fake-gaps + D129 cloud line).
+ * Has NO `path` — it is NEVER navigable, rendered greyed with a "Cloud" chip. These
+ * map to our ACTUAL planned managed-cloud capabilities (D118 permissioned
+ * federation · D129 managed multi-party), so the group is honest about what arrives
+ * in Cloud rather than fabricating a local feature.
+ */
+export interface CloudPlaceholder {
+  readonly id: string;
+  readonly label: string;
+  readonly icon: Glyph;
+}
+
+export const CLOUD_GROUP_LABEL = "Cloud";
+
+export const CLOUD_PLACEHOLDERS: readonly CloudPlaceholder[] = [
+  { id: "sharing", label: "Sharing", icon: "share" },
+  { id: "federation", label: "Federation", icon: "systems" },
+  { id: "experts", label: "Experts", icon: "activity" },
+] as const;
