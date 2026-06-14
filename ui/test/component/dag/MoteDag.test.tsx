@@ -19,6 +19,7 @@ vi.mock("@xyflow/react", () => ({
   Controls: () => null,
   MiniMap: () => null,
   useReactFlow: () => ({ fitView: () => {} }),
+  useNodesInitialized: () => false,
   Handle: () => null,
   Position: { Top: "top", Bottom: "bottom" },
   MarkerType: { ArrowClosed: "arrowclosed" },

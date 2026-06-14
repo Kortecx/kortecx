@@ -86,7 +86,7 @@ test("blueprints: the catalog is a table; View opens the contract in Monaco", as
   await expect(viewer).toBeHidden();
 });
 
-test("demo results render as TEXT (PR-2.1: printable payload) and the agent toggle is honestly absent FFI-free", async ({
+test("echo results render as readable TEXT (honest passthrough) and the agent toggle is honestly absent FFI-free", async ({
   page,
 }) => {
   gw = await spawnGateway({ corsOrigin: SPA_ORIGIN });
@@ -96,7 +96,8 @@ test("demo results render as TEXT (PR-2.1: printable payload) and the agent togg
   await expect(page.getByTestId("chat-panel")).toBeVisible();
   await expect(page.getByTestId("chat-mode")).toHaveCount(0);
 
-  // A committed demo result is readable text in the inspector's Result pane.
+  // A committed echo result is readable text in the inspector's Result pane
+  // (GR15: `echo` commits its bound `topic` verbatim, never a placeholder).
   await runRecipe(page, { handle: "kx/recipes/echo", fields: { topic: "readable" } });
   await expect(page.getByTestId("mote-dag")).toBeVisible({ timeout: 30_000 });
   await expect
@@ -106,7 +107,7 @@ test("demo results render as TEXT (PR-2.1: printable payload) and the agent togg
     .toBeGreaterThan(0);
   await page.getByTestId("mote-node").first().click();
   await expect(page.getByTestId("node-detail-drawer")).toBeVisible({ timeout: 15_000 });
-  await expect(page.getByTestId("node-detail-result")).toContainText("kx demo result for mote", {
+  await expect(page.getByTestId("node-detail-result")).toContainText("readable", {
     timeout: 30_000,
   });
 });

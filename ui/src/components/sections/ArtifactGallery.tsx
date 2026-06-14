@@ -33,7 +33,12 @@ function download(name: string, text: string): void {
 
 export function ArtifactGallery({ instanceId }: { instanceId: string }) {
   const { artifacts, isLoading, error, refetch } = useRunArtifacts(instanceId);
-  const [openRef, setOpenRef] = useState<string | null>(null);
+  // Track the open row by its MOTE id, not its result_ref: distinct Motes can
+  // legitimately commit IDENTICAL content (content-addressing dedups it to one
+  // ref — e.g. a fan-out of honest PURE passthrough Motes), so a result_ref is
+  // NOT a unique row key. Keying by the unique moteId keeps each committed output
+  // its own independently-expandable row.
+  const [openMote, setOpenMote] = useState<string | null>(null);
   // Batch-resolve every artifact's text for the list headline (one RPC, the N+1
   // collapse) — the full payload still opens lazily on click below.
   const refs = useMemo(() => artifacts.map((a) => a.resultRef), [artifacts]);
@@ -62,12 +67,12 @@ export function ArtifactGallery({ instanceId }: { instanceId: string }) {
       </p>
       <m.ul className="artifact-list" variants={stagger()} initial="hidden" animate="show">
         {artifacts.map((a) => {
-          const open = openRef === a.resultRef;
+          const open = openMote === a.moteId;
           const vm = byRef.get(a.resultRef);
           return (
             <m.li
               className="artifact-list__item card-hover"
-              key={a.resultRef}
+              key={a.moteId}
               variants={fadeUp}
               {...hoverLift}
             >
@@ -75,9 +80,9 @@ export function ArtifactGallery({ instanceId }: { instanceId: string }) {
                 <button
                   type="button"
                   className="artifact-list__toggle"
-                  data-testid={`artifact-${a.resultRef}`}
+                  data-testid={`artifact-${a.moteId}`}
                   aria-expanded={open}
-                  onClick={() => setOpenRef(open ? null : a.resultRef)}
+                  onClick={() => setOpenMote(open ? null : a.moteId)}
                 >
                   <span className="artifact-list__mote mono">{shortHex(a.moteId)}</span>
                   <span className="muted" aria-hidden="true">

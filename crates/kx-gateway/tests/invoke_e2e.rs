@@ -21,7 +21,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::net::SocketAddr;
 use std::time::Duration;
 
-use kx_gateway::{demo_pure_result, start, DEMO_RECIPE_HANDLE};
+use kx_gateway::{start, DEMO_RECIPE_HANDLE};
 use kx_proto::proto;
 use kx_proto::proto::kx_gateway_client::KxGatewayClient;
 use tonic::transport::Channel;
@@ -114,7 +114,6 @@ async fn invoke_runs_demo_recipe_to_committed() {
     // Await THIS invocation's Mote, then fetch its committed result.
     let result_ref =
         await_mote_committed(&mut c, &resp.instance_id, &resp.terminal_mote_id, None).await;
-    let mote_id: [u8; 32] = resp.terminal_mote_id.clone().try_into().unwrap();
     let blob = c
         .get_content(proto::GetContentRequest {
             content_ref: result_ref.to_vec(),
@@ -123,10 +122,10 @@ async fn invoke_runs_demo_recipe_to_committed() {
         .await
         .unwrap()
         .into_inner();
+    // GR15: `echo` is a TRUE echo — it commits its bound `topic` verbatim.
     assert_eq!(
-        blob.payload,
-        demo_pure_result(&mote_id),
-        "GetContent returns the bytes the worker committed for the invoked recipe"
+        blob.payload, b"incidents",
+        "GetContent returns the bytes the worker committed for the invoked recipe (the echoed topic)"
     );
 
     running.shutdown().await.unwrap();

@@ -1179,18 +1179,39 @@ select {
 }
 
 /* ---- chat ---- */
+/* New-Chat-ONLY layout: a fixed-height flex column so ONLY the message thread
+ * scrolls — the navbar, sidebar, chat header + settings, and composer stay put.
+ * Scoped to the chat route via `:has(.chat)`; every other section keeps its
+ * natural document scroll (the global `.shell` is min-height:100vh, untouched). */
 .chat {
   display: flex;
   flex-direction: column;
-  min-height: calc(100vh - 7rem);
+  height: 100%;
+  min-height: 0; /* let .chat__list shrink so it can scroll */
 }
 .chat__list {
-  flex: 1;
+  flex: 1 1 auto;
+  min-height: 0; /* the scroll-enabling line — a flex child won't shrink without it */
   display: flex;
   flex-direction: column;
   gap: 0.6rem;
   padding: 0.5rem 0;
   overflow-y: auto;
+  overscroll-behavior: contain; /* a thread scroll never chains to the page */
+}
+/* Bound the shell to the viewport ONLY on the chat route so `.chat` can own the
+ * scroll. The navbar is already position:sticky; the sidebar scrolls internally. */
+.shell:has(.chat) {
+  height: 100vh;
+}
+.shell:has(.chat) .shell__main {
+  min-height: 0;
+  overflow: hidden;
+}
+.shell:has(.chat) .shell__main > div {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
 }
 .bubble {
   max-width: 760px;
@@ -1219,12 +1240,160 @@ select {
   white-space: pre-wrap;
   word-break: break-word;
 }
+/* Assistant Markdown — tokens-only, AA in both themes. The renderer (markdown.tsx)
+ * owns block layout, so the container drops the pre-wrap. */
+.bubble__md {
+  white-space: normal;
+  word-break: break-word;
+}
+.bubble__md > :first-child {
+  margin-top: 0;
+}
+.bubble__md > :last-child {
+  margin-bottom: 0;
+}
+.bubble__md p {
+  margin: 0 0 0.5rem;
+}
+.bubble__md h1,
+.bubble__md h2,
+.bubble__md h3 {
+  margin: 0.8rem 0 0.4rem;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--fg);
+}
+.bubble__md h1 {
+  font-size: 1.15rem;
+}
+.bubble__md h2 {
+  font-size: 1.05rem;
+}
+.bubble__md h3 {
+  font-size: 0.95rem;
+}
+.bubble__md ul,
+.bubble__md ol {
+  margin: 0.3rem 0 0.5rem;
+  padding-left: 1.3rem;
+}
+.bubble__md li {
+  margin: 0.15rem 0;
+}
+.bubble__md a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.bubble__md code {
+  font-family: var(--mono);
+  font-size: 0.85em;
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+}
+.bubble__md pre {
+  margin: 0.5rem 0;
+  padding: 0.6rem 0.8rem;
+  overflow-x: auto;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.bubble__md pre code {
+  padding: 0;
+  border: 0;
+  background: none;
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+.bubble__md blockquote {
+  margin: 0.5rem 0;
+  padding-left: 0.8rem;
+  border-left: 3px solid var(--border);
+  color: var(--fg-muted);
+}
 .bubble__pending {
   color: var(--fg-muted);
   font-style: italic;
 }
 .thinking-trace {
   margin-top: 0.5rem;
+}
+/* T-FIX1: the in-chat DAG renders as a bubble SIBLING (MessageBubble) and spans
+ * the full chat column at a chat-appropriate height — wide + readable, not the
+ * stretched 760px-clamped box. Scoped to .screen.chat ⇒ the /workflows DAG route
+ * keeps its 520px canvas. */
+.screen.chat .thinking-trace {
+  align-self: stretch;
+}
+.screen.chat .dag-canvas {
+  height: 340px;
+}
+/* New-Chat header: editable name (left) + clean History/New-chat buttons (right). */
+.screen__head.chat__head {
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+.chat__title-block {
+  flex: 1;
+  min-width: 0;
+}
+.chat__name-input {
+  width: 100%;
+  max-width: 28rem;
+  margin: 0;
+  padding: 0.15rem 0.4rem;
+  font-size: 1.4rem;
+  font-weight: 600;
+  color: var(--fg);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+}
+.chat__name-input:hover {
+  border-color: var(--border);
+}
+.chat__name-input:focus {
+  background: var(--bg-input);
+  border-color: var(--accent);
+  outline: none;
+}
+.chat__head-actions {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+/* A clean, token-driven ghost button — reuses the .iconbtn interaction language
+ * (transparent → hover surface), so it's a REUSED pattern, not a new one. */
+.btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  align-self: center;
+  gap: 0.4rem;
+  margin: 0;
+  padding: 0.35rem 0.6rem;
+  font: inherit;
+  font-weight: 500;
+  color: var(--fg);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: none;
+  cursor: pointer;
+}
+.btn-ghost:hover {
+  background: var(--bg-input);
+  border-color: var(--fg-muted);
+}
+.btn-ghost:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.btn-ghost:hover:disabled {
+  background: transparent;
+  border-color: var(--border);
 }
 .chat-settings {
   margin: 0.5rem 0;

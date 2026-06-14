@@ -52,11 +52,10 @@ async fn invoke_projection_content_events_flow() {
     ]))
     .await;
     assert!(content.status.success(), "content failed");
-    let mote_bytes = kx_cli::hex::decode_fixed::<32>(&terminal).unwrap();
+    // GR15: echo commits its bound `topic` verbatim — the content path returns it.
     assert_eq!(
-        content.stdout,
-        kx_gateway::demo_pure_result(&mote_bytes),
-        "content returns the exact committed bytes"
+        content.stdout, b"incidents",
+        "content returns the exact committed bytes (the echoed topic)"
     );
 
     // (4) events: NDJSON to head carries the Committed delta for the Mote.
@@ -181,11 +180,11 @@ async fn content_out_writes_committed_bytes_to_file() {
     ]))
     .await;
     assert!(out.status.success(), "stderr: {}", stdout(&out));
-    let mote_bytes = kx_cli::hex::decode_fixed::<32>(&terminal).unwrap();
+    // GR15: echo commits its bound `topic` verbatim.
     assert_eq!(
         std::fs::read(&out_path).unwrap(),
-        kx_gateway::demo_pure_result(&mote_bytes),
-        "content --out writes the exact committed bytes"
+        b"to-disk",
+        "content --out writes the exact committed bytes (the echoed topic)"
     );
 
     running.shutdown().await.unwrap();

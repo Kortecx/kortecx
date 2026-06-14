@@ -1,9 +1,20 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  type ChatSettings,
   DEFAULT_CHAT_SETTINGS,
+  ECHO_PRESET,
+  MODEL_CHAT_HANDLE,
   loadChatSettings,
+  resolveChatBacking,
   saveChatSettings,
 } from "../../src/lib/chat-settings";
+
+const echoSettings: ChatSettings = {
+  handle: ECHO_PRESET.handle,
+  promptKey: ECHO_PRESET.promptKey,
+  showThinking: true,
+  autoscroll: true,
+};
 
 afterEach(() => {
   localStorage.clear();
@@ -56,5 +67,60 @@ describe("chat settings persistence", () => {
       throw new Error("blocked");
     });
     expect(() => saveChatSettings(DEFAULT_CHAT_SETTINGS)).not.toThrow();
+  });
+});
+
+describe("resolveChatBacking — the live-recipe reconciliation (GR15)", () => {
+  const withModel = [MODEL_CHAT_HANDLE, ECHO_PRESET.handle, "kx/recipes/react"];
+  const modelFree = [ECHO_PRESET.handle];
+
+  it("a STALE echo handle does NOT echo when the model chat recipe is served", () => {
+    // The core bug: a globally-persisted model-free `echo` handle must not silently
+    // echo the prompt — the model chat recipe backs chat whenever provisioned.
+    expect(resolveChatBacking(echoSettings, withModel)).toEqual({
+      handle: MODEL_CHAT_HANDLE,
+      promptKey: "prompt",
+    });
+  });
+
+  it("the default chat handle stays the model chat recipe", () => {
+    expect(resolveChatBacking(DEFAULT_CHAT_SETTINGS, withModel)).toEqual({
+      handle: MODEL_CHAT_HANDLE,
+      promptKey: "prompt",
+    });
+  });
+
+  it("echo backs chat on a MODEL-FREE serve (the honest degraded fallback)", () => {
+    expect(resolveChatBacking(echoSettings, modelFree)).toEqual({
+      handle: ECHO_PRESET.handle,
+      promptKey: ECHO_PRESET.promptKey,
+    });
+  });
+
+  it("honors a deliberate, available NON-echo handle", () => {
+    const custom: ChatSettings = { ...echoSettings, handle: "kx/recipes/react", promptKey: "x" };
+    expect(resolveChatBacking(custom, withModel)).toEqual({
+      handle: "kx/recipes/react",
+      promptKey: "x",
+    });
+  });
+
+  it("an unavailable NON-echo handle is honored verbatim (the invoke fails honestly — don't-fake-gaps)", () => {
+    const gone: ChatSettings = {
+      ...echoSettings,
+      handle: "kx/recipes/does-not-exist",
+      promptKey: "p",
+    };
+    expect(resolveChatBacking(gone, withModel)).toEqual({
+      handle: "kx/recipes/does-not-exist",
+      promptKey: "p",
+    });
+  });
+
+  it("while recipes are still loading (empty list) the persisted handle stands", () => {
+    expect(resolveChatBacking(echoSettings, [])).toEqual({
+      handle: ECHO_PRESET.handle,
+      promptKey: ECHO_PRESET.promptKey,
+    });
   });
 });

@@ -490,14 +490,15 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         )
     });
     // The embedded worker's executor routes a real-body Mote to the platform
-    // sandbox (bwrap on Linux / sandbox-exec on macOS) and the bodyless PURE demo
-    // `echo` to the unchanged deterministic storing fallback. Fail-closed: a
-    // sandbox that cannot run errors (worker backs off); never host-exec.
+    // sandbox (bwrap on Linux / sandbox-exec on macOS) and a bodyless PURE Mote
+    // (`echo` / `fanout-demo`) to the HONEST passthrough fallback (GR15 — it
+    // commits the Mote's real input, never a fabricated placeholder). Fail-closed:
+    // a sandbox that cannot run errors (worker backs off); never host-exec.
     let executor: Arc<dyn MoteExecutor> = Arc::new(crate::real_exec::RouterExecutor::new(
         (*content).clone(),
         real_body_ref,
         default_executor_class(),
-        storing_executor(content.clone()),
+        passthrough_executor(content.clone()),
     ));
     // AL1 + PR-2b: when a fit serve model resolved (above), wrap the router so leased
     // model Motes run REAL in-process inference (`kx/recipes/chat`) AND a leased SHAPER
@@ -1129,16 +1130,22 @@ fn open_signature_catalog(dir: &Path) -> Result<Arc<dyn SignatureCatalog>, Gatew
     Ok(Arc::new(HostSignatureCatalog::new(registry)))
 }
 
-/// A `MoteExecutor` for PURE Motes that PUBLISHES its deterministic result bytes
-/// into the shared store and returns the ref (the correct producer for the PURE
-/// path — content-addressed, so the committed ref == the stored object, and the
-/// coordinator's D55 phantom-ref guard passes). Built from the existing public
-/// `TestMoteExecutor::new` — kx-executor source is untouched. (R1 does NOT
-/// sandbox; the hardened spawn backend is a later step — stated honestly.)
+/// A `MoteExecutor` for PURE Motes that PUBLISHES an HONEST passthrough of the
+/// Mote's real input — its bound free-params (`config_subset`), or (when it
+/// carries none) its declared `InputDataId` — into the shared store and returns
+/// the ref. The correct producer for the PURE path: content-addressed (the
+/// committed ref == the stored object ⇒ the coordinator's D55 phantom-ref guard
+/// passes), deterministic (a pure function of the Mote's identity-bearing fields
+/// ⇒ idempotent re-lease + recovery re-fold), and HONEST (GR15): the committed
+/// bytes are the real input, NEVER a fabricated "demo result" placeholder — so
+/// `Invoke kx/recipes/echo {topic:"hello"}` commits exactly `hello`. Built from
+/// the public `TestMoteExecutor::new` — kx-executor source is untouched (the
+/// frozen trio). Model recipes (chat/react/vision) route through the model
+/// executor and never reach here.
 #[cfg(feature = "embedded-worker")]
-fn storing_executor(store: Arc<LocalFsContentStore>) -> Arc<dyn MoteExecutor> {
+fn passthrough_executor(store: Arc<LocalFsContentStore>) -> Arc<dyn MoteExecutor> {
     Arc::new(TestMoteExecutor::new(move |mote, _warrant| {
-        let payload = demo_pure_result(mote.id.as_bytes());
+        let payload = passthrough_payload(mote);
         store.put(&payload).unwrap_or_else(|error| {
             // No unwrap/panic on the worker task: a phantom (absent) ref makes the
             // coordinator reject the commit; run_once errors and the loop backs off.
@@ -1146,6 +1153,39 @@ fn storing_executor(store: Arc<LocalFsContentStore>) -> Arc<dyn MoteExecutor> {
             ContentRef::from_bytes([0u8; 32])
         })
     }))
+}
+
+/// The honest passthrough bytes a PURE Mote commits (GR15). The decoded,
+/// non-empty `config_subset` free-param values (the `BTreeMap` iterates sorted by
+/// key ⇒ deterministic order; each value JSON-string-or-UTF-8 decoded, mirroring
+/// the model arm's `prompt_from_config`) joined by newlines — a true echo of the
+/// bound inputs. When the Mote carries no bound free-param (a parentless PURE
+/// Mote, or a structural fan-out/gather node), it echoes the declared
+/// `InputDataId` as lowercase hex — a real, printable, deterministic content
+/// address, never a fabricated sentence. `PROMPT_KEY` is skipped (a prompt-bearing
+/// Mote is a MODEL Mote and never reaches this PURE executor).
+#[cfg(feature = "embedded-worker")]
+fn passthrough_payload(mote: &kx_mote::Mote) -> Vec<u8> {
+    use kx_mote::PROMPT_KEY;
+    let parts: Vec<String> = mote
+        .def
+        .config_subset
+        .iter()
+        .filter(|(k, v)| k.0 != PROMPT_KEY && !v.0.is_empty())
+        .map(|(_, v)| {
+            serde_json::from_slice::<String>(&v.0)
+                .unwrap_or_else(|_| String::from_utf8_lossy(&v.0).into_owned())
+        })
+        .collect();
+    if parts.is_empty() {
+        use std::fmt::Write as _;
+        let mut hex = String::with_capacity(64);
+        for b in mote.input_data_id.as_bytes() {
+            let _ = write!(hex, "{b:02x}");
+        }
+        return hex.into_bytes();
+    }
+    parts.join("\n").into_bytes()
 }
 
 /// Drive the worker: lease → run → propose, forever, with idle/error backoff.
