@@ -36,7 +36,7 @@ describe("FeedbackButtons", () => {
     render(<FeedbackButtons message={msg} recipeHandle="kx/recipes/chat" modelId="qwen3" />);
     fireEvent.click(screen.getByTestId("msg-feedback-up"));
     expect(mutate).toHaveBeenCalledTimes(1);
-    expect(mutate.mock.calls[0][0]).toMatchObject({
+    expect(mutate.mock.calls[0]?.[0]).toMatchObject({
       rating: "up",
       messageId: "a1",
       instanceId: "11".repeat(16),
