@@ -2,8 +2,11 @@ import type { ReactNode } from "react";
 import { useUploadPreview } from "../../kx/use-upload-preview";
 import type { ChatMessage, MessageAttachment } from "../../lib/chat-thread";
 import { splitReasoning } from "../../lib/split-reasoning";
+import { useCopyToClipboard } from "../../lib/use-copy-to-clipboard";
 import { DigestChip } from "../DigestChip";
 import { ErrorNotice } from "../ErrorNotice";
+import { Icon } from "../shell/Icon";
+import { FeedbackButtons } from "./FeedbackButtons";
 import { renderMarkdown } from "./markdown";
 
 /** One attachment figure. A LIVE thread previews from the session-local `blob:`
@@ -36,13 +39,19 @@ export function MessageBubble({
   showReasoning = true,
   trace,
   onRetry,
+  recipeHandle,
+  modelId,
 }: {
   message: ChatMessage;
   /** Show the model's leading `<think>` reasoning as a collapsed disclosure (T-FEAT1). */
   showReasoning?: boolean;
   trace?: ReactNode;
   onRetry?: (assistantId: string) => void;
+  /** The chat backing handle/model — advisory context on 👍/👎 feedback (PR-4.1). */
+  recipeHandle?: string;
+  modelId?: string;
 }) {
+  const { copied, copy } = useCopyToClipboard();
   const inFlight = message.status === "pending" || message.status === "thinking";
   const mod = message.status === "failed" ? " bubble--failed" : inFlight ? " bubble--thinking" : "";
   // Assistant replies may carry a leading <think> reasoning block (raw-committed
@@ -92,6 +101,24 @@ export function MessageBubble({
           ) : (
             <p className="bubble__text">{message.text}</p>
           )
+        ) : null}
+        {/* The assistant action row: copy the answer + rate it 👍/👎 (PR-4.1).
+            Shown only on a settled answer; feedback hides itself on a gateway
+            without the seam (don't-fake-gaps). */}
+        {message.role === "assistant" && message.status === "done" && split.answer ? (
+          <div className="msg-actions" data-testid="msg-actions">
+            <button
+              type="button"
+              className={`msg-action${copied ? " msg-action--on" : ""}`}
+              onClick={() => copy(split.answer ?? "")}
+              title="Copy answer"
+              data-testid="msg-copy"
+            >
+              <Icon name="copy" size={15} />
+              <span>{copied ? "Copied" : "Copy"}</span>
+            </button>
+            <FeedbackButtons message={message} recipeHandle={recipeHandle} modelId={modelId} />
+          </div>
         ) : null}
         {message.error ? <ErrorNotice error={message.error} /> : null}
         {message.status === "failed" && onRetry ? (

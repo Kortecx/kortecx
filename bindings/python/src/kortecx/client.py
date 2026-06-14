@@ -31,6 +31,7 @@ from .datasets import (
     _to_documents,
 )
 from .errors import KxUsage, from_rpc_error
+from .feedback import FeedbackPage, FeedbackRow, rating_to_proto
 from .grants import AssetGrants
 from .models import ModelSummary
 from .motes import MoteDetail
@@ -493,6 +494,64 @@ class KxClient:
             rows=[MoteTelemetryRow.from_proto(r) for r in resp.rows], has_more=resp.has_more
         )
 
+    def submit_feedback(
+        self,
+        rating: str,
+        message_id: str,
+        *,
+        instance_id: Optional[str] = None,
+        mote_id: Optional[str] = None,
+        content_ref: Optional[str] = None,
+        comment: str = "",
+        recipe_handle: str = "",
+        model_id: str = "",
+    ) -> str:
+        """Record 👍/👎 feedback on an answer (PR-4.1) — a client-origin write into
+        the gateway's rebuildable-to-empty ``feedback.db`` sidecar (advisory; never
+        truth/identity/a digest input). ``rating`` is ``"up"``/``"down"``;
+        ``message_id`` is the stable per-answer key (required). The caller principal
+        + the returned ``feedback_id`` (hex) are SERVER-derived; re-rating the same
+        answer OVERWRITES. An old gateway raises ``KxUnimplemented``."""
+        req = _g.SubmitFeedbackRequest(
+            rating=rating_to_proto(rating),
+            message_id=message_id,
+            comment=comment,
+            recipe_handle=recipe_handle,
+            model_id=model_id,
+        )
+        if instance_id is not None:
+            req.instance_id = hexids.decode(instance_id)
+        if mote_id is not None:
+            req.mote_id = hexids.decode(mote_id)
+        if content_ref is not None:
+            req.content_ref = hexids.decode(content_ref)
+        resp = self._call(lambda: self._stub.SubmitFeedback(req, metadata=self._md))
+        return hexids.encode(resp.feedback_id)
+
+    def list_feedback(
+        self,
+        *,
+        instance_id: Optional[str] = None,
+        limit: Optional[int] = None,
+        before_rowid: Optional[int] = None,
+    ) -> FeedbackPage:
+        """Read back recorded feedback (newest-first, paginated; PR-4.1) from the
+        gateway's ``feedback.db`` sidecar — audit/inspection only. ``instance_id``
+        (hex) scopes to one run; ``before_rowid`` resumes below the last row's
+        rowid. The server clamps ``limit`` to its max page. An old gateway (or one
+        without the sidecar) raises ``KxUnimplemented``."""
+        req = _g.ListFeedbackRequest()
+        if instance_id is not None:
+            req.instance_id = hexids.decode(instance_id)
+        if limit is not None:
+            req.limit = limit
+        if before_rowid is not None:
+            req.before_rowid = before_rowid
+        resp = self._call(lambda: self._stub.ListFeedback(req, metadata=self._md))
+        return FeedbackPage(
+            rows=[FeedbackRow.from_proto(r) for r in resp.rows], has_more=resp.has_more
+        )
+
     def list_recipes(self) -> List[str]:
         """List the invocable recipe handles the gateway provisions (the public
         recipe catalog)."""
@@ -925,6 +984,55 @@ class AsyncKxClient:
         resp = await self._acall(self._stub.ListMoteTelemetry(req, metadata=self._md))
         return TelemetryPage(
             rows=[MoteTelemetryRow.from_proto(r) for r in resp.rows], has_more=resp.has_more
+        )
+
+    async def submit_feedback(
+        self,
+        rating: str,
+        message_id: str,
+        *,
+        instance_id: Optional[str] = None,
+        mote_id: Optional[str] = None,
+        content_ref: Optional[str] = None,
+        comment: str = "",
+        recipe_handle: str = "",
+        model_id: str = "",
+    ) -> str:
+        """Async :meth:`KxClient.submit_feedback`."""
+        req = _g.SubmitFeedbackRequest(
+            rating=rating_to_proto(rating),
+            message_id=message_id,
+            comment=comment,
+            recipe_handle=recipe_handle,
+            model_id=model_id,
+        )
+        if instance_id is not None:
+            req.instance_id = hexids.decode(instance_id)
+        if mote_id is not None:
+            req.mote_id = hexids.decode(mote_id)
+        if content_ref is not None:
+            req.content_ref = hexids.decode(content_ref)
+        resp = await self._acall(self._stub.SubmitFeedback(req, metadata=self._md))
+        return hexids.encode(resp.feedback_id)
+
+    async def list_feedback(
+        self,
+        *,
+        instance_id: Optional[str] = None,
+        limit: Optional[int] = None,
+        before_rowid: Optional[int] = None,
+    ) -> FeedbackPage:
+        """Async :meth:`KxClient.list_feedback`."""
+        req = _g.ListFeedbackRequest()
+        if instance_id is not None:
+            req.instance_id = hexids.decode(instance_id)
+        if limit is not None:
+            req.limit = limit
+        if before_rowid is not None:
+            req.before_rowid = before_rowid
+        resp = await self._acall(self._stub.ListFeedback(req, metadata=self._md))
+        return FeedbackPage(
+            rows=[FeedbackRow.from_proto(r) for r in resp.rows], has_more=resp.has_more
         )
 
     async def list_recipes(self) -> List[str]:

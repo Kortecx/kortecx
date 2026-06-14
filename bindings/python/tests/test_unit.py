@@ -317,3 +317,59 @@ def test_react_wait_times_out_while_pending():
     stub = _FakeReactStub(turns=[g.ReactTurnSummary(turn=0, turn_mote_id=seed, branch="pending")])
     out = poll_react_result(stub, [], inst, seed, timeout=0.01)
     assert out.state == WaitState.RUNNING  # still in progress (resumable), no false commit
+
+
+# --- PR-4.1 feedback view (advisory product signal; rebuildable-to-empty) ------
+
+
+def test_feedback_rating_mapping():
+    from kortecx import rating_from_proto, rating_to_proto
+
+    assert rating_to_proto("up") == g.FEEDBACK_RATING_UP
+    assert rating_to_proto("down") == g.FEEDBACK_RATING_DOWN
+    assert rating_from_proto(g.FEEDBACK_RATING_UP) == "up"
+    assert rating_from_proto(g.FEEDBACK_RATING_DOWN) == "down"
+    assert rating_from_proto(g.FEEDBACK_RATING_UNSPECIFIED) is None
+    with pytest.raises(ValueError):
+        rating_to_proto("meh")
+
+
+def test_feedback_row_from_proto_hex_encodes_and_normalizes_empties():
+    from kortecx import FeedbackRow
+
+    row = FeedbackRow.from_proto(
+        g.FeedbackRow(
+            feedback_id=b"\xab" * 16,
+            rating=g.FEEDBACK_RATING_UP,
+            message_id="answer-9",
+            instance_id=b"\x05" * 16,
+            mote_id=b"\x28" * 32,
+            content_ref=b"\x44" * 32,
+            comment="great",
+            recipe_handle="kx/recipes/chat",
+            model_id="qwen3-4b",
+            submitted_unix_ms=1234,
+            rowid=7,
+        )
+    )
+    assert row.feedback_id == "ab" * 16
+    assert row.rating == "up"
+    assert row.message_id == "answer-9"
+    assert row.instance_id == "05" * 16
+    assert row.mote_id == "28" * 32
+    assert row.rowid == 7
+
+    # A local-only turn (all-zero targets) normalizes to empty strings.
+    local = FeedbackRow.from_proto(
+        g.FeedbackRow(
+            feedback_id=b"\xab" * 16,
+            rating=g.FEEDBACK_RATING_DOWN,
+            message_id="local-1",
+            instance_id=b"\x00" * 16,
+            mote_id=b"\x00" * 32,
+            content_ref=b"\x00" * 32,
+            rowid=1,
+        )
+    )
+    assert local.rating == "down"
+    assert local.instance_id == "" and local.mote_id == "" and local.content_ref == ""

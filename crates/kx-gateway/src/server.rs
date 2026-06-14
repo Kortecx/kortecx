@@ -655,6 +655,11 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
                                           //      the blobs in the content store are truth). Same hard-error posture
                                           //      as capture on an unrecoverable open.
     let uploads_db = Arc::new(crate::uploads::UploadsDb::open(&catalog_dir)?);
+    // (3f-ter) PR-4.1: the feedback sidecar (feedback.db beside uploads.db) — the
+    //      SubmitFeedback 👍/👎 rows + their ListFeedback read-back. Client-origin
+    //      product signal: rebuildable-to-EMPTY (never journaled), off-journal,
+    //      off-digest. Same hard-error posture as uploads on an unrecoverable open.
+    let feedback_db = Arc::new(crate::feedback::FeedbackDb::open(&catalog_dir)?);
     let capture_task = {
         let ledger = capture_ledger.clone();
         let reader = reader.clone();
@@ -750,6 +755,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         .with_toolscout_view(toolscout_view)
         .with_content_writer(content_writer)
         .with_uploads_ledger(uploads_db)
+        .with_feedback_store(feedback_db)
         .with_put_content_cap(cfg.content_max_bytes)
         .with_model_catalog_view(models_view)
         .with_mote_def_view(mote_defs_view)
@@ -987,7 +993,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
 /// All values are post-resolution: the bound `local_addr` reflects an ephemeral
 /// `:0` if one was requested, and the sidecar paths mirror the gateway's own
 /// `catalog_dir` layout (catalog.db / members.db / telemetry.db / capture.db /
-/// uploads.db / datasets/).
+/// uploads.db / feedback.db / datasets/).
 #[cfg(feature = "embedded-worker")]
 fn log_startup_banner(
     cfg: &GatewayConfig,
@@ -1029,6 +1035,7 @@ fn log_startup_banner(
         telemetry_db  = %catalog_dir.join("telemetry.db").display(),
         capture_db    = %catalog_dir.join("capture.db").display(),
         uploads_db    = %catalog_dir.join("uploads.db").display(),
+        feedback_db   = %catalog_dir.join("feedback.db").display(),
         datasets_dir  = %catalog_dir.join("datasets").display(),
         grpc_endpoint = %format!("http://{local_addr}"),
         ws_endpoint   = %format!("ws://{ws_local_addr}"),

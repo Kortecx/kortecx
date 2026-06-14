@@ -73,6 +73,11 @@ mod datasets;
 // Always-on, off-truth-path; FFI-free (rusqlite is already in the closure).
 mod capture;
 mod error;
+// PR-4.1: the feedback.db sidecar (the FeedbackStore seam) — the SubmitFeedback
+// 👍/👎 rows + their ListFeedback read-back. Rebuildable-to-empty (client-origin
+// product signal, never journaled), off-journal, off-digest. Like uploads, no
+// executor wrapper — always-on, FFI-free (rusqlite already in the closure).
+mod feedback;
 mod live_tail;
 // PR-2d-2: the bundled deterministic stdio MCP tool's wiring (locate the bin,
 // register the capability + the typed ToolDef). Behind `inference` (the react

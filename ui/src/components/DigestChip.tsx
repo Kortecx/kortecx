@@ -1,5 +1,5 @@
-import { useState } from "react";
 import { shortHex } from "../lib/format";
+import { useCopyToClipboard } from "../lib/use-copy-to-clipboard";
 
 /**
  * A content-address chip: the truncated hex is the secondary affordance (the
@@ -8,25 +8,13 @@ import { shortHex } from "../lib/format";
  * attachments now; runs/edges/datasets as those sections grow).
  */
 export function DigestChip({ hex, label }: { hex: string; label?: string }) {
-  const [copied, setCopied] = useState(false);
-
-  function copy(): void {
-    void navigator.clipboard
-      ?.writeText(hex)
-      .then(() => {
-        setCopied(true);
-        window.setTimeout(() => setCopied(false), 1200);
-      })
-      .catch(() => {
-        /* clipboard unavailable (permissions/insecure context) — the title still shows the full hex */
-      });
-  }
+  const { copied, copy } = useCopyToClipboard();
 
   return (
     <button
       type="button"
       className="digestchip mono"
-      onClick={copy}
+      onClick={() => copy(hex)}
       title={`${label ? `${label}: ` : ""}${hex} — click to copy`}
       data-testid="digest-chip"
     >

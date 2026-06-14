@@ -5,7 +5,13 @@ import { useConnection } from "../../kx/connection-context";
 import { useAttachments } from "../../kx/use-attachments";
 import { REACT_RECIPE_HANDLE, useChat } from "../../kx/use-chat";
 import { useRecipes } from "../../kx/use-recipes";
-import { type SavedChat, defaultChatName, renameChat, saveChat } from "../../lib/chat-history";
+import {
+  type SavedChat,
+  autoNameFrom,
+  defaultChatName,
+  renameChat,
+  saveChat,
+} from "../../lib/chat-history";
 import {
   type ChatSettings,
   loadChatSettings,
@@ -13,6 +19,8 @@ import {
   saveChatSettings,
 } from "../../lib/chat-settings";
 import type { MessageAttachment } from "../../lib/chat-thread";
+import { download } from "../../lib/download";
+import { exportChatFilename, exportChatJson } from "../../lib/export-chat";
 import { Icon } from "../shell/Icon";
 import { AttachmentStrip } from "./AttachmentStrip";
 import { ChatHistory } from "./ChatHistory";
@@ -63,6 +71,9 @@ export function ChatPanel() {
   const [chatName, setChatName] = useState<string>(() => defaultChatName());
   const chatNameRef = useRef(chatName);
   chatNameRef.current = chatName;
+  // True once the user edits the name OR restores a named chat — auto-naming then
+  // never overrides their choice.
+  const userRenamedRef = useRef(false);
 
   // Autosave: every thread change upserts this chat (empty threads are a no-op),
   // carrying the current name.
@@ -78,14 +89,28 @@ export function ChatPanel() {
   function newChat(): void {
     chatIdRef.current = crypto.randomUUID();
     setChatName(defaultChatName());
+    userRenamedRef.current = false;
     chat.reset();
   }
 
   function loadSaved(saved: SavedChat): void {
     chatIdRef.current = saved.id;
     setChatName(saved.name ?? saved.title);
+    // A restored chat already carries a name — never auto-rename it.
+    userRenamedRef.current = true;
     chat.loadThread(saved.messages);
     setHistoryOpen(false);
+  }
+
+  function exportChat(): void {
+    if (chat.thread.messages.length === 0) {
+      return;
+    }
+    download(
+      exportChatFilename(chatName),
+      exportChatJson(chatName, chat.thread.messages),
+      "application/json",
+    );
   }
 
   // Persist a name edit — only once the chat actually exists in history.
@@ -96,6 +121,15 @@ export function ChatPanel() {
   }
 
   function sendWithAttachments(text: string): void {
+    // Auto-name a fresh, un-renamed thread from its first message — set the ref
+    // synchronously so THIS tick's autosave persists the derived name.
+    if (!userRenamedRef.current && chat.thread.messages.length === 0) {
+      const auto = autoNameFrom([{ id: "seed", role: "user", text, status: "done" }]);
+      if (auto) {
+        setChatName(auto);
+        chatNameRef.current = auto;
+      }
+    }
     // Only READY uploads ride the message (failed/uploading chips stay behind
     // in the strip; the composer blocks sends while uploads are in flight).
     const ready: MessageAttachment[] = attach.attachments
@@ -123,7 +157,10 @@ export function ChatPanel() {
           <input
             className="chat__name-input"
             value={chatName}
-            onChange={(e) => setChatName(e.target.value)}
+            onChange={(e) => {
+              userRenamedRef.current = true;
+              setChatName(e.target.value);
+            }}
             onBlur={commitName}
             onKeyDown={(e) => {
               if (e.key === "Enter") {
@@ -138,6 +175,17 @@ export function ChatPanel() {
           />
         </div>
         <div className="screen__head-actions chat__head-actions">
+          <button
+            type="button"
+            className="btn-ghost"
+            onClick={exportChat}
+            disabled={chat.thread.messages.length === 0}
+            title="Export this chat as JSON"
+            data-testid="chat-export"
+          >
+            <Icon name="download" />
+            <span>Export</span>
+          </button>
           <button
             type="button"
             className="btn-ghost"
@@ -205,6 +253,8 @@ export function ChatPanel() {
         autoscroll={settings.autoscroll}
         showReasoning={settings.showReasoning}
         onRetry={(id) => void chat.retry(id)}
+        recipeHandle={backing.handle}
+        modelId={settings.modelId}
         renderTrace={(id) => {
           if (id !== chat.activeAssistantId) {
             return null;

@@ -3,6 +3,7 @@
 
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  autoNameFrom,
   chatTitle,
   defaultChatName,
   deleteChat,
@@ -123,5 +124,18 @@ describe("chatTitle", () => {
     expect(chatTitle([msg({ text: "  what\n is \tthis? " })])).toBe("what is this?");
     expect(chatTitle([msg({ text: "x".repeat(100) })])).toBe(`${"x".repeat(64)}…`);
     expect(chatTitle([])).toBe("(empty chat)");
+  });
+});
+
+describe("autoNameFrom", () => {
+  it("derives a short name from the first user message", () => {
+    expect(autoNameFrom([msg({ text: "  Plan a trip\n to Japan " })])).toBe("Plan a trip to Japan");
+  });
+  it("truncates a long first message with an ellipsis", () => {
+    expect(autoNameFrom([msg({ text: "y".repeat(80) })])).toBe(`${"y".repeat(48)}…`);
+  });
+  it("returns null when there is no user message to name from", () => {
+    expect(autoNameFrom([])).toBeNull();
+    expect(autoNameFrom([{ id: "a", role: "assistant", text: "hi", status: "done" }])).toBeNull();
   });
 });

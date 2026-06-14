@@ -30,7 +30,11 @@ export type Glyph =
   | "search"
   | "send"
   | "settings"
-  | "terminal";
+  | "terminal"
+  | "copy"
+  | "download"
+  | "thumb-up"
+  | "thumb-down";
 
 // 24×24 viewBox, stroke = currentColor. Multi-subpath `d` is fine.
 const PATHS: Record<Glyph, string> = {
@@ -62,6 +66,12 @@ const PATHS: Record<Glyph, string> = {
   settings:
     "M12 9a3 3 0 100 6 3 3 0 000-6zM19 12a7 7 0 00-.1-1l2-1.5-2-3.4-2.3 1a7 7 0 00-1.7-1l-.3-2.6h-4l-.3 2.6a7 7 0 00-1.7 1l-2.3-1-2 3.4 2 1.5a7 7 0 000 2l-2 1.5 2 3.4 2.3-1a7 7 0 001.7 1l.3 2.6h4l.3-2.6a7 7 0 001.7-1l2.3 1 2-3.4-2-1.5a7 7 0 00.1-1z",
   terminal: "M4 17l6-5-6-5M12 19h8",
+  copy: "M9 9h11a2 2 0 012 2v9a2 2 0 01-2 2h-9a2 2 0 01-2-2v-9a2 2 0 012-2zM5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1",
+  download: "M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3",
+  "thumb-up":
+    "M14 9V5a3 3 0 00-3-3l-4 9v11h11.28a2 2 0 002-1.7l1.38-9a2 2 0 00-2-2.3zM7 22H4a2 2 0 01-2-2v-7a2 2 0 012-2h3",
+  "thumb-down":
+    "M10 15v4a3 3 0 003 3l4-9V2H5.72a2 2 0 00-2 1.7l-1.38 9a2 2 0 002 2.3zM17 2h2.67A2.31 2.31 0 0122 4v7a2.31 2.31 0 01-2.33 2H17",
 };
 
 const FALLBACK = "M12 12h.01";

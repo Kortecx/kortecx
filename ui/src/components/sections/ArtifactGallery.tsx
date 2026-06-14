@@ -15,21 +15,13 @@ import { useResultMap } from "../../kx/use-content-batch";
 import { useRunArtifacts } from "../../kx/use-run-artifacts";
 import { artifactKindVisual } from "../../lib/artifact-kind";
 import type { DecodedContent } from "../../lib/content-decode";
+import { download } from "../../lib/download";
 import { shortHex } from "../../lib/format";
 import { DigestChip } from "../DigestChip";
 import { EmptyState } from "../EmptyState";
 import { ErrorNotice } from "../ErrorNotice";
 import { ResultPreview } from "../ResultPreview";
 import { ArtifactView } from "./ArtifactView";
-
-function download(name: string, text: string): void {
-  const url = URL.createObjectURL(new Blob([text], { type: "text/plain" }));
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = name;
-  a.click();
-  URL.revokeObjectURL(url);
-}
 
 export function ArtifactGallery({ instanceId }: { instanceId: string }) {
   const { artifacts, isLoading, error, refetch } = useRunArtifacts(instanceId);

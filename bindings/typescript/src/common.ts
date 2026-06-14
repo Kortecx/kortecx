@@ -56,6 +56,10 @@ export type { CaptureRecordPage } from "./capture.js";
 export { MoteTelemetryRow } from "./telemetry.js";
 export type { MoteTelemetryPage } from "./telemetry.js";
 
+// PR-4.1: user 👍/👎 feedback (advisory product signal; rebuildable-to-empty).
+export { FeedbackRow, ratingFromProto, ratingToProto } from "./feedback.js";
+export type { FeedbackInput, FeedbackPage, Rating } from "./feedback.js";
+
 export {
   RecipeForm,
   RecipeFormField,

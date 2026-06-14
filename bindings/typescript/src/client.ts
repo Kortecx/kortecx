@@ -25,6 +25,7 @@ import {
   wsDeltasFromMessages,
   wsUrl,
 } from "./events.js";
+import { type FeedbackInput, type FeedbackPage, FeedbackRow, ratingToProto } from "./feedback.js";
 import {
   KxGateway,
   type SubmitRunRequestSchema,
@@ -426,6 +427,49 @@ export abstract class KxClientBase {
       }),
     );
     return { rows: resp.rows.map((r) => MoteTelemetryRow.fromProto(r)), hasMore: resp.hasMore };
+  }
+
+  /**
+   * Record 👍/👎 feedback on an answer (PR-4.1) — a client-origin write into the
+   * gateway's rebuildable-to-empty `feedback.db` sidecar (advisory product
+   * signal, never truth/identity/a digest input). The caller principal + the
+   * returned `feedbackId` (hex) are SERVER-derived; re-rating the same answer
+   * OVERWRITES. `messageId` is the stable per-answer key; the rest are advisory
+   * join/context. An old gateway without this RPC throws {@link KxUnimplemented}.
+   */
+  async submitFeedback(input: FeedbackInput): Promise<string> {
+    const resp = await rpc(
+      this.grpc.submitFeedback({
+        rating: ratingToProto(input.rating),
+        messageId: input.messageId,
+        instanceId:
+          input.instanceId === undefined ? undefined : asBytes(input.instanceId, INSTANCE_LEN),
+        moteId: input.moteId === undefined ? undefined : asBytes(input.moteId, REF_LEN),
+        contentRef: input.contentRef === undefined ? undefined : asBytes(input.contentRef, REF_LEN),
+        comment: input.comment ?? "",
+        recipeHandle: input.recipeHandle ?? "",
+        modelId: input.modelId ?? "",
+      }),
+    );
+    return encode(resp.feedbackId);
+  }
+
+  /**
+   * Read back recorded feedback (newest-first, paginated; PR-4.1) from the
+   * gateway's `feedback.db` sidecar — audit/inspection only. `instanceId` (hex)
+   * scopes to one run; `beforeRowid` resumes from the last row seen. The server
+   * clamps `limit` to its max page. An old gateway (or one without the sidecar)
+   * throws {@link KxUnimplemented}.
+   */
+  async listFeedback(
+    opts: { instanceId?: string; limit?: number; beforeRowid?: bigint } = {},
+  ): Promise<FeedbackPage> {
+    const instanceId =
+      opts.instanceId === undefined ? undefined : asBytes(opts.instanceId, INSTANCE_LEN);
+    const resp = await rpc(
+      this.grpc.listFeedback({ instanceId, limit: opts.limit, beforeRowid: opts.beforeRowid }),
+    );
+    return { rows: resp.rows.map((r) => FeedbackRow.fromProto(r)), hasMore: resp.hasMore };
   }
 
   /**

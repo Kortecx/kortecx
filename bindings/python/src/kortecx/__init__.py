@@ -35,6 +35,7 @@ from .errors import (
     KxUsage,
     KxWaitTimeout,
 )
+from .feedback import FeedbackPage, FeedbackRow, rating_from_proto, rating_to_proto
 from .grants import AssetGrants, GrantView
 from .models import ModelSummary
 from .motes import MoteConfigItem, MoteDetail, effect_pattern_name, nd_class_name
@@ -134,6 +135,11 @@ __all__ = [
     "GlobalDelta",
     "MoteTelemetryRow",
     "TelemetryPage",
+    # PR-4.1: user 👍/👎 feedback (advisory product signal; rebuildable-to-empty)
+    "FeedbackRow",
+    "FeedbackPage",
+    "rating_to_proto",
+    "rating_from_proto",
     "DatasetHit",
     "IngestResult",
     "IngestDocument",
