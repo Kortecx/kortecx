@@ -631,6 +631,11 @@ pub struct GatewayService {
     /// `ListFeedback` return `unimplemented`. Client-origin product signal:
     /// off-journal, off-digest, off-identity, rebuildable-to-empty.
     feedback: Option<Arc<dyn crate::feedback_view::FeedbackStore>>,
+    /// The optional run-inputs store seam (PR-D "Re-run with changes" — the host
+    /// injects a `run_inputs.db`-backed args-capture sidecar). `None` ⇒
+    /// `GetRunInputs` returns `unimplemented` and the `Invoke` capture is skipped.
+    /// Off-journal, off-digest, off-identity, rebuildable-to-empty.
+    run_inputs: Option<Arc<dyn crate::run_inputs_view::RunInputsStore>>,
 }
 
 /// The default fail-closed `PutContent` payload cap (32 MiB).
@@ -691,6 +696,7 @@ impl GatewayService {
             models: None,
             mote_defs: None,
             feedback: None,
+            run_inputs: None,
         }
     }
 
@@ -906,6 +912,19 @@ impl GatewayService {
         feedback: Arc<dyn crate::feedback_view::FeedbackStore>,
     ) -> Self {
         self.feedback = Some(feedback);
+        self
+    }
+
+    /// Wire the run-inputs store (PR-D — the host's `run_inputs.db` sidecar that
+    /// captures `Invoke` args). Enables `GetRunInputs` + the best-effort capture
+    /// on the `Invoke` path. Rebuildable-to-empty, off-journal, off-digest,
+    /// off-identity (the args never become committed facts).
+    #[must_use]
+    pub fn with_run_inputs_store(
+        mut self,
+        run_inputs: Arc<dyn crate::run_inputs_view::RunInputsStore>,
+    ) -> Self {
+        self.run_inputs = Some(run_inputs);
         self
     }
 }
@@ -1138,6 +1157,29 @@ impl KxGateway for GatewayService {
             .register_run(bound.recipe_fingerprint)
             .await
             .map_err(submit_status)?;
+
+        // PR-D — best-effort capture of the Invoke args for "Re-run with changes"
+        // (an off-journal, off-digest sidecar keyed by `instance_id`). A capture
+        // failure NEVER fails the Invoke: the args are pre-fill convenience, not
+        // part of run admission (the run is already registered + about to dispatch).
+        // `handle` is captured here because a durable run otherwise carries only
+        // the fingerprint, not the handle `GetRecipeForm` needs.
+        if let Some(store) = self.run_inputs.as_ref() {
+            let captured_unix_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX));
+            if let Err(e) = store.record(crate::run_inputs_view::RunInputsRecord {
+                instance_id,
+                recipe_fingerprint: bound.recipe_fingerprint,
+                handle: req.handle.clone(),
+                args: req.args.clone(),
+                principal: party.clone(),
+                captured_unix_ms,
+            }) {
+                tracing::warn!(error = %e, "run-inputs capture failed (best-effort; Invoke unaffected)");
+            }
+        }
+
         let react_seed = bound.react_seed;
         for (mote, warrant) in bound.motes {
             self.submitter
@@ -1548,6 +1590,32 @@ impl KxGateway for GatewayService {
         // available (no seam) — it needs only the journal reader the service holds.
         let resp = crate::runs::list_runs(self.reader.as_ref(), req.limit, req.before_seq)?;
         Ok(Response::new(resp))
+    }
+
+    async fn get_run_inputs(
+        &self,
+        request: Request<proto::GetRunInputsRequest>,
+    ) -> Result<Response<proto::GetRunInputsResponse>, Status> {
+        // PR-D ("Re-run with changes"): return the args captured at `Invoke` so a
+        // run recovered from `ListRuns` (no client-side localStorage) can pre-fill
+        // its recipe form and re-invoke. A serve without the sidecar wired degrades
+        // forward-compatibly to `unimplemented`; a run with nothing captured (pre-
+        // PR-D, or a rebuilt-to-empty sidecar) is an honest `not_found`. No
+        // read-time party filter (single-tenant; the kx-cloud SN-8 wall is above).
+        let store = self.run_inputs.as_ref().ok_or_else(|| {
+            Status::unimplemented("GetRunInputs: no run-inputs store wired (run_inputs.db absent)")
+        })?;
+        let req = request.into_inner();
+        let instance_id = instance_id_16(&req.instance_id)?;
+        let entry = store
+            .get(&instance_id)?
+            .ok_or_else(|| Status::not_found("run inputs not captured for this run"))?;
+        Ok(Response::new(proto::GetRunInputsResponse {
+            instance_id: entry.instance_id.to_vec(),
+            recipe_fingerprint: entry.recipe_fingerprint.to_vec(),
+            handle: entry.handle,
+            args: entry.args,
+        }))
     }
 
     async fn list_replan_rounds(

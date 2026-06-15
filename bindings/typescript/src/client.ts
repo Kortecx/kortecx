@@ -39,7 +39,7 @@ import { ReactTurn, type ReactTurnPage } from "./react.js";
 import { RecipeForm, RecipeInfo, ScoredRecipe } from "./recipes.js";
 import { ReplanRound, type ReplanRoundPage } from "./replan.js";
 import { Result, Run } from "./run.js";
-import { type RunPage, RunSummary } from "./runs.js";
+import { RunInputs, type RunPage, RunSummary } from "./runs.js";
 import { TeamMembers, type TeamSummary, teamsFromProto } from "./teams.js";
 import { type MoteTelemetryPage, MoteTelemetryRow } from "./telemetry.js";
 import { BundleScore, type BundleSpec, ToolManifest, bundleSpecToProto } from "./toolscout.js";
@@ -346,6 +346,20 @@ export abstract class KxClientBase {
   async listRuns(opts: { limit?: number; beforeSeq?: bigint } = {}): Promise<RunPage> {
     const resp = await rpc(this.grpc.listRuns({ limit: opts.limit, beforeSeq: opts.beforeSeq }));
     return { runs: resp.runs.map((r) => RunSummary.fromProto(r)), hasMore: resp.hasMore };
+  }
+
+  /**
+   * The args a run was submitted with (PR-D `GetRunInputs`) — the baseline for
+   * "Re-run with changes": fetch the captured args + handle, edit, then
+   * {@link invoke} again (only the changed sub-DAG recomputes). Useful when a run
+   * is recovered from {@link listRuns} with no client-side state. A run with
+   * nothing captured throws {@link KxNotFound}; an old gateway without the sidecar
+   * throws {@link KxUnimplemented}.
+   */
+  async getRunInputs(instanceId: Id): Promise<RunInputs> {
+    const inst = asBytes(instanceId, INSTANCE_LEN);
+    const resp = await rpc(this.grpc.getRunInputs({ instanceId: inst }));
+    return RunInputs.fromProto(resp);
   }
 
   /**

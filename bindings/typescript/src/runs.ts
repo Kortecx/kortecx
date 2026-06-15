@@ -8,7 +8,10 @@
  * "started at" for the UI, never identity.
  */
 
-import type { RunSummary as PbRunSummary } from "./gen/kortecx/v1/gateway_pb.js";
+import type {
+  GetRunInputsResponse as PbGetRunInputsResponse,
+  RunSummary as PbRunSummary,
+} from "./gen/kortecx/v1/gateway_pb.js";
 import { encode } from "./hexids.js";
 
 /** One registered run instance: hex ids + the registered seq (pagination cursor)
@@ -45,4 +48,50 @@ export class RunSummary {
 export interface RunPage {
   readonly runs: RunSummary[];
   readonly hasMore: boolean;
+}
+
+/**
+ * The captured `Invoke` args for a run (PR-D `GetRunInputs`) — the baseline a
+ * client edits and re-invokes ("Re-run with changes"). `args` is decoded from the
+ * opaque JSON object bytes the run was submitted with; `handle` is what
+ * `getRecipeForm` needs to re-render the form (a durable run otherwise carries
+ * only the fingerprint).
+ *
+ * SN-8 / off-digest: the args never become committed facts. A run with nothing
+ * captured surfaces as `NotFound`; an old gateway as an `Unimplemented` rpc error.
+ */
+export class RunInputs {
+  constructor(
+    readonly instanceId: string,
+    readonly recipeFingerprint: string,
+    readonly handle: string,
+    readonly args: Record<string, unknown>,
+  ) {}
+
+  static fromProto(r: PbGetRunInputsResponse): RunInputs {
+    let args: Record<string, unknown> = {};
+    if (r.args.length > 0) {
+      try {
+        const parsed: unknown = JSON.parse(new TextDecoder().decode(r.args));
+        if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
+          args = parsed as Record<string, unknown>;
+        }
+      } catch {
+        // A corrupt/non-JSON capture degrades to empty args (the parseLocalArgs
+        // posture) rather than throwing inside the SDK — never fake, never crash.
+        args = {};
+      }
+    }
+    return new RunInputs(encode(r.instanceId), encode(r.recipeFingerprint), r.handle, args);
+  }
+
+  /** A plain snake_case object (stable wire-shaped serialization for UIs/logs). */
+  toJSON() {
+    return {
+      instance_id: this.instanceId,
+      recipe_fingerprint: this.recipeFingerprint,
+      handle: this.handle,
+      args: this.args,
+    };
+  }
 }

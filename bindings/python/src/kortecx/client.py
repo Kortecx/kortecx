@@ -39,7 +39,7 @@ from .react import ReactTurn, ReactTurnPage
 from .recipes import RecipeForm, RecipeInfo, ScoredRecipe
 from .replan import ReplanRound, ReplanRoundPage
 from .run import AsyncRun, Result, Run
-from .runs import RunPage, RunSummary
+from .runs import RunInputs, RunPage, RunSummary
 from .teams import TeamMembers, TeamSummary
 from .telemetry import MoteTelemetryRow, TelemetryPage
 from .toolscout import BundleScore, BundleSpec, ToolManifest
@@ -402,6 +402,21 @@ class KxClient:
             req.before_seq = before_seq
         resp = self._call(lambda: self._stub.ListRuns(req, metadata=self._md))
         return RunPage(runs=[RunSummary.from_proto(r) for r in resp.runs], has_more=resp.has_more)
+
+    def get_run_inputs(self, instance_id: IdType) -> RunInputs:
+        """The args a run was submitted with (PR-D ``GetRunInputs``) — the baseline
+        for "Re-run with changes": fetch the captured args + handle, edit, then
+        :meth:`invoke` again (only the changed sub-DAG recomputes). Useful when a
+        run is recovered from :meth:`list_runs` with no client-side state. A run
+        with nothing captured raises ``KxNotFound``; an old gateway without the
+        sidecar raises ``KxUnimplemented``."""
+        inst = hexids.as_bytes(instance_id, hexids.INSTANCE_LEN)
+        resp = self._call(
+            lambda: self._stub.GetRunInputs(
+                _g.GetRunInputsRequest(instance_id=inst), metadata=self._md
+            )
+        )
+        return RunInputs.from_proto(resp)
 
     def get_mote_detail(self, instance_id: IdType, mote_id: IdType) -> MoteDetail:
         """Resolve one Mote's admitted definition (Batch B) — the node-inspector
@@ -913,6 +928,16 @@ class AsyncKxClient:
             req.before_seq = before_seq
         resp = await self._acall(self._stub.ListRuns(req, metadata=self._md))
         return RunPage(runs=[RunSummary.from_proto(r) for r in resp.runs], has_more=resp.has_more)
+
+    async def get_run_inputs(self, instance_id: IdType) -> RunInputs:
+        """The args a run was submitted with (PR-D ``GetRunInputs``) — the baseline
+        for "Re-run with changes". A run with nothing captured raises
+        ``KxNotFound``; an old gateway raises ``KxUnimplemented``."""
+        inst = hexids.as_bytes(instance_id, hexids.INSTANCE_LEN)
+        resp = await self._acall(
+            self._stub.GetRunInputs(_g.GetRunInputsRequest(instance_id=inst), metadata=self._md)
+        )
+        return RunInputs.from_proto(resp)
 
     async def get_mote_detail(self, instance_id: IdType, mote_id: IdType) -> MoteDetail:
         """Async :meth:`KxClient.get_mote_detail`."""

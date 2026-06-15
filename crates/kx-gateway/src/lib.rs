@@ -97,6 +97,11 @@ mod mote_defs;
 mod provision;
 #[cfg(feature = "embedded-worker")]
 mod real_exec;
+// PR-D: the run_inputs.db sidecar (the RunInputsStore seam) — the Invoke args
+// captured at submit so a run recovered from ListRuns can pre-fill its recipe
+// form and be re-invoked with edits ("Re-run with changes"). Rebuildable-to-
+// EMPTY, off-journal, off-digest, off-identity.
+mod run_inputs;
 mod server;
 // Batch C: the telemetry.db sidecar (the TelemetryView seam) — host-measured
 // execution exhaust (wall-clock / model usage / fired tool), joined to the

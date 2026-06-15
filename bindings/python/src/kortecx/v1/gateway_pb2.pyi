@@ -343,6 +343,24 @@ class ListRunsResponse(_message.Message):
     has_more: bool
     def __init__(self, runs: _Optional[_Iterable[_Union[RunSummary, _Mapping]]] = ..., has_more: bool = ...) -> None: ...
 
+class GetRunInputsRequest(_message.Message):
+    __slots__ = ("instance_id",)
+    INSTANCE_ID_FIELD_NUMBER: _ClassVar[int]
+    instance_id: bytes
+    def __init__(self, instance_id: _Optional[bytes] = ...) -> None: ...
+
+class GetRunInputsResponse(_message.Message):
+    __slots__ = ("instance_id", "recipe_fingerprint", "handle", "args")
+    INSTANCE_ID_FIELD_NUMBER: _ClassVar[int]
+    RECIPE_FINGERPRINT_FIELD_NUMBER: _ClassVar[int]
+    HANDLE_FIELD_NUMBER: _ClassVar[int]
+    ARGS_FIELD_NUMBER: _ClassVar[int]
+    instance_id: bytes
+    recipe_fingerprint: bytes
+    handle: str
+    args: bytes
+    def __init__(self, instance_id: _Optional[bytes] = ..., recipe_fingerprint: _Optional[bytes] = ..., handle: _Optional[str] = ..., args: _Optional[bytes] = ...) -> None: ...
+
 class ListRecipesRequest(_message.Message):
     __slots__ = ()
     def __init__(self) -> None: ...

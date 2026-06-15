@@ -49,6 +49,7 @@ usage: kx <command> [args]
                                                  (string-DSL DAG: a > [b & c]; see `kx help chain`)
     kx projection --instance <hex16> [--at-seq N]
     kx runs list [--limit N] [--before-seq N]    (durable run history, newest-first)
+    kx runs rerun <instance-hex16> [--set k=v]   (re-run a prior run with edited args)
     kx mote show <instance-hex16> <mote-hex32>   (display-only definition inspection)
     kx content get --ref <hex32> [--instance <hex16>] [--out <file>]   (no --instance = the uploads scope)
     kx content put <file> [--media-type <mime>] [--filename <name>]
@@ -478,7 +479,15 @@ kx projection --instance <hex16> [--at-seq N] [client flags]
 kx runs list [--limit N] [--before-seq N] [client flags]
   Durable run history (Batch B): every registered run, newest-first, from one
   server-side journal fold. --limit caps the page (server max 500); --before-seq
-  pages older runs (pass the last page's lowest registered_seq). Read-only."
+  pages older runs (pass the last page's lowest registered_seq). Read-only.
+
+kx runs rerun <instance-hex16> [--set k=v]... [--wait] [--timeout-secs N] [--out PATH] [client flags]
+  Re-run with changes (PR-D): fetch the args a run was submitted with
+  (GetRunInputs), overlay each --set key=value edit, and re-invoke. A value that
+  parses as JSON keeps its type (--set count=3 → 3); otherwise it is a string.
+  Only the changed sub-DAG recomputes; an unchanged re-run returns the existing
+  result (idempotent). Same admission as `kx invoke` (never SubmitRun). An old
+  gateway / a run with no captured args degrades honestly."
             .into(),
         "mote" => "\
 kx mote show <instance-hex16> <mote-hex32> [client flags]

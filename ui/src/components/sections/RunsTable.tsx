@@ -14,6 +14,7 @@ import { RUN_NAMES_CHANGED_EVENT, loadRunNames, setRunName } from "../../lib/run
 import { EmptyState } from "../EmptyState";
 import { ErrorNotice } from "../ErrorNotice";
 import { Icon } from "../shell/Icon";
+import { RerunDrawer } from "./RerunDrawer";
 
 /** A run's display shape (local rename > humanized handle > short id). */
 interface RunDisplay {
@@ -38,6 +39,7 @@ export function RunsTable() {
   const [filter, setFilter] = useState("");
   const [names, setNames] = useState<Record<string, string>>(() => loadRunNames(endpoint));
   const [open, setOpen] = useState<RunRecord | null>(null);
+  const [rerun, setRerun] = useState<RunRecord | null>(null);
 
   useEffect(() => {
     setNames(loadRunNames(endpoint));
@@ -162,8 +164,18 @@ export function RunsTable() {
       ) : null}
 
       {open ? (
-        <RunDetailDrawer run={open} display={displayFor(open)} onClose={() => setOpen(null)} />
+        <RunDetailDrawer
+          run={open}
+          display={displayFor(open)}
+          onClose={() => setOpen(null)}
+          onRerun={() => {
+            setRerun(open);
+            setOpen(null);
+          }}
+        />
       ) : null}
+
+      {rerun ? <RerunDrawer run={rerun} onClose={() => setRerun(null)} /> : null}
     </div>
   );
 }
@@ -241,10 +253,12 @@ function RunDetailDrawer({
   run,
   display,
   onClose,
+  onRerun,
 }: {
   run: RunRecord;
   display: RunDisplay;
   onClose: () => void;
+  onRerun: () => void;
 }) {
   const { endpoint } = useConnection();
   const navigate = useNavigate();
@@ -387,6 +401,15 @@ function RunDetailDrawer({
         </label>
 
         <div className="drawer-actions drawer-actions--wrap">
+          <button
+            type="button"
+            className="btnlink"
+            data-testid="run-rerun-changes"
+            title="Edit this run's inputs and re-run — only the changed steps recompute"
+            onClick={onRerun}
+          >
+            Re-run with changes
+          </button>
           {canRunAgain ? (
             <button
               type="button"

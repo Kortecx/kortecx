@@ -283,6 +283,32 @@ message ListRunsResponse {
 }
 
 // ---------------------------------------------------------------------------
+// PR-D — "Re-run with changes" / "Fork & re-run". Additive (D120.6).
+//
+// The Invoke args submitted with a run are captured into an OFF-JOURNAL,
+// OFF-DIGEST sidecar (the feedback.db/uploads.db posture: rebuildable-to-EMPTY,
+// principal server-resolved audit-only, NO read-time party filter — the
+// kx-cloud SN-8 wall enforces tenancy above). GetRunInputs reads them back so a
+// run recovered from ListRuns (no client-side localStorage) can pre-fill its
+// recipe form and be re-invoked with edits. The args never become committed
+// facts ⇒ the canonical projection digest is invariant by construction.
+//
+// Degrade: a serve without the sidecar wired returns UNIMPLEMENTED; a run with
+// nothing captured (pre-PR-D, or a rebuilt-to-empty sidecar) returns NOT_FOUND.
+// A re-run is just a new Invoke(handle, edited_args) — same admission, NEVER
+// SubmitRun (the standing client-warrant finding).
+// ---------------------------------------------------------------------------
+message GetRunInputsRequest {
+  bytes instance_id = 1;                 // 16B — the run whose captured Invoke args to read
+}
+message GetRunInputsResponse {
+  bytes instance_id = 1;                 // 16B — echoed
+  bytes recipe_fingerprint = 2;          // 32B — the recipe the run registered under (advisory)
+  string handle = 3;                     // the Invoke handle (so GetRecipeForm can re-render the form)
+  bytes args = 4;                        // opaque JSON object bytes — the captured Invoke args (off-digest, off-identity)
+}
+
+// ---------------------------------------------------------------------------
 // UI-2 — recipe discovery (the "what can I run, and with what inputs" query).
 // Additive RPCs (D120.6). DISTINCT from the signature catalog (ListSignatures
 // is the TaskSignature/verdict-reuse registry); these enumerate the INVOCABLE
@@ -982,6 +1008,9 @@ service KxGateway {
   rpc ListRuns(ListRunsRequest) returns (ListRunsResponse);
   rpc ListRecipes(ListRecipesRequest) returns (ListRecipesResponse);
   rpc GetRecipeForm(GetRecipeFormRequest) returns (GetRecipeFormResponse);
+  // PR-D additive (D120.6): the captured Invoke args for a run ("Re-run with
+  // changes"). UNIMPLEMENTED with no sidecar; NOT_FOUND with nothing captured.
+  rpc GetRunInputs(GetRunInputsRequest) returns (GetRunInputsResponse);
   // PR-4 Batch D additive (D120.6): ADVISORY recipe discovery (DiscoveryIndex +
   // AdvisoryMetadataStore). Display-only ranking; never authorizes. UNIMPLEMENTED
   // on an old gateway / when the seam yields None.

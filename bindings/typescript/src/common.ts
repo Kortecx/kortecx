@@ -40,7 +40,7 @@ export {
 export { ParentEdge, edgeKindName } from "./parents.js";
 export type { EdgeKindName } from "./parents.js";
 
-export { RunSummary } from "./runs.js";
+export { RunInputs, RunSummary } from "./runs.js";
 export type { RunPage } from "./runs.js";
 
 export { ReactTurn } from "./react.js";
