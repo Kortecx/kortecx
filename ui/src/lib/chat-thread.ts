@@ -36,6 +36,11 @@ export interface ChatMessage {
   /** The run backing an assistant turn (set once Invoke returns). */
   readonly instanceId?: string;
   readonly terminalMoteId?: string;
+  /** PR-4.2 (T-STREAM1): the in-flight agent chain's LIVE reasoning text, streamed
+   *  out-of-band while `status === "thinking"`. Display-only + advisory — cleared
+   *  when the committed answer lands (`turn_done`); never persisted as the answer.
+   *  (Simple/vision turns stream straight into `text` instead.) */
+  readonly streamingReasoning?: string;
   /** Set when the turn fails (Invoke error, failed terminal Mote, or fetch error). */
   readonly error?: UiError;
 }
@@ -56,6 +61,11 @@ export type ChatAction =
     }
   | { type: "turn_started"; assistantId: string; instanceId: string; terminalMoteId: string }
   | { type: "turn_thinking"; assistantId: string }
+  /** PR-4.2 (T-STREAM1): the ADVISORY live token text. `target: "answer"` streams
+   *  into the bubble (simple/vision); `target: "reasoning"` streams into the agent
+   *  trace line (so a tool turn's raw envelope never masquerades as the answer).
+   *  Ignored once the turn leaves `thinking` (the committed fact is the authority). */
+  | { type: "token_streamed"; assistantId: string; text: string; target: "answer" | "reasoning" }
   | { type: "turn_done"; assistantId: string; text: string }
   | { type: "turn_failed"; assistantId: string; error: UiError }
   /** Re-dispatch a FAILED turn with its identical args (Batch A idempotent-run
@@ -100,11 +110,24 @@ export function chatReducer(state: ChatThread, action: ChatAction): ChatThread {
       return patch(state, action.assistantId, (m) =>
         m.status === "pending" ? { ...m, status: "thinking" } : m,
       );
+    case "token_streamed":
+      // Only a THINKING turn accepts live tokens — a late chunk after the
+      // committed answer landed (`turn_done`) must NEVER clobber the authority.
+      return patch(state, action.assistantId, (m) => {
+        if (m.status !== "thinking") {
+          return m;
+        }
+        return action.target === "reasoning"
+          ? { ...m, streamingReasoning: action.text }
+          : { ...m, text: action.text };
+      });
     case "turn_done":
       return patch(state, action.assistantId, (m) => ({
         ...m,
         status: "done",
         text: action.text,
+        // The committed answer supersedes the live reasoning trace.
+        streamingReasoning: undefined,
       }));
     case "turn_failed":
       return patch(state, action.assistantId, (m) => ({
@@ -115,7 +138,9 @@ export function chatReducer(state: ChatThread, action: ChatAction): ChatThread {
     case "turn_retry":
       // Only a FAILED turn re-arms (a done/in-flight turn is not retryable).
       return patch(state, action.assistantId, (m) =>
-        m.status === "failed" ? { ...m, status: "pending", error: undefined, text: "" } : m,
+        m.status === "failed"
+          ? { ...m, status: "pending", error: undefined, text: "", streamingReasoning: undefined }
+          : m,
       );
     case "load_thread":
       return { messages: [...action.messages] };

@@ -96,6 +96,11 @@ struct Job {
     wall_clock_ms: u64,
     /// Where the owner thread sends the result.
     reply: Sender<Result<InferenceOutput, InferenceError>>,
+    /// PR-4.2 (T-STREAM1): an ADVISORY per-token sink, run on the owner thread
+    /// inside [`run_generation`]. `None` ⇒ byte-identical generation (the branch
+    /// is skipped; the committed bytes are unchanged). `Arc<dyn Fn>` is `Send` so
+    /// `Job` (and `OwnerJob::Generate(Box<Job>)`) stay `Send`.
+    token_sink: Option<crate::TokenSink>,
 }
 
 /// One embedding request handed to the owner thread (DP1). All fields are
@@ -203,6 +208,7 @@ impl ModelCache {
         params: InferenceParams,
         n_ctx: u32,
         wall_clock_ms: u64,
+        token_sink: Option<crate::TokenSink>,
     ) -> Result<InferenceOutput, InferenceError> {
         let (reply_tx, reply_rx) = mpsc::channel();
         let job = Job {
@@ -216,6 +222,7 @@ impl ModelCache {
             n_ctx,
             wall_clock_ms,
             reply: reply_tx,
+            token_sink,
         };
         self.tx
             .send(OwnerJob::Generate(Box::new(job)))
@@ -457,9 +464,19 @@ fn run_generation(
     for token_result in generator {
         check_timeout(start.elapsed(), timeout, job.wall_clock_ms)?;
         let token = token_result.map_err(map_llama_err)?;
+        let prev = output_bytes.len();
         vocab
             .token_to_piece_into(token, 0, false, &mut output_bytes)
             .map_err(map_llama_err)?;
+        // PR-4.2 (T-STREAM1): tap the freshly-appended piece for the ADVISORY
+        // token stream. This only READS the slice just written, so `output_bytes`
+        // — and therefore the committed `result_ref` — is byte-identical to the
+        // `None`-sink path. EOG renders an empty piece (`special=false`); skip it.
+        if let Some(sink) = &job.token_sink {
+            if output_bytes.len() > prev {
+                sink(&output_bytes[prev..]);
+            }
+        }
         output_tokens = output_tokens.saturating_add(1);
         if output_tokens >= job.params.max_output_tokens {
             break;

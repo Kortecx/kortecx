@@ -20,9 +20,12 @@ import { KxConnectError, KxRunFailed, KxUnimplemented, KxWaitTimeout, rpc } from
 import {
   streamAllDeltas,
   streamDeltas,
+  streamModelTokens,
   wsAllDeltasFromMessages,
   wsAllUrl,
   wsDeltasFromMessages,
+  wsTokenChunksFromMessages,
+  wsTokenUrl,
   wsUrl,
 } from "./events.js";
 import { type FeedbackInput, type FeedbackPage, FeedbackRow, ratingToProto } from "./feedback.js";
@@ -42,6 +45,7 @@ import { Result, Run } from "./run.js";
 import { RunInputs, type RunPage, RunSummary } from "./runs.js";
 import { TeamMembers, type TeamSummary, teamsFromProto } from "./teams.js";
 import { type MoteTelemetryPage, MoteTelemetryRow } from "./telemetry.js";
+import type { TokenChunk } from "./tokens.js";
 import { BundleScore, type BundleSpec, ToolManifest, bundleSpecToProto } from "./toolscout.js";
 import { type Args, encodeArgs } from "./transport.js";
 import { type Delta, type GlobalDelta, Projection, SignatureSummary } from "./types.js";
@@ -284,6 +288,44 @@ export abstract class KxClientBase {
       opts.since ?? 0n,
     );
     yield* wsDeltasFromMessages(this.openWsMessages(url, this.token));
+  }
+
+  /**
+   * Native gRPC server-streaming ADVISORY token tail for ONE model mote (PR-4.2 /
+   * T-STREAM1): the NEW bytes per decode step until `done`. `moteId` must belong
+   * to `instanceId`'s run (server-gated). The committed `result_ref` stays the
+   * authority — reconcile to it. An old gateway throws {@link KxUnimplemented}.
+   */
+  streamModelTokens(
+    instanceId: Id,
+    moteId: Id,
+    opts: { since?: bigint; signal?: AbortSignal } = {},
+  ): AsyncIterable<TokenChunk> {
+    const inst = asBytes(instanceId, INSTANCE_LEN);
+    const mote = asBytes(moteId, REF_LEN);
+    return streamModelTokens(this.grpc, inst, mote, opts.since ?? 0n, opts.signal);
+  }
+
+  /**
+   * Consume ONE model mote's ADVISORY token stream over the WS bridge (PR-4.2 —
+   * the browser's only live token path; a browser cannot speak gRPC server-
+   * streaming). Same bearer auth as {@link wsEvents}.
+   */
+  async *wsTokens(
+    instanceId: Id,
+    moteId: Id,
+    opts: { since?: bigint; wsEndpoint?: string } = {},
+  ): AsyncIterable<TokenChunk> {
+    const inst = asBytes(instanceId, INSTANCE_LEN);
+    const mote = asBytes(moteId, REF_LEN);
+    const url = wsTokenUrl(
+      this.endpoint,
+      opts.wsEndpoint ?? this.wsEndpoint,
+      encode(inst),
+      encode(mote),
+      opts.since ?? 0n,
+    );
+    yield* wsTokenChunksFromMessages(this.openWsMessages(url, this.token));
   }
 
   /**

@@ -76,6 +76,24 @@ def stream_all_deltas(stub, md, since: int, follow: bool) -> Iterator[types.Glob
             return
 
 
+def stream_model_tokens(
+    stub, md, instance_id: bytes, mote_id: bytes, since: int = 0
+) -> Iterator[types.TokenChunk]:
+    """Yield one model mote's ADVISORY tokens over the native gRPC stream (PR-4.2 /
+    T-STREAM1): the NEW bytes per decode step until the terminal ``done`` chunk.
+    The committed ``result_ref`` stays the authority — a consumer reconciles to it.
+    An old gateway without this RPC raises (mapped via :func:`from_rpc_error`)."""
+    req = _g.StreamModelTokensRequest(instance_id=instance_id, mote_id=mote_id, since_seq=since)
+    try:
+        for chunk in stub.StreamModelTokens(req, metadata=md):
+            view = types.TokenChunk.from_proto(chunk)
+            yield view
+            if view.done:
+                return
+    except grpc.RpcError as e:
+        raise from_rpc_error(e) from e
+
+
 # --- async gRPC --------------------------------------------------------------
 
 
@@ -127,6 +145,22 @@ async def astream_all_deltas(
             return
 
 
+async def astream_model_tokens(
+    stub, md, instance_id: bytes, mote_id: bytes, since: int = 0
+) -> AsyncIterator[types.TokenChunk]:
+    """Async twin of :func:`stream_model_tokens` (PR-4.2)."""
+    req = _g.StreamModelTokensRequest(instance_id=instance_id, mote_id=mote_id, since_seq=since)
+    try:
+        call = stub.StreamModelTokens(req, metadata=md)
+        async for chunk in call:
+            view = types.TokenChunk.from_proto(chunk)
+            yield view
+            if view.done:
+                return
+    except grpc.RpcError as e:
+        raise from_rpc_error(e) from e
+
+
 # --- optional WebSocket bridge (R5) ------------------------------------------
 
 
@@ -153,6 +187,14 @@ def _ws_url(grpc_endpoint: str, ws_endpoint: Optional[str], instance_hex: str, s
 def _ws_all_url(grpc_endpoint: str, ws_endpoint: Optional[str], since: int) -> str:
     """Derive the GLOBAL ``/v1/events/all`` WS URL (Batch C — no instance param)."""
     return f"{_ws_base(grpc_endpoint, ws_endpoint)}/v1/events/all?since={since}"
+
+
+def _ws_token_url(
+    grpc_endpoint: str, ws_endpoint: Optional[str], instance_hex: str, mote_hex: str, since: int
+) -> str:
+    """Derive the per-mote ``/v1/tokens`` WS URL (PR-4.2)."""
+    base = _ws_base(grpc_endpoint, ws_endpoint)
+    return f"{base}/v1/tokens?instance={instance_hex}&mote={mote_hex}&since={since}"
 
 
 def _ws_delta(obj: dict) -> Optional[types.Delta]:
@@ -206,6 +248,37 @@ def ws_stream_deltas(
                 view = _ws_delta(d)
                 if view is not None:
                     yield view
+
+
+def ws_stream_model_tokens(
+    grpc_endpoint: str,
+    instance_hex: str,
+    mote_hex: str,
+    *,
+    since: int = 0,
+    token: Optional[str] = None,
+    ws_endpoint: Optional[str] = None,
+) -> Iterator[types.TokenChunk]:
+    """Consume one model mote's ADVISORY token stream over the WS bridge (PR-4.2;
+    requires ``kortecx[ws]``). Each WS message is exactly ONE chunk (not a frame).
+    Stops after the terminal ``done`` chunk."""
+    import json
+
+    try:
+        from websockets.sync.client import connect
+    except Exception as e:  # pragma: no cover
+        raise ImportError(
+            "the WebSocket token client needs the 'ws' extra: pip install 'kortecx[ws]'"
+        ) from e
+
+    url = _ws_token_url(grpc_endpoint, ws_endpoint, instance_hex, mote_hex, since)
+    headers = {"Authorization": f"Bearer {token}"} if token else None
+    with connect(url, additional_headers=headers) as ws:
+        for message in ws:
+            view = types.TokenChunk.from_ws(json.loads(message))
+            yield view
+            if view.done:
+                return
 
 
 def _ws_global_delta(obj: dict) -> types.GlobalDelta:

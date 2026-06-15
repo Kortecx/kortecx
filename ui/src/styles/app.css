@@ -1491,6 +1491,19 @@ select {
   color: var(--fg-muted);
   font-style: italic;
 }
+/* PR-4.2 (T-STREAM1): an agent chain's LIVE reasoning/acting text while in flight.
+ * Muted + secondary (tokens-only, AA both themes) so the raw turn output reads as
+ * "the agent working", never as the final answer (which lands in .bubble__md). */
+.bubble__stream-reasoning {
+  margin-top: 0.35rem;
+  color: var(--fg-muted);
+  font-size: 0.85em;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  border-left: 2px solid var(--t-scheduled);
+  padding-left: 0.5rem;
+}
 .thinking-trace {
   margin-top: 0.5rem;
 }

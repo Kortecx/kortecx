@@ -72,6 +72,19 @@ export function MessageBubble({
             thinking…
           </span>
         ) : null}
+        {/* PR-4.2 (T-STREAM1): an agent chain's LIVE reasoning/acting text streams
+            here while in flight — a muted, secondary line so a tool turn's raw
+            envelope never poses as the answer. Cleared when the committed answer
+            lands (the simple/vision answer streams into `bubble__md` instead). */}
+        {message.role === "assistant" && inFlight && message.streamingReasoning ? (
+          <div
+            className="bubble__stream-reasoning"
+            data-testid="bubble-reasoning-stream"
+            aria-live="polite"
+          >
+            {message.streamingReasoning}
+          </div>
+        ) : null}
         {message.attachments && message.attachments.length > 0 ? (
           <div className="bubble__attachments" data-testid="bubble-attachments">
             {message.attachments.map((a) => (
@@ -94,7 +107,16 @@ export function MessageBubble({
         {message.text ? (
           message.role === "assistant" ? (
             split.answer ? (
-              <div className="bubble__text bubble__md" data-testid="bubble-md">
+              // PR-4.2: while the turn is in flight this container renders the LIVE
+              // streamed answer (simple/vision); it's an `aria-live` region so a
+              // screen reader announces incrementally. On settle the SAME container
+              // shows the committed answer (the authority).
+              <div
+                className="bubble__text bubble__md"
+                data-testid="bubble-md"
+                data-streaming={inFlight ? "true" : undefined}
+                aria-live={inFlight ? "polite" : undefined}
+              >
                 {renderMarkdown(split.answer)}
               </div>
             ) : null

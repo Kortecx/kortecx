@@ -44,7 +44,7 @@ usage: kx <command> [args]
               --cors-origin enables the gRPC-web browser shim for the listed origins, deny-by-default)
 
   client verbs (gRPC over the gateway; common flags: --endpoint <url> --token <t> | --token-file <p> --tls-ca <path> --json):
-    kx invoke <handle> --args <json> [--args-file <path>] [--wait] [--timeout-secs N] [--out <file>]
+    kx invoke <handle> --args <json> [--args-file <path>] [--wait] [--stream] [--timeout-secs N] [--out <file>]
     kx chain run \"<dsl>\" --tasks <tasks.json> [--seed N] [--wait] [--timeout-secs N] [--out <file>]
                                                  (string-DSL DAG: a > [b & c]; see `kx help chain`)
     kx projection --instance <hex16> [--at-seq N]
@@ -441,10 +441,12 @@ kx serve --dev-allow-local [--journal <path>] [--content <dir>] [--catalog-dir <
   gRPC-web shim for the listed origins (pair with --tls-cert/--tls-key for https)."
             .into(),
         "invoke" => "\
-kx invoke <handle> --args <json> [--args-file <path>] [--wait] [--timeout-secs N] [--out <file>] [client flags]
+kx invoke <handle> --args <json> [--args-file <path>] [--wait] [--stream] [--timeout-secs N] [--out <file>] [client flags]
   Bind a PUBLISHED blueprint (wire-legacy: recipe) by handle (e.g. kx/recipes/echo) to JSON args and run it.
   With --wait, poll to completion and print the committed result (run the runtime like
-  a function). Without --wait, print the async handle (instance_id/terminal_mote_id)."
+  a function). Without --wait, print the async handle (instance_id/terminal_mote_id).
+  With --stream, print the terminal model mote's tokens live as they generate (advisory;
+  the committed result stays the authority), then resolve — handy for chat/vision recipes."
             .into(),
         "blueprint" => "\
 kx blueprint run --file <dag.json> [--wait] [--timeout-secs N] [--out <file>] [client flags]

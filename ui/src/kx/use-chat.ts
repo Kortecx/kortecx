@@ -32,6 +32,7 @@ import { type UiError, toUiError } from "./errors";
 import { useInvoke } from "./use-invoke";
 import { type ProjectionVM, runSettled, useProjection } from "./use-projection";
 import { type ReactTurnVM, useReactProgress } from "./use-react-progress";
+import { useTokenStream } from "./use-token-stream";
 
 const COMMITTED = 3;
 
@@ -176,6 +177,35 @@ export function useChat({ handle, promptKey, modelId, agentMode }: UseChatOption
 
   // Agent turns: the loop's durable facts narrate progress + completion.
   const reactProgress = useReactProgress(active?.react ? active.instanceId : undefined);
+
+  // PR-4.2 (T-STREAM1): the live token stream for the in-flight mote. For a
+  // simple/vision turn it's the terminal mote (streams into the answer bubble);
+  // for an agent chain it's the LATEST in-flight turn (streams into the reasoning
+  // trace, so a tool turn's raw envelope never poses as the answer). The committed
+  // result stays the authority and overwrites the stream on settle.
+  const reactTurnList = reactProgress.turns;
+  const latestReactMote = reactTurnList[reactTurnList.length - 1]?.turnMoteId;
+  const streamMoteId = active
+    ? active.react
+      ? latestReactMote
+      : active.terminalMoteId
+    : undefined;
+  const tokenStream = useTokenStream(active?.instanceId, streamMoteId, Boolean(active));
+
+  const streamText = tokenStream.text;
+  const streamAssistantId = active?.assistantId;
+  const streamTarget: "answer" | "reasoning" = active?.react ? "reasoning" : "answer";
+  useEffect(() => {
+    if (!streamAssistantId || streamText === "") {
+      return;
+    }
+    dispatch({
+      type: "token_streamed",
+      assistantId: streamAssistantId,
+      text: streamText,
+      target: streamTarget,
+    });
+  }, [streamAssistantId, streamText, streamTarget]);
 
   // When the active AGENT chain settles, resolve the answer turn's committed
   // text (one imperative projection read — the poll hook's at-rest heuristic

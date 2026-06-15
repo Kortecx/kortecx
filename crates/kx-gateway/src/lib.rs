@@ -88,6 +88,18 @@ mod mcp_tool;
 // the inference FFI, so it's behind the off-by-default `inference` feature.
 #[cfg(feature = "inference")]
 mod model_exec;
+// PR-4.2 (T-STREAM1): the ADVISORY in-process token broker — the rendezvous
+// between the model executor (publisher) and the live-token subscribers. Only
+// the inference build dispatches models + publishes tokens, so it's inference-
+// gated; out-of-band (never journal / digest / identity).
+#[cfg(feature = "inference")]
+mod token_broker;
+// PR-4.2 (T-STREAM1): the LiveTokenTailer — the broker-backed `TokenTailer` impl
+// the gRPC `StreamModelTokens` handler + the WS `/tokens` bridge subscribe
+// through. Needs the broker, so inference-gated; the FFI-free build serves the
+// core `NoTokenTailer` (an honest empty stream).
+#[cfg(feature = "inference")]
+mod token_tail;
 // Batch A: the host-side model catalog (the ModelCatalogView seam) — always
 // wired so an FFI-free serve answers ListModels with an honest empty list.
 mod models;

@@ -387,6 +387,25 @@ mod tests {
     }
 
     #[test]
+    fn check_run_ownership_gates_on_registration() {
+        // The run-ownership gate the live token stream (PR-4.2) reuses: the caller
+        // must own `instance_id`; a foreign instance is refused (uniform
+        // NotAuthorized — no existence oracle). The streamed `mote_id` is the
+        // broker key, NOT a second journal gate (a freshly-submitted terminal mote
+        // is not journaled when the client subscribes for time-to-first-token).
+        let j = InMemoryJournal::new();
+        j.append(reg(7, 8, 1234)).unwrap();
+        j.append(committed(1)).unwrap();
+        let r = ReadOnly::new(j);
+
+        assert!(check_run_ownership(&r, [7u8; INSTANCE_ID_LEN]).is_ok());
+        assert!(matches!(
+            check_run_ownership(&r, [9u8; INSTANCE_ID_LEN]),
+            Err(GatewayError::NotAuthorized)
+        ));
+    }
+
+    #[test]
     fn two_runs_attribute_to_the_latest_registration() {
         // The watermark pin: reg A → commit → reg B → commit. The first commit
         // belongs to A, the second to B (latest registration at-or-below its seq).

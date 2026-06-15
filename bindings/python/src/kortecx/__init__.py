@@ -72,6 +72,7 @@ from .types import (
     ParentEdge,
     Projection,
     SignatureSummary,
+    TokenChunk,
     edge_kind_name,
     state_name,
 )
@@ -97,6 +98,7 @@ __all__ = [
     "ParentEdge",
     "Delta",
     "Frame",
+    "TokenChunk",
     "SignatureSummary",
     "RunSummary",
     "RunPage",

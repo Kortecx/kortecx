@@ -50,7 +50,7 @@ mod cache;
 mod llama;
 mod types;
 
-pub use backend::{BatchItem, EmbeddingBackend, InferenceBackend};
+pub use backend::{BatchItem, EmbeddingBackend, InferenceBackend, TokenSink};
 pub use dispatcher::{DispatchOutcome, Dispatcher, DispatcherConfig};
 #[cfg(feature = "llamacpp")]
 pub use llama::{ContentFetcher, LlamaInferenceBackend};

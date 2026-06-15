@@ -477,6 +477,13 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     // worker's `MoteExecutor` AND its `ContextSink` (one Arc, two roles) so the
     // coordinator-resolved `parent_results` reach the model prompt. `None` ⇒ no sink
     // ⇒ the worker dispatch is byte-identical to pre-F-7.
+    // PR-4.2 (T-STREAM1): the ADVISORY token broker shared by the model executor
+    // (the PUBLISHER, keyed by mote.id) and the live-token subscribers (the gRPC
+    // `StreamModelTokens` tailer + the WS `/tokens` bridge). Out-of-band — never
+    // journal / digest / identity. Built once on the inference build; the FFI-free
+    // build has no model dispatch and serves the empty `NoTokenTailer`.
+    #[cfg(feature = "inference")]
+    let token_broker = Arc::new(crate::token_broker::TokenBroker::new());
     #[cfg(feature = "inference")]
     let (executor, context_sink, serve_model): WiredExecutor = match shaper_runtime {
         Some(rt) => {
@@ -491,7 +498,10 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
                 // Batch C: the usage hook — every model arm funnels through
                 // dispatch_model, so this records the model that ACTUALLY ran +
                 // its output tokens (fail-open; dispatch unchanged).
-                .with_usage_sink(Arc::new(telemetry_ledger.sink())),
+                .with_usage_sink(Arc::new(telemetry_ledger.sink()))
+                // PR-4.2: the ADVISORY token publisher — streams each model mote's
+                // tokens out-of-band (keyed by mote.id). Byte-identical dispatch.
+                .with_token_publisher(token_broker.clone()),
             );
             let sink: Arc<dyn kx_worker::ContextSink> = model_exec.clone();
             let wrapped: Arc<dyn MoteExecutor> = model_exec;
@@ -779,6 +789,16 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     {
         gateway = gateway.with_dataset_view(dataset_view);
     }
+    // PR-4.2 (T-STREAM1): wire the broker-backed live token tailer behind the gRPC
+    // `StreamModelTokens` RPC (the inference build only; the default `NoTokenTailer`
+    // serves an honest empty stream otherwise). Read-side / out-of-band.
+    #[cfg(feature = "inference")]
+    {
+        gateway = gateway.with_token_tailer(Arc::new(crate::token_tail::LiveTokenTailer::new(
+            token_broker.clone(),
+            live_shutdown_rx.clone(),
+        )));
+    }
 
     // (4) Auth interceptor + bind + serve. Posture: --dev-allow-local (loopback
     //     dev) → configured bearer tokens → deny-all (the safe default). The SAME
@@ -813,6 +833,36 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     }
     let ws_tailer: Arc<dyn EventTailer> =
         Arc::new(crate::live_tail::LiveTailer::new(live_shutdown_rx.clone()));
+    // PR-4.2 (T-STREAM1): the WS `/tokens` token tailer — the broker-backed
+    // `LiveTokenTailer` on the inference build (the browser's only live path; a
+    // browser cannot speak gRPC server-streaming), the empty `NoTokenTailer`
+    // otherwise. Read-side / out-of-band; same shutdown discipline.
+    #[cfg(feature = "inference")]
+    let ws_token_tailer: Arc<dyn kx_gateway_core::TokenTailer> = Arc::new(
+        crate::token_tail::LiveTokenTailer::new(token_broker.clone(), live_shutdown_rx.clone()),
+    );
+    #[cfg(not(feature = "inference"))]
+    let ws_token_tailer: Arc<dyn kx_gateway_core::TokenTailer> =
+        Arc::new(kx_gateway_core::NoTokenTailer);
+    // PR-4.2: a background sweep that reclaims idle/finished per-mote token
+    // channels (bounded memory on a long-lived serve). Aborted on shutdown like
+    // the other aux tasks.
+    #[cfg(feature = "inference")]
+    let token_evict_task = {
+        let broker = token_broker.clone();
+        let mut shutdown = live_shutdown_rx.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(crate::token_broker::BROKER_TTL);
+            loop {
+                tokio::select! {
+                    _ = tick.tick() => broker.evict_idle(crate::token_broker::BROKER_TTL),
+                    res = shutdown.changed() => {
+                        if res.is_err() || *shutdown.borrow() { break; }
+                    }
+                }
+            }
+        })
+    };
     // Batch C: the GLOBAL live tailer behind the WS `/events/all` channel (the
     // same journal handle + shutdown discipline as the per-run bridge tailer).
     let ws_global_tailer: Arc<dyn GlobalEventTailer> =
@@ -950,10 +1000,14 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         reader.clone(),
         ws_tailer,
         ws_global_tailer,
+        ws_token_tailer,
         ws_resolver,
     ));
-    // `mut` is consumed only by the console push below (feature-gated).
-    #[cfg_attr(not(feature = "console"), allow(unused_mut))]
+    // `mut` consumed by the console push (feature-gated) and the token-evict push.
+    #[cfg_attr(
+        all(not(feature = "console"), not(feature = "inference")),
+        allow(unused_mut)
+    )]
     let mut aux = vec![
         coord_task,
         worker_task,
@@ -962,6 +1016,8 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         capture_task,
         telemetry_task,
     ];
+    #[cfg(feature = "inference")]
+    aux.push(token_evict_task);
     #[cfg(feature = "console")]
     if let Some(tcp) = console_tcp {
         aux.push(tokio::spawn(crate::console::serve_console(tcp)));

@@ -13,6 +13,7 @@ import { Code, ConnectError } from "@connectrpc/connect";
 import type { Client } from "@connectrpc/connect";
 import { KxConnectError, fromRpcError } from "./errors.js";
 import type { KxGateway } from "./gen/kortecx/v1/gateway_pb.js";
+import { TokenChunk } from "./tokens.js";
 import { Delta, GlobalDelta } from "./types.js";
 
 type Gateway = Client<typeof KxGateway>;
@@ -118,6 +119,66 @@ export function wsAllUrl(
   since: bigint,
 ): string {
   return `${wsBase(grpcEndpoint, wsEndpoint)}/v1/events/all?since=${since.toString()}`;
+}
+
+/**
+ * Yield a model mote's ADVISORY tokens over the native gRPC stream (PR-4.2 /
+ * T-STREAM1): the NEW bytes per decode step, until the terminal `done` chunk.
+ * The committed `result_ref` stays the authority — a consumer reconciles to it.
+ * An old gateway without this RPC throws (mapped via {@link fromRpcError}).
+ */
+export async function* streamModelTokens(
+  gw: Gateway,
+  instance: Uint8Array,
+  mote: Uint8Array,
+  since: bigint,
+  signal?: AbortSignal,
+): AsyncIterable<TokenChunk> {
+  try {
+    const opts = signal ? { signal } : undefined;
+    for await (const chunk of gw.streamModelTokens(
+      { instanceId: instance, moteId: mote, sinceSeq: since },
+      opts,
+    )) {
+      const view = TokenChunk.fromProto(chunk);
+      yield view;
+      if (view.done) return;
+    }
+  } catch (e) {
+    throw fromRpcError(e);
+  }
+}
+
+/** Derive the per-mote `/v1/tokens` WS URL (PR-4.2 — see {@link wsUrl}). */
+export function wsTokenUrl(
+  grpcEndpoint: string,
+  wsEndpoint: string | undefined,
+  instanceHex: string,
+  moteHex: string,
+  since: bigint,
+): string {
+  return `${wsBase(grpcEndpoint, wsEndpoint)}/v1/tokens?instance=${instanceHex}&mote=${moteHex}&since=${since.toString()}`;
+}
+
+/**
+ * Parse a stream of WS JSON token-chunk messages into {@link TokenChunk}s. Unlike
+ * the event channel (one frame of many deltas per message), each token message is
+ * exactly ONE chunk. Stops after the terminal `done` chunk.
+ */
+export async function* wsTokenChunksFromMessages(
+  messages: AsyncIterable<string>,
+): AsyncIterable<TokenChunk> {
+  for await (const message of messages) {
+    let obj: Record<string, unknown>;
+    try {
+      obj = JSON.parse(message);
+    } catch {
+      continue;
+    }
+    const view = TokenChunk.fromWs(obj);
+    yield view;
+    if (view.done) return;
+  }
 }
 
 /** Map one R5 WS JSON delta (`type` discriminant, hex ids) to a {@link Delta}. */
