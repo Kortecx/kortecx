@@ -6,12 +6,14 @@
  * `path` MUST match a route registered in `router/router.tsx`; `icon` MUST be a key
  * in `shell/Icon.tsx`. The `nav-model` unit test pins both invariants.
  *
- * The EIGHT sections follow the product-spec IA in its order (§2.186 plan; D141.1
+ * The core sections follow the product-spec IA in its order (§2.186 plan; D141.1
  * disjointness): New Chat · Workflows · Blueprints · Datasets · Tools · Context ·
- * Monitoring · Security. Display labels rename freely; section IDS/icons stay on
- * the frozen wire-legacy handles (`chat`/`runs`/`recipes`/`systems` — test-ids,
- * RPC names never rename, the D136 Blueprints precedent). Activity is no longer a
- * section: it is the navbar's activity drawer. PR-2 completed the D141.1 route
+ * Monitoring · Security, plus the Dashboard landing (PR-C1, D150) leading and the
+ * read-only Models view (PR-C2, D152) in the Tools group. Display labels rename
+ * freely; section IDS/icons stay on the frozen wire-legacy handles
+ * (`chat`/`runs`/`recipes`/`systems` — test-ids, RPC names never rename, the D136
+ * Blueprints precedent). Activity is no longer a section: it is the navbar's
+ * activity drawer. PR-2 completed the D141.1 route
  * merge: the `runs` section LIVES at `/workflows` (old `/runs`, `/runs/$id`,
  * `/artifacts`, `/activity` deep links redirect there) and Artifacts is a TAB of
  * a run's detail page — one capability, one home.
@@ -29,6 +31,7 @@ export type IconName =
   | "context"
   | "datasets"
   | "tools"
+  | "models"
   | "systems"
   | "settings";
 
@@ -46,6 +49,7 @@ export type RoutePath =
   | "/context"
   | "/datasets"
   | "/tools"
+  | "/models"
   | "/systems"
   | "/settings";
 
@@ -111,6 +115,16 @@ export const NAV_SECTIONS: readonly NavSection[] = [
     path: "/tools",
     icon: "tools",
     hint: "MCP tool discovery & bundle preview",
+  },
+  {
+    // A read-only view over the models serving this gateway (`ListModels`).
+    // Display-only (SN-8): listing a model never routes one. FFI-free serves
+    // return an honest empty list; an old gateway degrades to "not wired".
+    id: "models",
+    label: "Models",
+    path: "/models",
+    icon: "models",
+    hint: "Discover the models serving this gateway",
   },
   {
     id: "context",
@@ -195,7 +209,7 @@ export const NAV_GROUPS: readonly NavGroup[] = [
     sectionIds: ["dashboard", "chat", "runs", "recipes"],
   },
   { id: "data", label: "Data", color: "teal", sectionIds: ["datasets", "context"] },
-  { id: "tools", label: "Tools", color: "violet", sectionIds: ["tools"] },
+  { id: "tools", label: "Tools", color: "violet", sectionIds: ["tools", "models"] },
   { id: "monitoring", label: "Monitoring", color: "error", sectionIds: ["monitor"] },
   { id: "security", label: "Security", color: "success", sectionIds: ["systems"] },
 ] as const;
