@@ -501,14 +501,17 @@ pub type TokenStream =
 /// [`EventTailer`] posture).
 pub trait TokenTailer: Send + Sync {
     /// Open the token stream for `(instance_id, mote_id, since_seq)`. The
-    /// ownership gate — caller owns `instance_id` AND `mote_id` belongs to that
-    /// run — is the tailer's first action (uniform `permission_denied`, no
-    /// existence oracle). `since_seq` is an advisory replay cursor into the
+    /// ownership gate — the caller owns `instance_id` (the `StreamEvents`
+    /// run-ownership precedent) — is the tailer's first action (uniform
+    /// `permission_denied`, no existence oracle). `mote_id` is the broker key (a
+    /// server-derived, unguessable id), NOT a second journal gate: a
+    /// freshly-submitted terminal mote is not journaled when a client subscribes
+    /// for time-to-first-token. `since_seq` is an advisory replay cursor into the
     /// broker's per-mote history.
     ///
     /// # Errors
-    /// A uniform `permission_denied` if the caller does not own the run or the
-    /// mote is not a member of it; `internal` on a read/fold failure.
+    /// A uniform `permission_denied` if the caller does not own the run;
+    /// `internal` on a read/fold failure.
     // Same `result_large_err` rationale as `EventTailer::stream`.
     #[allow(clippy::result_large_err)]
     fn stream(

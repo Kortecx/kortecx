@@ -45,37 +45,6 @@ pub fn check_run_ownership(
     }
 }
 
-/// Validate that the caller's run owns `mote_id` (PR-4.2 / T-STREAM1 — the live
-/// token-stream gate). Uniform `NotAuthorized` (no existence oracle). Two checks,
-/// both off ONE fold-to-head:
-/// (1) the run's `RunRegistered` matches `instance_id` (the [`check_run_ownership`]
-///     gate — the caller owns the run), AND
-/// (2) `mote_id` is a member of THIS run's projection (a committed-or-scheduled
-///     mote of the run). A cross-run / guessed `mote_id` is refused, so a caller
-///     who owns run A cannot subscribe to run B's tokens.
-///
-/// Called ONCE at subscribe (the broker key is the globally-unique 32-byte,
-/// server-derived `MoteId`); per-token delivery rides the broker. `O(journal)`
-/// once — the same posture as [`check_run_ownership`] + the `GetMoteDetail` gate.
-pub fn check_mote_in_run(
-    reader: &dyn JournalReader,
-    instance_id: [u8; 16],
-    mote_id: [u8; 32],
-) -> Result<(), GatewayError> {
-    let head = reader.current_seq().map_err(internal)?;
-    let (projection, _) = fold_through(reader, head)?;
-    match projection.run_registration() {
-        Some((inst, _)) if inst == instance_id => {}
-        _ => return Err(GatewayError::NotAuthorized),
-    }
-    let mote_id = kx_mote::MoteId::from_bytes(mote_id);
-    if projection.iter_motes().any(|(id, _)| id == mote_id) {
-        Ok(())
-    } else {
-        Err(GatewayError::NotAuthorized)
-    }
-}
-
 /// Build resumable frames for the surfaced deltas in `(since_seq, head]`, the
 /// caller supplying the already-polled `head`. Assumes ownership was already
 /// checked (the snapshot path checks in `build_frames`; the live tailer checks
@@ -418,29 +387,20 @@ mod tests {
     }
 
     #[test]
-    fn check_mote_in_run_gates_on_ownership_and_membership() {
-        // PR-4.2 (T-STREAM1): the live token-stream gate. A run that owns the mote
-        // passes; a foreign mote_id OR a foreign instance_id is refused (uniform
-        // NotAuthorized — no existence oracle).
+    fn check_run_ownership_gates_on_registration() {
+        // The run-ownership gate the live token stream (PR-4.2) reuses: the caller
+        // must own `instance_id`; a foreign instance is refused (uniform
+        // NotAuthorized — no existence oracle). The streamed `mote_id` is the
+        // broker key, NOT a second journal gate (a freshly-submitted terminal mote
+        // is not journaled when the client subscribes for time-to-first-token).
         let j = InMemoryJournal::new();
-        j.append(reg(7, 8, 1234)).unwrap(); // registers instance [7; 16]
-        j.append(committed(1)).unwrap(); // commits mote id [1,0,0,0, 0..]
+        j.append(reg(7, 8, 1234)).unwrap();
+        j.append(committed(1)).unwrap();
         let r = ReadOnly::new(j);
 
-        let instance = [7u8; INSTANCE_ID_LEN];
-        let mut mote = [0u8; 32];
-        mote[..4].copy_from_slice(&1u32.to_le_bytes());
-
-        // Owns the run AND the mote belongs to it.
-        assert!(check_mote_in_run(&r, instance, mote).is_ok());
-        // A foreign mote_id (not a member of this run) is refused.
+        assert!(check_run_ownership(&r, [7u8; INSTANCE_ID_LEN]).is_ok());
         assert!(matches!(
-            check_mote_in_run(&r, instance, [99u8; 32]),
-            Err(GatewayError::NotAuthorized)
-        ));
-        // A foreign instance_id is refused even with a real mote.
-        assert!(matches!(
-            check_mote_in_run(&r, [9u8; INSTANCE_ID_LEN], mote),
+            check_run_ownership(&r, [9u8; INSTANCE_ID_LEN]),
             Err(GatewayError::NotAuthorized)
         ));
     }

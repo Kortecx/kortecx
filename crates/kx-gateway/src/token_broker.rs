@@ -15,8 +15,10 @@
 //! The publisher (`ModelRouterExecutor::dispatch_model`) only knows `mote.id`, so
 //! the broker is keyed by the 32-byte (server-derived) `MoteId`. A subscriber
 //! presents `instance_id` (its run-ownership ticket) AND `mote_id`; the gateway
-//! gate (`check_mote_in_run`) proves the caller owns the run AND the mote belongs
-//! to it before any `subscribe`.
+//! gate (`check_run_ownership`, the StreamEvents precedent) proves the caller owns
+//! the run before any `subscribe`. `mote_id` is the unguessable broker key that
+//! selects which model mote to stream (not a second journal gate — a fresh
+//! terminal mote is not journaled when the client subscribes for TTFT).
 //!
 //! ## Lifecycle (bounded + self-cleaning)
 //! Each mote gets a [`broadcast`] channel (non-blocking publisher — a slow

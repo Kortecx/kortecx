@@ -12,9 +12,10 @@
 //! authority.
 //!
 //! ## Lifecycle + backpressure
-//! - **Ownership FIRST** ([`check_mote_in_run`]) — a clean pre-stream
-//!   `permission_denied` (the caller owns the run AND the mote belongs to it), so
-//!   an unauthorized caller never subscribes.
+//! - **Ownership FIRST** ([`check_run_ownership`]) — a clean pre-stream
+//!   `permission_denied` (the caller owns the run, the StreamEvents precedent), so
+//!   an unauthorized caller never subscribes. `mote_id` is the unguessable broker
+//!   key (not a second journal gate — a fresh terminal mote isn't journaled yet).
 //! - **Lagging consumer** → the broadcast receiver yields `Lagged`; the loop ends
 //!   the stream with `Status::resource_exhausted` (the "CatchupRequired" signal,
 //!   mirroring [`LiveTailer`](crate::live_tail::LiveTailer)); the client resumes a
@@ -25,7 +26,7 @@
 
 use std::sync::Arc;
 
-use kx_gateway_core::{check_mote_in_run, JournalReader, TokenStream, TokenTailer};
+use kx_gateway_core::{check_run_ownership, JournalReader, TokenStream, TokenTailer};
 use kx_proto::proto;
 use tokio::sync::{broadcast, mpsc, watch};
 use tokio_stream::wrappers::ReceiverStream;
@@ -68,8 +69,14 @@ impl TokenTailer for LiveTokenTailer {
         since_seq: u64,
     ) -> Result<TokenStream, Status> {
         // Ownership is a clean PRE-stream error (uniform permission_denied), so an
-        // unauthorized caller never subscribes to the broker.
-        check_mote_in_run(reader.as_ref(), instance_id, mote_id).map_err(Status::from)?;
+        // unauthorized caller never subscribes to the broker. The gate is RUN
+        // ownership (the StreamEvents precedent): the caller must own `instance_id`.
+        // We do NOT also require `mote_id` to be journaled yet — a freshly-submitted
+        // terminal mote (the common TTFT case) isn't in the projection when the
+        // client subscribes right after Invoke. The `mote_id` is the broker key
+        // (a server-derived, unguessable 32-byte id); cross-tenant scoping in cloud
+        // is enforced by the SN-8 wall ABOVE gateway-core, exactly as for StreamEvents.
+        check_run_ownership(reader.as_ref(), instance_id).map_err(Status::from)?;
         let (snapshot, rx) = self.broker.subscribe(mote_id);
         let (tx, out_rx) = mpsc::channel::<Result<proto::TokenChunk, Status>>(SUBSCRIBER_QUEUE);
         tokio::spawn(forward_loop(

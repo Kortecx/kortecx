@@ -79,8 +79,8 @@ pub use feedback_view::{FeedbackEntry, FeedbackRecord, FeedbackStore};
 // GLOBAL twin's pieces (cursor seed + per-range builder) for the live global
 // tailer.
 pub use events::{
-    check_mote_in_run, check_run_ownership, frames_for_range, global_frames_for_range,
-    seed_global_cursor, GlobalCursor,
+    check_run_ownership, frames_for_range, global_frames_for_range, seed_global_cursor,
+    GlobalCursor,
 };
 pub use identity::CallerParty;
 pub use models_view::{ModelCatalogView, ModelSummaryEntry};

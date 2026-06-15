@@ -92,7 +92,8 @@ committed bytes.
 
 The stream is subscribed by `instance_id` **and** the model `mote_id` (the run's
 terminal mote, or — for an agent chain — the in‑flight turn). A subscriber must
-own the run; a mote that does not belong to it is refused.
+**own the run** (the same gate as the event stream); the `mote_id` is the
+unguessable server‑derived key that selects which model mote to stream.
 
 ```ts
 // TypeScript — browser path (WebSocket bridge) or native gRPC.

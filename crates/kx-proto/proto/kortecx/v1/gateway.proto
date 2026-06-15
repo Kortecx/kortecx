@@ -1001,14 +1001,17 @@ message ListFeedbackResponse {
 // ending EMPTY stream (honest, never an error). The committed result is the
 // authority; a client MUST reconcile to it (overwrite streamed text on commit).
 //
-// SN-8 (load-bearing): `instance_id` is the ownership ticket (the SAME gate as
-// per-run StreamEvents — uniform permission_denied, no existence oracle).
-// `mote_id` MUST be a member of the run's projection (a cross-run mote_id is
-// refused) so a caller cannot subscribe to another run's tokens by id-guessing.
+// SN-8 (load-bearing): `instance_id` is the ownership ticket — the SAME gate as
+// per-run StreamEvents (uniform permission_denied, no existence oracle, caller
+// must own the run). `mote_id` is the broker KEY (a server-derived, unguessable
+// 32-byte id) selecting which model mote to stream — NOT a second journal gate,
+// because a freshly-submitted terminal mote is not yet journaled when a client
+// subscribes for time-to-first-token.
 //
 // *** PARTY-SCOPED by instance_id ownership (UNLIKE StreamAllEvents which is
 // *** operator-global). Safe to serve multi-tenant: the gate is the SAME
-// *** run-ownership fold as the frozen per-run StreamEvents.
+// *** run-ownership fold as the frozen per-run StreamEvents; cross-tenant scoping
+// *** is enforced by the cloud SN-8 wall ABOVE gateway-core (as for StreamEvents).
 // ---------------------------------------------------------------------------
 
 message StreamModelTokensRequest {
