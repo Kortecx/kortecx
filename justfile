@@ -190,7 +190,7 @@ fetch-agent-model:
 # `just serve-inference /path/kx.db /path/blobs`). NOTE: bare `kx serve
 # --dev-allow-local` is now zero-config (auto paths under ~/.kortecx); we keep
 # the explicit paths here so the inference demo's state lives beside the repo.
-serve-inference journal="target/serve/kx.db" content="target/serve/blobs": fetch-agent-model
+serve-inference journal="target/serve/kx.db" content="target/serve/blobs": fetch-agent-model console-dist
     #!/usr/bin/env bash
     set -euo pipefail
     mkdir -p "$(dirname "{{journal}}")" "{{content}}"
@@ -198,6 +198,56 @@ serve-inference journal="target/serve/kx.db" content="target/serve/blobs": fetch
     echo " ▶ inference serve (model: $KX_SERVE_MODEL_GGUF)"
     cargo run --release -p kx-cli --features inference,hnsw,console --bin kx -- \
         serve --journal "{{journal}}" --content "{{content}}" --dev-allow-local
+
+# THE PR-REVIEW serve (§2.208 + §2.194 + GR15 guardrail). Guarantees a reviewer
+# sees a FRESH console + REAL (non-echo) chat — closing the three reviewer failure
+# modes (STALE BINARY · STALE UI EMBED · NO MODEL → echo). Rebuilds ui/dist
+# (console-dist) → builds kx with inference+console → frees the console port (kills
+# any stale kx on :50180) → serves WITH the fetched model → HARD-verifies: (a) the
+# served console index byte-matches the just-built ui/dist [stale-embed catch;
+# relies on the console serving raw `include_bytes!` bytes, no Content-Encoding],
+# (b) ListModels is non-empty [a model is loaded ⇒ chat uses kx/recipes/chat, NOT
+# echo], (c) a known-prompt completion is real + non-echo. Fails LOUDLY on any.
+# Use this for EVERY PR-review console (never a bare `kx serve`, never a
+# separately-built long-lived target/release/kx — `check-reproducible` /
+# `verify-quickstart` clobber it to a console-less FFI-free binary).
+review-serve journal="target/serve/kx.db" content="target/serve/blobs": fetch-agent-model console-dist
+    #!/usr/bin/env bash
+    set -euo pipefail
+    PORT=50180; GRPC="http://127.0.0.1:50151"
+    MODEL="${KX_AGENT_MODEL_DEST:-$(pwd)/target/models/qwen3-0.6b-q4_k_m.gguf}"
+    test -f "$MODEL" || { echo " ✗ model GGUF missing: $MODEL" >&2; exit 1; }
+    cargo build --release -p kx-cli --features inference,hnsw,console --bin kx
+    KX="$(pwd)/target/release/kx"
+    PIDS="$(lsof -ti tcp:$PORT 2>/dev/null || true)"
+    [ -n "$PIDS" ] && { echo " ! killing stale process on :$PORT ($PIDS)"; kill $PIDS 2>/dev/null || true; sleep 1; }
+    mkdir -p "$(dirname "{{journal}}")" "{{content}}"
+    export KX_SERVE_MODEL_GGUF="$MODEL"
+    echo " ▶ review serve (model: $KX_SERVE_MODEL_GGUF)"
+    "$KX" serve --journal "{{journal}}" --content "{{content}}" --dev-allow-local &
+    SERVE_PID=$!; trap 'kill $SERVE_PID 2>/dev/null || true' EXIT
+    for i in $(seq 1 60); do curl -fsS "http://127.0.0.1:$PORT/" -o /dev/null 2>/dev/null && break; sleep 1; done
+    # (a) stale-embed catch — served console index == the just-built ui/dist.
+    SERVED="$(curl -fsS "http://127.0.0.1:$PORT/" | shasum -a 256 | cut -d' ' -f1)"
+    DISK="$(shasum -a 256 ui/dist/index.html | cut -d' ' -f1)"
+    [ "$SERVED" = "$DISK" ] || { echo " ✗ STALE EMBED: served $SERVED != ui/dist $DISK — rebuild"; exit 1; }
+    echo " ✓ fresh console embed ($SERVED)"
+    # (b) a model is loaded ⇒ chat is the real chat recipe, NOT echo.
+    "$KX" models list --endpoint "$GRPC" --json \
+      | python3 -c "import json,sys; sys.exit(0 if len(json.load(sys.stdin).get('models',[]))>=1 else 1)" \
+      || { echo " ✗ NO MODEL: ListModels empty — chat would echo. Set KX_SERVE_MODEL_GGUF."; exit 1; }
+    echo " ✓ model loaded (ListModels non-empty)"
+    # (c) a known-prompt completion is REAL + non-echo (the model is answering).
+    PROMPT="Reply with only the digit: what is 2+2?"
+    OUT="$("$KX" invoke kx/recipes/chat --args "{\"prompt\":\"$PROMPT\"}" --wait --json --endpoint "$GRPC" \
+      | python3 -c "import json,sys; print(json.load(sys.stdin).get('result_utf8',''))" 2>/dev/null || true)"
+    [ -n "$OUT" ] || { echo " ✗ chat returned no committed result — model not answering."; exit 1; }
+    case "$OUT" in *"$PROMPT"*) echo " ✗ ECHO DETECTED: chat returned the prompt verbatim."; exit 1;; esac
+    echo " ✓ real non-echo completion: $(printf '%s' "$OUT" | tr '\n' ' ' | head -c 70)"
+    echo ""
+    echo " ✅ REVIEW SERVE READY — console http://127.0.0.1:$PORT/  ·  connect $GRPC"
+    echo "    (review in BOTH themes; chat returns a real <think>+answer, never echo)"
+    wait $SERVE_PID
 
 # D139: build the web console's embed input — the TS SDK (the UI's file: dep)
 # then the SPA production bundle into ui/dist. The exact sequence release.yml
