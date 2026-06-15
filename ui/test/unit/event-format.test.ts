@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { eventSummary, eventVisual } from "../../src/lib/event-format";
+import { eventSummary, eventVisual, failureReasonLabel } from "../../src/lib/event-format";
 
 describe("eventVisual", () => {
   it("maps known kinds to reused state tones", () => {
@@ -46,7 +46,40 @@ describe("eventSummary", () => {
     expect(eventSummary({ seq: 1, kind: "effect_staged", moteId: id })).toContain("effect");
   });
 
+  it("a failed row appends the FailureReason label when the wire carried one", () => {
+    const s = eventSummary({ seq: 1, kind: "failed", moteId: id, reasonClass: 0 });
+    expect(s).toContain("failed");
+    expect(s).toContain("TIMED OUT");
+  });
+
+  it("a failed row with no reason class shows NO fabricated reason", () => {
+    expect(eventSummary({ seq: 1, kind: "failed", moteId: id })).not.toContain("—");
+    expect(eventSummary({ seq: 1, kind: "failed", moteId: id, reasonClass: null })).not.toContain(
+      "—",
+    );
+  });
+
   it("unknown kind falls back to a generic summary", () => {
     expect(eventSummary({ seq: 1, kind: "weird" })).toContain("weird");
+  });
+});
+
+describe("failureReasonLabel", () => {
+  it("maps every journal FailureReason discriminant (0-8)", () => {
+    expect(failureReasonLabel(0)).toBe("TIMED OUT");
+    expect(failureReasonLabel(1)).toBe("EXECUTOR REFUSED");
+    expect(failureReasonLabel(2)).toBe("VALIDATOR REJECTED");
+    expect(failureReasonLabel(3)).toBe("WORKER CRASHED");
+    expect(failureReasonLabel(4)).toBe("UPSTREAM REPUDIATED");
+    expect(failureReasonLabel(5)).toBe("UNSAFE WORLD-MUTATING");
+    expect(failureReasonLabel(6)).toBe("COMPENSATED");
+    expect(failureReasonLabel(7)).toBe("QUARANTINED");
+    expect(failureReasonLabel(8)).toBe("DEAD-LETTERED");
+  });
+
+  it("null/undefined → null (no fabricated cause); unknown discriminant → UNKNOWN", () => {
+    expect(failureReasonLabel(null)).toBeNull();
+    expect(failureReasonLabel(undefined)).toBeNull();
+    expect(failureReasonLabel(99)).toBe("UNKNOWN REASON");
   });
 });

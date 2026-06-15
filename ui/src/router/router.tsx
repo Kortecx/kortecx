@@ -6,6 +6,7 @@ import { blueprintsNewRoute } from "./routes/blueprints-new";
 import { chatRoute } from "./routes/chat";
 import { connectRoute } from "./routes/connect";
 import { contextRoute } from "./routes/context";
+import { dashboardRoute } from "./routes/dashboard";
 import { datasetsRoute } from "./routes/datasets";
 import { indexRoute } from "./routes/index";
 import { monitorRoute } from "./routes/monitor";
@@ -25,6 +26,7 @@ const routeTree = rootRoute.addChildren([
   workflowsRoute,
   workflowDetailRoute,
   activityRoute,
+  dashboardRoute,
   chatRoute,
   runsRoute,
   runDetailRedirectRoute,

@@ -40,6 +40,32 @@ export function eventVisual(kind: string): EventVisual {
   return KIND_VISUAL[kind] ?? UNKNOWN_VISUAL;
 }
 
+/**
+ * The journal's `FailureReason` discriminant → a short triage label. Mirrors the
+ * closed enum in `kx-journal/src/entry.rs` (variants 0-8, in declaration order).
+ * An unknown discriminant maps to "UNKNOWN REASON" rather than crashing (the proto
+ * is additive-only); a `null`/absent reason returns `null` so a failed row that
+ * carried no reason shows NO fabricated label (GR15 — never invent a cause).
+ */
+const FAILURE_REASON: Readonly<Record<number, string>> = {
+  0: "TIMED OUT",
+  1: "EXECUTOR REFUSED",
+  2: "VALIDATOR REJECTED",
+  3: "WORKER CRASHED",
+  4: "UPSTREAM REPUDIATED",
+  5: "UNSAFE WORLD-MUTATING",
+  6: "COMPENSATED",
+  7: "QUARANTINED",
+  8: "DEAD-LETTERED",
+};
+
+export function failureReasonLabel(code: number | null | undefined): string | null {
+  if (code === null || code === undefined) {
+    return null;
+  }
+  return FAILURE_REASON[code] ?? "UNKNOWN REASON";
+}
+
 /** A one-line human summary of a delta (the Mote it concerns + its effect).
  *  `recipeName` labels a `run_registered` row when the fingerprint→handle join
  *  resolved one (else the row degrades to the fingerprint hex). `omitResultRef`
@@ -51,8 +77,10 @@ export function eventSummary(d: EventLike, recipeName?: string, omitResultRef = 
       return `Mote ${shortHex(d.moteId ?? "")} committed${
         d.resultRef && !omitResultRef ? ` → ${shortHex(d.resultRef)}` : ""
       }`;
-    case "failed":
-      return `Mote ${shortHex(d.moteId ?? "")} failed`;
+    case "failed": {
+      const reason = failureReasonLabel(d.reasonClass);
+      return `Mote ${shortHex(d.moteId ?? "")} failed${reason ? ` — ${reason}` : ""}`;
+    }
     case "repudiated":
       return `Mote ${shortHex(d.targetMoteId ?? "")} repudiated`;
     case "effect_staged":

@@ -38,6 +38,7 @@ export type IconName =
  * `<Link to>` (no cast) — and a typo here is a compile error, not a dead link.
  */
 export type RoutePath =
+  | "/dashboard"
   | "/monitor"
   | "/chat"
   | "/workflows"
@@ -61,8 +62,16 @@ export interface NavSection {
   readonly hint: string;
 }
 
-/** The eight spec-IA sections, in the spec's order. */
+/** The spec-IA sections, in the spec's order. The Dashboard landing (PR-C1, D150)
+ *  leads the Workspace group; `/` still redirects to Chat (D137 — unchanged). */
 export const NAV_SECTIONS: readonly NavSection[] = [
+  {
+    id: "dashboard",
+    label: "Dashboard",
+    path: "/dashboard",
+    icon: "activity",
+    hint: "A live at-a-glance overview of this gateway",
+  },
   {
     id: "chat",
     label: "New Chat",
@@ -183,7 +192,7 @@ export const NAV_GROUPS: readonly NavGroup[] = [
     id: "workspace",
     label: "Workspace",
     color: "warning",
-    sectionIds: ["chat", "runs", "recipes"],
+    sectionIds: ["dashboard", "chat", "runs", "recipes"],
   },
   { id: "data", label: "Data", color: "teal", sectionIds: ["datasets", "context"] },
   { id: "tools", label: "Tools", color: "violet", sectionIds: ["tools"] },

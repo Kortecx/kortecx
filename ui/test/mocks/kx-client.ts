@@ -25,6 +25,7 @@ export interface MockClientImpl {
   listCaptureRecords?: (...args: unknown[]) => Promise<unknown>;
   getMoteDetail?: (...args: unknown[]) => Promise<unknown>;
   getContentBatch?: (...args: unknown[]) => Promise<unknown>;
+  listModels?: (...args: unknown[]) => Promise<unknown>;
 }
 
 export function makeMockClient(impl: MockClientImpl = {}) {
@@ -87,6 +88,7 @@ export function makeMockClient(impl: MockClientImpl = {}) {
       }),
   );
   const getContentBatch = vi.fn(impl.getContentBatch ?? (async () => []));
+  const listModels = vi.fn(impl.listModels ?? (async () => []));
   const close = vi.fn();
   const client = {
     listSignatures,
@@ -108,6 +110,7 @@ export function makeMockClient(impl: MockClientImpl = {}) {
     listCaptureRecords,
     getMoteDetail,
     getContentBatch,
+    listModels,
     close,
     submitRun: vi.fn(),
     registerSignature: vi.fn(),
@@ -133,6 +136,7 @@ export function makeMockClient(impl: MockClientImpl = {}) {
     listCaptureRecords,
     getMoteDetail,
     getContentBatch,
+    listModels,
     close,
   };
 }

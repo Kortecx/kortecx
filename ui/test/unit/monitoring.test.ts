@@ -1,13 +1,25 @@
-import { CaptureRecord, ReactTurn, ReplanRound } from "@kortecx/sdk/web";
+import { CaptureRecord, MoteTelemetryRow, ReactTurn, ReplanRound } from "@kortecx/sdk/web";
 import { describe, expect, it } from "vitest";
 import {
   summarizeCaptures,
   summarizeReact,
   summarizeReplan,
   summarizeRuns,
+  summarizeTelemetryByModel,
   tallyRows,
+  wallClockPercentiles,
 } from "../../src/lib/monitoring";
 import type { RunRecord } from "../../src/lib/recent-runs";
+
+/** Build a telemetry row with only the fields the rollup reads. */
+function tel(
+  modelId: string,
+  wallClockMs: number,
+  outputTokens: number | null = null,
+  seq = 0,
+): MoteTelemetryRow {
+  return new MoteTelemetryRow("m", "", wallClockMs, null, outputTokens, modelId, "", 0, seq);
+}
 
 function run(handle: string | null): RunRecord {
   return {
@@ -85,5 +97,80 @@ describe("tallyRows", () => {
       ["a", 1],
       ["b", 1],
     ]);
+  });
+});
+
+describe("summarizeTelemetryByModel", () => {
+  it("empty window → zeroed rollup", () => {
+    expect(summarizeTelemetryByModel([])).toEqual({ windowSize: 0, rows: [] });
+  });
+
+  it("groups by model with nearest-rank p50/p95 and summed output tokens", () => {
+    // qwen3 walls [10,20,30,40,100]: p50 = rank ceil(.5*5)-1=2 → 30; p95 = ceil(.95*5)-1=4 → 100.
+    const s = summarizeTelemetryByModel([
+      tel("qwen3", 10, 5),
+      tel("qwen3", 20, null),
+      tel("qwen3", 30, 7),
+      tel("qwen3", 40, 0),
+      tel("qwen3", 100, 8),
+    ]);
+    expect(s.windowSize).toBe(5);
+    expect(s.rows).toHaveLength(1);
+    expect(s.rows[0]?.modelId).toBe("qwen3");
+    expect(s.rows[0]?.count).toBe(5);
+    expect(s.rows[0]?.p50WallMs).toBe(30);
+    expect(s.rows[0]?.p95WallMs).toBe(100);
+    // null contributes 0, never a fabricated count.
+    expect(s.rows[0]?.totalOutputTokens).toBe(5 + 7 + 0 + 8);
+  });
+
+  it("a single-row window clamps both percentiles to the sole value", () => {
+    const s = summarizeTelemetryByModel([tel("m", 42, 3)]);
+    expect(s.rows[0]?.p50WallMs).toBe(42);
+    expect(s.rows[0]?.p95WallMs).toBe(42);
+  });
+
+  it("a two-row window picks defensible nearest-rank values", () => {
+    // walls [5,9]: p50 ceil(.5*2)-1=0 → 5; p95 ceil(.95*2)-1=1 → 9.
+    const s = summarizeTelemetryByModel([tel("m", 9), tel("m", 5)]);
+    expect(s.rows[0]?.p50WallMs).toBe(5);
+    expect(s.rows[0]?.p95WallMs).toBe(9);
+  });
+
+  it("excludes non-model motes (empty modelId) but counts them in windowSize", () => {
+    const s = summarizeTelemetryByModel([tel("", 50), tel("qwen3", 12, 4), tel("", 70)]);
+    expect(s.windowSize).toBe(3); // honest: "over the last 3 motes"
+    expect(s.rows.map((r) => r.modelId)).toEqual(["qwen3"]);
+    expect(s.rows[0]?.count).toBe(1);
+  });
+
+  it("sorts rows by count desc, then model id asc", () => {
+    const s = summarizeTelemetryByModel([
+      tel("bbb", 1),
+      tel("aaa", 1),
+      tel("ccc", 1),
+      tel("ccc", 2),
+    ]);
+    expect(s.rows.map((r) => r.modelId)).toEqual(["ccc", "aaa", "bbb"]);
+  });
+});
+
+describe("wallClockPercentiles", () => {
+  it("empty → zeroed", () => {
+    expect(wallClockPercentiles([])).toEqual({
+      count: 0,
+      p50WallMs: 0,
+      p95WallMs: 0,
+      totalOutputTokens: 0,
+    });
+  });
+
+  it("covers ALL rows (incl. non-model motes) and sums real output tokens only", () => {
+    const w = wallClockPercentiles([tel("", 100, null), tel("qwen3", 10, 4), tel("qwen3", 30, 6)]);
+    expect(w.count).toBe(3);
+    // walls [10,30,100]: p50 → 30, p95 → 100.
+    expect(w.p50WallMs).toBe(30);
+    expect(w.p95WallMs).toBe(100);
+    expect(w.totalOutputTokens).toBe(10);
   });
 });

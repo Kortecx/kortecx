@@ -29,7 +29,9 @@ import {
   summarizeReact,
   summarizeReplan,
   summarizeRuns,
+  summarizeTelemetryByModel,
   tallyRows,
+  wallClockPercentiles,
 } from "../../lib/monitoring";
 import type { MonitorTab } from "../../router/routes/monitor";
 import { EmptyState } from "../EmptyState";
@@ -145,6 +147,10 @@ function FeedView() {
  *  usage + the fired tool per committed mote, cursor-paged newest-first. */
 function TelemetryView() {
   const t = useTelemetry();
+  // Client-side rollups over the LOADED telemetry window (cursor-paged, so this is
+  // "the last N motes on this page", NOT all-time — labeled honestly below).
+  const byModel = useMemo(() => summarizeTelemetryByModel(t.rows), [t.rows]);
+  const wall = useMemo(() => wallClockPercentiles(t.rows), [t.rows]);
   return (
     <GlowCard hover={false} className="monitor-panel" data-testid="monitor-telemetry">
       <div className="monitor-panel__head">
@@ -167,6 +173,76 @@ function TelemetryView() {
         />
       ) : (
         <>
+          <m.div
+            className="metrics-grid"
+            variants={stagger()}
+            initial="hidden"
+            animate="show"
+            data-testid="telemetry-kpis"
+          >
+            <MetricCard label="Motes" value={byModel.windowSize} tone="neutral" sub="this page" />
+            <MetricCard
+              label="p50 wall ms"
+              value={wall.p50WallMs}
+              tone="info"
+              sub={`over last ${wall.count}`}
+            />
+            <MetricCard
+              label="p95 wall ms"
+              value={wall.p95WallMs}
+              tone="info"
+              sub={`over last ${wall.count}`}
+            />
+            <MetricCard
+              label="Output tokens"
+              value={wall.totalOutputTokens}
+              tone="committed"
+              sub="this page"
+            />
+            {/* Honest-disabled: OSS serves locally — no price / input_tokens / expert
+                entity to bill. Per-expert cost arrives with managed Cloud (D129). */}
+            <div className="metric-card metric-card--disabled" data-testid="cost-tile-disabled">
+              <span className="metric-card__value">
+                <span className="chip--soon">Cloud</span>
+              </span>
+              <span className="metric-card__label">Cost &amp; per-expert billing</span>
+              <span className="metric-card__sub">No cost/input-token data in OSS (D129).</span>
+            </div>
+          </m.div>
+
+          {byModel.rows.length > 0 ? (
+            <>
+              <div className="monitor-panel__head">
+                <h3>Per-model rollup</h3>
+                <span className="muted">
+                  over the last {byModel.windowSize} motes (this page, not all-time)
+                </span>
+              </div>
+              <table className="trail-table" data-testid="telemetry-by-model">
+                <thead>
+                  <tr>
+                    <th>Model</th>
+                    <th>Count</th>
+                    <th>p50&nbsp;ms</th>
+                    <th>p95&nbsp;ms</th>
+                    <th>Out&nbsp;tokens</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {byModel.rows.map((r) => (
+                    <tr key={r.modelId} data-testid="telemetry-by-model-row">
+                      <td className="mono">{r.modelId}</td>
+                      <td className="mono">{r.count}</td>
+                      <td className="mono">{r.p50WallMs}</td>
+                      <td className="mono">{r.p95WallMs}</td>
+                      <td className="mono">{r.totalOutputTokens}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </>
+          ) : null}
+
           <table className="trail-table" data-testid="telemetry-table">
             <thead>
               <tr>
