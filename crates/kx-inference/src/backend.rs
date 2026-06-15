@@ -9,6 +9,8 @@
 // only makes sense for an in-process backend, that method belongs on
 // a more specific type, not on this trait.
 
+use std::sync::Arc;
+
 use kx_mote::ModelId;
 use kx_warrant::WarrantSpec;
 
@@ -16,6 +18,14 @@ use crate::types::{
     EmbeddingOutput, EmbeddingPooling, InferenceError, InferenceInput, InferenceOutput,
     InferenceParams,
 };
+
+/// An ADVISORY, out-of-band per-token sink (PR-4.2 / T-STREAM1). Called once per
+/// generated token with the NEW detokenized bytes (the *piece*); the cumulative
+/// completion is the byte-identical concatenation of every call's slice. `Arc<dyn
+/// Fn>` (not `&dyn Fn`) so the closure is `'static + Send + Sync` and can ride a
+/// synchronous backend's owner thread; the boxed `Fn` carries no runtime/tokio
+/// coupling into this crate. The stream is NEVER an authority/identity input.
+pub type TokenSink = Arc<dyn Fn(&[u8]) + Send + Sync>;
 
 /// A single dispatch request, packaged as a reference-tuple so
 /// `batch_dispatch` doesn't force clones.
@@ -72,6 +82,36 @@ pub trait InferenceBackend: Send + Sync {
         params: &InferenceParams,
         warrant: &WarrantSpec,
     ) -> Result<InferenceOutput, InferenceError>;
+
+    /// Streaming dispatch (PR-4.2 / T-STREAM1) — the ADVISORY, out-of-band twin
+    /// of [`Self::dispatch`]: identical contract + identical [`InferenceOutput`],
+    /// plus an optional `token_sink` invoked once per generated token with the
+    /// NEW detokenized bytes. The cumulative completion is the byte-identical
+    /// concatenation of every sink call's slice — so the committed `result_ref`
+    /// is unchanged whether or not a sink is passed.
+    ///
+    /// The DEFAULT ignores the sink and calls [`Self::dispatch`], so EVERY
+    /// backend — including out-of-process cloud backends that stream over their
+    /// own wire (vLLM / Triton / remote APIs) — is transparent, and the trait
+    /// stays dyn-compatible (no generics, no `Self` in the return). A backend
+    /// that can emit tokens in-process (the OSS llama backend) OVERRIDES this.
+    /// With a `None` sink the result is byte-identical to `dispatch` (the digest
+    /// anchor); the stream is NEVER an authority or identity input (SN-8).
+    ///
+    /// # Errors
+    ///
+    /// Identical to [`Self::dispatch`].
+    fn dispatch_streaming(
+        &self,
+        model_id: &ModelId,
+        input: &InferenceInput,
+        params: &InferenceParams,
+        warrant: &WarrantSpec,
+        token_sink: Option<TokenSink>,
+    ) -> Result<InferenceOutput, InferenceError> {
+        let _ = token_sink;
+        self.dispatch(model_id, input, params, warrant)
+    }
 
     /// Whether this backend can serve the named model.
     ///

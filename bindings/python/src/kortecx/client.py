@@ -346,6 +346,38 @@ class KxClient:
             self.endpoint, inst_hex, since=since, token=self._token, ws_endpoint=ws_endpoint
         )
 
+    def stream_model_tokens(
+        self, instance_id: IdType, mote_id: IdType, *, since: int = 0
+    ) -> Iterator[types.TokenChunk]:
+        """Native gRPC ADVISORY token tail for ONE model mote (PR-4.2 / T-STREAM1):
+        the NEW bytes per decode step until ``done``. ``mote_id`` must belong to
+        ``instance_id``'s run (server-gated). The committed ``result_ref`` stays the
+        authority — reconcile to it. An old gateway raises ``KxUnimplemented``."""
+        inst = hexids.as_bytes(instance_id, hexids.INSTANCE_LEN)
+        mote = hexids.as_bytes(mote_id, hexids.REF_LEN)
+        return _events.stream_model_tokens(self._stub, self._md, inst, mote, since)
+
+    def ws_tokens(
+        self,
+        instance_id: IdType,
+        mote_id: IdType,
+        *,
+        since: int = 0,
+        ws_endpoint: Optional[str] = None,
+    ) -> Iterator[types.TokenChunk]:
+        """Consume one model mote's ADVISORY token stream over the WS bridge (PR-4.2;
+        ``kortecx[ws]``) — the browser/firewall-friendly path."""
+        inst_hex = hexids.encode(hexids.as_bytes(instance_id, hexids.INSTANCE_LEN))
+        mote_hex = hexids.encode(hexids.as_bytes(mote_id, hexids.REF_LEN))
+        return _events.ws_stream_model_tokens(
+            self.endpoint,
+            inst_hex,
+            mote_hex,
+            since=since,
+            token=self._token,
+            ws_endpoint=ws_endpoint,
+        )
+
     def stream_all_events(
         self, *, since: int = 0, follow: bool = False
     ) -> Iterator[types.GlobalDelta]:
@@ -890,6 +922,14 @@ class AsyncKxClient:
     ) -> AsyncIterator[types.Delta]:
         inst = hexids.as_bytes(instance_id, hexids.INSTANCE_LEN)
         return _events.astream_deltas(self._stub, self._md, inst, since, follow)
+
+    def stream_model_tokens(
+        self, instance_id: IdType, mote_id: IdType, *, since: int = 0
+    ) -> AsyncIterator[types.TokenChunk]:
+        """Async :meth:`KxClient.stream_model_tokens` (PR-4.2 ADVISORY token tail)."""
+        inst = hexids.as_bytes(instance_id, hexids.INSTANCE_LEN)
+        mote = hexids.as_bytes(mote_id, hexids.REF_LEN)
+        return _events.astream_model_tokens(self._stub, self._md, inst, mote, since)
 
     def stream_all_events(
         self, *, since: int = 0, follow: bool = False

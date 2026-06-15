@@ -1154,3 +1154,25 @@ class ListFeedbackResponse(_message.Message):
     rows: _containers.RepeatedCompositeFieldContainer[FeedbackRow]
     has_more: bool
     def __init__(self, rows: _Optional[_Iterable[_Union[FeedbackRow, _Mapping]]] = ..., has_more: bool = ...) -> None: ...
+
+class StreamModelTokensRequest(_message.Message):
+    __slots__ = ("instance_id", "mote_id", "since_seq")
+    INSTANCE_ID_FIELD_NUMBER: _ClassVar[int]
+    MOTE_ID_FIELD_NUMBER: _ClassVar[int]
+    SINCE_SEQ_FIELD_NUMBER: _ClassVar[int]
+    instance_id: bytes
+    mote_id: bytes
+    since_seq: int
+    def __init__(self, instance_id: _Optional[bytes] = ..., mote_id: _Optional[bytes] = ..., since_seq: _Optional[int] = ...) -> None: ...
+
+class TokenChunk(_message.Message):
+    __slots__ = ("seq", "mote_id", "text_piece", "done")
+    SEQ_FIELD_NUMBER: _ClassVar[int]
+    MOTE_ID_FIELD_NUMBER: _ClassVar[int]
+    TEXT_PIECE_FIELD_NUMBER: _ClassVar[int]
+    DONE_FIELD_NUMBER: _ClassVar[int]
+    seq: int
+    mote_id: bytes
+    text_piece: bytes
+    done: bool
+    def __init__(self, seq: _Optional[int] = ..., mote_id: _Optional[bytes] = ..., text_piece: _Optional[bytes] = ..., done: bool = ...) -> None: ...

@@ -260,6 +260,45 @@ class Frame:
 
 
 @dataclass(frozen=True)
+class TokenChunk:
+    """One ADVISORY live token chunk (PR-4.2 / T-STREAM1).
+
+    ``text`` is the NEW model bytes for one decode step, UTF-8 decoded;
+    concatenating ``text`` across a stream in ``seq`` order rebuilds the
+    completion — byte-identical to the committed ``result_ref`` (the durable
+    authority). The stream is out-of-band + display-only, never an authority
+    input. ``done`` marks the terminal chunk. ``raw`` keeps the exact piece bytes
+    (the gRPC path) for byte-faithful concatenation; it is empty on the WS path.
+    """
+
+    seq: int
+    mote_id: str
+    text: str
+    done: bool
+    raw: bytes = b""
+
+    @classmethod
+    def from_proto(cls, c: "_g.TokenChunk") -> "TokenChunk":
+        return cls(
+            seq=c.seq,
+            mote_id=hexids.encode(c.mote_id),
+            text=c.text_piece.decode("utf-8", errors="replace"),
+            done=c.done,
+            raw=bytes(c.text_piece),
+        )
+
+    @classmethod
+    def from_ws(cls, obj: dict) -> "TokenChunk":
+        """Build from a WS JSON chunk (``text_piece`` already a lossy-UTF-8 string)."""
+        return cls(
+            seq=int(obj.get("seq", 0)),
+            mote_id=str(obj.get("mote_id", "")),
+            text=str(obj.get("text_piece", "")),
+            done=bool(obj.get("done", False)),
+        )
+
+
+@dataclass(frozen=True)
 class GlobalDelta:
     """One cross-run event delta from the Batch C global tail (``StreamAllEvents``).
 

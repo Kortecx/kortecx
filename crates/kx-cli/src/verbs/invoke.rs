@@ -24,6 +24,10 @@ pub struct InvokeArgs {
     pub args_json: Vec<u8>,
     /// Run to completion and print the committed result (`--wait`).
     pub wait: bool,
+    /// Stream the terminal model mote's ADVISORY tokens to stdout as they
+    /// generate (`--stream`, PR-4.2 / T-STREAM1), then resolve the committed
+    /// result. Implies awaiting the run; safe on a token-less terminal.
+    pub stream: bool,
     /// `--wait` timeout in seconds.
     pub timeout_secs: u64,
     /// Write the committed result bytes to this file instead of inlining them.
@@ -37,6 +41,7 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<InvokeArgs, CliEr
     let mut handle: Option<String> = None;
     let mut args_json: Option<Vec<u8>> = None;
     let mut wait = false;
+    let mut stream = false;
     let mut timeout_secs = DEFAULT_TIMEOUT_SECS;
     let mut out: Option<PathBuf> = None;
     let mut common = ClientCommon::default();
@@ -58,6 +63,7 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<InvokeArgs, CliEr
                 );
             }
             "--wait" => wait = true,
+            "--stream" => stream = true,
             "--timeout-secs" => {
                 let v = next_value(&mut args, "--timeout-secs")?;
                 timeout_secs = v.parse().map_err(|_| {
@@ -94,6 +100,7 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<InvokeArgs, CliEr
         handle,
         args_json,
         wait,
+        stream,
         timeout_secs,
         out,
         common,
@@ -125,6 +132,53 @@ pub async fn execute(args: InvokeArgs) -> Result<(), CliError> {
         .await
         .map_err(CliError::from_status)?
         .into_inner();
+
+    if args.stream {
+        // PR-4.2 (T-STREAM1): print the terminal model mote's ADVISORY tokens
+        // live while CONCURRENTLY awaiting the committed result. The run settling
+        // ends the loop even when the terminal is token-less (a non-model mote /
+        // broker-unwired serve), so `--stream` never hangs. The committed result
+        // stays the authority — surfaced via `finish_wait` for --json / --out.
+        use std::io::Write;
+        let mut tokens = client
+            .stream_model_tokens(resolved.request(proto::StreamModelTokensRequest {
+                instance_id: resp.instance_id.clone(),
+                mote_id: resp.terminal_mote_id.clone(),
+                since_seq: 0,
+            })?)
+            .await
+            .map_err(CliError::from_status)?
+            .into_inner();
+        let wait_fut = wait::await_result(
+            &mut client,
+            &resolved,
+            resp.instance_id.clone(),
+            resp.terminal_mote_id.clone(),
+            Duration::from_secs(args.timeout_secs),
+        );
+        tokio::pin!(wait_fut);
+        let mut stdout = std::io::stdout();
+        let outcome = loop {
+            tokio::select! {
+                msg = tokens.message() => match msg.map_err(CliError::from_status)? {
+                    Some(chunk) if !chunk.done => {
+                        let _ = stdout.write_all(&chunk.text_piece);
+                        let _ = stdout.flush();
+                    }
+                    // `done` or end-of-stream: keep awaiting the committed result.
+                    _ => {}
+                },
+                res = &mut wait_fut => break res?,
+            }
+        };
+        let _ = writeln!(stdout);
+        return if args.common.json || args.out.is_some() {
+            verbs::finish_wait(&outcome, args.common.json, args.out.as_deref())
+        } else {
+            // The live tokens were the human-facing output; don't re-dump.
+            Ok(())
+        };
+    }
 
     if args.wait {
         let outcome = wait::await_result(
@@ -164,6 +218,16 @@ mod tests {
         let a = parse_v(&["--args", "{}", "kx/recipes/echo", "--wait"]).unwrap();
         assert_eq!(a.handle, "kx/recipes/echo");
         assert!(a.wait);
+    }
+
+    #[test]
+    fn parses_stream_flag() {
+        let a = parse_v(&["kx/recipes/chat", "--args", "{}", "--stream"]).unwrap();
+        assert!(a.stream);
+        assert!(!a.wait, "--stream does not require --wait");
+        // --stream composes with --wait / --json.
+        let b = parse_v(&["kx/recipes/chat", "--args", "{}", "--stream", "--json"]).unwrap();
+        assert!(b.stream && b.common.json);
     }
 
     #[test]

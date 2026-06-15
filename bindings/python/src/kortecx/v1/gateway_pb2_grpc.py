@@ -203,6 +203,11 @@ class KxGatewayStub(object):
                 request_serializer=kortecx_dot_v1_dot_gateway__pb2.ListFeedbackRequest.SerializeToString,
                 response_deserializer=kortecx_dot_v1_dot_gateway__pb2.ListFeedbackResponse.FromString,
                 _registered_method=True)
+        self.StreamModelTokens = channel.unary_stream(
+                '/kortecx.v1.KxGateway/StreamModelTokens',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.StreamModelTokensRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.TokenChunk.FromString,
+                _registered_method=True)
 
 
 class KxGatewayServicer(object):
@@ -440,6 +445,17 @@ class KxGatewayServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def StreamModelTokens(self, request, context):
+        """PR-4.2 / T-STREAM1 additive (D120.6): live token streaming — ADVISORY +
+        out-of-band tokens as a model mote generates. Party-scoped by instance_id
+        ownership (the per-run StreamEvents gate). The committed result_ref stays
+        the authority. An EMPTY immediately-ending stream when the broker is not
+        wired (FFI-free build) — honest, never an error.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_KxGatewayServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -607,6 +623,11 @@ def add_KxGatewayServicer_to_server(servicer, server):
                     servicer.ListFeedback,
                     request_deserializer=kortecx_dot_v1_dot_gateway__pb2.ListFeedbackRequest.FromString,
                     response_serializer=kortecx_dot_v1_dot_gateway__pb2.ListFeedbackResponse.SerializeToString,
+            ),
+            'StreamModelTokens': grpc.unary_stream_rpc_method_handler(
+                    servicer.StreamModelTokens,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.StreamModelTokensRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.TokenChunk.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -1504,6 +1525,33 @@ class KxGateway(object):
             '/kortecx.v1.KxGateway/ListFeedback',
             kortecx_dot_v1_dot_gateway__pb2.ListFeedbackRequest.SerializeToString,
             kortecx_dot_v1_dot_gateway__pb2.ListFeedbackResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def StreamModelTokens(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_stream(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/StreamModelTokens',
+            kortecx_dot_v1_dot_gateway__pb2.StreamModelTokensRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.TokenChunk.FromString,
             options,
             channel_credentials,
             insecure,

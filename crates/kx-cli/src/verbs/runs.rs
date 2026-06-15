@@ -200,6 +200,8 @@ async fn execute_rerun(common: ClientCommon, spec: RerunSpec) -> Result<(), CliE
         handle: inputs.handle,
         args_json,
         wait: spec.wait,
+        // Re-run focuses on the dedup proof, not a live chat view — no streaming.
+        stream: false,
         timeout_secs: spec.timeout_secs,
         out: spec.out,
         common,

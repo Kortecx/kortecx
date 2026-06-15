@@ -370,6 +370,13 @@ pub(crate) struct ModelRouterExecutor<B: InferenceBackend> {
     /// infallible by contract (the sink drops on a full queue); `None` ⇒
     /// byte-identical dispatch behavior.
     usage: Option<Arc<dyn crate::telemetry::UsageSink>>,
+    /// PR-4.2 (T-STREAM1): the optional ADVISORY token broker. When set,
+    /// `dispatch_model` builds a per-mote sink that publishes each token's NEW
+    /// bytes (keyed by `mote.id`) for the live stream, then `finish`es the mote on
+    /// BOTH the success and error paths. `None` ⇒ byte-identical (the non-
+    /// streaming `dispatch` is taken); out-of-band — never journal / digest /
+    /// identity.
+    token_publisher: Option<Arc<crate::token_broker::TokenBroker>>,
 }
 
 impl<B: InferenceBackend> ModelRouterExecutor<B> {
@@ -390,6 +397,7 @@ impl<B: InferenceBackend> ModelRouterExecutor<B> {
             recipes,
             parent_ctx: Mutex::new(None),
             usage: None,
+            token_publisher: None,
         }
     }
 
@@ -397,6 +405,17 @@ impl<B: InferenceBackend> ModelRouterExecutor<B> {
     /// the dispatch path is unchanged when unset).
     pub(crate) fn with_usage_sink(mut self, usage: Arc<dyn crate::telemetry::UsageSink>) -> Self {
         self.usage = Some(usage);
+        self
+    }
+
+    /// Wire the PR-4.2 (T-STREAM1) ADVISORY token broker. When set, every model
+    /// dispatch streams its tokens out-of-band keyed by `mote.id`; unset ⇒ the
+    /// dispatch path is byte-identical (the non-streaming `dispatch` is taken).
+    pub(crate) fn with_token_publisher(
+        mut self,
+        broker: Arc<crate::token_broker::TokenBroker>,
+    ) -> Self {
+        self.token_publisher = Some(broker);
         self
     }
 
@@ -539,10 +558,29 @@ impl<B: InferenceBackend> ModelRouterExecutor<B> {
         };
         let params = inference_params_from_mote(mote, warrant)
             .map_err(|e| internal(&format!("inference params: {e}")))?;
-        let out = self
-            .backend
-            .dispatch(&mote.def.model_id, &input, &params, warrant)
-            .map_err(|e| internal(&format!("model dispatch: {e}")))?;
+        // PR-4.2 (T-STREAM1): when a token broker is wired, stream this mote's
+        // tokens out-of-band (keyed by `mote.id`) and `finish` the mote on BOTH
+        // the Ok and Err paths so a subscriber's stream always ends. The streamed
+        // bytes are byte-identical to the non-streaming dispatch (the sink only
+        // reads the per-token slice), so the committed `result_ref` is unchanged.
+        let out = match &self.token_publisher {
+            Some(broker) => {
+                let mid = *mote.id.as_bytes();
+                let publisher = broker.clone();
+                let sink: kx_inference::TokenSink =
+                    Arc::new(move |piece: &[u8]| publisher.publish(mid, piece));
+                let result = self
+                    .backend
+                    .dispatch_streaming(&mote.def.model_id, &input, &params, warrant, Some(sink))
+                    .map_err(|e| internal(&format!("model dispatch (stream): {e}")));
+                broker.finish(mid);
+                result?
+            }
+            None => self
+                .backend
+                .dispatch(&mote.def.model_id, &input, &params, warrant)
+                .map_err(|e| internal(&format!("model dispatch: {e}")))?,
+        };
         // Batch C: record the usage exhaust (the model that ACTUALLY ran + its
         // token count) — display/audit only, never identity; the sink is
         // non-blocking + infallible (drop-on-full), so dispatch is unaffected.

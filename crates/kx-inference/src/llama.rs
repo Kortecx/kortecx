@@ -293,13 +293,20 @@ impl Default for LlamaInferenceBackend {
     }
 }
 
-impl InferenceBackend for LlamaInferenceBackend {
-    fn dispatch(
+impl LlamaInferenceBackend {
+    /// The shared dispatch body for [`InferenceBackend::dispatch`] (`token_sink`
+    /// `None`) and [`InferenceBackend::dispatch_streaming`] (`Some`). Threading
+    /// the ADVISORY `token_sink` to the owner thread's generation loop is the
+    /// ONLY difference between the two entry points — every gate (grammar /
+    /// warrant model-route / ceilings) and the model-cache path are byte-
+    /// identical, so the committed `InferenceOutput.bytes` is unchanged.
+    fn dispatch_inner(
         &self,
         model_id: &ModelId,
         input: &InferenceInput,
         params: &InferenceParams,
         warrant: &WarrantSpec,
+        token_sink: Option<crate::TokenSink>,
     ) -> Result<InferenceOutput, InferenceError> {
         // ---- Grammar reservation gate (fires before any model work) -------
         // Constrained generation is a distinct, still-reserved seam; it gates
@@ -343,6 +350,7 @@ impl InferenceBackend for LlamaInferenceBackend {
                 params.clone(),
                 self.n_ctx,
                 warrant.resource_ceiling.wall_clock_ms,
+                token_sink,
             ),
             InferenceInput::Multimodal { text, content_refs } => {
                 let images = self.resolve_image_refs(descriptor, content_refs, warrant)?;
@@ -362,6 +370,7 @@ impl InferenceBackend for LlamaInferenceBackend {
                     params.clone(),
                     self.n_ctx,
                     warrant.resource_ceiling.wall_clock_ms,
+                    token_sink,
                 )
             }
             // The completion path produces no embedding; embeddings ride the
@@ -371,6 +380,33 @@ impl InferenceBackend for LlamaInferenceBackend {
                          EmbeddingBackend::dispatch_embedding",
             }),
         }
+    }
+}
+
+impl InferenceBackend for LlamaInferenceBackend {
+    fn dispatch(
+        &self,
+        model_id: &ModelId,
+        input: &InferenceInput,
+        params: &InferenceParams,
+        warrant: &WarrantSpec,
+    ) -> Result<InferenceOutput, InferenceError> {
+        self.dispatch_inner(model_id, input, params, warrant, None)
+    }
+
+    /// PR-4.2 (T-STREAM1): the in-process streaming override. Identical to
+    /// [`Self::dispatch`] but threads the ADVISORY `token_sink` to the owner
+    /// thread's generation loop (each token's new bytes). The committed bytes are
+    /// byte-identical to `dispatch`; a `None` sink is exactly `dispatch`.
+    fn dispatch_streaming(
+        &self,
+        model_id: &ModelId,
+        input: &InferenceInput,
+        params: &InferenceParams,
+        warrant: &WarrantSpec,
+        token_sink: Option<crate::TokenSink>,
+    ) -> Result<InferenceOutput, InferenceError> {
+        self.dispatch_inner(model_id, input, params, warrant, token_sink)
     }
 
     fn supports(&self, model_id: &ModelId) -> bool {

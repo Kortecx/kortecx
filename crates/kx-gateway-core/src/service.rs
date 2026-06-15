@@ -486,6 +486,60 @@ impl EventTailer for SnapshotTailer {
     }
 }
 
+/// The boxed server-streaming type the `StreamModelTokens` RPC returns (PR-4.2).
+pub type TokenStream =
+    Pin<Box<dyn Stream<Item = Result<proto::TokenChunk, Status>> + Send + 'static>>;
+
+/// The token-tailing seam behind `StreamModelTokens` (PR-4.2 / T-STREAM1). The
+/// default [`NoTokenTailer`] returns an immediately-ending EMPTY stream — the
+/// FFI-free / broker-unwired serve has no live tokens, which is honest (never an
+/// error). The host injects a broker-backed tailer (`kx-gateway`'s
+/// `LiveTokenTailer`) that subscribes the per-mote ADVISORY stream. Spoken in
+/// gateway-core's vocabulary (a [`JournalReader`] for the ownership fold + the
+/// frozen [`TokenChunk`](proto::TokenChunk)) so the live tailer lives in the
+/// binary WITHOUT a runtime dep on the read-fold crate (the dep wall — the
+/// [`EventTailer`] posture).
+pub trait TokenTailer: Send + Sync {
+    /// Open the token stream for `(instance_id, mote_id, since_seq)`. The
+    /// ownership gate — caller owns `instance_id` AND `mote_id` belongs to that
+    /// run — is the tailer's first action (uniform `permission_denied`, no
+    /// existence oracle). `since_seq` is an advisory replay cursor into the
+    /// broker's per-mote history.
+    ///
+    /// # Errors
+    /// A uniform `permission_denied` if the caller does not own the run or the
+    /// mote is not a member of it; `internal` on a read/fold failure.
+    // Same `result_large_err` rationale as `EventTailer::stream`.
+    #[allow(clippy::result_large_err)]
+    fn stream(
+        &self,
+        reader: Arc<dyn JournalReader>,
+        instance_id: [u8; 16],
+        mote_id: [u8; 32],
+        since_seq: u64,
+    ) -> Result<TokenStream, Status>;
+}
+
+/// The default, dependency-free token tailer: an immediately-ending EMPTY stream.
+/// The FFI-free / broker-unwired serve surfaces no live tokens — honest, never an
+/// error (a client reconciles to the committed `result_ref` it polls regardless).
+/// A live tail is opt-in via [`GatewayService::with_token_tailer`].
+#[derive(Clone, Copy, Debug, Default)]
+pub struct NoTokenTailer;
+
+impl TokenTailer for NoTokenTailer {
+    #[allow(clippy::result_large_err)] // see the trait method.
+    fn stream(
+        &self,
+        _reader: Arc<dyn JournalReader>,
+        _instance_id: [u8; 16],
+        _mote_id: [u8; 32],
+        _since_seq: u64,
+    ) -> Result<TokenStream, Status> {
+        Ok(Box::pin(tokio_stream::iter(std::iter::empty())))
+    }
+}
+
 /// The boxed server-streaming type the `StreamAllEvents` RPC returns (Batch C).
 pub type GlobalEventStream =
     Pin<Box<dyn Stream<Item = Result<proto::GlobalEventFrame, Status>> + Send + 'static>>;
@@ -570,6 +624,11 @@ pub struct GatewayService {
     /// [`SnapshotGlobalTailer`]; the host injects a live tailer via
     /// [`GatewayService::with_global_event_tailer`].
     global_tailer: Arc<dyn GlobalEventTailer>,
+    /// The `StreamModelTokens` tailer (PR-4.2 / T-STREAM1). Defaults to the
+    /// [`NoTokenTailer`] empty stream; the host injects a broker-backed
+    /// `LiveTokenTailer` via [`GatewayService::with_token_tailer`] on the
+    /// inference build. ADVISORY + out-of-band — never journal / digest.
+    token_tailer: Arc<dyn TokenTailer>,
     /// The optional telemetry-view seam (Batch C — the host injects a
     /// `telemetry.db`-backed view of execution exhaust). `None` ⇒
     /// `ListMoteTelemetry` returns `unimplemented`. Read-only, off-truth-path,
@@ -684,6 +743,7 @@ impl GatewayService {
             capture: None,
             tailer: Arc::new(SnapshotTailer),
             global_tailer: Arc::new(SnapshotGlobalTailer),
+            token_tailer: Arc::new(NoTokenTailer),
             telemetry: None,
             critics_supported: false,
             react_supported: false,
@@ -823,6 +883,16 @@ impl GatewayService {
     #[must_use]
     pub fn with_global_event_tailer(mut self, global_tailer: Arc<dyn GlobalEventTailer>) -> Self {
         self.global_tailer = global_tailer;
+        self
+    }
+
+    /// Wire a live `StreamModelTokens` tailer (PR-4.2 / T-STREAM1 —
+    /// `kx-gateway`'s broker-backed `LiveTokenTailer`), replacing the default
+    /// empty [`NoTokenTailer`]. ADVISORY + out-of-band: it taps the in-flight
+    /// generation loop and never changes the journal, the digest, or identity.
+    #[must_use]
+    pub fn with_token_tailer(mut self, token_tailer: Arc<dyn TokenTailer>) -> Self {
+        self.token_tailer = token_tailer;
         self
     }
 
@@ -1496,6 +1566,26 @@ impl KxGateway for GatewayService {
         let stream = self
             .tailer
             .stream(self.reader.clone(), instance_id, req.since_seq)?;
+        Ok(Response::new(stream))
+    }
+
+    type StreamModelTokensStream = TokenStream;
+
+    async fn stream_model_tokens(
+        &self,
+        request: Request<proto::StreamModelTokensRequest>,
+    ) -> Result<Response<Self::StreamModelTokensStream>, Status> {
+        let req = request.into_inner();
+        let instance_id = instance_id_16(&req.instance_id)?;
+        let mote_id = hash_32(&req.mote_id, "mote_id must be 32 bytes")?;
+        // Delegate to the injected tailer (default EMPTY stream; the inference
+        // build wires a broker-backed live tailer via `with_token_tailer`). The
+        // ownership gate — caller owns `instance_id` AND `mote_id` belongs to that
+        // run — is the tailer's first action → uniform `permission_denied`. The
+        // stream is ADVISORY; the committed `result_ref` stays the authority.
+        let stream =
+            self.token_tailer
+                .stream(self.reader.clone(), instance_id, mote_id, req.since_seq)?;
         Ok(Response::new(stream))
     }
 

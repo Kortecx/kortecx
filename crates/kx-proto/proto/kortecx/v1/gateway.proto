@@ -992,6 +992,47 @@ message ListFeedbackResponse {
 }
 
 // ---------------------------------------------------------------------------
+// PR-4.2 / T-STREAM1 — LIVE TOKEN STREAMING. Additive RPC (D120.6). ADVISORY +
+// OUT-OF-BAND: the model's tokens as they generate, for time-to-first-token UX.
+// NEVER truth, NEVER identity, NEVER a digest input, NEVER a journal change.
+// The DURABLE fact stays the committed `result_ref` (the WHOLE result, fetched
+// via GetContent). The token stream is the F-7 parent_results / Batch-C
+// telemetry posture: a serve without the broker wired answers an immediately-
+// ending EMPTY stream (honest, never an error). The committed result is the
+// authority; a client MUST reconcile to it (overwrite streamed text on commit).
+//
+// SN-8 (load-bearing): `instance_id` is the ownership ticket (the SAME gate as
+// per-run StreamEvents — uniform permission_denied, no existence oracle).
+// `mote_id` MUST be a member of the run's projection (a cross-run mote_id is
+// refused) so a caller cannot subscribe to another run's tokens by id-guessing.
+//
+// *** PARTY-SCOPED by instance_id ownership (UNLIKE StreamAllEvents which is
+// *** operator-global). Safe to serve multi-tenant: the gate is the SAME
+// *** run-ownership fold as the frozen per-run StreamEvents.
+// ---------------------------------------------------------------------------
+
+message StreamModelTokensRequest {
+  bytes instance_id = 1;                 // 16B — the run that owns the mote (ownership ticket)
+  bytes mote_id = 2;                     // 32B — the model mote whose tokens to stream
+  uint64 since_seq = 3;                  // advisory replay cursor into the broker ring (0 = earliest retained)
+}
+
+// One ADVISORY token chunk. `seq` is a per-mote monotone counter assigned by the
+// broker (NOT a journal seq — these never touch the journal). `text_piece` is
+// the NEW detokenized bytes for this step; the cumulative completion is the
+// concatenation of every chunk's `text_piece` in seq order, byte-identical to
+// the committed result. `done` marks the final chunk (generation ended: EOG /
+// cap / dispatch return); the stream ends after it. `text_piece` is raw UTF-8
+// model bytes — DISPLAY ONLY, never parsed for authority (a ReAct turn's
+// tool-call JSON may stream through; the COORDINATOR settle is the sole gate).
+message TokenChunk {
+  uint64 seq = 1;                        // broker-assigned per-mote monotone counter (advisory; NOT a journal seq)
+  bytes mote_id = 2;                     // 32B — echoed (self-describing wire; a stream is single-mote)
+  bytes text_piece = 3;                  // the NEW detokenized bytes this step (UTF-8; may split a codepoint at a token boundary)
+  bool done = 4;                         // true on the terminal chunk (generation ended); the stream ends after it
+}
+
+// ---------------------------------------------------------------------------
 // Service — the external client-facing gateway (distinct from Coordinator).
 // ---------------------------------------------------------------------------
 
@@ -1059,4 +1100,10 @@ service KxGateway {
   // the read-back / inspection surface. UNIMPLEMENTED when the seam yields None.
   rpc SubmitFeedback(SubmitFeedbackRequest) returns (SubmitFeedbackResponse);
   rpc ListFeedback(ListFeedbackRequest) returns (ListFeedbackResponse);
+  // PR-4.2 / T-STREAM1 additive (D120.6): live token streaming — ADVISORY +
+  // out-of-band tokens as a model mote generates. Party-scoped by instance_id
+  // ownership (the per-run StreamEvents gate). The committed result_ref stays
+  // the authority. An EMPTY immediately-ending stream when the broker is not
+  // wired (FFI-free build) — honest, never an error.
+  rpc StreamModelTokens(StreamModelTokensRequest) returns (stream TokenChunk);
 }

@@ -79,8 +79,8 @@ pub use feedback_view::{FeedbackEntry, FeedbackRecord, FeedbackStore};
 // GLOBAL twin's pieces (cursor seed + per-range builder) for the live global
 // tailer.
 pub use events::{
-    check_run_ownership, frames_for_range, global_frames_for_range, seed_global_cursor,
-    GlobalCursor,
+    check_mote_in_run, check_run_ownership, frames_for_range, global_frames_for_range,
+    seed_global_cursor, GlobalCursor,
 };
 pub use identity::CallerParty;
 pub use models_view::{ModelCatalogView, ModelSummaryEntry};
@@ -91,10 +91,11 @@ pub use run_inputs_view::{RunInputsEntry, RunInputsRecord, RunInputsStore};
 pub use service::{
     AssetGrantsView, AuthorEdge, AuthorExecutionMode, AuthorStep, AuthorStepKind, BinderError,
     BoundRecipe, CatalogSeamError, EventStream, EventTailer, GatewayService, GlobalEventStream,
-    GlobalEventTailer, GrantEntry, GrantView, MembershipView, RecipeBinder, RecipeCatalog,
-    RecipeFormFieldEntry, RecipeMetadataEntry, RecipeParamKind, RegisteredSignature,
+    GlobalEventTailer, GrantEntry, GrantView, MembershipView, NoTokenTailer, RecipeBinder,
+    RecipeCatalog, RecipeFormFieldEntry, RecipeMetadataEntry, RecipeParamKind, RegisteredSignature,
     ScoredRecipeEntry, SignatureCatalog, SignatureSummaryEntry, SnapshotGlobalTailer,
-    SnapshotTailer, TeamMemberEntry, TeamMembersView, TeamSummaryEntry, WarrantProjection,
+    SnapshotTailer, TeamMemberEntry, TeamMembersView, TeamSummaryEntry, TokenStream, TokenTailer,
+    WarrantProjection,
     WorkflowAuthor, BATCH_ITEM_CLAMP_BYTES, DEFAULT_PUT_CAP_BYTES, MAX_BATCH_REFS,
     MAX_FEEDBACK_COMMENT_BYTES, REFUSAL_CODE_METADATA_KEY, SEARCH_RECIPES_DEFAULT_LIMIT,
     SEARCH_RECIPES_MAX_LIMIT,

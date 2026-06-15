@@ -23,7 +23,7 @@ use std::borrow::Cow;
 use std::sync::{Arc, Mutex};
 
 use futures_util::{SinkExt, StreamExt};
-use kx_gateway_core::{EventTailer, GlobalEventTailer, JournalReader};
+use kx_gateway_core::{EventTailer, GlobalEventTailer, JournalReader, TokenTailer};
 use kx_proto::proto;
 use tokio::net::{TcpListener, TcpStream};
 use tokio_tungstenite::tungstenite::handshake::server::{
@@ -46,6 +46,7 @@ pub(crate) async fn serve_ws(
     reader: Arc<dyn JournalReader>,
     tailer: Arc<dyn EventTailer>,
     global_tailer: Arc<dyn GlobalEventTailer>,
+    token_tailer: Arc<dyn TokenTailer>,
     resolver: Arc<dyn PrincipalResolver>,
 ) {
     loop {
@@ -59,9 +60,12 @@ pub(crate) async fn serve_ws(
         let reader = reader.clone();
         let tailer = tailer.clone();
         let global_tailer = global_tailer.clone();
+        let token_tailer = token_tailer.clone();
         let resolver = resolver.clone();
         tokio::spawn(async move {
-            if let Err(error) = handle_conn(stream, reader, tailer, global_tailer, resolver).await {
+            if let Err(error) =
+                handle_conn(stream, reader, tailer, global_tailer, token_tailer, resolver).await
+            {
                 tracing::debug!(%error, "ws-bridge connection ended");
             }
         });
@@ -76,6 +80,10 @@ pub(crate) async fn serve_ws(
 enum StreamTarget {
     Run([u8; 16], u64),
     All(u64),
+    /// PR-4.2 (T-STREAM1): the per-mote ADVISORY token channel (a path ending in
+    /// `/tokens`, `?instance=<hex16>&mote=<hex32>&since=N`). Same token auth; an
+    /// OLD server 400s the path ("missing ?instance"), the not-wired signal.
+    Tokens([u8; 16], [u8; 32], u64),
 }
 
 /// Handshake (auth + parse) then stream live frames to one client.
@@ -87,6 +95,7 @@ async fn handle_conn(
     reader: Arc<dyn JournalReader>,
     tailer: Arc<dyn EventTailer>,
     global_tailer: Arc<dyn GlobalEventTailer>,
+    token_tailer: Arc<dyn TokenTailer>,
     resolver: Arc<dyn PrincipalResolver>,
 ) -> Result<(), tokio_tungstenite::tungstenite::Error> {
     // The handshake callback runs synchronously during the upgrade; it stashes the
@@ -134,6 +143,9 @@ async fn handle_conn(
             pump(ws, reader, tailer, instance_id, since_seq).await
         }
         StreamTarget::All(since_seq) => pump_global(ws, reader, global_tailer, since_seq).await,
+        StreamTarget::Tokens(instance_id, mote_id, since_seq) => {
+            pump_tokens(ws, reader, token_tailer, instance_id, mote_id, since_seq).await
+        }
     }
 }
 
@@ -262,6 +274,52 @@ async fn pump_global(
     }
 }
 
+/// Drive the live TOKEN tailer → JSON-over-WS (the PR-4.2 `/tokens` channel) —
+/// the [`pump`] twin over [`WsTokenChunk`]. The ownership gate (caller owns the
+/// run AND the mote belongs to it) is the tailer's first action; the same
+/// Close/Ping handling and CatchupRequired close protocol as [`pump`]. ADVISORY:
+/// the committed result is the authority, so a dropped token stream loses nothing.
+async fn pump_tokens(
+    ws: tokio_tungstenite::WebSocketStream<TcpStream>,
+    reader: Arc<dyn JournalReader>,
+    token_tailer: Arc<dyn TokenTailer>,
+    instance_id: [u8; 16],
+    mote_id: [u8; 32],
+    since_seq: u64,
+) -> Result<(), tokio_tungstenite::tungstenite::Error> {
+    let (mut write, mut read) = ws.split();
+
+    let mut chunks = match token_tailer.stream(reader, instance_id, mote_id, since_seq) {
+        Ok(stream) => stream,
+        Err(status) => {
+            let _ = write.send(Message::Close(Some(close_for(&status)))).await;
+            return write.close().await;
+        }
+    };
+
+    loop {
+        tokio::select! {
+            chunk = chunks.next() => match chunk {
+                Some(Ok(chunk)) => {
+                    let json = serde_json::to_string(&WsTokenChunk::from_proto(chunk))
+                        .unwrap_or_else(|_| "{}".to_string());
+                    write.send(Message::Text(json)).await?;
+                }
+                Some(Err(status)) => {
+                    let _ = write.send(Message::Close(Some(close_for(&status)))).await;
+                    return write.close().await;
+                }
+                None => return write.close().await,
+            },
+            incoming = read.next() => match incoming {
+                Some(Ok(Message::Close(_))) | None => return Ok(()),
+                Some(Ok(_)) => {}
+                Some(Err(error)) => return Err(error),
+            },
+        }
+    }
+}
+
 /// Extract the token from `Sec-WebSocket-Protocol: bearer, <token>` (the browser
 /// path — browsers cannot set an `Authorization` header on a WebSocket).
 fn subprotocol_bearer(req: &HsRequest) -> Option<String> {
@@ -282,21 +340,29 @@ fn subprotocol_bearer(req: &HsRequest) -> Option<String> {
 fn parse_target(req: &HsRequest) -> Result<StreamTarget, String> {
     let query = req.uri().query().unwrap_or("");
     let mut instance: Option<[u8; 16]> = None;
+    let mut mote: Option<[u8; 32]> = None;
     let mut since: u64 = 0;
     for (key, value) in url::form_urlencoded::parse(query.as_bytes()) {
         match key.as_ref() {
             "instance" => instance = hex_decode_16(&value),
+            "mote" => mote = hex_decode_32(&value),
             "since" => since = value.parse().unwrap_or(0),
             _ => {}
         }
     }
-    if req
-        .uri()
-        .path()
-        .trim_end_matches('/')
-        .ends_with("/events/all")
-    {
+    let path = req.uri().path().trim_end_matches('/');
+    if path.ends_with("/events/all") {
         return Ok(StreamTarget::All(since));
+    }
+    // PR-4.2 (T-STREAM1): the per-mote token channel. MUST be matched BEFORE the
+    // per-run fallthrough below — otherwise a `/tokens` request mis-routes to the
+    // event tail (a `mote`-less request would 400 there; a `mote`-bearing one
+    // would silently stream the WRONG channel). Fail-closed on a missing arg.
+    if path.ends_with("/tokens") {
+        let instance =
+            instance.ok_or_else(|| "missing or malformed ?instance=<hex16>".to_string())?;
+        let mote = mote.ok_or_else(|| "missing or malformed ?mote=<hex32>".to_string())?;
+        return Ok(StreamTarget::Tokens(instance, mote, since));
     }
     let instance = instance.ok_or_else(|| "missing or malformed ?instance=<hex16>".to_string())?;
     Ok(StreamTarget::Run(instance, since))
@@ -519,6 +585,36 @@ impl WsGlobalDelta {
     }
 }
 
+/// PR-4.2 (T-STREAM1): one ADVISORY token chunk on the WS `/tokens` channel.
+/// `text_piece` is the NEW model bytes for this step, rendered as a lossy-UTF-8
+/// string so the browser appends it directly to the chat bubble. A token may end
+/// mid-codepoint (the lossy boundary is cosmetic and reconciled away the moment
+/// the committed `result_ref` is fetched whole). `done` ends the stream.
+#[derive(serde::Serialize)]
+struct WsTokenChunk {
+    seq: u64,
+    mote_id: String,
+    text_piece: String,
+    done: bool,
+}
+
+impl WsTokenChunk {
+    fn from_proto(chunk: proto::TokenChunk) -> Self {
+        // Consume `text_piece` by value (no copy on the valid-UTF-8 path); fall
+        // back to lossy decoding only when a token ends mid-codepoint.
+        let text_piece = match String::from_utf8(chunk.text_piece) {
+            Ok(s) => s,
+            Err(e) => String::from_utf8_lossy(e.as_bytes()).into_owned(),
+        };
+        Self {
+            seq: chunk.seq,
+            mote_id: hex_encode(&chunk.mote_id),
+            text_piece,
+            done: chunk.done,
+        }
+    }
+}
+
 /// Stable lowercase nd-class tag (matches the kx-audit wire vocabulary).
 fn nd_str(nd: i32) -> &'static str {
     match proto::NdClass::try_from(nd) {
@@ -547,6 +643,21 @@ fn hex_decode_16(s: &str) -> Option<[u8; 16]> {
     }
     let bytes = s.as_bytes();
     let mut out = [0u8; 16];
+    for (i, slot) in out.iter_mut().enumerate() {
+        let hi = hex_val(bytes[2 * i])?;
+        let lo = hex_val(bytes[2 * i + 1])?;
+        *slot = (hi << 4) | lo;
+    }
+    Some(out)
+}
+
+/// Decode exactly 64 lowercase/uppercase hex chars into a 32-byte mote id (PR-4.2).
+fn hex_decode_32(s: &str) -> Option<[u8; 32]> {
+    if s.len() != 64 {
+        return None;
+    }
+    let bytes = s.as_bytes();
+    let mut out = [0u8; 32];
     for (i, slot) in out.iter_mut().enumerate() {
         let hi = hex_val(bytes[2 * i])?;
         let lo = hex_val(bytes[2 * i + 1])?;

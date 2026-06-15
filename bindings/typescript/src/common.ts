@@ -46,6 +46,8 @@ export type { RunPage } from "./runs.js";
 export { ReactTurn } from "./react.js";
 export type { ReactTurnPage } from "./react.js";
 
+export { TokenChunk } from "./tokens.js";
+
 export { ReplanRound } from "./replan.js";
 export type { ReplanRoundPage } from "./replan.js";
 

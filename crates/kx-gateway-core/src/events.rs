@@ -45,6 +45,37 @@ pub fn check_run_ownership(
     }
 }
 
+/// Validate that the caller's run owns `mote_id` (PR-4.2 / T-STREAM1 — the live
+/// token-stream gate). Uniform `NotAuthorized` (no existence oracle). Two checks,
+/// both off ONE fold-to-head:
+/// (1) the run's `RunRegistered` matches `instance_id` (the [`check_run_ownership`]
+///     gate — the caller owns the run), AND
+/// (2) `mote_id` is a member of THIS run's projection (a committed-or-scheduled
+///     mote of the run). A cross-run / guessed `mote_id` is refused, so a caller
+///     who owns run A cannot subscribe to run B's tokens.
+///
+/// Called ONCE at subscribe (the broker key is the globally-unique 32-byte,
+/// server-derived `MoteId`); per-token delivery rides the broker. `O(journal)`
+/// once — the same posture as [`check_run_ownership`] + the `GetMoteDetail` gate.
+pub fn check_mote_in_run(
+    reader: &dyn JournalReader,
+    instance_id: [u8; 16],
+    mote_id: [u8; 32],
+) -> Result<(), GatewayError> {
+    let head = reader.current_seq().map_err(internal)?;
+    let (projection, _) = fold_through(reader, head)?;
+    match projection.run_registration() {
+        Some((inst, _)) if inst == instance_id => {}
+        _ => return Err(GatewayError::NotAuthorized),
+    }
+    let mote_id = kx_mote::MoteId::from_bytes(mote_id);
+    if projection.iter_motes().any(|(id, _)| id == mote_id) {
+        Ok(())
+    } else {
+        Err(GatewayError::NotAuthorized)
+    }
+}
+
 /// Build resumable frames for the surfaced deltas in `(since_seq, head]`, the
 /// caller supplying the already-polled `head`. Assumes ownership was already
 /// checked (the snapshot path checks in `build_frames`; the live tailer checks
