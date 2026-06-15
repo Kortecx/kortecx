@@ -63,8 +63,15 @@ pub(crate) async fn serve_ws(
         let token_tailer = token_tailer.clone();
         let resolver = resolver.clone();
         tokio::spawn(async move {
-            if let Err(error) =
-                handle_conn(stream, reader, tailer, global_tailer, token_tailer, resolver).await
+            if let Err(error) = handle_conn(
+                stream,
+                reader,
+                tailer,
+                global_tailer,
+                token_tailer,
+                resolver,
+            )
+            .await
             {
                 tracing::debug!(%error, "ws-bridge connection ended");
             }
@@ -687,6 +694,42 @@ mod tests {
         assert_eq!(hex_decode_16(&s), Some(id));
         assert_eq!(hex_decode_16("ab"), None, "wrong length");
         assert_eq!(hex_decode_16(&"z".repeat(32)), None, "non-hex");
+    }
+
+    #[test]
+    fn hex_roundtrip_32() {
+        let id = [0xcdu8; 32];
+        assert_eq!(hex_decode_32(&hex_encode(&id)), Some(id));
+        assert_eq!(hex_decode_32("cd"), None, "wrong length");
+        assert_eq!(hex_decode_32(&"z".repeat(64)), None, "non-hex");
+    }
+
+    fn req(uri: &str) -> HsRequest {
+        HsRequest::builder().uri(uri).body(()).unwrap()
+    }
+
+    #[test]
+    fn parse_target_routes_tokens_before_per_run_fallthrough() {
+        // PR-4.2 (T-STREAM1): the load-bearing routing order — `/tokens` is matched
+        // BEFORE the per-run fallthrough, so a token request never mis-routes to
+        // the event tail (and a malformed one fails closed with a 400).
+        let inst = "ab".repeat(16);
+        let mote = "cd".repeat(32);
+        let t = parse_target(&req(&format!(
+            "/v1/tokens?instance={inst}&mote={mote}&since=5"
+        )))
+        .unwrap();
+        assert!(matches!(t, StreamTarget::Tokens(i, m, 5) if i == [0xab; 16] && m == [0xcd; 32]));
+        // Missing mote / instance → fail-closed (never a silent Run mis-route).
+        assert!(parse_target(&req(&format!("/v1/tokens?instance={inst}"))).is_err());
+        assert!(parse_target(&req(&format!("/v1/tokens?mote={mote}"))).is_err());
+        // The per-run + global channels are unaffected by the new arm.
+        let r = parse_target(&req(&format!("/v1/events?instance={inst}&since=2"))).unwrap();
+        assert!(matches!(r, StreamTarget::Run(i, 2) if i == [0xab; 16]));
+        assert!(matches!(
+            parse_target(&req("/v1/events/all?since=1")).unwrap(),
+            StreamTarget::All(1)
+        ));
     }
 
     #[test]

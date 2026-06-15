@@ -57,6 +57,62 @@ The **attach** button (next to send) opens a menu:
   (not the reasoning block) to the clipboard.
 - **Feedback.** 👍 / 👎 record your rating on the answer. See below.
 
+## Live token streaming
+
+A model's tokens stream to the chat **as they generate** (time‑to‑first‑token),
+so you see the answer build instead of waiting for the whole completion.
+
+- **Advisory + out‑of‑band — the committed result is the authority.** The stream
+  is *not* the durable fact. When the run commits, the console fetches the
+  committed result (its content hash) and the bubble **reconciles** to it. A
+  client that ignores the stream still polls and shows the identical committed
+  answer; the journal, the canonical digest, and replay are **unchanged**.
+- **Simple & vision chat.** Tokens stream straight into the answer bubble (an
+  `aria-live` region — screen readers announce incrementally), then settle to the
+  committed answer.
+- **Agent mode.** The current turn's tokens stream into a muted **reasoning/acting
+  trace** line while the chain runs (a tool turn's raw call envelope never poses
+  as the answer); the committed final answer lands in the bubble when the chain
+  settles.
+- **Honest degrade.** A serve that predates streaming, or one built without a
+  model, simply shows no live tokens — the answer still arrives via the poll path.
+
+### CLI
+
+```bash
+# Stream the terminal model mote's tokens to stdout, then resolve the result.
+kx invoke kx/recipes/chat --args '{"message":"explain backpressure"}' --stream
+```
+
+`--stream` never hangs on a token‑less (non‑model) terminal — it resolves the
+committed result concurrently. Add `--json` or `--out <file>` to also capture the
+committed bytes.
+
+### SDK
+
+The stream is subscribed by `instance_id` **and** the model `mote_id` (the run's
+terminal mote, or — for an agent chain — the in‑flight turn). A subscriber must
+own the run; a mote that does not belong to it is refused.
+
+```ts
+// TypeScript — browser path (WebSocket bridge) or native gRPC.
+for await (const chunk of kx.wsTokens(instanceId, terminalMoteId)) {
+  process.stdout.write(chunk.text);          // concatenation == the committed result
+  if (chunk.done) break;
+}
+```
+
+```python
+# Python — sync or async; ws_stream_model_tokens for the WS bridge.
+for chunk in kx.stream_model_tokens(instance_id, terminal_mote_id):
+    print(chunk.text, end="", flush=True)
+    if chunk.done:
+        break
+```
+
+A serve without the streaming surface answers `UNIMPLEMENTED` (gRPC) or closes the
+WebSocket — the SDK degrades to the poll path.
+
 ## Feedback (👍 / 👎)
 
 Rating an answer calls `SubmitFeedback`, which records a row into the gateway's

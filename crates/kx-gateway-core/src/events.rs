@@ -418,6 +418,34 @@ mod tests {
     }
 
     #[test]
+    fn check_mote_in_run_gates_on_ownership_and_membership() {
+        // PR-4.2 (T-STREAM1): the live token-stream gate. A run that owns the mote
+        // passes; a foreign mote_id OR a foreign instance_id is refused (uniform
+        // NotAuthorized — no existence oracle).
+        let j = InMemoryJournal::new();
+        j.append(reg(7, 8, 1234)).unwrap(); // registers instance [7; 16]
+        j.append(committed(1)).unwrap(); // commits mote id [1,0,0,0, 0..]
+        let r = ReadOnly::new(j);
+
+        let instance = [7u8; INSTANCE_ID_LEN];
+        let mut mote = [0u8; 32];
+        mote[..4].copy_from_slice(&1u32.to_le_bytes());
+
+        // Owns the run AND the mote belongs to it.
+        assert!(check_mote_in_run(&r, instance, mote).is_ok());
+        // A foreign mote_id (not a member of this run) is refused.
+        assert!(matches!(
+            check_mote_in_run(&r, instance, [99u8; 32]),
+            Err(GatewayError::NotAuthorized)
+        ));
+        // A foreign instance_id is refused even with a real mote.
+        assert!(matches!(
+            check_mote_in_run(&r, [9u8; INSTANCE_ID_LEN], mote),
+            Err(GatewayError::NotAuthorized)
+        ));
+    }
+
+    #[test]
     fn two_runs_attribute_to_the_latest_registration() {
         // The watermark pin: reg A → commit → reg B → commit. The first commit
         // belongs to A, the second to B (latest registration at-or-below its seq).

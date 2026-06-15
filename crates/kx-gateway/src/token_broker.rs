@@ -206,7 +206,10 @@ mod tests {
         let (snapshot, mut rx) = broker.subscribe(mid(1));
         let joined: Vec<u8> = snapshot.iter().flat_map(|c| c.text_piece.clone()).collect();
         assert_eq!(&joined, b"hello");
-        assert_eq!(snapshot.iter().map(|c| c.seq).collect::<Vec<_>>(), vec![0, 1]);
+        assert_eq!(
+            snapshot.iter().map(|c| c.seq).collect::<Vec<_>>(),
+            vec![0, 1]
+        );
         // A subsequent publish reaches the live receiver, NOT the snapshot.
         broker.publish(mid(1), b"!");
         let live = rx.recv().await.expect("live chunk");

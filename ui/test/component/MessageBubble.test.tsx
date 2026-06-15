@@ -102,4 +102,40 @@ describe("MessageBubble", () => {
     expect(screen.queryByTestId("bubble-reasoning")).toBeNull();
     expect(screen.getByTestId("bubble-md")).toHaveTextContent("Just an answer.");
   });
+
+  // PR-4.2 (T-STREAM1): the streaming render states.
+  it("a thinking turn with streamed text marks the answer container as a live region", () => {
+    render(<MessageBubble message={msg({ role: "assistant", status: "thinking", text: "Hel" })} />);
+    const md = screen.getByTestId("bubble-md");
+    expect(md).toHaveTextContent("Hel");
+    expect(md).toHaveAttribute("data-streaming", "true");
+    expect(md).toHaveAttribute("aria-live", "polite");
+  });
+
+  it("an agent chain's live reasoning streams into a secondary trace line, not the answer", () => {
+    render(
+      <MessageBubble
+        message={msg({
+          role: "assistant",
+          status: "thinking",
+          streamingReasoning: '{"tool":"echo","args":{}}',
+        })}
+      />,
+    );
+    const reasoning = screen.getByTestId("bubble-reasoning-stream");
+    expect(reasoning).toHaveTextContent('{"tool":"echo","args":{}}');
+    expect(reasoning).toHaveAttribute("aria-live", "polite");
+    // The raw envelope is NOT rendered as the answer (no committed text yet).
+    expect(screen.queryByTestId("bubble-md")).toBeNull();
+  });
+
+  it("a settled answer drops the live-region marker (reconciled to the committed fact)", () => {
+    render(
+      <MessageBubble message={msg({ role: "assistant", status: "done", text: "final answer" })} />,
+    );
+    const md = screen.getByTestId("bubble-md");
+    expect(md).toHaveTextContent("final answer");
+    expect(md).not.toHaveAttribute("data-streaming");
+    expect(screen.queryByTestId("bubble-reasoning-stream")).toBeNull();
+  });
 });

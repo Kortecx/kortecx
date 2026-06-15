@@ -74,6 +74,74 @@ describe("chatReducer", () => {
     expect(s.messages[1]?.error).toBe(ERR);
   });
 
+  it("token_streamed (answer) sets the live bubble text while thinking", () => {
+    const thinking = chatReducer(send(EMPTY_THREAD), {
+      type: "turn_started",
+      assistantId: "a1",
+      instanceId: "ab".repeat(16),
+      terminalMoteId: "ee".repeat(32),
+    });
+    const streamed = chatReducer(thinking, {
+      type: "token_streamed",
+      assistantId: "a1",
+      text: "Hel",
+      target: "answer",
+    });
+    expect(streamed.messages[1]).toMatchObject({ status: "thinking", text: "Hel" });
+  });
+
+  it("token_streamed (reasoning) sets the live trace, not the answer text", () => {
+    const thinking = chatReducer(send(EMPTY_THREAD), {
+      type: "turn_started",
+      assistantId: "a1",
+      instanceId: "ab".repeat(16),
+      terminalMoteId: "ee".repeat(32),
+    });
+    const streamed = chatReducer(thinking, {
+      type: "token_streamed",
+      assistantId: "a1",
+      text: '{"tool":"echo"',
+      target: "reasoning",
+    });
+    expect(streamed.messages[1]?.streamingReasoning).toBe('{"tool":"echo"');
+    expect(streamed.messages[1]?.text).toBe(""); // raw envelope never poses as the answer
+  });
+
+  it("token_streamed never clobbers a committed answer (late chunk after turn_done)", () => {
+    let s = chatReducer(send(EMPTY_THREAD), {
+      type: "turn_started",
+      assistantId: "a1",
+      instanceId: "ab".repeat(16),
+      terminalMoteId: "ee".repeat(32),
+    });
+    s = chatReducer(s, { type: "turn_done", assistantId: "a1", text: "committed answer" });
+    s = chatReducer(s, {
+      type: "token_streamed",
+      assistantId: "a1",
+      text: "stale partial",
+      target: "answer",
+    });
+    expect(s.messages[1]).toMatchObject({ status: "done", text: "committed answer" });
+  });
+
+  it("turn_done clears the live reasoning trace (the committed answer supersedes it)", () => {
+    let s = chatReducer(send(EMPTY_THREAD), {
+      type: "turn_started",
+      assistantId: "a1",
+      instanceId: "ab".repeat(16),
+      terminalMoteId: "ee".repeat(32),
+    });
+    s = chatReducer(s, {
+      type: "token_streamed",
+      assistantId: "a1",
+      text: "reasoning…",
+      target: "reasoning",
+    });
+    s = chatReducer(s, { type: "turn_done", assistantId: "a1", text: "final" });
+    expect(s.messages[1]?.streamingReasoning).toBeUndefined();
+    expect(s.messages[1]?.text).toBe("final");
+  });
+
   it("preserves order across multiple turns", () => {
     let s = chatReducer(EMPTY_THREAD, {
       type: "user_send",
