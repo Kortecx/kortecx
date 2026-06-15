@@ -17,6 +17,7 @@ describe("NAV_SECTIONS", () => {
       "recipes",
       "datasets",
       "tools",
+      "models",
       "context",
       "monitor",
       "systems",
@@ -50,6 +51,15 @@ describe("NAV_SECTIONS", () => {
 
   it("Activity is NOT a section (it is the navbar drawer)", () => {
     expect(NAV_SECTIONS.some((s) => s.id === "activity")).toBe(false);
+  });
+
+  it("the Models section (PR-C2) is a read-only Tools-group view at /models", () => {
+    const byId = new Map(NAV_SECTIONS.map((s) => [s.id, s]));
+    expect(byId.get("models")?.label).toBe("Models");
+    expect(byId.get("models")?.path).toBe("/models");
+    expect(byId.get("models")?.icon).toBe("models");
+    const tools = NAV_GROUPS.find((g) => g.id === "tools");
+    expect(tools?.sectionIds).toContain("models");
   });
 
   it("ids and paths are unique across nav + hidden + settings", () => {

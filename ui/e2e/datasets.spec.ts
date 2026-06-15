@@ -36,6 +36,13 @@ test("Datasets: lists a seeded corpus + degrades cleanly without an embedder", a
   await expect(chip).toContainText("3 docs");
   await expect(chip).toHaveAttribute("aria-pressed", "true");
 
+  // GR15 guard (PR-C2): the reference app's DatasetCard ships a Delete button, but
+  // OUR gateway has NO DeleteDataset RPC — so the re-skin must expose NO delete
+  // affordance (a faked, non-functional control would violate don't-fake-gaps).
+  const section = page.getByTestId("datasets-section");
+  await expect(section.getByRole("button", { name: /delete|remove|drop/i })).toHaveCount(0);
+  await expect(section.getByTestId("dataset-delete")).toHaveCount(0);
+
   // Querying TEXT needs a server embedder this FFI-free gateway lacks → the
   // actionable no-embedder notice (FAILED_PRECONDITION), never a crash. Controlled
   // inputs are driven with click + pressSequentially (a bulk fill() can leave React

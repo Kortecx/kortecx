@@ -9,6 +9,7 @@ import { contextRoute } from "./routes/context";
 import { dashboardRoute } from "./routes/dashboard";
 import { datasetsRoute } from "./routes/datasets";
 import { indexRoute } from "./routes/index";
+import { modelsRoute } from "./routes/models";
 import { monitorRoute } from "./routes/monitor";
 import { recipesRoute } from "./routes/recipes";
 import { runDetailRedirectRoute, runsRoute } from "./routes/runs";
@@ -36,6 +37,7 @@ const routeTree = rootRoute.addChildren([
   contextRoute,
   datasetsRoute,
   toolsRoute,
+  modelsRoute,
   monitorRoute,
   systemsRoute,
   settingsRoute,

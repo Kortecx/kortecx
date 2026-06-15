@@ -21,13 +21,15 @@ test("the app shell navigates to every section (brand + favicon present)", async
   await expect(page.getByTestId("navbar").getByTestId("brand")).toHaveCount(0);
   await expect(page.locator('link[rel="icon"]')).toHaveCount(1);
 
-  // The eight spec-IA sections in the spec's order (+ pinned Settings).
+  // The spec-IA sections in the spec's order (+ pinned Settings); the Dashboard
+  // landing is exercised separately by dashboard.spec.ts.
   const sections: Array<[string, string, string]> = [
     ["nav-chat", "chat-panel", "New Chat"],
     ["nav-runs", "runs-section", "Workflows"],
     ["nav-recipes", "recipes-section", "Blueprints"],
     ["nav-datasets", "datasets-section", "Datasets"],
     ["nav-tools", "tools-section", "Tools"],
+    ["nav-models", "models-section", "Models"],
     ["nav-context", "context-section", "Context"],
     ["nav-monitor", "monitoring-section", "Monitoring"],
     ["nav-systems", "systems-section", "Security"],
