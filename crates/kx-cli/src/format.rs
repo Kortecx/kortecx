@@ -35,6 +35,22 @@ pub fn state_name(state: i32) -> &'static str {
     }
 }
 
+/// Map a [`proto::EdgeKind`] discriminant to a short edge label for the human
+/// projection rendering (`data`/`control`). Out-of-range renders `unknown`
+/// (forward-compatible). The `--json` form keeps the raw discriminant for parity
+/// with the Python SDK (`MoteView`).
+#[must_use]
+pub fn edge_kind_name(edge_kind: i32) -> &'static str {
+    use proto::EdgeKind as E;
+    if edge_kind == E::Data as i32 {
+        "data"
+    } else if edge_kind == E::Control as i32 {
+        "control"
+    } else {
+        "unknown"
+    }
+}
+
 /// Render an `invoke` (no `--wait`) result: the async run handle.
 #[must_use]
 pub fn render_invoke(resp: &proto::InvokeResponse, json: bool) -> String {
@@ -89,6 +105,15 @@ pub fn render_projection(view: &proto::ProjectionView, json: bool) -> String {
                     "result_ref": m.result_ref.as_deref().map(hex::encode),
                     "committed_seq": m.committed_seq,
                     "anomaly": m.anomaly,
+                    // The Mote's incoming DAG edges (server-derived projection
+                    // topology). edge_kind is the stable NAME (data/control/unknown)
+                    // — self-describing + byte-identical across the CLI/Python/TS
+                    // --json shapes (the TS ParentEdge established the name form).
+                    "parents": m.parents.iter().map(|p| json!({
+                        "parent_id": hex::encode(&p.parent_id),
+                        "edge_kind": edge_kind_name(p.edge_kind),
+                        "non_cascade": p.non_cascade,
+                    })).collect::<Vec<_>>(),
                 })
             })
             .collect();
@@ -107,15 +132,31 @@ pub fn render_projection(view: &proto::ProjectionView, json: bool) -> String {
             view.current_seq,
         );
         for m in &view.motes {
+            let parents = if m.parents.is_empty() {
+                "-".to_string()
+            } else {
+                m.parents
+                    .iter()
+                    .map(|p| {
+                        format!(
+                            "{}:{}",
+                            &hex::encode(&p.parent_id)[..8.min(p.parent_id.len() * 2)],
+                            edge_kind_name(p.edge_kind),
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(",")
+            };
             let _ = write!(
                 out,
-                "\n  {}  {:<12} nd={} result={} committed_seq={}",
+                "\n  {}  {:<12} nd={} result={} committed_seq={} parents={}",
                 hex::encode(&m.mote_id),
                 state_name(m.state),
                 m.nd_class,
                 hex::encode_opt(m.result_ref.as_deref()),
                 m.committed_seq
                     .map_or_else(|| "-".to_string(), |s| s.to_string()),
+                parents,
             );
         }
         out
@@ -1223,7 +1264,11 @@ mod tests {
                 warrant_ref: None,
                 mote_def_hash: vec![5u8; 32],
                 committed_seq: Some(7),
-                parents: vec![],
+                parents: vec![proto::ParentRef {
+                    parent_id: vec![9u8; 32],
+                    edge_kind: proto::EdgeKind::Data as i32,
+                    non_cascade: false,
+                }],
                 verdict: None,
                 anomaly: None,
             }],
@@ -1232,9 +1277,18 @@ mod tests {
         assert_eq!(v["current_seq"], 7);
         assert_eq!(v["motes"][0]["state"], "COMMITTED");
         assert_eq!(v["motes"][0]["result_ref"].as_str().unwrap().len(), 64);
-        // Human form mentions the state name + the seq.
+        // The DAG edge surfaces in --json (T-XSURF-1): parent_id hex + raw
+        // edge_kind discriminant + non_cascade (parity with the Python MoteView).
+        assert_eq!(
+            v["motes"][0]["parents"][0]["parent_id"],
+            hex::encode(&[9u8; 32])
+        );
+        assert_eq!(v["motes"][0]["parents"][0]["edge_kind"], "data"); // EDGE_KIND_DATA → name
+        assert_eq!(v["motes"][0]["parents"][0]["non_cascade"], false);
+        // Human form mentions the state name + the seq + the edge.
         let human = render_projection(&view, false);
         assert!(human.contains("COMMITTED") && human.contains("seq 7"));
+        assert!(human.contains("parents=") && human.contains(":data"));
     }
 
     #[test]

@@ -56,8 +56,10 @@ export class MoteView {
     readonly anomaly: number | null,
     /**
      * Inbound DAG edges (server-derived). Trailing + defaulted so existing
-     * positional callers keep working; deliberately NOT in `toJSON()` (the CLI
-     * `projection --json` shape carries no parents — byte-parity is load-bearing).
+     * positional callers keep working. Surfaced in `toJSON()` as of T-XSURF-1 —
+     * the CLI `projection --json` + the Python `MoteView` now carry `parents`
+     * too, so the three `--json` shapes stay byte-identical (parity is
+     * load-bearing for the contract e2e + the UI byte-parity test).
      */
     readonly parents: readonly ParentEdge[] = [],
   ) {}
@@ -77,7 +79,9 @@ export class MoteView {
     );
   }
 
-  /** The CLI `--json` mote shape (ints for nd_class/promotion/anomaly). */
+  /** The CLI `--json` mote shape (ints for nd_class/promotion/anomaly; the DAG
+   *  edges as {parent_id, edge_kind name, non_cascade} — byte-identical to the
+   *  CLI + Python --json). */
   toJSON(): Record<string, unknown> {
     return {
       mote_id: this.moteId,
@@ -87,6 +91,11 @@ export class MoteView {
       result_ref: this.resultRef,
       committed_seq: this.committedSeq,
       anomaly: this.anomaly,
+      parents: this.parents.map((p) => ({
+        parent_id: p.parentId,
+        edge_kind: p.edgeKind,
+        non_cascade: p.nonCascade,
+      })),
     };
   }
 }

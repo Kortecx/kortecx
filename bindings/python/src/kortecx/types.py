@@ -8,10 +8,11 @@ with a future proto state — never a crash, never a silent mislabel).
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List, Optional
 
 from . import hexids
+from .v1 import coordinator_pb2 as _c
 from .v1 import gateway_pb2 as _g
 
 # --- enum display names (mirror kx-cli format.rs::state_name) -----------------
@@ -43,7 +44,49 @@ def is_pending(state: int) -> bool:
     )
 
 
+_EDGE_KIND_NAMES: "dict[int, str]" = {
+    _c.EdgeKind.EDGE_KIND_DATA: "data",
+    _c.EdgeKind.EDGE_KIND_CONTROL: "control",
+}
+
+
+def edge_kind_name(edge_kind: int) -> str:
+    """Map an ``EdgeKind`` discriminant to a stable name (``unknown`` if new) —
+    mirrors ``kx-cli format.rs::edge_kind_name`` + the TS ``edgeKindName``."""
+    return _EDGE_KIND_NAMES.get(edge_kind, "unknown")
+
+
 # --- Mote / projection views --------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ParentEdge:
+    """One incoming DAG edge of a Mote (mirrors ``coordinator.proto`` ``ParentRef``).
+
+    Surfaces the run's topology that the gateway already serves — the upstream
+    Mote a child depends on, the edge kind, and (for CONTROL edges) whether it is
+    non-cascading. Display-only projection facts (SN-8): a parent edge is
+    server-derived, never a client-supplied identity input.
+    """
+
+    parent_id: str  # hex (32B parent MoteId)
+    edge_kind: str  # stable name: "data" | "control" | "unknown" (parity with CLI/TS)
+    non_cascade: bool  # only meaningful for CONTROL edges
+
+    @classmethod
+    def from_proto(cls, p: "_c.ParentRef") -> "ParentEdge":
+        return cls(
+            parent_id=hexids.encode(p.parent_id),
+            edge_kind=edge_kind_name(p.edge_kind),
+            non_cascade=p.non_cascade,
+        )
+
+    def to_dict(self) -> dict:
+        return {
+            "parent_id": self.parent_id,
+            "edge_kind": self.edge_kind,
+            "non_cascade": self.non_cascade,
+        }
 
 
 @dataclass(frozen=True)
@@ -59,6 +102,10 @@ class MoteView:
     mote_def_hash: str  # hex
     committed_seq: Optional[int]
     anomaly: Optional[int]
+    # The Mote's incoming DAG edges (T-XSURF-1: the gateway serves these; the
+    # field defaults to empty so callers constructing a MoteView directly stay
+    # forward-compatible).
+    parents: List[ParentEdge] = field(default_factory=list)
 
     @classmethod
     def from_proto(cls, m: "_g.MoteSnapshot") -> "MoteView":
@@ -72,6 +119,7 @@ class MoteView:
             mote_def_hash=hexids.encode(m.mote_def_hash),
             committed_seq=m.committed_seq if m.HasField("committed_seq") else None,
             anomaly=m.anomaly if m.HasField("anomaly") else None,
+            parents=[ParentEdge.from_proto(p) for p in m.parents],
         )
 
     def to_dict(self) -> dict:
@@ -84,6 +132,7 @@ class MoteView:
             "result_ref": self.result_ref,
             "committed_seq": self.committed_seq,
             "anomaly": self.anomaly,
+            "parents": [p.to_dict() for p in self.parents],
         }
 
 

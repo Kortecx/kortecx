@@ -64,7 +64,17 @@ from .toolscout import (
     ToolManifest,
     lower_verdict_name,
 )
-from .types import Delta, Frame, GlobalDelta, MoteView, Projection, SignatureSummary, state_name
+from .types import (
+    Delta,
+    Frame,
+    GlobalDelta,
+    MoteView,
+    ParentEdge,
+    Projection,
+    SignatureSummary,
+    edge_kind_name,
+    state_name,
+)
 from .wait import WaitOutcome, WaitState
 
 __version__ = "0.1.0"
@@ -84,6 +94,7 @@ __all__ = [
     # views
     "Projection",
     "MoteView",
+    "ParentEdge",
     "Delta",
     "Frame",
     "SignatureSummary",
@@ -152,6 +163,7 @@ __all__ = [
     "BundleTool",
     "lower_verdict_name",
     "state_name",
+    "edge_kind_name",
     # errors
     "ErrorCode",
     "KxError",

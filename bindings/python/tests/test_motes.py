@@ -2,7 +2,15 @@
 
 from __future__ import annotations
 
-from kortecx import MoteConfigItem, MoteDetail, effect_pattern_name, nd_class_name
+from kortecx import (
+    MoteConfigItem,
+    MoteDetail,
+    MoteView,
+    ParentEdge,
+    effect_pattern_name,
+    nd_class_name,
+)
+from kortecx.v1 import coordinator_pb2 as c
 from kortecx.v1 import gateway_pb2 as g
 
 
@@ -81,3 +89,39 @@ def test_config_item_truncation_is_honest():
     assert item.truncated is True
     assert item.full_len == 5000
     assert item.to_dict()["value_hex"] == "61" * 8
+
+
+def test_mote_view_surfaces_parents_dag_edges():
+    """T-XSURF-1: MoteView + ``--json`` must surface the projection ``parents[]``
+    DAG edges the gateway serves (parity with the TS SDK / the UI DAG)."""
+    m = g.MoteSnapshot(
+        mote_id=b"\x03" * 32,
+        state=g.MoteSnapshotState.MOTE_SNAPSHOT_STATE_COMMITTED,
+        nd_class=1,
+        promotion=1,
+        result_ref=b"\x04" * 32,
+        mote_def_hash=b"\x05" * 32,
+        committed_seq=7,
+        parents=[
+            c.ParentRef(
+                parent_id=b"\x09" * 32,
+                edge_kind=c.EdgeKind.EDGE_KIND_DATA,
+                non_cascade=False,
+            )
+        ],
+    )
+    view = MoteView.from_proto(m)
+    assert view.parents == [ParentEdge(parent_id="09" * 32, edge_kind="data", non_cascade=False)]
+    # The CLI --json mote shape carries the edge (stable NAME for byte-parity
+    # across CLI/Python/TS --json — self-describing, mirrors the TS ParentEdge).
+    assert view.to_dict()["parents"] == [
+        {"parent_id": "09" * 32, "edge_kind": "data", "non_cascade": False}
+    ]
+
+
+def test_mote_view_no_parents_defaults_empty():
+    """A root Mote (no incoming edges) yields an empty parents list, not a crash."""
+    m = g.MoteSnapshot(mote_id=b"\x01" * 32, mote_def_hash=b"\x02" * 32)
+    view = MoteView.from_proto(m)
+    assert view.parents == []
+    assert view.to_dict()["parents"] == []

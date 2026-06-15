@@ -69,7 +69,7 @@ describe("MoteView parents", () => {
     expect(new MoteView("aa", "S", 2, 1, 1, null, "bb", null, null).parents).toEqual([]);
   });
 
-  it("toJSON() does NOT include parents (CLI byte-parity guard)", () => {
+  it("toJSON() includes parents as {parent_id, edge_kind name, non_cascade} (T-XSURF-1 — CLI/Python byte-parity)", () => {
     const snap = create(MoteSnapshotSchema, {
       moteId: fill(0x03, 32),
       state: MoteSnapshotState.COMMITTED,
@@ -77,6 +77,18 @@ describe("MoteView parents", () => {
       parents: [create(ParentRefSchema, { parentId: fill(0x01, 32), edgeKind: EdgeKind.DATA })],
     });
     const json = MoteView.fromProto(snap).toJSON();
-    expect(Object.keys(json)).not.toContain("parents");
+    // The DAG edges surface in the --json shape, byte-identical to the CLI
+    // `kx projection --json` + the Python MoteView (edge_kind is the NAME).
+    expect(json.parents).toEqual([
+      { parent_id: "01".repeat(32), edge_kind: "data", non_cascade: false },
+    ]);
+  });
+
+  it("toJSON() parents is an empty array for a root mote", () => {
+    const snap = create(MoteSnapshotSchema, {
+      moteId: fill(0x03, 32),
+      moteDefHash: fill(0x05, 32),
+    });
+    expect(MoteView.fromProto(snap).toJSON().parents).toEqual([]);
   });
 });
