@@ -2095,6 +2095,35 @@ select {
   gap: 0.9rem;
   margin: 0.2rem 0;
 }
+/* PR-D "Re-run with changes": the honest no-change banner + the confirm-before-
+   fire panel. Tokens only (both themes; AA-locked) — no literal colors. */
+.rerun-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--success);
+  background: var(--surface-elev);
+  border-radius: var(--radius);
+  padding: 0.6rem 0.8rem;
+  margin: 0.6rem 0;
+  font-size: 0.88rem;
+}
+.rerun-confirm {
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--t-world-mutating);
+  background: var(--surface-elev);
+  border-radius: var(--radius);
+  padding: 0.6rem 0.8rem;
+  margin: 0.6rem 0;
+}
+.rerun-confirm__warn {
+  margin: 0 0 0.6rem;
+  color: var(--text-2);
+  font-size: 0.88rem;
+}
 .drawer-actions--wrap {
   flex-wrap: wrap;
   gap: 0.6rem 0.9rem;

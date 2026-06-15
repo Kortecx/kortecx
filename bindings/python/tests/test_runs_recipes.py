@@ -9,6 +9,7 @@ from kortecx import (
     RecipeFormField,
     RecipeInfo,
     ReplanRound,
+    RunInputs,
     RunSummary,
     ScoredRecipe,
     recipe_param_type_name,
@@ -38,6 +39,30 @@ def test_run_summary_from_proto_hex_encodes_and_carries_seq_ts():
     assert s.recipe_fingerprint == "22" * 32
     assert s.registered_seq == 7
     assert s.registered_unix_ms == 1234
+
+
+def test_run_inputs_from_proto_decodes_args_and_handle():
+    r = g.GetRunInputsResponse(
+        instance_id=b"\x11" * 16,
+        recipe_fingerprint=b"\x22" * 32,
+        handle="kx/recipes/echo",
+        args=b'{"topic":"hi","count":3}',
+    )
+    ri = RunInputs.from_proto(r)
+    assert ri.instance_id == "11" * 16
+    assert ri.recipe_fingerprint == "22" * 32
+    assert ri.handle == "kx/recipes/echo"
+    assert ri.args == {"topic": "hi", "count": 3}
+
+
+def test_run_inputs_empty_non_object_or_malformed_args_become_empty_dict():
+    empty = RunInputs.from_proto(g.GetRunInputsResponse(handle="h"))
+    assert empty.args == {}
+    arr = RunInputs.from_proto(g.GetRunInputsResponse(handle="h", args=b"[1,2,3]"))
+    assert arr.args == {}
+    # A corrupt/non-JSON capture degrades to {} rather than throwing.
+    bad = RunInputs.from_proto(g.GetRunInputsResponse(handle="h", args=b"not json{"))
+    assert bad.args == {}
 
 
 def test_recipe_form_field_typed_str_with_max_len():

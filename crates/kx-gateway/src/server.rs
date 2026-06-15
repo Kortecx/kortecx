@@ -660,6 +660,14 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     //      product signal: rebuildable-to-EMPTY (never journaled), off-journal,
     //      off-digest. Same hard-error posture as uploads on an unrecoverable open.
     let feedback_db = Arc::new(crate::feedback::FeedbackDb::open(&catalog_dir)?);
+    // (3f-quater) PR-D: the run-inputs sidecar (run_inputs.db beside feedback.db) —
+    //      the Invoke args captured at submit + their GetRunInputs read-back, so a
+    //      run recovered from ListRuns can pre-fill its recipe form and be
+    //      re-invoked with edits ("Re-run with changes"). Rebuildable-to-EMPTY
+    //      (the args never touch the journal; the run lives in the journal), off-
+    //      journal, off-digest. Same hard-error posture as feedback on an
+    //      unrecoverable open.
+    let run_inputs_db = Arc::new(crate::run_inputs::RunInputsDb::open(&catalog_dir)?);
     let capture_task = {
         let ledger = capture_ledger.clone();
         let reader = reader.clone();
@@ -756,6 +764,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         .with_content_writer(content_writer)
         .with_uploads_ledger(uploads_db)
         .with_feedback_store(feedback_db)
+        .with_run_inputs_store(run_inputs_db)
         .with_put_content_cap(cfg.content_max_bytes)
         .with_model_catalog_view(models_view)
         .with_mote_def_view(mote_defs_view)
@@ -993,7 +1002,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
 /// All values are post-resolution: the bound `local_addr` reflects an ephemeral
 /// `:0` if one was requested, and the sidecar paths mirror the gateway's own
 /// `catalog_dir` layout (catalog.db / members.db / telemetry.db / capture.db /
-/// uploads.db / feedback.db / datasets/).
+/// uploads.db / feedback.db / run_inputs.db / datasets/).
 #[cfg(feature = "embedded-worker")]
 fn log_startup_banner(
     cfg: &GatewayConfig,
@@ -1036,6 +1045,7 @@ fn log_startup_banner(
         capture_db    = %catalog_dir.join("capture.db").display(),
         uploads_db    = %catalog_dir.join("uploads.db").display(),
         feedback_db   = %catalog_dir.join("feedback.db").display(),
+        run_inputs_db = %catalog_dir.join("run_inputs.db").display(),
         datasets_dir  = %catalog_dir.join("datasets").display(),
         grpc_endpoint = %format!("http://{local_addr}"),
         ws_endpoint   = %format!("ws://{ws_local_addr}"),

@@ -93,6 +93,11 @@ class KxGatewayStub(object):
                 request_serializer=kortecx_dot_v1_dot_gateway__pb2.GetRecipeFormRequest.SerializeToString,
                 response_deserializer=kortecx_dot_v1_dot_gateway__pb2.GetRecipeFormResponse.FromString,
                 _registered_method=True)
+        self.GetRunInputs = channel.unary_unary(
+                '/kortecx.v1.KxGateway/GetRunInputs',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.GetRunInputsRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.GetRunInputsResponse.FromString,
+                _registered_method=True)
         self.SearchRecipes = channel.unary_unary(
                 '/kortecx.v1.KxGateway/SearchRecipes',
                 request_serializer=kortecx_dot_v1_dot_gateway__pb2.SearchRecipesRequest.SerializeToString,
@@ -270,6 +275,14 @@ class KxGatewayServicer(object):
 
     def GetRecipeForm(self, request, context):
         """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def GetRunInputs(self, request, context):
+        """PR-D additive (D120.6): the captured Invoke args for a run ("Re-run with
+        changes"). UNIMPLEMENTED with no sidecar; NOT_FOUND with nothing captured.
+        """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
@@ -484,6 +497,11 @@ def add_KxGatewayServicer_to_server(servicer, server):
                     servicer.GetRecipeForm,
                     request_deserializer=kortecx_dot_v1_dot_gateway__pb2.GetRecipeFormRequest.FromString,
                     response_serializer=kortecx_dot_v1_dot_gateway__pb2.GetRecipeFormResponse.SerializeToString,
+            ),
+            'GetRunInputs': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetRunInputs,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.GetRunInputsRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.GetRunInputsResponse.SerializeToString,
             ),
             'SearchRecipes': grpc.unary_unary_rpc_method_handler(
                     servicer.SearchRecipes,
@@ -892,6 +910,33 @@ class KxGateway(object):
             '/kortecx.v1.KxGateway/GetRecipeForm',
             kortecx_dot_v1_dot_gateway__pb2.GetRecipeFormRequest.SerializeToString,
             kortecx_dot_v1_dot_gateway__pb2.GetRecipeFormResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GetRunInputs(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/GetRunInputs',
+            kortecx_dot_v1_dot_gateway__pb2.GetRunInputsRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.GetRunInputsResponse.FromString,
             options,
             channel_credentials,
             insecure,

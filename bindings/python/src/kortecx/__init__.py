@@ -52,7 +52,7 @@ from .recipes import (
 )
 from .replan import ReplanRound, ReplanRoundPage
 from .run import AsyncRun, Result, Run
-from .runs import RunPage, RunSummary
+from .runs import RunInputs, RunPage, RunSummary
 from .teams import TeamMember, TeamMembers, TeamSummary, WarrantView
 from .telemetry import MoteTelemetryRow, TelemetryPage
 from .toolscout import (
@@ -100,6 +100,7 @@ __all__ = [
     "SignatureSummary",
     "RunSummary",
     "RunPage",
+    "RunInputs",
     "ReactTurn",
     "ReactTurnPage",
     "ReplanRound",

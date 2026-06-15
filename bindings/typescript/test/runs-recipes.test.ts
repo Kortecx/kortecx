@@ -6,6 +6,7 @@ import { CaptureRecord } from "../src/capture.js";
 import {
   CaptureRecordSummarySchema,
   GetRecipeFormResponseSchema,
+  GetRunInputsResponseSchema,
   ReactTurnSummarySchema,
   RecipeFormFieldSchema,
   RecipeParamType,
@@ -15,7 +16,7 @@ import {
 import { ReactTurn } from "../src/react.js";
 import { RecipeForm, RecipeFormField, recipeParamTypeName } from "../src/recipes.js";
 import { ReplanRound } from "../src/replan.js";
-import { RunSummary } from "../src/runs.js";
+import { RunInputs, RunSummary } from "../src/runs.js";
 
 const fill = (v: number, n: number): Uint8Array => new Uint8Array(n).fill(v);
 
@@ -50,6 +51,46 @@ describe("RunSummary.fromProto", () => {
       registered_seq: 7,
       registered_unix_ms: 1234,
     });
+  });
+});
+
+describe("RunInputs.fromProto", () => {
+  const enc = (s: string): Uint8Array => new TextEncoder().encode(s);
+
+  it("decodes the captured args JSON + handle, snake_case toJSON", () => {
+    const r = create(GetRunInputsResponseSchema, {
+      instanceId: fill(0x11, 16),
+      recipeFingerprint: fill(0x22, 32),
+      handle: "kx/recipes/echo",
+      args: enc('{"topic":"hi","count":3}'),
+    });
+    const ri = RunInputs.fromProto(r);
+    expect(ri.instanceId).toBe("11".repeat(16));
+    expect(ri.recipeFingerprint).toBe("22".repeat(32));
+    expect(ri.handle).toBe("kx/recipes/echo");
+    expect(ri.args).toEqual({ topic: "hi", count: 3 });
+    expect(ri.toJSON()).toEqual({
+      instance_id: "11".repeat(16),
+      recipe_fingerprint: "22".repeat(32),
+      handle: "kx/recipes/echo",
+      args: { topic: "hi", count: 3 },
+    });
+  });
+
+  it("treats empty/non-object/malformed args as {} (never throws)", () => {
+    const empty = RunInputs.fromProto(
+      create(GetRunInputsResponseSchema, { handle: "h", args: new Uint8Array() }),
+    );
+    expect(empty.args).toEqual({});
+    const arr = RunInputs.fromProto(
+      create(GetRunInputsResponseSchema, { handle: "h", args: enc("[1,2,3]") }),
+    );
+    expect(arr.args).toEqual({});
+    // A corrupt/non-JSON capture degrades to {} rather than throwing.
+    const bad = RunInputs.fromProto(
+      create(GetRunInputsResponseSchema, { handle: "h", args: enc("not json{") }),
+    );
+    expect(bad.args).toEqual({});
   });
 });
 

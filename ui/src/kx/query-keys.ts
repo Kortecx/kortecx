@@ -22,6 +22,9 @@ export const queryKeys = {
   /** One recipe's free-param form (`GetRecipeForm`), scoped by handle. */
   recipeForm: (endpoint: string, handle: string) =>
     ["kx", endpoint, "recipe-form", handle] as const,
+  /** A run's captured Invoke args (`GetRunInputs`, PR-D "Re-run with changes"). */
+  runInputs: (endpoint: string, instanceId: string) =>
+    ["kx", endpoint, "run-inputs", instanceId] as const,
   /** The teams the gateway knows (`ListTeams`). */
   teams: (endpoint: string) => ["kx", endpoint, "teams"] as const,
   /** One team's members (`ListTeamMembers`); `assetRef` distinguishes the resolved view. */

@@ -8,8 +8,9 @@ only hex-encodes the bytes. ``registered_unix_ms`` is an audit-only wall-clock
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
-from typing import List
+from typing import Any, Dict, List
 
 from . import hexids
 from .v1 import gateway_pb2 as _g
@@ -41,3 +42,40 @@ class RunPage:
 
     runs: List[RunSummary]
     has_more: bool
+
+
+@dataclass(frozen=True)
+class RunInputs:
+    """The args a run was submitted with (PR-D ``GetRunInputs``) — the baseline a
+    client edits and re-invokes ("Re-run with changes").
+
+    ``args`` is decoded from the opaque JSON object bytes the run was submitted
+    with; ``handle`` is what :meth:`KxClient.get_recipe_form` needs to re-render
+    the form (a durable run otherwise carries only the fingerprint). SN-8 /
+    off-digest: the args never become committed facts. A run with nothing captured
+    raises ``KxNotFound``; an old gateway raises ``KxUnimplemented``.
+    """
+
+    instance_id: str  # hex
+    recipe_fingerprint: str  # hex
+    handle: str
+    args: Dict[str, Any]
+
+    @classmethod
+    def from_proto(cls, r: "_g.GetRunInputsResponse") -> "RunInputs":
+        args: Dict[str, Any] = {}
+        if r.args:
+            try:
+                parsed = json.loads(r.args.decode("utf-8"))
+                if isinstance(parsed, dict):
+                    args = parsed
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                # A corrupt/non-JSON capture degrades to empty args rather than
+                # throwing inside the SDK — never fake, never crash.
+                args = {}
+        return cls(
+            instance_id=hexids.encode(r.instance_id),
+            recipe_fingerprint=hexids.encode(r.recipe_fingerprint),
+            handle=r.handle,
+            args=args,
+        )

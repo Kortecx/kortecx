@@ -34,6 +34,7 @@ const sidebars: SidebarsConfig = {
         "models",
         "scripts",
         "reading-run-outputs",
+        "rerun-with-changes",
         "observability",
       ],
     },
