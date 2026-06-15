@@ -9,8 +9,9 @@ import {
 } from "../../src/components/shell/nav-model";
 
 describe("NAV_SECTIONS", () => {
-  it("has the eight spec-IA sections in the spec's order", () => {
+  it("has the spec-IA sections in the spec's order (Dashboard leads — PR-C1/D150)", () => {
     expect(NAV_SECTIONS.map((s) => s.id)).toEqual([
+      "dashboard",
       "chat",
       "runs",
       "recipes",
@@ -20,6 +21,13 @@ describe("NAV_SECTIONS", () => {
       "monitor",
       "systems",
     ]);
+  });
+
+  it("the Dashboard landing keeps Chat as the default route (D137 unchanged)", () => {
+    const byId = new Map(NAV_SECTIONS.map((s) => [s.id, s]));
+    expect(byId.get("dashboard")?.label).toBe("Dashboard");
+    expect(byId.get("dashboard")?.path).toBe("/dashboard");
+    expect(byId.get("dashboard")?.icon).toBe("activity");
   });
 
   it("display labels rename; ids/icons stay on the frozen wire-legacy handles", () => {

@@ -1,4 +1,4 @@
-import { ReplanRound } from "@kortecx/sdk/web";
+import { MoteTelemetryRow, ReplanRound } from "@kortecx/sdk/web";
 import { render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { MonitoringSection } from "../../src/components/sections/MonitoringSection";
@@ -33,5 +33,27 @@ describe("MonitoringSection", () => {
     const mock = makeMockClient({ listReplanRounds: async () => unimplemented() });
     render(<MonitoringSection />, { wrapper: connectedWrapper(mock.client) });
     await waitFor(() => expect(screen.getByText(/Not wired on this gateway/i)).toBeInTheDocument());
+  });
+
+  it("Telemetry tab shows a per-model rollup + honest-disabled cost tile (no faked cost)", async () => {
+    const mock = makeMockClient({
+      listMoteTelemetry: async () => ({
+        // Unattributed rows ("" instanceId) so the raw table renders "—" rather
+        // than a <Link> (the harness has no RouterProvider); the rollup groups by
+        // model regardless.
+        rows: [
+          new MoteTelemetryRow("m1", "", 10, null, 5, "qwen3", "", 0, 2),
+          new MoteTelemetryRow("m2", "", 30, null, 7, "qwen3", "", 0, 1),
+        ],
+        hasMore: false,
+      }),
+    });
+    render(<MonitoringSection tab="telemetry" />, { wrapper: connectedWrapper(mock.client) });
+    // The per-model rollup renders the resolved model id, honestly windowed.
+    await waitFor(() => expect(screen.getByTestId("telemetry-by-model")).toBeInTheDocument());
+    expect(screen.getByText(/not all-time/i)).toBeInTheDocument();
+    expect(screen.getAllByText("qwen3").length).toBeGreaterThan(0);
+    // Cost is honest-disabled (Cloud), never a fabricated number.
+    expect(screen.getByTestId("cost-tile-disabled")).toBeInTheDocument();
   });
 });

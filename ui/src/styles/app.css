@@ -1055,6 +1055,32 @@ select {
 .metric-card--scheduled .metric-card__value {
   color: var(--t-scheduled);
 }
+/* PR-C1 KPI tones: accent-bar-only (value stays --text-1) so no NEW audited
+ * text-on-accent pair enters the contrast lock — the accent bar is decorative. */
+.metric-card--pending {
+  --metric-accent: var(--t-pending);
+}
+.metric-card--info {
+  --metric-accent: var(--info);
+}
+.metric-card--neutral {
+  --metric-accent: var(--text-3);
+}
+/* An honest-disabled tile (e.g. a Cloud-only metric we don't fabricate). */
+.metric-card--disabled {
+  --metric-accent: var(--border);
+  background: var(--surface-elev, var(--bg-input));
+}
+.metric-card--disabled .metric-card__value,
+.metric-card--disabled .metric-card__label {
+  color: var(--text-3);
+}
+/* A muted honest qualifier under the label (e.g. "over the last N motes"). */
+.metric-card__sub {
+  font-size: 0.62rem;
+  color: var(--text-3);
+  margin-top: 0.1rem;
+}
 .state-bar {
   display: flex;
   height: 10px;
@@ -3140,6 +3166,71 @@ button.card-grid__title:hover {
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--text-3);
+}
+
+/* ---- Dashboard landing (PR-C1) ---- */
+.dashboard-cols {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.75rem;
+  margin-top: 0.85rem;
+}
+@media (min-width: 1000px) {
+  .dashboard-cols {
+    grid-template-columns: 1.6fr 1fr;
+    align-items: start;
+  }
+}
+.quickstart-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 0.6rem;
+  margin-top: 0.85rem;
+}
+.quickstart-card {
+  display: block;
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: inherit;
+  text-decoration: none;
+}
+.quickstart-card:hover {
+  border-color: color-mix(in srgb, var(--primary) 50%, var(--border));
+  box-shadow: 0 4px 20px rgba(240, 69, 0, 0.1);
+}
+.quickstart-card__title {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+.quickstart-card__hint {
+  color: var(--text-3);
+  font-size: 0.72rem;
+  margin-top: 0.15rem;
+}
+.dashboard-runs {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.dashboard-runs__row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  padding: 0.35rem 0;
+  border-bottom: 1px solid var(--border);
+}
+.dashboard-runs__handle {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dashboard-runs__time {
+  color: var(--text-3);
+  font-size: 0.72rem;
 }
 
 /* ---- Monitoring dashboard ---- */

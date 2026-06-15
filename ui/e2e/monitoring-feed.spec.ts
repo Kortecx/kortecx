@@ -51,6 +51,13 @@ test("monitoring: URL-addressable tabs, the live cross-run feed, telemetry rows 
   await expect(page).toHaveURL(/\/monitor\?tab=telemetry$/);
   await expect(page.getByTestId("telemetry-row").first()).toBeVisible({ timeout: 20_000 });
 
+  // PR-C1 density: a real KPI strip derived from the loaded telemetry window +
+  // the honest-disabled cost tile (Cloud-only — never a fabricated number). The
+  // per-model rollup table is honestly ABSENT on an FFI-free serve (no model mote).
+  await expect(page.getByTestId("telemetry-kpis")).toBeVisible();
+  await expect(page.getByTestId("cost-tile-disabled")).toBeVisible();
+  await expect(page.getByTestId("telemetry-by-model")).toHaveCount(0);
+
   // Tab clicks rewrite the URL (overview drops the param).
   await page.getByTestId("monitor-tab-overview").click();
   await expect(page).toHaveURL(/\/monitor$/);
