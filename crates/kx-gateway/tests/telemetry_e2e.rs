@@ -184,6 +184,43 @@ async fn telemetry_rows_survive_a_restart() {
 }
 
 #[tokio::test]
+async fn summary_matches_the_sum_over_list_pages() {
+    // W1a-3 cross-surface invariant: the server-side rollup MUST equal the client
+    // fold over every ListMoteTelemetry page (no drift). On an FFI-free serve there
+    // are no model motes, so the per-model rows are empty and output tokens are 0 —
+    // but total_motes must equal the joined-row count (the honest "all runs" total).
+    let dir = tempfile::TempDir::new().unwrap();
+    let running = start(gateway_config(&dir, true, HashMap::new()))
+        .await
+        .unwrap();
+    let mut c = connect_client(running.local_addr()).await;
+
+    for seed in [0x91u8, 0x92, 0x93] {
+        let instance = submit_pure_run(&mut c, seed).await;
+        await_committed(&mut c, &instance).await;
+    }
+    let rows = await_rows(&mut c, all_rows(), 3).await;
+
+    let summary = c
+        .list_telemetry_summary(proto::ListTelemetrySummaryRequest { instance_id: None })
+        .await
+        .unwrap()
+        .into_inner();
+
+    // total_motes == the count of joined rows; output tokens == their sum (0 here).
+    let page_token_sum: u64 = rows.iter().filter_map(|r| r.output_tokens).sum();
+    assert_eq!(summary.total_motes as usize, rows.len());
+    assert_eq!(summary.total_output_tokens, page_token_sum);
+    // FFI-free: no model ran, so no per-model row is fabricated.
+    assert!(
+        summary.rows.is_empty(),
+        "no model motes ⇒ no per-model rows"
+    );
+
+    running.shutdown().await.unwrap();
+}
+
+#[tokio::test]
 async fn telemetry_denied_without_auth() {
     let dir = tempfile::TempDir::new().unwrap();
     let running = start(gateway_config(&dir, false, HashMap::new()))
@@ -194,6 +231,12 @@ async fn telemetry_denied_without_auth() {
         .list_mote_telemetry(all_rows())
         .await
         .expect_err("deny-all rejects telemetry reads");
+    assert_eq!(err.code(), Code::Unauthenticated);
+    // The W1a-3 summary RPC sits behind the same auth interceptor.
+    let err = c
+        .list_telemetry_summary(proto::ListTelemetrySummaryRequest { instance_id: None })
+        .await
+        .expect_err("deny-all rejects the telemetry summary too");
     assert_eq!(err.code(), Code::Unauthenticated);
     running.shutdown().await.unwrap();
 }

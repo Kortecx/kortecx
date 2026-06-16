@@ -41,9 +41,32 @@ URL-addressable tabs:
   (`ListCaptureRecords`), and gateway health. Each panel degrades to an honest
   "not wired on this gateway" note rather than a hollow placeholder.
 - **Live feed** — the continuous cross-run event tail (`StreamAllEvents`), newest
-  first, each row attributed to its run.
+  first, each row attributed to its run. The feed is **triage-able**: toggle kind
+  chips (with per-kind count badges), filter by run id / mote / reason free-text,
+  and **export the filtered buffer as NDJSON**.
 - **Telemetry** — the host-measured execution exhaust (`ListMoteTelemetry`):
   wall-clock, model/tool usage, and the committed `seq`, cursor-paged.
+
+### Live-feed triage
+
+The live feed is a structured log, so it is filtered like one — entirely
+client-side over the buffered tail, the server stream is untouched:
+
+- **Kind chips** toggle which event kinds show (`committed`, `failed`,
+  `repudiated`, `effect_staged`, `run_registered`); each carries a count badge
+  over the current buffer.
+- A **free-text filter** narrows by run id, mote hex, or the human reason label.
+- **Export** writes the *filtered* rows as **NDJSON** — one server-derived object
+  per line (hex join keys only, never payloads), the same shape the CLI emits.
+
+From the CLI, the same global tail is filterable by kind and exports as NDJSON:
+
+```bash
+# the global cross-run tail, filtered to failures + commits (one JSON object per line):
+kx events --all --kind committed,failed --json > feed.ndjson
+# a live, filtered follow:
+kx events --all --kind failed --follow
+```
 
 ### Per-model telemetry rollup
 
@@ -55,12 +78,39 @@ is captioned **"over the last N motes (this page, not all-time)"** and is honest
 model id). Cost and per-expert billing are shown as a disabled **Cloud** tile: OSS
 serves locally and has no price, input-token, or expert entity to bill.
 
+### Token economy
+
+Beside the page-windowed rollup, the Telemetry tab shows an **all-runs token
+economy** — output tokens and wall-clock per model, summed **server-side** so a
+long agentic run is totalled exactly (not capped to a page). It is backed by
+`ListTelemetrySummary` (a single `SUM … GROUP BY model_id` over the same
+`telemetry.db` sidecar):
+
+```bash
+kx telemetry summary               # per-model output tokens + wall-clock, all runs
+kx telemetry summary --instance <hex16>   # scoped to one run
+kx telemetry summary --json        # model_id · count · total_output_tokens · total_wall_clock_ms
+```
+
+```python
+summary = client.list_telemetry_summary()         # Python SDK
+for row in summary.rows:
+    print(row.model_id, row.total_output_tokens)
+```
+
+The economy is **token-only and honest**: there is no fabricated "tokens saved"
+delta — no durable counterfactual baseline exists, so none is invented (a run's
+reasoning mode is recoverable per-mote from its definition, but no aggregate
+savings number is computable). **Cost / $** stays the disabled
+[Cloud](https://github.com/Kortecx/kortecx#cloud) tile.
+
 ## Failure triage
 
-A failed event row surfaces the journal's `FailureReason` as a short label
-(e.g. `TIMED OUT`, `VALIDATOR REJECTED`, `WORKER CRASHED`, `DEAD-LETTERED`) next to
-the `FAILED` pill, mirroring the closed enum in the runtime. A row that carried no
-reason shows no label — the reason is never invented.
+A failed event row surfaces the journal's `FailureReason` as a short, scannable
+**reason badge** (e.g. `TIMED OUT`, `VALIDATOR REJECTED`, `WORKER CRASHED`,
+`DEAD-LETTERED`) next to the `FAILED` pill, mirroring the closed enum in the
+runtime, and it is **filterable** via the live-feed free-text filter. A row that
+carried no reason shows no badge — the reason is never invented.
 
 ## Alerts inbox
 
@@ -178,10 +228,10 @@ additive follow-on). Filter the trail with `jq`:
 jq -c 'select(.type=="mote_failed")' /var/log/kortecx/audit.jsonl
 ```
 
-:::note More on the way
-Live-feed **filter chips + JSONL export** and a **token-economy** breakdown land
-with the next observability batch. Time-travel (`kx projection --at-seq`) and run
-capture (`ListCaptureRecords`) are covered in the
-[Quickstart](./quickstart.md#run-your-first-blueprint) and the
+:::note See also
+Time-travel (`kx projection --at-seq`) and run capture (`ListCaptureRecords`) are
+covered in the [Quickstart](./quickstart.md#run-your-first-blueprint) and the
 [production notes in the README](https://github.com/Kortecx/kortecx/blob/main/README.md#production-notes).
+OTLP export is on the roadmap; today metrics are Prometheus text and traces are the
+durable journal itself.
 :::

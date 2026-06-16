@@ -23,6 +23,7 @@ import { useReactTurns } from "../../kx/use-react-turns";
 import { useReplanRounds } from "../../kx/use-replan-rounds";
 import { useRuns } from "../../kx/use-runs";
 import { useTelemetry } from "../../kx/use-telemetry";
+import { useTelemetrySummary } from "../../kx/use-telemetry-summary";
 import { failureReasonLabel } from "../../lib/event-format";
 import { shortHex } from "../../lib/format";
 import {
@@ -300,6 +301,9 @@ function TelemetryView() {
   // "the last N motes on this page", NOT all-time — labeled honestly below).
   const byModel = useMemo(() => summarizeTelemetryByModel(t.rows), [t.rows]);
   const wall = useMemo(() => wallClockPercentiles(t.rows), [t.rows]);
+  // The EXACT, cross-page per-model token-economy rollup (W1a-3) — server-side
+  // SUM ... GROUP BY model_id, so it is honestly "all runs", not "this page".
+  const summary = useTelemetrySummary();
   return (
     <GlowCard hover={false} className="monitor-panel" data-testid="monitor-telemetry">
       <div className="monitor-panel__head">
@@ -390,6 +394,46 @@ function TelemetryView() {
                 </tbody>
               </table>
             </>
+          ) : null}
+
+          {/* W1a-3 token-economy — the EXACT, cross-page per-model rollup (server
+              SUM ... GROUP BY, "all runs"), distinct from the page-windowed table
+              above. Token-only; cost/$ stays the honest-disabled Cloud tile. */}
+          {summary.notWired ? null : summary.summary && summary.summary.rows.length > 0 ? (
+            <>
+              <div className="monitor-panel__head">
+                <h3>Token economy</h3>
+                <span className="muted">
+                  output tokens per model across all runs ({summary.summary.totalMotes} motes,{" "}
+                  {summary.summary.totalOutputTokens} tokens)
+                </span>
+              </div>
+              <table className="trail-table" data-testid="telemetry-token-economy">
+                <thead>
+                  <tr>
+                    <th>Model</th>
+                    <th>Motes</th>
+                    <th>Out&nbsp;tokens</th>
+                    <th>Wall&nbsp;ms</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {summary.summary.rows.map((r) => (
+                    <tr key={r.modelId} data-testid="telemetry-token-economy-row">
+                      <td className="mono">{r.modelId}</td>
+                      <td className="mono">{r.count}</td>
+                      <td className="mono">{r.totalOutputTokens}</td>
+                      <td className="mono">{r.totalWallClockMs}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </>
+          ) : summary.summary ? (
+            <p className="muted" data-testid="telemetry-token-economy-empty">
+              No model output tokens recorded yet — token economy populates as model motes run on an
+              inference build.
+            </p>
           ) : null}
 
           <table className="trail-table" data-testid="telemetry-table">

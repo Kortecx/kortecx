@@ -104,7 +104,9 @@ describe("GlobalFeed (Batch C)", () => {
     // a real router — covered by the monitoring-feed Playwright spec).
     render(<GlobalFeed onSelectRun={() => {}} />, { wrapper: connectedWrapper(mock.client) });
     await waitFor(() => expect(screen.getAllByTestId("global-event-row")).toHaveLength(2));
-    expect(screen.getByText("RUN STARTED")).toBeInTheDocument();
+    // Scope to the row PILL — the W1a-3 triage toolbar also renders a "RUN STARTED"
+    // filter chip, so the bare text now appears twice (chip + pill).
+    expect(screen.getByText("RUN STARTED", { selector: ".pill" })).toBeInTheDocument();
     expect(screen.getByText(/Run started/)).toBeInTheDocument();
     // Both rows carry the run chip (the click-through affordance).
     expect(screen.getAllByTestId("global-event-run")).toHaveLength(2);

@@ -422,6 +422,12 @@ button:disabled {
   color: var(--pill-fg);
   background: var(--t-failed);
 }
+/* The failure-reason triage badge (W1a-3) — outlined in the failed tone, AA on
+ * both themes via the --t-failed token (never the white-on-red anomaly fill). */
+.badge--failed {
+  color: var(--t-failed);
+  border-color: var(--t-failed);
+}
 
 /* ---- table ---- */
 .mote-table {
@@ -1096,6 +1102,79 @@ select {
 /* ---- activity feed / timeline ---- */
 .feed {
   margin-top: 0.5rem;
+}
+/* W1a-3 — the live-feed triage toolbar: kind toggle chips (with count badges),
+ * a free-text filter, and the NDJSON export. Wraps on narrow widths. */
+.feed__toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.6rem;
+}
+.feed__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  /* fieldset reset (the .view-toggle convention) */
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-inline-size: 0;
+}
+.chip--toggle {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.25rem 0.6rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  opacity: 0.55;
+}
+.chip--toggle.chip--on {
+  opacity: 1;
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+}
+.chip__dot {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--t-unknown);
+}
+.chip__dot--committed {
+  background: var(--t-committed);
+}
+.chip__dot--failed {
+  background: var(--t-failed);
+}
+.chip__dot--repudiated {
+  background: var(--t-repudiated);
+}
+.chip__dot--scheduled {
+  background: var(--t-scheduled);
+}
+.chip__dot--unknown {
+  background: var(--t-unknown);
+}
+.chip__count {
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-muted);
+  background: var(--bg);
+  border-radius: 6px;
+  padding: 0 0.35rem;
+  min-width: 1.2rem;
+  text-align: center;
+}
+.feed__filter {
+  flex: 1 1 12rem;
+  min-width: 8rem;
+  padding: 0.3rem 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-input);
+  color: var(--fg);
+  font-size: 0.82rem;
 }
 .feed__list {
   list-style: none;

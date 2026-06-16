@@ -182,6 +182,28 @@ export async function* wsTokenChunksFromMessages(
 }
 
 /** Map one R5 WS JSON delta (`type` discriminant, hex ids) to a {@link Delta}. */
+/**
+ * Map the wire `nd_class` STRING tag back to its `NdClass` discriminant — the
+ * inverse of the gateway's `nd_str`. The committed WS delta carries `nd_class`
+ * as a string (`"pure"`/`"read_only_nondet"`/`"world_mutating"`/`"unspecified"`),
+ * but {@link Delta}/{@link GlobalDelta} model it numerically (matching the gRPC
+ * proto). Absent/unknown ⇒ `null` — honest, never a fabricated `0`.
+ */
+export function ndClassFromTag(tag: string | null): number | null {
+  switch (tag) {
+    case "pure":
+      return 1;
+    case "read_only_nondet":
+      return 2;
+    case "world_mutating":
+      return 3;
+    case "unspecified":
+      return 0;
+    default:
+      return null;
+  }
+}
+
 export function wsDelta(obj: Record<string, unknown>): Delta | null {
   const kind = obj.type as string | undefined;
   const seq = Number(obj.seq ?? 0);
@@ -190,7 +212,13 @@ export function wsDelta(obj: Record<string, unknown>): Delta | null {
   const num = (k: string): number | null => (obj[k] != null ? Number(obj[k]) : null);
   switch (kind) {
     case "committed":
-      return new Delta(seq, "committed", str("mote_id"), str("result_ref"));
+      return new Delta(
+        seq,
+        "committed",
+        str("mote_id"),
+        str("result_ref"),
+        ndClassFromTag(str("nd_class")),
+      );
     case "failed":
       return new Delta(seq, "failed", str("mote_id"), null, null, num("reason_class"));
     case "repudiated":
@@ -255,7 +283,14 @@ export function wsAllDelta(obj: Record<string, unknown>): GlobalDelta {
         num("registered_unix_ms"),
       );
     case "committed":
-      return new GlobalDelta(seq, "committed", instanceId, str("mote_id"), str("result_ref"));
+      return new GlobalDelta(
+        seq,
+        "committed",
+        instanceId,
+        str("mote_id"),
+        str("result_ref"),
+        ndClassFromTag(str("nd_class")),
+      );
     case "failed":
       return new GlobalDelta(
         seq,

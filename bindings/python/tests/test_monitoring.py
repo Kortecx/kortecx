@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from kortecx import GlobalDelta, MoteTelemetryRow, TelemetryPage
+from kortecx import GlobalDelta, MoteTelemetryRow, TelemetryPage, TelemetrySummary
 from kortecx.events import _ws_all_url, _ws_global_delta, _ws_url
 from kortecx.telemetry import MoteTelemetryRow as TelemetryRowAlias
 from kortecx.v1 import gateway_pb2 as g
@@ -230,3 +230,34 @@ def test_telemetry_page_shape():
     page = TelemetryPage(rows=[row], has_more=True)
     assert page.rows[0] is row and page.has_more is True
     assert TelemetryRowAlias is MoteTelemetryRow  # one class, exported at the top level
+
+
+def test_telemetry_summary_maps_rows_and_totals():
+    # W1a-3: the per-model token-economy rollup mapper (descending output tokens
+    # is the server's ordering — the SDK preserves it verbatim).
+    resp = g.ListTelemetrySummaryResponse(
+        rows=[
+            g.ModelTokenRollup(
+                model_id="model-a", count=3, total_output_tokens=60, total_wall_clock_ms=12
+            ),
+            g.ModelTokenRollup(
+                model_id="model-b", count=1, total_output_tokens=5, total_wall_clock_ms=7
+            ),
+        ],
+        total_motes=5,
+        total_output_tokens=65,
+    )
+    view = TelemetrySummary.from_proto(resp)
+    assert [r.model_id for r in view.rows] == ["model-a", "model-b"]
+    assert view.rows[0].count == 3
+    assert view.rows[0].total_output_tokens == 60
+    assert view.rows[0].total_wall_clock_ms == 12
+    assert view.total_motes == 5
+    assert view.total_output_tokens == 65
+
+
+def test_telemetry_summary_empty_is_empty_not_fabricated():
+    view = TelemetrySummary.from_proto(g.ListTelemetrySummaryResponse())
+    assert view.rows == []
+    assert view.total_motes == 0
+    assert view.total_output_tokens == 0

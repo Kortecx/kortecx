@@ -933,6 +933,32 @@ message ListMoteTelemetryResponse {
 }
 
 // ---------------------------------------------------------------------------
+// W1a-3 additive (D120.6): the EXACT, cross-page per-model token-economy
+// rollup. `ListMoteTelemetry` is page-clamped (1..=500), so a long ReAct run
+// can NOT be honestly summed client-side from one page; this RPC folds the
+// whole `telemetry.db` sidecar server-side (`SUM ... GROUP BY model_id`) so
+// CLI/SDK/UI render ONE truth (no per-surface drift). Same boundary as
+// `ListMoteTelemetry`: off-journal, off-digest, rebuildable-to-EMPTY,
+// AUDIT/DISPLAY ONLY. No cost/$ field — billing is CLOUD (D129/D156/GR19). A
+// serve without the sidecar answers `unimplemented` (forward-compat degrade).
+message ListTelemetrySummaryRequest {
+  optional bytes instance_id = 1;        // 16B — scope to one run (absent = all runs)
+}
+
+message ModelTokenRollup {
+  string model_id = 1;                   // the model that ACTUALLY ran (per-model rows only; never empty)
+  uint64 count = 2;                      // committed model motes that ran this model
+  uint64 total_output_tokens = 3;        // SUM(output_tokens); 0 on an FFI-free serve (honest)
+  uint64 total_wall_clock_ms = 4;        // SUM(wall_clock_ms) for this model
+}
+
+message ListTelemetrySummaryResponse {
+  repeated ModelTokenRollup rows = 1;    // one per model_id, descending total_output_tokens
+  uint64 total_motes = 2;                // ALL joined motes in scope (model + non-model)
+  uint64 total_output_tokens = 3;        // window-wide SUM(output_tokens)
+}
+
+// ---------------------------------------------------------------------------
 // PR-4.1 additive (D120.6): user feedback on an answer (👍/👎 + optional note).
 // A CLIENT-ORIGIN write into a rebuildable-to-EMPTY `feedback.db` sidecar — the
 // uploads.db posture (off-journal, off-digest, off-identity). NOTHING here is
@@ -1140,6 +1166,11 @@ service KxGateway {
   // sidecar; audit/display only — never truth/identity/digest; never a journal
   // change).
   rpc ListMoteTelemetry(ListMoteTelemetryRequest) returns (ListMoteTelemetryResponse);
+  // W1a-3 additive (D120.6): the exact, cross-page per-model token-economy
+  // rollup (server-side SUM ... GROUP BY model_id over the same telemetry.db
+  // sidecar). One truth for CLI/SDK/UI; no cost/$ field (billing is CLOUD).
+  // UNIMPLEMENTED when the seam yields None (forward-compat degrade).
+  rpc ListTelemetrySummary(ListTelemetrySummaryRequest) returns (ListTelemetrySummaryResponse);
   // PR-4.1 additive (D120.6): user 👍/👎 feedback on an answer — a client-origin
   // write into a rebuildable-to-empty feedback.db sidecar (advisory; off-journal,
   // off-digest, off-identity; SN-8 server-resolved principal). `ListFeedback` is

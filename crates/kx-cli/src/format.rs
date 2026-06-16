@@ -974,6 +974,58 @@ pub fn render_telemetry(resp: &proto::ListMoteTelemetryResponse, json: bool) -> 
     }
 }
 
+/// Render `telemetry summary` (W1a-3): the exact, cross-page per-model
+/// token-economy rollup + the window-wide totals. The empty state is honest
+/// ("(no telemetry rows)"), never a fabricated row; no cost/$ (billing is
+/// CLOUD). `--json` field names mirror the SDK snake_case shape (the
+/// tri-surface parity contract).
+#[must_use]
+pub fn render_telemetry_summary(resp: &proto::ListTelemetrySummaryResponse, json: bool) -> String {
+    if json {
+        let rows: Vec<Value> = resp
+            .rows
+            .iter()
+            .map(|r| {
+                json!({
+                    "model_id": r.model_id,
+                    "count": r.count,
+                    "total_output_tokens": r.total_output_tokens,
+                    "total_wall_clock_ms": r.total_wall_clock_ms,
+                })
+            })
+            .collect();
+        json!({
+            "rows": rows,
+            "total_motes": resp.total_motes,
+            "total_output_tokens": resp.total_output_tokens,
+        })
+        .to_string()
+    } else if resp.rows.is_empty() && resp.total_motes == 0 {
+        "(no telemetry rows)".to_string()
+    } else {
+        let mut out = String::new();
+        for r in &resp.rows {
+            let _ = write!(
+                out,
+                "{}model {}  motes {}  out_tokens {}  wall_ms {}",
+                if out.is_empty() { "" } else { "\n" },
+                r.model_id,
+                r.count,
+                r.total_output_tokens,
+                r.total_wall_clock_ms,
+            );
+        }
+        let _ = write!(
+            out,
+            "{}total: {} motes, {} output tokens",
+            if out.is_empty() { "" } else { "\n" },
+            resp.total_motes,
+            resp.total_output_tokens,
+        );
+        out
+    }
+}
+
 /// Render `alerts list` (W1a-2): newest-first terminal-failure alerts + the
 /// pagination cursor hint. The empty state is honest ("System is healthy …"),
 /// not a fabricated row. `--json` field names mirror the SDK snake_case shape
@@ -1642,5 +1694,46 @@ mod tests {
             false,
         );
         assert!(empty.contains("System is healthy"));
+    }
+
+    #[test]
+    fn telemetry_summary_json_carries_every_snake_case_field() {
+        // Locks the tri-surface parity contract for W1a-3: the CLI `--json` shape
+        // MUST carry every field the Py/TS SDKs expose. If a proto field is added,
+        // extend this set.
+        let resp = proto::ListTelemetrySummaryResponse {
+            rows: vec![proto::ModelTokenRollup {
+                model_id: "kx-serve:qwen3".into(),
+                count: 3,
+                total_output_tokens: 60,
+                total_wall_clock_ms: 12,
+            }],
+            total_motes: 4,
+            total_output_tokens: 60,
+        };
+        let v: Value = serde_json::from_str(&render_telemetry_summary(&resp, true)).unwrap();
+        let row = &v["rows"][0];
+        for key in [
+            "model_id",
+            "count",
+            "total_output_tokens",
+            "total_wall_clock_ms",
+        ] {
+            assert!(!row[key].is_null(), "summary --json must carry `{key}`");
+        }
+        assert_eq!(row["model_id"], "kx-serve:qwen3");
+        assert_eq!(row["count"], 3);
+        assert_eq!(v["total_motes"], 4);
+        assert_eq!(v["total_output_tokens"], 60);
+        // The empty case is honest, never a fabricated row.
+        let empty = render_telemetry_summary(
+            &proto::ListTelemetrySummaryResponse {
+                rows: vec![],
+                total_motes: 0,
+                total_output_tokens: 0,
+            },
+            false,
+        );
+        assert!(empty.contains("no telemetry rows"));
     }
 }

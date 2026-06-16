@@ -42,7 +42,7 @@ from .replan import ReplanRound, ReplanRoundPage
 from .run import AsyncRun, Result, Run
 from .runs import RunInputs, RunPage, RunSummary
 from .teams import TeamMembers, TeamSummary
-from .telemetry import MoteTelemetryRow, TelemetryPage
+from .telemetry import MoteTelemetryRow, TelemetryPage, TelemetrySummary
 from .toolscout import BundleScore, BundleSpec, ToolManifest
 from .v1 import gateway_pb2 as _g
 from .v1 import gateway_pb2_grpc as _gg
@@ -541,6 +541,24 @@ class KxClient:
         return TelemetryPage(
             rows=[MoteTelemetryRow.from_proto(r) for r in resp.rows], has_more=resp.has_more
         )
+
+    def list_telemetry_summary(
+        self,
+        *,
+        instance_id: Optional[str] = None,
+    ) -> TelemetrySummary:
+        """The EXACT, cross-page per-model token-economy rollup (W1a-3) — output
+        tokens + wall-clock summed ``GROUP BY model_id`` server-side over the same
+        ``telemetry.db`` sidecar, so a long ReAct run is summed honestly (unlike a
+        client fold over the page-clamped :meth:`list_mote_telemetry`). Token-only,
+        no cost/$ (billing is CLOUD). ``instance_id`` (hex) scopes to one run; absent
+        sums all runs. An old gateway (or one without the sidecar) raises
+        ``KxUnimplemented``."""
+        req = _g.ListTelemetrySummaryRequest()
+        if instance_id is not None:
+            req.instance_id = hexids.decode(instance_id)
+        resp = self._call(lambda: self._stub.ListTelemetrySummary(req, metadata=self._md))
+        return TelemetrySummary.from_proto(resp)
 
     def list_alerts(
         self,
@@ -1079,6 +1097,18 @@ class AsyncKxClient:
         return TelemetryPage(
             rows=[MoteTelemetryRow.from_proto(r) for r in resp.rows], has_more=resp.has_more
         )
+
+    async def list_telemetry_summary(
+        self,
+        *,
+        instance_id: Optional[str] = None,
+    ) -> TelemetrySummary:
+        """Async :meth:`KxClient.list_telemetry_summary`."""
+        req = _g.ListTelemetrySummaryRequest()
+        if instance_id is not None:
+            req.instance_id = hexids.decode(instance_id)
+        resp = await self._acall(self._stub.ListTelemetrySummary(req, metadata=self._md))
+        return TelemetrySummary.from_proto(resp)
 
     async def submit_feedback(
         self,
