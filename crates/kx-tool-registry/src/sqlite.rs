@@ -599,6 +599,45 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "GR10 micro-profile; run with `cargo test -p kx-tool-registry gr10 -- --ignored --nocapture`"]
+    fn gr10_registry_spike() {
+        // Realistic cardinality (built-ins + a few dozen registered tools).
+        let reg =
+            SqliteToolRegistry::open(tempfile::tempdir().unwrap().path().join("tools.db")).unwrap();
+        let n = 50usize;
+        let prov = ToolProvenance::HumanAuthored {
+            author: "ops".into(),
+        };
+        let mut reg_t = Vec::with_capacity(n);
+        for i in 0..n {
+            let def = custom_def(&format!("tool-{i:03}"));
+            let start = std::time::Instant::now();
+            reg.register_durable(def, prov.clone(), Some("h.example.com".into()))
+                .unwrap();
+            reg_t.push(start.elapsed());
+        }
+        reg_t.sort_unstable();
+        let d0 = std::time::Instant::now();
+        let _ = reg.discover(256, None).unwrap();
+        let discover = d0.elapsed();
+        let mut look_t = Vec::with_capacity(n);
+        for i in 0..n {
+            let id = ToolName(format!("tool-{i:03}"));
+            let start = std::time::Instant::now();
+            let _ = reg.lookup(&id, &ToolVersion("1".into()));
+            look_t.push(start.elapsed());
+        }
+        look_t.sort_unstable();
+        eprintln!(
+            "GR10 tools-registry (n={n}): register_durable p50={:?} p99={:?} · discover(all)={:?} · lookup p50={:?}",
+            reg_t[n / 2],
+            reg_t[(n * 99) / 100],
+            discover,
+            look_t[n / 2],
+        );
+    }
+
+    #[test]
     fn resolve_byte_identical_to_in_memory() {
         // The durable resolve must produce the SAME resolved_def_hash as the
         // in-memory backend — the digest-invariance keystone.
