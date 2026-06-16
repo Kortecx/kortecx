@@ -57,8 +57,8 @@ fn tool_menu_text(def: &ToolDef) -> String {
 /// 2. For each `tool_grant` in `warrant.tool_grants`:
 ///    - Resolve via `registry.resolve(grant, warrant)`.
 ///    - Hash the resolved `ToolDef` via canonical bincode → `source_ref`.
-///    - Emit one `AssembledItem` carrying the tool's menu text (see
-///      [`tool_menu_text`]), labeled `"tool.<name>@<version>"`.
+///    - Emit one `AssembledItem` carrying the tool's menu text, labeled
+///      `"tool.<name>@<version>"`.
 ///    - **PR-6a: the menu text is the tool's `description` PLUS its typed
 ///      `inputSchema` parameters** (name · type · required), so the model
 ///      proposes well-formed calls; a schema-less tool is byte-identical to the
