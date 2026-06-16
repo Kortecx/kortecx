@@ -62,6 +62,38 @@ A failed event row surfaces the journal's `FailureReason` as a short label
 the `FAILED` pill, mirroring the closed enum in the runtime. A row that carried no
 reason shows no label — the reason is never invented.
 
+## Alerts inbox
+
+The **Alerts** sub-tab in Monitoring is a read-only operator inbox of **terminal
+failures** — the runtime's durable signal that a run gave up. It is folded from the
+journal's terminal `Failed` facts (dead-letters and worker-reported terminal
+failures); the liveness retries (`TIMED OUT` / `WORKER CRASHED`, which re-dispatch)
+are deliberately excluded, so a row here means a run that is genuinely done and
+failed.
+
+```bash
+# the same inbox from the CLI (newest-first, paginated):
+kx alerts list
+kx alerts list --instance <hex16> --limit 50
+kx alerts list --json   # alert_id · mote_id · reason_class · reason_code · severity · seq
+```
+
+Each alert deep-links to the failed run's graph and carries the journal `seq` of the
+`Failed` fact. The inbox lives in a rebuildable, off-journal `alerts.db` sidecar that
+is **folded from committed facts**: delete it and restart, and the same alert set
+re-materializes — it is derived, never authoritative, and never changes the canonical
+projection digest. When the serve has no sidecar (an older build) the view degrades
+honestly to "not wired".
+
+**Scope note.** Admission **refusals** (a `SubmitRun` rejected up front with a
+`kx-refusal-code`) are *not* in this inbox — they are synchronous responses that never
+become journal facts, and they surface in the live feed instead.
+
+The **triage lifecycle** (acknowledge / resolve), an **alert-rule engine**, and
+outbound **notifications** (Slack / PagerDuty / webhook) are a managed
+[Cloud](https://github.com/Kortecx/kortecx#cloud) capability and appear here as an
+honest-disabled card — OSS ships the durable read-only view.
+
 ## Health
 
 Gateway liveness is inferred from a cheap unary round-trip on an interval (the same
@@ -147,10 +179,9 @@ jq -c 'select(.type=="mote_failed")' /var/log/kortecx/audit.jsonl
 ```
 
 :::note More on the way
-A failures/refusals **alerts inbox** (acknowledge / resolve), live-feed **filter
-chips + JSONL export**, and a **token-economy** breakdown land with the next
-observability batches. Time-travel (`kx projection --at-seq`) and run capture
-(`ListCaptureRecords`) are covered in the
+Live-feed **filter chips + JSONL export** and a **token-economy** breakdown land
+with the next observability batch. Time-travel (`kx projection --at-seq`) and run
+capture (`ListCaptureRecords`) are covered in the
 [Quickstart](./quickstart.md#run-your-first-blueprint) and the
 [production notes in the README](https://github.com/Kortecx/kortecx/blob/main/README.md#production-notes).
 :::

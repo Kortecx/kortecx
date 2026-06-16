@@ -58,6 +58,10 @@ export type { CaptureRecordPage } from "./capture.js";
 export { MoteTelemetryRow } from "./telemetry.js";
 export type { MoteTelemetryPage } from "./telemetry.js";
 
+// W1a-2: the operator alerts inbox (read-only view; terminal-failure facts).
+export { AlertSummary } from "./alerts.js";
+export type { AlertsPage } from "./alerts.js";
+
 // PR-4.1: user 👍/👎 feedback (advisory product signal; rebuildable-to-empty).
 export { FeedbackRow, ratingFromProto, ratingToProto } from "./feedback.js";
 export type { FeedbackInput, FeedbackPage, Rating } from "./feedback.js";

@@ -1176,3 +1176,41 @@ class TokenChunk(_message.Message):
     text_piece: bytes
     done: bool
     def __init__(self, seq: _Optional[int] = ..., mote_id: _Optional[bytes] = ..., text_piece: _Optional[bytes] = ..., done: bool = ...) -> None: ...
+
+class ListAlertsRequest(_message.Message):
+    __slots__ = ("limit", "instance_id", "before_seq")
+    LIMIT_FIELD_NUMBER: _ClassVar[int]
+    INSTANCE_ID_FIELD_NUMBER: _ClassVar[int]
+    BEFORE_SEQ_FIELD_NUMBER: _ClassVar[int]
+    limit: int
+    instance_id: bytes
+    before_seq: int
+    def __init__(self, limit: _Optional[int] = ..., instance_id: _Optional[bytes] = ..., before_seq: _Optional[int] = ...) -> None: ...
+
+class AlertSummary(_message.Message):
+    __slots__ = ("alert_id", "mote_id", "instance_id", "reason_class", "severity", "seq", "created_unix_ms", "reason_code")
+    ALERT_ID_FIELD_NUMBER: _ClassVar[int]
+    MOTE_ID_FIELD_NUMBER: _ClassVar[int]
+    INSTANCE_ID_FIELD_NUMBER: _ClassVar[int]
+    REASON_CLASS_FIELD_NUMBER: _ClassVar[int]
+    SEVERITY_FIELD_NUMBER: _ClassVar[int]
+    SEQ_FIELD_NUMBER: _ClassVar[int]
+    CREATED_UNIX_MS_FIELD_NUMBER: _ClassVar[int]
+    REASON_CODE_FIELD_NUMBER: _ClassVar[int]
+    alert_id: bytes
+    mote_id: bytes
+    instance_id: bytes
+    reason_class: str
+    severity: str
+    seq: int
+    created_unix_ms: int
+    reason_code: int
+    def __init__(self, alert_id: _Optional[bytes] = ..., mote_id: _Optional[bytes] = ..., instance_id: _Optional[bytes] = ..., reason_class: _Optional[str] = ..., severity: _Optional[str] = ..., seq: _Optional[int] = ..., created_unix_ms: _Optional[int] = ..., reason_code: _Optional[int] = ...) -> None: ...
+
+class ListAlertsResponse(_message.Message):
+    __slots__ = ("alerts", "has_more")
+    ALERTS_FIELD_NUMBER: _ClassVar[int]
+    HAS_MORE_FIELD_NUMBER: _ClassVar[int]
+    alerts: _containers.RepeatedCompositeFieldContainer[AlertSummary]
+    has_more: bool
+    def __init__(self, alerts: _Optional[_Iterable[_Union[AlertSummary, _Mapping]]] = ..., has_more: bool = ...) -> None: ...

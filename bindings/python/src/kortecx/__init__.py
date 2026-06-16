@@ -12,6 +12,7 @@ go::
 
 from __future__ import annotations
 
+from .alerts import AlertsPage, AlertSummary
 from .blueprints import BlueprintBuilder, EdgeInput, StepInput
 from .capture import CaptureRecord, CaptureRecordPage
 from .chains import Chain, Task, chain, model, pure
@@ -149,6 +150,9 @@ __all__ = [
     "GlobalDelta",
     "MoteTelemetryRow",
     "TelemetryPage",
+    # W1a-2: the operator alerts inbox (read-only view; terminal-failure facts)
+    "AlertSummary",
+    "AlertsPage",
     # PR-4.1: user 👍/👎 feedback (advisory product signal; rebuildable-to-empty)
     "FeedbackRow",
     "FeedbackPage",

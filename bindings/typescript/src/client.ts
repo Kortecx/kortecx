@@ -12,6 +12,7 @@
 import type { MessageInitShape } from "@bufbuild/protobuf";
 import { createClient } from "@connectrpc/connect";
 import type { Client, Transport } from "@connectrpc/connect";
+import { AlertSummary, type AlertsPage } from "./alerts.js";
 import { CaptureRecord, type CaptureRecordPage } from "./capture.js";
 import type { Chain } from "./chains.js";
 import { ContentItem, PutResult } from "./content.js";
@@ -483,6 +484,32 @@ export abstract class KxClientBase {
       }),
     );
     return { rows: resp.rows.map((r) => MoteTelemetryRow.fromProto(r)), hasMore: resp.hasMore };
+  }
+
+  /**
+   * Enumerate the operator alerts inbox (newest-first, paginated) — the
+   * journal's TERMINAL `Failed` facts (dead-letters + worker-reported terminal
+   * failures) folded into the gateway's rebuildable-to-empty `alerts.db`
+   * read-cache (W1a-2). DISPLAY/TRIAGE-READ only: never truth, never identity,
+   * never a digest input. `instanceId` (hex) scopes to one run; `beforeSeq`
+   * resumes from the `seq` of the last row seen. The server clamps `limit` to its
+   * max page. The triage lifecycle (ack/resolve) is a Cloud capability (D156) —
+   * not exposed here. An old gateway (or one without the sidecar) throws
+   * {@link KxUnimplemented}.
+   */
+  async listAlerts(
+    opts: { instanceId?: string; limit?: number; beforeSeq?: bigint } = {},
+  ): Promise<AlertsPage> {
+    const instanceId =
+      opts.instanceId === undefined ? undefined : asBytes(opts.instanceId, INSTANCE_LEN);
+    const resp = await rpc(
+      this.grpc.listAlerts({
+        instanceId,
+        limit: opts.limit,
+        beforeSeq: opts.beforeSeq,
+      }),
+    );
+    return { alerts: resp.alerts.map((a) => AlertSummary.fromProto(a)), hasMore: resp.hasMore };
   }
 
   /**

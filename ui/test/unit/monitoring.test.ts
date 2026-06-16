@@ -1,6 +1,13 @@
-import { CaptureRecord, MoteTelemetryRow, ReactTurn, ReplanRound } from "@kortecx/sdk/web";
+import {
+  AlertSummary,
+  CaptureRecord,
+  MoteTelemetryRow,
+  ReactTurn,
+  ReplanRound,
+} from "@kortecx/sdk/web";
 import { describe, expect, it } from "vitest";
 import {
+  summarizeAlerts,
   summarizeCaptures,
   summarizeReact,
   summarizeReplan,
@@ -172,5 +179,35 @@ describe("wallClockPercentiles", () => {
     expect(w.p50WallMs).toBe(30);
     expect(w.p95WallMs).toBe(100);
     expect(w.totalOutputTokens).toBe(10);
+  });
+});
+
+/** Build an alert with only the fields the rollup reads. */
+function alert(reasonClass: string, severity: string, seq = 0): AlertSummary {
+  return new AlertSummary("aa", "bb", "cc", reasonClass, 8, severity, seq, 0);
+}
+
+describe("summarizeAlerts", () => {
+  it("is empty for no alerts (honest healthy state)", () => {
+    const s = summarizeAlerts([]);
+    expect(s.total).toBe(0);
+    expect(s.errors).toBe(0);
+    expect(s.refusals).toBe(0);
+    expect(Object.keys(s.byReason)).toHaveLength(0);
+  });
+
+  it("splits error vs refused by severity and tallies reasons", () => {
+    const s = summarizeAlerts([
+      alert("dead_lettered", "error", 5),
+      alert("validator_rejected", "error", 4),
+      alert("executor_refused", "refused", 3),
+      alert("dead_lettered", "error", 2),
+    ]);
+    expect(s.total).toBe(4);
+    expect(s.errors).toBe(3);
+    expect(s.refusals).toBe(1);
+    // tally is by reasonClass; dead_lettered seen twice.
+    expect(s.byReason.dead_lettered).toBe(2);
+    expect(s.byReason.executor_refused).toBe(1);
   });
 });

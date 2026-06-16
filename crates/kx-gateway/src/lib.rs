@@ -68,6 +68,11 @@ mod console;
 // `hnsw` feature (the default build + the dep-wall stay unchanged).
 #[cfg(feature = "hnsw")]
 mod datasets;
+// W1a-2: the alerts.db read-cache (the AlertView seam) — the operator alerts
+// inbox folded from the journal's TERMINAL `Failed` facts. Read-only,
+// off-truth-path, rebuildable (the capture.db posture). The triage lifecycle
+// (ack/resolve), rule engine, and notifications are a Cloud capability (D156).
+mod alerts;
 // The Morphic Data Engine (campaign Batch 2): the durable serve-path capture
 // projection (capture.db sidecar folded from the read-only journal handle).
 // Always-on, off-truth-path; FFI-free (rusqlite is already in the closure).

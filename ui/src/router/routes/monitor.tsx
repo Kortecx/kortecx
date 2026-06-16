@@ -11,10 +11,10 @@ const MonitoringSection = lazy(() =>
   })),
 );
 
-/** The Monitoring views (Batch C): the overview panels, the global live feed,
- *  and the execution-telemetry table. URL-addressable (the run-detail tab
- *  precedent); absent = "overview". */
-const MONITOR_TABS = ["feed", "telemetry"] as const;
+/** The Monitoring views: the overview panels, the global live feed, the
+ *  execution-telemetry table (Batch C), and the operator alerts inbox (W1a-2).
+ *  URL-addressable (the run-detail tab precedent); absent = "overview". */
+const MONITOR_TABS = ["feed", "telemetry", "alerts"] as const;
 export type MonitorTab = (typeof MONITOR_TABS)[number];
 
 interface MonitorSearch {

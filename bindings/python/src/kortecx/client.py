@@ -21,6 +21,7 @@ if TYPE_CHECKING:
 from . import events as _events
 from . import hexids, types
 from . import wait as _wait  # aliased: `wait` is also a public kwarg name
+from .alerts import AlertsPage, AlertSummary
 from .capture import CaptureRecord, CaptureRecordPage
 from .content import ContentItem, PutResult
 from .datasets import (
@@ -539,6 +540,34 @@ class KxClient:
         resp = self._call(lambda: self._stub.ListMoteTelemetry(req, metadata=self._md))
         return TelemetryPage(
             rows=[MoteTelemetryRow.from_proto(r) for r in resp.rows], has_more=resp.has_more
+        )
+
+    def list_alerts(
+        self,
+        *,
+        instance_id: Optional[str] = None,
+        limit: Optional[int] = None,
+        before_seq: Optional[int] = None,
+    ) -> AlertsPage:
+        """Enumerate the operator alerts inbox (newest-first, paginated) — the
+        journal's TERMINAL ``Failed`` facts (dead-letters + worker-reported
+        terminal failures) folded into a rebuildable-to-empty ``alerts.db``
+        read-cache (W1a-2). DISPLAY/TRIAGE-READ only: never truth, never identity,
+        never a digest input. ``instance_id`` (hex) scopes the page; ``before_seq``
+        resumes below the last row's seq. The server clamps ``limit`` to its max
+        page. The triage lifecycle (ack/resolve) is a Cloud capability (D156) — not
+        exposed here. An old gateway (or one without the sidecar) raises
+        ``KxUnimplemented``."""
+        req = _g.ListAlertsRequest()
+        if instance_id is not None:
+            req.instance_id = hexids.decode(instance_id)
+        if limit is not None:
+            req.limit = limit
+        if before_seq is not None:
+            req.before_seq = before_seq
+        resp = self._call(lambda: self._stub.ListAlerts(req, metadata=self._md))
+        return AlertsPage(
+            alerts=[AlertSummary.from_proto(a) for a in resp.alerts], has_more=resp.has_more
         )
 
     def submit_feedback(
