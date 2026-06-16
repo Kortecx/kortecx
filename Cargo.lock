@@ -1408,6 +1408,7 @@ version = "0.1.1"
 dependencies = [
  "criterion",
  "getrandom 0.3.4",
+ "kx-audit",
  "kx-content",
  "kx-journal",
  "kx-mote",
@@ -1538,6 +1539,7 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "kx-audit",
  "kx-bundle",
  "kx-capability",
  "kx-capture",
@@ -1557,6 +1559,7 @@ dependencies = [
  "kx-model-store",
  "kx-model-validator",
  "kx-mote",
+ "kx-otel",
  "kx-planner",
  "kx-proto",
  "kx-refusal",
@@ -1820,6 +1823,18 @@ dependencies = [
  "thiserror 1.0.69",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "kx-otel"
+version = "0.1.1"
+dependencies = [
+ "kx-content",
+ "kx-gateway-core",
+ "kx-journal",
+ "kx-mote",
+ "thiserror 1.0.69",
+ "tracing",
 ]
 
 [[package]]

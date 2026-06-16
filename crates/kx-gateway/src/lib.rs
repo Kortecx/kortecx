@@ -79,6 +79,9 @@ mod error;
 // executor wrapper — always-on, FFI-free (rusqlite already in the closure).
 mod feedback;
 mod live_tail;
+// W1a (T-OBS2): the always-available Prometheus `/metrics` listener (opt-in via
+// `--metrics-listen`). FFI-free (hyper http1 only); not feature-gated.
+mod metrics;
 // PR-2d-2: the bundled deterministic stdio MCP tool's wiring (locate the bin,
 // register the capability + the typed ToolDef). Behind `inference` (the react
 // decode arm lives in the inference-gated executor; the MCP adapter is FFI-free).

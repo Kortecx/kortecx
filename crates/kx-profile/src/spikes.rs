@@ -100,6 +100,8 @@ pub(crate) fn config(dir: &Path) -> Result<GatewayConfig, ProfileError> {
         cors_origins: Vec::new(),
         console_listen: ConsoleMode::Disabled,
         content_max_bytes: kx_gateway::DEFAULT_CONTENT_MAX_BYTES,
+        metrics_listen: None,
+        audit_log: None,
     })
 }
 

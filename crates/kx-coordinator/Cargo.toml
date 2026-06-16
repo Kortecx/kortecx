@@ -25,6 +25,12 @@ kx-projection = { workspace = true }
 kx-mote = { workspace = true }
 kx-content = { workspace = true }
 kx-warrant = { workspace = true }
+# W1a (T-OBS1): the OFF-TRUTH-PATH audit sink. The serve coordinator emits the
+# operator lifecycle (admitted / committed / failed) to an optional sink so the
+# long-running `kx serve` has the durable operator audit trail the CLI already
+# has. NOT the frozen trio + the dep-wall test (kx-audit/tests/boundary.rs) keeps
+# the guarantee-path crates off this edge; record() is infallible (digest-inert).
+kx-audit = { workspace = true }
 # Resolve-at-submit (M1.2, D79): the coordinator resolves the warrant's
 # tool_grants and captures the resolved versions as off-DAG run metadata. This
 # is a NEW dep edge but does NOT touch the frozen trio

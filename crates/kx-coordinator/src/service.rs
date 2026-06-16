@@ -7,9 +7,10 @@
 
 use std::sync::Arc;
 
+use kx_audit::{AuditEvent, AuditSink, DispatchKind};
 use kx_content::LocalFsContentStore;
 use kx_journal::{FailureReason, Journal, JournalEntry};
-use kx_mote::{Mote, MoteId};
+use kx_mote::{Mote, MoteId, NdClass};
 use kx_projection::MoteState;
 use kx_proto::proto;
 use kx_proto::proto::coordinator_server::Coordinator;
@@ -31,6 +32,11 @@ use crate::state::CoreHandle;
 pub struct CoordinatorService {
     core: CoreHandle,
     registry: Arc<dyn WorkerRegistry>,
+    /// W1a (T-OBS1): the OPTIONAL off-truth-path operator audit sink. `None`
+    /// (every constructor's default) ⇒ no audit emit, byte-identical to today.
+    /// Set by the gateway via [`CoordinatorService::with_audit_sink`] for the
+    /// long-running serve. Best-effort: `record` is infallible + never gates a run.
+    audit: Option<Arc<dyn AuditSink>>,
 }
 
 impl CoordinatorService {
@@ -128,6 +134,7 @@ impl CoordinatorService {
                 None,
             ),
             registry,
+            audit: None,
         }
     }
 
@@ -160,6 +167,7 @@ impl CoordinatorService {
                 Some(shaper_roles),
             ),
             registry,
+            audit: None,
         }
     }
 
@@ -219,6 +227,26 @@ impl CoordinatorService {
             Arc::new(SystemClock),
             Arc::new(OsRandomNonce),
         )
+    }
+
+    /// W1a (T-OBS1): attach an OFF-TRUTH-PATH operator audit sink (builder style,
+    /// like the runtime's `RuntimeAuditSink`). The serve coordinator then emits the
+    /// admitted / committed / failed lifecycle as best-effort [`AuditEvent`]s. The
+    /// gateway supplies a `JsonlAuditSink` from `--audit-log`; every other caller
+    /// leaves it `None` (no emit). NEVER gates a run — `record` is infallible.
+    #[must_use]
+    pub fn with_audit_sink(mut self, sink: Arc<dyn AuditSink>) -> Self {
+        self.audit = Some(sink);
+        self
+    }
+
+    /// Emit one lifecycle event to the audit sink, if one is attached. A no-op when
+    /// `None`, so the off-truth-path guarantee holds (no time/identity recomputation;
+    /// the sink only echoes already-derived join keys).
+    fn audit(&self, event: AuditEvent) {
+        if let Some(sink) = &self.audit {
+            sink.record(event);
+        }
     }
 
     /// Read-side accessor: the current [`MoteState`] of `mote_id` in the
@@ -340,6 +368,9 @@ impl Coordinator for CoordinatorService {
         // The coordinator-derived identity (D53) — captured before the move so
         // it can ride a REJECTED response when the submit is refused (M1.3).
         let mote_id = mote.id.as_bytes().to_vec();
+        // W1a (T-OBS1): the nd_class for the admitted-Mote audit line (captured
+        // before the move into `submit`). Off the truth path — echoed, never recomputed.
+        let nd_class = mote.nd_class();
 
         match self
             .core
@@ -352,6 +383,29 @@ impl Coordinator for CoordinatorService {
                 } else {
                     proto::SubmitStatus::Accepted
                 };
+                // W1a (T-OBS1): a genuinely-new admission is an operator-relevant
+                // lifecycle event (a duplicate re-submit is not — the journal already
+                // has it). Mapped to MoteDispatched (the Mote entered the runtime for
+                // execution); the kind is derived from nd_class (no recovery context
+                // at submit). Best-effort + off the digest. NOTE: this is the
+                // CLIENT-submission admission line; coordinator-MATERIALIZED agentic
+                // children (shaper children, ReAct/re-plan turns) are spliced onto the
+                // sole-writer thread (state.rs materialize_*) and so are audited via
+                // their report_commit/report_failure (MoteCommitted/MoteFailed) only —
+                // every durable outcome is captured; a per-child dispatch line for the
+                // agentic loop is an additive follow-on (threads the sink into core).
+                if !outcome.duplicate {
+                    let kind = if matches!(nd_class, NdClass::Pure) {
+                        DispatchKind::Pure
+                    } else {
+                        DispatchKind::WmFresh
+                    };
+                    self.audit(AuditEvent::MoteDispatched {
+                        mote_id: outcome.mote_id,
+                        nd_class,
+                        kind,
+                    });
+                }
                 Ok(Response::new(proto::SubmitMoteResponse {
                     mote_id: outcome.mote_id.as_bytes().to_vec(),
                     status: status as i32,
@@ -401,12 +455,25 @@ impl Coordinator for CoordinatorService {
             return Err(CoordinatorError::UnknownWorker(worker).into());
         }
         let proposal = commit::assemble(req)?;
+        // W1a (T-OBS1): capture the commit's join keys before the proposal moves
+        // into the sole-writer core, so a NEWLY-committed Mote can be audited below.
+        let (audit_mote_id, audit_result_ref, audit_nd) =
+            (proposal.mote_id, proposal.result_ref, proposal.nd_class);
         let applied = self.core.commit(proposal).await?;
         let outcome = if applied.already_committed {
             proto::CommitOutcome::AlreadyCommitted
         } else {
             proto::CommitOutcome::Committed
         };
+        // W1a (T-OBS1): emit the durable-effect audit line only for a genuinely new
+        // commit (an already-committed re-report is not a new fact). Off the digest.
+        if !applied.already_committed {
+            self.audit(AuditEvent::MoteCommitted {
+                mote_id: audit_mote_id,
+                result_ref: audit_result_ref,
+                nd_class: audit_nd,
+            });
+        }
         tracing::info!(
             seq = applied.committed_seq,
             already_committed = applied.already_committed,
@@ -486,6 +553,11 @@ impl Coordinator for CoordinatorService {
             .core
             .report_failure(mote_id, idempotency_key, reason_class, worker)
             .await?;
+        // W1a (T-OBS1): a freshly-appended terminal failure is an operator-relevant
+        // event (a deduped re-report is not). Off the truth path; never gates the run.
+        if appended {
+            self.audit(AuditEvent::MoteFailed { mote_id });
+        }
         tracing::info!(
             seq = failed_seq,
             appended,
