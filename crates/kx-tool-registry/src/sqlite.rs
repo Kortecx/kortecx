@@ -214,7 +214,14 @@ impl SqliteToolRegistry {
     ) -> Result<RegistrationToken, RegistrationError> {
         let token = registration_token_of(&def, &provenance);
         let conn = self.conn.lock().expect("poisoned mutex");
-        insert_row(&conn, &token, &def, &provenance, is_builtin, server_host.as_deref())?;
+        insert_row(
+            &conn,
+            &token,
+            &def,
+            &provenance,
+            is_builtin,
+            server_host.as_deref(),
+        )?;
         let rebuilt = rebuild_inner(&conn)?;
         *self.inner.write().expect("poisoned lock") = rebuilt;
         Ok(token)
@@ -278,18 +285,15 @@ impl SqliteToolRegistry {
         let limit_i64 = i64::try_from(limit).unwrap_or(i64::MAX);
         let mut stmt = conn.prepare(sql).map_err(|e| store_err(&e))?;
         let rows = stmt
-            .query_map(
-                params![after_name, after_version, limit_i64],
-                |r| {
-                    Ok((
-                        r.get::<_, Vec<u8>>(0)?,
-                        r.get::<_, i64>(1)?,
-                        r.get::<_, Option<String>>(2)?,
-                        r.get::<_, Vec<u8>>(3)?,
-                        r.get::<_, Vec<u8>>(4)?,
-                    ))
-                },
-            )
+            .query_map(params![after_name, after_version, limit_i64], |r| {
+                Ok((
+                    r.get::<_, Vec<u8>>(0)?,
+                    r.get::<_, i64>(1)?,
+                    r.get::<_, Option<String>>(2)?,
+                    r.get::<_, Vec<u8>>(3)?,
+                    r.get::<_, Vec<u8>>(4)?,
+                ))
+            })
             .map_err(|e| store_err(&e))?;
 
         let mut out = Vec::new();
@@ -411,7 +415,10 @@ impl ToolRegistry for SqliteToolRegistry {
         grant: &ToolGrant,
         warrant: &WarrantSpec,
     ) -> Result<ResolvedTool, ResolutionError> {
-        self.inner.read().expect("poisoned lock").resolve(grant, warrant)
+        self.inner
+            .read()
+            .expect("poisoned lock")
+            .resolve(grant, warrant)
     }
 
     fn register(
@@ -521,7 +528,8 @@ mod tests {
         let prov = ToolProvenance::HumanAuthored {
             author: "ops".into(),
         };
-        reg.register_durable(custom_def("my-tool"), prov, None).unwrap();
+        reg.register_durable(custom_def("my-tool"), prov, None)
+            .unwrap();
         assert!(reg
             .lookup(&ToolName("my-tool".into()), &ToolVersion("1".into()))
             .is_some());

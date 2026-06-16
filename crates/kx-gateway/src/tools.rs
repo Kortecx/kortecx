@@ -23,8 +23,8 @@ use kx_gateway_core::{
 };
 use kx_mote::{ToolName, ToolVersion};
 use kx_tool_registry::{
-    tool_id_of, IdempotencyClass, InputSchema, McpEndpointId, ParamSpec, ParamType, RegisteredEntry,
-    RegistrationStatus, SqliteToolRegistry, ToolDef, ToolKind, ToolProvenance,
+    tool_id_of, IdempotencyClass, InputSchema, McpEndpointId, ParamSpec, ParamType,
+    RegisteredEntry, RegistrationStatus, SqliteToolRegistry, ToolDef, ToolKind, ToolProvenance,
 };
 use kx_warrant::{FsScope, Host, NetScope, ResourceCeiling, ToolRequirement};
 
@@ -79,11 +79,13 @@ impl ToolRegistryAdmin for HostToolRegistry {
             .map_err(ToolAdminError::HostRejected)?;
 
         // (2) Map the declared idempotency class fail-closed.
-        let idempotency_class = parse_idempotency_class(&reg.idempotency_class)
-            .ok_or_else(|| ToolAdminError::InvalidArgument(format!(
-                "unknown idempotency_class {:?} (want Token|Readback|Staged|AtLeastOnce)",
-                reg.idempotency_class
-            )))?;
+        let idempotency_class =
+            parse_idempotency_class(&reg.idempotency_class).ok_or_else(|| {
+                ToolAdminError::InvalidArgument(format!(
+                    "unknown idempotency_class {:?} (want Token|Readback|Staged|AtLeastOnce)",
+                    reg.idempotency_class
+                ))
+            })?;
 
         // (3) Map the optional typed schema fail-closed (no float — SN-8).
         let input_schema = match reg.input_schema {
@@ -142,7 +144,10 @@ impl ToolRegistryAdmin for HostToolRegistry {
 
     fn deregister(&self, tool_name: &str, tool_version: &str) -> Result<bool, GatewayError> {
         self.registry
-            .deregister(&ToolName(tool_name.to_string()), &ToolVersion(tool_version.to_string()))
+            .deregister(
+                &ToolName(tool_name.to_string()),
+                &ToolVersion(tool_version.to_string()),
+            )
             .map_err(|e| GatewayError::Internal(e.to_string()))
     }
 
@@ -222,7 +227,11 @@ fn parse_idempotency_class(s: &str) -> Option<IdempotencyClass> {
 fn map_input_schema(s: kx_gateway_core::ToolSchemaWire) -> Result<InputSchema, String> {
     let mut params = Vec::with_capacity(s.params.len());
     for p in s.params {
-        let max_len = if p.max_len == 0 { 4096 } else { p.max_len as usize };
+        let max_len = if p.max_len == 0 {
+            4096
+        } else {
+            p.max_len as usize
+        };
         let ty = match p.ty.as_str() {
             "str" => ParamType::Str { max_len },
             "bytes" => ParamType::Bytes { max_len },
@@ -414,7 +423,9 @@ mod tests {
     #[test]
     fn register_then_discover_roundtrip() {
         let admin = host_registry();
-        let id = admin.register(registration("web-search", "mcp.example.com")).unwrap();
+        let id = admin
+            .register(registration("web-search", "mcp.example.com"))
+            .unwrap();
         assert_ne!(id, [0u8; 16]);
         let (rows, _) = admin.discover(64, None).unwrap();
         let row = rows.iter().find(|r| r.tool_name == "web-search").unwrap();
@@ -425,7 +436,9 @@ mod tests {
         assert_eq!(row.registration_status, "Approved");
         assert!(!row.is_builtin);
         // built-ins are visible too (re-seeded on open)
-        assert!(rows.iter().any(|r| r.tool_name == "fs-read" && r.is_builtin));
+        assert!(rows
+            .iter()
+            .any(|r| r.tool_name == "fs-read" && r.is_builtin));
     }
 
     #[test]
@@ -449,10 +462,12 @@ mod tests {
     #[test]
     fn deregister_removes_a_registered_tool() {
         let admin = host_registry();
-        admin.register(registration("temp", "mcp.example.com")).unwrap();
+        admin
+            .register(registration("temp", "mcp.example.com"))
+            .unwrap();
         assert!(admin.deregister("temp", "1").unwrap());
         assert!(!admin.deregister("temp", "1").unwrap()); // gone now
-        // a built-in cannot be deregistered
+                                                          // a built-in cannot be deregistered
         assert!(!admin.deregister("fs-read", "1").unwrap());
     }
 }

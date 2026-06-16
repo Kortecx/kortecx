@@ -256,7 +256,10 @@ mod tests {
 
         let scope = NetScope::EgressAllowlist([Host("example.com".into())].into_iter().collect());
         let mut mounts = std::collections::BTreeMap::new();
-        mounts.insert(std::path::PathBuf::from("/data"), kx_warrant::FsMode::ReadOnly);
+        mounts.insert(
+            std::path::PathBuf::from("/data"),
+            kx_warrant::FsMode::ReadOnly,
+        );
         let fs = FsScope { mounts };
         let with_args = effect_request_for(
             &mote,

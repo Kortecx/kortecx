@@ -298,7 +298,15 @@ impl DemoLibrary {
         parties: &[String],
         serve_model: Option<ModelId>,
     ) -> Result<Self, GatewayError> {
-        Self::seed(dir, exec_class, parties, serve_model.as_ref(), None, false, None)
+        Self::seed(
+            dir,
+            exec_class,
+            parties,
+            serve_model.as_ref(),
+            None,
+            false,
+            None,
+        )
     }
 
     /// Like [`DemoLibrary::open_full`], plus (when `react_tool` is `Some` AND a
@@ -321,7 +329,13 @@ impl DemoLibrary {
         fs_list: Option<(&(ToolName, ToolVersion), &Path)>,
     ) -> Result<Self, GatewayError> {
         Self::seed(
-            dir, exec_class, parties, serve_model, react_tool, vision, fs_list,
+            dir,
+            exec_class,
+            parties,
+            serve_model,
+            react_tool,
+            vision,
+            fs_list,
         )
     }
 

@@ -22,9 +22,11 @@ serde_json = { workspace = true, features = ["raw_value"] }
 thiserror  = { workspace = true }
 tracing    = { workspace = true }
 # Durable `tools.db` backend (PR-6a) — the same off-journal SQLite store the
-# fleet/catalog ledgers use, behind the unchanged `ToolRegistry` trait. rusqlite
-# is already in the closure (kx-journal/kx-catalog/kx-fleet pull it), so this is
-# a Cargo.lock EDGE only — no new package; FFI-free (pure-C via cc, no C++).
+# durable ledgers use, behind the unchanged `ToolRegistry` trait. rusqlite is
+# already in the workspace closure (the journal + the durable ledgers pull it),
+# so this is a Cargo.lock EDGE only — no new package; FFI-free (pure-C via cc, no
+# C++). (Comment avoids naming guarded crates — the advertise-cycle Cargo.toml
+# substring-scan gotcha.)
 rusqlite   = { workspace = true }
 
 [dev-dependencies]

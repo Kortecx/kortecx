@@ -109,9 +109,14 @@ fn parse_param(raw: &str) -> Result<(String, String), CliError> {
 
 /// Parse `tools` args (the verb already consumed). The first token selects the
 /// subcommand (`list` / `score` / `discover` / `register` / `deregister`).
+// A flat flag-collect loop + a per-subcommand assembly match — the length is the
+// subcommand count, not branching complexity (the verb-parser precedent).
+#[allow(clippy::too_many_lines)]
 pub fn parse(mut args: impl Iterator<Item = String>) -> Result<ToolsArgs, CliError> {
     let kw = args.next().ok_or_else(|| {
-        CliError::Usage("tools requires a subcommand: list | score | discover | register | deregister".into())
+        CliError::Usage(
+            "tools requires a subcommand: list | score | discover | register | deregister".into(),
+        )
     })?;
 
     let mut intent: Option<String> = None;
@@ -156,7 +161,9 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<ToolsArgs, CliErr
             "--limit" => {
                 let raw = next_value(&mut args, "--limit")?;
                 limit = raw.parse().map_err(|_| {
-                    CliError::Usage(format!("--limit expects a non-negative integer, got {raw:?}"))
+                    CliError::Usage(format!(
+                        "--limit expects a non-negative integer, got {raw:?}"
+                    ))
                 })?;
             }
             other => return Err(CliError::Usage(format!("unknown flag {other:?}"))),

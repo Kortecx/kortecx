@@ -2210,7 +2210,10 @@ impl KxGateway for GatewayService {
                 is_builtin: e.is_builtin,
             })
             .collect();
-        Ok(Response::new(proto::DiscoverToolsResponse { tools, has_more }))
+        Ok(Response::new(proto::DiscoverToolsResponse {
+            tools,
+            has_more,
+        }))
     }
 
     async fn list_tool_manifests(

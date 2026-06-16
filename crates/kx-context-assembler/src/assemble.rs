@@ -184,10 +184,10 @@ pub fn assemble<S: ContentStore>(
 mod tool_menu_tests {
     use super::tool_menu_text;
     use kx_content::ContentRef;
+    use kx_mote::{ToolName, ToolVersion};
     use kx_tool_registry::{
         IdempotencyClass, InputSchema, ParamSpec, ParamType, ToolDef, ToolKind,
     };
-    use kx_mote::{ToolName, ToolVersion};
     use kx_warrant::{FsScope, NetScope, ResourceCeiling, ToolRequirement};
 
     fn def(input_schema: Option<InputSchema>) -> ToolDef {
