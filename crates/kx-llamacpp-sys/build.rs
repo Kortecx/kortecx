@@ -112,6 +112,13 @@ fn main() {
         .define("LLAMA_BUILD_TESTS", "OFF")
         .define("LLAMA_BUILD_EXAMPLES", "OFF")
         .define("LLAMA_BUILD_SERVER", "OFF")
+        // The unified `llama` app binary (added upstream 2026-06) links
+        // `llama-server-impl`, which `LLAMA_BUILD_SERVER=OFF` does not build —
+        // so the default-ON app target fails to link. We only need the static
+        // libs (ggml/llama/mtmd), so disable it. NOTE: `LLAMA_BUILD_TOOLS` MUST
+        // stay ON — `tools/mtmd` (libmtmd.a, the multi-modal projector) lives
+        // under `tools/`.
+        .define("LLAMA_BUILD_APP", "OFF")
         // CUDA is cloud-side per D28. Disable for OSS portability.
         .define("GGML_CUDA", "OFF")
         // BLAS optional; disable to keep the build dep-light.

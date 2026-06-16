@@ -14,11 +14,11 @@ against.
 | Submodule path | `crates/kx-llamacpp-sys/llama.cpp` |
 | Upstream URL | `https://github.com/ggerganov/llama.cpp` |
 | Tracking branch | `master` (advisory only — the SHA is what builds) |
-| **Pinned commit** | `1a03cf47f67be591699d1f0f7ca28e1ed6eb8c7e` |
-| **Version-tag-derived name** | `gguf-v0.18.0-826-g1a03cf47f` (826 commits past `gguf-v0.18.0`) |
-| Date of pin entry | 2026-05-25 |
+| **Pinned commit** | `d2462f8f7ac6d80070a587ffebf6cd73730f4280` |
+| **Version-tag-derived name** | `b9310-280-gd2462f8f7` (280 commits past build tag `b9310`) |
+| Date of pin entry | 2026-06-16 |
 
-The pinned commit subject is `hexagon: hmx flash attention (#22347)`.
+The pinned commit subject is `chat: fix LFM2/LFM2.5 ignoring json_schema (#24377)`.
 
 ## Why this matters
 
@@ -38,12 +38,14 @@ This is why the peer-review of P1.7-foundation flagged `kx-llamacpp-sys` as
 *ASSUMED-with-tail-risk* (the link compiles, smoke tests pass, but FFI bugs
 hide until specific call patterns hit them).
 
-> **Note (agent-model integration).** This pin already provides everything the
-> Qwen3-4B agent model + the GPU/decoding tuning need — **no bump required**:
-> `qwen3` arch (`src/llama-arch.cpp` `LLM_ARCH_QWEN3`), the `llama_flash_attn_type`
-> enum on `llama_context_params.flash_attn_type`, and `type_k`/`type_v` (`ggml_type`)
-> KV-cache element types. This SHA equals the `LLAMA_CPP_REF` the companion model
-> repo (`Kortecx/kortecx-model-base-0.0.1`) pins for GGUF format compatibility.
+> **Note (agent-model integration).** This pin supports both the Qwen3 agent
+> stand-in (`qwen3` arch, the `llama_flash_attn_type` enum on
+> `llama_context_params.flash_attn_type`, `type_k`/`type_v` KV-cache element
+> types) **and the Gemma-4-12B omni model** — the 2026-06-16 bump's motivation:
+> the `gemma4` text arch (`src/llama-arch.cpp`) plus the `gemma4uv` *unified
+> vision* projector (`tools/mtmd/models/gemma4uv.cpp`), which the prior
+> 2026-05-25 pin did not recognize (`clip_init: unknown projector type:
+> gemma4uv`). GGUF stays format V3, so existing Qwen3 fixtures load unchanged.
 
 The pin makes ABI drift **an explicit, audited event** rather than a
 shadow upgrade.
@@ -139,3 +141,4 @@ archive); Linux catches the CPU-only path. Both must pass.
 | Date | SHA | `git describe` | One-line audit note |
 |---|---|---|---|
 | 2026-05-25 | `1a03cf47f67b...` | `gguf-v0.18.0-826-g1a03cf47f` | Initial pin record (this commit). FFI surface clean against `kx-llamacpp/src/*.rs`; Drop coverage verified for Model/Context/Sampler/Batch/LlamaBackend. |
+| 2026-06-16 | `d2462f8f7ac6...` | `b9310-280-gd2462f8f7` | +671 commits. Motivation: the `gemma4uv` unified-vision projector (Gemma-4-12B omni), absent from the prior pin. **`llama.h` C API stable for all bound symbols** (only additive `llama_n_rs_seq` + a `llama_set_warmup` deprecation we don't use). **Two changes required:** (1) `mtmd_helper_bitmap_init_from_buf` gained a `placeholder` bool and now returns `mtmd_helper_bitmap_wrapper { bitmap, video_ctx }` — `kx-llamacpp/src/mtmd.rs` updated to pass `false` + take `.bitmap`; (2) upstream added a default-ON unified `llama` app (`app/`) that links `llama-server-impl` (we build `LLAMA_BUILD_SERVER=OFF`) → added `LLAMA_BUILD_APP=OFF` in `build.rs` (`tools/mtmd`/`libmtmd.a` stays built under `LLAMA_BUILD_TOOLS`). Drop coverage re-verified; no enum-discriminant or struct-layout drift in used types. |

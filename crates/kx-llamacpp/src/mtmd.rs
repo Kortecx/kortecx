@@ -373,9 +373,18 @@ impl Bitmap {
     /// - [`LlamaError::AudioNotSupported`] if the bytes are audio.
     pub fn from_image_buf(mtmd: &Mtmd<'_, '_>, bytes: &[u8]) -> Result<Self, LlamaError> {
         // SAFETY: `mtmd.ptr` valid; `bytes` is a valid `len`-byte buffer that
-        // outlives the (synchronous) call. Returns null on decode failure.
+        // outlives the (synchronous) call. Returns a wrapper whose `.bitmap` is
+        // null on decode failure (the `placeholder=false` path eagerly decodes;
+        // `.video_ctx` is only set for video input, which this image-only path
+        // never requests, so it is null here and needs no free).
         let raw = unsafe {
-            sys::mtmd_helper_bitmap_init_from_buf(mtmd.ptr.as_ptr(), bytes.as_ptr(), bytes.len())
+            sys::mtmd_helper_bitmap_init_from_buf(
+                mtmd.ptr.as_ptr(),
+                bytes.as_ptr(),
+                bytes.len(),
+                false,
+            )
+            .bitmap
         };
         let ptr = NonNull::new(raw).ok_or(LlamaError::BitmapDecodeFailed {
             n_bytes: bytes.len(),
