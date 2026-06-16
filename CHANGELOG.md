@@ -8,6 +8,16 @@ development; interfaces may change before 1.0 — pin a commit if you build on i
 
 ### Added
 
+- **Gemma-4-12B omni support + model-agnostic prompt templating.** A model-serving
+  gateway now formats every model with its OWN chat template — applying the GGUF's
+  embedded template through llama.cpp where it renders, with a built-in
+  per-architecture fallback (`ChatML` / Gemma) for models llama.cpp cannot render
+  (such as Gemma-4) — so a model is never fed another model's format. A recipe's
+  structured reply is normalized symmetrically: a leading reasoning block
+  (`<think>` or Gemma's reasoning channel) or a Markdown JSON code fence around a
+  plan / tool-call envelope is stripped before the fail-closed parse. Pull and serve
+  the recommended local model (Apache-2.0, text + image) with `just
+  fetch-gemma-model` and `just review-serve-gemma`. (serve/inference/docs)
 - **Data Lab — a multi-modal asset viewer + the datasets keystone.** Committed run
   artifacts and retrieval hits now render **inline in the browser** by kind: images,
   video, and audio (from a `blob:` object URL — never a remote `src`, so no

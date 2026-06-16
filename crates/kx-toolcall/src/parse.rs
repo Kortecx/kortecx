@@ -32,26 +32,51 @@ pub fn max_args_bytes(warrant: &WarrantSpec) -> usize {
     (warrant.model_route.max_output_tokens as usize).saturating_mul(4)
 }
 
-/// Strip a single leading `<think>…</think>` reasoning block (Qwen3 thinking
-/// mode) so the strict envelope parser sees the JSON that follows it.
+/// Extract the JSON envelope a model wrapped in reasoning and/or a markdown code
+/// fence, so the strict parser sees the bare `{ … }`. Removes a SINGLE leading
+/// reasoning block — Qwen3 `<think>…</think>` OR Gemma-4 `<|channel>…<channel|>`
+/// — then a surrounding markdown code fence (```` ```json … ``` ````; Gemma-4
+/// reliably fences structured output).
 ///
-/// ONLY a leading block is removed — we never scan for `{` mid-string, which
-/// would reopen the injection vector the strict `starts_with('{')` gate closes.
-/// An unclosed `<think>` (reasoning with no closing tag / no JSON) yields `""`,
-/// which the caller treats as a normal (non-call) completion — fail-closed.
-///
-/// Total + panic-free (`find` returns a valid byte boundary; the close tag is
-/// ASCII so the post-tag slice boundary is always valid).
+/// Leading-block + structural-wrapper ONLY — we NEVER scan for `{` mid-string
+/// (the fence is a defined ```` ``` ```` delimiter, not a `{` search), so the
+/// strict `starts_with('{')` gate below stays the injection boundary (SN-8).
+/// Mirrors `kx_planner::decode`'s extractor — the two trust seams keep the SAME
+/// discipline. Total + panic-free; an unclosed reasoning tag yields `""`, which
+/// the caller treats as a normal (non-call) completion (fail-closed).
+fn extract_json_envelope(text: &str) -> &str {
+    strip_code_fence(strip_reasoning_preamble(text))
+}
+
+/// Strip a SINGLE leading reasoning block: Qwen3 `<think>…</think>` or Gemma-4
+/// `<|channel>…<channel|>`. An unclosed tag yields `""`.
 fn strip_reasoning_preamble(text: &str) -> &str {
-    const OPEN: &str = "<think>";
-    const CLOSE: &str = "</think>";
     let t = text.trim_start();
-    let Some(rest) = t.strip_prefix(OPEN) else {
+    for (open, close) in [("<think>", "</think>"), ("<|channel>", "<channel|>")] {
+        if let Some(rest) = t.strip_prefix(open) {
+            return match rest.find(close) {
+                Some(i) => rest[i + close.len()..].trim_start(),
+                None => "",
+            };
+        }
+    }
+    t
+}
+
+/// Strip a surrounding markdown code fence (```` ``` ````), optionally tagged
+/// (```` ```json ````). No fence ⇒ `text` trimmed. Total + panic-free.
+fn strip_code_fence(text: &str) -> &str {
+    let t = text.trim();
+    let Some(rest) = t.strip_prefix("```") else {
         return t;
     };
-    match rest.find(CLOSE) {
-        Some(i) => rest[i + CLOSE.len()..].trim_start(),
-        None => "",
+    let inner = match rest.find('\n') {
+        Some(nl) => &rest[nl + 1..],
+        None => rest,
+    };
+    match inner.rfind("```") {
+        Some(i) => inner[..i].trim(),
+        None => inner.trim(),
     }
 }
 
@@ -90,9 +115,10 @@ pub fn parse_tool_call(
     let Ok(text) = std::str::from_utf8(bytes) else {
         return Ok(None);
     };
-    // Strip a leading Qwen3 `<think>…</think>` block, then require the remainder
-    // to BEGIN with `{` — leading-block-only; no mid-string scan (SN-8).
-    let trimmed = strip_reasoning_preamble(text);
+    // Strip a leading reasoning block (Qwen3 `<think>` / Gemma-4 `<|channel>`) and
+    // a surrounding ```` ```json ```` fence, then require the remainder to BEGIN
+    // with `{` — leading-block + structural-fence only; no mid-string scan (SN-8).
+    let trimmed = extract_json_envelope(text);
     if !trimmed.starts_with('{') {
         return Ok(None);
     }
@@ -219,6 +245,31 @@ mod tests {
         let call = parse_tool_call(env, &w, 4096).unwrap().expect("a call");
         assert_eq!(call.name, ToolName("mcp-echo".into()));
         assert_eq!(call.args_bytes, br#"{"q":"x"}"#.to_vec());
+    }
+
+    #[test]
+    fn fenced_envelope_is_decoded() {
+        let w = warrant_granting(Some(("mcp-echo", "1")));
+        // Gemma-4 reliably fences structured output in a ```json block.
+        let env =
+            b"```json\n{\"tool_call\":{\"name\":\"mcp-echo\",\"version\":\"1\",\"args\":{\"q\":\"x\"}}}\n```";
+        let call = parse_tool_call(env, &w, 4096)
+            .unwrap()
+            .expect("a fenced call");
+        assert_eq!(call.name, ToolName("mcp-echo".into()));
+        assert_eq!(call.args_bytes, br#"{"q":"x"}"#.to_vec());
+    }
+
+    #[test]
+    fn gemma_channel_then_fenced_envelope_is_decoded() {
+        let w = warrant_granting(Some(("mcp-echo", "1")));
+        // Gemma-4: a `<|channel>thought…<channel|>` reasoning segment then a
+        // fenced tool-call.
+        let env = b"<|channel>thought\nI should echo.<channel|>```json\n{\"tool_call\":{\"name\":\"mcp-echo\",\"version\":\"1\",\"args\":{}}}\n```";
+        let call = parse_tool_call(env, &w, 4096)
+            .unwrap()
+            .expect("a channel + fence call");
+        assert_eq!(call.name, ToolName("mcp-echo".into()));
     }
 
     #[test]

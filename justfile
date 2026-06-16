@@ -181,6 +181,44 @@ fetch-agent-model:
     echo "     export KX_MODEL_NAME=qwen3-0.6b"
     echo "     export KX_MODEL_HARNESS_GGUF=\"$(pwd)/$DEST\""
 
+# Download the Gemma-4-12B omni model (Q4_K_M GGUF ~7.1 GB + its vision mmproj
+# ~175 MB) from unsloth to target/models/, SHA-256-verified + idempotent. This is
+# the LOCAL / CLOUD real-test + benchmark model going forward (D158); CI stays on
+# the tiny public Qwen3-0.6B (`fetch-agent-model`). REQUIRES the gemma4uv-capable
+# llama.cpp pin (>= d2462f8f7; see crates/kx-llamacpp-sys/PIN.md). Override the
+# quant via KX_GEMMA_MODEL_{URL,SHA,DEST} (a SHA is REQUIRED — never unverified).
+fetch-gemma-model:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    BASE="https://huggingface.co/unsloth/gemma-4-12b-it-GGUF/resolve/main"
+    dl() {
+      url="$1"; dest="$2"; sha="$3"
+      if [ -f "$dest" ] && [ "$(shasum -a 256 "$dest" | cut -d' ' -f1)" = "$sha" ]; then
+        echo " ✓ already present + verified: $dest"; return 0
+      fi
+      echo "Downloading $url → $dest ..."
+      rm -f "$dest" "$dest.partial"
+      if [ -n "${HF_TOKEN:-}" ]; then
+        curl -fsSL -H "Authorization: Bearer ${HF_TOKEN}" "$url" -o "$dest.partial"
+      else
+        curl -fsSL "$url" -o "$dest.partial"
+      fi
+      got="$(shasum -a 256 "$dest.partial" | cut -d' ' -f1)"
+      if [ "$got" != "$sha" ]; then
+        echo " ✗ SHA-256 mismatch for $dest: expected $sha got $got" >&2
+        rm -f "$dest.partial"; exit 1
+      fi
+      mv "$dest.partial" "$dest"; echo " ✓ verified + saved: $dest"
+    }
+    mkdir -p target/models
+    dl "${KX_GEMMA_MMPROJ_URL:-$BASE/mmproj-F16.gguf}" \
+       "${KX_GEMMA_MMPROJ_DEST:-target/models/gemma-4-12b-it-mmproj-f16.gguf}" \
+       "${KX_GEMMA_MMPROJ_SHA:-91f086971e56d7a7d8d39e271873fccdb49541bd259d6e02c401a4f1cb7a219e}"
+    dl "${KX_GEMMA_MODEL_URL:-$BASE/gemma-4-12b-it-Q4_K_M.gguf}" \
+       "${KX_GEMMA_MODEL_DEST:-target/models/gemma-4-12b-it-q4_k_m.gguf}" \
+       "${KX_GEMMA_MODEL_SHA:-43fec98c5102b1c446b4ddd0a9439f1db3a2e1f2e0b8cd143ce1ea619a9403d6}"
+    echo "   Serve it (text + vision): just review-serve-gemma"
+
 # The ONE-COMMAND inference serve (§2.194 guardrail): fetch the stand-in model
 # if absent (idempotent, checksum-verified), then start `kx serve` with it +
 # the embedded console at :50180. Model paths are DETERMINISTIC
@@ -247,6 +285,50 @@ review-serve journal="target/serve/kx.db" content="target/serve/blobs": fetch-ag
     echo ""
     echo " ✅ REVIEW SERVE READY — console http://127.0.0.1:$PORT/  ·  connect $GRPC"
     echo "    (review in BOTH themes; chat returns a real <think>+answer, never echo)"
+    wait $SERVE_PID
+
+# The Gemma-4-12B omni PR-review serve (TEXT + VISION) — the `review-serve` twin
+# for the local/cloud real-test model (D158). Same three guardrails (FRESH embed ·
+# model loaded · REAL non-echo completion). Sets KX_SERVE_MMPROJ_GGUF so the
+# vision recipe is provisioned (the gemma4uv projector; needs the PIN.md bump).
+# 12B loads slower than the stand-in, so the readiness wait is longer. Review in
+# BOTH themes; chat returns a real answer (Gemma's reasoning channel is collapsed
+# by the model-agnostic templating, never echo).
+review-serve-gemma journal="target/serve/kx.db" content="target/serve/blobs": fetch-gemma-model console-dist
+    #!/usr/bin/env bash
+    set -euo pipefail
+    PORT=50180; GRPC="http://127.0.0.1:50151"
+    MODEL="${KX_GEMMA_MODEL_DEST:-$(pwd)/target/models/gemma-4-12b-it-q4_k_m.gguf}"
+    MMPROJ="${KX_GEMMA_MMPROJ_DEST:-$(pwd)/target/models/gemma-4-12b-it-mmproj-f16.gguf}"
+    test -f "$MODEL" || { echo " ✗ model GGUF missing: $MODEL" >&2; exit 1; }
+    test -f "$MMPROJ" || { echo " ✗ mmproj GGUF missing: $MMPROJ" >&2; exit 1; }
+    cargo build --release -p kx-cli --features inference,hnsw,console --bin kx
+    KX="$(pwd)/target/release/kx"
+    PIDS="$(lsof -ti tcp:$PORT 2>/dev/null || true)"
+    [ -n "$PIDS" ] && { echo " ! killing stale process on :$PORT ($PIDS)"; kill $PIDS 2>/dev/null || true; sleep 1; }
+    mkdir -p "$(dirname "{{journal}}")" "{{content}}"
+    export KX_SERVE_MODEL_GGUF="$MODEL" KX_SERVE_MMPROJ_GGUF="$MMPROJ"
+    echo " ▶ Gemma review serve (model: $MODEL  +  vision mmproj: $MMPROJ)"
+    "$KX" serve --journal "{{journal}}" --content "{{content}}" --dev-allow-local &
+    SERVE_PID=$!; trap 'kill $SERVE_PID 2>/dev/null || true' EXIT
+    for i in $(seq 1 120); do curl -fsS "http://127.0.0.1:$PORT/" -o /dev/null 2>/dev/null && break; sleep 1; done
+    SERVED="$(curl -fsS "http://127.0.0.1:$PORT/" | shasum -a 256 | cut -d' ' -f1)"
+    DISK="$(shasum -a 256 ui/dist/index.html | cut -d' ' -f1)"
+    [ "$SERVED" = "$DISK" ] || { echo " ✗ STALE EMBED: served $SERVED != ui/dist $DISK — rebuild"; exit 1; }
+    echo " ✓ fresh console embed ($SERVED)"
+    "$KX" models list --endpoint "$GRPC" --json \
+      | python3 -c "import json,sys; sys.exit(0 if len(json.load(sys.stdin).get('models',[]))>=1 else 1)" \
+      || { echo " ✗ NO MODEL: ListModels empty — chat would echo. Set KX_SERVE_MODEL_GGUF."; exit 1; }
+    echo " ✓ model loaded (ListModels non-empty)"
+    PROMPT="Reply with only the digit: what is 2+2?"
+    OUT="$("$KX" invoke kx/recipes/chat --args "{\"prompt\":\"$PROMPT\"}" --wait --json --endpoint "$GRPC" \
+      | python3 -c "import json,sys; print(json.load(sys.stdin).get('result_utf8',''))" 2>/dev/null || true)"
+    [ -n "$OUT" ] || { echo " ✗ chat returned no committed result — model not answering."; exit 1; }
+    case "$OUT" in *"$PROMPT"*) echo " ✗ ECHO DETECTED: chat returned the prompt verbatim."; exit 1;; esac
+    echo " ✓ real non-echo Gemma completion: $(printf '%s' "$OUT" | tr '\n' ' ' | head -c 70)"
+    echo ""
+    echo " ✅ GEMMA REVIEW SERVE READY — console http://127.0.0.1:$PORT/  ·  connect $GRPC"
+    echo "    (text + vision; review in BOTH themes; chat returns a real answer, never echo)"
     wait $SERVE_PID
 
 # D139: build the web console's embed input — the TS SDK (the UI's file: dep)

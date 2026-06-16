@@ -45,25 +45,57 @@ pub fn max_plan_bytes(warrant: &WarrantSpec) -> usize {
     (warrant.model_route.max_output_tokens as usize).saturating_mul(4)
 }
 
-/// Strip a single leading `<think>…</think>` reasoning block (Qwen3 thinking
-/// mode) so the strict envelope parser sees the JSON plan that follows it.
+/// Extract the JSON envelope a model wrapped in reasoning and/or a markdown code
+/// fence, so the strict parser sees the bare `{ … }`. Removes, in order:
+///   1. a SINGLE leading reasoning block — Qwen3 `<think>…</think>` OR Gemma-4
+///      `<|channel>…<channel|>` (the answer follows the close tag);
+///   2. a surrounding markdown code fence — ```` ```json … ``` ```` (Gemma-4
+///      reliably fences structured output) or a bare ```` ``` … ``` ````.
 ///
-/// ONLY a leading block is removed — never a mid-string scan. An unclosed
-/// `<think>` (reasoning with no closing tag) yields `""`, which fails the
-/// strict parse below (a plan is mandatory) — fail-closed.
-///
-/// Total + panic-free (`find` returns a valid byte boundary; the ASCII close
-/// tag makes the post-tag slice boundary always valid).
+/// Model-agnostic, total + panic-free over arbitrary input. It ONLY strips known
+/// wrappers — the strict, `deny_unknown_fields` serde parse downstream still gates
+/// the envelope (fail-closed), so widening the accepted wrapper set never opens a
+/// smuggling vector (the size cap on the ORIGINAL bytes still bounds the parse,
+/// and extraction can only shrink). An unclosed reasoning tag yields `""`, which
+/// the strict parse rejects (a plan is mandatory).
+fn extract_json_envelope(text: &str) -> &str {
+    strip_code_fence(strip_reasoning_preamble(text))
+}
+
+/// Strip a SINGLE leading reasoning block: Qwen3 `<think>…</think>` or Gemma-4
+/// `<|channel>…<channel|>`. An unclosed tag yields `""`. Total + panic-free (the
+/// ASCII close tag makes every post-tag slice boundary valid).
 fn strip_reasoning_preamble(text: &str) -> &str {
-    const OPEN: &str = "<think>";
-    const CLOSE: &str = "</think>";
     let t = text.trim_start();
-    let Some(rest) = t.strip_prefix(OPEN) else {
+    for (open, close) in [("<think>", "</think>"), ("<|channel>", "<channel|>")] {
+        if let Some(rest) = t.strip_prefix(open) {
+            return match rest.find(close) {
+                Some(i) => rest[i + close.len()..].trim_start(),
+                None => "",
+            };
+        }
+    }
+    t
+}
+
+/// Strip a surrounding markdown code fence (```` ``` ````), optionally with a
+/// language tag (```` ```json ````). Returns the inner content trimmed; no fence
+/// ⇒ `text` trimmed. Total + panic-free (the fence delimiter is ASCII, so every
+/// slice boundary is valid).
+fn strip_code_fence(text: &str) -> &str {
+    let t = text.trim();
+    let Some(rest) = t.strip_prefix("```") else {
         return t;
     };
-    match rest.find(CLOSE) {
-        Some(i) => rest[i + CLOSE.len()..].trim_start(),
-        None => "",
+    // Drop an optional language tag up to the first newline (```json\n…).
+    let inner = match rest.find('\n') {
+        Some(nl) => &rest[nl + 1..],
+        None => rest,
+    };
+    // Drop the trailing closing fence if present.
+    match inner.rfind("```") {
+        Some(i) => inner[..i].trim(),
+        None => inner.trim(),
     }
 }
 
@@ -98,7 +130,7 @@ pub fn decode_plan(bytes: &[u8], max_plan_bytes: usize) -> Result<Plan, PlanErro
     let text = std::str::from_utf8(bytes).map_err(|_| PlanError::Malformed {
         diagnostic: "model output was not valid UTF-8".to_string(),
     })?;
-    let stripped = strip_reasoning_preamble(text);
+    let stripped = extract_json_envelope(text);
     let envelope: Envelope = serde_json::from_str(stripped).map_err(|e| PlanError::Malformed {
         diagnostic: e.to_string(),
     })?;
@@ -165,7 +197,7 @@ pub fn decode_loop_proposal(bytes: &[u8], max_bytes: usize) -> Result<LoopPropos
     let text = std::str::from_utf8(bytes).map_err(|_| PlanError::Malformed {
         diagnostic: "model output was not valid UTF-8".to_string(),
     })?;
-    let stripped = strip_reasoning_preamble(text);
+    let stripped = extract_json_envelope(text);
     let envelope: LoopEnvelope =
         serde_json::from_str(stripped).map_err(|e| PlanError::Malformed {
             diagnostic: e.to_string(),
@@ -226,7 +258,7 @@ pub fn decode_replan_proposal(bytes: &[u8], max_bytes: usize) -> Result<ReplanPr
     let text = std::str::from_utf8(bytes).map_err(|_| PlanError::Malformed {
         diagnostic: "model output was not valid UTF-8".to_string(),
     })?;
-    let stripped = strip_reasoning_preamble(text);
+    let stripped = extract_json_envelope(text);
     let envelope: ReplanEnvelope =
         serde_json::from_str(stripped).map_err(|e| PlanError::Malformed {
             diagnostic: e.to_string(),

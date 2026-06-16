@@ -39,8 +39,8 @@ use std::time::{Duration, Instant};
 
 use kx_content::ContentRef;
 use kx_llamacpp::{
-    Bitmap, Context, ContextParams, Generator, LlamaBackend, LlamaError, Model, ModelWithProjector,
-    Mtmd, PoolingType, Sampler, Vocab,
+    Bitmap, ChatMessage, Context, ContextParams, Generator, LlamaBackend, LlamaError, Model,
+    ModelWithProjector, Mtmd, PoolingType, Sampler, Vocab,
 };
 use kx_mote::{InferenceParams, ModelId};
 use smallvec::SmallVec;
@@ -125,15 +125,35 @@ struct EmbedJob {
     reply: Sender<Result<EmbeddingOutput, InferenceError>>,
 }
 
-/// The owner thread serves both completion and embedding jobs over one channel
-/// so a single loaded-model LRU backs both (an embedding reuses the cached
-/// generation model). Boxed variants keep the enum small (the completion `Job`
-/// is heavyweight).
+/// One chat-template render request handed to the owner thread (model-agnostic
+/// templating). Shares the owner thread + loaded-model LRU with [`Job`]/[`EmbedJob`]
+/// so a render reuses an already-cached model. Produces the model's expected
+/// prompt STRING — via the GGUF's embedded `chat_template` (llama.cpp's `minja`,
+/// model-agnostic), falling back to a built-in arch template when `minja` cannot
+/// render the embedded one (e.g. Gemma-4's complex tool-calling template). No
+/// sampler, no generation loop.
+struct RenderJob {
+    /// Loaded-model cache key (the same identity used by [`Job`]).
+    identity: ContentRef,
+    /// Where to load the model from on a cache miss.
+    path: PathBuf,
+    /// `(role, content)` messages, in order (typically system then user).
+    messages: Vec<(String, String)>,
+    /// Where the owner thread sends the rendered prompt.
+    reply: Sender<Result<String, InferenceError>>,
+}
+
+/// The owner thread serves completion, embedding, and chat-template-render jobs
+/// over one channel so a single loaded-model LRU backs all three (each reuses the
+/// cached model). Boxed variants keep the enum small (the completion `Job` is
+/// heavyweight).
 enum OwnerJob {
     /// A completion / generation request (text or multimodal).
     Generate(Box<Job>),
     /// An embedding request (DP1).
     Embed(Box<EmbedJob>),
+    /// A chat-template render request (model-agnostic prompt formatting).
+    RenderChat(Box<RenderJob>),
 }
 
 /// Map the FFI-free [`EmbeddingPooling`] seam type to `kx-llamacpp`'s
@@ -273,6 +293,37 @@ impl ModelCache {
                 message: "model-cache owner thread died mid-job (recv failed)".to_string(),
             })?
     }
+
+    /// Render `messages` into the model's expected prompt STRING on the owner
+    /// thread (where the model is resident), and block until the reply. Shares the
+    /// loaded-model LRU, so a render reuses a model a prior dispatch cached (and a
+    /// subsequent generation of the rendered prompt then hits that warm model).
+    pub(crate) fn render_chat(
+        &self,
+        identity: ContentRef,
+        path: PathBuf,
+        messages: Vec<(String, String)>,
+    ) -> Result<String, InferenceError> {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        let job = RenderJob {
+            identity,
+            path,
+            messages,
+            reply: reply_tx,
+        };
+        self.tx
+            .send(OwnerJob::RenderChat(Box::new(job)))
+            .map_err(|_| InferenceError::BackendFailure {
+                backend: BACKEND_NAME,
+                message: "model-cache owner thread is gone (send failed)".to_string(),
+            })?;
+        reply_rx
+            .recv()
+            .map_err(|_| InferenceError::BackendFailure {
+                backend: BACKEND_NAME,
+                message: "model-cache owner thread died mid-job (recv failed)".to_string(),
+            })?
+    }
 }
 
 /// The owner thread's loop. Owns the (`!Send`) backend and the loaded-model LRU
@@ -295,6 +346,9 @@ fn owner_loop(
                         let _ = job.reply.send(Err(err.clone()));
                     }
                     OwnerJob::Embed(job) => {
+                        let _ = job.reply.send(Err(err.clone()));
+                    }
+                    OwnerJob::RenderChat(job) => {
                         let _ = job.reply.send(Err(err.clone()));
                     }
                 }
@@ -320,6 +374,10 @@ fn owner_loop(
             }
             OwnerJob::Embed(job) => {
                 let result = run_embed_job(&backend, &mut lru, capacity, loads, &job);
+                let _ = job.reply.send(result);
+            }
+            OwnerJob::RenderChat(job) => {
+                let result = run_render_job(&backend, &mut lru, capacity, loads, &job);
                 let _ = job.reply.send(result);
             }
         }
@@ -391,6 +449,37 @@ fn run_embed_job<'b>(
         model_id: job.model_id.clone(),
         elapsed: start.elapsed(),
     })
+}
+
+/// Resolve-or-load the model (reusing the SHARED LRU), then render `job.messages`
+/// into the model's expected prompt string. The PRIMARY path is the model's own
+/// embedded `chat_template` via llama.cpp's `minja` (model-agnostic — what
+/// `llama-server` does); on a `minja` render failure (e.g. Gemma-4's complex
+/// tool-calling template, `rc = -1`) it falls back to a built-in template keyed on
+/// the GGUF architecture. No sampler, no generation loop — a single template
+/// apply, so it is cheap once the model is warm.
+fn run_render_job<'b>(
+    backend: &'b LlamaBackend,
+    lru: &mut Vec<(ContentRef, ModelWithProjector<'b>)>,
+    capacity: usize,
+    loads: &AtomicU64,
+    job: &RenderJob,
+) -> Result<String, InferenceError> {
+    let entry = get_or_load(backend, lru, capacity, loads, job.identity, &job.path)
+        .map_err(map_llama_err)?;
+    let model = entry.model();
+    let messages: Vec<ChatMessage> = job
+        .messages
+        .iter()
+        .map(|(role, content)| ChatMessage::new(role.clone(), content.clone()))
+        .collect();
+    // Embedded template first — correct for any model llama.cpp can template.
+    if let Ok(rendered) = model.apply_chat_template(None, &messages, /* add_assistant */ true) {
+        return Ok(rendered);
+    }
+    // Fallback: `minja` could not render the embedded template (Gemma-4). Use a
+    // built-in template keyed on the GGUF arch (the leading token of `desc()`).
+    Ok(crate::templates::builtin_render(&model.desc(), &messages))
 }
 
 /// Return a mutable reference to the cached model bundle for `identity`,
