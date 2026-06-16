@@ -6,11 +6,44 @@ use bytes::Bytes;
 use kx_content::ContentStore;
 use kx_mote::{EdgeKind, Mote, MoteId};
 use kx_projection::Snapshot;
-use kx_tool_registry::ToolRegistry;
+use kx_tool_registry::{ParamType, ToolDef, ToolRegistry};
 use kx_warrant::WarrantSpec;
 
 use crate::errors::AssemblyError;
 use crate::types::{AssembledContext, AssembledItem};
+
+/// PR-6a: render the tool-menu text the model sees for a granted tool — its
+/// description PLUS, when the tool declares a typed `inputSchema`, a deterministic
+/// one-line-per-parameter block (name · type · required/optional). This is the
+/// "suggest better tools/steps" lever: the model proposes well-formed calls
+/// instead of guessing argument shapes; the runtime still validates the proposed
+/// args fail-closed against the SAME schema (SN-8 — advisory in, exact enforced).
+/// A tool with NO schema yields its description verbatim (legacy-byte-identical).
+fn tool_menu_text(def: &ToolDef) -> String {
+    let Some(schema) = &def.input_schema else {
+        return def.description.clone();
+    };
+    let mut text = def.description.clone();
+    text.push_str("\nInputs:");
+    for p in &schema.params {
+        let ty = match &p.ty {
+            ParamType::Int { .. } => "integer",
+            ParamType::Bytes { .. } => "bytes",
+            ParamType::Str { .. } => "string",
+            ParamType::Bool => "bool",
+            ParamType::Enum { .. } => "enum",
+        };
+        let req = if p.required { "required" } else { "optional" };
+        text.push_str("\n  - ");
+        text.push_str(&p.name);
+        text.push_str(" (");
+        text.push_str(ty);
+        text.push_str(", ");
+        text.push_str(req);
+        text.push(')');
+    }
+    text
+}
 
 /// Assemble the Mote's explicit dependency closure into byte-deterministic
 /// resolved content.
@@ -24,12 +57,12 @@ use crate::types::{AssembledContext, AssembledItem};
 /// 2. For each `tool_grant` in `warrant.tool_grants`:
 ///    - Resolve via `registry.resolve(grant, warrant)`.
 ///    - Hash the resolved `ToolDef` via canonical bincode → `source_ref`.
-///    - Emit one `AssembledItem` carrying the tool's `description` bytes,
-///      labeled `"tool.<name>@<version>"`.
-///    - **Tool defs in v0.1 contribute the `description` field as bytes.** The
-///      richer "structured tool spec for the model" surface lives at P1.8
-///      (when the inference dispatcher formats tools for the specific
-///      backend's expected shape).
+///    - Emit one `AssembledItem` carrying the tool's menu text (see
+///      [`tool_menu_text`]), labeled `"tool.<name>@<version>"`.
+///    - **PR-6a: the menu text is the tool's `description` PLUS its typed
+///      `inputSchema` parameters** (name · type · required), so the model
+///      proposes well-formed calls; a schema-less tool is byte-identical to the
+///      pre-PR-6a description-only menu.
 /// 3. Sort items deterministically: parents first by `MoteId` bytes; tools
 ///    second by `(tool_id, tool_version)`.
 /// 4. Compute total bytes; if `> window_bytes` → return `OverflowDecisionRequired`.
@@ -104,9 +137,12 @@ pub fn assemble<S: ContentStore>(
                 reason,
             }
         })?;
-        // v0.1 contributes the tool's description bytes — enough for the
-        // model to know the tool's intent. Richer formatting at P1.8.
-        let desc_bytes = Bytes::copy_from_slice(resolved.def.description.as_bytes());
+        // The tool's description PLUS — PR-6a, the "richer formatting at P1.8"
+        // hook — its typed input parameters, so the model proposes well-formed
+        // tool calls (the runtime still validates args fail-closed against the
+        // same `inputSchema`, SN-8). A tool with NO schema is byte-unchanged (the
+        // description alone), so legacy menus are identical.
+        let desc_bytes = Bytes::copy_from_slice(tool_menu_text(&resolved.def).as_bytes());
         let label = format!("tool.{}@{}", grant.tool_id.0, grant.tool_version.0);
         items.push(AssembledItem {
             label,
@@ -142,4 +178,60 @@ pub fn assemble<S: ContentStore>(
     }
 
     Ok(AssembledContext { items })
+}
+
+#[cfg(test)]
+mod tool_menu_tests {
+    use super::tool_menu_text;
+    use kx_content::ContentRef;
+    use kx_tool_registry::{
+        IdempotencyClass, InputSchema, ParamSpec, ParamType, ToolDef, ToolKind,
+    };
+    use kx_mote::{ToolName, ToolVersion};
+    use kx_warrant::{FsScope, NetScope, ResourceCeiling, ToolRequirement};
+
+    fn def(input_schema: Option<InputSchema>) -> ToolDef {
+        ToolDef {
+            tool_id: ToolName("fs-list".into()),
+            tool_version: ToolVersion("1".into()),
+            kind: ToolKind::Builtin,
+            required_capability: ToolRequirement {
+                net_scope_required: NetScope::None,
+                fs_scope_required: FsScope::empty(),
+                syscall_profile_ref: ContentRef::from_bytes([0; 32]),
+                min_resource_ceiling: ResourceCeiling {
+                    cpu_milli: 0,
+                    mem_bytes: 0,
+                    wall_clock_ms: 0,
+                    fd_count: 0,
+                    disk_bytes: 0,
+                },
+            },
+            description: "List a directory.".into(),
+            idempotency_class: IdempotencyClass::Readback,
+            input_schema,
+        }
+    }
+
+    #[test]
+    fn no_schema_is_description_verbatim() {
+        // Legacy-byte-identical: a tool with no schema yields its description.
+        assert_eq!(tool_menu_text(&def(None)), "List a directory.");
+    }
+
+    #[test]
+    fn schema_appends_typed_params() {
+        let schema = InputSchema {
+            params: vec![ParamSpec {
+                name: "path".into(),
+                ty: ParamType::Str { max_len: 4096 },
+                required: false,
+            }],
+            deny_unknown: true,
+        };
+        assert_eq!(
+            tool_menu_text(&def(Some(schema))),
+            "List a directory.\nInputs:\n  - path (string, optional)"
+        );
+    }
 }
