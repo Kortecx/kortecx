@@ -59,7 +59,7 @@ pub(crate) async fn run_wm(
     warrant: &WarrantSpec,
     worker_id: u64,
     instance_id: Option<[u8; INSTANCE_ID_LEN]>,
-    tool_args: Option<(Vec<u8>, NetScope)>,
+    tool_args: Option<(Vec<u8>, NetScope, FsScope)>,
 ) -> Result<ContentRef, WorkerError> {
     let capability = resolve_capability(mote)?;
     if tool_args.is_none() && requires_tool_args(mote, warrant, &capability) {
@@ -133,19 +133,23 @@ fn requires_tool_args(mote: &Mote, warrant: &WarrantSpec, capability: &ToolName)
 fn effect_request_for(
     mote: &Mote,
     instance_id: Option<[u8; INSTANCE_ID_LEN]>,
-    tool_args: Option<(Vec<u8>, NetScope)>,
+    tool_args: Option<(Vec<u8>, NetScope, FsScope)>,
 ) -> EffectRequest {
     let idempotency_key = match instance_id {
         Some(id) => run_scoped_token(&id, mote),
         None => idempotency_token_for(mote),
     };
-    let (payload, net_scope) = tool_args.unwrap_or((Vec::new(), NetScope::None));
+    // PR-6a/D155 (fs-list): the resolved tool's fs_scope rides along (empty for
+    // echo + every legacy WM Mote ⇒ byte-identical). The broker precheck still
+    // enforces request.fs_scope ⊆ warrant.fs_scope at dispatch.
+    let (payload, net_scope, fs_scope) =
+        tool_args.unwrap_or((Vec::new(), NetScope::None, FsScope::empty()));
     EffectRequest {
         payload,
         pattern: mote.effect_pattern(),
         idempotency_key: Some(idempotency_key),
         net_scope,
-        fs_scope: FsScope::empty(),
+        fs_scope,
         secret_scope: kx_warrant::SecretScope::None,
     }
 }
@@ -251,13 +255,18 @@ mod tests {
         assert_eq!(legacy.net_scope, NetScope::None);
 
         let scope = NetScope::EgressAllowlist([Host("example.com".into())].into_iter().collect());
+        let mut mounts = std::collections::BTreeMap::new();
+        mounts.insert(std::path::PathBuf::from("/data"), kx_warrant::FsMode::ReadOnly);
+        let fs = FsScope { mounts };
         let with_args = effect_request_for(
             &mote,
             Some([3; INSTANCE_ID_LEN]),
-            Some((br#"{"q":"x"}"#.to_vec(), scope.clone())),
+            Some((br#"{"q":"x"}"#.to_vec(), scope.clone(), fs.clone())),
         );
         assert_eq!(with_args.payload, br#"{"q":"x"}"#.to_vec());
         assert_eq!(with_args.net_scope, scope);
+        // PR-6a/D155 (fs-list): the resolved tool's fs_scope rides into the request.
+        assert_eq!(with_args.fs_scope, fs);
         // The idempotency token is args-FREE (mote + instance only, D58 §7):
         // identical across the two requests.
         assert_eq!(with_args.idempotency_key, legacy.idempotency_key);

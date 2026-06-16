@@ -28,7 +28,7 @@ use kx_inference::{inference_params_from_mote, InferenceBackend};
 use kx_mote::{EffectPattern, Mote, MoteId, ToolName, ToolVersion};
 use kx_runtime::{CrashPoint, SnapshotSink};
 use kx_tool_registry::ToolRegistry;
-use kx_warrant::{FsScope, WarrantSpec};
+use kx_warrant::WarrantSpec;
 
 use crate::{context, prompt, toolcall};
 
@@ -86,6 +86,10 @@ pub fn dispatch_decoded_call(
         }
     }
     let net_scope = def.required_capability.net_scope_required;
+    // PR-6a/D155 (fs-list): the resolved tool's declared fs requirement (empty for
+    // echo ⇒ byte-identical). The broker's `precheck` still enforces
+    // request.fs_scope ⊆ warrant.fs_scope at dispatch.
+    let fs_scope = def.required_capability.fs_scope_required.clone();
     let effect = EffectRequest {
         payload: call.args_bytes.clone(),
         // MCP effects are world-mutating by default → StageThenCommit (D66).
@@ -95,7 +99,7 @@ pub fn dispatch_decoded_call(
         // exactly-once). A re-SUBMITTED run (fresh instance_id) fires afresh (D64).
         idempotency_key: Some(run_scoped_token(instance_id, mote)),
         net_scope,
-        fs_scope: FsScope::empty(),
+        fs_scope,
         secret_scope: kx_warrant::SecretScope::None,
     };
     tool_broker.dispatch(mote, warrant, &call.name, effect)

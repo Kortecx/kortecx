@@ -382,6 +382,7 @@ message ParentResult {
 message ToolArgs {
   bytes args_bytes = 1;                 // the decoded call's args, verbatim (RawValue bytes)
   NetScope net_scope = 2;               // the resolved ToolDef's net_scope_required
+  FsScope fs_scope = 3;                 // PR-6a/D155 (fs-list): the resolved ToolDef's fs_scope_required (empty for echo ⇒ byte-identical; the broker precheck still enforces request ⊆ warrant)
 }
 
 // One unit of work: the Mote to run plus the warrant it runs under. `parent_results`

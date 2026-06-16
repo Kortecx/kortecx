@@ -611,9 +611,12 @@ impl Coordinator for CoordinatorService {
                 // legacy WM/leaf wire payload is byte-identical.
                 tool_args: item
                     .tool_args
-                    .map(|(args_bytes, net_scope)| proto::ToolArgs {
+                    .map(|(args_bytes, net_scope, fs_scope)| proto::ToolArgs {
                         args_bytes,
                         net_scope: Some(net_scope.into()),
+                        // PR-6a/D155 (fs-list): the resolved tool's fs requirement
+                        // (empty for echo ⇒ byte-identical to PR-2d-2).
+                        fs_scope: Some(fs_scope.into()),
                     }),
             })
             .collect();

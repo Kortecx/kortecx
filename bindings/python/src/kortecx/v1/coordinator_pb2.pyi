@@ -433,12 +433,14 @@ class ParentResult(_message.Message):
     def __init__(self, parent_mote_id: _Optional[bytes] = ..., result_ref: _Optional[bytes] = ...) -> None: ...
 
 class ToolArgs(_message.Message):
-    __slots__ = ("args_bytes", "net_scope")
+    __slots__ = ("args_bytes", "net_scope", "fs_scope")
     ARGS_BYTES_FIELD_NUMBER: _ClassVar[int]
     NET_SCOPE_FIELD_NUMBER: _ClassVar[int]
+    FS_SCOPE_FIELD_NUMBER: _ClassVar[int]
     args_bytes: bytes
     net_scope: NetScope
-    def __init__(self, args_bytes: _Optional[bytes] = ..., net_scope: _Optional[_Union[NetScope, _Mapping]] = ...) -> None: ...
+    fs_scope: FsScope
+    def __init__(self, args_bytes: _Optional[bytes] = ..., net_scope: _Optional[_Union[NetScope, _Mapping]] = ..., fs_scope: _Optional[_Union[FsScope, _Mapping]] = ...) -> None: ...
 
 class WorkItem(_message.Message):
     __slots__ = ("mote", "warrant", "parent_results", "tool_args")

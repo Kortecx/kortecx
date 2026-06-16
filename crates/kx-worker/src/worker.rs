@@ -237,10 +237,19 @@ impl Worker {
                 // `run_wm` into the `EffectRequest`. A malformed wire NetScope
                 // decodes to `None` args, which `run_wm` then REFUSES for a
                 // granted-tool Mote (fail-closed — never fire empty/garbled).
-                let tool_args: Option<(Vec<u8>, kx_warrant::NetScope)> =
+                let tool_args: Option<(Vec<u8>, kx_warrant::NetScope, kx_warrant::FsScope)> =
                     item.tool_args.and_then(|ta| {
                         let net_scope = ta.net_scope?.try_into().ok()?;
-                        Some((ta.args_bytes, net_scope))
+                        // PR-6a/D155 (fs-list): an ABSENT fs_scope decodes to empty
+                        // (an old coordinator / a non-fs tool ⇒ byte-identical).
+                        let fs_scope = ta
+                            .fs_scope
+                            .map(TryInto::try_into)
+                            .transpose()
+                            .ok()
+                            .flatten()
+                            .unwrap_or_default();
+                        Some((ta.args_bytes, net_scope, fs_scope))
                     });
                 run_wm::run_wm(
                     &mut self.client,
