@@ -208,6 +208,11 @@ class KxGatewayStub(object):
                 request_serializer=kortecx_dot_v1_dot_gateway__pb2.StreamModelTokensRequest.SerializeToString,
                 response_deserializer=kortecx_dot_v1_dot_gateway__pb2.TokenChunk.FromString,
                 _registered_method=True)
+        self.ListAlerts = channel.unary_unary(
+                '/kortecx.v1.KxGateway/ListAlerts',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.ListAlertsRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.ListAlertsResponse.FromString,
+                _registered_method=True)
 
 
 class KxGatewayServicer(object):
@@ -456,6 +461,16 @@ class KxGatewayServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def ListAlerts(self, request, context):
+        """W1a-2 additive (D120.6): the read-only ALERTS inbox VIEW — a page over the
+        host's rebuildable-to-empty alerts.db (folded from terminal `Failed` facts).
+        Display/triage-read only; UNIMPLEMENTED when the seam yields None. The triage
+        LIFECYCLE (ack/resolve), the rule engine, and notifications are CLOUD (D156/D129).
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_KxGatewayServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -628,6 +643,11 @@ def add_KxGatewayServicer_to_server(servicer, server):
                     servicer.StreamModelTokens,
                     request_deserializer=kortecx_dot_v1_dot_gateway__pb2.StreamModelTokensRequest.FromString,
                     response_serializer=kortecx_dot_v1_dot_gateway__pb2.TokenChunk.SerializeToString,
+            ),
+            'ListAlerts': grpc.unary_unary_rpc_method_handler(
+                    servicer.ListAlerts,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.ListAlertsRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.ListAlertsResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -1552,6 +1572,33 @@ class KxGateway(object):
             '/kortecx.v1.KxGateway/StreamModelTokens',
             kortecx_dot_v1_dot_gateway__pb2.StreamModelTokensRequest.SerializeToString,
             kortecx_dot_v1_dot_gateway__pb2.TokenChunk.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ListAlerts(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/ListAlerts',
+            kortecx_dot_v1_dot_gateway__pb2.ListAlertsRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.ListAlertsResponse.FromString,
             options,
             channel_credentials,
             insecure,

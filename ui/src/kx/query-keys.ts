@@ -65,4 +65,8 @@ export const queryKeys = {
    *  `instanceId` scopes to one run; cursor pages live inside the one key. */
   telemetry: (endpoint: string, instanceId: string | undefined, pageSize: number) =>
     ["kx", endpoint, "telemetry", instanceId ?? "all", pageSize] as const,
+  /** The operator alerts inbox pages (`ListAlerts`, W1a-2); terminal-failure
+   *  facts folded newest-first; cursor pages live inside the one key. */
+  alerts: (endpoint: string, instanceId: string | undefined, pageSize: number) =>
+    ["kx", endpoint, "alerts", instanceId ?? "all", pageSize] as const,
 };

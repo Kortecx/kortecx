@@ -45,6 +45,7 @@
 //! names that `instance_id`; `GetContent` returns a **uniform** not-authorized
 //! (no existence oracle).
 
+mod alerts_view;
 mod capture_view;
 mod datasets;
 mod error;
@@ -67,6 +68,7 @@ mod uploads;
 mod view;
 mod writer;
 
+pub use alerts_view::{AlertEntry, AlertView};
 pub use capture_view::{CaptureRecordEntry, CaptureView};
 pub use datasets::{
     DatasetError, DatasetHitEntry, DatasetSummaryEntry, DatasetView, IngestDoc, IngestOutcome,

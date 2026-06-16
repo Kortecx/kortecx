@@ -16,15 +16,18 @@ import { Link } from "@tanstack/react-router";
 import { m } from "framer-motion";
 import { useMemo } from "react";
 import { fadeUp, stagger } from "../../app/motion";
+import { useAlerts } from "../../kx/use-alerts";
 import { useCaptureRecords } from "../../kx/use-capture-records";
 import { type RunScopedRef, useResultMapMulti } from "../../kx/use-content-batch";
 import { useReactTurns } from "../../kx/use-react-turns";
 import { useReplanRounds } from "../../kx/use-replan-rounds";
 import { useRuns } from "../../kx/use-runs";
 import { useTelemetry } from "../../kx/use-telemetry";
+import { failureReasonLabel } from "../../lib/event-format";
 import { shortHex } from "../../lib/format";
 import {
   type Tally,
+  summarizeAlerts,
   summarizeCaptures,
   summarizeReact,
   summarizeReplan,
@@ -42,11 +45,12 @@ import { GlowCard } from "../ds/GlowCard";
 import { HealthIndicator } from "../metrics/HealthIndicator";
 import { MetricCard } from "../metrics/MetricCard";
 
-const MONITOR_VIEWS = [undefined, "feed", "telemetry"] as const;
+const MONITOR_VIEWS = [undefined, "feed", "telemetry", "alerts"] as const;
 const VIEW_LABEL: Record<string, string> = {
   overview: "Overview",
   feed: "Live feed",
   telemetry: "Telemetry",
+  alerts: "Alerts",
 };
 
 function TallyList({ tally, empty }: { tally: Tally; empty: string }) {
@@ -124,8 +128,153 @@ export function MonitoringSection({
         ))}
       </fieldset>
 
-      {tab === "feed" ? <FeedView /> : tab === "telemetry" ? <TelemetryView /> : <OverviewView />}
+      {tab === "feed" ? (
+        <FeedView />
+      ) : tab === "telemetry" ? (
+        <TelemetryView />
+      ) : tab === "alerts" ? (
+        <AlertsView />
+      ) : (
+        <OverviewView />
+      )}
     </section>
+  );
+}
+
+/** W1a-2: the operator alerts inbox — the journal's TERMINAL `Failed` facts
+ *  (dead-letters + worker-reported terminal failures) folded newest-first into a
+ *  rebuildable read-cache, cursor-paged. Read-only: the triage lifecycle
+ *  (acknowledge/resolve), the rule engine, and notifications are a Cloud
+ *  capability (D156/D129) — surfaced here as an honest-disabled card. */
+function AlertsView() {
+  const a = useAlerts();
+  const rollup = useMemo(() => summarizeAlerts(a.alerts), [a.alerts]);
+  return (
+    <GlowCard hover={false} className="monitor-panel" data-testid="monitor-alerts">
+      <div className="monitor-panel__head">
+        <h2>Alerts</h2>
+        <span className="muted">
+          terminal failures & dead-letters, newest first (read-only view)
+        </span>
+      </div>
+      {a.notWired ? (
+        <p className="muted" data-testid="alerts-not-wired">
+          Not wired on this gateway — the alerts inbox needs a serve with its alerts.db sidecar
+          (upgrade the serve to triage terminal failures).
+        </p>
+      ) : a.error ? (
+        <ErrorNotice error={a.error} />
+      ) : a.isLoading ? (
+        <EmptyState title="Loading alerts…" />
+      ) : a.alerts.length === 0 ? (
+        <EmptyState
+          title="System is healthy — no terminal failures or refusals"
+          detail="Alerts appear when a run dead-letters or a worker reports a terminal failure. Admission refusals surface in the live feed, not here."
+        />
+      ) : (
+        <>
+          <m.div
+            className="metrics-grid"
+            variants={stagger()}
+            initial="hidden"
+            animate="show"
+            data-testid="alerts-kpis"
+          >
+            <MetricCard label="Alerts" value={rollup.total} tone="failed" sub="this page" />
+            <MetricCard label="Errors" value={rollup.errors} tone="failed" sub="this page" />
+            <MetricCard label="Refusals" value={rollup.refusals} tone="scheduled" sub="this page" />
+          </m.div>
+
+          <table className="trail-table" data-testid="alerts-table">
+            <thead>
+              <tr>
+                <th>Severity</th>
+                <th>Reason</th>
+                <th>Mote</th>
+                <th>Run</th>
+                <th>When</th>
+                <th>seq</th>
+              </tr>
+            </thead>
+            <tbody>
+              {a.alerts.map((al) => (
+                <tr key={al.alertId} data-testid="alert-row">
+                  <td>
+                    <span
+                      className={`pill ${al.severity === "refused" ? "pill--repudiated" : "pill--failed"}`}
+                    >
+                      {al.severity}
+                    </span>
+                  </td>
+                  <td className="mono">{failureReasonLabel(al.reasonCode) ?? al.reasonClass}</td>
+                  <td className="mono">
+                    {al.instanceId ? (
+                      <Link
+                        to="/workflows/$instanceId"
+                        params={{ instanceId: al.instanceId }}
+                        className="linkbtn mono"
+                        title="Open the failed run's graph"
+                      >
+                        {shortHex(al.moteId)}
+                      </Link>
+                    ) : (
+                      shortHex(al.moteId)
+                    )}
+                  </td>
+                  <td className="mono">
+                    {al.instanceId ? (
+                      <Link
+                        to="/workflows/$instanceId"
+                        params={{ instanceId: al.instanceId }}
+                        className="linkbtn mono"
+                        title="Open this run"
+                      >
+                        {shortHex(al.instanceId)}
+                      </Link>
+                    ) : (
+                      "—"
+                    )}
+                  </td>
+                  <td className="muted">
+                    {al.createdUnixMs > 0 ? new Date(al.createdUnixMs).toLocaleTimeString() : "—"}
+                  </td>
+                  <td className="mono">#{al.seq}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {a.hasMore ? (
+            <button
+              type="button"
+              className="linkbtn"
+              onClick={a.loadMore}
+              disabled={a.isLoadingMore}
+              data-testid="alerts-load-more"
+            >
+              {a.isLoadingMore ? "Loading…" : "Load more"}
+            </button>
+          ) : null}
+        </>
+      )}
+
+      {/* The capability boundary is honest in EVERY wired state (healthy or not):
+          the triage lifecycle (acknowledge/resolve), the alert-rule engine, and
+          outbound notifications are a managed Cloud capability (D156/D129; GR19). */}
+      {a.notWired ? null : (
+        <div className="metrics-grid" data-testid="alerts-cloud-disabled">
+          <div className="metric-card metric-card--disabled">
+            <span className="metric-card__value">
+              <span className="chip--soon">Cloud</span>
+            </span>
+            <span className="metric-card__label">Triage, rules &amp; notifications</span>
+            <span className="metric-card__sub">
+              Acknowledge/resolve, alert rules &amp; outbound alerting are a Cloud capability
+              (D156).
+            </span>
+          </div>
+        </div>
+      )}
+    </GlowCard>
   );
 }
 

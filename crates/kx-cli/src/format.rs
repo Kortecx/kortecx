@@ -974,6 +974,61 @@ pub fn render_telemetry(resp: &proto::ListMoteTelemetryResponse, json: bool) -> 
     }
 }
 
+/// Render `alerts list` (W1a-2): newest-first terminal-failure alerts + the
+/// pagination cursor hint. The empty state is honest ("System is healthy …"),
+/// not a fabricated row. `--json` field names mirror the SDK snake_case shape
+/// (the tri-surface parity contract).
+#[must_use]
+pub fn render_alerts(resp: &proto::ListAlertsResponse, json: bool) -> String {
+    if json {
+        let rows: Vec<Value> = resp
+            .alerts
+            .iter()
+            .map(|a| {
+                json!({
+                    "alert_id": hex::encode(&a.alert_id),
+                    "mote_id": hex::encode(&a.mote_id),
+                    "instance_id": telemetry_instance_hex(&a.instance_id),
+                    "reason_class": a.reason_class,
+                    "reason_code": a.reason_code,
+                    "severity": a.severity,
+                    "seq": a.seq,
+                    "created_unix_ms": a.created_unix_ms,
+                })
+            })
+            .collect();
+        json!({ "alerts": rows, "has_more": resp.has_more }).to_string()
+    } else if resp.alerts.is_empty() {
+        "System is healthy — no terminal failures or refusals.".to_string()
+    } else {
+        let dash = |s: &str| {
+            if s.is_empty() {
+                "-".to_string()
+            } else {
+                s.to_string()
+            }
+        };
+        let mut out = String::new();
+        for a in &resp.alerts {
+            let _ = write!(
+                out,
+                "{}[{}] {}  mote {}  inst {}  seq {}",
+                if out.is_empty() { "" } else { "\n" },
+                a.severity,
+                a.reason_class,
+                hex::encode(&a.mote_id),
+                dash(&telemetry_instance_hex(&a.instance_id)),
+                a.seq,
+            );
+        }
+        if resp.has_more {
+            let last = resp.alerts.last().map_or(0, |a| a.seq);
+            let _ = write!(out, "\n(more — continue with --before-seq {last})");
+        }
+        out
+    }
+}
+
 /// Render `feedback submit` (PR-4.1): the server-derived `feedback_id`.
 #[must_use]
 pub fn render_feedback_submit(resp: &proto::SubmitFeedbackResponse, json: bool) -> String {
@@ -1538,5 +1593,54 @@ mod tests {
         assert_eq!(v["seq"], 5);
         // A delta with no kind is skipped.
         assert!(render_delta(&proto::EventDelta { seq: 1, kind: None }, false).is_none());
+    }
+
+    #[test]
+    fn alerts_json_carries_every_snake_case_field() {
+        // Locks the tri-surface parity contract: the CLI `--json` shape MUST carry
+        // every field the Py/TS SDKs expose (GR16 — a dropped `reason_code` was the
+        // exact drift this guards). If a proto field is added, extend this set.
+        let resp = proto::ListAlertsResponse {
+            alerts: vec![proto::AlertSummary {
+                alert_id: vec![0x11; 16],
+                mote_id: vec![0x22; 32],
+                instance_id: vec![0x33; 16],
+                reason_class: "dead_lettered".into(),
+                severity: "error".into(),
+                seq: 7,
+                created_unix_ms: 123,
+                reason_code: 8,
+            }],
+            has_more: true,
+        };
+        let v: Value = serde_json::from_str(&render_alerts(&resp, true)).unwrap();
+        let row = &v["alerts"][0];
+        for key in [
+            "alert_id",
+            "mote_id",
+            "instance_id",
+            "reason_class",
+            "reason_code",
+            "severity",
+            "seq",
+            "created_unix_ms",
+        ] {
+            assert!(!row[key].is_null(), "alerts --json must carry `{key}`");
+        }
+        assert_eq!(
+            row["reason_code"], 8,
+            "the numeric discriminant for label reuse"
+        );
+        assert_eq!(row["reason_class"], "dead_lettered");
+        assert_eq!(v["has_more"], true);
+        // The empty case is the honest healthy state, never a fabricated row.
+        let empty = render_alerts(
+            &proto::ListAlertsResponse {
+                alerts: vec![],
+                has_more: false,
+            },
+            false,
+        );
+        assert!(empty.contains("System is healthy"));
     }
 }

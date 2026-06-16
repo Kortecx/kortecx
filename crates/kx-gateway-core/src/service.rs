@@ -698,6 +698,13 @@ pub struct GatewayService {
     /// `GetRunInputs` returns `unimplemented` and the `Invoke` capture is skipped.
     /// Off-journal, off-digest, off-identity, rebuildable-to-empty.
     run_inputs: Option<Arc<dyn crate::run_inputs_view::RunInputsStore>>,
+    /// The optional alerts-inbox view seam (W1a-2 — the host injects an
+    /// `alerts.db`-backed read-cache folded from the journal's terminal `Failed`
+    /// facts). `None` ⇒ `ListAlerts` returns `unimplemented`. Read-only,
+    /// off-truth-path, rebuildable. The triage LIFECYCLE (acknowledge/resolve),
+    /// the rule engine, and notifications are a CLOUD capability (D156/D129) — so
+    /// this seam carries NO mutate method (GR19).
+    alerts: Option<Arc<dyn crate::alerts_view::AlertView>>,
 }
 
 /// The default fail-closed `PutContent` payload cap (32 MiB).
@@ -760,6 +767,7 @@ impl GatewayService {
             mote_defs: None,
             feedback: None,
             run_inputs: None,
+            alerts: None,
         }
     }
 
@@ -998,6 +1006,17 @@ impl GatewayService {
         run_inputs: Arc<dyn crate::run_inputs_view::RunInputsStore>,
     ) -> Self {
         self.run_inputs = Some(run_inputs);
+        self
+    }
+
+    /// Wire the alerts-inbox view (W1a-2 — the host's `alerts.db` read-cache
+    /// folded from the journal's terminal `Failed` facts). Enables `ListAlerts`.
+    /// Read-only, off-truth-path, rebuildable. The triage LIFECYCLE
+    /// (acknowledge/resolve), the rule engine, and notifications are a CLOUD
+    /// capability (D156/D129) — not exposed by this OSS seam (GR19).
+    #[must_use]
+    pub fn with_alerts_view(mut self, alerts: Arc<dyn crate::alerts_view::AlertView>) -> Self {
+        self.alerts = Some(alerts);
         self
     }
 }
@@ -1934,6 +1953,47 @@ impl KxGateway for GatewayService {
             .collect();
         Ok(Response::new(proto::ListFeedbackResponse {
             rows,
+            has_more,
+        }))
+    }
+
+    async fn list_alerts(
+        &self,
+        request: Request<proto::ListAlertsRequest>,
+    ) -> Result<Response<proto::ListAlertsResponse>, Status> {
+        // W1a-2: a read-only page over the host's alerts.db read-cache (folded
+        // from the journal's terminal `Failed` facts). A serve without the
+        // sidecar wired degrades forward-compatibly to `unimplemented`. The
+        // triage lifecycle (ack/resolve) is a Cloud capability (D156) — there is
+        // no mutate RPC here.
+        let view = self.alerts.as_ref().ok_or_else(|| {
+            Status::unimplemented("ListAlerts: no alerts view wired (alerts.db absent)")
+        })?;
+        let req = request.into_inner();
+        let instance_id: Option<[u8; 16]> = match req.instance_id {
+            None => None,
+            Some(raw) => Some(<[u8; 16]>::try_from(raw.as_slice()).map_err(|_| {
+                Status::invalid_argument("alerts instance_id filter must be 16 bytes")
+            })?),
+        };
+        // The same page bounds the read-fold RPCs use (1..=500, default 200).
+        let page = req.limit.map_or(200usize, |l| (l as usize).clamp(1, 500));
+        let (rows, has_more) = view.list(page, instance_id, req.before_seq)?;
+        let alerts = rows
+            .into_iter()
+            .map(|r| proto::AlertSummary {
+                alert_id: r.alert_id.to_vec(),
+                mote_id: r.mote_id.to_vec(),
+                instance_id: r.instance_id.to_vec(),
+                reason_class: r.reason_class,
+                severity: r.severity,
+                seq: r.seq,
+                created_unix_ms: r.created_unix_ms,
+                reason_code: r.reason_code,
+            })
+            .collect();
+        Ok(Response::new(proto::ListAlertsResponse {
+            alerts,
             has_more,
         }))
     }

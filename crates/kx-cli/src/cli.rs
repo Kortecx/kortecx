@@ -61,6 +61,7 @@ usage: kx <command> [args]
     kx replan list [--limit N]                   (re-plan rounds, newest-first)
     kx react list [--instance <hex16>] [--limit N]     (ReAct turns, newest-first)
     kx capture list [--instance <hex16>] [--limit N]   (captured actions, newest-first)
+    kx alerts list [--instance <hex16>] [--limit N] [--before-seq N]   (terminal-failure alerts, newest-first)
     kx signatures list | get --id <hex32> | register --manifest-file <path>
     kx tools list | score --intent <text> --tool <id>@<ver>... [--language-tag <t>]... [--tolerance-threshold-bp N]
     kx recipe list | search <intent> [--keyword <k>]... [--limit N]   (advisory recipe discovery)
@@ -115,6 +116,8 @@ pub enum Cli {
     React(verbs::react::ReactArgs),
     /// Captured-action records (`ListCaptureRecords`; read-only join keys).
     Capture(verbs::capture::CaptureArgs),
+    /// The operator alerts inbox (W1a-2 `ListAlerts`; read-only view).
+    Alerts(verbs::alerts::AlertsArgs),
     /// Catalog signature RPCs.
     Signatures(verbs::signatures::SignaturesArgs),
     /// Advisory toolscout RPCs (tool discovery + TaskBundle preview).
@@ -169,6 +172,7 @@ impl Cli {
             Some("replan") => Ok(Cli::Replan(verbs::replan::parse(args)?)),
             Some("react") => Ok(Cli::React(verbs::react::parse(args)?)),
             Some("capture") => Ok(Cli::Capture(verbs::capture::parse(args)?)),
+            Some("alerts") => Ok(Cli::Alerts(verbs::alerts::parse(args)?)),
             Some("signatures") => Ok(Cli::Signatures(verbs::signatures::parse(args)?)),
             Some("tools") => Ok(Cli::Tools(verbs::tools::parse(args)?)),
             Some("models") => Ok(Cli::Models(verbs::models::parse(args)?)),
@@ -237,6 +241,7 @@ async fn dispatch(cli: Cli) -> Result<(), CliError> {
         Cli::Replan(a) => verbs::replan::execute(a).await,
         Cli::React(a) => verbs::react::execute(a).await,
         Cli::Capture(a) => verbs::capture::execute(a).await,
+        Cli::Alerts(a) => verbs::alerts::execute(a).await,
         Cli::Signatures(a) => verbs::signatures::execute(a).await,
         Cli::Tools(a) => verbs::tools::execute(a).await,
         Cli::Models(a) => verbs::models::execute(a).await,

@@ -738,6 +738,16 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     //      journal, off-digest. Same hard-error posture as feedback on an
     //      unrecoverable open.
     let run_inputs_db = Arc::new(crate::run_inputs::RunInputsDb::open(&catalog_dir)?);
+    // (3f-quinquies) W1a-2: the alerts sidecar (alerts.db beside run_inputs.db) —
+    //      the operator alerts inbox FOLDED from the journal's terminal `Failed`
+    //      facts (dead-letters + worker-reported terminal failures). A journal-
+    //      DERIVED, rebuildable read-cache (the capture.db posture): deleting it
+    //      and re-folding re-materializes the SAME item set. Read-only, off-
+    //      journal, off-digest. The triage lifecycle (ack/resolve), the rule
+    //      engine, and notifications are a Cloud capability (D156). Same hard-
+    //      error posture as capture on an unrecoverable open.
+    let alerts_db = Arc::new(crate::alerts::AlertsDb::open(&catalog_dir)?);
+    alerts_db.fold(reader.as_ref()); // initial backfill before serving reads
     let capture_task = {
         let ledger = capture_ledger.clone();
         let reader = reader.clone();
@@ -780,7 +790,30 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
             }
         })
     };
-    // (3f-quater) W1a (T-OBS2): the metrics fold tick — incrementally folds the
+    // (3f-quinquies) W1a-2: the alerts fold tick — incrementally folds the
+    //      journal tail's terminal `Failed` facts into the alerts.db read-cache,
+    //      mirroring the capture tick's cadence + shutdown catch-up. Off the
+    //      sole-writer thread; read-only journal handle.
+    let alerts_task = {
+        let ledger = alerts_db.clone();
+        let reader = reader.clone();
+        let mut shutdown = live_shutdown_rx.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(Duration::from_millis(250));
+            loop {
+                tokio::select! {
+                    _ = tick.tick() => { ledger.fold(reader.as_ref()); }
+                    _ = shutdown.changed() => {
+                        if *shutdown.borrow() {
+                            ledger.fold(reader.as_ref()); // final catch-up
+                            break;
+                        }
+                    }
+                }
+            }
+        })
+    };
+    // (3f-sexies) W1a (T-OBS2): the metrics fold tick — incrementally folds the
     //      journal tail into the cached RED snapshot, mirroring the telemetry tick's
     //      cadence + shutdown catch-up. Off the sole-writer thread; read-only handle;
     //      fail-open (a fold error keeps the last good snapshot). Spawned only when
@@ -861,6 +894,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         .with_uploads_ledger(uploads_db)
         .with_feedback_store(feedback_db)
         .with_run_inputs_store(run_inputs_db)
+        .with_alerts_view(alerts_db)
         .with_put_content_cap(cfg.content_max_bytes)
         .with_model_catalog_view(models_view)
         .with_mote_def_view(mote_defs_view)
@@ -1129,6 +1163,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         ws_task,
         capture_task,
         telemetry_task,
+        alerts_task,
     ];
     #[cfg(feature = "inference")]
     aux.push(token_evict_task);
@@ -1194,7 +1229,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
 /// All values are post-resolution: the bound `local_addr` reflects an ephemeral
 /// `:0` if one was requested, and the sidecar paths mirror the gateway's own
 /// `catalog_dir` layout (catalog.db / members.db / telemetry.db / capture.db /
-/// uploads.db / feedback.db / run_inputs.db / datasets/).
+/// uploads.db / feedback.db / run_inputs.db / alerts.db / datasets/).
 #[cfg(feature = "embedded-worker")]
 fn log_startup_banner(
     cfg: &GatewayConfig,
@@ -1248,6 +1283,7 @@ fn log_startup_banner(
         uploads_db    = %catalog_dir.join("uploads.db").display(),
         feedback_db   = %catalog_dir.join("feedback.db").display(),
         run_inputs_db = %catalog_dir.join("run_inputs.db").display(),
+        alerts_db     = %catalog_dir.join("alerts.db").display(),
         datasets_dir  = %catalog_dir.join("datasets").display(),
         grpc_endpoint = %format!("http://{local_addr}"),
         ws_endpoint   = %format!("ws://{ws_local_addr}"),

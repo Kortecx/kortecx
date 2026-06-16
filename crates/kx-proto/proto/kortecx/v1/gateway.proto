@@ -1036,6 +1036,49 @@ message TokenChunk {
 }
 
 // ---------------------------------------------------------------------------
+// W1a-2 — ALERTS inbox (read-only VIEW; observability/operability). Additive RPC
+// (D120.6). A rebuildable-to-EMPTY, off-journal, off-digest `alerts.db` read-
+// cache the host FOLDS from the journal's TERMINAL `Failed` facts only
+// (`!is_pre_commit_crash` — dead-letters + worker-reported terminal failures;
+// the liveness `TimedOut`/`WorkerCrashed` retries are EXCLUDED). Serve-path
+// admission refusals write NOTHING to the journal (they are synchronous
+// SUBMIT_STATUS_REJECTED responses carrying `kx-refusal-code` metadata), so they
+// are NOT foldable and NOT in this inbox. `alert_id` is SERVER-derived + re-fold-
+// stable (deterministic over (mote_id, seq)); deleting `alerts.db` and re-folding
+// re-materializes the SAME item set (derived, not stored). Display/triage-read
+// ONLY: never truth, never a `MoteId` input, never a digest input, never a
+// journal change. A serve without the sidecar answers `unimplemented` (forward-
+// compat degrade).
+//
+// *** OSS = the read-only Alerts VIEW. The TRIAGE LIFECYCLE (acknowledge /
+// *** resolve), the alert-RULE engine, and outbound NOTIFICATIONS (a new egress
+// *** surface) are a CLOUD capability (D156 / D129) — deliberately NOT in this
+// *** OSS contract (GR19: reserve production-grade management surfaces for Cloud).
+// ---------------------------------------------------------------------------
+
+message ListAlertsRequest {
+  optional uint32 limit = 1;             // page size; server clamps 1..=500 (absent = 200)
+  optional bytes instance_id = 2;        // 16B — scope to one run (watermark attribution)
+  optional uint64 before_seq = 3;        // cursor: rows with seq strictly below (newest-first)
+}
+
+message AlertSummary {
+  bytes alert_id = 1;                    // 16B SERVER-derived, re-fold-stable id (blake3 over (mote_id, seq); SN-8 — no existence oracle)
+  bytes mote_id = 2;                     // 32B — the failed Mote (deep-link target)
+  bytes instance_id = 3;                 // 16B watermark attribution (may be EMPTY)
+  string reason_class = 4;               // the terminal FailureReason wire token (e.g. "dead_lettered", "validator_rejected")
+  string severity = 5;                   // closed display vocabulary: "error" | "refused"
+  uint64 seq = 6;                        // the Failed fact's journal seq (deep-link cursor + pagination)
+  uint64 created_unix_ms = 7;            // AUDIT-ONLY first-folded wall clock (off every hash; may differ after a rebuild)
+  uint32 reason_code = 8;                // the numeric FailureReason discriminant (0-8) — the UI reuses its single failure-label map
+}
+
+message ListAlertsResponse {
+  repeated AlertSummary alerts = 1;      // newest-first (descending seq)
+  bool has_more = 2;
+}
+
+// ---------------------------------------------------------------------------
 // Service — the external client-facing gateway (distinct from Coordinator).
 // ---------------------------------------------------------------------------
 
@@ -1109,4 +1152,9 @@ service KxGateway {
   // the authority. An EMPTY immediately-ending stream when the broker is not
   // wired (FFI-free build) — honest, never an error.
   rpc StreamModelTokens(StreamModelTokensRequest) returns (stream TokenChunk);
+  // W1a-2 additive (D120.6): the read-only ALERTS inbox VIEW — a page over the
+  // host's rebuildable-to-empty alerts.db (folded from terminal `Failed` facts).
+  // Display/triage-read only; UNIMPLEMENTED when the seam yields None. The triage
+  // LIFECYCLE (ack/resolve), the rule engine, and notifications are CLOUD (D156/D129).
+  rpc ListAlerts(ListAlertsRequest) returns (ListAlertsResponse);
 }

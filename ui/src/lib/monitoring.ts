@@ -6,7 +6,13 @@
  * section stays a thin renderer (the `lib/metrics.ts` precedent).
  */
 
-import type { CaptureRecord, MoteTelemetryRow, ReactTurn, ReplanRound } from "@kortecx/sdk/web";
+import type {
+  AlertSummary,
+  CaptureRecord,
+  MoteTelemetryRow,
+  ReactTurn,
+  ReplanRound,
+} from "@kortecx/sdk/web";
 import type { RunRecord } from "./recent-runs";
 
 /** A counter keyed by a string label (model id, branch, nd_class, handle). */
@@ -88,6 +94,32 @@ export function summarizeCaptures(records: readonly CaptureRecord[]): CaptureSum
     bump(byBranch, r.reactBranch || "—");
   }
   return { total: records.length, byNdClass, byBranch };
+}
+
+/** A rollup of the loaded alerts page (W1a-2). `total` is this-page only (the
+ *  inbox is cursor-paged); `errors`/`refusals` split by the wire severity. */
+export interface AlertSummaryRollup {
+  readonly total: number;
+  readonly errors: number;
+  readonly refusals: number;
+  readonly byReason: Tally;
+}
+
+/** Roll up the loaded alerts page by severity + reason — pure, so the section
+ *  stays a renderer and the split is unit-testable (no fabricated counts). */
+export function summarizeAlerts(alerts: readonly AlertSummary[]): AlertSummaryRollup {
+  const byReason: Record<string, number> = {};
+  let errors = 0;
+  let refusals = 0;
+  for (const a of alerts) {
+    bump(byReason, a.reasonClass || "—");
+    if (a.severity === "refused") {
+      refusals += 1;
+    } else {
+      errors += 1;
+    }
+  }
+  return { total: alerts.length, errors, refusals, byReason };
 }
 
 /** Sort a tally into `[label, count]` rows, biggest first (stable for ties by label). */
