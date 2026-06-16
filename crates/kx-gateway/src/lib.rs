@@ -162,8 +162,8 @@ pub use error::GatewayError;
 pub use live_tail::{GlobalLiveTailer, LiveTailer};
 pub use provision::{
     DemoLibrary, HostRecipeBinder, HostRecipeCatalog, HostSignatureCatalog, HostWorkflowAuthor,
-    DEMO_RECIPE_HANDLE, MODEL_RECIPE_HANDLE, PASSTHROUGH_DAG_HANDLE, REACT_RECIPE_HANDLE,
-    VISION_RECIPE_HANDLE,
+    DEMO_RECIPE_HANDLE, MODEL_RECIPE_HANDLE, PASSTHROUGH_DAG_HANDLE, REACT_FS_RECIPE_HANDLE,
+    REACT_RECIPE_HANDLE, VISION_RECIPE_HANDLE,
 };
 pub use server::{serve, start, RunningGateway};
 pub use teams::{seed_workspace_team, HostGrantView, HostMembershipView, WORKSPACE_TEAM_HANDLE};
