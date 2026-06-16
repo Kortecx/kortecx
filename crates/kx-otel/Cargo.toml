@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: Apache-2.0
+[package]
+name         = "kx-otel"
+version      = "0.1.1"
+edition      = { workspace = true }
+rust-version = { workspace = true }
+license      = { workspace = true }
+authors      = { workspace = true }
+repository   = { workspace = true }
+description  = "kortecx observability metrics (W1a / T-OBS2): an FFI-free, build.rs-free crate that folds the read-only journal into RED (rate/errors/duration) counters and renders the Prometheus text exposition format. Derived from durable committed facts only — never an identity or digest input."
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+# The read-only journal seam (JournalReader / ReadOnly<J>) + the journal entry
+# kinds the RED counters fold over. FFI-free edges only (the dep_wall pins it):
+# kx-otel reads committed facts, it never dispatches inference.
+kx-gateway-core = { workspace = true }
+kx-journal      = { workspace = true }
+thiserror       = { workspace = true }
+tracing         = { workspace = true }
+
+[dev-dependencies]
+# In-memory journal to drive the fold deterministically in unit tests.
+kx-mote    = { workspace = true }
+kx-content = { workspace = true }
+
+[lints]
+workspace = true

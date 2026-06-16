@@ -106,6 +106,18 @@ pub struct GatewayConfig {
     /// The fail-closed `PutContent` payload cap in bytes (Batch A). Default
     /// [`DEFAULT_CONTENT_MAX_BYTES`]; `--content-max-bytes <BYTES>` overrides.
     pub content_max_bytes: u64,
+    /// W1a (T-OBS2): the address:port the Prometheus `/metrics` endpoint binds, or
+    /// `None` (the default) to NOT serve metrics. Opt-in via `--metrics-listen
+    /// <addr:port>` (deny-by-default posture). The endpoint is unauthenticated (the
+    /// scraper convention, like `grpc.health.v1`) — bind loopback or a trusted
+    /// network; a non-loopback bind is allowed but warns at startup (Cloud adds the
+    /// auth/party-scope). A `0` port is ephemeral (used by tests).
+    pub metrics_listen: Option<SocketAddr>,
+    /// W1a (T-OBS1): a JSONL operator audit log path for the long-running serve, or
+    /// `None` (the default) to NOT write one. Opt-in via `--audit-log <path>`; opened
+    /// in APPEND mode so the trail accumulates across restarts. Off the truth path
+    /// (best-effort, never gates a run); the operator owns retention/rotation.
+    pub audit_log: Option<PathBuf>,
 }
 
 /// PEM paths for the gRPC listener's server TLS (A1). The embedded loopback
@@ -142,7 +154,7 @@ pub const USAGE: &str =
 [--max-lease <N>] [--dev-allow-local | --allow-local-dev] \
 [--auth-token <token>=<party>]... [--auth-token-file <path>] [--catalog-dir <dir>] \
 [--tls-cert <path> --tls-key <path>] [--cors-origin <scheme://host[:port]>]... \
-[--content-max-bytes <BYTES>]\n       \
+[--content-max-bytes <BYTES>] [--metrics-listen <addr:port>] [--audit-log <path>]\n       \
 kx-gateway --help | --version";
 
 impl Cli {
@@ -168,6 +180,9 @@ impl Cli {
     }
 }
 
+// A flat `--flag value` parsing loop: one arm per flag keeps the grammar in one
+// readable place; splitting it into sub-parsers would scatter the contract.
+#[allow(clippy::too_many_lines)]
 fn parse_serve(mut args: impl Iterator<Item = String>) -> Result<GatewayConfig, GatewayError> {
     let mut listen: Option<SocketAddr> = None;
     let mut ws_listen: SocketAddr = DEFAULT_WS_LISTEN;
@@ -183,6 +198,8 @@ fn parse_serve(mut args: impl Iterator<Item = String>) -> Result<GatewayConfig, 
     let mut console_listen = ConsoleMode::Default;
     let mut console_flag_seen = false;
     let mut content_max_bytes: u64 = DEFAULT_CONTENT_MAX_BYTES;
+    let mut metrics_listen: Option<SocketAddr> = None;
+    let mut audit_log: Option<PathBuf> = None;
 
     while let Some(flag) = args.next() {
         let mut take_value = |name: &str| -> Result<String, GatewayError> {
@@ -238,6 +255,15 @@ fn parse_serve(mut args: impl Iterator<Item = String>) -> Result<GatewayConfig, 
                     ))
                 })?;
             }
+            // W1a (T-OBS2): opt-in Prometheus metrics endpoint (default OFF).
+            "--metrics-listen" => {
+                metrics_listen = Some(parse_addr(
+                    "--metrics-listen",
+                    &take_value("--metrics-listen")?,
+                )?);
+            }
+            // W1a (T-OBS1): opt-in serve-path JSONL audit log (default OFF).
+            "--audit-log" => audit_log = Some(PathBuf::from(take_value("--audit-log")?)),
             other => return Err(GatewayError::Config(format!("unknown flag {other:?}"))),
         }
     }
@@ -273,6 +299,8 @@ fn parse_serve(mut args: impl Iterator<Item = String>) -> Result<GatewayConfig, 
         cors_origins,
         console_listen,
         content_max_bytes,
+        metrics_listen,
+        audit_log,
     })
 }
 
@@ -614,6 +642,46 @@ mod tests {
         assert!(base(&["--content-max-bytes", "0"]).is_err());
         assert!(base(&["--content-max-bytes", "lots"]).is_err());
         assert!(base(&["--content-max-bytes"]).is_err());
+    }
+
+    #[test]
+    fn metrics_listen_and_audit_log_default_off_and_parse() {
+        let base = |extra: &[&str]| {
+            let mut a = vec![
+                "serve",
+                "--listen",
+                "127.0.0.1:0",
+                "--journal",
+                "/tmp/j",
+                "--content",
+                "/tmp/c",
+            ];
+            a.extend_from_slice(extra);
+            Cli::from_args(a)
+        };
+        // Default: both OFF (deny-by-default observability posture).
+        let c = serve(base(&[]).unwrap());
+        assert_eq!(c.metrics_listen, None);
+        assert_eq!(c.audit_log, None);
+        // Opt-in: both parse.
+        let c = serve(
+            base(&[
+                "--metrics-listen",
+                "127.0.0.1:9090",
+                "--audit-log",
+                "/tmp/audit.jsonl",
+            ])
+            .unwrap(),
+        );
+        assert_eq!(
+            c.metrics_listen,
+            Some("127.0.0.1:9090".parse::<SocketAddr>().unwrap())
+        );
+        assert_eq!(c.audit_log, Some(PathBuf::from("/tmp/audit.jsonl")));
+        // A malformed metrics addr is a config error; a missing value too.
+        assert!(base(&["--metrics-listen", "not-an-addr"]).is_err());
+        assert!(base(&["--metrics-listen"]).is_err());
+        assert!(base(&["--audit-log"]).is_err());
     }
 
     #[test]

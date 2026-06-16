@@ -16,15 +16,18 @@
 //! [`ReadOnly`] handle with no `append`.
 
 use std::net::SocketAddr;
+// `Arc` + the `AuditSink` trait are used by the (feature-independent)
+// `RunningGateway` struct field + `shutdown()` flush, so they MUST be imported
+// unconditionally — the rest of the audit/worker wiring is `embedded-worker`-gated.
+use std::sync::Arc;
 
+use kx_audit::AuditSink;
 use tokio::sync::{oneshot, watch};
 use tokio::task::JoinHandle;
 
 use crate::config::GatewayConfig;
 use crate::error::GatewayError;
 
-#[cfg(feature = "embedded-worker")]
-use std::sync::Arc;
 #[cfg(feature = "embedded-worker")]
 use std::time::Duration;
 #[cfg(feature = "embedded-worker")]
@@ -33,6 +36,7 @@ use {
         DemoLibrary, HostRecipeBinder, HostRecipeCatalog, HostSignatureCatalog, HostWorkflowAuthor,
     },
     crate::teams::{seed_workspace_team, HostGrantView, HostMembershipView},
+    kx_audit::JsonlAuditSink,
     kx_capability::{CapabilityBroker, LocalCapabilityBroker},
     kx_catalog::SqliteCatalog,
     kx_content::{ContentRef, ContentStore, LocalFsContentStore},
@@ -41,8 +45,8 @@ use {
     kx_fleet::SqliteMembershipLedger,
     kx_gateway_core::{
         EventTailer, GatewayService, GlobalEventTailer, GrantView, JournalReader, MembershipView,
-        ReadOnly, RecipeBinder, RecipeCatalog, SignatureCatalog, TonicCoordinatorSubmitter,
-        WorkflowAuthor,
+        ReadOnly, RecipeBinder, RecipeCatalog, SignatureCatalog, TelemetryView,
+        TonicCoordinatorSubmitter, WorkflowAuthor,
     },
     kx_journal::SqliteJournal,
     kx_proto::proto::coordinator_server::CoordinatorServer,
@@ -203,6 +207,13 @@ pub struct RunningGateway {
     /// Where the embedded web console (D139) is bound, when this binary carries
     /// the `console` feature and the config did not disable it.
     console_local_addr: Option<SocketAddr>,
+    /// W1a (T-OBS2): where the Prometheus `/metrics` endpoint is bound, or `None`
+    /// when `--metrics-listen` was not given (default OFF).
+    metrics_local_addr: Option<SocketAddr>,
+    /// W1a (T-OBS1): the serve-path audit sink, retained so a graceful
+    /// [`RunningGateway::shutdown`] can flush its buffered trail to disk (the
+    /// JSONL sink also flushes on Drop, the crash safety net). `None` ⇒ no audit.
+    audit_sink: Option<Arc<dyn AuditSink>>,
     shutdown: oneshot::Sender<()>,
     /// Flips the live-tail poll loops off so their (otherwise endless) streams end
     /// and the gateway's graceful drain can complete (R5). Signalled BEFORE the
@@ -236,6 +247,14 @@ impl RunningGateway {
         self.console_local_addr
     }
 
+    /// W1a (T-OBS2): the address the Prometheus `/metrics` endpoint is bound to
+    /// (resolved from a `:0` request), or `None` when `--metrics-listen` was not
+    /// given. Scrape `http://<addr>/metrics`.
+    #[must_use]
+    pub fn metrics_local_addr(&self) -> Option<SocketAddr> {
+        self.metrics_local_addr
+    }
+
     /// Stop accepting new gateway RPCs, drain in-flight ones, then abort the
     /// embedded coordinator + worker. The journal is always left at a safe
     /// boundary: commits are durable before they are acked, and any
@@ -246,6 +265,7 @@ impl RunningGateway {
             live_shutdown,
             gateway,
             aux,
+            audit_sink,
             ..
         } = self;
         // Stop the live-tail poll loops FIRST so their endless streams end —
@@ -261,6 +281,13 @@ impl RunningGateway {
         };
         for handle in &aux {
             handle.abort();
+        }
+        // W1a (T-OBS1): the in-flight commits have drained (their audit lines are
+        // buffered in the sink); flush the trail to disk so a graceful shutdown
+        // leaves a COMPLETE audit log (the Drop-flush only fires when the last Arc
+        // drops — non-deterministic relative to this return). Best-effort.
+        if let Some(sink) = &audit_sink {
+            sink.flush();
         }
         result
     }
@@ -423,6 +450,26 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     };
     #[cfg(not(feature = "inference"))]
     let coordinator = CoordinatorService::with_store(writer, content.clone());
+    // W1a (T-OBS1): build the optional serve-path operator audit sink ONCE. Opened
+    // in APPEND mode so the JSONL trail accumulates across restarts; a bad/unwritable
+    // path fails `start` LOUDLY (never a silently-dropped audit). Kept as a shared
+    // Arc so the gateway can FLUSH it on graceful shutdown (the Drop-flush is the
+    // crash safety net; an explicit flush makes a clean shutdown's trail complete).
+    // OFF the truth path (record is infallible, never gates a run, never a digest
+    // input) — `None` ⇒ no sink, byte-identical to today (deny-by-default).
+    let audit_sink: Option<Arc<dyn AuditSink>> = match cfg.audit_log.as_ref() {
+        Some(path) => {
+            let sink = JsonlAuditSink::append(path).map_err(|e| {
+                GatewayError::Config(format!("--audit-log {}: {e}", path.display()))
+            })?;
+            Some(Arc::new(sink))
+        }
+        None => None,
+    };
+    let coordinator = match &audit_sink {
+        Some(sink) => coordinator.with_audit_sink(sink.clone()),
+        None => coordinator,
+    };
     let coord_addr = resolve_listen(SocketAddr::from(([127, 0, 0, 1], 0))).await?;
     let coord_task = tokio::spawn(async move {
         if let Err(error) = Server::builder()
@@ -565,6 +612,19 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     // Typed as `Arc<dyn JournalReader>` so the SAME read-only handle backs both the
     // gateway read-fold and the R5 WebSocket bridge (cheap clone, one fold source).
     let reader: Arc<dyn JournalReader> = Arc::new(ReadOnly::new(read_journal));
+    // W1a (T-OBS2): the metrics handle folds the SAME read-only journal handle into
+    // RED counters (off the truth path — never journaled, never a digest input).
+    // Built only when `--metrics-listen` is set (default OFF, deny-by-default). A
+    // background tick refreshes the cached snapshot; the `/metrics` scrape serves it
+    // without scanning the journal, so scrape latency is independent of journal size.
+    let metrics_handle = cfg.metrics_listen.map(|_| {
+        kx_otel::MetricsHandle::new(
+            reader.clone(),
+            kx_otel::BuildInfo {
+                version: env!("CARGO_PKG_VERSION"),
+            },
+        )
+    });
     let submitter = Arc::new(connect_submitter_with_retry(&coord_endpoint).await?);
 
     // (3b) Durable catalog directory (R2a/R2b): `--catalog-dir` (default:
@@ -720,6 +780,32 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
             }
         })
     };
+    // (3f-quater) W1a (T-OBS2): the metrics fold tick — incrementally folds the
+    //      journal tail into the cached RED snapshot, mirroring the telemetry tick's
+    //      cadence + shutdown catch-up. Off the sole-writer thread; read-only handle;
+    //      fail-open (a fold error keeps the last good snapshot). Spawned only when
+    //      `--metrics-listen` is set; `None` ⇒ no task, byte-identical to today.
+    let metrics_task = metrics_handle.clone().map(|handle| {
+        let mut shutdown = live_shutdown_rx.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(Duration::from_millis(250));
+            loop {
+                tokio::select! {
+                    _ = tick.tick() => {
+                        if let Err(error) = handle.refresh() {
+                            tracing::debug!(%error, "metrics fold tick failed; serving last snapshot");
+                        }
+                    }
+                    _ = shutdown.changed() => {
+                        if *shutdown.borrow() {
+                            let _ = handle.refresh(); // final catch-up
+                            break;
+                        }
+                    }
+                }
+            }
+        })
+    });
 
     // (3g) W1.A5: the always-on advisory toolscout view — manifests from the
     //      SAME registry surface the serve path resolves against (built-ins
@@ -905,6 +991,34 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     #[cfg(not(feature = "console"))]
     let (console_local_addr, console_tcp): (Option<SocketAddr>, Option<()>) = (None, None);
 
+    // (5c) W1a (T-OBS2): bind the Prometheus `/metrics` listener (when enabled)
+    //      EARLY so a port conflict fails `start` loudly, but SERVE it LATE (aux)
+    //      like the console + ws accept loops (bind early, serve late — no orphan on
+    //      a later fallible step). Unauthenticated by design (the scraper convention);
+    //      a non-loopback bind is allowed but warns (Cloud adds auth/party-scope).
+    let (metrics_local_addr, metrics_tcp) = match cfg.metrics_listen {
+        Some(addr) => {
+            let tcp = tokio::net::TcpListener::bind(addr).await.map_err(|e| {
+                GatewayError::Bind(format!(
+                    "metrics listener {addr}: {e} (another process on this port? \
+                     pick one with --metrics-listen <addr:port>)"
+                ))
+            })?;
+            let local = tcp
+                .local_addr()
+                .map_err(|e| GatewayError::Bind(e.to_string()))?;
+            if !local.ip().is_loopback() {
+                tracing::warn!(
+                    metrics = %local,
+                    "the /metrics endpoint is UNAUTHENTICATED and bound to a non-loopback \
+                     address — restrict it to a trusted network (Cloud adds auth/party-scope)"
+                );
+            }
+            (Some(local), Some(tcp))
+        }
+        None => (None, None),
+    };
+
     // Cloned for the ws accept loop, which spawns LAST (after every fallible
     // start step) so a failed start never orphans it.
     let ws_resolver = resolver.clone();
@@ -1028,6 +1142,25 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     #[cfg(not(feature = "console"))]
     let _ = console_tcp;
 
+    // W1a (T-OBS2): the metrics fold tick + the /metrics accept loop join the aux
+    // set (spawned only when `--metrics-listen` is set; served LATE, after every
+    // fallible start step). The accept loop reuses the telemetry seam for the
+    // recent-window latency block (None when no model Mote has run — honest omit).
+    if let Some(task) = metrics_task {
+        aux.push(task);
+    }
+    if let (Some(tcp), Some(handle)) = (metrics_tcp, metrics_handle) {
+        let telemetry_view: Option<Arc<dyn TelemetryView>> = Some(telemetry_ledger.clone());
+        aux.push(tokio::spawn(crate::metrics::serve_metrics(
+            tcp,
+            handle,
+            telemetry_view,
+        )));
+        if let Some(local) = metrics_local_addr {
+            tracing::info!(url = %format!("http://{local}/metrics"), "metrics endpoint ready");
+        }
+    }
+
     // The operator-facing startup banner: every RESOLVED durable path + endpoint
     // in one place, so a zero-config `kx serve` (auto paths under ~/.kortecx) is
     // transparent — the operator can find the journal, inspect the sidecar DBs,
@@ -1038,12 +1171,15 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         local_addr,
         ws_local_addr,
         console_local_addr,
+        metrics_local_addr,
     );
 
     Ok(RunningGateway {
         local_addr,
         ws_local_addr,
         console_local_addr,
+        metrics_local_addr,
+        audit_sink,
         shutdown,
         live_shutdown,
         gateway,
@@ -1066,6 +1202,7 @@ fn log_startup_banner(
     local_addr: SocketAddr,
     ws_local_addr: SocketAddr,
     console_local_addr: Option<SocketAddr>,
+    metrics_local_addr: Option<SocketAddr>,
 ) {
     let auth_mode = if cfg.dev_allow_local {
         "dev-allow-local (loopback only, no token)"
@@ -1083,6 +1220,15 @@ fn log_startup_banner(
         .unwrap_or_else(|| Path::new("."));
     let console_url =
         console_local_addr.map_or_else(|| "(disabled)".to_string(), |a| format!("http://{a}/"));
+    // W1a (T-OBS2/T-OBS1): the opt-in observability surfaces, "(disabled)" when off.
+    let metrics_url = metrics_local_addr.map_or_else(
+        || "(disabled)".to_string(),
+        |a| format!("http://{a}/metrics"),
+    );
+    let audit_log = cfg
+        .audit_log
+        .as_ref()
+        .map_or_else(|| "(disabled)".to_string(), |p| p.display().to_string());
     let connect_hint = if cfg.dev_allow_local {
         format!("kx runs list --endpoint http://{local_addr}")
     } else {
@@ -1106,6 +1252,8 @@ fn log_startup_banner(
         grpc_endpoint = %format!("http://{local_addr}"),
         ws_endpoint   = %format!("ws://{ws_local_addr}"),
         console_url   = %console_url,
+        metrics_url   = %metrics_url,
+        audit_log     = %audit_log,
         auth_mode,
         connect_hint  = %connect_hint,
         "kx-gateway STARTUP — resolved durable layout + endpoints",

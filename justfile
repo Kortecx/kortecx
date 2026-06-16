@@ -415,6 +415,12 @@ features-guard:
     cargo check -p kx-cli --features hnsw
     cargo check -p kx-cli --features inference,hnsw
     echo " ✓ features-guard: hnsw + inference,hnsw both build"
+    # W1a (SN-6): the gateway-only / external-coordinator config (default feature
+    # `embedded-worker` OFF) reserved by the `start_impl` stub must stay BUILDABLE,
+    # so a feature-independent struct field never references a feature-gated import
+    # (the W1a-1 audit-sink cfg-leak class). CI builds only the default features.
+    cargo check -p kx-gateway --no-default-features
+    echo " ✓ features-guard: kx-gateway --no-default-features builds"
 
 # Byte-determinism check (I1.c). Two consecutive release builds must produce
 # bit-identical artifacts. Failure indicates the build is nondeterministic and

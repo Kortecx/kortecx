@@ -50,6 +50,7 @@ members = [
     "crates/kx-model-store",
     "crates/kx-cli",
     "crates/kx-profile",
+    "crates/kx-otel",
 ]
 exclude = [
     "kx-cloud",
@@ -217,6 +218,10 @@ kx-fleet             = { path = "crates/kx-fleet",             version = "0.1.1"
 # StreamEvents) + propose-proxy (SubmitRun -> coordinator). No journal write path;
 # never links the frozen-trio writers (a dep-wall test pins it).
 kx-gateway-core      = { path = "crates/kx-gateway-core",      version = "0.1.1" }
+# W1a (T-OBS2) observability metrics: folds the read-only journal into RED counters
+# + renders the Prometheus text format. FFI-free, no build.rs; off the truth path
+# (a dep-wall test keeps it out of the frozen-trio + journal-writer closure).
+kx-otel              = { path = "crates/kx-otel",              version = "0.1.1" }
 # R1 (D130) gateway dev BINARY: hosts the FROZEN KxGateway proto over kx-gateway-core
 # with an embedded single-system coordinator + local worker; the first network server
 # that binds a port outside tests. Deny-all auth stub (R2 fills it). FFI-free by default.
