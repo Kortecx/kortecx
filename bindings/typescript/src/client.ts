@@ -48,7 +48,15 @@ import { RunInputs, type RunPage, RunSummary } from "./runs.js";
 import { TeamMembers, type TeamSummary, teamsFromProto } from "./teams.js";
 import { type MoteTelemetryPage, MoteTelemetryRow, TelemetrySummary } from "./telemetry.js";
 import type { TokenChunk } from "./tokens.js";
-import { BundleScore, type BundleSpec, ToolManifest, bundleSpecToProto } from "./toolscout.js";
+import {
+  BundleScore,
+  type BundleSpec,
+  type RegisterToolInput,
+  RegisteredTool,
+  type RegisteredToolsPage,
+  ToolManifest,
+  bundleSpecToProto,
+} from "./toolscout.js";
 import { type Args, encodeArgs } from "./transport.js";
 import { type Delta, type GlobalDelta, Projection, SignatureSummary } from "./types.js";
 import {
@@ -527,6 +535,72 @@ export abstract class KxClientBase {
       }),
     );
     return { alerts: resp.alerts.map((a) => AlertSummary.fromProto(a)), hasMore: resp.hasMore };
+  }
+
+  /**
+   * The durable tools registry INVENTORY (PR-6a `DiscoverTools`) — registered
+   * tools + their authority/provenance, in `(name, version)` order. DISTINCT from
+   * {@link KxClientBase.listToolManifests} (advisory ranking). Registration grants
+   * NO authority (SN-8). An old gateway (or one without the registry) throws
+   * {@link KxUnimplemented}.
+   */
+  async discoverTools(
+    opts: { limit?: number; afterName?: string; afterVersion?: string } = {},
+  ): Promise<RegisteredToolsPage> {
+    const resp = await rpc(
+      this.grpc.discoverTools({
+        limit: opts.limit ?? 0,
+        afterName: opts.afterName ?? "",
+        afterVersion: opts.afterVersion ?? "",
+      }),
+    );
+    return { tools: resp.tools.map((t) => RegisteredTool.fromProto(t)), hasMore: resp.hasMore };
+  }
+
+  /**
+   * Register a declarative EXTERNAL MCP tool (PR-6a `RegisterTool`). The server
+   * SSRF-vets `serverHost`, derives identity + capability, and durably stores it;
+   * the returned `toolId` (hex) is SERVER-derived (the client never names/forges
+   * it, SN-8). Registration grants NO authority — a tool fires only under a
+   * server-issued warrant. DIALING `serverHost` is a Cloud / PR-6b capability. An
+   * internal/link-local host is refused (`permission_denied`).
+   */
+  async registerTool(input: RegisterToolInput): Promise<string> {
+    const inputSchema =
+      input.params && input.params.length > 0
+        ? {
+            params: input.params.map((p) => ({
+              name: p.name,
+              ty: p.ty ?? "str",
+              maxLen: p.maxLen ?? 0,
+              required: p.required ?? true,
+              allowed: [...(p.allowed ?? [])],
+            })),
+            denyUnknown: input.denyUnknownParams ?? true,
+          }
+        : undefined;
+    const resp = await rpc(
+      this.grpc.registerTool({
+        toolName: input.name,
+        toolVersion: input.version,
+        description: input.description ?? "",
+        idempotencyClass: input.idempotencyClass ?? "Readback",
+        inputSchema,
+        serverHost: input.serverHost,
+        remoteName: input.remoteName ?? "",
+      }),
+    );
+    return encode(resp.toolId);
+  }
+
+  /**
+   * Deregister an operator-registered tool by exact `(name, version)` (PR-6a
+   * `DeregisterTool`). Built-ins are refused (returns `false`). Returns `true` iff
+   * a row was removed.
+   */
+  async deregisterTool(name: string, version: string): Promise<boolean> {
+    const resp = await rpc(this.grpc.deregisterTool({ toolName: name, toolVersion: version }));
+    return resp.removed;
   }
 
   /**

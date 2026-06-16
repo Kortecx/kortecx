@@ -162,3 +162,75 @@ class BundleSpec:
             tool_sequence=[t.to_proto() for t in self.tools],
             tolerance_threshold_bp=self.tolerance_threshold_bp,
         )
+
+
+# --- PR-6a declarative tools registry (DiscoverTools / RegisterTool) ------------
+#
+# DISTINCT from the advisory ToolManifest above: this is the durable registry
+# INVENTORY (what is registered, by whom, with what authority). Registration
+# grants NO authority — a tool fires only under a server-issued warrant (SN-8);
+# `tool_id` is server-derived (the client never names/forges it). DIALING a
+# registered external MCP server is a Cloud / PR-6b capability.
+
+
+@dataclass(frozen=True)
+class RegisteredTool:
+    """One durable-registry row (``DiscoverTools``). ``net_scope`` is a display
+    summary; authority never rides this wire (SN-8)."""
+
+    tool_id: str  # 16-byte server-derived id, hex
+    tool_name: str
+    tool_version: str
+    kind: str  # "Builtin" | "Mcp"
+    description: str
+    idempotency_class: str
+    provenance: str  # "HumanAuthored" | "SelfGenerated"
+    registration_status: str  # "Approved" | "PendingHumanReview"
+    server_host: str  # the vetted egress endpoint (empty = no egress)
+    net_scope: str  # "none" | "egress:host[,host]"
+    is_builtin: bool
+
+    @classmethod
+    def from_proto(cls, t: "_g.RegisteredTool") -> "RegisteredTool":
+        return cls(
+            tool_id=hexids.encode(t.tool_id),
+            tool_name=t.tool_name,
+            tool_version=t.tool_version,
+            kind=t.kind,
+            description=t.description,
+            idempotency_class=t.idempotency_class,
+            provenance=t.provenance,
+            registration_status=t.registration_status,
+            server_host=t.server_host,
+            net_scope=t.net_scope_summary,
+            is_builtin=t.is_builtin,
+        )
+
+
+@dataclass(frozen=True)
+class RegisteredToolsPage:
+    """One ``DiscoverTools`` page (deterministic ``(name, version)`` order)."""
+
+    tools: List[RegisteredTool]
+    has_more: bool
+
+
+@dataclass(frozen=True)
+class ToolParam:
+    """A declared, typed tool input parameter (the MCP inputSchema analogue —
+    CLOSED set, no float, SN-8). ``ty`` in ``str|bytes|int|bool|enum``."""
+
+    name: str
+    ty: str = "str"
+    max_len: int = 0  # str/bytes byte cap (0 = server default)
+    required: bool = True
+    allowed: Sequence[str] = ()  # enum: permitted exact values
+
+    def to_proto(self) -> "_g.ToolParamSpec":
+        return _g.ToolParamSpec(
+            name=self.name,
+            ty=self.ty,
+            max_len=self.max_len,
+            required=self.required,
+            allowed=list(self.allowed),
+        )

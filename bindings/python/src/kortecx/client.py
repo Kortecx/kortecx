@@ -44,7 +44,14 @@ from .run import AsyncRun, Result, Run
 from .runs import RunInputs, RunPage, RunSummary
 from .teams import TeamMembers, TeamSummary
 from .telemetry import MoteTelemetryRow, TelemetryPage, TelemetrySummary
-from .toolscout import BundleScore, BundleSpec, ToolManifest
+from .toolscout import (
+    BundleScore,
+    BundleSpec,
+    RegisteredTool,
+    RegisteredToolsPage,
+    ToolManifest,
+    ToolParam,
+)
 from .v1 import gateway_pb2 as _g
 from .v1 import gateway_pb2_grpc as _gg
 
@@ -588,6 +595,70 @@ class KxClient:
         return AlertsPage(
             alerts=[AlertSummary.from_proto(a) for a in resp.alerts], has_more=resp.has_more
         )
+
+    def discover_tools(
+        self,
+        *,
+        limit: int = 0,
+        after_name: str = "",
+        after_version: str = "",
+    ) -> RegisteredToolsPage:
+        """The durable tools registry INVENTORY (PR-6a ``DiscoverTools``) —
+        registered tools + their authority/provenance, in ``(name, version)``
+        order. DISTINCT from ``list_tool_manifests`` (advisory ranking).
+        Registration grants NO authority (SN-8). An old gateway (or one without
+        the registry) raises ``KxUnimplemented``."""
+        req = _g.DiscoverToolsRequest(
+            limit=limit, after_name=after_name, after_version=after_version
+        )
+        resp = self._call(lambda: self._stub.DiscoverTools(req, metadata=self._md))
+        return RegisteredToolsPage(
+            tools=[RegisteredTool.from_proto(t) for t in resp.tools], has_more=resp.has_more
+        )
+
+    def register_tool(
+        self,
+        *,
+        name: str,
+        version: str,
+        server_host: str,
+        description: str = "",
+        idempotency_class: str = "Readback",
+        remote_name: str = "",
+        params: Optional[Sequence[ToolParam]] = None,
+        deny_unknown_params: bool = True,
+    ) -> str:
+        """Register a declarative EXTERNAL MCP tool (PR-6a ``RegisterTool``). The
+        server SSRF-vets ``server_host``, derives identity + capability, and
+        durably stores it; the returned ``tool_id`` (hex) is SERVER-derived (the
+        client never names/forges it, SN-8). Registration grants NO authority — a
+        tool fires only under a server-issued warrant. DIALING ``server_host`` is a
+        Cloud / PR-6b capability. An internal/link-local host is refused
+        (``permission_denied``)."""
+        schema = None
+        if params:
+            schema = _g.ToolInputSchema(
+                params=[p.to_proto() for p in params], deny_unknown=deny_unknown_params
+            )
+        req = _g.RegisterToolRequest(
+            tool_name=name,
+            tool_version=version,
+            description=description,
+            idempotency_class=idempotency_class,
+            input_schema=schema,
+            server_host=server_host,
+            remote_name=remote_name,
+        )
+        resp = self._call(lambda: self._stub.RegisterTool(req, metadata=self._md))
+        return hexids.encode(resp.tool_id)
+
+    def deregister_tool(self, *, name: str, version: str) -> bool:
+        """Deregister an operator-registered tool by exact ``(name, version)``
+        (PR-6a ``DeregisterTool``). Built-ins are refused (returns ``False``).
+        Returns ``True`` iff a row was removed."""
+        req = _g.DeregisterToolRequest(tool_name=name, tool_version=version)
+        resp = self._call(lambda: self._stub.DeregisterTool(req, metadata=self._md))
+        return resp.removed
 
     def submit_feedback(
         self,

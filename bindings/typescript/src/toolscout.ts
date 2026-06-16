@@ -17,6 +17,7 @@ import { LowerVerdict } from "./gen/kortecx/v1/gateway_pb.js";
 import type {
   KeywordSet as PbKeywordSet,
   ManifestScore as PbManifestScore,
+  RegisteredTool as PbRegisteredTool,
   ScoreTaskBundleResponse as PbScoreTaskBundleResponse,
   ToolManifest as PbToolManifest,
   ScoreTaskBundleRequestSchema,
@@ -173,4 +174,88 @@ export function bundleSpecToProto(
     })),
     toleranceThresholdBp: spec.toleranceThresholdBp ?? 0,
   };
+}
+
+// --- PR-6a declarative tools registry (DiscoverTools / RegisterTool) ----------
+//
+// DISTINCT from the advisory ToolManifest above: the durable registry INVENTORY
+// (what is registered, by whom, with what authority). Registration grants NO
+// authority — a tool fires only under a server-issued warrant (SN-8); `toolId`
+// is server-derived. DIALING a registered external MCP server is Cloud / PR-6b.
+
+/** One durable-registry row (`DiscoverTools`). `netScope` is a display summary;
+ *  authority never rides this wire (SN-8). */
+export class RegisteredTool {
+  constructor(
+    /** 16-byte server-derived id, as lowercase hex. */
+    readonly toolId: string,
+    readonly toolName: string,
+    readonly toolVersion: string,
+    /** `"Builtin"` | `"Mcp"` (display). */
+    readonly kind: string,
+    readonly description: string,
+    readonly idempotencyClass: string,
+    /** `"HumanAuthored"` | `"SelfGenerated"`. */
+    readonly provenance: string,
+    /** `"Approved"` | `"PendingHumanReview"`. */
+    readonly registrationStatus: string,
+    /** The vetted egress endpoint (empty = no egress). */
+    readonly serverHost: string,
+    /** `"none"` | `"egress:host[,host]"`. */
+    readonly netScope: string,
+    readonly isBuiltin: boolean,
+  ) {}
+
+  static fromProto(t: PbRegisteredTool): RegisteredTool {
+    return new RegisteredTool(
+      encode(t.toolId),
+      t.toolName,
+      t.toolVersion,
+      t.kind,
+      t.description,
+      t.idempotencyClass,
+      t.provenance,
+      t.registrationStatus,
+      t.serverHost,
+      t.netScopeSummary,
+      t.isBuiltin,
+    );
+  }
+}
+
+/** One `DiscoverTools` page (deterministic `(name, version)` order). */
+export interface RegisteredToolsPage {
+  readonly tools: readonly RegisteredTool[];
+  readonly hasMore: boolean;
+}
+
+/** A declared, typed tool input parameter (the MCP inputSchema analogue — CLOSED
+ *  set, no float, SN-8). `ty` in `str|bytes|int|bool|enum`. */
+export interface ToolParam {
+  readonly name: string;
+  /** `str` | `bytes` | `int` | `bool` | `enum` (defaults to `str`). */
+  readonly ty?: string;
+  /** str/bytes byte cap (0 = server default). */
+  readonly maxLen?: number;
+  /** Defaults to `true`. */
+  readonly required?: boolean;
+  /** enum: the permitted exact values. */
+  readonly allowed?: readonly string[];
+}
+
+/** A `RegisterTool` request shape. The host is SSRF-vetted; the server derives
+ *  identity + capability (the client never sends a warrant / toolId, SN-8). */
+export interface RegisterToolInput {
+  readonly name: string;
+  readonly version: string;
+  /** The external MCP endpoint `host[:port]` (SSRF-vetted; required). */
+  readonly serverHost: string;
+  readonly description?: string;
+  /** `Token` | `Readback` | `Staged` | `AtLeastOnce` (defaults to `Readback`). */
+  readonly idempotencyClass?: string;
+  /** The tool's name on the remote server (defaults to `name`). */
+  readonly remoteName?: string;
+  readonly params?: readonly ToolParam[];
+  /** Refuse keys not in `params` (defaults to `true`). */
+  readonly denyUnknownParams?: boolean;
 }
