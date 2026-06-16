@@ -113,6 +113,25 @@ pub trait InferenceBackend: Send + Sync {
         self.dispatch(model_id, input, params, warrant)
     }
 
+    /// Render a chat prompt (`system` + `user`) into the model's expected input
+    /// string, using the model's OWN chat template where the backend can.
+    ///
+    /// Model-agnostic prompt formatting: the OSS llama backend OVERRIDES this to
+    /// apply the GGUF's embedded `chat_template` via llama.cpp (`apply_chat_template`
+    /// — what `llama-server` does), with a built-in per-architecture fallback for
+    /// models whose template llama.cpp cannot render (e.g. Gemma-4). The DEFAULT
+    /// returns `None`, so a caller falls back to its own formatting and the trait
+    /// stays dyn-compatible. Cloud backends (`vLLM` / `SGLang`) that apply the
+    /// template server-side may also leave this `None`.
+    ///
+    /// `None` ⇒ the caller should format the prompt itself (e.g. hand-rolled
+    /// `ChatML`). This is purely presentation: the rendered string is NOT an
+    /// identity or authority input (SN-8) — it is tokenized and fed to the model.
+    fn render_chat(&self, model_id: &ModelId, system: &str, user: &str) -> Option<String> {
+        let (_, _, _) = (model_id, system, user);
+        None
+    }
+
     /// Whether this backend can serve the named model.
     ///
     /// The dispatcher uses this to choose which backend to route a

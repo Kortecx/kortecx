@@ -48,6 +48,11 @@ mod dispatcher;
 mod cache;
 #[cfg(feature = "llamacpp")]
 mod llama;
+// Built-in chat-template fallbacks (Gemma / ChatML) for models whose embedded
+// GGUF template llama.cpp's `minja` cannot render. Uses `kx_llamacpp` types, so
+// it rides the same `llamacpp` gate as `cache`/`llama`.
+#[cfg(feature = "llamacpp")]
+mod templates;
 mod types;
 
 pub use backend::{BatchItem, EmbeddingBackend, InferenceBackend, TokenSink};

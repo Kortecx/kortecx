@@ -36,6 +36,23 @@ enforces](./security.md#model-proposes-runtime-enforces)).
 - **Older gateway.** A gateway that predates `ListModels` degrades to a
   "not wired" notice rather than a blank screen.
 
+## Local models & prompt formatting
+
+A model-serving gateway loads a local GGUF named by `KX_SERVE_MODEL_GGUF` (plus an
+optional `KX_SERVE_MMPROJ_GGUF` vision projector). The gateway is
+**model-agnostic**: every model is prompted with its OWN chat template — the
+gateway applies the GGUF's embedded `chat_template` through llama.cpp where it
+renders, and falls back to a built-in per-architecture template for models
+llama.cpp cannot render, so a model is never fed another model's format. A
+recipe's structured reply is normalized symmetrically: a leading reasoning block
+or a Markdown code fence around the JSON is stripped before the runtime parses
+it, fail-closed.
+
+The recommended local model is **Gemma-4-12B** (Apache-2.0; omni — `text` +
+`image`). A tiny public **Qwen3-0.6B** stand-in backs the
+[Quickstart](./quickstart.md) and CI. Pull Gemma locally with `just
+fetch-gemma-model` and serve it (text + vision) with `just review-serve-gemma`.
+
 ## Cloud & coming soon
 
 Connecting a managed cloud provider (vendor keys + OAuth) is a **Cloud**
