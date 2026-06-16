@@ -432,18 +432,28 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     //     runtime it also materializes + dispatches a committed shaper's children (PR-2b).
     let writer =
         SqliteJournal::open(&cfg.journal_path).map_err(|e| GatewayError::Journal(e.to_string()))?;
+    // PR-6a/D155 (fs-list): the operator-granted read root (`KX_SERVE_FS_ROOT`),
+    // canonicalized once. `None` (default) ⇒ fs-list is NOT registered + the
+    // `kx/recipes/react-fs` recipe is NOT seeded ⇒ deny-by-default, byte-identical
+    // serve. Resolved BEFORE the coordinator so its registry carries the fs-list
+    // def (settle/lease args-validation) when the root is set.
+    #[cfg(feature = "inference")]
+    let fs_list_root: Option<std::path::PathBuf> = crate::mcp_tool::fs_list_root();
+    #[cfg(not(feature = "inference"))]
+    let fs_list_root: Option<std::path::PathBuf> = None;
     #[cfg(feature = "inference")]
     let coordinator = match shaper_runtime.as_ref() {
         Some(rt) => {
             tracing::info!("PR-2b: live model-driven topology loop enabled (kx/recipes/plan)");
             // PR-2d-2: the coordinator shares the serve tool registry (built-ins
-            // + the bundled stdio tool) so its settle validates a model-proposed
-            // call's args against the SAME typed schema the broker dispatch sees.
+            // + the bundled stdio tool + fs-list@1 when a read root is granted) so
+            // its settle validates a model-proposed call's args against the SAME
+            // typed schema the broker dispatch sees.
             CoordinatorService::with_store_shaper_and_tools(
                 writer,
                 content.clone(),
                 rt.role_registry.clone(),
-                Arc::new(crate::mcp_tool::registry_with_echo()),
+                Arc::new(crate::mcp_tool::registry_with_echo(fs_list_root.as_deref())),
             )
         }
         None => CoordinatorService::with_store(writer, content.clone()),
@@ -496,6 +506,17 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     // off-digest; the hot-path sink is bounded + fail-open (drop-on-full), so it
     // can never block, slow, or fail a run.
     let telemetry_ledger = Arc::new(crate::telemetry::TelemetryLedger::open(&catalog_dir)?);
+    // PR-6a: the durable declarative-tools registry (off-journal tools.db beside
+    // the catalog ledgers). The OSS built-ins re-seed on open; the serve path
+    // registers the bundled tools (echo / fs-list) below so DiscoverTools shows
+    // the real runnable set. RegisterTool/DeregisterTool write it; DiscoverTools
+    // reads it. Off-digest by construction (server-derived tool_id; never a
+    // MoteId/journal/checkpoint input). DIALING a registered external MCP server
+    // is PR-6b/Cloud — this stores a vetted server_host, never dials it.
+    let tool_registry = Arc::new(
+        kx_tool_registry::SqliteToolRegistry::open(catalog_dir.join("tools.db"))
+            .map_err(|e| GatewayError::Config(format!("tools.db: {e}")))?,
+    );
     let client = connect_worker(&coord_endpoint).await?;
     // No real body is provisioned in the OSS serve path (script/tool execution is
     // OSS-scoped-out, D141.4), so the sandbox-routing seam is wired with no body ref:
@@ -581,6 +602,19 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     };
     #[cfg(not(feature = "inference"))]
     let react_tool: Option<(kx_mote::ToolName, kx_mote::ToolVersion)> = None;
+    // PR-6a/D155 (fs-list): register the read-only host fs-list@1 capability when a
+    // read root is granted (`KX_SERVE_FS_ROOT`) AND a model is served (no model ⇒
+    // no react chain to drive it). Default-OFF ⇒ no capability, no `react-fs`.
+    #[cfg(feature = "inference")]
+    let fs_list_tool: Option<(kx_mote::ToolName, kx_mote::ToolVersion)> =
+        if serve_model.is_some() && fs_list_root.is_some() {
+            crate::mcp_tool::register_fs_list_capability(&local_broker);
+            Some(crate::mcp_tool::fs_list_tool())
+        } else {
+            None
+        };
+    #[cfg(not(feature = "inference"))]
+    let fs_list_tool: Option<(kx_mote::ToolName, kx_mote::ToolVersion)> = None;
     let broker: Arc<dyn CapabilityBroker> = Arc::new(local_broker);
     let worker = Worker::register(
         client,
@@ -652,6 +686,39 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         .iter()
         .map(|(id, ver)| (id.0.clone(), ver.0.clone()))
         .collect();
+    // PR-6a: seed the bundled tools into the durable registry so `DiscoverTools`
+    // shows the real runnable set (the OSS built-ins are re-seeded on open). When
+    // the bundled echo capability resolved (`react_tool`), register `mcp-echo@1`
+    // as a server-built (non-deregisterable) tool — matching the coordinator's
+    // `registry_with_echo` so the inventory agrees with what the loop can fire.
+    #[cfg(feature = "inference")]
+    if react_tool.is_some() {
+        if let Err(error) = tool_registry.register_server_tool(
+            crate::mcp_tool::echo_tool_def(),
+            kx_tool_registry::ToolProvenance::HumanAuthored {
+                author: "kx-gateway".to_string(),
+            },
+            None,
+        ) {
+            tracing::warn!(%error, "PR-6a: failed to seed mcp-echo@1 into tools.db");
+        }
+    }
+    // PR-6a/D155 (fs-list): seed fs-list@1 into the durable registry (so
+    // DiscoverTools shows the real runnable set) when the read root is granted.
+    #[cfg(feature = "inference")]
+    if let Some(root) = fs_list_root.as_deref() {
+        if fs_list_tool.is_some() {
+            if let Err(error) = tool_registry.register_server_tool(
+                crate::mcp_tool::fs_list_tool_def(root),
+                kx_tool_registry::ToolProvenance::HumanAuthored {
+                    author: "kx-gateway".to_string(),
+                },
+                None,
+            ) {
+                tracing::warn!(%error, "PR-6a: failed to seed fs-list@1 into tools.db");
+            }
+        }
+    }
     // Batch A: vision is a SERVE FACT derived from what actually registered
     // (the catalog entry declares "image" iff the projector resolved + the
     // backend built) — the vision recipe seeds exactly when the dispatch path
@@ -659,6 +726,13 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     let vision_supported = model_catalog_entries
         .iter()
         .any(|e| e.modalities.iter().any(|m| m == "image"));
+    // PR-6a/D155 (fs-list): the (fs-list tool identity, read root) the react-fs
+    // recipe is seeded with — `None` (default-OFF) ⇒ no react-fs recipe.
+    let fs_list_binding: Option<(&(kx_mote::ToolName, kx_mote::ToolVersion), &std::path::Path)> =
+        match (fs_list_tool.as_ref(), fs_list_root.as_deref()) {
+            (Some(tool), Some(root)) => Some((tool, root)),
+            _ => None,
+        };
     let demo = Arc::new(DemoLibrary::open_complete(
         &catalog_dir,
         default_executor_class(),
@@ -666,6 +740,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         serve_model.as_ref(),
         react_tool.as_ref(),
         vision_supported,
+        fs_list_binding,
     )?);
     // One seed, two seams: the binder (Invoke) and the recipe catalog (ListRecipes
     // / GetRecipeForm) share the SAME library, so the published form and the
@@ -850,14 +925,10 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     //      lowering gate against the SERVER react warrant when the react
     //      runtime is live; otherwise it degrades to UNAVAILABLE. Read-only,
     //      display-only — never an authorization (SN-8).
-    #[cfg(feature = "inference")]
-    let toolscout_defs = if react_tool.is_some() {
-        crate::mcp_tool::registry_with_echo().defs()
-    } else {
-        kx_tool_registry::InMemoryToolRegistry::with_builtins().defs()
-    };
-    #[cfg(not(feature = "inference"))]
-    let toolscout_defs = kx_tool_registry::InMemoryToolRegistry::with_builtins().defs();
+    // PR-6a: the advisory toolscout manifests come from the SAME durable registry
+    // the serve path resolves + DiscoverTools reads (built-ins + the bundled echo
+    // when its capability resolved). One source for the discovery surfaces.
+    let toolscout_defs = tool_registry.defs();
     let toolscout_verdict = match (serve_model.as_ref(), react_tool.as_ref()) {
         (Some(model_id), Some(tool)) => Some(crate::toolscout::VerdictCtx {
             warrant: crate::provision::react_warrant(default_executor_class(), model_id, tool),
@@ -898,6 +969,10 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         .with_feedback_store(feedback_db)
         .with_run_inputs_store(run_inputs_db)
         .with_alerts_view(alerts_db)
+        .with_tool_admin(Arc::new(crate::tools::HostToolRegistry::new(
+            tool_registry.clone(),
+            crate::tools::tool_host_allowlist(),
+        )))
         .with_put_content_cap(cfg.content_max_bytes)
         .with_model_catalog_view(models_view)
         .with_mote_def_view(mote_defs_view)

@@ -52,6 +52,7 @@ class WorkflowStepKind(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     WORKFLOW_STEP_KIND_PURE: _ClassVar[WorkflowStepKind]
     WORKFLOW_STEP_KIND_MODEL: _ClassVar[WorkflowStepKind]
     WORKFLOW_STEP_KIND_EXEC: _ClassVar[WorkflowStepKind]
+    WORKFLOW_STEP_KIND_TOOL: _ClassVar[WorkflowStepKind]
 
 class WorkflowExecutionMode(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
@@ -92,6 +93,7 @@ WORKFLOW_STEP_KIND_UNSPECIFIED: WorkflowStepKind
 WORKFLOW_STEP_KIND_PURE: WorkflowStepKind
 WORKFLOW_STEP_KIND_MODEL: WorkflowStepKind
 WORKFLOW_STEP_KIND_EXEC: WorkflowStepKind
+WORKFLOW_STEP_KIND_TOOL: WorkflowStepKind
 WORKFLOW_EXECUTION_MODE_UNSPECIFIED: WorkflowExecutionMode
 WORKFLOW_EXECUTION_MODE_FROZEN: WorkflowExecutionMode
 WORKFLOW_EXECUTION_MODE_DYNAMIC: WorkflowExecutionMode
@@ -1268,3 +1270,109 @@ class ListAlertsResponse(_message.Message):
     alerts: _containers.RepeatedCompositeFieldContainer[AlertSummary]
     has_more: bool
     def __init__(self, alerts: _Optional[_Iterable[_Union[AlertSummary, _Mapping]]] = ..., has_more: bool = ...) -> None: ...
+
+class ToolParamSpec(_message.Message):
+    __slots__ = ("name", "ty", "max_len", "required", "allowed")
+    NAME_FIELD_NUMBER: _ClassVar[int]
+    TY_FIELD_NUMBER: _ClassVar[int]
+    MAX_LEN_FIELD_NUMBER: _ClassVar[int]
+    REQUIRED_FIELD_NUMBER: _ClassVar[int]
+    ALLOWED_FIELD_NUMBER: _ClassVar[int]
+    name: str
+    ty: str
+    max_len: int
+    required: bool
+    allowed: _containers.RepeatedScalarFieldContainer[str]
+    def __init__(self, name: _Optional[str] = ..., ty: _Optional[str] = ..., max_len: _Optional[int] = ..., required: bool = ..., allowed: _Optional[_Iterable[str]] = ...) -> None: ...
+
+class ToolInputSchema(_message.Message):
+    __slots__ = ("params", "deny_unknown")
+    PARAMS_FIELD_NUMBER: _ClassVar[int]
+    DENY_UNKNOWN_FIELD_NUMBER: _ClassVar[int]
+    params: _containers.RepeatedCompositeFieldContainer[ToolParamSpec]
+    deny_unknown: bool
+    def __init__(self, params: _Optional[_Iterable[_Union[ToolParamSpec, _Mapping]]] = ..., deny_unknown: bool = ...) -> None: ...
+
+class RegisterToolRequest(_message.Message):
+    __slots__ = ("tool_name", "tool_version", "description", "idempotency_class", "input_schema", "server_host", "remote_name")
+    TOOL_NAME_FIELD_NUMBER: _ClassVar[int]
+    TOOL_VERSION_FIELD_NUMBER: _ClassVar[int]
+    DESCRIPTION_FIELD_NUMBER: _ClassVar[int]
+    IDEMPOTENCY_CLASS_FIELD_NUMBER: _ClassVar[int]
+    INPUT_SCHEMA_FIELD_NUMBER: _ClassVar[int]
+    SERVER_HOST_FIELD_NUMBER: _ClassVar[int]
+    REMOTE_NAME_FIELD_NUMBER: _ClassVar[int]
+    tool_name: str
+    tool_version: str
+    description: str
+    idempotency_class: str
+    input_schema: ToolInputSchema
+    server_host: str
+    remote_name: str
+    def __init__(self, tool_name: _Optional[str] = ..., tool_version: _Optional[str] = ..., description: _Optional[str] = ..., idempotency_class: _Optional[str] = ..., input_schema: _Optional[_Union[ToolInputSchema, _Mapping]] = ..., server_host: _Optional[str] = ..., remote_name: _Optional[str] = ...) -> None: ...
+
+class RegisterToolResponse(_message.Message):
+    __slots__ = ("tool_id", "registration_status")
+    TOOL_ID_FIELD_NUMBER: _ClassVar[int]
+    REGISTRATION_STATUS_FIELD_NUMBER: _ClassVar[int]
+    tool_id: bytes
+    registration_status: str
+    def __init__(self, tool_id: _Optional[bytes] = ..., registration_status: _Optional[str] = ...) -> None: ...
+
+class DeregisterToolRequest(_message.Message):
+    __slots__ = ("tool_name", "tool_version")
+    TOOL_NAME_FIELD_NUMBER: _ClassVar[int]
+    TOOL_VERSION_FIELD_NUMBER: _ClassVar[int]
+    tool_name: str
+    tool_version: str
+    def __init__(self, tool_name: _Optional[str] = ..., tool_version: _Optional[str] = ...) -> None: ...
+
+class DeregisterToolResponse(_message.Message):
+    __slots__ = ("removed",)
+    REMOVED_FIELD_NUMBER: _ClassVar[int]
+    removed: bool
+    def __init__(self, removed: bool = ...) -> None: ...
+
+class DiscoverToolsRequest(_message.Message):
+    __slots__ = ("limit", "after_name", "after_version")
+    LIMIT_FIELD_NUMBER: _ClassVar[int]
+    AFTER_NAME_FIELD_NUMBER: _ClassVar[int]
+    AFTER_VERSION_FIELD_NUMBER: _ClassVar[int]
+    limit: int
+    after_name: str
+    after_version: str
+    def __init__(self, limit: _Optional[int] = ..., after_name: _Optional[str] = ..., after_version: _Optional[str] = ...) -> None: ...
+
+class RegisteredTool(_message.Message):
+    __slots__ = ("tool_id", "tool_name", "tool_version", "kind", "description", "idempotency_class", "provenance", "registration_status", "server_host", "net_scope_summary", "is_builtin")
+    TOOL_ID_FIELD_NUMBER: _ClassVar[int]
+    TOOL_NAME_FIELD_NUMBER: _ClassVar[int]
+    TOOL_VERSION_FIELD_NUMBER: _ClassVar[int]
+    KIND_FIELD_NUMBER: _ClassVar[int]
+    DESCRIPTION_FIELD_NUMBER: _ClassVar[int]
+    IDEMPOTENCY_CLASS_FIELD_NUMBER: _ClassVar[int]
+    PROVENANCE_FIELD_NUMBER: _ClassVar[int]
+    REGISTRATION_STATUS_FIELD_NUMBER: _ClassVar[int]
+    SERVER_HOST_FIELD_NUMBER: _ClassVar[int]
+    NET_SCOPE_SUMMARY_FIELD_NUMBER: _ClassVar[int]
+    IS_BUILTIN_FIELD_NUMBER: _ClassVar[int]
+    tool_id: bytes
+    tool_name: str
+    tool_version: str
+    kind: str
+    description: str
+    idempotency_class: str
+    provenance: str
+    registration_status: str
+    server_host: str
+    net_scope_summary: str
+    is_builtin: bool
+    def __init__(self, tool_id: _Optional[bytes] = ..., tool_name: _Optional[str] = ..., tool_version: _Optional[str] = ..., kind: _Optional[str] = ..., description: _Optional[str] = ..., idempotency_class: _Optional[str] = ..., provenance: _Optional[str] = ..., registration_status: _Optional[str] = ..., server_host: _Optional[str] = ..., net_scope_summary: _Optional[str] = ..., is_builtin: bool = ...) -> None: ...
+
+class DiscoverToolsResponse(_message.Message):
+    __slots__ = ("tools", "has_more")
+    TOOLS_FIELD_NUMBER: _ClassVar[int]
+    HAS_MORE_FIELD_NUMBER: _ClassVar[int]
+    tools: _containers.RepeatedCompositeFieldContainer[RegisteredTool]
+    has_more: bool
+    def __init__(self, tools: _Optional[_Iterable[_Union[RegisteredTool, _Mapping]]] = ..., has_more: bool = ...) -> None: ...

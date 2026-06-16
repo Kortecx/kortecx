@@ -64,7 +64,7 @@ usage: kx <command> [args]
     kx capture list [--instance <hex16>] [--limit N]   (captured actions, newest-first)
     kx alerts list [--instance <hex16>] [--limit N] [--before-seq N]   (terminal-failure alerts, newest-first)
     kx signatures list | get --id <hex32> | register --manifest-file <path>
-    kx tools list | score --intent <text> --tool <id>@<ver>... [--language-tag <t>]... [--tolerance-threshold-bp N]
+    kx tools list | score --intent <text> --tool <id>@<ver>... | discover | register | deregister
     kx recipe list | search <intent> [--keyword <k>]... [--limit N]   (advisory recipe discovery)
     kx models list                              (display-only model discovery)
     kx datasets list | ingest <name> (--text <s>|--file <p>)... | query <name> --text <q> [--k N]   (RAG corpora)
@@ -588,12 +588,19 @@ kx signatures list | get --id <hex32> | register --manifest-file <path> [client 
 kx tools list [client flags]
 kx tools score --intent <text> --tool <id>@<ver> [--tool <id>@<ver>]... [--language-tag <t>]...
                [--tolerance-threshold-bp N] [client flags]
-  Advisory MCP-tool discovery + TaskBundle preview (W1.A5). `list` shows the
-  gateway's registered tool manifests; `score` ranks every manifest against an
-  intent (integer basis points: 10000 = exact keyword hit; lower = similar) and
-  dry-runs the real lowering gate (verdict: would-lower / unavailable / refused).
-  ADVISORY ONLY (SN-8): scores and the verdict NEVER authorize a tool — the
-  exact (name, version) grant gate stays the broker's. No warrant is sent."
+kx tools discover [--limit N] [client flags]
+kx tools register --name <n> --version <v> --server-host <host[:port]> [--description <d>]
+                  [--idempotency-class Token|Readback|Staged|AtLeastOnce] [--remote-name <r>]
+                  [--param <name>[:<ty>]]... [client flags]
+kx tools deregister --name <n> --version <v> [client flags]
+  Advisory discovery + the durable tools registry (W1.A5 + PR-6a). `list`/`score`
+  are ADVISORY (SN-8) — they rank manifests + dry-run the lowering gate, never
+  authorize a tool. `discover` shows the durable registry INVENTORY (registered
+  tools + their authority/provenance). `register`/`deregister` write the durable
+  off-journal tools.db: `register` declares an EXTERNAL MCP tool (the host is
+  SSRF-vetted; the server derives identity + capability). Registration grants NO
+  authority — a tool fires only under a server-issued warrant. DIALING the
+  registered host (the live remote tool round) is a Cloud / PR-6b capability."
             .into(),
         "recipe" => "\
 kx recipe list [client flags]

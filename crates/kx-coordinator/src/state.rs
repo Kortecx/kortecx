@@ -99,7 +99,7 @@ pub(crate) struct LeasedItem {
     /// the tool's typed `inputSchema`), so a crash/re-lease carries byte-identical
     /// args with nothing staged. `None` for every non-observation Mote (the
     /// legacy WM/leaf paths are byte-unchanged).
-    pub(crate) tool_args: Option<(Vec<u8>, kx_warrant::NetScope)>,
+    pub(crate) tool_args: Option<(Vec<u8>, kx_warrant::NetScope, kx_warrant::FsScope)>,
 }
 
 /// Leased work plus the run's `instance_id` (if registered) — the `LeaseWork`
@@ -706,7 +706,7 @@ fn resolve_tool_args(
     projection: &Projection,
     store: Option<&LocalFsContentStore>,
     tool_registry: &dyn ToolRegistry,
-) -> Option<(Vec<u8>, kx_warrant::NetScope)> {
+) -> Option<(Vec<u8>, kx_warrant::NetScope, kx_warrant::FsScope)> {
     let store = store?;
     let parent = mote.parents.first()?.parent_id;
     let result_ref = projection.result_ref_of(&parent)?;
@@ -723,9 +723,13 @@ fn resolve_tool_args(
     if let Some(schema) = &def.input_schema {
         kx_tool_registry::validate_args(schema, &call.args_bytes).ok()?;
     }
+    // PR-6a/D155 (fs-list): the resolved tool's declared fs requirement is taken
+    // as the request's fs_scope (empty for echo ⇒ byte-identical). The broker's
+    // precheck still enforces request.fs_scope ⊆ warrant.fs_scope at dispatch.
     Some((
         call.args_bytes,
         def.required_capability.net_scope_required.clone(),
+        def.required_capability.fs_scope_required.clone(),
     ))
 }
 

@@ -62,7 +62,10 @@ from .toolscout import (
     BundleTool,
     KeywordSet,
     ManifestScore,
+    RegisteredTool,
+    RegisteredToolsPage,
     ToolManifest,
+    ToolParam,
     lower_verdict_name,
 )
 from .types import (
@@ -173,6 +176,10 @@ __all__ = [
     "BundleSpec",
     "BundleTool",
     "lower_verdict_name",
+    # PR-6a declarative tools registry (DiscoverTools / RegisterTool)
+    "RegisteredTool",
+    "RegisteredToolsPage",
+    "ToolParam",
     "state_name",
     "edge_kind_name",
     # errors

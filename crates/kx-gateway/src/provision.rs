@@ -168,6 +168,16 @@ pub const REACT_RECIPE_HANDLE: &str = "kx/recipes/react";
 /// the ref never reaches an admitted identity).
 const REACT_LOGIC_REF: [u8; 32] = [0x4e; 32];
 
+/// The wire handle of the PR-6a/D155 `react-fs` recipe: a live ReAct loop like
+/// [`REACT_RECIPE_HANDLE`] BUT whose server-built step warrant grants the read-only
+/// `fs-list@1` tool + a `fs_scope` of the operator-granted read root (`KX_SERVE_FS_ROOT`)
+/// instead of `mcp-echo@1`. A SEPARATE recipe BY DESIGN (the vision precedent) so the
+/// canonical `kx/recipes/react` + the projection digest stay byte-unchanged. Seeded only
+/// when a fit serve model resolved AND `KX_SERVE_FS_ROOT` is set (the fs-list capability
+/// registered). Reuses the react free-param contract (instruction / max_turns /
+/// max_tool_calls) + logic ref — only the warrant + handle differ.
+pub const REACT_FS_RECIPE_HANDLE: &str = "kx/recipes/react-fs";
+
 /// Schema-refs of the react recipe's typed free-params.
 const REACT_INSTRUCTION_SCHEMA_REF: [u8; 32] = [0x4f; 32];
 /// See [`REACT_INSTRUCTION_SCHEMA_REF`].
@@ -269,7 +279,7 @@ impl DemoLibrary {
         exec_class: ExecutorClass,
         parties: &[String],
     ) -> Result<Self, GatewayError> {
-        Self::seed(dir, exec_class, parties, None, None, false)
+        Self::seed(dir, exec_class, parties, None, None, false, None)
     }
 
     /// Like [`DemoLibrary::open`], plus (when `serve_model` is `Some`) the AL1
@@ -288,7 +298,15 @@ impl DemoLibrary {
         parties: &[String],
         serve_model: Option<ModelId>,
     ) -> Result<Self, GatewayError> {
-        Self::seed(dir, exec_class, parties, serve_model.as_ref(), None, false)
+        Self::seed(
+            dir,
+            exec_class,
+            parties,
+            serve_model.as_ref(),
+            None,
+            false,
+            None,
+        )
     }
 
     /// Like [`DemoLibrary::open_full`], plus (when `react_tool` is `Some` AND a
@@ -300,6 +318,7 @@ impl DemoLibrary {
     ///
     /// # Errors
     /// [`GatewayError::Catalog`] on a ledger open / seed failure.
+    #[allow(clippy::too_many_arguments)]
     pub fn open_complete(
         dir: &Path,
         exec_class: ExecutorClass,
@@ -307,8 +326,17 @@ impl DemoLibrary {
         serve_model: Option<&ModelId>,
         react_tool: Option<&(ToolName, ToolVersion)>,
         vision: bool,
+        fs_list: Option<(&(ToolName, ToolVersion), &Path)>,
     ) -> Result<Self, GatewayError> {
-        Self::seed(dir, exec_class, parties, serve_model, react_tool, vision)
+        Self::seed(
+            dir,
+            exec_class,
+            parties,
+            serve_model,
+            react_tool,
+            vision,
+            fs_list,
+        )
     }
 
     /// Open the durable ledgers under `dir` and idempotently seed the `echo`
@@ -326,6 +354,7 @@ impl DemoLibrary {
         serve_model: Option<&ModelId>,
         react_tool: Option<&(ToolName, ToolVersion)>,
         vision: bool,
+        fs_list: Option<(&(ToolName, ToolVersion), &Path)>,
     ) -> Result<Self, GatewayError> {
         let cat = |e: String| GatewayError::Catalog(e);
         let versions =
@@ -458,6 +487,43 @@ impl DemoLibrary {
                 react_h,
                 RecipeMeta {
                     owner_root: react_w,
+                    free_params: react_contract(),
+                },
+            ));
+        }
+
+        // (react-fs) PR-6a/D155: a SEPARATE live ReAct recipe whose server-built
+        // warrant grants the read-only `fs-list@1` tool + a fs_scope of the granted
+        // read root (`KX_SERVE_FS_ROOT`) — the first recipe that produces REAL
+        // agent data (a directory listing committed as the Observation result_ref).
+        // Seeded only when a model is served AND fs-list is available; reuses the
+        // react logic ref + free-param contract (only the warrant + handle differ),
+        // so the canonical `kx/recipes/react` + the digest stay byte-unchanged.
+        if let (Some(model_id), Some((fs_tool, fs_root))) = (serve_model, fs_list) {
+            let react_fs_w = react_fs_warrant(exec_class, model_id, fs_tool, fs_root);
+            let react_fs_h = react_fs_handle()?;
+            seed_recipe(
+                &versions,
+                &bodies,
+                &grants,
+                &owner,
+                parties,
+                &react_fs_h,
+                recipe_body(
+                    LogicRef::from_bytes(REACT_LOGIC_REF),
+                    &react_fs_w,
+                    &[
+                        kx_mote::REACT_INSTRUCTION_KEY,
+                        kx_mote::REACT_MAX_TURNS_KEY,
+                        kx_mote::REACT_MAX_TOOL_CALLS_KEY,
+                    ],
+                ),
+                &react_fs_w,
+            )?;
+            recipes.push((
+                react_fs_h,
+                RecipeMeta {
+                    owner_root: react_fs_w,
                     free_params: react_contract(),
                 },
             ));
@@ -711,6 +777,10 @@ fn recipe_advisory(handle: &str) -> (&'static str, &'static [&'static str]) {
         REACT_RECIPE_HANDLE => (
             "ReAct — a live tool-using agent loop (plan → act → observe → answer).",
             &["agent", "react", "tools", "loop", "reasoning"],
+        ),
+        REACT_FS_RECIPE_HANDLE => (
+            "ReAct-FS — a live agent loop with a read-only filesystem tool (lists files under the granted root).",
+            &["agent", "react", "tools", "filesystem", "fs-list"],
         ),
         VISION_RECIPE_HANDLE => (
             "Vision — a multimodal completion over an attached image.",
@@ -991,7 +1061,11 @@ impl RecipeBinder for HostRecipeBinder {
             // PR-2d-2: the react recipe seeds a live ReAct chain — the Invoke
             // arm submits its (single) bound Mote with `react_seed = true`,
             // triggering the coordinator's run-salted seed-swap + durable anchor.
-            react_seed: parse_handle(REACT_RECIPE_HANDLE).is_some_and(|h| h == asset_path),
+            // PR-6a/D155: react-fs is ALSO a live ReAct chain (same machinery,
+            // fs-list grant) ⇒ it MUST set react_seed too, else the loop never runs.
+            react_seed: [REACT_RECIPE_HANDLE, REACT_FS_RECIPE_HANDLE]
+                .iter()
+                .any(|h| parse_handle(h).is_some_and(|p| p == asset_path)),
         })
     }
 }
@@ -1591,6 +1665,56 @@ pub(crate) fn react_warrant(
         executor_class: exec_class,
         ..Default::default()
     }
+}
+
+/// PR-6a/D155: the server-built `react-fs` step warrant. Mirrors [`react_warrant`]
+/// but grants the read-only `fs-list@1` tool + a `fs_scope` of the operator-granted
+/// read `root` (ReadOnly). The grant's fs_scope MUST equal the tool's declared
+/// `fs_scope_required` so the broker's `precheck` subset gate passes and the
+/// capability receives the root via `request.fs_scope`. `net_scope: None` (fs-list
+/// has no egress). Tool authority NEVER enters via a client warrant (BLOCKER #5/SN-8).
+pub(crate) fn react_fs_warrant(
+    exec_class: ExecutorClass,
+    model_id: &ModelId,
+    tool: &(ToolName, ToolVersion),
+    root: &Path,
+) -> WarrantSpec {
+    let mut tool_grants = BTreeSet::new();
+    tool_grants.insert(kx_warrant::ToolGrant {
+        tool_id: tool.0.clone(),
+        tool_version: tool.1.clone(),
+    });
+    let mut mounts = std::collections::BTreeMap::new();
+    mounts.insert(root.to_path_buf(), kx_warrant::FsMode::ReadOnly);
+    WarrantSpec {
+        mote_class: MoteClass::ReadOnlyNondet,
+        nd_class: MoteClass::ReadOnlyNondet,
+        fs_scope: FsScope { mounts },
+        net_scope: NetScope::None,
+        syscall_profile_ref: ContentRef::from_bytes([0u8; 32]),
+        tool_grants,
+        model_route: ModelRoute {
+            model_id: model_id.clone(),
+            max_input_tokens: 4_096,
+            max_output_tokens: 512,
+            max_calls: 8,
+        },
+        resource_ceiling: ResourceCeiling {
+            cpu_milli: 0,
+            mem_bytes: 0,
+            wall_clock_ms: 120_000,
+            fd_count: 0,
+            disk_bytes: 0,
+        },
+        environment_ref: None,
+        executor_class: exec_class,
+        ..Default::default()
+    }
+}
+
+fn react_fs_handle() -> Result<AssetPath, GatewayError> {
+    parse_handle(REACT_FS_RECIPE_HANDLE)
+        .ok_or_else(|| GatewayError::Catalog("invalid react-fs recipe handle".into()))
 }
 
 /// The PURE demo recipe warrant. Its `executor_class` MUST equal the embedded
@@ -2265,6 +2389,7 @@ mod tests {
             Some(&ModelId("kx-serve:vlm".to_string())),
             None,
             false,
+            None,
         )
         .unwrap();
         assert!(!lib
@@ -2281,6 +2406,7 @@ mod tests {
             Some(&ModelId("kx-serve:vlm".to_string())),
             None,
             true,
+            None,
         )
         .unwrap();
         let form = lib
@@ -2299,6 +2425,69 @@ mod tests {
             vec!["kx-serve:vlm".to_string()],
             "allowed = exactly the served id (server-validated selection)"
         );
+    }
+
+    #[test]
+    fn react_fs_recipe_seeded_only_with_fs_list() {
+        // PR-6a/D155: react-fs is a SEPARATE recipe, seeded only when a model is
+        // served AND fs-list is available — default-OFF keeps the canonical set.
+        let model = ModelId("kx-serve:m".to_string());
+        let fs_tool = (ToolName("fs-list".into()), ToolVersion("1".into()));
+        let root = tempfile::tempdir().unwrap();
+
+        let dir = tempfile::tempdir().unwrap();
+        let lib = DemoLibrary::open_complete(
+            dir.path(),
+            ExecutorClass::Bwrap,
+            &["alice@acme".to_string()],
+            Some(&model),
+            None,
+            false,
+            Some((&fs_tool, root.path())),
+        )
+        .unwrap();
+        assert!(lib
+            .recipe_handles()
+            .contains(&REACT_FS_RECIPE_HANDLE.to_string()));
+        // The published form is the react contract (instruction + the two budget caps).
+        let form = lib
+            .recipe_form(REACT_FS_RECIPE_HANDLE)
+            .expect("react-fs is provisioned");
+        assert_eq!(form.len(), 3);
+
+        // Without an fs-list binding ⇒ NOT seeded (default-OFF).
+        let dir2 = tempfile::tempdir().unwrap();
+        let lib2 = DemoLibrary::open_complete(
+            dir2.path(),
+            ExecutorClass::Bwrap,
+            &["alice@acme".to_string()],
+            Some(&model),
+            None,
+            false,
+            None,
+        )
+        .unwrap();
+        assert!(!lib2
+            .recipe_handles()
+            .contains(&REACT_FS_RECIPE_HANDLE.to_string()));
+    }
+
+    #[test]
+    fn react_fs_warrant_grants_fs_list_and_the_read_root() {
+        let root = std::path::PathBuf::from("/data");
+        let w = react_fs_warrant(
+            ExecutorClass::Bwrap,
+            &ModelId("m".to_string()),
+            &(ToolName("fs-list".into()), ToolVersion("1".into())),
+            &root,
+        );
+        assert!(w.tool_grants.iter().any(|g| g.tool_id.0 == "fs-list"));
+        assert_eq!(
+            w.fs_scope.mounts.get(&root),
+            Some(&kx_warrant::FsMode::ReadOnly),
+            "the grant's fs_scope must equal the tool's declared scope (precheck subset)"
+        );
+        assert_eq!(w.net_scope, NetScope::None, "fs-list has no egress");
     }
 
     #[test]

@@ -223,6 +223,21 @@ class KxGatewayStub(object):
                 request_serializer=kortecx_dot_v1_dot_gateway__pb2.ListAlertsRequest.SerializeToString,
                 response_deserializer=kortecx_dot_v1_dot_gateway__pb2.ListAlertsResponse.FromString,
                 _registered_method=True)
+        self.RegisterTool = channel.unary_unary(
+                '/kortecx.v1.KxGateway/RegisterTool',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.RegisterToolRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.RegisterToolResponse.FromString,
+                _registered_method=True)
+        self.DeregisterTool = channel.unary_unary(
+                '/kortecx.v1.KxGateway/DeregisterTool',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.DeregisterToolRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.DeregisterToolResponse.FromString,
+                _registered_method=True)
+        self.DiscoverTools = channel.unary_unary(
+                '/kortecx.v1.KxGateway/DiscoverTools',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.DiscoverToolsRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.DiscoverToolsResponse.FromString,
+                _registered_method=True)
 
 
 class KxGatewayServicer(object):
@@ -498,6 +513,30 @@ class KxGatewayServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def RegisterTool(self, request, context):
+        """PR-6a additive (D120.6): the declarative tools registry. RegisterTool /
+        DeregisterTool write the durable off-journal tools.db (server-derived tool_id,
+        SSRF-vetted server_host); DiscoverTools is the inventory/governance VIEW
+        (distinct from the advisory ListToolManifests). SN-8: registration grants NO
+        authority; client tool_grants stay refused. DIALING external MCP servers +
+        Connections + parallel fan-out are PR-6b/Cloud (D159/GR19).
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def DeregisterTool(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def DiscoverTools(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_KxGatewayServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -685,6 +724,21 @@ def add_KxGatewayServicer_to_server(servicer, server):
                     servicer.ListAlerts,
                     request_deserializer=kortecx_dot_v1_dot_gateway__pb2.ListAlertsRequest.FromString,
                     response_serializer=kortecx_dot_v1_dot_gateway__pb2.ListAlertsResponse.SerializeToString,
+            ),
+            'RegisterTool': grpc.unary_unary_rpc_method_handler(
+                    servicer.RegisterTool,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.RegisterToolRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.RegisterToolResponse.SerializeToString,
+            ),
+            'DeregisterTool': grpc.unary_unary_rpc_method_handler(
+                    servicer.DeregisterTool,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.DeregisterToolRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.DeregisterToolResponse.SerializeToString,
+            ),
+            'DiscoverTools': grpc.unary_unary_rpc_method_handler(
+                    servicer.DiscoverTools,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.DiscoverToolsRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.DiscoverToolsResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -1690,6 +1744,87 @@ class KxGateway(object):
             '/kortecx.v1.KxGateway/ListAlerts',
             kortecx_dot_v1_dot_gateway__pb2.ListAlertsRequest.SerializeToString,
             kortecx_dot_v1_dot_gateway__pb2.ListAlertsResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def RegisterTool(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/RegisterTool',
+            kortecx_dot_v1_dot_gateway__pb2.RegisterToolRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.RegisterToolResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def DeregisterTool(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/DeregisterTool',
+            kortecx_dot_v1_dot_gateway__pb2.DeregisterToolRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.DeregisterToolResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def DiscoverTools(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/DiscoverTools',
+            kortecx_dot_v1_dot_gateway__pb2.DiscoverToolsRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.DiscoverToolsResponse.FromString,
             options,
             channel_credentials,
             insecure,

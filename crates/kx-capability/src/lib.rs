@@ -92,6 +92,7 @@
 mod broker;
 mod capability;
 mod errors;
+mod fs_list;
 mod local;
 mod request;
 mod token;
@@ -99,6 +100,7 @@ mod token;
 pub use broker::CapabilityBroker;
 pub use capability::Capability;
 pub use errors::{BrokerError, CapabilityFailureReason};
+pub use fs_list::FsListCapability;
 pub use local::LocalCapabilityBroker;
 pub use request::{BrokerHandle, EffectRequest};
 pub use token::{idempotency_token_for, run_scoped_token, INSTANCE_ID_LEN};

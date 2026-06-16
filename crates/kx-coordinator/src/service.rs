@@ -609,12 +609,15 @@ impl Coordinator for CoordinatorService {
                 // re-derived on the sole-writer thread at lease time
                 // (`resolve_tool_args`). `None` for every other Mote — the
                 // legacy WM/leaf wire payload is byte-identical.
-                tool_args: item
-                    .tool_args
-                    .map(|(args_bytes, net_scope)| proto::ToolArgs {
+                tool_args: item.tool_args.map(|(args_bytes, net_scope, fs_scope)| {
+                    proto::ToolArgs {
                         args_bytes,
                         net_scope: Some(net_scope.into()),
-                    }),
+                        // PR-6a/D155 (fs-list): the resolved tool's fs requirement
+                        // (empty for echo ⇒ byte-identical to PR-2d-2).
+                        fs_scope: Some(fs_scope.into()),
+                    }
+                }),
             })
             .collect();
         Ok(Response::new(proto::LeaseWorkResponse {

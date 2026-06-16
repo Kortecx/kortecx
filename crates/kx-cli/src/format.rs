@@ -673,6 +673,90 @@ pub fn render_tools_list(resp: &proto::ListToolManifestsResponse, json: bool) ->
     }
 }
 
+/// Render `tools discover` — the durable registry INVENTORY (PR-6a). Distinct
+/// from `tools list` (advisory ranking): this is "what is registered, by whom,
+/// with what authority". Registration grants no authority (SN-8).
+#[must_use]
+pub fn render_tools_discover(resp: &proto::DiscoverToolsResponse, json: bool) -> String {
+    if json {
+        let tools: Vec<Value> = resp
+            .tools
+            .iter()
+            .map(|t| {
+                json!({
+                    "tool_id": hex::encode(&t.tool_id),
+                    "tool_name": t.tool_name,
+                    "tool_version": t.tool_version,
+                    "kind": t.kind,
+                    "description": t.description,
+                    "idempotency_class": t.idempotency_class,
+                    "provenance": t.provenance,
+                    "registration_status": t.registration_status,
+                    "server_host": t.server_host,
+                    "net_scope": t.net_scope_summary,
+                    "is_builtin": t.is_builtin,
+                })
+            })
+            .collect();
+        json!({ "tools": tools, "has_more": resp.has_more }).to_string()
+    } else if resp.tools.is_empty() {
+        "(no tools registered)".to_string()
+    } else {
+        resp.tools
+            .iter()
+            .map(|t| {
+                let builtin = if t.is_builtin { " builtin" } else { "" };
+                let host = if t.server_host.is_empty() {
+                    String::new()
+                } else {
+                    format!("  ->{}", t.server_host)
+                };
+                format!(
+                    "{}@{}  [{}{}]  {}{}  {}",
+                    t.tool_name,
+                    t.tool_version,
+                    t.kind,
+                    builtin,
+                    t.net_scope_summary,
+                    host,
+                    t.description
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+}
+
+/// Render `tools register` — the SERVER-DERIVED tool_id + status.
+#[must_use]
+pub fn render_register_tool(resp: &proto::RegisterToolResponse, json: bool) -> String {
+    if json {
+        json!({
+            "tool_id": hex::encode(&resp.tool_id),
+            "registration_status": resp.registration_status,
+        })
+        .to_string()
+    } else {
+        format!(
+            "registered tool_id={} ({})",
+            hex::encode(&resp.tool_id),
+            resp.registration_status
+        )
+    }
+}
+
+/// Render `tools deregister` — whether a row was removed.
+#[must_use]
+pub fn render_deregister_tool(resp: &proto::DeregisterToolResponse, json: bool) -> String {
+    if json {
+        json!({ "removed": resp.removed }).to_string()
+    } else if resp.removed {
+        "removed".to_string()
+    } else {
+        "not removed (absent or a built-in)".to_string()
+    }
+}
+
 /// Render `tools score` — the advisory rank ladder + the lowering dry-run
 /// verdict. Every number is DISPLAY-ONLY (SN-8): a score can surface a tool,
 /// never grant one.

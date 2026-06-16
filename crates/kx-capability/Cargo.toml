@@ -17,12 +17,16 @@ kx-content = { workspace = true }
 kx-warrant = { workspace = true }
 blake3     = { workspace = true }
 serde      = { workspace = true }
+# fs-list@1 (PR-6a / D155): parse the model's `{"path": …}` arg + encode the
+# bounded JSON listing. FFI-free, pure Rust.
+serde_json = { workspace = true }
 thiserror  = { workspace = true }
 tracing    = { workspace = true }
 
 [dev-dependencies]
 proptest           = { workspace = true }
 smallvec           = { workspace = true }
+tempfile           = { workspace = true }
 tracing-subscriber = { workspace = true }
 
 [lints]

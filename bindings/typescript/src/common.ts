@@ -121,6 +121,7 @@ export {
   KeywordSet,
   ManifestScore,
   BundleScore,
+  RegisteredTool,
   lowerVerdictName,
   bundleSpecToProto,
 } from "./toolscout.js";
@@ -129,6 +130,9 @@ export type {
   BundleSpec,
   BundleToolInput,
   KeywordSetInput,
+  RegisteredToolsPage,
+  RegisterToolInput,
+  ToolParam,
 } from "./toolscout.js";
 
 export { WaitState } from "./wait.js";

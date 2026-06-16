@@ -710,6 +710,13 @@ pub struct GatewayService {
     /// the rule engine, and notifications are a CLOUD capability (D156/D129) — so
     /// this seam carries NO mutate method (GR19).
     alerts: Option<Arc<dyn crate::alerts_view::AlertView>>,
+    /// The optional declarative-tools registry admin seam (PR-6a — the host
+    /// injects an `Arc<SqliteToolRegistry>` wrapper over the durable `tools.db`).
+    /// `None` ⇒ `RegisterTool`/`DeregisterTool`/`DiscoverTools` return
+    /// `unimplemented`. Off-journal, off-digest, off-identity. DIALING the
+    /// external MCP server + Connections + parallel fan-out are PR-6b/Cloud
+    /// (D159/GR19) — this seam stores a vetted `server_host`, never dials it.
+    tool_admin: Option<Arc<dyn crate::tool_registry_admin::ToolRegistryAdmin>>,
 }
 
 /// The default fail-closed `PutContent` payload cap (32 MiB).
@@ -774,6 +781,7 @@ impl GatewayService {
             feedback: None,
             run_inputs: None,
             alerts: None,
+            tool_admin: None,
         }
     }
 
@@ -1034,6 +1042,20 @@ impl GatewayService {
         self.alerts = Some(alerts);
         self
     }
+
+    /// Wire the declarative-tools registry admin seam (PR-6a — the host's durable
+    /// `tools.db` + admission-time SSRF vetting). Enables `RegisterTool` /
+    /// `DeregisterTool` / `DiscoverTools`. Off-journal, off-digest. DIALING the
+    /// external MCP server + Connections + parallel fan-out are PR-6b/Cloud
+    /// (D159/GR19) — not exposed by this OSS seam.
+    #[must_use]
+    pub fn with_tool_admin(
+        mut self,
+        tool_admin: Arc<dyn crate::tool_registry_admin::ToolRegistryAdmin>,
+    ) -> Self {
+        self.tool_admin = Some(tool_admin);
+        self
+    }
 }
 
 /// The structured-refusal metadata key (PR-2). The value is
@@ -1074,6 +1096,44 @@ fn opt_fixed<const N: usize>(raw: Option<Vec<u8>>, what: &str) -> Result<[u8; N]
         None => Ok([0u8; N]),
         Some(v) => <[u8; N]>::try_from(v.as_slice())
             .map_err(|_| Status::invalid_argument(format!("{what} must be {N} bytes"))),
+    }
+}
+
+/// The fail-closed `RegisterTool` description cap (4 KiB). A longer description
+/// ⇒ `invalid_argument` (checked BEFORE the durable write).
+const MAX_TOOL_DESCRIPTION_BYTES: usize = 4 * 1024;
+
+/// The fail-closed `RegisterTool` param-count cap. A larger schema ⇒
+/// `invalid_argument`.
+const MAX_TOOL_PARAMS: usize = 64;
+
+/// Map a `ToolInputSchema` wire message into the gateway-core seam vocabulary.
+fn tool_schema_from_proto(s: proto::ToolInputSchema) -> crate::ToolSchemaWire {
+    crate::ToolSchemaWire {
+        params: s
+            .params
+            .into_iter()
+            .map(|p| crate::ToolParamWire {
+                name: p.name,
+                ty: p.ty,
+                max_len: p.max_len,
+                required: p.required,
+                allowed: p.allowed,
+            })
+            .collect(),
+        deny_unknown: s.deny_unknown,
+    }
+}
+
+/// Map a tool-registry admin refusal onto the fail-closed gRPC status. A rejected
+/// `server_host` is `permission_denied` (not a permitted egress target); a bad
+/// field is `invalid_argument`; a durable-store failure is `internal`.
+#[allow(clippy::result_large_err)]
+fn tool_admin_status(err: crate::ToolAdminError) -> Status {
+    match err {
+        crate::ToolAdminError::HostRejected(detail) => Status::permission_denied(detail),
+        crate::ToolAdminError::InvalidArgument(detail) => Status::invalid_argument(detail),
+        crate::ToolAdminError::Storage(detail) => Status::internal(detail),
     }
 }
 
@@ -2046,6 +2106,112 @@ impl KxGateway for GatewayService {
             .collect();
         Ok(Response::new(proto::ListAlertsResponse {
             alerts,
+            has_more,
+        }))
+    }
+
+    async fn register_tool(
+        &self,
+        request: Request<proto::RegisterToolRequest>,
+    ) -> Result<Response<proto::RegisterToolResponse>, Status> {
+        // PR-6a: a durable write into the off-journal tools.db. The host derives
+        // identity + capability server-side (HumanAuthored; net_scope = egress to
+        // the SSRF-vetted server_host) — the client supplies NO warrant / tool_id
+        // (SN-8). A serve without the registry wired degrades to `unimplemented`.
+        // DIALING server_host (the live remote tool round) is PR-6b/Cloud.
+        let admin = self.tool_admin.as_ref().ok_or_else(|| {
+            Status::unimplemented("RegisterTool: no tool registry wired (tools.db absent)")
+        })?;
+        let req = request.into_inner();
+        // Fail-closed field caps BEFORE the durable write.
+        if req.tool_name.trim().is_empty() || req.tool_version.trim().is_empty() {
+            return Err(Status::invalid_argument(
+                "tool_name and tool_version are required",
+            ));
+        }
+        if req.server_host.trim().is_empty() {
+            return Err(Status::invalid_argument(
+                "server_host is required (the external MCP endpoint the PR-6b gateway will dial)",
+            ));
+        }
+        if req.description.len() > MAX_TOOL_DESCRIPTION_BYTES {
+            return Err(Status::invalid_argument("description too long"));
+        }
+        if let Some(s) = &req.input_schema {
+            if s.params.len() > MAX_TOOL_PARAMS {
+                return Err(Status::invalid_argument("too many tool params"));
+            }
+        }
+        let reg = crate::ToolRegistration {
+            tool_name: req.tool_name,
+            tool_version: req.tool_version,
+            description: req.description,
+            idempotency_class: req.idempotency_class,
+            input_schema: req.input_schema.map(tool_schema_from_proto),
+            server_host: req.server_host,
+            remote_name: req.remote_name,
+        };
+        let tool_id = admin.register(reg).map_err(tool_admin_status)?;
+        Ok(Response::new(proto::RegisterToolResponse {
+            tool_id: tool_id.to_vec(),
+            registration_status: "Approved".to_string(),
+        }))
+    }
+
+    async fn deregister_tool(
+        &self,
+        request: Request<proto::DeregisterToolRequest>,
+    ) -> Result<Response<proto::DeregisterToolResponse>, Status> {
+        let admin = self.tool_admin.as_ref().ok_or_else(|| {
+            Status::unimplemented("DeregisterTool: no tool registry wired (tools.db absent)")
+        })?;
+        let req = request.into_inner();
+        if req.tool_name.trim().is_empty() || req.tool_version.trim().is_empty() {
+            return Err(Status::invalid_argument(
+                "tool_name and tool_version are required",
+            ));
+        }
+        let removed = admin.deregister(&req.tool_name, &req.tool_version)?;
+        Ok(Response::new(proto::DeregisterToolResponse { removed }))
+    }
+
+    async fn discover_tools(
+        &self,
+        request: Request<proto::DiscoverToolsRequest>,
+    ) -> Result<Response<proto::DiscoverToolsResponse>, Status> {
+        let admin = self.tool_admin.as_ref().ok_or_else(|| {
+            Status::unimplemented("DiscoverTools: no tool registry wired (tools.db absent)")
+        })?;
+        let req = request.into_inner();
+        let limit = if req.limit == 0 {
+            100usize
+        } else {
+            (req.limit as usize).clamp(1, 256)
+        };
+        let after = if req.after_name.is_empty() {
+            None
+        } else {
+            Some((req.after_name, req.after_version))
+        };
+        let (rows, has_more) = admin.discover(limit, after)?;
+        let tools = rows
+            .into_iter()
+            .map(|e| proto::RegisteredTool {
+                tool_id: e.tool_id.to_vec(),
+                tool_name: e.tool_name,
+                tool_version: e.tool_version,
+                kind: e.kind,
+                description: e.description,
+                idempotency_class: e.idempotency_class,
+                provenance: e.provenance,
+                registration_status: e.registration_status,
+                server_host: e.server_host,
+                net_scope_summary: e.net_scope_summary,
+                is_builtin: e.is_builtin,
+            })
+            .collect();
+        Ok(Response::new(proto::DiscoverToolsResponse {
+            tools,
             has_more,
         }))
     }
