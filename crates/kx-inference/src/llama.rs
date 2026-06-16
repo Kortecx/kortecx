@@ -409,6 +409,26 @@ impl InferenceBackend for LlamaInferenceBackend {
         self.dispatch_inner(model_id, input, params, warrant, token_sink)
     }
 
+    /// Model-agnostic prompt formatting: render `system` + `user` through the
+    /// model's OWN chat template. Resolves the descriptor (no warrant gate — this
+    /// is pure formatting, not a model route; the route is enforced at `dispatch`)
+    /// and renders on the shared owner thread (where the model is resident),
+    /// reusing the loaded-model LRU. `None` iff the model id is unresolvable or the
+    /// render fails — the caller then falls back to its own formatting.
+    fn render_chat(&self, model_id: &ModelId, system: &str, user: &str) -> Option<String> {
+        let descriptor = self.resolver.resolve(model_id)?;
+        let cache = self
+            .cache
+            .get_or_init(|| ModelCache::spawn(self.cache_capacity));
+        let messages = vec![
+            ("system".to_string(), system.to_string()),
+            ("user".to_string(), user.to_string()),
+        ];
+        cache
+            .render_chat(descriptor.identity_digest, descriptor.gguf_path.clone(), messages)
+            .ok()
+    }
+
     fn supports(&self, model_id: &ModelId) -> bool {
         self.resolver.resolve(model_id).is_some()
     }

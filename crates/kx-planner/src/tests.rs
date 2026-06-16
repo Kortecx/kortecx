@@ -164,6 +164,26 @@ fn think_preamble_then_plan_decodes() {
 }
 
 #[test]
+fn fenced_plan_decodes() {
+    // Gemma-4 reliably fences structured output in a ```json block.
+    let bytes = json(
+        "```json\n{\"plan\":{\"version\":1,\"steps\":[{\"role\":\"reader\",\"intent\":\"read\"}],\"edges\":[]}}\n```",
+    );
+    let plan = decode_plan(&bytes, 8192).expect("a fenced plan decodes");
+    assert_eq!(plan.steps.len(), 1);
+}
+
+#[test]
+fn gemma_channel_then_fenced_plan_decodes() {
+    // Gemma-4: a `<|channel>thought…<channel|>` reasoning segment then a fenced plan.
+    let bytes = json(
+        "<|channel>thought\nI will produce a plan.<channel|>```json\n{\"plan\":{\"version\":1,\"steps\":[{\"role\":\"reader\",\"intent\":\"read\"}],\"edges\":[]}}\n```",
+    );
+    let plan = decode_plan(&bytes, 8192).expect("channel + fence + plan decodes");
+    assert_eq!(plan.steps.len(), 1);
+}
+
+#[test]
 fn unclosed_think_is_malformed() {
     // An unterminated reasoning block strips to "" ⇒ a plan is mandatory ⇒ Err.
     assert!(matches!(

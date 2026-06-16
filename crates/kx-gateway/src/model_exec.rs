@@ -175,14 +175,22 @@ const MAX_SERVE_N_CTX: u32 = 8192;
 /// `kx_model_harness::registration::AGENT_MIN_CTX_TOKENS`).
 const AGENT_MIN_CTX_TOKENS: u32 = 2048;
 
+/// The fixed system instruction for the served chat / agentic model (the
+/// precise-assistant "training contract"). Shared by the model-agnostic
+/// `render_chat` path (passed as the system message, then wrapped in the model's
+/// OWN template) and the hand-rolled [`chatml`] fallback (embedded into the
+/// ChatML system turn) — so the system prompt is identical on both paths.
+const SERVE_SYSTEM: &str = "You are a precise assistant. Follow the instruction exactly.";
+
 /// Qwen ChatML wrapping of a user prompt — the **training contract** the
 /// companion model repo mirrors (kept byte-identical to
 /// `kx_model_harness::prompt::chatml`; duplicated here so the production gateway
-/// need not depend on the eval harness).
+/// need not depend on the eval harness). The FALLBACK used when the backend
+/// cannot render the model's own chat template (PR-1 model-agnostic templating).
 #[must_use]
 fn chatml(prompt: &str) -> String {
     format!(
-        "<|im_start|>system\nYou are a precise assistant. Follow the instruction exactly.<|im_end|>\n<|im_start|>user\n{prompt}<|im_end|>\n<|im_start|>assistant\n"
+        "<|im_start|>system\n{SERVE_SYSTEM}<|im_end|>\n<|im_start|>user\n{prompt}<|im_end|>\n<|im_start|>assistant\n"
     )
 }
 
@@ -549,12 +557,26 @@ impl<B: InferenceBackend> ModelRouterExecutor<B> {
         // text; they ride as a content_ref the backend fetches through its
         // bound store. A present-but-malformed ref fails CLOSED (silently
         // answering without the attached image would be a lie).
+        // Model-agnostic prompt formatting (PR-1): render the system + instruction
+        // through the served model's OWN chat template (the backend applies the
+        // GGUF's embedded template via llama.cpp, with a built-in per-arch
+        // fallback — e.g. Gemma-4, whose template llama.cpp cannot render). A
+        // backend that can't render (the deterministic test stub) returns `None`,
+        // so we fall back to the long-standing hand-rolled ChatML — byte-identical
+        // to pre-PR-1 for those paths. The wrapping is presentation only, never an
+        // identity/authority input (SN-8); the raw `instruction` already fixed the
+        // Mote identity via `config_subset[PROMPT_KEY]`.
+        let format = |user: &str| -> String {
+            self.backend
+                .render_chat(&mote.def.model_id, SERVE_SYSTEM, user)
+                .unwrap_or_else(|| chatml(user))
+        };
         let input = match image_ref_from_config(mote).map_err(|e| internal(&e))? {
             Some(image) => InferenceInput::Multimodal {
-                text: chatml(&format!("{MEDIA_MARKER}{instruction}")),
+                text: format(&format!("{MEDIA_MARKER}{instruction}")),
                 content_refs: std::iter::once(image).collect(),
             },
-            None => InferenceInput::text(chatml(&instruction)),
+            None => InferenceInput::text(format(&instruction)),
         };
         let params = inference_params_from_mote(mote, warrant)
             .map_err(|e| internal(&format!("inference params: {e}")))?;
