@@ -193,6 +193,11 @@ class KxGatewayStub(object):
                 request_serializer=kortecx_dot_v1_dot_gateway__pb2.ListMoteTelemetryRequest.SerializeToString,
                 response_deserializer=kortecx_dot_v1_dot_gateway__pb2.ListMoteTelemetryResponse.FromString,
                 _registered_method=True)
+        self.ListTelemetrySummary = channel.unary_unary(
+                '/kortecx.v1.KxGateway/ListTelemetrySummary',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.ListTelemetrySummaryRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.ListTelemetrySummaryResponse.FromString,
+                _registered_method=True)
         self.SubmitFeedback = channel.unary_unary(
                 '/kortecx.v1.KxGateway/SubmitFeedback',
                 request_serializer=kortecx_dot_v1_dot_gateway__pb2.SubmitFeedbackRequest.SerializeToString,
@@ -434,6 +439,16 @@ class KxGatewayServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def ListTelemetrySummary(self, request, context):
+        """W1a-3 additive (D120.6): the exact, cross-page per-model token-economy
+        rollup (server-side SUM ... GROUP BY model_id over the same telemetry.db
+        sidecar). One truth for CLI/SDK/UI; no cost/$ field (billing is CLOUD).
+        UNIMPLEMENTED when the seam yields None (forward-compat degrade).
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
     def SubmitFeedback(self, request, context):
         """PR-4.1 additive (D120.6): user 👍/👎 feedback on an answer — a client-origin
         write into a rebuildable-to-empty feedback.db sidecar (advisory; off-journal,
@@ -628,6 +643,11 @@ def add_KxGatewayServicer_to_server(servicer, server):
                     servicer.ListMoteTelemetry,
                     request_deserializer=kortecx_dot_v1_dot_gateway__pb2.ListMoteTelemetryRequest.FromString,
                     response_serializer=kortecx_dot_v1_dot_gateway__pb2.ListMoteTelemetryResponse.SerializeToString,
+            ),
+            'ListTelemetrySummary': grpc.unary_unary_rpc_method_handler(
+                    servicer.ListTelemetrySummary,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.ListTelemetrySummaryRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.ListTelemetrySummaryResponse.SerializeToString,
             ),
             'SubmitFeedback': grpc.unary_unary_rpc_method_handler(
                     servicer.SubmitFeedback,
@@ -1491,6 +1511,33 @@ class KxGateway(object):
             '/kortecx.v1.KxGateway/ListMoteTelemetry',
             kortecx_dot_v1_dot_gateway__pb2.ListMoteTelemetryRequest.SerializeToString,
             kortecx_dot_v1_dot_gateway__pb2.ListMoteTelemetryResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ListTelemetrySummary(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/ListTelemetrySummary',
+            kortecx_dot_v1_dot_gateway__pb2.ListTelemetrySummaryRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.ListTelemetrySummaryResponse.FromString,
             options,
             channel_credentials,
             insecure,

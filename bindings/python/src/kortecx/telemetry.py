@@ -55,3 +55,42 @@ class TelemetryPage:
 
     rows: List[MoteTelemetryRow]
     has_more: bool
+
+
+@dataclass(frozen=True)
+class ModelTokenRollup:
+    """One model's exact, cross-page token-economy rollup (``ListTelemetrySummary``,
+    W1a-3): output tokens + wall-clock summed over every committed mote that ran
+    ``model_id``. Token-only — no cost/$ (billing is CLOUD)."""
+
+    model_id: str  # the model that ACTUALLY ran (per-model rows only; never "")
+    count: int  # committed model motes that ran this model
+    total_output_tokens: int  # SUM(output_tokens); 0 on an FFI-free serve (honest)
+    total_wall_clock_ms: int  # SUM(wall_clock_ms) for this model
+
+    @classmethod
+    def from_proto(cls, r: "_g.ModelTokenRollup") -> "ModelTokenRollup":
+        return cls(
+            model_id=r.model_id,
+            count=r.count,
+            total_output_tokens=r.total_output_tokens,
+            total_wall_clock_ms=r.total_wall_clock_ms,
+        )
+
+
+@dataclass(frozen=True)
+class TelemetrySummary:
+    """The per-model token rollup (descending output tokens) + the window-wide
+    honest totals across ALL joined motes in scope (model + non-model)."""
+
+    rows: List[ModelTokenRollup]
+    total_motes: int
+    total_output_tokens: int
+
+    @classmethod
+    def from_proto(cls, resp: "_g.ListTelemetrySummaryResponse") -> "TelemetrySummary":
+        return cls(
+            rows=[ModelTokenRollup.from_proto(r) for r in resp.rows],
+            total_motes=resp.total_motes,
+            total_output_tokens=resp.total_output_tokens,
+        )

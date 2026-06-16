@@ -58,6 +58,9 @@ export type { CaptureRecordPage } from "./capture.js";
 export { MoteTelemetryRow } from "./telemetry.js";
 export type { MoteTelemetryPage } from "./telemetry.js";
 
+// W1a-3: the exact per-model token-economy rollup (token-only; no cost/$).
+export { ModelTokenRollup, TelemetrySummary } from "./telemetry.js";
+
 // W1a-2: the operator alerts inbox (read-only view; terminal-failure facts).
 export { AlertSummary } from "./alerts.js";
 export type { AlertsPage } from "./alerts.js";

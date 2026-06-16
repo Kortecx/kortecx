@@ -2,17 +2,18 @@
 
 import { create } from "@bufbuild/protobuf";
 import { describe, expect, it } from "vitest";
-import { wsAllDelta, wsAllUrl, wsUrl } from "../src/events.js";
+import { ndClassFromTag, wsAllDelta, wsAllUrl, wsUrl } from "../src/events.js";
 import {
   CommittedDeltaSchema,
   EffectStagedDeltaSchema,
   FailedDeltaSchema,
   GlobalEventDeltaSchema,
+  ListTelemetrySummaryResponseSchema,
   MoteTelemetryRowSchema,
   RepudiatedDeltaSchema,
   RunRegisteredDeltaSchema,
 } from "../src/gen/kortecx/v1/gateway_pb.js";
-import { MoteTelemetryRow } from "../src/telemetry.js";
+import { MoteTelemetryRow, TelemetrySummary } from "../src/telemetry.js";
 import { GlobalDelta } from "../src/types.js";
 
 const fill = (v: number, n: number): Uint8Array => new Uint8Array(n).fill(v);
@@ -44,6 +45,17 @@ describe("wsAllUrl", () => {
 
 // --- the global WS JSON delta parser (all six tags, unknown-tolerant) ---------
 
+describe("ndClassFromTag", () => {
+  it("inverts the wire nd_class string tag to its discriminant; unknown ⇒ null (no fabricated 0)", () => {
+    expect(ndClassFromTag("pure")).toBe(1);
+    expect(ndClassFromTag("read_only_nondet")).toBe(2);
+    expect(ndClassFromTag("world_mutating")).toBe(3);
+    expect(ndClassFromTag("unspecified")).toBe(0);
+    expect(ndClassFromTag(null)).toBeNull();
+    expect(ndClassFromTag("future_tag")).toBeNull();
+  });
+});
+
 describe("wsAllDelta", () => {
   it("parses run_registered with the camelCase view fields", () => {
     const d = wsAllDelta({
@@ -73,6 +85,9 @@ describe("wsAllDelta", () => {
     expect(committed.instanceId).toBe("11".repeat(16));
     expect(committed.moteId).toBe("33".repeat(32));
     expect(committed.resultRef).toBe("44".repeat(32));
+    // The wire `nd_class` STRING tag is parsed back to its discriminant (the
+    // GR16-caught gap: the committed arm used to DROP it → a null/0 export).
+    expect(committed.ndClass).toBe(1); // "pure" → 1
 
     const failed = wsAllDelta({
       type: "failed",
@@ -275,5 +290,39 @@ describe("MoteTelemetryRow.fromProto", () => {
       seq: 1n,
     });
     expect(MoteTelemetryRow.fromProto(r).instanceId).toBe("");
+  });
+});
+
+describe("TelemetrySummary.fromProto (W1a-3)", () => {
+  it("maps per-model rows + window totals, with a snake_case toJSON", () => {
+    const resp = create(ListTelemetrySummaryResponseSchema, {
+      rows: [
+        { modelId: "model-a", count: 3n, totalOutputTokens: 60n, totalWallClockMs: 12n },
+        { modelId: "model-b", count: 1n, totalOutputTokens: 5n, totalWallClockMs: 7n },
+      ],
+      totalMotes: 5n,
+      totalOutputTokens: 65n,
+    });
+    const view = TelemetrySummary.fromProto(resp);
+    expect(view.rows.map((r) => r.modelId)).toEqual(["model-a", "model-b"]);
+    expect(view.rows[0]?.count).toBe(3);
+    expect(view.rows[0]?.totalOutputTokens).toBe(60);
+    expect(view.totalMotes).toBe(5);
+    expect(view.totalOutputTokens).toBe(65);
+    expect(view.toJSON()).toEqual({
+      rows: [
+        { model_id: "model-a", count: 3, total_output_tokens: 60, total_wall_clock_ms: 12 },
+        { model_id: "model-b", count: 1, total_output_tokens: 5, total_wall_clock_ms: 7 },
+      ],
+      total_motes: 5,
+      total_output_tokens: 65,
+    });
+  });
+
+  it("an empty summary maps to empty rows + zero totals (no fabrication)", () => {
+    const view = TelemetrySummary.fromProto(create(ListTelemetrySummaryResponseSchema, {}));
+    expect(view.rows).toEqual([]);
+    expect(view.totalMotes).toBe(0);
+    expect(view.totalOutputTokens).toBe(0);
   });
 });

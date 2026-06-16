@@ -55,7 +55,7 @@ from .replan import ReplanRound, ReplanRoundPage
 from .run import AsyncRun, Result, Run
 from .runs import RunInputs, RunPage, RunSummary
 from .teams import TeamMember, TeamMembers, TeamSummary, WarrantView
-from .telemetry import MoteTelemetryRow, TelemetryPage
+from .telemetry import ModelTokenRollup, MoteTelemetryRow, TelemetryPage, TelemetrySummary
 from .toolscout import (
     BundleScore,
     BundleSpec,
@@ -150,6 +150,9 @@ __all__ = [
     "GlobalDelta",
     "MoteTelemetryRow",
     "TelemetryPage",
+    # W1a-3: the exact per-model token-economy rollup (audit/display; token-only)
+    "ModelTokenRollup",
+    "TelemetrySummary",
     # W1a-2: the operator alerts inbox (read-only view; terminal-failure facts)
     "AlertSummary",
     "AlertsPage",

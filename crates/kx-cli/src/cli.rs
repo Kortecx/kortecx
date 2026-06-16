@@ -54,8 +54,9 @@ usage: kx <command> [args]
     kx content get --ref <hex32> [--instance <hex16>] [--out <file>]   (no --instance = the uploads scope)
     kx content put <file> [--media-type <mime>] [--filename <name>]
     kx events --instance <hex16> [--since N] [--follow]
-    kx events --all [--since N] [--follow]       (the global cross-run event tail)
+    kx events --all [--since N] [--follow] [--kind committed,failed,...]   (the global cross-run event tail)
     kx telemetry list [--instance <hex16>] [--mote <hex32>] [--limit N] [--before-seq N]
+    kx telemetry summary [--instance <hex16>]    (the per-model output-token rollup)
     kx feedback submit --rating up|down --message-id <id> [--instance <hex16>] [--comment <s>]
     kx feedback list [--instance <hex16>] [--limit N] [--before-rowid N]
     kx replan list [--limit N]                   (re-plan rounds, newest-first)

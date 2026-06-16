@@ -34,7 +34,9 @@ use std::sync::Mutex;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use kx_executor::{MoteExecutor, MoteExecutorError, Rootfs};
-use kx_gateway_core::{JournalReader, MoteTelemetryEntry, TelemetryView};
+use kx_gateway_core::{
+    JournalReader, ModelTokenRollup, MoteTelemetryEntry, TelemetrySummary, TelemetryView,
+};
 use kx_journal::JournalEntry;
 use kx_mote::Mote;
 use kx_warrant::ExecutorClass;
@@ -468,6 +470,92 @@ impl TelemetryView for TelemetryLedger {
         rows.truncate(limit);
         Ok((rows, has_more))
     }
+
+    fn summarize(&self, instance_id: Option<[u8; 16]>) -> Result<TelemetrySummary, CoreError> {
+        // The EXACT, cross-page rollup: a single GROUP BY over the whole scope
+        // (never a page window), so a long ReAct run is summed honestly. Only
+        // JOINED rows count (`seq IS NOT NULL` — an uncommitted execution never
+        // contributes). Per-model rows exclude non-model motes (empty model_id)
+        // but they still count toward `total_motes` (computed separately).
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| CoreError::Internal("telemetry lock poisoned".into()))?;
+
+        // (1) Per-model rollups — empty model_id excluded from these rows.
+        let mut sql = String::from(
+            "SELECT model_id, COUNT(*), \
+                    COALESCE(SUM(output_tokens), 0), COALESCE(SUM(wall_clock_ms), 0) \
+             FROM exec_metrics WHERE seq IS NOT NULL AND model_id <> ''",
+        );
+        let mut args: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        if let Some(inst) = instance_id {
+            sql.push_str(" AND instance_id = ?");
+            args.push(Box::new(inst.to_vec()));
+        }
+        sql.push_str(" GROUP BY model_id");
+        let mut stmt = conn
+            .prepare(&sql)
+            .map_err(|e| CoreError::Internal(format!("telemetry summary prep: {e}")))?;
+        let mapped = stmt
+            .query_map(
+                rusqlite::params_from_iter(args.iter().map(std::convert::AsRef::as_ref)),
+                |r| {
+                    let model_id: String = r.get(0)?;
+                    let count: i64 = r.get(1)?;
+                    let out: i64 = r.get(2)?;
+                    let wall: i64 = r.get(3)?;
+                    Ok(ModelTokenRollup {
+                        model_id,
+                        count: u64::try_from(count).unwrap_or(0),
+                        total_output_tokens: u64::try_from(out).unwrap_or(0),
+                        total_wall_clock_ms: u64::try_from(wall).unwrap_or(0),
+                    })
+                },
+            )
+            .map_err(|e| CoreError::Internal(format!("telemetry summary query: {e}")))?;
+        let mut rows = Vec::new();
+        for row in mapped {
+            rows.push(row.map_err(|e| CoreError::Internal(format!("telemetry summary row: {e}")))?);
+        }
+        // Descending output tokens; ties by model_id (mirrors the seam default).
+        rows.sort_by(|a: &ModelTokenRollup, b: &ModelTokenRollup| {
+            b.total_output_tokens
+                .cmp(&a.total_output_tokens)
+                .then_with(|| a.model_id.cmp(&b.model_id))
+        });
+
+        // (2) Window-wide totals over ALL joined motes (model + non-model).
+        let mut tsql = String::from(
+            "SELECT COUNT(*), COALESCE(SUM(output_tokens), 0) \
+             FROM exec_metrics WHERE seq IS NOT NULL",
+        );
+        let mut targs: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        if let Some(inst) = instance_id {
+            tsql.push_str(" AND instance_id = ?");
+            targs.push(Box::new(inst.to_vec()));
+        }
+        let (total_motes, total_output_tokens): (u64, u64) = conn
+            .query_row(
+                &tsql,
+                rusqlite::params_from_iter(targs.iter().map(std::convert::AsRef::as_ref)),
+                |r| {
+                    let motes: i64 = r.get(0)?;
+                    let out: i64 = r.get(1)?;
+                    Ok((
+                        u64::try_from(motes).unwrap_or(0),
+                        u64::try_from(out).unwrap_or(0),
+                    ))
+                },
+            )
+            .map_err(|e| CoreError::Internal(format!("telemetry summary totals: {e}")))?;
+
+        Ok(TelemetrySummary {
+            rows,
+            total_motes,
+            total_output_tokens,
+        })
+    }
 }
 
 /// The OUTERMOST executor wrapper: measures every leased mote's wall clock and
@@ -887,5 +975,163 @@ mod tests {
         let (one, _) = ledger.list(10, None, Some([0x52; 32]), None).unwrap();
         assert_eq!(one.len(), 1);
         assert_eq!(one[0].mote_id, [0x52; 32]);
+    }
+
+    #[test]
+    fn summary_groups_by_model_sums_tokens_and_wall() {
+        // W1a-3: the exact GROUP BY rollup. Three motes on model A, one on B,
+        // one non-model (echo) mote — per-model rows exclude the echo, but it
+        // still counts toward total_motes.
+        let dir = tempfile::TempDir::new().unwrap();
+        let ledger = TelemetryLedger::open(dir.path()).unwrap();
+        let sink = ledger.sink();
+        let j = InMemoryJournal::new();
+        j.append(registered(1)).unwrap();
+        // model A: motes 0x10..0x13 (3) — usage 10/20/30, wall 1/2/3
+        for (i, (tok, wall)) in [(10u64, 1u64), (20, 2), (30, 3)].into_iter().enumerate() {
+            #[allow(clippy::cast_possible_truncation)]
+            let m = 0x10u8 + i as u8;
+            sink.send(exec_event(m, wall));
+            sink.record_usage([m; 32], "model-a", tok);
+            j.append(committed(m)).unwrap();
+        }
+        // model B: mote 0x20 — usage 5, wall 7
+        sink.send(exec_event(0x20, 7));
+        sink.record_usage([0x20; 32], "model-b", 5);
+        j.append(committed(0x20)).unwrap();
+        // non-model echo mote 0x30 — exec only (empty model_id), wall 4
+        sink.send(exec_event(0x30, 4));
+        j.append(committed(0x30)).unwrap();
+
+        assert_eq!(ledger.join_fold(&ReadOnly::new(j)), 5);
+
+        let s = ledger.summarize(None).unwrap();
+        // Per-model rows: A then B (descending output tokens).
+        assert_eq!(s.rows.len(), 2, "echo mote excluded from per-model rows");
+        assert_eq!(s.rows[0].model_id, "model-a");
+        assert_eq!(s.rows[0].count, 3);
+        assert_eq!(s.rows[0].total_output_tokens, 60);
+        assert_eq!(s.rows[0].total_wall_clock_ms, 6);
+        assert_eq!(s.rows[1].model_id, "model-b");
+        assert_eq!(s.rows[1].total_output_tokens, 5);
+        // Window-wide totals count the echo mote too.
+        assert_eq!(s.total_motes, 5, "echo counted in total_motes");
+        assert_eq!(s.total_output_tokens, 65);
+    }
+
+    #[test]
+    fn summary_scopes_to_instance() {
+        // Two runs, distinct instance watermarks; the filter isolates one.
+        let dir = tempfile::TempDir::new().unwrap();
+        let ledger = TelemetryLedger::open(dir.path()).unwrap();
+        let sink = ledger.sink();
+        let reader = GrowableReader::new();
+        // run A (instance 0x07): mote 0x10, usage 11
+        reader.push(registered(0x07), 1);
+        sink.send(exec_event(0x10, 1));
+        sink.record_usage([0x10; 32], "model-a", 11);
+        reader.push(committed(0x10), 2);
+        // run B (instance 0x08): mote 0x11, usage 22
+        reader.push(registered(0x08), 3);
+        sink.send(exec_event(0x11, 1));
+        sink.record_usage([0x11; 32], "model-a", 22);
+        reader.push(committed(0x11), 4);
+        ledger.join_fold(&reader);
+
+        let all = ledger.summarize(None).unwrap();
+        assert_eq!(all.total_output_tokens, 33, "both runs summed");
+        let a = ledger.summarize(Some([0x07; INSTANCE_ID_LEN])).unwrap();
+        assert_eq!(a.total_motes, 1);
+        assert_eq!(a.total_output_tokens, 11, "scoped to run A only");
+        assert_eq!(a.rows[0].count, 1);
+    }
+
+    #[test]
+    fn summary_excludes_unjoined_executions() {
+        // An executed-but-never-committed mote (seq IS NULL) never contributes.
+        let dir = tempfile::TempDir::new().unwrap();
+        let ledger = TelemetryLedger::open(dir.path()).unwrap();
+        let sink = ledger.sink();
+        let j = InMemoryJournal::new();
+        j.append(registered(1)).unwrap();
+        sink.send(exec_event(0x10, 1));
+        sink.record_usage([0x10; 32], "model-a", 9);
+        j.append(committed(0x10)).unwrap();
+        // 0x11 executes but is never committed (dead-letter shape).
+        sink.send(exec_event(0x11, 1));
+        sink.record_usage([0x11; 32], "model-a", 99);
+        ledger.join_fold(&ReadOnly::new(j));
+
+        let s = ledger.summarize(None).unwrap();
+        assert_eq!(s.total_motes, 1, "the uncommitted execution is invisible");
+        assert_eq!(s.total_output_tokens, 9);
+        assert_eq!(s.rows[0].count, 1);
+    }
+
+    #[test]
+    fn summary_empty_is_empty_not_fabricated() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let ledger = TelemetryLedger::open(dir.path()).unwrap();
+        let s = ledger.summarize(None).unwrap();
+        assert!(s.rows.is_empty(), "no rows fabricated on an empty sidecar");
+        assert_eq!(s.total_motes, 0);
+        assert_eq!(s.total_output_tokens, 0);
+    }
+
+    /// GR10 (W1a-3) — the per-call cost of the `summarize` GROUP BY over a
+    /// populated sidecar. The summary is a single table scan + group; this pins
+    /// it as flat and fast even at thousands of rows (the cross-page rollup is
+    /// the whole point — never a per-row client drag). Release-only.
+    #[test]
+    #[ignore = "GR10 measurement — meaningful in release only"]
+    fn summary_query_spike() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let ledger = TelemetryLedger::open(dir.path()).unwrap();
+        let reader = GrowableReader::new();
+        reader.push(registered(1), 1);
+        let sink = ledger.sink();
+        let total = 5_000u32;
+        let models = ["m-a", "m-b", "m-c", "m-d", "m-e"];
+        for i in 0..total {
+            let mut id = [0u8; 32];
+            id[..4].copy_from_slice(&i.to_le_bytes());
+            sink.send(TelemetryEvent::Exec {
+                mote_id: id,
+                started_unix_ms: 1,
+                wall_clock_ms: 1,
+                tool_id: String::new(),
+            });
+            sink.record_usage(id, models[(i as usize) % models.len()], u64::from(i % 100));
+            reader.push(
+                JournalEntry::Committed {
+                    mote_id: MoteId::from_bytes(id),
+                    idempotency_key: id,
+                    seq: 0,
+                    nondeterminism: NdClass::Pure,
+                    result_ref: ContentRef::from_bytes(id),
+                    parents: SmallVec::new(),
+                    warrant_ref: ContentRef::from_bytes([0xaa; 32]),
+                    mote_def_hash: MoteDefHash::from_bytes([0x09; 32]),
+                },
+                u64::from(i) + 2,
+            );
+            if i % 500 == 499 {
+                ledger.join_fold(&reader);
+            }
+        }
+        ledger.join_fold(&reader);
+
+        let runs = 200u32;
+        let t = std::time::Instant::now();
+        let mut last = 0u64;
+        for _ in 0..runs {
+            last = ledger.summarize(None).unwrap().total_output_tokens;
+        }
+        let per_call = t.elapsed() / runs;
+        println!("GR10 W1a-3 summarize({total} rows) per-call {per_call:?} (sum={last})");
+        assert!(
+            per_call < std::time::Duration::from_millis(20),
+            "the GROUP BY rollup stays well under 20ms at 5k rows"
+        );
     }
 }

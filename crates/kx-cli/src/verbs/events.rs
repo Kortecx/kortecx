@@ -13,6 +13,8 @@
 //! marker the per-run cursor never carries. Mutually exclusive with
 //! `--instance`; the frozen per-run path is untouched.
 
+use std::collections::BTreeSet;
+
 use kx_proto::proto;
 use kx_proto::proto::kx_gateway_client::KxGatewayClient;
 use tonic::transport::Channel;
@@ -31,6 +33,63 @@ pub enum EventsTarget {
     All,
 }
 
+/// A global event-delta kind, for the `--kind` triage filter (W1a-3). The five
+/// kinds the global tail carries; the filter is purely CLIENT-SIDE (applied
+/// after the snapshot/follow drain — the server stream is unchanged, SN-8).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum GlobalKind {
+    /// A Mote committed a durable effect.
+    Committed,
+    /// A Mote failed terminally.
+    Failed,
+    /// A committed Mote was later repudiated.
+    Repudiated,
+    /// A WORLD-MUTATING effect was staged.
+    EffectStaged,
+    /// A run registered (the global tail's "run started" marker).
+    RunRegistered,
+}
+
+impl GlobalKind {
+    /// Parse one wire token (the `type` tag the JSON/WS surfaces use).
+    fn parse(token: &str) -> Result<Self, CliError> {
+        match token {
+            "committed" => Ok(Self::Committed),
+            "failed" => Ok(Self::Failed),
+            "repudiated" => Ok(Self::Repudiated),
+            "effect_staged" => Ok(Self::EffectStaged),
+            "run_registered" => Ok(Self::RunRegistered),
+            other => Err(CliError::Usage(format!(
+                "--kind: unknown event kind {other:?} (expected a comma-list of: \
+                 committed, failed, repudiated, effect_staged, run_registered)"
+            ))),
+        }
+    }
+
+    /// The kind of a global delta (`None` = a future/unknown kind).
+    fn of(delta: &proto::GlobalEventDelta) -> Option<Self> {
+        use proto::global_event_delta::Kind;
+        match delta.kind.as_ref()? {
+            Kind::Committed(_) => Some(Self::Committed),
+            Kind::Failed(_) => Some(Self::Failed),
+            Kind::Repudiated(_) => Some(Self::Repudiated),
+            Kind::EffectStaged(_) => Some(Self::EffectStaged),
+            Kind::RunRegistered(_) => Some(Self::RunRegistered),
+        }
+    }
+}
+
+/// Should this delta print, given the optional `--kind` filter? An absent
+/// filter shows everything; a present filter shows only the named kinds (a
+/// future/unknown kind is hidden when a filter is set — the user asked for
+/// specific kinds).
+fn passes(kinds: Option<&BTreeSet<GlobalKind>>, delta: &proto::GlobalEventDelta) -> bool {
+    match kinds {
+        None => true,
+        Some(set) => GlobalKind::of(delta).is_some_and(|k| set.contains(&k)),
+    }
+}
+
 /// Parsed `events` arguments.
 #[derive(Debug)]
 pub struct EventsArgs {
@@ -40,6 +99,8 @@ pub struct EventsArgs {
     pub since: u64,
     /// Keep polling from the last cursor until Ctrl-C.
     pub follow: bool,
+    /// The `--kind` triage filter (W1a-3). `None` = all kinds; `--all`-only.
+    pub kinds: Option<BTreeSet<GlobalKind>>,
     /// Common client flags.
     pub common: ClientCommon,
 }
@@ -50,6 +111,7 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<EventsArgs, CliEr
     let mut all = false;
     let mut since: u64 = 0;
     let mut follow = false;
+    let mut kinds: Option<BTreeSet<GlobalKind>> = None;
     let mut common = ClientCommon::default();
 
     while let Some(flag) = args.next() {
@@ -66,6 +128,19 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<EventsArgs, CliEr
                 })?;
             }
             "--follow" => follow = true,
+            "--kind" => {
+                let v = next_value(&mut args, "--kind")?;
+                let mut set = BTreeSet::new();
+                for token in v.split(',').map(str::trim).filter(|t| !t.is_empty()) {
+                    set.insert(GlobalKind::parse(token)?);
+                }
+                if set.is_empty() {
+                    return Err(CliError::Usage(
+                        "--kind expects a comma-list of event kinds (e.g. committed,failed)".into(),
+                    ));
+                }
+                kinds = Some(set);
+            }
             other => return Err(CliError::Usage(format!("unknown flag {other:?}"))),
         }
     }
@@ -84,10 +159,18 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<EventsArgs, CliEr
                     .into(),
             )),
         };
+    // The `--kind` triage filter is the global tail's richer kind set (it
+    // carries run_registered); reject it on the frozen per-run path.
+    if kinds.is_some() && !matches!(target, EventsTarget::All) {
+        return Err(CliError::Usage(
+            "--kind filters the global tail: use it with `kx events --all --kind <k1,k2>`".into(),
+        ));
+    }
     Ok(EventsArgs {
         target,
         since,
         follow,
+        kinds,
         common,
     })
 }
@@ -145,13 +228,27 @@ pub async fn execute(args: EventsArgs) -> Result<(), CliError> {
         }
         EventsTarget::All => {
             if !args.follow {
-                let cursor = drain_all_once(&mut client, &resolved, args.since, json).await?;
+                let cursor = drain_all_once(
+                    &mut client,
+                    &resolved,
+                    args.since,
+                    json,
+                    args.kinds.as_ref(),
+                )
+                .await?;
                 if !json {
                     println!("-- caught up at seq {cursor} --");
                 }
                 return Ok(());
             }
-            follow_all_live(&mut client, &resolved, args.since, json).await
+            follow_all_live(
+                &mut client,
+                &resolved,
+                args.since,
+                json,
+                args.kinds.as_ref(),
+            )
+            .await
         }
     }
 }
@@ -208,6 +305,7 @@ async fn drain_all_once(
     resolved: &Resolved,
     since: u64,
     json: bool,
+    kinds: Option<&BTreeSet<GlobalKind>>,
 ) -> Result<u64, CliError> {
     let mut stream = client
         .stream_all_events(resolved.request(proto::StreamAllEventsRequest { since_seq: since })?)
@@ -218,7 +316,9 @@ async fn drain_all_once(
     let mut cursor = since;
     while let Some(frame) = stream.message().await.map_err(CliError::from_status)? {
         for delta in &frame.deltas {
-            println!("{}", format::render_global_delta(delta, json));
+            if passes(kinds, delta) {
+                println!("{}", format::render_global_delta(delta, json));
+            }
         }
         cursor = frame.next_seq;
         if frame.journal_boundary {
@@ -237,6 +337,7 @@ async fn follow_all_live(
     resolved: &Resolved,
     mut cursor: u64,
     json: bool,
+    kinds: Option<&BTreeSet<GlobalKind>>,
 ) -> Result<(), CliError> {
     loop {
         let mut stream = client
@@ -252,7 +353,9 @@ async fn follow_all_live(
                 message = stream.message() => match message {
                     Ok(Some(frame)) => {
                         for delta in &frame.deltas {
-                            println!("{}", format::render_global_delta(delta, json));
+                            if passes(kinds, delta) {
+                                println!("{}", format::render_global_delta(delta, json));
+                            }
                         }
                         cursor = frame.next_seq;
                     }
@@ -327,5 +430,71 @@ mod tests {
         assert!(p(&["--instance", &"ab".repeat(16), "--nope"]).is_err());
         // A wrong-length instance is rejected (32 hex chars = 16 bytes required).
         assert!(p(&["--instance", &"ab".repeat(32)]).is_err());
+    }
+
+    #[test]
+    fn parses_all_with_kind_commalist() {
+        let a = p(&["--all", "--kind", "committed,failed"]).unwrap();
+        let set = a.kinds.expect("kinds present");
+        assert_eq!(set.len(), 2);
+        assert!(set.contains(&GlobalKind::Committed));
+        assert!(set.contains(&GlobalKind::Failed));
+        // Whitespace + duplicates tolerated; all five kinds parse.
+        let a = p(&[
+            "--all",
+            "--kind",
+            "run_registered, effect_staged ,repudiated,failed,failed",
+        ])
+        .unwrap();
+        assert_eq!(a.kinds.unwrap().len(), 4, "dedup; 4 distinct kinds");
+    }
+
+    #[test]
+    fn kind_default_is_all() {
+        let a = p(&["--all"]).unwrap();
+        assert!(a.kinds.is_none(), "absent --kind = every kind shows");
+    }
+
+    #[test]
+    fn unknown_kind_token_is_usage() {
+        let err = p(&["--all", "--kind", "committed,bogus"]).unwrap_err();
+        assert!(
+            err.to_string().contains("unknown event kind") && err.to_string().contains("bogus"),
+            "the error names the bad token: {err}"
+        );
+        // An empty value is a usage error too.
+        assert!(p(&["--all", "--kind", " , "]).is_err());
+    }
+
+    #[test]
+    fn kind_requires_all_not_instance() {
+        let err = p(&["--instance", &"ab".repeat(16), "--kind", "committed"]).unwrap_err();
+        assert!(
+            err.to_string().contains("--all"),
+            "the error steers to --all: {err}"
+        );
+    }
+
+    #[test]
+    fn passes_filters_by_kind() {
+        let committed = proto::GlobalEventDelta {
+            seq: 1,
+            instance_id: vec![0; 16],
+            kind: Some(proto::global_event_delta::Kind::Committed(
+                proto::CommittedDelta {
+                    mote_id: vec![0; 32],
+                    result_ref: vec![0; 32],
+                    nd_class: 0,
+                },
+            )),
+        };
+        // No filter: everything passes.
+        assert!(passes(None, &committed));
+        // A filter that includes committed.
+        let only_committed = BTreeSet::from([GlobalKind::Committed]);
+        assert!(passes(Some(&only_committed), &committed));
+        // A filter that excludes committed.
+        let only_failed = BTreeSet::from([GlobalKind::Failed]);
+        assert!(!passes(Some(&only_failed), &committed));
     }
 }

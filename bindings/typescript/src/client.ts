@@ -45,7 +45,7 @@ import { ReplanRound, type ReplanRoundPage } from "./replan.js";
 import { Result, Run } from "./run.js";
 import { RunInputs, type RunPage, RunSummary } from "./runs.js";
 import { TeamMembers, type TeamSummary, teamsFromProto } from "./teams.js";
-import { type MoteTelemetryPage, MoteTelemetryRow } from "./telemetry.js";
+import { type MoteTelemetryPage, MoteTelemetryRow, TelemetrySummary } from "./telemetry.js";
 import type { TokenChunk } from "./tokens.js";
 import { BundleScore, type BundleSpec, ToolManifest, bundleSpecToProto } from "./toolscout.js";
 import { type Args, encodeArgs } from "./transport.js";
@@ -484,6 +484,22 @@ export abstract class KxClientBase {
       }),
     );
     return { rows: resp.rows.map((r) => MoteTelemetryRow.fromProto(r)), hasMore: resp.hasMore };
+  }
+
+  /**
+   * The EXACT, cross-page per-model token-economy rollup (W1a-3) — output tokens
+   * + wall-clock summed `GROUP BY model_id` server-side over the same
+   * `telemetry.db` sidecar, so a long ReAct run is summed honestly (unlike a
+   * client fold over the page-clamped {@link listMoteTelemetry}). Token-only, no
+   * cost/$ (billing is CLOUD). `instanceId` (hex) scopes to one run; absent sums
+   * all runs. An old gateway (or one without the sidecar) throws
+   * {@link KxUnimplemented}.
+   */
+  async listTelemetrySummary(opts: { instanceId?: string } = {}): Promise<TelemetrySummary> {
+    const instanceId =
+      opts.instanceId === undefined ? undefined : asBytes(opts.instanceId, INSTANCE_LEN);
+    const resp = await rpc(this.grpc.listTelemetrySummary({ instanceId }));
+    return TelemetrySummary.fromProto(resp);
   }
 
   /**

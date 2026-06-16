@@ -1085,6 +1085,34 @@ class ListMoteTelemetryResponse(_message.Message):
     has_more: bool
     def __init__(self, rows: _Optional[_Iterable[_Union[MoteTelemetryRow, _Mapping]]] = ..., has_more: bool = ...) -> None: ...
 
+class ListTelemetrySummaryRequest(_message.Message):
+    __slots__ = ("instance_id",)
+    INSTANCE_ID_FIELD_NUMBER: _ClassVar[int]
+    instance_id: bytes
+    def __init__(self, instance_id: _Optional[bytes] = ...) -> None: ...
+
+class ModelTokenRollup(_message.Message):
+    __slots__ = ("model_id", "count", "total_output_tokens", "total_wall_clock_ms")
+    MODEL_ID_FIELD_NUMBER: _ClassVar[int]
+    COUNT_FIELD_NUMBER: _ClassVar[int]
+    TOTAL_OUTPUT_TOKENS_FIELD_NUMBER: _ClassVar[int]
+    TOTAL_WALL_CLOCK_MS_FIELD_NUMBER: _ClassVar[int]
+    model_id: str
+    count: int
+    total_output_tokens: int
+    total_wall_clock_ms: int
+    def __init__(self, model_id: _Optional[str] = ..., count: _Optional[int] = ..., total_output_tokens: _Optional[int] = ..., total_wall_clock_ms: _Optional[int] = ...) -> None: ...
+
+class ListTelemetrySummaryResponse(_message.Message):
+    __slots__ = ("rows", "total_motes", "total_output_tokens")
+    ROWS_FIELD_NUMBER: _ClassVar[int]
+    TOTAL_MOTES_FIELD_NUMBER: _ClassVar[int]
+    TOTAL_OUTPUT_TOKENS_FIELD_NUMBER: _ClassVar[int]
+    rows: _containers.RepeatedCompositeFieldContainer[ModelTokenRollup]
+    total_motes: int
+    total_output_tokens: int
+    def __init__(self, rows: _Optional[_Iterable[_Union[ModelTokenRollup, _Mapping]]] = ..., total_motes: _Optional[int] = ..., total_output_tokens: _Optional[int] = ...) -> None: ...
+
 class SubmitFeedbackRequest(_message.Message):
     __slots__ = ("rating", "message_id", "instance_id", "mote_id", "content_ref", "comment", "recipe_handle", "model_id")
     RATING_FIELD_NUMBER: _ClassVar[int]

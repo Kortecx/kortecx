@@ -1842,6 +1842,43 @@ impl KxGateway for GatewayService {
         }))
     }
 
+    async fn list_telemetry_summary(
+        &self,
+        request: Request<proto::ListTelemetrySummaryRequest>,
+    ) -> Result<Response<proto::ListTelemetrySummaryResponse>, Status> {
+        // W1a-3: the exact, cross-page per-model token rollup over the same
+        // telemetry.db sidecar. A serve without it degrades forward-compatibly
+        // to `unimplemented`.
+        let telemetry = self.telemetry.as_ref().ok_or_else(|| {
+            Status::unimplemented(
+                "ListTelemetrySummary: no telemetry view wired (telemetry.db absent)",
+            )
+        })?;
+        let req = request.into_inner();
+        let instance_id: Option<[u8; 16]> = match req.instance_id {
+            None => None,
+            Some(raw) => Some(<[u8; 16]>::try_from(raw.as_slice()).map_err(|_| {
+                Status::invalid_argument("telemetry instance_id filter must be 16 bytes")
+            })?),
+        };
+        let summary = telemetry.summarize(instance_id)?;
+        let rows = summary
+            .rows
+            .into_iter()
+            .map(|r| proto::ModelTokenRollup {
+                model_id: r.model_id,
+                count: r.count,
+                total_output_tokens: r.total_output_tokens,
+                total_wall_clock_ms: r.total_wall_clock_ms,
+            })
+            .collect();
+        Ok(Response::new(proto::ListTelemetrySummaryResponse {
+            rows,
+            total_motes: summary.total_motes,
+            total_output_tokens: summary.total_output_tokens,
+        }))
+    }
+
     async fn submit_feedback(
         &self,
         request: Request<proto::SubmitFeedbackRequest>,

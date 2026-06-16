@@ -65,6 +65,10 @@ export const queryKeys = {
    *  `instanceId` scopes to one run; cursor pages live inside the one key. */
   telemetry: (endpoint: string, instanceId: string | undefined, pageSize: number) =>
     ["kx", endpoint, "telemetry", instanceId ?? "all", pageSize] as const,
+  /** The exact per-model token-economy rollup (`ListTelemetrySummary`, W1a-3);
+   *  `instanceId` scopes to one run (else all runs). One unary call, no cursor. */
+  telemetrySummary: (endpoint: string, instanceId: string | undefined) =>
+    ["kx", endpoint, "telemetry-summary", instanceId ?? "all"] as const,
   /** The operator alerts inbox pages (`ListAlerts`, W1a-2); terminal-failure
    *  facts folded newest-first; cursor pages live inside the one key. */
   alerts: (endpoint: string, instanceId: string | undefined, pageSize: number) =>
