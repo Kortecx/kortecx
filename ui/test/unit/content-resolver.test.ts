@@ -61,6 +61,16 @@ describe("classifyItem", () => {
     expect(classifyItem(item(new Uint8Array([0xff, 0xfe, 0x00, 0x01]))).kind).toBe("binary");
   });
 
+  it("classifies video + audio payloads via the shared media sniff", () => {
+    const mp4 = new Uint8Array(16);
+    mp4.set([0x66, 0x74, 0x79, 0x70], 4); // 'ftyp' at offset 4
+    expect(classifyItem(item(mp4)).kind).toBe("video");
+    const ogg = new Uint8Array([0x4f, 0x67, 0x67, 0x53, 0, 0, 0, 0]);
+    const r = classifyItem(item(ogg));
+    expect(r.kind).toBe("audio");
+    expect(r.mediaType).toBe("audio/ogg");
+  });
+
   it("surfaces the UNIFORM empty item as missing (no existence oracle)", () => {
     const r = classifyItem(item(new Uint8Array(), { fullSize: 0n, missing: true }));
     expect(r.kind).toBe("missing");

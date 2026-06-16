@@ -133,6 +133,11 @@ class KxGatewayStub(object):
                 request_serializer=kortecx_dot_v1_dot_gateway__pb2.QueryDatasetRequest.SerializeToString,
                 response_deserializer=kortecx_dot_v1_dot_gateway__pb2.QueryDatasetResponse.FromString,
                 _registered_method=True)
+        self.FuzzyDiscovery = channel.unary_unary(
+                '/kortecx.v1.KxGateway/FuzzyDiscovery',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.FuzzyDiscoveryRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.FuzzyDiscoveryResponse.FromString,
+                _registered_method=True)
         self.ListReplanRounds = channel.unary_unary(
                 '/kortecx.v1.KxGateway/ListReplanRounds',
                 request_serializer=kortecx_dot_v1_dot_gateway__pb2.ListReplanRoundsRequest.SerializeToString,
@@ -345,6 +350,13 @@ class KxGatewayServicer(object):
 
     def QueryDataset(self, request, context):
         """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def FuzzyDiscovery(self, request, context):
+        """Slice-B additive (D120.6/D151): advisory fuzzy-in/exact-out discovery.
+        """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
@@ -583,6 +595,11 @@ def add_KxGatewayServicer_to_server(servicer, server):
                     servicer.QueryDataset,
                     request_deserializer=kortecx_dot_v1_dot_gateway__pb2.QueryDatasetRequest.FromString,
                     response_serializer=kortecx_dot_v1_dot_gateway__pb2.QueryDatasetResponse.SerializeToString,
+            ),
+            'FuzzyDiscovery': grpc.unary_unary_rpc_method_handler(
+                    servicer.FuzzyDiscovery,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.FuzzyDiscoveryRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.FuzzyDiscoveryResponse.SerializeToString,
             ),
             'ListReplanRounds': grpc.unary_unary_rpc_method_handler(
                     servicer.ListReplanRounds,
@@ -1187,6 +1204,33 @@ class KxGateway(object):
             '/kortecx.v1.KxGateway/QueryDataset',
             kortecx_dot_v1_dot_gateway__pb2.QueryDatasetRequest.SerializeToString,
             kortecx_dot_v1_dot_gateway__pb2.QueryDatasetResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def FuzzyDiscovery(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/FuzzyDiscovery',
+            kortecx_dot_v1_dot_gateway__pb2.FuzzyDiscoveryRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.FuzzyDiscoveryResponse.FromString,
             options,
             channel_credentials,
             insecure,

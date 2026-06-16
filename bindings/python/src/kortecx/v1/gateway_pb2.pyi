@@ -626,6 +626,32 @@ class QueryDatasetResponse(_message.Message):
     hits: _containers.RepeatedCompositeFieldContainer[DatasetHit]
     def __init__(self, hits: _Optional[_Iterable[_Union[DatasetHit, _Mapping]]] = ...) -> None: ...
 
+class FuzzyDiscoveryRequest(_message.Message):
+    __slots__ = ("dataset", "query_text", "query_embedding", "k")
+    DATASET_FIELD_NUMBER: _ClassVar[int]
+    QUERY_TEXT_FIELD_NUMBER: _ClassVar[int]
+    QUERY_EMBEDDING_FIELD_NUMBER: _ClassVar[int]
+    K_FIELD_NUMBER: _ClassVar[int]
+    dataset: str
+    query_text: str
+    query_embedding: _containers.RepeatedScalarFieldContainer[float]
+    k: int
+    def __init__(self, dataset: _Optional[str] = ..., query_text: _Optional[str] = ..., query_embedding: _Optional[_Iterable[float]] = ..., k: _Optional[int] = ...) -> None: ...
+
+class FuzzyHit(_message.Message):
+    __slots__ = ("content_ref", "score_bp")
+    CONTENT_REF_FIELD_NUMBER: _ClassVar[int]
+    SCORE_BP_FIELD_NUMBER: _ClassVar[int]
+    content_ref: bytes
+    score_bp: int
+    def __init__(self, content_ref: _Optional[bytes] = ..., score_bp: _Optional[int] = ...) -> None: ...
+
+class FuzzyDiscoveryResponse(_message.Message):
+    __slots__ = ("hits",)
+    HITS_FIELD_NUMBER: _ClassVar[int]
+    hits: _containers.RepeatedCompositeFieldContainer[FuzzyHit]
+    def __init__(self, hits: _Optional[_Iterable[_Union[FuzzyHit, _Mapping]]] = ...) -> None: ...
+
 class ListReplanRoundsRequest(_message.Message):
     __slots__ = ("limit",)
     LIMIT_FIELD_NUMBER: _ClassVar[int]

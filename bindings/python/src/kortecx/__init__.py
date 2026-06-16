@@ -18,7 +18,7 @@ from .capture import CaptureRecord, CaptureRecordPage
 from .chains import Chain, Task, chain, model, pure
 from .client import DEFAULT_ENDPOINT, AsyncKxClient, KxClient
 from .content import ContentItem, PutResult
-from .datasets import DatasetHit, DatasetSummary, IngestDocument, IngestResult
+from .datasets import DatasetHit, DatasetSummary, FuzzyHit, IngestDocument, IngestResult
 from .errors import (
     ErrorCode,
     KxCatchupRequired,
@@ -162,6 +162,7 @@ __all__ = [
     "rating_to_proto",
     "rating_from_proto",
     "DatasetHit",
+    "FuzzyHit",
     "IngestResult",
     "IngestDocument",
     # W1.A5 toolscout (advisory/display-only — scores never authorize, SN-8)

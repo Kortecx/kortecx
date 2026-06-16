@@ -32,6 +32,7 @@ const sidebars: SidebarsConfig = {
         "security",
         "tools",
         "models",
+        "datasets",
         "scripts",
         "reading-run-outputs",
         "rerun-with-changes",

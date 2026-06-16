@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from kortecx import DatasetHit, DatasetSummary, IngestDocument, IngestResult
+from kortecx import DatasetHit, DatasetSummary, FuzzyHit, IngestDocument, IngestResult
 from kortecx.v1 import gateway_pb2 as g
 
 
@@ -22,6 +22,15 @@ def test_dataset_hit_from_proto_hex_encodes_ref_and_decodes_text():
     assert hit.content == b"hello world"
     assert abs(hit.score - 0.875) < 1e-6
     assert hit.text == "hello world"
+
+
+def test_fuzzy_hit_from_proto_hex_encodes_ref_and_exposes_score_fraction():
+    # Slice-B exact-out: refs + a DISPLAY-ONLY basis-point score (no content bytes).
+    h = g.FuzzyHit(content_ref=b"\xcd" * 32, score_bp=8750)
+    hit = FuzzyHit.from_proto(h)
+    assert hit.content_ref == "cd" * 32
+    assert hit.score_bp == 8750
+    assert abs(hit.score - 0.875) < 1e-6  # bp/10000 fraction (display only)
 
 
 def test_ingest_result_from_proto_carries_counts():

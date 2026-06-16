@@ -67,6 +67,7 @@ usage: kx <command> [args]
     kx tools list | score --intent <text> --tool <id>@<ver>... [--language-tag <t>]... [--tolerance-threshold-bp N]
     kx recipe list | search <intent> [--keyword <k>]... [--limit N]   (advisory recipe discovery)
     kx models list                              (display-only model discovery)
+    kx datasets list | ingest <name> (--text <s>|--file <p>)... | query <name> --text <q> [--k N]   (RAG corpora)
     kx health                                   (grpc.health.v1 liveness; exit 0 iff SERVING)
 
     --endpoint defaults to http://127.0.0.1:50151
@@ -125,6 +126,8 @@ pub enum Cli {
     Tools(verbs::tools::ToolsArgs),
     /// Model discovery (Batch A `ListModels`; display-only).
     Models(verbs::models::ModelsArgs),
+    /// The RAG data-plane (`ListDatasets` / `IngestDocuments` / `QueryDataset`).
+    Datasets(verbs::datasets::DatasetsArgs),
     /// Liveness/readiness probe (grpc.health.v1).
     Health(verbs::health::HealthArgs),
 }
@@ -177,6 +180,7 @@ impl Cli {
             Some("signatures") => Ok(Cli::Signatures(verbs::signatures::parse(args)?)),
             Some("tools") => Ok(Cli::Tools(verbs::tools::parse(args)?)),
             Some("models") => Ok(Cli::Models(verbs::models::parse(args)?)),
+            Some("datasets") => Ok(Cli::Datasets(verbs::datasets::parse(args)?)),
             Some("health") => Ok(Cli::Health(verbs::health::parse(args)?)),
             Some(other) => Err(CliError::Usage(format!(
                 "unknown command {other:?} (try `kx --help`)"
@@ -246,6 +250,7 @@ async fn dispatch(cli: Cli) -> Result<(), CliError> {
         Cli::Signatures(a) => verbs::signatures::execute(a).await,
         Cli::Tools(a) => verbs::tools::execute(a).await,
         Cli::Models(a) => verbs::models::execute(a).await,
+        Cli::Datasets(a) => verbs::datasets::execute(a).await,
         Cli::Health(a) => verbs::health::execute(a).await,
     }
 }
@@ -611,6 +616,18 @@ kx health [client flags]
   Probe the gateway's grpc.health.v1 liveness/readiness. Prints SERVING / NOT_SERVING
   (or --json) and exits 0 iff SERVING — a purpose-built healthcheck (the compose
   stack uses it). Unauthenticated; honors --endpoint / --tls-ca for a TLS gateway."
+            .into(),
+        "datasets" => "\
+kx datasets list [client flags]
+kx datasets ingest <name> (--text <s> | --file <path>)... [client flags]
+kx datasets query <name> --text <query> [--k N] [client flags]
+  The RAG data-plane (T3.7): browse / populate / search content-addressed vector
+  corpora. `ingest` adds documents (created on first ingest); the CLI uses the
+  SERVER-EMBED path, so it needs `kx serve --features inference` with a model
+  (else FAILED_PRECONDITION) — the client-vector (FFI-free) path is an SDK surface.
+  `query` returns top-k hits; each `score` is DISPLAY-ONLY (SN-8), a ranking aid
+  never an identity input. The store is APPEND-ONLY + content-dedup (no delete).
+  A pre-T3.7 / `hnsw`-less gateway answers Unimplemented (run `kx serve --features hnsw`)."
             .into(),
         other => format!("no help for {other:?}; try `kx --help`"),
     }

@@ -7,6 +7,7 @@ pub mod blueprint;
 pub mod capture;
 pub mod chain;
 pub mod content;
+pub mod datasets;
 pub mod events;
 pub mod feedback;
 pub mod health;

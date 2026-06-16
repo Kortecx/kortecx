@@ -40,6 +40,9 @@ export const queryKeys = {
   /** A dataset query (`QueryDataset`), scoped by dataset + query text + k. */
   datasetQuery: (endpoint: string, dataset: string, text: string, k: number) =>
     ["kx", endpoint, "dataset-query", dataset, text, k] as const,
+  /** Advisory fuzzy discovery (`FuzzyDiscovery`), scoped by dataset + text + k. */
+  fuzzyDiscovery: (endpoint: string, dataset: string, text: string, k: number) =>
+    ["kx", endpoint, "fuzzy-discovery", dataset, text, k] as const,
   /** Gateway liveness probe (endpoint-scoped). */
   health: (endpoint: string) => ["kx", endpoint, "health"] as const,
   /** The re-plan-round trail (`ListReplanRounds`), scoped by page size. */

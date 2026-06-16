@@ -3,9 +3,11 @@
 import { create } from "@bufbuild/protobuf";
 import { describe, expect, it } from "vitest";
 import { DatasetHit, DatasetSummary, IngestResult } from "../src/datasets.js";
+import { FuzzyHit } from "../src/fuzzy.js";
 import {
   DatasetHitSchema,
   DatasetSummarySchema,
+  FuzzyHitSchema,
   IngestDocumentsResponseSchema,
 } from "../src/gen/kortecx/v1/gateway_pb.js";
 
@@ -46,6 +48,17 @@ describe("DatasetHit.fromProto", () => {
     expect(hit.contentRef).toBe("ab".repeat(32));
     expect(hit.score).toBeCloseTo(0.875);
     expect(hit.text).toBe("hello world");
+  });
+});
+
+describe("FuzzyHit.fromProto", () => {
+  it("hex-encodes the ref + exposes the display-only bp score as a fraction + snake_case toJSON", () => {
+    const h = create(FuzzyHitSchema, { contentRef: fill(0xcd, 32), scoreBp: 8750 });
+    const hit = FuzzyHit.fromProto(h);
+    expect(hit.contentRef).toBe("cd".repeat(32));
+    expect(hit.scoreBp).toBe(8750);
+    expect(hit.score).toBeCloseTo(0.875); // bp/10000 fraction (SN-8 display only)
+    expect(hit.toJSON()).toEqual({ content_ref: "cd".repeat(32), score_bp: 8750 });
   });
 });
 

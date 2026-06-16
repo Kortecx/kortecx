@@ -47,6 +47,12 @@ test("Datasets: lists a seeded corpus + degrades cleanly without an embedder", a
   // actionable no-embedder notice (FAILED_PRECONDITION), never a crash. Controlled
   // inputs are driven with click + pressSequentially (a bulk fill() can leave React
   // state stale — the recorded e2e gotcha).
+  // The Data Lab controls render up-front (no embedder needed): the Search/Discover
+  // mode toggle + the top-k slider (D157).
+  await expect(page.getByTestId("dataset-mode-search")).toBeVisible();
+  await expect(page.getByTestId("dataset-mode-discover")).toBeVisible();
+  await expect(page.getByTestId("dataset-k-slider")).toBeVisible();
+
   const queryInput = page.getByTestId("dataset-query-input");
   await queryInput.click();
   await queryInput.pressSequentially("alpha");

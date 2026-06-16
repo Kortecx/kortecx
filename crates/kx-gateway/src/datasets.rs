@@ -40,7 +40,8 @@ use kx_content::ContentRef;
 use kx_dataset::RetrievalIndex;
 use kx_dataset_hnsw::HnswRetrievalIndex;
 use kx_gateway_core::{
-    DatasetError, DatasetHitEntry, DatasetSummaryEntry, DatasetView, IngestDoc, IngestOutcome,
+    score_to_bp, DatasetError, DatasetHitEntry, DatasetSummaryEntry, DatasetView,
+    FuzzyDiscoveryView, FuzzyHitEntry, IngestDoc, IngestOutcome,
 };
 use rusqlite::{params, Connection};
 
@@ -397,6 +398,67 @@ impl HostDatasetView {
             Err(DatasetError::EmbedderUnavailable)
         }
     }
+
+    /// The shared ANN-search core for [`DatasetView::query`] and
+    /// [`FuzzyDiscoveryView::discover`]: resolve the query vector (client-vector
+    /// path takes precedence; text-only falls back to the server embedder),
+    /// validate it, then run the cosine ANN search under one lock — returning the
+    /// raw hits as `(content_ref, content, score)`. `query` ships the content;
+    /// the exact-out `discover` ignores it (its wire carries refs + a display
+    /// score only). One source of the search logic; one lock, no re-lock race.
+    fn ann_search(
+        &self,
+        dataset: &str,
+        query_embedding: Option<&[f32]>,
+        query_text: &str,
+        k: usize,
+    ) -> Result<Vec<(ContentRef, Vec<u8>, f32)>, DatasetError> {
+        if k == 0 {
+            return Ok(Vec::new());
+        }
+        let k = k.min(MAX_K);
+        // Resolve the query vector outside the lock (the client-vector path takes
+        // precedence; text-only falls back to the server embedder).
+        let qvec = match query_embedding {
+            Some(v) if !v.is_empty() => v.to_vec(),
+            _ => {
+                if query_text.is_empty() {
+                    return Err(DatasetError::InvalidArgument(
+                        "query requires query_text or a query_embedding".to_string(),
+                    ));
+                }
+                self.embed_query(query_text)?
+            }
+        };
+        if !all_finite(&qvec) {
+            return Err(DatasetError::InvalidArgument(
+                "query vector must be finite (no NaN/inf)".to_string(),
+            ));
+        }
+        let inner = self
+            .inner
+            .lock()
+            .map_err(|_| DatasetError::Internal("dataset store lock poisoned".to_string()))?;
+        let state = inner.datasets.get(dataset).ok_or(DatasetError::NotFound)?;
+        if let Some(dim) = state.dim {
+            let qdim = u32::try_from(qvec.len())
+                .map_err(|_| DatasetError::InvalidArgument("query vector too large".to_string()))?;
+            if qdim != dim {
+                return Err(DatasetError::DimMismatch(format!(
+                    "dataset dim is {dim}, got a {qdim}-dim query"
+                )));
+            }
+        }
+        Ok(state
+            .index
+            .query(&qvec, k)
+            .into_iter()
+            .map(|h| {
+                let content = state.docs.get(&h.id).cloned().unwrap_or_default();
+                (h.id, content, h.score)
+            })
+            .collect())
+    }
 }
 
 impl DatasetView for HostDatasetView {
@@ -462,53 +524,38 @@ impl DatasetView for HostDatasetView {
         query_text: &str,
         k: usize,
     ) -> Result<Vec<DatasetHitEntry>, DatasetError> {
-        if k == 0 {
-            return Ok(Vec::new());
-        }
-        let k = k.min(MAX_K);
-        // Resolve the query vector outside the lock (the client-vector path takes
-        // precedence; text-only falls back to the server embedder).
-        let qvec = match query_embedding {
-            Some(v) if !v.is_empty() => v.to_vec(),
-            _ => {
-                if query_text.is_empty() {
-                    return Err(DatasetError::InvalidArgument(
-                        "query requires query_text or a query_embedding".to_string(),
-                    ));
-                }
-                self.embed_query(query_text)?
-            }
-        };
-        if !all_finite(&qvec) {
-            return Err(DatasetError::InvalidArgument(
-                "query vector must be finite (no NaN/inf)".to_string(),
-            ));
-        }
-        let inner = self
-            .inner
-            .lock()
-            .map_err(|_| DatasetError::Internal("dataset store lock poisoned".to_string()))?;
-        let state = inner.datasets.get(dataset).ok_or(DatasetError::NotFound)?;
-        if let Some(dim) = state.dim {
-            let qdim = u32::try_from(qvec.len())
-                .map_err(|_| DatasetError::InvalidArgument("query vector too large".to_string()))?;
-            if qdim != dim {
-                return Err(DatasetError::DimMismatch(format!(
-                    "dataset dim is {dim}, got a {qdim}-dim query"
-                )));
-            }
-        }
-        let hits = state
-            .index
-            .query(&qvec, k)
+        Ok(self
+            .ann_search(dataset, query_embedding, query_text, k)?
             .into_iter()
-            .map(|h| DatasetHitEntry {
-                content_ref: *h.id.as_bytes(),
-                content: state.docs.get(&h.id).cloned().unwrap_or_default(),
-                score: h.score,
+            .map(|(id, content, score)| DatasetHitEntry {
+                content_ref: *id.as_bytes(),
+                content,
+                score,
             })
-            .collect();
-        Ok(hits)
+            .collect())
+    }
+}
+
+impl FuzzyDiscoveryView for HostDatasetView {
+    /// Advisory fuzzy-in / exact-out discovery: the SAME cosine ANN search as
+    /// [`DatasetView::query`], but the result is the ordered content-ref SET +
+    /// a DISPLAY-ONLY basis-point score (SN-8) — no content bytes on the wire.
+    /// The caller joins back to bytes with an EXACT `GetContent` on the ref.
+    fn discover(
+        &self,
+        dataset: &str,
+        query_embedding: Option<&[f32]>,
+        query_text: &str,
+        k: usize,
+    ) -> Result<Vec<FuzzyHitEntry>, DatasetError> {
+        Ok(self
+            .ann_search(dataset, query_embedding, query_text, k)?
+            .into_iter()
+            .map(|(id, _content, score)| FuzzyHitEntry {
+                content_ref: *id.as_bytes(),
+                score_bp: score_to_bp(score),
+            })
+            .collect())
     }
 }
 
@@ -725,5 +772,42 @@ mod tests {
         let inf = vec![f32::INFINITY, 0.0, 0.0, 0.0];
         let qerr = view.query("c", Some(&inf), "", 1).unwrap_err();
         assert!(matches!(qerr, DatasetError::InvalidArgument(_)));
+    }
+
+    #[test]
+    fn discover_returns_exact_out_refs_and_bp_scores() {
+        let dir = tempfile::tempdir().unwrap();
+        let view = open_view(dir.path());
+        let (a, b, c) = (axis_vec(0), axis_vec(1), axis_vec(2));
+        view.ingest(
+            "corpus",
+            &[doc(b"alpha", &a), doc(b"bravo", &b), doc(b"charlie", &c)],
+        )
+        .unwrap();
+        // Closest to axis 1 ⇒ "bravo" is the top hit; the result carries the EXACT
+        // content-ref + a display-only bp score (no content bytes — SN-8 exact-out).
+        let hits = view.discover("corpus", Some(&axis_vec(1)), "", 3).unwrap();
+        assert_eq!(hits.len(), 3);
+        assert_eq!(hits[0].content_ref, *ContentRef::of(b"bravo").as_bytes());
+        assert!(
+            hits[0].score_bp <= 10_000,
+            "bp score is a 0..=10000 display band"
+        );
+        assert!(hits[0].score_bp >= hits[1].score_bp, "best-first ordering");
+    }
+
+    #[test]
+    fn discover_clamps_zero_k_and_reports_unknown_dataset() {
+        let dir = tempfile::tempdir().unwrap();
+        let view = open_view(dir.path());
+        view.ingest("c", &[doc(b"a", &axis_vec(0))]).unwrap();
+        assert!(view
+            .discover("c", Some(&axis_vec(0)), "", 0)
+            .unwrap()
+            .is_empty());
+        let err = view
+            .discover("nope", Some(&axis_vec(0)), "", 1)
+            .unwrap_err();
+        assert!(matches!(err, DatasetError::NotFound));
     }
 }

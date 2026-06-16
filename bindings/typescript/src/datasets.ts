@@ -62,6 +62,11 @@ export class DatasetHit {
   get text(): string {
     return new TextDecoder().decode(this.content);
   }
+
+  /** A plain snake_case object — byte-shape parity with `kx datasets query --json`. */
+  toJSON() {
+    return { content_ref: this.contentRef, score: this.score, text: this.text };
+  }
 }
 
 /** The outcome of an `IngestDocuments` call (server-derived counts). */

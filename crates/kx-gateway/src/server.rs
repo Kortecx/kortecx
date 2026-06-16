@@ -699,8 +699,11 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     //      a durable SQLite store + a rebuilt-on-open HNSW ANN index under the catalog
     //      dir. The client-vector path is FFI-free; an `inference` build additionally
     //      wires the resolved serve model as the server embedder (text-only ingest/query).
+    // One concrete `Arc<HostDatasetView>` backs BOTH the inline RAG seam
+    // (`DatasetView`) and the advisory Slice-B seam (`FuzzyDiscoveryView`) — one
+    // store, two views, cloned into the gateway below.
     #[cfg(feature = "hnsw")]
-    let dataset_view: Arc<dyn kx_gateway_core::DatasetView> = {
+    let dataset_view: Arc<crate::datasets::HostDatasetView> = {
         let datasets_dir = catalog_dir.join("datasets");
         #[cfg_attr(not(feature = "inference"), allow(unused_mut))]
         let mut view = crate::datasets::HostDatasetView::open(&datasets_dir)?;
@@ -907,7 +910,9 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         )));
     #[cfg(feature = "hnsw")]
     {
-        gateway = gateway.with_dataset_view(dataset_view);
+        gateway = gateway
+            .with_dataset_view(dataset_view.clone())
+            .with_fuzzy_discovery(dataset_view);
     }
     // PR-4.2 (T-STREAM1): wire the broker-backed live token tailer behind the gRPC
     // `StreamModelTokens` RPC (the inference build only; the default `NoTokenTailer`

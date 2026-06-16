@@ -2,10 +2,9 @@
  * Pure classification of a decoded artifact into a display label + glyph (UI-2
  * artifact gallery). Kept separate from `content-decode` (which owns the
  * bytes→safe-shape decision) so the gallery's presentation logic is testable in
- * isolation and image-ready WITHOUT enabling image rendering yet (the demo recipes
- * emit text/JSON only; inline image rendering is a separate, security-reviewed PR
- * — see the UI-2 plan). When it lands, add an `"image"` kind here + a Blob-URL
- * renderer; nothing else in the gallery changes.
+ * isolation. The OSS Data Lab viewer (D157) landed inline media rendering — the
+ * image/video/audio/markdown kinds map here; the shared `AssetViewer` does the
+ * Blob-URL / markdown rendering, and nothing else in the gallery changed.
  */
 
 import type { DecodedKind } from "./content-decode";
@@ -20,8 +19,12 @@ export interface ArtifactKindVisual {
 const VISUALS: Record<DecodedKind, ArtifactKindVisual> = {
   json: { label: "JSON", glyph: "{ }" },
   text: { label: "Text", glyph: "¶" },
+  markdown: { label: "Markdown", glyph: "M↓" },
   binary: { label: "Binary", glyph: "⬚" },
   empty: { label: "Empty", glyph: "∅" },
+  image: { label: "Image", glyph: "🖼" },
+  video: { label: "Video", glyph: "▶" },
+  audio: { label: "Audio", glyph: "♪" },
 };
 
 /** Map a `DecodedKind` to its gallery visual (`Binary` for any unknown kind). */

@@ -27,6 +27,7 @@ from .content import ContentItem, PutResult
 from .datasets import (
     DatasetHit,
     DatasetSummary,
+    FuzzyHit,
     IngestDocument,
     IngestResult,
     _to_documents,
@@ -755,6 +756,25 @@ class KxClient:
         resp = self._call(lambda: self._stub.QueryDataset(req, metadata=self._md))
         return [DatasetHit.from_proto(h) for h in resp.hits]
 
+    def fuzzy_discovery(
+        self,
+        dataset: str,
+        *,
+        text: Optional[str] = None,
+        embedding: Optional[Sequence[float]] = None,
+        k: int = 10,
+    ) -> List[FuzzyHit]:
+        """Slice-B advisory fuzzy-in / exact-out discovery over ``dataset`` (D151).
+        Like :meth:`query_dataset`, but each :class:`FuzzyHit` carries ONLY the
+        content-addressed ref + a DISPLAY-ONLY basis-point score (SN-8) — join back
+        to bytes with an EXACT :meth:`get_content` on the ref. An old / ``hnsw``-less
+        gateway raises ``KxUnimplemented``."""
+        req = _g.FuzzyDiscoveryRequest(dataset=dataset, query_text=text or "", k=k)
+        if embedding:
+            req.query_embedding.extend(embedding)
+        resp = self._call(lambda: self._stub.FuzzyDiscovery(req, metadata=self._md))
+        return [FuzzyHit.from_proto(h) for h in resp.hits]
+
     def list_tool_manifests(self) -> List[ToolManifest]:
         """Enumerate the registered tools' ADVISORY manifests (W1.A5 toolscout),
         in deterministic ``(tool_id, tool_version)`` order — ranking/display
@@ -1235,6 +1255,23 @@ class AsyncKxClient:
             req.query_embedding.extend(embedding)
         resp = await self._acall(self._stub.QueryDataset(req, metadata=self._md))
         return [DatasetHit.from_proto(h) for h in resp.hits]
+
+    async def fuzzy_discovery(
+        self,
+        dataset: str,
+        *,
+        text: Optional[str] = None,
+        embedding: Optional[Sequence[float]] = None,
+        k: int = 10,
+    ) -> List[FuzzyHit]:
+        """Slice-B advisory fuzzy-in / exact-out discovery (D151) — async twin of
+        :meth:`KxClient.fuzzy_discovery`. Returns refs + DISPLAY-ONLY basis-point
+        scores (SN-8); join back to bytes with an EXACT ``get_content``."""
+        req = _g.FuzzyDiscoveryRequest(dataset=dataset, query_text=text or "", k=k)
+        if embedding:
+            req.query_embedding.extend(embedding)
+        resp = await self._acall(self._stub.FuzzyDiscovery(req, metadata=self._md))
+        return [FuzzyHit.from_proto(h) for h in resp.hits]
 
     async def list_tool_manifests(self) -> List[ToolManifest]:
         """Async :meth:`KxClient.list_tool_manifests`."""
