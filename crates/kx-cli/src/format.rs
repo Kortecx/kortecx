@@ -469,6 +469,104 @@ pub fn render_models(resp: &proto::ListModelsResponse, json: bool) -> String {
     }
 }
 
+/// Render `datasets list` — every RAG corpus on this serve (name, doc count, dim).
+#[must_use]
+pub fn render_datasets(resp: &proto::ListDatasetsResponse, json: bool) -> String {
+    if json {
+        let datasets: Vec<Value> = resp
+            .datasets
+            .iter()
+            .map(|d| {
+                json!({
+                    "dataset_id": d.dataset_id,
+                    "name": d.name,
+                    "doc_count": d.doc_count,
+                    "dim": d.dim,
+                    "created_ms": d.created_ms,
+                })
+            })
+            .collect();
+        json!({ "datasets": datasets }).to_string()
+    } else if resp.datasets.is_empty() {
+        "(no datasets on this serve)".to_string()
+    } else {
+        resp.datasets
+            .iter()
+            .map(|d| format!("{}  docs={}  dim={}", d.dataset_id, d.doc_count, d.dim))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+}
+
+/// Render `datasets ingest` — the post-dedup insert outcome.
+#[must_use]
+pub fn render_ingest(resp: &proto::IngestDocumentsResponse, json: bool) -> String {
+    if json {
+        json!({
+            "dataset_id": resp.dataset_id,
+            "doc_count": resp.doc_count,
+            "inserted": resp.inserted,
+            "dim": resp.dim,
+        })
+        .to_string()
+    } else {
+        format!(
+            "dataset={} inserted={} doc_count={} dim={}",
+            resp.dataset_id, resp.inserted, resp.doc_count, resp.dim
+        )
+    }
+}
+
+/// A short, single-line, control-char-free preview of a document's bytes (lossy
+/// UTF-8, truncated). For the human form only — `--json` carries `text` in full.
+fn doc_snippet(content: &[u8]) -> String {
+    const MAX: usize = 80;
+    let text: String = String::from_utf8_lossy(content)
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect();
+    let trimmed = text.trim();
+    if trimmed.chars().count() > MAX {
+        let head: String = trimmed.chars().take(MAX).collect();
+        format!("{head}…")
+    } else {
+        trimmed.to_string()
+    }
+}
+
+/// Render `datasets query` hits. The `score` is DISPLAY-ONLY (SN-8) — a ranking
+/// aid, never an identity input; the durable result is the ordered content-ref SET.
+#[must_use]
+pub fn render_dataset_hits(resp: &proto::QueryDatasetResponse, json: bool) -> String {
+    if json {
+        let hits: Vec<Value> = resp
+            .hits
+            .iter()
+            .map(|h| {
+                json!({
+                    "content_ref": hex::encode(&h.content_ref),
+                    "score": h.score,
+                    "text": String::from_utf8_lossy(&h.content),
+                })
+            })
+            .collect();
+        json!({ "hits": hits }).to_string()
+    } else if resp.hits.is_empty() {
+        "(no matches)".to_string()
+    } else {
+        resp.hits
+            .iter()
+            .map(|h| {
+                // Show the leading 16 hex chars of the ref + the score + a snippet.
+                let r = hex::encode(&h.content_ref);
+                let short = r.get(..16).unwrap_or(&r);
+                format!("{:.3}  {}  {}", h.score, short, doc_snippet(&h.content))
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+}
+
 /// Render `signatures list`.
 #[must_use]
 pub fn render_signatures_list(resp: &proto::ListSignaturesResponse, json: bool) -> String {

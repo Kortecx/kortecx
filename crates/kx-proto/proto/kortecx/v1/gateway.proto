@@ -533,6 +533,34 @@ message QueryDatasetResponse {
 }
 
 // ---------------------------------------------------------------------------
+// Slice-B (D151) — FuzzyDiscovery: ADVISORY fuzzy-in / exact-out retrieval over
+// a dataset's RetrievalIndex. Additive RPC (D120.6). Unlike QueryDataset (which
+// echoes content bytes + a float score for the inline RAG path), this returns
+// ONLY content-addressed refs + a DISPLAY-ONLY integer basis-point score — the
+// caller joins back to bytes with an EXACT GetContent on the ref. The "fuzzy in,
+// exact out" contract: the approximate similarity ranking surfaces candidates,
+// but identity is always the exact content hash (SN-8 — the score never enters a
+// committed fact / a MoteId / an identity decision; it is off-digest, advisory).
+// Same scope + degrade as the dataset RPCs: operator-global (per-party isolation
+// is CLOUD, D129); a None FuzzyDiscoveryView seam ⇒ UNIMPLEMENTED; an unknown
+// dataset ⇒ not_found; server-embed (text-only) needs `inference` else
+// FAILED_PRECONDITION; the client-vector path runs FFI-free.
+// ---------------------------------------------------------------------------
+message FuzzyDiscoveryRequest {
+  string dataset                 = 1;
+  string query_text              = 2;    // server-embed path (needs `inference` + an embedder)
+  repeated float query_embedding = 3;    // client-vector path (FFI-free); takes precedence when non-empty
+  uint32 k                       = 4;    // top-k (server-clamped to a sane max)
+}
+message FuzzyHit {
+  bytes  content_ref = 1;                // 32B content-addressed id — the EXACT-OUT join key (GetContent)
+  uint32 score_bp    = 2;                // 0..=10000 DISPLAY-ONLY basis points; NEVER an identity input (SN-8)
+}
+message FuzzyDiscoveryResponse {
+  repeated FuzzyHit hits = 1;            // best-first; deterministic tiebreak (score desc, then ascending ref)
+}
+
+// ---------------------------------------------------------------------------
 // PR-2c-2 — re-plan-round observability (read-only). Enumerate the durable
 // `ReplanRound` facts the live re-plan-on-failure loop commits, so an operator
 // can SEE the runtime's self-correction (which rounds ran, what failed, whether
@@ -1136,6 +1164,8 @@ service KxGateway {
   rpc ListDatasets(ListDatasetsRequest) returns (ListDatasetsResponse);
   rpc IngestDocuments(IngestDocumentsRequest) returns (IngestDocumentsResponse);
   rpc QueryDataset(QueryDatasetRequest) returns (QueryDatasetResponse);
+  // Slice-B additive (D120.6/D151): advisory fuzzy-in/exact-out discovery.
+  rpc FuzzyDiscovery(FuzzyDiscoveryRequest) returns (FuzzyDiscoveryResponse);
   // PR-2c-2 additive (D120.6): re-plan-round observability (read-only).
   rpc ListReplanRounds(ListReplanRoundsRequest) returns (ListReplanRoundsResponse);
   // PR-2d-1 additive (D120.6): ReAct-turn observability (read-only).

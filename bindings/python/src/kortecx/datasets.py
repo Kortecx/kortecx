@@ -65,6 +65,26 @@ class DatasetHit:
 
 
 @dataclass(frozen=True)
+class FuzzyHit:
+    """Slice-B advisory fuzzy-in / exact-out discovery hit (``FuzzyDiscovery``):
+    the content-addressed ref (hex) + a DISPLAY-ONLY basis-point score (SN-8 —
+    never an identity input). Join back to bytes with an EXACT ``get_content`` on
+    the ref ("fuzzy in, exact out")."""
+
+    content_ref: str  # hex — the EXACT-OUT join key
+    score_bp: int  # 0..=10000 display-only basis points
+
+    @classmethod
+    def from_proto(cls, h: "_g.FuzzyHit") -> "FuzzyHit":
+        return cls(content_ref=hexids.encode(h.content_ref), score_bp=h.score_bp)
+
+    @property
+    def score(self) -> float:
+        """The similarity as a 0..1 fraction (display only)."""
+        return self.score_bp / 10_000
+
+
+@dataclass(frozen=True)
 class IngestResult:
     """The outcome of an ``IngestDocuments`` call (server-derived counts)."""
 

@@ -15,6 +15,7 @@ use tonic::{Request, Response, Status};
 use crate::capture_view::CaptureView;
 use crate::datasets::DatasetView;
 use crate::error::{hash_32, instance_id_16, GatewayError};
+use crate::fuzzy_discovery::FuzzyDiscoveryView;
 use crate::identity::CallerParty;
 use crate::reader::{ContentReader, JournalReader};
 use crate::submit::{RunSubmitter, SubmitterError};
@@ -616,6 +617,10 @@ pub struct GatewayService {
     /// view behind the `hnsw` feature). `None` ⇒ `ListDatasets` / `IngestDocuments`
     /// / `QueryDataset` return `unimplemented`.
     datasets: Option<Arc<dyn DatasetView>>,
+    /// The optional fuzzy-discovery seam (Slice-B). The host injects the SAME
+    /// `kx-dataset-hnsw`-backed view as `datasets` (one `Arc`, two seams). `None`
+    /// ⇒ `FuzzyDiscovery` returns `unimplemented`. Advisory, off the journal/digest.
+    fuzzy: Option<Arc<dyn FuzzyDiscoveryView>>,
     /// The optional capture-view seam (the Morphic Data Engine — the host injects
     /// a `capture.db`-backed view folded from the journal). `None` ⇒
     /// `ListCaptureRecords` returns `unimplemented`. Read-only, off-truth-path.
@@ -750,6 +755,7 @@ impl GatewayService {
             membership: None,
             grants_view: None,
             datasets: None,
+            fuzzy: None,
             capture: None,
             tailer: Arc::new(SnapshotTailer),
             global_tailer: Arc::new(SnapshotGlobalTailer),
@@ -864,6 +870,15 @@ impl GatewayService {
     #[must_use]
     pub fn with_dataset_view(mut self, datasets: Arc<dyn DatasetView>) -> Self {
         self.datasets = Some(datasets);
+        self
+    }
+
+    /// Wire the fuzzy-discovery seam (Slice-B). The host injects the SAME
+    /// `kx-dataset-hnsw`-backed view as [`with_dataset_view`](Self::with_dataset_view).
+    /// Enables `FuzzyDiscovery` (advisory fuzzy-in/exact-out). Off the journal/digest.
+    #[must_use]
+    pub fn with_fuzzy_discovery(mut self, fuzzy: Arc<dyn FuzzyDiscoveryView>) -> Self {
+        self.fuzzy = Some(fuzzy);
         self
     }
 
@@ -2275,6 +2290,29 @@ impl KxGateway for GatewayService {
             .map(crate::datasets::dataset_hit_to_proto)
             .collect();
         Ok(Response::new(proto::QueryDatasetResponse { hits }))
+    }
+
+    async fn fuzzy_discovery(
+        &self,
+        request: Request<proto::FuzzyDiscoveryRequest>,
+    ) -> Result<Response<proto::FuzzyDiscoveryResponse>, Status> {
+        let view = self.fuzzy.as_ref().ok_or_else(|| {
+            Status::unimplemented("FuzzyDiscovery: no fuzzy-discovery view wired")
+        })?;
+        let req = request.into_inner();
+        // The client-vector path takes precedence (FFI-free); an empty vector
+        // falls back to embedding `query_text` (needs an embedder). Mirrors
+        // `query_dataset` exactly — but the response carries refs + bp only (no
+        // content echo, exact-out).
+        let qe = (!req.query_embedding.is_empty()).then_some(req.query_embedding.as_slice());
+        let hits = view
+            .discover(&req.dataset, qe, &req.query_text, req.k as usize)
+            .map_err(crate::datasets::dataset_status)?;
+        let hits = hits
+            .into_iter()
+            .map(crate::fuzzy_discovery::fuzzy_hit_to_proto)
+            .collect();
+        Ok(Response::new(proto::FuzzyDiscoveryResponse { hits }))
     }
 }
 

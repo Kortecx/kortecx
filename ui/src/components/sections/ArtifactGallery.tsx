@@ -15,7 +15,6 @@ import { useResultMap } from "../../kx/use-content-batch";
 import { useRunArtifacts } from "../../kx/use-run-artifacts";
 import { artifactKindVisual } from "../../lib/artifact-kind";
 import type { DecodedContent } from "../../lib/content-decode";
-import { download } from "../../lib/download";
 import { shortHex } from "../../lib/format";
 import { DigestChip } from "../DigestChip";
 import { EmptyState } from "../EmptyState";
@@ -131,18 +130,10 @@ function ArtifactCardBody({
           {kind.glyph}
         </span>
         <span>{kind.label}</span>
-        {data.kind !== "empty" ? (
-          <button
-            type="button"
-            className="linkbtn"
-            data-testid="artifact-download"
-            onClick={() => download(`${contentRef.slice(0, 12)}.txt`, data.text)}
-          >
-            Download
-          </button>
-        ) : null}
       </div>
-      <ArtifactView content={data} />
+      {/* The AssetViewer owns the per-asset download (bytes for media, text for
+          text/json) — so a media artifact downloads its real bytes, not a hex preview. */}
+      <ArtifactView content={data} stem={contentRef.slice(0, 12)} />
     </div>
   );
 }

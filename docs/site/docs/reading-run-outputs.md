@@ -108,6 +108,16 @@ an empty result reads `(empty)`, non-UTF-8 output reads `binary · N B` (never a
 fake text headline), and a preview truncated at the per-item clamp links to the
 full artifact. None of these are ever shown as a bare hash.
 
+## Viewing media artifacts
+
+When a committed result is an **image, video, audio clip, or markdown** document,
+the console renders it inline through the shared multi-modal viewer (the same one the
+[Data Lab](./datasets.md) uses for retrieval hits). The kind is detected by a
+magic-byte sniff; media renders from a `blob:` object URL built off the bytes —
+**never a remote `src`**, so opening an artifact never makes an outbound request.
+Markdown renders as React elements (never `innerHTML`); anything non-renderable falls
+back to the bounded hex preview, and every artifact offers a byte-accurate download.
+
 :::note Display only
 Resolved content is for reading. Identity and authority always come from the
 runtime: the ref is a content address (it changes when the bytes change), never a

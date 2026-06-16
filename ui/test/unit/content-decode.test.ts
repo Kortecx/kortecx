@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { decodeContent } from "../../src/lib/content-decode";
+import { decodeContent, mediaKindOf, sniffMediaMime } from "../../src/lib/content-decode";
 
 const utf8 = (s: string) => new TextEncoder().encode(s);
+
+/** A buffer that starts with `magic` (padded so offset sniffs have room). */
+const withMagic = (magic: number[], len = 32) => {
+  const b = new Uint8Array(len);
+  b.set(magic, 0);
+  return b;
+};
 
 describe("decodeContent", () => {
   it("empty bytes → empty", () => {
@@ -54,5 +61,63 @@ describe("decodeContent", () => {
     expect(d.kind).toBe("binary");
     expect(d.truncated).toBe(true);
     expect(d.byteLength).toBe(5000);
+  });
+
+  it("PNG magic → image, carrying the raw bytes + sniffed mime", () => {
+    const png = withMagic([0x89, 0x50, 0x4e, 0x47]);
+    const d = decodeContent(png);
+    expect(d.kind).toBe("image");
+    expect(d.mediaType).toBe("image/png");
+    expect(d.bytes).toBe(png);
+    expect(d.text).toBe("");
+  });
+
+  it("MP4 ftyp box → video; OggS → audio; RIFF WAVE → audio", () => {
+    // 'ftyp' at offset 4
+    expect(decodeContent(withMagic([0, 0, 0, 0, 0x66, 0x74, 0x79, 0x70])).kind).toBe("video");
+    expect(decodeContent(withMagic([0x4f, 0x67, 0x67, 0x53])).kind).toBe("audio");
+    // RIFF....WAVE
+    expect(
+      decodeContent(withMagic([0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x41, 0x56, 0x45])).kind,
+    ).toBe("audio");
+  });
+
+  it("an advisory image media type promotes non-sniffable bytes (e.g. SVG text) to image", () => {
+    const d = decodeContent(utf8("<svg/>"), { mediaType: "image/svg+xml" });
+    expect(d.kind).toBe("image");
+    expect(d.mediaType).toBe("image/svg+xml");
+  });
+
+  it("markdown is opt-in via a hint, never guessed from content", () => {
+    expect(decodeContent(utf8("# Title\n\ntext")).kind).toBe("text");
+    expect(decodeContent(utf8("# Title"), { filename: "readme.md" }).kind).toBe("markdown");
+    expect(decodeContent(utf8("hi"), { mediaType: "text/markdown" }).kind).toBe("markdown");
+  });
+});
+
+describe("sniffMediaMime / mediaKindOf", () => {
+  it("recognizes the common browser-renderable formats", () => {
+    expect(sniffMediaMime(withMagic([0x89, 0x50, 0x4e, 0x47]))).toBe("image/png");
+    expect(sniffMediaMime(withMagic([0xff, 0xd8, 0xff]))).toBe("image/jpeg");
+    expect(sniffMediaMime(withMagic([0x47, 0x49, 0x46, 0x38]))).toBe("image/gif");
+    expect(
+      sniffMediaMime(withMagic([0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x45, 0x42, 0x50])),
+    ).toBe("image/webp");
+    expect(sniffMediaMime(withMagic([0x1a, 0x45, 0xdf, 0xa3]))).toBe("video/webm");
+    expect(sniffMediaMime(withMagic([0x49, 0x44, 0x33]))).toBe("audio/mpeg");
+    expect(sniffMediaMime(withMagic([0xff, 0xfb]))).toBe("audio/mpeg");
+  });
+
+  it("returns null for text + short buffers (fail-closed, never throws)", () => {
+    expect(sniffMediaMime(utf8("hello"))).toBeNull();
+    expect(sniffMediaMime(new Uint8Array())).toBeNull();
+    expect(sniffMediaMime(new Uint8Array([0x89]))).toBeNull();
+  });
+
+  it("mediaKindOf maps a MIME prefix to its kind", () => {
+    expect(mediaKindOf("image/png")).toBe("image");
+    expect(mediaKindOf("video/mp4")).toBe("video");
+    expect(mediaKindOf("audio/ogg")).toBe("audio");
+    expect(mediaKindOf("text/plain")).toBeNull();
   });
 });

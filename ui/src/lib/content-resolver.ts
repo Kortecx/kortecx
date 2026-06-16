@@ -11,6 +11,7 @@
  */
 
 import type { ContentItem, KxClient } from "@kortecx/sdk/web";
+import { mediaKindOf, sniffMediaMime } from "./content-decode";
 
 /** The gateway's batch ref cap (`MAX_BATCH_REFS`); bigger requests are refused. */
 export const BATCH_REFS_MAX = 64;
@@ -46,7 +47,7 @@ export function sniffImageMime(bytes: Uint8Array): string | null {
   return null;
 }
 
-export type ResolvedKind = "image" | "text" | "binary" | "missing";
+export type ResolvedKind = "image" | "video" | "audio" | "text" | "binary" | "missing";
 
 /** One resolved batch item, classified for display. */
 export interface ResolvedContent {
@@ -55,7 +56,7 @@ export interface ResolvedContent {
   readonly bytes: Uint8Array;
   readonly truncated: boolean;
   readonly fullSize: number;
-  /** The sniffed mime when `kind === "image"`. */
+  /** The sniffed mime when `kind` is a medium (image/video/audio). */
   readonly mediaType?: string;
 }
 
@@ -70,11 +71,14 @@ export function classifyItem(item: ContentItem): ResolvedContent {
       fullSize: 0,
     };
   }
-  const mime = sniffImageMime(item.payload);
-  if (mime !== null) {
+  // Magic-byte media sniff (image/video/audio) — shared with content-decode so
+  // the batch/preview path classifies media exactly like the single-blob viewer.
+  const mime = sniffMediaMime(item.payload);
+  const mediaKind = mime ? mediaKindOf(mime) : null;
+  if (mediaKind !== null && mime !== null) {
     return {
       ref: item.contentRef,
-      kind: "image",
+      kind: mediaKind,
       bytes: item.payload,
       truncated: item.truncated,
       fullSize: Number(item.fullSize),

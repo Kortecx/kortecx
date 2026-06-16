@@ -6,6 +6,24 @@ development; interfaces may change before 1.0 — pin a commit if you build on i
 
 ## [Unreleased]
 
+### Added
+
+- **Data Lab — a multi-modal asset viewer + the datasets keystone.** Committed run
+  artifacts and retrieval hits now render **inline in the browser** by kind: images,
+  video, and audio (from a `blob:` object URL — never a remote `src`, so no
+  outbound-fetch surface), markdown (React-element rendering, never `innerHTML`), JSON
+  and text (read-only Monaco), with a bounded hex preview + byte-accurate download for
+  anything else. The Datasets section is reframed as the **Data Lab** with a top-k
+  slider, a `content_ref` chip, and a click-to-expand hit detail that renders through
+  the shared viewer. A new **`kx datasets` CLI** (`list` / `ingest` / `query`, with
+  `--json`) exposes the RAG data-plane, mirrored by the Python and TypeScript SDKs.
+  (serve/cli/sdk/ui/docs)
+- **`FuzzyDiscovery` — advisory fuzzy-in / exact-out retrieval (Slice-B).** A new
+  additive RPC over a dataset's vector index that returns only content-addressed refs
+  + a display-only basis-point score (SN-8 — never an identity input); resolve bytes by
+  the exact ref. Exposed in the Python/TypeScript SDKs and an advisory "Discover" mode
+  in the Data Lab. (serve/sdk/ui)
+
 ### Changed
 
 - **The bootstrap demo team is now a workspace team** (`kx/teams/workspace`) whose

@@ -30,6 +30,7 @@ import {
   wsUrl,
 } from "./events.js";
 import { type FeedbackInput, type FeedbackPage, FeedbackRow, ratingToProto } from "./feedback.js";
+import { FuzzyHit } from "./fuzzy.js";
 import {
   KxGateway,
   type SubmitRunRequestSchema,
@@ -702,6 +703,29 @@ export abstract class KxClientBase {
       }),
     );
     return resp.hits.map((h) => DatasetHit.fromProto(h));
+  }
+
+  /**
+   * Slice-B advisory fuzzy-in / exact-out discovery over `dataset` (D151). Like
+   * {@link queryDataset} (pass `embedding` for the FFI-free client-vector path, or
+   * `text` for server-embed), but each {@link FuzzyHit} carries ONLY the
+   * content-addressed ref + a DISPLAY-ONLY basis-point score (SN-8) — join back to
+   * bytes with an EXACT {@link getContent} on the ref. An old gateway / a build
+   * without the `hnsw` feature throws {@link KxUnimplemented}.
+   */
+  async fuzzyDiscovery(
+    dataset: string,
+    opts: { text?: string; embedding?: readonly number[]; k?: number } = {},
+  ): Promise<FuzzyHit[]> {
+    const resp = await rpc(
+      this.grpc.fuzzyDiscovery({
+        dataset,
+        queryText: opts.text ?? "",
+        queryEmbedding: opts.embedding ? Array.from(opts.embedding) : [],
+        k: opts.k ?? 10,
+      }),
+    );
+    return resp.hits.map((h) => FuzzyHit.fromProto(h));
   }
 
   /**

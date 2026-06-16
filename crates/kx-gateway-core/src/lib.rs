@@ -51,6 +51,7 @@ mod datasets;
 mod error;
 mod events;
 mod feedback_view;
+mod fuzzy_discovery;
 mod identity;
 mod models_view;
 mod mote_def_view;
@@ -75,6 +76,7 @@ pub use datasets::{
 };
 pub use error::GatewayError;
 pub use feedback_view::{FeedbackEntry, FeedbackRecord, FeedbackStore};
+pub use fuzzy_discovery::{score_to_bp, FuzzyDiscoveryView, FuzzyHitEntry};
 // The event-source pieces a live tailer (R5, `kx-gateway`) reuses: the one-time
 // ownership gate + the per-range frame builder. The snapshot composition stays
 // crate-private (it backs the default `SnapshotTailer`). Batch C adds the
