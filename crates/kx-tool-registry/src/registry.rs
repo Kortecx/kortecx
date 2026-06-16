@@ -223,6 +223,109 @@ pub fn resolve_run_versions(
         .collect()
 }
 
+/// The OSS built-in tool set (`fs-read`, `fs-write`, `text-summarize`) paired
+/// with their `HumanAuthored` provenance.
+///
+/// Shared by [`InMemoryToolRegistry::with_builtins`] and the durable
+/// [`crate::SqliteToolRegistry`] so the seeded built-in set is **byte-identical
+/// across backends** — the same `(ToolDef, ToolProvenance)` bytes yield the same
+/// `RegistrationToken` (the server-derived `tool_id`), so a fresh durable
+/// `tools.db` re-materializes exactly the in-memory built-in identities.
+pub(crate) fn builtin_registrations() -> Vec<(ToolDef, ToolProvenance)> {
+    let author = "kortecx-oss".to_string();
+
+    let empty_ceiling = ResourceCeiling {
+        cpu_milli: 0,
+        mem_bytes: 0,
+        wall_clock_ms: 0,
+        fd_count: 0,
+        disk_bytes: 0,
+    };
+
+    let req = |fs: FsScope| kx_warrant::ToolRequirement {
+        net_scope_required: NetScope::None,
+        fs_scope_required: fs,
+        syscall_profile_ref: ContentRef::from_bytes([0; 32]),
+        min_resource_ceiling: empty_ceiling,
+    };
+
+    vec![
+        // fs-read: reads bytes from a path declared in the warrant's fs_scope.
+        // Read-only operation; naturally idempotent. IdempotencyClass::Readback
+        // is the natural fit — the dispatch IS the probe; re-dispatch is safe
+        // because reads don't mutate state.
+        (
+            ToolDef {
+                tool_id: ToolName("fs-read".into()),
+                tool_version: ToolVersion("1".into()),
+                kind: ToolKind::Builtin,
+                required_capability: req(FsScope::empty()),
+                description: "Read bytes from a path declared in the warrant's fs_scope. Read-only; naturally idempotent.".into(),
+                idempotency_class: IdempotencyClass::Readback,
+                input_schema: None,
+            },
+            ToolProvenance::HumanAuthored {
+                author: author.clone(),
+            },
+        ),
+        // fs-write: writes bytes to a path declared in the warrant's fs_scope.
+        //
+        // SEMANTICS LOCKED TO OVERWRITE-ONLY, FULL-CONTENT writes. The tool
+        // accepts the COMPLETE intended file content and replaces the file at
+        // the target path atomically (open-write-rename). It DOES NOT support
+        // append mode or any partial-write semantics. This is the precondition
+        // that makes IdempotencyClass::Staged safe: re-dispatch after a
+        // pre-commit crash writes the same complete bytes to the same path,
+        // producing the same final state — idempotent.
+        //
+        // If a future workflow needs append semantics, the answer is a
+        // separate tool (e.g., `fs-append`) with `IdempotencyClass::Readback`
+        // (probe the file's current length/contents before deciding to write)
+        // or `IdempotencyClass::AtLeastOnce` (explicit author ack required).
+        // Append-mode under `Staged` would double-write on re-dispatch.
+        //
+        // The `Staged` class itself is DECLARED HERE BUT NOT YET ENFORCED at
+        // runtime — see IdempotencyClass::Staged docs. PR 7 (kx-journal v1→v2
+        // adds the EffectStaged kind) + PR 9 (kx-executor wires the protocol)
+        // close the runtime contract. Today's resolver returns the resolved
+        // tool correctly; only the recovery-time re-dispatch refusal is
+        // pending.
+        (
+            ToolDef {
+                tool_id: ToolName("fs-write".into()),
+                tool_version: ToolVersion("1".into()),
+                kind: ToolKind::Builtin,
+                required_capability: req(FsScope::empty()),
+                description: "Write the complete intended file content to a path declared in the warrant's fs_scope (overwrite-only; no append; staged-intent dispatch).".into(),
+                idempotency_class: IdempotencyClass::Staged,
+                input_schema: None,
+            },
+            ToolProvenance::HumanAuthored {
+                author: author.clone(),
+            },
+        ),
+        // text-summarize: pure transformation (input bytes → summarized
+        // string). IdempotencyClass::Readback fits — for a deterministic
+        // pure-transformation tool, "probe + skip if applied" collapses to
+        // "the journal already has a Committed result_ref for this Mote",
+        // which the executor's memoizer (P1.7.9) handles via the same cache
+        // lookup path; the tool's idempotency-class declaration is the
+        // dispatch-protocol signal, not a separate cache.
+        (
+            ToolDef {
+                tool_id: ToolName("text-summarize".into()),
+                tool_version: ToolVersion("1".into()),
+                kind: ToolKind::Builtin,
+                required_capability: req(FsScope::empty()),
+                description: "Deterministic text summarization heuristic. Pure transformation; naturally idempotent.".into(),
+                idempotency_class: IdempotencyClass::Readback,
+                input_schema: None,
+            },
+            ToolProvenance::HumanAuthored { author },
+        ),
+    ]
+}
+
 /// Internal per-registration record.
 #[derive(Debug, Clone)]
 struct RegistrationRecord {
@@ -298,107 +401,9 @@ impl InMemoryToolRegistry {
     #[must_use]
     pub fn with_builtins() -> Self {
         let mut reg = Self::new();
-        let author = "kortecx-oss".to_string();
-
-        let empty_ceiling = ResourceCeiling {
-            cpu_milli: 0,
-            mem_bytes: 0,
-            wall_clock_ms: 0,
-            fd_count: 0,
-            disk_bytes: 0,
-        };
-
-        // fs-read: reads bytes from a path declared in the warrant's fs_scope.
-        // Read-only operation; naturally idempotent. IdempotencyClass::Readback
-        // is the natural fit — the dispatch IS the probe; re-dispatch is safe
-        // because reads don't mutate state.
-        let _ = reg.register(
-            ToolDef {
-                tool_id: ToolName("fs-read".into()),
-                tool_version: ToolVersion("1".into()),
-                kind: ToolKind::Builtin,
-                required_capability: kx_warrant::ToolRequirement {
-                    net_scope_required: NetScope::None,
-                    fs_scope_required: FsScope::empty(),
-                    syscall_profile_ref: ContentRef::from_bytes([0; 32]),
-                    min_resource_ceiling: empty_ceiling,
-                },
-                description: "Read bytes from a path declared in the warrant's fs_scope. Read-only; naturally idempotent.".into(),
-                idempotency_class: IdempotencyClass::Readback,
-                input_schema: None,
-            },
-            ToolProvenance::HumanAuthored {
-                author: author.clone(),
-            },
-        );
-
-        // fs-write: writes bytes to a path declared in the warrant's fs_scope.
-        //
-        // SEMANTICS LOCKED TO OVERWRITE-ONLY, FULL-CONTENT writes. The tool
-        // accepts the COMPLETE intended file content and replaces the file at
-        // the target path atomically (open-write-rename). It DOES NOT support
-        // append mode or any partial-write semantics. This is the precondition
-        // that makes IdempotencyClass::Staged safe: re-dispatch after a
-        // pre-commit crash writes the same complete bytes to the same path,
-        // producing the same final state — idempotent.
-        //
-        // If a future workflow needs append semantics, the answer is a
-        // separate tool (e.g., `fs-append`) with `IdempotencyClass::Readback`
-        // (probe the file's current length/contents before deciding to write)
-        // or `IdempotencyClass::AtLeastOnce` (explicit author ack required).
-        // Append-mode under `Staged` would double-write on re-dispatch.
-        //
-        // The `Staged` class itself is DECLARED HERE BUT NOT YET ENFORCED at
-        // runtime — see IdempotencyClass::Staged docs. PR 7 (kx-journal v1→v2
-        // adds the EffectStaged kind) + PR 9 (kx-executor wires the protocol)
-        // close the runtime contract. Today's resolver returns the resolved
-        // tool correctly; only the recovery-time re-dispatch refusal is
-        // pending.
-        let _ = reg.register(
-            ToolDef {
-                tool_id: ToolName("fs-write".into()),
-                tool_version: ToolVersion("1".into()),
-                kind: ToolKind::Builtin,
-                required_capability: kx_warrant::ToolRequirement {
-                    net_scope_required: NetScope::None,
-                    fs_scope_required: FsScope::empty(),
-                    syscall_profile_ref: ContentRef::from_bytes([0; 32]),
-                    min_resource_ceiling: empty_ceiling,
-                },
-                description: "Write the complete intended file content to a path declared in the warrant's fs_scope (overwrite-only; no append; staged-intent dispatch).".into(),
-                idempotency_class: IdempotencyClass::Staged,
-                input_schema: None,
-            },
-            ToolProvenance::HumanAuthored {
-                author: author.clone(),
-            },
-        );
-
-        // text-summarize: pure transformation (input bytes → summarized
-        // string). IdempotencyClass::Readback fits — for a deterministic
-        // pure-transformation tool, "probe + skip if applied" collapses to
-        // "the journal already has a Committed result_ref for this Mote",
-        // which the executor's memoizer (P1.7.9) handles via the same cache
-        // lookup path; the tool's idempotency-class declaration is the
-        // dispatch-protocol signal, not a separate cache.
-        let _ = reg.register(
-            ToolDef {
-                tool_id: ToolName("text-summarize".into()),
-                tool_version: ToolVersion("1".into()),
-                kind: ToolKind::Builtin,
-                required_capability: kx_warrant::ToolRequirement {
-                    net_scope_required: NetScope::None,
-                    fs_scope_required: FsScope::empty(),
-                    syscall_profile_ref: ContentRef::from_bytes([0; 32]),
-                    min_resource_ceiling: empty_ceiling,
-                },
-                description: "Deterministic text summarization heuristic. Pure transformation; naturally idempotent.".into(),
-                idempotency_class: IdempotencyClass::Readback,
-                input_schema: None,
-            },
-            ToolProvenance::HumanAuthored { author },
-        );
-
+        for (def, provenance) in builtin_registrations() {
+            let _ = reg.register(def, provenance);
+        }
         reg
     }
 

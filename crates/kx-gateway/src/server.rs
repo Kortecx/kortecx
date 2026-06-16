@@ -496,6 +496,17 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     // off-digest; the hot-path sink is bounded + fail-open (drop-on-full), so it
     // can never block, slow, or fail a run.
     let telemetry_ledger = Arc::new(crate::telemetry::TelemetryLedger::open(&catalog_dir)?);
+    // PR-6a: the durable declarative-tools registry (off-journal tools.db beside
+    // the catalog ledgers). The OSS built-ins re-seed on open; the serve path
+    // registers the bundled tools (echo / fs-list) below so DiscoverTools shows
+    // the real runnable set. RegisterTool/DeregisterTool write it; DiscoverTools
+    // reads it. Off-digest by construction (server-derived tool_id; never a
+    // MoteId/journal/checkpoint input). DIALING a registered external MCP server
+    // is PR-6b/Cloud — this stores a vetted server_host, never dials it.
+    let tool_registry = Arc::new(
+        kx_tool_registry::SqliteToolRegistry::open(catalog_dir.join("tools.db"))
+            .map_err(|e| GatewayError::Config(format!("tools.db: {e}")))?,
+    );
     let client = connect_worker(&coord_endpoint).await?;
     // No real body is provisioned in the OSS serve path (script/tool execution is
     // OSS-scoped-out, D141.4), so the sandbox-routing seam is wired with no body ref:
@@ -652,6 +663,23 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         .iter()
         .map(|(id, ver)| (id.0.clone(), ver.0.clone()))
         .collect();
+    // PR-6a: seed the bundled tools into the durable registry so `DiscoverTools`
+    // shows the real runnable set (the OSS built-ins are re-seeded on open). When
+    // the bundled echo capability resolved (`react_tool`), register `mcp-echo@1`
+    // as a server-built (non-deregisterable) tool — matching the coordinator's
+    // `registry_with_echo` so the inventory agrees with what the loop can fire.
+    #[cfg(feature = "inference")]
+    if react_tool.is_some() {
+        if let Err(error) = tool_registry.register_server_tool(
+            crate::mcp_tool::echo_tool_def(),
+            kx_tool_registry::ToolProvenance::HumanAuthored {
+                author: "kx-gateway".to_string(),
+            },
+            None,
+        ) {
+            tracing::warn!(%error, "PR-6a: failed to seed mcp-echo@1 into tools.db");
+        }
+    }
     // Batch A: vision is a SERVE FACT derived from what actually registered
     // (the catalog entry declares "image" iff the projector resolved + the
     // backend built) — the vision recipe seeds exactly when the dispatch path
@@ -850,14 +878,10 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     //      lowering gate against the SERVER react warrant when the react
     //      runtime is live; otherwise it degrades to UNAVAILABLE. Read-only,
     //      display-only — never an authorization (SN-8).
-    #[cfg(feature = "inference")]
-    let toolscout_defs = if react_tool.is_some() {
-        crate::mcp_tool::registry_with_echo().defs()
-    } else {
-        kx_tool_registry::InMemoryToolRegistry::with_builtins().defs()
-    };
-    #[cfg(not(feature = "inference"))]
-    let toolscout_defs = kx_tool_registry::InMemoryToolRegistry::with_builtins().defs();
+    // PR-6a: the advisory toolscout manifests come from the SAME durable registry
+    // the serve path resolves + DiscoverTools reads (built-ins + the bundled echo
+    // when its capability resolved). One source for the discovery surfaces.
+    let toolscout_defs = tool_registry.defs();
     let toolscout_verdict = match (serve_model.as_ref(), react_tool.as_ref()) {
         (Some(model_id), Some(tool)) => Some(crate::toolscout::VerdictCtx {
             warrant: crate::provision::react_warrant(default_executor_class(), model_id, tool),
@@ -898,6 +922,10 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         .with_feedback_store(feedback_db)
         .with_run_inputs_store(run_inputs_db)
         .with_alerts_view(alerts_db)
+        .with_tool_admin(Arc::new(crate::tools::HostToolRegistry::new(
+            tool_registry.clone(),
+            crate::tools::tool_host_allowlist(),
+        )))
         .with_put_content_cap(cfg.content_max_bytes)
         .with_model_catalog_view(models_view)
         .with_mote_def_view(mote_defs_view)

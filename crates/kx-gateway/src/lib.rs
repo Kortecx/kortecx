@@ -137,6 +137,11 @@ mod tls;
 // W1.A5: the host-side advisory toolscout view (manifests + bundle scoring +
 // the lowering dry-run verdict). Always-on; display-only by construction.
 mod toolscout;
+// PR-6a: the host-side declarative tools registry admin (the ToolRegistryAdmin
+// seam over the durable tools.db) + admission-time SSRF vetting of a
+// RegisterTool's server_host. Always-on; off-journal, off-digest. DIALING the
+// external MCP server + Connections + parallel fan-out are PR-6b/Cloud (D159).
+mod tools;
 // Batch A: the uploads.db sidecar (the UploadsLedger seam) — the PutContent
 // audit rows + the uploads-scope authorized set. Rebuildable-to-empty (truth
 // stays in the content store), off-journal, off-digest.

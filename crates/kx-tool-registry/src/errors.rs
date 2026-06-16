@@ -70,4 +70,10 @@ pub enum RegistrationError {
         /// The token whose registration is not in PendingHumanReview state.
         token: RegistrationToken,
     },
+    /// A durable-store (SQLite) open / I/O / SQL / corrupt-row failure. Only the
+    /// durable [`crate::SqliteToolRegistry`] raises this; the in-memory registry
+    /// never touches a store. Fail-closed: a write that cannot durably commit is
+    /// surfaced rather than silently lost.
+    #[error("tool registry storage error: {0}")]
+    Storage(String),
 }

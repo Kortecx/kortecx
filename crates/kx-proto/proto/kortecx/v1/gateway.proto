@@ -737,6 +737,7 @@ enum WorkflowStepKind {
   WORKFLOW_STEP_KIND_PURE        = 1;  // deterministic transform; server logic_ref = content-derived sentinel
   WORKFLOW_STEP_KIND_MODEL       = 2;  // greedy model step routed by model_id + prompt (server logic_ref = MODEL sentinel)
   WORKFLOW_STEP_KIND_EXEC        = 3;  // references a REGISTERED body by signature id; server logic_ref = that body's content ref
+  WORKFLOW_STEP_KIND_TOOL        = 4;  // PR-6a: a single registered tool step. The client sends kind + tool_contract={name:version}; the SERVER builds the per-step warrant narrowed against the party grant (client tool_grants stay structurally refused — BLOCKER #5/SN-8). The tool MUST resolve in the durable registry or the step is refused.
 }
 
 // Execution mode (blueprint-execution-modes.md). Additive, default = FROZEN.
@@ -1133,6 +1134,91 @@ message ListAlertsResponse {
 }
 
 // ---------------------------------------------------------------------------
+// PR-6a — declarative tools registry. Additive RPCs (D120.6). The durable
+// inventory + governance surface over the off-journal `tools.db`, DISTINCT from
+// the advisory ListToolManifests (ranking). SN-8: `tool_id` is SERVER-DERIVED
+// (blake3 of the canonical registration bytes, first 16 B) — the client NEVER
+// names or forges a registration identity, and REGISTRATION GRANTS NO AUTHORITY:
+// a registered tool fires only when a SERVER-issued warrant grants the exact
+// (name, version) AND the broker precheck passes. `tools.db` is off-journal,
+// off-digest, rebuildable (built-ins re-seeded on open) ⇒ the canonical digest
+// is invariant by construction.
+//
+// *** OSS = the registry + view + admission-time SSRF vetting of `server_host`.
+// *** DIALING external MCP servers (the live remote tool round), credentialed
+// *** Connections, and parallel tool fan-out are the PR-6b / Cloud surface
+// *** (D159/D132/GR19) — `server_host` here is vetted + stored, never dialed.
+// ---------------------------------------------------------------------------
+
+// A tool parameter's declared type + bound (the MCP inputSchema analogue;
+// CLOSED set, NO float — SN-8). `ty`: "str"|"bytes"|"int"|"bool"|"enum".
+message ToolParamSpec {
+  string name            = 1;
+  string ty              = 2;            // closed vocabulary (see above)
+  uint32 max_len         = 3;            // str/bytes byte cap (ignored otherwise)
+  bool   required        = 4;
+  repeated string allowed = 5;           // enum: the permitted exact values
+}
+// A tool's declared typed parameter contract (validated fail-closed before any
+// dispatch). Absent ⇒ no validation (pre-M5.3 behaviour).
+message ToolInputSchema {
+  repeated ToolParamSpec params = 1;
+  bool deny_unknown             = 2;     // refuse keys not in params (fail-closed)
+}
+
+// Register a declarative EXTERNAL MCP tool into the durable registry. The server
+// derives identity + capability: kind = Mcp{endpoint = server_host}; the tool's
+// net_scope_required = egress to server_host (the MCP-as-egress monotonic rule).
+// `server_host` is REQUIRED + SSRF-vetted at admission (deny-by-default; internal
+// /link-local/metadata literals refused). The OSS register path is HumanAuthored.
+message RegisterToolRequest {
+  string tool_name          = 1;         // identity half (the grant-set key)
+  string tool_version       = 2;         // identity half
+  string description        = 3;         // free-form; NEVER parsed for enforcement (size-capped)
+  string idempotency_class  = 4;         // "Token"|"Readback"|"Staged"|"AtLeastOnce" (validated)
+  ToolInputSchema input_schema = 5;      // optional typed params (the "input parameters")
+  string server_host        = 6;         // host[:port] the PR-6b gateway will dial; SSRF-vetted; REQUIRED
+  string remote_name        = 7;         // the tool's name on the remote server (default = tool_name)
+}
+message RegisterToolResponse {
+  bytes  tool_id              = 1;        // 16B SERVER-DERIVED id (SN-8)
+  string registration_status  = 2;       // "Approved" (HumanAuthored)
+}
+
+message DeregisterToolRequest {
+  string tool_name    = 1;
+  string tool_version = 2;               // exact (name, version); built-ins refused
+}
+message DeregisterToolResponse {
+  bool removed = 1;                       // false iff absent OR a built-in (not deregisterable)
+}
+
+message DiscoverToolsRequest {
+  uint32 limit         = 1;              // page size; server clamps 1..=256 (absent = 100)
+  string after_name    = 2;              // exclusive cursor: the (name) of the last row of the prior page
+  string after_version = 3;              // cursor tiebreak: the (version)
+}
+// One registered tool's durable INVENTORY row (governance view). net_scope /
+// fs_scope are DISPLAY summaries; authority never rides this wire (SN-8).
+message RegisteredTool {
+  bytes  tool_id            = 1;         // 16B server-derived
+  string tool_name          = 2;
+  string tool_version       = 3;
+  string kind               = 4;         // "Builtin" | "Mcp" (display)
+  string description        = 5;
+  string idempotency_class  = 6;
+  string provenance         = 7;         // "HumanAuthored" | "SelfGenerated"
+  string registration_status = 8;        // "Approved" | "PendingHumanReview"
+  string server_host        = 9;         // empty for a no-egress / built-in tool
+  string net_scope_summary  = 10;        // display: "none" | "egress:host[,host]"
+  bool   is_builtin         = 11;        // server-built (not deregisterable)
+}
+message DiscoverToolsResponse {
+  repeated RegisteredTool tools = 1;     // deterministic (name, version) order
+  bool has_more = 2;
+}
+
+// ---------------------------------------------------------------------------
 // Service — the external client-facing gateway (distinct from Coordinator).
 // ---------------------------------------------------------------------------
 
@@ -1218,4 +1304,13 @@ service KxGateway {
   // Display/triage-read only; UNIMPLEMENTED when the seam yields None. The triage
   // LIFECYCLE (ack/resolve), the rule engine, and notifications are CLOUD (D156/D129).
   rpc ListAlerts(ListAlertsRequest) returns (ListAlertsResponse);
+  // PR-6a additive (D120.6): the declarative tools registry. RegisterTool /
+  // DeregisterTool write the durable off-journal tools.db (server-derived tool_id,
+  // SSRF-vetted server_host); DiscoverTools is the inventory/governance VIEW
+  // (distinct from the advisory ListToolManifests). SN-8: registration grants NO
+  // authority; client tool_grants stay refused. DIALING external MCP servers +
+  // Connections + parallel fan-out are PR-6b/Cloud (D159/GR19).
+  rpc RegisterTool(RegisterToolRequest) returns (RegisterToolResponse);
+  rpc DeregisterTool(DeregisterToolRequest) returns (DeregisterToolResponse);
+  rpc DiscoverTools(DiscoverToolsRequest) returns (DiscoverToolsResponse);
 }

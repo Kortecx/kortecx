@@ -64,6 +64,7 @@ mod runs;
 mod service;
 mod submit;
 mod telemetry_view;
+mod tool_registry_admin;
 mod toolscout_view;
 mod uploads;
 mod view;
@@ -107,6 +108,10 @@ pub use submit::{
     RunSubmitter, SubmitMoteOutcome, SubmitStatus, SubmitterError, TonicCoordinatorSubmitter,
 };
 pub use telemetry_view::{ModelTokenRollup, MoteTelemetryEntry, TelemetrySummary, TelemetryView};
+pub use tool_registry_admin::{
+    RegisteredToolEntry, ToolAdminError, ToolParamWire, ToolRegistration, ToolRegistryAdmin,
+    ToolSchemaWire,
+};
 pub use toolscout_view::{
     BundleScoreView, BundleSpecEntry, BundleToolSpecEntry, KeywordSetEntry, LowerVerdictEntry,
     ManifestScoreEntry, ToolManifestEntry, ToolScoutView,
