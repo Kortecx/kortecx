@@ -9,7 +9,7 @@ test.afterEach(() => {
   gw = undefined;
 });
 
-test("Tools registry: built-in inventory, disabled built-in deregister, SSRF-refused host, Connections stub", async ({
+test("Tools registry: built-in inventory, disabled built-in deregister, SSRF-refused host, live Connections panel", async ({
   page,
 }) => {
   gw = await spawnGateway({ corsOrigin: SPA_ORIGIN });
@@ -42,7 +42,11 @@ test("Tools registry: built-in inventory, disabled built-in deregister, SSRF-ref
     timeout: 30_000,
   });
 
-  // The Connections affordance is an HONEST-disabled forward card (no fake control —
-  // live external-MCP dialing + credentialed connections land in PR-6b).
-  await expect(page.getByTestId("tools-connections-disabled")).toBeVisible();
+  // PR-6b-1: the live Connections panel (replaces the old honest-disabled stub) —
+  // the govern surface over the external MCP gateway. Its add form + the
+  // honest-disabled Cloud (OAuth/marketplace) affordance are always present
+  // regardless of whether this FFI-free serve wired the mcp-gateway feature.
+  await expect(page.getByTestId("connections-panel")).toBeVisible();
+  await expect(page.getByTestId("connections-add-form")).toBeVisible();
+  await expect(page.getByTestId("connections-cloud-disabled")).toBeVisible();
 });

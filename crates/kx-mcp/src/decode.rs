@@ -82,6 +82,96 @@ pub fn decode_tool_result(bytes: &[u8], max_bytes: usize) -> Result<Vec<u8>, Dec
     }
 }
 
+/// The JSON-RPC `id` of a message, for request/response correlation in a
+/// stateful session. A notification (server-initiated: logging / progress) has
+/// NO `id` (→ `None`); a response echoes the request's numeric `id`.
+#[derive(Deserialize)]
+struct JsonRpcId {
+    #[serde(default)]
+    id: Option<u64>,
+}
+
+/// PR-6b-1: extract a JSON-RPC message's `id` for session correlation. Returns
+/// `None` for a notification (no `id`), a non-numeric `id`, or unparseable bytes
+/// (total + panic-free over arbitrary input). A stateful session uses this to
+/// SKIP unsolicited notification lines a spec-compliant server may interleave on
+/// stdout, so the next line is matched to the in-flight request's id.
+pub(crate) fn response_id(bytes: &[u8]) -> Option<u64> {
+    serde_json::from_slice::<JsonRpcId>(bytes)
+        .ok()
+        .and_then(|m| m.id)
+}
+
+/// PR-6b-1: a single remote tool declaration from an MCP `tools/list` response.
+///
+/// `input_schema_json` is the verbatim bytes of the tool's `inputSchema` object
+/// (a JSON Schema), or empty when the server omitted it. It is carried opaque —
+/// the gateway maps the subset it understands into the typed registry schema and
+/// otherwise leaves remote-side validation to the server (fail-closed: an absent
+/// or unmappable schema yields no client-side arg gate, never a fabricated one).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemoteToolDecl {
+    /// The tool's remote name (the `name` passed to `tools/call`).
+    pub name: String,
+    /// The tool's human description (may be empty).
+    pub description: String,
+    /// Verbatim bytes of the tool's `inputSchema` object, or empty when absent.
+    pub input_schema_json: Vec<u8>,
+}
+
+/// The inner `result` of an MCP `tools/list` response: `{ "tools": [ … ] }`.
+#[derive(Deserialize)]
+struct ToolsListResult {
+    #[serde(default)]
+    tools: Vec<RemoteToolWire>,
+}
+
+/// A `tools/list` tool entry, decoded into a fixed shape. `inputSchema` is kept
+/// verbatim as a [`RawValue`] (never interpreted into a dynamic `Value`/floats).
+#[derive(Deserialize)]
+struct RemoteToolWire {
+    name: String,
+    #[serde(default)]
+    description: String,
+    #[serde(default, rename = "inputSchema")]
+    input_schema: Option<Box<RawValue>>,
+}
+
+/// Decode an MCP `tools/list` JSON-RPC response into the remote tool declarations
+/// — fail-closed, reusing [`decode_tool_result`]'s envelope/error/size handling.
+///
+/// # Errors
+///
+/// - [`DecodeError::Oversize`] / [`DecodeError::Malformed`] / [`DecodeError::ProtocolError`]
+///   exactly as [`decode_tool_result`] (the envelope is shared), plus
+///   [`DecodeError::Malformed`] if the `result` is not a `{ "tools": [...] }`
+///   object. A server returning a `result` with no `tools` member yields an
+///   EMPTY list (a server may legitimately expose zero tools).
+pub fn decode_tools_list(
+    bytes: &[u8],
+    max_bytes: usize,
+) -> Result<Vec<RemoteToolDecl>, DecodeError> {
+    // Reuse the envelope decode: size-cap before parse, JSON-RPC error precedence,
+    // and verbatim extraction of the `result` object's canonical bytes.
+    let result = decode_tool_result(bytes, max_bytes)?;
+    let parsed: ToolsListResult =
+        serde_json::from_slice(&result).map_err(|e| DecodeError::Malformed {
+            diagnostic: e.to_string(),
+        })?;
+    Ok(parsed
+        .tools
+        .into_iter()
+        .map(|t| RemoteToolDecl {
+            name: t.name,
+            description: t.description,
+            input_schema_json: t
+                .input_schema
+                .map(|s| s.get().as_bytes().to_vec())
+                .unwrap_or_default(),
+        })
+        .collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -171,6 +261,64 @@ mod tests {
         // Cap above the body size so we exercise the parser, not the size guard.
         let cap = body.len() + 16;
         let _ = decode_tool_result(body.as_bytes(), cap); // must not panic
+    }
+
+    #[test]
+    fn response_id_correlates_and_skips_notifications() {
+        // A response echoes the request id.
+        assert_eq!(
+            response_id(br#"{"jsonrpc":"2.0","id":7,"result":{}}"#),
+            Some(7)
+        );
+        // A notification has no id → None (the session skips it).
+        assert_eq!(
+            response_id(br#"{"jsonrpc":"2.0","method":"notifications/message","params":{}}"#),
+            None
+        );
+        // Garbage / a non-numeric id is total + None (never panics).
+        assert_eq!(response_id(b"not json"), None);
+        assert_eq!(response_id(br#"{"id":"a-string"}"#), None);
+        assert_eq!(response_id(b""), None);
+    }
+
+    #[test]
+    fn decode_tools_list_extracts_decls_verbatim() {
+        let body = br#"{"jsonrpc":"2.0","id":1,"result":{"tools":[
+            {"name":"search","description":"web search","inputSchema":{"type":"object","properties":{"q":{"type":"string"}},"required":["q"]}},
+            {"name":"noschema"}
+        ]}}"#;
+        let decls = decode_tools_list(body, 4096).unwrap();
+        assert_eq!(decls.len(), 2);
+        assert_eq!(decls[0].name, "search");
+        assert_eq!(decls[0].description, "web search");
+        assert!(!decls[0].input_schema_json.is_empty());
+        assert_eq!(decls[1].name, "noschema");
+        assert!(decls[1].input_schema_json.is_empty());
+    }
+
+    #[test]
+    fn decode_tools_list_empty_when_no_tools_member() {
+        // A server may legitimately expose zero tools.
+        let body = br#"{"jsonrpc":"2.0","id":1,"result":{}}"#;
+        assert!(decode_tools_list(body, 4096).unwrap().is_empty());
+    }
+
+    #[test]
+    fn decode_tools_list_surfaces_protocol_error() {
+        let body = br#"{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"no tools/list"}}"#;
+        assert!(matches!(
+            decode_tools_list(body, 4096),
+            Err(DecodeError::ProtocolError { code: -32601, .. })
+        ));
+    }
+
+    #[test]
+    fn decode_tools_list_rejects_oversize_before_parse() {
+        let body = br#"{"jsonrpc":"2.0","id":1,"result":{"tools":[]}}"#;
+        assert!(matches!(
+            decode_tools_list(body, 4),
+            Err(DecodeError::Oversize { max: 4, .. })
+        ));
     }
 
     #[test]

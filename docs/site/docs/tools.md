@@ -52,12 +52,12 @@ const page = await client.discoverTools({ limit: 50 });
 
 ### Register a declarative external MCP tool
 
-`RegisterTool` records a tool and its **SSRF-vetted** egress host. The host is
-checked at admission (deny-by-default — internal / loopback / link-local /
-metadata endpoints are refused); an optional operator allowlist is
-`KX_SERVE_TOOL_HOST_ALLOWLIST`. Registration **does not dial** the host — dialing
-external MCP servers is a [PR-6b](#whats-next-pr-6b--the-external-mcp-gateway)
-capability.
+`RegisterTool` records a *single declarative* tool and its **SSRF-vetted** egress
+host. The host is checked at admission (deny-by-default — internal / loopback /
+link-local / metadata endpoints are refused); an optional operator allowlist is
+`KX_SERVE_TOOL_HOST_ALLOWLIST`. This path records the tool; to **dial** a whole
+external MCP server and auto-discover its tools, use
+[Connections](#connections--the-external-mcp-gateway) (`kx connections add`).
 
 ```bash
 kx tools register --name web-search --version 1 \
@@ -126,13 +126,70 @@ tools). **No arbitrary code runs in the runtime.** In-runtime sandboxed
 script/skill execution, and OAuth / hosted-marketplace credential connections, are
 Cloud / future capabilities.
 
-## What's next (PR-6b) — the external MCP gateway
+## Connections — the external MCP gateway
 
-The registry stores a vetted `server_host` today; **dialing** it lands in PR-6b:
-a multi-server MCP gateway (stdio + Streamable HTTP) with per-server health,
-discovery into the same registry, a dial-time SSRF gate, per-server
-rate-limit/quota, warrant-gated egress, and secret-less `CredentialRef`
-**Connections** — plus the `tool()` chains-node so an authored DAG can call a tool
-directly. The Connections card in the console is the honest forward stub for that
-work. (Branched write-back over the content-addressed store is the D155
-post-RC epic.)
+The runtime **dials external MCP servers** (stdio + HTTP, including Py/TS-SDK-
+exposed gateways), discovers their tools, and registers each into the same durable
+registry — namespaced `<server>/<remote>` so tools from different servers never
+collide. Connections live in an off-journal, rebuildable `connections.db` sidecar
+(never a `MoteId`/digest input); the `connection_id` is server-derived (SN-8).
+
+```bash
+# A local stdio MCP server:
+kx connections add --name local --command /usr/local/bin/my-mcp-server --arg --stdio
+# A remote HTTP MCP gateway (e.g. one you exposed from the Python/TS SDK):
+kx connections add --name search --url https://mcp.example.com/rpc --tls-required \
+  --credential-ref MCP_TOKEN
+kx connections list
+kx connections test --name search
+kx connections discover --name search   # re-dial + re-discover its tools
+kx connections remove --name search
+```
+
+```python
+res = client.register_mcp_server(name="search", transport="http",
+                                 endpoint="https://mcp.example.com/rpc",
+                                 tls_required=True, credential_ref="MCP_TOKEN")
+print(res.discovered, res.health)
+for s in client.list_mcp_servers().servers:
+    print(s.server_name, s.health, s.tool_count)
+```
+
+```typescript
+await client.registerMcpServer({ name: "search", transport: "http",
+  endpoint: "https://mcp.example.com/rpc", tlsRequired: true, credentialRef: "MCP_TOKEN" });
+const { servers } = await client.listMcpServers();
+```
+
+The console's **Tools → Connections** panel is the live UI for this (add / test /
+re-discover / remove, with per-server health). Manage it from whichever surface
+fits your workflow.
+
+### Security (the live untrusted-egress surface)
+
+- **Two-gate egress.** The host is SSRF-vetted at **admission** (deny-by-default)
+  AND again at **dial time** on the *resolved* address (DNS-rebind defense —
+  loopback / private / link-local / `169.254.169.254` / CGNAT / IPv6-ULA refused).
+- **Per-server rate-limit.** A token bucket per server bounds dial bursts.
+- **Warrant-gated egress.** A discovered tool's `net_scope` is egress to *only*
+  its origin server's host; the broker re-checks `request.net_scope ⊆ warrant` at
+  every call. A prompt-injected call to an ungranted tool never fires (SN-8).
+- **Secret-less credentials (D81).** A connection stores the credential **ref name
+  only** (an env var / vault key); the secret value is read transiently at dial and
+  never journaled / staged / shown to the model. A URL must not embed credentials
+  in its userinfo (`user:pass@host` is refused at admission) — use `credential_ref`.
+- **Registration is host-trusted.** A `credential_ref` names a process env var (the
+  OSS `EnvSecretStore`), and a stdio connection names a program to spawn — both
+  assume the operator registering the server is trusted with the serve host's
+  environment + execution. Run `kx serve` as a principal whose env holds only the
+  secrets you intend agents' tools to use; the Cloud `SecretStore` adds vault-scoped,
+  multi-tenant credentials.
+
+### What's still coming
+
+OAuth / device-flow setup and a hosted credential marketplace are a **Cloud**
+capability (the OSS console shows them as an honest-disabled affordance). The
+`tool()` chains-node (call a discovered tool from an authored DAG) and the
+autonomous ReAct loop's auto-grant of dialed tools land in the next batch — they
+share the coordinator's args-from-params durable-execution path. (Branched
+write-back over the content-addressed store is the D155 post-RC epic.)

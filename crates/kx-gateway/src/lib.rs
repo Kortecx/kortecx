@@ -92,6 +92,13 @@ mod metrics;
 // decode arm lives in the inference-gated executor; the MCP adapter is FFI-free).
 #[cfg(feature = "inference")]
 mod mcp_tool;
+// PR-6b-1 (D159): the EXTERNAL MCP gateway host wiring — the McpGatewayAdmin impl
+// over kx_mcp_gateway::McpGateway + the BrokerCapabilitySink. Behind the
+// `mcp-gateway` feature (ON by default); FFI-free, off-journal, off-digest. DIALS
+// external MCP servers + governs connections; the autonomous-loop auto-grant is
+// PR-6b-2 (a dialed tool is registered + fireable through a granting warrant).
+#[cfg(feature = "mcp-gateway")]
+mod mcp_gateway;
 // AL1: the in-process model executor for `kx serve` (live LLM dispatch). Pulls
 // the inference FFI, so it's behind the off-by-default `inference` feature.
 #[cfg(feature = "inference")]

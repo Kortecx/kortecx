@@ -6,6 +6,7 @@ pub mod alerts;
 pub mod blueprint;
 pub mod capture;
 pub mod chain;
+pub mod connections;
 pub mod content;
 pub mod datasets;
 pub mod events;

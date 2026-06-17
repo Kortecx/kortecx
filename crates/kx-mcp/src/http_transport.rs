@@ -39,10 +39,19 @@ use std::time::Duration;
 use url::Url;
 
 use crate::credential::CredentialRef;
+use crate::decode::{
+    decode_tool_result, decode_tools_list, RemoteToolDecl, MAX_TOOL_RESULT_BYTES_DEFAULT,
+};
 use crate::egress::{vet_resolved_addr, EgressPolicy};
 use crate::errors::TransportError;
+use crate::jsonrpc::{frame_initialize, frame_tools_call, frame_tools_list};
 use crate::secret_store::{EnvSecretStore, SecretStore};
+use crate::session::{McpSession, SessionError};
 use crate::transport::{McpTransport, DEFAULT_WALL_CLOCK_MS};
+
+/// The MCP Streamable-HTTP session-id header: a server MAY return it on
+/// `initialize` and the client MUST echo it on subsequent requests.
+const MCP_SESSION_HEADER: &str = "mcp-session-id";
 
 /// Slack added to the per-call budget for ureq's own request timeout, so a worker
 /// the watchdog has already abandoned still self-terminates (instead of lingering
@@ -262,6 +271,165 @@ impl McpTransport for HttpTransport {
                 Err(TransportError::Io("worker thread disconnected".to_string()))
             }
         }
+    }
+
+    /// PR-6b-1: open a stateful HTTP session — sequential POSTs to the same
+    /// endpoint that carry the negotiated `Mcp-Session-Id`. The pooled, already
+    /// egress-bound agent (vetting resolver + `redirects(0)` + `https_only`) is
+    /// cloned, so every dial the session makes inherits the same egress sandbox.
+    fn open_session(&self) -> Result<Box<dyn McpSession>, TransportError> {
+        Ok(Box::new(HttpSession {
+            agent: self.agent.clone(),
+            endpoint: self.endpoint.to_string(),
+            credentials: self.credentials.clone(),
+            secret_store: self.secret_store.clone(),
+            session_id: None,
+            next_id: 1,
+        }))
+    }
+}
+
+/// A stateful HTTP MCP session (PR-6b-1): each method is a POST to the endpoint
+/// carrying the negotiated `Mcp-Session-Id` (captured from the `initialize`
+/// reply). Every POST runs under the same watchdog as [`HttpTransport::round_trip`]
+/// and inherits the agent's egress sandbox.
+struct HttpSession {
+    agent: ureq::Agent,
+    endpoint: String,
+    credentials: Vec<(String, CredentialRef)>,
+    secret_store: Arc<dyn SecretStore>,
+    /// Captured from the `initialize` reply header; echoed on later requests.
+    session_id: Option<String>,
+    next_id: u64,
+}
+
+impl HttpSession {
+    fn next_id(&mut self) -> u64 {
+        let id = self.next_id;
+        self.next_id = self.next_id.wrapping_add(1);
+        id
+    }
+
+    /// POST one framed request, returning the response body bytes (size-bounded)
+    /// and capturing the `Mcp-Session-Id` header into `self.session_id`. Runs the
+    /// send+read on a worker thread under the wall-clock watchdog (mirrors
+    /// `round_trip`).
+    fn post_framed(
+        &mut self,
+        frame: &[u8],
+        max_response_bytes: usize,
+        wall_clock_ms: u64,
+        idempotency_key: Option<&[u8; 32]>,
+    ) -> Result<Vec<u8>, TransportError> {
+        let read_cap = u64::try_from(max_response_bytes.saturating_add(1)).unwrap_or(u64::MAX);
+        let budget_ms = if wall_clock_ms == 0 {
+            DEFAULT_WALL_CLOCK_MS
+        } else {
+            wall_clock_ms
+        };
+        let budget = Duration::from_millis(budget_ms);
+        let worker_timeout =
+            Duration::from_millis(budget_ms.saturating_add(WORKER_BACKSTOP_SLACK_MS));
+
+        let headers: Vec<(String, String)> = self
+            .credentials
+            .iter()
+            .filter_map(|(name, cred)| {
+                cred.read_secret(&*self.secret_store)
+                    .map(|val| (name.clone(), val))
+            })
+            .collect();
+        let idempotency_header = idempotency_key.map(hex32);
+        let session_header = self.session_id.clone();
+
+        let agent = self.agent.clone();
+        let url = self.endpoint.clone();
+        let body = frame.to_vec();
+        let (tx, rx) = mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let mut req = agent
+                .post(&url)
+                .timeout(worker_timeout)
+                .set("Content-Type", "application/json")
+                .set("Accept", "application/json");
+            if let Some(ref key) = idempotency_header {
+                req = req.set("Idempotency-Key", key);
+            }
+            if let Some(ref sid) = session_header {
+                req = req.set("Mcp-Session-Id", sid);
+            }
+            for (name, value) in &headers {
+                req = req.set(name, value);
+            }
+            let outcome = match req.send_bytes(&body) {
+                Ok(resp) => {
+                    // Capture the session id BEFORE consuming the body.
+                    let sid = resp.header(MCP_SESSION_HEADER).map(str::to_string);
+                    read_capped(resp, read_cap).map(|bytes| (sid, bytes))
+                }
+                Err(ureq::Error::Status(code, _)) => {
+                    Err(TransportError::Io(format!("http status {code}")))
+                }
+                Err(ureq::Error::Transport(t)) => Err(TransportError::Unreachable(t.to_string())),
+            };
+            let _ = tx.send(outcome);
+        });
+
+        match rx.recv_timeout(budget.saturating_add(Duration::from_millis(WATCHDOG_GRACE_MS))) {
+            Ok(Ok((sid, bytes))) => {
+                let _ = worker.join();
+                if let Some(sid) = sid {
+                    self.session_id = Some(sid);
+                }
+                Ok(bytes)
+            }
+            Ok(Err(e)) => {
+                let _ = worker.join();
+                Err(e)
+            }
+            Err(RecvTimeoutError::Timeout) => Err(TransportError::Timeout { wall_clock_ms }),
+            Err(RecvTimeoutError::Disconnected) => {
+                Err(TransportError::Io("worker thread disconnected".to_string()))
+            }
+        }
+    }
+}
+
+impl McpSession for HttpSession {
+    fn initialize(&mut self, wall_clock_ms: u64) -> Result<(), SessionError> {
+        let id = self.next_id();
+        let frame = frame_initialize(id).map_err(|e| TransportError::Io(e.to_string()))?;
+        let resp = self.post_framed(&frame, MAX_TOOL_RESULT_BYTES_DEFAULT, wall_clock_ms, None)?;
+        // A well-formed result (not a JSON-RPC error) confirms the handshake; the
+        // session-id header (if any) was already captured by `post_framed`.
+        decode_tool_result(&resp, MAX_TOOL_RESULT_BYTES_DEFAULT)?;
+        Ok(())
+    }
+
+    fn list_tools(
+        &mut self,
+        max_response_bytes: usize,
+        wall_clock_ms: u64,
+    ) -> Result<Vec<RemoteToolDecl>, SessionError> {
+        let id = self.next_id();
+        let frame = frame_tools_list(id).map_err(|e| TransportError::Io(e.to_string()))?;
+        let resp = self.post_framed(&frame, max_response_bytes, wall_clock_ms, None)?;
+        Ok(decode_tools_list(&resp, max_response_bytes)?)
+    }
+
+    fn call(
+        &mut self,
+        remote_name: &str,
+        arguments: &[u8],
+        max_response_bytes: usize,
+        wall_clock_ms: u64,
+        idempotency_key: Option<&[u8; 32]>,
+    ) -> Result<Vec<u8>, SessionError> {
+        let id = self.next_id();
+        let frame = frame_tools_call(id, remote_name, arguments)
+            .map_err(|e| TransportError::Io(e.to_string()))?;
+        let resp = self.post_framed(&frame, max_response_bytes, wall_clock_ms, idempotency_key)?;
+        Ok(decode_tool_result(&resp, max_response_bytes)?)
     }
 }
 

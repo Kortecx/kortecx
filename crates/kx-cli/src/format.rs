@@ -757,6 +757,129 @@ pub fn render_deregister_tool(resp: &proto::DeregisterToolResponse, json: bool) 
     }
 }
 
+/// Render `connections add` — the server-derived connection id + discovery health.
+#[must_use]
+pub fn render_register_server(resp: &proto::RegisterMcpServerResponse, json: bool) -> String {
+    if json {
+        json!({
+            "connection_id": hex::encode(&resp.connection_id),
+            "discovered": resp.discovered,
+            "health": resp.health,
+        })
+        .to_string()
+    } else {
+        format!(
+            "registered connection_id={} ({}, {} tool(s) discovered)",
+            hex::encode(&resp.connection_id),
+            resp.health,
+            resp.discovered
+        )
+    }
+}
+
+/// Render `connections list` — the registered external MCP servers + health.
+#[must_use]
+pub fn render_connections_list(resp: &proto::ListMcpServersResponse, json: bool) -> String {
+    if json {
+        let servers: Vec<Value> = resp
+            .servers
+            .iter()
+            .map(|s| {
+                json!({
+                    "connection_id": hex::encode(&s.connection_id),
+                    "server_name": s.server_name,
+                    "transport": s.transport,
+                    "endpoint": s.endpoint,
+                    "health": s.health,
+                    "tool_count": s.tool_count,
+                    "credential_ref_present": s.credential_ref_present,
+                })
+            })
+            .collect();
+        json!({ "servers": servers, "has_more": resp.has_more }).to_string()
+    } else if resp.servers.is_empty() {
+        "(no MCP servers registered)".to_string()
+    } else {
+        resp.servers
+            .iter()
+            .map(|s| {
+                let cred = if s.credential_ref_present {
+                    "  cred"
+                } else {
+                    ""
+                };
+                format!(
+                    "{}  [{}]  {}  {} tool(s)  ({}){}",
+                    s.server_name, s.transport, s.endpoint, s.tool_count, s.health, cred
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+}
+
+/// Render `connections test` — reachability + a short diagnostic.
+#[must_use]
+pub fn render_test_server(resp: &proto::TestMcpServerResponse, json: bool) -> String {
+    if json {
+        json!({ "reachable": resp.reachable, "detail": resp.detail }).to_string()
+    } else if resp.reachable {
+        format!("reachable ({})", resp.detail)
+    } else {
+        format!("unreachable ({})", resp.detail)
+    }
+}
+
+/// Render `connections remove` — whether the server was removed.
+#[must_use]
+pub fn render_deregister_server(resp: &proto::DeregisterMcpServerResponse, json: bool) -> String {
+    if json {
+        json!({ "removed": resp.removed }).to_string()
+    } else if resp.removed {
+        "removed".to_string()
+    } else {
+        "not removed (no such server)".to_string()
+    }
+}
+
+/// Render `connections discover` — the server's registered tools (after re-dial).
+#[must_use]
+pub fn render_discover_server(resp: &proto::DiscoverServerToolsResponse, json: bool) -> String {
+    if json {
+        let tools: Vec<Value> = resp
+            .tools
+            .iter()
+            .map(|t| {
+                json!({
+                    "tool_id": hex::encode(&t.tool_id),
+                    "tool_name": t.tool_name,
+                    "tool_version": t.tool_version,
+                    "kind": t.kind,
+                    "description": t.description,
+                    "net_scope": t.net_scope_summary,
+                })
+            })
+            .collect();
+        json!({ "tools": tools, "discovered": resp.discovered }).to_string()
+    } else if resp.tools.is_empty() {
+        format!("({} tool(s) discovered; none registered)", resp.discovered)
+    } else {
+        let header = format!("{} tool(s) discovered:", resp.discovered);
+        let rows = resp
+            .tools
+            .iter()
+            .map(|t| {
+                format!(
+                    "  {}@{}  [{}]  {}  {}",
+                    t.tool_name, t.tool_version, t.kind, t.net_scope_summary, t.description
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        format!("{header}\n{rows}")
+    }
+}
+
 /// Render `tools score` — the advisory rank ladder + the lowering dry-run
 /// verdict. Every number is DISPLAY-ONLY (SN-8): a score can surface a tool,
 /// never grant one.

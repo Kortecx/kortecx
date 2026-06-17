@@ -53,6 +53,7 @@ mod events;
 mod feedback_view;
 mod fuzzy_discovery;
 mod identity;
+mod mcp_gateway_admin;
 mod models_view;
 mod mote_def_view;
 mod mote_detail;
@@ -88,6 +89,9 @@ pub use events::{
     GlobalCursor,
 };
 pub use identity::CallerParty;
+pub use mcp_gateway_admin::{
+    McpAdminError, McpGatewayAdmin, McpServerRegistration, McpServerView, RegisterServerOutcome,
+};
 pub use models_view::{ModelCatalogView, ModelSummaryEntry};
 pub use mote_def_view::MoteDefView;
 pub use mote_detail::{MAX_CONFIG_ENTRIES, MAX_CONFIG_VALUE_BYTES, MAX_PROMPT_BYTES};

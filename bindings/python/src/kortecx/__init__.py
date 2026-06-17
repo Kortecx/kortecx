@@ -62,8 +62,11 @@ from .toolscout import (
     BundleTool,
     KeywordSet,
     ManifestScore,
+    McpServer,
+    McpServersPage,
     RegisteredTool,
     RegisteredToolsPage,
+    RegisterServerResult,
     ToolManifest,
     ToolParam,
     lower_verdict_name,
@@ -176,6 +179,10 @@ __all__ = [
     "BundleSpec",
     "BundleTool",
     "lower_verdict_name",
+    # PR-6b-1 external MCP gateway (RegisterMcpServer / ListMcpServers)
+    "McpServer",
+    "McpServersPage",
+    "RegisterServerResult",
     # PR-6a declarative tools registry (DiscoverTools / RegisterTool)
     "RegisteredTool",
     "RegisteredToolsPage",

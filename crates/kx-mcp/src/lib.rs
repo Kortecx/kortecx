@@ -63,15 +63,19 @@ mod errors;
 mod http_transport;
 mod jsonrpc;
 mod secret_store;
+mod session;
 mod transport;
 
 pub use capability::McpCapability;
 pub use credential::CredentialRef;
-pub use decode::{decode_tool_result, MAX_TOOL_RESULT_BYTES_DEFAULT};
+pub use decode::{
+    decode_tool_result, decode_tools_list, RemoteToolDecl, MAX_TOOL_RESULT_BYTES_DEFAULT,
+};
 pub use egress::{classify_ip, vet_resolved_addr, EgressDenied, EgressPolicy, IpClass};
 pub use errors::{DecodeError, TransportError};
 pub use http_transport::HttpTransport;
 pub use secret_store::{EnvSecretStore, SecretStore};
+pub use session::{McpSession, McpSessionCapability, SessionError};
 pub use transport::{McpTransport, StdioTransport};
 // Re-export the warrant's `SecretRef` (the scope identifier) so callers can build
 // a `CredentialRef::from_secret_ref` without a direct `kx-warrant` dependency.

@@ -51,6 +51,10 @@ import type { TokenChunk } from "./tokens.js";
 import {
   BundleScore,
   type BundleSpec,
+  McpServer,
+  type McpServersPage,
+  type RegisterMcpServerInput,
+  type RegisterServerResult,
   type RegisterToolInput,
   RegisteredTool,
   type RegisteredToolsPage,
@@ -600,6 +604,73 @@ export abstract class KxClientBase {
    */
   async deregisterTool(name: string, version: string): Promise<boolean> {
     const resp = await rpc(this.grpc.deregisterTool({ toolName: name, toolVersion: version }));
+    return resp.removed;
+  }
+
+  // --- PR-6b-1: the external MCP gateway (dial Py/TS-SDK-exposed MCP servers) ---
+
+  /**
+   * Register an EXTERNAL MCP server (PR-6b-1 `RegisterMcpServer`) — the runtime
+   * DIALS it (`initialize` → `tools/list`) and registers its tools into the
+   * durable registry (each namespaced `<name>/<remote>`). The host is SSRF-vetted
+   * at admission AND at dial time. `credentialRef` names an env var / vault key
+   * (the secret VALUE is never sent, D81). A dial failure is NOT fatal — the
+   * server persists with `health="unreachable"` (honest, never a fabricated
+   * success). An internal host is refused (`permission_denied`).
+   */
+  async registerMcpServer(input: RegisterMcpServerInput): Promise<RegisterServerResult> {
+    const resp = await rpc(
+      this.grpc.registerMcpServer({
+        serverName: input.name,
+        transport: input.transport ?? "stdio",
+        endpoint: input.endpoint,
+        args: [...(input.args ?? [])],
+        tlsRequired: input.tlsRequired ?? false,
+        credentialRef: input.credentialRef ?? "",
+      }),
+    );
+    return {
+      connectionId: encode(resp.connectionId),
+      discovered: resp.discovered,
+      health: resp.health,
+    };
+  }
+
+  /**
+   * List the registered external MCP servers + their health (PR-6b-1
+   * `ListMcpServers`), in `(name)` order.
+   */
+  async listMcpServers(opts: { limit?: number; afterName?: string } = {}): Promise<McpServersPage> {
+    const resp = await rpc(
+      this.grpc.listMcpServers({ limit: opts.limit ?? 0, afterName: opts.afterName ?? "" }),
+    );
+    return { servers: resp.servers.map((s) => McpServer.fromProto(s)), hasMore: resp.hasMore };
+  }
+
+  /**
+   * Re-dial a registered server + re-discover its tools (PR-6b-1
+   * `DiscoverServerTools`); returns the server's registered tools.
+   */
+  async discoverServerTools(name: string): Promise<RegisteredToolsPage> {
+    const resp = await rpc(this.grpc.discoverServerTools({ serverName: name }));
+    return { tools: resp.tools.map((t) => RegisteredTool.fromProto(t)), hasMore: false };
+  }
+
+  /**
+   * Test a server's reachability — dial + `initialize` only (PR-6b-1
+   * `TestMcpServer`). Returns `true` iff the handshake succeeded.
+   */
+  async testMcpServer(name: string): Promise<boolean> {
+    const resp = await rpc(this.grpc.testMcpServer({ serverName: name }));
+    return resp.reachable;
+  }
+
+  /**
+   * Remove a registered server + deregister its tools (PR-6b-1
+   * `DeregisterMcpServer`). Returns `true` iff a server was removed.
+   */
+  async deregisterMcpServer(name: string): Promise<boolean> {
+    const resp = await rpc(this.grpc.deregisterMcpServer({ serverName: name }));
     return resp.removed;
   }
 

@@ -717,6 +717,13 @@ pub struct GatewayService {
     /// external MCP server + Connections + parallel fan-out are PR-6b/Cloud
     /// (D159/GR19) — this seam stores a vetted `server_host`, never dials it.
     tool_admin: Option<Arc<dyn crate::tool_registry_admin::ToolRegistryAdmin>>,
+    /// The optional EXTERNAL MCP gateway admin seam (PR-6b-1 — the host injects an
+    /// `McpGateway` wrapper that DIALS external MCP servers + registers their
+    /// tools into the same `tools.db`). `None` ⇒ `RegisterMcpServer`/
+    /// `ListMcpServers`/`DiscoverServerTools`/`TestMcpServer`/`DeregisterMcpServer`
+    /// return `unimplemented`. The live untrusted-egress surface (GR8). OAuth/
+    /// device-flow + a credential marketplace are CLOUD (D159/GR19).
+    mcp_admin: Option<Arc<dyn crate::mcp_gateway_admin::McpGatewayAdmin>>,
 }
 
 /// The default fail-closed `PutContent` payload cap (32 MiB).
@@ -782,6 +789,7 @@ impl GatewayService {
             run_inputs: None,
             alerts: None,
             tool_admin: None,
+            mcp_admin: None,
         }
     }
 
@@ -1056,6 +1064,17 @@ impl GatewayService {
         self.tool_admin = Some(tool_admin);
         self
     }
+
+    /// Inject the EXTERNAL MCP gateway admin seam (PR-6b-1). `None` (the default)
+    /// ⇒ the 5 MCP-server RPCs return `unimplemented`.
+    #[must_use]
+    pub fn with_mcp_admin(
+        mut self,
+        mcp_admin: Arc<dyn crate::mcp_gateway_admin::McpGatewayAdmin>,
+    ) -> Self {
+        self.mcp_admin = Some(mcp_admin);
+        self
+    }
 }
 
 /// The structured-refusal metadata key (PR-2). The value is
@@ -1134,6 +1153,22 @@ fn tool_admin_status(err: crate::ToolAdminError) -> Status {
         crate::ToolAdminError::HostRejected(detail) => Status::permission_denied(detail),
         crate::ToolAdminError::InvalidArgument(detail) => Status::invalid_argument(detail),
         crate::ToolAdminError::Storage(detail) => Status::internal(detail),
+    }
+}
+
+/// Map an MCP gateway admin refusal onto the fail-closed gRPC status. A rejected
+/// host is `permission_denied`; an invalid spec is `invalid_argument`; an
+/// unreachable server is `failed_precondition`; over-budget is `resource_exhausted`;
+/// an unknown server is `not_found`; a storage failure is `internal`.
+#[allow(clippy::result_large_err)]
+fn mcp_admin_status(err: crate::McpAdminError) -> Status {
+    match err {
+        crate::McpAdminError::HostRejected(detail) => Status::permission_denied(detail),
+        crate::McpAdminError::InvalidArgument(detail) => Status::invalid_argument(detail),
+        crate::McpAdminError::Dial(detail) => Status::failed_precondition(detail),
+        crate::McpAdminError::RateLimited(detail) => Status::resource_exhausted(detail),
+        crate::McpAdminError::NotFound(detail) => Status::not_found(detail),
+        crate::McpAdminError::Storage(detail) => Status::internal(detail),
     }
 }
 
@@ -2213,6 +2248,151 @@ impl KxGateway for GatewayService {
         Ok(Response::new(proto::DiscoverToolsResponse {
             tools,
             has_more,
+        }))
+    }
+
+    async fn register_mcp_server(
+        &self,
+        request: Request<proto::RegisterMcpServerRequest>,
+    ) -> Result<Response<proto::RegisterMcpServerResponse>, Status> {
+        // PR-6b-1: the live untrusted-egress surface. The host vets the host,
+        // DIALS the server (initialize -> tools/list), and registers its tools
+        // into the same tools.db (each namespaced `<server>/<remote>`). SN-8: the
+        // client supplies NO warrant / tool_id; ids are server-derived.
+        let admin = self.mcp_admin.as_ref().ok_or_else(|| {
+            Status::unimplemented("RegisterMcpServer: no MCP gateway wired (connections.db absent)")
+        })?;
+        let req = request.into_inner();
+        if req.server_name.trim().is_empty() {
+            return Err(Status::invalid_argument("server_name is required"));
+        }
+        if req.endpoint.trim().is_empty() {
+            return Err(Status::invalid_argument("endpoint is required"));
+        }
+        let credential_ref = if req.credential_ref.trim().is_empty() {
+            None
+        } else {
+            Some(req.credential_ref)
+        };
+        let reg = crate::McpServerRegistration {
+            server_name: req.server_name,
+            transport: req.transport,
+            endpoint: req.endpoint,
+            args: req.args,
+            tls_required: req.tls_required,
+            credential_ref,
+        };
+        let out = admin.register_server(reg).map_err(mcp_admin_status)?;
+        Ok(Response::new(proto::RegisterMcpServerResponse {
+            connection_id: out.connection_id.to_vec(),
+            discovered: out.discovered,
+            health: out.health,
+        }))
+    }
+
+    async fn list_mcp_servers(
+        &self,
+        _request: Request<proto::ListMcpServersRequest>,
+    ) -> Result<Response<proto::ListMcpServersResponse>, Status> {
+        let admin = self.mcp_admin.as_ref().ok_or_else(|| {
+            Status::unimplemented("ListMcpServers: no MCP gateway wired (connections.db absent)")
+        })?;
+        let servers = admin
+            .list_servers()
+            .map_err(mcp_admin_status)?
+            .into_iter()
+            .map(|s| proto::McpServer {
+                connection_id: s.connection_id.to_vec(),
+                server_name: s.server_name,
+                transport: s.transport,
+                endpoint: s.endpoint,
+                health: s.health,
+                tool_count: s.tool_count,
+                credential_ref_present: s.credential_ref_present,
+            })
+            .collect();
+        Ok(Response::new(proto::ListMcpServersResponse {
+            servers,
+            has_more: false,
+        }))
+    }
+
+    async fn discover_server_tools(
+        &self,
+        request: Request<proto::DiscoverServerToolsRequest>,
+    ) -> Result<Response<proto::DiscoverServerToolsResponse>, Status> {
+        let admin = self.mcp_admin.as_ref().ok_or_else(|| {
+            Status::unimplemented(
+                "DiscoverServerTools: no MCP gateway wired (connections.db absent)",
+            )
+        })?;
+        let req = request.into_inner();
+        if req.server_name.trim().is_empty() {
+            return Err(Status::invalid_argument("server_name is required"));
+        }
+        let (rows, discovered) = admin
+            .discover_server(&req.server_name)
+            .map_err(mcp_admin_status)?;
+        let tools = rows
+            .into_iter()
+            .map(|e| proto::RegisteredTool {
+                tool_id: e.tool_id.to_vec(),
+                tool_name: e.tool_name,
+                tool_version: e.tool_version,
+                kind: e.kind,
+                description: e.description,
+                idempotency_class: e.idempotency_class,
+                provenance: e.provenance,
+                registration_status: e.registration_status,
+                server_host: e.server_host,
+                net_scope_summary: e.net_scope_summary,
+                is_builtin: e.is_builtin,
+            })
+            .collect();
+        Ok(Response::new(proto::DiscoverServerToolsResponse {
+            tools,
+            discovered,
+        }))
+    }
+
+    async fn test_mcp_server(
+        &self,
+        request: Request<proto::TestMcpServerRequest>,
+    ) -> Result<Response<proto::TestMcpServerResponse>, Status> {
+        let admin = self.mcp_admin.as_ref().ok_or_else(|| {
+            Status::unimplemented("TestMcpServer: no MCP gateway wired (connections.db absent)")
+        })?;
+        let req = request.into_inner();
+        if req.server_name.trim().is_empty() {
+            return Err(Status::invalid_argument("server_name is required"));
+        }
+        let (reachable, detail) = admin
+            .test_server(&req.server_name)
+            .map_err(mcp_admin_status)?;
+        Ok(Response::new(proto::TestMcpServerResponse {
+            reachable,
+            detail,
+        }))
+    }
+
+    async fn deregister_mcp_server(
+        &self,
+        request: Request<proto::DeregisterMcpServerRequest>,
+    ) -> Result<Response<proto::DeregisterMcpServerResponse>, Status> {
+        let admin = self.mcp_admin.as_ref().ok_or_else(|| {
+            Status::unimplemented(
+                "DeregisterMcpServer: no MCP gateway wired (connections.db absent)",
+            )
+        })?;
+        let req = request.into_inner();
+        if req.server_name.trim().is_empty() {
+            return Err(Status::invalid_argument("server_name is required"));
+        }
+        let removed = admin
+            .deregister_server(&req.server_name)
+            .map_err(mcp_admin_status)?;
+        Ok(Response::new(proto::DeregisterMcpServerResponse {
+            removed,
         }))
     }
 

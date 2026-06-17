@@ -216,6 +216,51 @@ class RegisteredToolsPage:
 
 
 @dataclass(frozen=True)
+class McpServer:
+    """One registered external MCP server (PR-6b-1 ``ListMcpServers``). The
+    credential VALUE is never on the wire — only whether a ref NAME is attached
+    (D81)."""
+
+    connection_id: str  # 16-byte server-derived id, hex
+    server_name: str
+    transport: str  # "stdio" | "http"
+    endpoint: str  # command (stdio) | URL (http)
+    health: str  # "connected" | "unreachable" | "unknown"
+    tool_count: int
+    credential_ref_present: bool
+
+    @classmethod
+    def from_proto(cls, s: "_g.McpServer") -> "McpServer":
+        return cls(
+            connection_id=hexids.encode(s.connection_id),
+            server_name=s.server_name,
+            transport=s.transport,
+            endpoint=s.endpoint,
+            health=s.health,
+            tool_count=s.tool_count,
+            credential_ref_present=s.credential_ref_present,
+        )
+
+
+@dataclass(frozen=True)
+class McpServersPage:
+    """One ``ListMcpServers`` page (deterministic ``(name)`` order)."""
+
+    servers: List[McpServer]
+    has_more: bool
+
+
+@dataclass(frozen=True)
+class RegisterServerResult:
+    """The outcome of ``register_mcp_server`` — the server-derived connection id,
+    the count of tools discovered + registered, and the folded health."""
+
+    connection_id: str  # 16-byte server-derived id, hex
+    discovered: int
+    health: str  # "connected" | "unreachable" | "unknown"
+
+
+@dataclass(frozen=True)
 class ToolParam:
     """A declared, typed tool input parameter (the MCP inputSchema analogue —
     CLOSED set, no float, SN-8). ``ty`` in ``str|bytes|int|bool|enum``."""

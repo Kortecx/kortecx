@@ -1376,3 +1376,103 @@ class DiscoverToolsResponse(_message.Message):
     tools: _containers.RepeatedCompositeFieldContainer[RegisteredTool]
     has_more: bool
     def __init__(self, tools: _Optional[_Iterable[_Union[RegisteredTool, _Mapping]]] = ..., has_more: bool = ...) -> None: ...
+
+class RegisterMcpServerRequest(_message.Message):
+    __slots__ = ("server_name", "transport", "endpoint", "args", "tls_required", "credential_ref")
+    SERVER_NAME_FIELD_NUMBER: _ClassVar[int]
+    TRANSPORT_FIELD_NUMBER: _ClassVar[int]
+    ENDPOINT_FIELD_NUMBER: _ClassVar[int]
+    ARGS_FIELD_NUMBER: _ClassVar[int]
+    TLS_REQUIRED_FIELD_NUMBER: _ClassVar[int]
+    CREDENTIAL_REF_FIELD_NUMBER: _ClassVar[int]
+    server_name: str
+    transport: str
+    endpoint: str
+    args: _containers.RepeatedScalarFieldContainer[str]
+    tls_required: bool
+    credential_ref: str
+    def __init__(self, server_name: _Optional[str] = ..., transport: _Optional[str] = ..., endpoint: _Optional[str] = ..., args: _Optional[_Iterable[str]] = ..., tls_required: bool = ..., credential_ref: _Optional[str] = ...) -> None: ...
+
+class RegisterMcpServerResponse(_message.Message):
+    __slots__ = ("connection_id", "discovered", "health")
+    CONNECTION_ID_FIELD_NUMBER: _ClassVar[int]
+    DISCOVERED_FIELD_NUMBER: _ClassVar[int]
+    HEALTH_FIELD_NUMBER: _ClassVar[int]
+    connection_id: bytes
+    discovered: int
+    health: str
+    def __init__(self, connection_id: _Optional[bytes] = ..., discovered: _Optional[int] = ..., health: _Optional[str] = ...) -> None: ...
+
+class ListMcpServersRequest(_message.Message):
+    __slots__ = ("limit", "after_name")
+    LIMIT_FIELD_NUMBER: _ClassVar[int]
+    AFTER_NAME_FIELD_NUMBER: _ClassVar[int]
+    limit: int
+    after_name: str
+    def __init__(self, limit: _Optional[int] = ..., after_name: _Optional[str] = ...) -> None: ...
+
+class McpServer(_message.Message):
+    __slots__ = ("connection_id", "server_name", "transport", "endpoint", "health", "tool_count", "credential_ref_present")
+    CONNECTION_ID_FIELD_NUMBER: _ClassVar[int]
+    SERVER_NAME_FIELD_NUMBER: _ClassVar[int]
+    TRANSPORT_FIELD_NUMBER: _ClassVar[int]
+    ENDPOINT_FIELD_NUMBER: _ClassVar[int]
+    HEALTH_FIELD_NUMBER: _ClassVar[int]
+    TOOL_COUNT_FIELD_NUMBER: _ClassVar[int]
+    CREDENTIAL_REF_PRESENT_FIELD_NUMBER: _ClassVar[int]
+    connection_id: bytes
+    server_name: str
+    transport: str
+    endpoint: str
+    health: str
+    tool_count: int
+    credential_ref_present: bool
+    def __init__(self, connection_id: _Optional[bytes] = ..., server_name: _Optional[str] = ..., transport: _Optional[str] = ..., endpoint: _Optional[str] = ..., health: _Optional[str] = ..., tool_count: _Optional[int] = ..., credential_ref_present: bool = ...) -> None: ...
+
+class ListMcpServersResponse(_message.Message):
+    __slots__ = ("servers", "has_more")
+    SERVERS_FIELD_NUMBER: _ClassVar[int]
+    HAS_MORE_FIELD_NUMBER: _ClassVar[int]
+    servers: _containers.RepeatedCompositeFieldContainer[McpServer]
+    has_more: bool
+    def __init__(self, servers: _Optional[_Iterable[_Union[McpServer, _Mapping]]] = ..., has_more: bool = ...) -> None: ...
+
+class DiscoverServerToolsRequest(_message.Message):
+    __slots__ = ("server_name",)
+    SERVER_NAME_FIELD_NUMBER: _ClassVar[int]
+    server_name: str
+    def __init__(self, server_name: _Optional[str] = ...) -> None: ...
+
+class DiscoverServerToolsResponse(_message.Message):
+    __slots__ = ("tools", "discovered")
+    TOOLS_FIELD_NUMBER: _ClassVar[int]
+    DISCOVERED_FIELD_NUMBER: _ClassVar[int]
+    tools: _containers.RepeatedCompositeFieldContainer[RegisteredTool]
+    discovered: int
+    def __init__(self, tools: _Optional[_Iterable[_Union[RegisteredTool, _Mapping]]] = ..., discovered: _Optional[int] = ...) -> None: ...
+
+class TestMcpServerRequest(_message.Message):
+    __slots__ = ("server_name",)
+    SERVER_NAME_FIELD_NUMBER: _ClassVar[int]
+    server_name: str
+    def __init__(self, server_name: _Optional[str] = ...) -> None: ...
+
+class TestMcpServerResponse(_message.Message):
+    __slots__ = ("reachable", "detail")
+    REACHABLE_FIELD_NUMBER: _ClassVar[int]
+    DETAIL_FIELD_NUMBER: _ClassVar[int]
+    reachable: bool
+    detail: str
+    def __init__(self, reachable: bool = ..., detail: _Optional[str] = ...) -> None: ...
+
+class DeregisterMcpServerRequest(_message.Message):
+    __slots__ = ("server_name",)
+    SERVER_NAME_FIELD_NUMBER: _ClassVar[int]
+    server_name: str
+    def __init__(self, server_name: _Optional[str] = ...) -> None: ...
+
+class DeregisterMcpServerResponse(_message.Message):
+    __slots__ = ("removed",)
+    REMOVED_FIELD_NUMBER: _ClassVar[int]
+    removed: bool
+    def __init__(self, removed: bool = ...) -> None: ...

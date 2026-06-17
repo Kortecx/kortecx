@@ -47,8 +47,11 @@ from .telemetry import MoteTelemetryRow, TelemetryPage, TelemetrySummary
 from .toolscout import (
     BundleScore,
     BundleSpec,
+    McpServer,
+    McpServersPage,
     RegisteredTool,
     RegisteredToolsPage,
+    RegisterServerResult,
     ToolManifest,
     ToolParam,
 )
@@ -658,6 +661,77 @@ class KxClient:
         Returns ``True`` iff a row was removed."""
         req = _g.DeregisterToolRequest(tool_name=name, tool_version=version)
         resp = self._call(lambda: self._stub.DeregisterTool(req, metadata=self._md))
+        return resp.removed
+
+    # --- PR-6b-1: the external MCP gateway (dial Py/TS-SDK-exposed MCP servers) ---
+
+    def register_mcp_server(
+        self,
+        *,
+        name: str,
+        transport: str = "stdio",
+        endpoint: str,
+        args: Optional[Sequence[str]] = None,
+        tls_required: bool = False,
+        credential_ref: str = "",
+    ) -> RegisterServerResult:
+        """Register an EXTERNAL MCP server (PR-6b-1 ``RegisterMcpServer``) — the
+        runtime DIALS it (``initialize`` → ``tools/list``) and registers its tools
+        into the durable registry (each namespaced ``<name>/<remote>``).
+
+        ``transport`` is ``"stdio"`` (``endpoint`` = the program path, ``args`` =
+        its command line) or ``"http"`` (``endpoint`` = the URL; ``tls_required``
+        refuses plaintext ``http://``). ``credential_ref`` names an env var / vault
+        key (the secret VALUE is never sent, D81). The host is SSRF-vetted at
+        admission AND at dial time; an internal host is refused
+        (``permission_denied``). A dial failure is NOT fatal — the server persists
+        with ``health="unreachable"`` (honest, never a fabricated success)."""
+        req = _g.RegisterMcpServerRequest(
+            server_name=name,
+            transport=transport,
+            endpoint=endpoint,
+            args=list(args or []),
+            tls_required=tls_required,
+            credential_ref=credential_ref,
+        )
+        resp = self._call(lambda: self._stub.RegisterMcpServer(req, metadata=self._md))
+        return RegisterServerResult(
+            connection_id=hexids.encode(resp.connection_id),
+            discovered=resp.discovered,
+            health=resp.health,
+        )
+
+    def list_mcp_servers(self, *, limit: int = 0, after_name: str = "") -> McpServersPage:
+        """List the registered external MCP servers + their health (PR-6b-1
+        ``ListMcpServers``), in ``(name)`` order."""
+        req = _g.ListMcpServersRequest(limit=limit, after_name=after_name)
+        resp = self._call(lambda: self._stub.ListMcpServers(req, metadata=self._md))
+        return McpServersPage(
+            servers=[McpServer.from_proto(s) for s in resp.servers], has_more=resp.has_more
+        )
+
+    def discover_server_tools(self, *, name: str) -> RegisteredToolsPage:
+        """Re-dial a registered server + re-discover its tools (PR-6b-1
+        ``DiscoverServerTools``); returns the server's registered tools."""
+        req = _g.DiscoverServerToolsRequest(server_name=name)
+        resp = self._call(lambda: self._stub.DiscoverServerTools(req, metadata=self._md))
+        # `discovered` is the count; the rows are the registered inventory.
+        return RegisteredToolsPage(
+            tools=[RegisteredTool.from_proto(t) for t in resp.tools], has_more=False
+        )
+
+    def test_mcp_server(self, *, name: str) -> bool:
+        """Test a server's reachability — dial + ``initialize`` only (PR-6b-1
+        ``TestMcpServer``). Returns ``True`` iff the handshake succeeded."""
+        req = _g.TestMcpServerRequest(server_name=name)
+        resp = self._call(lambda: self._stub.TestMcpServer(req, metadata=self._md))
+        return resp.reachable
+
+    def deregister_mcp_server(self, *, name: str) -> bool:
+        """Remove a registered server + deregister its tools (PR-6b-1
+        ``DeregisterMcpServer``). Returns ``True`` iff a server was removed."""
+        req = _g.DeregisterMcpServerRequest(server_name=name)
+        resp = self._call(lambda: self._stub.DeregisterMcpServer(req, metadata=self._md))
         return resp.removed
 
     def submit_feedback(
