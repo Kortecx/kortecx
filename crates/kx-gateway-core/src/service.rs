@@ -447,7 +447,7 @@ pub trait WorkflowAuthor: Send + Sync {
 /// MOMENT its firing capability registers, never gated by a startup snapshot.
 ///
 /// `None` on the service ⇒ the backstop falls back to the static
-/// [`GatewayService::registered_tools`] set (the PR-2d-2 behaviour — bundled
+/// `GatewayService::registered_tools` set (the PR-2d-2 behaviour — bundled
 /// tools only). The VIEW never authorizes (SN-8): it is a belt-and-braces
 /// fail-closed gate that refuses authoring a warrant granting a tool the broker
 /// cannot fire; the broker's own 6-gate `precheck` re-verifies at dispatch.
