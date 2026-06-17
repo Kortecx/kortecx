@@ -8,17 +8,30 @@
 //! (IMP-16) and **wall-clock-bounded** (a watchdog kills a hung server).
 
 use std::ffi::OsString;
-use std::io::{Read, Write};
-use std::process::{Command, Stdio};
-use std::sync::mpsc::{self, RecvTimeoutError};
+use std::io::{BufRead, BufReader, Read, Write};
+use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::sync::Arc;
+use std::thread::JoinHandle;
 use std::time::Duration;
 
 use kx_warrant::SecretScope;
 
 use crate::credential::CredentialRef;
+use crate::decode::{
+    decode_tool_result, decode_tools_list, RemoteToolDecl, MAX_TOOL_RESULT_BYTES_DEFAULT,
+};
 use crate::errors::TransportError;
+use crate::jsonrpc::{frame_initialize, frame_tools_call, frame_tools_list};
 use crate::secret_store::{EnvSecretStore, SecretStore};
+use crate::session::{McpSession, SessionError};
+
+/// OOM backstop for a single newline-delimited response line a stateful stdio
+/// session reads (16 MiB): far above any legitimate `tools/list` / `tools/call`
+/// body, so a hostile server cannot force an unbounded allocation. The PRECISE
+/// per-call bound is the decoder's `max_response_bytes` (the warrant ceiling);
+/// this only caps what the background reader will buffer.
+const SESSION_READ_HARD_CAP: u64 = 16 << 20;
 
 /// Fallback wall-clock budget when the warrant supplies none (`0`): 30 s. Keeps a
 /// hung or chatty server from blocking a dispatch indefinitely while not failing a
@@ -65,6 +78,21 @@ pub trait McpTransport: Send + Sync {
     /// Default: [`SecretScope::None`] (no credentials configured).
     fn declared_secret_scope(&self) -> SecretScope {
         SecretScope::None
+    }
+
+    /// PR-6b-1: open a stateful [`McpSession`] (`initialize → tools/list →
+    /// tools/call` over ONE live connection) — used by the external MCP gateway
+    /// for discovery and by [`crate::McpSessionCapability`] for firing.
+    ///
+    /// Default: NOT supported — a single-shot transport fires via
+    /// [`round_trip`](McpTransport::round_trip). [`StdioTransport`] and
+    /// [`crate::HttpTransport`] override this with real sessions. Returning an
+    /// error here (rather than a silent single-shot adapter) keeps the contract
+    /// honest: a caller that asked for a session gets one or a typed refusal.
+    fn open_session(&self) -> Result<Box<dyn McpSession>, TransportError> {
+        Err(TransportError::Unreachable(
+            "this transport does not support stateful MCP sessions".to_string(),
+        ))
     }
 }
 
@@ -248,5 +276,191 @@ impl McpTransport for StdioTransport {
         let _ = reader.join();
 
         result
+    }
+
+    /// PR-6b-1: open a persistent stdio session — one long-lived subprocess across
+    /// the `initialize → tools/list → tools/call` lifecycle (vs `round_trip`'s
+    /// fresh process per call). Credentials are injected into the child env at
+    /// spawn (D81). A background reader thread bounds each response line (a 16 MiB
+    /// OOM backstop) so a hostile server cannot OOM the host.
+    fn open_session(&self) -> Result<Box<dyn McpSession>, TransportError> {
+        let mut cmd = Command::new(&self.program);
+        cmd.args(&self.args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+        for (key, value) in &self.envs {
+            cmd.env(key, value);
+        }
+        for credential in &self.credentials {
+            credential.inject_into(&*self.secret_store, &mut cmd);
+        }
+        let session = StdioSession::spawn(cmd)?;
+        Ok(Box::new(session))
+    }
+}
+
+/// A persistent stdio MCP session (PR-6b-1): one subprocess, newline-delimited
+/// JSON-RPC, across the lifecycle handshake + discovery + calls. A background
+/// reader thread reads each response line (size-bounded) into a channel so every
+/// request can be wall-clock-bounded via `recv_timeout` (mirrors the single-shot
+/// `round_trip` watchdog discipline). Dropping the session kills + reaps the
+/// child.
+struct StdioSession {
+    child: Child,
+    stdin: ChildStdin,
+    /// Each item is one response line's raw bytes (newline stripped), or a read error.
+    lines: Receiver<std::io::Result<Vec<u8>>>,
+    reader: Option<JoinHandle<()>>,
+    next_id: u64,
+    /// Latched on any I/O fault so a poisoned session refuses further requests.
+    closed: bool,
+}
+
+impl StdioSession {
+    /// Spawn `cmd` (already configured with stdio pipes + env/credentials) and
+    /// start its background line reader.
+    fn spawn(mut cmd: Command) -> Result<Self, TransportError> {
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| TransportError::Unreachable(e.to_string()))?;
+        let stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| TransportError::Io("child stdin unavailable".to_string()))?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| TransportError::Io("child stdout unavailable".to_string()))?;
+        let (tx, rx) = mpsc::channel();
+        let reader = std::thread::spawn(move || {
+            let mut buf_reader = BufReader::new(stdout);
+            loop {
+                let mut line = Vec::new();
+                // Bound each line so an oversize/never-terminating response cannot
+                // OOM the host; the per-call decoder applies the precise cap.
+                match (&mut buf_reader)
+                    .take(SESSION_READ_HARD_CAP)
+                    .read_until(b'\n', &mut line)
+                {
+                    Ok(0) => break, // EOF: the server closed stdout.
+                    Ok(_) => {
+                        if line.last() == Some(&b'\n') {
+                            line.pop();
+                        }
+                        if tx.send(Ok(line)).is_err() {
+                            break; // receiver gone (session dropped)
+                        }
+                    }
+                    Err(e) => {
+                        let _ = tx.send(Err(e));
+                        break;
+                    }
+                }
+            }
+        });
+        Ok(Self {
+            child,
+            stdin,
+            lines: rx,
+            reader: Some(reader),
+            next_id: 1,
+            closed: false,
+        })
+    }
+
+    /// Write one framed request + newline, then read exactly one response line
+    /// under the wall-clock budget. Latches `closed` on any fault.
+    fn request_raw(&mut self, frame: &[u8], wall_clock_ms: u64) -> Result<Vec<u8>, TransportError> {
+        if self.closed {
+            return Err(TransportError::Io("stdio session is closed".to_string()));
+        }
+        if let Err(e) = self
+            .stdin
+            .write_all(frame)
+            .and_then(|()| self.stdin.write_all(b"\n"))
+            .and_then(|()| self.stdin.flush())
+        {
+            self.closed = true;
+            return Err(TransportError::Io(e.to_string()));
+        }
+        let budget = Duration::from_millis(if wall_clock_ms == 0 {
+            DEFAULT_WALL_CLOCK_MS
+        } else {
+            wall_clock_ms
+        });
+        match self.lines.recv_timeout(budget) {
+            Ok(Ok(bytes)) => Ok(bytes),
+            Ok(Err(e)) => {
+                self.closed = true;
+                Err(TransportError::Io(e.to_string()))
+            }
+            Err(RecvTimeoutError::Timeout) => {
+                self.closed = true;
+                Err(TransportError::Timeout { wall_clock_ms })
+            }
+            Err(RecvTimeoutError::Disconnected) => {
+                self.closed = true;
+                Err(TransportError::Io("stdio server closed".to_string()))
+            }
+        }
+    }
+
+    fn next_id(&mut self) -> u64 {
+        let id = self.next_id;
+        self.next_id = self.next_id.wrapping_add(1);
+        id
+    }
+}
+
+impl McpSession for StdioSession {
+    fn initialize(&mut self, wall_clock_ms: u64) -> Result<(), SessionError> {
+        let id = self.next_id();
+        let frame = frame_initialize(id).map_err(|e| TransportError::Io(e.to_string()))?;
+        let resp = self.request_raw(&frame, wall_clock_ms)?;
+        // A well-formed result (not a JSON-RPC error) confirms the handshake.
+        decode_tool_result(&resp, MAX_TOOL_RESULT_BYTES_DEFAULT)?;
+        Ok(())
+    }
+
+    fn list_tools(
+        &mut self,
+        max_response_bytes: usize,
+        wall_clock_ms: u64,
+    ) -> Result<Vec<RemoteToolDecl>, SessionError> {
+        let id = self.next_id();
+        let frame = frame_tools_list(id).map_err(|e| TransportError::Io(e.to_string()))?;
+        let resp = self.request_raw(&frame, wall_clock_ms)?;
+        Ok(decode_tools_list(&resp, max_response_bytes)?)
+    }
+
+    fn call(
+        &mut self,
+        remote_name: &str,
+        arguments: &[u8],
+        max_response_bytes: usize,
+        wall_clock_ms: u64,
+        idempotency_key: Option<&[u8; 32]>,
+    ) -> Result<Vec<u8>, SessionError> {
+        // stdio has no dedup header; recovery dedup is the content-addressed
+        // staging key (the broker idempotency token), so the key is unused here.
+        let _ = idempotency_key;
+        let id = self.next_id();
+        let frame = frame_tools_call(id, remote_name, arguments)
+            .map_err(|e| TransportError::Io(e.to_string()))?;
+        let resp = self.request_raw(&frame, wall_clock_ms)?;
+        Ok(decode_tool_result(&resp, max_response_bytes)?)
+    }
+}
+
+impl Drop for StdioSession {
+    fn drop(&mut self) {
+        // Close stdin (EOF to the server) by dropping it implicitly at struct drop;
+        // kill + reap so a lingering server cannot outlive the session.
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        if let Some(reader) = self.reader.take() {
+            let _ = reader.join();
+        }
     }
 }

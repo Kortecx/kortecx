@@ -1558,6 +1558,7 @@ dependencies = [
  "kx-invoke",
  "kx-journal",
  "kx-mcp",
+ "kx-mcp-gateway",
  "kx-model-store",
  "kx-model-validator",
  "kx-mote",
@@ -1717,6 +1718,25 @@ dependencies = [
  "tracing",
  "ureq",
  "url",
+]
+
+[[package]]
+name = "kx-mcp-gateway"
+version = "0.1.1"
+dependencies = [
+ "blake3",
+ "kx-capability",
+ "kx-content",
+ "kx-mcp",
+ "kx-mote",
+ "kx-tool-registry",
+ "kx-warrant",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tracing",
 ]
 
 [[package]]

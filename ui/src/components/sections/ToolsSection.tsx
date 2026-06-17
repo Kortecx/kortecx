@@ -4,7 +4,7 @@ import { useScoreBundle, useToolManifests } from "../../kx/use-toolscout";
 import { EmptyState } from "../EmptyState";
 import { ErrorNotice } from "../ErrorNotice";
 import { BundleComposer } from "../tools/BundleComposer";
-import { ConnectionsCard } from "../tools/ConnectionsCard";
+import { ConnectionsPanel } from "../tools/ConnectionsPanel";
 import { ManifestGrid } from "../tools/ManifestGrid";
 import { RegisterToolForm } from "../tools/RegisterToolForm";
 import { RegisteredToolsPanel } from "../tools/RegisteredToolsPanel";
@@ -66,10 +66,16 @@ export function ToolsSection() {
       <RegisteredToolsPanel />
       <div className="tools-registry-actions">
         <RegisterToolForm />
-        <div className="metrics-grid tools-connections">
-          <ConnectionsCard />
-        </div>
       </div>
+
+      <h2>Connections</h2>
+      <p className="muted">
+        Dial external MCP servers (stdio · HTTP, including Py/TS-SDK-exposed gateways) to give your
+        agents external knowledge + actions. Registering DIALS the server and registers its tools;
+        secret-less credential references only (OAuth + a credential marketplace are a Cloud
+        capability).
+      </p>
+      <ConnectionsPanel />
 
       <h2>Discovery &amp; preview</h2>
       <p className="muted">

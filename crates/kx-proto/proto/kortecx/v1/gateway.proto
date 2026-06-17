@@ -1218,6 +1218,69 @@ message DiscoverToolsResponse {
   bool has_more = 2;
 }
 
+// PR-6b-1 (D159): the EXTERNAL MCP gateway. Register an external MCP server
+// (a local stdio command or a remote HTTP endpoint); the runtime DIALS it
+// (initialize -> tools/list), discovers its tools into the SAME durable registry
+// (each id namespaced `<server_name>/<remote>`), and governs the connection in an
+// off-journal connections.db sidecar. SN-8: connection_id + tool ids are
+// server-derived; the credential is referenced by NAME only (never the secret).
+message RegisterMcpServerRequest {
+  string server_name    = 1;             // unique handle; namespaces discovered tool ids; must not contain '/'
+  string transport      = 2;             // "stdio" | "http"
+  string endpoint       = 3;             // stdio: program path; http: URL (host SSRF-vetted at admission + dial)
+  repeated string args  = 4;             // stdio command-line args (ignored for http)
+  bool   tls_required   = 5;             // http: refuse plaintext http:// when true
+  string credential_ref = 6;             // OPTIONAL secret-less ref NAME (env var / vault key); never the secret
+}
+message RegisterMcpServerResponse {
+  bytes  connection_id = 1;              // 16B server-derived (SN-8)
+  uint32 discovered    = 2;              // tools discovered + registered (0 when unreachable)
+  string health        = 3;              // "connected" | "unreachable" | "unknown"
+}
+
+message ListMcpServersRequest {
+  uint32 limit      = 1;                 // reserved for paging (server returns all today)
+  string after_name = 2;                 // reserved cursor
+}
+// One registered external MCP server (governance view). The credential value is
+// NEVER on this wire — only whether a ref NAME is attached (D81).
+message McpServer {
+  bytes  connection_id          = 1;     // 16B server-derived
+  string server_name            = 2;
+  string transport              = 3;     // "stdio" | "http"
+  string endpoint               = 4;     // command (stdio) | URL (http)
+  string health                 = 5;     // "connected" | "unreachable" | "unknown"
+  uint32 tool_count             = 6;     // tools discovered on the last successful dial
+  bool   credential_ref_present = 7;     // a credential ref NAME is attached (never the value)
+}
+message ListMcpServersResponse {
+  repeated McpServer servers = 1;        // deterministic (name) order
+  bool has_more = 2;
+}
+
+message DiscoverServerToolsRequest {
+  string server_name = 1;                // re-dial + re-discover this server
+}
+message DiscoverServerToolsResponse {
+  repeated RegisteredTool tools = 1;     // the server's registered tools (reuses the inventory row)
+  uint32 discovered = 2;
+}
+
+message TestMcpServerRequest {
+  string server_name = 1;
+}
+message TestMcpServerResponse {
+  bool   reachable = 1;                  // dial + initialize succeeded
+  string detail    = 2;                  // short diagnostic on failure (no secret / why-leak)
+}
+
+message DeregisterMcpServerRequest {
+  string server_name = 1;
+}
+message DeregisterMcpServerResponse {
+  bool removed = 1;                       // false iff absent
+}
+
 // ---------------------------------------------------------------------------
 // Service — the external client-facing gateway (distinct from Coordinator).
 // ---------------------------------------------------------------------------
@@ -1313,4 +1376,17 @@ service KxGateway {
   rpc RegisterTool(RegisterToolRequest) returns (RegisterToolResponse);
   rpc DeregisterTool(DeregisterToolRequest) returns (DeregisterToolResponse);
   rpc DiscoverTools(DiscoverToolsRequest) returns (DiscoverToolsResponse);
+  // PR-6b-1 additive (D159): the EXTERNAL MCP gateway. RegisterMcpServer dials a
+  // remote MCP server (stdio + Streamable-HTTP) and registers its discovered
+  // tools into the SAME tools.db (each namespaced `<server>/<remote>`, fireable
+  // via the broker); List/Discover/Test/Deregister govern the connections. The
+  // live untrusted-egress surface (GR8): admission + dial-time SSRF vetting,
+  // per-server rate-limit, warrant-gated egress, secret-less CredentialRef.
+  // SN-8: server-derived connection/tool ids; client tool_grants stay refused.
+  // OAuth/device-flow + a hosted credential marketplace are CLOUD (D159/GR19).
+  rpc RegisterMcpServer(RegisterMcpServerRequest) returns (RegisterMcpServerResponse);
+  rpc ListMcpServers(ListMcpServersRequest) returns (ListMcpServersResponse);
+  rpc DiscoverServerTools(DiscoverServerToolsRequest) returns (DiscoverServerToolsResponse);
+  rpc TestMcpServer(TestMcpServerRequest) returns (TestMcpServerResponse);
+  rpc DeregisterMcpServer(DeregisterMcpServerRequest) returns (DeregisterMcpServerResponse);
 }

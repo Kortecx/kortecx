@@ -17,6 +17,7 @@ import { LowerVerdict } from "./gen/kortecx/v1/gateway_pb.js";
 import type {
   KeywordSet as PbKeywordSet,
   ManifestScore as PbManifestScore,
+  McpServer as PbMcpServer,
   RegisteredTool as PbRegisteredTool,
   ScoreTaskBundleResponse as PbScoreTaskBundleResponse,
   ToolManifest as PbToolManifest,
@@ -241,6 +242,69 @@ export interface ToolParam {
   readonly required?: boolean;
   /** enum: the permitted exact values. */
   readonly allowed?: readonly string[];
+}
+
+/** One registered external MCP server (PR-6b-1 `ListMcpServers`). The credential
+ *  VALUE is never on the wire — only whether a ref NAME is attached (D81). */
+export class McpServer {
+  constructor(
+    /** 16-byte server-derived connection id, as lowercase hex. */
+    readonly connectionId: string,
+    readonly serverName: string,
+    /** `"stdio"` | `"http"`. */
+    readonly transport: string,
+    /** The command (stdio) or URL (http). */
+    readonly endpoint: string,
+    /** `"connected"` | `"unreachable"` | `"unknown"`. */
+    readonly health: string,
+    readonly toolCount: number,
+    readonly credentialRefPresent: boolean,
+  ) {}
+
+  static fromProto(s: PbMcpServer): McpServer {
+    return new McpServer(
+      encode(s.connectionId),
+      s.serverName,
+      s.transport,
+      s.endpoint,
+      s.health,
+      s.toolCount,
+      s.credentialRefPresent,
+    );
+  }
+}
+
+/** One `ListMcpServers` page (deterministic `(name)` order). */
+export interface McpServersPage {
+  readonly servers: readonly McpServer[];
+  readonly hasMore: boolean;
+}
+
+/** The outcome of `registerMcpServer` — the server-derived connection id, the
+ *  tools discovered + registered, and the folded health. */
+export interface RegisterServerResult {
+  /** 16-byte server-derived connection id, as lowercase hex. */
+  readonly connectionId: string;
+  readonly discovered: number;
+  /** `"connected"` | `"unreachable"` | `"unknown"`. */
+  readonly health: string;
+}
+
+/** A `RegisterMcpServer` request shape (PR-6b-1). The runtime DIALS the server;
+ *  the host is SSRF-vetted (admission + dial). A credential is referenced by NAME
+ *  only (never the secret, D81). The server derives the connection/tool ids (SN-8). */
+export interface RegisterMcpServerInput {
+  readonly name: string;
+  /** `"stdio"` | `"http"` (defaults to `"stdio"`). */
+  readonly transport?: string;
+  /** stdio: the program path; http: the endpoint URL. */
+  readonly endpoint: string;
+  /** stdio command-line args (ignored for http). */
+  readonly args?: readonly string[];
+  /** http: refuse plaintext `http://` (defaults to `false`). */
+  readonly tlsRequired?: boolean;
+  /** OPTIONAL secret-less credential ref NAME (env var / vault key). */
+  readonly credentialRef?: string;
 }
 
 /** A `RegisterTool` request shape. The host is SSRF-vetted; the server derives

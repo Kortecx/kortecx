@@ -38,6 +38,7 @@ members = [
     "crates/kx-audit",
     "crates/kx-refusal",
     "crates/kx-mcp",
+    "crates/kx-mcp-gateway",
     "crates/kx-planner",
     "crates/kx-catalog",
     "crates/kx-bundle",
@@ -180,6 +181,15 @@ kx-refusal           = { path = "crates/kx-refusal",           version = "0.1.1"
 # concrete ToolKind::Mcp dispatch. A thin SYNC client (stdio now; ureq HTTP in M5.2b)
 # so the broker trait + kx-tool-registry stay dependency-clean (no tokio/rmcp).
 kx-mcp               = { path = "crates/kx-mcp",               version = "0.1.1" }
+# PR-6b-1 (D159) — the multi-server EXTERNAL MCP gateway: dials N external MCP
+# servers (stdio + Streamable-HTTP) over kx-mcp's session seam, discovers their
+# tools into the durable tools.db (kx-tool-registry), governs them via an
+# off-journal connections.db sidecar, and enforces the live untrusted-egress
+# surface (dial-time vetting + per-server rate-limit + warrant-gated egress +
+# fail-closed + audit). A thin SYNC orchestrator over kx-mcp; never the frozen
+# trio, never the journal (a dep-wall test pins it). The runtime is a SECURE
+# GATEWAY (D132/GR19) — no arbitrary code runs in-runtime.
+kx-mcp-gateway       = { path = "crates/kx-mcp-gateway",       version = "0.1.1" }
 # The planner (M6, D73) — lowers an untrusted model PROPOSAL into a registered
 # Mote DAG (decode fail-closed; select ROLES not permissions; compile is the
 # structural gate). Sits above the scheduler; PURE lowering lib — depends only on

@@ -1,0 +1,56 @@
+[package]
+name         = "kx-mcp-gateway"
+version      = "0.1.1"
+edition      = { workspace = true }
+rust-version = { workspace = true }
+license      = { workspace = true }
+authors      = { workspace = true }
+repository   = { workspace = true }
+description  = "kortecx external MCP gateway (PR-6b-1, D159): a thin SYNC multi-server orchestrator over kx-mcp. Dials N external MCP servers (stdio + Streamable-HTTP) via kx-mcp's session seam, discovers their tools into the durable kx-tool-registry, governs them via an off-journal connections.db sidecar, and enforces the live untrusted-egress surface (dial-time SSRF/rebind vetting, per-server token-bucket rate-limit, warrant-gated egress, fail-closed decode, audit). The runtime is a SECURE GATEWAY (D132/GR19): no arbitrary code runs in-runtime; client tool_grants are refused (SN-8); connection_id is server-derived and NEVER a MoteId/journal/digest input."
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+# The MCP client + the stateful session seam (open_session / McpSession /
+# McpSessionCapability) + the egress sandbox + fail-closed decode this gateway
+# orchestrates across N servers.
+kx-mcp           = { workspace = true }
+# The durable tool registry the discovered remote tools are registered into
+# (register_durable + ToolDef/ToolKind::Mcp + the typed InputSchema).
+kx-tool-registry = { workspace = true }
+# The Capability trait the discovered tools are registered as on the broker
+# (via the CapabilitySink seam) + EffectRequest/CapabilityFailureReason.
+kx-capability    = { workspace = true }
+# ToolName / ToolVersion identities.
+kx-mote          = { workspace = true }
+# NetScope / Host / ToolRequirement — the per-server egress requirement.
+kx-warrant       = { workspace = true }
+# ContentRef — the ToolRequirement.syscall_profile_ref sentinel for a discovered tool.
+kx-content       = { workspace = true }
+serde            = { workspace = true }
+# Parse the remote tool's JSON `inputSchema` (a JSON Schema) into the typed
+# registry InputSchema — values are never decoded to floats (SN-8 discipline).
+serde_json       = { workspace = true }
+# connection_id derivation (server-derived, off-digest).
+blake3           = { workspace = true }
+thiserror        = { workspace = true }
+tracing          = { workspace = true }
+# The off-journal, rebuildable connections.db sidecar (mirrors tools.db). Already
+# in the lock via kx-tool-registry — promoting it adds no new package.
+rusqlite         = { workspace = true }
+
+[dev-dependencies]
+tempfile         = { workspace = true }
+
+# A STATEFUL newline-delimited JSON-RPC stdio MCP test server (handles the full
+# initialize → tools/list → tools/call lifecycle over ONE process), spawned by
+# the integration tests to exercise the REAL session seam + the gateway dial/
+# discover/register path end-to-end. Kept out of the lib so the gateway surface
+# stays clean (mirrors kx-mcp's mock-stdio test-support bin).
+[[bin]]
+name = "kx-mcp-test-stdio"
+path = "tests/support/test_stdio_server.rs"
+
+[lints]
+workspace = true

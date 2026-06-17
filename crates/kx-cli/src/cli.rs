@@ -65,6 +65,7 @@ usage: kx <command> [args]
     kx alerts list [--instance <hex16>] [--limit N] [--before-seq N]   (terminal-failure alerts, newest-first)
     kx signatures list | get --id <hex32> | register --manifest-file <path>
     kx tools list | score --intent <text> --tool <id>@<ver>... | discover | register | deregister
+    kx connections add --name <n> (--command <path> | --url <url>) | list | test | remove | discover   (external MCP gateways)
     kx recipe list | search <intent> [--keyword <k>]... [--limit N]   (advisory recipe discovery)
     kx models list                              (display-only model discovery)
     kx datasets list | ingest <name> (--text <s>|--file <p>)... | query <name> --text <q> [--k N]   (RAG corpora)
@@ -124,6 +125,8 @@ pub enum Cli {
     Signatures(verbs::signatures::SignaturesArgs),
     /// Advisory toolscout RPCs (tool discovery + TaskBundle preview).
     Tools(verbs::tools::ToolsArgs),
+    /// External MCP gateway connections (PR-6b-1 — add/list/test/remove/discover).
+    Connections(verbs::connections::ConnectionsArgs),
     /// Model discovery (Batch A `ListModels`; display-only).
     Models(verbs::models::ModelsArgs),
     /// The RAG data-plane (`ListDatasets` / `IngestDocuments` / `QueryDataset`).
@@ -179,6 +182,7 @@ impl Cli {
             Some("alerts") => Ok(Cli::Alerts(verbs::alerts::parse(args)?)),
             Some("signatures") => Ok(Cli::Signatures(verbs::signatures::parse(args)?)),
             Some("tools") => Ok(Cli::Tools(verbs::tools::parse(args)?)),
+            Some("connections") => Ok(Cli::Connections(verbs::connections::parse(args)?)),
             Some("models") => Ok(Cli::Models(verbs::models::parse(args)?)),
             Some("datasets") => Ok(Cli::Datasets(verbs::datasets::parse(args)?)),
             Some("health") => Ok(Cli::Health(verbs::health::parse(args)?)),
@@ -249,6 +253,7 @@ async fn dispatch(cli: Cli) -> Result<(), CliError> {
         Cli::Alerts(a) => verbs::alerts::execute(a).await,
         Cli::Signatures(a) => verbs::signatures::execute(a).await,
         Cli::Tools(a) => verbs::tools::execute(a).await,
+        Cli::Connections(a) => verbs::connections::execute(a).await,
         Cli::Models(a) => verbs::models::execute(a).await,
         Cli::Datasets(a) => verbs::datasets::execute(a).await,
         Cli::Health(a) => verbs::health::execute(a).await,
@@ -601,6 +606,22 @@ kx tools deregister --name <n> --version <v> [client flags]
   SSRF-vetted; the server derives identity + capability). Registration grants NO
   authority — a tool fires only under a server-issued warrant. DIALING the
   registered host (the live remote tool round) is a Cloud / PR-6b capability."
+            .into(),
+        "connections" => "\
+kx connections add --name <n> (--command <path> [--arg <a>]... | --url <url> [--tls-required])
+                   [--credential-ref <ENV_VAR>] [client flags]
+kx connections list [client flags]
+kx connections test --name <n> [client flags]
+kx connections remove --name <n> [client flags]
+kx connections discover --name <n> [client flags]
+  Govern the EXTERNAL MCP gateway (PR-6b-1). `add` registers an external MCP
+  server and DIALS it (initialize -> tools/list), registering its tools into the
+  durable registry (each namespaced `<server>/<remote>`). The live untrusted-
+  egress surface: the host is SSRF-vetted at admission AND at dial time; per-
+  server rate-limited. A credential is referenced by NAME only (an env var /
+  vault key — never the secret, D81). `test` checks reachability; `discover` re-
+  dials + re-registers; `remove` deregisters the server + its tools. Server ids
+  are server-derived (SN-8). OAuth/device-flow + a credential marketplace are Cloud."
             .into(),
         "recipe" => "\
 kx recipe list [client flags]

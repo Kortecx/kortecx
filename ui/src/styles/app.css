@@ -3217,6 +3217,61 @@ button.card-grid__title:hover {
   font-size: 0.9rem;
 }
 
+/* ---- MCP Connections (PR-6b-1: the live external-MCP-gateway govern surface) ---- */
+.connections-list {
+  list-style: none;
+  margin: 0.5rem 0 1rem;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+.connections-list__row {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.6rem 0.8rem;
+  background: var(--bg-input);
+}
+.connections-list__head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.connections-list__name {
+  font-weight: 600;
+}
+.connections-list__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  font-size: 0.82rem;
+  margin: 0.3rem 0 0.5rem;
+}
+.connections-list__actions {
+  margin-top: 0.2rem;
+}
+/* A non-interactive chip (a badge): no hover/cursor affordance. */
+.chip--static {
+  cursor: default;
+}
+.chip--static:hover {
+  border-color: var(--border);
+}
+/* The destructive (Remove) chip. */
+.chip--danger {
+  color: var(--error);
+  border-color: color-mix(in srgb, var(--error) 45%, var(--border));
+}
+.chip--danger:hover {
+  border-color: var(--error);
+}
+.connections-tls {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.88rem;
+}
+
 /* ---- Data Lab: Agent Outputs (PR-6a-2: capture action-exhaust review) ---- */
 .agent-outputs__filter {
   margin: 0.25rem 0 0.6rem;

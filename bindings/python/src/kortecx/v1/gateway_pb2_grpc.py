@@ -238,6 +238,31 @@ class KxGatewayStub(object):
                 request_serializer=kortecx_dot_v1_dot_gateway__pb2.DiscoverToolsRequest.SerializeToString,
                 response_deserializer=kortecx_dot_v1_dot_gateway__pb2.DiscoverToolsResponse.FromString,
                 _registered_method=True)
+        self.RegisterMcpServer = channel.unary_unary(
+                '/kortecx.v1.KxGateway/RegisterMcpServer',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.RegisterMcpServerRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.RegisterMcpServerResponse.FromString,
+                _registered_method=True)
+        self.ListMcpServers = channel.unary_unary(
+                '/kortecx.v1.KxGateway/ListMcpServers',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.ListMcpServersRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.ListMcpServersResponse.FromString,
+                _registered_method=True)
+        self.DiscoverServerTools = channel.unary_unary(
+                '/kortecx.v1.KxGateway/DiscoverServerTools',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.DiscoverServerToolsRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.DiscoverServerToolsResponse.FromString,
+                _registered_method=True)
+        self.TestMcpServer = channel.unary_unary(
+                '/kortecx.v1.KxGateway/TestMcpServer',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.TestMcpServerRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.TestMcpServerResponse.FromString,
+                _registered_method=True)
+        self.DeregisterMcpServer = channel.unary_unary(
+                '/kortecx.v1.KxGateway/DeregisterMcpServer',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.DeregisterMcpServerRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.DeregisterMcpServerResponse.FromString,
+                _registered_method=True)
 
 
 class KxGatewayServicer(object):
@@ -537,6 +562,44 @@ class KxGatewayServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def RegisterMcpServer(self, request, context):
+        """PR-6b-1 additive (D159): the EXTERNAL MCP gateway. RegisterMcpServer dials a
+        remote MCP server (stdio + Streamable-HTTP) and registers its discovered
+        tools into the SAME tools.db (each namespaced `<server>/<remote>`, fireable
+        via the broker); List/Discover/Test/Deregister govern the connections. The
+        live untrusted-egress surface (GR8): admission + dial-time SSRF vetting,
+        per-server rate-limit, warrant-gated egress, secret-less CredentialRef.
+        SN-8: server-derived connection/tool ids; client tool_grants stay refused.
+        OAuth/device-flow + a hosted credential marketplace are CLOUD (D159/GR19).
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ListMcpServers(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def DiscoverServerTools(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def TestMcpServer(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def DeregisterMcpServer(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_KxGatewayServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -739,6 +802,31 @@ def add_KxGatewayServicer_to_server(servicer, server):
                     servicer.DiscoverTools,
                     request_deserializer=kortecx_dot_v1_dot_gateway__pb2.DiscoverToolsRequest.FromString,
                     response_serializer=kortecx_dot_v1_dot_gateway__pb2.DiscoverToolsResponse.SerializeToString,
+            ),
+            'RegisterMcpServer': grpc.unary_unary_rpc_method_handler(
+                    servicer.RegisterMcpServer,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.RegisterMcpServerRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.RegisterMcpServerResponse.SerializeToString,
+            ),
+            'ListMcpServers': grpc.unary_unary_rpc_method_handler(
+                    servicer.ListMcpServers,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.ListMcpServersRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.ListMcpServersResponse.SerializeToString,
+            ),
+            'DiscoverServerTools': grpc.unary_unary_rpc_method_handler(
+                    servicer.DiscoverServerTools,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.DiscoverServerToolsRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.DiscoverServerToolsResponse.SerializeToString,
+            ),
+            'TestMcpServer': grpc.unary_unary_rpc_method_handler(
+                    servicer.TestMcpServer,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.TestMcpServerRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.TestMcpServerResponse.SerializeToString,
+            ),
+            'DeregisterMcpServer': grpc.unary_unary_rpc_method_handler(
+                    servicer.DeregisterMcpServer,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.DeregisterMcpServerRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.DeregisterMcpServerResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -1825,6 +1913,141 @@ class KxGateway(object):
             '/kortecx.v1.KxGateway/DiscoverTools',
             kortecx_dot_v1_dot_gateway__pb2.DiscoverToolsRequest.SerializeToString,
             kortecx_dot_v1_dot_gateway__pb2.DiscoverToolsResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def RegisterMcpServer(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/RegisterMcpServer',
+            kortecx_dot_v1_dot_gateway__pb2.RegisterMcpServerRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.RegisterMcpServerResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ListMcpServers(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/ListMcpServers',
+            kortecx_dot_v1_dot_gateway__pb2.ListMcpServersRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.ListMcpServersResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def DiscoverServerTools(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/DiscoverServerTools',
+            kortecx_dot_v1_dot_gateway__pb2.DiscoverServerToolsRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.DiscoverServerToolsResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def TestMcpServer(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/TestMcpServer',
+            kortecx_dot_v1_dot_gateway__pb2.TestMcpServerRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.TestMcpServerResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def DeregisterMcpServer(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/DeregisterMcpServer',
+            kortecx_dot_v1_dot_gateway__pb2.DeregisterMcpServerRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.DeregisterMcpServerResponse.FromString,
             options,
             channel_credentials,
             insecure,

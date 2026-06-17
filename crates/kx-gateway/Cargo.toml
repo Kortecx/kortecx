@@ -102,6 +102,13 @@ kx-critic          = { workspace = true, optional = true }
 # OPTIONAL + behind `inference` (the react decode arm lives in the
 # inference-gated executor), so the DEFAULT build is byte-unchanged.
 kx-mcp             = { workspace = true, optional = true }
+# PR-6b-1 (D159): the EXTERNAL MCP gateway — dials external MCP servers (stdio +
+# Streamable-HTTP) over kx-mcp's session seam, discovers their tools into the
+# durable tools.db, and governs them via an off-journal connections.db sidecar.
+# FFI-free (kx-mcp/ureq/rusqlite only — the dep-wall subtree check pins it).
+# Behind the `mcp-gateway` feature (ON by default); the live untrusted-egress
+# surface is the registry + dial-time SSRF + per-server rate-limit (GR8).
+kx-mcp-gateway     = { workspace = true, optional = true }
 # PR-2d-2: the typed ToolDef/inputSchema vocabulary for the bundled tool's
 # registry entry (shared with the coordinator so the settle's validate-at-freeze
 # and the broker dispatch see the SAME schema). FFI-free. NON-optional since
@@ -206,7 +213,15 @@ rcgen    = { workspace = true }
 tonic    = { workspace = true, features = ["tls"] }
 
 [features]
-default = ["embedded-worker"]
+default = ["embedded-worker", "mcp-gateway"]
+# PR-6b-1 (D159): the EXTERNAL MCP gateway (dial external MCP servers + the
+# Connections govern surface + the 5 MCP-server RPCs). FFI-free (kx-mcp/ureq/
+# rusqlite), so it stays in the DEFAULT build without breaking `build-no-inference`
+# or the FFI-link gate. Requires the embedded broker (to register a dialed tool's
+# firing capability). The autonomous ReAct loop's auto-grant of dialed tools ships
+# in PR-6b-2; here a dialed tool is registered + directly fireable through a
+# granting warrant (SN-8). OAuth/device-flow + a credential marketplace = CLOUD.
+mcp-gateway = ["dep:kx-mcp", "dep:kx-mcp-gateway", "embedded-worker"]
 # The in-process coordinator + local worker (single-system OSS, D129). On by default so
 # the binary is genuinely reachable end-to-end (SubmitRun -> Committed). A future library
 # consumer can disable it to embed a gateway-only front end (then `serve` requires an
@@ -225,6 +240,7 @@ inference = [
     "dep:kx-planner",
     "dep:kx-critic",
     "dep:kx-mcp",
+    "mcp-gateway",
 ]
 # T3.7: the Datasets data-plane (RAG) read/write surface. The client-provided-vector
 # path is FFI-FREE + deterministic (CI-exercisable on Linux with no model). Pulls only

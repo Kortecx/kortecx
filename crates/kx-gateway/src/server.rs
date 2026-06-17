@@ -589,7 +589,11 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         executor,
         telemetry_ledger.sink(),
     ));
-    let local_broker = LocalCapabilityBroker::new((*content).clone());
+    // PR-6b-1: held as an `Arc` (one object, two views) so the external MCP
+    // gateway can register a dialed tool's firing capability at runtime
+    // (`register_capability` is `&self`/interior-mutable) on the SAME broker the
+    // worker dispatches through.
+    let local_broker = Arc::new(LocalCapabilityBroker::new((*content).clone()));
     // PR-2d-2 (react-tools-live): register the bundled deterministic stdio tool's
     // capability — the live ReAct loop's "Act" step — when its binary is present
     // AND a fit serve model resolved (no model ⇒ no react chain can drive it).
@@ -615,7 +619,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         };
     #[cfg(not(feature = "inference"))]
     let fs_list_tool: Option<(kx_mote::ToolName, kx_mote::ToolVersion)> = None;
-    let broker: Arc<dyn CapabilityBroker> = Arc::new(local_broker);
+    let broker: Arc<dyn CapabilityBroker> = local_broker.clone();
     let worker = Worker::register(
         client,
         default_executor_class(),
@@ -998,6 +1002,27 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
             token_broker.clone(),
             live_shutdown_rx.clone(),
         )));
+    }
+    // PR-6b-1: wire the EXTERNAL MCP gateway (the 5 MCP-server RPCs + the live
+    // Connections govern surface). Opens the off-journal connections.db beside the
+    // catalog, registers dialed tools' firing capabilities on the shared broker,
+    // and re-dials persisted servers (fail-soft). A connections.db open failure
+    // leaves the seam unwired (the RPCs return `unimplemented`) — never aborts serve.
+    #[cfg(feature = "mcp-gateway")]
+    {
+        match crate::mcp_gateway::wire_mcp_gateway(
+            &catalog_dir,
+            tool_registry.clone(),
+            local_broker.clone(),
+        ) {
+            Ok(admin) => {
+                gateway = gateway.with_mcp_admin(admin);
+                tracing::info!("PR-6b-1: external MCP gateway wired (connections.db)");
+            }
+            Err(error) => {
+                tracing::warn!(%error, "external MCP gateway disabled (connections.db unavailable)");
+            }
+        }
     }
 
     // (4) Auth interceptor + bind + serve. Posture: --dev-allow-local (loopback
