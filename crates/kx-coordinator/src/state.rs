@@ -25,9 +25,9 @@ use kx_journal::{
     ResolvedCapabilityRecord, ResolvedKindTag, INSTANCE_ID_LEN,
 };
 use kx_mote::{
-    ConfigKey, EdgeKind, ModelId, Mote, MoteDef, MoteId, NdClass, ToolName, ToolVersion,
-    PROMPT_KEY, REACT_INSTRUCTION_KEY, REACT_MAX_TOOL_CALLS_KEY, REACT_MAX_TURNS_KEY,
-    REACT_TURN_KEY,
+    ConfigKey, EdgeKind, EffectPattern, ModelId, Mote, MoteDef, MoteId, NdClass, ToolName,
+    ToolVersion, PROMPT_KEY, REACT_INSTRUCTION_KEY, REACT_MAX_TOOL_CALLS_KEY, REACT_MAX_TURNS_KEY,
+    REACT_TURN_KEY, TOOL_ARGS_KEY,
 };
 use kx_projection::{
     ContentStoreVerdicts, MoteState, Projection, ReactRoundRecord, RegisterMote, ReplanRoundRecord,
@@ -654,6 +654,17 @@ fn lease_ready(
                         Some(args) => Some(args),
                         None => return None,
                     }
+                } else if is_authored_tool(mote, projection) {
+                    // PR-6b-2: a STANDALONE authored `tool()` node derives its args
+                    // from its OWN identity-bearing `config_subset` (no parent, no
+                    // store I/O), validated fail-closed. Same args-or-skip rule as
+                    // the react observation: a transient registry fault skips the
+                    // lease this poll and a later poll retries (the worker never
+                    // sees an authored tool without coordinator-validated args).
+                    match resolve_authored_tool_args(mote, tool_registry) {
+                        Some(args) => Some(args),
+                        None => return None,
+                    }
                 } else {
                     None
                 };
@@ -728,6 +739,74 @@ fn resolve_tool_args(
     // precheck still enforces request.fs_scope ⊆ warrant.fs_scope at dispatch.
     Some((
         call.args_bytes,
+        def.required_capability.net_scope_required.clone(),
+        def.required_capability.fs_scope_required.clone(),
+    ))
+}
+
+/// PR-6b-2: `true` iff `mote` is a STANDALONE authored `tool()` node — a
+/// tool-contract Mote carrying its AUTHORED args in `config_subset[TOOL_ARGS_KEY]`,
+/// declared `StageThenCommit`, and NOT a coordinator-materialized ReAct
+/// observation. The two args-bearing shapes are provably DISJOINT: a react
+/// observation has a folded react-turn Data parent and NO `TOOL_ARGS_KEY` (its
+/// args are re-derived from the parent turn's output, [`resolve_tool_args`]); an
+/// authored tool node carries the key and has no react-turn parent. Scoped as
+/// tight as [`is_react_observation`] so the args-from-params lease branch can NEVER
+/// wedge an ordinary WM Mote — anything failing this predicate (every canonical
+/// run mote: no `tool_contract`, no `TOOL_ARGS_KEY`) leases exactly as before.
+fn is_authored_tool(mote: &Mote, projection: &Projection) -> bool {
+    !mote.def.tool_contract.is_empty()
+        && mote.effect_pattern() == EffectPattern::StageThenCommit
+        && mote
+            .def
+            .config_subset
+            .contains_key(&ConfigKey(TOOL_ARGS_KEY.to_string()))
+        && !is_react_observation(mote, projection)
+}
+
+/// PR-6b-2: derive a standalone authored `tool()` node's `(args_bytes, net_scope,
+/// fs_scope)` — a PURE function of the Mote's OWN identity-bearing `config_subset`
+/// (NO parent, NO store I/O), run on the sole-writer thread at every (re-)lease:
+///
+/// 1. require `tool_contract` to name EXACTLY one `(tool, version)` (an authored
+///    tool step binds a single tool);
+/// 2. read the authored args object from `config_subset[TOOL_ARGS_KEY]` — one
+///    canonical-JSON object lowered byte-identically by the Chains DSL and copied
+///    verbatim into `config_subset` by the gateway binder;
+/// 3. resolve the tool def (`lookup` returns `None` for absent/PendingHumanReview
+///    — fail-closed) and validate the args against its typed `inputSchema`
+///    FAIL-CLOSED ([`kx_tool_registry::validate_args`]);
+/// 4. take the tool's DECLARED net/fs requirement as the request scopes (the
+///    broker's `precheck` still enforces request ⊆ warrant at dispatch).
+///
+/// `None` on ANY fault (multi/empty contract, missing config, unknown or pending
+/// tool, schema reject) — the lease is skipped this poll. Because the args live in
+/// the identity-bearing `config_subset`, recovery re-derives them byte-identically;
+/// a persistent `None` is a registry/admission fault (already gated at authoring),
+/// not a nondeterministic disagreement, so skip-and-retry is fail-closed (no
+/// effect ever fires without coordinator-validated args).
+fn resolve_authored_tool_args(
+    mote: &Mote,
+    tool_registry: &dyn ToolRegistry,
+) -> Option<(Vec<u8>, kx_warrant::NetScope, kx_warrant::FsScope)> {
+    // Exactly one (tool, version): the authored tool step binds a single tool.
+    let mut contract = mote.def.tool_contract.iter();
+    let (name, version) = contract.next()?;
+    if contract.next().is_some() {
+        return None;
+    }
+    let args_bytes = mote
+        .def
+        .config_subset
+        .get(&ConfigKey(TOOL_ARGS_KEY.to_string()))?
+        .0
+        .clone();
+    let def = tool_registry.lookup(name, version)?;
+    if let Some(schema) = &def.input_schema {
+        kx_tool_registry::validate_args(schema, &args_bytes).ok()?;
+    }
+    Some((
+        args_bytes,
         def.required_capability.net_scope_required.clone(),
         def.required_capability.fs_scope_required.clone(),
     ))
@@ -3202,4 +3281,140 @@ fn apply_batch<J: Journal>(
         });
     }
     Ok(applied)
+}
+
+#[cfg(test)]
+mod authored_tool_tests {
+    //! PR-6b-2: the fail-closed `resolve_authored_tool_args` gate — the
+    //! coordinator's args-from-`config_subset` resolver for a standalone authored
+    //! `tool()` node. (Full lease-path disjointness incl. `is_authored_tool`'s
+    //! Projection dependence is covered by the live integration test
+    //! `tests/tool_node_live.rs`.)
+    use super::*;
+    use kx_mote::{
+        ConfigVal, GraphPosition, InferenceParams, InputDataId, LogicRef, PromptTemplateHash,
+        MOTE_DEF_SCHEMA_VERSION,
+    };
+    use kx_tool_registry::{
+        IdempotencyClass, InMemoryToolRegistry, InputSchema, ParamSpec, ParamType, ToolDef,
+        ToolKind, ToolProvenance,
+    };
+    use kx_warrant::{FsScope, NetScope, ResourceCeiling, ToolRequirement};
+
+    fn tool_mote(contract: &[(&str, &str)], args: Option<&[u8]>) -> Mote {
+        let mut tool_contract = BTreeMap::new();
+        for (n, v) in contract {
+            tool_contract.insert(ToolName((*n).into()), ToolVersion((*v).into()));
+        }
+        let mut config_subset = BTreeMap::new();
+        if let Some(a) = args {
+            config_subset.insert(ConfigKey(TOOL_ARGS_KEY.to_string()), ConfigVal(a.to_vec()));
+        }
+        let def = MoteDef {
+            logic_ref: LogicRef::from_bytes([7u8; 32]),
+            model_id: ModelId("test".into()),
+            prompt_template_hash: PromptTemplateHash::from_bytes([7u8; 32]),
+            tool_contract,
+            nd_class: NdClass::WorldMutating,
+            config_subset,
+            effect_pattern: EffectPattern::StageThenCommit,
+            critic_for: None,
+            is_topology_shaper: false,
+            inference_params: InferenceParams::default(),
+            critic_check: None,
+            schema_version: MOTE_DEF_SCHEMA_VERSION,
+        };
+        Mote::new(
+            def,
+            InputDataId::from_bytes([7u8; 32]),
+            GraphPosition(vec![1]),
+            SmallVec::new(),
+        )
+    }
+
+    fn registry_with(schema: Option<InputSchema>) -> InMemoryToolRegistry {
+        let mut reg = InMemoryToolRegistry::new();
+        let def = ToolDef {
+            tool_id: ToolName("web-search".into()),
+            tool_version: ToolVersion("1".into()),
+            kind: ToolKind::Builtin,
+            required_capability: ToolRequirement {
+                net_scope_required: NetScope::None,
+                fs_scope_required: FsScope::empty(),
+                syscall_profile_ref: kx_content::ContentRef::from_bytes([0; 32]),
+                min_resource_ceiling: ResourceCeiling {
+                    cpu_milli: 0,
+                    mem_bytes: 0,
+                    wall_clock_ms: 0,
+                    fd_count: 0,
+                    disk_bytes: 0,
+                },
+            },
+            description: String::new(),
+            idempotency_class: IdempotencyClass::Staged,
+            input_schema: schema,
+        };
+        let _ = reg.register(def, ToolProvenance::HumanAuthored { author: "t".into() });
+        reg
+    }
+
+    fn schema() -> InputSchema {
+        InputSchema {
+            params: vec![ParamSpec {
+                name: "q".into(),
+                ty: ParamType::Str { max_len: 64 },
+                required: true,
+            }],
+            deny_unknown: true,
+        }
+    }
+
+    #[test]
+    fn happy_path_returns_validated_args() {
+        let reg = registry_with(Some(schema()));
+        let mote = tool_mote(&[("web-search", "1")], Some(br#"{"q":"hi"}"#));
+        let got = resolve_authored_tool_args(&mote, &reg).expect("valid args resolve");
+        assert_eq!(got.0, br#"{"q":"hi"}"#.to_vec());
+        assert_eq!(got.1, NetScope::None);
+    }
+
+    #[test]
+    fn absent_tool_is_fail_closed() {
+        let reg = InMemoryToolRegistry::new(); // empty — tool not registered
+        let mote = tool_mote(&[("web-search", "1")], Some(br#"{"q":"hi"}"#));
+        assert!(resolve_authored_tool_args(&mote, &reg).is_none());
+    }
+
+    #[test]
+    fn multi_tool_contract_is_refused() {
+        let reg = registry_with(Some(schema()));
+        let mote = tool_mote(
+            &[("web-search", "1"), ("other", "1")],
+            Some(br#"{"q":"hi"}"#),
+        );
+        assert!(resolve_authored_tool_args(&mote, &reg).is_none());
+    }
+
+    #[test]
+    fn missing_config_args_is_refused() {
+        let reg = registry_with(Some(schema()));
+        let mote = tool_mote(&[("web-search", "1")], None);
+        assert!(resolve_authored_tool_args(&mote, &reg).is_none());
+    }
+
+    #[test]
+    fn schema_reject_is_fail_closed() {
+        let reg = registry_with(Some(schema()));
+        // `q` required but absent, and a smuggled key under deny_unknown.
+        let mote = tool_mote(&[("web-search", "1")], Some(br#"{"smuggled":1}"#));
+        assert!(resolve_authored_tool_args(&mote, &reg).is_none());
+    }
+
+    #[test]
+    fn no_schema_tool_passes_args_through() {
+        let reg = registry_with(None); // no input_schema ⇒ no client-side gate
+        let mote = tool_mote(&[("web-search", "1")], Some(br#"{"anything":true}"#));
+        let got = resolve_authored_tool_args(&mote, &reg).expect("passes through");
+        assert_eq!(got.0, br#"{"anything":true}"#.to_vec());
+    }
 }

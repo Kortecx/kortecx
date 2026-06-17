@@ -441,19 +441,34 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     let fs_list_root: Option<std::path::PathBuf> = crate::mcp_tool::fs_list_root();
     #[cfg(not(feature = "inference"))]
     let fs_list_root: Option<std::path::PathBuf> = None;
+    // PR-6b-2: resolve the durable catalog dir + open the durable tools registry
+    // EARLY (moved up from the telemetry section) so the embedded coordinator
+    // SHARES the SAME live `Arc<SqliteToolRegistry>`. The coordinator's D66
+    // submission gate (and the react settle's arg-validation) then resolve a
+    // runtime-DIALED or `RegisterTool`'d tool — what an authored `tool()` node /
+    // an auto-grant fires — not just the bundled set. The bundled echo/fs-list
+    // tools are seeded into it below (before any submission can arrive), and the
+    // SqliteToolRegistry's lookups are live DB reads, so the react path resolves
+    // byte-identically to the prior in-memory `registry_with_echo`.
+    let catalog_dir = resolve_catalog_dir(&cfg)?;
+    let tool_registry = Arc::new(
+        kx_tool_registry::SqliteToolRegistry::open(catalog_dir.join("tools.db"))
+            .map_err(|e| GatewayError::Config(format!("tools.db: {e}")))?,
+    );
     #[cfg(feature = "inference")]
     let coordinator = match shaper_runtime.as_ref() {
         Some(rt) => {
             tracing::info!("PR-2b: live model-driven topology loop enabled (kx/recipes/plan)");
-            // PR-2d-2: the coordinator shares the serve tool registry (built-ins
-            // + the bundled stdio tool + fs-list@1 when a read root is granted) so
-            // its settle validates a model-proposed call's args against the SAME
-            // typed schema the broker dispatch sees.
+            // PR-2d-2/PR-6b-2: the coordinator shares the live serve tool registry
+            // (built-ins + the bundled stdio tool + fs-list@1 when a read root is
+            // granted + any RegisterTool'd or runtime-DIALED external MCP tool) so
+            // its settle/D66 gate validates a proposed call's args + resolves its
+            // grant against the SAME registry the broker dispatch sees.
             CoordinatorService::with_store_shaper_and_tools(
                 writer,
                 content.clone(),
                 rt.role_registry.clone(),
-                Arc::new(crate::mcp_tool::registry_with_echo(fs_list_root.as_deref())),
+                tool_registry.clone(),
             )
         }
         None => CoordinatorService::with_store(writer, content.clone()),
@@ -496,27 +511,13 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     //     deterministic content-storing executor (publishes bytes into the shared
     //     store BEFORE proposing, so D55 holds), and proposes the commit.
     //
-    // The durable catalog directory is resolved HERE (it only needs cfg) because
-    // the Batch C telemetry ledger must exist before the executor chain is
-    // composed below — its sidecar lives beside the catalog ledgers, and its
-    // sink rides the executor wrapper. Section (3b) reuses the same path.
-    let catalog_dir = resolve_catalog_dir(&cfg)?;
+    // (`catalog_dir` + the durable `tool_registry` were resolved EARLY above so the
+    // embedded coordinator shares the live registry — PR-6b-2.)
     // Batch C: the telemetry.db sidecar (host-measured execution exhaust —
     // wall-clock / model usage / fired tool). Rebuildable-to-EMPTY, off-journal,
     // off-digest; the hot-path sink is bounded + fail-open (drop-on-full), so it
     // can never block, slow, or fail a run.
     let telemetry_ledger = Arc::new(crate::telemetry::TelemetryLedger::open(&catalog_dir)?);
-    // PR-6a: the durable declarative-tools registry (off-journal tools.db beside
-    // the catalog ledgers). The OSS built-ins re-seed on open; the serve path
-    // registers the bundled tools (echo / fs-list) below so DiscoverTools shows
-    // the real runnable set. RegisterTool/DeregisterTool write it; DiscoverTools
-    // reads it. Off-digest by construction (server-derived tool_id; never a
-    // MoteId/journal/checkpoint input). DIALING a registered external MCP server
-    // is PR-6b/Cloud — this stores a vetted server_host, never dials it.
-    let tool_registry = Arc::new(
-        kx_tool_registry::SqliteToolRegistry::open(catalog_dir.join("tools.db"))
-            .map_err(|e| GatewayError::Config(format!("tools.db: {e}")))?,
-    );
     let client = connect_worker(&coord_endpoint).await?;
     // No real body is provisioned in the OSS serve path (script/tool execution is
     // OSS-scoped-out, D141.4), so the sandbox-routing seam is wired with no body ref:
@@ -754,7 +755,14 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     // The Blueprint-builder author seam (SubmitWorkflow) — shares the same library
     // `Arc` (one seed, many seams), so the authoring authority resolves from the
     // SAME grant ledger Invoke uses.
-    let author: Arc<dyn WorkflowAuthor> = Arc::new(HostWorkflowAuthor::from_shared(demo.clone()));
+    // PR-6b-2: the author shares the LIVE tool registry (the SAME `Arc` the
+    // coordinator + broker hold) so a `tool()` step resolves its def + builds a
+    // tool-aware authoring ceiling, and a runtime-dialed tool is authorable the
+    // moment it registers.
+    let author: Arc<dyn WorkflowAuthor> = Arc::new(HostWorkflowAuthor::from_shared_with_tools(
+        demo.clone(),
+        tool_registry.clone(),
+    ));
     // (3d) UI-3: a durable membership ledger (teams) under the SAME catalog dir,
     //      idempotently seeded with one workspace team (owner = the gateway principal;
     //      members = each --auth-token party + the dev principal, one a Delegate) +
@@ -967,6 +975,9 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         .with_critics_supported(critics_supported)
         .with_react_supported(react_supported)
         .with_registered_tools(registered_tools)
+        .with_registered_tools_view(Arc::new(HostRegisteredTools {
+            broker: local_broker.clone(),
+        }))
         .with_toolscout_view(toolscout_view)
         .with_content_writer(content_writer)
         .with_uploads_ledger(uploads_db)
@@ -1432,6 +1443,22 @@ async fn connect_submitter_with_retry(
     Err(GatewayError::Coordinator(format!(
         "embedded coordinator never accepted at {endpoint}: {last}"
     )))
+}
+
+/// PR-6b-2: the host [`RegisteredToolsView`](kx_gateway_core::RegisteredToolsView)
+/// — the authoring/invoke backstop's LIVE truth source. Wraps the serve broker so
+/// a runtime-DIALED external MCP tool's `(tool_id, tool_version)` becomes
+/// authorable the moment its firing capability registers (never a startup
+/// snapshot). Read-only; never authorizes (SN-8) — the broker's 6-gate precheck
+/// re-verifies at dispatch.
+struct HostRegisteredTools {
+    broker: Arc<LocalCapabilityBroker<LocalFsContentStore>>,
+}
+
+impl kx_gateway_core::RegisteredToolsView for HostRegisteredTools {
+    fn registered_grants(&self) -> std::collections::BTreeSet<(String, String)> {
+        self.broker.registered_grants()
+    }
 }
 
 /// Resolve (creating if absent) the durable catalog directory: `--catalog-dir`

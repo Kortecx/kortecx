@@ -24,6 +24,7 @@ from kortecx.chains import (
     chain,
     model,
     pure,
+    tool,
 )
 
 # The corpus is the cross-surface contract: repo-root/tests/golden/chains. From
@@ -44,13 +45,18 @@ def _load_corpus() -> list:
 
 def _task_from_spec(spec: Dict[str, object]) -> Task:
     """Build a :class:`Task` from a corpus task spec (``{kind, model_id?, prompt?,
-    params?}``)."""
+    params?}`` for pure/model; ``{kind:"tool", tool_contract, args?}`` for tool)."""
     kind = spec["kind"]
     params = spec.get("params") or {}
     if kind == "model":
         return model(str(spec.get("model_id", "")), str(spec.get("prompt", "")), **params)
     if kind == "pure":
         return pure(**params)
+    if kind == "tool":
+        contract = spec.get("tool_contract") or {}
+        (tool_id, tool_version) = next(iter(contract.items()))
+        args = spec.get("args") or {}
+        return tool(str(tool_id), str(tool_version), **args)
     raise AssertionError(f"unsupported corpus task kind {kind!r}")
 
 

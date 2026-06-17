@@ -18,7 +18,9 @@
 //! `--tasks` is a JSON object map `{ "a": {"kind":"pure", ...}, ... }` — each value
 //! is a [`StepSpec`](crate::verbs::blueprint) (the same shape as a `blueprint`
 //! step). A handle that appears more than once is the SAME node (reuse builds DAGs);
-//! tasks defined but unused are ignored (lenient). P1 palette: `pure` / `model`.
+//! tasks defined but unused are ignored (lenient). Palette: `pure` / `model` /
+//! `tool` (PR-6b-2 — fire a registered tool; `args` lower to the canonical
+//! `kx.tool.args` blob).
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
@@ -549,6 +551,8 @@ mod tests {
         #[serde(default)]
         prompt: String,
         #[serde(default)]
+        tool_contract: BTreeMap<String, String>,
+        #[serde(default)]
         params: BTreeMap<String, String>,
     }
 
@@ -575,6 +579,7 @@ mod tests {
             Ok(proto::WorkflowStepKind::Pure) => "pure",
             Ok(proto::WorkflowStepKind::Model) => "model",
             Ok(proto::WorkflowStepKind::Exec) => "exec",
+            Ok(proto::WorkflowStepKind::Tool) => "tool",
             _ => "unspecified",
         }
     }
@@ -627,6 +632,16 @@ mod tests {
                     case.name
                 );
                 assert_eq!(got.prompt, want.prompt, "[{}] step {i} prompt", case.name);
+                let got_contract: BTreeMap<String, String> = got
+                    .tool_contract
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect();
+                assert_eq!(
+                    got_contract, want.tool_contract,
+                    "[{}] step {i} tool_contract",
+                    case.name
+                );
                 let want_params: BTreeMap<String, Vec<u8>> = want
                     .params
                     .iter()

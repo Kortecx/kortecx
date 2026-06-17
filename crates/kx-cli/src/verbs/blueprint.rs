@@ -50,9 +50,14 @@ pub(crate) struct DagSpec {
     pub(crate) execution_mode: Option<String>,
 }
 
+/// PR-6b-2: the single canonical config key a `tool` step's authored args ride
+/// under. MUST equal `kx_mote::TOOL_ARGS_KEY` + the Py/TS `TOOL_ARGS_KEY` (pinned
+/// identical by the golden corpus). Hardcoded to avoid a `kx-mote` dep on the CLI.
+const TOOL_ARGS_KEY: &str = "kx.tool.args";
+
 #[derive(Debug, Deserialize)]
 pub(crate) struct StepSpec {
-    /// `pure` | `model` | `exec` (exec reserved).
+    /// `pure` | `model` | `exec` (reserved) | `tool` (PR-6b-2).
     pub(crate) kind: String,
     #[serde(default)]
     pub(crate) model_id: String,
@@ -66,6 +71,11 @@ pub(crate) struct StepSpec {
     /// Free config entries; values are UTF-8 strings.
     #[serde(default)]
     pub(crate) params: BTreeMap<String, String>,
+    /// TOOL only (PR-6b-2): the tool-call arguments, serialized at lowering to ONE
+    /// canonical-JSON object under [`TOOL_ARGS_KEY`] (sorted keys, compact) —
+    /// byte-identical to the Py/TS `tool()` factories. No floats (SN-8).
+    #[serde(default)]
+    pub(crate) args: BTreeMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -152,9 +162,10 @@ pub(crate) fn to_request(spec: DagSpec) -> Result<proto::SubmitWorkflowRequest, 
             "pure" => proto::WorkflowStepKind::Pure,
             "model" => proto::WorkflowStepKind::Model,
             "exec" => proto::WorkflowStepKind::Exec,
+            "tool" => proto::WorkflowStepKind::Tool,
             other => {
                 return Err(CliError::Usage(format!(
-                    "step kind must be pure|model|exec, got {other:?}"
+                    "step kind must be pure|model|exec|tool, got {other:?}"
                 )));
             }
         };
@@ -164,17 +175,27 @@ pub(crate) fn to_request(spec: DagSpec) -> Result<proto::SubmitWorkflowRequest, 
                 .to_vec(),
             None => Vec::new(),
         };
+        let mut params: BTreeMap<String, Vec<u8>> = s
+            .params
+            .into_iter()
+            .map(|(k, v)| (k, v.into_bytes()))
+            .collect();
+        // PR-6b-2: a TOOL step lowers its authored args to the canonical-JSON blob
+        // under TOOL_ARGS_KEY (`s.args` is a BTreeMap ⇒ sorted keys; serde_json ⇒
+        // compact) — byte-identical to the Py/TS factories + the coordinator's
+        // `is_authored_tool` discriminant.
+        if kind == proto::WorkflowStepKind::Tool {
+            let blob = serde_json::to_string(&s.args)
+                .map_err(|e| CliError::Usage(format!("tool args: {e}")))?;
+            params.insert(TOOL_ARGS_KEY.to_string(), blob.into_bytes());
+        }
         steps.push(proto::WorkflowStep {
             kind: kind as i32,
             model_id: s.model_id,
             prompt: s.prompt,
             body_signature_id,
             tool_contract: s.tool_contract.into_iter().collect(),
-            params: s
-                .params
-                .into_iter()
-                .map(|(k, v)| (k, v.into_bytes()))
-                .collect(),
+            params: params.into_iter().collect(),
         });
     }
     let mut edges = Vec::with_capacity(spec.edges.len());

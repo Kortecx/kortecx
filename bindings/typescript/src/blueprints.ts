@@ -18,8 +18,8 @@ import {
 } from "./gen/kortecx/v1/gateway_pb.js";
 import { decodeFixed } from "./hexids.js";
 
-/** The vetted step palette (EXEC is reserved server-side in PR-1). */
-export type StepKind = "pure" | "model" | "exec";
+/** The vetted step palette (EXEC is reserved server-side in PR-1; TOOL = PR-6b-2). */
+export type StepKind = "pure" | "model" | "exec" | "tool";
 /** Frozen = memoize/reuse (default); dynamic is reserved server-side in PR-1. */
 export type ExecutionMode = "frozen" | "dynamic";
 export type EdgeType = "data" | "control";
@@ -48,6 +48,7 @@ const STEP_KIND: Record<StepKind, WorkflowStepKind> = {
   pure: WorkflowStepKind.PURE,
   model: WorkflowStepKind.MODEL,
   exec: WorkflowStepKind.EXEC,
+  tool: WorkflowStepKind.TOOL,
 };
 
 function paramBytes(v: Uint8Array | string): Uint8Array {

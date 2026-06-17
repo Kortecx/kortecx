@@ -28,12 +28,14 @@ use kx_gateway_core::{
 use kx_invoke::{bind_snapshot, InvokeError, UseWarrantResolver};
 use kx_mote::{
     ConfigKey, ConfigVal, EdgeMeta, LogicRef, ModelId, ToolName, ToolVersion, PROMPT_KEY,
+    TOOL_ARGS_KEY,
 };
+use kx_tool_registry::{ToolDef, ToolRegistry};
 use kx_warrant::{
     intersect, ExecutorClass, FsMode, FsScope, Host, ModelRoute, MoteClass, NetScope,
-    ResourceCeiling, Role, WarrantSpec,
+    ResourceCeiling, Role, ToolGrant, WarrantSpec,
 };
-use kx_workflow::{compile, transform, StepDef, WorkflowDef};
+use kx_workflow::{compile, tool_step, transform, StepDef, WorkflowDef};
 
 use crate::error::GatewayError;
 
@@ -1093,13 +1095,38 @@ impl UseWarrantResolver for HostUseResolver<'_> {
 /// client warrant — SN-8). Shares the library `Arc` with the binder/catalog.
 pub struct HostWorkflowAuthor {
     lib: std::sync::Arc<DemoLibrary>,
+    /// PR-6b-2: the LIVE tool registry (the SAME `Arc` the coordinator + broker
+    /// share). A `tool()` step resolves its def here (warrant + typed schema), and
+    /// `author()` widens the authoring CEILING with its tools so a server-built
+    /// tool warrant survives the per-party intersect — both LIVE, so a
+    /// runtime-DIALED external MCP tool is authorable the moment it registers.
+    /// `None` ([`from_shared`](Self::from_shared)) ⇒ `tool()` authoring is refused
+    /// (the PR-1 PURE/MODEL-only behaviour; every existing test path).
+    tools: Option<std::sync::Arc<dyn ToolRegistry>>,
 }
 
 impl HostWorkflowAuthor {
-    /// Wrap a [`DemoLibrary`] shared with the binder/catalog (one seed, many seams).
+    /// Wrap a [`DemoLibrary`] shared with the binder/catalog (one seed, many
+    /// seams), WITHOUT a tool registry — PURE/MODEL authoring only (`tool()` steps
+    /// are refused fail-closed).
     #[must_use]
     pub fn from_shared(lib: std::sync::Arc<DemoLibrary>) -> Self {
-        Self { lib }
+        Self { lib, tools: None }
+    }
+
+    /// Wrap a [`DemoLibrary`] WITH the live tool registry (PR-6b-2) — enables
+    /// `tool()` step authoring + a tool-aware authoring ceiling. The registry is
+    /// the SAME `Arc` shared with the coordinator + broker, so authoring, the D66
+    /// submission gate, and the broker dispatch all see one live tool set.
+    #[must_use]
+    pub fn from_shared_with_tools(
+        lib: std::sync::Arc<DemoLibrary>,
+        tools: std::sync::Arc<dyn ToolRegistry>,
+    ) -> Self {
+        Self {
+            lib,
+            tools: Some(tools),
+        }
     }
 
     /// Map one authored step → a `kx_workflow::StepDef`, server-assigning `logic_ref`.
@@ -1161,9 +1188,15 @@ impl HostWorkflowAuthor {
                     "EXEC step authoring is reserved (PR-1 supports PURE + MODEL)".into(),
                 ));
             }
+            // TOOL (PR-6b-2): fire a single REGISTERED tool as a standalone node
+            // (extracted helper — the host resolves the tool in the LIVE registry +
+            // builds its warrant SERVER-SIDE from the declared scope, SN-8).
+            AuthorStepKind::Tool => self.tool_step_def(index, s, base)?,
         };
         // Free params land in config_subset (identity-bearing); MODEL also binds the
         // prompt into config_subset[PROMPT_KEY] — the key the model executor reads.
+        // For a TOOL step the params carry the authored args under TOOL_ARGS_KEY
+        // (the SDK lowering's single param), which lands in config_subset here.
         for (k, v) in &s.params {
             def.config_subset
                 .insert(ConfigKey(k.clone()), ConfigVal(v.clone()));
@@ -1174,7 +1207,85 @@ impl HostWorkflowAuthor {
                 ConfigVal(s.prompt.clone().into_bytes()),
             );
         }
+        // PR-6b-2: a TOOL step ALWAYS carries a TOOL_ARGS_KEY entry — it is the
+        // coordinator's `is_authored_tool` discriminant and the args source. A
+        // no-arg call (or a client that omitted it) defaults to the empty object
+        // `{}`; the coordinator validates it against the tool's schema fail-closed.
+        if s.kind == AuthorStepKind::Tool
+            && !def
+                .config_subset
+                .contains_key(&ConfigKey(TOOL_ARGS_KEY.to_string()))
+        {
+            def.config_subset.insert(
+                ConfigKey(TOOL_ARGS_KEY.to_string()),
+                ConfigVal(b"{}".to_vec()),
+            );
+        }
         Ok(def)
+    }
+
+    /// PR-6b-2: build the [`StepDef`] for an authored `tool()` step. Resolves the
+    /// single `(tool_id, tool_version)` in the LIVE registry (fail-closed on
+    /// absent/`PendingHumanReview`), server-assigns a content-sentinel `logic_ref`,
+    /// and builds the per-step warrant from the tool's DECLARED scope ([`tool_step_warrant`]).
+    /// The authored args land in `config_subset[TOOL_ARGS_KEY]` via the shared
+    /// params loop in [`step_def`](Self::step_def).
+    fn tool_step_def(
+        &self,
+        index: usize,
+        s: &AuthorStep,
+        base: &WarrantSpec,
+    ) -> Result<StepDef, BinderError> {
+        let tools = self.tools.as_ref().ok_or_else(|| {
+            BinderError::InvalidArgs(
+                "this serve has no tool registry; TOOL steps are unavailable".into(),
+            )
+        })?;
+        // Exactly one (tool_id, tool_version) — a tool step binds one tool.
+        let mut it = s.tool_contract.iter();
+        let (name, version) = it.next().ok_or_else(|| {
+            BinderError::InvalidArgs(
+                "TOOL step must name exactly one (tool_id, tool_version)".into(),
+            )
+        })?;
+        if it.next().is_some() {
+            return Err(BinderError::InvalidArgs(
+                "TOOL step must name exactly one tool".into(),
+            ));
+        }
+        let tool_name = ToolName(name.clone());
+        let tool_version = ToolVersion(version.clone());
+        // Resolve the registered tool — `lookup` returns `None` for an absent OR
+        // `PendingHumanReview` registration (fail-closed, GR15).
+        let tdef = tools.lookup(&tool_name, &tool_version).ok_or_else(|| {
+            BinderError::InvalidArgs(format!(
+                "TOOL step references unregistered tool {name}@{version}"
+            ))
+        })?;
+        // Server-assigned content-sentinel logic_ref over (index, id, ver), so
+        // distinct tool steps get distinct ids (the client never supplies bytes).
+        let mut buf = Vec::with_capacity(64);
+        buf.extend_from_slice(b"kx-blueprint/tool/v1");
+        buf.extend_from_slice(&(index as u64).to_le_bytes());
+        buf.extend_from_slice(name.as_bytes());
+        buf.push(b'@');
+        buf.extend_from_slice(version.as_bytes());
+        let logic_ref = LogicRef::from_bytes(*ContentRef::of(&buf).as_bytes());
+        // The step warrant = the authoring base (matching syscall_profile / executor
+        // / model_route ceilings) NARROWED to THIS tool's grant + declared net/fs.
+        // `author()` widens the party ceiling with the live registry so this survives
+        // the intersect; the broker precheck + coordinator D66 re-verify at fire.
+        let warrant = tool_step_warrant(base, &tool_name, &tool_version, &tdef);
+        let mut sd = tool_step(
+            logic_ref,
+            base.model_route.model_id.clone(),
+            warrant,
+            tool_name.clone(),
+        );
+        let mut tc = std::collections::BTreeMap::new();
+        tc.insert(tool_name, tool_version);
+        sd.tool_contract = tc;
+        Ok(sd)
     }
 }
 
@@ -1264,14 +1375,27 @@ impl WorkflowAuthor for HostWorkflowAuthor {
         // DAG yields the same fingerprint (FROZEN dedup; discovery only, never identity).
         let mut fp_buf = Vec::with_capacity(compiled.motes.len() * 32);
         for cm in &compiled.motes {
-            let step_role = Role {
-                name: "blueprint-step".to_string(),
-                version: 0,
-                spec: cm.warrant.clone(),
-                description: String::new(),
+            // PR-6b-2: a TOOL step's warrant (non-empty `tool_grants`) is SERVER-built
+            // from the registry (`tool_step_warrant` — the tool's declared net/fs +
+            // its own `syscall_profile_ref`) and admitted DIRECTLY, like the seeded
+            // react recipes — NOT intersected against the party blueprint grant
+            // (whose syscall profile differs, and which never grants the tool). The
+            // per-party gate is "can author at all" (`effective` resolved above); the
+            // `registered_tools` backstop + the broker precheck + the coordinator's
+            // D66 resolution re-verify every axis server-side at fire (SN-8). Every
+            // PURE/MODEL mote (empty `tool_grants`) narrows against the party
+            // authority exactly as before (byte-identical when no tool() steps).
+            let warrant = if cm.warrant.tool_grants.is_empty() {
+                let step_role = Role {
+                    name: "blueprint-step".to_string(),
+                    version: 0,
+                    spec: cm.warrant.clone(),
+                    description: String::new(),
+                };
+                intersect(&effective, &step_role).map_err(|_| BinderError::NotAuthorized)?
+            } else {
+                cm.warrant.clone()
             };
-            let warrant =
-                intersect(&effective, &step_role).map_err(|_| BinderError::NotAuthorized)?;
             fp_buf.extend_from_slice(cm.mote.id.as_bytes());
             motes.push((cm.mote.clone(), warrant));
         }
@@ -1712,6 +1836,47 @@ pub(crate) fn react_fs_warrant(
     }
 }
 
+/// PR-6b-2: the COMPLETE server-built warrant for a standalone authored `tool()`
+/// step — mirrors [`react_fs_warrant`] (a server-built, directly-admitted warrant)
+/// but GENERIC over the tool's DECLARED `required_capability`. Grants EXACTLY
+/// `(name, version)` and takes the tool's declared net/fs **and
+/// `syscall_profile_ref`** (the resolver's `check_tool_requirement` demands syscall
+/// EQUALITY, so the warrant must carry the TOOL's own profile — not the authoring
+/// base's). The `model_route` / `resource_ceiling` / `executor_class` come from
+/// `base` so the mote leases on the served worker. ReadOnlyNondet classes mirror
+/// the react recipe warrant (the mcp-echo dispatch precedent). The coordinator's
+/// `resolve_authored_tool_args` sets the dispatch REQUEST net/fs to the SAME
+/// declared values, so `request ⊆ warrant` holds by construction at the broker's
+/// precheck. Admitted DIRECTLY (not intersected against the party blueprint grant):
+/// the tool's scope is SERVER-vetted (the registry), so the per-party gate is "can
+/// author at all" (`effective` resolved); the broker precheck + coordinator D66
+/// re-verify every axis at fire (SN-8).
+fn tool_step_warrant(
+    base: &WarrantSpec,
+    name: &ToolName,
+    version: &ToolVersion,
+    tdef: &ToolDef,
+) -> WarrantSpec {
+    let mut grants = BTreeSet::new();
+    grants.insert(ToolGrant {
+        tool_id: name.clone(),
+        tool_version: version.clone(),
+    });
+    WarrantSpec {
+        mote_class: MoteClass::ReadOnlyNondet,
+        nd_class: MoteClass::ReadOnlyNondet,
+        fs_scope: tdef.required_capability.fs_scope_required.clone(),
+        net_scope: tdef.required_capability.net_scope_required.clone(),
+        syscall_profile_ref: tdef.required_capability.syscall_profile_ref,
+        tool_grants: grants,
+        model_route: base.model_route.clone(),
+        resource_ceiling: base.resource_ceiling,
+        environment_ref: None,
+        executor_class: base.executor_class,
+        ..Default::default()
+    }
+}
+
 fn react_fs_handle() -> Result<AssetPath, GatewayError> {
     parse_handle(REACT_FS_RECIPE_HANDLE)
         .ok_or_else(|| GatewayError::Catalog("invalid react-fs recipe handle".into()))
@@ -1976,6 +2141,131 @@ mod tests {
             data: true,
             non_cascade: false,
         }
+    }
+
+    // ---- PR-6b-2: tool() authoring helpers + tests ------------------------
+
+    fn tool_registry_with(tool_id: &str, version: &str) -> std::sync::Arc<dyn ToolRegistry> {
+        use kx_tool_registry::{IdempotencyClass, InMemoryToolRegistry, ToolKind, ToolProvenance};
+        let mut reg = InMemoryToolRegistry::new();
+        let def = ToolDef {
+            tool_id: ToolName(tool_id.into()),
+            tool_version: ToolVersion(version.into()),
+            kind: ToolKind::Builtin,
+            required_capability: kx_warrant::ToolRequirement {
+                net_scope_required: NetScope::None,
+                fs_scope_required: FsScope::empty(),
+                syscall_profile_ref: ContentRef::from_bytes([0; 32]),
+                min_resource_ceiling: ResourceCeiling {
+                    cpu_milli: 0,
+                    mem_bytes: 0,
+                    wall_clock_ms: 0,
+                    fd_count: 0,
+                    disk_bytes: 0,
+                },
+            },
+            description: String::new(),
+            idempotency_class: IdempotencyClass::Staged,
+            input_schema: None,
+        };
+        let _ = reg.register(def, ToolProvenance::HumanAuthored { author: "t".into() });
+        std::sync::Arc::new(reg)
+    }
+
+    fn author_with_tools(
+        dir: &std::path::Path,
+        tools: std::sync::Arc<dyn ToolRegistry>,
+    ) -> HostWorkflowAuthor {
+        let lib =
+            DemoLibrary::open(dir, ExecutorClass::Bwrap, &["alice@acme".to_string()]).unwrap();
+        HostWorkflowAuthor::from_shared_with_tools(std::sync::Arc::new(lib), tools)
+    }
+
+    fn tool_author_step(tool_id: &str, version: &str, args_json: &[u8]) -> AuthorStep {
+        let mut tc = std::collections::BTreeMap::new();
+        tc.insert(tool_id.to_string(), version.to_string());
+        let mut params = std::collections::BTreeMap::new();
+        params.insert(TOOL_ARGS_KEY.to_string(), args_json.to_vec());
+        AuthorStep {
+            kind: AuthorStepKind::Tool,
+            model_id: String::new(),
+            prompt: String::new(),
+            body_signature_id: None,
+            tool_contract: tc,
+            params,
+        }
+    }
+
+    /// A `tool()` step authors a fireable, args-bearing, tool-granting Mote — the
+    /// shape the coordinator's `is_authored_tool` + the worker's args gate expect.
+    #[tokio::test]
+    async fn tool_step_authors_a_fireable_tool_node() {
+        let dir = tempfile::tempdir().unwrap();
+        let author = author_with_tools(dir.path(), tool_registry_with("echo-tool", "1"));
+        let steps = [tool_author_step("echo-tool", "1", br#"{"q":"hi"}"#)];
+        let bound = author
+            .author("alice@acme", 3, &steps, &[], AuthorExecutionMode::Frozen)
+            .await
+            .expect("tool step authored");
+        assert_eq!(bound.motes.len(), 1);
+        let (mote, warrant) = &bound.motes[0];
+        // Names the tool + carries the authored args (the args-from-config path).
+        assert!(mote
+            .def
+            .tool_contract
+            .contains_key(&ToolName("echo-tool".into())));
+        let args = mote
+            .def
+            .config_subset
+            .get(&ConfigKey(TOOL_ARGS_KEY.to_string()))
+            .expect("authored args land in config_subset");
+        assert_eq!(args.0, br#"{"q":"hi"}"#.to_vec());
+        // The SERVER-built warrant GRANTS the tool (so the broker can fire it; SN-8).
+        assert!(warrant
+            .tool_grants
+            .iter()
+            .any(|g| g.tool_id.0 == "echo-tool"));
+        // The observation shape: WORLD-MUTATING + StageThenCommit.
+        assert_eq!(
+            mote.def.effect_pattern,
+            kx_mote::EffectPattern::StageThenCommit
+        );
+        // Deterministic + content-addressed (same authored bytes → same identity).
+        let again = author
+            .author("alice@acme", 3, &steps, &[], AuthorExecutionMode::Frozen)
+            .await
+            .expect("re-authored");
+        assert_eq!(bound.terminal_mote_id, again.terminal_mote_id);
+    }
+
+    /// A `tool()` step naming an UNREGISTERED tool is refused at authoring (the
+    /// fail-closed GR15 gate — the registry lookup misses).
+    #[tokio::test]
+    async fn tool_step_unregistered_tool_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let author = author_with_tools(dir.path(), tool_registry_with("echo-tool", "1"));
+        let steps = [tool_author_step("ghost-tool", "1", b"{}")];
+        assert!(matches!(
+            author
+                .author("alice@acme", 1, &steps, &[], AuthorExecutionMode::Frozen)
+                .await,
+            Err(BinderError::InvalidArgs(_))
+        ));
+    }
+
+    /// Without a wired tool registry (`from_shared`), `tool()` authoring is refused
+    /// fail-closed (the PR-1 PURE/MODEL-only behaviour is byte-unchanged).
+    #[tokio::test]
+    async fn tool_step_without_registry_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let author = demo_author(dir.path());
+        let steps = [tool_author_step("echo-tool", "1", b"{}")];
+        assert!(matches!(
+            author
+                .author("alice@acme", 1, &steps, &[], AuthorExecutionMode::Frozen)
+                .await,
+            Err(BinderError::InvalidArgs(_))
+        ));
     }
 
     /// An authored DAG compiles to STABLE, content-addressed identity (same bytes →

@@ -12,13 +12,17 @@
  */
 
 import type { StepInput } from "@kortecx/sdk/web";
-import { BlueprintBuilder } from "@kortecx/sdk/web";
+import { BlueprintBuilder, task } from "@kortecx/sdk/web";
 
-/** The authored step palette (EXEC is reserved server-side; the UI offers PURE/MODEL). */
-export type BuilderStepKind = "pure" | "model";
+/** The authored step palette (EXEC is reserved server-side; the UI offers
+ *  PURE / MODEL / TOOL). TOOL (PR-6b-2) fires a single REGISTERED tool: the SERVER
+ *  resolves it in the live registry + builds the per-step warrant (client tool_grants
+ *  stay refused — SN-8/§2.171), so adding it does NOT reopen the admission boundary. */
+export type BuilderStepKind = "pure" | "model" | "tool";
 
 /** One authored builder step. `params` is the JSON-OBJECT TEXT the user edits in
- *  Monaco (parsed at submit); `prompt`/`modelId` apply to MODEL steps. */
+ *  Monaco (parsed at submit); `prompt`/`modelId` apply to MODEL steps; `toolId`/
+ *  `toolVersion` + the params-as-args apply to TOOL steps. */
 export interface BuilderStep {
   /** Client-local node id (NOT a MoteId — the server derives identity). */
   readonly id: string;
@@ -29,10 +33,15 @@ export interface BuilderStep {
   readonly modelId: string;
   /** MODEL: the prompt (Monaco). */
   readonly prompt: string;
-  /** Free-param JSON-object text (parsed to bytes server-side). */
+  /** Free-param JSON-object text (parsed to bytes server-side). For a TOOL step this
+   *  JSON object IS the tool-call arguments (lowered to the canonical TOOL_ARGS_KEY blob). */
   readonly paramsText: string;
   /** Optional reasoning-mode (PR-4 Phase F) — opt-in MODEL knob; "" ⇒ default. */
   readonly reasoning: "" | "full" | "minimal" | "off";
+  /** TOOL: the registered tool id (from `DiscoverTools`); the SERVER resolves it. */
+  readonly toolId: string;
+  /** TOOL: the registered tool version (defaults to "1" when blank). */
+  readonly toolVersion: string;
 }
 
 /** One authored edge (by client-local node id). `instruction` (D141.5) is the
@@ -118,8 +127,11 @@ export function validationError(graph: BuilderGraph): string | null {
     if (s.kind === "model" && s.modelId.trim() === "") {
       return `Agent step "${s.label}" needs a model.`;
     }
+    if (s.kind === "tool" && s.toolId.trim() === "") {
+      return `Tool step "${s.label}" needs a registered tool.`;
+    }
     if (s.paramsText.trim() !== "" && !isJsonObject(s.paramsText)) {
-      return `Step "${s.label}" params must be a JSON object.`;
+      return `Step "${s.label}" ${s.kind === "tool" ? "args" : "params"} must be a JSON object.`;
     }
   }
   const acyclic = validateAcyclic(graph);
@@ -166,20 +178,29 @@ export function toRequest(graph: BuilderGraph, seed = 0) {
     }
   }
   for (const s of graph.steps) {
-    const params = paramsRecord(s);
-    let prompt = s.prompt;
-    if (s.kind === "model") {
-      const instr = inbound.get(s.id);
-      if (instr && instr.length > 0) {
-        prompt = `${instr.join("\n\n")}\n\n${s.prompt}`.trim();
+    let step: StepInput;
+    if (s.kind === "tool") {
+      // Reuse the SDK `task.tool` factory so the canonical TOOL_ARGS_KEY lowering
+      // is byte-identical to the Py/TS/CLI surfaces (the golden-corpus contract).
+      step = task
+        .tool(s.toolId, s.toolVersion.trim() === "" ? "1" : s.toolVersion, toolArgs(s))
+        .toStepInput();
+    } else {
+      const params = paramsRecord(s);
+      let prompt = s.prompt;
+      if (s.kind === "model") {
+        const instr = inbound.get(s.id);
+        if (instr && instr.length > 0) {
+          prompt = `${instr.join("\n\n")}\n\n${s.prompt}`.trim();
+        }
       }
+      step = {
+        kind: s.kind,
+        modelId: s.kind === "model" ? s.modelId : undefined,
+        prompt: s.kind === "model" ? prompt : undefined,
+        params,
+      };
     }
-    const step: StepInput = {
-      kind: s.kind,
-      modelId: s.kind === "model" ? s.modelId : undefined,
-      prompt: s.kind === "model" ? prompt : undefined,
-      params,
-    };
     index.set(s.id, builder.addStep(step));
   }
   for (const e of graph.edges) {
@@ -211,15 +232,43 @@ function paramsRecord(s: BuilderStep): Record<string, string> {
   return out;
 }
 
+/** Parse a TOOL step's params text as its tool-call argument map (string/number/
+ *  boolean values — no floats; the server schema is integer/bytes/bool/enum-typed).
+ *  Blank ⇒ the empty `{}` call. Validation already proved it is a JSON object. */
+function toolArgs(s: BuilderStep): Record<string, string | number | boolean> {
+  if (s.paramsText.trim() === "") {
+    return {};
+  }
+  const parsed = JSON.parse(s.paramsText) as Record<string, unknown>;
+  const out: Record<string, string | number | boolean> = {};
+  for (const [k, v] of Object.entries(parsed)) {
+    out[k] =
+      typeof v === "string" || typeof v === "number" || typeof v === "boolean"
+        ? v
+        : JSON.stringify(v);
+  }
+  return out;
+}
+
+/** A label for a fresh step of `kind`. */
+function defaultLabel(kind: BuilderStepKind): string {
+  if (kind === "model") {
+    return "Agent";
+  }
+  return kind === "tool" ? "Tool" : "Step";
+}
+
 /** A fresh empty step of `kind` with a unique client-local id. */
 export function newStep(kind: BuilderStepKind, id: string): BuilderStep {
   return {
     id,
     kind,
-    label: kind === "model" ? "Agent" : "Step",
+    label: defaultLabel(kind),
     modelId: "",
     prompt: "",
     paramsText: "",
     reasoning: "",
+    toolId: "",
+    toolVersion: "",
   };
 }

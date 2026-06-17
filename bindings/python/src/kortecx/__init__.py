@@ -15,7 +15,7 @@ from __future__ import annotations
 from .alerts import AlertsPage, AlertSummary
 from .blueprints import BlueprintBuilder, EdgeInput, StepInput
 from .capture import CaptureRecord, CaptureRecordPage
-from .chains import Chain, Task, chain, model, pure
+from .chains import Chain, Task, chain, model, pure, tool
 from .client import DEFAULT_ENDPOINT, AsyncKxClient, KxClient
 from .content import ContentItem, PutResult
 from .datasets import DatasetHit, DatasetSummary, FuzzyHit, IngestDocument, IngestResult
@@ -136,6 +136,7 @@ __all__ = [
     "chain",
     "pure",
     "model",
+    "tool",
     "TeamSummary",
     "TeamMember",
     "TeamMembers",

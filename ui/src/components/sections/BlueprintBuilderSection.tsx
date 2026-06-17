@@ -269,6 +269,14 @@ function BuilderInner({ initialGraph }: { initialGraph?: BuilderGraph }) {
           </button>
           <button
             type="button"
+            className="btn-ghost"
+            data-testid="builder-add-tool"
+            onClick={() => addStep("tool")}
+          >
+            + Tool
+          </button>
+          <button
+            type="button"
             className="builder-submit"
             data-testid="builder-submit"
             disabled={invalid !== null || submit.isPending}

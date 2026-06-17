@@ -27,10 +27,11 @@ Both produce a :class:`Chain`; :meth:`Chain.build` runs the one canonical loweri
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple, Union
 
-from .blueprints import BlueprintBuilder, EdgeInput, StepInput
+from .blueprints import TOOL_ARGS_KEY, BlueprintBuilder, EdgeInput, StepInput
 from .v1 import gateway_pb2 as _g
 
 
@@ -133,6 +134,31 @@ def model(model_id: str, prompt: str, **params: Union[bytes, str]) -> Task:
     """A MODEL step. ``model_id`` is the recipe enum the SERVER validates (SN-8);
     ``prompt`` is the instruction; ``params`` are extra step params."""
     return Task(StepInput(kind="model", model_id=model_id, prompt=prompt, params=dict(params)))
+
+
+def _canonical_args_json(args: Dict[str, object]) -> str:
+    """Serialize a flat tool-call arg map to the canonical-JSON string the three
+    SDK surfaces lower byte-identically (sorted keys, compact separators). No
+    floats (SN-8 — the server schema is integer/bytes/bool/enum-typed)."""
+    return json.dumps(args, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+
+def tool(tool_id: str, tool_version: str, **args: object) -> Task:
+    """A TOOL step (PR-6b-2): fire a single REGISTERED tool as a standalone node.
+
+    ``tool_id`` + ``tool_version`` name the tool the SERVER resolves in its live
+    registry (SN-8 — the client never supplies the warrant); ``args`` are the
+    tool-call arguments, lowered to ONE canonical-JSON object under
+    :data:`~kortecx.blueprints.TOOL_ARGS_KEY` in the step's params. The coordinator
+    re-derives + validates those args against the tool's typed schema fail-closed.
+    """
+    return Task(
+        StepInput(
+            kind="tool",
+            tool_contract={tool_id: tool_version},
+            params={TOOL_ARGS_KEY: _canonical_args_json(dict(args))},
+        )
+    )
 
 
 # --- The chain (operator AST or parsed DSL) + lowering ------------------------

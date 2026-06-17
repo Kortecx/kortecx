@@ -21,14 +21,21 @@ _KIND = {
     "pure": _g.WorkflowStepKind.WORKFLOW_STEP_KIND_PURE,
     "model": _g.WorkflowStepKind.WORKFLOW_STEP_KIND_MODEL,
     "exec": _g.WorkflowStepKind.WORKFLOW_STEP_KIND_EXEC,
+    "tool": _g.WorkflowStepKind.WORKFLOW_STEP_KIND_TOOL,
 }
+
+#: PR-6b-2: the single canonical ``config_subset`` key a ``tool()`` step's authored
+#: args ride under (one canonical-JSON object). MUST equal the Rust
+#: ``kx_mote::TOOL_ARGS_KEY`` and the TS ``TOOL_ARGS_KEY`` — the coordinator's
+#: ``is_authored_tool`` discriminant + args source.
+TOOL_ARGS_KEY = "kx.tool.args"
 
 
 @dataclass
 class StepInput:
     """One authored step. ``params`` values may be ``str`` (UTF-8) or ``bytes``."""
 
-    kind: str  # "pure" | "model" | "exec" (exec reserved server-side in PR-1)
+    kind: str  # "pure" | "model" | "exec" (reserved) | "tool" (PR-6b-2)
     model_id: str = ""
     prompt: str = ""
     body_signature_id: Optional[str] = None  # EXEC only: 64-char hex of the body id

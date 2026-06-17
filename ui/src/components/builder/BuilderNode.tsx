@@ -21,22 +21,23 @@ export type BuilderFlowNode = Node<BuilderNodeData, "builder">;
  */
 function BuilderNodeImpl({ data, selected }: NodeProps<BuilderFlowNode>) {
   const { step } = data;
-  const tone = step.kind === "model" ? "model" : "pure";
-  const needsConfig = step.kind === "model" && step.modelId.trim() === "";
+  const tone = step.kind === "model" ? "model" : step.kind === "tool" ? "tool" : "pure";
+  const kindLabel = step.kind === "model" ? "Agent" : step.kind === "tool" ? "Tool" : "Pure";
+  const needsConfig =
+    (step.kind === "model" && step.modelId.trim() === "") ||
+    (step.kind === "tool" && step.toolId.trim() === "");
   return (
     <div
       className={`dag-node builder-node builder-node--${tone}${selected ? " builder-node--selected" : ""}`}
       data-testid="builder-node"
       data-node={step.id}
       data-kind={step.kind}
-      aria-label={`${step.kind === "model" ? "Agent" : "Step"} ${step.label}`}
+      aria-label={`${kindLabel} ${step.label}`}
     >
       <span className="dag-node__accent" aria-hidden="true" />
       <Handle type="target" position={Position.Top} className="dag-handle" />
       <div className="dag-node__head">
-        <span className={`builder-node__kind builder-node__kind--${tone}`}>
-          {step.kind === "model" ? "Agent" : "Pure"}
-        </span>
+        <span className={`builder-node__kind builder-node__kind--${tone}`}>{kindLabel}</span>
         <span className="builder-node__label" title={step.label}>
           {step.label}
         </span>
@@ -50,6 +51,19 @@ function BuilderNodeImpl({ data, selected }: NodeProps<BuilderFlowNode>) {
           ) : (
             <span className="builder-node__model mono" title={step.modelId}>
               {step.modelId}
+            </span>
+          )}
+        </div>
+      ) : null}
+      {step.kind === "tool" ? (
+        <div className="builder-node__row">
+          {needsConfig ? (
+            <span className="builder-node__hint" data-testid="builder-node-needs-config">
+              pick a tool
+            </span>
+          ) : (
+            <span className="builder-node__model mono" title={`${step.toolId}@${step.toolVersion}`}>
+              {step.toolId}@{step.toolVersion || "1"}
             </span>
           )}
         </div>

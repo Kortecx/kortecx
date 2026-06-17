@@ -91,6 +91,10 @@ export function useCloneGraph(instanceId: string | null): UseCloneGraph {
           prompt: cfg.prompt,
           paramsText: cfg.paramsText,
           reasoning: cfg.reasoning,
+          // Clone preserves PURE/MODEL steps only; a cloned graph never carries a
+          // TOOL step (the projection's stepKind is model|pure), so empty is correct.
+          toolId: "",
+          toolVersion: "",
         };
       });
       const edges: BuilderEdge[] = [];

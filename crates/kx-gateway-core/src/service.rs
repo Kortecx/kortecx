@@ -369,12 +369,19 @@ pub enum AuthorStepKind {
     /// References a REGISTERED body by its signature id; the host maps it to that
     /// body's content `logic_ref`. The client cannot inject bytes (Tier-1 invariant).
     Exec,
+    /// Fires a single REGISTERED tool as a standalone DAG node (PR-6b-2). The host
+    /// looks the tool up in the live tool registry, builds its warrant SERVER-SIDE
+    /// from the tool's declared `required_capability` (SN-8 — never a client
+    /// warrant), and carries the authored args (canonical-JSON) into the step's
+    /// `config_subset[TOOL_ARGS_KEY]`. The client supplies only the
+    /// `(tool_id, tool_version)` + args; the warrant + identity are server-derived.
+    Tool,
 }
 
 /// One authored step in gateway-core's vocabulary (no `kx_workflow` dep here).
 #[derive(Debug, Clone)]
 pub struct AuthorStep {
-    /// The palette kind (PURE / MODEL / EXEC).
+    /// The palette kind (PURE / MODEL / EXEC / TOOL).
     pub kind: AuthorStepKind,
     /// MODEL: the model id (must equal the served model); ignored otherwise.
     pub model_id: String,
@@ -432,6 +439,22 @@ pub trait WorkflowAuthor: Send + Sync {
         edges: &[AuthorEdge],
         mode: AuthorExecutionMode,
     ) -> Result<BoundRecipe, BinderError>;
+}
+
+/// The LIVE broker-fireable tool set seam (PR-6b-2 — the authoring backstop's
+/// truth source). The host impl wraps the serve broker so a runtime-dialed
+/// external MCP tool becomes authorable (a `tool()` step / an auto-grant) the
+/// MOMENT its firing capability registers, never gated by a startup snapshot.
+///
+/// `None` on the service ⇒ the backstop falls back to the static
+/// `GatewayService::registered_tools` set (the PR-2d-2 behaviour — bundled
+/// tools only). The VIEW never authorizes (SN-8): it is a belt-and-braces
+/// fail-closed gate that refuses authoring a warrant granting a tool the broker
+/// cannot fire; the broker's own 6-gate `precheck` re-verifies at dispatch.
+pub trait RegisteredToolsView: Send + Sync {
+    /// The `(tool_id, tool_version)` of every tool whose firing capability is
+    /// CURRENTLY registered on the serve broker.
+    fn registered_grants(&self) -> std::collections::BTreeSet<(String, String)>;
 }
 
 /// The boxed server-streaming type the `StreamEvents` RPC returns.
@@ -666,6 +689,11 @@ pub struct GatewayService {
     /// over the provisioning invariant; the react recipe is only seeded when its
     /// tool registered). Empty by default (no tools — every grant refused).
     registered_tools: std::collections::BTreeSet<(String, String)>,
+    /// PR-6b-2: the optional LIVE broker-fireable set seam. When wired (the serve
+    /// path), the authoring backstop reads this instead of the static
+    /// `registered_tools` snapshot — so a runtime-DIALED external MCP tool becomes
+    /// authorable the moment its capability registers. `None` ⇒ the static set.
+    registered_tools_view: Option<Arc<dyn RegisteredToolsView>>,
     /// The optional advisory toolscout seam (W1.A5 — the host injects a
     /// registry-backed manifest index). `None` ⇒ `ListToolManifests` /
     /// `ScoreTaskBundle` return `unimplemented`. Read-only, display-only.
@@ -778,6 +806,7 @@ impl GatewayService {
             critics_supported: false,
             react_supported: false,
             registered_tools: std::collections::BTreeSet::new(),
+            registered_tools_view: None,
             toolscout: None,
             author: None,
             content_writer: None,
@@ -826,6 +855,29 @@ impl GatewayService {
     ) -> Self {
         self.registered_tools = tools;
         self
+    }
+
+    /// Wire the LIVE broker-fireable tool set seam (PR-6b-2). When set, the
+    /// authoring backstop reads the broker's CURRENT capabilities instead of the
+    /// static [`with_registered_tools`](Self::with_registered_tools) snapshot — so
+    /// a runtime-DIALED external MCP tool (or any tool registered after startup)
+    /// becomes authorable the moment its firing capability registers.
+    #[must_use]
+    pub fn with_registered_tools_view(mut self, view: Arc<dyn RegisteredToolsView>) -> Self {
+        self.registered_tools_view = Some(view);
+        self
+    }
+
+    /// PR-6b-2: the LIVE broker-fireable `(tool_id, tool_version)` set the
+    /// authoring/invoke backstop checks against — the wired [`RegisteredToolsView`]
+    /// when present (so a runtime-DIALED external MCP tool is visible the moment it
+    /// registers), else the static `registered_tools` snapshot (the PR-2d-2
+    /// behaviour). Never authorizes (SN-8); a fail-closed drift backstop.
+    fn fireable_grants(&self) -> std::collections::BTreeSet<(String, String)> {
+        match &self.registered_tools_view {
+            Some(view) => view.registered_grants(),
+            None => self.registered_tools.clone(),
+        }
     }
 
     /// Wire the signature-catalog seam (the host's concrete `kx-catalog`-backed
@@ -1327,13 +1379,15 @@ impl KxGateway for GatewayService {
         // name capabilities the host ACTUALLY registered on the serve broker (a
         // grant the broker cannot honour dead-letters every observation it fires).
         // Server-derived warrants make this a provisioning invariant; the check is
-        // the fail-closed backstop against drift.
+        // the fail-closed backstop against drift. PR-6b-2: read the LIVE broker set
+        // so a runtime-dialed tool a recipe grants is honoured.
+        let fireable = self.fireable_grants();
         for (_, warrant) in &bound.motes {
-            if let Some(grant) = warrant.tool_grants.iter().find(|g| {
-                !self
-                    .registered_tools
-                    .contains(&(g.tool_id.0.clone(), g.tool_version.0.clone()))
-            }) {
+            if let Some(grant) = warrant
+                .tool_grants
+                .iter()
+                .find(|g| !fireable.contains(&(g.tool_id.0.clone(), g.tool_version.0.clone())))
+            {
                 return Err(Status::failed_precondition(format!(
                     "recipe grants tool {}@{} but this serve registered no such \
                      capability",
@@ -1422,9 +1476,10 @@ impl KxGateway for GatewayService {
                 Ok(proto::WorkflowStepKind::Pure) => AuthorStepKind::Pure,
                 Ok(proto::WorkflowStepKind::Model) => AuthorStepKind::Model,
                 Ok(proto::WorkflowStepKind::Exec) => AuthorStepKind::Exec,
+                Ok(proto::WorkflowStepKind::Tool) => AuthorStepKind::Tool,
                 _ => {
                     return Err(Status::invalid_argument(
-                        "WorkflowStep.kind must be PURE, MODEL, or EXEC",
+                        "WorkflowStep.kind must be PURE, MODEL, EXEC, or TOOL",
                     ));
                 }
             };
@@ -1485,13 +1540,15 @@ impl KxGateway for GatewayService {
 
         // The Invoke tool-grant backstop: every server-built warrant's grants must
         // name a capability the host ACTUALLY registered on the broker (fail-closed
-        // against provisioning drift).
+        // against provisioning drift). PR-6b-2: a `tool()` step grants a registered
+        // tool; the LIVE broker set makes a runtime-dialed tool authorable.
+        let fireable = self.fireable_grants();
         for (_, warrant) in &bound.motes {
-            if let Some(grant) = warrant.tool_grants.iter().find(|g| {
-                !self
-                    .registered_tools
-                    .contains(&(g.tool_id.0.clone(), g.tool_version.0.clone()))
-            }) {
+            if let Some(grant) = warrant
+                .tool_grants
+                .iter()
+                .find(|g| !fireable.contains(&(g.tool_id.0.clone(), g.tool_version.0.clone())))
+            {
                 return Err(Status::failed_precondition(format!(
                     "authored step grants tool {}@{} but this serve registered no such \
                      capability",

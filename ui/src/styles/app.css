@@ -3777,6 +3777,11 @@ button.card-grid__title:hover {
   color: var(--accent);
   border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
 }
+/* PR-6b-2: the TOOL node badge — the Tools-section accent (both-theme via vars). */
+.builder-node__kind--tool {
+  color: var(--primary, var(--accent));
+  border-color: color-mix(in srgb, var(--primary, var(--accent)) 45%, var(--border));
+}
 .builder-node__label {
   margin-left: 0.4rem;
   font-weight: 600;
