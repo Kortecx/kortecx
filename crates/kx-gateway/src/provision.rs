@@ -232,6 +232,16 @@ const VISION_MODEL_SCHEMA_REF: [u8; 32] = [0x54; 32];
 /// what actually routes).
 const VISION_MODEL_KEY: &str = "model";
 
+/// The vision recipe's image-payload ceiling (BUG-26). The multimodal dispatch
+/// (`kx-inference` `llama.rs`) gates each fetched image's byte length against the
+/// warrant's `resource_ceiling.mem_bytes`; the text-only [`model_warrant`] leaves
+/// that `0` (no image payload), so the vision recipe MUST raise it or EVERY
+/// `image_ref` fails `scope violation on image_bytes` at dispatch. `seed_recipe`
+/// issues the party `Use` grant from this SAME warrant, so the bind-time narrow
+/// keeps the ceiling (grant ∩ owner-root = this value). 16 MiB comfortably covers
+/// a high-resolution still while bounding the untrusted blob the projector decodes.
+const VISION_MAX_IMAGE_BYTES: u64 = 16 << 20;
+
 /// The vision recipe's image slot name — the binder writes the bound arg into
 /// `config_subset["image_ref"]`, the key the model executor's multimodal arm
 /// reads (exactly the [`PROMPT_KEY`] pattern). Lives here (not in the
@@ -456,7 +466,13 @@ impl DemoLibrary {
         // selection is a server-validated free-param, never a client warrant).
         // Seeded only when the serve model registered IMAGE-capable.
         if let Some(model_id) = serve_model.filter(|_| vision) {
-            let vision_w = model_warrant(exec_class, model_id);
+            // BUG-26: the multimodal dispatch caps each image against `mem_bytes`,
+            // which the text-only `model_warrant` leaves 0 — raise it to the vision
+            // image ceiling or every `image_ref` fails `scope violation on
+            // image_bytes`. Set BEFORE any use so the owner-root, the recipe body's
+            // step warrant, and the party `Use` grant all carry the same ceiling.
+            let mut vision_w = model_warrant(exec_class, model_id);
+            vision_w.resource_ceiling.mem_bytes = VISION_MAX_IMAGE_BYTES;
             let vision_h = vision_handle()?;
             seed_recipe(
                 &versions,

@@ -80,6 +80,112 @@ fn strip_code_fence(text: &str) -> &str {
     }
 }
 
+/// Gemma-4's NATIVE tool-call open delimiter (`<|tool_call>call:NAME{ARGS}<tool_call|>`).
+const GEMMA_TOOL_OPEN: &str = "<|tool_call>";
+/// The optional `call:` marker after the open delimiter (observed: `call:fs_list{}`).
+const GEMMA_CALL_MARKER: &str = "call:";
+
+/// A model-NATIVE (non-envelope) call shape, post-extraction: the raw tool name
+/// and the verbatim args-object bytes. The version is resolved against the grant
+/// set by the caller (Gemma emits no version).
+struct NativeCall<'a> {
+    raw_name: &'a str,
+    args: &'a str,
+}
+
+/// Extract a Gemma-4 native `<|tool_call>call:NAME{ARGS}<tool_call|>` call from the
+/// (reasoning-stripped) text, or `None` if the text is not this shape. NAME is the
+/// run after the (optional) `call:` marker up to the FIRST `{` — a DEFINED
+/// NAME/ARGS boundary, exactly like the markdown fence (NEVER a mid-string `{`
+/// search, so the SN-8 injection boundary is unchanged: only bytes the model
+/// fenced inside `<|tool_call>…` are promoted to a call). The `<tool_call|>` close
+/// is optional (truncation-tolerant) — `balanced_object` bounds the args object so
+/// trailing prose / the close delim can never leak in. Total + panic-free.
+fn extract_gemma_native(text: &str) -> Option<NativeCall<'_>> {
+    let after_open = text.trim_start().strip_prefix(GEMMA_TOOL_OPEN)?;
+    let after_marker = after_open
+        .trim_start()
+        .strip_prefix(GEMMA_CALL_MARKER)
+        .unwrap_or_else(|| after_open.trim_start());
+    let brace = after_marker.find('{')?;
+    let raw_name = after_marker[..brace].trim();
+    if raw_name.is_empty() {
+        return None;
+    }
+    let args = balanced_object(&after_marker[brace..])?;
+    Some(NativeCall { raw_name, args })
+}
+
+/// Return the prefix of `s` (which MUST start with `{`) spanning the first
+/// brace-balanced JSON object, ignoring braces inside double-quoted strings
+/// (with `\"` escapes). `None` if unbalanced or past `MAX_DEPTH`. Total +
+/// panic-free; the depth bound rejects pathological nesting cheaply (serde
+/// re-parses for shape downstream).
+fn balanced_object(s: &str) -> Option<&str> {
+    const MAX_DEPTH: usize = 64;
+    let bytes = s.as_bytes();
+    if bytes.first() != Some(&b'{') {
+        return None;
+    }
+    let mut depth = 0usize;
+    let mut in_str = false;
+    let mut escaped = false;
+    for (i, &b) in bytes.iter().enumerate() {
+        if in_str {
+            if escaped {
+                escaped = false;
+            } else if b == b'\\' {
+                escaped = true;
+            } else if b == b'"' {
+                in_str = false;
+            }
+            continue;
+        }
+        match b {
+            b'"' => in_str = true,
+            b'{' => {
+                depth += 1;
+                if depth > MAX_DEPTH {
+                    return None;
+                }
+            }
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(&s[..=i]);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Resolve a model-emitted (often separator-variant, version-less) tool name to a
+/// GRANTED `(ToolName, ToolVersion)`, SN-8-safe. Normalization is SEPARATOR-ONLY
+/// (`_`→`-`, matching how Gemma renders `fs-list` as `fs_list`) — never an
+/// arbitrary remap. Resolution = the UNIQUE granted tool whose name, after the
+/// SAME separator-normalization on BOTH sides, equals the model's. Ambiguity (two
+/// granted tools collapsing to one normalized name) ⇒ `None` (fail-closed — no
+/// guessing). The returned version is whatever the grant pins, so the downstream
+/// `tool_grants.contains` check is exact by construction.
+fn resolve_granted_name(raw_name: &str, warrant: &WarrantSpec) -> Option<ToolGrant> {
+    fn norm(s: &str) -> String {
+        s.replace('_', "-")
+    }
+    let target = norm(raw_name);
+    let mut hit: Option<&ToolGrant> = None;
+    for g in &warrant.tool_grants {
+        if norm(&g.tool_id.0) == target {
+            if hit.is_some() {
+                return None; // ambiguous ⇒ fail-closed
+            }
+            hit = Some(g);
+        }
+    }
+    hit.cloned()
+}
+
 /// Decode a model-proposed tool call from raw model output, fail-closed.
 ///
 /// Returns `Ok(None)` for a normal completion (prose, non-envelope JSON, or — the
@@ -119,6 +225,37 @@ pub fn parse_tool_call(
     // a surrounding ```` ```json ```` fence, then require the remainder to BEGIN
     // with `{` — leading-block + structural-fence only; no mid-string scan (SN-8).
     let trimmed = extract_json_envelope(text);
+
+    // (1a) Gemma-4 NATIVE shape: `<|tool_call>call:NAME{ARGS}<tool_call|>`. A SECOND
+    //      DEFINED delimiter set (not a `{` search) — recognized BEFORE the JSON
+    //      gate. Version-less + separator-variant names (`fs_list`) are resolved
+    //      against the grant set, and the result is gated by the SAME exact
+    //      `tool_grants` equality (SN-8). Anything not opening with this exact
+    //      delimiter falls through to the JSON envelope path, byte-identical for
+    //      every existing row (no current input begins with `<|tool_call>`).
+    if let Some(native) = extract_gemma_native(trimmed) {
+        let Some(grant) = resolve_granted_name(native.raw_name, warrant) else {
+            // The model COMMITTED to a native call but named an unknown/ambiguous
+            // tool ⇒ fail-closed (a bad name is a refusal, never silent prose).
+            return Err(DecodeError::UngrantedTool {
+                name: ToolName(native.raw_name.to_string()),
+                version: ToolVersion(String::new()),
+            });
+        };
+        let args_bytes = native.args.as_bytes().to_vec();
+        if args_bytes.len() > max_args_bytes {
+            return Err(DecodeError::Oversize {
+                got: args_bytes.len(),
+                max: max_args_bytes,
+            });
+        }
+        return Ok(Some(ToolCall {
+            name: grant.tool_id,
+            version: grant.tool_version,
+            args_bytes,
+        }));
+    }
+
     if !trimmed.starts_with('{') {
         return Ok(None);
     }
@@ -367,5 +504,101 @@ mod tests {
             .unwrap()
             .expect("a call");
         assert_eq!(call.args_bytes, args_src.as_bytes().to_vec());
+    }
+
+    // ---- BUG-28: Gemma-4 native `<|tool_call>call:NAME{ARGS}<tool_call|>` arm ----
+
+    #[test]
+    fn gemma_native_call_is_decoded_name_normalized_version_resolved() {
+        let w = warrant_granting(Some(("fs-list", "1")));
+        // Gemma's native syntax: underscore name, no version, empty args.
+        let env = b"<|tool_call>call:fs_list{}<tool_call|>";
+        let call = parse_tool_call(env, &w, 4096)
+            .unwrap()
+            .expect("a native call");
+        assert_eq!(call.name, ToolName("fs-list".into())); // `_`→`-` normalized
+        assert_eq!(call.version, ToolVersion("1".into())); // resolved from the grant
+        assert_eq!(call.args_bytes, b"{}".to_vec());
+    }
+
+    #[test]
+    fn gemma_native_call_with_args_carries_bytes_verbatim() {
+        let w = warrant_granting(Some(("fs-list", "1")));
+        let env = br#"<|tool_call>call:fs_list{"path":"sub"}<tool_call|>"#;
+        let call = parse_tool_call(env, &w, 4096)
+            .unwrap()
+            .expect("a native call");
+        assert_eq!(call.args_bytes, br#"{"path":"sub"}"#.to_vec());
+    }
+
+    #[test]
+    fn gemma_native_tolerates_missing_close_delim() {
+        let w = warrant_granting(Some(("fs-list", "1")));
+        // Truncated close delimiter — brace-balancing still bounds the args object.
+        let env = br#"<|tool_call>call:fs_list{"path":"x"}"#;
+        let call = parse_tool_call(env, &w, 4096)
+            .unwrap()
+            .expect("a native call");
+        assert_eq!(call.args_bytes, br#"{"path":"x"}"#.to_vec());
+    }
+
+    #[test]
+    fn gemma_native_after_channel_reasoning_is_decoded() {
+        let w = warrant_granting(Some(("fs-list", "1")));
+        // The `<|channel>` reasoning block is stripped first, then the native shape.
+        let env = b"<|channel>thinking<channel|><|tool_call>call:fs_list{}<tool_call|>";
+        let call = parse_tool_call(env, &w, 4096)
+            .unwrap()
+            .expect("a native call");
+        assert_eq!(call.name, ToolName("fs-list".into()));
+    }
+
+    #[test]
+    fn gemma_native_ungranted_tool_is_refused() {
+        let w = warrant_granting(Some(("fs-list", "1")));
+        let env = b"<|tool_call>call:rm_rf{}<tool_call|>";
+        assert!(matches!(
+            parse_tool_call(env, &w, 4096),
+            Err(DecodeError::UngrantedTool { .. })
+        ));
+    }
+
+    #[test]
+    fn gemma_native_empty_grants_is_none() {
+        let w = warrant_granting(None); // step (0) short-circuits before any parse
+        let env = b"<|tool_call>call:fs_list{}<tool_call|>";
+        assert_eq!(parse_tool_call(env, &w, 4096), Ok(None));
+    }
+
+    #[test]
+    fn gemma_native_oversize_args_refused() {
+        let w = warrant_granting(Some(("fs-list", "1")));
+        let big = "x".repeat(100);
+        let env = format!(r#"<|tool_call>call:fs_list{{"p":"{big}"}}<tool_call|>"#);
+        assert!(matches!(
+            parse_tool_call(env.as_bytes(), &w, 8),
+            Err(DecodeError::Oversize { .. })
+        ));
+    }
+
+    #[test]
+    fn gemma_native_overdeep_args_falls_through_to_none() {
+        let w = warrant_granting(Some(("fs-list", "1")));
+        let deep = format!(
+            "<|tool_call>call:fs_list{}{}",
+            "{".repeat(80),
+            "}".repeat(80)
+        );
+        // balanced_object returns None past MAX_DEPTH ⇒ not a native call ⇒ falls to
+        // the JSON gate, which sees a non-`{` start ⇒ Ok(None) (fail-closed).
+        assert_eq!(parse_tool_call(deep.as_bytes(), &w, 4096), Ok(None));
+    }
+
+    #[test]
+    fn gemma_native_no_brace_is_not_a_call() {
+        let w = warrant_granting(Some(("fs-list", "1")));
+        // Open delim but no `{` ⇒ not extractable ⇒ falls through ⇒ Ok(None).
+        let env = b"<|tool_call>call:fs_list no args here";
+        assert_eq!(parse_tool_call(env, &w, 4096), Ok(None));
     }
 }
