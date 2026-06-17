@@ -620,6 +620,14 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         };
     #[cfg(not(feature = "inference"))]
     let fs_list_tool: Option<(kx_mote::ToolName, kx_mote::ToolVersion)> = None;
+    // PR-6b-4 (auto-grant): the operator opt-in (`KX_SERVE_AUTOGRANT`, default-OFF)
+    // for the autonomous-loop tool auto-grant — gates seeding `kx/recipes/react-auto`
+    // AND wiring the binder's live-warrant rebuild. Requires a served model (no model
+    // ⇒ no react chain to drive). OFF ⇒ byte-identical serve (react-auto absent).
+    #[cfg(feature = "inference")]
+    let autogrant = serve_model.is_some() && crate::mcp_tool::autogrant_enabled();
+    #[cfg(not(feature = "inference"))]
+    let autogrant = false;
     let broker: Arc<dyn CapabilityBroker> = local_broker.clone();
     let worker = Worker::register(
         client,
@@ -746,11 +754,32 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         react_tool.as_ref(),
         vision_supported,
         fs_list_binding,
+        autogrant,
     )?);
     // One seed, two seams: the binder (Invoke) and the recipe catalog (ListRecipes
     // / GetRecipeForm) share the SAME library, so the published form and the
     // executable bind agree by construction.
-    let binder: Arc<dyn RecipeBinder> = Arc::new(HostRecipeBinder::from_shared(demo.clone()));
+    // PR-6b-4: when the operator opted into auto-grant, the binder gets the LIVE
+    // tool registry + broker-fireable view so a bind of `kx/recipes/react-auto`
+    // rebuilds its union warrant from the live (incl. runtime-dialed) tool set.
+    let binder: Arc<dyn RecipeBinder> = if autogrant {
+        let registered: Arc<dyn kx_gateway_core::RegisteredToolsView> =
+            Arc::new(HostRegisteredTools {
+                broker: local_broker.clone(),
+            });
+        Arc::new(HostRecipeBinder::from_shared_with_autogrant(
+            demo.clone(),
+            tool_registry.clone(),
+            registered,
+        ))
+    } else {
+        Arc::new(HostRecipeBinder::from_shared(demo.clone()))
+    };
+    if autogrant {
+        tracing::info!(
+            "PR-6b-4: KX_SERVE_AUTOGRANT on — kx/recipes/react-auto live (auto-grants the registered/dialed tool set to the autonomous loop, capped)"
+        );
+    }
     let recipe_catalog: Arc<dyn RecipeCatalog> = Arc::new(HostRecipeCatalog::new(demo.clone()));
     // The Blueprint-builder author seam (SubmitWorkflow) — shares the same library
     // `Arc` (one seed, many seams), so the authoring authority resolves from the

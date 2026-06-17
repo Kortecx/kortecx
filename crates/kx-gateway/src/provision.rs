@@ -170,6 +170,24 @@ pub const REACT_RECIPE_HANDLE: &str = "kx/recipes/react";
 /// the ref never reaches an admitted identity).
 const REACT_LOGIC_REF: [u8; 32] = [0x4e; 32];
 
+/// PR-6b-4: a DISTINCT placeholder `logic_ref` for the `react-fs` seed step. The
+/// recipe body's manifest id is `hash(seed ‖ mote_ids)` and EXCLUDES the warrant
+/// (`Manifest::recipe`), so two react bodies that differ ONLY by their server-built
+/// warrant map to the SAME manifest id but DIFFERENT body bytes — a body-ledger
+/// immutability conflict at seed. `react` (echo grant) + `react-fs` (fs-list grant)
+/// previously shared [`REACT_LOGIC_REF`], so a serve with BOTH the bundled echo bin
+/// AND `KX_SERVE_FS_ROOT` panicked at startup (BUG-25: the bodies differ only by
+/// warrant). A distinct sentinel gives `react-fs` its own manifest id; the seed is
+/// SWAPPED at submit, so the ref never reaches an admitted identity.
+const REACT_FS_LOGIC_REF: [u8; 32] = [0x54; 32];
+
+/// PR-6b-4: a DISTINCT placeholder `logic_ref` for the react-auto seed step (the
+/// same BUG-25 class as [`REACT_FS_LOGIC_REF`] — react-auto's placeholder grant is
+/// empty, which would collide with `kx/recipes/react`). The binder overrides the
+/// bound warrant with the live union; like [`REACT_LOGIC_REF`] the seed is SWAPPED
+/// at submit, so the ref never reaches an admitted identity.
+const REACT_AUTO_LOGIC_REF: [u8; 32] = [0x53; 32];
+
 /// The wire handle of the PR-6a/D155 `react-fs` recipe: a live ReAct loop like
 /// [`REACT_RECIPE_HANDLE`] BUT whose server-built step warrant grants the read-only
 /// `fs-list@1` tool + a `fs_scope` of the operator-granted read root (`KX_SERVE_FS_ROOT`)
@@ -177,7 +195,8 @@ const REACT_LOGIC_REF: [u8; 32] = [0x4e; 32];
 /// canonical `kx/recipes/react` + the projection digest stay byte-unchanged. Seeded only
 /// when a fit serve model resolved AND `KX_SERVE_FS_ROOT` is set (the fs-list capability
 /// registered). Reuses the react free-param contract (instruction / max_turns /
-/// max_tool_calls) + logic ref — only the warrant + handle differ.
+/// max_tool_calls); carries its OWN `REACT_FS_LOGIC_REF` (BUG-25 — a shared logic ref
+/// collides with `kx/recipes/react` at seed) — the warrant + handle + logic ref differ.
 pub const REACT_FS_RECIPE_HANDLE: &str = "kx/recipes/react-fs";
 
 /// Schema-refs of the react recipe's typed free-params.
@@ -281,7 +300,7 @@ impl DemoLibrary {
         exec_class: ExecutorClass,
         parties: &[String],
     ) -> Result<Self, GatewayError> {
-        Self::seed(dir, exec_class, parties, None, None, false, None)
+        Self::seed(dir, exec_class, parties, None, None, false, None, false)
     }
 
     /// Like [`DemoLibrary::open`], plus (when `serve_model` is `Some`) the AL1
@@ -308,6 +327,7 @@ impl DemoLibrary {
             None,
             false,
             None,
+            false,
         )
     }
 
@@ -329,6 +349,7 @@ impl DemoLibrary {
         react_tool: Option<&(ToolName, ToolVersion)>,
         vision: bool,
         fs_list: Option<(&(ToolName, ToolVersion), &Path)>,
+        autogrant: bool,
     ) -> Result<Self, GatewayError> {
         Self::seed(
             dir,
@@ -338,6 +359,7 @@ impl DemoLibrary {
             react_tool,
             vision,
             fs_list,
+            autogrant,
         )
     }
 
@@ -357,6 +379,7 @@ impl DemoLibrary {
         react_tool: Option<&(ToolName, ToolVersion)>,
         vision: bool,
         fs_list: Option<(&(ToolName, ToolVersion), &Path)>,
+        autogrant: bool,
     ) -> Result<Self, GatewayError> {
         let cat = |e: String| GatewayError::Catalog(e);
         let versions =
@@ -499,7 +522,8 @@ impl DemoLibrary {
         // read root (`KX_SERVE_FS_ROOT`) — the first recipe that produces REAL
         // agent data (a directory listing committed as the Observation result_ref).
         // Seeded only when a model is served AND fs-list is available; reuses the
-        // react logic ref + free-param contract (only the warrant + handle differ),
+        // react free-param contract but carries its OWN logic ref (BUG-25 — a shared
+        // logic ref collides with `kx/recipes/react` at seed when both are present),
         // so the canonical `kx/recipes/react` + the digest stay byte-unchanged.
         if let (Some(model_id), Some((fs_tool, fs_root))) = (serve_model, fs_list) {
             let react_fs_w = react_fs_warrant(exec_class, model_id, fs_tool, fs_root);
@@ -512,7 +536,7 @@ impl DemoLibrary {
                 parties,
                 &react_fs_h,
                 recipe_body(
-                    LogicRef::from_bytes(REACT_LOGIC_REF),
+                    LogicRef::from_bytes(REACT_FS_LOGIC_REF),
                     &react_fs_w,
                     &[
                         kx_mote::REACT_INSTRUCTION_KEY,
@@ -526,6 +550,47 @@ impl DemoLibrary {
                 react_fs_h,
                 RecipeMeta {
                     owner_root: react_fs_w,
+                    free_params: react_contract(),
+                },
+            ));
+        }
+
+        // (react-auto) PR-6b-4: a SEPARATE live ReAct recipe whose warrant is
+        // REBUILT at bind from the LIVE registry to auto-grant the registered/
+        // dialed tool set (a union warrant, ≤ AUTOGRANT_MAX_TOOLS) — so the
+        // autonomous loop can pick from ALL live tools, not just one bundled seed
+        // tool. The seed-time `owner_root` here is a PLACEHOLDER (empty tool_grants);
+        // the host binder overrides the bound seed Mote's warrant with the live
+        // union (the dialed tool registers at runtime, after seed). A separate
+        // recipe (the react-fs precedent) keeps the canonical react recipe + the
+        // digest byte-unchanged. Seeded only when a model is served AND the operator
+        // opted in via `KX_SERVE_AUTOGRANT`; reuses the react logic ref + free-param
+        // contract (only the warrant + handle differ).
+        if let Some(model_id) = serve_model.filter(|_| autogrant) {
+            let react_auto_w = react_auto_base_warrant(exec_class, model_id);
+            let react_auto_h = react_auto_handle()?;
+            seed_recipe(
+                &versions,
+                &bodies,
+                &grants,
+                &owner,
+                parties,
+                &react_auto_h,
+                recipe_body(
+                    LogicRef::from_bytes(REACT_AUTO_LOGIC_REF),
+                    &react_auto_w,
+                    &[
+                        kx_mote::REACT_INSTRUCTION_KEY,
+                        kx_mote::REACT_MAX_TURNS_KEY,
+                        kx_mote::REACT_MAX_TOOL_CALLS_KEY,
+                    ],
+                ),
+                &react_auto_w,
+            )?;
+            recipes.push((
+                react_auto_h,
+                RecipeMeta {
+                    owner_root: react_auto_w,
                     free_params: react_contract(),
                 },
             ));
@@ -784,6 +849,10 @@ fn recipe_advisory(handle: &str) -> (&'static str, &'static [&'static str]) {
             "ReAct-FS — a live agent loop with a read-only filesystem tool (lists files under the granted root).",
             &["agent", "react", "tools", "filesystem", "fs-list"],
         ),
+        REACT_AUTO_RECIPE_HANDLE => (
+            "ReAct-Auto — a live agent loop that auto-grants the registered/dialed tool set (the model picks from all live tools).",
+            &["agent", "react", "tools", "auto-grant", "mcp"],
+        ),
         VISION_RECIPE_HANDLE => (
             "Vision — a multimodal completion over an attached image.",
             &["model", "vision", "image", "multimodal", "agent"],
@@ -957,6 +1026,23 @@ fn seed_recipe(
 /// execution surface).
 pub struct HostRecipeBinder {
     lib: std::sync::Arc<DemoLibrary>,
+    /// PR-6b-4: present iff `KX_SERVE_AUTOGRANT` is on AND a model is served. When
+    /// `Some`, a bind of [`REACT_AUTO_RECIPE_HANDLE`] OVERRIDES the bound seed
+    /// Mote's warrant with [`tool_union_warrant`] rebuilt from the LIVE registry
+    /// (admit-direct — the dialed-tool live-warrant rebuild). `None` ⇒ every
+    /// existing path is byte-identical (react-auto is not seeded, so `bind` never
+    /// reaches the override).
+    autogrant: Option<AutoGrant>,
+}
+
+/// PR-6b-4: the two LIVE seams the react-auto bind override reads — the SAME
+/// shared `Arc`s the coordinator/author/broker use, so a runtime-DIALED tool is
+/// auto-grantable the moment its firing capability registers.
+struct AutoGrant {
+    /// The live tool registry (full `ToolDef`s — net/fs/syscall per tool).
+    tools: std::sync::Arc<dyn ToolRegistry>,
+    /// The live broker-fireable `(id, version)` set (PR-6b-2 backstop).
+    registered: std::sync::Arc<dyn kx_gateway_core::RegisteredToolsView>,
 }
 
 impl HostRecipeBinder {
@@ -964,13 +1050,57 @@ impl HostRecipeBinder {
     pub fn new(lib: DemoLibrary) -> Self {
         Self {
             lib: std::sync::Arc::new(lib),
+            autogrant: None,
         }
     }
 
     /// Wrap a [`DemoLibrary`] SHARED with a [`HostRecipeCatalog`] (one seed, two
     /// seams) — the server wires both over the same `Arc<DemoLibrary>`.
     pub fn from_shared(lib: std::sync::Arc<DemoLibrary>) -> Self {
-        Self { lib }
+        Self {
+            lib,
+            autogrant: None,
+        }
+    }
+
+    /// PR-6b-4: wrap a shared [`DemoLibrary`] WITH the live auto-grant seams — a
+    /// bind of [`REACT_AUTO_RECIPE_HANDLE`] rebuilds the union warrant from the
+    /// live registry at bind. The server uses this only when `KX_SERVE_AUTOGRANT`
+    /// is on; the `tools` registry + `registered` view are the SAME `Arc`s the
+    /// coordinator + broker share (one live tool set across authoring, the D66
+    /// submit gate, and dispatch).
+    pub fn from_shared_with_autogrant(
+        lib: std::sync::Arc<DemoLibrary>,
+        tools: std::sync::Arc<dyn ToolRegistry>,
+        registered: std::sync::Arc<dyn kx_gateway_core::RegisteredToolsView>,
+    ) -> Self {
+        Self {
+            lib,
+            autogrant: Some(AutoGrant { tools, registered }),
+        }
+    }
+
+    /// PR-6b-4: rebuild the auto-grant union warrant from the LIVE registry for a
+    /// react-auto bind. `base` is the recipe's seed-time `owner_root` (model_route
+    /// / resource_ceiling / executor_class). Reads the broker-fireable `(id,ver)`
+    /// set and looks each up for its full `ToolDef`; a tool whose capability is
+    /// registered but whose def is no longer resolvable is simply skipped (the
+    /// union is best-effort + re-verified per-fire). `None` ⇒ no autogrant seam
+    /// (unreachable for a seeded react-auto, but a safe fallthrough).
+    fn react_auto_union(&self, base: &WarrantSpec) -> Option<WarrantSpec> {
+        let ag = self.autogrant.as_ref()?;
+        let defs: std::collections::BTreeMap<(ToolName, ToolVersion), ToolDef> = ag
+            .registered
+            .registered_grants()
+            .into_iter()
+            .filter_map(|(id, ver)| {
+                let (name, version) = (ToolName(id), ToolVersion(ver));
+                ag.tools
+                    .lookup(&name, &version)
+                    .map(|def| ((name, version), def))
+            })
+            .collect();
+        Some(tool_union_warrant(base, &defs))
     }
 }
 
@@ -1056,18 +1186,40 @@ impl RecipeBinder for HostRecipeBinder {
             args,
         )
         .map_err(map_invoke_err)?;
+        // PR-6b-4: react-auto's bound seed Mote warrant is the seed-time PLACEHOLDER
+        // (empty tool_grants). OVERRIDE it with the union warrant rebuilt from the
+        // LIVE registry (admit-direct — the bound mote is byte-identical except its
+        // separate WarrantSpec, which is off the MoteDef/MoteId/digest). `bind_snapshot`
+        // already gated the party's Use authorization + bound the free-params, so a
+        // party without a Use grant on react-auto never reaches here. The union flows
+        // durably to every turn/observation via the chain's `anchor.warrant_ref`; the
+        // broker precheck + coordinator D66 re-verify every axis at each fire (SN-8).
+        let is_react_auto = parse_handle(REACT_AUTO_RECIPE_HANDLE).is_some_and(|p| p == asset_path);
+        let motes = match (is_react_auto, self.react_auto_union(&meta.owner_root)) {
+            (true, Some(union)) => bound
+                .motes
+                .into_iter()
+                .map(|(m, _w)| (m, union.clone()))
+                .collect(),
+            _ => bound.motes,
+        };
         Ok(BoundRecipe {
             recipe_fingerprint: bound.recipe_fingerprint,
-            motes: bound.motes,
+            motes,
             terminal_mote_id: bound.terminal_mote_id,
             // PR-2d-2: the react recipe seeds a live ReAct chain — the Invoke
             // arm submits its (single) bound Mote with `react_seed = true`,
             // triggering the coordinator's run-salted seed-swap + durable anchor.
             // PR-6a/D155: react-fs is ALSO a live ReAct chain (same machinery,
             // fs-list grant) ⇒ it MUST set react_seed too, else the loop never runs.
-            react_seed: [REACT_RECIPE_HANDLE, REACT_FS_RECIPE_HANDLE]
-                .iter()
-                .any(|h| parse_handle(h).is_some_and(|p| p == asset_path)),
+            // PR-6b-4: react-auto is the same machinery (union tool grant).
+            react_seed: [
+                REACT_RECIPE_HANDLE,
+                REACT_FS_RECIPE_HANDLE,
+                REACT_AUTO_RECIPE_HANDLE,
+            ]
+            .iter()
+            .any(|h| parse_handle(h).is_some_and(|p| p == asset_path)),
         })
     }
 }
@@ -1882,6 +2034,179 @@ fn react_fs_handle() -> Result<AssetPath, GatewayError> {
         .ok_or_else(|| GatewayError::Catalog("invalid react-fs recipe handle".into()))
 }
 
+/// PR-6b-4: the cap on the auto-grant union warrant's tool set — bounds the
+/// model's tool menu (prompt size) AND the union warrant's scope breadth. When
+/// more than this many tools are registered, a deterministic `(id, version)`
+/// prefix is granted (the rest are still authorable via an explicit `tool()`
+/// node). 16 is generous for the live ReAct menu and keeps the prompt bounded.
+const AUTOGRANT_MAX_TOOLS: usize = 16;
+
+/// The "no syscall profile" sentinel every in-scope tool declares (MCP / stdio /
+/// host-read tools do not run sandboxed body-exec). The auto-grant union FILTERS
+/// to this profile so the union warrant's single `syscall_profile_ref` satisfies
+/// the registry resolver's per-tool EQUALITY gate (`check_tool_requirement`) for
+/// every granted tool (cf. BUG-24). A future sandboxed tool with a different
+/// profile is simply excluded from auto-grant (still fireable via `tool()`).
+const EMPTY_SYSCALL_PROFILE: [u8; 32] = [0u8; 32];
+
+/// Union of two [`NetScope`]s — the identity is [`NetScope::None`] (`None ∪ X =
+/// X`); two allowlists merge their host sets. A widening op (the dual of
+/// `is_subset_of`), used ONLY to build the server's auto-grant union warrant from
+/// already-vetted tool scopes — never to narrow a caller's authority.
+fn net_scope_union(a: &NetScope, b: &NetScope) -> NetScope {
+    match (a, b) {
+        (NetScope::None, other) | (other, NetScope::None) => other.clone(),
+        (NetScope::EgressAllowlist(x), NetScope::EgressAllowlist(y)) => {
+            let mut hosts: BTreeSet<Host> = x.clone();
+            hosts.extend(y.iter().cloned());
+            NetScope::EgressAllowlist(hosts)
+        }
+    }
+}
+
+/// Per-path least-upper-bound merge of two [`FsScope`]s under the [`FsMode`]
+/// subset order. Disjoint paths union; a shared path takes the wider mode.
+/// Returns `None` (fail-closed) iff any shared path has INCOMPARABLE modes
+/// (e.g. `ReadWrite` vs `ExecOnly` — neither is a subset of the other), so the
+/// caller drops that tool from the union rather than fabricate a phantom
+/// superset. In-scope tools are all `ReadOnly`/empty, so this never fires today;
+/// the check is the forward-safety guard.
+fn fs_scope_union(a: &FsScope, b: &FsScope) -> Option<FsScope> {
+    let mut mounts = a.mounts.clone();
+    for (path, mode_b) in &b.mounts {
+        match mounts.get(path) {
+            None => {
+                mounts.insert(path.clone(), *mode_b);
+            }
+            Some(mode_a) => {
+                // The least upper bound under `is_subset_of`: whichever mode the
+                // other is a subset of. Incomparable ⇒ fail closed.
+                let lub = if mode_a.is_subset_of(*mode_b) {
+                    *mode_b
+                } else if mode_b.is_subset_of(*mode_a) {
+                    *mode_a
+                } else {
+                    return None;
+                };
+                mounts.insert(path.clone(), lub);
+            }
+        }
+    }
+    Some(FsScope { mounts })
+}
+
+/// PR-6b-4: the SERVER-built UNION warrant for the autonomous `react-auto` loop —
+/// auto-grants the LIVE set of registered/dialed tools so the model can pick from
+/// ALL of them (not just one bundled seed tool). `defs` is the live broker-fireable
+/// `(id, version) → ToolDef` set; the union is rebuilt at BIND (a dialed tool
+/// registers at runtime, after seed). Filters to [`EMPTY_SYSCALL_PROFILE`] (so the
+/// per-tool syscall EQUALITY gate passes — BUG-24) AND to fs-union-compatible tools;
+/// caps at [`AUTOGRANT_MAX_TOOLS`] by a deterministic `(id, version)` sort + prefix.
+/// `tool_grants` = that set; `net_scope` / `fs_scope` = the UNION of their declared
+/// `required_capability` scopes (so the broker `precheck` `request ⊆ warrant` passes
+/// for EVERY granted tool, the per-call request carrying THAT tool's own scope);
+/// `syscall_profile_ref` = the empty sentinel; `model_route` / `resource_ceiling` /
+/// `executor_class` from `base` (the react-auto seed warrant) so the chain leases on
+/// the served worker. Admitted DIRECTLY at bind (mirrors [`tool_step_warrant`] / the
+/// PR-6b-2 `author()` precedent): the tool scopes are SERVER-vetted (SSRF-vetted at
+/// dial, the registry the source of truth) and the operator opt-in (`KX_SERVE_AUTOGRANT`)
+/// is the OSS ceiling; the broker precheck + coordinator D66 re-verify every axis at
+/// each fire (SN-8). Client `tool_grants` are NEVER accepted.
+pub(crate) fn tool_union_warrant(
+    base: &WarrantSpec,
+    defs: &std::collections::BTreeMap<(ToolName, ToolVersion), ToolDef>,
+) -> WarrantSpec {
+    // Deterministic order: BTreeMap already iterates by (ToolName, ToolVersion),
+    // so the cap takes a stable prefix and the warrant is byte-reproducible.
+    let mut tool_grants: BTreeSet<ToolGrant> = BTreeSet::new();
+    let mut net_scope = NetScope::None;
+    let mut fs_scope = FsScope::empty();
+    for ((name, version), def) in defs {
+        if tool_grants.len() >= AUTOGRANT_MAX_TOOLS {
+            break;
+        }
+        let cap = &def.required_capability;
+        // Only tools with the empty syscall profile can share one union warrant.
+        if cap.syscall_profile_ref != ContentRef::from_bytes(EMPTY_SYSCALL_PROFILE) {
+            continue;
+        }
+        // A tool whose fs scope is incomparable with the running union is skipped
+        // (never poisons the whole union); echo/fs-list/MCP tools never trip this.
+        let Some(merged_fs) = fs_scope_union(&fs_scope, &cap.fs_scope_required) else {
+            continue;
+        };
+        fs_scope = merged_fs;
+        net_scope = net_scope_union(&net_scope, &cap.net_scope_required);
+        tool_grants.insert(ToolGrant {
+            tool_id: name.clone(),
+            tool_version: version.clone(),
+        });
+    }
+    WarrantSpec {
+        mote_class: MoteClass::ReadOnlyNondet,
+        nd_class: MoteClass::ReadOnlyNondet,
+        fs_scope,
+        net_scope,
+        syscall_profile_ref: ContentRef::from_bytes(EMPTY_SYSCALL_PROFILE),
+        tool_grants,
+        model_route: base.model_route.clone(),
+        resource_ceiling: base.resource_ceiling,
+        environment_ref: None,
+        executor_class: base.executor_class,
+        ..Default::default()
+    }
+}
+
+/// PR-6b-4: the seed-time PLACEHOLDER warrant for `kx/recipes/react-auto`. Mirrors
+/// [`react_warrant`] but with EMPTY `tool_grants` (no bundled tool) — at bind the
+/// host binder OVERRIDES the bound seed Mote's warrant with [`tool_union_warrant`]
+/// rebuilt from the LIVE registry. This base supplies the `model_route` /
+/// `resource_ceiling` / `executor_class` so the recipe is structurally valid + the
+/// chain leases on the served worker, and it is the `base` passed to the union
+/// builder at bind.
+pub(crate) fn react_auto_base_warrant(
+    exec_class: ExecutorClass,
+    model_id: &ModelId,
+) -> WarrantSpec {
+    WarrantSpec {
+        mote_class: MoteClass::ReadOnlyNondet,
+        nd_class: MoteClass::ReadOnlyNondet,
+        fs_scope: FsScope::empty(),
+        net_scope: NetScope::None,
+        syscall_profile_ref: ContentRef::from_bytes(EMPTY_SYSCALL_PROFILE),
+        tool_grants: BTreeSet::new(),
+        model_route: ModelRoute {
+            model_id: model_id.clone(),
+            max_input_tokens: 4_096,
+            max_output_tokens: 512,
+            max_calls: 8,
+        },
+        resource_ceiling: ResourceCeiling {
+            cpu_milli: 0,
+            mem_bytes: 0,
+            wall_clock_ms: 120_000,
+            fd_count: 0,
+            disk_bytes: 0,
+        },
+        environment_ref: None,
+        executor_class: exec_class,
+        ..Default::default()
+    }
+}
+
+/// The wire handle of the PR-6b-4 `react-auto` recipe: a live ReAct loop like
+/// [`REACT_RECIPE_HANDLE`] BUT whose warrant is REBUILT at bind from the LIVE
+/// registry to auto-grant the registered/dialed tool set (a union warrant, ≤
+/// `AUTOGRANT_MAX_TOOLS`). A SEPARATE recipe (the react-fs precedent) so the
+/// canonical `kx/recipes/react` + the projection digest stay byte-unchanged.
+/// Seeded only when a fit serve model resolved AND `KX_SERVE_AUTOGRANT` is on.
+pub const REACT_AUTO_RECIPE_HANDLE: &str = "kx/recipes/react-auto";
+
+fn react_auto_handle() -> Result<AssetPath, GatewayError> {
+    parse_handle(REACT_AUTO_RECIPE_HANDLE)
+        .ok_or_else(|| GatewayError::Catalog("invalid react-auto recipe handle".into()))
+}
+
 /// The PURE demo recipe warrant. Its `executor_class` MUST equal the embedded
 /// worker's (`default_executor_class()`); used identically as the owner root,
 /// the grant runtime scope, and the recipe step warrant, so every `intersect`
@@ -2680,6 +3005,7 @@ mod tests {
             None,
             false,
             None,
+            false,
         )
         .unwrap();
         assert!(!lib
@@ -2697,6 +3023,7 @@ mod tests {
             None,
             true,
             None,
+            false,
         )
         .unwrap();
         let form = lib
@@ -2734,6 +3061,7 @@ mod tests {
             None,
             false,
             Some((&fs_tool, root.path())),
+            false,
         )
         .unwrap();
         assert!(lib
@@ -2755,11 +3083,110 @@ mod tests {
             None,
             false,
             None,
+            false,
         )
         .unwrap();
         assert!(!lib2
             .recipe_handles()
             .contains(&REACT_FS_RECIPE_HANDLE.to_string()));
+    }
+
+    #[test]
+    fn react_variants_coexist_without_a_body_id_collision() {
+        // BUG-25 regression: react (echo), react-fs (fs-list), and react-auto all
+        // seed live ReAct chains whose recipe bodies differ ONLY by their
+        // server-built warrant. The body manifest id is `hash(seed ‖ mote_ids)` and
+        // EXCLUDES the warrant, so a shared logic ref makes the second seed a
+        // body-ledger immutability conflict (a startup panic). Each carries its OWN
+        // logic ref, so a serve with the echo bin + KX_SERVE_FS_ROOT + autogrant
+        // provisions ALL of them without conflict.
+        let model = ModelId("kx-serve:m".to_string());
+        let echo = (ToolName("mcp-echo".into()), ToolVersion("1".into()));
+        let fs_tool = (ToolName("fs-list".into()), ToolVersion("1".into()));
+        let root = tempfile::tempdir().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let lib = DemoLibrary::open_complete(
+            dir.path(),
+            ExecutorClass::Bwrap,
+            &["alice@acme".to_string()],
+            Some(&model),
+            Some(&echo), // react
+            false,
+            Some((&fs_tool, root.path())), // react-fs
+            true,                          // react-auto
+        )
+        .expect("all three react variants seed without a body-id collision");
+        let handles = lib.recipe_handles();
+        assert!(handles.contains(&REACT_RECIPE_HANDLE.to_string()));
+        assert!(handles.contains(&REACT_FS_RECIPE_HANDLE.to_string()));
+        assert!(handles.contains(&REACT_AUTO_RECIPE_HANDLE.to_string()));
+        // Each has a DISTINCT recipe fingerprint (the distinct logic refs).
+        let fp = |h: &str| lib.recipe_fingerprint(h).unwrap();
+        assert_ne!(fp(REACT_RECIPE_HANDLE), fp(REACT_FS_RECIPE_HANDLE));
+        assert_ne!(fp(REACT_RECIPE_HANDLE), fp(REACT_AUTO_RECIPE_HANDLE));
+        assert_ne!(fp(REACT_FS_RECIPE_HANDLE), fp(REACT_AUTO_RECIPE_HANDLE));
+    }
+
+    #[test]
+    fn react_auto_recipe_seeded_only_with_the_autogrant_flag() {
+        // PR-6b-4: react-auto is a SEPARATE recipe, seeded only when a model is
+        // served AND the operator opted in — default-OFF keeps the canonical set.
+        let model = ModelId("kx-serve:m".to_string());
+
+        // autogrant ON ⇒ seeded; the published form is the react contract.
+        let dir = tempfile::tempdir().unwrap();
+        let lib = DemoLibrary::open_complete(
+            dir.path(),
+            ExecutorClass::Bwrap,
+            &["alice@acme".to_string()],
+            Some(&model),
+            None,
+            false,
+            None,
+            true,
+        )
+        .unwrap();
+        assert!(lib
+            .recipe_handles()
+            .contains(&REACT_AUTO_RECIPE_HANDLE.to_string()));
+        let form = lib
+            .recipe_form(REACT_AUTO_RECIPE_HANDLE)
+            .expect("react-auto is provisioned");
+        assert_eq!(form.len(), 3, "instruction + the two budget caps");
+
+        // autogrant OFF (default) ⇒ NOT seeded.
+        let dir2 = tempfile::tempdir().unwrap();
+        let lib2 = DemoLibrary::open_complete(
+            dir2.path(),
+            ExecutorClass::Bwrap,
+            &["alice@acme".to_string()],
+            Some(&model),
+            None,
+            false,
+            None,
+            false,
+        )
+        .unwrap();
+        assert!(!lib2
+            .recipe_handles()
+            .contains(&REACT_AUTO_RECIPE_HANDLE.to_string()));
+
+        // No served model ⇒ NOT seeded even with the flag on.
+        let dir3 = tempfile::tempdir().unwrap();
+        let lib3 = DemoLibrary::open_complete(
+            dir3.path(),
+            ExecutorClass::Bwrap,
+            &["alice@acme".to_string()],
+            None,
+            None,
+            false,
+            None,
+            true,
+        )
+        .unwrap();
+        assert!(!lib3
+            .recipe_handles()
+            .contains(&REACT_AUTO_RECIPE_HANDLE.to_string()));
     }
 
     #[test]
@@ -2778,6 +3205,143 @@ mod tests {
             "the grant's fs_scope must equal the tool's declared scope (precheck subset)"
         );
         assert_eq!(w.net_scope, NetScope::None, "fs-list has no egress");
+    }
+
+    // ---- PR-6b-4: auto-grant union warrant -------------------------------
+
+    fn host(h: &str) -> Host {
+        Host(h.to_string())
+    }
+
+    fn tool_def_with(net: NetScope, fs: FsScope, syscall: [u8; 32]) -> ToolDef {
+        ToolDef {
+            tool_id: ToolName("t".into()),
+            tool_version: ToolVersion("1".into()),
+            kind: kx_tool_registry::ToolKind::Builtin,
+            required_capability: kx_warrant::ToolRequirement {
+                net_scope_required: net,
+                fs_scope_required: fs,
+                syscall_profile_ref: ContentRef::from_bytes(syscall),
+                min_resource_ceiling: ResourceCeiling {
+                    cpu_milli: 0,
+                    mem_bytes: 0,
+                    wall_clock_ms: 0,
+                    fd_count: 0,
+                    disk_bytes: 0,
+                },
+            },
+            description: String::new(),
+            idempotency_class: kx_tool_registry::IdempotencyClass::Staged,
+            input_schema: None,
+        }
+    }
+
+    #[test]
+    fn net_scope_union_treats_none_as_identity_and_merges_allowlists() {
+        let a = NetScope::EgressAllowlist([host("api.example.com")].into_iter().collect());
+        assert_eq!(net_scope_union(&NetScope::None, &a), a, "None ∪ X = X");
+        assert_eq!(net_scope_union(&a, &NetScope::None), a, "X ∪ None = X");
+        assert_eq!(
+            net_scope_union(&NetScope::None, &NetScope::None),
+            NetScope::None
+        );
+        let b = NetScope::EgressAllowlist([host("b.example.com")].into_iter().collect());
+        let merged = net_scope_union(&a, &b);
+        match merged {
+            NetScope::EgressAllowlist(hosts) => {
+                assert!(hosts.contains(&host("api.example.com")));
+                assert!(hosts.contains(&host("b.example.com")));
+            }
+            NetScope::None => panic!("merge of two allowlists must be an allowlist"),
+        }
+    }
+
+    #[test]
+    fn fs_scope_union_takes_lub_and_fails_closed_on_incomparable_modes() {
+        let p = std::path::PathBuf::from("/data");
+        let ro = FsScope {
+            mounts: [(p.clone(), FsMode::ReadOnly)].into_iter().collect(),
+        };
+        let rw = FsScope {
+            mounts: [(p.clone(), FsMode::ReadWrite)].into_iter().collect(),
+        };
+        // ReadWrite is the wider mode (ReadOnly ⊆ ReadWrite) ⇒ LUB = ReadWrite.
+        let lub = fs_scope_union(&ro, &rw).expect("comparable modes union");
+        assert_eq!(lub.mounts.get(&p), Some(&FsMode::ReadWrite));
+        // Disjoint paths simply union.
+        let q = std::path::PathBuf::from("/etc");
+        let other = FsScope {
+            mounts: [(q.clone(), FsMode::ReadOnly)].into_iter().collect(),
+        };
+        let merged = fs_scope_union(&ro, &other).expect("disjoint union");
+        assert_eq!(merged.mounts.len(), 2);
+        // ExecOnly ⟂ ReadWrite ⇒ incomparable ⇒ fail-closed None.
+        let exec = FsScope {
+            mounts: [(p.clone(), FsMode::ExecOnly)].into_iter().collect(),
+        };
+        assert_eq!(fs_scope_union(&exec, &rw), None, "incomparable ⇒ None");
+    }
+
+    #[test]
+    fn tool_union_warrant_grants_unions_caps_and_filters() {
+        let base = react_auto_base_warrant(ExecutorClass::Bwrap, &ModelId("m".into()));
+        // Two egress tools to different hosts + one non-empty-syscall tool (excluded).
+        let mut defs: std::collections::BTreeMap<(ToolName, ToolVersion), ToolDef> =
+            std::collections::BTreeMap::new();
+        let net_a = NetScope::EgressAllowlist([host("a.example.com")].into_iter().collect());
+        let net_b = NetScope::EgressAllowlist([host("b.example.com")].into_iter().collect());
+        defs.insert(
+            (ToolName("alpha".into()), ToolVersion("1".into())),
+            tool_def_with(net_a, FsScope::empty(), EMPTY_SYSCALL_PROFILE),
+        );
+        defs.insert(
+            (ToolName("bravo".into()), ToolVersion("1".into())),
+            tool_def_with(net_b, FsScope::empty(), EMPTY_SYSCALL_PROFILE),
+        );
+        defs.insert(
+            (ToolName("sandboxed".into()), ToolVersion("1".into())),
+            tool_def_with(NetScope::None, FsScope::empty(), [9u8; 32]),
+        );
+        let w = tool_union_warrant(&base, &defs);
+        // alpha + bravo granted; the non-empty-syscall tool is FILTERED out.
+        assert_eq!(w.tool_grants.len(), 2);
+        assert!(w.tool_grants.iter().any(|g| g.tool_id.0 == "alpha"));
+        assert!(w.tool_grants.iter().any(|g| g.tool_id.0 == "bravo"));
+        assert!(!w.tool_grants.iter().any(|g| g.tool_id.0 == "sandboxed"));
+        // net_scope is the UNION of the two hosts.
+        match &w.net_scope {
+            NetScope::EgressAllowlist(hosts) => {
+                assert!(hosts.contains(&host("a.example.com")));
+                assert!(hosts.contains(&host("b.example.com")));
+            }
+            NetScope::None => panic!("union of two egress tools must be an allowlist"),
+        }
+        // syscall is the empty sentinel; classes + model_route inherit the base.
+        assert_eq!(w.syscall_profile_ref, ContentRef::from_bytes([0u8; 32]));
+        assert_eq!(w.model_route.model_id, ModelId("m".into()));
+        // Determinism: same input ⇒ byte-identical warrant.
+        assert_eq!(w, tool_union_warrant(&base, &defs));
+    }
+
+    #[test]
+    fn tool_union_warrant_caps_at_the_max() {
+        let base = react_auto_base_warrant(ExecutorClass::Bwrap, &ModelId("m".into()));
+        let mut defs: std::collections::BTreeMap<(ToolName, ToolVersion), ToolDef> =
+            std::collections::BTreeMap::new();
+        for i in 0..(AUTOGRANT_MAX_TOOLS + 4) {
+            defs.insert(
+                (ToolName(format!("tool-{i:02}")), ToolVersion("1".into())),
+                tool_def_with(NetScope::None, FsScope::empty(), EMPTY_SYSCALL_PROFILE),
+            );
+        }
+        let w = tool_union_warrant(&base, &defs);
+        assert_eq!(w.tool_grants.len(), AUTOGRANT_MAX_TOOLS, "capped");
+        // The deterministic prefix is the first AUTOGRANT_MAX_TOOLS by (id, ver).
+        assert!(w.tool_grants.iter().any(|g| g.tool_id.0 == "tool-00"));
+        assert!(!w
+            .tool_grants
+            .iter()
+            .any(|g| g.tool_id.0 == format!("tool-{:02}", AUTOGRANT_MAX_TOOLS + 3)));
     }
 
     #[test]

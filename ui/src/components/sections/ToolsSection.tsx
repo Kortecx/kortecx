@@ -3,6 +3,7 @@ import { toUiError } from "../../kx/errors";
 import { useScoreBundle, useToolManifests } from "../../kx/use-toolscout";
 import { EmptyState } from "../EmptyState";
 import { ErrorNotice } from "../ErrorNotice";
+import { AutoGrantStatus } from "../tools/AutoGrantStatus";
 import { BundleComposer } from "../tools/BundleComposer";
 import { ConnectionsPanel } from "../tools/ConnectionsPanel";
 import { ManifestGrid } from "../tools/ManifestGrid";
@@ -76,6 +77,14 @@ export function ToolsSection() {
         capability).
       </p>
       <ConnectionsPanel />
+
+      <h2>Autonomous tool access</h2>
+      <p className="muted">
+        Whether the autonomous agent loop may auto-grant the registered and dialed tool set. The
+        runtime is the source of truth — OSS exposes no toggle here; the operator enables it at
+        startup (<span className="mono">KX_SERVE_AUTOGRANT</span>).
+      </p>
+      <AutoGrantStatus />
 
       <h2>Discovery &amp; preview</h2>
       <p className="muted">
