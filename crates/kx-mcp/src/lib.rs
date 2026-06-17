@@ -69,7 +69,8 @@ mod transport;
 pub use capability::McpCapability;
 pub use credential::CredentialRef;
 pub use decode::{
-    decode_tool_result, decode_tools_list, RemoteToolDecl, MAX_TOOL_RESULT_BYTES_DEFAULT,
+    decode_initialize_result, decode_tool_result, decode_tools_list, RemoteToolDecl,
+    MAX_TOOL_RESULT_BYTES_DEFAULT,
 };
 pub use egress::{classify_ip, vet_resolved_addr, EgressDenied, EgressPolicy, IpClass};
 pub use errors::{DecodeError, TransportError};

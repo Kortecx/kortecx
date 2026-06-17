@@ -84,6 +84,51 @@ impl ConnectionHealth {
     }
 }
 
+/// PR-6b-3 — the per-connection firing posture (the MCP 2026-07-28 RC's
+/// stateless-first thesis). `Stateless` (the DEFAULT) fires each tool as a
+/// self-contained single-shot session (best for idempotent read tools + servers
+/// behind a round-robin load balancer; a content-addressed Mote that recovers
+/// with no session store). `Stateful` reuses ONE long-lived `McpSession` across
+/// calls — opt-in, for servers that genuinely require a live session (browser
+/// automation, a DB transaction) or chatty same-server traffic that benefits from
+/// amortizing the handshake.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SessionMode {
+    /// Single-shot per call (the stateless-first default).
+    #[default]
+    Stateless,
+    /// One reused long-lived session (opt-in).
+    Stateful,
+}
+
+impl SessionMode {
+    /// A short, stable tag for the wire + storage + display.
+    #[must_use]
+    pub fn tag(self) -> &'static str {
+        match self {
+            SessionMode::Stateless => "stateless",
+            SessionMode::Stateful => "stateful",
+        }
+    }
+
+    /// Parse a stored/wire tag back into a mode. Fail-soft to the stateless-first
+    /// DEFAULT for an empty string (proto3 default) or any unknown value — never a
+    /// surprise stateful escalation.
+    #[must_use]
+    pub fn from_tag(s: &str) -> Self {
+        match s {
+            "stateful" => SessionMode::Stateful,
+            _ => SessionMode::Stateless,
+        }
+    }
+
+    /// `true` iff this mode keeps a long-lived reused session.
+    #[must_use]
+    pub fn is_stateful(self) -> bool {
+        matches!(self, SessionMode::Stateful)
+    }
+}
+
 /// An operator-registered external MCP server.
 #[derive(Debug, Clone)]
 pub struct Connection {
@@ -99,6 +144,8 @@ pub struct Connection {
     pub health: ConnectionHealth,
     /// The number of tools discovered on the last successful `tools/list`.
     pub tool_count: u32,
+    /// PR-6b-3: the firing posture for this server's tools (default stateless).
+    pub session_mode: SessionMode,
 }
 
 impl Connection {
@@ -202,6 +249,7 @@ mod tests {
             credential_ref: None,
             health: ConnectionHealth::Unknown,
             tool_count: 0,
+            session_mode: SessionMode::Stateless,
         };
         assert_eq!(conn.egress_host().as_deref(), Some("mcp.example.com"));
         match conn.net_scope() {
@@ -224,6 +272,7 @@ mod tests {
             credential_ref: None,
             health: ConnectionHealth::Unknown,
             tool_count: 0,
+            session_mode: SessionMode::Stateless,
         };
         assert_eq!(conn.egress_host(), None);
         assert_eq!(conn.net_scope(), NetScope::None);

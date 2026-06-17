@@ -172,6 +172,39 @@ pub fn decode_tools_list(
         .collect())
 }
 
+/// The inner `result` of an MCP `initialize` response. Only the negotiated
+/// `protocolVersion` is read; `capabilities`/`serverInfo` are dropped (unknown
+/// fields). A spec-minimal server may omit `protocolVersion` → defaults to empty.
+#[derive(Deserialize)]
+struct InitializeResultWire {
+    #[serde(default, rename = "protocolVersion")]
+    protocol_version: String,
+}
+
+/// PR-6b-3: decode an MCP `initialize` JSON-RPC response, capturing the server's
+/// negotiated `protocolVersion` — fail-closed, reusing [`decode_tool_result`]'s
+/// envelope (size-cap before parse, JSON-RPC error precedence).
+///
+/// Returns the negotiated protocol-version string, or an EMPTY string when the
+/// server returned a well-formed result that omitted `protocolVersion` (a minimal
+/// but compliant server) — the handshake still succeeds in that case. This turns
+/// the former liveness-only check into a real negotiation capture; the caller
+/// RECORDS the value (it is never a hard gate — refusing on mismatch would break
+/// interop between old `2025-06-18` and new `2026-07-28` servers).
+///
+/// # Errors
+///
+/// - [`DecodeError::Oversize`] / [`DecodeError::Malformed`] / [`DecodeError::ProtocolError`]
+///   exactly as [`decode_tool_result`] (the envelope is shared).
+pub fn decode_initialize_result(bytes: &[u8], max_bytes: usize) -> Result<String, DecodeError> {
+    let result = decode_tool_result(bytes, max_bytes)?;
+    let parsed: InitializeResultWire =
+        serde_json::from_slice(&result).map_err(|e| DecodeError::Malformed {
+            diagnostic: e.to_string(),
+        })?;
+    Ok(parsed.protocol_version)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -230,6 +263,58 @@ mod tests {
             }
             other => panic!("expected ProtocolError, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn pins_rc_error_code_tolerance() {
+        // PR-6b-3 (SEP-2164): the RC standardized missing-resource on JSON-RPC
+        // `-32602 Invalid Params` (was `-32002`). The decoder parses `code` as a
+        // bare i64 (no switch), so BOTH surface unchanged as ProtocolError — pin
+        // the no-regression contract for the old AND the new code.
+        for code in [-32002_i64, -32602] {
+            let body = format!(
+                r#"{{"jsonrpc":"2.0","id":1,"error":{{"code":{code},"message":"missing"}}}}"#
+            );
+            match decode_tool_result(body.as_bytes(), 4096) {
+                Err(DecodeError::ProtocolError { code: got, message }) => {
+                    assert_eq!(got, code);
+                    assert_eq!(message, "missing");
+                }
+                other => panic!("expected ProtocolError({code}), got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn captures_negotiated_protocol_version() {
+        // A new RC server negotiates the current revision.
+        let new = br#"{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2026-07-28","capabilities":{},"serverInfo":{"name":"s","version":"1"}}}"#;
+        assert_eq!(decode_initialize_result(new, 4096).unwrap(), "2026-07-28");
+        // An older server negotiates DOWN — captured, not refused (interop).
+        let old = br#"{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18"}}"#;
+        assert_eq!(decode_initialize_result(old, 4096).unwrap(), "2025-06-18");
+    }
+
+    #[test]
+    fn initialize_result_tolerates_absent_version() {
+        // A minimal-but-compliant server may omit protocolVersion: handshake still
+        // succeeds (empty = unknown), never an error (back-compat).
+        let body = br#"{"jsonrpc":"2.0","id":1,"result":{"capabilities":{}}}"#;
+        assert_eq!(decode_initialize_result(body, 4096).unwrap(), "");
+    }
+
+    #[test]
+    fn initialize_result_surfaces_protocol_error_and_oversize() {
+        let err = br#"{"jsonrpc":"2.0","id":1,"error":{"code":-32600,"message":"bad"}}"#;
+        assert!(matches!(
+            decode_initialize_result(err, 4096),
+            Err(DecodeError::ProtocolError { code: -32600, .. })
+        ));
+        let big = br#"{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2026-07-28"}}"#;
+        assert!(matches!(
+            decode_initialize_result(big, 4),
+            Err(DecodeError::Oversize { max: 4, .. })
+        ));
     }
 
     #[test]

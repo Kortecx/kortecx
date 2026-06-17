@@ -26,9 +26,16 @@ struct Params {
 }
 
 fn main() {
+    // PR-6b-3: the advertised protocol version is selectable via
+    // `--protocol-version <v>` (default `2025-06-18`) so an interop test can dial
+    // an OLD vs a NEW (`2026-07-28`) server. A per-process `tools/call` counter is
+    // echoed back so a test can PROVE stateful session reuse (the same process
+    // serves call 1 then call 2) vs stateless (a fresh process resets to 1).
+    let version = protocol_version_from_args();
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
+    let mut call_count: u64 = 0;
     for line in stdin.lock().lines() {
         let Ok(line) = line else { break };
         if line.trim().is_empty() {
@@ -50,7 +57,12 @@ fn main() {
             break;
         }
         let reply = match req {
-            Some(req) => handle(&req),
+            Some(req) => {
+                if req.method == "tools/call" {
+                    call_count += 1;
+                }
+                handle(&req, &version, call_count)
+            }
             None => r#"{"jsonrpc":"2.0","id":0,"error":{"code":-32700,"message":"parse error"}}"#
                 .to_string(),
         };
@@ -60,11 +72,24 @@ fn main() {
     }
 }
 
-fn handle(req: &Req) -> String {
+/// Read `--protocol-version <v>` from argv (default `2025-06-18`).
+fn protocol_version_from_args() -> String {
+    let mut args = std::env::args().skip(1);
+    while let Some(a) = args.next() {
+        if a == "--protocol-version" {
+            if let Some(v) = args.next() {
+                return v;
+            }
+        }
+    }
+    "2025-06-18".to_string()
+}
+
+fn handle(req: &Req, version: &str, call_count: u64) -> String {
     let id = req.id;
     match req.method.as_str() {
         "initialize" => format!(
-            r#"{{"jsonrpc":"2.0","id":{id},"result":{{"protocolVersion":"2025-06-18","capabilities":{{}},"serverInfo":{{"name":"kx-test","version":"1"}}}}}}"#
+            r#"{{"jsonrpc":"2.0","id":{id},"result":{{"protocolVersion":"{version}","capabilities":{{}},"serverInfo":{{"name":"kx-test","version":"1"}}}}}}"#
         ),
         "tools/list" => format!(
             r#"{{"jsonrpc":"2.0","id":{id},"result":{{"tools":[{{"name":"echo","description":"echo the args back","inputSchema":{{"type":"object","properties":{{"q":{{"type":"string"}}}},"required":["q"]}}}},{{"name":"ping","description":"liveness","inputSchema":{{"type":"object","properties":{{}}}}}}]}}}}"#
@@ -75,7 +100,9 @@ fn handle(req: &Req) -> String {
                 .as_ref()
                 .and_then(|p| p.arguments.as_ref())
                 .map_or_else(|| "{}".to_string(), |a| a.get().to_string());
-            format!(r#"{{"jsonrpc":"2.0","id":{id},"result":{{"echoed":{args}}}}}"#)
+            format!(
+                r#"{{"jsonrpc":"2.0","id":{id},"result":{{"echoed":{args},"call":{call_count}}}}}"#
+            )
         }
         other => format!(
             r#"{{"jsonrpc":"2.0","id":{id},"error":{{"code":-32601,"message":"no such method: {other}"}}}}"#

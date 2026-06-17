@@ -793,6 +793,7 @@ pub fn render_connections_list(resp: &proto::ListMcpServersResponse, json: bool)
                     "health": s.health,
                     "tool_count": s.tool_count,
                     "credential_ref_present": s.credential_ref_present,
+                    "session_mode": s.session_mode,
                 })
             })
             .collect();
@@ -808,9 +809,15 @@ pub fn render_connections_list(resp: &proto::ListMcpServersResponse, json: bool)
                 } else {
                     ""
                 };
+                // The session_mode is shown only when stateful (the non-default).
+                let mode = if s.session_mode == "stateful" {
+                    "  stateful"
+                } else {
+                    ""
+                };
                 format!(
-                    "{}  [{}]  {}  {} tool(s)  ({}){}",
-                    s.server_name, s.transport, s.endpoint, s.tool_count, s.health, cred
+                    "{}  [{}]  {}  {} tool(s)  ({}){}{}",
+                    s.server_name, s.transport, s.endpoint, s.tool_count, s.health, cred, mode
                 )
             })
             .collect::<Vec<_>>()

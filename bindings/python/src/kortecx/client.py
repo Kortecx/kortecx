@@ -674,6 +674,7 @@ class KxClient:
         args: Optional[Sequence[str]] = None,
         tls_required: bool = False,
         credential_ref: str = "",
+        session_mode: str = "stateless",
     ) -> RegisterServerResult:
         """Register an EXTERNAL MCP server (PR-6b-1 ``RegisterMcpServer``) — the
         runtime DIALS it (``initialize`` → ``tools/list``) and registers its tools
@@ -685,7 +686,13 @@ class KxClient:
         key (the secret VALUE is never sent, D81). The host is SSRF-vetted at
         admission AND at dial time; an internal host is refused
         (``permission_denied``). A dial failure is NOT fatal — the server persists
-        with ``health="unreachable"`` (honest, never a fabricated success)."""
+        with ``health="unreachable"`` (honest, never a fabricated success).
+
+        ``session_mode`` is the firing posture (PR-6b-3): ``"stateless"`` (the
+        default — a self-contained single-shot session per call, best for
+        idempotent read tools and servers behind a round-robin load balancer) or
+        ``"stateful"`` (one reused long-lived session, for servers that require it
+        or chatty same-server traffic)."""
         req = _g.RegisterMcpServerRequest(
             server_name=name,
             transport=transport,
@@ -693,6 +700,7 @@ class KxClient:
             args=list(args or []),
             tls_required=tls_required,
             credential_ref=credential_ref,
+            session_mode=session_mode,
         )
         resp = self._call(lambda: self._stub.RegisterMcpServer(req, metadata=self._md))
         return RegisterServerResult(

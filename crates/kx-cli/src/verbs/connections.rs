@@ -53,6 +53,8 @@ pub struct AddSpec {
     pub tls_required: bool,
     /// OPTIONAL secret-less credential ref NAME (env var / vault key).
     pub credential_ref: String,
+    /// PR-6b-3 firing posture: `"stateful"` | `"stateless"` (default stateless).
+    pub session_mode: String,
 }
 
 /// Parsed `connections` arguments.
@@ -62,6 +64,21 @@ pub struct ConnectionsArgs {
     pub sub: ConnectionsSub,
     /// Common client flags.
     pub common: ClientCommon,
+}
+
+/// Resolve the firing posture (PR-6b-3): `--stateful` wins; else a validated
+/// `--session-mode`; else the stateless-first default.
+fn resolve_session_mode(stateful_flag: bool, mode: Option<&str>) -> Result<String, CliError> {
+    if stateful_flag {
+        return Ok("stateful".to_string());
+    }
+    match mode {
+        None | Some("stateless") => Ok("stateless".to_string()),
+        Some("stateful") => Ok("stateful".to_string()),
+        Some(other) => Err(CliError::Usage(format!(
+            "--session-mode must be stateful | stateless, got {other:?}"
+        ))),
+    }
 }
 
 /// Parse `connections` args (the verb already consumed). The first token selects
@@ -84,6 +101,10 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<ConnectionsArgs, 
     let mut server_args: Vec<String> = Vec::new();
     let mut tls_required = false;
     let mut credential_ref = String::new();
+    // PR-6b-3: the firing posture. `--stateful` is sugar for
+    // `--session-mode stateful`; default (neither) is stateless.
+    let mut session_mode: Option<String> = None;
+    let mut stateful_flag = false;
     let mut common = ClientCommon::default();
 
     while let Some(flag) = args.next() {
@@ -98,6 +119,8 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<ConnectionsArgs, 
             "--arg" => server_args.push(next_value(&mut args, "--arg")?),
             "--tls-required" => tls_required = true,
             "--credential-ref" => credential_ref = next_value(&mut args, "--credential-ref")?,
+            "--session-mode" => session_mode = Some(next_value(&mut args, "--session-mode")?),
+            "--stateful" => stateful_flag = true,
             other => return Err(CliError::Usage(format!("unknown flag {other:?}"))),
         }
     }
@@ -147,6 +170,7 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<ConnectionsArgs, 
                     CliError::Usage("connections add --transport http requires --url <url>".into())
                 })?,
             };
+            let session_mode = resolve_session_mode(stateful_flag, session_mode.as_deref())?;
             ConnectionsSub::Add(AddSpec {
                 name,
                 transport,
@@ -154,6 +178,7 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<ConnectionsArgs, 
                 args: server_args,
                 tls_required,
                 credential_ref,
+                session_mode,
             })
         }
         other => {
@@ -180,6 +205,7 @@ pub async fn execute(args: ConnectionsArgs) -> Result<(), CliError> {
                 args: spec.args,
                 tls_required: spec.tls_required,
                 credential_ref: spec.credential_ref,
+                session_mode: spec.session_mode,
             };
             let resp = client
                 .register_mcp_server(resolved.request(req)?)
@@ -260,6 +286,46 @@ mod tests {
         assert_eq!(spec.endpoint, "https://mcp.github.example/rpc");
         assert!(spec.tls_required);
         assert_eq!(spec.credential_ref, "GH_MCP_TOKEN");
+        assert_eq!(spec.session_mode, "stateless", "default is stateless-first");
+    }
+
+    #[test]
+    fn parses_session_mode_flags() {
+        // `--stateful` sugar.
+        let a = p(&["add", "--name", "s", "--command", "x", "--stateful"]).unwrap();
+        let ConnectionsSub::Add(spec) = a.sub else {
+            panic!("expected Add");
+        };
+        assert_eq!(spec.session_mode, "stateful");
+        // explicit `--session-mode stateless`.
+        let a = p(&[
+            "add",
+            "--name",
+            "s",
+            "--command",
+            "x",
+            "--session-mode",
+            "stateless",
+        ])
+        .unwrap();
+        let ConnectionsSub::Add(spec) = a.sub else {
+            panic!("expected Add");
+        };
+        assert_eq!(spec.session_mode, "stateless");
+        // a bad value is rejected.
+        assert!(
+            p(&[
+                "add",
+                "--name",
+                "s",
+                "--command",
+                "x",
+                "--session-mode",
+                "weird"
+            ])
+            .is_err(),
+            "bad session-mode"
+        );
     }
 
     #[test]

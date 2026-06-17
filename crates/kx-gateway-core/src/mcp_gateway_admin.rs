@@ -38,6 +38,8 @@ pub struct McpServerRegistration {
     pub tls_required: bool,
     /// OPTIONAL secret-less credential ref NAME (env var / vault key) — never the secret.
     pub credential_ref: Option<String>,
+    /// PR-6b-3: `"stateful"` | `"stateless"`; empty ⇒ `"stateless"` (the default).
+    pub session_mode: String,
 }
 
 /// One registered external MCP server, in gateway-core vocabulary (the
@@ -58,6 +60,8 @@ pub struct McpServerView {
     pub tool_count: u32,
     /// Whether a credential ref NAME is attached (never the value, D81).
     pub credential_ref_present: bool,
+    /// PR-6b-3: the firing posture — `"stateful"` | `"stateless"`.
+    pub session_mode: String,
 }
 
 /// The outcome of registering an MCP server.

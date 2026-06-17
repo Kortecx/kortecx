@@ -14,12 +14,15 @@ use std::sync::Mutex;
 
 use rusqlite::{params, Connection as SqliteConn, OpenFlags};
 
-use crate::connection::{connection_id_of, Connection, ConnectionHealth, TransportSpec};
+use crate::connection::{
+    connection_id_of, Connection, ConnectionHealth, SessionMode, TransportSpec,
+};
 use crate::errors::GatewayError;
 
-/// The connections sidecar schema version (LE-u16; bumping is a deliberate
-/// migration, never a silent loss — matches the `tools.db` posture).
-const CONNECTIONS_SCHEMA_VERSION: u16 = 1;
+/// The connections sidecar schema version (LE-u16). PR-6b-3 bumped it 1 → 2 to add
+/// the `session_mode` column; the migration is FORWARD + lossless (an idempotent
+/// `ALTER TABLE ADD COLUMN` preserves every existing row), never a silent wipe.
+const CONNECTIONS_SCHEMA_VERSION: u16 = 2;
 
 const DDL: &str = "CREATE TABLE IF NOT EXISTS connections (
     name           TEXT PRIMARY KEY,
@@ -30,7 +33,8 @@ const DDL: &str = "CREATE TABLE IF NOT EXISTS connections (
     tls_required   INTEGER NOT NULL DEFAULT 0,
     credential_ref TEXT,
     health         TEXT NOT NULL DEFAULT 'unknown',
-    tool_count     INTEGER NOT NULL DEFAULT 0
+    tool_count     INTEGER NOT NULL DEFAULT 0,
+    session_mode   TEXT NOT NULL DEFAULT 'stateless'
 );";
 
 /// A durable SQLite store of registered external MCP server connections.
@@ -99,13 +103,26 @@ impl SqliteConnectionStore {
             u16::from_le_bytes([stored[0], stored[1]])
         } else {
             return Err(GatewayError::Storage(
-                "connections.db metadata.schema_version is not 2 bytes".to_string(),
+                "connections.db metadata.schema_version is not a 2-byte u16".to_string(),
             ));
         };
-        if found != CONNECTIONS_SCHEMA_VERSION {
+        // A NEWER on-disk schema than this binary understands is refused (a lossy
+        // downgrade is never safe). An OLDER schema is FORWARD-MIGRATED in place.
+        if found > CONNECTIONS_SCHEMA_VERSION {
             return Err(GatewayError::Storage(format!(
-                "connections.db schema_version mismatch: expected {CONNECTIONS_SCHEMA_VERSION}, found {found}"
+                "connections.db schema_version {found} is newer than this binary supports ({CONNECTIONS_SCHEMA_VERSION}) — refusing a lossy downgrade"
             )));
+        }
+        // PR-6b-3 v1 → v2: add `session_mode` (idempotent — a no-op on a fresh v2
+        // table the DDL already created, and on re-open). Existing rows survive,
+        // defaulting to the stateless-first posture.
+        ensure_session_mode_column(&conn)?;
+        if found < CONNECTIONS_SCHEMA_VERSION {
+            conn.execute(
+                "UPDATE metadata SET value = ?1 WHERE key = 'schema_version'",
+                params![&CONNECTIONS_SCHEMA_VERSION.to_le_bytes()[..]],
+            )
+            .map_err(storage)?;
         }
         Ok(Self {
             conn: Mutex::new(conn),
@@ -122,8 +139,8 @@ impl SqliteConnectionStore {
         let db = self.conn.lock().map_err(|_| poisoned())?;
         db.execute(
             "INSERT OR REPLACE INTO connections
-             (name, connection_id, transport_kind, endpoint, args_json, tls_required, credential_ref, health, tool_count)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+             (name, connection_id, transport_kind, endpoint, args_json, tls_required, credential_ref, health, tool_count, session_mode)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
                 conn.name,
                 &conn.id[..],
@@ -134,6 +151,7 @@ impl SqliteConnectionStore {
                 conn.credential_ref,
                 conn.health.tag(),
                 conn.tool_count,
+                conn.session_mode.tag(),
             ],
         )
         .map_err(storage)?;
@@ -167,7 +185,7 @@ impl SqliteConnectionStore {
         let db = self.conn.lock().map_err(|_| poisoned())?;
         let raw = db
             .query_row(
-                "SELECT name, transport_kind, endpoint, args_json, tls_required, credential_ref, health, tool_count
+                "SELECT name, transport_kind, endpoint, args_json, tls_required, credential_ref, health, tool_count, session_mode
                  FROM connections WHERE name = ?1",
                 params![name],
                 read_raw,
@@ -188,7 +206,7 @@ impl SqliteConnectionStore {
         let db = self.conn.lock().map_err(|_| poisoned())?;
         let mut stmt = db
             .prepare(
-                "SELECT name, transport_kind, endpoint, args_json, tls_required, credential_ref, health, tool_count
+                "SELECT name, transport_kind, endpoint, args_json, tls_required, credential_ref, health, tool_count, session_mode
                  FROM connections ORDER BY name ASC",
             )
             .map_err(storage)?;
@@ -239,6 +257,7 @@ struct RawRow {
     credential_ref: Option<String>,
     health: String,
     tool_count: u32,
+    session_mode: String,
 }
 
 /// Read a row into [`RawRow`] (pure rusqlite — no `GatewayError` here).
@@ -253,7 +272,32 @@ fn read_raw(row: &rusqlite::Row<'_>) -> rusqlite::Result<RawRow> {
         credential_ref: row.get(5)?,
         health: row.get(6)?,
         tool_count: row.get(7)?,
+        session_mode: row.get(8)?,
     })
+}
+
+/// PR-6b-3: idempotently add the `session_mode` column to an existing v1
+/// `connections` table (SQLite has no `ADD COLUMN IF NOT EXISTS`, so guard via
+/// `PRAGMA table_info`). A no-op on a fresh v2 table (the DDL already has it) and
+/// on every re-open — existing rows survive, defaulting to `'stateless'`.
+fn ensure_session_mode_column(conn: &SqliteConn) -> Result<(), GatewayError> {
+    let mut stmt = conn
+        .prepare("PRAGMA table_info(connections)")
+        .map_err(storage)?;
+    let has_column = stmt
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(storage)?
+        .collect::<Result<Vec<String>, _>>()
+        .map_err(storage)?
+        .iter()
+        .any(|name| name == "session_mode");
+    if !has_column {
+        conn.execute_batch(
+            "ALTER TABLE connections ADD COLUMN session_mode TEXT NOT NULL DEFAULT 'stateless';",
+        )
+        .map_err(storage)?;
+    }
+    Ok(())
 }
 
 /// Decode a [`RawRow`] into a [`Connection`] (the `connection_id` re-derives from
@@ -285,6 +329,7 @@ fn decode_raw(raw: RawRow) -> Result<Connection, GatewayError> {
         credential_ref: raw.credential_ref,
         health: ConnectionHealth::from_tag(&raw.health),
         tool_count: raw.tool_count,
+        session_mode: SessionMode::from_tag(&raw.session_mode),
     })
 }
 
@@ -311,6 +356,7 @@ mod tests {
             credential_ref: Some("MCP_TOKEN".to_string()),
             health: ConnectionHealth::Connected,
             tool_count: 3,
+            session_mode: SessionMode::Stateless,
         }
     }
 
@@ -331,6 +377,7 @@ mod tests {
                 credential_ref: None,
                 health: ConnectionHealth::Unknown,
                 tool_count: 0,
+                session_mode: SessionMode::Stateful,
             })
             .unwrap();
 
@@ -340,6 +387,8 @@ mod tests {
         assert_eq!(got.health, ConnectionHealth::Connected);
         assert_eq!(got.tool_count, 3);
         assert_eq!(got.egress_host().as_deref(), Some("mcp.github.example"));
+        // PR-6b-3: session_mode round-trips (default stateless for the http helper).
+        assert_eq!(got.session_mode, SessionMode::Stateless);
 
         let local = store.get("local").unwrap().unwrap();
         match local.transport {
@@ -349,6 +398,8 @@ mod tests {
             }
             TransportSpec::Http { .. } => panic!("expected stdio"),
         }
+        // The explicitly-stateful stdio server round-trips as stateful.
+        assert_eq!(local.session_mode, SessionMode::Stateful);
 
         // Deterministic ordering by name.
         let all = store.list().unwrap();
@@ -360,6 +411,48 @@ mod tests {
         assert!(store.remove("github").unwrap());
         assert!(!store.remove("github").unwrap());
         assert!(store.get("github").unwrap().is_none());
+    }
+
+    #[test]
+    fn migrates_v1_db_to_v2_preserving_rows() {
+        use rusqlite::{params, Connection as SqliteConn};
+        // Build a v1-shaped connections.db on disk (no session_mode column, version 1).
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("connections.db");
+        {
+            let c = SqliteConn::open(&path).unwrap();
+            c.execute_batch(
+                "CREATE TABLE metadata (key TEXT PRIMARY KEY, value BLOB NOT NULL);
+                 CREATE TABLE connections (
+                    name TEXT PRIMARY KEY, connection_id BLOB NOT NULL, transport_kind TEXT NOT NULL,
+                    endpoint TEXT NOT NULL, args_json TEXT NOT NULL DEFAULT '[]',
+                    tls_required INTEGER NOT NULL DEFAULT 0, credential_ref TEXT,
+                    health TEXT NOT NULL DEFAULT 'unknown', tool_count INTEGER NOT NULL DEFAULT 0);",
+            )
+            .unwrap();
+            let one: u16 = 1;
+            c.execute(
+                "INSERT INTO metadata (key, value) VALUES ('schema_version', ?1)",
+                params![&one.to_le_bytes()[..]],
+            )
+            .unwrap();
+            c.execute(
+                "INSERT INTO connections (name, connection_id, transport_kind, endpoint, health, tool_count)
+                 VALUES ('legacy', ?1, 'http', 'https://a.example/rpc', 'connected', 2)",
+                params![&connection_id_of("legacy")[..]],
+            )
+            .unwrap();
+        }
+        // Re-open through the v2 store: the forward migration must preserve the row,
+        // default its session_mode to stateless, and stamp schema_version = 2.
+        let store = SqliteConnectionStore::open(&path).unwrap();
+        let got = store.get("legacy").unwrap().expect("legacy row preserved");
+        assert_eq!(got.tool_count, 2);
+        assert_eq!(got.health, ConnectionHealth::Connected);
+        assert_eq!(got.session_mode, SessionMode::Stateless);
+        // Re-open AGAIN: the idempotent ALTER must be a no-op (no duplicate-column error).
+        let store2 = SqliteConnectionStore::open(&path).unwrap();
+        assert!(store2.get("legacy").unwrap().is_some());
     }
 
     #[test]

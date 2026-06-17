@@ -86,9 +86,11 @@ impl From<SessionError> for CapabilityFailureReason {
 /// `Send` (not `Sync`): a session carries per-connection mutable state (the live
 /// child / the request-id counter), used single-threaded by one caller at a time.
 pub trait McpSession: Send {
-    /// Send the MCP `initialize` handshake and verify the server's reply is a
-    /// well-formed result (fail-closed). Sent once, right after open.
-    fn initialize(&mut self, wall_clock_ms: u64) -> Result<(), SessionError>;
+    /// Send the MCP `initialize` handshake and CAPTURE the server's negotiated
+    /// `protocolVersion` (PR-6b-3) — fail-closed (a malformed reply is refused).
+    /// Sent once, right after open. Returns the negotiated version string, or an
+    /// empty string when a compliant server omitted it (still a valid handshake).
+    fn initialize(&mut self, wall_clock_ms: u64) -> Result<String, SessionError>;
 
     /// Send `tools/list` and decode the server's tool declarations fail-closed.
     fn list_tools(
@@ -126,6 +128,20 @@ pub struct McpSessionCapability {
     transport: Box<dyn McpTransport>,
     max_response_bytes: usize,
     wall_clock_ms: u64,
+    /// PR-6b-3: firing posture. `false` (the DEFAULT) = stateless single-shot
+    /// (open→initialize→call→drop per invoke — byte-identical to the original
+    /// behaviour). `true` = a long-lived session reused across invokes (amortizes
+    /// the handshake for chatty session-requiring servers). The gateway sets this
+    /// from the connection's `session_mode`.
+    stateful: bool,
+    /// The cached long-lived session, used ONLY in stateful mode. Interior
+    /// mutability because [`Capability::invoke`] takes `&self`; the `Mutex`
+    /// serializes one in-flight call per connection (an `McpSession` is `Send`,
+    /// not `Sync`). Dropped + re-opened on any [`SessionError`]. Held for the
+    /// capability's lifetime (no idle-expiry) — bounded by the operator-registered
+    /// per-server tool count, opt-in, off the default stateless path; a future
+    /// hardening could add an idle-drop / per-connection session cap.
+    cached: std::sync::Mutex<Option<Box<dyn McpSession>>>,
 }
 
 impl std::fmt::Debug for McpSessionCapability {
@@ -137,6 +153,7 @@ impl std::fmt::Debug for McpSessionCapability {
             .field("remote_name", &self.remote_name)
             .field("max_response_bytes", &self.max_response_bytes)
             .field("wall_clock_ms", &self.wall_clock_ms)
+            .field("stateful", &self.stateful)
             .finish_non_exhaustive()
     }
 }
@@ -161,7 +178,18 @@ impl McpSessionCapability {
             transport,
             max_response_bytes: MAX_TOOL_RESULT_BYTES_DEFAULT,
             wall_clock_ms: 0,
+            stateful: false,
+            cached: std::sync::Mutex::new(None),
         }
+    }
+
+    /// PR-6b-3: select the firing posture. `false` (default) = stateless
+    /// single-shot per invoke; `true` = a reused long-lived session. Set by the
+    /// gateway from the connection's `session_mode` ("stateful" ⇒ `true`).
+    #[must_use]
+    pub fn with_stateful(mut self, stateful: bool) -> Self {
+        self.stateful = stateful;
+        self
     }
 
     /// Bound the response size (IMP-16). `0` ⇒ the default cap (never "unbounded").
@@ -202,14 +230,34 @@ impl Capability for McpSessionCapability {
     }
 
     fn invoke(&self, request: &EffectRequest) -> Result<Vec<u8>, CapabilityFailureReason> {
-        // Open a fresh short-lived session, handshake, fire, drop. The args are the
-        // already-warrant-validated `EffectRequest.payload`, carried verbatim.
-        tracing::debug!(remote = %self.remote_name, "mcp session tools/call dispatch");
+        tracing::debug!(
+            remote = %self.remote_name,
+            stateful = self.stateful,
+            "mcp session tools/call dispatch"
+        );
+        if self.stateful {
+            self.invoke_stateful(request)
+        } else {
+            self.invoke_stateless(request)
+        }
+    }
+}
+
+impl McpSessionCapability {
+    /// The DEFAULT (stateless) firing path — byte-identical to the original
+    /// behaviour: open a fresh short-lived session, handshake, fire, drop. The
+    /// args are the already-warrant-validated `EffectRequest.payload`, verbatim.
+    fn invoke_stateless(
+        &self,
+        request: &EffectRequest,
+    ) -> Result<Vec<u8>, CapabilityFailureReason> {
         let mut session = self.transport.open_session().map_err(|e| {
             // A transport that does not support sessions (or a failed open/spawn)
             // is a typed transport failure — never a silent success.
             CapabilityFailureReason::from(e)
         })?;
+        // The negotiated version is captured by the session; firing doesn't gate on
+        // it (recorded at discovery), so the handshake result is discarded here.
         session
             .initialize(self.wall_clock_ms)
             .map_err(CapabilityFailureReason::from)?;
@@ -223,5 +271,51 @@ impl Capability for McpSessionCapability {
             )
             .map_err(CapabilityFailureReason::from)?;
         Ok(result)
+    }
+
+    /// PR-6b-3 stateful firing: reuse a long-lived session across invokes,
+    /// amortizing the handshake. Lazily opens + `initialize`s on first use; on ANY
+    /// `SessionError` the cached session is dropped so the NEXT invoke re-opens
+    /// cleanly (a within-mode recovery — never a silent accept). The run-scoped
+    /// `idempotency_key` still rides every `tools/call`, so reuse does not weaken
+    /// the exactly-once contract. The `Mutex` serializes one in-flight call per
+    /// connection (`McpSession` is `Send`, not `Sync`).
+    fn invoke_stateful(&self, request: &EffectRequest) -> Result<Vec<u8>, CapabilityFailureReason> {
+        let mut guard = self
+            .cached
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        // (Re)establish the session if absent (first use or post-fault recovery).
+        if guard.is_none() {
+            let mut session = self
+                .transport
+                .open_session()
+                .map_err(CapabilityFailureReason::from)?;
+            session
+                .initialize(self.wall_clock_ms)
+                .map_err(CapabilityFailureReason::from)?;
+            *guard = Some(session);
+        }
+        // The session is present (just ensured above); a let-else keeps this
+        // fail-closed + panic-free (the no-`expect` discipline) rather than asserting.
+        let Some(session) = guard.as_mut() else {
+            return Err(CapabilityFailureReason::Other(
+                "mcp stateful session unexpectedly absent".to_string(),
+            ));
+        };
+        match session.call(
+            &self.remote_name,
+            &request.payload,
+            self.max_response_bytes,
+            self.wall_clock_ms,
+            request.idempotency_key.as_ref(),
+        ) {
+            Ok(result) => Ok(result),
+            Err(e) => {
+                // Drop the (possibly half-open) session so the next invoke re-opens.
+                *guard = None;
+                Err(CapabilityFailureReason::from(e))
+            }
+        }
     }
 }

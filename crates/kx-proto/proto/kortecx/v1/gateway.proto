@@ -1231,6 +1231,7 @@ message RegisterMcpServerRequest {
   repeated string args  = 4;             // stdio command-line args (ignored for http)
   bool   tls_required   = 5;             // http: refuse plaintext http:// when true
   string credential_ref = 6;             // OPTIONAL secret-less ref NAME (env var / vault key); never the secret
+  string session_mode   = 7;             // PR-6b-3: "stateful" | "stateless"; empty ⇒ "stateless" (stateless-first default)
 }
 message RegisterMcpServerResponse {
   bytes  connection_id = 1;              // 16B server-derived (SN-8)
@@ -1252,6 +1253,7 @@ message McpServer {
   string health                 = 5;     // "connected" | "unreachable" | "unknown"
   uint32 tool_count             = 6;     // tools discovered on the last successful dial
   bool   credential_ref_present = 7;     // a credential ref NAME is attached (never the value)
+  string session_mode          = 8;      // PR-6b-3: "stateful" | "stateless" (firing posture; empty ⇒ "stateless")
 }
 message ListMcpServersResponse {
   repeated McpServer servers = 1;        // deterministic (name) order

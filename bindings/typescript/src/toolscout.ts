@@ -259,6 +259,8 @@ export class McpServer {
     readonly health: string,
     readonly toolCount: number,
     readonly credentialRefPresent: boolean,
+    /** PR-6b-3: the firing posture — `"stateful"` | `"stateless"`. */
+    readonly sessionMode: string,
   ) {}
 
   static fromProto(s: PbMcpServer): McpServer {
@@ -270,6 +272,7 @@ export class McpServer {
       s.health,
       s.toolCount,
       s.credentialRefPresent,
+      s.sessionMode,
     );
   }
 }
@@ -305,6 +308,8 @@ export interface RegisterMcpServerInput {
   readonly tlsRequired?: boolean;
   /** OPTIONAL secret-less credential ref NAME (env var / vault key). */
   readonly credentialRef?: string;
+  /** PR-6b-3 firing posture: `"stateful"` | `"stateless"` (defaults to `"stateless"`). */
+  readonly sessionMode?: string;
 }
 
 /** A `RegisterTool` request shape. The host is SSRF-vetted; the server derives

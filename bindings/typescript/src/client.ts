@@ -627,6 +627,7 @@ export abstract class KxClientBase {
         args: [...(input.args ?? [])],
         tlsRequired: input.tlsRequired ?? false,
         credentialRef: input.credentialRef ?? "",
+        sessionMode: input.sessionMode ?? "stateless",
       }),
     );
     return {

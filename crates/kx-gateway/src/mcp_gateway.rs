@@ -20,7 +20,7 @@ use kx_gateway_core::{
     RegisteredToolEntry,
 };
 use kx_mcp_gateway::{
-    CapabilitySink, GatewayError, McpGateway, SqliteConnectionStore, TransportSpec,
+    CapabilitySink, GatewayError, McpGateway, SessionMode, SqliteConnectionStore, TransportSpec,
 };
 use kx_tool_registry::{RegistrationStatus, SqliteToolRegistry, ToolKind, ToolProvenance};
 
@@ -115,9 +115,15 @@ impl McpGatewayAdmin for HostMcpGateway {
         reg: McpServerRegistration,
     ) -> Result<RegisterServerOutcome, McpAdminError> {
         let transport = transport_from_wire(&reg)?;
+        let session_mode = SessionMode::from_tag(&reg.session_mode);
         let outcome = self
             .gateway
-            .register_server(&reg.server_name, transport, reg.credential_ref)
+            .register_server(
+                &reg.server_name,
+                transport,
+                reg.credential_ref,
+                session_mode,
+            )
             .map_err(map_err)?;
         Ok(RegisterServerOutcome {
             connection_id: outcome.connection_id,
@@ -138,6 +144,7 @@ impl McpGatewayAdmin for HostMcpGateway {
                 health: c.health.tag().to_string(),
                 tool_count: c.tool_count,
                 credential_ref_present: c.credential_ref.is_some(),
+                session_mode: c.session_mode.tag().to_string(),
             })
             .collect())
     }
