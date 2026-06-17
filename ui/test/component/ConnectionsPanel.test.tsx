@@ -115,7 +115,7 @@ describe("ConnectionsPanel", () => {
     fireEvent.change(screen.getByTestId("connection-args"), { target: { value: "--stdio -v" } });
     fireEvent.submit(screen.getByTestId("connections-add-form"));
     expect(registerM.mutate).toHaveBeenCalledTimes(1);
-    const [input] = registerM.mutate.mock.calls[0];
+    const input = registerM.mutate.mock.calls[0]?.[0];
     expect(input).toMatchObject({
       name: "local",
       transport: "stdio",
