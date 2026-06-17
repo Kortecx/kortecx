@@ -28,7 +28,9 @@ use kx_tool_registry::{
 };
 use kx_warrant::ToolRequirement;
 
-use crate::connection::{connection_id_of, Connection, ConnectionHealth, TransportSpec};
+use crate::connection::{
+    connection_id_of, Connection, ConnectionHealth, SessionMode, TransportSpec,
+};
 use crate::errors::GatewayError;
 use crate::ratelimit::RateLimiter;
 use crate::store::SqliteConnectionStore;
@@ -131,6 +133,7 @@ impl McpGateway {
         name: &str,
         transport: TransportSpec,
         credential_ref: Option<String>,
+        session_mode: SessionMode,
     ) -> Result<RegisterOutcome, GatewayError> {
         let name = name.trim();
         if name.is_empty() {
@@ -165,6 +168,7 @@ impl McpGateway {
                 credential_ref: None,
                 health: ConnectionHealth::Unknown,
                 tool_count: 0,
+                session_mode: SessionMode::Stateless,
             }
             .egress_host()
             .ok_or_else(|| GatewayError::InvalidSpec(format!("endpoint has no host: {url}")))?;
@@ -178,6 +182,7 @@ impl McpGateway {
             credential_ref,
             health: ConnectionHealth::Unknown,
             tool_count: 0,
+            session_mode,
         };
         // Persist FIRST (so a dial failure still leaves a re-testable record).
         self.store.upsert(&conn)?;
@@ -333,9 +338,18 @@ impl McpGateway {
         let mut session = transport
             .open_session()
             .map_err(|e| GatewayError::Dial(e.to_string()))?;
-        session
+        // PR-6b-3: capture the server's negotiated protocol version (recorded for
+        // diagnostics — never a hard gate, so old `2025-06-18` + new `2026-07-28`
+        // servers both dial successfully).
+        let negotiated = session
             .initialize(wall_clock_ms)
             .map_err(|e| GatewayError::Dial(e.to_string()))?;
+        tracing::info!(
+            server = %conn.name,
+            negotiated_version = %if negotiated.is_empty() { "unspecified" } else { &negotiated },
+            session_mode = conn.session_mode.tag(),
+            "dialed external MCP server"
+        );
         let decls = session
             .list_tools(DISCOVERY_MAX_BYTES, wall_clock_ms)
             .map_err(|e| GatewayError::Dial(e.to_string()))?;
@@ -397,14 +411,18 @@ impl McpGateway {
             // Register the firing capability on the broker (per-invoke session) —
             // only after the durable write succeeded.
             let cap_transport = build_transport(conn)?;
-            self.sink
-                .register_capability(Box::new(McpSessionCapability::new(
-                    tool_id,
-                    tool_version,
-                    McpEndpointId(conn.transport.endpoint().to_string()),
-                    remote.to_string(),
-                    cap_transport,
-                )));
+            self.sink.register_capability(Box::new(
+                McpSessionCapability::new(
+                        tool_id,
+                        tool_version,
+                        McpEndpointId(conn.transport.endpoint().to_string()),
+                        remote.to_string(),
+                        cap_transport,
+                    )
+                    // PR-6b-3: honor the connection's firing posture (stateless
+                    // single-shot by default; reuse one session when stateful).
+                    .with_stateful(conn.session_mode.is_stateful()),
+            ));
             count += 1;
         }
         Ok(count)
@@ -440,18 +458,36 @@ fn build_transport(conn: &Connection) -> Result<Box<dyn McpTransport>, GatewayEr
     }
 }
 
-/// Best-effort map of a remote tool's JSON-Schema `inputSchema` into the typed
-/// registry [`InputSchema`]. Maps `string`/`integer`/`boolean` object properties
-/// (the args the runtime can validate); skips unmappable types (number/array/
-/// object) and sets `deny_unknown = false` (external servers may accept extra
-/// fields — being lenient avoids false rejections, and the SERVER still validates
-/// authoritatively). Returns `None` when the schema is absent or not an object
-/// schema (⇒ no client-side arg gate; the remote validates).
+/// Maximum JSON-Schema nesting depth the mapper will accept (PR-6b-3 / RC
+/// SEP-2106 security constraint). A schema deeper than this — or one carrying an
+/// EXTERNAL `$ref` — is refused (mapped to `None`); the arg still passes through
+/// verbatim for the SERVER to validate. Generous for real tool schemas, tight
+/// enough to deny a pathological nested-schema DoS.
+const MAX_SCHEMA_DEPTH: usize = 8;
+
+/// Best-effort map of a remote tool's JSON-Schema `inputSchema` (the 2020-12 RC
+/// shape, SEP-2106) into the typed registry [`InputSchema`] — the OPTIONAL
+/// client-side arg gate. Maps the property kinds the runtime can validate exactly:
+/// `string` (honouring `maxLength`, clamped ≤ 8192), `integer` (honouring
+/// `minimum`/`maximum`), `boolean`, and a pure-string `enum` (→ exact-match
+/// `Enum`). `number`/`array`/`object` and the `oneOf`/`anyOf`/`allOf` combinators
+/// are NOT mapped — there is **no float in `ParamType`** (SN-8), and a structured
+/// type has no typed gate — so those args pass through VERBATIM for the server to
+/// validate authoritatively (`deny_unknown = false`, never a fabricated gate).
+///
+/// Security (the RC constraint): the schema is pre-scanned and REFUSED entirely
+/// (→ `None`) if it nests deeper than [`MAX_SCHEMA_DEPTH`] or carries an external
+/// `$ref` (a non-`#` pointer — defense against schema-driven SSRF/DoS). Returns
+/// `None` when the schema is absent, not an object schema, or refused.
 fn json_schema_to_input_schema(schema_json: &[u8]) -> Option<InputSchema> {
     if schema_json.is_empty() {
         return None;
     }
     let value: serde_json::Value = serde_json::from_slice(schema_json).ok()?;
+    // RC security pre-scan: bound depth + refuse external `$ref` before mapping.
+    if !schema_is_safe(&value, 0) {
+        return None;
+    }
     let obj = value.as_object()?;
     let properties = obj.get("properties")?.as_object()?;
     let required: std::collections::BTreeSet<&str> = obj
@@ -461,17 +497,10 @@ fn json_schema_to_input_schema(schema_json: &[u8]) -> Option<InputSchema> {
         .unwrap_or_default();
     let mut params = Vec::new();
     for (pname, pspec) in properties {
-        let ty_str = pspec.get("type").and_then(|t| t.as_str());
-        let ty = match ty_str {
-            Some("string") => ParamType::Str { max_len: 8192 },
-            Some("integer") => ParamType::Int {
-                min: None,
-                max: None,
-            },
-            Some("boolean") => ParamType::Bool,
-            // number/array/object/null/absent → not client-validatable; skip the
-            // param (the server validates it). The arg still passes through verbatim.
-            _ => continue,
+        let Some(ty) = param_type_of(pspec) else {
+            // number/array/object/combinator/absent → no typed gate; the arg
+            // passes through verbatim (the server validates it).
+            continue;
         };
         params.push(ParamSpec {
             name: pname.clone(),
@@ -488,6 +517,63 @@ fn json_schema_to_input_schema(schema_json: &[u8]) -> Option<InputSchema> {
         params,
         deny_unknown: false,
     })
+}
+
+/// Map a single JSON-Schema property spec to a typed [`ParamType`], or `None` when
+/// it has no exact typed gate (number/array/object/combinator → verbatim pass-through).
+fn param_type_of(pspec: &serde_json::Value) -> Option<ParamType> {
+    // A pure-string `enum` → exact-match Enum (SN-8: exact equality, no fuzzy
+    // match). A mixed/numeric enum is left to the server (no partial allow-list).
+    if let Some(values) = pspec.get("enum").and_then(|e| e.as_array()) {
+        if !values.is_empty() && values.iter().all(serde_json::Value::is_string) {
+            let allowed = values
+                .iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect::<std::collections::BTreeSet<String>>();
+            return Some(ParamType::Enum { allowed });
+        }
+    }
+    match pspec.get("type").and_then(|t| t.as_str()) {
+        Some("string") => {
+            let max_len = pspec
+                .get("maxLength")
+                .and_then(serde_json::Value::as_u64)
+                .and_then(|n| usize::try_from(n.min(8192)).ok())
+                .unwrap_or(8192);
+            Some(ParamType::Str { max_len })
+        }
+        Some("integer") => Some(ParamType::Int {
+            min: pspec.get("minimum").and_then(serde_json::Value::as_i64),
+            max: pspec.get("maximum").and_then(serde_json::Value::as_i64),
+        }),
+        Some("boolean") => Some(ParamType::Bool),
+        _ => None,
+    }
+}
+
+/// Pre-scan a parsed schema for the RC security constraints: REFUSE an external
+/// `$ref` (a non-`#`-prefixed pointer — schema-driven SSRF/fetch defense) and bound
+/// nesting depth (DoS). Returns `true` iff the schema is SAFE to map. The walk is
+/// itself depth-capped (bails at the limit without descending), so the scan can
+/// never be turned into a stack-overflow vector.
+fn schema_is_safe(value: &serde_json::Value, depth: usize) -> bool {
+    if depth > MAX_SCHEMA_DEPTH {
+        return false;
+    }
+    match value {
+        serde_json::Value::Object(map) => {
+            if let Some(r) = map.get("$ref").and_then(|v| v.as_str()) {
+                // Internal same-document pointers (`#/...`) are tolerated (that prop
+                // simply gets no typed gate); an EXTERNAL ref refuses the schema.
+                if !r.starts_with('#') {
+                    return false;
+                }
+            }
+            map.values().all(|v| schema_is_safe(v, depth + 1))
+        }
+        serde_json::Value::Array(items) => items.iter().all(|v| schema_is_safe(v, depth + 1)),
+        _ => true,
+    }
 }
 
 /// Admission-time SSRF vetting of a server host (`host[:port]`), deny-by-default.
@@ -597,6 +683,93 @@ mod tests {
         assert!(json_schema_to_input_schema(b"not json").is_none());
         // object schema with only unmappable props → None (server validates).
         assert!(json_schema_to_input_schema(br#"{"properties":{"x":{"type":"array"}}}"#).is_none());
+    }
+
+    #[test]
+    fn json_schema_2020_12_enum_and_bounds() {
+        // PR-6b-3: a pure-string enum maps to exact-match Enum; string maxLength
+        // clamps; integer minimum/maximum become bounds.
+        let schema = br#"{"type":"object","properties":{
+            "mode":{"enum":["a","b","c"]},
+            "name":{"type":"string","maxLength":32},
+            "huge":{"type":"string","maxLength":99999},
+            "count":{"type":"integer","minimum":1,"maximum":10}
+        }}"#;
+        let mapped = json_schema_to_input_schema(schema).unwrap();
+        let by = |n: &str| {
+            mapped
+                .params
+                .iter()
+                .find(|p| p.name == n)
+                .unwrap()
+                .ty
+                .clone()
+        };
+        match by("mode") {
+            ParamType::Enum { allowed } => {
+                assert_eq!(allowed.len(), 3);
+                assert!(allowed.contains("b"));
+            }
+            other => panic!("expected Enum, got {other:?}"),
+        }
+        assert_eq!(by("name"), ParamType::Str { max_len: 32 });
+        assert_eq!(
+            by("huge"),
+            ParamType::Str { max_len: 8192 },
+            "clamped to the ceiling"
+        );
+        assert_eq!(
+            by("count"),
+            ParamType::Int {
+                min: Some(1),
+                max: Some(10)
+            }
+        );
+    }
+
+    #[test]
+    fn json_schema_passes_through_combinators_verbatim() {
+        // oneOf/anyOf/allOf + number have no typed gate → skipped (server validates).
+        let schema = br#"{"type":"object","properties":{
+            "either":{"oneOf":[{"type":"string"},{"type":"integer"}]},
+            "amount":{"type":"number"},
+            "ok":{"type":"boolean"}
+        }}"#;
+        let mapped = json_schema_to_input_schema(schema).unwrap();
+        // only `ok` is client-validatable.
+        assert_eq!(mapped.params.len(), 1);
+        assert_eq!(mapped.params[0].name, "ok");
+    }
+
+    #[test]
+    fn json_schema_refuses_external_ref() {
+        // An external `$ref` (non-`#` pointer) refuses the WHOLE schema (SSRF/DoS
+        // defense) — the arg still passes through verbatim for the server.
+        let schema = br#"{"type":"object","properties":{
+            "x":{"$ref":"https://evil.example/schema.json"}
+        }}"#;
+        assert!(json_schema_to_input_schema(schema).is_none());
+        // An internal `#/...` pointer is tolerated (that prop just gets no gate).
+        let internal = br##"{"type":"object","properties":{
+            "x":{"$ref":"#/$defs/T"},
+            "ok":{"type":"boolean"}
+        }}"##;
+        let mapped = json_schema_to_input_schema(internal).unwrap();
+        assert_eq!(mapped.params.len(), 1);
+        assert_eq!(mapped.params[0].name, "ok");
+    }
+
+    #[test]
+    fn json_schema_refuses_overdeep_schema() {
+        // Build a schema nested past MAX_SCHEMA_DEPTH → refused (DoS bound).
+        let mut inner = String::from(r#"{"type":"string"}"#);
+        for _ in 0..(MAX_SCHEMA_DEPTH + 3) {
+            inner = format!(r#"{{"type":"object","properties":{{"n":{inner}}}}}"#);
+        }
+        assert!(
+            json_schema_to_input_schema(inner.as_bytes()).is_none(),
+            "a schema deeper than MAX_SCHEMA_DEPTH must be refused"
+        );
     }
 
     #[test]

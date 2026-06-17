@@ -609,7 +609,8 @@ kx tools deregister --name <n> --version <v> [client flags]
             .into(),
         "connections" => "\
 kx connections add --name <n> (--command <path> [--arg <a>]... | --url <url> [--tls-required])
-                   [--credential-ref <ENV_VAR>] [client flags]
+                   [--credential-ref <ENV_VAR>] [--session-mode <stateful|stateless> | --stateful]
+                   [client flags]
 kx connections list [client flags]
 kx connections test --name <n> [client flags]
 kx connections remove --name <n> [client flags]
@@ -619,9 +620,12 @@ kx connections discover --name <n> [client flags]
   durable registry (each namespaced `<server>/<remote>`). The live untrusted-
   egress surface: the host is SSRF-vetted at admission AND at dial time; per-
   server rate-limited. A credential is referenced by NAME only (an env var /
-  vault key — never the secret, D81). `test` checks reachability; `discover` re-
-  dials + re-registers; `remove` deregisters the server + its tools. Server ids
-  are server-derived (SN-8). OAuth/device-flow + a credential marketplace are Cloud."
+  vault key — never the secret, D81). `--session-mode` (default `stateless`; the
+  `--stateful` shorthand) is the firing posture (PR-6b-3): `stateless` fires each
+  call as a single-shot session; `stateful` reuses one live session for servers
+  that require it. `test` checks reachability; `discover` re-dials + re-registers;
+  `remove` deregisters the server + its tools. Server ids are server-derived
+  (SN-8). OAuth/device-flow + a credential marketplace are Cloud."
             .into(),
         "recipe" => "\
 kx recipe list [client flags]

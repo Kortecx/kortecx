@@ -19,7 +19,7 @@ use kx_warrant::SecretScope;
 
 use crate::credential::CredentialRef;
 use crate::decode::{
-    decode_tool_result, decode_tools_list, response_id, RemoteToolDecl,
+    decode_initialize_result, decode_tool_result, decode_tools_list, response_id, RemoteToolDecl,
     MAX_TOOL_RESULT_BYTES_DEFAULT,
 };
 use crate::errors::TransportError;
@@ -440,13 +440,17 @@ impl StdioSession {
 }
 
 impl McpSession for StdioSession {
-    fn initialize(&mut self, wall_clock_ms: u64) -> Result<(), SessionError> {
+    fn initialize(&mut self, wall_clock_ms: u64) -> Result<String, SessionError> {
         let id = self.next_id();
         let frame = frame_initialize(id).map_err(|e| TransportError::Io(e.to_string()))?;
         let resp = self.request_raw(&frame, id, wall_clock_ms)?;
-        // A well-formed result (not a JSON-RPC error) confirms the handshake.
-        decode_tool_result(&resp, MAX_TOOL_RESULT_BYTES_DEFAULT)?;
-        Ok(())
+        // PR-6b-3: a well-formed result confirms the handshake AND carries the
+        // server's negotiated protocolVersion (empty when omitted) — returned to
+        // the caller (logged at dial), never a hard gate (old/new interop).
+        Ok(decode_initialize_result(
+            &resp,
+            MAX_TOOL_RESULT_BYTES_DEFAULT,
+        )?)
     }
 
     fn list_tools(

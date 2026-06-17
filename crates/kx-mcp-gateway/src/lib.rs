@@ -39,7 +39,7 @@ mod gateway;
 mod ratelimit;
 mod store;
 
-pub use connection::{connection_id_of, Connection, ConnectionHealth, TransportSpec};
+pub use connection::{connection_id_of, Connection, ConnectionHealth, SessionMode, TransportSpec};
 pub use errors::GatewayError;
 pub use gateway::{CapabilitySink, McpGateway, RegisterOutcome};
 pub use ratelimit::RateLimiter;

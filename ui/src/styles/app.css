@@ -3272,6 +3272,12 @@ button.card-grid__title:hover {
   font-size: 0.88rem;
 }
 
+/* PR-6b-3: the per-connection session-mode hint under the Session chip toggle. */
+.connections-session-hint {
+  margin: 0.4rem 0 0;
+  font-size: 0.82rem;
+}
+
 /* ---- Data Lab: Agent Outputs (PR-6a-2: capture action-exhaust review) ---- */
 .agent-outputs__filter {
   margin: 0.25rem 0 0.6rem;

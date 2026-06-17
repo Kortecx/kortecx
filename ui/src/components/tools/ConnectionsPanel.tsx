@@ -32,6 +32,9 @@ import { GlowCard } from "../ds/GlowCard";
 const TRANSPORTS = ["stdio", "http"] as const;
 type Transport = (typeof TRANSPORTS)[number];
 
+const SESSION_MODES = ["stateless", "stateful"] as const;
+type SessionMode = (typeof SESSION_MODES)[number];
+
 /** Map a folded health tag to an existing status-dot modifier + an a11y label. */
 function healthDot(health: string): { cls: string; label: string } {
   switch (health) {
@@ -57,6 +60,9 @@ export function ConnectionsPanel() {
   const [args, setArgs] = useState("");
   const [tlsRequired, setTlsRequired] = useState(true);
   const [credentialRef, setCredentialRef] = useState("");
+  // PR-6b-3: the firing posture. Stateless-first (the default); stateful reuses
+  // one long-lived session for servers that require it.
+  const [sessionMode, setSessionMode] = useState<SessionMode>("stateless");
 
   const canSubmit = name.trim().length > 0 && endpoint.trim().length > 0;
 
@@ -73,6 +79,7 @@ export function ConnectionsPanel() {
         args: transport === "stdio" ? args.split(/\s+/).filter((a) => a.length > 0) : [],
         tlsRequired: transport === "http" ? tlsRequired : false,
         credentialRef: credentialRef.trim(),
+        sessionMode,
       },
       {
         onSuccess: () => {
@@ -80,6 +87,7 @@ export function ConnectionsPanel() {
           setEndpoint("");
           setArgs("");
           setCredentialRef("");
+          setSessionMode("stateless");
         },
       },
     );
@@ -158,6 +166,15 @@ export function ConnectionsPanel() {
                   <span className="chip chip--static">
                     <span className="chip__label">{s.transport}</span>
                   </span>
+                  {s.sessionMode === "stateful" ? (
+                    <span
+                      className="chip chip--static"
+                      data-testid={`connection-session-${s.serverName}`}
+                      title="Reuses one long-lived session across calls"
+                    >
+                      <span className="chip__label">stateful</span>
+                    </span>
+                  ) : null}
                   {s.credentialRefPresent ? (
                     <span className="chip chip--static" title="A credential ref name is attached">
                       <span className="chip__label">cred</span>
@@ -235,6 +252,27 @@ export function ConnectionsPanel() {
               </button>
             ))}
           </div>
+        </fieldset>
+        <fieldset className="register-tool-form__idempotency">
+          <legend className="muted">Session</legend>
+          <div className="chip-row">
+            {SESSION_MODES.map((m) => (
+              <button
+                key={m}
+                type="button"
+                className={`chip${sessionMode === m ? " chip--active" : ""}`}
+                data-testid={`connection-session-mode-${m}`}
+                aria-pressed={sessionMode === m}
+                onClick={() => setSessionMode(m)}
+              >
+                <span className="chip__label">{m}</span>
+              </button>
+            ))}
+          </div>
+          <p className="muted connections-session-hint">
+            Stateless fires each call as a fresh single-shot session (best for read tools &amp;
+            load-balanced servers). Stateful reuses one live session — for servers that require it.
+          </p>
         </fieldset>
         <div className="register-tool-form__row">
           <input

@@ -21,10 +21,14 @@ pub(crate) const METHOD_INITIALIZE: &str = "initialize";
 /// PR-6b-1: the MCP discovery method — enumerate a server's tools.
 pub(crate) const METHOD_TOOLS_LIST: &str = "tools/list";
 
-/// The MCP protocol revision this client advertises in `initialize`. A server
-/// MAY negotiate a different supported revision in its response; the gateway
-/// treats `initialize` as a liveness/handshake step and does not pin the reply.
-pub(crate) const MCP_PROTOCOL_VERSION: &str = "2025-06-18";
+/// The MCP protocol revision this client advertises in `initialize` and in the
+/// Streamable-HTTP `MCP-Protocol-Version` routing header (PR-6b-3, the 2026-07-28
+/// RC). A server MAY negotiate a different supported revision in its response:
+/// an older server negotiates *down* (e.g. `2025-06-18`); the session CAPTURES the
+/// negotiated reply via [`crate::decode::decode_initialize_result`] (no longer a
+/// bare liveness check) and proceeds either way — the version is recorded, never a
+/// hard gate (refusing on mismatch would break old/new interop).
+pub(crate) const MCP_PROTOCOL_VERSION: &str = "2026-07-28";
 
 /// An outbound JSON-RPC 2.0 `tools/call` request.
 ///

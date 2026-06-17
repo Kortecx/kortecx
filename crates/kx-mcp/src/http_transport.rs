@@ -40,11 +40,15 @@ use url::Url;
 
 use crate::credential::CredentialRef;
 use crate::decode::{
-    decode_tool_result, decode_tools_list, RemoteToolDecl, MAX_TOOL_RESULT_BYTES_DEFAULT,
+    decode_initialize_result, decode_tool_result, decode_tools_list, RemoteToolDecl,
+    MAX_TOOL_RESULT_BYTES_DEFAULT,
 };
 use crate::egress::{vet_resolved_addr, EgressPolicy};
 use crate::errors::TransportError;
-use crate::jsonrpc::{frame_initialize, frame_tools_call, frame_tools_list};
+use crate::jsonrpc::{
+    frame_initialize, frame_tools_call, frame_tools_list, MCP_PROTOCOL_VERSION, METHOD_INITIALIZE,
+    METHOD_TOOLS_CALL, METHOD_TOOLS_LIST,
+};
 use crate::secret_store::{EnvSecretStore, SecretStore};
 use crate::session::{McpSession, SessionError};
 use crate::transport::{McpTransport, DEFAULT_WALL_CLOCK_MS};
@@ -52,6 +56,19 @@ use crate::transport::{McpTransport, DEFAULT_WALL_CLOCK_MS};
 /// The MCP Streamable-HTTP session-id header: a server MAY return it on
 /// `initialize` and the client MUST echo it on subsequent requests.
 const MCP_SESSION_HEADER: &str = "mcp-session-id";
+
+/// PR-6b-3 (2026-07-28 RC, SEP-2243): the Streamable-HTTP version header that
+/// replaces session-based version negotiation — sent on every HTTP request so an
+/// RC server behind a round-robin load balancer can route without body inspection.
+/// Old (`2025-06-18`) servers ignore the unknown header.
+const MCP_PROTOCOL_HEADER: &str = "MCP-Protocol-Version";
+
+/// PR-6b-3 (SEP-2243): the routing headers a gateway/LB uses to dispatch without
+/// parsing the JSON-RPC body. Set ONLY on the stateful session path (where the
+/// method + tool name are known structurally) — never derived by re-parsing a
+/// pre-framed body (the round_trip single-shot path stays method-agnostic).
+const MCP_METHOD_HEADER: &str = "Mcp-Method";
+const MCP_NAME_HEADER: &str = "Mcp-Name";
 
 /// Slack added to the per-call budget for ureq's own request timeout, so a worker
 /// the watchdog has already abandoned still self-terminates (instead of lingering
@@ -235,7 +252,10 @@ impl McpTransport for HttpTransport {
                 .post(&url)
                 .timeout(worker_timeout)
                 .set("Content-Type", "application/json")
-                .set("Accept", "application/json");
+                .set("Accept", "application/json")
+                // PR-6b-3: advertise the protocol version on the wire (RC LB routing);
+                // the single-shot path is method-agnostic, so no Mcp-Method/Mcp-Name.
+                .set(MCP_PROTOCOL_HEADER, MCP_PROTOCOL_VERSION);
             if let Some(ref key) = idempotency_header {
                 req = req.set("Idempotency-Key", key);
             }
@@ -284,6 +304,7 @@ impl McpTransport for HttpTransport {
             credentials: self.credentials.clone(),
             secret_store: self.secret_store.clone(),
             session_id: None,
+            negotiated_version: None,
             next_id: 1,
         }))
     }
@@ -300,6 +321,11 @@ struct HttpSession {
     secret_store: Arc<dyn SecretStore>,
     /// Captured from the `initialize` reply header; echoed on later requests.
     session_id: Option<String>,
+    /// PR-6b-3: the server's negotiated `protocolVersion` (from the `initialize`
+    /// reply body). Subsequent requests echo THIS in the `MCP-Protocol-Version`
+    /// header (falling back to the advertised constant when unknown) so a strict
+    /// server that negotiated DOWN never sees a header/body version conflict.
+    negotiated_version: Option<String>,
     next_id: u64,
 }
 
@@ -313,10 +339,15 @@ impl HttpSession {
     /// POST one framed request, returning the response body bytes (size-bounded)
     /// and capturing the `Mcp-Session-Id` header into `self.session_id`. Runs the
     /// send+read on a worker thread under the wall-clock watchdog (mirrors
-    /// `round_trip`).
+    /// `round_trip`). PR-6b-3: `method` (+ optional tool `name`) are set as the
+    /// `Mcp-Method`/`Mcp-Name` routing headers (known structurally per call, never
+    /// re-parsed from the body); the `MCP-Protocol-Version` header carries the
+    /// negotiated version (or the advertised constant before/without negotiation).
     fn post_framed(
         &mut self,
         frame: &[u8],
+        method: &str,
+        name: Option<&str>,
         max_response_bytes: usize,
         wall_clock_ms: u64,
         idempotency_key: Option<&[u8; 32]>,
@@ -341,6 +372,15 @@ impl HttpSession {
             .collect();
         let idempotency_header = idempotency_key.map(hex32);
         let session_header = self.session_id.clone();
+        // Echo the negotiated version (RC servers that negotiated DOWN reject a
+        // header/body version conflict) — falls back to the advertised constant on
+        // the `initialize` request itself (no negotiation yet) or an unknown reply.
+        let protocol_header = self
+            .negotiated_version
+            .clone()
+            .unwrap_or_else(|| MCP_PROTOCOL_VERSION.to_string());
+        let method_header = method.to_string();
+        let name_header = name.map(str::to_string);
 
         let agent = self.agent.clone();
         let url = self.endpoint.clone();
@@ -351,7 +391,12 @@ impl HttpSession {
                 .post(&url)
                 .timeout(worker_timeout)
                 .set("Content-Type", "application/json")
-                .set("Accept", "application/json");
+                .set("Accept", "application/json")
+                .set(MCP_PROTOCOL_HEADER, &protocol_header)
+                .set(MCP_METHOD_HEADER, &method_header);
+            if let Some(ref n) = name_header {
+                req = req.set(MCP_NAME_HEADER, n);
+            }
             if let Some(ref key) = idempotency_header {
                 req = req.set("Idempotency-Key", key);
             }
@@ -396,14 +441,24 @@ impl HttpSession {
 }
 
 impl McpSession for HttpSession {
-    fn initialize(&mut self, wall_clock_ms: u64) -> Result<(), SessionError> {
+    fn initialize(&mut self, wall_clock_ms: u64) -> Result<String, SessionError> {
         let id = self.next_id();
         let frame = frame_initialize(id).map_err(|e| TransportError::Io(e.to_string()))?;
-        let resp = self.post_framed(&frame, MAX_TOOL_RESULT_BYTES_DEFAULT, wall_clock_ms, None)?;
-        // A well-formed result (not a JSON-RPC error) confirms the handshake; the
-        // session-id header (if any) was already captured by `post_framed`.
-        decode_tool_result(&resp, MAX_TOOL_RESULT_BYTES_DEFAULT)?;
-        Ok(())
+        let resp = self.post_framed(
+            &frame,
+            METHOD_INITIALIZE,
+            None,
+            MAX_TOOL_RESULT_BYTES_DEFAULT,
+            wall_clock_ms,
+            None,
+        )?;
+        // PR-6b-3: a well-formed result confirms the handshake AND carries the
+        // server's negotiated protocolVersion (the session-id header, if any, was
+        // already captured by `post_framed`). Store the version so later requests
+        // echo it in the MCP-Protocol-Version header; return it for dial logging.
+        let negotiated = decode_initialize_result(&resp, MAX_TOOL_RESULT_BYTES_DEFAULT)?;
+        self.negotiated_version = (!negotiated.is_empty()).then(|| negotiated.clone());
+        Ok(negotiated)
     }
 
     fn list_tools(
@@ -413,7 +468,14 @@ impl McpSession for HttpSession {
     ) -> Result<Vec<RemoteToolDecl>, SessionError> {
         let id = self.next_id();
         let frame = frame_tools_list(id).map_err(|e| TransportError::Io(e.to_string()))?;
-        let resp = self.post_framed(&frame, max_response_bytes, wall_clock_ms, None)?;
+        let resp = self.post_framed(
+            &frame,
+            METHOD_TOOLS_LIST,
+            None,
+            max_response_bytes,
+            wall_clock_ms,
+            None,
+        )?;
         Ok(decode_tools_list(&resp, max_response_bytes)?)
     }
 
@@ -428,7 +490,14 @@ impl McpSession for HttpSession {
         let id = self.next_id();
         let frame = frame_tools_call(id, remote_name, arguments)
             .map_err(|e| TransportError::Io(e.to_string()))?;
-        let resp = self.post_framed(&frame, max_response_bytes, wall_clock_ms, idempotency_key)?;
+        let resp = self.post_framed(
+            &frame,
+            METHOD_TOOLS_CALL,
+            Some(remote_name),
+            max_response_bytes,
+            wall_clock_ms,
+            idempotency_key,
+        )?;
         Ok(decode_tool_result(&resp, max_response_bytes)?)
     }
 }

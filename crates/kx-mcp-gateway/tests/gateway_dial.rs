@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 
 use kx_capability::{Capability, EffectRequest};
 use kx_mcp_gateway::{
-    CapabilitySink, ConnectionHealth, McpGateway, SqliteConnectionStore, TransportSpec,
+    CapabilitySink, ConnectionHealth, McpGateway, SessionMode, SqliteConnectionStore, TransportSpec,
 };
 use kx_mote::EffectPattern;
 use kx_tool_registry::{SqliteToolRegistry, ToolRegistry};
@@ -50,6 +50,7 @@ fn dial_discover_register_fire_roundtrip() {
                 args: vec![],
             },
             None,
+            SessionMode::Stateless,
         )
         .unwrap();
     assert_eq!(outcome.health, ConnectionHealth::Connected);
@@ -135,6 +136,7 @@ fn unreachable_server_registers_with_unreachable_health() {
                 args: vec![],
             },
             None,
+            SessionMode::Stateless,
         )
         .unwrap();
     assert_eq!(outcome.health, ConnectionHealth::Unreachable);
@@ -158,6 +160,7 @@ fn internal_http_host_is_refused_at_admission() {
                 tls_required: false,
             },
             None,
+            SessionMode::Stateless,
         )
         .unwrap_err();
     assert!(matches!(err, kx_mcp_gateway::GatewayError::HostRejected(_)));
@@ -181,8 +184,84 @@ fn userinfo_embedded_credentials_in_url_are_refused() {
                 tls_required: true,
             },
             None,
+            SessionMode::Stateless,
         )
         .unwrap_err();
     assert!(matches!(err, kx_mcp_gateway::GatewayError::InvalidSpec(_)));
     assert!(gateway.list_servers().unwrap().is_empty());
+}
+
+#[test]
+fn negotiates_old_and_new_protocol_versions() {
+    // PR-6b-3: the client interoperates with BOTH an OLD (`2025-06-18`) and a NEW
+    // (`2026-07-28` RC) server — `initialize` captures the negotiated version and
+    // proceeds either way (never a hard gate). Driven over the REAL kx-mcp stdio
+    // session seam against the parameterizable test server.
+    use kx_mcp::{McpTransport, StdioTransport};
+
+    let old = StdioTransport::new(test_server_command());
+    let mut s_old = old.open_session().unwrap();
+    assert_eq!(
+        s_old.initialize(0).unwrap(),
+        "2025-06-18",
+        "old server negotiates down"
+    );
+
+    let new = StdioTransport::new(test_server_command())
+        .arg("--protocol-version")
+        .arg("2026-07-28");
+    let mut s_new = new.open_session().unwrap();
+    assert_eq!(s_new.initialize(0).unwrap(), "2026-07-28", "new RC server");
+}
+
+#[test]
+fn stateful_session_reuses_one_connection_across_invokes() {
+    // PR-6b-3: a connection registered `Stateful` reuses ONE long-lived session
+    // across invokes — proven by the test server's per-process call counter
+    // advancing 1 → 2 (a stateless capability would spawn a fresh process and
+    // reset to 1 on each invoke).
+    let registry = Arc::new(SqliteToolRegistry::open_in_memory().unwrap());
+    let store = SqliteConnectionStore::open_in_memory().unwrap();
+    let sink = Arc::new(CollectingSink::default());
+    let gateway = McpGateway::new(
+        store,
+        registry,
+        sink.clone() as Arc<dyn CapabilitySink>,
+        vec![],
+    );
+    gateway
+        .register_server(
+            "tools",
+            TransportSpec::Stdio {
+                command: test_server_command(),
+                args: vec![],
+            },
+            None,
+            SessionMode::Stateful,
+        )
+        .unwrap();
+
+    let caps = sink.0.lock().unwrap();
+    let echo = caps
+        .iter()
+        .find(|c| c.name().0.ends_with("echo"))
+        .expect("echo capability");
+    let req = || EffectRequest {
+        payload: br#"{"q":"x"}"#.to_vec(),
+        pattern: EffectPattern::StageThenCommit,
+        idempotency_key: None,
+        net_scope: NetScope::None,
+        fs_scope: FsScope::empty(),
+        secret_scope: SecretScope::None,
+    };
+    let r1 = String::from_utf8(echo.invoke(&req()).expect("first invoke")).unwrap();
+    let r2 = String::from_utf8(echo.invoke(&req()).expect("second invoke")).unwrap();
+    assert!(
+        r1.contains(r#""call":1"#),
+        "first call on a fresh session: {r1}"
+    );
+    assert!(
+        r2.contains(r#""call":2"#),
+        "second call reuses the SAME session (counter advances): {r2}"
+    );
 }

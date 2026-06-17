@@ -182,6 +182,8 @@ kx connections add --name local --command /usr/local/bin/my-mcp-server --arg --s
 # A remote HTTP MCP gateway (e.g. one you exposed from the Python/TS SDK):
 kx connections add --name search --url https://mcp.example.com/rpc --tls-required \
   --credential-ref MCP_TOKEN
+# A server that needs a live session (browser automation, a DB transaction):
+kx connections add --name browser --command /usr/local/bin/browser-mcp --stateful
 kx connections list
 kx connections test --name search
 kx connections discover --name search   # re-dial + re-discover its tools
@@ -191,21 +193,53 @@ kx connections remove --name search
 ```python
 res = client.register_mcp_server(name="search", transport="http",
                                  endpoint="https://mcp.example.com/rpc",
-                                 tls_required=True, credential_ref="MCP_TOKEN")
+                                 tls_required=True, credential_ref="MCP_TOKEN",
+                                 session_mode="stateless")  # the default
 print(res.discovered, res.health)
 for s in client.list_mcp_servers().servers:
-    print(s.server_name, s.health, s.tool_count)
+    print(s.server_name, s.health, s.tool_count, s.session_mode)
 ```
 
 ```typescript
 await client.registerMcpServer({ name: "search", transport: "http",
-  endpoint: "https://mcp.example.com/rpc", tlsRequired: true, credentialRef: "MCP_TOKEN" });
+  endpoint: "https://mcp.example.com/rpc", tlsRequired: true, credentialRef: "MCP_TOKEN",
+  sessionMode: "stateless" });
 const { servers } = await client.listMcpServers();
 ```
 
 The console's **Tools → Connections** panel is the live UI for this (add / test /
 re-discover / remove, with per-server health). Manage it from whichever surface
 fits your workflow.
+
+### Session mode (stateless-first)
+
+Each connection has a **firing posture**, chosen at registration (`--session-mode`,
+`session_mode=`, the **Session** chip in the console; default **stateless**):
+
+- **Stateless** (the default) — every tool call is a self-contained, single-shot
+  session: dial → `initialize` → `tools/call` → close. This is the best fit for
+  idempotent read tools (search, retrieval, file listing) and for remote servers
+  behind a round-robin load balancer, and it aligns with the runtime's durable
+  model — a stateless call is a *content-addressed fact* that recovers from a crash
+  with no session store. If a server needs to keep state across calls, the MCP
+  pattern is to mint an explicit handle (a `basket_id`, a `browser_id`) from a tool
+  and pass it back as an ordinary argument — that handle rides in the committed
+  Mote, so it survives recovery with no sticky session.
+- **Stateful** — the runtime keeps **one long-lived session** and reuses it across
+  calls, amortizing the handshake. Use it only for servers that genuinely require a
+  live session (browser automation, a database transaction, a stateful sandbox) or
+  for chatty same-server traffic. The session is re-opened automatically after any
+  transport fault.
+
+### MCP protocol interoperability
+
+The client speaks the **MCP `2026-07-28`** revision: it advertises that version on
+`initialize` and (for HTTP) sends the `MCP-Protocol-Version` routing header on every
+request so a server behind a plain load balancer can route without inspecting the
+body. It **captures the version the server negotiates** in its reply and proceeds
+either way — so the runtime interoperates with **both** older (`2025-06-18`) and
+RC (`2026-07-28`) servers. An older server simply negotiates down; nothing is
+refused on a version mismatch.
 
 ### Security (the live untrusted-egress surface)
 
@@ -226,6 +260,11 @@ fits your workflow.
   environment + execution. Run `kx serve` as a principal whose env holds only the
   secrets you intend agents' tools to use; the Cloud `SecretStore` adds vault-scoped,
   multi-tenant credentials.
+- **Bounded tool-arg schemas.** A discovered tool's JSON-Schema `inputSchema` is
+  mapped into the typed client-side arg gate only up to a bounded nesting depth, and
+  a schema carrying an **external `$ref`** is refused (the arg still passes through
+  for the server to validate) — preventing a malicious schema from driving an
+  SSRF/fetch or a deep-recursion DoS.
 
 ### What's still coming
 
@@ -234,7 +273,7 @@ capability (the OSS console shows them as an honest-disabled affordance). The
 [`tool()` chains-node](#authoring-a-tool-step) is now live (call a discovered tool
 from an authored DAG, across Python / TypeScript / CLI / the console builder). The
 autonomous ReAct loop's **auto-grant** of dialed tools (the model auto-picking from
-the live dialed set) + **parallel tool fan-out** (N concurrent tool calls per turn)
-land in the next batch — they share the coordinator's args-from-params
-durable-execution path. (Branched write-back over the content-addressed store is the
-D155 post-RC epic.)
+the live dialed set) lands in the next batch (it rebuilds the react warrant live
+from the registry). **Parallel tool fan-out** (N concurrent tool calls per turn)
+arrives with the embeddable agent-runner. (Branched write-back over the
+content-addressed store is the D155 post-RC epic.)

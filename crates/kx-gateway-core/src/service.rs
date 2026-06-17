@@ -2338,6 +2338,7 @@ impl KxGateway for GatewayService {
             args: req.args,
             tls_required: req.tls_required,
             credential_ref,
+            session_mode: req.session_mode,
         };
         let out = admin.register_server(reg).map_err(mcp_admin_status)?;
         Ok(Response::new(proto::RegisterMcpServerResponse {
@@ -2366,6 +2367,7 @@ impl KxGateway for GatewayService {
                 health: s.health,
                 tool_count: s.tool_count,
                 credential_ref_present: s.credential_ref_present,
+                session_mode: s.session_mode,
             })
             .collect();
         Ok(Response::new(proto::ListMcpServersResponse {
