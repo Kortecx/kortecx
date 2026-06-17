@@ -19,8 +19,7 @@ use kx_content::{ContentRef, ContentStore};
 use kx_mcp::{McpCapability, StdioTransport};
 use kx_mote::{ToolName, ToolVersion};
 use kx_tool_registry::{
-    IdempotencyClass, InMemoryToolRegistry, InputSchema, McpEndpointId, ParamSpec, ParamType,
-    ToolDef, ToolKind, ToolProvenance, ToolRegistry,
+    IdempotencyClass, InputSchema, McpEndpointId, ParamSpec, ParamType, ToolDef, ToolKind,
 };
 use kx_warrant::{FsScope, NetScope, ResourceCeiling, ToolRequirement};
 
@@ -124,31 +123,6 @@ pub(crate) fn register_fs_list_capability<S: ContentStore + Send + Sync>(
 ) {
     broker.register_capability(Box::new(kx_capability::FsListCapability::new()));
     tracing::info!("PR-6a/D155: read-only fs-list@1 capability registered (kx/recipes/react-fs)");
-}
-
-/// A tool registry carrying the OSS built-ins PLUS the bundled echo tool, and —
-/// when an `fs_root` is granted (`KX_SERVE_FS_ROOT`) — the read-only `fs-list@1`
-/// tool. Shared by the coordinator (settle-time `validate_args` + lease-time args
-/// re-derivation) and the recipe seeding, so the grant, the registry, and the
-/// broker agree by construction. `fs_root = None` ⇒ byte-identical to echo-only.
-#[must_use]
-pub(crate) fn registry_with_echo(fs_root: Option<&std::path::Path>) -> InMemoryToolRegistry {
-    let mut reg = InMemoryToolRegistry::with_builtins();
-    let _ = reg.register(
-        echo_tool_def(),
-        ToolProvenance::HumanAuthored {
-            author: "kx-gateway".into(),
-        },
-    );
-    if let Some(root) = fs_root {
-        let _ = reg.register(
-            fs_list_tool_def(root),
-            ToolProvenance::HumanAuthored {
-                author: "kx-gateway".into(),
-            },
-        );
-    }
-    reg
 }
 
 /// Locate the bundled `kx-mcp-echo` binary and register its capability on the

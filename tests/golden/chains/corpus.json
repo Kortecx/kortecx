@@ -324,5 +324,45 @@
     "seed": 0,
     "tasks": { "a": { "kind": "pure" } },
     "error": "parse"
+  },
+  {
+    "name": "tool_single",
+    "dsl": "t",
+    "seed": 0,
+    "tasks": { "t": { "kind": "tool", "tool_contract": { "echo": "1" } } },
+    "expect": {
+      "steps": [
+        { "kind": "tool", "model_id": "", "prompt": "", "body_signature_id": null, "tool_contract": { "echo": "1" }, "params": { "kx.tool.args": "{}" } }
+      ],
+      "edges": []
+    }
+  },
+  {
+    "name": "tool_with_args",
+    "dsl": "t",
+    "seed": 0,
+    "tasks": { "t": { "kind": "tool", "tool_contract": { "web-search": "1" }, "args": { "q": "kortecx", "n": 3 } } },
+    "expect": {
+      "steps": [
+        { "kind": "tool", "model_id": "", "prompt": "", "body_signature_id": null, "tool_contract": { "web-search": "1" }, "params": { "kx.tool.args": "{\"n\":3,\"q\":\"kortecx\"}" } }
+      ],
+      "edges": []
+    }
+  },
+  {
+    "name": "model_then_tool",
+    "dsl": "g > t",
+    "seed": 0,
+    "tasks": {
+      "g": { "kind": "model", "model_id": "kx-serve:qwen3-4b-q4_k_m", "prompt": "Plan a search." },
+      "t": { "kind": "tool", "tool_contract": { "web-search": "1" }, "args": { "q": "hi" } }
+    },
+    "expect": {
+      "steps": [
+        { "kind": "model", "model_id": "kx-serve:qwen3-4b-q4_k_m", "prompt": "Plan a search.", "body_signature_id": null, "tool_contract": {}, "params": {} },
+        { "kind": "tool", "model_id": "", "prompt": "", "body_signature_id": null, "tool_contract": { "web-search": "1" }, "params": { "kx.tool.args": "{\"q\":\"hi\"}" } }
+      ],
+      "edges": [ { "parent": 0, "child": 1, "edge": "data" } ]
+    }
   }
 ]

@@ -105,6 +105,27 @@ pub const REACT_MAX_TURNS_KEY: &str = "max_turns";
 /// `max_tool_calls` slot). See [`REACT_MAX_TURNS_KEY`].
 pub const REACT_MAX_TOOL_CALLS_KEY: &str = "max_tool_calls";
 
+/// The single canonical [`ConfigKey`] *name* under which a STANDALONE authored
+/// `tool()` Mote (PR-6b-2) carries its tool-call argument object — ONE
+/// canonical-JSON object (e.g. `{"q":"…"}`; `{}` when the call has no args),
+/// serialized by the Chains-DSL lowering across all three SDK surfaces
+/// (Py/TS/Rust, byte-identical, golden-pinned).
+///
+/// Unlike a ReAct OBSERVATION — whose args the coordinator RE-DERIVES from the
+/// proposing model TURN's committed output ([`REACT_TURN_KEY`]) — an authored
+/// tool node has NO model parent: its args are AUTHORED, so they are carried
+/// HERE, in `config_subset`, where they fold into [`crate::MoteDef::hash`] →
+/// `MoteId`. The args are therefore IDENTITY-BEARING ⇒ deterministic and
+/// recovery-stable (a re-lease re-derives byte-identical args with nothing
+/// staged), and they cannot be dropped in transit without changing the identity
+/// the coordinator re-derives (structurally fail-closed, like [`REACT_TURN_KEY`]).
+/// The coordinator's `is_authored_tool` gate keys on the PRESENCE of this key
+/// (with `tool_contract` non-empty, `StageThenCommit`, and NOT a react
+/// observation) to route the args-from-`config_subset` lease path; every Mote
+/// without it leases exactly as before — so adding the constant moves no existing
+/// digest (no prior Mote carries this key).
+pub const TOOL_ARGS_KEY: &str = "kx.tool.args";
+
 /// The stable position of a Mote in its DAG.
 ///
 /// Assigned at DAG-compile time (workflow SDK) or derived from a topology

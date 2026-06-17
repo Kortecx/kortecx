@@ -69,7 +69,7 @@ pub use recipes::{
 pub use retrieval::{encode_retrieval_fact, retrieval, retrieval_result_ref};
 pub use share::{Manifest, ManifestId};
 pub use synthesis::{
-    critic, deterministic_critic, generator, permissive_warrant, synthesis_pipeline,
+    critic, deterministic_critic, generator, permissive_warrant, synthesis_pipeline, tool_step,
     topology_shaper, transform,
 };
 

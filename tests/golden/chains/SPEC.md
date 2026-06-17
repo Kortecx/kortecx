@@ -5,9 +5,21 @@ and Rust (CLI) implementations MUST all parse + lower a chain expression to **by
 `(steps, edges)`, pinned by `corpus.json` in this directory (the GR12 tri-surface parity gate).
 
 A chain expression composes **task handles** into a DAG. Each handle resolves (via a caller
-`tasks` map) to a typed step (`pure` / `model` today; the palette grows per phase). The DSL
+`tasks` map) to a typed step (`pure` / `model` / `tool`; the palette grows per phase). The DSL
 operators describe topology only — the server still compiles + warrants every step (SN-8); a
 chain only changes what is PROPOSED.
+
+### The `tool` step (PR-6b-2)
+
+A `tool` handle fires a single REGISTERED tool as a standalone node. It carries a
+`tool_contract = { tool_id: tool_version }` (the SERVER resolves the tool in its live registry and
+builds the per-step warrant — the client never supplies a warrant or grants, SN-8) and lowers its
+authored arguments to ONE **canonical-JSON object** under the reserved config key
+`kx.tool.args` (`TOOL_ARGS_KEY`) in `params`. The canonical-JSON encoding is **keys sorted
+ascending, compact separators (`,`/`:`), no floats** (the server schema is integer/bytes/bool/enum-typed) —
+so `tool("web-search","1", q="kortecx", n=3)` lowers to `params["kx.tool.args"] = {"n":3,"q":"kortecx"}`
+byte-identically across Python, TypeScript, and Rust. The coordinator re-derives + validates those
+args against the tool's typed schema fail-closed at every lease (`resolve_authored_tool_args`).
 
 ## Grammar (EBNF)
 
@@ -77,6 +89,12 @@ The result feeds `BlueprintBuilder.add_step` / `add_edge` (one canonical lowerin
     "steps": [ {"kind":"pure","model_id":"","prompt":"","body_signature_id":null,"tool_contract":{},"params":{}}, ... ],
     "edges": [ {"parent":0,"child":1,"edge":"data"}, {"parent":0,"child":2,"edge":"data"} ] } }
 ```
+
+A `tool` task spec carries `tool_contract` + (optional) structured `args`:
+`{ "kind": "tool", "tool_contract": {"web-search":"1"}, "args": {"q":"kortecx","n":3} }`; its
+`expect` step has the `tool_contract` and `params["kx.tool.args"]` = the canonical-JSON string. Each
+surface lowers the structured `args` (Python/TS via the `tool()` factory, Rust via the CLI
+`StepSpec.args`) and the corpus asserts the byte-identical canonical JSON.
 
 `steps` are in node order; `params` values are strings (the pre-encoding lowering form — each SDK
 UTF-8-encodes at `build()` time). An error case carries `"error": "<class>"` instead of `expect`,

@@ -38,10 +38,13 @@ const CORPUS_PATH = join(
 
 /** A task spec as it appears in the corpus (the resolved `tasks` map values). */
 interface CorpusTask {
-  kind: "pure" | "model";
+  kind: "pure" | "model" | "tool";
   model_id?: string;
   prompt?: string;
   params?: Record<string, string>;
+  /** TOOL only: the single `{ tool_id: tool_version }` + the structured args. */
+  tool_contract?: Record<string, string>;
+  args?: Record<string, string | number | boolean>;
 }
 
 interface CorpusCase {
@@ -57,10 +60,14 @@ interface CorpusCase {
 function tasksFromCorpus(specs: Record<string, CorpusTask>): Record<string, Task> {
   const out: Record<string, Task> = {};
   for (const [handle, spec] of Object.entries(specs)) {
-    out[handle] =
-      spec.kind === "model"
-        ? task.model(spec.model_id ?? "", spec.prompt ?? "", spec.params ?? {})
-        : task.pure(spec.params ?? {});
+    if (spec.kind === "model") {
+      out[handle] = task.model(spec.model_id ?? "", spec.prompt ?? "", spec.params ?? {});
+    } else if (spec.kind === "tool") {
+      const [toolId, version] = Object.entries(spec.tool_contract ?? {})[0] ?? ["", ""];
+      out[handle] = task.tool(toolId, version, spec.args ?? {});
+    } else {
+      out[handle] = task.pure(spec.params ?? {});
+    }
   }
   return out;
 }

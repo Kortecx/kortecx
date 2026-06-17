@@ -125,6 +125,32 @@ pub fn transform(
     )
 }
 
+/// A **tool step** (PR-6b-2): fires a single registered tool as a standalone DAG
+/// node. WORLD-MUTATING + `StageThenCommit` — the SAME shape as a live react
+/// observation (`react_shape::build_react_tool`), so the worker's args gate, the
+/// broker's stage→fire→commit, and crash recovery treat it identically. The
+/// caller sets `tool_contract` to the single `(tool_id, tool_version)` it fires
+/// and carries the authored args (canonical-JSON) in
+/// `config_subset[kx_mote::TOOL_ARGS_KEY]`; the coordinator re-derives + validates
+/// those args at every lease (`resolve_authored_tool_args`).
+#[must_use]
+pub fn tool_step(
+    logic_ref: LogicRef,
+    model_id: ModelId,
+    warrant: WarrantSpec,
+    capability: ToolName,
+) -> StepDef {
+    step(
+        logic_ref,
+        model_id,
+        NdClass::WorldMutating,
+        EffectPattern::StageThenCommit,
+        StepRole::Plain,
+        warrant,
+        capability,
+    )
+}
+
 /// A critic step validating `producer`: a deterministic check (PURE,
 /// `IdempotentByConstruction`) — schema / dedup / stat-bounds / PII-leakage.
 /// Declare a dependency edge from `producer` to this step so the producer

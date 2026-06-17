@@ -51,11 +51,13 @@ export class ChainCycleError extends Error {
  */
 export class Task {
   constructor(
-    readonly kind: "pure" | "model",
+    readonly kind: "pure" | "model" | "tool",
     readonly modelId: string,
     readonly prompt: string,
     /** Pre-encoding lowering form — `params` values are strings (UTF-8-encoded at build). */
     readonly params: Readonly<Record<string, string>>,
+    /** TOOL only (PR-6b-2): the single `{ tool_id: tool_version }` the step fires. */
+    readonly toolContract: Readonly<Record<string, string>> = {},
   ) {}
 
   /** The {@link StepInput} this task lowers to (verbatim, the builder encodes params). */
@@ -64,12 +66,33 @@ export class Task {
       kind: this.kind,
       modelId: this.modelId,
       prompt: this.prompt,
+      toolContract: { ...this.toolContract },
       params: { ...this.params },
     };
   }
 }
 
-/** Factories for the live `pure` / `model` palette (TS has no operator overloading). */
+/**
+ * PR-6b-2: the single canonical `config_subset` key a `tool()` step's authored
+ * args ride under. MUST equal the Rust `kx_mote::TOOL_ARGS_KEY` + the Python
+ * `TOOL_ARGS_KEY` (the coordinator's `is_authored_tool` discriminant + args source).
+ */
+export const TOOL_ARGS_KEY = "kx.tool.args";
+
+/**
+ * Serialize a flat tool-call arg map to the canonical-JSON string the three SDK
+ * surfaces lower byte-identically: keys sorted ascending, compact separators, no
+ * floats (SN-8 — the server schema is integer/bytes/bool/enum-typed).
+ */
+function canonicalArgsJson(args: Readonly<Record<string, string | number | boolean>>): string {
+  const sorted: Record<string, string | number | boolean> = {};
+  for (const k of Object.keys(args).sort()) {
+    sorted[k] = args[k] as string | number | boolean;
+  }
+  return JSON.stringify(sorted);
+}
+
+/** Factories for the live `pure` / `model` / `tool` palette (TS has no operator overloading). */
 export const task = {
   /** A `pure` step (optional string params). */
   pure(params: Readonly<Record<string, string>> = {}): Task {
@@ -78,6 +101,26 @@ export const task = {
   /** A `model` step: the model id + prompt (+ optional string params). */
   model(modelId: string, prompt: string, params: Readonly<Record<string, string>> = {}): Task {
     return new Task("model", modelId, prompt, { ...params });
+  },
+  /**
+   * A `tool` step (PR-6b-2): fire a single REGISTERED tool. `toolId` + `version`
+   * name the tool the SERVER resolves (SN-8); `args` are the tool-call arguments,
+   * lowered to one canonical-JSON object under {@link TOOL_ARGS_KEY}.
+   */
+  tool(
+    toolId: string,
+    version: string,
+    args: Readonly<Record<string, string | number | boolean>> = {},
+  ): Task {
+    return new Task(
+      "tool",
+      "",
+      "",
+      { [TOOL_ARGS_KEY]: canonicalArgsJson(args) },
+      {
+        [toolId]: version,
+      },
+    );
   },
 };
 
@@ -402,7 +445,7 @@ function dedupRefs(refs: HandleRef[]): HandleRef[] {
 
 /** A canonical lowered step (the corpus snake_case shape; `params` values are strings). */
 export interface LoweredStep {
-  kind: "pure" | "model";
+  kind: "pure" | "model" | "tool";
   model_id: string;
   prompt: string;
   body_signature_id: null;
@@ -445,7 +488,7 @@ function taskToLoweredStep(t: Task): LoweredStep {
     model_id: t.modelId,
     prompt: t.prompt,
     body_signature_id: null,
-    tool_contract: {},
+    tool_contract: { ...t.toolContract },
     params: { ...t.params },
   };
 }

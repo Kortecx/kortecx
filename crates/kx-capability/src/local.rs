@@ -117,6 +117,29 @@ impl<S: ContentStore + Send + Sync> LocalCapabilityBroker<S> {
         self.capabilities.read().expect("RwLock poisoned").len()
     }
 
+    /// The `(tool_id, tool_version)` of every currently-registered capability —
+    /// the LIVE broker-fireable set (PR-6b-2).
+    ///
+    /// The gateway's authoring backstop reads this so a runtime-dialed external
+    /// MCP tool becomes authorable (a `tool()` step / an auto-grant) the MOMENT
+    /// its firing capability registers, never gated by a startup snapshot. The
+    /// map is keyed by [`ToolName`]; each capability reports its own pinned
+    /// `version()` (the precheck's grant key).
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned (see
+    /// [`register_capability`][Self::register_capability]).
+    #[must_use]
+    pub fn registered_grants(&self) -> std::collections::BTreeSet<(String, String)> {
+        self.capabilities
+            .read()
+            .expect("RwLock poisoned")
+            .iter()
+            .map(|(name, cap)| (name.0.clone(), cap.version().0.clone()))
+            .collect()
+    }
+
     /// Internal: run the per-call contract checks shared by
     /// `dispatch` and `probe_readback`. Returns the resolved capability
     /// version on success (so the caller can build a `BrokerHandle`

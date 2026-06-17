@@ -118,6 +118,48 @@ the arguments against the tool's typed `inputSchema`, and dispatches via the
 capability broker. A prompt-injected call to an **ungranted** tool never fires.
 See the [Quickstart agent loop](./quickstart.md#run-the-agent-loop).
 
+## Authoring a `tool()` step
+
+Beyond the ReAct loop (where the *model* picks tools), you can author a **`tool()`
+step** into a DAG to fire a single registered tool deterministically — a discovered
+external MCP tool, a `RegisterTool`'d declarative tool, or the bundled `fs-list`.
+The server resolves the tool in its live registry and builds the per-step warrant
+from the tool's **declared** capability scope (you never supply a warrant — the
+client-`tool_grants` boundary stays refused, SN-8). The authored arguments lower to
+one canonical-JSON object the coordinator validates against the tool's typed schema
+fail-closed at every lease (so a crash re-derives byte-identical args).
+
+```python
+from kortecx import chain, model, tool
+
+# A model plans a query, then a discovered tool runs it (a DATA edge feeds the result).
+c = chain("plan > search", tasks={
+    "plan": model("kx-serve:qwen3-4b-q4_k_m", "Plan a web search for the user's question."),
+    "search": tool("search/web-search", "1", q="kortecx runtime"),
+})
+run = client.run_chain(c, wait=True)
+```
+
+```typescript
+import { chain, task } from "@kortecx/sdk/web";
+const c = chain("plan > search", { tasks: {
+  plan: task.model("kx-serve:qwen3-4b-q4_k_m", "Plan a web search."),
+  search: task.tool("search/web-search", "1", { q: "kortecx runtime" }),
+} });
+```
+
+```bash
+# kx blueprint run --file dag.json, where a step is:
+#   { "kind": "tool", "tool_contract": { "search/web-search": "1" }, "args": { "q": "kortecx" } }
+kx blueprint run --file dag.json --wait
+```
+
+In the **console builder** (`/blueprints/new`), add a **+ Tool** node, pick a
+registered tool from the live registry (the same set `DiscoverTools` shows), and
+edit its **Args (JSON)** — the server resolves + warrants it on submit. The
+`q="…"`-style args lower **byte-identically across Python, TypeScript, Rust (CLI),
+and the UI** (the `tests/golden/chains` parity gate).
+
 ## OSS / Cloud line
 
 Kortecx OSS is the **secure gateway to external MCP** — the runtime is the
@@ -189,7 +231,10 @@ fits your workflow.
 
 OAuth / device-flow setup and a hosted credential marketplace are a **Cloud**
 capability (the OSS console shows them as an honest-disabled affordance). The
-`tool()` chains-node (call a discovered tool from an authored DAG) and the
-autonomous ReAct loop's auto-grant of dialed tools land in the next batch — they
-share the coordinator's args-from-params durable-execution path. (Branched
-write-back over the content-addressed store is the D155 post-RC epic.)
+[`tool()` chains-node](#authoring-a-tool-step) is now live (call a discovered tool
+from an authored DAG, across Python / TypeScript / CLI / the console builder). The
+autonomous ReAct loop's **auto-grant** of dialed tools (the model auto-picking from
+the live dialed set) + **parallel tool fan-out** (N concurrent tool calls per turn)
+land in the next batch — they share the coordinator's args-from-params
+durable-execution path. (Branched write-back over the content-addressed store is the
+D155 post-RC epic.)

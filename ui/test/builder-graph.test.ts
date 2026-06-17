@@ -1,3 +1,4 @@
+import { TOOL_ARGS_KEY, proto } from "@kortecx/sdk/web";
 import { describe, expect, it } from "vitest";
 import {
   type BuilderGraph,
@@ -98,5 +99,27 @@ describe("builder-graph", () => {
     const off = toRequest(graph([{ ...base, reasoning: "off" as const }], []));
     // params values are byte-encoded by the SDK builder.
     expect(Object.keys(off.steps?.[0]?.params ?? {})).toContain("reasoning");
+  });
+
+  it("PR-6b-2: a tool node lowers to TOOL kind + tool_contract + canonical args", () => {
+    const t = {
+      ...newStep("tool", "t"),
+      toolId: "web-search",
+      toolVersion: "1",
+      paramsText: '{"q":"hi","n":2}',
+    };
+    const req = toRequest(graph([t], []));
+    expect(req.steps).toHaveLength(1);
+    const step = req.steps?.[0];
+    expect(step?.kind).toBe(proto.WorkflowStepKind.TOOL);
+    expect(step?.toolContract).toEqual({ "web-search": "1" });
+    // The args lower to the canonical TOOL_ARGS_KEY blob (sorted keys, compact) —
+    // byte-identical to the Py/TS/CLI surfaces (the golden-corpus contract).
+    const args = step?.params?.[TOOL_ARGS_KEY];
+    expect(new TextDecoder().decode(args as Uint8Array)).toBe('{"n":2,"q":"hi"}');
+  });
+
+  it("PR-6b-2: a tool node without a picked tool fails validation", () => {
+    expect(validationError(graph([newStep("tool", "t")], []))).toMatch(/needs a registered tool/);
   });
 });

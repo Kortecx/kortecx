@@ -96,6 +96,7 @@ export {
   group,
   chain,
   chainFrom,
+  TOOL_ARGS_KEY,
   ChainParseError,
   ChainUnknownHandleError,
   ChainCycleError,

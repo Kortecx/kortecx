@@ -10,10 +10,18 @@
 import type { ModelSummary } from "@kortecx/sdk/web";
 import { m } from "framer-motion";
 import { useEffect } from "react";
+import { useDiscoverTools } from "../../kx/use-tool-registry";
 import { JsonEditor } from "../editor/JsonEditor";
 import { MonacoMount } from "../editor/MonacoMount";
 import type { BuilderStep } from "./builder-graph";
 import { isJsonObject } from "./builder-graph";
+
+/** The drawer's kind badge label + modifier (PURE / MODEL / TOOL). */
+function kindBadge(kind: BuilderStep["kind"]): { label: string; mod: string } {
+  if (kind === "model") return { label: "Agent", mod: "model" };
+  if (kind === "tool") return { label: "Tool", mod: "tool" };
+  return { label: "Pure", mod: "pure" };
+}
 
 const slideIn = {
   initial: { x: 24, opacity: 0 },
@@ -56,6 +64,9 @@ export function StepConfigDrawer({
 
   const paramsValid = isJsonObject(step.paramsText);
   const served = (models ?? []).filter((mm) => mm.serving);
+  const badge = kindBadge(step.kind);
+  // PR-6b-2: the LIVE registered-tool set for a TOOL step's picker (DiscoverTools).
+  const { tools, notWired: toolsNotWired } = useDiscoverTools();
 
   return (
     <>
@@ -77,10 +88,8 @@ export function StepConfigDrawer({
         transition={slideIn.transition}
       >
         <div className="node-drawer__head">
-          <span
-            className={`builder-node__kind builder-node__kind--${step.kind === "model" ? "model" : "pure"}`}
-          >
-            {step.kind === "model" ? "Agent" : "Pure"}
+          <span className={`builder-node__kind builder-node__kind--${badge.mod}`}>
+            {badge.label}
           </span>
           <button type="button" className="linkbtn" onClick={onClose} aria-label="Close">
             ✕
@@ -157,18 +166,57 @@ export function StepConfigDrawer({
           </>
         ) : null}
 
+        {step.kind === "tool" ? (
+          <div className="builder-field">
+            <span className="builder-field__label">Tool</span>
+            {toolsNotWired || tools.length === 0 ? (
+              <p className="muted" data-testid="step-config-no-tools">
+                No tools are registered. Register one in <strong>Tools → Registry</strong>, or dial
+                an external MCP server in <strong>Tools → Connections</strong>, then pick it here.
+              </p>
+            ) : (
+              <div className="builder-chips" data-testid="step-config-tool">
+                {tools.map((t) => {
+                  const active = step.toolId === t.toolName && step.toolVersion === t.toolVersion;
+                  return (
+                    <button
+                      key={`${t.toolName}@${t.toolVersion}`}
+                      type="button"
+                      className={`chip${active ? " chip--active" : ""}`}
+                      title={t.description}
+                      onClick={() =>
+                        onChange({ ...step, toolId: t.toolName, toolVersion: t.toolVersion })
+                      }
+                    >
+                      {t.toolName}@{t.toolVersion}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            <span className="builder-field__hint">
+              The SERVER resolves the tool in its live registry + builds the per-step warrant from
+              the tool's declared scope (you never supply a warrant — SN-8).
+            </span>
+          </div>
+        ) : null}
+
         <div className="builder-field">
-          <span className="builder-field__label">Params (JSON)</span>
+          <span className="builder-field__label">
+            {step.kind === "tool" ? "Args (JSON)" : "Params (JSON)"}
+          </span>
           <JsonEditor
             value={step.paramsText}
             onChange={(v) => onChange({ ...step, paramsText: v })}
             testId="step-config-params"
-            ariaLabel="Step params (JSON object)"
+            ariaLabel={
+              step.kind === "tool" ? "Tool args (JSON object)" : "Step params (JSON object)"
+            }
             height={120}
           />
           {!paramsValid ? (
             <span className="builder-field__error" data-testid="step-config-params-error">
-              Params must be a JSON object.
+              {step.kind === "tool" ? "Args" : "Params"} must be a JSON object.
             </span>
           ) : null}
         </div>
