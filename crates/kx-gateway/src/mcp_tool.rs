@@ -171,6 +171,23 @@ pub(crate) fn fs_list_root() -> Option<PathBuf> {
     }
 }
 
+/// PR-6b-4: the operator opt-in for the autonomous-loop tool AUTO-GRANT
+/// (`KX_SERVE_AUTOGRANT`). Default-OFF (unset / `"0"` / `"false"` / empty ⇒
+/// `false`) — mirrors `KX_SERVE_FS_ROOT`'s deny-by-default. ON ⇒ the
+/// `kx/recipes/react-auto` recipe is seeded + the binder rebuilds its warrant
+/// from the LIVE registry at bind (the model picks from ALL registered/dialed
+/// tools). OFF ⇒ react-auto is NOT seeded ⇒ byte-identical serve.
+pub(crate) fn autogrant_enabled() -> bool {
+    match std::env::var_os("KX_SERVE_AUTOGRANT") {
+        Some(v) => {
+            let v = v.to_string_lossy();
+            let v = v.trim();
+            v == "1" || v.eq_ignore_ascii_case("true")
+        }
+        None => false,
+    }
+}
+
 /// Resolve the bundled tool binary's path: an explicit `KX_MCP_ECHO_PATH`
 /// override first, then the fixed in-image path, then a dev/test walk up to the
 /// workspace `target/` dir (the `real_body_binary_path` precedent). `None` ⇒

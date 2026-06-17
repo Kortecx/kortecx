@@ -3190,6 +3190,25 @@ button.card-grid__title:hover {
 .tools-connections {
   margin: 0;
 }
+/* PR-6b-4: the honest auto-grant status row (read-only — reflects the serve). */
+.autogrant-status {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-elev, var(--surface));
+}
+.autogrant-status__label {
+  font-weight: 600;
+}
+.autogrant-status__detail {
+  flex: 1 1 16rem;
+  min-width: 0;
+  font-size: 0.82rem;
+}
 .register-tool-form {
   display: flex;
   flex-direction: column;

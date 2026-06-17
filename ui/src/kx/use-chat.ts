@@ -43,6 +43,12 @@ export const VISION_RECIPE_HANDLE = "kx/recipes/vision";
  *  with the bundled tool — the PR-2.1 agent mode's backend). */
 export const REACT_RECIPE_HANDLE = "kx/recipes/react";
 
+/** The PR-6b-4 auto-grant ReAct loop — provisioned only when the operator opts
+ *  in via `KX_SERVE_AUTOGRANT`. Its presence in `ListRecipes` is the honest
+ *  ON/OFF signal the Tools section reflects (the runtime is the source of truth;
+ *  OSS exposes no toggle — enabling it is an operator/Cloud concern). */
+export const REACT_AUTO_RECIPE_HANDLE = "kx/recipes/react-auto";
+
 interface ActiveTurn {
   readonly assistantId: string;
   readonly instanceId: string;
