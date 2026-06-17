@@ -4,16 +4,26 @@ import { useScoreBundle, useToolManifests } from "../../kx/use-toolscout";
 import { EmptyState } from "../EmptyState";
 import { ErrorNotice } from "../ErrorNotice";
 import { BundleComposer } from "../tools/BundleComposer";
+import { ConnectionsCard } from "../tools/ConnectionsCard";
 import { ManifestGrid } from "../tools/ManifestGrid";
+import { RegisterToolForm } from "../tools/RegisterToolForm";
+import { RegisteredToolsPanel } from "../tools/RegisteredToolsPanel";
 import { ScoreLadder } from "../tools/ScoreLadder";
 
 /**
- * Tools (W1.A5 toolscout): the registered tool manifests + an interactive
- * TaskBundle preview — compose an ordered tool sequence, give an intent, and
- * dry-run the advisory scorer. ADVISORY-ONLY BY CONSTRUCTION (SN-8): every
- * score/verdict here is display-only and never authorizes anything — the sole
- * grant gate stays the exact (toolId, toolVersion) check in lowering + the
- * broker. Degrades to a not-wired empty state on older gateways (UNIMPLEMENTED).
+ * Tools — two surfaces over the gateway's tool plane:
+ *
+ * 1. **Registry (governance)** — the DURABLE inventory (`DiscoverTools`): every
+ *    registered tool with its authority/provenance/status + register & deregister
+ *    controls (`RegisterTool` / `DeregisterTool`). Registration grants NO authority
+ *    (SN-8); built-ins are re-seeded + not deregisterable. Live external-MCP dialing
+ *    + Connections is the PR-6b card (honest-disabled — GR19/GR15).
+ * 2. **Discovery & preview (advisory)** — the W1.A5 toolscout: tool manifests + an
+ *    interactive TaskBundle dry-run scorer. ADVISORY-ONLY BY CONSTRUCTION (SN-8):
+ *    every score/verdict is display-only and never authorizes anything — the sole
+ *    grant gate stays the exact (toolId, toolVersion) check in lowering + the broker.
+ *
+ * Both degrade to a not-wired empty state on older gateways (UNIMPLEMENTED).
  */
 export function ToolsSection() {
   const manifests = useToolManifests();
@@ -43,8 +53,28 @@ export function ToolsSection() {
     <section className="screen" data-testid="tools-section">
       <h1>Tools</h1>
       <p className="muted">
-        MCP tool discovery &amp; TaskBundle preview. Advisory by construction (SN-8): ranking scores
-        and dry-run verdicts are display-only — they never authorize a tool.
+        Register, govern, and discover the tools your agents can call. Registration grants no
+        authority (SN-8): a tool fires only under a server-issued warrant, re-verified by the broker
+        at every call.
+      </p>
+
+      <h2>Registry</h2>
+      <p className="muted">
+        The durable tool inventory — what is registered, with what provenance, status, and egress
+        authority. Built-ins are re-seeded on start and cannot be deregistered.
+      </p>
+      <RegisteredToolsPanel />
+      <div className="tools-registry-actions">
+        <RegisterToolForm />
+        <div className="metrics-grid tools-connections">
+          <ConnectionsCard />
+        </div>
+      </div>
+
+      <h2>Discovery &amp; preview</h2>
+      <p className="muted">
+        Advisory by construction (SN-8): ranking scores and dry-run verdicts are display-only — they
+        never authorize a tool.
       </p>
 
       {manifests.isLoading ? <EmptyState title="Loading tools…" /> : null}

@@ -1,6 +1,7 @@
 import { m } from "framer-motion";
 import { useState } from "react";
 import { stagger } from "../../app/motion";
+import { AgentOutputsPanel } from "../datasets/AgentOutputsPanel";
 import { DatasetsPanel } from "../datasets/DatasetsPanel";
 import { IngestPanel } from "../datasets/IngestPanel";
 import { QueryPanel } from "../datasets/QueryPanel";
@@ -48,6 +49,13 @@ export function DatasetsSection() {
         <QueryPanel dataset={selected} />
         <IngestPanel />
       </m.div>
+
+      <h2 className="datasets-cloud__title">Agent Outputs</h2>
+      <p className="muted">
+        The data your agents generate — every committed output (a tool's JSON, a model's answer, an
+        image), newest-first, previewed in the browser. ReAct turns are badged by turn and branch.
+      </p>
+      <AgentOutputsPanel />
 
       <h2 className="datasets-cloud__title">Data engineering</h2>
       <p className="muted">
