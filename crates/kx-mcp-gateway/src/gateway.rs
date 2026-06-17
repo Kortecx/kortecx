@@ -37,9 +37,16 @@ use crate::store::SqliteConnectionStore;
 /// floor). Tool firing uses the warrant ceiling via the capability.
 const DISCOVERY_MAX_BYTES: usize = 1 << 20;
 
-/// Default per-dial wall-clock budget (ms): `0` ⇒ the transport's own default
-/// (30 s). Discovery dials are operator-initiated and infrequent.
+/// Default per-dial wall-clock budget (ms) for operator-initiated dials
+/// (register / discover / test): `0` ⇒ the transport's own default (30 s). The
+/// operator is interactively waiting, so a generous ceiling is fine.
 const DIAL_WALL_CLOCK_MS: u64 = 0;
+
+/// Per-dial budget for the STARTUP re-dial of persisted servers (8 s). Tighter
+/// than the interactive budget so a dead/hung persisted server is abandoned
+/// quickly — and re-dial runs OFF the serve-bind path (a background task), so it
+/// never delays the listeners coming up regardless.
+const REDIAL_WALL_CLOCK_MS: u64 = 8_000;
 
 /// MCP tool versions are not surfaced by `tools/list`; the gateway pins every
 /// discovered tool to version `1` (the registry keys on `(name, version)`).
@@ -138,6 +145,16 @@ impl McpGateway {
         }
         // Admission host vetting for HTTP (deny-by-default; stdio has no egress).
         if let TransportSpec::Http { url, .. } = &transport {
+            // Refuse credentials embedded in the URL userinfo (`user:pass@host`):
+            // they would persist in connections.db + ride the wire/CLI/UI/logs,
+            // defeating the secret-less-credential invariant (D81, review #4). All
+            // secrets must go through the by-name `credential_ref` header path.
+            if url_authority(url).is_some_and(|a| a.contains('@')) {
+                return Err(GatewayError::InvalidSpec(
+                    "endpoint must not embed credentials in the URL (user:pass@host); use credential_ref"
+                        .to_string(),
+                ));
+            }
             let host = crate::connection::Connection {
                 id: [0; 16],
                 name: name.to_string(),
@@ -165,7 +182,7 @@ impl McpGateway {
         // Persist FIRST (so a dial failure still leaves a re-testable record).
         self.store.upsert(&conn)?;
 
-        match self.dial_and_register(&conn) {
+        match self.dial_and_register(&conn, DIAL_WALL_CLOCK_MS) {
             Ok(count) => {
                 self.store
                     .set_health(name, ConnectionHealth::Connected, count)?;
@@ -198,7 +215,7 @@ impl McpGateway {
             .store
             .get(name)?
             .ok_or_else(|| GatewayError::NotFound(name.to_string()))?;
-        match self.dial_and_register(&conn) {
+        match self.dial_and_register(&conn, DIAL_WALL_CLOCK_MS) {
             Ok(count) => {
                 self.store
                     .set_health(name, ConnectionHealth::Connected, count)?;
@@ -281,7 +298,7 @@ impl McpGateway {
     /// [`GatewayError::Storage`] on a SQLite failure listing the connections.
     pub fn redial_persisted(&self) -> Result<(), GatewayError> {
         for conn in self.store.list()? {
-            match self.dial_and_register(&conn) {
+            match self.dial_and_register(&conn, REDIAL_WALL_CLOCK_MS) {
                 Ok(count) => {
                     let _ = self
                         .store
@@ -300,8 +317,15 @@ impl McpGateway {
     }
 
     /// Dial a server, `tools/list`, and register each discovered tool into the
-    /// registry + the broker. Returns the count registered.
-    fn dial_and_register(&self, conn: &Connection) -> Result<u32, GatewayError> {
+    /// registry + the broker. Returns the count actually registered. A per-tool
+    /// registration failure is logged + skipped (best-effort) rather than failing
+    /// the whole dial, so `count` (and the folded health) reflect what truly
+    /// registered — never a hard zero while some tools are live (review #7).
+    fn dial_and_register(
+        &self,
+        conn: &Connection,
+        wall_clock_ms: u64,
+    ) -> Result<u32, GatewayError> {
         if !self.rate_limiter.try_acquire(&conn.name) {
             return Err(GatewayError::RateLimited(conn.name.clone()));
         }
@@ -310,10 +334,10 @@ impl McpGateway {
             .open_session()
             .map_err(|e| GatewayError::Dial(e.to_string()))?;
         session
-            .initialize(DIAL_WALL_CLOCK_MS)
+            .initialize(wall_clock_ms)
             .map_err(|e| GatewayError::Dial(e.to_string()))?;
         let decls = session
-            .list_tools(DISCOVERY_MAX_BYTES, DIAL_WALL_CLOCK_MS)
+            .list_tools(DISCOVERY_MAX_BYTES, wall_clock_ms)
             .map_err(|e| GatewayError::Dial(e.to_string()))?;
 
         let mut count = 0u32;
@@ -356,17 +380,22 @@ impl McpGateway {
                 idempotency_class: IdempotencyClass::Staged,
                 input_schema,
             };
-            self.registry
-                .register_durable(
-                    def,
-                    ToolProvenance::HumanAuthored {
-                        author: format!("mcp-gateway:{}", conn.name),
-                    },
-                    conn.egress_host(),
-                )
-                .map_err(|e| GatewayError::Storage(e.to_string()))?;
+            if let Err(error) = self.registry.register_durable(
+                def,
+                ToolProvenance::HumanAuthored {
+                    author: format!("mcp-gateway:{}", conn.name),
+                },
+                conn.egress_host(),
+            ) {
+                // Best-effort: a single tool's durable-write failure does not fail
+                // the whole dial (or hard-zero the count) — log it + skip, so the
+                // capability is NOT registered for an unpersisted tool either.
+                tracing::warn!(server = %conn.name, tool = %remote, %error, "skipping tool (durable register failed)");
+                continue;
+            }
 
-            // Register the firing capability on the broker (per-invoke session).
+            // Register the firing capability on the broker (per-invoke session) —
+            // only after the durable write succeeded.
             let cap_transport = build_transport(conn)?;
             self.sink
                 .register_capability(Box::new(McpSessionCapability::new(
@@ -510,12 +539,32 @@ fn vet_registration_host(host: &str, allowlist: &[String]) -> Result<(), String>
             ));
         }
     }
-    if !allowlist.is_empty() && !allowlist.iter().any(|h| h == host) {
-        return Err(format!(
-            "host {host:?} is not in KX_SERVE_TOOL_HOST_ALLOWLIST"
-        ));
+    // Normalize both sides (lowercase + strip a trailing FQDN dot) so the
+    // case/dot-insensitive allowlist match is consistent with how a host is
+    // compared elsewhere (review #6).
+    if !allowlist.is_empty() {
+        let want = normalize_host(host);
+        if !allowlist.iter().any(|h| normalize_host(h) == want) {
+            return Err(format!(
+                "host {host:?} is not in KX_SERVE_TOOL_HOST_ALLOWLIST"
+            ));
+        }
     }
     Ok(())
+}
+
+/// Normalize a host for an allowlist comparison: lowercase + strip one trailing
+/// FQDN dot. (Host-only; the caller already stripped any port.)
+fn normalize_host(h: &str) -> String {
+    h.trim().trim_end_matches('.').to_ascii_lowercase()
+}
+
+/// Extract the authority (`[userinfo@]host[:port]`) of an `http(s)://…` URL — the
+/// substring between `://` and the first `/`, `?`, or `#`. Used to refuse
+/// userinfo-embedded credentials at admission (dependency-light; no `url` crate).
+fn url_authority(u: &str) -> Option<&str> {
+    let after = u.split_once("://").map(|(_, rest)| rest)?;
+    Some(after.split(['/', '?', '#']).next().unwrap_or(after))
 }
 
 #[cfg(test)]
@@ -576,5 +625,22 @@ mod tests {
         let allow = vec!["mcp.example.com".to_string()];
         assert!(vet_registration_host("mcp.example.com", &allow).is_ok());
         assert!(vet_registration_host("evil.com", &allow).is_err());
+    }
+
+    #[test]
+    fn allowlist_match_is_case_and_trailing_dot_insensitive() {
+        // review #6: normalize both sides of the allowlist comparison.
+        let allow = vec!["MCP.Example.COM".to_string()];
+        assert!(vet_registration_host("mcp.example.com", &allow).is_ok());
+        assert!(vet_registration_host("mcp.example.com.", &allow).is_ok());
+    }
+
+    #[test]
+    fn url_authority_extracts_userinfo_and_host() {
+        // review #4: the authority carries userinfo when present.
+        assert_eq!(url_authority("https://u:p@host/rpc"), Some("u:p@host"));
+        assert!(url_authority("https://u:p@host/rpc").unwrap().contains('@'));
+        assert_eq!(url_authority("https://host:443/rpc?x#y"), Some("host:443"));
+        assert!(!url_authority("https://host/rpc").unwrap().contains('@'));
     }
 }

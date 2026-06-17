@@ -13,13 +13,14 @@ use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::sync::Arc;
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use kx_warrant::SecretScope;
 
 use crate::credential::CredentialRef;
 use crate::decode::{
-    decode_tool_result, decode_tools_list, RemoteToolDecl, MAX_TOOL_RESULT_BYTES_DEFAULT,
+    decode_tool_result, decode_tools_list, response_id, RemoteToolDecl,
+    MAX_TOOL_RESULT_BYTES_DEFAULT,
 };
 use crate::errors::TransportError;
 use crate::jsonrpc::{frame_initialize, frame_tools_call, frame_tools_list};
@@ -369,9 +370,18 @@ impl StdioSession {
         })
     }
 
-    /// Write one framed request + newline, then read exactly one response line
-    /// under the wall-clock budget. Latches `closed` on any fault.
-    fn request_raw(&mut self, frame: &[u8], wall_clock_ms: u64) -> Result<Vec<u8>, TransportError> {
+    /// Write one framed request + newline, then read response lines under the
+    /// wall-clock budget until one CORRELATES to `id` — SKIPPING any unsolicited
+    /// JSON-RPC notification (no `id`) or stale response (different `id`) a
+    /// spec-compliant server may interleave on stdout (logging / progress). The
+    /// budget is a single deadline across all skipped lines. Latches `closed` on
+    /// any fault.
+    fn request_raw(
+        &mut self,
+        frame: &[u8],
+        id: u64,
+        wall_clock_ms: u64,
+    ) -> Result<Vec<u8>, TransportError> {
         if self.closed {
             return Err(TransportError::Io("stdio session is closed".to_string()));
         }
@@ -384,24 +394,40 @@ impl StdioSession {
             self.closed = true;
             return Err(TransportError::Io(e.to_string()));
         }
-        let budget = Duration::from_millis(if wall_clock_ms == 0 {
+        let total = Duration::from_millis(if wall_clock_ms == 0 {
             DEFAULT_WALL_CLOCK_MS
         } else {
             wall_clock_ms
         });
-        match self.lines.recv_timeout(budget) {
-            Ok(Ok(bytes)) => Ok(bytes),
-            Ok(Err(e)) => {
+        let deadline = Instant::now() + total;
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
                 self.closed = true;
-                Err(TransportError::Io(e.to_string()))
+                return Err(TransportError::Timeout { wall_clock_ms });
             }
-            Err(RecvTimeoutError::Timeout) => {
-                self.closed = true;
-                Err(TransportError::Timeout { wall_clock_ms })
-            }
-            Err(RecvTimeoutError::Disconnected) => {
-                self.closed = true;
-                Err(TransportError::Io("stdio server closed".to_string()))
+            match self.lines.recv_timeout(remaining) {
+                Ok(Ok(bytes)) => {
+                    // A reply that correlates to our in-flight request wins; a
+                    // notification (no id) or a stale/foreign id is skipped (this
+                    // client never pipelines, so a foreign id is a server quirk,
+                    // not a crossed response) — keep reading until the deadline.
+                    if response_id(&bytes) == Some(id) {
+                        return Ok(bytes);
+                    }
+                }
+                Ok(Err(e)) => {
+                    self.closed = true;
+                    return Err(TransportError::Io(e.to_string()));
+                }
+                Err(RecvTimeoutError::Timeout) => {
+                    self.closed = true;
+                    return Err(TransportError::Timeout { wall_clock_ms });
+                }
+                Err(RecvTimeoutError::Disconnected) => {
+                    self.closed = true;
+                    return Err(TransportError::Io("stdio server closed".to_string()));
+                }
             }
         }
     }
@@ -417,7 +443,7 @@ impl McpSession for StdioSession {
     fn initialize(&mut self, wall_clock_ms: u64) -> Result<(), SessionError> {
         let id = self.next_id();
         let frame = frame_initialize(id).map_err(|e| TransportError::Io(e.to_string()))?;
-        let resp = self.request_raw(&frame, wall_clock_ms)?;
+        let resp = self.request_raw(&frame, id, wall_clock_ms)?;
         // A well-formed result (not a JSON-RPC error) confirms the handshake.
         decode_tool_result(&resp, MAX_TOOL_RESULT_BYTES_DEFAULT)?;
         Ok(())
@@ -430,7 +456,7 @@ impl McpSession for StdioSession {
     ) -> Result<Vec<RemoteToolDecl>, SessionError> {
         let id = self.next_id();
         let frame = frame_tools_list(id).map_err(|e| TransportError::Io(e.to_string()))?;
-        let resp = self.request_raw(&frame, wall_clock_ms)?;
+        let resp = self.request_raw(&frame, id, wall_clock_ms)?;
         Ok(decode_tools_list(&resp, max_response_bytes)?)
     }
 
@@ -448,7 +474,7 @@ impl McpSession for StdioSession {
         let id = self.next_id();
         let frame = frame_tools_call(id, remote_name, arguments)
             .map_err(|e| TransportError::Io(e.to_string()))?;
-        let resp = self.request_raw(&frame, wall_clock_ms)?;
+        let resp = self.request_raw(&frame, id, wall_clock_ms)?;
         Ok(decode_tool_result(&resp, max_response_bytes)?)
     }
 }

@@ -34,9 +34,24 @@ fn main() {
         if line.trim().is_empty() {
             continue;
         }
-        let reply = match serde_json::from_str::<Req>(&line) {
-            Ok(req) => handle(&req),
-            Err(_) => r#"{"jsonrpc":"2.0","id":0,"error":{"code":-32700,"message":"parse error"}}"#
+        let req = serde_json::from_str::<Req>(&line).ok();
+        // Before a tools/call reply, emit an UNSOLICITED JSON-RPC notification
+        // (no `id`) — a spec-compliant server may interleave logging/progress on
+        // stdout. The client's stateful session MUST skip it and correlate the
+        // following reply by `id` (PR-6b-1 review finding #1).
+        if req.as_ref().map(|r| r.method.as_str()) == Some("tools/call")
+            && (writeln!(
+                out,
+                r#"{{"jsonrpc":"2.0","method":"notifications/message","params":{{"level":"info","data":"working"}}}}"#
+            )
+            .is_err()
+                || out.flush().is_err())
+        {
+            break;
+        }
+        let reply = match req {
+            Some(req) => handle(&req),
+            None => r#"{"jsonrpc":"2.0","id":0,"error":{"code":-32700,"message":"parse error"}}"#
                 .to_string(),
         };
         if writeln!(out, "{reply}").is_err() || out.flush().is_err() {

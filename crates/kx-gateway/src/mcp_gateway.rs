@@ -42,8 +42,19 @@ pub(crate) fn wire_mcp_gateway<S: ContentStore + Send + Sync + 'static>(
     let allowlist = crate::tools::tool_host_allowlist();
     let gateway = Arc::new(McpGateway::new(store, registry.clone(), sink, allowlist));
     // Re-dial persisted servers so a restart re-registers their tools +
-    // capabilities (fail-soft per server: a dead server is marked Unreachable).
-    let _ = gateway.redial_persisted();
+    // capabilities — but OFF the serve-bind path: a hung/dead persisted server
+    // must NOT delay the listeners coming up (review #2). The dials are synchronous
+    // (std threads), so run them on the blocking pool; each dial is budget-bounded
+    // (REDIAL_WALL_CLOCK_MS). Fail-soft per server; capability registration is
+    // interior-mutable + dialed tools aren't auto-granted in 6b-1, so deferring
+    // re-registration past bind loses nothing. Health is off-digest, so this is
+    // safe w.r.t. the digest/frozen-trio invariants.
+    let redial_handle = gateway.clone();
+    tokio::task::spawn_blocking(move || {
+        if let Err(error) = redial_handle.redial_persisted() {
+            tracing::warn!(%error, "MCP gateway: persisted-connection re-dial failed");
+        }
+    });
     Ok(Arc::new(HostMcpGateway::new(gateway, registry)))
 }
 

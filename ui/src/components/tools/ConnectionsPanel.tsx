@@ -87,6 +87,28 @@ export function ConnectionsPanel() {
 
   const registerErr = register.error ? toUiError(register.error) : null;
 
+  // The most recent per-row action's error (Test / Re-discover / Remove) — surfaced
+  // so NotFound / RateLimited / Dial refusals are never swallowed (review #3).
+  const actionError = test.error
+    ? toUiError(test.error)
+    : discover.error
+      ? toUiError(discover.error)
+      : remove.error
+        ? toUiError(remove.error)
+        : null;
+  // ...or its transient success outcome.
+  const actionResult = !actionError
+    ? test.isSuccess
+      ? test.data
+        ? "Server is reachable."
+        : "Server is unreachable — check the endpoint."
+      : discover.isSuccess
+        ? `Re-discovered ${discover.data.tools.length} tool(s).`
+        : remove.isSuccess
+          ? "Server removed."
+          : null
+    : null;
+
   return (
     <GlowCard hover={false} variants={fadeUp} data-testid="connections-panel">
       <h2>MCP Connections</h2>
@@ -181,6 +203,19 @@ export function ConnectionsPanel() {
           })}
         </ul>
       )}
+
+      {/* Per-action outcome + error (Test / Re-discover / Remove). D142: every
+          state designed — these mutations would otherwise be silent (review #3). */}
+      {actionError ? (
+        <p className="field-error" data-testid="connection-action-error" role="alert">
+          {actionError.kind === "forbidden" ? "Not permitted: " : ""}
+          {actionError.message}
+        </p>
+      ) : actionResult ? (
+        <p className="register-tool__result" data-testid="connection-action-result">
+          {actionResult}
+        </p>
+      ) : null}
 
       <form onSubmit={onSubmit} className="register-tool-form" data-testid="connections-add-form">
         <h3>Add a server</h3>

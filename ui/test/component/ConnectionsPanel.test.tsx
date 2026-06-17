@@ -14,37 +14,43 @@ const listState = {
   error: null as unknown,
   refetch: vi.fn(),
 };
-const registerMutate = vi.fn();
-const testMutate = vi.fn();
-const discoverMutate = vi.fn();
-const removeMutate = vi.fn();
-
-const idleMutation = (mutate: ReturnType<typeof vi.fn>) => ({
+// Mutable per-mutation state so tests can flip isSuccess/data/error.
+const mut = (mutate: ReturnType<typeof vi.fn>) => ({
   mutate,
   isPending: false,
-  variables: undefined,
-  error: null,
+  variables: undefined as unknown,
+  error: null as unknown,
   isSuccess: false,
-  data: undefined,
+  data: undefined as unknown,
 });
+const registerM = mut(vi.fn());
+const testM = mut(vi.fn());
+const discoverM = mut(vi.fn());
+const removeM = mut(vi.fn());
 
 vi.mock("../../src/kx/use-connections", () => ({
   useListMcpServers: () => listState,
-  useRegisterMcpServer: () => idleMutation(registerMutate),
-  useTestMcpServer: () => idleMutation(testMutate),
-  useDiscoverServerTools: () => idleMutation(discoverMutate),
-  useDeregisterMcpServer: () => idleMutation(removeMutate),
+  useRegisterMcpServer: () => registerM,
+  useTestMcpServer: () => testM,
+  useDiscoverServerTools: () => discoverM,
+  useDeregisterMcpServer: () => removeM,
 }));
 
 import { ConnectionsPanel } from "../../src/components/tools/ConnectionsPanel";
 
+function resetMut(m: ReturnType<typeof mut>) {
+  m.isPending = false;
+  m.variables = undefined;
+  m.error = null;
+  m.isSuccess = false;
+  m.data = undefined;
+  m.mutate.mockClear();
+}
+
 afterEach(() => {
   listState.servers = [];
   listState.notWired = false;
-  registerMutate.mockClear();
-  testMutate.mockClear();
-  discoverMutate.mockClear();
-  removeMutate.mockClear();
+  [registerM, testM, discoverM, removeM].forEach(resetMut);
 });
 
 describe("ConnectionsPanel", () => {
@@ -80,9 +86,23 @@ describe("ConnectionsPanel", () => {
     expect(screen.getByText("https://mcp.github.example/rpc")).toBeInTheDocument();
     // Per-row actions fire the right mutations with the server name.
     fireEvent.click(screen.getByTestId("connection-test-github"));
-    expect(testMutate).toHaveBeenCalledWith("github");
+    expect(testM.mutate).toHaveBeenCalledWith("github");
     fireEvent.click(screen.getByTestId("connection-remove-github"));
-    expect(removeMutate).toHaveBeenCalledWith("github");
+    expect(removeM.mutate).toHaveBeenCalledWith("github");
+  });
+
+  it("surfaces a per-action result (test reachable) and error (remove failed)", () => {
+    // review #3: the per-row mutations must not be silent — D142 every state.
+    testM.isSuccess = true;
+    testM.data = true;
+    const { rerender } = render(<ConnectionsPanel />);
+    expect(screen.getByTestId("connection-action-result")).toHaveTextContent("reachable");
+
+    testM.isSuccess = false;
+    testM.data = undefined;
+    removeM.error = { code: 5, message: "no such MCP server: gone" };
+    rerender(<ConnectionsPanel />);
+    expect(screen.getByTestId("connection-action-error")).toBeInTheDocument();
   });
 
   it("submits the add form with the chosen transport + fields", () => {
@@ -94,8 +114,8 @@ describe("ConnectionsPanel", () => {
     });
     fireEvent.change(screen.getByTestId("connection-args"), { target: { value: "--stdio -v" } });
     fireEvent.submit(screen.getByTestId("connections-add-form"));
-    expect(registerMutate).toHaveBeenCalledTimes(1);
-    const [input] = registerMutate.mock.calls[0];
+    expect(registerM.mutate).toHaveBeenCalledTimes(1);
+    const [input] = registerM.mutate.mock.calls[0];
     expect(input).toMatchObject({
       name: "local",
       transport: "stdio",

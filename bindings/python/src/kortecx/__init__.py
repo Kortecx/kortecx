@@ -179,10 +179,11 @@ __all__ = [
     "BundleSpec",
     "BundleTool",
     "lower_verdict_name",
-    # PR-6a declarative tools registry (DiscoverTools / RegisterTool)
+    # PR-6b-1 external MCP gateway (RegisterMcpServer / ListMcpServers)
     "McpServer",
     "McpServersPage",
     "RegisterServerResult",
+    # PR-6a declarative tools registry (DiscoverTools / RegisterTool)
     "RegisteredTool",
     "RegisteredToolsPage",
     "ToolParam",

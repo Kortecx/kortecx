@@ -176,7 +176,14 @@ fits your workflow.
   every call. A prompt-injected call to an ungranted tool never fires (SN-8).
 - **Secret-less credentials (D81).** A connection stores the credential **ref name
   only** (an env var / vault key); the secret value is read transiently at dial and
-  never journaled / staged / shown to the model.
+  never journaled / staged / shown to the model. A URL must not embed credentials
+  in its userinfo (`user:pass@host` is refused at admission) — use `credential_ref`.
+- **Registration is host-trusted.** A `credential_ref` names a process env var (the
+  OSS `EnvSecretStore`), and a stdio connection names a program to spawn — both
+  assume the operator registering the server is trusted with the serve host's
+  environment + execution. Run `kx serve` as a principal whose env holds only the
+  secrets you intend agents' tools to use; the Cloud `SecretStore` adds vault-scoped,
+  multi-tenant credentials.
 
 ### What's still coming
 

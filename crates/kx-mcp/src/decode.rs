@@ -82,6 +82,26 @@ pub fn decode_tool_result(bytes: &[u8], max_bytes: usize) -> Result<Vec<u8>, Dec
     }
 }
 
+/// The JSON-RPC `id` of a message, for request/response correlation in a
+/// stateful session. A notification (server-initiated: logging / progress) has
+/// NO `id` (→ `None`); a response echoes the request's numeric `id`.
+#[derive(Deserialize)]
+struct JsonRpcId {
+    #[serde(default)]
+    id: Option<u64>,
+}
+
+/// PR-6b-1: extract a JSON-RPC message's `id` for session correlation. Returns
+/// `None` for a notification (no `id`), a non-numeric `id`, or unparseable bytes
+/// (total + panic-free over arbitrary input). A stateful session uses this to
+/// SKIP unsolicited notification lines a spec-compliant server may interleave on
+/// stdout, so the next line is matched to the in-flight request's id.
+pub(crate) fn response_id(bytes: &[u8]) -> Option<u64> {
+    serde_json::from_slice::<JsonRpcId>(bytes)
+        .ok()
+        .and_then(|m| m.id)
+}
+
 /// PR-6b-1: a single remote tool declaration from an MCP `tools/list` response.
 ///
 /// `input_schema_json` is the verbatim bytes of the tool's `inputSchema` object
@@ -241,6 +261,24 @@ mod tests {
         // Cap above the body size so we exercise the parser, not the size guard.
         let cap = body.len() + 16;
         let _ = decode_tool_result(body.as_bytes(), cap); // must not panic
+    }
+
+    #[test]
+    fn response_id_correlates_and_skips_notifications() {
+        // A response echoes the request id.
+        assert_eq!(
+            response_id(br#"{"jsonrpc":"2.0","id":7,"result":{}}"#),
+            Some(7)
+        );
+        // A notification has no id → None (the session skips it).
+        assert_eq!(
+            response_id(br#"{"jsonrpc":"2.0","method":"notifications/message","params":{}}"#),
+            None
+        );
+        // Garbage / a non-numeric id is total + None (never panics).
+        assert_eq!(response_id(b"not json"), None);
+        assert_eq!(response_id(br#"{"id":"a-string"}"#), None);
+        assert_eq!(response_id(b""), None);
     }
 
     #[test]

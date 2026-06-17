@@ -163,3 +163,26 @@ fn internal_http_host_is_refused_at_admission() {
     assert!(matches!(err, kx_mcp_gateway::GatewayError::HostRejected(_)));
     assert!(gateway.list_servers().unwrap().is_empty());
 }
+
+#[test]
+fn userinfo_embedded_credentials_in_url_are_refused() {
+    let registry = Arc::new(SqliteToolRegistry::open_in_memory().unwrap());
+    let store = SqliteConnectionStore::open_in_memory().unwrap();
+    let sink = Arc::new(CollectingSink::default());
+    let gateway = McpGateway::new(store, registry, sink as Arc<dyn CapabilitySink>, vec![]);
+
+    // review #4: a `user:pass@host` URL is refused at admission (never stored) so
+    // a secret can't leak into connections.db / the wire / logs (D81).
+    let err = gateway
+        .register_server(
+            "leaky",
+            TransportSpec::Http {
+                url: "https://user:secret@mcp.example.com/rpc".into(),
+                tls_required: true,
+            },
+            None,
+        )
+        .unwrap_err();
+    assert!(matches!(err, kx_mcp_gateway::GatewayError::InvalidSpec(_)));
+    assert!(gateway.list_servers().unwrap().is_empty());
+}
