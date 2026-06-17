@@ -1356,7 +1356,7 @@ impl WorkflowAuthor for HostWorkflowAuthor {
             grants: &self.lib.grants,
             owner_root: self.lib.blueprint_base.clone(),
         };
-        let mut effective = resolver
+        let effective = resolver
             .resolve_use(&party_id, &AssetRef::Path(handle))
             .ok_or(BinderError::NotAuthorized)?;
 
@@ -1365,24 +1365,6 @@ impl WorkflowAuthor for HostWorkflowAuthor {
         // grant → AttemptedWiden → NotAuthorized — identical to the Invoke binder).
         let compiled =
             compile(&wf).map_err(|e| BinderError::InvalidArgs(format!("compile: {e}")))?;
-        // PR-6b-2: widen the authoring CEILING with the tool axes the SERVER built
-        // for the authored `tool()` steps (each compiled mote's grants + declared
-        // net/fs — step_def resolved them from the LIVE registry), so the per-mote
-        // intersect below does not strip a registered tool's grant/scope. The
-        // tools are server-vetted; the per-party gate still holds (an unauthorized
-        // party never resolved `effective`). A PURE/MODEL mote has empty
-        // `tool_grants` ⇒ contributes nothing, and requests none of the widened
-        // scope ⇒ its intersect yields its own narrow warrant unchanged (the
-        // pre-6b-2 behaviour is byte-identical when no tool() steps are authored).
-        for cm in &compiled.motes {
-            if !cm.warrant.tool_grants.is_empty() {
-                for g in &cm.warrant.tool_grants {
-                    effective.tool_grants.insert(g.clone());
-                }
-                effective.net_scope = net_union(&effective.net_scope, &cm.warrant.net_scope);
-                fs_union_into(&mut effective.fs_scope, &cm.warrant.fs_scope);
-            }
-        }
         let terminal_mote_id = compiled
             .motes
             .last()
@@ -1393,14 +1375,27 @@ impl WorkflowAuthor for HostWorkflowAuthor {
         // DAG yields the same fingerprint (FROZEN dedup; discovery only, never identity).
         let mut fp_buf = Vec::with_capacity(compiled.motes.len() * 32);
         for cm in &compiled.motes {
-            let step_role = Role {
-                name: "blueprint-step".to_string(),
-                version: 0,
-                spec: cm.warrant.clone(),
-                description: String::new(),
+            // PR-6b-2: a TOOL step's warrant (non-empty `tool_grants`) is SERVER-built
+            // from the registry (`tool_step_warrant` — the tool's declared net/fs +
+            // its own `syscall_profile_ref`) and admitted DIRECTLY, like the seeded
+            // react recipes — NOT intersected against the party blueprint grant
+            // (whose syscall profile differs, and which never grants the tool). The
+            // per-party gate is "can author at all" (`effective` resolved above); the
+            // `registered_tools` backstop + the broker precheck + the coordinator's
+            // D66 resolution re-verify every axis server-side at fire (SN-8). Every
+            // PURE/MODEL mote (empty `tool_grants`) narrows against the party
+            // authority exactly as before (byte-identical when no tool() steps).
+            let warrant = if cm.warrant.tool_grants.is_empty() {
+                let step_role = Role {
+                    name: "blueprint-step".to_string(),
+                    version: 0,
+                    spec: cm.warrant.clone(),
+                    description: String::new(),
+                };
+                intersect(&effective, &step_role).map_err(|_| BinderError::NotAuthorized)?
+            } else {
+                cm.warrant.clone()
             };
-            let warrant =
-                intersect(&effective, &step_role).map_err(|_| BinderError::NotAuthorized)?;
             fp_buf.extend_from_slice(cm.mote.id.as_bytes());
             motes.push((cm.mote.clone(), warrant));
         }
@@ -1841,70 +1836,44 @@ pub(crate) fn react_fs_warrant(
     }
 }
 
-/// PR-6b-2: the server-built warrant for a standalone authored `tool()` step.
-/// Starts from the authoring `base` (so `syscall_profile_ref` + `executor_class` +
-/// `model_route` match the authoring ceiling — the intersect's equality/subset
-/// axes) and NARROWS to EXACTLY this tool: grants `(name, version)` and sets the
-/// net/fs scope to the tool's DECLARED `required_capability`. The coordinator's
-/// `resolve_authored_tool_args` sets the dispatch REQUEST scope to the SAME
+/// PR-6b-2: the COMPLETE server-built warrant for a standalone authored `tool()`
+/// step — mirrors [`react_fs_warrant`] (a server-built, directly-admitted warrant)
+/// but GENERIC over the tool's DECLARED `required_capability`. Grants EXACTLY
+/// `(name, version)` and takes the tool's declared net/fs **and
+/// `syscall_profile_ref`** (the resolver's `check_tool_requirement` demands syscall
+/// EQUALITY, so the warrant must carry the TOOL's own profile — not the authoring
+/// base's). The `model_route` / `resource_ceiling` / `executor_class` come from
+/// `base` so the mote leases on the served worker. ReadOnlyNondet classes mirror
+/// the react recipe warrant (the mcp-echo dispatch precedent). The coordinator's
+/// `resolve_authored_tool_args` sets the dispatch REQUEST net/fs to the SAME
 /// declared values, so `request ⊆ warrant` holds by construction at the broker's
-/// precheck. WORLD-MUTATING classes mirror `build_react_tool`'s observation shape
-/// (the precheck has no `mote_class` gate — honest labelling, not a gate).
+/// precheck. Admitted DIRECTLY (not intersected against the party blueprint grant):
+/// the tool's scope is SERVER-vetted (the registry), so the per-party gate is "can
+/// author at all" (`effective` resolved); the broker precheck + coordinator D66
+/// re-verify every axis at fire (SN-8).
 fn tool_step_warrant(
     base: &WarrantSpec,
     name: &ToolName,
     version: &ToolVersion,
     tdef: &ToolDef,
 ) -> WarrantSpec {
-    let mut w = base.clone();
     let mut grants = BTreeSet::new();
     grants.insert(ToolGrant {
         tool_id: name.clone(),
         tool_version: version.clone(),
     });
-    w.tool_grants = grants;
-    w.net_scope = tdef.required_capability.net_scope_required.clone();
-    w.fs_scope = tdef.required_capability.fs_scope_required.clone();
-    w.mote_class = MoteClass::WorldMutating;
-    w.nd_class = MoteClass::WorldMutating;
-    w
-}
-
-/// The egress superset of two scopes: `None` is the identity; two allowlists merge
-/// to the union of their hosts (so each input `is_subset_of` the result).
-fn net_union(a: &NetScope, b: &NetScope) -> NetScope {
-    match (a, b) {
-        (NetScope::None, other) | (other, NetScope::None) => other.clone(),
-        (NetScope::EgressAllowlist(sa), NetScope::EgressAllowlist(sb)) => {
-            let mut hosts: BTreeSet<Host> = sa.clone();
-            hosts.extend(sb.iter().cloned());
-            NetScope::EgressAllowlist(hosts)
-        }
-    }
-}
-
-/// Merge `add`'s mounts into `ceiling` as a per-path SUPERSET (so each tool's
-/// fs_scope `is_subset_of` the result). On a path conflict the wider Read-family
-/// mode wins (`ReadOnly ∪ ReadWrite = ReadWrite`); a conflicting non-Read mode
-/// (e.g. `ExecOnly`, which no MCP/registered tool declares) keeps the existing
-/// mount — if that is not actually a superset, the per-tool intersect later fails
-/// closed for that tool, never silently widening.
-fn fs_union_into(ceiling: &mut FsScope, add: &FsScope) {
-    for (path, mode) in &add.mounts {
-        ceiling
-            .mounts
-            .entry(path.clone())
-            .and_modify(|existing| {
-                *existing = match (*existing, *mode) {
-                    (FsMode::ReadWrite, FsMode::ReadOnly | FsMode::ReadWrite)
-                    | (FsMode::ReadOnly, FsMode::ReadWrite) => FsMode::ReadWrite,
-                    (FsMode::ReadOnly, FsMode::ReadOnly) => FsMode::ReadOnly,
-                    // Any mode involving ExecOnly (orthogonal): keep the existing
-                    // mount; an Exec tool simply won't survive its own intersect.
-                    (existing, _) => existing,
-                };
-            })
-            .or_insert(*mode);
+    WarrantSpec {
+        mote_class: MoteClass::ReadOnlyNondet,
+        nd_class: MoteClass::ReadOnlyNondet,
+        fs_scope: tdef.required_capability.fs_scope_required.clone(),
+        net_scope: tdef.required_capability.net_scope_required.clone(),
+        syscall_profile_ref: tdef.required_capability.syscall_profile_ref,
+        tool_grants: grants,
+        model_route: base.model_route.clone(),
+        resource_ceiling: base.resource_ceiling,
+        environment_ref: None,
+        executor_class: base.executor_class,
+        ..Default::default()
     }
 }
 
