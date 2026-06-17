@@ -3119,6 +3119,142 @@ button.card-grid__title:hover {
   font-size: 0.82rem;
 }
 
+/* ---- Tools registry (PR-6a-2: DiscoverTools governance + RegisterTool) ---- */
+.registry-list {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.registry-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.7rem 0.85rem;
+}
+.registry-row__main {
+  min-width: 0;
+}
+.registry-row__head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.registry-row__name {
+  font-size: 0.92rem;
+  font-weight: 600;
+}
+.registry-row__desc {
+  margin: 0.35rem 0 0;
+  font-size: 0.82rem;
+}
+.registry-row__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1.2rem;
+  margin: 0.5rem 0 0;
+}
+.registry-row__meta > div {
+  display: flex;
+  flex-direction: column;
+}
+.registry-row__meta dt {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.registry-row__meta dd {
+  margin: 0;
+  font-size: 0.82rem;
+}
+.registry-row__deregister {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+.tools-registry-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
+  gap: 1rem;
+  align-items: start;
+  margin-top: 0.75rem;
+}
+@media (max-width: 720px) {
+  .tools-registry-actions {
+    grid-template-columns: 1fr;
+  }
+}
+.tools-connections {
+  margin: 0;
+}
+.register-tool-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin: 0.6rem 0 0;
+}
+.register-tool-form__row {
+  display: grid;
+  grid-template-columns: 1fr 0.4fr;
+  gap: 0.5rem;
+}
+.register-tool-form__idempotency {
+  border: none;
+  margin: 0;
+  padding: 0;
+}
+.register-tool-form__idempotency legend {
+  font-size: 0.75rem;
+  padding: 0;
+  margin-bottom: 0.3rem;
+}
+.register-tool__result {
+  margin: 0.5rem 0 0;
+  color: var(--fg-muted);
+  font-size: 0.9rem;
+}
+
+/* ---- Data Lab: Agent Outputs (PR-6a-2: capture action-exhaust review) ---- */
+.agent-outputs__filter {
+  margin: 0.25rem 0 0.6rem;
+}
+.agent-outputs-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.agent-output-row {
+  padding: 0.55rem 0.75rem;
+}
+.agent-output-row__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+.agent-output-row__toggle {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  color: inherit;
+  min-width: 0;
+}
+.agent-output-row__mote {
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
 /* ---- editor surfaces (Monaco + the headless fallback) ---- */
 .editor-surface {
   border: 1px solid var(--border);
