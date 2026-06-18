@@ -35,6 +35,13 @@ pub enum GatewayError {
     /// (`GetProjection`), so this is honest, never an existence oracle.
     #[error("not found: {0}")]
     NotFound(&'static str),
+
+    /// The request is well-formed but the runtime is not in a state to serve it
+    /// (D155: `SnapshotInto` when `KX_SERVE_FS_ROOT` is unset — host snapshot is
+    /// default-OFF). Distinct from `InvalidArgument` (the request is fine; the
+    /// operator has not enabled the capability).
+    #[error("failed precondition: {0}")]
+    FailedPrecondition(&'static str),
 }
 
 impl From<GatewayError> for Status {
@@ -46,6 +53,7 @@ impl From<GatewayError> for Status {
             GatewayError::Internal(msg) => Status::internal(msg),
             GatewayError::ResourceExhausted(msg) => Status::resource_exhausted(msg),
             GatewayError::NotFound(msg) => Status::not_found(msg),
+            GatewayError::FailedPrecondition(msg) => Status::failed_precondition(msg),
         }
     }
 }

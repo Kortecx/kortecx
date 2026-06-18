@@ -107,6 +107,12 @@ export interface SpawnOpts {
    * `--no-console` so a default-on console build can never collide on 50180.
    */
   console?: boolean;
+  /**
+   * D155: set `KX_SERVE_FS_ROOT` for this spawn — the operator read root that
+   * enables `SnapshotInto` (default-OFF). The branch RPCs (CreateBranch / the
+   * branches.db store) are always wired; only snapshot's host read is gated.
+   */
+  fsRoot?: string;
 }
 
 export async function spawnGateway(opts: SpawnOpts = {}): Promise<Gateway> {
@@ -137,7 +143,8 @@ export async function spawnGateway(opts: SpawnOpts = {}): Promise<Gateway> {
   if (opts.corsOrigin) {
     args.push("--cors-origin", opts.corsOrigin);
   }
-  const proc = spawn(kxBin, args, { stdio: ["ignore", "pipe", "pipe"] });
+  const env = opts.fsRoot ? { ...process.env, KX_SERVE_FS_ROOT: opts.fsRoot } : process.env;
+  const proc = spawn(kxBin, args, { stdio: ["ignore", "pipe", "pipe"], env });
   let stopped = false;
   const stop = () => {
     if (!stopped) {

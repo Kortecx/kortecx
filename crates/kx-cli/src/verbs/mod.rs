@@ -4,6 +4,7 @@
 
 pub mod alerts;
 pub mod blueprint;
+pub mod branch;
 pub mod capture;
 pub mod chain;
 pub mod connections;

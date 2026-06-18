@@ -67,6 +67,7 @@ usage: kx <command> [args]
     kx tools list | score --intent <text> --tool <id>@<ver>... | discover | register | deregister
     kx connections add --name <n> (--command <path> | --url <url>) | list | test | remove | discover   (external MCP gateways)
     kx context add <handle> (--item <name>=<hex32> | --file <name>=<path>)... [--description <s>] | list | get <handle> | remove <handle>   (context bundles)
+    kx branch create <handle> [--parent <handle>] [--description <s>] | snapshot <handle> --path <p>... [--parent <handle>] | list | get <handle> | remove <handle>   (D155 file branches)
     kx recipe list | search <intent> [--keyword <k>]... [--limit N]   (advisory recipe discovery)
     kx models list                              (display-only model discovery)
     kx datasets list | ingest <name> (--text <s>|--file <p>)... | query <name> --text <q> [--k N]   (RAG corpora)
@@ -130,6 +131,8 @@ pub enum Cli {
     Connections(verbs::connections::ConnectionsArgs),
     /// Context bundles (PR-7 — add/list/get/remove; attach via `invoke --context`).
     Context(verbs::context::ContextArgs),
+    /// Branches (D155 — create/snapshot/list/get/remove; content-addressed file branches).
+    Branch(verbs::branch::BranchArgs),
     /// Model discovery (Batch A `ListModels`; display-only).
     Models(verbs::models::ModelsArgs),
     /// The RAG data-plane (`ListDatasets` / `IngestDocuments` / `QueryDataset`).
@@ -187,6 +190,7 @@ impl Cli {
             Some("tools") => Ok(Cli::Tools(verbs::tools::parse(args)?)),
             Some("connections") => Ok(Cli::Connections(verbs::connections::parse(args)?)),
             Some("context") => Ok(Cli::Context(verbs::context::parse(args)?)),
+            Some("branch") => Ok(Cli::Branch(verbs::branch::parse(args)?)),
             Some("models") => Ok(Cli::Models(verbs::models::parse(args)?)),
             Some("datasets") => Ok(Cli::Datasets(verbs::datasets::parse(args)?)),
             Some("health") => Ok(Cli::Health(verbs::health::parse(args)?)),
@@ -259,6 +263,7 @@ async fn dispatch(cli: Cli) -> Result<(), CliError> {
         Cli::Tools(a) => verbs::tools::execute(a).await,
         Cli::Connections(a) => verbs::connections::execute(a).await,
         Cli::Context(a) => verbs::context::execute(a).await,
+        Cli::Branch(a) => verbs::branch::execute(a).await,
         Cli::Models(a) => verbs::models::execute(a).await,
         Cli::Datasets(a) => verbs::datasets::execute(a).await,
         Cli::Health(a) => verbs::health::execute(a).await,

@@ -19,6 +19,7 @@ describe("NAV_SECTIONS", () => {
       "tools",
       "models",
       "context",
+      "branches",
       "monitor",
       "systems",
     ]);

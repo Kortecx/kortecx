@@ -1009,6 +1009,171 @@ pub fn render_delete_context_bundle(
     }
 }
 
+// ----- D155 branches -----
+
+/// JSON of a branch manifest's `{path -> ref}` items (path-sorted display).
+fn branch_items_json(items: &[proto::BranchItem]) -> Vec<Value> {
+    items
+        .iter()
+        .map(|it| json!({ "path": it.path, "content_ref": hex::encode(&it.content_ref) }))
+        .collect()
+}
+
+/// Render `branch create` — the new/forked branch ref.
+#[must_use]
+pub fn render_create_branch(resp: &proto::CreateBranchResponse, json: bool) -> String {
+    if json {
+        json!({
+            "branch_ref": hex::encode(&resp.branch_ref),
+            "handle": resp.handle,
+            "deduplicated": resp.deduplicated,
+        })
+        .to_string()
+    } else {
+        format!(
+            "branch {} ref={} deduplicated={}",
+            resp.handle,
+            hex::encode(&resp.branch_ref),
+            resp.deduplicated
+        )
+    }
+}
+
+/// Render `branch snapshot` — the resolved manifest + how many paths were ingested.
+#[must_use]
+pub fn render_snapshot_into(resp: &proto::SnapshotIntoResponse, json: bool) -> String {
+    if json {
+        json!({
+            "branch_ref": hex::encode(&resp.branch_ref),
+            "handle": resp.handle,
+            "ingested": resp.ingested,
+            "item_count": resp.items.len(),
+            "items": branch_items_json(&resp.items),
+            "deduplicated": resp.deduplicated,
+        })
+        .to_string()
+    } else {
+        let header = format!(
+            "branch {} ref={}  ingested={}  {} file(s)",
+            resp.handle,
+            hex::encode(&resp.branch_ref),
+            resp.ingested,
+            resp.items.len()
+        );
+        let rows = resp
+            .items
+            .iter()
+            .map(|it| format!("  {} -> {}", it.path, hex::encode(&it.content_ref)))
+            .collect::<Vec<_>>()
+            .join("\n");
+        if rows.is_empty() {
+            header
+        } else {
+            format!("{header}\n{rows}")
+        }
+    }
+}
+
+/// Render `branch list` — the caller's branches in handle order.
+#[must_use]
+pub fn render_branches_list(resp: &proto::ListBranchesResponse, json: bool) -> String {
+    if json {
+        let branches: Vec<Value> = resp
+            .branches
+            .iter()
+            .map(|b| {
+                json!({
+                    "branch_ref": hex::encode(&b.branch_ref),
+                    "handle": b.handle,
+                    "parent_handle": b.parent_handle,
+                    "description": b.description,
+                    "item_count": b.item_count,
+                })
+            })
+            .collect();
+        json!({ "branches": branches, "has_more": resp.has_more }).to_string()
+    } else if resp.branches.is_empty() {
+        "(no branches)".to_string()
+    } else {
+        resp.branches
+            .iter()
+            .map(|b| {
+                let parent = if b.parent_handle.is_empty() {
+                    String::new()
+                } else {
+                    format!("  <- {}", b.parent_handle)
+                };
+                format!(
+                    "{}  {} file(s){}  {}",
+                    b.handle, b.item_count, parent, b.description
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+}
+
+/// Render `branch get` — one branch's resolved manifest (uniform not-found).
+#[must_use]
+pub fn render_get_branch(resp: &proto::GetBranchResponse, json: bool) -> String {
+    let Some(b) = resp.branch.as_ref().filter(|_| resp.found) else {
+        return if json {
+            json!({ "found": false }).to_string()
+        } else {
+            "(not found)".to_string()
+        };
+    };
+    if json {
+        json!({
+            "found": true,
+            "branch_ref": hex::encode(&b.branch_ref),
+            "handle": b.handle,
+            "parent_handle": b.parent_handle,
+            "description": b.description,
+            "item_count": b.item_count,
+            "items": branch_items_json(&b.items),
+        })
+        .to_string()
+    } else {
+        let parent = if b.parent_handle.is_empty() {
+            String::new()
+        } else {
+            format!("  parent={}", b.parent_handle)
+        };
+        let header = format!(
+            "{}  ref={}{}  {} file(s)  {}",
+            b.handle,
+            hex::encode(&b.branch_ref),
+            parent,
+            b.item_count,
+            b.description
+        );
+        let rows = b
+            .items
+            .iter()
+            .map(|it| format!("  {} -> {}", it.path, hex::encode(&it.content_ref)))
+            .collect::<Vec<_>>()
+            .join("\n");
+        if rows.is_empty() {
+            header
+        } else {
+            format!("{header}\n{rows}")
+        }
+    }
+}
+
+/// Render `branch remove` — whether the branch was unbound.
+#[must_use]
+pub fn render_delete_branch(resp: &proto::DeleteBranchResponse, json: bool) -> String {
+    if json {
+        json!({ "removed": resp.removed }).to_string()
+    } else if resp.removed {
+        "removed".to_string()
+    } else {
+        "not removed (no such branch)".to_string()
+    }
+}
+
 /// Render `tools score` — the advisory rank ladder + the lowering dry-run
 /// verdict. Every number is DISPLAY-ONLY (SN-8): a score can surface a tool,
 /// never grant one.

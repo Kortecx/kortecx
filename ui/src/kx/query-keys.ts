@@ -44,6 +44,9 @@ export const queryKeys = {
   /** This party's context bundles (`ListContextBundles`, PR-7) — named,
    *  content-addressed grounding. Caller-scoped; `bundleRef` is server-derived (SN-8). */
   contextBundles: (endpoint: string) => ["kx", endpoint, "context-bundles"] as const,
+  /** This party's D155 branches (`ListBranches`) — content-addressed file branches.
+   *  Caller-scoped; `branchRef` is server-derived (SN-8). */
+  branches: (endpoint: string) => ["kx", endpoint, "branches"] as const,
   /** The datasets (RAG corpora) the gateway holds (`ListDatasets`). */
   datasets: (endpoint: string) => ["kx", endpoint, "datasets"] as const,
   /** A dataset query (`QueryDataset`), scoped by dataset + query text + k. */

@@ -1352,6 +1352,84 @@ message DeleteContextBundleResponse {
 }
 
 // ---------------------------------------------------------------------------
+// D155 Phase-A — branched data (read / snapshot). A BRANCH is a named,
+// content-addressed manifest of {host-path -> ContentRef} entries: the operator
+// snapshots approved host files (confined under KX_SERVE_FS_ROOT) INTO the
+// content store, and the agent loop edits them IN-CAS (the host is NEVER written
+// in Phase-A — governed write-back is Phase-B, after PR-8). Off-journal
+// branches.db sidecar (rebuildable-to-empty; branch_ref is SERVER-DERIVED, never
+// a MoteId / journal / digest input => the canonical projection digest is
+// invariant). A sub-branch (parent_handle) is a point-in-time CoW fork: it
+// inherits the parent's resolved refs at create time and re-points only the
+// paths a later snapshot overrides (unchanged paths share the parent's CAS blob
+// — zero-copy). SN-8: the client names a handle; the server derives the ref and
+// scopes List/Get/Delete to the caller's principal (no cross-party oracle).
+// ---------------------------------------------------------------------------
+
+message BranchItem {
+  string path        = 1;                // the snapshot-relative path (display + manifest key)
+  bytes  content_ref = 2;                // 32B — the file's blob in the content store (fs-read@1 -> CAS)
+}
+
+message Branch {
+  bytes  branch_ref          = 1;        // 16B SERVER-DERIVED manifest hash (SN-8; display + dedup)
+  string handle              = 2;        // "namespace/collection/name" AssetPath handle
+  string parent_handle       = 3;        // the CoW parent (lineage); empty = a root branch
+  string description         = 4;        // free-form; NEVER parsed for enforcement
+  repeated BranchItem items  = 5;        // the resolved {path -> ref} set, path-sorted
+  uint32 item_count          = 6;
+}
+
+message CreateBranchRequest {
+  string handle        = 1;              // "namespace/collection/name" AssetPath handle (upsert key)
+  string description   = 2;              // free-form; size-capped
+  string parent_handle = 3;              // optional: fork this branch (CoW); empty = a fresh root branch
+}
+message CreateBranchResponse {
+  bytes  branch_ref   = 1;               // 16B SERVER-DERIVED
+  string handle       = 2;               // echoed canonical handle
+  bool   deduplicated = 3;               // true iff an identical manifest already existed
+}
+
+message SnapshotIntoRequest {
+  string handle         = 1;             // the branch to ingest into (created if absent)
+  repeated string paths = 2;             // host paths (confined under KX_SERVE_FS_ROOT) to read into CAS
+  string description    = 3;             // free-form; size-capped (applied iff the branch is created)
+  string parent_handle  = 4;             // optional CoW parent (applied iff the branch is created)
+}
+message SnapshotIntoResponse {
+  bytes  branch_ref         = 1;
+  string handle             = 2;
+  repeated BranchItem items = 3;         // the resolved manifest after the snapshot
+  uint32 ingested           = 4;         // how many paths were read into CAS this call
+  bool   deduplicated       = 5;
+}
+
+message ListBranchesRequest {
+  uint32 limit        = 1;               // page size; server clamps 1..=256 (absent = 100)
+  string after_handle = 2;               // exclusive cursor: the handle of the last row of the prior page
+}
+message ListBranchesResponse {
+  repeated Branch branches = 1;          // deterministic (handle) order, caller-scoped
+  bool has_more = 2;
+}
+
+message GetBranchRequest {
+  string handle = 1;                     // exact handle
+}
+message GetBranchResponse {
+  Branch branch = 1;                     // the resolved manifest; empty iff not found / not owned (uniform)
+  bool found = 2;                        // false uniformly for absent OR not-owned (no existence oracle)
+}
+
+message DeleteBranchRequest {
+  string handle = 1;                     // unbinds the branch; the CAS blobs stay
+}
+message DeleteBranchResponse {
+  bool removed = 1;                       // false iff absent / not owned
+}
+
+// ---------------------------------------------------------------------------
 // Service — the external client-facing gateway (distinct from Coordinator).
 // ---------------------------------------------------------------------------
 
@@ -1465,4 +1543,16 @@ service KxGateway {
   rpc ListContextBundles(ListContextBundlesRequest) returns (ListContextBundlesResponse);
   rpc GetContextBundle(GetContextBundleRequest) returns (GetContextBundleResponse);
   rpc DeleteContextBundle(DeleteContextBundleRequest) returns (DeleteContextBundleResponse);
+
+  // D155 Phase-A — branched data (off-journal branches.db sidecar; SN-8
+  // server-derived ref). SnapshotInto reads operator-approved host files
+  // (confined under KX_SERVE_FS_ROOT, default-OFF) INTO the content store and
+  // records the {path -> ref} manifest; the agent loop edits IN-CAS (no host
+  // write in Phase-A — write-back is Phase-B, after PR-8). UNIMPLEMENTED with no
+  // sidecar; FAILED_PRECONDITION on SnapshotInto when KX_SERVE_FS_ROOT is unset.
+  rpc CreateBranch(CreateBranchRequest) returns (CreateBranchResponse);
+  rpc SnapshotInto(SnapshotIntoRequest) returns (SnapshotIntoResponse);
+  rpc ListBranches(ListBranchesRequest) returns (ListBranchesResponse);
+  rpc GetBranch(GetBranchRequest) returns (GetBranchResponse);
+  rpc DeleteBranch(DeleteBranchRequest) returns (DeleteBranchResponse);
 }

@@ -1570,3 +1570,115 @@ class DeleteContextBundleResponse(_message.Message):
     REMOVED_FIELD_NUMBER: _ClassVar[int]
     removed: bool
     def __init__(self, removed: bool = ...) -> None: ...
+
+class BranchItem(_message.Message):
+    __slots__ = ("path", "content_ref")
+    PATH_FIELD_NUMBER: _ClassVar[int]
+    CONTENT_REF_FIELD_NUMBER: _ClassVar[int]
+    path: str
+    content_ref: bytes
+    def __init__(self, path: _Optional[str] = ..., content_ref: _Optional[bytes] = ...) -> None: ...
+
+class Branch(_message.Message):
+    __slots__ = ("branch_ref", "handle", "parent_handle", "description", "items", "item_count")
+    BRANCH_REF_FIELD_NUMBER: _ClassVar[int]
+    HANDLE_FIELD_NUMBER: _ClassVar[int]
+    PARENT_HANDLE_FIELD_NUMBER: _ClassVar[int]
+    DESCRIPTION_FIELD_NUMBER: _ClassVar[int]
+    ITEMS_FIELD_NUMBER: _ClassVar[int]
+    ITEM_COUNT_FIELD_NUMBER: _ClassVar[int]
+    branch_ref: bytes
+    handle: str
+    parent_handle: str
+    description: str
+    items: _containers.RepeatedCompositeFieldContainer[BranchItem]
+    item_count: int
+    def __init__(self, branch_ref: _Optional[bytes] = ..., handle: _Optional[str] = ..., parent_handle: _Optional[str] = ..., description: _Optional[str] = ..., items: _Optional[_Iterable[_Union[BranchItem, _Mapping]]] = ..., item_count: _Optional[int] = ...) -> None: ...
+
+class CreateBranchRequest(_message.Message):
+    __slots__ = ("handle", "description", "parent_handle")
+    HANDLE_FIELD_NUMBER: _ClassVar[int]
+    DESCRIPTION_FIELD_NUMBER: _ClassVar[int]
+    PARENT_HANDLE_FIELD_NUMBER: _ClassVar[int]
+    handle: str
+    description: str
+    parent_handle: str
+    def __init__(self, handle: _Optional[str] = ..., description: _Optional[str] = ..., parent_handle: _Optional[str] = ...) -> None: ...
+
+class CreateBranchResponse(_message.Message):
+    __slots__ = ("branch_ref", "handle", "deduplicated")
+    BRANCH_REF_FIELD_NUMBER: _ClassVar[int]
+    HANDLE_FIELD_NUMBER: _ClassVar[int]
+    DEDUPLICATED_FIELD_NUMBER: _ClassVar[int]
+    branch_ref: bytes
+    handle: str
+    deduplicated: bool
+    def __init__(self, branch_ref: _Optional[bytes] = ..., handle: _Optional[str] = ..., deduplicated: bool = ...) -> None: ...
+
+class SnapshotIntoRequest(_message.Message):
+    __slots__ = ("handle", "paths", "description", "parent_handle")
+    HANDLE_FIELD_NUMBER: _ClassVar[int]
+    PATHS_FIELD_NUMBER: _ClassVar[int]
+    DESCRIPTION_FIELD_NUMBER: _ClassVar[int]
+    PARENT_HANDLE_FIELD_NUMBER: _ClassVar[int]
+    handle: str
+    paths: _containers.RepeatedScalarFieldContainer[str]
+    description: str
+    parent_handle: str
+    def __init__(self, handle: _Optional[str] = ..., paths: _Optional[_Iterable[str]] = ..., description: _Optional[str] = ..., parent_handle: _Optional[str] = ...) -> None: ...
+
+class SnapshotIntoResponse(_message.Message):
+    __slots__ = ("branch_ref", "handle", "items", "ingested", "deduplicated")
+    BRANCH_REF_FIELD_NUMBER: _ClassVar[int]
+    HANDLE_FIELD_NUMBER: _ClassVar[int]
+    ITEMS_FIELD_NUMBER: _ClassVar[int]
+    INGESTED_FIELD_NUMBER: _ClassVar[int]
+    DEDUPLICATED_FIELD_NUMBER: _ClassVar[int]
+    branch_ref: bytes
+    handle: str
+    items: _containers.RepeatedCompositeFieldContainer[BranchItem]
+    ingested: int
+    deduplicated: bool
+    def __init__(self, branch_ref: _Optional[bytes] = ..., handle: _Optional[str] = ..., items: _Optional[_Iterable[_Union[BranchItem, _Mapping]]] = ..., ingested: _Optional[int] = ..., deduplicated: bool = ...) -> None: ...
+
+class ListBranchesRequest(_message.Message):
+    __slots__ = ("limit", "after_handle")
+    LIMIT_FIELD_NUMBER: _ClassVar[int]
+    AFTER_HANDLE_FIELD_NUMBER: _ClassVar[int]
+    limit: int
+    after_handle: str
+    def __init__(self, limit: _Optional[int] = ..., after_handle: _Optional[str] = ...) -> None: ...
+
+class ListBranchesResponse(_message.Message):
+    __slots__ = ("branches", "has_more")
+    BRANCHES_FIELD_NUMBER: _ClassVar[int]
+    HAS_MORE_FIELD_NUMBER: _ClassVar[int]
+    branches: _containers.RepeatedCompositeFieldContainer[Branch]
+    has_more: bool
+    def __init__(self, branches: _Optional[_Iterable[_Union[Branch, _Mapping]]] = ..., has_more: bool = ...) -> None: ...
+
+class GetBranchRequest(_message.Message):
+    __slots__ = ("handle",)
+    HANDLE_FIELD_NUMBER: _ClassVar[int]
+    handle: str
+    def __init__(self, handle: _Optional[str] = ...) -> None: ...
+
+class GetBranchResponse(_message.Message):
+    __slots__ = ("branch", "found")
+    BRANCH_FIELD_NUMBER: _ClassVar[int]
+    FOUND_FIELD_NUMBER: _ClassVar[int]
+    branch: Branch
+    found: bool
+    def __init__(self, branch: _Optional[_Union[Branch, _Mapping]] = ..., found: bool = ...) -> None: ...
+
+class DeleteBranchRequest(_message.Message):
+    __slots__ = ("handle",)
+    HANDLE_FIELD_NUMBER: _ClassVar[int]
+    handle: str
+    def __init__(self, handle: _Optional[str] = ...) -> None: ...
+
+class DeleteBranchResponse(_message.Message):
+    __slots__ = ("removed",)
+    REMOVED_FIELD_NUMBER: _ClassVar[int]
+    removed: bool
+    def __init__(self, removed: bool = ...) -> None: ...
