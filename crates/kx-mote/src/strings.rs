@@ -126,6 +126,16 @@ pub const REACT_MAX_TOOL_CALLS_KEY: &str = "max_tool_calls";
 /// digest (no prior Mote carries this key).
 pub const TOOL_ARGS_KEY: &str = "kx.tool.args";
 
+/// PR-7: the `config_subset` key under which the bind layer injects a run's
+/// attached context-bundle items (canonical-encoded by
+/// [`crate::encode_context_items`]). Present ONLY on an ENTRY Mote of a run that
+/// attached `context_bundles`, so a different attached context yields a different
+/// `MoteId` (exactly-once-per-`(input + context)`); every Mote without it is
+/// byte-identical to pre-PR-7 (no prior Mote carries this key, so adding the
+/// constant moves no existing digest). The context-assembler reads it to fetch +
+/// label the items for the model.
+pub const CONTEXT_ITEMS_KEY: &str = "kx.context.items";
+
 /// The stable position of a Mote in its DAG.
 ///
 /// Assigned at DAG-compile time (workflow SDK) or derived from a topology

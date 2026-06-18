@@ -32,6 +32,10 @@ pub struct InvokeArgs {
     pub timeout_secs: u64,
     /// Write the committed result bytes to this file instead of inlining them.
     pub out: Option<PathBuf>,
+    /// PR-7: context-bundle handles to attach (`--context <handle>`, repeatable).
+    /// The server resolves each to its item refs and injects them into the entry
+    /// Mote's identity-bearing context (a different context ⇒ a different run).
+    pub context_bundles: Vec<String>,
     /// Common client flags.
     pub common: ClientCommon,
 }
@@ -44,6 +48,7 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<InvokeArgs, CliEr
     let mut stream = false;
     let mut timeout_secs = DEFAULT_TIMEOUT_SECS;
     let mut out: Option<PathBuf> = None;
+    let mut context_bundles: Vec<String> = Vec::new();
     let mut common = ClientCommon::default();
 
     while let Some(flag) = args.next() {
@@ -71,6 +76,7 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<InvokeArgs, CliEr
                 })?;
             }
             "--out" => out = Some(PathBuf::from(next_value(&mut args, "--out")?)),
+            "--context" => context_bundles.push(next_value(&mut args, "--context")?),
             other => {
                 if other.starts_with("--") {
                     return Err(CliError::Usage(format!("unknown flag {other:?}")));
@@ -103,6 +109,7 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<InvokeArgs, CliEr
         stream,
         timeout_secs,
         out,
+        context_bundles,
         common,
     })
 }
@@ -128,6 +135,7 @@ pub async fn execute(args: InvokeArgs) -> Result<(), CliError> {
         .invoke(resolved.request(proto::InvokeRequest {
             handle: args.handle,
             args: args.args_json,
+            context_bundles: args.context_bundles,
         })?)
         .await
         .map_err(CliError::from_status)?

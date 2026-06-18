@@ -31,6 +31,7 @@ const sidebars: SidebarsConfig = {
         "agent-runner",
         "security",
         "tools",
+        "context",
         "models",
         "datasets",
         "scripts",

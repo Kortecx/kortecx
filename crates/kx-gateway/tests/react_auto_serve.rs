@@ -111,6 +111,7 @@ async fn autogrant_serve_provisions_react_auto_and_drives_a_live_chain() {
             handle: REACT_AUTO_RECIPE_HANDLE.to_string(),
             args: br#"{"instruction":"What is 2+2? Answer briefly in prose.","max_turns":4,"max_tool_calls":2}"#
                 .to_vec(),
+            context_bundles: vec![],
         })
         .await
         .expect("invoke kx/recipes/react-auto")

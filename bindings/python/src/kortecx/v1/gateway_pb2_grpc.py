@@ -263,6 +263,26 @@ class KxGatewayStub(object):
                 request_serializer=kortecx_dot_v1_dot_gateway__pb2.DeregisterMcpServerRequest.SerializeToString,
                 response_deserializer=kortecx_dot_v1_dot_gateway__pb2.DeregisterMcpServerResponse.FromString,
                 _registered_method=True)
+        self.PutContextBundle = channel.unary_unary(
+                '/kortecx.v1.KxGateway/PutContextBundle',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.PutContextBundleRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.PutContextBundleResponse.FromString,
+                _registered_method=True)
+        self.ListContextBundles = channel.unary_unary(
+                '/kortecx.v1.KxGateway/ListContextBundles',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.ListContextBundlesRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.ListContextBundlesResponse.FromString,
+                _registered_method=True)
+        self.GetContextBundle = channel.unary_unary(
+                '/kortecx.v1.KxGateway/GetContextBundle',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.GetContextBundleRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.GetContextBundleResponse.FromString,
+                _registered_method=True)
+        self.DeleteContextBundle = channel.unary_unary(
+                '/kortecx.v1.KxGateway/DeleteContextBundle',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.DeleteContextBundleRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.DeleteContextBundleResponse.FromString,
+                _registered_method=True)
 
 
 class KxGatewayServicer(object):
@@ -600,6 +620,31 @@ class KxGatewayServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def PutContextBundle(self, request, context):
+        """PR-7 — context bundles (off-journal bundles.db sidecar; SN-8 server-derived ref).
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ListContextBundles(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def GetContextBundle(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def DeleteContextBundle(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_KxGatewayServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -827,6 +872,26 @@ def add_KxGatewayServicer_to_server(servicer, server):
                     servicer.DeregisterMcpServer,
                     request_deserializer=kortecx_dot_v1_dot_gateway__pb2.DeregisterMcpServerRequest.FromString,
                     response_serializer=kortecx_dot_v1_dot_gateway__pb2.DeregisterMcpServerResponse.SerializeToString,
+            ),
+            'PutContextBundle': grpc.unary_unary_rpc_method_handler(
+                    servicer.PutContextBundle,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.PutContextBundleRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.PutContextBundleResponse.SerializeToString,
+            ),
+            'ListContextBundles': grpc.unary_unary_rpc_method_handler(
+                    servicer.ListContextBundles,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.ListContextBundlesRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.ListContextBundlesResponse.SerializeToString,
+            ),
+            'GetContextBundle': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetContextBundle,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.GetContextBundleRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.GetContextBundleResponse.SerializeToString,
+            ),
+            'DeleteContextBundle': grpc.unary_unary_rpc_method_handler(
+                    servicer.DeleteContextBundle,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.DeleteContextBundleRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.DeleteContextBundleResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -2048,6 +2113,114 @@ class KxGateway(object):
             '/kortecx.v1.KxGateway/DeregisterMcpServer',
             kortecx_dot_v1_dot_gateway__pb2.DeregisterMcpServerRequest.SerializeToString,
             kortecx_dot_v1_dot_gateway__pb2.DeregisterMcpServerResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def PutContextBundle(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/PutContextBundle',
+            kortecx_dot_v1_dot_gateway__pb2.PutContextBundleRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.PutContextBundleResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ListContextBundles(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/ListContextBundles',
+            kortecx_dot_v1_dot_gateway__pb2.ListContextBundlesRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.ListContextBundlesResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GetContextBundle(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/GetContextBundle',
+            kortecx_dot_v1_dot_gateway__pb2.GetContextBundleRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.GetContextBundleResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def DeleteContextBundle(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/DeleteContextBundle',
+            kortecx_dot_v1_dot_gateway__pb2.DeleteContextBundleRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.DeleteContextBundleResponse.FromString,
             options,
             channel_credentials,
             insecure,

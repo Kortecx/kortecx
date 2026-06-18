@@ -115,6 +115,7 @@ async fn invoke_model_recipe_runs_real_inference_to_committed() {
         .invoke(proto::InvokeRequest {
             handle: MODEL_RECIPE_HANDLE.to_string(),
             args: br#"{"prompt":"What is 2+2? Reply with just the number."}"#.to_vec(),
+            context_bundles: vec![],
         })
         .await
         .expect("invoke kx/recipes/chat (is the serve model fit + the feature on?)")
@@ -192,6 +193,7 @@ async fn chat_greedy_decode_is_deterministic_across_gateways() {
             .invoke(proto::InvokeRequest {
                 handle: MODEL_RECIPE_HANDLE.to_string(),
                 args: prompt.to_vec(),
+                context_bundles: vec![],
             })
             .await
             .expect("invoke kx/recipes/chat")

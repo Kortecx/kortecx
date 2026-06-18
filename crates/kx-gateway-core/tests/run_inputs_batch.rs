@@ -37,6 +37,7 @@ impl RecipeBinder for PlainBinder {
         _party: &str,
         _handle: &str,
         _args: &[u8],
+        _context_bundles: &[String],
     ) -> Result<BoundRecipe, BinderError> {
         Ok(BoundRecipe {
             recipe_fingerprint: RECIPE_FP,
@@ -95,6 +96,7 @@ async fn invoke_captures_args_then_get_run_inputs_returns_them() {
         .invoke(proto::InvokeRequest {
             handle: "kx/recipes/echo".into(),
             args: br#"{"topic":"hi"}"#.to_vec(),
+            context_bundles: vec![],
         })
         .await
         .expect("invoke admitted");
@@ -123,6 +125,7 @@ async fn invoke_succeeds_when_capture_fails() {
         .invoke(proto::InvokeRequest {
             handle: "kx/recipes/echo".into(),
             args: b"{}".to_vec(),
+            context_bundles: vec![],
         })
         .await
         .expect("invoke still admitted despite a failing run-inputs capture");

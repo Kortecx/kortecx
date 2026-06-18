@@ -3,8 +3,8 @@
 //! byte-deterministic [`crate::AssembledContext`].
 
 use bytes::Bytes;
-use kx_content::ContentStore;
-use kx_mote::{EdgeKind, Mote, MoteId};
+use kx_content::{ContentRef, ContentStore};
+use kx_mote::{decode_context_items, ConfigKey, EdgeKind, Mote, MoteId, CONTEXT_ITEMS_KEY};
 use kx_projection::Snapshot;
 use kx_tool_registry::{ParamType, ToolDef, ToolRegistry};
 use kx_warrant::WarrantSpec;
@@ -126,6 +126,36 @@ pub fn assemble<S: ContentStore>(
             bytes,
             source_ref: result_ref,
         });
+    }
+
+    // 1b. PR-7: attached context-bundle items, carried in the ENTRY Mote's
+    //     `config_subset[CONTEXT_ITEMS_KEY]` (canonical-encoded by the bind layer).
+    //     Absent ⇒ byte-identical to pre-PR-7 (no key, this block is skipped). Each
+    //     item's blob lives in the SAME content store (a `PutContent` ref); a
+    //     missing ref FAILS CLOSED — a run that asked for grounding must never run
+    //     silently without it.
+    if let Some(encoded) = mote
+        .def
+        .config_subset
+        .get(&ConfigKey(CONTEXT_ITEMS_KEY.to_string()))
+    {
+        for item in decode_context_items(&encoded.0) {
+            let content_ref = ContentRef(item.content_ref);
+            let payload = store
+                .get(&content_ref)
+                .map_err(|_| AssemblyError::ContentStoreMiss { content_ref })?;
+            let bytes = Bytes::copy_from_slice(&payload);
+            let label = if item.name.is_empty() {
+                format!("context.{}", &content_ref.to_hex()[..16])
+            } else {
+                format!("context.{}", item.name)
+            };
+            items.push(AssembledItem {
+                label,
+                bytes,
+                source_ref: content_ref,
+            });
+        }
     }
 
     // 2. Tools from warrant.tool_grants, sorted by (tool_id, tool_version).

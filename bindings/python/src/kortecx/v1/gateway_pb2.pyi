@@ -130,12 +130,14 @@ class RunHandle(_message.Message):
     def __init__(self, instance_id: _Optional[bytes] = ..., recipe_fingerprint: _Optional[bytes] = ...) -> None: ...
 
 class InvokeRequest(_message.Message):
-    __slots__ = ("handle", "args")
+    __slots__ = ("handle", "args", "context_bundles")
     HANDLE_FIELD_NUMBER: _ClassVar[int]
     ARGS_FIELD_NUMBER: _ClassVar[int]
+    CONTEXT_BUNDLES_FIELD_NUMBER: _ClassVar[int]
     handle: str
     args: bytes
-    def __init__(self, handle: _Optional[str] = ..., args: _Optional[bytes] = ...) -> None: ...
+    context_bundles: _containers.RepeatedScalarFieldContainer[str]
+    def __init__(self, handle: _Optional[str] = ..., args: _Optional[bytes] = ..., context_bundles: _Optional[_Iterable[str]] = ...) -> None: ...
 
 class InvokeResponse(_message.Message):
     __slots__ = ("instance_id", "recipe_fingerprint", "terminal_mote_id")
@@ -883,16 +885,18 @@ class WorkflowEdge(_message.Message):
     def __init__(self, parent: _Optional[int] = ..., child: _Optional[int] = ..., edge_kind: _Optional[_Union[_coordinator_pb2.EdgeKind, str]] = ..., non_cascade: bool = ...) -> None: ...
 
 class SubmitWorkflowRequest(_message.Message):
-    __slots__ = ("seed", "steps", "edges", "execution_mode")
+    __slots__ = ("seed", "steps", "edges", "execution_mode", "context_bundles")
     SEED_FIELD_NUMBER: _ClassVar[int]
     STEPS_FIELD_NUMBER: _ClassVar[int]
     EDGES_FIELD_NUMBER: _ClassVar[int]
     EXECUTION_MODE_FIELD_NUMBER: _ClassVar[int]
+    CONTEXT_BUNDLES_FIELD_NUMBER: _ClassVar[int]
     seed: int
     steps: _containers.RepeatedCompositeFieldContainer[WorkflowStep]
     edges: _containers.RepeatedCompositeFieldContainer[WorkflowEdge]
     execution_mode: WorkflowExecutionMode
-    def __init__(self, seed: _Optional[int] = ..., steps: _Optional[_Iterable[_Union[WorkflowStep, _Mapping]]] = ..., edges: _Optional[_Iterable[_Union[WorkflowEdge, _Mapping]]] = ..., execution_mode: _Optional[_Union[WorkflowExecutionMode, str]] = ...) -> None: ...
+    context_bundles: _containers.RepeatedScalarFieldContainer[str]
+    def __init__(self, seed: _Optional[int] = ..., steps: _Optional[_Iterable[_Union[WorkflowStep, _Mapping]]] = ..., edges: _Optional[_Iterable[_Union[WorkflowEdge, _Mapping]]] = ..., execution_mode: _Optional[_Union[WorkflowExecutionMode, str]] = ..., context_bundles: _Optional[_Iterable[str]] = ...) -> None: ...
 
 class PutContentRequest(_message.Message):
     __slots__ = ("payload", "media_type", "filename")
@@ -1476,6 +1480,92 @@ class DeregisterMcpServerRequest(_message.Message):
     def __init__(self, server_name: _Optional[str] = ...) -> None: ...
 
 class DeregisterMcpServerResponse(_message.Message):
+    __slots__ = ("removed",)
+    REMOVED_FIELD_NUMBER: _ClassVar[int]
+    removed: bool
+    def __init__(self, removed: bool = ...) -> None: ...
+
+class ContextItem(_message.Message):
+    __slots__ = ("name", "content_ref", "media_type")
+    NAME_FIELD_NUMBER: _ClassVar[int]
+    CONTENT_REF_FIELD_NUMBER: _ClassVar[int]
+    MEDIA_TYPE_FIELD_NUMBER: _ClassVar[int]
+    name: str
+    content_ref: bytes
+    media_type: str
+    def __init__(self, name: _Optional[str] = ..., content_ref: _Optional[bytes] = ..., media_type: _Optional[str] = ...) -> None: ...
+
+class PutContextBundleRequest(_message.Message):
+    __slots__ = ("handle", "description", "items")
+    HANDLE_FIELD_NUMBER: _ClassVar[int]
+    DESCRIPTION_FIELD_NUMBER: _ClassVar[int]
+    ITEMS_FIELD_NUMBER: _ClassVar[int]
+    handle: str
+    description: str
+    items: _containers.RepeatedCompositeFieldContainer[ContextItem]
+    def __init__(self, handle: _Optional[str] = ..., description: _Optional[str] = ..., items: _Optional[_Iterable[_Union[ContextItem, _Mapping]]] = ...) -> None: ...
+
+class PutContextBundleResponse(_message.Message):
+    __slots__ = ("bundle_ref", "handle", "deduplicated")
+    BUNDLE_REF_FIELD_NUMBER: _ClassVar[int]
+    HANDLE_FIELD_NUMBER: _ClassVar[int]
+    DEDUPLICATED_FIELD_NUMBER: _ClassVar[int]
+    bundle_ref: bytes
+    handle: str
+    deduplicated: bool
+    def __init__(self, bundle_ref: _Optional[bytes] = ..., handle: _Optional[str] = ..., deduplicated: bool = ...) -> None: ...
+
+class ListContextBundlesRequest(_message.Message):
+    __slots__ = ("limit", "after_handle")
+    LIMIT_FIELD_NUMBER: _ClassVar[int]
+    AFTER_HANDLE_FIELD_NUMBER: _ClassVar[int]
+    limit: int
+    after_handle: str
+    def __init__(self, limit: _Optional[int] = ..., after_handle: _Optional[str] = ...) -> None: ...
+
+class ContextBundle(_message.Message):
+    __slots__ = ("bundle_ref", "handle", "description", "items", "item_count")
+    BUNDLE_REF_FIELD_NUMBER: _ClassVar[int]
+    HANDLE_FIELD_NUMBER: _ClassVar[int]
+    DESCRIPTION_FIELD_NUMBER: _ClassVar[int]
+    ITEMS_FIELD_NUMBER: _ClassVar[int]
+    ITEM_COUNT_FIELD_NUMBER: _ClassVar[int]
+    bundle_ref: bytes
+    handle: str
+    description: str
+    items: _containers.RepeatedCompositeFieldContainer[ContextItem]
+    item_count: int
+    def __init__(self, bundle_ref: _Optional[bytes] = ..., handle: _Optional[str] = ..., description: _Optional[str] = ..., items: _Optional[_Iterable[_Union[ContextItem, _Mapping]]] = ..., item_count: _Optional[int] = ...) -> None: ...
+
+class ListContextBundlesResponse(_message.Message):
+    __slots__ = ("bundles", "has_more")
+    BUNDLES_FIELD_NUMBER: _ClassVar[int]
+    HAS_MORE_FIELD_NUMBER: _ClassVar[int]
+    bundles: _containers.RepeatedCompositeFieldContainer[ContextBundle]
+    has_more: bool
+    def __init__(self, bundles: _Optional[_Iterable[_Union[ContextBundle, _Mapping]]] = ..., has_more: bool = ...) -> None: ...
+
+class GetContextBundleRequest(_message.Message):
+    __slots__ = ("handle",)
+    HANDLE_FIELD_NUMBER: _ClassVar[int]
+    handle: str
+    def __init__(self, handle: _Optional[str] = ...) -> None: ...
+
+class GetContextBundleResponse(_message.Message):
+    __slots__ = ("bundle", "found")
+    BUNDLE_FIELD_NUMBER: _ClassVar[int]
+    FOUND_FIELD_NUMBER: _ClassVar[int]
+    bundle: ContextBundle
+    found: bool
+    def __init__(self, bundle: _Optional[_Union[ContextBundle, _Mapping]] = ..., found: bool = ...) -> None: ...
+
+class DeleteContextBundleRequest(_message.Message):
+    __slots__ = ("handle",)
+    HANDLE_FIELD_NUMBER: _ClassVar[int]
+    handle: str
+    def __init__(self, handle: _Optional[str] = ...) -> None: ...
+
+class DeleteContextBundleResponse(_message.Message):
     __slots__ = ("removed",)
     REMOVED_FIELD_NUMBER: _ClassVar[int]
     removed: bool

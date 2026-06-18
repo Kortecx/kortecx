@@ -34,8 +34,8 @@ use kx_model_validator::{
     RequiredCapabilities, ValidatorOutcome,
 };
 use kx_mote::{
-    ConfigKey, EffectPattern, InferenceParams, LogicRef, ModelId, Mote, MoteId, NdClass,
-    PromptTemplateHash, RoleId, ToolName, PROMPT_KEY,
+    decode_context_items, ConfigKey, EffectPattern, InferenceParams, LogicRef, ModelId, Mote,
+    MoteId, NdClass, PromptTemplateHash, RoleId, ToolName, CONTEXT_ITEMS_KEY, PROMPT_KEY,
 };
 use kx_planner::{
     decode_loop_proposal, decode_replan_proposal, lower_loop_to_topology_decision, max_plan_bytes,
@@ -545,6 +545,23 @@ impl<B: InferenceBackend> ModelRouterExecutor<B> {
                 format!("{context}{instruction}")
             }
             _ => instruction,
+        };
+        // PR-7: prepend a run's ATTACHED context-bundle items (the entry Mote's
+        // identity-bearing `config_subset[CONTEXT_ITEMS_KEY]`), AHEAD of the F-7
+        // parent context. Absent ⇒ byte-identical to pre-PR-7 (the canonical run
+        // attaches no bundle); a missing ref / overflow fails closed.
+        let instruction = match mote
+            .def
+            .config_subset
+            .get(&ConfigKey(CONTEXT_ITEMS_KEY.to_string()))
+        {
+            Some(encoded) => {
+                let items = decode_context_items(&encoded.0);
+                let context = crate::assemble_serve::assemble_context_items(&items, &self.store)
+                    .map_err(|e| internal(&format!("assemble context items: {e}")))?;
+                format!("{context}{instruction}")
+            }
+            None => instruction,
         };
         // PR-4 (T-FEAT1): the opt-in reasoning-mode appends the model's native
         // think/no-think directive. ABSENT ⇒ byte-identical (the directive is a

@@ -240,6 +240,29 @@ impl WorkflowDef {
         }
         bound
     }
+
+    /// PR-7: INSERT a config entry into every ENTRY step — a step with no incoming
+    /// edge (a DAG root). Unlike [`Self::bind_param`] (which overwrites a declared
+    /// free-param slot), this ADDS `key` to each root step's `config_subset`, making
+    /// the entry `MoteId` identity-bearing over the value (e.g. attached
+    /// context-bundle items, `CONTEXT_ITEMS_KEY`). Returns the number of steps
+    /// injected. Because `config_subset` flows verbatim into each `MoteDef`, a
+    /// distinct value yields a distinct entry `MoteId` — and an EMPTY call (no
+    /// injection) leaves identity byte-identical (the canonical-digest-preserving
+    /// property: a run that attaches no context never reaches this method).
+    pub fn inject_entry_config(&mut self, key: &str, value: &ConfigVal) -> usize {
+        let has_parent: std::collections::HashSet<usize> =
+            self.edges.iter().map(|e| e.child.0).collect();
+        let k = ConfigKey(key.to_string());
+        let mut injected = 0usize;
+        for (idx, step) in self.steps.iter_mut().enumerate() {
+            if !has_parent.contains(&idx) {
+                step.config_subset.insert(k.clone(), value.clone());
+                injected += 1;
+            }
+        }
+        injected
+    }
 }
 
 /// One compiled step ready to submit: a derived [`Mote`] plus the warrant and

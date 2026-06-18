@@ -762,18 +762,26 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     // PR-6b-4: when the operator opted into auto-grant, the binder gets the LIVE
     // tool registry + broker-fireable view so a bind of `kx/recipes/react-auto`
     // rebuilds its union warrant from the live (incl. runtime-dialed) tool set.
+    // PR-7: the context-bundle store (bundles.db) under the SAME catalog dir —
+    // shared by the gateway service (the 4 context-bundle RPCs) AND the binder +
+    // author (resolving a run's attached `context_bundles` at bind). Off-journal,
+    // off-digest, rebuildable-to-empty.
+    let bundles_db = Arc::new(crate::bundles::BundlesDb::open(&catalog_dir)?);
     let binder: Arc<dyn RecipeBinder> = if autogrant {
         let registered: Arc<dyn kx_gateway_core::RegisteredToolsView> =
             Arc::new(HostRegisteredTools {
                 broker: local_broker.clone(),
             });
-        Arc::new(HostRecipeBinder::from_shared_with_autogrant(
-            demo.clone(),
-            tool_registry.clone(),
-            registered,
-        ))
+        Arc::new(
+            HostRecipeBinder::from_shared_with_autogrant(
+                demo.clone(),
+                tool_registry.clone(),
+                registered,
+            )
+            .with_bundles(bundles_db.clone()),
+        )
     } else {
-        Arc::new(HostRecipeBinder::from_shared(demo.clone()))
+        Arc::new(HostRecipeBinder::from_shared(demo.clone()).with_bundles(bundles_db.clone()))
     };
     if autogrant {
         tracing::info!(
@@ -788,10 +796,10 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     // coordinator + broker hold) so a `tool()` step resolves its def + builds a
     // tool-aware authoring ceiling, and a runtime-dialed tool is authorable the
     // moment it registers.
-    let author: Arc<dyn WorkflowAuthor> = Arc::new(HostWorkflowAuthor::from_shared_with_tools(
-        demo.clone(),
-        tool_registry.clone(),
-    ));
+    let author: Arc<dyn WorkflowAuthor> = Arc::new(
+        HostWorkflowAuthor::from_shared_with_tools(demo.clone(), tool_registry.clone())
+            .with_bundles(bundles_db.clone()),
+    );
     // (3d) UI-3: a durable membership ledger (teams) under the SAME catalog dir,
     //      idempotently seeded with one workspace team (owner = the gateway principal;
     //      members = each --auth-token party + the dev principal, one a Delegate) +
@@ -1013,6 +1021,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         .with_feedback_store(feedback_db)
         .with_run_inputs_store(run_inputs_db)
         .with_alerts_view(alerts_db)
+        .with_bundles_store(bundles_db)
         .with_tool_admin(Arc::new(crate::tools::HostToolRegistry::new(
             tool_registry.clone(),
             crate::tools::tool_host_allowlist(),

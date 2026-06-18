@@ -16,6 +16,7 @@ import { AlertSummary, type AlertsPage } from "./alerts.js";
 import { CaptureRecord, type CaptureRecordPage } from "./capture.js";
 import type { Chain } from "./chains.js";
 import { ContentItem, PutResult } from "./content.js";
+import { ContextBundle, type ContextItemInput, PutContextBundleResult } from "./context.js";
 import { DatasetHit, DatasetSummary, type IngestDoc, IngestResult } from "./datasets.js";
 import { KxConnectError, KxRunFailed, KxUnimplemented, KxWaitTimeout, rpc } from "./errors.js";
 import {
@@ -104,6 +105,12 @@ export interface InvokeOptions {
   waitMode?: WaitMode;
   /** Write the committed payload to this file (Node only). */
   out?: string;
+  /**
+   * PR-7: context-bundle handles to attach. The server resolves each to its item
+   * refs and injects them into the entry Mote's IDENTITY-BEARING context, so a
+   * different context ⇒ a different run.
+   */
+  context?: readonly string[];
 }
 
 export abstract class KxClientBase {
@@ -130,7 +137,13 @@ export abstract class KxClientBase {
    */
   async invoke(handle: string, args: Args, opts: InvokeOptions = {}): Promise<Run | Result> {
     const argBytes = encodeArgs(args);
-    const resp = await rpc(this.grpc.invoke({ handle, args: argBytes }));
+    const resp = await rpc(
+      this.grpc.invoke({
+        handle,
+        args: argBytes,
+        contextBundles: opts.context ? [...opts.context] : [],
+      }),
+    );
     const run = new Run(this, resp.instanceId, resp.terminalMoteId, resp.recipeFingerprint);
     if (!opts.wait) return run;
     const result =
@@ -267,6 +280,53 @@ export abstract class KxClientBase {
       }),
     );
     return resp.items.map((i) => ContentItem.fromProto(i));
+  }
+
+  /**
+   * Author (upsert) a context bundle (PR-7) at `handle` for this party. Each item
+   * names a `contentRef` already in the content store (e.g. from
+   * {@link putContent}). The server derives `bundleRef` (SN-8) into an off-journal
+   * sidecar. Attach the handle to a run with `invoke(handle, args, { context: [h] })`.
+   */
+  async putContextBundle(
+    handle: string,
+    items: readonly ContextItemInput[],
+    opts: { description?: string } = {},
+  ): Promise<PutContextBundleResult> {
+    const protoItems = items.map((it) => ({
+      name: it.name,
+      contentRef: asBytes(it.contentRef, REF_LEN),
+      mediaType: it.mediaType ?? "",
+    }));
+    const resp = await rpc(
+      this.grpc.putContextBundle({
+        handle,
+        description: opts.description ?? "",
+        items: protoItems,
+      }),
+    );
+    return PutContextBundleResult.fromProto(resp);
+  }
+
+  /** List this party's context bundles (PR-7) in handle order. */
+  async listContextBundles(): Promise<ContextBundle[]> {
+    const resp = await rpc(this.grpc.listContextBundles({}));
+    return resp.bundles.map((b) => ContextBundle.fromProto(b));
+  }
+
+  /**
+   * Fetch one context bundle by handle, or `null` if not found / not owned
+   * (uniform — no cross-party existence oracle).
+   */
+  async getContextBundle(handle: string): Promise<ContextBundle | null> {
+    const resp = await rpc(this.grpc.getContextBundle({ handle }));
+    return resp.found && resp.bundle ? ContextBundle.fromProto(resp.bundle) : null;
+  }
+
+  /** Unbind a context bundle (its CAS blobs stay). Returns `true` iff removed. */
+  async deleteContextBundle(handle: string): Promise<boolean> {
+    const resp = await rpc(this.grpc.deleteContextBundle({ handle }));
+    return resp.removed;
   }
 
   /**

@@ -204,6 +204,9 @@ async fn execute_rerun(common: ClientCommon, spec: RerunSpec) -> Result<(), CliE
         stream: false,
         timeout_secs: spec.timeout_secs,
         out: spec.out,
+        // PR-7: a re-run replays the captured handle+args; context bundles are not
+        // part of the PR-D capture, so a re-run attaches none (empty = unchanged).
+        context_bundles: Vec::new(),
         common,
     })
     .await

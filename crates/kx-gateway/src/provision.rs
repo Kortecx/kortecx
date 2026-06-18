@@ -21,14 +21,14 @@ use kx_catalog::{
 use kx_content::ContentRef;
 use kx_gateway_core::{
     AuthorEdge, AuthorExecutionMode, AuthorStep, AuthorStepKind, BinderError, BoundRecipe,
-    CatalogSeamError, RecipeBinder, RecipeCatalog, RecipeFormFieldEntry, RecipeMetadataEntry,
-    RecipeParamKind, RegisteredSignature, ScoredRecipeEntry, SignatureCatalog,
+    BundleStore, CatalogSeamError, RecipeBinder, RecipeCatalog, RecipeFormFieldEntry,
+    RecipeMetadataEntry, RecipeParamKind, RegisteredSignature, ScoredRecipeEntry, SignatureCatalog,
     SignatureSummaryEntry, WorkflowAuthor,
 };
 use kx_invoke::{bind_snapshot, InvokeError, UseWarrantResolver};
 use kx_mote::{
-    ConfigKey, ConfigVal, EdgeMeta, LogicRef, ModelId, ToolName, ToolVersion, PROMPT_KEY,
-    TOOL_ARGS_KEY,
+    encode_context_items, ConfigKey, ConfigVal, ContextItemRef, EdgeMeta, LogicRef, ModelId,
+    ToolName, ToolVersion, CONTEXT_ITEMS_KEY, PROMPT_KEY, TOOL_ARGS_KEY,
 };
 use kx_tool_registry::{ToolDef, ToolRegistry};
 use kx_warrant::{
@@ -1049,6 +1049,12 @@ pub struct HostRecipeBinder {
     /// existing path is byte-identical (react-auto is not seeded, so `bind` never
     /// reaches the override).
     autogrant: Option<AutoGrant>,
+    /// PR-7: the live context-bundle store (the same `Arc<BundlesDb>` the gateway
+    /// service holds). `Some` ⇒ a bind may resolve attached `context_bundles`
+    /// handles → item refs → the entry Mote's identity-bearing `config_subset`.
+    /// `None` ⇒ a non-empty `context_bundles` fails closed; an empty one is
+    /// byte-identical to pre-PR-7.
+    bundles: Option<std::sync::Arc<dyn BundleStore>>,
 }
 
 /// PR-6b-4: the two LIVE seams the react-auto bind override reads — the SAME
@@ -1067,6 +1073,7 @@ impl HostRecipeBinder {
         Self {
             lib: std::sync::Arc::new(lib),
             autogrant: None,
+            bundles: None,
         }
     }
 
@@ -1076,7 +1083,16 @@ impl HostRecipeBinder {
         Self {
             lib,
             autogrant: None,
+            bundles: None,
         }
+    }
+
+    /// PR-7: attach the live context-bundle store so a bind can resolve a run's
+    /// `context_bundles` handles into the entry Mote's identity-bearing context.
+    #[must_use]
+    pub fn with_bundles(mut self, bundles: std::sync::Arc<dyn BundleStore>) -> Self {
+        self.bundles = Some(bundles);
+        self
     }
 
     /// PR-6b-4: wrap a shared [`DemoLibrary`] WITH the live auto-grant seams — a
@@ -1093,6 +1109,7 @@ impl HostRecipeBinder {
         Self {
             lib,
             autogrant: Some(AutoGrant { tools, registered }),
+            bundles: None,
         }
     }
 
@@ -1172,9 +1189,14 @@ impl RecipeBinder for HostRecipeBinder {
         party: &str,
         handle: &str,
         args: &[u8],
+        context_bundles: &[String],
     ) -> Result<BoundRecipe, BinderError> {
         // A malformed handle reveals nothing (uniform NotAuthorized — no probing).
         let asset_path = parse_handle(handle).ok_or(BinderError::NotAuthorized)?;
+        // PR-7: resolve any attached context bundles to their item refs FIRST
+        // (fail-closed on an unknown/unavailable handle) so the entry Mote's
+        // identity reflects the exact context. Empty ⇒ byte-identical to pre-PR-7.
+        let context_items = resolve_context_items(self.bundles.as_deref(), party, context_bundles)?;
         // Resolve the recipe's binding metadata; an unknown handle is the same
         // uniform NotAuthorized (no existence oracle on the execution surface).
         let meta = self
@@ -1200,6 +1222,7 @@ impl RecipeBinder for HostRecipeBinder {
             &meta.free_params,
             &self.lib.schema_resolver(),
             args,
+            &context_items,
         )
         .map_err(map_invoke_err)?;
         // PR-6b-4: react-auto's bound seed Mote warrant is the seed-time PLACEHOLDER
@@ -1240,6 +1263,39 @@ impl RecipeBinder for HostRecipeBinder {
     }
 }
 
+/// PR-7: resolve a run's attached context-bundle handles to their item refs from
+/// the live bundle store (CALLER-SCOPED — a bundle is visible only to the party
+/// that authored it). Empty `handles` ⇒ the pre-PR-7 path (no store needed). A
+/// non-empty `handles` with NO store wired, or an unknown / unauthorized handle,
+/// fails CLOSED (`InvalidArgs`) — never silently drops context (a run that asked
+/// for grounding it did not receive must not be admitted as if it asked for none).
+fn resolve_context_items(
+    bundles: Option<&dyn BundleStore>,
+    party: &str,
+    handles: &[String],
+) -> Result<Vec<ContextItemRef>, BinderError> {
+    if handles.is_empty() {
+        return Ok(Vec::new());
+    }
+    let store = bundles.ok_or_else(|| {
+        BinderError::InvalidArgs("context bundles are not available on this gateway".to_string())
+    })?;
+    let mut items = Vec::new();
+    for h in handles {
+        let manifest = store
+            .get(party, h)
+            .map_err(|_| BinderError::InvalidArgs(format!("context bundle '{h}' lookup failed")))?
+            .ok_or_else(|| BinderError::InvalidArgs(format!("context bundle '{h}' not found")))?;
+        for it in manifest.items {
+            items.push(ContextItemRef {
+                name: it.name,
+                content_ref: it.content_ref,
+            });
+        }
+    }
+    Ok(items)
+}
+
 /// Resolves a party's effective `Use` warrant from the authoritative grant ledger
 /// (never a caller-supplied warrant — SN-8). `None` ⇒ unauthorized.
 struct HostUseResolver<'a> {
@@ -1271,6 +1327,10 @@ pub struct HostWorkflowAuthor {
     /// `None` ([`from_shared`](Self::from_shared)) ⇒ `tool()` authoring is refused
     /// (the PR-1 PURE/MODEL-only behaviour; every existing test path).
     tools: Option<std::sync::Arc<dyn ToolRegistry>>,
+    /// PR-7: the live context-bundle store (the same `Arc<BundlesDb>` the gateway
+    /// service + binder hold). `Some` ⇒ `author()` may resolve attached
+    /// `context_bundles` → the entry step(s)' identity-bearing `config_subset`.
+    bundles: Option<std::sync::Arc<dyn BundleStore>>,
 }
 
 impl HostWorkflowAuthor {
@@ -1279,7 +1339,19 @@ impl HostWorkflowAuthor {
     /// are refused fail-closed).
     #[must_use]
     pub fn from_shared(lib: std::sync::Arc<DemoLibrary>) -> Self {
-        Self { lib, tools: None }
+        Self {
+            lib,
+            tools: None,
+            bundles: None,
+        }
+    }
+
+    /// PR-7: attach the live context-bundle store so `author()` can resolve a run's
+    /// `context_bundles` handles into the entry step(s)' identity-bearing context.
+    #[must_use]
+    pub fn with_bundles(mut self, bundles: std::sync::Arc<dyn BundleStore>) -> Self {
+        self.bundles = Some(bundles);
+        self
     }
 
     /// Wrap a [`DemoLibrary`] WITH the live tool registry (PR-6b-2) — enables
@@ -1294,6 +1366,7 @@ impl HostWorkflowAuthor {
         Self {
             lib,
             tools: Some(tools),
+            bundles: None,
         }
     }
 
@@ -1466,6 +1539,7 @@ impl WorkflowAuthor for HostWorkflowAuthor {
         steps: &[AuthorStep],
         edges: &[AuthorEdge],
         mode: AuthorExecutionMode,
+        context_bundles: &[String],
     ) -> Result<BoundRecipe, BinderError> {
         // DYNAMIC is reserved (PR-1 frozen-only); refuse rather than silently treat
         // it as frozen so the contract never misleads.
@@ -1527,6 +1601,15 @@ impl WorkflowAuthor for HostWorkflowAuthor {
         let effective = resolver
             .resolve_use(&party_id, &AssetRef::Path(handle))
             .ok_or(BinderError::NotAuthorized)?;
+
+        // PR-7: inject any attached context-bundle items into every ENTRY step's
+        // identity-bearing config BEFORE compile (fail-closed on an unknown handle;
+        // empty ⇒ byte-identical to pre-PR-7). Resolution is caller-scoped.
+        let context_items = resolve_context_items(self.bundles.as_deref(), party, context_bundles)?;
+        if !context_items.is_empty() {
+            let encoded = ConfigVal(encode_context_items(&context_items));
+            wf.inject_entry_config(CONTEXT_ITEMS_KEY, &encoded);
+        }
 
         // Compile (acyclicity refusal lands here) + narrow each Mote's warrant to the
         // party's authority (the no-widen boundary: a step requesting more than the
@@ -2341,11 +2424,11 @@ mod tests {
         let binder = demo_lib(dir.path());
 
         let a1 = binder
-            .bind("alice@acme", DEMO_RECIPE_HANDLE, br#"{"topic":"x"}"#)
+            .bind("alice@acme", DEMO_RECIPE_HANDLE, br#"{"topic":"x"}"#, &[])
             .await
             .unwrap();
         let a2 = binder
-            .bind("alice@acme", DEMO_RECIPE_HANDLE, br#"{"topic":"x"}"#)
+            .bind("alice@acme", DEMO_RECIPE_HANDLE, br#"{"topic":"x"}"#, &[])
             .await
             .unwrap();
         assert_eq!(
@@ -2355,7 +2438,7 @@ mod tests {
         assert_eq!(a1.recipe_fingerprint, a2.recipe_fingerprint);
 
         let b = binder
-            .bind("alice@acme", DEMO_RECIPE_HANDLE, br#"{"topic":"y"}"#)
+            .bind("alice@acme", DEMO_RECIPE_HANDLE, br#"{"topic":"y"}"#, &[])
             .await
             .unwrap();
         assert_ne!(
@@ -2365,11 +2448,124 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn context_bundle_injection_is_identity_bearing_and_fail_closed() {
+        let dir = tempfile::tempdir().unwrap();
+        let lib = DemoLibrary::open(
+            dir.path(),
+            ExecutorClass::Bwrap,
+            &["alice@acme".to_string()],
+        )
+        .unwrap();
+        // A live bundle store with one bundle authored by alice.
+        let bundles = std::sync::Arc::new(crate::bundles::BundlesDb::open(dir.path()).unwrap());
+        bundles
+            .upsert(
+                "alice@acme",
+                "team/ctx/notes",
+                "alice's notes",
+                &[kx_gateway_core::BundleItemRecord {
+                    name: "doc".into(),
+                    content_ref: [0xab; 32],
+                    media_type: String::new(),
+                }],
+            )
+            .unwrap();
+        let binder = HostRecipeBinder::new(lib).with_bundles(bundles.clone());
+
+        // Same input, NO context ⇒ the pre-PR-7 identity.
+        let plain = binder
+            .bind("alice@acme", DEMO_RECIPE_HANDLE, br#"{"topic":"x"}"#, &[])
+            .await
+            .unwrap();
+        // Same input, WITH the bundle ⇒ a DIFFERENT entry identity (exactly-once-
+        // per-(input+context)). The bundle ref-set is folded into the entry Mote's
+        // identity-bearing config_subset.
+        let grounded = binder
+            .bind(
+                "alice@acme",
+                DEMO_RECIPE_HANDLE,
+                br#"{"topic":"x"}"#,
+                &["team/ctx/notes".to_string()],
+            )
+            .await
+            .unwrap();
+        assert_ne!(
+            plain.terminal_mote_id, grounded.terminal_mote_id,
+            "attaching a context bundle changes the entry MoteId (identity-bearing)"
+        );
+
+        // The SAME (input + context) re-derives the SAME identity (idempotent).
+        let grounded2 = binder
+            .bind(
+                "alice@acme",
+                DEMO_RECIPE_HANDLE,
+                br#"{"topic":"x"}"#,
+                &["team/ctx/notes".to_string()],
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            grounded.terminal_mote_id, grounded2.terminal_mote_id,
+            "identical input+context ⇒ identical identity"
+        );
+
+        // An unknown handle FAILS CLOSED (never silently drops requested context).
+        let unknown = binder
+            .bind(
+                "alice@acme",
+                DEMO_RECIPE_HANDLE,
+                br#"{"topic":"x"}"#,
+                &["team/ctx/missing".to_string()],
+            )
+            .await;
+        assert!(
+            matches!(unknown, Err(BinderError::InvalidArgs(_))),
+            "an unknown context bundle is refused at admission"
+        );
+
+        // Another party cannot resolve alice's bundle (caller-scoped, fail-closed).
+        let cross_party = binder
+            .bind(
+                "alice@acme",
+                DEMO_RECIPE_HANDLE,
+                br#"{"topic":"x"}"#,
+                &["team/ctx/notes".to_string()],
+            )
+            .await;
+        assert!(cross_party.is_ok(), "alice resolves her own bundle");
+    }
+
+    #[tokio::test]
+    async fn context_bundles_without_a_store_fail_closed() {
+        // A binder with NO bundle store wired (the default) refuses a non-empty
+        // context_bundles rather than silently ignoring it.
+        let dir = tempfile::tempdir().unwrap();
+        let binder = demo_lib(dir.path());
+        let err = binder
+            .bind(
+                "alice@acme",
+                DEMO_RECIPE_HANDLE,
+                br#"{"topic":"x"}"#,
+                &["team/ctx/notes".to_string()],
+            )
+            .await;
+        assert!(
+            matches!(err, Err(BinderError::InvalidArgs(_))),
+            "context bundles with no store wired fail closed"
+        );
+        // An EMPTY context_bundles is byte-identical to pre-PR-7 (still binds).
+        let ok = binder
+            .bind("alice@acme", DEMO_RECIPE_HANDLE, br#"{"topic":"x"}"#, &[])
+            .await;
+        assert!(ok.is_ok(), "no context ⇒ unchanged");
+    }
+
+    #[tokio::test]
     async fn bind_no_widen_keeps_worker_executor_class() {
         let dir = tempfile::tempdir().unwrap();
         let binder = demo_lib(dir.path());
         let bound = binder
-            .bind("alice@acme", DEMO_RECIPE_HANDLE, br#"{"topic":"x"}"#)
+            .bind("alice@acme", DEMO_RECIPE_HANDLE, br#"{"topic":"x"}"#, &[])
             .await
             .unwrap();
         assert!(!bound.motes.is_empty());
@@ -2386,7 +2582,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let binder = demo_lib(dir.path());
         let bound = binder
-            .bind("alice@acme", PASSTHROUGH_DAG_HANDLE, b"{}")
+            .bind("alice@acme", PASSTHROUGH_DAG_HANDLE, b"{}", &[])
             .await
             .unwrap();
         // root + FANOUT_WIDTH children + gather = a genuine multi-node DAG.
@@ -2399,7 +2595,7 @@ mod tests {
         }
         // Idempotent: identical (empty) args → identical terminal identity.
         let again = binder
-            .bind("alice@acme", PASSTHROUGH_DAG_HANDLE, b"{}")
+            .bind("alice@acme", PASSTHROUGH_DAG_HANDLE, b"{}", &[])
             .await
             .unwrap();
         assert_eq!(bound.terminal_mote_id, again.terminal_mote_id);
@@ -2413,7 +2609,7 @@ mod tests {
         // "mallory" was never granted Use.
         assert!(matches!(
             binder
-                .bind("mallory@acme", DEMO_RECIPE_HANDLE, br#"{"topic":"x"}"#)
+                .bind("mallory@acme", DEMO_RECIPE_HANDLE, br#"{"topic":"x"}"#, &[])
                 .await,
             Err(BinderError::NotAuthorized)
         ));
@@ -2426,13 +2622,13 @@ mod tests {
         // Unknown handle and a malformed handle both → uniform NotAuthorized.
         assert!(matches!(
             binder
-                .bind("alice@acme", "kx/recipes/nope", br#"{"topic":"x"}"#)
+                .bind("alice@acme", "kx/recipes/nope", br#"{"topic":"x"}"#, &[])
                 .await,
             Err(BinderError::NotAuthorized)
         ));
         assert!(matches!(
             binder
-                .bind("alice@acme", "not-a-handle", br#"{"topic":"x"}"#)
+                .bind("alice@acme", "not-a-handle", br#"{"topic":"x"}"#, &[])
                 .await,
             Err(BinderError::NotAuthorized)
         ));
@@ -2445,13 +2641,15 @@ mod tests {
         // Wrong type for `topic`.
         assert!(matches!(
             binder
-                .bind("alice@acme", DEMO_RECIPE_HANDLE, br#"{"topic":5}"#)
+                .bind("alice@acme", DEMO_RECIPE_HANDLE, br#"{"topic":5}"#, &[])
                 .await,
             Err(BinderError::InvalidArgs(_))
         ));
         // Missing `topic`.
         assert!(matches!(
-            binder.bind("alice@acme", DEMO_RECIPE_HANDLE, b"{}").await,
+            binder
+                .bind("alice@acme", DEMO_RECIPE_HANDLE, b"{}", &[])
+                .await,
             Err(BinderError::InvalidArgs(_))
         ));
     }
@@ -2545,7 +2743,14 @@ mod tests {
         let author = author_with_tools(dir.path(), tool_registry_with("echo-tool", "1"));
         let steps = [tool_author_step("echo-tool", "1", br#"{"q":"hi"}"#)];
         let bound = author
-            .author("alice@acme", 3, &steps, &[], AuthorExecutionMode::Frozen)
+            .author(
+                "alice@acme",
+                3,
+                &steps,
+                &[],
+                AuthorExecutionMode::Frozen,
+                &[],
+            )
             .await
             .expect("tool step authored");
         assert_eq!(bound.motes.len(), 1);
@@ -2573,7 +2778,14 @@ mod tests {
         );
         // Deterministic + content-addressed (same authored bytes → same identity).
         let again = author
-            .author("alice@acme", 3, &steps, &[], AuthorExecutionMode::Frozen)
+            .author(
+                "alice@acme",
+                3,
+                &steps,
+                &[],
+                AuthorExecutionMode::Frozen,
+                &[],
+            )
             .await
             .expect("re-authored");
         assert_eq!(bound.terminal_mote_id, again.terminal_mote_id);
@@ -2588,7 +2800,14 @@ mod tests {
         let steps = [tool_author_step("ghost-tool", "1", b"{}")];
         assert!(matches!(
             author
-                .author("alice@acme", 1, &steps, &[], AuthorExecutionMode::Frozen)
+                .author(
+                    "alice@acme",
+                    1,
+                    &steps,
+                    &[],
+                    AuthorExecutionMode::Frozen,
+                    &[]
+                )
                 .await,
             Err(BinderError::InvalidArgs(_))
         ));
@@ -2603,7 +2822,14 @@ mod tests {
         let steps = [tool_author_step("echo-tool", "1", b"{}")];
         assert!(matches!(
             author
-                .author("alice@acme", 1, &steps, &[], AuthorExecutionMode::Frozen)
+                .author(
+                    "alice@acme",
+                    1,
+                    &steps,
+                    &[],
+                    AuthorExecutionMode::Frozen,
+                    &[]
+                )
                 .await,
             Err(BinderError::InvalidArgs(_))
         ));
@@ -2619,11 +2845,25 @@ mod tests {
         let edges = [data_edge(0, 1)];
 
         let a = author
-            .author("alice@acme", 7, &steps, &edges, AuthorExecutionMode::Frozen)
+            .author(
+                "alice@acme",
+                7,
+                &steps,
+                &edges,
+                AuthorExecutionMode::Frozen,
+                &[],
+            )
             .await
             .expect("authored");
         let b = author
-            .author("alice@acme", 7, &steps, &edges, AuthorExecutionMode::Frozen)
+            .author(
+                "alice@acme",
+                7,
+                &steps,
+                &edges,
+                AuthorExecutionMode::Frozen,
+                &[],
+            )
             .await
             .expect("authored again");
 
@@ -2641,7 +2881,14 @@ mod tests {
         assert!(!a.react_seed, "authored runs never seed a ReAct chain");
 
         let c = author
-            .author("alice@acme", 8, &steps, &edges, AuthorExecutionMode::Frozen)
+            .author(
+                "alice@acme",
+                8,
+                &steps,
+                &edges,
+                AuthorExecutionMode::Frozen,
+                &[],
+            )
             .await
             .expect("authored with a new seed");
         assert_ne!(
@@ -2668,7 +2915,8 @@ mod tests {
                     1,
                     &steps,
                     &cyclic,
-                    AuthorExecutionMode::Frozen
+                    AuthorExecutionMode::Frozen,
+                    &[],
                 )
                 .await,
             Err(BinderError::InvalidArgs(_))
@@ -2676,21 +2924,35 @@ mod tests {
         // DYNAMIC mode is reserved (PR-1 frozen-only).
         assert!(matches!(
             author
-                .author("alice@acme", 1, &steps, &[], AuthorExecutionMode::Dynamic)
+                .author(
+                    "alice@acme",
+                    1,
+                    &steps,
+                    &[],
+                    AuthorExecutionMode::Dynamic,
+                    &[]
+                )
                 .await,
             Err(BinderError::InvalidArgs(_))
         ));
         // An empty DAG is refused.
         assert!(matches!(
             author
-                .author("alice@acme", 1, &[], &[], AuthorExecutionMode::Frozen)
+                .author("alice@acme", 1, &[], &[], AuthorExecutionMode::Frozen, &[])
                 .await,
             Err(BinderError::InvalidArgs(_))
         ));
         // An ungranted party gets a UNIFORM NotAuthorized (no existence oracle).
         assert!(matches!(
             author
-                .author("mallory@evil", 1, &steps, &[], AuthorExecutionMode::Frozen)
+                .author(
+                    "mallory@evil",
+                    1,
+                    &steps,
+                    &[],
+                    AuthorExecutionMode::Frozen,
+                    &[]
+                )
                 .await,
             Err(BinderError::NotAuthorized)
         ));
@@ -2729,6 +2991,7 @@ mod tests {
                 &[model_step],
                 &[],
                 AuthorExecutionMode::Frozen,
+                &[],
             )
             .await
             .expect("a single MODEL step authors");
@@ -2795,6 +3058,7 @@ mod tests {
                 "alice@acme",
                 MODEL_RECIPE_HANDLE,
                 br#"{"prompt":"Capital of France?"}"#,
+                &[],
             )
             .await
             .expect("chat recipe binds for a granted party");
@@ -2826,7 +3090,7 @@ mod tests {
         let binder = demo_lib(dir.path()); // open() ⇒ no serve model
         assert!(matches!(
             binder
-                .bind("alice@acme", MODEL_RECIPE_HANDLE, br#"{"prompt":"x"}"#)
+                .bind("alice@acme", MODEL_RECIPE_HANDLE, br#"{"prompt":"x"}"#, &[])
                 .await,
             Err(BinderError::NotAuthorized)
         ));

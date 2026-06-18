@@ -354,6 +354,7 @@ pub trait RecipeBinder: Send + Sync {
         party: &str,
         handle: &str,
         args: &[u8],
+        context_bundles: &[String],
     ) -> Result<BoundRecipe, BinderError>;
 }
 
@@ -438,6 +439,7 @@ pub trait WorkflowAuthor: Send + Sync {
         steps: &[AuthorStep],
         edges: &[AuthorEdge],
         mode: AuthorExecutionMode,
+        context_bundles: &[String],
     ) -> Result<BoundRecipe, BinderError>;
 }
 
@@ -752,6 +754,11 @@ pub struct GatewayService {
     /// return `unimplemented`. The live untrusted-egress surface (GR8). OAuth/
     /// device-flow + a credential marketplace are CLOUD (D159/GR19).
     mcp_admin: Option<Arc<dyn crate::mcp_gateway_admin::McpGatewayAdmin>>,
+    /// The optional context-bundle store seam (PR-7 — the host injects a
+    /// `bundles.db`-backed sidecar). `None` ⇒ the 4 context-bundle RPCs return
+    /// `unimplemented` and `context_bundles` cannot be resolved at bind. Caller-
+    /// scoped, off-journal, off-digest, rebuildable-to-empty.
+    bundles: Option<Arc<dyn crate::bundles_view::BundleStore>>,
 }
 
 /// The default fail-closed `PutContent` payload cap (32 MiB).
@@ -819,6 +826,7 @@ impl GatewayService {
             alerts: None,
             tool_admin: None,
             mcp_admin: None,
+            bundles: None,
         }
     }
 
@@ -1127,6 +1135,18 @@ impl GatewayService {
         self.mcp_admin = Some(mcp_admin);
         self
     }
+
+    /// Inject the context-bundle store seam (PR-7). `None` (the default) ⇒ the 4
+    /// context-bundle RPCs return `unimplemented` and `context_bundles` resolves
+    /// empty (a clear bind error).
+    #[must_use]
+    pub fn with_bundles_store(
+        mut self,
+        bundles: Arc<dyn crate::bundles_view::BundleStore>,
+    ) -> Self {
+        self.bundles = Some(bundles);
+        self
+    }
 }
 
 /// The structured-refusal metadata key (PR-2). The value is
@@ -1221,6 +1241,49 @@ fn mcp_admin_status(err: crate::McpAdminError) -> Status {
         crate::McpAdminError::RateLimited(detail) => Status::resource_exhausted(detail),
         crate::McpAdminError::NotFound(detail) => Status::not_found(detail),
         crate::McpAdminError::Storage(detail) => Status::internal(detail),
+    }
+}
+
+/// PR-7: lightweight `namespace/collection/name` handle validation for context
+/// bundles (gateway-core stays off `kx-catalog`; mirrors `AssetPath`'s segment
+/// rule — lowercase `[a-z0-9._-]`, no leading/trailing `.`/`-`, ≤128B, 3 segments).
+fn valid_bundle_handle(h: &str) -> bool {
+    let mut segs = 0usize;
+    for seg in h.split('/') {
+        segs += 1;
+        if seg.is_empty() || seg.len() > 128 {
+            return false;
+        }
+        if !seg.bytes().all(|b| {
+            b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'.' | b'_' | b'-')
+        }) {
+            return false;
+        }
+        let bytes = seg.as_bytes();
+        if matches!(bytes[0], b'.' | b'-') || matches!(bytes[bytes.len() - 1], b'.' | b'-') {
+            return false;
+        }
+    }
+    segs == 3
+}
+
+/// PR-7: map a host `BundleManifest` to the wire view.
+fn manifest_to_proto(m: crate::BundleManifest) -> proto::ContextBundle {
+    let item_count = u32::try_from(m.items.len()).unwrap_or(u32::MAX);
+    proto::ContextBundle {
+        bundle_ref: m.bundle_ref.to_vec(),
+        handle: m.handle,
+        description: m.description,
+        items: m
+            .items
+            .into_iter()
+            .map(|it| proto::ContextItem {
+                name: it.name,
+                content_ref: it.content_ref.to_vec(),
+                media_type: it.media_type,
+            })
+            .collect(),
+        item_count,
     }
 }
 
@@ -1365,7 +1428,7 @@ impl KxGateway for GatewayService {
         let req = request.into_inner();
 
         let bound = binder
-            .bind(&party, &req.handle, &req.args)
+            .bind(&party, &req.handle, &req.args, &req.context_bundles)
             .await
             .map_err(|e| match e {
                 // Uniform "not authorized" — no existence oracle on the execution
@@ -1530,7 +1593,7 @@ impl KxGateway for GatewayService {
         // (react_seed = false) is reused; every Mote then flows the SAME admission as
         // Invoke/SubmitRun.
         let bound = author
-            .author(&party, req.seed, &steps, &edges, mode)
+            .author(&party, req.seed, &steps, &edges, mode, &req.context_bundles)
             .await
             .map_err(|e| match e {
                 BinderError::NotAuthorized => Status::permission_denied("not authorized"),
@@ -2451,6 +2514,141 @@ impl KxGateway for GatewayService {
             .deregister_server(&req.server_name)
             .map_err(mcp_admin_status)?;
         Ok(Response::new(proto::DeregisterMcpServerResponse {
+            removed,
+        }))
+    }
+
+    async fn put_context_bundle(
+        &self,
+        request: Request<proto::PutContextBundleRequest>,
+    ) -> Result<Response<proto::PutContextBundleResponse>, Status> {
+        let bundles = self.bundles.as_ref().ok_or_else(|| {
+            Status::unimplemented(
+                "PutContextBundle: no context-bundle store wired (bundles.db absent)",
+            )
+        })?;
+        // SERVER-DERIVED identity (SN-8): bundles are scoped to the auth-resolved party.
+        let principal = request
+            .extensions()
+            .get::<CallerParty>()
+            .map(|p| p.0.clone())
+            .ok_or_else(|| Status::unauthenticated("no resolved caller identity"))?;
+        let req = request.into_inner();
+        if !valid_bundle_handle(&req.handle) {
+            return Err(Status::invalid_argument(
+                "handle must be a 'namespace/collection/name' AssetPath ([a-z0-9._-] segments)",
+            ));
+        }
+        if req.description.len() > crate::MAX_BUNDLE_DESCRIPTION_BYTES {
+            return Err(Status::invalid_argument(
+                "description exceeds the server cap",
+            ));
+        }
+        if req.items.is_empty() {
+            return Err(Status::invalid_argument(
+                "a context bundle needs at least one item",
+            ));
+        }
+        if req.items.len() > crate::MAX_CONTEXT_BUNDLE_ITEMS {
+            return Err(Status::invalid_argument(
+                "a context bundle accepts at most 256 items",
+            ));
+        }
+        let mut items = Vec::with_capacity(req.items.len());
+        for it in req.items {
+            let content_ref = hash_32(&it.content_ref, "item content_ref must be 32 bytes")?;
+            items.push(crate::BundleItemRecord {
+                name: it.name,
+                content_ref,
+                media_type: it.media_type,
+            });
+        }
+        let (bundle_ref, deduplicated) =
+            bundles.upsert(&principal, &req.handle, &req.description, &items)?;
+        Ok(Response::new(proto::PutContextBundleResponse {
+            bundle_ref: bundle_ref.to_vec(),
+            handle: req.handle,
+            deduplicated,
+        }))
+    }
+
+    async fn list_context_bundles(
+        &self,
+        request: Request<proto::ListContextBundlesRequest>,
+    ) -> Result<Response<proto::ListContextBundlesResponse>, Status> {
+        let bundles = self.bundles.as_ref().ok_or_else(|| {
+            Status::unimplemented(
+                "ListContextBundles: no context-bundle store wired (bundles.db absent)",
+            )
+        })?;
+        let principal = request
+            .extensions()
+            .get::<CallerParty>()
+            .map(|p| p.0.clone())
+            .ok_or_else(|| Status::unauthenticated("no resolved caller identity"))?;
+        let req = request.into_inner();
+        let limit = if req.limit == 0 {
+            100
+        } else {
+            (req.limit as usize).min(256)
+        };
+        let after = if req.after_handle.is_empty() {
+            None
+        } else {
+            Some(req.after_handle.as_str())
+        };
+        let (manifests, has_more) = bundles.list(&principal, limit, after)?;
+        Ok(Response::new(proto::ListContextBundlesResponse {
+            bundles: manifests.into_iter().map(manifest_to_proto).collect(),
+            has_more,
+        }))
+    }
+
+    async fn get_context_bundle(
+        &self,
+        request: Request<proto::GetContextBundleRequest>,
+    ) -> Result<Response<proto::GetContextBundleResponse>, Status> {
+        let bundles = self.bundles.as_ref().ok_or_else(|| {
+            Status::unimplemented(
+                "GetContextBundle: no context-bundle store wired (bundles.db absent)",
+            )
+        })?;
+        let principal = request
+            .extensions()
+            .get::<CallerParty>()
+            .map(|p| p.0.clone())
+            .ok_or_else(|| Status::unauthenticated("no resolved caller identity"))?;
+        let req = request.into_inner();
+        // Uniform not-found for absent OR not-owned (no cross-party existence oracle).
+        match bundles.get(&principal, &req.handle)? {
+            Some(m) => Ok(Response::new(proto::GetContextBundleResponse {
+                bundle: Some(manifest_to_proto(m)),
+                found: true,
+            })),
+            None => Ok(Response::new(proto::GetContextBundleResponse {
+                bundle: None,
+                found: false,
+            })),
+        }
+    }
+
+    async fn delete_context_bundle(
+        &self,
+        request: Request<proto::DeleteContextBundleRequest>,
+    ) -> Result<Response<proto::DeleteContextBundleResponse>, Status> {
+        let bundles = self.bundles.as_ref().ok_or_else(|| {
+            Status::unimplemented(
+                "DeleteContextBundle: no context-bundle store wired (bundles.db absent)",
+            )
+        })?;
+        let principal = request
+            .extensions()
+            .get::<CallerParty>()
+            .map(|p| p.0.clone())
+            .ok_or_else(|| Status::unauthenticated("no resolved caller identity"))?;
+        let req = request.into_inner();
+        let removed = bundles.delete(&principal, &req.handle)?;
+        Ok(Response::new(proto::DeleteContextBundleResponse {
             removed,
         }))
     }

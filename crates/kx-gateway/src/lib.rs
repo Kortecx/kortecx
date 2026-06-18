@@ -73,6 +73,11 @@ mod datasets;
 // off-truth-path, rebuildable (the capture.db posture). The triage lifecycle
 // (ack/resolve), rule engine, and notifications are a Cloud capability (D156).
 mod alerts;
+// PR-7: the bundles.db sidecar (the BundleStore seam) — context-bundle manifests
+// (PutContextBundle) + the bind-time resolution of `context_bundles`. Rebuildable-
+// to-empty (caller-authored, never journaled), off-journal, off-digest; like
+// uploads, no executor wrapper — always-on, FFI-free (rusqlite already in closure).
+mod bundles;
 // The Morphic Data Engine (campaign Batch 2): the durable serve-path capture
 // projection (capture.db sidecar folded from the read-only journal handle).
 // Always-on, off-truth-path; FFI-free (rusqlite is already in the closure).

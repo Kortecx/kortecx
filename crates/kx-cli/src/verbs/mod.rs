@@ -8,6 +8,7 @@ pub mod capture;
 pub mod chain;
 pub mod connections;
 pub mod content;
+pub mod context;
 pub mod datasets;
 pub mod events;
 pub mod feedback;

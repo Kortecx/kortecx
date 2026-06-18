@@ -44,7 +44,7 @@ usage: kx <command> [args]
               --cors-origin enables the gRPC-web browser shim for the listed origins, deny-by-default)
 
   client verbs (gRPC over the gateway; common flags: --endpoint <url> --token <t> | --token-file <p> --tls-ca <path> --json):
-    kx invoke <handle> --args <json> [--args-file <path>] [--wait] [--stream] [--timeout-secs N] [--out <file>]
+    kx invoke <handle> --args <json> [--args-file <path>] [--wait] [--stream] [--timeout-secs N] [--out <file>] [--context <handle>]...
     kx chain run \"<dsl>\" --tasks <tasks.json> [--seed N] [--wait] [--timeout-secs N] [--out <file>]
                                                  (string-DSL DAG: a > [b & c]; see `kx help chain`)
     kx projection --instance <hex16> [--at-seq N]
@@ -66,6 +66,7 @@ usage: kx <command> [args]
     kx signatures list | get --id <hex32> | register --manifest-file <path>
     kx tools list | score --intent <text> --tool <id>@<ver>... | discover | register | deregister
     kx connections add --name <n> (--command <path> | --url <url>) | list | test | remove | discover   (external MCP gateways)
+    kx context add <handle> (--item <name>=<hex32> | --file <name>=<path>)... [--description <s>] | list | get <handle> | remove <handle>   (context bundles)
     kx recipe list | search <intent> [--keyword <k>]... [--limit N]   (advisory recipe discovery)
     kx models list                              (display-only model discovery)
     kx datasets list | ingest <name> (--text <s>|--file <p>)... | query <name> --text <q> [--k N]   (RAG corpora)
@@ -127,6 +128,8 @@ pub enum Cli {
     Tools(verbs::tools::ToolsArgs),
     /// External MCP gateway connections (PR-6b-1 — add/list/test/remove/discover).
     Connections(verbs::connections::ConnectionsArgs),
+    /// Context bundles (PR-7 — add/list/get/remove; attach via `invoke --context`).
+    Context(verbs::context::ContextArgs),
     /// Model discovery (Batch A `ListModels`; display-only).
     Models(verbs::models::ModelsArgs),
     /// The RAG data-plane (`ListDatasets` / `IngestDocuments` / `QueryDataset`).
@@ -183,6 +186,7 @@ impl Cli {
             Some("signatures") => Ok(Cli::Signatures(verbs::signatures::parse(args)?)),
             Some("tools") => Ok(Cli::Tools(verbs::tools::parse(args)?)),
             Some("connections") => Ok(Cli::Connections(verbs::connections::parse(args)?)),
+            Some("context") => Ok(Cli::Context(verbs::context::parse(args)?)),
             Some("models") => Ok(Cli::Models(verbs::models::parse(args)?)),
             Some("datasets") => Ok(Cli::Datasets(verbs::datasets::parse(args)?)),
             Some("health") => Ok(Cli::Health(verbs::health::parse(args)?)),
@@ -254,6 +258,7 @@ async fn dispatch(cli: Cli) -> Result<(), CliError> {
         Cli::Signatures(a) => verbs::signatures::execute(a).await,
         Cli::Tools(a) => verbs::tools::execute(a).await,
         Cli::Connections(a) => verbs::connections::execute(a).await,
+        Cli::Context(a) => verbs::context::execute(a).await,
         Cli::Models(a) => verbs::models::execute(a).await,
         Cli::Datasets(a) => verbs::datasets::execute(a).await,
         Cli::Health(a) => verbs::health::execute(a).await,
