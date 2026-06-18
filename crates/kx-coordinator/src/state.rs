@@ -651,19 +651,31 @@ fn lease_ready(
                 // observation without args. Every other Mote: `None`, unchanged.
                 let tool_args = if is_react_observation(mote, projection) {
                     match resolve_tool_args(mote, warrant, projection, store, tool_registry) {
-                        Some(args) => Some(args),
-                        None => return None,
+                        ArgResolution::Resolved(args) => Some(args),
+                        // PR-9a: lease selection is READ-ONLY (it must not append a
+                        // journal fact). A Transient fault skips this poll (retry). A
+                        // Permanent fault ALSO skips here — the settle pass
+                        // (`progress_tool_round`) is what appends the terminal
+                        // `DeadLettered` branch + retires the wedged observation.
+                        ArgResolution::Transient | ArgResolution::Permanent { .. } => {
+                            return None;
+                        }
                     }
                 } else if is_authored_tool(mote, projection) {
                     // PR-6b-2: a STANDALONE authored `tool()` node derives its args
                     // from its OWN identity-bearing `config_subset` (no parent, no
-                    // store I/O), validated fail-closed. Same args-or-skip rule as
-                    // the react observation: a transient registry fault skips the
-                    // lease this poll and a later poll retries (the worker never
-                    // sees an authored tool without coordinator-validated args).
+                    // store I/O), validated fail-closed.
                     match resolve_authored_tool_args(mote, tool_registry) {
-                        Some(args) => Some(args),
-                        None => return None,
+                        ArgResolution::Resolved(args) => Some(args),
+                        // PR-9a: the primary fault (schema mismatch) is refused at
+                        // AUTHORING (BUG-27 Path 1); a Permanent here is the rare
+                        // deregister-after-authoring residual — skip defensively (a
+                        // standalone node has no settle pass; the follow-up ticket
+                        // closes it with a coordinator-self dead-letter). Transient
+                        // never occurs (args are in the identity-bearing config).
+                        ArgResolution::Transient | ArgResolution::Permanent { .. } => {
+                            return None;
+                        }
                     }
                 } else {
                     None
@@ -692,6 +704,47 @@ fn is_react_observation(mote: &Mote, projection: &Projection) -> bool {
     projection.is_react_turn_mote(&mote.parents[0].parent_id)
 }
 
+/// PR-9a (BUG-27): the outcome of re-deriving a tool-firing Mote's args on the
+/// sole-writer thread. The pre-PR-9a resolvers returned `Option`, collapsing
+/// EVERY fault to `None` — an infinite fail-safe lease skip even for a fault that
+/// can never resolve (a silent wedge: a `tool()` run / ReAct chain stuck "in
+/// progress" forever with no error). Splitting into three lets a PERMANENT fault
+/// become a LOUD terminal dead-letter while a TRANSIENT fault keeps the fail-safe
+/// retry:
+///
+/// - [`Resolved`](ArgResolution::Resolved) — `(args_bytes, net_scope, fs_scope)`;
+///   lease / materialize exactly as before.
+/// - [`Transient`](ArgResolution::Transient) — a retryable I/O fault (store
+///   absent / store read error / a not-yet-folded parent): skip this poll, a
+///   later pass retries.
+/// - [`Permanent`](ArgResolution::Permanent) — a DETERMINISTIC fault that can
+///   never resolve: a schema reject, an unknown / DEREGISTERED tool, a declared
+///   version mismatch, a malformed contract, or a committed turn that no longer
+///   decodes to the granted call. The chain / run must dead-letter, never retry.
+///   `reason` is a human diagnostic for the trace log (the durable terminal is
+///   the existing `DeadLettered` fact — the branch carries no reason field).
+enum ArgResolution {
+    Resolved((Vec<u8>, kx_warrant::NetScope, kx_warrant::FsScope)),
+    Transient,
+    Permanent { reason: String },
+}
+
+#[cfg(test)]
+impl ArgResolution {
+    /// The resolved tuple, or `None` for a Transient/Permanent fault (test ergonomics).
+    fn into_resolved(self) -> Option<(Vec<u8>, kx_warrant::NetScope, kx_warrant::FsScope)> {
+        match self {
+            ArgResolution::Resolved(tuple) => Some(tuple),
+            _ => None,
+        }
+    }
+
+    /// Whether the resolution is a permanent (terminal, dead-letterable) fault.
+    fn is_permanent(&self) -> bool {
+        matches!(self, ArgResolution::Permanent { .. })
+    }
+}
+
 /// PR-2d-2: re-derive a ReAct observation's `(args_bytes, net_scope)` — a PURE
 /// function of committed facts, run on the sole-writer thread at every
 /// (re-)lease:
@@ -708,36 +761,97 @@ fn is_react_observation(mote: &Mote, projection: &Projection) -> bool {
 ///    the tool's DECLARED egress requirement as the request's `net_scope` (the
 ///    broker's `precheck` still enforces request ⊆ warrant at dispatch).
 ///
-/// `None` on ANY fault — the caller skips the lease this poll and a later poll
-/// retries (the settle already validated these args once, so a persistent
-/// `None` here is a store/registry fault, not a decode disagreement).
+/// Returns an [`ArgResolution`] (PR-9a): an I/O fault (missing store / store read
+/// error / a not-yet-folded parent) is [`Transient`](ArgResolution::Transient)
+/// (skip + retry — the settle validated these args once, so I/O is the only
+/// fail-safe-retryable cause); a DETERMINISTIC fault (the committed turn no longer
+/// decodes to a granted call, a tool/version/schema disagreement, or the granted
+/// tool was DEREGISTERED since the `Tool` branch froze) is
+/// [`Permanent`](ArgResolution::Permanent) — the settle pass dead-letters the chain
+/// instead of skipping forever (BUG-27).
 fn resolve_tool_args(
     mote: &Mote,
     warrant: &WarrantSpec,
     projection: &Projection,
     store: Option<&LocalFsContentStore>,
     tool_registry: &dyn ToolRegistry,
-) -> Option<(Vec<u8>, kx_warrant::NetScope, kx_warrant::FsScope)> {
-    let store = store?;
-    let parent = mote.parents.first()?.parent_id;
-    let result_ref = projection.result_ref_of(&parent)?;
-    let raw = store.get(&result_ref).ok()?;
-    let call =
-        kx_toolcall::parse_tool_call(raw.as_ref(), warrant, kx_toolcall::max_args_bytes(warrant))
-            .ok()
-            .flatten()?;
-    let declared_version = mote.def.tool_contract.get(&call.name)?;
+) -> ArgResolution {
+    // Transient I/O: a missing store, a parent not yet folded, or a store read
+    // error — a later pass retries (never a terminal decision).
+    let Some(store) = store else {
+        return ArgResolution::Transient;
+    };
+    let Some(parent) = mote.parents.first().map(|p| p.parent_id) else {
+        return ArgResolution::Transient;
+    };
+    let Some(result_ref) = projection.result_ref_of(&parent) else {
+        return ArgResolution::Transient;
+    };
+    let Ok(raw) = store.get(&result_ref) else {
+        return ArgResolution::Transient;
+    };
+    // The committed turn + the immutable chain warrant produced this `Tool` branch
+    // at freeze. If the SAME bytes no longer decode to a granted call, or the
+    // decoded call disagrees with the frozen contract, the facts are inconsistent —
+    // a permanent fault, never a transient skip.
+    let call = match kx_toolcall::parse_tool_call(
+        raw.as_ref(),
+        warrant,
+        kx_toolcall::max_args_bytes(warrant),
+    ) {
+        Ok(Some(call)) => call,
+        Ok(None) => {
+            return ArgResolution::Permanent {
+                reason: "committed turn output no longer decodes to a granted tool call"
+                    .to_string(),
+            };
+        }
+        Err(error) => {
+            return ArgResolution::Permanent {
+                reason: format!("tool-call decode rejected: {error:?}"),
+            };
+        }
+    };
+    let Some(declared_version) = mote.def.tool_contract.get(&call.name) else {
+        return ArgResolution::Permanent {
+            reason: format!(
+                "decoded tool {} is not in the observation contract",
+                call.name.0
+            ),
+        };
+    };
     if declared_version != &call.version {
-        return None;
+        return ArgResolution::Permanent {
+            reason: format!(
+                "tool {} version mismatch (contract {} vs call {})",
+                call.name.0, declared_version.0, call.version.0
+            ),
+        };
     }
-    let def = tool_registry.lookup(&call.name, &call.version)?;
+    // Validated + present at branch-freeze; absent now ⇒ DEREGISTERED (or moved to
+    // PendingHumanReview) — a permanent registry mutation, the BUG-27 wedge cause.
+    let Some(def) = tool_registry.lookup(&call.name, &call.version) else {
+        return ArgResolution::Permanent {
+            reason: format!(
+                "tool {}@{} is no longer registered (deregistered or pending review)",
+                call.name.0, call.version.0
+            ),
+        };
+    };
     if let Some(schema) = &def.input_schema {
-        kx_tool_registry::validate_args(schema, &call.args_bytes).ok()?;
+        if let Err(error) = kx_tool_registry::validate_args(schema, &call.args_bytes) {
+            return ArgResolution::Permanent {
+                reason: format!(
+                    "args do not match {}@{} inputSchema: {error}",
+                    call.name.0, call.version.0
+                ),
+            };
+        }
     }
     // PR-6a/D155 (fs-list): the resolved tool's declared fs requirement is taken
     // as the request's fs_scope (empty for echo ⇒ byte-identical). The broker's
     // precheck still enforces request.fs_scope ⊆ warrant.fs_scope at dispatch.
-    Some((
+    ArgResolution::Resolved((
         call.args_bytes,
         def.required_capability.net_scope_required.clone(),
         def.required_capability.fs_scope_required.clone(),
@@ -779,33 +893,57 @@ fn is_authored_tool(mote: &Mote, projection: &Projection) -> bool {
 /// 4. take the tool's DECLARED net/fs requirement as the request scopes (the
 ///    broker's `precheck` still enforces request ⊆ warrant at dispatch).
 ///
-/// `None` on ANY fault (multi/empty contract, missing config, unknown or pending
-/// tool, schema reject) — the lease is skipped this poll. Because the args live in
-/// the identity-bearing `config_subset`, recovery re-derives them byte-identically;
-/// a persistent `None` is a registry/admission fault (already gated at authoring),
-/// not a nondeterministic disagreement, so skip-and-retry is fail-closed (no
-/// effect ever fires without coordinator-validated args).
-fn resolve_authored_tool_args(
-    mote: &Mote,
-    tool_registry: &dyn ToolRegistry,
-) -> Option<(Vec<u8>, kx_warrant::NetScope, kx_warrant::FsScope)> {
+/// Returns an [`ArgResolution`] (PR-9a). Because the args live in the
+/// identity-bearing `config_subset` (no store I/O), EVERY fault here is
+/// DETERMINISTIC and therefore [`Permanent`](ArgResolution::Permanent) — there is
+/// no transient cause. The primary fault (args that do not match the tool's
+/// `inputSchema`) is refused at AUTHORING (the gateway's `tool_step_def`) so a
+/// wedge can never be authored into existence (BUG-27); a `Permanent` here is the
+/// rare DEREGISTER-after-authoring residual (the tool was removed between admit
+/// and lease) — the lease arm skips it (a standalone authored node has no settle
+/// pass to dead-letter it; closing that residual is a flagged follow-up).
+fn resolve_authored_tool_args(mote: &Mote, tool_registry: &dyn ToolRegistry) -> ArgResolution {
     // Exactly one (tool, version): the authored tool step binds a single tool.
     let mut contract = mote.def.tool_contract.iter();
-    let (name, version) = contract.next()?;
+    let Some((name, version)) = contract.next() else {
+        return ArgResolution::Permanent {
+            reason: "authored tool node has an empty tool_contract".to_string(),
+        };
+    };
     if contract.next().is_some() {
-        return None;
+        return ArgResolution::Permanent {
+            reason: "authored tool node binds more than one tool".to_string(),
+        };
     }
-    let args_bytes = mote
+    let Some(args) = mote
         .def
         .config_subset
-        .get(&ConfigKey(TOOL_ARGS_KEY.to_string()))?
-        .0
-        .clone();
-    let def = tool_registry.lookup(name, version)?;
+        .get(&ConfigKey(TOOL_ARGS_KEY.to_string()))
+    else {
+        return ArgResolution::Permanent {
+            reason: "authored tool node is missing its kx.tool.args config".to_string(),
+        };
+    };
+    let args_bytes = args.0.clone();
+    let Some(def) = tool_registry.lookup(name, version) else {
+        return ArgResolution::Permanent {
+            reason: format!(
+                "tool {}@{} is not registered (deregistered or pending review)",
+                name.0, version.0
+            ),
+        };
+    };
     if let Some(schema) = &def.input_schema {
-        kx_tool_registry::validate_args(schema, &args_bytes).ok()?;
+        if let Err(error) = kx_tool_registry::validate_args(schema, &args_bytes) {
+            return ArgResolution::Permanent {
+                reason: format!(
+                    "authored args do not match {}@{} inputSchema: {error}",
+                    name.0, version.0
+                ),
+            };
+        }
     }
-    Some((
+    ArgResolution::Resolved((
         args_bytes,
         def.required_capability.net_scope_required.clone(),
         def.required_capability.fs_scope_required.clone(),
@@ -2482,6 +2620,7 @@ fn settle_react_chain<J: Journal>(
                 tool_version: tool_version.clone(),
                 turn_mote_id: latest.turn_mote_id,
             },
+            tool_registry,
         ),
         // The in-flight turn: settle it once its Mote reaches a terminal state.
         ReactBranch::Pending => {
@@ -2614,6 +2753,7 @@ fn settle_react_chain<J: Journal>(
                     &rounds,
                     turn,
                     &round,
+                    tool_registry,
                 )
             } else {
                 // Answer / DeadLettered just froze — the chain is done.
@@ -2670,6 +2810,7 @@ fn progress_tool_round<J: Journal>(
     rounds: &[ReactRoundRecord],
     turn: u32,
     round: &ToolRound,
+    tool_registry: &dyn ToolRegistry,
 ) -> ReactChainStatus {
     let obs = crate::react_shape::build_react_tool(
         &ModelId(anchor.model_id.clone()),
@@ -2722,6 +2863,45 @@ fn progress_tool_round<J: Journal>(
     let Ok(warrant) = decode_warrant(warrant_bytes.as_ref()) else {
         return ReactChainStatus::Active;
     };
+    // PR-9a (BUG-27): an observation materialized but UNLEASEABLE — its args can no
+    // longer resolve because the granted tool was DEREGISTERED / re-schema'd since
+    // the `Tool` branch froze — would otherwise be skipped by the lease arm on
+    // every poll and re-materialized here FOREVER (a silent infinite-Active wedge).
+    // Re-derive on the sole-writer thread; on a PERMANENT fault, dead-letter the
+    // chain instead of wedging. Guarded by `!is_leased`: an observation a worker is
+    // already executing is left to its normal commit/fail lifecycle (no race with a
+    // worker about to commit — the broker capability is separate from this registry
+    // lookup); a TRANSIENT fault falls through to (re-)materialize + retry.
+    if !dispatch.tracker.is_leased(obs.id) {
+        if let ArgResolution::Permanent { reason } =
+            resolve_tool_args(&obs, &warrant, projection, Some(store), tool_registry)
+        {
+            tracing::warn!(
+                turn,
+                observation = ?obs.id,
+                tool = %round.tool_id,
+                %reason,
+                "react observation can never resolve its args — dead-lettering the chain (BUG-27)"
+            );
+            append_react_branch(
+                journal,
+                projection,
+                folded_through,
+                anchor,
+                round.turn_mote_id,
+                turn,
+                ReactBranch::DeadLettered,
+            );
+            // Retire the orphaned (never-leased) observation so it leaves the
+            // ready-set — mirror `dead_letter_failure`'s dispatch cleanup. The
+            // observation is never journaled, so a restart simply does not re-create
+            // it; the durable terminal is the `DeadLettered` chain branch.
+            dispatch.submitted.remove(&obs.id);
+            dispatch.defs.remove(&obs.id);
+            dispatch.tracker.resolve_committed(obs.id);
+            return ReactChainStatus::Settled;
+        }
+    }
     materialize_react_tool(
         projection,
         dispatch,
@@ -3373,7 +3553,9 @@ mod authored_tool_tests {
     fn happy_path_returns_validated_args() {
         let reg = registry_with(Some(schema()));
         let mote = tool_mote(&[("web-search", "1")], Some(br#"{"q":"hi"}"#));
-        let got = resolve_authored_tool_args(&mote, &reg).expect("valid args resolve");
+        let got = resolve_authored_tool_args(&mote, &reg)
+            .into_resolved()
+            .expect("valid args resolve");
         assert_eq!(got.0, br#"{"q":"hi"}"#.to_vec());
         assert_eq!(got.1, NetScope::None);
     }
@@ -3382,7 +3564,9 @@ mod authored_tool_tests {
     fn absent_tool_is_fail_closed() {
         let reg = InMemoryToolRegistry::new(); // empty — tool not registered
         let mote = tool_mote(&[("web-search", "1")], Some(br#"{"q":"hi"}"#));
-        assert!(resolve_authored_tool_args(&mote, &reg).is_none());
+        // PR-9a: an absent tool is a PERMANENT fault (deregister-after-authoring),
+        // not a transient skip — the loud terminal, never a silent wedge.
+        assert!(resolve_authored_tool_args(&mote, &reg).is_permanent());
     }
 
     #[test]
@@ -3392,14 +3576,14 @@ mod authored_tool_tests {
             &[("web-search", "1"), ("other", "1")],
             Some(br#"{"q":"hi"}"#),
         );
-        assert!(resolve_authored_tool_args(&mote, &reg).is_none());
+        assert!(resolve_authored_tool_args(&mote, &reg).is_permanent());
     }
 
     #[test]
     fn missing_config_args_is_refused() {
         let reg = registry_with(Some(schema()));
         let mote = tool_mote(&[("web-search", "1")], None);
-        assert!(resolve_authored_tool_args(&mote, &reg).is_none());
+        assert!(resolve_authored_tool_args(&mote, &reg).is_permanent());
     }
 
     #[test]
@@ -3407,14 +3591,18 @@ mod authored_tool_tests {
         let reg = registry_with(Some(schema()));
         // `q` required but absent, and a smuggled key under deny_unknown.
         let mote = tool_mote(&[("web-search", "1")], Some(br#"{"smuggled":1}"#));
-        assert!(resolve_authored_tool_args(&mote, &reg).is_none());
+        // PR-9a: a schema reject is PERMANENT — at the coordinator it is now a
+        // dead-letter signal (it is also refused earlier, at authoring).
+        assert!(resolve_authored_tool_args(&mote, &reg).is_permanent());
     }
 
     #[test]
     fn no_schema_tool_passes_args_through() {
         let reg = registry_with(None); // no input_schema ⇒ no client-side gate
         let mote = tool_mote(&[("web-search", "1")], Some(br#"{"anything":true}"#));
-        let got = resolve_authored_tool_args(&mote, &reg).expect("passes through");
+        let got = resolve_authored_tool_args(&mote, &reg)
+            .into_resolved()
+            .expect("passes through");
         assert_eq!(got.0, br#"{"anything":true}"#.to_vec());
     }
 }

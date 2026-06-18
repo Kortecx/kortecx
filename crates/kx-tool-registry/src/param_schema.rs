@@ -118,6 +118,33 @@ pub enum SchemaError {
     },
 }
 
+impl std::fmt::Display for SchemaError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SchemaError::NotAnObject => write!(f, "args are not a JSON object"),
+            SchemaError::MissingRequired { name } => {
+                write!(f, "missing required parameter `{name}`")
+            }
+            SchemaError::UnknownParam { name } => {
+                write!(f, "unknown parameter `{name}` (deny_unknown)")
+            }
+            SchemaError::TypeMismatch { name, expected } => {
+                write!(f, "parameter `{name}` is not a {expected}")
+            }
+            SchemaError::OutOfRange { name } => write!(f, "parameter `{name}` is out of range"),
+            SchemaError::TooLong { name, max } => {
+                write!(f, "parameter `{name}` exceeds max length {max}")
+            }
+            SchemaError::NotAllowed { name } => {
+                write!(f, "parameter `{name}` is not an allowed value")
+            }
+            SchemaError::Malformed { diagnostic } => write!(f, "malformed args: {diagnostic}"),
+        }
+    }
+}
+
+impl std::error::Error for SchemaError {}
+
 /// Validate a model's proposed tool-call `args_bytes` against `schema`,
 /// **fail-closed**. Total + panic-free over arbitrary bytes: the args are parsed
 /// as a SHALLOW one-level map of raw values (never a recursive dynamic `Value`,

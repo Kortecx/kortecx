@@ -69,6 +69,32 @@ impl CoordinatorService {
         )
     }
 
+    /// As [`with_store`](Self::with_store), but injects the live [`ToolRegistry`]
+    /// the coordinator resolves a warrant's `tool_grants` against at the D66
+    /// admission gate (PR-9a). The MODEL-FREE serve arms use this so a tool that
+    /// was DIALED from an external MCP server, registered via `RegisterTool`, or
+    /// bundled (echo) is resolvable against the SAME durable registry the broker +
+    /// the `RegisterTool` admin write into — closing the D66-on-a-model-free-serve
+    /// gap (the inference-shaper arm already shares the live registry via
+    /// [`with_store_shaper_and_tools`]). The topology/materialization path stays
+    /// inert (no shaper roles), byte-identical to [`with_store`](Self::with_store).
+    ///
+    /// [`with_store_shaper_and_tools`]: CoordinatorService::with_store_shaper_and_tools
+    pub fn with_store_and_tools<J: Journal + Send + 'static>(
+        journal: J,
+        store: Arc<LocalFsContentStore>,
+        tool_registry: Arc<dyn ToolRegistry>,
+    ) -> Self {
+        Self::with_tool_registry_and_seams(
+            journal,
+            Arc::new(InMemoryWorkerRegistry::new()),
+            Some(store),
+            Arc::new(SystemClock),
+            Arc::new(OsRandomNonce),
+            tool_registry,
+        )
+    }
+
     /// Build a coordinator with **both** a caller-supplied worker registry and the
     /// shared content store (the `with_registry` + `with_store` combination). Used
     /// where a test needs a clock-injected registry (worker-death detection, P3.1)
