@@ -41,6 +41,13 @@ const MAC: ProtoExecutorClass = ProtoExecutorClass::MacosSandbox;
 const INSTRUCTION: &str = "List the files, then answer.";
 const MODEL: &str = "react-v1";
 const TOOL_ENVELOPE: &[u8] = br#"{"tool_call":{"name":"mcp-echo","version":"1","args":{"q":"x"}}}"#;
+/// PR-9a (the BUG-28 regression pin): Gemma-4's NATIVE tool-call shape
+/// (`<|tool_call>call:NAME{ARGS}<tool_call|>`) — `mcp_echo` (underscore) exercises
+/// the parser's separator-only `_`→`-` name normalization. BUG-28 was a real-model
+/// tool loop that NEVER fired because no e2e drove this shape through the settle's
+/// decode→Tool-freeze→observation-fire→commit path; this const lets the fire-commits
+/// test assert that invariant for BOTH the JSON envelope and the native shape.
+const GEMMA_NATIVE: &[u8] = br#"<|tool_call>call:mcp_echo{"q":"x"}<tool_call|>"#;
 
 /// The client's SEED Mote: an ordinary ROND model Mote carrying the instruction.
 /// Its identity is advisory — the coordinator swaps in the run-salted turn 0.
@@ -108,47 +115,52 @@ fn warrant(granted: bool) -> WarrantSpec {
     }
 }
 
-/// The builtins PLUS `mcp-echo@1` (typed schema: one required `q: Str`) — the
-/// settle's validate-at-freeze (PR-2d-2) resolves the proposed tool against the
-/// registry BEFORE freezing a `Tool` fact, so the tool the tests propose must
-/// be registered (the harness `registry_with_mcp` mirror).
-fn registry_with_mcp() -> Arc<dyn kx_tool_registry::ToolRegistry> {
+/// The `mcp-echo@1` ToolDef (typed schema: one required `q: Str`) the live tests
+/// register — the settle's validate-at-freeze (PR-2d-2) resolves a proposed tool
+/// against the registry BEFORE freezing a `Tool` fact, so the tool the tests
+/// propose must be registered. Extracted so the PR-9a deregister-mid-chain test
+/// can register it durably (deregisterable) and remove it after the freeze.
+fn echo_tool_def() -> kx_tool_registry::ToolDef {
     use kx_tool_registry::{
-        IdempotencyClass, InMemoryToolRegistry, InputSchema, McpEndpointId, ParamSpec, ParamType,
-        ToolDef, ToolKind, ToolProvenance, ToolRegistry,
+        IdempotencyClass, InputSchema, McpEndpointId, ParamSpec, ParamType, ToolDef, ToolKind,
     };
+    ToolDef {
+        tool_id: kx_mote::ToolName("mcp-echo".into()),
+        tool_version: kx_mote::ToolVersion("1".into()),
+        kind: ToolKind::Mcp {
+            endpoint: McpEndpointId("stdio://test".into()),
+            remote_name: "echo".into(),
+        },
+        required_capability: kx_warrant::ToolRequirement {
+            net_scope_required: NetScope::None,
+            fs_scope_required: FsScope::empty(),
+            syscall_profile_ref: ContentRef::from_bytes([0; 32]),
+            min_resource_ceiling: ResourceCeiling {
+                cpu_milli: 0,
+                mem_bytes: 0,
+                wall_clock_ms: 0,
+                fd_count: 0,
+                disk_bytes: 0,
+            },
+        },
+        description: "deterministic echo (ReAct live tests).".into(),
+        idempotency_class: IdempotencyClass::Staged,
+        input_schema: Some(InputSchema {
+            params: vec![ParamSpec {
+                name: "q".into(),
+                ty: ParamType::Str { max_len: 256 },
+                required: true,
+            }],
+            deny_unknown: true,
+        }),
+    }
+}
+
+fn registry_with_mcp() -> Arc<dyn kx_tool_registry::ToolRegistry> {
+    use kx_tool_registry::{InMemoryToolRegistry, ToolProvenance, ToolRegistry};
     let mut reg = InMemoryToolRegistry::with_builtins();
     let _ = reg.register(
-        ToolDef {
-            tool_id: kx_mote::ToolName("mcp-echo".into()),
-            tool_version: kx_mote::ToolVersion("1".into()),
-            kind: ToolKind::Mcp {
-                endpoint: McpEndpointId("stdio://test".into()),
-                remote_name: "echo".into(),
-            },
-            required_capability: kx_warrant::ToolRequirement {
-                net_scope_required: NetScope::None,
-                fs_scope_required: FsScope::empty(),
-                syscall_profile_ref: ContentRef::from_bytes([0; 32]),
-                min_resource_ceiling: ResourceCeiling {
-                    cpu_milli: 0,
-                    mem_bytes: 0,
-                    wall_clock_ms: 0,
-                    fd_count: 0,
-                    disk_bytes: 0,
-                },
-            },
-            description: "deterministic echo (ReAct live tests).".into(),
-            idempotency_class: IdempotencyClass::Staged,
-            input_schema: Some(InputSchema {
-                params: vec![ParamSpec {
-                    name: "q".into(),
-                    ty: ParamType::Str { max_len: 256 },
-                    required: true,
-                }],
-                deny_unknown: true,
-            }),
-        },
+        echo_tool_def(),
         ToolProvenance::HumanAuthored {
             author: "test".into(),
         },
@@ -156,7 +168,10 @@ fn registry_with_mcp() -> Arc<dyn kx_tool_registry::ToolRegistry> {
     Arc::new(reg)
 }
 
-fn coordinator(dir: &TempDir) -> (CoordinatorService, Arc<LocalFsContentStore>) {
+fn coordinator_with(
+    dir: &TempDir,
+    tool_registry: Arc<dyn kx_tool_registry::ToolRegistry>,
+) -> (CoordinatorService, Arc<LocalFsContentStore>) {
     let store = Arc::new(LocalFsContentStore::open(dir.path().join("content")).unwrap());
     let journal = SqliteJournal::open(dir.path().join("journal.db")).unwrap();
     let registry: Arc<dyn WorkerRegistry> = Arc::new(InMemoryWorkerRegistry::new());
@@ -166,10 +181,14 @@ fn coordinator(dir: &TempDir) -> (CoordinatorService, Arc<LocalFsContentStore>) 
         store.clone(),
         Arc::new(kx_coordinator::SystemClock),
         Arc::new(kx_coordinator::OsRandomNonce),
-        registry_with_mcp(),
+        tool_registry,
         Arc::new(kx_warrant::InMemoryRoleRegistry::new()),
     );
     (svc, store)
+}
+
+fn coordinator(dir: &TempDir) -> (CoordinatorService, Arc<LocalFsContentStore>) {
+    coordinator_with(dir, registry_with_mcp())
 }
 
 /// Submit `mote` with `react_seed = true`; returns `(turn0_mote_id, instance_id)`.
@@ -526,6 +545,207 @@ async fn tool_branch_advances_the_chain_with_trajectory() {
         ))
         .unwrap();
     assert_eq!(served_obs.as_ref(), br#"{"echoed":{"q":"x"}}"#);
+}
+
+/// PR-9a (the BUG-28 regression pin, model-free + deterministic): the SAME
+/// fire-commits invariant as `tool_branch_advances_the_chain_with_trajectory`, but
+/// the turn-0 output is Gemma-4's NATIVE shape (`<|tool_call>call:mcp_echo{…}`).
+/// This drives the REAL coordinator settle — which calls `kx-toolcall` to decode
+/// the staged bytes — and asserts the native shape (a) freezes a `Tool` fact for
+/// `mcp-echo@1` (name separator-normalized), (b) the observation leases WITH the
+/// args decoded from the native shape, and (c) the observation commits ⇒ turn 1
+/// spawns. BUG-28 was exactly this path being silently dead: the loop only ever
+/// asserted an ANSWER settling, never a tool FIRING through the native arm.
+#[tokio::test]
+async fn tool_branch_fires_and_commits_via_gemma_native_shape() {
+    let dir = TempDir::new().unwrap();
+    let (svc, store) = coordinator(&dir);
+    let w = warrant(true); // mcp-echo@1 GRANTED
+
+    let (_, _) = submit_react(&svc, &seed_mote(), &w).await;
+    let worker = common::register(&svc, "w").await;
+    let leased = common::lease_work(&svc, worker, MAC, 16).await;
+    let turn0: Mote = leased[0].mote.clone().unwrap().try_into().unwrap();
+    // Stage the NATIVE shape (not the JSON envelope) — the settle must decode it.
+    commit_raw(&svc, &store, &turn0, &w, GEMMA_NATIVE, worker).await;
+
+    // (a) the settle froze a `Tool` fact for the separator-normalized `mcp-echo@1`.
+    let facts = react_facts(&svc, &dir).await;
+    assert_eq!(
+        facts.len(),
+        2,
+        "anchor + the Tool settle (the native shape FIRED)"
+    );
+    assert!(
+        matches!(
+            &facts[1],
+            JournalEntry::ReactRound {
+                turn: 0,
+                branch: ReactBranch::Tool { tool_id, tool_version },
+                ..
+            } if tool_id == "mcp-echo" && tool_version == "1"
+        ),
+        "the Gemma-native `<|tool_call>call:mcp_echo{{…}}` decodes + freezes a Tool fact"
+    );
+
+    // (b) the observation leases WITH the args decoded from the native shape.
+    let (obs, args) = lease_observation(&svc, worker, &turn0).await;
+    assert_eq!(
+        args,
+        br#"{"q":"x"}"#.to_vec(),
+        "args decode from the native shape"
+    );
+
+    // (c) the observation commits (the tool FIRED) ⇒ turn 1 spawns — the world
+    // mutating observation reaching Committed is the BUG-28 invariant.
+    commit_raw(&svc, &store, &obs, &w, br#"{"echoed":{"q":"x"}}"#, worker).await;
+    let facts = react_facts(&svc, &dir).await;
+    assert_eq!(
+        facts.len(),
+        3,
+        "anchor + Tool + turn-1 Pending (the fire advanced the chain)"
+    );
+    assert!(matches!(
+        &facts[2],
+        JournalEntry::ReactRound {
+            turn: 1,
+            branch: ReactBranch::Pending,
+            ..
+        }
+    ));
+    assert_eq!(
+        svc.state_of(obs.id).await.unwrap(),
+        MoteState::Committed,
+        "the world-mutating observation COMMITTED — a tool genuinely fired"
+    );
+}
+
+/// PR-9a (the format-drift fail-closed invariant): an UNRECOGNIZED tool-shaped
+/// completion under a GRANTING warrant commits as an ANSWER and fires NOTHING —
+/// the SN-8 default. This is the durable invariant a format guard can hold: a
+/// future model's novel tool-call syntax that NO parser arm recognizes never
+/// mis-fires a tool; it degrades to an honest, committed answer (vs. the two
+/// RECOGNIZED shapes — the JSON envelope and the Gemma-native delimiter — which DO
+/// fire, proven by the two tests above).
+#[tokio::test]
+async fn unrecognized_tool_shape_under_grant_answers_and_fires_nothing() {
+    let dir = TempDir::new().unwrap();
+    let (svc, store) = coordinator(&dir);
+    let w = warrant(true); // mcp-echo@1 GRANTED — yet an unparseable shape must NOT fire
+
+    let (_, _) = submit_react(&svc, &seed_mote(), &w).await;
+    let worker = common::register(&svc, "w").await;
+    let leased = common::lease_work(&svc, worker, MAC, 16).await;
+    let turn0: Mote = leased[0].mote.clone().unwrap().try_into().unwrap();
+    // A made-up "tool call" in a format no parser arm recognizes — neither the JSON
+    // envelope (must start with `{`) nor the Gemma-native `<|tool_call>` delimiter.
+    commit_raw(
+        &svc,
+        &store,
+        &turn0,
+        &w,
+        b"TOOL: mcp-echo(q=x)  # please run this for me",
+        worker,
+    )
+    .await;
+
+    let facts = react_facts(&svc, &dir).await;
+    assert_eq!(facts.len(), 2, "anchor + the Answer settle");
+    assert!(
+        matches!(
+            &facts[1],
+            JournalEntry::ReactRound {
+                turn: 0,
+                branch: ReactBranch::Answer,
+                ..
+            }
+        ),
+        "an unrecognized tool-shape under a grant ANSWERS — it never mis-fires a tool"
+    );
+    assert!(
+        common::lease_work(&svc, worker, MAC, 16).await.is_empty(),
+        "Answer is terminal — no observation was materialized, no tool fired"
+    );
+}
+
+/// PR-9a (BUG-27 Path 2, end-to-end): when the tool a frozen `Tool` branch
+/// references is DEREGISTERED before its observation can lease, the chain
+/// DEAD-LETTERS (a loud terminal) instead of WEDGING forever — the pre-PR-9a
+/// behavior re-materialized an unleaseable observation on every settle pass with
+/// no terminal. Uses a `SqliteToolRegistry` (interior-mutable deregistration) so
+/// the tool can be removed AFTER the settle freezes the `Tool` fact.
+#[tokio::test]
+async fn deregistering_a_tool_mid_chain_dead_letters_instead_of_wedging() {
+    let dir = TempDir::new().unwrap();
+    let reg =
+        Arc::new(kx_tool_registry::SqliteToolRegistry::open(dir.path().join("tools.db")).unwrap());
+    // Register mcp-echo@1 DURABLY (deregisterable — not a non-removable built-in).
+    reg.register_durable(
+        echo_tool_def(),
+        kx_tool_registry::ToolProvenance::HumanAuthored {
+            author: "test".into(),
+        },
+        None,
+    )
+    .unwrap();
+    let (svc, store) = coordinator_with(&dir, reg.clone());
+    let w = warrant(true);
+
+    let (_, _) = submit_react(&svc, &seed_mote(), &w).await;
+    let worker = common::register(&svc, "w").await;
+    let leased = common::lease_work(&svc, worker, MAC, 16).await;
+    let turn0: Mote = leased[0].mote.clone().unwrap().try_into().unwrap();
+    // Turn 0 proposes the tool ⇒ the settle freezes a Tool branch + materializes
+    // the observation (Pending, NOT yet leased) — the tool is still registered.
+    commit_raw(&svc, &store, &turn0, &w, TOOL_ENVELOPE, worker).await;
+    let facts = react_facts(&svc, &dir).await;
+    assert!(
+        matches!(
+            &facts[1],
+            JournalEntry::ReactRound {
+                turn: 0,
+                branch: ReactBranch::Tool { .. },
+                ..
+            }
+        ),
+        "the tool proposal froze a Tool branch"
+    );
+
+    // DEREGISTER the tool: the frozen branch now references a tool that is gone, so
+    // the observation's args can never resolve (a PERMANENT fault).
+    assert!(
+        reg.deregister(
+            &kx_mote::ToolName("mcp-echo".into()),
+            &kx_mote::ToolVersion("1".into())
+        )
+        .unwrap(),
+        "the tool was deregistered"
+    );
+
+    // The next drain: the lease arm skips the unresolvable observation (Permanent),
+    // and the settle pass DEAD-LETTERS the chain (instead of re-materializing it
+    // forever). The observation is never leased.
+    let leased_after = common::lease_work(&svc, worker, MAC, 16).await;
+    assert!(
+        leased_after.is_empty(),
+        "the unresolvable observation is never leased"
+    );
+    let facts = react_facts(&svc, &dir).await;
+    assert!(
+        facts.iter().any(|f| matches!(
+            f,
+            JournalEntry::ReactRound {
+                branch: ReactBranch::DeadLettered,
+                ..
+            }
+        )),
+        "the chain DEAD-LETTERED instead of wedging (BUG-27)"
+    );
+    // Terminal: bounded, no runaway re-lease of the retired observation.
+    assert!(
+        common::lease_work(&svc, worker, MAC, 16).await.is_empty(),
+        "terminal — the retired observation never re-enters the ready set"
+    );
 }
 
 /// A dead-lettered turn settles the chain `DeadLettered` (terminal — no next turn).

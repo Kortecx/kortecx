@@ -570,6 +570,23 @@ real-model-e2e: fetch-agent-model
     # one inference at a time = full CPU each.
     cargo test -p kx-gateway --features inference --test al1_serve -- --ignored --nocapture --test-threads=1
 
+# LOCAL / manual witness (NOT a CI job): drive a LIVE ReAct chain that FIRES a real
+# tool on a capable model. The DETERMINISTIC, CI-runnable regression guard for this
+# lives model-free in `crates/kx-coordinator/tests/react_live.rs` — it pins the
+# fire-commits invariant (a `world_mutating` observation COMMITS) for BOTH the JSON
+# envelope AND the Gemma-native `<|tool_call>` shape, closing the BUG-28 gap (no e2e
+# ever asserted a tool FIRES, only that an answer settled). This recipe is the
+# real-model witness on top: it serves `kx/recipes/react-auto` (`KX_SERVE_AUTOGRANT`)
+# with the bundled `mcp-echo`, so the live loop has a tool to call. Set
+# `KX_SERVE_MODEL_GGUF=<gemma.gguf>` to exercise the Gemma-native format (the BUG-28
+# scenario); the default Qwen3 stand-in fires via the JSON envelope. The full
+# cross-surface `world_mutating`-fire assertion is the deep-test campaign's "ReAct
+# tool-calling" matrix row.
+react-fire-local: fetch-agent-model
+    cargo build -p kx-mcp # the bundled kx-mcp-echo firing bin (or set KX_MCP_ECHO_PATH)
+    KX_SERVE_AUTOGRANT=1 cargo test -p kx-gateway --features inference \
+        --test react_auto_serve -- --ignored --nocapture --test-threads=1
+
 # LOCAL / manual gate (NOT a CI job): exercise the safe-wrapper inference pipeline
 # with GPU offload forced ON (`KX_N_GPU_LAYERS=-1`) so an Apple-Silicon dev sees
 # Metal actually used (look for `offloaded N/N layers to GPU` + `ggml_metal_*`),

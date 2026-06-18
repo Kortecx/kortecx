@@ -73,6 +73,15 @@ impl LeaseTracker {
             .is_some_and(|workers| workers.contains(&worker))
     }
 
+    /// Whether ANY worker currently holds an outstanding lease on `mote`. Used by
+    /// the PR-9a settle-pass dead-letter (BUG-27) to leave an in-flight observation
+    /// to its normal commit/fail lifecycle and dead-letter ONLY a wedged
+    /// (materialized-but-never-leased) one — avoiding a race with a worker about to
+    /// commit. O(1) via the reverse index.
+    pub(crate) fn is_leased(&self, mote: MoteId) -> bool {
+        self.holders.contains_key(&mote)
+    }
+
     /// Remove and return `worker`'s outstanding leases (used when reaping a dead
     /// worker), keeping the reverse index consistent.
     pub(crate) fn take_leases(&mut self, worker: WorkerId) -> BTreeSet<MoteId> {

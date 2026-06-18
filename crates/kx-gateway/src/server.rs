@@ -475,10 +475,22 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
                 tool_registry.clone(),
             )
         }
-        None => CoordinatorService::with_store(writer, content.clone()),
+        // PR-9a (D66 model-free): a model-free serve (no shaper runtime) still
+        // accumulates DIALED + RegisterTool'd tools in the SAME `tool_registry`
+        // (both write paths are off the `inference` feature). Resolve the D66
+        // admission gate against the live registry — not the echo-less in-memory
+        // built-ins `with_store` would default to — so an authored/dialed `tool()`
+        // is admissible without a served model.
+        None => {
+            CoordinatorService::with_store_and_tools(writer, content.clone(), tool_registry.clone())
+        }
     };
+    // PR-9a (D66 model-free): the FFI-free serve shares the live tool registry too,
+    // so a dialed/RegisterTool'd `tool()` resolves at the coordinator D66 gate
+    // (parity with the inference-shaper arm; the topology path stays inert).
     #[cfg(not(feature = "inference"))]
-    let coordinator = CoordinatorService::with_store(writer, content.clone());
+    let coordinator =
+        CoordinatorService::with_store_and_tools(writer, content.clone(), tool_registry.clone());
     // W1a (T-OBS1): build the optional serve-path operator audit sink ONCE. Opened
     // in APPEND mode so the JSONL trail accumulates across restarts; a bad/unwritable
     // path fails `start` LOUDLY (never a silently-dropped audit). Kept as a shared

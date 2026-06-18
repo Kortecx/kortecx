@@ -1611,6 +1611,21 @@ impl HostWorkflowAuthor {
                 "TOOL step references unregistered tool {name}@{version}"
             ))
         })?;
+        // PR-9a (BUG-27 Path 1): validate the authored args against the tool's
+        // typed `inputSchema` AT AUTHORING and refuse with a clear invalid_argument
+        // BEFORE any Mote is created. The args are a DETERMINISTIC part of the
+        // step's identity-bearing `config_subset`, so a schema mismatch is a
+        // PERMANENT fault — without this gate it was admitted and then SKIPPED
+        // forever at the coordinator lease (a silent "in progress" wedge). Validate
+        // the EXACT bytes the coordinator's `resolve_authored_tool_args` will read:
+        // `s.params[TOOL_ARGS_KEY]` defaulting to the empty object `{}` (mirroring
+        // the empty-default insert in `step_def`).
+        if let Some(schema) = &tdef.input_schema {
+            let args: &[u8] = s.params.get(TOOL_ARGS_KEY).map_or(b"{}", Vec::as_slice);
+            kx_tool_registry::validate_args(schema, args).map_err(|e| {
+                BinderError::InvalidArgs(format!("tool args invalid for {name}@{version}: {e}"))
+            })?;
+        }
         // Server-assigned content-sentinel logic_ref over (index, id, ver), so
         // distinct tool steps get distinct ids (the client never supplies bytes).
         let mut buf = Vec::with_capacity(64);
@@ -3073,6 +3088,45 @@ mod tests {
         std::sync::Arc::new(reg)
     }
 
+    /// As [`tool_registry_with`], but the tool declares a typed `inputSchema` (one
+    /// required `q: Str`, `deny_unknown`) — for the PR-9a validate-at-authoring tests.
+    fn tool_registry_with_schema(tool_id: &str, version: &str) -> std::sync::Arc<dyn ToolRegistry> {
+        use kx_tool_registry::{
+            IdempotencyClass, InMemoryToolRegistry, InputSchema, ParamSpec, ParamType, ToolKind,
+            ToolProvenance,
+        };
+        let mut reg = InMemoryToolRegistry::new();
+        let def = ToolDef {
+            tool_id: ToolName(tool_id.into()),
+            tool_version: ToolVersion(version.into()),
+            kind: ToolKind::Builtin,
+            required_capability: kx_warrant::ToolRequirement {
+                net_scope_required: NetScope::None,
+                fs_scope_required: FsScope::empty(),
+                syscall_profile_ref: ContentRef::from_bytes([0; 32]),
+                min_resource_ceiling: ResourceCeiling {
+                    cpu_milli: 0,
+                    mem_bytes: 0,
+                    wall_clock_ms: 0,
+                    fd_count: 0,
+                    disk_bytes: 0,
+                },
+            },
+            description: String::new(),
+            idempotency_class: IdempotencyClass::Staged,
+            input_schema: Some(InputSchema {
+                params: vec![ParamSpec {
+                    name: "q".into(),
+                    ty: ParamType::Str { max_len: 64 },
+                    required: true,
+                }],
+                deny_unknown: true,
+            }),
+        };
+        let _ = reg.register(def, ToolProvenance::HumanAuthored { author: "t".into() });
+        std::sync::Arc::new(reg)
+    }
+
     fn author_with_tools(
         dir: &std::path::Path,
         tools: std::sync::Arc<dyn ToolRegistry>,
@@ -3173,6 +3227,64 @@ mod tests {
                 .await,
             Err(BinderError::InvalidArgs(_))
         ));
+    }
+
+    /// PR-9a (BUG-27 Path 1): a `tool()` step whose authored args violate the
+    /// tool's typed `inputSchema` is refused AT AUTHORING with `InvalidArgs` naming
+    /// the tool@version — BEFORE any Mote is created. Without this gate the
+    /// malformed step was admitted and then SKIPPED forever at the coordinator
+    /// lease (a silent "in progress" wedge).
+    #[tokio::test]
+    async fn tool_step_schema_invalid_args_refused_at_authoring() {
+        let dir = tempfile::tempdir().unwrap();
+        let author = author_with_tools(dir.path(), tool_registry_with_schema("echo-tool", "1"));
+        // `q` is required (Str) but absent, plus a smuggled key under deny_unknown.
+        let steps = [tool_author_step("echo-tool", "1", br#"{"smuggled":1}"#)];
+        let result = author
+            .author(
+                "alice@acme",
+                1,
+                &steps,
+                &[],
+                AuthorExecutionMode::Frozen,
+                &[],
+            )
+            .await;
+        match result {
+            Err(BinderError::InvalidArgs(msg)) => {
+                assert!(
+                    msg.contains("echo-tool@1"),
+                    "the refusal names the tool@version: {msg}"
+                );
+                assert!(
+                    msg.contains("tool args invalid"),
+                    "the refusal explains the cause: {msg}"
+                );
+            }
+            Err(other) => panic!("expected InvalidArgs, got {other:?}"),
+            Ok(_) => panic!("expected a refusal, but authoring succeeded (the wedge gate is open)"),
+        }
+    }
+
+    /// PR-9a regression: VALID authored args still author cleanly under a schema
+    /// (Path 1 refuses ONLY the malformed case; the happy path is unchanged).
+    #[tokio::test]
+    async fn tool_step_schema_valid_args_author_cleanly() {
+        let dir = tempfile::tempdir().unwrap();
+        let author = author_with_tools(dir.path(), tool_registry_with_schema("echo-tool", "1"));
+        let steps = [tool_author_step("echo-tool", "1", br#"{"q":"hi"}"#)];
+        let bound = author
+            .author(
+                "alice@acme",
+                1,
+                &steps,
+                &[],
+                AuthorExecutionMode::Frozen,
+                &[],
+            )
+            .await
+            .expect("valid authored args author cleanly under a schema");
+        assert_eq!(bound.motes.len(), 1);
     }
 
     /// Without a wired tool registry (`from_shared`), `tool()` authoring is refused
