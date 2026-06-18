@@ -83,7 +83,11 @@ export interface UseChat {
   readonly activeAssistantId: string | undefined;
   /** The in-flight AGENT turn's loop progress (react turns), if any. */
   readonly reactTurns: readonly ReactTurnVM[] | undefined;
-  send(text: string, attachments?: readonly MessageAttachment[]): Promise<void>;
+  send(
+    text: string,
+    attachments?: readonly MessageAttachment[],
+    context?: readonly string[],
+  ): Promise<void>;
   /** Re-dispatch a FAILED turn with its identical args. */
   retry(assistantId: string): Promise<void>;
   /** Restore a saved thread (chat history) — replaces the live one. */
@@ -370,10 +374,16 @@ export function useChat({ handle, promptKey, modelId, agentMode }: UseChatOption
       assistantId: string,
       text: string,
       attachments: readonly MessageAttachment[],
+      context: readonly string[],
     ): Promise<void> => {
       try {
         const plan = await planTurn(text, attachments);
-        const { instanceId, terminalMoteId } = await invoke.mutateAsync(plan);
+        // PR-7b: context is request-level — it attaches to the run regardless of
+        // which recipe route (chat / vision / react) the plan picked.
+        const { instanceId, terminalMoteId } = await invoke.mutateAsync({
+          ...plan,
+          context: context.length > 0 ? context : undefined,
+        });
         dispatch({ type: "turn_started", assistantId, instanceId, terminalMoteId });
         // A retried assistant id must be re-finalizable.
         if (finalizedRef.current === assistantId) {
@@ -397,7 +407,11 @@ export function useChat({ handle, promptKey, modelId, agentMode }: UseChatOption
   );
 
   const send = useCallback(
-    async (text: string, attachments: readonly MessageAttachment[] = []): Promise<void> => {
+    async (
+      text: string,
+      attachments: readonly MessageAttachment[] = [],
+      context: readonly string[] = [],
+    ): Promise<void> => {
       const trimmed = text.trim();
       if (trimmed === "") {
         return;
@@ -411,8 +425,9 @@ export function useChat({ handle, promptKey, modelId, agentMode }: UseChatOption
         assistantId,
         text: trimmed,
         attachments: attachments.length > 0 ? attachments : undefined,
+        context: context.length > 0 ? context : undefined,
       });
-      await startTurn(assistantId, trimmed, attachments);
+      await startTurn(assistantId, trimmed, attachments, context);
     },
     [startTurn],
   );
@@ -425,7 +440,7 @@ export function useChat({ handle, promptKey, modelId, agentMode }: UseChatOption
       }
       setDegraded(null);
       dispatch({ type: "turn_retry", assistantId });
-      await startTurn(assistantId, source.text, source.attachments);
+      await startTurn(assistantId, source.text, source.attachments, source.context);
     },
     [thread, startTurn],
   );

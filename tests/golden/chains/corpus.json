@@ -364,5 +364,77 @@
       ],
       "edges": [ { "parent": 0, "child": 1, "edge": "data" } ]
     }
+  },
+  {
+    "name": "ctx_single",
+    "dsl": "a",
+    "seed": 0,
+    "context_bundles": [ "team/ctx/spec" ],
+    "tasks": { "a": { "kind": "pure" } },
+    "expect": {
+      "steps": [
+        { "kind": "pure", "model_id": "", "prompt": "", "body_signature_id": null, "tool_contract": {}, "params": {} }
+      ],
+      "edges": [],
+      "context_bundles": [ "team/ctx/spec" ]
+    }
+  },
+  {
+    "name": "ctx_multi_order",
+    "dsl": "a",
+    "seed": 0,
+    "context_bundles": [ "z/ctx/two", "a/ctx/one" ],
+    "tasks": { "a": { "kind": "pure" } },
+    "expect": {
+      "steps": [
+        { "kind": "pure", "model_id": "", "prompt": "", "body_signature_id": null, "tool_contract": {}, "params": {} }
+      ],
+      "edges": [],
+      "context_bundles": [ "z/ctx/two", "a/ctx/one" ]
+    }
+  },
+  {
+    "name": "ctx_seq",
+    "dsl": "a > b",
+    "seed": 0,
+    "context_bundles": [ "team/ctx/spec" ],
+    "tasks": { "a": { "kind": "pure" }, "b": { "kind": "pure" } },
+    "expect": {
+      "steps": [
+        { "kind": "pure", "model_id": "", "prompt": "", "body_signature_id": null, "tool_contract": {}, "params": {} },
+        { "kind": "pure", "model_id": "", "prompt": "", "body_signature_id": null, "tool_contract": {}, "params": {} }
+      ],
+      "edges": [ { "parent": 0, "child": 1, "edge": "data" } ],
+      "context_bundles": [ "team/ctx/spec" ]
+    }
+  },
+  {
+    "name": "ctx_with_seed",
+    "dsl": "a > b",
+    "seed": 7,
+    "context_bundles": [ "team/ctx/spec", "team/ctx/notes" ],
+    "tasks": { "a": { "kind": "pure" }, "b": { "kind": "pure" } },
+    "expect": {
+      "steps": [
+        { "kind": "pure", "model_id": "", "prompt": "", "body_signature_id": null, "tool_contract": {}, "params": {} },
+        { "kind": "pure", "model_id": "", "prompt": "", "body_signature_id": null, "tool_contract": {}, "params": {} }
+      ],
+      "edges": [ { "parent": 0, "child": 1, "edge": "data" } ],
+      "context_bundles": [ "team/ctx/spec", "team/ctx/notes" ]
+    }
+  },
+  {
+    "name": "ctx_empty_explicit",
+    "dsl": "a",
+    "seed": 0,
+    "context_bundles": [],
+    "tasks": { "a": { "kind": "pure" } },
+    "expect": {
+      "steps": [
+        { "kind": "pure", "model_id": "", "prompt": "", "body_signature_id": null, "tool_contract": {}, "params": {} }
+      ],
+      "edges": [],
+      "context_bundles": []
+    }
   }
 ]

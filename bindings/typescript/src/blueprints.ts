@@ -63,6 +63,7 @@ export class BlueprintBuilder {
   private readonly _steps: StepInput[] = [];
   private readonly _edges: EdgeInput[] = [];
   private _mode: ExecutionMode = "frozen";
+  private _contextBundles: string[] = [];
 
   constructor(private readonly seed: number = 0) {}
 
@@ -79,6 +80,16 @@ export class BlueprintBuilder {
 
   mode(m: ExecutionMode): this {
     this._mode = m;
+    return this;
+  }
+
+  /**
+   * PR-7: attach context-bundle handles to the run (verbatim order — the SERVER
+   * canonicalizes + injects into every entry Mote at bind, SN-8). An empty list ⇒
+   * a request byte-identical to pre-PR-7.
+   */
+  contextBundles(handles: readonly string[]): this {
+    this._contextBundles = [...handles];
     return this;
   }
 
@@ -103,6 +114,7 @@ export class BlueprintBuilder {
       })),
       executionMode:
         this._mode === "dynamic" ? WorkflowExecutionMode.DYNAMIC : WorkflowExecutionMode.FROZEN,
+      contextBundles: [...this._contextBundles],
     };
   }
 }

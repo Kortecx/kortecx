@@ -73,16 +73,21 @@ def test_corpus_parity(case: Dict[str, object]) -> None:
     matching error class is raised."""
     tasks = _tasks_from_spec(case["tasks"])
     seed = case.get("seed", 0)
+    context = case.get("context_bundles")  # PR-7b: chain-level attachment (None ⇒ [])
 
     if "error" in case:
         expected_exc = _ERROR_CLASSES[case["error"]]
         with pytest.raises(expected_exc):
             # The cycle check fires at lowering time; parse/handle at parse time.
-            chain(case["dsl"], tasks, seed=seed).lowering()
+            chain(case["dsl"], tasks, seed=seed, context=context).lowering()
         return
 
-    lowered = chain(case["dsl"], tasks, seed=seed).lowering()
-    assert lowered == case["expect"]
+    lowered = chain(case["dsl"], tasks, seed=seed, context=context).lowering()
+    # PR-7b: existing cases omit `context_bundles` in `expect` ⇒ default it to []
+    # (matches the SPEC "absent ⇒ []" rule + Rust `#[serde(default)]`).
+    expected = dict(case["expect"])
+    expected.setdefault("context_bundles", [])
+    assert lowered == expected
 
 
 def test_seed_flows_to_the_request() -> None:
@@ -102,6 +107,50 @@ def test_build_produces_a_frozen_request() -> None:
     # a > b & c : only one edge, a->b (precedence: > tighter than &)
     assert len(req.edges) == 1
     assert (req.edges[0].parent, req.edges[0].child) == (0, 1)
+    # PR-7b: a chain with no attached context carries an empty repeated field
+    # (byte-identical to pre-PR-7).
+    assert list(req.context_bundles) == []
+
+
+# --- PR-7b: context bundles (chain-level attachment) --------------------------
+
+
+def test_context_kwarg_flows_to_the_request() -> None:
+    """``context=`` reaches ``SubmitWorkflowRequest.context_bundles`` verbatim."""
+    req = chain("a > b", {"a": pure(), "b": pure()}, context=["team/ctx/spec"]).build()
+    assert list(req.context_bundles) == ["team/ctx/spec"]
+    assert len(req.steps) == 2  # context is chain-level, NOT a step
+
+
+def test_context_is_emitted_in_the_lowering() -> None:
+    lowered = chain("a", {"a": pure()}, context=["x/y/z"]).lowering()
+    assert lowered["context_bundles"] == ["x/y/z"]
+    assert len(lowered["steps"]) == 1
+
+
+def test_context_order_is_preserved_not_sorted() -> None:
+    """The DSL never sorts/dedups — the SERVER canonicalizes at bind (SN-8)."""
+    handles = ["z/ctx/two", "a/ctx/one"]
+    req = chain("a", {"a": pure()}, context=handles).build()
+    assert list(req.context_bundles) == handles
+
+
+def test_fluent_context_matches_kwarg_and_appends() -> None:
+    base = chain("a > b", {"a": pure(), "b": pure()})
+    via_fluent = base.context("team/ctx/spec").context("team/ctx/notes")
+    via_kwarg = chain(
+        "a > b", {"a": pure(), "b": pure()}, context=["team/ctx/spec", "team/ctx/notes"]
+    )
+    assert via_fluent.lowering() == via_kwarg.lowering()
+    # `.context()` is immutable — the base chain is unchanged.
+    assert base.lowering()["context_bundles"] == []
+
+
+def test_sugar_context_matches_string() -> None:
+    a, b = pure(), pure()
+    sugar = Chain.from_node(a >> b, context=["team/ctx/spec"])
+    string = chain("a > b", {"a": pure(), "b": pure()}, context=["team/ctx/spec"])
+    assert sugar.lowering() == string.lowering()
 
 
 # --- operator sugar lowers identically to the string DSL ----------------------

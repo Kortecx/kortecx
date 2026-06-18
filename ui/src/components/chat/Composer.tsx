@@ -4,15 +4,24 @@ import { MonacoMount } from "../editor/MonacoMount";
 import { Icon } from "../shell/Icon";
 import { Popover } from "../shell/Popover";
 
-/** Attach categories that need Context bundles (PR-7) to ride a message — shown
- *  in the menu as honest-disabled rows so the surface is complete but never fakes
- *  a capability that does not exist yet (D142 don't-fake-gaps). */
+/** Attach categories not yet wired — shown in the menu as honest-disabled rows so
+ *  the surface is complete but never fakes a capability that does not exist yet
+ *  (D142 don't-fake-gaps). Context is LIVE (PR-7b) and rendered separately. */
 const SOON_CATEGORIES: ReadonlyArray<{ label: string; testId: string }> = [
   { label: "Blueprint", testId: "attach-blueprint" },
   { label: "Dataset", testId: "attach-dataset" },
   { label: "Tool", testId: "attach-tool" },
-  { label: "Context", testId: "attach-context" },
 ];
+
+/** PR-7b: the context-bundle picker state the parent (ChatPanel) owns + passes in.
+ *  `bundles` are the party's authored handles; toggling attaches/detaches a handle
+ *  to the NEXT turn (multi-select — the menu stays open). Absent ⇒ no picker. */
+export interface ContextPickerProps {
+  readonly bundles: readonly string[];
+  readonly attached: readonly string[];
+  readonly notWired: boolean;
+  readonly onToggle: (handle: string) => void;
+}
 
 /**
  * The message input — a Monaco surface with MARKDOWN highlighting (D141.2's
@@ -26,12 +35,15 @@ export function Composer({
   sendBlocked,
   onSend,
   onPickFiles,
+  context,
 }: {
   disabled: boolean;
   /** Extra send-only block (e.g. an attachment upload still in flight). */
   sendBlocked?: boolean;
   onSend: (text: string) => void;
   onPickFiles?: (files: ArrayLike<File>) => void;
+  /** PR-7b: the context-bundle picker (the attach-menu "Context" category). */
+  context?: ContextPickerProps;
 }) {
   const [text, setText] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
@@ -110,9 +122,63 @@ export function Composer({
                     <Icon name="attach" size={15} />
                     <span>Upload a file</span>
                   </button>
-                  {/* Attaching a Blueprint/Dataset/Tool/Context as message context
-                      rides the Context-bundle work (PR-7) — shown but honest-
-                      disabled so the menu is complete without faking the gap. */}
+                  {/* PR-7b: the LIVE Context category — pick authored bundles to
+                      ground the next turn (multi-select; the menu stays open). */}
+                  {context ? (
+                    <div className="popover__group" data-testid="attach-context-group">
+                      <div className="popover__group-label">Context</div>
+                      {context.notWired ? (
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className="popover__item popover__item--disabled"
+                          data-testid="attach-context-not-wired"
+                          disabled
+                          aria-disabled="true"
+                          title="Context bundles need a newer gateway"
+                        >
+                          <span>Needs a newer gateway</span>
+                        </button>
+                      ) : context.bundles.length === 0 ? (
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className="popover__item popover__item--disabled"
+                          data-testid="attach-context-empty"
+                          disabled
+                          aria-disabled="true"
+                          title="Author bundles in the Context section"
+                        >
+                          <span>No bundles — author in Context</span>
+                        </button>
+                      ) : (
+                        context.bundles.map((handle) => {
+                          const on = context.attached.includes(handle);
+                          return (
+                            <button
+                              key={handle}
+                              type="button"
+                              role="menuitemcheckbox"
+                              aria-checked={on}
+                              className={`popover__item${on ? " popover__item--active" : ""}`}
+                              data-testid={`attach-context-option-${handle}`}
+                              onClick={() => context.onToggle(handle)}
+                            >
+                              <span className="mono">{handle}</span>
+                              {on ? (
+                                <span className="popover__check" aria-hidden="true">
+                                  ✓
+                                </span>
+                              ) : null}
+                            </button>
+                          );
+                        })
+                      )}
+                    </div>
+                  ) : null}
+                  {/* Attaching a Blueprint/Dataset/Tool as message context is not yet
+                      wired — shown but honest-disabled so the menu is complete
+                      without faking the gap. */}
                   {SOON_CATEGORIES.map((c) => (
                     <button
                       key={c.testId}

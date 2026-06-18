@@ -13,6 +13,12 @@ import { useConnection } from "./connection-context";
 export interface InvokeVars {
   handle: string;
   args: Record<string, unknown>;
+  /**
+   * PR-7b: context-bundle handles to attach to this run. The server resolves each
+   * to its content refs and folds them into the entry Mote's identity-bearing
+   * config, so a different attached context ⇒ a different run.
+   */
+  context?: readonly string[];
 }
 
 /** The server-derived handles for a started run (all hex; the client never derives an id). */
@@ -26,11 +32,15 @@ export interface StartedRun {
 export function useInvoke() {
   const { client } = useConnection();
   return useMutation<StartedRun, unknown, InvokeVars>({
-    mutationFn: async ({ handle, args }) => {
+    mutationFn: async ({ handle, args, context }) => {
       if (!client) {
         throw new Error("not connected");
       }
-      const run = (await client.invoke(handle, args)) as Run;
+      // Only carry the opts arg when context is attached — a plain turn keeps the
+      // exact `invoke(handle, args)` call (PR-7b is additive, never perturbs it).
+      const run = (await (context && context.length > 0
+        ? client.invoke(handle, args, { context })
+        : client.invoke(handle, args))) as Run;
       return {
         instanceId: run.instanceId,
         terminalMoteId: run.terminalMoteId,

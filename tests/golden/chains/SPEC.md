@@ -69,6 +69,29 @@ So `a > [b & c]` fans OUT (`a→b`, `a→c`); `[a & b] > c` fans IN (`a→c`, `b
 The result feeds `BlueprintBuilder.add_step` / `add_edge` (one canonical lowering) →
 `SubmitWorkflowRequest`.
 
+## Context bundles (PR-7b)
+
+A chain may carry an ordered list of **context-bundle handles** (`namespace/collection/name`
+strings) — named, content-addressed grounding the caller attaches to the run. Context is
+**chain-level, NOT a node**: it is `repeated string context_bundles` on `SubmitWorkflowRequest`
+(field 5), and the SERVER injects the resolved item-refs into EVERY entry (parentless) Mote's
+identity-bearing `config_subset` at bind (a different attached context ⇒ a different entry MoteId
+⇒ exactly-once-per-`(input + context)`). Position in the chain is irrelevant — there is no
+`context()` step.
+
+- **Front doors**: the string `chain(expr, tasks, context=[...])`, the operator/combinator form
+  (`Chain.from_node(node, context=[...])` / `chainFrom(frag, {context})`), the fluent
+  `.context(*handles)` (appends, returns an immutable copy), and the CLI `--context <handle>`
+  (repeatable). `blueprint run --file` accepts a top-level `"context_bundles": [...]`.
+- **Lowering rule**: `context_bundles` are emitted **verbatim in caller-supplied order — NOT
+  sorted, NOT deduped at the DSL layer**. The server owns canonicalization (it folds the SORTED,
+  deduped ref-set into `config_subset` at bind, SN-8); the DSL only PROPOSES the handle list.
+- **Default**: absent ⇒ `[]`. A chain that attaches no context lowers byte-identically to
+  pre-PR-7 (the empty repeated field serializes away), so the canonical reference run is unmoved.
+
+The lowering inspector (`lowering()` / `lower()`) includes a top-level `context_bundles` array so
+the cross-surface byte-identity of the attachment is pinned by the corpus.
+
 ## Validation (errors, fail-closed)
 
 - **Empty expression** or **empty group `[]`** → parse error.
@@ -95,6 +118,11 @@ A `tool` task spec carries `tool_contract` + (optional) structured `args`:
 `expect` step has the `tool_contract` and `params["kx.tool.args"]` = the canonical-JSON string. Each
 surface lowers the structured `args` (Python/TS via the `tool()` factory, Rust via the CLI
 `StepSpec.args`) and the corpus asserts the byte-identical canonical JSON.
+
+A case MAY carry a top-level `"context_bundles": [<handle>, ...]` (the chain-level attachment);
+its `expect` then carries the SAME array (verbatim order). When absent, each surface defaults it
+to `[]` — so the existing cases stay byte-unchanged. `ctx_multi_order` pins order-preservation
+(its input order is NOT sorted, and `expect.context_bundles` matches it).
 
 `steps` are in node order; `params` values are strings (the pre-encoding lowering form — each SDK
 UTF-8-encodes at `build()` time). An error case carries `"error": "<class>"` instead of `expect`,

@@ -464,6 +464,12 @@ export interface LoweredEdge {
 export interface Lowered {
   steps: LoweredStep[];
   edges: LoweredEdge[];
+  /**
+   * PR-7b: the chain-level context-bundle handles, emitted verbatim (caller order
+   * — the SERVER canonicalizes the sorted ref-set into each entry Mote at bind,
+   * SN-8). Absent on the wire ⇒ `[]`; the corpus pins its byte-identity.
+   */
+  context_bundles: string[];
 }
 
 /** Sort + dedup edge index pairs ascending by (parent, child) — the canonical rule. */
@@ -568,6 +574,12 @@ export interface ChainOptions {
   tasks: Readonly<Record<string, Task>>;
   /** The chain seed (default `0`). */
   seed?: number;
+  /**
+   * PR-7b: context-bundle handles to attach to the run (chain-level grounding the
+   * server injects into every entry Mote; verbatim order). Also settable fluently
+   * via {@link Chain.context}.
+   */
+  context?: readonly string[];
 }
 
 /**
@@ -581,13 +593,29 @@ export class Chain {
     private readonly nodes: readonly Task[],
     private readonly edgePairs: readonly LoweredEdge[],
     readonly seed: number,
+    /** PR-7b: chain-level context-bundle handles (verbatim caller order). */
+    readonly contextBundles: readonly string[] = [],
   ) {}
+
+  /**
+   * Attach context-bundle `handles` to this chain (PR-7b), returning a NEW
+   * {@link Chain} (immutable — this one is unchanged). Repeated calls APPEND in
+   * order; the SERVER resolves each handle to its content-refs and folds the
+   * sorted set into every entry Mote's identity-bearing config, so a different
+   * attached context ⇒ a different run (exactly-once-per-input+context). Context
+   * is request-level — it attaches to the ENTRY Motes regardless of position;
+   * there is no `context` step.
+   */
+  context(...handles: string[]): Chain {
+    return new Chain(this.nodes, this.edgePairs, this.seed, [...this.contextBundles, ...handles]);
+  }
 
   /** The canonical lowering (the corpus snake_case shape; `params` values are strings). */
   lower(): Lowered {
     return {
       steps: this.nodes.map((t) => taskToLoweredStep(t)),
       edges: this.edgePairs.map((e) => ({ ...e })),
+      context_bundles: [...this.contextBundles],
     };
   }
 
@@ -606,15 +634,21 @@ export class Chain {
       const edge: EdgeInput = { parent: e.parent, child: e.child, edge: "data" };
       builder.addEdge(edge);
     }
+    builder.contextBundles(this.contextBundles);
     return builder.build();
   }
 }
 
 /** Assemble a {@link Chain} from resolved node-ordered tasks + canonical edges + seed. */
-function chainOf(nodes: Task[], edgePairs: Array<[number, number]>, seed: number): Chain {
+function chainOf(
+  nodes: Task[],
+  edgePairs: Array<[number, number]>,
+  seed: number,
+  contextBundles: readonly string[] = [],
+): Chain {
   const edges = canonicalizeEdges(edgePairs);
   assertAcyclic(nodes.length, edges);
-  return new Chain(nodes, edges, seed);
+  return new Chain(nodes, edges, seed, contextBundles);
 }
 
 /**
@@ -632,7 +666,7 @@ export function chain(expr: string, opts: ChainOptions): Chain {
   const parser = new Parser(tokenize(expr));
   parser.parse();
   const { nodes, edgePairs } = lowerParse(parser, opts.tasks);
-  return chainOf(nodes, edgePairs, opts.seed ?? 0);
+  return chainOf(nodes, edgePairs, opts.seed ?? 0, opts.context ?? []);
 }
 
 /**
@@ -646,12 +680,15 @@ export function chain(expr: string, opts: ChainOptions): Chain {
  * chainFrom(seq(a, par(b, c)));          // == chain("a > [b & c]", ...)
  * ```
  */
-export function chainFrom(frag: Frag, opts: { seed?: number } = {}): Chain {
+export function chainFrom(
+  frag: Frag,
+  opts: { seed?: number; context?: readonly string[] } = {},
+): Chain {
   const acc = new NodeAccumulator() as EdgeRecordingAccumulator;
   evalFrag(frag, acc);
   const edgePairs: Array<[number, number]> = (acc.edges ?? []).map(([p, c]) => [
     acc.index(p),
     acc.index(c),
   ]);
-  return chainOf([...acc.nodes], edgePairs, opts.seed ?? 0);
+  return chainOf([...acc.nodes], edgePairs, opts.seed ?? 0, opts.context ?? []);
 }

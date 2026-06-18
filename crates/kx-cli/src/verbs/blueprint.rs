@@ -14,11 +14,14 @@
 //!     { "kind": "pure" }
 //!   ],
 //!   "edges": [ { "parent": 0, "child": 1, "edge": "data" } ],
-//!   "execution_mode": "frozen"
+//!   "execution_mode": "frozen",
+//!   "context_bundles": [ "team/ctx/spec" ]
 //! }
 //! ```
 //! `params` values are UTF-8 strings (their bytes land in the step's config).
 //! `kind` ∈ {`pure`, `model`} (`exec` is reserved); `edge` ∈ {`data`, `control`}.
+//! `context_bundles` (PR-7, optional) attaches named context bundles to the run —
+//! the server injects them into every entry Mote at bind (SN-8).
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -48,6 +51,11 @@ pub(crate) struct DagSpec {
     pub(crate) edges: Vec<EdgeSpec>,
     #[serde(default)]
     pub(crate) execution_mode: Option<String>,
+    /// PR-7: context-bundle handles to attach to the run (chain-level grounding the
+    /// SERVER resolves + injects into every entry Mote at bind, SN-8). Verbatim
+    /// order; empty ⇒ byte-identical to pre-PR-7.
+    #[serde(default)]
+    pub(crate) context_bundles: Vec<String>,
 }
 
 /// PR-6b-2: the single canonical config key a `tool` step's authored args ride
@@ -225,7 +233,7 @@ pub(crate) fn to_request(spec: DagSpec) -> Result<proto::SubmitWorkflowRequest, 
         steps,
         edges,
         execution_mode: execution_mode as i32,
-        context_bundles: vec![],
+        context_bundles: spec.context_bundles,
     })
 }
 

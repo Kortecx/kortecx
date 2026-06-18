@@ -85,6 +85,60 @@ const run = await kx.invoke("kx/recipes/react",
                             { context: ["team/ctx/spec"], wait: true });
 ```
 
+## Attach a bundle to a chain
+
+A [Chain](./chains/dsl-reference.md) carries context **at the chain level** — the
+server attaches it to the chain's entry step(s), so position in the chain is
+irrelevant (there is no `context` node). Pass the handles via the `context`
+option, the fluent `.context(...)`, or the CLI `--context` flag (repeatable):
+
+```python
+from kortecx.chains import chain, model
+
+c = chain("plan > write",
+          {"plan": model("kx-serve:qwen3", "Plan the doc."),
+           "write": model("kx-serve:qwen3", "Write it.")},
+          context=["team/ctx/spec"])           # or: .context("team/ctx/spec")
+run = kx.run_chain(c, wait=True)
+```
+
+```ts
+import { chain, task } from "@kortecx/sdk/chains";
+
+const c = chain("plan > write", {
+  tasks: { plan: task.model("kx-serve:qwen3", "Plan the doc."),
+           write: task.model("kx-serve:qwen3", "Write it.") },
+  context: ["team/ctx/spec"],                   // or: .context("team/ctx/spec")
+});
+await kx.runChain(c, { wait: true });
+```
+
+```bash
+kx chain run "plan > write" --tasks tasks.json --context team/ctx/spec --wait
+```
+
+The handles lower **verbatim** into the request's `context_bundles` (no client-side
+sort/dedup — the server owns canonicalization). The lowering is pinned
+byte-identical across Python, TypeScript, and the CLI by the
+[Chains golden corpus](./chains/dsl-reference.md).
+
+## Manage bundles in the Console
+
+The console's **Context** section (left nav → Context) is the OSS author + govern
+surface:
+
+- **Author** a bundle: a handle + a description + items added by uploading files
+  (each upload is a `PutContent`) or by naming an existing content ref.
+- **Review** every bundle you authored — its items (each a content ref) and the
+  server-derived bundle ref.
+- **Delete** a bundle (unbinds the handle; the content-store blobs stay).
+
+In **Chat**, the composer's attach menu has a live **Context** category: pick one
+or more bundles to ground the next turn. The attached bundles show as chips above
+the composer and ride that turn's run (the same identity-bearing attachment as
+`--context`). The section degrades to an honest "needs a newer gateway" state when
+the bundle store is absent (never a mock).
+
 ## How delivery works
 
 At bind, the runtime resolves each attached handle to its item refs (caller-scoped,

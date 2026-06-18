@@ -147,6 +147,32 @@ step's `model_id` and `prompt` are carried into its `StepInput`; the pure step
 carries its `params`. Params values are strings in the lowering form — each SDK
 UTF-8-encodes them at `build()` time.
 
+### Attaching context bundles
+
+A chain can attach [context bundles](../context.md) — named, content-addressed
+grounding the model reasons over. Context is **chain-level, not a node**: the
+server injects it into the chain's entry step(s), so position is irrelevant.
+Attach handles via the `context` option (or the fluent `.context(...)`, or the CLI
+`--context` flag, repeatable):
+
+```python
+chain("plan > write", tasks=tasks, context=["team/ctx/spec"])
+```
+
+```ts
+chain("plan > write", { tasks, context: ["team/ctx/spec"] });
+```
+
+```bash
+kx chain run "plan > write" --tasks tasks.json --context team/ctx/spec
+```
+
+The handles lower **verbatim** into the request's `context_bundles` (no DSL-side
+sort or dedup — the server canonicalizes the sorted ref-set at bind, SN-8). A
+chain with no attached context lowers byte-identically to pre-context-bundle, and
+the attachment's byte-identity across Python, TypeScript, and the CLI is pinned by
+the golden corpus alongside the topology.
+
 ## Per-language authoring
 
 - **[Chains in Python](./python.md)** — the `chain()` string DSL plus the

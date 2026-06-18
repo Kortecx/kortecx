@@ -13,14 +13,16 @@
 //! Python / TypeScript SDKs lower an identical chain to byte-identical topology.
 //!
 //! ```text
-//! kx chain run "a > [b & c]" --tasks tasks.json --wait
+//! kx chain run "a > [b & c]" --tasks tasks.json --context team/ctx/spec --wait
 //! ```
 //! `--tasks` is a JSON object map `{ "a": {"kind":"pure", ...}, ... }` — each value
 //! is a [`StepSpec`](crate::verbs::blueprint) (the same shape as a `blueprint`
 //! step). A handle that appears more than once is the SAME node (reuse builds DAGs);
 //! tasks defined but unused are ignored (lenient). Palette: `pure` / `model` /
 //! `tool` (PR-6b-2 — fire a registered tool; `args` lower to the canonical
-//! `kx.tool.args` blob).
+//! `kx.tool.args` blob). `--context <handle>` (PR-7, repeatable) attaches named
+//! context bundles to the run — the server injects them into every entry Mote at
+//! bind (SN-8); verbatim order, empty ⇒ byte-identical to pre-PR-7.
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
@@ -48,6 +50,9 @@ pub struct ChainArgs {
     pub tasks: PathBuf,
     /// The chain seed (`--seed`, default 0; folds into entrypoint identity).
     pub seed: u32,
+    /// PR-7: context-bundle handles to attach (`--context <handle>`, repeatable).
+    /// Verbatim order; the server resolves + injects into every entry Mote (SN-8).
+    pub context: Vec<String>,
     /// Run to completion and print the committed result (`--wait`).
     pub wait: bool,
     /// `--wait` timeout in seconds.
@@ -72,6 +77,7 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<ChainArgs, CliErr
     let mut dsl: Option<String> = None;
     let mut tasks: Option<PathBuf> = None;
     let mut seed: u32 = 0;
+    let mut context: Vec<String> = Vec::new();
     let mut wait = false;
     let mut timeout_secs = DEFAULT_TIMEOUT_SECS;
     let mut out: Option<PathBuf> = None;
@@ -89,6 +95,7 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<ChainArgs, CliErr
                     CliError::Usage(format!("--seed expects an integer, got {v:?}"))
                 })?;
             }
+            "--context" => context.push(next_value(&mut args, "--context")?),
             "--wait" => wait = true,
             "--timeout-secs" => {
                 let v = next_value(&mut args, "--timeout-secs")?;
@@ -123,6 +130,7 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<ChainArgs, CliErr
         dsl,
         tasks,
         seed,
+        context,
         wait,
         timeout_secs,
         out,
@@ -402,6 +410,7 @@ fn build_request(
     lowered: Lowered,
     mut tasks: BTreeMap<String, StepSpec>,
     seed: u32,
+    context_bundles: Vec<String>,
 ) -> Result<kx_proto::proto::SubmitWorkflowRequest, CliError> {
     let mut steps = Vec::with_capacity(lowered.nodes.len());
     for handle in &lowered.nodes {
@@ -426,6 +435,8 @@ fn build_request(
         edges,
         // The DSL fixes the mode to frozen (the deterministic canonical lowering).
         execution_mode: Some("frozen".to_string()),
+        // PR-7: chain-level context attachment, verbatim (the server canonicalizes).
+        context_bundles,
     };
     crate::verbs::blueprint::to_request(spec)
 }
@@ -438,7 +449,7 @@ pub async fn execute(args: ChainArgs) -> Result<(), CliError> {
         .map_err(|e| CliError::Usage(format!("invalid --tasks JSON: {e}")))?;
 
     let lowered = lower(&args.dsl)?;
-    let req = build_request(lowered, tasks, args.seed)?;
+    let req = build_request(lowered, tasks, args.seed, args.context)?;
 
     let resolved = args.common.resolve()?;
     let mut client = resolved.connect().await?;
@@ -495,6 +506,10 @@ mod tests {
             "tasks.json",
             "--seed",
             "7",
+            "--context",
+            "team/ctx/spec",
+            "--context",
+            "team/ctx/notes",
             "--wait",
             "--json",
             "--timeout-secs",
@@ -504,8 +519,36 @@ mod tests {
         assert_eq!(a.dsl, "a > [b & c]");
         assert_eq!(a.tasks, PathBuf::from("tasks.json"));
         assert_eq!(a.seed, 7);
+        // PR-7: --context is repeatable, captured verbatim in order.
+        assert_eq!(a.context, vec!["team/ctx/spec", "team/ctx/notes"]);
         assert!(a.wait && a.common.json);
         assert_eq!(a.timeout_secs, 30);
+    }
+
+    #[test]
+    fn no_context_flag_yields_an_empty_attachment() {
+        let a = p(&["run", "a > b", "--tasks", "t.json"]).unwrap();
+        assert!(a.context.is_empty());
+    }
+
+    #[test]
+    fn context_flows_through_build_request() {
+        // PR-7: a chain with --context lowers to a request carrying the handles
+        // verbatim; context is chain-level (the step count is unchanged).
+        let mut tasks = BTreeMap::new();
+        tasks.insert(
+            "a".to_string(),
+            serde_json::from_value::<StepSpec>(serde_json::json!({ "kind": "pure" })).unwrap(),
+        );
+        let req = build_request(
+            lower("a").unwrap(),
+            tasks,
+            0,
+            vec!["z/ctx/two".to_string(), "a/ctx/one".to_string()],
+        )
+        .unwrap();
+        assert_eq!(req.steps.len(), 1);
+        assert_eq!(req.context_bundles, vec!["z/ctx/two", "a/ctx/one"]);
     }
 
     #[test]
@@ -530,6 +573,8 @@ mod tests {
         dsl: String,
         #[serde(default)]
         seed: u32,
+        #[serde(default)]
+        context_bundles: Vec<String>,
         tasks: BTreeMap<String, StepSpec>,
         #[serde(default)]
         expect: Option<Expect>,
@@ -541,6 +586,8 @@ mod tests {
     struct Expect {
         steps: Vec<ExpectStep>,
         edges: Vec<ExpectEdge>,
+        #[serde(default)]
+        context_bundles: Vec<String>,
     }
 
     #[derive(Debug, Deserialize)]
@@ -600,11 +647,18 @@ mod tests {
                 lower(&case.dsl).unwrap_or_else(|e| panic!("[{}] lower failed: {e}", case.name)),
                 case.tasks,
                 case.seed,
+                case.context_bundles,
             )
             .unwrap_or_else(|e| panic!("[{}] build_request failed: {e}", case.name));
 
             // seed + frozen mode are part of the canonical lowering.
             assert_eq!(req.seed, case.seed, "[{}] seed", case.name);
+            // PR-7b: chain-level context attachment, verbatim order (absent ⇒ []).
+            assert_eq!(
+                req.context_bundles, expect.context_bundles,
+                "[{}] context_bundles",
+                case.name
+            );
             assert_eq!(
                 req.execution_mode,
                 proto::WorkflowExecutionMode::Frozen as i32,
@@ -679,8 +733,9 @@ mod tests {
             let class = case.error.expect("filtered to error cases");
             // Parse/cycle errors surface from `lower`; unknown_handle from the tasks
             // resolution in `build_request`.
-            let result = lower(&case.dsl)
-                .and_then(|low| build_request(low, case.tasks, case.seed).map(|_| ()));
+            let result = lower(&case.dsl).and_then(|low| {
+                build_request(low, case.tasks, case.seed, case.context_bundles).map(|_| ())
+            });
             let err = result
                 .expect_err(&format!("[{}] expected an error", case.name))
                 .to_string()

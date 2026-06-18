@@ -4,6 +4,7 @@ import { fadeUp } from "../../app/motion";
 import { useConnection } from "../../kx/connection-context";
 import { useAttachments } from "../../kx/use-attachments";
 import { REACT_RECIPE_HANDLE, useChat } from "../../kx/use-chat";
+import { useContextBundles } from "../../kx/use-context-bundles";
 import { useModels } from "../../kx/use-models";
 import { useRecipes } from "../../kx/use-recipes";
 import {
@@ -75,6 +76,15 @@ export function ChatPanel() {
     agentMode: agentMode && agentAvailable,
   });
   const attach = useAttachments();
+  // PR-7b: the party's authored context bundles + the handles attached to the
+  // NEXT turn (multi-select via the composer attach-menu Context category).
+  const contextBundles = useContextBundles();
+  const [pendingContext, setPendingContext] = useState<readonly string[]>([]);
+  function toggleContext(handle: string): void {
+    setPendingContext((prev) =>
+      prev.includes(handle) ? prev.filter((h) => h !== handle) : [...prev, handle],
+    );
+  }
   const [historyOpen, setHistoryOpen] = useState(false);
   // The identity the autosave upserts under; a new id per fresh/restored thread.
   const chatIdRef = useRef<string>(crypto.randomUUID());
@@ -153,8 +163,9 @@ export function ChatPanel() {
         mediaType: a.mediaType,
         objectUrl: a.objectUrl,
       }));
-    void chat.send(text, ready);
+    void chat.send(text, ready, pendingContext);
     attach.clear();
+    setPendingContext([]);
   }
 
   return (
@@ -294,11 +305,40 @@ export function ChatPanel() {
         />
       </div>
       <AttachmentStrip attachments={attach.attachments} onRemove={attach.remove} />
+      {pendingContext.length > 0 ? (
+        <div className="context-strip" data-testid="chat-context-strip">
+          <span className="context-strip__label muted">Context:</span>
+          {pendingContext.map((handle) => (
+            <span
+              key={handle}
+              className="context-strip__chip"
+              data-testid={`chat-context-${handle}`}
+            >
+              <span className="mono">{handle}</span>
+              <button
+                type="button"
+                className="context-strip__remove"
+                aria-label={`Detach ${handle}`}
+                data-testid={`chat-context-remove-${handle}`}
+                onClick={() => toggleContext(handle)}
+              >
+                ✕
+              </button>
+            </span>
+          ))}
+        </div>
+      ) : null}
       <Composer
         disabled={chat.busy}
         sendBlocked={attach.uploading}
         onSend={sendWithAttachments}
         onPickFiles={attach.addFiles}
+        context={{
+          bundles: contextBundles.bundles.map((b) => b.handle),
+          attached: pendingContext,
+          notWired: contextBundles.notWired,
+          onToggle: toggleContext,
+        }}
       />
 
       <ChatHistory

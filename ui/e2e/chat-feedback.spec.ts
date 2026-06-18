@@ -56,7 +56,7 @@ test("a settled answer carries copy + 👍/👎; rating SENDS SubmitFeedback to 
   await page.getByTestId("msg-copy").click();
 });
 
-test("the attach button opens a menu: Upload is live, Context is honest-disabled", async ({
+test("the attach button opens a menu: Upload + Context are live, Blueprint/Dataset/Tool are honest-disabled", async ({
   page,
 }) => {
   gw = await spawnGateway({ corsOrigin: SPA_ORIGIN });
@@ -67,7 +67,12 @@ test("the attach button opens a menu: Upload is live, Context is honest-disabled
   await page.getByTestId("attach-btn").click();
   await expect(page.getByTestId("attach-menu")).toBeVisible();
   await expect(page.getByTestId("attach-upload")).toBeEnabled();
-  await expect(page.getByTestId("attach-context")).toBeDisabled();
+  // PR-7b: the Context category is LIVE — on a fresh serve (no bundles authored)
+  // it shows the honest "no bundles" row, never a fake.
+  await expect(page.getByTestId("attach-context-group")).toBeVisible();
+  await expect(page.getByTestId("attach-context-empty")).toBeVisible();
+  // The remaining not-yet-wired categories stay honest-disabled (don't-fake-gaps).
+  await expect(page.getByTestId("attach-tool")).toBeDisabled();
 
   // Escape closes the menu.
   await page.keyboard.press("Escape");

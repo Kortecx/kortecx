@@ -11,7 +11,7 @@ only changes what is PROPOSED, never what identity it gets.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional, Sequence, Union
 
 from . import hexids
 from .v1 import coordinator_pb2 as _c
@@ -66,6 +66,7 @@ class BlueprintBuilder:
         self._steps: List[StepInput] = []
         self._edges: List[EdgeInput] = []
         self._mode = "frozen"
+        self._context_bundles: List[str] = []
 
     def add_step(self, step: StepInput) -> int:
         self._steps.append(step)
@@ -77,6 +78,13 @@ class BlueprintBuilder:
 
     def mode(self, m: str) -> "BlueprintBuilder":
         self._mode = m
+        return self
+
+    def context_bundles(self, handles: Sequence[str]) -> "BlueprintBuilder":
+        """PR-7: attach context-bundle handles to the run (verbatim order — the
+        SERVER canonicalizes + injects into every entry Mote at bind, SN-8). An
+        empty list ⇒ a request byte-identical to pre-PR-7."""
+        self._context_bundles = list(handles)
         return self
 
     def build(self) -> "_g.SubmitWorkflowRequest":
@@ -112,5 +120,9 @@ class BlueprintBuilder:
             else _g.WorkflowExecutionMode.WORKFLOW_EXECUTION_MODE_FROZEN
         )
         return _g.SubmitWorkflowRequest(
-            seed=self._seed, steps=steps, edges=edges, execution_mode=mode
+            seed=self._seed,
+            steps=steps,
+            edges=edges,
+            execution_mode=mode,
+            context_bundles=list(self._context_bundles),
         )
