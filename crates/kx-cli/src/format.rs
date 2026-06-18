@@ -1074,6 +1074,45 @@ pub fn render_snapshot_into(resp: &proto::SnapshotIntoResponse, json: bool) -> S
     }
 }
 
+/// Render `branch advance` / the post-`edit` manifest — the re-pointed manifest
+/// (D155 Phase-3). Mirrors `render_snapshot_into` minus the `ingested` count.
+#[must_use]
+pub fn render_advance_branch(resp: &proto::AdvanceBranchResponse, json: bool) -> String {
+    if json {
+        json!({
+            "branch_ref": hex::encode(&resp.branch_ref),
+            "handle": resp.handle,
+            "item_count": resp.items.len(),
+            "items": branch_items_json(&resp.items),
+            "deduplicated": resp.deduplicated,
+        })
+        .to_string()
+    } else {
+        let header = format!(
+            "branch {} advanced ref={}  {} file(s){}",
+            resp.handle,
+            hex::encode(&resp.branch_ref),
+            resp.items.len(),
+            if resp.deduplicated {
+                "  (no change)"
+            } else {
+                ""
+            }
+        );
+        let rows = resp
+            .items
+            .iter()
+            .map(|it| format!("  {} -> {}", it.path, hex::encode(&it.content_ref)))
+            .collect::<Vec<_>>()
+            .join("\n");
+        if rows.is_empty() {
+            header
+        } else {
+            format!("{header}\n{rows}")
+        }
+    }
+}
+
 /// Render `branch list` — the caller's branches in handle order.
 #[must_use]
 pub fn render_branches_list(resp: &proto::ListBranchesResponse, json: bool) -> String {

@@ -308,6 +308,11 @@ class KxGatewayStub(object):
                 request_serializer=kortecx_dot_v1_dot_gateway__pb2.DeleteBranchRequest.SerializeToString,
                 response_deserializer=kortecx_dot_v1_dot_gateway__pb2.DeleteBranchResponse.FromString,
                 _registered_method=True)
+        self.AdvanceBranch = channel.unary_unary(
+                '/kortecx.v1.KxGateway/AdvanceBranch',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.AdvanceBranchRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.AdvanceBranchResponse.FromString,
+                _registered_method=True)
 
 
 class KxGatewayServicer(object):
@@ -706,6 +711,17 @@ class KxGatewayServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def AdvanceBranch(self, request, context):
+        """D155 Phase-3 — agentic in-CAS edit: re-point a manifest path to an EXISTING
+        content-store ref (the edited body the ReAct loop just committed). Strictly
+        IN-CAS — never reads/writes the host (host write-back is Phase-B). NOT_FOUND
+        if the branch is unknown to the caller; INVALID_ARGUMENT if the ref does not
+        resolve in the content store (fail-closed — no dangling manifest).
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_KxGatewayServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -978,6 +994,11 @@ def add_KxGatewayServicer_to_server(servicer, server):
                     servicer.DeleteBranch,
                     request_deserializer=kortecx_dot_v1_dot_gateway__pb2.DeleteBranchRequest.FromString,
                     response_serializer=kortecx_dot_v1_dot_gateway__pb2.DeleteBranchResponse.SerializeToString,
+            ),
+            'AdvanceBranch': grpc.unary_unary_rpc_method_handler(
+                    servicer.AdvanceBranch,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.AdvanceBranchRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.AdvanceBranchResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -2442,6 +2463,33 @@ class KxGateway(object):
             '/kortecx.v1.KxGateway/DeleteBranch',
             kortecx_dot_v1_dot_gateway__pb2.DeleteBranchRequest.SerializeToString,
             kortecx_dot_v1_dot_gateway__pb2.DeleteBranchResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def AdvanceBranch(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/AdvanceBranch',
+            kortecx_dot_v1_dot_gateway__pb2.AdvanceBranchRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.AdvanceBranchResponse.FromString,
             options,
             channel_credentials,
             insecure,

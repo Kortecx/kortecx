@@ -67,6 +67,43 @@ kx branch snapshot team/workspace/feature --path src/lib.rs   # only lib.rs re-p
 kx branch remove team/workspace/feature
 ```
 
+## Edit a branch file (agentic, in-CAS)
+
+`kx branch edit` runs the model over a branch file: it attaches the file's
+**current** content as context, the model rewrites it per your instruction, the new
+body commits as a fresh `ContentRef`, and the manifest **advances** to it. The host
+filesystem is never written.
+
+```bash
+# the operator must serve a model; set KX_SERVE_FS_ROOT to also allow sibling reads
+kx branch edit team/workspace/main --path README.md \
+  --instruction "Add a one-line summary to the top; keep the rest unchanged"
+kx branch get team/workspace/main          # README.md now points at the new ref
+```
+
+The edit runs through the `kx/recipes/react-edit` recipe — a single model step
+(seeded only when a model is served). The model's leading `<think>` reasoning is
+stripped at commit, so the committed answer **is** the new file body verbatim (no
+silent transform). The model rewrites only from the attached current contents;
+letting the model read *other* files in the loop (`fs-read`) is a later capability.
+It never writes the host.
+
+The edit **fails closed** if the model returns no usable file body (the branch is
+left unchanged rather than advanced to an empty file). Edit quality depends on the
+served model completing the rewrite; small or heavy-reasoning models may need a
+retry.
+
+Because the edit is an ordinary `Invoke`, it is **reproducible**: re-run it with a
+changed instruction via `kx runs rerun --set` and only the changed sub-DAG
+recomputes (the kernel's exact-equality dedup).
+
+Power users can re-point a path to an already-committed ref directly (the low-level
+step the agentic edit ends with):
+
+```bash
+kx branch advance team/workspace/main --path README.md --ref <64-hex content ref>
+```
+
 ## SDKs
 
 The Python and TypeScript SDKs expose the same surface.
@@ -80,6 +117,10 @@ with KxClient("http://127.0.0.1:50151", token="...") as kx:
     kx.create_branch("team/workspace/feature", parent="team/workspace/main")
     for b in kx.list_branches():
         print(b.handle, b.item_count, b.parent_handle)
+    # agentic in-CAS edit (needs a served model)
+    res = kx.edit_branch("team/workspace/main", "README.md",
+                         "Add a one-line summary to the top")
+    print(res.handle, res.branch_ref)        # the manifest advanced
 ```
 
 ```ts
@@ -90,6 +131,9 @@ const snap = await kx.snapshotInto("team/workspace/main", ["src/lib.rs", "README
 console.log(snap.ingested, snap.items.length);
 await kx.createBranch("team/workspace/feature", { parent: "team/workspace/main" });
 const branches = await kx.listBranches();
+// agentic in-CAS edit (needs a served model)
+const res = await kx.editBranch("team/workspace/main", "README.md",
+  "Add a one-line summary to the top");
 ```
 
 ## In the console
@@ -98,7 +142,8 @@ The **Branches** section (under **Data**) lists your branches, shows each
 manifest's `{path → ref}` entries with a digest chip per file, and lets you create
 a branch, fork a sub-branch, and snapshot a path set — when the operator has set a
 read root. Without one, the section shows an honest disabled state explaining how
-to enable it.
+to enable it. Each file row has an **Edit** control that opens an instruction box
+and runs the agentic in-CAS rewrite (when a model is served).
 
 ## What this is *not* (yet)
 

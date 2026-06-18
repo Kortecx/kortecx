@@ -704,11 +704,16 @@ impl<B: InferenceBackend> ModelRouterExecutor<B> {
         // The committed `result_ref` is the content hash of the completion — a
         // greedy decode ⇒ identical bytes ⇒ identical ref (exactly-once-per-input).
         let bytes = self.dispatch_model(mote, warrant)?;
-        // PR-4 (T-FEAT1): under `reasoning=off`, defensively strip a leading
-        // `<think>` block the model may still emit (a model ignoring `/no_think`)
-        // so the committed "off" answer carries no reasoning. ONLY affects
-        // off-Motes (the default path commits the raw bytes verbatim).
-        let bytes = if reasoning_mode_from_config(mote) == ReasoningMode::Off {
+        // PR-4 (T-FEAT1) + D155 Phase-3: under `reasoning=off` OR `reasoning=strip`,
+        // defensively strip a leading `<think>` block so the committed answer
+        // carries no reasoning. `off` ALSO sends `/no_think` (suppress); `strip`
+        // lets the model reason naturally and only strips at commit (react-edit —
+        // some models emit an empty completion under `/no_think`). ONLY affects
+        // those Motes (the default path commits the raw bytes verbatim).
+        let bytes = if matches!(
+            reasoning_mode_from_config(mote),
+            ReasoningMode::Off | ReasoningMode::Strip
+        ) {
             match std::str::from_utf8(&bytes) {
                 Ok(text) => strip_leading_think(text).as_bytes().to_vec(),
                 Err(_) => bytes, // non-UTF-8 completion — leave as-is
@@ -911,6 +916,12 @@ pub(crate) enum ReasoningMode {
     Minimal,
     /// Native `/no_think` + a defensive leading-`<think>` strip at commit.
     Off,
+    /// D155 Phase-3: NO directive (the model reasons naturally — some models emit
+    /// an empty completion under `/no_think`) BUT strip the leading `<think>`
+    /// block at commit, so the committed answer is the clean post-reasoning body.
+    /// Used by `kx/recipes/react-edit` so the committed file body carries no
+    /// reasoning preamble while the model still thinks enough to produce content.
+    Strip,
 }
 
 /// The reasoning free-param key (mirrors the recipe form ENUM in `provision`).
@@ -932,6 +943,7 @@ fn reasoning_mode_from_config(mote: &Mote) -> ReasoningMode {
         "full" => ReasoningMode::Full,
         "minimal" => ReasoningMode::Minimal,
         "off" => ReasoningMode::Off,
+        "strip" => ReasoningMode::Strip,
         _ => ReasoningMode::Default,
     }
 }
@@ -940,7 +952,9 @@ fn reasoning_mode_from_config(mote: &Mote) -> ReasoningMode {
 /// user instruction; `Default` returns it unchanged (byte-identical).
 fn apply_reasoning_directive(instruction: String, mode: ReasoningMode) -> String {
     match mode {
-        ReasoningMode::Default => instruction,
+        // `Strip` sends NO directive (the model reasons naturally) — the strip is
+        // a commit-time concern only.
+        ReasoningMode::Default | ReasoningMode::Strip => instruction,
         ReasoningMode::Full => format!("{instruction}\n/think"),
         ReasoningMode::Minimal => format!("{instruction}\n/think Keep your reasoning brief."),
         ReasoningMode::Off => format!("{instruction}\n/no_think"),
@@ -1170,6 +1184,11 @@ mod tests {
             reasoning_mode_from_config(&mote_with_reasoning(Some("off"))),
             ReasoningMode::Off
         );
+        // D155 Phase-3: `strip` reasons naturally (NO directive) but strips at commit.
+        assert_eq!(
+            reasoning_mode_from_config(&mote_with_reasoning(Some("strip"))),
+            ReasoningMode::Strip
+        );
         // An unrecognized value fails soft to Default (never a hard error).
         assert_eq!(
             reasoning_mode_from_config(&mote_with_reasoning(Some("bogus"))),
@@ -1177,6 +1196,11 @@ mod tests {
         );
         assert!(apply_reasoning_directive("q".into(), ReasoningMode::Full).contains("/think"));
         assert!(apply_reasoning_directive("q".into(), ReasoningMode::Off).contains("/no_think"));
+        // `strip` injects NO directive (the model reasons naturally; strip is at commit).
+        assert_eq!(
+            apply_reasoning_directive("q".into(), ReasoningMode::Strip),
+            "q"
+        );
     }
 
     #[test]

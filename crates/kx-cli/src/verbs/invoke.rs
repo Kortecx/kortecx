@@ -36,6 +36,10 @@ pub struct InvokeArgs {
     /// The server resolves each to its item refs and injects them into the entry
     /// Mote's identity-bearing context (a different context ⇒ a different run).
     pub context_bundles: Vec<String>,
+    /// D155 Phase-3: raw 64-hex content-store refs to attach directly as context
+    /// (`--context-ref <hex>`, repeatable) — no bundle needed (e.g. a branch
+    /// file's current ref). Same identity-bearing injection as `context_bundles`.
+    pub context_refs: Vec<String>,
     /// Common client flags.
     pub common: ClientCommon,
 }
@@ -49,6 +53,7 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<InvokeArgs, CliEr
     let mut timeout_secs = DEFAULT_TIMEOUT_SECS;
     let mut out: Option<PathBuf> = None;
     let mut context_bundles: Vec<String> = Vec::new();
+    let mut context_refs: Vec<String> = Vec::new();
     let mut common = ClientCommon::default();
 
     while let Some(flag) = args.next() {
@@ -77,6 +82,7 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<InvokeArgs, CliEr
             }
             "--out" => out = Some(PathBuf::from(next_value(&mut args, "--out")?)),
             "--context" => context_bundles.push(next_value(&mut args, "--context")?),
+            "--context-ref" => context_refs.push(next_value(&mut args, "--context-ref")?),
             other => {
                 if other.starts_with("--") {
                     return Err(CliError::Usage(format!("unknown flag {other:?}")));
@@ -110,6 +116,7 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<InvokeArgs, CliEr
         timeout_secs,
         out,
         context_bundles,
+        context_refs,
         common,
     })
 }
@@ -136,6 +143,7 @@ pub async fn execute(args: InvokeArgs) -> Result<(), CliError> {
             handle: args.handle,
             args: args.args_json,
             context_bundles: args.context_bundles,
+            context_refs: args.context_refs,
         })?)
         .await
         .map_err(CliError::from_status)?

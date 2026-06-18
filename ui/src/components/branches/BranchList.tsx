@@ -7,9 +7,10 @@
  */
 
 import { m } from "framer-motion";
+import { useState } from "react";
 import { fadeUp, hoverLift, stagger } from "../../app/motion";
 import { toUiError } from "../../kx/errors";
-import { useBranches, useDeleteBranch } from "../../kx/use-branches";
+import { useBranches, useDeleteBranch, useEditBranch } from "../../kx/use-branches";
 import { DigestChip } from "../DigestChip";
 import { EmptyState } from "../EmptyState";
 import { ErrorNotice } from "../ErrorNotice";
@@ -102,6 +103,27 @@ function BranchRow({
   pending: boolean;
   onDelete: () => void;
 }) {
+  const edit = useEditBranch();
+  const [editingPath, setEditingPath] = useState<string | null>(null);
+  const [instruction, setInstruction] = useState("");
+  const editError = edit.error ? toUiError(edit.error) : null;
+
+  const submitEdit = (path: string) => {
+    const trimmed = instruction.trim();
+    if (trimmed.length === 0) {
+      return;
+    }
+    edit.mutate(
+      { handle, path, instruction: trimmed },
+      {
+        onSuccess: () => {
+          setEditingPath(null);
+          setInstruction("");
+        },
+      },
+    );
+  };
+
   return (
     <GlowCard
       className="registry-row"
@@ -120,13 +142,57 @@ function BranchRow({
         {description ? <p className="registry-row__desc muted">{description}</p> : null}
         {items.length > 0 ? (
           <ul className="context-bundle__items">
-            {items.map((it) => (
-              <li key={it.path} className="context-bundle__item">
-                <span className="context-bundle__item-name mono">{it.path}</span>
-                <DigestChip hex={it.contentRef} label={it.path} />
-              </li>
-            ))}
+            {items.map((it) => {
+              const isEditing = editingPath === it.path;
+              const editingThis = edit.isPending && edit.variables?.path === it.path;
+              return (
+                <li key={it.path} className="context-bundle__item branch-item">
+                  <span className="context-bundle__item-name mono">{it.path}</span>
+                  <DigestChip hex={it.contentRef} label={it.path} />
+                  <button
+                    type="button"
+                    className="btn-ghost branch-item__edit"
+                    data-testid={`branch-edit-${handle}-${it.path}`}
+                    disabled={edit.isPending}
+                    title="Rewrite this file in-CAS via the agent (the host is never written)"
+                    onClick={() => {
+                      setEditingPath(isEditing ? null : it.path);
+                      setInstruction("");
+                    }}
+                  >
+                    {isEditing ? "Cancel" : "Edit"}
+                  </button>
+                  {isEditing ? (
+                    <div className="branch-item__editor" data-testid="branch-edit-form">
+                      <textarea
+                        className="input"
+                        data-testid="branch-edit-instruction"
+                        placeholder="Describe the change (e.g. 'uppercase the title line')…"
+                        rows={2}
+                        value={instruction}
+                        disabled={editingThis}
+                        onChange={(e) => setInstruction(e.target.value)}
+                      />
+                      <button
+                        type="button"
+                        className="btn-primary"
+                        data-testid="branch-edit-submit"
+                        disabled={editingThis || instruction.trim().length === 0}
+                        onClick={() => submitEdit(it.path)}
+                      >
+                        {editingThis ? "Editing…" : "Run edit"}
+                      </button>
+                    </div>
+                  ) : null}
+                </li>
+              );
+            })}
           </ul>
+        ) : null}
+        {editError ? (
+          <p className="field-error" data-testid="branch-edit-error" role="alert">
+            {editError.message}
+          </p>
         ) : null}
       </div>
       <button

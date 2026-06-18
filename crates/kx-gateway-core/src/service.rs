@@ -355,6 +355,7 @@ pub trait RecipeBinder: Send + Sync {
         handle: &str,
         args: &[u8],
         context_bundles: &[String],
+        context_refs: &[String],
     ) -> Result<BoundRecipe, BinderError>;
 }
 
@@ -1495,7 +1496,13 @@ impl KxGateway for GatewayService {
         let req = request.into_inner();
 
         let bound = binder
-            .bind(&party, &req.handle, &req.args, &req.context_bundles)
+            .bind(
+                &party,
+                &req.handle,
+                &req.args,
+                &req.context_bundles,
+                &req.context_refs,
+            )
             .await
             .map_err(|e| match e {
                 // Uniform "not authorized" — no existence oracle on the execution
@@ -2860,6 +2867,43 @@ impl KxGateway for GatewayService {
         let req = request.into_inner();
         let removed = branches.delete(&principal, &req.handle)?;
         Ok(Response::new(proto::DeleteBranchResponse { removed }))
+    }
+
+    async fn advance_branch(
+        &self,
+        request: Request<proto::AdvanceBranchRequest>,
+    ) -> Result<Response<proto::AdvanceBranchResponse>, Status> {
+        let branches = self.branches.as_ref().ok_or_else(|| {
+            Status::unimplemented("AdvanceBranch: no branch store wired (branches.db absent)")
+        })?;
+        let principal = caller_principal(&request)?;
+        let req = request.into_inner();
+        if !valid_bundle_handle(&req.handle) {
+            return Err(Status::invalid_argument(
+                "handle must be a 'namespace/collection/name' AssetPath ([a-z0-9._-] segments)",
+            ));
+        }
+        if req.path.trim().is_empty() {
+            return Err(Status::invalid_argument(
+                "advance requires a non-empty path",
+            ));
+        }
+        // The edited body the ReAct loop committed; an unresolvable ref is rejected
+        // in the store (fail-closed) — here we only enforce the 32-byte shape.
+        let content_ref: [u8; 32] = req
+            .content_ref
+            .as_slice()
+            .try_into()
+            .map_err(|_| Status::invalid_argument("content_ref must be exactly 32 bytes"))?;
+        let (manifest, deduplicated) =
+            branches.advance(&principal, &req.handle, &req.path, content_ref)?;
+        let proto_branch = branch_to_proto(manifest);
+        Ok(Response::new(proto::AdvanceBranchResponse {
+            branch_ref: proto_branch.branch_ref,
+            handle: req.handle,
+            items: proto_branch.items,
+            deduplicated,
+        }))
     }
 
     async fn list_tool_manifests(

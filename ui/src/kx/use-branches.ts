@@ -100,3 +100,32 @@ export function useDeleteBranch() {
     },
   });
 }
+
+export interface EditBranchVars {
+  readonly handle: string;
+  readonly path: string;
+  readonly instruction: string;
+}
+
+/**
+ * D155 Phase-3: agentically edit a branch file IN-CAS. Runs the
+ * `kx/recipes/react-edit` loop (the file's current body attached as a context
+ * ref; the model rewrites it per `instruction`) and advances the manifest to the
+ * new content ref. The host is NEVER written. The mutation can take a while
+ * (model inference), so the form shows a pending state.
+ */
+export function useEditBranch() {
+  const { client, endpoint } = useConnection();
+  const qc = useQueryClient();
+  return useMutation<unknown, unknown, EditBranchVars>({
+    mutationFn: async ({ handle, path, instruction }) => {
+      if (!client) {
+        throw new Error("not connected");
+      }
+      return client.editBranch(handle, path, instruction);
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.branches(endpoint) });
+    },
+  });
+}

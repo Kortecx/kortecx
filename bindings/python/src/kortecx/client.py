@@ -22,7 +22,7 @@ from . import events as _events
 from . import hexids, types
 from . import wait as _wait  # aliased: `wait` is also a public kwarg name
 from .alerts import AlertsPage, AlertSummary
-from .branch import Branch, CreateBranchResult, SnapshotResult
+from .branch import AdvanceResult, Branch, CreateBranchResult, SnapshotResult
 from .capture import CaptureRecord, CaptureRecordPage
 from .content import ContentItem, PutResult
 from .context import ContextBundle, PutContextBundleResult
@@ -34,7 +34,7 @@ from .datasets import (
     IngestResult,
     _to_documents,
 )
-from .errors import KxUsage, from_rpc_error
+from .errors import KxError, KxUsage, from_rpc_error
 from .feedback import FeedbackPage, FeedbackRow, rating_to_proto
 from .grants import AssetGrants
 from .models import ModelSummary
@@ -88,9 +88,11 @@ def _merged_options(channel_options: Optional[list]) -> list:
 
 
 def _is_react_handle(handle: str) -> bool:
-    """True for the ReAct recipe — its ``invoke(wait=True)`` settles via the chain
-    (``ListReactTurns``), not a terminal Mote (F13)."""
-    return handle == REACT_RECIPE_HANDLE
+    """True for a ReAct CHAIN recipe (``react`` / ``react-fs`` / ``react-auto``) —
+    its ``invoke(wait=True)`` settles via the chain (``ListReactTurns``), not a
+    terminal Mote (F13). They share the ``kx/recipes/react`` prefix. ``react-edit``
+    is EXCLUDED: it is a single model step that settles on its terminal mote."""
+    return handle.startswith(REACT_RECIPE_HANDLE) and handle != "kx/recipes/react-edit"
 
 
 # --- shared credential + channel helpers -------------------------------------
@@ -212,6 +214,7 @@ class KxClient:
         wait_mode: str = "poll",
         out: Optional[str] = None,
         context: Optional[Sequence[str]] = None,
+        context_refs: Optional[Sequence[str]] = None,
     ) -> Union[Run, Result]:
         """Bind a published recipe to ``args`` and run it.
 
@@ -223,6 +226,8 @@ class KxClient:
         ``context`` is an optional list of context-bundle handles (PR-7) to attach;
         the server resolves each to its item refs and injects them into the entry
         Mote's IDENTITY-BEARING context, so a different context ⇒ a different run.
+        ``context_refs`` (D155 Phase-3) attaches raw 64-hex content-store refs
+        directly (no bundle) — same identity-bearing injection.
         """
         resp = self._call(
             lambda: self._stub.Invoke(
@@ -230,6 +235,7 @@ class KxClient:
                     handle=handle,
                     args=_encode_args(args),
                     context_bundles=list(context or []),
+                    context_refs=list(context_refs or []),
                 ),
                 metadata=self._md,
             )
@@ -475,6 +481,68 @@ class KxClient:
             )
         )
         return resp.removed
+
+    def advance_branch(self, handle: str, path: str, content_ref: IdType) -> AdvanceResult:
+        """D155 Phase-3 (low-level): re-point ``path`` in branch ``handle`` to an
+        EXISTING content-store ref (or insert it — "enrich"), then recompute
+        ``branch_ref``. Strictly IN-CAS (no host read/write). Raises ``KxNotFound``
+        if the branch is unknown, ``KxInvalidArgument`` if the ref does not resolve.
+        Prefer :meth:`edit_branch` for the agentic high-level flow."""
+        resp = self._call(
+            lambda: self._stub.AdvanceBranch(
+                _g.AdvanceBranchRequest(
+                    handle=handle,
+                    path=path,
+                    content_ref=hexids.as_bytes(content_ref, hexids.REF_LEN),
+                ),
+                metadata=self._md,
+            )
+        )
+        return AdvanceResult.from_proto(resp)
+
+    def edit_branch(
+        self,
+        handle: str,
+        path: str,
+        instruction: str,
+        *,
+        timeout: float = 300.0,
+    ) -> AdvanceResult:
+        """D155 Phase-3: agentically edit a branch file IN-CAS. Resolves ``path``'s
+        current ref, runs the ``kx/recipes/react-edit`` model step (the body attached
+        as a context ref; the model rewrites it per ``instruction`` under
+        reasoning=off), and advances the manifest to the new content ref. The host is
+        NEVER written. Raises ``KxError`` if the step produced no committed answer."""
+        branch = self.get_branch(handle)
+        if branch is None:
+            raise KxError(f"branch {handle!r} not found")
+        item = next((it for it in branch.items if it.path == path), None)
+        if item is None:
+            raise KxError(f"path {path!r} is not in branch {handle!r}")
+        directive = (
+            f"You are editing the file `{path}`. The text in the attached context below IS its "
+            f"exact current contents. Apply this change: {instruction}\n\nReturn ONLY the "
+            "complete, updated file contents — no commentary, no explanation, and no markdown "
+            "code fences."
+        )
+        # react-edit is a single model step; its only free param is `prompt`.
+        result = self.invoke(
+            "kx/recipes/react-edit",
+            {"prompt": directive},
+            wait=True,
+            timeout=timeout,
+            context_refs=[item.content_ref],
+        )
+        if not isinstance(result, Result) or not result.ok or result.result_ref is None:
+            raise KxError("react-edit produced no committed answer to advance the branch to")
+        # Fail CLOSED on an empty edit (GR15): never advance the manifest to an
+        # empty file (a heavy-reasoning model can return only stripped reasoning).
+        if not result.payload:
+            raise KxError(
+                "react-edit produced an empty body (the model did not return file "
+                "contents); the branch was NOT advanced"
+            )
+        return self.advance_branch(handle, path, result.result_ref)
 
     def list_models(self) -> List[ModelSummary]:
         """Discover the models the connected gateway serves (Batch A). Display

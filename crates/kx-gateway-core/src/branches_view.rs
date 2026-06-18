@@ -126,4 +126,29 @@ pub trait BranchStore: Send + Sync {
     /// # Errors
     /// A host write failure ([`GatewayError::Internal`]).
     fn delete(&self, principal: &str, handle: &str) -> Result<bool, GatewayError>;
+
+    /// Advance the branch `(principal, handle)` by re-pointing `path` to an
+    /// EXISTING content-store ref (or inserting it if absent — "enrich"), then
+    /// recomputing `branch_ref`. This is the D155 Phase-3 in-CAS edit step: the
+    /// agentic loop has already committed the edited body as `content_ref` (a
+    /// `result_ref`); `advance` simply moves the manifest pointer.
+    ///
+    /// Strictly IN-CAS: it NEVER reads or writes the host filesystem (no
+    /// `KX_SERVE_FS_ROOT` dependency, unlike [`Self::snapshot_into`]) and never
+    /// grants `ReadWrite` — host write-back stays Phase-B. Returns
+    /// `(manifest, deduplicated)`; re-pointing a path to its CURRENT ref is a
+    /// no-op that reports `deduplicated == true` (idempotent).
+    ///
+    /// # Errors
+    /// [`GatewayError::NotFound`] if the branch is unknown to the caller;
+    /// [`GatewayError::InvalidArgument`] if `content_ref` does not resolve in the
+    /// content store (fail-closed — a manifest never points at an unresolvable
+    /// blob); a host write failure ([`GatewayError::Internal`]).
+    fn advance(
+        &self,
+        principal: &str,
+        handle: &str,
+        path: &str,
+        content_ref: [u8; 32],
+    ) -> Result<(BranchManifest, bool), GatewayError>;
 }

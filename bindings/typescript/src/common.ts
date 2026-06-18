@@ -116,7 +116,13 @@ export { PutResult, ContentItem } from "./content.js";
 export { ContextBundle, ContextBundleItem, PutContextBundleResult } from "./context.js";
 export type { ContextItemInput } from "./context.js";
 // D155: branches (content-addressed file branches).
-export { Branch, BranchItem, CreateBranchResult, SnapshotResult } from "./branch.js";
+export {
+  AdvanceResult,
+  Branch,
+  BranchItem,
+  CreateBranchResult,
+  SnapshotResult,
+} from "./branch.js";
 export { ModelSummary } from "./models.js";
 
 // Batch B: per-mote definition inspection (display-only).

@@ -69,3 +69,43 @@ test("Branches (D155): snapshot a confined file, see the manifest, fork a sub-br
   await expect(page.getByTestId(`branch-${FORK}`)).toHaveCount(0, { timeout: 30_000 });
   await expect(page.getByTestId(`branch-${HANDLE}`)).toBeVisible();
 });
+
+test("Branches (D155 Phase-3): the per-file agentic Edit affordance opens", async ({ page }) => {
+  // The CI e2e binary builds `--features console,hnsw` (NO inference), so the
+  // `react-edit` recipe is not seeded and a real rewrite cannot run here — that
+  // is verified in the real-model integration. This asserts the UI WIRING: the
+  // per-file Edit affordance is present and opens an instruction editor.
+  const fsRoot = await mkdtemp(path.join(tmpdir(), "kxbranch-edit-"));
+  await writeFile(path.join(fsRoot, "notes.md"), "# Project notes\nhello\n");
+  gw = await spawnGateway({ corsOrigin: SPA_ORIGIN, fsRoot });
+  await connectConsole(page, gw);
+
+  await page.getByTestId("nav-branches").click();
+  const handle = page.getByTestId("branch-handle");
+  await handle.click();
+  await handle.pressSequentially(HANDLE);
+  const pathDraft = page.getByTestId("branch-path-draft");
+  await pathDraft.click();
+  await pathDraft.pressSequentially("notes.md");
+  await page.getByTestId("branch-add-path").click();
+  await page.getByTestId("branch-snapshot-submit").click();
+
+  const card = page.getByTestId(`branch-${HANDLE}`);
+  await expect(card).toBeVisible({ timeout: 30_000 });
+
+  // Open the per-file Edit editor; the submit is disabled until an instruction
+  // is typed, then enables (no model run in this CI binary).
+  const editBtn = page.getByTestId(`branch-edit-${HANDLE}-notes.md`);
+  await expect(editBtn).toBeVisible();
+  await editBtn.click();
+  const instr = page.getByTestId("branch-edit-instruction");
+  await expect(instr).toBeVisible();
+  await expect(page.getByTestId("branch-edit-submit")).toBeDisabled();
+  await instr.click();
+  await instr.pressSequentially("uppercase the title line");
+  await expect(page.getByTestId("branch-edit-submit")).toBeEnabled();
+
+  // Cancel collapses the editor.
+  await editBtn.click();
+  await expect(page.getByTestId("branch-edit-instruction")).toHaveCount(0);
+});

@@ -90,3 +90,23 @@ class SnapshotResult:
             items=[BranchItem.from_proto(it) for it in r.items],
             deduplicated=r.deduplicated,
         )
+
+
+@dataclass(frozen=True)
+class AdvanceResult:
+    """The outcome of an ``AdvanceBranch`` (D155 Phase-3) — the manifest after the
+    in-CAS re-point. ``deduplicated`` is True iff the re-point was a no-op."""
+
+    branch_ref: str  # server-derived manifest hash, as hex (recomputed)
+    handle: str  # echoed canonical handle
+    items: List[BranchItem]  # the resolved manifest after the advance
+    deduplicated: bool
+
+    @classmethod
+    def from_proto(cls, r: "_g.AdvanceBranchResponse") -> "AdvanceResult":
+        return cls(
+            branch_ref=hexids.encode(r.branch_ref),
+            handle=r.handle,
+            items=[BranchItem.from_proto(it) for it in r.items],
+            deduplicated=r.deduplicated,
+        )

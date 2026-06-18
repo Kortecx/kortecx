@@ -491,6 +491,60 @@ impl<S: ContentStore + Send + Sync + 'static> BranchStore for BranchesDb<S> {
             .map_err(|e| CoreError::Internal(format!("branches delete: {e}")))?;
         Ok(n > 0)
     }
+
+    fn advance(
+        &self,
+        principal: &str,
+        handle: &str,
+        path: &str,
+        content_ref: [u8; 32],
+    ) -> Result<(BranchManifest, bool), CoreError> {
+        // Strictly IN-CAS (the D155 Phase-3 edit step): the edited body is ALREADY
+        // a committed `result_ref`. Fail-closed verify it resolves BEFORE touching
+        // the manifest — a branch must never point at an unresolvable blob (the
+        // F-7 / PR-7 `UpstreamMissing` posture). NO host read: `advance` never uses
+        // `self.fs_root`, so it works even when `KX_SERVE_FS_ROOT` is unset.
+        if !self.content.contains(&kx_content::ContentRef(content_ref)) {
+            return Err(CoreError::InvalidArgument(
+                "advance content_ref does not resolve in the content store",
+            ));
+        }
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| CoreError::Internal("branches lock poisoned".into()))?;
+        // Load the full row (preserve `parent_handle` + the advisory `description` —
+        // re-pointing one path must not re-fork or blank the description).
+        let (parent, description, base_items) = conn
+            .query_row(
+                "SELECT parent_handle, description, items_json FROM branches \
+                 WHERE principal = ?1 AND handle = ?2",
+                params![principal, handle],
+                |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        items_from_json(&r.get::<_, String>(2)?),
+                    ))
+                },
+            )
+            .map_err(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => CoreError::NotFound("branch not found"),
+                other => CoreError::Internal(format!("branches advance load: {other}")),
+            })?;
+        // Re-point `path` (or insert it — "enrich" per the B-spec). Re-pointing to
+        // the CURRENT ref is a no-op that dedups (idempotent).
+        let mut by_path: std::collections::BTreeMap<String, [u8; 32]> = base_items
+            .into_iter()
+            .map(|it| (it.path, it.content_ref))
+            .collect();
+        by_path.insert(path.to_string(), content_ref);
+        let items: Vec<BranchItemRecord> = by_path
+            .into_iter()
+            .map(|(path, content_ref)| BranchItemRecord { path, content_ref })
+            .collect();
+        Self::upsert_manifest(&conn, principal, handle, &parent, &description, items)
+    }
 }
 
 #[cfg(test)]
@@ -633,5 +687,128 @@ mod tests {
         assert!(has_more);
         assert!(db.delete("alice", "ns/c/a").unwrap());
         assert!(!db.delete("alice", "ns/c/a").unwrap());
+    }
+
+    // ---- D155 Phase-3: in-CAS edit (`advance`) -----------------------------
+
+    #[test]
+    fn advance_re_points_a_path_and_keeps_others() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("a.txt"), b"v1").unwrap();
+        std::fs::write(root.path().join("b.txt"), b"keep").unwrap();
+        let db = db_with_root(Some(root.path().to_path_buf()));
+        db.snapshot_into(
+            "alice",
+            "ns/coll/main",
+            None,
+            "desc",
+            &["a.txt".to_string(), "b.txt".to_string()],
+        )
+        .unwrap();
+        let before = db.get("alice", "ns/coll/main").unwrap().unwrap();
+
+        // an agentic edit committed a NEW body to CAS — advance re-points a.txt.
+        let edited = db.content.put(b"v2-edited").unwrap();
+        let (m, dedup) = db
+            .advance("alice", "ns/coll/main", "a.txt", edited.0)
+            .unwrap();
+        assert!(!dedup);
+        let a = m.items.iter().find(|i| i.path == "a.txt").unwrap();
+        let b = m.items.iter().find(|i| i.path == "b.txt").unwrap();
+        assert_eq!(a.content_ref, edited.0);
+        assert_eq!(b.content_ref, kx_content::ContentRef::of(b"keep").0);
+        assert_ne!(m.branch_ref, before.branch_ref); // manifest advanced
+        assert_eq!(m.description, "desc"); // advisory description preserved
+        assert_eq!(m.parent_handle, ""); // not re-forked
+    }
+
+    #[test]
+    fn advance_is_idempotent_and_dedups() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("a.txt"), b"v1").unwrap();
+        let db = db_with_root(Some(root.path().to_path_buf()));
+        db.snapshot_into("alice", "ns/coll/main", None, "", &["a.txt".to_string()])
+            .unwrap();
+        let edited = db.content.put(b"v2").unwrap();
+        let (m1, dedup1) = db
+            .advance("alice", "ns/coll/main", "a.txt", edited.0)
+            .unwrap();
+        assert!(!dedup1);
+        // re-pointing to the SAME ref is a no-op that dedups (idempotent).
+        let (m2, dedup2) = db
+            .advance("alice", "ns/coll/main", "a.txt", edited.0)
+            .unwrap();
+        assert!(dedup2);
+        assert_eq!(m1.branch_ref, m2.branch_ref);
+    }
+
+    #[test]
+    fn advance_inserts_a_new_path_enrich_and_recomputes_ref() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("a.txt"), b"v1").unwrap();
+        let db = db_with_root(Some(root.path().to_path_buf()));
+        db.snapshot_into("alice", "ns/coll/main", None, "", &["a.txt".to_string()])
+            .unwrap();
+        let added = db.content.put(b"new-file").unwrap();
+        let (m, _) = db
+            .advance("alice", "ns/coll/main", "z.txt", added.0)
+            .unwrap();
+        assert_eq!(m.items.len(), 2);
+        assert_eq!(m.items[0].path, "a.txt"); // items stay path-sorted
+        assert_eq!(m.items[1].path, "z.txt");
+        assert_eq!(m.items[1].content_ref, added.0);
+        // branch_ref matches a fresh recompute over the advanced, sorted items.
+        assert_eq!(m.branch_ref, branch_ref_of("ns/coll/main", "", &m.items));
+    }
+
+    #[test]
+    fn advance_unknown_handle_or_principal_not_found() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("a.txt"), b"v1").unwrap();
+        let db = db_with_root(Some(root.path().to_path_buf()));
+        db.snapshot_into("alice", "ns/coll/main", None, "", &["a.txt".to_string()])
+            .unwrap();
+        let r = db.content.put(b"x").unwrap();
+        assert!(matches!(
+            db.advance("alice", "ns/coll/missing", "a.txt", r.0)
+                .unwrap_err(),
+            CoreError::NotFound(_)
+        ));
+        // caller-scoped: no cross-party advance.
+        assert!(matches!(
+            db.advance("bob", "ns/coll/main", "a.txt", r.0).unwrap_err(),
+            CoreError::NotFound(_)
+        ));
+    }
+
+    #[test]
+    fn advance_unresolvable_ref_invalid_argument() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("a.txt"), b"v1").unwrap();
+        let db = db_with_root(Some(root.path().to_path_buf()));
+        db.snapshot_into("alice", "ns/coll/main", None, "", &["a.txt".to_string()])
+            .unwrap();
+        // a ref never put into the store — fail-closed (no dangling manifest).
+        let bogus = [0xABu8; 32];
+        assert!(matches!(
+            db.advance("alice", "ns/coll/main", "a.txt", bogus)
+                .unwrap_err(),
+            CoreError::InvalidArgument(_)
+        ));
+    }
+
+    #[test]
+    fn advance_is_host_free_works_without_fs_root() {
+        // `advance` never reads the host, so it works when KX_SERVE_FS_ROOT is
+        // unset (where `snapshot_into` would FAILED_PRECONDITION).
+        let db = db_with_root(None);
+        db.create("alice", "ns/coll/empty", None, "").unwrap();
+        let body = db.content.put(b"generated").unwrap();
+        let (m, _) = db
+            .advance("alice", "ns/coll/empty", "out.txt", body.0)
+            .unwrap();
+        assert_eq!(m.items.len(), 1);
+        assert_eq!(m.items[0].path, "out.txt");
+        assert_eq!(m.items[0].content_ref, body.0);
     }
 }

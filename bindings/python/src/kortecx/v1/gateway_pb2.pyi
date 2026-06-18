@@ -130,14 +130,16 @@ class RunHandle(_message.Message):
     def __init__(self, instance_id: _Optional[bytes] = ..., recipe_fingerprint: _Optional[bytes] = ...) -> None: ...
 
 class InvokeRequest(_message.Message):
-    __slots__ = ("handle", "args", "context_bundles")
+    __slots__ = ("handle", "args", "context_bundles", "context_refs")
     HANDLE_FIELD_NUMBER: _ClassVar[int]
     ARGS_FIELD_NUMBER: _ClassVar[int]
     CONTEXT_BUNDLES_FIELD_NUMBER: _ClassVar[int]
+    CONTEXT_REFS_FIELD_NUMBER: _ClassVar[int]
     handle: str
     args: bytes
     context_bundles: _containers.RepeatedScalarFieldContainer[str]
-    def __init__(self, handle: _Optional[str] = ..., args: _Optional[bytes] = ..., context_bundles: _Optional[_Iterable[str]] = ...) -> None: ...
+    context_refs: _containers.RepeatedScalarFieldContainer[str]
+    def __init__(self, handle: _Optional[str] = ..., args: _Optional[bytes] = ..., context_bundles: _Optional[_Iterable[str]] = ..., context_refs: _Optional[_Iterable[str]] = ...) -> None: ...
 
 class InvokeResponse(_message.Message):
     __slots__ = ("instance_id", "recipe_fingerprint", "terminal_mote_id")
@@ -1682,3 +1684,25 @@ class DeleteBranchResponse(_message.Message):
     REMOVED_FIELD_NUMBER: _ClassVar[int]
     removed: bool
     def __init__(self, removed: bool = ...) -> None: ...
+
+class AdvanceBranchRequest(_message.Message):
+    __slots__ = ("handle", "path", "content_ref")
+    HANDLE_FIELD_NUMBER: _ClassVar[int]
+    PATH_FIELD_NUMBER: _ClassVar[int]
+    CONTENT_REF_FIELD_NUMBER: _ClassVar[int]
+    handle: str
+    path: str
+    content_ref: bytes
+    def __init__(self, handle: _Optional[str] = ..., path: _Optional[str] = ..., content_ref: _Optional[bytes] = ...) -> None: ...
+
+class AdvanceBranchResponse(_message.Message):
+    __slots__ = ("branch_ref", "handle", "items", "deduplicated")
+    BRANCH_REF_FIELD_NUMBER: _ClassVar[int]
+    HANDLE_FIELD_NUMBER: _ClassVar[int]
+    ITEMS_FIELD_NUMBER: _ClassVar[int]
+    DEDUPLICATED_FIELD_NUMBER: _ClassVar[int]
+    branch_ref: bytes
+    handle: str
+    items: _containers.RepeatedCompositeFieldContainer[BranchItem]
+    deduplicated: bool
+    def __init__(self, branch_ref: _Optional[bytes] = ..., handle: _Optional[str] = ..., items: _Optional[_Iterable[_Union[BranchItem, _Mapping]]] = ..., deduplicated: bool = ...) -> None: ...

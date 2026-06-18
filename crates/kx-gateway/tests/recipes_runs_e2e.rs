@@ -123,6 +123,7 @@ async fn list_runs_enumerates_the_durable_registered_run() {
             handle: DEMO_RECIPE_HANDLE.to_string(),
             args: br#"{"topic":"incidents"}"#.to_vec(),
             context_bundles: vec![],
+            context_refs: vec![],
         })
         .await
         .unwrap()
@@ -132,6 +133,7 @@ async fn list_runs_enumerates_the_durable_registered_run() {
             handle: PASSTHROUGH_DAG_HANDLE.to_string(),
             args: b"{}".to_vec(),
             context_bundles: vec![],
+            context_refs: vec![],
         })
         .await
         .unwrap()

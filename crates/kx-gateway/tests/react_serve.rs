@@ -116,6 +116,7 @@ async fn invoke_react_recipe_drives_a_live_chain_to_answer() {
             args: br#"{"instruction":"What is 2+2? Answer briefly in prose.","max_turns":4,"max_tool_calls":2}"#
                 .to_vec(),
             context_bundles: vec![],
+            context_refs: vec![],
         })
         .await
         .expect("invoke kx/recipes/react")

@@ -101,6 +101,7 @@ async fn invoke_runs_demo_recipe_to_committed() {
             handle: DEMO_RECIPE_HANDLE.to_string(),
             args: args("incidents"),
             context_bundles: vec![],
+            context_refs: vec![],
         })
         .await
         .unwrap()
@@ -145,6 +146,7 @@ async fn invoke_distinct_args_yield_distinct_motes() {
             handle: DEMO_RECIPE_HANDLE.to_string(),
             args: args("alpha"),
             context_bundles: vec![],
+            context_refs: vec![],
         })
         .await
         .unwrap()
@@ -154,6 +156,7 @@ async fn invoke_distinct_args_yield_distinct_motes() {
             handle: DEMO_RECIPE_HANDLE.to_string(),
             args: args("bravo"),
             context_bundles: vec![],
+            context_refs: vec![],
         })
         .await
         .unwrap()
@@ -188,6 +191,7 @@ async fn invoke_unknown_handle_is_permission_denied() {
             handle: "kx/recipes/does-not-exist".to_string(),
             args: args("x"),
             context_bundles: vec![],
+            context_refs: vec![],
         })
         .await
         .unwrap_err();
@@ -210,6 +214,7 @@ async fn invoke_malformed_args_are_invalid_argument() {
                 handle: DEMO_RECIPE_HANDLE.to_string(),
                 args: bad,
                 context_bundles: vec![],
+                context_refs: vec![],
             })
             .await
             .unwrap_err();
@@ -232,6 +237,7 @@ async fn invoke_under_deny_all_is_unauthenticated() {
             handle: DEMO_RECIPE_HANDLE.to_string(),
             args: args("x"),
             context_bundles: vec![],
+            context_refs: vec![],
         })
         .await
         .unwrap_err();
@@ -256,6 +262,7 @@ async fn invoke_with_bearer_token_runs_to_committed() {
             handle: DEMO_RECIPE_HANDLE.to_string(),
             args: args("x"),
             context_bundles: vec![],
+            context_refs: vec![],
         })
         .await
         .unwrap_err();
@@ -268,6 +275,7 @@ async fn invoke_with_bearer_token_runs_to_committed() {
                 handle: DEMO_RECIPE_HANDLE.to_string(),
                 args: args("incidents"),
                 context_bundles: vec![],
+                context_refs: vec![],
             },
             Some("s3cr3t"),
         ))
@@ -304,6 +312,7 @@ async fn concurrent_invokes_all_commit() {
                     handle: DEMO_RECIPE_HANDLE.to_string(),
                     args: args(&format!("topic-{i}")),
                     context_bundles: vec![],
+                    context_refs: vec![],
                 })
                 .await
                 .unwrap()

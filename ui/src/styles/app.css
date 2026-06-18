@@ -3279,6 +3279,31 @@ button.card-grid__title:hover {
 .context-bundle__item-type {
   font-size: 0.75rem;
 }
+/* D155 Phase-3: the per-file agentic Edit affordance in a branch manifest. The
+   editor breaks to its own full-width row; controls inherit themed tokens (the
+   `.input` / `.btn-*` classes), so both themes + AA carry by construction. */
+.branch-item {
+  flex-wrap: wrap;
+}
+.branch-item__edit {
+  margin-left: auto;
+  font-size: 0.78rem;
+  padding: 0.1rem 0.5rem;
+}
+.branch-item__editor {
+  flex-basis: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin-top: 0.3rem;
+}
+.branch-item__editor textarea {
+  width: 100%;
+  resize: vertical;
+}
+.branch-item__editor .btn-primary {
+  align-self: flex-start;
+}
 .context-bundle-form__add {
   display: flex;
   gap: 0.5rem;

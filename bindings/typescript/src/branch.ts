@@ -12,6 +12,7 @@
  */
 
 import type {
+  AdvanceBranchResponse as PbAdvanceBranchResponse,
   Branch as PbBranch,
   BranchItem as PbBranchItem,
   CreateBranchResponse as PbCreateBranchResponse,
@@ -114,6 +115,35 @@ export class SnapshotResult {
       branch_ref: this.branchRef,
       handle: this.handle,
       ingested: this.ingested,
+      deduplicated: this.deduplicated,
+      items: this.items.map((i) => i.toJSON()),
+    };
+  }
+}
+
+/** The outcome of an `AdvanceBranch` (D155 Phase-3) — the manifest after the
+ * in-CAS re-point. `deduplicated` is true iff the re-point was a no-op. */
+export class AdvanceResult {
+  constructor(
+    readonly branchRef: string,
+    readonly handle: string,
+    readonly items: BranchItem[],
+    readonly deduplicated: boolean,
+  ) {}
+
+  static fromProto(r: PbAdvanceBranchResponse): AdvanceResult {
+    return new AdvanceResult(
+      encode(r.branchRef),
+      r.handle,
+      r.items.map((it) => BranchItem.fromProto(it)),
+      r.deduplicated,
+    );
+  }
+
+  toJSON() {
+    return {
+      branch_ref: this.branchRef,
+      handle: this.handle,
       deduplicated: this.deduplicated,
       items: this.items.map((i) => i.toJSON()),
     };

@@ -14,7 +14,13 @@ from __future__ import annotations
 
 from .alerts import AlertsPage, AlertSummary
 from .blueprints import BlueprintBuilder, EdgeInput, StepInput
-from .branch import Branch, BranchItem, CreateBranchResult, SnapshotResult
+from .branch import (
+    AdvanceResult,
+    Branch,
+    BranchItem,
+    CreateBranchResult,
+    SnapshotResult,
+)
 from .capture import CaptureRecord, CaptureRecordPage
 from .chains import Chain, Task, chain, model, pure, tool
 from .client import DEFAULT_ENDPOINT, AsyncKxClient, KxClient
@@ -155,6 +161,7 @@ __all__ = [
     "BranchItem",
     "CreateBranchResult",
     "SnapshotResult",
+    "AdvanceResult",
     "ModelSummary",
     # Batch B: per-mote definition inspection (display-only)
     "MoteDetail",
