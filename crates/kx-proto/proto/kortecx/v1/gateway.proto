@@ -116,6 +116,7 @@ message InvokeRequest {
   string handle = 1;                     // "namespace/collection/name" recipe handle (AssetPath)
   bytes  args   = 2;                     // opaque JSON object bytes; validated server-side, fail-closed
   repeated string context_bundles = 3;   // PR-7: AssetPath handles of context bundles to attach (identity-bearing); empty = byte-identical to pre-PR-7
+  repeated string context_refs = 4;      // D155 Phase-3: raw 64-hex content-store refs attached directly as context items (no bundles.db); identity-bearing; empty = byte-identical
 }
 
 message InvokeResponse {
@@ -1429,6 +1430,18 @@ message DeleteBranchResponse {
   bool removed = 1;                       // false iff absent / not owned
 }
 
+message AdvanceBranchRequest {
+  string handle      = 1;                // the branch to advance (caller-scoped)
+  string path        = 2;                // the manifest path to re-point (or insert — "enrich")
+  bytes  content_ref = 3;                // 32B — the EXISTING content-store ref to point at (the edited body)
+}
+message AdvanceBranchResponse {
+  bytes  branch_ref         = 1;         // 16B SERVER-DERIVED, recomputed over the advanced manifest
+  string handle             = 2;
+  repeated BranchItem items = 3;         // the resolved manifest after the advance
+  bool   deduplicated       = 4;         // true iff the re-point was a no-op (idempotent)
+}
+
 // ---------------------------------------------------------------------------
 // Service — the external client-facing gateway (distinct from Coordinator).
 // ---------------------------------------------------------------------------
@@ -1555,4 +1568,10 @@ service KxGateway {
   rpc ListBranches(ListBranchesRequest) returns (ListBranchesResponse);
   rpc GetBranch(GetBranchRequest) returns (GetBranchResponse);
   rpc DeleteBranch(DeleteBranchRequest) returns (DeleteBranchResponse);
+  // D155 Phase-3 — agentic in-CAS edit: re-point a manifest path to an EXISTING
+  // content-store ref (the edited body the ReAct loop just committed). Strictly
+  // IN-CAS — never reads/writes the host (host write-back is Phase-B). NOT_FOUND
+  // if the branch is unknown to the caller; INVALID_ARGUMENT if the ref does not
+  // resolve in the content store (fail-closed — no dangling manifest).
+  rpc AdvanceBranch(AdvanceBranchRequest) returns (AdvanceBranchResponse);
 }

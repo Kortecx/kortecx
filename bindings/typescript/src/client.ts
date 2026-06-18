@@ -13,7 +13,7 @@ import type { MessageInitShape } from "@bufbuild/protobuf";
 import { createClient } from "@connectrpc/connect";
 import type { Client, Transport } from "@connectrpc/connect";
 import { AlertSummary, type AlertsPage } from "./alerts.js";
-import { Branch, CreateBranchResult, SnapshotResult } from "./branch.js";
+import { AdvanceResult, Branch, CreateBranchResult, SnapshotResult } from "./branch.js";
 import { CaptureRecord, type CaptureRecordPage } from "./capture.js";
 import type { Chain } from "./chains.js";
 import { ContentItem, PutResult } from "./content.js";
@@ -112,6 +112,11 @@ export interface InvokeOptions {
    * different context ⇒ a different run.
    */
   context?: readonly string[];
+  /**
+   * D155 Phase-3: raw 64-hex content-store refs to attach directly as context
+   * (no bundle needed). Same identity-bearing injection as {@link context}.
+   */
+  contextRefs?: readonly string[];
 }
 
 export abstract class KxClientBase {
@@ -143,12 +148,16 @@ export abstract class KxClientBase {
         handle,
         args: argBytes,
         contextBundles: opts.context ? [...opts.context] : [],
+        contextRefs: opts.contextRefs ? [...opts.contextRefs] : [],
       }),
     );
     const run = new Run(this, resp.instanceId, resp.terminalMoteId, resp.recipeFingerprint);
     if (!opts.wait) return run;
     const result =
-      handle === REACT_RECIPE_HANDLE
+      // React CHAIN recipes (react / react-fs / react-auto) settle via
+      // ListReactTurns, not a terminal Mote (F13); they share the prefix.
+      // react-edit is EXCLUDED — a single model step settling on its terminal mote.
+      handle.startsWith(REACT_RECIPE_HANDLE) && handle !== "kx/recipes/react-edit"
         ? // F13: a react chain settles via ListReactTurns, not a terminal Mote.
           this._finish(
             await pollReactResult(
@@ -392,6 +401,57 @@ export abstract class KxClientBase {
   async deleteBranch(handle: string): Promise<boolean> {
     const resp = await rpc(this.grpc.deleteBranch({ handle }));
     return resp.removed;
+  }
+
+  /**
+   * D155 Phase-3 (low-level): re-point `path` in branch `handle` to an EXISTING
+   * content-store ref `contentRef` (64-hex), or insert it ("enrich"), then
+   * recompute `branchRef`. Strictly IN-CAS (no host read/write). Rejects
+   * NOT_FOUND if the branch is unknown, INVALID_ARGUMENT if the ref does not
+   * resolve. Prefer {@link editBranch} for the agentic high-level flow.
+   */
+  async advanceBranch(handle: string, path: string, contentRef: string): Promise<AdvanceResult> {
+    const resp = await rpc(
+      this.grpc.advanceBranch({ handle, path, contentRef: asBytes(contentRef, REF_LEN) }),
+    );
+    return AdvanceResult.fromProto(resp);
+  }
+
+  /**
+   * D155 Phase-3: agentically edit a branch file IN-CAS. Resolves `path`'s current
+   * ref, runs the `kx/recipes/react-edit` loop (the body attached as a context
+   * ref; the model rewrites it per `instruction`), and advances the manifest to
+   * the new content ref. The host is NEVER written. Rejects if the chain produced
+   * no committed answer.
+   */
+  async editBranch(
+    handle: string,
+    path: string,
+    instruction: string,
+    opts: { timeoutMs?: number } = {},
+  ): Promise<AdvanceResult> {
+    const branch = await this.getBranch(handle);
+    if (branch === null) throw new Error(`branch '${handle}' not found`);
+    const item = branch.items.find((it) => it.path === path);
+    if (item === undefined) throw new Error(`path '${path}' is not in branch '${handle}'`);
+    const directive = `You are editing the file \`${path}\`. The text in the attached context below IS its exact current contents. Apply this change: ${instruction}\n\nReturn ONLY the complete, updated file contents — no commentary, no explanation, and no markdown code fences.`;
+    // react-edit is a single model step; its only free param is `prompt`.
+    const result = await this.invoke(
+      "kx/recipes/react-edit",
+      { prompt: directive },
+      { wait: true, timeoutMs: opts.timeoutMs ?? 300_000, contextRefs: [item.contentRef] },
+    );
+    if (!(result instanceof Result) || !result.ok || result.resultRef === null) {
+      throw new Error("react-edit produced no committed answer to advance the branch to");
+    }
+    // Fail CLOSED on an empty edit (GR15): never advance the manifest to an empty
+    // file (a heavy-reasoning model can return only stripped reasoning).
+    if (result.payload === null || result.payload.length === 0) {
+      throw new Error(
+        "react-edit produced an empty body (the model did not return file contents); the branch was NOT advanced",
+      );
+    }
+    return this.advanceBranch(handle, path, result.resultRef);
   }
 
   /**

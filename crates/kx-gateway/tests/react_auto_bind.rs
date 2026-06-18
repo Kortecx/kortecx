@@ -117,7 +117,7 @@ async fn react_auto_bind_admits_the_live_union_warrant() {
     let binder = HostRecipeBinder::from_shared_with_autogrant(lib, registry, view);
 
     let bound = binder
-        .bind("alice@acme", REACT_AUTO_RECIPE_HANDLE, ARGS, &[])
+        .bind("alice@acme", REACT_AUTO_RECIPE_HANDLE, ARGS, &[], &[])
         .await
         .expect("alice holds Use on react-auto");
 
@@ -152,13 +152,13 @@ async fn react_auto_override_preserves_the_seed_mote_identity() {
     // WITHOUT autogrant: the placeholder warrant (empty tool_grants) binds.
     let plain = HostRecipeBinder::from_shared(lib.clone());
     let bound_plain = plain
-        .bind("alice@acme", REACT_AUTO_RECIPE_HANDLE, ARGS, &[])
+        .bind("alice@acme", REACT_AUTO_RECIPE_HANDLE, ARGS, &[], &[])
         .await
         .unwrap();
     // WITH autogrant: the union warrant overrides.
     let auto = HostRecipeBinder::from_shared_with_autogrant(lib, registry, view);
     let bound_auto = auto
-        .bind("alice@acme", REACT_AUTO_RECIPE_HANDLE, ARGS, &[])
+        .bind("alice@acme", REACT_AUTO_RECIPE_HANDLE, ARGS, &[], &[])
         .await
         .unwrap();
 
@@ -183,7 +183,7 @@ async fn react_auto_refuses_a_party_without_use() {
     // The pre-override `bind_snapshot` gate still fires: a party with no `Use`
     // grant on react-auto is refused (the override never widens authorization).
     let outcome = binder
-        .bind("mallory@evil", REACT_AUTO_RECIPE_HANDLE, ARGS, &[])
+        .bind("mallory@evil", REACT_AUTO_RECIPE_HANDLE, ARGS, &[], &[])
         .await;
     assert!(
         matches!(outcome, Err(kx_gateway_core::BinderError::NotAuthorized)),

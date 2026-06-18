@@ -199,6 +199,27 @@ const REACT_AUTO_LOGIC_REF: [u8; 32] = [0x53; 32];
 /// collides with `kx/recipes/react` at seed) — the warrant + handle + logic ref differ.
 pub const REACT_FS_RECIPE_HANDLE: &str = "kx/recipes/react-fs";
 
+/// The wire handle of the D155 Phase-3 `react-edit` recipe: a bounded live ReAct
+/// loop like [`REACT_RECIPE_HANDLE`] whose model rewrites a branch file body —
+/// delivered out-of-band as an `InvokeRequest.context_ref` (the file's current
+/// in-CAS ref) — and emits the edited body as its TERMINAL ANSWER, which the
+/// runtime content-addresses as a NEW content ref the branch manifest then
+/// `AdvanceBranch`-es to. When `KX_SERVE_FS_ROOT` is set its server-built warrant
+/// ALSO grants the read-only `fs-read@1` tool so the model can read sibling files
+/// for a context-aware refactor (still ReadOnly — host write-back is Phase-B, after
+/// PR-8). A SEPARATE recipe BY DESIGN (the react-fs / vision precedent) so the
+/// canonical recipes + the projection digest stay byte-unchanged. Seeded only when
+/// a fit serve model resolved (works model-only — the edit source arrives via the
+/// context item, not the host). Reuses the react free-param contract; carries its
+/// OWN logic ref (BUG-25 — a shared logic ref collides at seed).
+pub const REACT_EDIT_RECIPE_HANDLE: &str = "kx/recipes/react-edit";
+
+/// A DISTINCT placeholder `logic_ref` for the `react-edit` seed step (the BUG-25
+/// class — a shared logic ref collides with the other react recipe bodies at seed;
+/// the seed is SWAPPED at submit, so the ref never reaches an admitted identity).
+/// `0x55` is the next free sentinel after react-fs (`0x54`).
+const REACT_EDIT_LOGIC_REF: [u8; 32] = [0x55; 32];
+
 /// Schema-refs of the react recipe's typed free-params.
 const REACT_INSTRUCTION_SCHEMA_REF: [u8; 32] = [0x4f; 32];
 /// See [`REACT_INSTRUCTION_SCHEMA_REF`].
@@ -612,6 +633,37 @@ impl DemoLibrary {
             ));
         }
 
+        // (react-edit) D155 Phase-3: agentic in-CAS edit as a SINGLE PURE model
+        // step (the chat/vision shape) — NOT a react chain. The branch file's
+        // current body is delivered as `context_refs` (which survive on a single
+        // entry mote; a react seed-swap would drop them) and the model rewrites it
+        // under `reasoning=off`; the terminal mote's committed result IS the new
+        // body, which the manifest then `AdvanceBranch`-es to. In-loop `fs-read`
+        // (reading sibling files) needs the react chain's per-turn context carry,
+        // deferred to PR-9. Seeded only when a model is served (default-OFF without
+        // ⇒ digest unchanged); a `prompt` free-param contract; OWN logic ref.
+        if let Some(model_id) = serve_model {
+            let react_edit_w = react_edit_warrant(exec_class, model_id);
+            let react_edit_h = react_edit_handle()?;
+            seed_recipe(
+                &versions,
+                &bodies,
+                &grants,
+                &owner,
+                parties,
+                &react_edit_h,
+                react_edit_body(&react_edit_w),
+                &react_edit_w,
+            )?;
+            recipes.push((
+                react_edit_h,
+                RecipeMeta {
+                    owner_root: react_edit_w,
+                    free_params: prompt_contract(),
+                },
+            ));
+        }
+
         // (blueprints/author) the Tier-1 DAG-authoring asset — granted Use to each
         // party so `SubmitWorkflow` resolves the party's authority from this same
         // ledger (no body/version; authoring submits one-off DAGs). Always seeded.
@@ -868,6 +920,10 @@ fn recipe_advisory(handle: &str) -> (&'static str, &'static [&'static str]) {
         REACT_AUTO_RECIPE_HANDLE => (
             "ReAct-Auto — a live agent loop that auto-grants the registered/dialed tool set (the model picks from all live tools).",
             &["agent", "react", "tools", "auto-grant", "mcp"],
+        ),
+        REACT_EDIT_RECIPE_HANDLE => (
+            "ReAct-Edit — a live agent loop that rewrites a branch file in-CAS; the edited body commits as a new content ref the branch manifest advances to (the host is never written).",
+            &["agent", "react", "edit", "branch", "refactor", "filesystem"],
         ),
         VISION_RECIPE_HANDLE => (
             "Vision — a multimodal completion over an attached image.",
@@ -1190,13 +1246,20 @@ impl RecipeBinder for HostRecipeBinder {
         handle: &str,
         args: &[u8],
         context_bundles: &[String],
+        context_refs: &[String],
     ) -> Result<BoundRecipe, BinderError> {
         // A malformed handle reveals nothing (uniform NotAuthorized — no probing).
         let asset_path = parse_handle(handle).ok_or(BinderError::NotAuthorized)?;
-        // PR-7: resolve any attached context bundles to their item refs FIRST
-        // (fail-closed on an unknown/unavailable handle) so the entry Mote's
-        // identity reflects the exact context. Empty ⇒ byte-identical to pre-PR-7.
-        let context_items = resolve_context_items(self.bundles.as_deref(), party, context_bundles)?;
+        // PR-7 + D155 Phase-3: resolve any attached context bundles (handles) AND
+        // direct content refs to their item refs FIRST (fail-closed on an
+        // unknown/unavailable handle or malformed ref) so the entry Mote's identity
+        // reflects the exact context. Both empty ⇒ byte-identical to pre-PR-7.
+        let context_items = resolve_context_items(
+            self.bundles.as_deref(),
+            party,
+            context_bundles,
+            context_refs,
+        )?;
         // Resolve the recipe's binding metadata; an unknown handle is the same
         // uniform NotAuthorized (no existence oracle on the execution surface).
         let meta = self
@@ -1252,6 +1315,8 @@ impl RecipeBinder for HostRecipeBinder {
             // PR-6a/D155: react-fs is ALSO a live ReAct chain (same machinery,
             // fs-list grant) ⇒ it MUST set react_seed too, else the loop never runs.
             // PR-6b-4: react-auto is the same machinery (union tool grant).
+            // (D155 Phase-3 `react-edit` is a SINGLE model step, NOT a react chain
+            // — it is deliberately absent here; it settles on its terminal mote.)
             react_seed: [
                 REACT_RECIPE_HANDLE,
                 REACT_FS_RECIPE_HANDLE,
@@ -1273,27 +1338,70 @@ fn resolve_context_items(
     bundles: Option<&dyn BundleStore>,
     party: &str,
     handles: &[String],
+    refs: &[String],
 ) -> Result<Vec<ContextItemRef>, BinderError> {
-    if handles.is_empty() {
+    if handles.is_empty() && refs.is_empty() {
         return Ok(Vec::new());
     }
-    let store = bundles.ok_or_else(|| {
-        BinderError::InvalidArgs("context bundles are not available on this gateway".to_string())
-    })?;
     let mut items = Vec::new();
-    for h in handles {
-        let manifest = store
-            .get(party, h)
-            .map_err(|_| BinderError::InvalidArgs(format!("context bundle '{h}' lookup failed")))?
-            .ok_or_else(|| BinderError::InvalidArgs(format!("context bundle '{h}' not found")))?;
-        for it in manifest.items {
-            items.push(ContextItemRef {
-                name: it.name,
-                content_ref: it.content_ref,
-            });
+    // PR-7: named context-bundle handles, resolved against bundles.db (caller-scoped).
+    if !handles.is_empty() {
+        let store = bundles.ok_or_else(|| {
+            BinderError::InvalidArgs(
+                "context bundles are not available on this gateway".to_string(),
+            )
+        })?;
+        for h in handles {
+            let manifest = store
+                .get(party, h)
+                .map_err(|_| {
+                    BinderError::InvalidArgs(format!("context bundle '{h}' lookup failed"))
+                })?
+                .ok_or_else(|| {
+                    BinderError::InvalidArgs(format!("context bundle '{h}' not found"))
+                })?;
+            for it in manifest.items {
+                items.push(ContextItemRef {
+                    name: it.name,
+                    content_ref: it.content_ref,
+                });
+            }
         }
     }
+    // D155 Phase-3: raw content-store refs attached DIRECTLY (no bundles.db) — each
+    // a 64-hex ref of a blob ALREADY in the store (e.g. a branch file's current
+    // ref the `react-edit` model rewrites). Fail closed on a malformed ref (never
+    // silently drop context); the assemble layer fails closed if a ref does not
+    // resolve at fetch (the `UpstreamMissing` posture). The label is display-only
+    // (identity is the ref + label canonicalised by `encode_context_items`).
+    for r in refs {
+        let content_ref = decode_hex32(r).ok_or_else(|| {
+            BinderError::InvalidArgs(format!("context ref '{r}' is not a 64-hex content ref"))
+        })?;
+        items.push(ContextItemRef {
+            name: format!("ref:{}", r.chars().take(12).collect::<String>()),
+            content_ref,
+        });
+    }
     Ok(items)
+}
+
+/// Decode a 64-char hex string into a 32-byte content ref (`None` on any
+/// non-hex / wrong-length input). Lives in `provision` (always compiled) — NOT
+/// behind the `inference`-gated `model_exec` (the BUG-30 cfg-leak class: a binder
+/// helper must resolve `context_refs` on the no-inference CI binary too).
+fn decode_hex32(s: &str) -> Option<[u8; 32]> {
+    let b = s.as_bytes();
+    if b.len() != 64 {
+        return None;
+    }
+    let mut out = [0u8; 32];
+    for (i, pair) in b.chunks_exact(2).enumerate() {
+        let hi = (pair[0] as char).to_digit(16)?;
+        let lo = (pair[1] as char).to_digit(16)?;
+        out[i] = u8::try_from(hi * 16 + lo).ok()?;
+    }
+    Some(out)
 }
 
 /// Resolves a party's effective `Use` warrant from the authoritative grant ledger
@@ -1604,8 +1712,11 @@ impl WorkflowAuthor for HostWorkflowAuthor {
 
         // PR-7: inject any attached context-bundle items into every ENTRY step's
         // identity-bearing config BEFORE compile (fail-closed on an unknown handle;
-        // empty ⇒ byte-identical to pre-PR-7). Resolution is caller-scoped.
-        let context_items = resolve_context_items(self.bundles.as_deref(), party, context_bundles)?;
+        // empty ⇒ byte-identical to pre-PR-7). Resolution is caller-scoped. The
+        // author/SubmitWorkflow path carries no direct `context_refs` (those are an
+        // Invoke-only field) ⇒ pass an empty ref set.
+        let context_items =
+            resolve_context_items(self.bundles.as_deref(), party, context_bundles, &[])?;
         if !context_items.is_empty() {
             let encoded = ConfigVal(encode_context_items(&context_items));
             wf.inject_entry_config(CONTEXT_ITEMS_KEY, &encoded);
@@ -2137,6 +2248,111 @@ fn react_fs_handle() -> Result<AssetPath, GatewayError> {
         .ok_or_else(|| GatewayError::Catalog("invalid react-fs recipe handle".into()))
 }
 
+/// D155 Phase-3: the server-built `react-edit` step warrant. A bounded live ReAct
+/// loop (ReadOnlyNondet) whose model rewrites a file body delivered out-of-band as
+/// a context item; the terminal answer turn IS the edited body. When `fs_read` is
+/// `Some((tool, root))` it grants the read-only `fs-read@1` tool + a ReadOnly mount
+/// of `root` so the model may read sibling files for a context-aware refactor
+/// rewrite from the attached body). The terminal mote IS the edited file body.
+///
+/// D155 Phase-3 ships react-edit as a SINGLE PURE model step (the chat/vision
+/// precedent), NOT a react chain: the file body is delivered as `context_refs`
+/// (which SURVIVE on a single entry mote — there is no react seed-swap to drop
+/// them), and `reasoning=off` is baked into the recipe body so the committed
+/// answer is the file body verbatim. NO tools / fs / net — in-loop `fs-read`
+/// (the model reading sibling files) needs the react chain's per-turn context
+/// carry, deferred to PR-9's agentic-runner substrate work. A larger output
+/// budget than chat (the answer is a file body) + a generous wall clock so a
+/// full-budget greedy decode never times out.
+pub(crate) fn react_edit_warrant(exec_class: ExecutorClass, model_id: &ModelId) -> WarrantSpec {
+    WarrantSpec {
+        // Pure ⇒ greedy + recomputable (the model_warrant precedent; the single-
+        // step dispatch is greedy regardless of class) — so a PR-D re-edit with
+        // unchanged inputs dedups exactly. NOTE: a heavy-reasoning model can emit
+        // verbose `<think>` that never closes under a single greedy step; the
+        // client fails CLOSED on an empty stripped body (it never advances the
+        // manifest to an empty file). Letting such models complete (sampling /
+        // the react-chain context-carry) is a post-RC improvement.
+        mote_class: MoteClass::Pure,
+        nd_class: MoteClass::Pure,
+        fs_scope: FsScope::empty(),
+        net_scope: NetScope::None,
+        syscall_profile_ref: ContentRef::from_bytes([0u8; 32]),
+        tool_grants: BTreeSet::new(),
+        model_route: ModelRoute {
+            model_id: model_id.clone(),
+            // The answer is the rewritten file body. A reasoning model spends a
+            // chunk of the budget on its `<think>` block (stripped at commit), so
+            // this must be generous enough to FINISH reasoning AND emit the body
+            // (a budget that ends mid-`<think>` strips to empty). Bounded so a
+            // full-budget greedy decode still completes within the wall clock.
+            max_input_tokens: 8_192,
+            max_output_tokens: 3_072,
+            max_calls: 4,
+        },
+        resource_ceiling: ResourceCeiling {
+            cpu_milli: 0,
+            mem_bytes: 0,
+            // Generous: an edit is a deliberate op and CPU/Metal decode of a
+            // multi-B model is slow; this must comfortably exceed the time to
+            // decode `max_output_tokens` so a full-budget rewrite never times out.
+            wall_clock_ms: 300_000,
+            fd_count: 0,
+            disk_bytes: 0,
+        },
+        environment_ref: None,
+        executor_class: exec_class,
+        ..Default::default()
+    }
+}
+
+fn react_edit_handle() -> Result<AssetPath, GatewayError> {
+    parse_handle(REACT_EDIT_RECIPE_HANDLE)
+        .ok_or_else(|| GatewayError::Catalog("invalid react-edit recipe handle".into()))
+}
+
+/// The model-executor config key for the opt-in reasoning mode (mirrors
+/// `kx-gateway::model_exec::REASONING_KEY`, hard-coded here because `model_exec`
+/// is `inference`-gated while `provision` is always compiled — the BUG-30
+/// cfg-leak class). react-edit uses `"strip"`: the model reasons naturally (so it
+/// produces real content — `/no_think` makes some models emit an EMPTY
+/// completion) but the leading `<think>` block is stripped at commit, so the
+/// committed edit body is the file verbatim (GR15).
+const REASONING_CONFIG_KEY: &str = "reasoning";
+const REASONING_STRIP: &str = "strip";
+
+/// The D155 Phase-3 `react-edit` recipe body: a SINGLE PURE model step (the chat
+/// shape) with a `prompt` slot (the edit directive, filled at bind) AND a FIXED
+/// `reasoning=off` config so the committed answer is the edited file verbatim.
+/// The attached `context_refs` (the file's current body) land on this entry mote
+/// at bind (identity-bearing) and the model executor assembles them ahead of the
+/// prompt — they SURVIVE because a single model step is admitted verbatim (no
+/// react seed-swap to drop the config). Carries its OWN `REACT_EDIT_LOGIC_REF`.
+fn react_edit_body(warrant: &WarrantSpec) -> WorkflowDef {
+    let logic = LogicRef::from_bytes(REACT_EDIT_LOGIC_REF);
+    let b = REACT_EDIT_LOGIC_REF;
+    let seed = u32::from_le_bytes([b[0], b[1], b[2], b[3]]);
+    let mut wf = WorkflowDef::new(seed);
+    let mut step = transform(
+        logic,
+        warrant.model_route.model_id.clone(),
+        warrant.clone(),
+        ToolName("demo".into()),
+    );
+    // The `prompt` slot the binder fills from the edit directive (the key the
+    // model executor reads); empty here, like `recipe_body`'s variable slots.
+    step.config_subset
+        .insert(ConfigKey(PROMPT_KEY.into()), ConfigVal(Vec::new()));
+    // FIXED: reasoning=strip ⇒ the model reasons naturally (produces content) but
+    // the committed body has the leading `<think>` block stripped (clean file).
+    step.config_subset.insert(
+        ConfigKey(REASONING_CONFIG_KEY.into()),
+        ConfigVal(REASONING_STRIP.as_bytes().to_vec()),
+    );
+    wf.add_step(step);
+    wf
+}
+
 /// PR-6b-4: the cap on the auto-grant union warrant's tool set — bounds the
 /// model's tool menu (prompt size) AND the union warrant's scope breadth. When
 /// more than this many tools are registered, a deterministic `(id, version)`
@@ -2428,11 +2644,23 @@ mod tests {
         let binder = demo_lib(dir.path());
 
         let a1 = binder
-            .bind("alice@acme", DEMO_RECIPE_HANDLE, br#"{"topic":"x"}"#, &[])
+            .bind(
+                "alice@acme",
+                DEMO_RECIPE_HANDLE,
+                br#"{"topic":"x"}"#,
+                &[],
+                &[],
+            )
             .await
             .unwrap();
         let a2 = binder
-            .bind("alice@acme", DEMO_RECIPE_HANDLE, br#"{"topic":"x"}"#, &[])
+            .bind(
+                "alice@acme",
+                DEMO_RECIPE_HANDLE,
+                br#"{"topic":"x"}"#,
+                &[],
+                &[],
+            )
             .await
             .unwrap();
         assert_eq!(
@@ -2442,7 +2670,13 @@ mod tests {
         assert_eq!(a1.recipe_fingerprint, a2.recipe_fingerprint);
 
         let b = binder
-            .bind("alice@acme", DEMO_RECIPE_HANDLE, br#"{"topic":"y"}"#, &[])
+            .bind(
+                "alice@acme",
+                DEMO_RECIPE_HANDLE,
+                br#"{"topic":"y"}"#,
+                &[],
+                &[],
+            )
             .await
             .unwrap();
         assert_ne!(
@@ -2478,7 +2712,13 @@ mod tests {
 
         // Same input, NO context ⇒ the pre-PR-7 identity.
         let plain = binder
-            .bind("alice@acme", DEMO_RECIPE_HANDLE, br#"{"topic":"x"}"#, &[])
+            .bind(
+                "alice@acme",
+                DEMO_RECIPE_HANDLE,
+                br#"{"topic":"x"}"#,
+                &[],
+                &[],
+            )
             .await
             .unwrap();
         // Same input, WITH the bundle ⇒ a DIFFERENT entry identity (exactly-once-
@@ -2490,6 +2730,7 @@ mod tests {
                 DEMO_RECIPE_HANDLE,
                 br#"{"topic":"x"}"#,
                 &["team/ctx/notes".to_string()],
+                &[],
             )
             .await
             .unwrap();
@@ -2505,6 +2746,7 @@ mod tests {
                 DEMO_RECIPE_HANDLE,
                 br#"{"topic":"x"}"#,
                 &["team/ctx/notes".to_string()],
+                &[],
             )
             .await
             .unwrap();
@@ -2520,6 +2762,7 @@ mod tests {
                 DEMO_RECIPE_HANDLE,
                 br#"{"topic":"x"}"#,
                 &["team/ctx/missing".to_string()],
+                &[],
             )
             .await;
         assert!(
@@ -2534,6 +2777,7 @@ mod tests {
                 DEMO_RECIPE_HANDLE,
                 br#"{"topic":"x"}"#,
                 &["team/ctx/notes".to_string()],
+                &[],
             )
             .await;
         assert!(cross_party.is_ok(), "alice resolves her own bundle");
@@ -2634,6 +2878,7 @@ mod tests {
                 DEMO_RECIPE_HANDLE,
                 br#"{"topic":"x"}"#,
                 &["team/ctx/notes".to_string()],
+                &[],
             )
             .await;
         assert!(
@@ -2642,7 +2887,13 @@ mod tests {
         );
         // An EMPTY context_bundles is byte-identical to pre-PR-7 (still binds).
         let ok = binder
-            .bind("alice@acme", DEMO_RECIPE_HANDLE, br#"{"topic":"x"}"#, &[])
+            .bind(
+                "alice@acme",
+                DEMO_RECIPE_HANDLE,
+                br#"{"topic":"x"}"#,
+                &[],
+                &[],
+            )
             .await;
         assert!(ok.is_ok(), "no context ⇒ unchanged");
     }
@@ -2652,7 +2903,13 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let binder = demo_lib(dir.path());
         let bound = binder
-            .bind("alice@acme", DEMO_RECIPE_HANDLE, br#"{"topic":"x"}"#, &[])
+            .bind(
+                "alice@acme",
+                DEMO_RECIPE_HANDLE,
+                br#"{"topic":"x"}"#,
+                &[],
+                &[],
+            )
             .await
             .unwrap();
         assert!(!bound.motes.is_empty());
@@ -2669,7 +2926,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let binder = demo_lib(dir.path());
         let bound = binder
-            .bind("alice@acme", PASSTHROUGH_DAG_HANDLE, b"{}", &[])
+            .bind("alice@acme", PASSTHROUGH_DAG_HANDLE, b"{}", &[], &[])
             .await
             .unwrap();
         // root + FANOUT_WIDTH children + gather = a genuine multi-node DAG.
@@ -2682,7 +2939,7 @@ mod tests {
         }
         // Idempotent: identical (empty) args → identical terminal identity.
         let again = binder
-            .bind("alice@acme", PASSTHROUGH_DAG_HANDLE, b"{}", &[])
+            .bind("alice@acme", PASSTHROUGH_DAG_HANDLE, b"{}", &[], &[])
             .await
             .unwrap();
         assert_eq!(bound.terminal_mote_id, again.terminal_mote_id);
@@ -2696,7 +2953,13 @@ mod tests {
         // "mallory" was never granted Use.
         assert!(matches!(
             binder
-                .bind("mallory@acme", DEMO_RECIPE_HANDLE, br#"{"topic":"x"}"#, &[])
+                .bind(
+                    "mallory@acme",
+                    DEMO_RECIPE_HANDLE,
+                    br#"{"topic":"x"}"#,
+                    &[],
+                    &[]
+                )
                 .await,
             Err(BinderError::NotAuthorized)
         ));
@@ -2709,13 +2972,19 @@ mod tests {
         // Unknown handle and a malformed handle both → uniform NotAuthorized.
         assert!(matches!(
             binder
-                .bind("alice@acme", "kx/recipes/nope", br#"{"topic":"x"}"#, &[])
+                .bind(
+                    "alice@acme",
+                    "kx/recipes/nope",
+                    br#"{"topic":"x"}"#,
+                    &[],
+                    &[]
+                )
                 .await,
             Err(BinderError::NotAuthorized)
         ));
         assert!(matches!(
             binder
-                .bind("alice@acme", "not-a-handle", br#"{"topic":"x"}"#, &[])
+                .bind("alice@acme", "not-a-handle", br#"{"topic":"x"}"#, &[], &[])
                 .await,
             Err(BinderError::NotAuthorized)
         ));
@@ -2728,14 +2997,20 @@ mod tests {
         // Wrong type for `topic`.
         assert!(matches!(
             binder
-                .bind("alice@acme", DEMO_RECIPE_HANDLE, br#"{"topic":5}"#, &[])
+                .bind(
+                    "alice@acme",
+                    DEMO_RECIPE_HANDLE,
+                    br#"{"topic":5}"#,
+                    &[],
+                    &[]
+                )
                 .await,
             Err(BinderError::InvalidArgs(_))
         ));
         // Missing `topic`.
         assert!(matches!(
             binder
-                .bind("alice@acme", DEMO_RECIPE_HANDLE, b"{}", &[])
+                .bind("alice@acme", DEMO_RECIPE_HANDLE, b"{}", &[], &[])
                 .await,
             Err(BinderError::InvalidArgs(_))
         ));
@@ -3146,6 +3421,7 @@ mod tests {
                 MODEL_RECIPE_HANDLE,
                 br#"{"prompt":"Capital of France?"}"#,
                 &[],
+                &[],
             )
             .await
             .expect("chat recipe binds for a granted party");
@@ -3177,7 +3453,13 @@ mod tests {
         let binder = demo_lib(dir.path()); // open() ⇒ no serve model
         assert!(matches!(
             binder
-                .bind("alice@acme", MODEL_RECIPE_HANDLE, br#"{"prompt":"x"}"#, &[])
+                .bind(
+                    "alice@acme",
+                    MODEL_RECIPE_HANDLE,
+                    br#"{"prompt":"x"}"#,
+                    &[],
+                    &[]
+                )
                 .await,
             Err(BinderError::NotAuthorized)
         ));
@@ -3487,11 +3769,100 @@ mod tests {
         assert!(handles.contains(&REACT_RECIPE_HANDLE.to_string()));
         assert!(handles.contains(&REACT_FS_RECIPE_HANDLE.to_string()));
         assert!(handles.contains(&REACT_AUTO_RECIPE_HANDLE.to_string()));
+        // D155 Phase-3: react-edit seeds alongside (a served model is present).
+        assert!(handles.contains(&REACT_EDIT_RECIPE_HANDLE.to_string()));
         // Each has a DISTINCT recipe fingerprint (the distinct logic refs).
         let fp = |h: &str| lib.recipe_fingerprint(h).unwrap();
         assert_ne!(fp(REACT_RECIPE_HANDLE), fp(REACT_FS_RECIPE_HANDLE));
         assert_ne!(fp(REACT_RECIPE_HANDLE), fp(REACT_AUTO_RECIPE_HANDLE));
         assert_ne!(fp(REACT_FS_RECIPE_HANDLE), fp(REACT_AUTO_RECIPE_HANDLE));
+        assert_ne!(fp(REACT_EDIT_RECIPE_HANDLE), fp(REACT_RECIPE_HANDLE));
+        assert_ne!(fp(REACT_EDIT_RECIPE_HANDLE), fp(REACT_FS_RECIPE_HANDLE));
+        assert_ne!(fp(REACT_EDIT_RECIPE_HANDLE), fp(REACT_AUTO_RECIPE_HANDLE));
+    }
+
+    #[test]
+    fn react_edit_recipe_seeded_only_with_a_served_model() {
+        // D155 Phase-3: react-edit seeds whenever a model is served (the edit source
+        // arrives via a context_ref, not the host) — and NOT without a model
+        // (default-OFF ⇒ the canonical projection digest stays byte-unchanged).
+        let model = ModelId("kx-serve:m".to_string());
+        let dir = tempfile::tempdir().unwrap();
+        let lib = DemoLibrary::open_complete(
+            dir.path(),
+            ExecutorClass::Bwrap,
+            &["alice@acme".to_string()],
+            Some(&model),
+            None,
+            false,
+            None,
+            false,
+        )
+        .unwrap();
+        assert!(lib
+            .recipe_handles()
+            .contains(&REACT_EDIT_RECIPE_HANDLE.to_string()));
+        // The published form is the single-step `prompt` contract (the edit
+        // directive); react-edit is a model step, not the 3-slot react contract.
+        let form = lib
+            .recipe_form(REACT_EDIT_RECIPE_HANDLE)
+            .expect("react-edit is provisioned");
+        assert_eq!(form.len(), 1);
+        assert_eq!(form[0].name, PROMPT_KEY);
+
+        // No served model ⇒ NOT seeded (the digest gate).
+        let dir2 = tempfile::tempdir().unwrap();
+        let lib2 = DemoLibrary::open_complete(
+            dir2.path(),
+            ExecutorClass::Bwrap,
+            &["alice@acme".to_string()],
+            None,
+            None,
+            false,
+            None,
+            false,
+        )
+        .unwrap();
+        assert!(!lib2
+            .recipe_handles()
+            .contains(&REACT_EDIT_RECIPE_HANDLE.to_string()));
+    }
+
+    #[test]
+    fn react_edit_warrant_is_a_single_step_no_tools() {
+        // D155 Phase-3: react-edit is a SINGLE PURE (greedy, recomputable) model
+        // step — no tools / fs / net (in-loop fs-read is deferred to PR-9).
+        let w = react_edit_warrant(ExecutorClass::Bwrap, &ModelId("m".to_string()));
+        assert_eq!(w.mote_class, MoteClass::Pure);
+        assert!(w.tool_grants.is_empty(), "no tool grant (single step)");
+        assert!(w.fs_scope.mounts.is_empty(), "no fs scope");
+        assert_eq!(w.net_scope, NetScope::None, "edit has no egress");
+        // The answer is the rewritten file body — a larger output budget than a
+        // short chat answer, bounded to complete within a generous wall clock.
+        assert!(w.model_route.max_output_tokens >= 1_024);
+        assert!(
+            w.resource_ceiling.wall_clock_ms >= 300_000,
+            "the wall clock must comfortably exceed a full-budget greedy decode"
+        );
+    }
+
+    #[test]
+    fn context_refs_resolve_directly_without_a_bundle_store() {
+        // D155 Phase-3: raw content refs resolve to context items with NO bundles.db
+        // (the direct-attach path the `react-edit` Invoke uses).
+        let good = "ab".repeat(32); // 64 hex chars
+        let items = resolve_context_items(None, "alice@acme", &[], &[good]).unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].content_ref, [0xABu8; 32]);
+        // A malformed ref fails CLOSED (never silently drops context).
+        assert!(matches!(
+            resolve_context_items(None, "alice@acme", &[], &["zz".to_string()]),
+            Err(BinderError::InvalidArgs(_))
+        ));
+        // Both empty ⇒ empty (byte-identical to pre-PR-7; no store needed).
+        assert!(resolve_context_items(None, "alice@acme", &[], &[])
+            .unwrap()
+            .is_empty());
     }
 
     #[test]

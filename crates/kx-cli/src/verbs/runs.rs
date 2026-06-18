@@ -207,6 +207,7 @@ async fn execute_rerun(common: ClientCommon, spec: RerunSpec) -> Result<(), CliE
         // PR-7: a re-run replays the captured handle+args; context bundles are not
         // part of the PR-D capture, so a re-run attaches none (empty = unchanged).
         context_bundles: Vec::new(),
+        context_refs: Vec::new(),
         common,
     })
     .await
