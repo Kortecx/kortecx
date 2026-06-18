@@ -1516,6 +1516,26 @@ impl HostWorkflowAuthor {
                         served.0
                     )));
                 }
+                // PR-9b (D161.1): a MODEL step carrying a non-empty tool_contract is a
+                // DETERMINISTIC-AGENTIC step (`model@tool` in the chains DSL). The
+                // AUTHORING contract — the `@` grammar, the SDK `tools=` factory, the
+                // golden corpus, the server-vetted per-step union warrant — ships in
+                // PR-9b-1, but the bounded reason→tool→observe LOOP execution (a new
+                // launch/park/terminal-commit hook in the sole-writer coordinator + a
+                // journal v8→v9 bump + the compound react-chain key + recovery) lands
+                // in PR-9b-2. Until then the server FAILS CLOSED rather than silently
+                // run the step greedy + drop the grant set (GR15): a clear refusal at
+                // authoring, before any Mote is created.
+                if !s.tool_contract.is_empty() {
+                    return Err(BinderError::InvalidArgs(
+                        "the deterministic-agentic step (a MODEL step with `@tool` grants) is \
+                         authored across the chains DSL/SDK/CLI/UI, but its bounded \
+                         reason→tool→observe loop is not yet runnable on this server (lands in \
+                         PR-9b-2); use a standalone tool() step or the `react`/`react-auto` \
+                         recipe for tool-calling today"
+                            .into(),
+                    ));
+                }
                 // P1.1: the step warrant is `base` — and `blueprint_base` now carries
                 // the SERVED model in its `model_route` (see `seed`), so the dispatch
                 // id (served) == the warrant route id (served) and the dispatcher's

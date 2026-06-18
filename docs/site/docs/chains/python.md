@@ -12,14 +12,6 @@ The Python SDK (`pip install kortecx`) authors chains two equivalent ways: a
 canonical `(steps, edges)` as the CLI and the TypeScript SDK — see the
 [DSL reference](./dsl-reference.md#canonical-lowering).
 
-:::info API surface is landing
-The string-DSL examples below match the cross-surface contract exactly. The
-Python builder/operator method names are stabilizing across releases — the
-shapes shown are illustrative where noted. Check
-[`bindings/python/README.md`](https://github.com/Kortecx/kortecx/blob/main/bindings/python/README.md)
-for the current signatures.
-:::
-
 ## Install
 
 ```bash
@@ -33,7 +25,7 @@ Compose published task handles into a DAG with a single expression. The `tasks`
 map resolves each handle to a typed step.
 
 ```python
-from kortecx import KxClient, chain  # API landing — see note above
+from kortecx import KxClient, chain
 
 tasks = {
     "a": {"kind": "pure"},
@@ -73,6 +65,42 @@ a >> (b & c)                        # operator sugar — same lowering
 Because `>>` binds tighter than `&`, which binds tighter than `|` — exactly as in
 the [precedence table](./dsl-reference.md#precedence) — `a >> b | c` groups as
 `(a >> b) | c`, matching the string DSL.
+
+## Deterministic-agentic step — `model@tool` (PR-9b)
+
+Tag tools onto a MODEL step to make it a
+[deterministic-agentic step](./dsl-reference.md#the-deterministic-agentic-step--modeltool-pr-9b)
+— a bounded reason→tool→observe loop over a server-vetted tool-grant SET. The
+string DSL `@` grammar and the `model(tools=...)` factory lower **identically**:
+
+```python
+from kortecx import chain
+from kortecx.chains import model, pure
+
+# String DSL: `plan` is granted {web-search, fs-list}; `review` is downstream.
+spec = chain(
+    "plan@web-search@fs-list > review",
+    tasks={
+        "plan": model("kx-serve:my-model", "Research the topic.", max_turns=4, max_tool_calls=3),
+        "review": pure(),
+    },
+)
+
+# The factory form lowers to the same (steps, edges):
+plan = model("kx-serve:my-model", "Research the topic.",
+             tools=["web-search", "fs-list"], max_turns=4, max_tool_calls=3)
+```
+
+`tools=` accepts a list of names (version `"1"`) or a `{name: version}` map; the
+budget (`max_turns` / `max_tool_calls`) defaults to 8 / 6 when omitted. The server
+vets every tagged tool and builds the per-step warrant (SN-8).
+
+:::info Authoring now, execution in PR-9b-2
+Authoring is available across every surface in PR-9b-1; the bounded-loop
+**execution** lands in PR-9b-2 — until then the server fails closed on a submitted
+`model@tool` step. For tool-calling today, use a standalone `tool()` step or the
+`react` / `react-auto` recipe.
+:::
 
 ## A model step
 

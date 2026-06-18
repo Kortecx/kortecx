@@ -23,6 +23,14 @@
 //! `kx.tool.args` blob). `--context <handle>` (PR-7, repeatable) attaches named
 //! context bundles to the run — the server injects them into every entry Mote at
 //! bind (SN-8); verbatim order, empty ⇒ byte-identical to pre-PR-7.
+//!
+//! PR-9b (D161.1) — the `@` grammar: a MODEL handle may tag tools to become a
+//! **deterministic-agentic step** — `plan@web-search@fs-list > review`. The `@tool`
+//! tags (order-preserving, deduped) merge into the model step's `tool_contract`
+//! (version `"1"`); its bounded reason→tool→observe budget (`max_turns` /
+//! `max_tool_calls`) rides the task spec. The SERVER vets every tagged tool against
+//! its live registry + builds the per-step warrant (SN-8). `@` on a non-model handle
+//! is a fail-closed authoring error.
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
@@ -147,6 +155,12 @@ struct Lowered {
     nodes: Vec<String>,
     /// Edges as `(parent_index, child_index)`, deduped + sorted ascending.
     edges: Vec<(u32, u32)>,
+    /// PR-9b (D161.1): per-node `@`-tag tool grants (`node index → ordered, deduped
+    /// tool names`). A `model@tool1@tool2` handle records `[tool1, tool2]` on its
+    /// node; the lowering merges them into the MODEL step's `tool_contract` (version
+    /// `"1"`) so it becomes a deterministic-agentic step (a bounded reason→tool→observe
+    /// loop). Empty for every non-tagged node ⇒ byte-identical to pre-PR-9b.
+    grants: BTreeMap<u32, Vec<String>>,
 }
 
 /// A sub-expression's interface to its neighbours: the node indices a `>` to its
@@ -172,6 +186,9 @@ struct Parser<'a> {
     index_of: HashMap<String, u32>,
     /// The accumulated `(parent, child)` edge set (deduped at insert).
     edges: Vec<(u32, u32)>,
+    /// PR-9b: per-node `@`-tag tool grants, accumulated (order-preserving, deduped)
+    /// across every appearance of a handle. `node index → tool names`.
+    grants: BTreeMap<u32, Vec<String>>,
 }
 
 impl<'a> Parser<'a> {
@@ -182,6 +199,7 @@ impl<'a> Parser<'a> {
             nodes: Vec::new(),
             index_of: HashMap::new(),
             edges: Vec::new(),
+            grants: BTreeMap::new(),
         }
     }
 
@@ -266,7 +284,11 @@ impl<'a> Parser<'a> {
         Ok(left)
     }
 
-    /// `atom := handle | "[" chain "]"`.
+    /// `atom := handle grants? | "[" chain "]"` — a handle atom may carry a
+    /// `grants := ("@" handle)+` suffix (PR-9b, D161.1): tool names tagged onto a
+    /// MODEL handle to make it a deterministic-agentic step. `@` binds tighter than
+    /// every operator (it is part of the atom). Tags on a group `[…]@t` are a parse
+    /// error (the `@` is left unconsumed ⇒ "unexpected trailing input").
     fn parse_atom(&mut self) -> Result<Fragment, CliError> {
         match self.peek() {
             Some(b'[') => {
@@ -289,6 +311,16 @@ impl<'a> Parser<'a> {
             Some(c) if is_handle_start(c) => {
                 let handle = self.take_handle();
                 let i = self.intern(&handle);
+                // PR-9b: an optional `@tool@tool` grant suffix on this handle.
+                let tags = self.take_grants()?;
+                if !tags.is_empty() {
+                    let entry = self.grants.entry(i).or_default();
+                    for t in tags {
+                        if !entry.contains(&t) {
+                            entry.push(t);
+                        }
+                    }
+                }
                 Ok(Fragment {
                     entries: vec![i],
                     exits: vec![i],
@@ -316,6 +348,39 @@ impl<'a> Parser<'a> {
         }
         // The slice is ASCII handle bytes by construction → valid UTF-8.
         String::from_utf8_lossy(&self.src[start..self.pos]).into_owned()
+    }
+
+    /// Consume a `grants := ("@" handle)+` suffix (PR-9b): zero-or-more `@tool`
+    /// tags, each a tool NAME from the handle charset (the version defaults to
+    /// `"1"`). Order-preserving dedup (`p@x@x` == `p@x`). A stray `@` with no tool
+    /// name (`p@`, `p@@x`) is a parse error ("unexpected …" ⇒ the parse class).
+    fn take_grants(&mut self) -> Result<Vec<String>, CliError> {
+        let mut tags: Vec<String> = Vec::new();
+        while self.peek() == Some(b'@') {
+            self.pos += 1; // consume the `@`
+            match self.peek() {
+                Some(c) if is_handle_start(c) => {
+                    let tag = self.take_handle();
+                    if !tags.contains(&tag) {
+                        tags.push(tag);
+                    }
+                }
+                Some(c) => {
+                    return Err(CliError::Usage(format!(
+                        "unexpected character {:?} after `@` in chain expression \
+                         (expected a tool name)",
+                        c as char
+                    )));
+                }
+                None => {
+                    return Err(CliError::Usage(
+                        "unexpected end of chain expression (expected a tool name after `@`)"
+                            .into(),
+                    ));
+                }
+            }
+        }
+        Ok(tags)
     }
 }
 
@@ -368,8 +433,13 @@ fn lower(dsl: &str) -> Result<Lowered, CliError> {
     let mut edges = parser.edges;
     edges.sort_unstable();
     let nodes = parser.nodes;
+    let grants = parser.grants;
     detect_cycle(nodes.len(), &edges)?;
-    Ok(Lowered { nodes, edges })
+    Ok(Lowered {
+        nodes,
+        edges,
+        grants,
+    })
 }
 
 /// Kahn's algorithm — a cycle (including a `a > a` self-loop, which yields the edge
@@ -413,10 +483,27 @@ fn build_request(
     context_bundles: Vec<String>,
 ) -> Result<kx_proto::proto::SubmitWorkflowRequest, CliError> {
     let mut steps = Vec::with_capacity(lowered.nodes.len());
-    for handle in &lowered.nodes {
-        let step = tasks.remove(handle).ok_or_else(|| {
+    for (idx, handle) in lowered.nodes.iter().enumerate() {
+        let mut step = tasks.remove(handle).ok_or_else(|| {
             CliError::Usage(format!("unknown task handle {handle:?} (not in --tasks)"))
         })?;
+        // PR-9b (D161.1): merge this node's `@`-tag grants into a MODEL step's
+        // tool_contract (version "1"), turning it into a deterministic-agentic step.
+        // `@` tags on a non-model step are a fail-closed authoring error.
+        if let Some(tags) = lowered.grants.get(&u32::try_from(idx).unwrap_or(u32::MAX)) {
+            if step.kind != "model" {
+                return Err(CliError::Usage(format!(
+                    "`@` tool grants on a non-model step {handle:?} (kind {:?}); \
+                     `@tool` tags require a model step (the deterministic-agentic step)",
+                    step.kind
+                )));
+            }
+            for tag in tags {
+                step.tool_contract
+                    .entry(tag.clone())
+                    .or_insert_with(|| "1".to_string());
+            }
+        }
         steps.push(step);
     }
     let edges = lowered
@@ -759,6 +846,11 @@ mod tests {
                     "[{}] expected an unknown_handle error, got: {err}",
                     case.name
                 ),
+                "agentic_non_model" => assert!(
+                    err.contains("non-model") || err.contains("`@` tool grants"),
+                    "[{}] expected an agentic_non_model error, got: {err}",
+                    case.name
+                ),
                 other => panic!("[{}] unknown error class {other:?}", case.name),
             }
         }
@@ -797,5 +889,63 @@ mod tests {
         assert!(lower("a > []").is_err());
         assert!(lower("[a").is_err(), "unbalanced bracket");
         assert!(lower("a]").is_err(), "trailing close bracket");
+    }
+
+    // ---- PR-9b: the `@` deterministic-agentic-step grammar ----
+
+    #[test]
+    fn at_grammar_records_ordered_deduped_grants_on_the_node() {
+        let low = lower("p@web-search@fs-list > r").unwrap();
+        assert_eq!(low.nodes, vec!["p", "r"]);
+        assert_eq!(low.edges, vec![(0, 1)]);
+        // order-preserving, attached to node 0 (`p`).
+        assert_eq!(
+            low.grants.get(&0).cloned(),
+            Some(vec!["web-search".to_string(), "fs-list".to_string()])
+        );
+        assert!(!low.grants.contains_key(&1), "`r` carries no grants");
+        // dedup: `p@x@x` == `p@x`.
+        assert_eq!(
+            lower("p@x@x").unwrap().grants.get(&0).cloned(),
+            Some(vec!["x".to_string()])
+        );
+    }
+
+    #[test]
+    fn at_grammar_lowers_to_a_model_tool_contract() {
+        let mut tasks = BTreeMap::new();
+        tasks.insert(
+            "p".to_string(),
+            serde_json::from_value::<StepSpec>(serde_json::json!({
+                "kind": "model", "model_id": "m", "prompt": "go"
+            }))
+            .unwrap(),
+        );
+        let req = build_request(lower("p@echo").unwrap(), tasks, 0, vec![]).unwrap();
+        assert_eq!(req.steps.len(), 1);
+        assert_eq!(req.steps[0].kind, proto::WorkflowStepKind::Model as i32);
+        assert_eq!(req.steps[0].tool_contract.get("echo").unwrap(), "1");
+    }
+
+    #[test]
+    fn at_grammar_on_a_non_model_step_is_an_error() {
+        let mut tasks = BTreeMap::new();
+        tasks.insert(
+            "p".to_string(),
+            serde_json::from_value::<StepSpec>(serde_json::json!({ "kind": "pure" })).unwrap(),
+        );
+        let err = build_request(lower("p@echo").unwrap(), tasks, 0, vec![])
+            .expect_err("grants on a pure step must fail")
+            .to_string()
+            .to_lowercase();
+        assert!(err.contains("non-model"), "got: {err}");
+    }
+
+    #[test]
+    fn dangling_and_misplaced_at_are_parse_errors() {
+        assert!(lower("p@").is_err(), "trailing @");
+        assert!(lower("p@@x").is_err(), "empty tag");
+        assert!(lower("@echo").is_err(), "@ with no preceding handle");
+        assert!(lower("a > @echo").is_err(), "@ where a handle is expected");
     }
 }

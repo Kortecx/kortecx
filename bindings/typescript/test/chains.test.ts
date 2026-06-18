@@ -12,6 +12,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   Chain,
+  ChainAgenticError,
   ChainCycleError,
   ChainParseError,
   ChainUnknownHandleError,
@@ -42,9 +43,12 @@ interface CorpusTask {
   model_id?: string;
   prompt?: string;
   params?: Record<string, string>;
-  /** TOOL only: the single `{ tool_id: tool_version }` + the structured args. */
+  /** TOOL: the `{ tool_id: tool_version }`; MODEL (PR-9b): the agentic grant set. */
   tool_contract?: Record<string, string>;
   args?: Record<string, string | number | boolean>;
+  /** Agentic MODEL step only (PR-9b): the bounded-loop budget. */
+  max_turns?: number;
+  max_tool_calls?: number;
 }
 
 interface CorpusCase {
@@ -55,7 +59,7 @@ interface CorpusCase {
   /** PR-7b: chain-level context attachment (absent ⇒ []). */
   context_bundles?: string[];
   expect?: Partial<Lowered>;
-  error?: "parse" | "unknown_handle" | "cycle";
+  error?: "parse" | "unknown_handle" | "cycle" | "agentic_non_model";
 }
 
 /** Build the `Task` resolution map from a corpus case's `tasks` (the SDK's factory shape). */
@@ -63,7 +67,11 @@ function tasksFromCorpus(specs: Record<string, CorpusTask>): Record<string, Task
   const out: Record<string, Task> = {};
   for (const [handle, spec] of Object.entries(specs)) {
     if (spec.kind === "model") {
-      out[handle] = task.model(spec.model_id ?? "", spec.prompt ?? "", spec.params ?? {});
+      out[handle] = task.model(spec.model_id ?? "", spec.prompt ?? "", spec.params ?? {}, {
+        tools: spec.tool_contract,
+        maxTurns: spec.max_turns,
+        maxToolCalls: spec.max_tool_calls,
+      });
     } else if (spec.kind === "tool") {
       const [toolId, version] = Object.entries(spec.tool_contract ?? {})[0] ?? ["", ""];
       out[handle] = task.tool(toolId, version, spec.args ?? {});
@@ -95,7 +103,9 @@ describe("Chains DSL — golden corpus parity", () => {
             ? ChainParseError
             : c.error === "unknown_handle"
               ? ChainUnknownHandleError
-              : ChainCycleError;
+              : c.error === "agentic_non_model"
+                ? ChainAgenticError
+                : ChainCycleError;
         expect(run).toThrow(expectedClass);
       });
     } else {
@@ -171,6 +181,30 @@ describe("Chains DSL — combinator API parity with the string form", () => {
   it("the combinator path rejects a cycle (self-loop via reuse)", () => {
     const a = task.pure();
     expect(() => chainFrom(seq(a, a))).toThrow(ChainCycleError);
+  });
+
+  it("model({tools}) matches the string '@' grammar (PR-9b)", () => {
+    const viaString = chain("p@echo", {
+      tasks: { p: task.model("kx-serve:qwen3-4b-q4_k_m", "go") },
+    }).lower();
+    const viaCombinator = chainFrom(
+      task.model("kx-serve:qwen3-4b-q4_k_m", "go", {}, { tools: ["echo"] }),
+    ).lower();
+    expect(viaCombinator).toEqual(viaString);
+    expect(viaCombinator.steps[0]?.tool_contract).toEqual({ echo: "1" });
+  });
+
+  it("agentic budget lowers to params", () => {
+    const lowered = chain("p@echo", {
+      tasks: {
+        p: task.model("kx-serve:qwen3-4b-q4_k_m", "go", {}, { maxTurns: 4, maxToolCalls: 3 }),
+      },
+    }).lower();
+    expect(lowered.steps[0]?.params).toEqual({ max_turns: "4", max_tool_calls: "3" });
+  });
+
+  it("`@` grants on a non-model step throw ChainAgenticError", () => {
+    expect(() => chain("p@echo", { tasks: { p: task.pure() } })).toThrow(ChainAgenticError);
   });
 });
 

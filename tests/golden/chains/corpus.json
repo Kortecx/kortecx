@@ -436,5 +436,84 @@
       "edges": [],
       "context_bundles": []
     }
+  },
+  {
+    "name": "agentic_single",
+    "dsl": "p@echo",
+    "seed": 0,
+    "tasks": {
+      "p": { "kind": "model", "model_id": "kx-serve:qwen3-4b-q4_k_m", "prompt": "Use the echo tool." }
+    },
+    "expect": {
+      "steps": [
+        { "kind": "model", "model_id": "kx-serve:qwen3-4b-q4_k_m", "prompt": "Use the echo tool.", "body_signature_id": null, "tool_contract": { "echo": "1" }, "params": {} }
+      ],
+      "edges": []
+    }
+  },
+  {
+    "name": "agentic_multi_tool",
+    "dsl": "p@web-search@fs-list > r",
+    "seed": 0,
+    "tasks": {
+      "p": { "kind": "model", "model_id": "kx-serve:qwen3-4b-q4_k_m", "prompt": "Research the topic." },
+      "r": { "kind": "pure" }
+    },
+    "expect": {
+      "steps": [
+        { "kind": "model", "model_id": "kx-serve:qwen3-4b-q4_k_m", "prompt": "Research the topic.", "body_signature_id": null, "tool_contract": { "web-search": "1", "fs-list": "1" }, "params": {} },
+        { "kind": "pure", "model_id": "", "prompt": "", "body_signature_id": null, "tool_contract": {}, "params": {} }
+      ],
+      "edges": [ { "parent": 0, "child": 1, "edge": "data" } ]
+    }
+  },
+  {
+    "name": "agentic_with_budget",
+    "dsl": "p@echo",
+    "seed": 0,
+    "tasks": {
+      "p": { "kind": "model", "model_id": "kx-serve:qwen3-4b-q4_k_m", "prompt": "Use the echo tool.", "max_turns": 4, "max_tool_calls": 3 }
+    },
+    "expect": {
+      "steps": [
+        { "kind": "model", "model_id": "kx-serve:qwen3-4b-q4_k_m", "prompt": "Use the echo tool.", "body_signature_id": null, "tool_contract": { "echo": "1" }, "params": { "max_turns": "4", "max_tool_calls": "3" } }
+      ],
+      "edges": []
+    }
+  },
+  {
+    "name": "agentic_dedup",
+    "dsl": "p@echo@echo",
+    "seed": 0,
+    "tasks": {
+      "p": { "kind": "model", "model_id": "kx-serve:qwen3-4b-q4_k_m", "prompt": "Use the echo tool." }
+    },
+    "expect": {
+      "steps": [
+        { "kind": "model", "model_id": "kx-serve:qwen3-4b-q4_k_m", "prompt": "Use the echo tool.", "body_signature_id": null, "tool_contract": { "echo": "1" }, "params": {} }
+      ],
+      "edges": []
+    }
+  },
+  {
+    "name": "err_agentic_non_model",
+    "dsl": "p@echo",
+    "seed": 0,
+    "tasks": { "p": { "kind": "pure" } },
+    "error": "agentic_non_model"
+  },
+  {
+    "name": "err_agentic_no_handle",
+    "dsl": "@echo",
+    "seed": 0,
+    "tasks": { "p": { "kind": "model", "model_id": "kx-serve:qwen3-4b-q4_k_m", "prompt": "x" } },
+    "error": "parse"
+  },
+  {
+    "name": "err_agentic_trailing_at",
+    "dsl": "p@",
+    "seed": 0,
+    "tasks": { "p": { "kind": "model", "model_id": "kx-serve:qwen3-4b-q4_k_m", "prompt": "x" } },
+    "error": "parse"
   }
 ]

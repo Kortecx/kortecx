@@ -19,9 +19,17 @@
 //! }
 //! ```
 //! `params` values are UTF-8 strings (their bytes land in the step's config).
-//! `kind` ∈ {`pure`, `model`} (`exec` is reserved); `edge` ∈ {`data`, `control`}.
-//! `context_bundles` (PR-7, optional) attaches named context bundles to the run —
-//! the server injects them into every entry Mote at bind (SN-8).
+//! `kind` ∈ {`pure`, `model`, `tool`} (`exec` is reserved); `edge` ∈ {`data`,
+//! `control`}. `context_bundles` (PR-7, optional) attaches named context bundles to
+//! the run — the server injects them into every entry Mote at bind (SN-8).
+//!
+//! A `tool` step (PR-6b-2) fires ONE registered tool: it carries `tool_contract`
+//! `{ tool_id: version }` + (optional) `args` (lowered to the canonical `kx.tool.args`
+//! blob). A `model` step carrying a non-empty `tool_contract` is a **deterministic-
+//! agentic step** (PR-9b / D161.1) — the model runs a bounded reason→tool→observe
+//! loop over the granted tool SET, bounded by optional `max_turns` / `max_tool_calls`.
+//! In every case the SERVER resolves the tool(s) in its live registry + builds the
+//! per-step warrant (the client never supplies a warrant or grants — SN-8).
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -63,6 +71,14 @@ pub(crate) struct DagSpec {
 /// identical by the golden corpus). Hardcoded to avoid a `kx-mote` dep on the CLI.
 const TOOL_ARGS_KEY: &str = "kx.tool.args";
 
+/// PR-9b (D161.1): the canonical config keys a deterministic-agentic MODEL step's
+/// bounded-loop budget rides under (decimal-string bytes ⇒ canonical-JSON `u32`,
+/// the form the coordinator's `react_seed_params` reads). MUST equal
+/// `kx_mote::REACT_MAX_TURNS_KEY` / `REACT_MAX_TOOL_CALLS_KEY` (pinned by the
+/// golden corpus). Hardcoded to avoid a `kx-mote` dep on the CLI.
+const REACT_MAX_TURNS_KEY: &str = "max_turns";
+const REACT_MAX_TOOL_CALLS_KEY: &str = "max_tool_calls";
+
 #[derive(Debug, Deserialize)]
 pub(crate) struct StepSpec {
     /// `pure` | `model` | `exec` (reserved) | `tool` (PR-6b-2).
@@ -84,6 +100,15 @@ pub(crate) struct StepSpec {
     /// byte-identical to the Py/TS `tool()` factories. No floats (SN-8).
     #[serde(default)]
     pub(crate) args: BTreeMap<String, serde_json::Value>,
+    /// Agentic MODEL step only (PR-9b, D161.1): the bounded reason→tool→observe
+    /// loop budget. Lowered to canonical-JSON `u32` bytes under
+    /// [`REACT_MAX_TURNS_KEY`] / [`REACT_MAX_TOOL_CALLS_KEY`] in `params` when the
+    /// step is a MODEL step with a non-empty `tool_contract`; ignored otherwise.
+    /// Absent ⇒ the coordinator default (8 turns / 6 tool calls).
+    #[serde(default)]
+    pub(crate) max_turns: Option<u32>,
+    #[serde(default)]
+    pub(crate) max_tool_calls: Option<u32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -196,6 +221,21 @@ pub(crate) fn to_request(spec: DagSpec) -> Result<proto::SubmitWorkflowRequest, 
             let blob = serde_json::to_string(&s.args)
                 .map_err(|e| CliError::Usage(format!("tool args: {e}")))?;
             params.insert(TOOL_ARGS_KEY.to_string(), blob.into_bytes());
+        }
+        // PR-9b (D161.1): an agentic MODEL step (MODEL + a non-empty tool_contract)
+        // lowers its bounded-loop budget to canonical-JSON `u32` bytes under the
+        // react budget keys (the form `react_seed_params` reads). Absent ⇒ the
+        // coordinator default. The decimal string of a `u32` IS canonical JSON.
+        if kind == proto::WorkflowStepKind::Model && !s.tool_contract.is_empty() {
+            if let Some(n) = s.max_turns {
+                params.insert(REACT_MAX_TURNS_KEY.to_string(), n.to_string().into_bytes());
+            }
+            if let Some(n) = s.max_tool_calls {
+                params.insert(
+                    REACT_MAX_TOOL_CALLS_KEY.to_string(),
+                    n.to_string().into_bytes(),
+                );
+            }
         }
         steps.push(proto::WorkflowStep {
             kind: kind as i32,

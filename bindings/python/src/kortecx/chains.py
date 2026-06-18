@@ -28,10 +28,17 @@ Both produce a :class:`Chain`; :meth:`Chain.build` runs the one canonical loweri
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
-from typing import Dict, List, Optional, Sequence, Tuple, Union
+from dataclasses import dataclass, replace
+from typing import Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
-from .blueprints import TOOL_ARGS_KEY, BlueprintBuilder, EdgeInput, StepInput
+from .blueprints import (
+    REACT_MAX_TOOL_CALLS_KEY,
+    REACT_MAX_TURNS_KEY,
+    TOOL_ARGS_KEY,
+    BlueprintBuilder,
+    EdgeInput,
+    StepInput,
+)
 from .v1 import gateway_pb2 as _g
 
 
@@ -49,6 +56,11 @@ class UnknownHandleError(ChainError):
 
 class ChainCycleError(ChainError):
     """The lowered topology has a cycle / self-loop — error class ``cycle``."""
+
+
+class AgenticStepError(ChainError):
+    """`@` tool grants were tagged onto a non-model handle — class
+    ``agentic_non_model`` (the deterministic-agentic step requires a MODEL step)."""
 
 
 # --- Task nodes + the operator AST --------------------------------------------
@@ -130,10 +142,50 @@ def pure(**params: Union[bytes, str]) -> Task:
     return Task(StepInput(kind="pure", params=dict(params)))
 
 
-def model(model_id: str, prompt: str, **params: Union[bytes, str]) -> Task:
+def _grants_to_contract(
+    tools: "Optional[Union[Sequence[str], Mapping[str, str]]]",
+) -> Dict[str, str]:
+    """Normalize an agentic-step tool grant set to a ``{name: version}`` contract: a
+    sequence of names → version ``"1"`` (mirrors the ``@tool`` grammar default), a
+    mapping → verbatim ``{name: version}``. Order-preserving dedup."""
+    if tools is None:
+        return {}
+    if isinstance(tools, Mapping):
+        return {str(k): str(v) for k, v in tools.items()}
+    contract: Dict[str, str] = {}
+    for name in tools:
+        contract.setdefault(str(name), "1")
+    return contract
+
+
+def model(
+    model_id: str,
+    prompt: str,
+    *,
+    tools: "Optional[Union[Sequence[str], Mapping[str, str]]]" = None,
+    max_turns: Optional[int] = None,
+    max_tool_calls: Optional[int] = None,
+    **params: Union[bytes, str],
+) -> Task:
     """A MODEL step. ``model_id`` is the recipe enum the SERVER validates (SN-8);
-    ``prompt`` is the instruction; ``params`` are extra step params."""
-    return Task(StepInput(kind="model", model_id=model_id, prompt=prompt, params=dict(params)))
+    ``prompt`` is the instruction; ``params`` are extra step params.
+
+    PR-9b (D161.1): pass ``tools`` (a list of names → version ``"1"``, or a
+    ``{name: version}`` map) to make this a **deterministic-agentic step** — the
+    model runs a bounded reason→tool→observe loop over the granted tool SET (the
+    same step the string DSL authors as ``handle@tool@tool``). ``max_turns`` /
+    ``max_tool_calls`` bound the loop (default 8 / 6; ignored when no tools)."""
+    return Task(
+        StepInput(
+            kind="model",
+            model_id=model_id,
+            prompt=prompt,
+            tool_contract=_grants_to_contract(tools),
+            params=dict(params),
+            max_turns=max_turns,
+            max_tool_calls=max_tool_calls,
+        )
+    )
 
 
 def _canonical_args_json(args: Dict[str, object]) -> str:
@@ -279,7 +331,7 @@ class Chain:
                 "prompt": t.step.prompt,
                 "body_signature_id": t.step.body_signature_id,
                 "tool_contract": dict(t.step.tool_contract),
-                "params": {k: _as_str(v) for k, v in t.step.params.items()},
+                "params": _effective_params(t.step),
             }
             for t in nodes
         ]
@@ -296,7 +348,7 @@ class Chain:
         nodes, edges = self._lower()
         builder = BlueprintBuilder(self._seed)
         for t in nodes:
-            builder.add_step(t.step)
+            builder.add_step(replace(t.step, params=_effective_params(t.step)))
         for parent, child in edges:
             builder.add_edge(EdgeInput(parent=parent, child=child, edge="data"))
         builder.context_bundles(self._context)
@@ -306,6 +358,21 @@ class Chain:
 def _as_str(v: Union[bytes, str]) -> str:
     """Render a param value as the pre-encoding string the lowering compares."""
     return v if isinstance(v, str) else v.decode("utf-8")
+
+
+def _effective_params(step: StepInput) -> Dict[str, Union[bytes, str]]:
+    """The step's params (as the pre-encoding string form the lowering compares),
+    with the agentic-loop budget injected for a MODEL step carrying a non-empty
+    ``tool_contract`` (PR-9b — mirrors the Rust ``to_request`` + the coordinator's
+    canonical-JSON-``u32`` budget keys). Pure — never mutates the step. Absent budget
+    ⇒ the coordinator default."""
+    params: Dict[str, Union[bytes, str]] = {k: _as_str(v) for k, v in step.params.items()}
+    if step.kind == "model" and step.tool_contract:
+        if step.max_turns is not None:
+            params[REACT_MAX_TURNS_KEY] = str(step.max_turns)
+        if step.max_tool_calls is not None:
+            params[REACT_MAX_TOOL_CALLS_KEY] = str(step.max_tool_calls)
+    return params
 
 
 def _check_acyclic(node_count: int, edges: List[Tuple[int, int]]) -> None:
@@ -342,6 +409,10 @@ class _Parser:
         self._tasks = tasks
         self._toks = _tokenize(expr)
         self._pos = 0
+        # PR-9b: handle → the (copied, possibly grant-augmented) node used in the
+        # AST, so a reused handle is ONE node and `@`-grants accumulate on it
+        # without mutating the caller's `tasks` map.
+        self._nodes: Dict[str, Task] = {}
 
     def _peek(self) -> Optional[str]:
         return self._toks[self._pos] if self._pos < len(self._toks) else None
@@ -394,14 +465,55 @@ class _Parser:
                 raise ChainParseError("expected ']'")
             self._next()
             return inner
-        if tok in ("|", "&", ">", "]"):
+        # `@` at an atom start = a grant with no preceding handle (parse error).
+        if tok in ("|", "&", ">", "]", "@"):
             raise ChainParseError(f"unexpected token {tok!r}")
-        # a handle
+        # a handle, with an optional `@tool@tool` grant suffix (PR-9b)
         handle = self._next()
-        task = self._tasks.get(handle)
-        if task is None:
+        base = self._tasks.get(handle)
+        if base is None:
             raise UnknownHandleError(f"unknown task handle '{handle}'")
-        return task
+        tags = self._take_grants()
+        return self._node_for(handle, base, tags)
+
+    def _take_grants(self) -> List[str]:
+        """Consume a ``grants := ("@" handle)+`` suffix (PR-9b): order-preserving
+        deduped tool names. A stray ``@`` with no tool name is a parse error."""
+        tags: List[str] = []
+        while self._peek() == "@":
+            self._next()  # consume the `@`
+            nxt = self._peek()
+            if nxt is None or nxt in ("|", "&", ">", "[", "]", "@"):
+                raise ChainParseError("unexpected token after '@' (expected a tool name)")
+            tag = self._next()
+            if tag not in tags:
+                tags.append(tag)
+        return tags
+
+    def _node_for(self, handle: str, base: Task, tags: List[str]) -> Task:
+        """Return the AST node for ``handle`` (one COPY per handle so reuse is one
+        node + the caller's ``tasks`` are never mutated), merging any ``@``-grants
+        (version ``"1"``) into a MODEL step's tool_contract; a non-model grant is a
+        fail-closed authoring error."""
+        node = self._nodes.get(handle)
+        if node is None:
+            node = Task(
+                replace(
+                    base.step,
+                    tool_contract=dict(base.step.tool_contract),
+                    params=dict(base.step.params),
+                )
+            )
+            self._nodes[handle] = node
+        if tags:
+            if node.step.kind != "model":
+                raise AgenticStepError(
+                    f"`@` tool grants on a non-model step '{handle}' "
+                    f"(kind '{node.step.kind}'); `@tool` tags require a model step"
+                )
+            for tag in tags:
+                node.step.tool_contract.setdefault(tag, "1")
+        return node
 
 
 _HANDLE_START = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz_"
@@ -419,7 +531,7 @@ def _tokenize(expr: str) -> List[str]:
         if ch.isspace():
             i += 1
             continue
-        if ch in "|&>[]":
+        if ch in "|&>[]@":
             toks.append(ch)
             i += 1
             continue

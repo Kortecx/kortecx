@@ -1,7 +1,10 @@
 /**
- * The Chains DSL — compose a vetted palette of task handles (`pure` / `model`
- * today) into a Tier-1 DAG via a string expression OR a combinator API, then
- * lower to the EXISTING {@link BlueprintBuilder} for `SubmitWorkflow`. Kept in
+ * The Chains DSL — compose a vetted palette of task handles (`pure` / `model` /
+ * `tool`) into a Tier-1 DAG via a string expression OR a combinator API, then
+ * lower to the EXISTING {@link BlueprintBuilder} for `SubmitWorkflow`. A MODEL
+ * handle may tag tools with the `@` grammar (`plan@web-search@fs-list`, PR-9b /
+ * D161.1) to become a **deterministic-agentic step** (a bounded reason→tool→observe
+ * loop over a server-vetted tool SET). Kept in
  * its own module (the Rust core's module-per-concern discipline); it builds
  * `StepInput`/`EdgeInput` lists and feeds the builder — it NEVER reassembles a
  * `SubmitWorkflowRequest` itself.
@@ -44,6 +47,23 @@ export class ChainCycleError extends Error {
 }
 
 /**
+ * Error class for `@` tool grants tagged onto a non-model handle (PR-9b — the
+ * `agentic_non_model` corpus class). The deterministic-agentic step requires a
+ * MODEL handle.
+ */
+export class ChainAgenticError extends Error {
+  constructor(
+    readonly handle: string,
+    readonly kind: string,
+  ) {
+    super(
+      `\`@\` tool grants on a non-model step '${handle}' (kind '${kind}'); \`@tool\` tags require a model step`,
+    );
+    this.name = "ChainAgenticError";
+  }
+}
+
+/**
  * A task node — a leaf fragment in the DSL. `pure` carries optional params; `model`
  * carries a model id + prompt (+ optional params). Identity is by OBJECT: reusing
  * the same `Task` instance reuses the same node (builds DAGs via fan-in/fan-out).
@@ -56,20 +76,76 @@ export class Task {
     readonly prompt: string,
     /** Pre-encoding lowering form — `params` values are strings (UTF-8-encoded at build). */
     readonly params: Readonly<Record<string, string>>,
-    /** TOOL only (PR-6b-2): the single `{ tool_id: tool_version }` the step fires. */
+    /**
+     * TOOL: the single `{ tool_id: tool_version }` the step fires (PR-6b-2). MODEL:
+     * the agentic grant SET (PR-9b, D161.1) — a non-empty contract makes a model
+     * step a deterministic-agentic step (a bounded reason→tool→observe loop).
+     */
     readonly toolContract: Readonly<Record<string, string>> = {},
+    /** Agentic MODEL step only (PR-9b): the bounded-loop budget (default 8 / 6). */
+    readonly maxTurns?: number,
+    readonly maxToolCalls?: number,
   ) {}
 
-  /** The {@link StepInput} this task lowers to (verbatim, the builder encodes params). */
+  /** The {@link StepInput} this task lowers to (the builder encodes params). */
   toStepInput(): StepInput {
     return {
       kind: this.kind,
       modelId: this.modelId,
       prompt: this.prompt,
       toolContract: { ...this.toolContract },
-      params: { ...this.params },
+      params: effectiveParams(this),
     };
   }
+}
+
+/**
+ * PR-9b (D161.1): the canonical `params` keys a deterministic-agentic MODEL step's
+ * bounded-loop budget rides under (decimal-string ⇒ canonical-JSON `u32`, the form
+ * the coordinator's `react_seed_params` reads). MUST equal the Rust
+ * `kx_mote::REACT_MAX_TURNS_KEY` / `REACT_MAX_TOOL_CALLS_KEY` + the Python keys.
+ */
+export const REACT_MAX_TURNS_KEY = "max_turns";
+export const REACT_MAX_TOOL_CALLS_KEY = "max_tool_calls";
+
+/**
+ * The step's params with the agentic-loop budget injected for a MODEL step carrying
+ * a non-empty `toolContract` (PR-9b — mirrors the Rust `to_request` + the Python
+ * `_effective_params`). Pure; absent budget ⇒ the coordinator default.
+ */
+function effectiveParams(t: Task): Record<string, string> {
+  const params: Record<string, string> = { ...t.params };
+  if (t.kind === "model" && Object.keys(t.toolContract).length > 0) {
+    if (t.maxTurns !== undefined) {
+      params[REACT_MAX_TURNS_KEY] = String(t.maxTurns);
+    }
+    if (t.maxToolCalls !== undefined) {
+      params[REACT_MAX_TOOL_CALLS_KEY] = String(t.maxToolCalls);
+    }
+  }
+  return params;
+}
+
+/**
+ * Normalize an agentic-step tool grant set to a `{ name: version }` contract: an
+ * array of names → version `"1"` (the `@tool` grammar default), a record → verbatim.
+ */
+function grantsToContract(
+  tools?: readonly string[] | Readonly<Record<string, string>>,
+): Record<string, string> {
+  if (tools === undefined) {
+    return {};
+  }
+  if (Array.isArray(tools)) {
+    const contract: Record<string, string> = {};
+    for (const name of tools) {
+      if (!(name in contract)) {
+        contract[name] = "1";
+      }
+    }
+    return contract;
+  }
+  return { ...(tools as Record<string, string>) };
 }
 
 /**
@@ -98,9 +174,33 @@ export const task = {
   pure(params: Readonly<Record<string, string>> = {}): Task {
     return new Task("pure", "", "", { ...params });
   },
-  /** A `model` step: the model id + prompt (+ optional string params). */
-  model(modelId: string, prompt: string, params: Readonly<Record<string, string>> = {}): Task {
-    return new Task("model", modelId, prompt, { ...params });
+  /**
+   * A `model` step: the model id + prompt (+ optional string params). PR-9b
+   * (D161.1): pass `opts.tools` (an array of names → version `"1"`, or a
+   * `{ name: version }` map) to make it a **deterministic-agentic step** — the model
+   * runs a bounded reason→tool→observe loop over the granted tool SET (the same step
+   * the string DSL authors as `handle@tool@tool`). `opts.maxTurns` / `maxToolCalls`
+   * bound the loop (default 8 / 6; ignored with no tools).
+   */
+  model(
+    modelId: string,
+    prompt: string,
+    params: Readonly<Record<string, string>> = {},
+    opts: {
+      tools?: readonly string[] | Readonly<Record<string, string>>;
+      maxTurns?: number;
+      maxToolCalls?: number;
+    } = {},
+  ): Task {
+    return new Task(
+      "model",
+      modelId,
+      prompt,
+      { ...params },
+      grantsToContract(opts.tools),
+      opts.maxTurns,
+      opts.maxToolCalls,
+    );
   },
   /**
    * A `tool` step (PR-6b-2): fire a single REGISTERED tool. `toolId` + `version`
@@ -265,7 +365,8 @@ type Token =
   | { t: "&"; pos: number }
   | { t: "|"; pos: number }
   | { t: "["; pos: number }
-  | { t: "]"; pos: number };
+  | { t: "]"; pos: number }
+  | { t: "@"; pos: number };
 
 const HANDLE_START = /[A-Za-z_]/;
 const HANDLE_REST = /[A-Za-z0-9_-]/;
@@ -283,7 +384,7 @@ function tokenize(expr: string): Token[] {
       i++;
       continue;
     }
-    if (c === ">" || c === "&" || c === "|" || c === "[" || c === "]") {
+    if (c === ">" || c === "&" || c === "|" || c === "[" || c === "]" || c === "@") {
       toks.push({ t: c, pos: i });
       i++;
       continue;
@@ -325,6 +426,9 @@ class Parser {
   readonly order: HandleRef[] = [];
   // Accumulated `>` edges, by handle-ref pair (deduped + sorted at lowering).
   readonly edges: Array<[HandleRef, HandleRef]> = [];
+  // PR-9b: per-handle `@`-tag grants (order-preserving, deduped), applied to the
+  // resolved MODEL Task at lowering.
+  readonly grants = new Map<string, string[]>();
 
   constructor(private readonly toks: Token[]) {}
 
@@ -405,6 +509,7 @@ class Parser {
     if (tok.t === "handle") {
       this.next();
       const r = this.ref(tok.v);
+      this.takeGrants(tok.v); // PR-9b: an optional `@tool@tool` suffix.
       return { entries: [r], exits: [r] };
     }
     if (tok.t === "[") {
@@ -420,6 +525,29 @@ class Parser {
       return inner; // brackets are precedence-only.
     }
     throw new ChainParseError(`expected a handle or '[' at position ${tok.pos}`);
+  }
+
+  // PR-9b: consume a `grants := ("@" handle)+` suffix on the just-parsed handle —
+  // order-preserving deduped tool names recorded for lowering. A stray `@` with no
+  // tool name is a parse error.
+  private takeGrants(handle: string): void {
+    const tags = this.grants.get(handle) ?? [];
+    while (this.peek()?.t === "@") {
+      this.next(); // consume the `@`
+      const nxt = this.peek();
+      if (nxt === undefined || nxt.t !== "handle") {
+        throw new ChainParseError(
+          `expected a tool name after '@' at position ${nxt?.pos ?? this.pos}`,
+        );
+      }
+      this.next(); // consume the tool-name handle
+      if (!tags.includes(nxt.v)) {
+        tags.push(nxt.v);
+      }
+    }
+    if (tags.length > 0) {
+      this.grants.set(handle, tags);
+    }
   }
 
   private mergePar(a: ParseFrag, b: ParseFrag): ParseFrag {
@@ -495,8 +623,34 @@ function taskToLoweredStep(t: Task): LoweredStep {
     prompt: t.prompt,
     body_signature_id: null,
     tool_contract: { ...t.toolContract },
-    params: { ...t.params },
+    params: effectiveParams(t),
   };
+}
+
+/**
+ * PR-9b: derive a granted MODEL Task — merge `@`-tag tool names (version `"1"`)
+ * into a copy of `base`'s tool_contract. A non-model base is a fail-closed
+ * authoring error (the deterministic-agentic step requires a MODEL step).
+ */
+function withGrants(base: Task, handle: string, tags: string[]): Task {
+  if (base.kind !== "model") {
+    throw new ChainAgenticError(handle, base.kind);
+  }
+  const contract: Record<string, string> = { ...base.toolContract };
+  for (const tag of tags) {
+    if (!(tag in contract)) {
+      contract[tag] = "1";
+    }
+  }
+  return new Task(
+    base.kind,
+    base.modelId,
+    base.prompt,
+    { ...base.params },
+    contract,
+    base.maxTurns,
+    base.maxToolCalls,
+  );
 }
 
 /** Kahn topological check — reject a cycle / self-loop (`a > a`, `a>b | b>a`). */
@@ -549,10 +703,13 @@ function lowerParse(
   const refToIndex = new Map<HandleRef, number>();
   const nodes: Task[] = [];
   for (const ref of parser.order) {
-    const t = tasks[ref.handle];
-    if (t === undefined) {
+    const base = tasks[ref.handle];
+    if (base === undefined) {
       throw new ChainUnknownHandleError(ref.handle);
     }
+    // PR-9b: apply any `@`-tag grants for this handle to a derived MODEL Task.
+    const tags = parser.grants.get(ref.handle);
+    const t = tags !== undefined && tags.length > 0 ? withGrants(base, ref.handle, tags) : base;
     refToIndex.set(ref, nodes.length);
     nodes.push(t);
   }
