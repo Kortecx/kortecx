@@ -215,6 +215,7 @@ fn bind_for(world: &World, party: &str, args: &[u8]) -> Result<BoundRun, InvokeE
         &topic_contract(),
         &StrResolver,
         args,
+        &[],
     )
 }
 
@@ -322,6 +323,7 @@ fn a_variable_slot_that_binds_no_step_is_refused() {
         &FreeParamContract { slots },
         &StrResolver,
         br#"{"ghost":"boo"}"#,
+        &[],
     )
     .unwrap_err();
     assert!(matches!(err, InvokeError::SlotUnbound(s) if s == "ghost"));
@@ -406,6 +408,7 @@ fn unpublished_handle_is_not_found_for_authorized_caller() {
         &topic_contract(),
         &StrResolver,
         br#"{"topic":"x"}"#,
+        &[],
     )
     .unwrap_err();
     assert!(matches!(err, InvokeError::NotFound));

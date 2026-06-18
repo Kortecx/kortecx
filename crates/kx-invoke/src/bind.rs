@@ -9,7 +9,7 @@ use kx_catalog::{
     free_params_to_input_schema, validate_args, AssetPath, AssetRef, BodyLedger, FreeParamContract,
     PartyId, SchemaResolver, SlotBinding, VersionLedger, VersionedContent,
 };
-use kx_mote::{ConfigVal, Mote, MoteId};
+use kx_mote::{encode_context_items, ConfigVal, ContextItemRef, Mote, MoteId, CONTEXT_ITEMS_KEY};
 use kx_warrant::{intersect, Role, WarrantSpec};
 use kx_workflow::compile;
 
@@ -69,6 +69,7 @@ pub fn bind_snapshot<V, B, R, U>(
     free_params: &FreeParamContract,
     schema_resolver: &R,
     args_bytes: &[u8],
+    context_items: &[ContextItemRef],
 ) -> Result<BoundRun, InvokeError>
 where
     V: VersionLedger,
@@ -120,6 +121,16 @@ where
         if body.bind_param(name, &ConfigVal(bytes)) == 0 {
             return Err(InvokeError::SlotUnbound(name.clone()));
         }
+    }
+
+    // (5b) PR-7: inject the run's attached context-bundle items into every ENTRY
+    //      step's identity-bearing `config_subset` (canonical-encoded). A different
+    //      attached context ⇒ a different entry `MoteId` (exactly-once-per-
+    //      `(input + context)`); an EMPTY attachment skips this entirely, so the
+    //      bound motes are byte-identical to pre-PR-7 (canonical digest untouched).
+    if !context_items.is_empty() {
+        let encoded = ConfigVal(encode_context_items(context_items));
+        body.inject_entry_config(CONTEXT_ITEMS_KEY, &encoded);
     }
 
     // (6) Compile + narrow each Mote's warrant to the caller's authority.

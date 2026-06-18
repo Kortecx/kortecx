@@ -115,6 +115,7 @@ message RunHandle {
 message InvokeRequest {
   string handle = 1;                     // "namespace/collection/name" recipe handle (AssetPath)
   bytes  args   = 2;                     // opaque JSON object bytes; validated server-side, fail-closed
+  repeated string context_bundles = 3;   // PR-7: AssetPath handles of context bundles to attach (identity-bearing); empty = byte-identical to pre-PR-7
 }
 
 message InvokeResponse {
@@ -771,6 +772,7 @@ message SubmitWorkflowRequest {
   repeated WorkflowStep steps          = 2; // authored steps, in StepRef order (count-capped server-side)
   repeated WorkflowEdge edges          = 3; // authored edges (count-capped; acyclicity enforced by compile)
   WorkflowExecutionMode execution_mode = 4; // default FROZEN
+  repeated string context_bundles      = 5; // PR-7: AssetPath handles of context bundles to attach to the entry step(s); empty = byte-identical to pre-PR-7
 }
 
 // ---------------------------------------------------------------------------
@@ -1284,6 +1286,72 @@ message DeregisterMcpServerResponse {
 }
 
 // ---------------------------------------------------------------------------
+// PR-7 (D120.6) — Context bundles. A named, content-addressed COLLECTION the
+// caller assembles for a model to reason over (the "context" the model is GIVEN,
+// distinct from the tools it reasons OVER). Each item references a blob already
+// in the content store (PutContent); the bundle MANIFEST lives in an off-journal
+// bundles.db sidecar (rebuildable-to-empty; the bundle_ref is SERVER-DERIVED,
+// never a MoteId / journal / digest input). A run attaches bundles by handle via
+// the `context_bundles` field on Invoke / SubmitWorkflow: the bind layer resolves
+// the handle -> item refs and injects the sorted ref-set into the ENTRY Mote's
+// identity-bearing config_subset (different context => different MoteId =>
+// exactly-once-per-(input+context)). No new journal write path; the canonical
+// digest is invariant (a run with no bundle is byte-identical). SN-8: the client
+// names a handle; the server derives the ref + scopes List/Get/Delete to the
+// caller's principal (no cross-party existence oracle).
+// ---------------------------------------------------------------------------
+
+message ContextItem {
+  string name        = 1;                // advisory label (display / context heading; never identity)
+  bytes  content_ref = 2;                // 32B — a blob already in the content store (PutContent)
+  string media_type  = 3;                // ADVISORY mime (display / classify only)
+}
+
+message PutContextBundleRequest {
+  string handle              = 1;        // "namespace/collection/name" AssetPath handle (upsert key)
+  string description         = 2;        // free-form; NEVER parsed for enforcement (size-capped)
+  repeated ContextItem items = 3;        // the bundle's items (each refs a PutContent blob; count-capped server-side)
+}
+message PutContextBundleResponse {
+  bytes  bundle_ref   = 1;               // 16B SERVER-DERIVED manifest hash (SN-8)
+  string handle       = 2;               // echoed canonical handle
+  bool   deduplicated = 3;               // true iff an identical manifest was already bound to this handle
+}
+
+message ListContextBundlesRequest {
+  uint32 limit        = 1;               // page size; server clamps 1..=256 (absent = 100)
+  string after_handle = 2;               // exclusive cursor: the handle of the last row of the prior page
+}
+// One bundle's manifest (governance / display view). content_refs are DISPLAY;
+// authority never rides this wire (SN-8).
+message ContextBundle {
+  bytes  bundle_ref          = 1;        // 16B server-derived
+  string handle              = 2;
+  string description         = 3;
+  repeated ContextItem items = 4;        // the bound items
+  uint32 item_count          = 5;
+}
+message ListContextBundlesResponse {
+  repeated ContextBundle bundles = 1;    // deterministic (handle) order, caller-scoped
+  bool has_more = 2;
+}
+
+message GetContextBundleRequest {
+  string handle = 1;                     // exact handle
+}
+message GetContextBundleResponse {
+  ContextBundle bundle = 1;              // the bound manifest; empty iff not found / not owned (uniform)
+  bool found = 2;                        // false uniformly for absent OR not-owned (no existence oracle)
+}
+
+message DeleteContextBundleRequest {
+  string handle = 1;                     // unbinds the handle; the CAS blobs stay
+}
+message DeleteContextBundleResponse {
+  bool removed = 1;                       // false iff absent / not owned
+}
+
+// ---------------------------------------------------------------------------
 // Service — the external client-facing gateway (distinct from Coordinator).
 // ---------------------------------------------------------------------------
 
@@ -1391,4 +1459,10 @@ service KxGateway {
   rpc DiscoverServerTools(DiscoverServerToolsRequest) returns (DiscoverServerToolsResponse);
   rpc TestMcpServer(TestMcpServerRequest) returns (TestMcpServerResponse);
   rpc DeregisterMcpServer(DeregisterMcpServerRequest) returns (DeregisterMcpServerResponse);
+
+  // PR-7 — context bundles (off-journal bundles.db sidecar; SN-8 server-derived ref).
+  rpc PutContextBundle(PutContextBundleRequest) returns (PutContextBundleResponse);
+  rpc ListContextBundles(ListContextBundlesRequest) returns (ListContextBundlesResponse);
+  rpc GetContextBundle(GetContextBundleRequest) returns (GetContextBundleResponse);
+  rpc DeleteContextBundle(DeleteContextBundleRequest) returns (DeleteContextBundleResponse);
 }

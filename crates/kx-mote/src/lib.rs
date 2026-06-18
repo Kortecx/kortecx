@@ -66,6 +66,7 @@
 //! - Runtime behavior. This crate only defines the *shapes* the runtime moves around.
 
 mod attempt;
+mod context_items;
 mod def;
 mod edge;
 mod effect;
@@ -80,6 +81,7 @@ mod topology;
 pub use attempt::{
     is_legal_transition, transition, AttemptState, IllegalTransition, ALL_ATTEMPT_STATES,
 };
+pub use context_items::{decode_context_items, encode_context_items, ContextItemRef};
 pub use def::{canonical_config, derive_mote_id, MoteDef, MOTE_DEF_SCHEMA_VERSION};
 pub use edge::{EdgeKind, EdgeMeta, ParentRef};
 pub use effect::EffectPattern;
@@ -89,9 +91,9 @@ pub use inference_params::{Grammar, InferenceParams};
 pub use mote::Mote;
 pub use ndclass::NdClass;
 pub use strings::{
-    ConfigKey, ConfigVal, GraphPosition, ModelId, ToolName, ToolVersion, PROMPT_KEY,
-    REACT_INSTRUCTION_KEY, REACT_MAX_TOOL_CALLS_KEY, REACT_MAX_TURNS_KEY, REACT_TURN_KEY,
-    TOOL_ARGS_KEY,
+    ConfigKey, ConfigVal, GraphPosition, ModelId, ToolName, ToolVersion, CONTEXT_ITEMS_KEY,
+    PROMPT_KEY, REACT_INSTRUCTION_KEY, REACT_MAX_TOOL_CALLS_KEY, REACT_MAX_TURNS_KEY,
+    REACT_TURN_KEY, TOOL_ARGS_KEY,
 };
 pub use topology::{ChildDescriptor, RoleId, TopologyDecision};
 

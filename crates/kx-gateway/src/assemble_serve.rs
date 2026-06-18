@@ -20,7 +20,7 @@
 use std::fmt;
 
 use kx_content::{ContentRef, ContentStore, LocalFsContentStore};
-use kx_mote::MoteId;
+use kx_mote::{ContextItemRef, MoteId};
 
 /// The hard cap on assembled F-7 context bytes prepended to a model prompt. Pinned
 /// (NOT warrant-derived) so the leaf's content-addressed result stays deterministic
@@ -79,6 +79,48 @@ pub(crate) fn assemble_from_parent_results(
         // Labeled block; UTF-8-lossy so arbitrary content bytes render deterministically.
         let block = format!(
             "[context parent.{label}]\n{}\n\n",
+            String::from_utf8_lossy(bytes.as_ref())
+        );
+        let needed = out.len() + block.len();
+        if needed > WINDOW_BYTES {
+            return Err(AssembleError::Overflow {
+                needed,
+                cap: WINDOW_BYTES,
+            });
+        }
+        out.push_str(&block);
+    }
+    Ok(out)
+}
+
+/// PR-7: render a run's attached context-bundle items (decoded from the entry
+/// Mote's `config_subset[CONTEXT_ITEMS_KEY]`) into a deterministic, labeled text
+/// block, prepended to the model prompt AHEAD of the F-7 parent context. `items`
+/// are already in canonical (decoded) order; each blob is fetched from the shared
+/// store (a `PutContent` ref). Empty ⇒ the empty string (byte-identical to
+/// pre-PR-7); a missing ref OR a window overflow fails closed (never run the model
+/// on partial / unbounded context). Bytes render UTF-8-lossy — consistent with the
+/// F-7 parent block (the serve text path; the harness assembler handles images).
+pub(crate) fn assemble_context_items(
+    items: &[ContextItemRef],
+    store: &LocalFsContentStore,
+) -> Result<String, AssembleError> {
+    if items.is_empty() {
+        return Ok(String::new());
+    }
+    let mut out = String::new();
+    for item in items {
+        let cref = ContentRef(item.content_ref);
+        let bytes = store
+            .get(&cref)
+            .map_err(|_| AssembleError::UpstreamMissing(cref))?;
+        let label = if item.name.is_empty() {
+            cref.to_hex()[..16].to_string()
+        } else {
+            item.name.clone()
+        };
+        let block = format!(
+            "[context {label}]\n{}\n\n",
             String::from_utf8_lossy(bytes.as_ref())
         );
         let needed = out.len() + block.len();
@@ -175,5 +217,41 @@ mod tests {
         let r = store.put(&big).unwrap();
         let err = assemble_from_parent_results(&[(mote_id(1), r)], &store).unwrap_err();
         assert!(matches!(err, AssembleError::Overflow { cap, .. } if cap == WINDOW_BYTES));
+    }
+
+    // --- PR-7 context items ------------------------------------------------
+
+    #[test]
+    fn context_items_render_labeled_blocks() {
+        let (_dir, store) = store();
+        let r = store.put(b"the spec text").unwrap();
+        let items = vec![ContextItemRef {
+            name: "spec".into(),
+            content_ref: r.0,
+        }];
+        let out = assemble_context_items(&items, &store).unwrap();
+        assert!(out.contains("[context spec]"), "labeled by name");
+        assert!(out.contains("the spec text"), "the blob bytes render");
+    }
+
+    #[test]
+    fn context_items_empty_is_empty() {
+        let (_dir, store) = store();
+        assert_eq!(assemble_context_items(&[], &store).unwrap(), String::new());
+    }
+
+    #[test]
+    fn context_items_missing_ref_fails_closed() {
+        let (_dir, store) = store();
+        let phantom = ContentRef::of(b"never-stored-context");
+        let err = assemble_context_items(
+            &[ContextItemRef {
+                name: "x".into(),
+                content_ref: phantom.0,
+            }],
+            &store,
+        )
+        .unwrap_err();
+        assert_eq!(err, AssembleError::UpstreamMissing(phantom));
     }
 }

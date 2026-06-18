@@ -112,6 +112,9 @@ export { FuzzyHit } from "./fuzzy.js";
 
 // Batch A: client uploads + batch content reads + model discovery.
 export { PutResult, ContentItem } from "./content.js";
+// PR-7: context bundles.
+export { ContextBundle, ContextBundleItem, PutContextBundleResult } from "./context.js";
+export type { ContextItemInput } from "./context.js";
 export { ModelSummary } from "./models.js";
 
 // Batch B: per-mote definition inspection (display-only).

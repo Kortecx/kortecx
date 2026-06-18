@@ -465,6 +465,7 @@ async fn invoke_refuses_recipe_granting_unregistered_tool() {
             _party: &str,
             _handle: &str,
             _args: &[u8],
+            _context_bundles: &[String],
         ) -> Result<BoundRecipe, BinderError> {
             let mut warrant = sample_warrant();
             warrant.tool_grants.insert(kx_warrant::ToolGrant {
@@ -488,6 +489,7 @@ async fn invoke_refuses_recipe_granting_unregistered_tool() {
         .invoke(proto::InvokeRequest {
             handle: "kx/recipes/react".into(),
             args: b"{}".to_vec(),
+            context_bundles: vec![],
         })
         .await
         .unwrap_err();
@@ -512,6 +514,7 @@ async fn invoke_forwards_react_seed_to_the_submitter() {
             _party: &str,
             _handle: &str,
             _args: &[u8],
+            _context_bundles: &[String],
         ) -> Result<BoundRecipe, BinderError> {
             Ok(BoundRecipe {
                 recipe_fingerprint: RECIPE_FP,
@@ -530,6 +533,7 @@ async fn invoke_forwards_react_seed_to_the_submitter() {
         .invoke(proto::InvokeRequest {
             handle: "kx/recipes/react".into(),
             args: b"{}".to_vec(),
+            context_bundles: vec![],
         })
         .await
         .expect("react recipe admitted");
@@ -694,6 +698,7 @@ impl RecipeBinder for MockBinder {
         _party: &str,
         _handle: &str,
         _args: &[u8],
+        _context_bundles: &[String],
     ) -> Result<BoundRecipe, BinderError> {
         Ok(BoundRecipe {
             recipe_fingerprint: RECIPE_FP,
@@ -717,6 +722,7 @@ async fn invoke_unimplemented_without_a_binder() {
         .invoke(proto::InvokeRequest {
             handle: "ns/coll/name".to_string(),
             args: vec![],
+            context_bundles: vec![],
         })
         .await
         .unwrap_err();
@@ -734,6 +740,7 @@ async fn invoke_without_a_resolved_party_is_unauthenticated() {
         .invoke(proto::InvokeRequest {
             handle: "ns/coll/name".to_string(),
             args: vec![],
+            context_bundles: vec![],
         })
         .await
         .unwrap_err();
@@ -750,6 +757,7 @@ async fn invoke_dispatches_to_binder_then_proposes() {
         .invoke(proto::InvokeRequest {
             handle: "ns/coll/name".to_string(),
             args: vec![],
+            context_bundles: vec![],
         })
         .await
         .unwrap()

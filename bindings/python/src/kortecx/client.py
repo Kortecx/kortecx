@@ -24,6 +24,7 @@ from . import wait as _wait  # aliased: `wait` is also a public kwarg name
 from .alerts import AlertsPage, AlertSummary
 from .capture import CaptureRecord, CaptureRecordPage
 from .content import ContentItem, PutResult
+from .context import ContextBundle, PutContextBundleResult
 from .datasets import (
     DatasetHit,
     DatasetSummary,
@@ -209,6 +210,7 @@ class KxClient:
         timeout: float = 120.0,
         wait_mode: str = "poll",
         out: Optional[str] = None,
+        context: Optional[Sequence[str]] = None,
     ) -> Union[Run, Result]:
         """Bind a published recipe to ``args`` and run it.
 
@@ -216,10 +218,19 @@ class KxClient:
         :class:`KxRunFailed` / :class:`KxWaitTimeout` on a failed / timed-out run);
         otherwise returns a :class:`Run` handle. ``wait_mode="events"`` uses the
         low-latency live subscription instead of polling.
+
+        ``context`` is an optional list of context-bundle handles (PR-7) to attach;
+        the server resolves each to its item refs and injects them into the entry
+        Mote's IDENTITY-BEARING context, so a different context ⇒ a different run.
         """
         resp = self._call(
             lambda: self._stub.Invoke(
-                _g.InvokeRequest(handle=handle, args=_encode_args(args)), metadata=self._md
+                _g.InvokeRequest(
+                    handle=handle,
+                    args=_encode_args(args),
+                    context_bundles=list(context or []),
+                ),
+                metadata=self._md,
             )
         )
         run = Run(self, resp.instance_id, resp.terminal_mote_id, resp.recipe_fingerprint)
@@ -334,6 +345,64 @@ class KxClient:
             req.max_bytes_per_item = max_bytes_per_item
         resp = self._call(lambda: self._stub.GetContentBatch(req, metadata=self._md))
         return [ContentItem.from_proto(i) for i in resp.items]
+
+    def put_context_bundle(
+        self,
+        handle: str,
+        items: Sequence[tuple],
+        *,
+        description: str = "",
+    ) -> PutContextBundleResult:
+        """Author (upsert) a context bundle (PR-7) at ``handle`` for this party.
+
+        ``items`` is a sequence of ``(name, content_ref)`` or
+        ``(name, content_ref, media_type)``; each ``content_ref`` is a ref already
+        in the content store (e.g. from :meth:`put_content`). The server derives
+        ``bundle_ref`` (SN-8) into an off-journal sidecar, scoped to this party.
+        Attach the handle to a run with ``invoke(..., context=[handle])``. An old
+        gateway raises ``KxUnimplemented``."""
+        proto_items = []
+        for it in items:
+            name = str(it[0])
+            cref = hexids.as_bytes(it[1], hexids.REF_LEN)
+            media = str(it[2]) if len(it) > 2 else ""
+            proto_items.append(_g.ContextItem(name=name, content_ref=cref, media_type=media))
+        resp = self._call(
+            lambda: self._stub.PutContextBundle(
+                _g.PutContextBundleRequest(
+                    handle=handle, description=description, items=proto_items
+                ),
+                metadata=self._md,
+            )
+        )
+        return PutContextBundleResult.from_proto(resp)
+
+    def list_context_bundles(self) -> List[ContextBundle]:
+        """List this party's context bundles (PR-7) in handle order."""
+        resp = self._call(
+            lambda: self._stub.ListContextBundles(_g.ListContextBundlesRequest(), metadata=self._md)
+        )
+        return [ContextBundle.from_proto(b) for b in resp.bundles]
+
+    def get_context_bundle(self, handle: str) -> Optional[ContextBundle]:
+        """Fetch one context bundle by handle, or ``None`` if not found / not owned
+        (uniform — no cross-party existence oracle)."""
+        resp = self._call(
+            lambda: self._stub.GetContextBundle(
+                _g.GetContextBundleRequest(handle=handle), metadata=self._md
+            )
+        )
+        return ContextBundle.from_proto(resp.bundle) if resp.found else None
+
+    def delete_context_bundle(self, handle: str) -> bool:
+        """Unbind a context bundle (its CAS blobs stay). Returns ``True`` iff a
+        bundle was removed."""
+        resp = self._call(
+            lambda: self._stub.DeleteContextBundle(
+                _g.DeleteContextBundleRequest(handle=handle), metadata=self._md
+            )
+        )
+        return resp.removed
 
     def list_models(self) -> List[ModelSummary]:
         """Discover the models the connected gateway serves (Batch A). Display

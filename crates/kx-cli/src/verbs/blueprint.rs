@@ -225,6 +225,7 @@ pub(crate) fn to_request(spec: DagSpec) -> Result<proto::SubmitWorkflowRequest, 
         steps,
         edges,
         execution_mode: execution_mode as i32,
+        context_bundles: vec![],
     })
 }
 

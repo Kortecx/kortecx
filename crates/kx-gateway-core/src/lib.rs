@@ -46,6 +46,7 @@
 //! (no existence oracle).
 
 mod alerts_view;
+mod bundles_view;
 mod capture_view;
 mod datasets;
 mod error;
@@ -72,6 +73,10 @@ mod view;
 mod writer;
 
 pub use alerts_view::{AlertEntry, AlertView};
+pub use bundles_view::{
+    BundleItemRecord, BundleManifest, BundleStore, MAX_BUNDLE_DESCRIPTION_BYTES,
+    MAX_CONTEXT_BUNDLE_ITEMS,
+};
 pub use capture_view::{CaptureRecordEntry, CaptureView};
 pub use datasets::{
     DatasetError, DatasetHitEntry, DatasetSummaryEntry, DatasetView, IngestDoc, IngestOutcome,

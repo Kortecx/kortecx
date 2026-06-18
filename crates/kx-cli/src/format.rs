@@ -887,6 +887,128 @@ pub fn render_discover_server(resp: &proto::DiscoverServerToolsResponse, json: b
     }
 }
 
+// --- PR-7 context bundles --------------------------------------------------
+
+/// Render the displayed items of a context bundle (shared by get/list JSON).
+fn context_items_json(items: &[proto::ContextItem]) -> Vec<Value> {
+    items
+        .iter()
+        .map(|it| {
+            json!({
+                "name": it.name,
+                "content_ref": hex::encode(&it.content_ref),
+                "media_type": it.media_type,
+            })
+        })
+        .collect()
+}
+
+/// Render `context add` — the server-derived bundle ref + dedup signal.
+#[must_use]
+pub fn render_put_context_bundle(resp: &proto::PutContextBundleResponse, json: bool) -> String {
+    if json {
+        json!({
+            "bundle_ref": hex::encode(&resp.bundle_ref),
+            "handle": resp.handle,
+            "deduplicated": resp.deduplicated,
+        })
+        .to_string()
+    } else {
+        format!(
+            "bundle {} ref={} deduplicated={}",
+            resp.handle,
+            hex::encode(&resp.bundle_ref),
+            resp.deduplicated
+        )
+    }
+}
+
+/// Render `context list` — the caller's bundles in handle order.
+#[must_use]
+pub fn render_context_bundles_list(resp: &proto::ListContextBundlesResponse, json: bool) -> String {
+    if json {
+        let bundles: Vec<Value> = resp
+            .bundles
+            .iter()
+            .map(|b| {
+                json!({
+                    "bundle_ref": hex::encode(&b.bundle_ref),
+                    "handle": b.handle,
+                    "description": b.description,
+                    "item_count": b.item_count,
+                    "items": context_items_json(&b.items),
+                })
+            })
+            .collect();
+        json!({ "bundles": bundles, "has_more": resp.has_more }).to_string()
+    } else if resp.bundles.is_empty() {
+        "(no context bundles)".to_string()
+    } else {
+        resp.bundles
+            .iter()
+            .map(|b| format!("{}  {} item(s)  {}", b.handle, b.item_count, b.description))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+}
+
+/// Render `context get` — one bundle's manifest (uniform not-found, no oracle).
+#[must_use]
+pub fn render_get_context_bundle(resp: &proto::GetContextBundleResponse, json: bool) -> String {
+    let Some(b) = resp.bundle.as_ref().filter(|_| resp.found) else {
+        return if json {
+            json!({ "found": false }).to_string()
+        } else {
+            "(not found)".to_string()
+        };
+    };
+    if json {
+        json!({
+            "found": true,
+            "bundle_ref": hex::encode(&b.bundle_ref),
+            "handle": b.handle,
+            "description": b.description,
+            "item_count": b.item_count,
+            "items": context_items_json(&b.items),
+        })
+        .to_string()
+    } else {
+        let header = format!(
+            "{}  ref={}  {} item(s)  {}",
+            b.handle,
+            hex::encode(&b.bundle_ref),
+            b.item_count,
+            b.description
+        );
+        let rows = b
+            .items
+            .iter()
+            .map(|it| format!("  {} -> {}", it.name, hex::encode(&it.content_ref)))
+            .collect::<Vec<_>>()
+            .join("\n");
+        if rows.is_empty() {
+            header
+        } else {
+            format!("{header}\n{rows}")
+        }
+    }
+}
+
+/// Render `context remove` — whether the bundle was unbound.
+#[must_use]
+pub fn render_delete_context_bundle(
+    resp: &proto::DeleteContextBundleResponse,
+    json: bool,
+) -> String {
+    if json {
+        json!({ "removed": resp.removed }).to_string()
+    } else if resp.removed {
+        "removed".to_string()
+    } else {
+        "not removed (no such bundle)".to_string()
+    }
+}
+
 /// Render `tools score` — the advisory rank ladder + the lowering dry-run
 /// verdict. Every number is DISPLAY-ONLY (SN-8): a score can surface a tool,
 /// never grant one.

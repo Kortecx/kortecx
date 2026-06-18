@@ -18,6 +18,7 @@ from .capture import CaptureRecord, CaptureRecordPage
 from .chains import Chain, Task, chain, model, pure, tool
 from .client import DEFAULT_ENDPOINT, AsyncKxClient, KxClient
 from .content import ContentItem, PutResult
+from .context import ContextBundle, ContextBundleItem, PutContextBundleResult
 from .datasets import DatasetHit, DatasetSummary, FuzzyHit, IngestDocument, IngestResult
 from .errors import (
     ErrorCode,
@@ -146,6 +147,9 @@ __all__ = [
     "DatasetSummary",
     "ContentItem",
     "PutResult",
+    "ContextBundle",
+    "ContextBundleItem",
+    "PutContextBundleResult",
     "ModelSummary",
     # Batch B: per-mote definition inspection (display-only)
     "MoteDetail",
