@@ -204,28 +204,9 @@ pub(crate) fn register_echo_capability<S: ContentStore + Send + Sync>(
     Some((tool_id, tool_version))
 }
 
-/// Resolve the operator-granted read root from `KX_SERVE_FS_ROOT` (PR-6a / D155).
-/// `None` (unset / empty / non-existent / non-canonicalizable) ⇒ fs-list is NOT
-/// registered + `kx/recipes/react-fs` is NOT seeded ⇒ deny-by-default, byte-
-/// identical serve. The path is CANONICALIZED here so every downstream confinement
-/// check (the warrant grant, the tool's declared scope, the capability's prefix
-/// check) shares one canonical root.
-pub(crate) fn fs_list_root() -> Option<PathBuf> {
-    let raw = std::env::var_os("KX_SERVE_FS_ROOT")?;
-    if raw.is_empty() {
-        return None;
-    }
-    match PathBuf::from(&raw).canonicalize() {
-        Ok(root) if root.is_dir() => Some(root),
-        _ => {
-            tracing::warn!(
-                root = ?raw,
-                "KX_SERVE_FS_ROOT is not a resolvable directory — fs-list disabled"
-            );
-            None
-        }
-    }
-}
+// `KX_SERVE_FS_ROOT` is resolved by `server::serve_fs_root()` (non-gated by
+// `inference`, so the D155 branch snapshot path gets the root without a model);
+// this module's fs-list/fs-read registration receives the resolved root.
 
 /// PR-6b-4: the operator opt-in for the autonomous-loop tool AUTO-GRANT
 /// (`KX_SERVE_AUTOGRANT`). Default-OFF (unset / `"0"` / `"false"` / empty ⇒

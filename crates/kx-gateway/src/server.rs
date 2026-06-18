@@ -437,10 +437,14 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     // `kx/recipes/react-fs` recipe is NOT seeded ⇒ deny-by-default, byte-identical
     // serve. Resolved BEFORE the coordinator so its registry carries the fs-list
     // def (settle/lease args-validation) when the root is set.
-    #[cfg(feature = "inference")]
-    let fs_list_root: Option<std::path::PathBuf> = crate::mcp_tool::fs_list_root();
-    #[cfg(not(feature = "inference"))]
-    let fs_list_root: Option<std::path::PathBuf> = None;
+    //
+    // D155: resolve the operator read root NON-gated by inference. The agentic
+    // fs-list/fs-read TOOLS still register only under `inference` (no model ⇒ no
+    // ReAct loop to drive them), but the BRANCH snapshot (`SnapshotInto`) is a data
+    // op — it reads files into CAS via the broker confinement, needs no model — so
+    // its read root must resolve on any embedded-worker serve (incl. `--features
+    // hnsw`). Default-OFF: `None` unless `KX_SERVE_FS_ROOT` is a resolvable dir.
+    let fs_list_root: Option<std::path::PathBuf> = serve_fs_root();
     // PR-6b-2: resolve the durable catalog dir + open the durable tools registry
     // EARLY (moved up from the telemetry section) so the embedded coordinator
     // SHARES the SAME live `Arc<SqliteToolRegistry>`. The coordinator's D66
@@ -1549,6 +1553,32 @@ struct HostRegisteredTools {
 impl kx_gateway_core::RegisteredToolsView for HostRegisteredTools {
     fn registered_grants(&self) -> std::collections::BTreeSet<(String, String)> {
         self.broker.registered_grants()
+    }
+}
+
+/// Resolve the operator-granted read root from `KX_SERVE_FS_ROOT` (D155 / PR-6a).
+/// `None` (unset / empty / non-existent / non-canonicalizable) ⇒ host snapshot +
+/// fs-list/fs-read are OFF (deny-by-default, byte-identical serve). The path is
+/// CANONICALIZED here so every downstream confinement check (the warrant grant,
+/// the tool's declared scope, the capability prefix check, the branch snapshot)
+/// shares one canonical root. NON-gated by `inference`: the branch `SnapshotInto`
+/// data path needs the root without a model (the agentic fs tools register only
+/// under `inference`, but they read the SAME knob).
+#[cfg(feature = "embedded-worker")]
+fn serve_fs_root() -> Option<PathBuf> {
+    let raw = std::env::var_os("KX_SERVE_FS_ROOT")?;
+    if raw.is_empty() {
+        return None;
+    }
+    match PathBuf::from(&raw).canonicalize() {
+        Ok(root) if root.is_dir() => Some(root),
+        _ => {
+            tracing::warn!(
+                root = ?raw,
+                "KX_SERVE_FS_ROOT is not a resolvable directory — host fs tools + branch snapshot disabled"
+            );
+            None
+        }
     }
 }
 
