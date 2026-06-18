@@ -759,6 +759,12 @@ pub struct GatewayService {
     /// `unimplemented` and `context_bundles` cannot be resolved at bind. Caller-
     /// scoped, off-journal, off-digest, rebuildable-to-empty.
     bundles: Option<Arc<dyn crate::bundles_view::BundleStore>>,
+    /// The optional branch store seam (D155 Phase-A — the host injects a
+    /// `branches.db`-backed sidecar + content store + `KX_SERVE_FS_ROOT` mount).
+    /// `None` ⇒ the 5 branch RPCs return `unimplemented`. Caller-scoped,
+    /// off-journal, off-digest, rebuildable-to-empty. `SnapshotInto` READS host
+    /// files into CAS (default-OFF); it never writes the host (Phase-B).
+    branches: Option<Arc<dyn crate::branches_view::BranchStore>>,
 }
 
 /// The default fail-closed `PutContent` payload cap (32 MiB).
@@ -827,6 +833,7 @@ impl GatewayService {
             tool_admin: None,
             mcp_admin: None,
             bundles: None,
+            branches: None,
         }
     }
 
@@ -1147,6 +1154,18 @@ impl GatewayService {
         self.bundles = Some(bundles);
         self
     }
+
+    /// Wire the D155 Phase-A branch store (the host's `branches.db` sidecar +
+    /// content store + `KX_SERVE_FS_ROOT` mount). Without it the five branch RPCs
+    /// return `unimplemented`.
+    #[must_use]
+    pub fn with_branches_store(
+        mut self,
+        branches: Arc<dyn crate::branches_view::BranchStore>,
+    ) -> Self {
+        self.branches = Some(branches);
+        self
+    }
 }
 
 /// The structured-refusal metadata key (PR-2). The value is
@@ -1267,6 +1286,34 @@ fn valid_bundle_handle(h: &str) -> bool {
     segs == 3
 }
 
+/// Extract the SERVER-RESOLVED caller principal from the auth interceptor
+/// extension (SN-8 — never wire-trusted). Shared by the caller-scoped sidecar
+/// RPCs (D155 branches).
+// `tonic::Status` exists only at the handler; boxing it would churn every caller.
+#[allow(clippy::result_large_err)]
+fn caller_principal<T>(request: &Request<T>) -> Result<String, Status> {
+    request
+        .extensions()
+        .get::<CallerParty>()
+        .map(|p| p.0.clone())
+        .ok_or_else(|| Status::unauthenticated("no resolved caller identity"))
+}
+
+/// Validate an optional CoW parent handle (D155): empty ⇒ `None`; non-empty must
+/// be a valid `namespace/collection/name` AssetPath handle.
+#[allow(clippy::result_large_err)] // see `caller_principal`.
+fn optional_handle(h: &str) -> Result<Option<&str>, Status> {
+    if h.is_empty() {
+        return Ok(None);
+    }
+    if !valid_bundle_handle(h) {
+        return Err(Status::invalid_argument(
+            "parent_handle must be a 'namespace/collection/name' AssetPath",
+        ));
+    }
+    Ok(Some(h))
+}
+
 /// PR-7: map a host `BundleManifest` to the wire view.
 fn manifest_to_proto(m: crate::BundleManifest) -> proto::ContextBundle {
     let item_count = u32::try_from(m.items.len()).unwrap_or(u32::MAX);
@@ -1281,6 +1328,26 @@ fn manifest_to_proto(m: crate::BundleManifest) -> proto::ContextBundle {
                 name: it.name,
                 content_ref: it.content_ref.to_vec(),
                 media_type: it.media_type,
+            })
+            .collect(),
+        item_count,
+    }
+}
+
+/// D155: map a host `BranchManifest` to the wire view (`{path -> ref}` entries).
+fn branch_to_proto(m: crate::BranchManifest) -> proto::Branch {
+    let item_count = u32::try_from(m.items.len()).unwrap_or(u32::MAX);
+    proto::Branch {
+        branch_ref: m.branch_ref.to_vec(),
+        handle: m.handle,
+        parent_handle: m.parent_handle,
+        description: m.description,
+        items: m
+            .items
+            .into_iter()
+            .map(|it| proto::BranchItem {
+                path: it.path,
+                content_ref: it.content_ref.to_vec(),
             })
             .collect(),
         item_count,
@@ -2651,6 +2718,148 @@ impl KxGateway for GatewayService {
         Ok(Response::new(proto::DeleteContextBundleResponse {
             removed,
         }))
+    }
+
+    // ----- D155 Phase-A — branched data (read / snapshot) -----
+
+    async fn create_branch(
+        &self,
+        request: Request<proto::CreateBranchRequest>,
+    ) -> Result<Response<proto::CreateBranchResponse>, Status> {
+        let branches = self.branches.as_ref().ok_or_else(|| {
+            Status::unimplemented("CreateBranch: no branch store wired (branches.db absent)")
+        })?;
+        let principal = caller_principal(&request)?;
+        let req = request.into_inner();
+        if !valid_bundle_handle(&req.handle) {
+            return Err(Status::invalid_argument(
+                "handle must be a 'namespace/collection/name' AssetPath ([a-z0-9._-] segments)",
+            ));
+        }
+        if req.description.len() > crate::MAX_BRANCH_DESCRIPTION_BYTES {
+            return Err(Status::invalid_argument(
+                "description exceeds the server cap",
+            ));
+        }
+        let parent = optional_handle(&req.parent_handle)?;
+        let (manifest, deduplicated) =
+            branches.create(&principal, &req.handle, parent, &req.description)?;
+        Ok(Response::new(proto::CreateBranchResponse {
+            branch_ref: manifest.branch_ref.to_vec(),
+            handle: req.handle,
+            deduplicated,
+        }))
+    }
+
+    async fn snapshot_into(
+        &self,
+        request: Request<proto::SnapshotIntoRequest>,
+    ) -> Result<Response<proto::SnapshotIntoResponse>, Status> {
+        let branches = self.branches.as_ref().ok_or_else(|| {
+            Status::unimplemented("SnapshotInto: no branch store wired (branches.db absent)")
+        })?;
+        let principal = caller_principal(&request)?;
+        let req = request.into_inner();
+        if !valid_bundle_handle(&req.handle) {
+            return Err(Status::invalid_argument(
+                "handle must be a 'namespace/collection/name' AssetPath ([a-z0-9._-] segments)",
+            ));
+        }
+        if req.description.len() > crate::MAX_BRANCH_DESCRIPTION_BYTES {
+            return Err(Status::invalid_argument(
+                "description exceeds the server cap",
+            ));
+        }
+        if req.paths.is_empty() {
+            return Err(Status::invalid_argument(
+                "snapshot needs at least one path to read",
+            ));
+        }
+        if req.paths.len() > crate::MAX_SNAPSHOT_PATHS {
+            return Err(Status::invalid_argument(
+                "snapshot accepts at most 256 paths per call",
+            ));
+        }
+        if req.paths.iter().any(|p| p.trim().is_empty()) {
+            return Err(Status::invalid_argument("a snapshot path may not be empty"));
+        }
+        let parent = optional_handle(&req.parent_handle)?;
+        let (manifest, ingested, deduplicated) = branches.snapshot_into(
+            &principal,
+            &req.handle,
+            parent,
+            &req.description,
+            &req.paths,
+        )?;
+        let proto_branch = branch_to_proto(manifest);
+        Ok(Response::new(proto::SnapshotIntoResponse {
+            branch_ref: proto_branch.branch_ref,
+            handle: req.handle,
+            items: proto_branch.items,
+            ingested: u32::try_from(ingested).unwrap_or(u32::MAX),
+            deduplicated,
+        }))
+    }
+
+    async fn list_branches(
+        &self,
+        request: Request<proto::ListBranchesRequest>,
+    ) -> Result<Response<proto::ListBranchesResponse>, Status> {
+        let branches = self.branches.as_ref().ok_or_else(|| {
+            Status::unimplemented("ListBranches: no branch store wired (branches.db absent)")
+        })?;
+        let principal = caller_principal(&request)?;
+        let req = request.into_inner();
+        let limit = if req.limit == 0 {
+            100
+        } else {
+            (req.limit as usize).min(256)
+        };
+        let after = if req.after_handle.is_empty() {
+            None
+        } else {
+            Some(req.after_handle.as_str())
+        };
+        let (manifests, has_more) = branches.list(&principal, limit, after)?;
+        Ok(Response::new(proto::ListBranchesResponse {
+            branches: manifests.into_iter().map(branch_to_proto).collect(),
+            has_more,
+        }))
+    }
+
+    async fn get_branch(
+        &self,
+        request: Request<proto::GetBranchRequest>,
+    ) -> Result<Response<proto::GetBranchResponse>, Status> {
+        let branches = self.branches.as_ref().ok_or_else(|| {
+            Status::unimplemented("GetBranch: no branch store wired (branches.db absent)")
+        })?;
+        let principal = caller_principal(&request)?;
+        let req = request.into_inner();
+        // Uniform not-found for absent OR not-owned (no cross-party existence oracle).
+        match branches.get(&principal, &req.handle)? {
+            Some(m) => Ok(Response::new(proto::GetBranchResponse {
+                branch: Some(branch_to_proto(m)),
+                found: true,
+            })),
+            None => Ok(Response::new(proto::GetBranchResponse {
+                branch: None,
+                found: false,
+            })),
+        }
+    }
+
+    async fn delete_branch(
+        &self,
+        request: Request<proto::DeleteBranchRequest>,
+    ) -> Result<Response<proto::DeleteBranchResponse>, Status> {
+        let branches = self.branches.as_ref().ok_or_else(|| {
+            Status::unimplemented("DeleteBranch: no branch store wired (branches.db absent)")
+        })?;
+        let principal = caller_principal(&request)?;
+        let req = request.into_inner();
+        let removed = branches.delete(&principal, &req.handle)?;
+        Ok(Response::new(proto::DeleteBranchResponse { removed }))
     }
 
     async fn list_tool_manifests(

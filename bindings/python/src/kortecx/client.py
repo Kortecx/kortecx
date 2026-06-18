@@ -22,6 +22,7 @@ from . import events as _events
 from . import hexids, types
 from . import wait as _wait  # aliased: `wait` is also a public kwarg name
 from .alerts import AlertsPage, AlertSummary
+from .branch import Branch, CreateBranchResult, SnapshotResult
 from .capture import CaptureRecord, CaptureRecordPage
 from .content import ContentItem, PutResult
 from .context import ContextBundle, PutContextBundleResult
@@ -400,6 +401,77 @@ class KxClient:
         resp = self._call(
             lambda: self._stub.DeleteContextBundle(
                 _g.DeleteContextBundleRequest(handle=handle), metadata=self._md
+            )
+        )
+        return resp.removed
+
+    def create_branch(
+        self, handle: str, *, parent: str = "", description: str = ""
+    ) -> CreateBranchResult:
+        """Create (or fork via ``parent``) a D155 branch at ``handle`` for this party.
+
+        A ``parent`` handle forks a point-in-time CoW sub-branch (it inherits the
+        parent's resolved items at create time; later parent edits do not
+        propagate). The server derives ``branch_ref`` (SN-8) into an off-journal
+        sidecar, scoped to this party. An old gateway raises ``KxUnimplemented``."""
+        resp = self._call(
+            lambda: self._stub.CreateBranch(
+                _g.CreateBranchRequest(
+                    handle=handle, description=description, parent_handle=parent
+                ),
+                metadata=self._md,
+            )
+        )
+        return CreateBranchResult.from_proto(resp)
+
+    def snapshot_into(
+        self,
+        handle: str,
+        paths: Sequence[str],
+        *,
+        parent: str = "",
+        description: str = "",
+    ) -> SnapshotResult:
+        """Snapshot operator-approved host ``paths`` into the branch ``handle``.
+
+        Each path is read (confined under ``KX_SERVE_FS_ROOT``, default-OFF) INTO
+        the content store; the ``{path -> ref}`` manifest is recorded/merged. The
+        branch is created (optionally from ``parent``) if absent. The host is never
+        written (Phase-A). Raises ``KxFailedPrecondition`` when ``KX_SERVE_FS_ROOT``
+        is unset, ``KxUnimplemented`` on an old gateway."""
+        resp = self._call(
+            lambda: self._stub.SnapshotInto(
+                _g.SnapshotIntoRequest(
+                    handle=handle,
+                    paths=list(paths),
+                    description=description,
+                    parent_handle=parent,
+                ),
+                metadata=self._md,
+            )
+        )
+        return SnapshotResult.from_proto(resp)
+
+    def list_branches(self) -> List[Branch]:
+        """List this party's D155 branches in handle order."""
+        resp = self._call(
+            lambda: self._stub.ListBranches(_g.ListBranchesRequest(), metadata=self._md)
+        )
+        return [Branch.from_proto(b) for b in resp.branches]
+
+    def get_branch(self, handle: str) -> Optional[Branch]:
+        """Fetch one branch's resolved manifest by handle, or ``None`` if not found
+        / not owned (uniform — no cross-party existence oracle)."""
+        resp = self._call(
+            lambda: self._stub.GetBranch(_g.GetBranchRequest(handle=handle), metadata=self._md)
+        )
+        return Branch.from_proto(resp.branch) if resp.found else None
+
+    def delete_branch(self, handle: str) -> bool:
+        """Unbind a branch (its CAS blobs stay). Returns ``True`` iff one was removed."""
+        resp = self._call(
+            lambda: self._stub.DeleteBranch(
+                _g.DeleteBranchRequest(handle=handle), metadata=self._md
             )
         )
         return resp.removed

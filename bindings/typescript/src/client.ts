@@ -13,6 +13,7 @@ import type { MessageInitShape } from "@bufbuild/protobuf";
 import { createClient } from "@connectrpc/connect";
 import type { Client, Transport } from "@connectrpc/connect";
 import { AlertSummary, type AlertsPage } from "./alerts.js";
+import { Branch, CreateBranchResult, SnapshotResult } from "./branch.js";
 import { CaptureRecord, type CaptureRecordPage } from "./capture.js";
 import type { Chain } from "./chains.js";
 import { ContentItem, PutResult } from "./content.js";
@@ -326,6 +327,70 @@ export abstract class KxClientBase {
   /** Unbind a context bundle (its CAS blobs stay). Returns `true` iff removed. */
   async deleteContextBundle(handle: string): Promise<boolean> {
     const resp = await rpc(this.grpc.deleteContextBundle({ handle }));
+    return resp.removed;
+  }
+
+  /**
+   * Create (or fork via `opts.parent`) a D155 branch at `handle` for this party.
+   * A `parent` handle forks a point-in-time CoW sub-branch (it inherits the
+   * parent's resolved items at create time; later parent edits do not propagate).
+   * The server derives `branchRef` (SN-8) into an off-journal sidecar.
+   */
+  async createBranch(
+    handle: string,
+    opts: { parent?: string; description?: string } = {},
+  ): Promise<CreateBranchResult> {
+    const resp = await rpc(
+      this.grpc.createBranch({
+        handle,
+        description: opts.description ?? "",
+        parentHandle: opts.parent ?? "",
+      }),
+    );
+    return CreateBranchResult.fromProto(resp);
+  }
+
+  /**
+   * Snapshot operator-approved host `paths` into the branch `handle` (created if
+   * absent, optionally from `opts.parent`). Each path is read (confined under
+   * `KX_SERVE_FS_ROOT`, default-OFF) INTO the content store; the `{path -> ref}`
+   * manifest is recorded/merged. The host is never written (Phase-A). Rejects with
+   * a FAILED_PRECONDITION when `KX_SERVE_FS_ROOT` is unset.
+   */
+  async snapshotInto(
+    handle: string,
+    paths: readonly string[],
+    opts: { parent?: string; description?: string } = {},
+  ): Promise<SnapshotResult> {
+    const resp = await rpc(
+      this.grpc.snapshotInto({
+        handle,
+        paths: [...paths],
+        description: opts.description ?? "",
+        parentHandle: opts.parent ?? "",
+      }),
+    );
+    return SnapshotResult.fromProto(resp);
+  }
+
+  /** List this party's D155 branches in handle order. */
+  async listBranches(): Promise<Branch[]> {
+    const resp = await rpc(this.grpc.listBranches({}));
+    return resp.branches.map((b) => Branch.fromProto(b));
+  }
+
+  /**
+   * Fetch one branch's resolved manifest by handle, or `null` if not found / not
+   * owned (uniform — no cross-party existence oracle).
+   */
+  async getBranch(handle: string): Promise<Branch | null> {
+    const resp = await rpc(this.grpc.getBranch({ handle }));
+    return resp.found && resp.branch ? Branch.fromProto(resp.branch) : null;
+  }
+
+  /** Unbind a branch (its CAS blobs stay). Returns `true` iff removed. */
+  async deleteBranch(handle: string): Promise<boolean> {
+    const resp = await rpc(this.grpc.deleteBranch({ handle }));
     return resp.removed;
   }
 

@@ -17,14 +17,14 @@
 //! Default-OFF: nothing registers `fs-list` unless `KX_SERVE_FS_ROOT` is set, so
 //! the runtime is byte-identical to today (echo-only) when unconfigured.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use kx_mote::{EffectPattern, ToolName, ToolVersion};
-use kx_warrant::{FsMode, FsScope};
 use serde::{Deserialize, Serialize};
 
 use crate::capability::Capability;
 use crate::errors::CapabilityFailureReason;
+use crate::fs_confine::{first_readable_mount, resolve_confined_dir};
 use crate::request::EffectRequest;
 
 /// fs-list observes the world (a read) and commits its bytes as a `result_ref` —
@@ -109,8 +109,8 @@ impl Capability for FsListCapability {
         let sub = parse_path_arg(&request.payload)?;
 
         // (3) Resolve + canonicalize + CONFINE to the granted root (reject
-        // `..`/symlink escapes — airtight prefix check on canonical paths).
-        let target = resolve_confined(root, sub.as_deref())?;
+        // `..`/symlink escapes — airtight prefix check, shared with fs-read).
+        let target = resolve_confined_dir(root, sub.as_deref())?;
 
         // (4) Bounded, deterministic (name-sorted) listing — names + kind + size.
         let entries_path = sub.unwrap_or_else(|| ".".to_string());
@@ -119,15 +119,6 @@ impl Capability for FsListCapability {
         serde_json::to_vec(&listing)
             .map_err(|e| CapabilityFailureReason::Other(format!("fs-list: encode: {e}")))
     }
-}
-
-/// The first mount in `fs` granting read access (`ReadOnly`/`ReadWrite`), in
-/// canonical `BTreeMap` order (deterministic).
-fn first_readable_mount(fs: &FsScope) -> Option<&PathBuf> {
-    fs.mounts
-        .iter()
-        .find(|(_, mode)| matches!(mode, FsMode::ReadOnly | FsMode::ReadWrite))
-        .map(|(path, _)| path)
 }
 
 /// Parse the model's `{"path": <subpath>}` arg. Empty payload ⇒ `None` (list the
@@ -139,34 +130,6 @@ fn parse_path_arg(payload: &[u8]) -> Result<Option<String>, CapabilityFailureRea
     let args: ListArgs = serde_json::from_slice(payload)
         .map_err(|e| CapabilityFailureReason::Other(format!("fs-list: bad args: {e}")))?;
     Ok(args.path.filter(|p| !p.is_empty()))
-}
-
-/// Resolve a (possibly absolute) subpath against `root`, canonicalize it (which
-/// resolves `..` + symlinks), and confine it inside the canonical root. Any
-/// escape, or a non-existent / non-directory target, is refused fail-closed.
-fn resolve_confined(root: &Path, sub: Option<&str>) -> Result<PathBuf, CapabilityFailureReason> {
-    let candidate = match sub {
-        Some(s) if Path::new(s).is_absolute() => PathBuf::from(s),
-        Some(s) => root.join(s),
-        None => root.to_path_buf(),
-    };
-    let canon = candidate.canonicalize().map_err(|e| {
-        CapabilityFailureReason::Other(format!("fs-list: cannot resolve path: {e}"))
-    })?;
-    let canon_root = root.canonicalize().map_err(|e| {
-        CapabilityFailureReason::Other(format!("fs-list: cannot resolve root: {e}"))
-    })?;
-    if !canon.starts_with(&canon_root) {
-        return Err(CapabilityFailureReason::Other(
-            "fs-list: path escapes the granted root".to_string(),
-        ));
-    }
-    if !canon.is_dir() {
-        return Err(CapabilityFailureReason::Other(
-            "fs-list: path is not a directory".to_string(),
-        ));
-    }
-    Ok(canon)
 }
 
 /// Read a directory's immediate entries (names + kind + size; NO contents),

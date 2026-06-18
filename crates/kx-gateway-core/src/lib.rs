@@ -46,6 +46,7 @@
 //! (no existence oracle).
 
 mod alerts_view;
+mod branches_view;
 mod bundles_view;
 mod capture_view;
 mod datasets;
@@ -73,6 +74,9 @@ mod view;
 mod writer;
 
 pub use alerts_view::{AlertEntry, AlertView};
+pub use branches_view::{
+    BranchItemRecord, BranchManifest, BranchStore, MAX_BRANCH_DESCRIPTION_BYTES, MAX_SNAPSHOT_PATHS,
+};
 pub use bundles_view::{
     BundleItemRecord, BundleManifest, BundleStore, MAX_BUNDLE_DESCRIPTION_BYTES,
     MAX_CONTEXT_BUNDLE_ITEMS,

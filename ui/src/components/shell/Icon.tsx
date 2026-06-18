@@ -15,6 +15,7 @@ export type Glyph =
   | "chat"
   | "chevron-right"
   | "context"
+  | "branches"
   | "moon"
   | "runs"
   | "recipes"
@@ -60,6 +61,9 @@ const PATHS: Record<Glyph, string> = {
   systems:
     "M6 7a2 2 0 100-4 2 2 0 000 4zm12 0a2 2 0 100-4 2 2 0 000 4zM12 21a2 2 0 100-4 2 2 0 000 4zM7.5 6.5l3.5 9M16.5 6.5L13 15.5",
   context: "M12 3l9 5-9 5-9-5 9-5zM3 12.5l9 5 9-5M3 17l9 5 9-5",
+  // A git-branch glyph: a trunk with a forked node (D155 branches).
+  branches:
+    "M6 3v12M6 15a3 3 0 1 0 0 6 3 3 0 0 0 0-6zM6 6a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM18 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm0 0a9 9 0 0 1-9 9",
   sun: "M12 7a5 5 0 100 10 5 5 0 000-10zm0-5v2m0 16v2M2 12h2m16 0h2M4.9 4.9l1.4 1.4m11.4 11.4l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4",
   moon: "M21 12.8A9 9 0 1111.2 3 7 7 0 0021 12.8z",
   menu: "M4 6h16M4 12h16M4 18h16",

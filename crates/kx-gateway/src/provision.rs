@@ -358,7 +358,7 @@ impl DemoLibrary {
         serve_model: Option<&ModelId>,
         react_tool: Option<&(ToolName, ToolVersion)>,
         vision: bool,
-        fs_list: Option<(&(ToolName, ToolVersion), &Path)>,
+        fs_list: Option<(&[(ToolName, ToolVersion)], &Path)>,
         autogrant: bool,
     ) -> Result<Self, GatewayError> {
         Self::seed(
@@ -388,7 +388,7 @@ impl DemoLibrary {
         serve_model: Option<&ModelId>,
         react_tool: Option<&(ToolName, ToolVersion)>,
         vision: bool,
-        fs_list: Option<(&(ToolName, ToolVersion), &Path)>,
+        fs_list: Option<(&[(ToolName, ToolVersion)], &Path)>,
         autogrant: bool,
     ) -> Result<Self, GatewayError> {
         let cat = |e: String| GatewayError::Catalog(e);
@@ -541,8 +541,8 @@ impl DemoLibrary {
         // react free-param contract but carries its OWN logic ref (BUG-25 — a shared
         // logic ref collides with `kx/recipes/react` at seed when both are present),
         // so the canonical `kx/recipes/react` + the digest stay byte-unchanged.
-        if let (Some(model_id), Some((fs_tool, fs_root))) = (serve_model, fs_list) {
-            let react_fs_w = react_fs_warrant(exec_class, model_id, fs_tool, fs_root);
+        if let (Some(model_id), Some((fs_tools, fs_root))) = (serve_model, fs_list) {
+            let react_fs_w = react_fs_warrant(exec_class, model_id, fs_tools, fs_root);
             let react_fs_h = react_fs_handle()?;
             seed_recipe(
                 &versions,
@@ -862,8 +862,8 @@ fn recipe_advisory(handle: &str) -> (&'static str, &'static [&'static str]) {
             &["agent", "react", "tools", "loop", "reasoning"],
         ),
         REACT_FS_RECIPE_HANDLE => (
-            "ReAct-FS — a live agent loop with a read-only filesystem tool (lists files under the granted root).",
-            &["agent", "react", "tools", "filesystem", "fs-list"],
+            "ReAct-FS — a live agent loop with read-only filesystem tools (list directory entries + read a file's contents) under the granted root.",
+            &["agent", "react", "tools", "filesystem", "fs-list", "fs-read"],
         ),
         REACT_AUTO_RECIPE_HANDLE => (
             "ReAct-Auto — a live agent loop that auto-grants the registered/dialed tool set (the model picks from all live tools).",
@@ -2051,14 +2051,18 @@ pub(crate) fn react_warrant(
 pub(crate) fn react_fs_warrant(
     exec_class: ExecutorClass,
     model_id: &ModelId,
-    tool: &(ToolName, ToolVersion),
+    tools: &[(ToolName, ToolVersion)],
     root: &Path,
 ) -> WarrantSpec {
     let mut tool_grants = BTreeSet::new();
-    tool_grants.insert(kx_warrant::ToolGrant {
-        tool_id: tool.0.clone(),
-        tool_version: tool.1.clone(),
-    });
+    // D155: grant EVERY filesystem tool (fs-list@1 to discover + fs-read@1 to
+    // ingest); both share the SAME read-only root (`KX_SERVE_FS_ROOT`).
+    for tool in tools {
+        tool_grants.insert(kx_warrant::ToolGrant {
+            tool_id: tool.0.clone(),
+            tool_version: tool.1.clone(),
+        });
+    }
     let mut mounts = std::collections::BTreeMap::new();
     mounts.insert(root.to_path_buf(), kx_warrant::FsMode::ReadOnly);
     WarrantSpec {
@@ -3423,7 +3427,7 @@ mod tests {
             Some(&model),
             None,
             false,
-            Some((&fs_tool, root.path())),
+            Some((std::slice::from_ref(&fs_tool), root.path())),
             false,
         )
         .unwrap();
@@ -3475,8 +3479,8 @@ mod tests {
             Some(&model),
             Some(&echo), // react
             false,
-            Some((&fs_tool, root.path())), // react-fs
-            true,                          // react-auto
+            Some((std::slice::from_ref(&fs_tool), root.path())), // react-fs
+            true,                                                // react-auto
         )
         .expect("all three react variants seed without a body-id collision");
         let handles = lib.recipe_handles();
@@ -3555,13 +3559,22 @@ mod tests {
     #[test]
     fn react_fs_warrant_grants_fs_list_and_the_read_root() {
         let root = std::path::PathBuf::from("/data");
+        // D155: the react-fs warrant grants BOTH fs-list@1 (discover) + fs-read@1
+        // (ingest), sharing the one read-only root.
         let w = react_fs_warrant(
             ExecutorClass::Bwrap,
             &ModelId("m".to_string()),
-            &(ToolName("fs-list".into()), ToolVersion("1".into())),
+            &[
+                (ToolName("fs-list".into()), ToolVersion("1".into())),
+                (ToolName("fs-read".into()), ToolVersion("1".into())),
+            ],
             &root,
         );
         assert!(w.tool_grants.iter().any(|g| g.tool_id.0 == "fs-list"));
+        assert!(
+            w.tool_grants.iter().any(|g| g.tool_id.0 == "fs-read"),
+            "D155: fs-read@1 must also be granted in the react-fs warrant"
+        );
         assert_eq!(
             w.fs_scope.mounts.get(&root),
             Some(&kx_warrant::FsMode::ReadOnly),

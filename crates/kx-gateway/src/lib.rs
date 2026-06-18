@@ -78,6 +78,14 @@ mod alerts;
 // to-empty (caller-authored, never journaled), off-journal, off-digest; like
 // uploads, no executor wrapper — always-on, FFI-free (rusqlite already in closure).
 mod bundles;
+// D155 Phase-A: the branches.db sidecar (the BranchStore seam) — CreateBranch /
+// SnapshotInto manifests of {host-path -> ContentRef}. SnapshotInto reads confined
+// host files into CAS (reusing fs-list's airtight confinement via kx-capability),
+// so the module is gated to `embedded-worker` (where the broker + content store +
+// kx-capability live; the gateway-only `--no-default-features` closure is
+// unchanged). Off-journal, off-digest, rebuildable-to-empty.
+#[cfg(feature = "embedded-worker")]
+mod branches;
 // The Morphic Data Engine (campaign Batch 2): the durable serve-path capture
 // projection (capture.db sidecar folded from the read-only journal handle).
 // Always-on, off-truth-path; FFI-free (rusqlite is already in the closure).

@@ -34,6 +34,7 @@ const sidebars: SidebarsConfig = {
         "context",
         "models",
         "datasets",
+        "branches",
         "scripts",
         "reading-run-outputs",
         "rerun-with-changes",

@@ -29,6 +29,7 @@ export type IconName =
   | "recipes"
   | "artifacts"
   | "context"
+  | "branches"
   | "datasets"
   | "tools"
   | "models"
@@ -47,6 +48,7 @@ export type RoutePath =
   | "/workflows"
   | "/recipes"
   | "/context"
+  | "/branches"
   | "/datasets"
   | "/tools"
   | "/models"
@@ -134,6 +136,16 @@ export const NAV_SECTIONS: readonly NavSection[] = [
     hint: "Reusable instruction & file bundles",
   },
   {
+    // D155: content-addressed branches over operator-approved host files
+    // (snapshot into CAS; edit in-CAS). Default-OFF (KX_SERVE_FS_ROOT); the host
+    // is never written in this phase. Degrades to an honest disabled state.
+    id: "branches",
+    label: "Branches",
+    path: "/branches",
+    icon: "branches",
+    hint: "Snapshot & edit files as content-addressed branches",
+  },
+  {
     id: "monitor",
     label: "Monitoring",
     path: "/monitor",
@@ -208,7 +220,7 @@ export const NAV_GROUPS: readonly NavGroup[] = [
     color: "warning",
     sectionIds: ["dashboard", "chat", "runs", "recipes"],
   },
-  { id: "data", label: "Data", color: "teal", sectionIds: ["datasets", "context"] },
+  { id: "data", label: "Data", color: "teal", sectionIds: ["datasets", "context", "branches"] },
   { id: "tools", label: "Tools", color: "violet", sectionIds: ["tools", "models"] },
   { id: "monitoring", label: "Monitoring", color: "error", sectionIds: ["monitor"] },
   { id: "security", label: "Security", color: "success", sectionIds: ["systems"] },
