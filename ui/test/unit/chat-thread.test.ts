@@ -5,6 +5,7 @@ import {
   EMPTY_THREAD,
   chatReducer,
   isTurnInFlight,
+  retrySource,
 } from "../../src/lib/chat-thread";
 
 const ERR: UiError = {
@@ -158,6 +159,41 @@ describe("chatReducer", () => {
 
   it("reset clears the thread", () => {
     expect(chatReducer(send(EMPTY_THREAD), { type: "reset" })).toBe(EMPTY_THREAD);
+  });
+});
+
+describe("context bundles (PR-7b)", () => {
+  it("user_send stores the attached context handles on the user message", () => {
+    const s = chatReducer(EMPTY_THREAD, {
+      type: "user_send",
+      userId: "u1",
+      assistantId: "a1",
+      text: "hi",
+      context: ["team/ctx/spec", "team/ctx/notes"],
+    });
+    expect(s.messages[0]?.context).toEqual(["team/ctx/spec", "team/ctx/notes"]);
+  });
+
+  it("retrySource returns the failed turn's context so a retry re-attaches it", () => {
+    let s = chatReducer(EMPTY_THREAD, {
+      type: "user_send",
+      userId: "u1",
+      assistantId: "a1",
+      text: "hi",
+      context: ["team/ctx/spec"],
+    });
+    s = chatReducer(s, { type: "turn_failed", assistantId: "a1", error: ERR });
+    expect(retrySource(s, "a1")).toEqual({
+      text: "hi",
+      attachments: [],
+      context: ["team/ctx/spec"],
+    });
+  });
+
+  it("retrySource defaults context to [] when none was attached", () => {
+    let s = send(EMPTY_THREAD);
+    s = chatReducer(s, { type: "turn_failed", assistantId: "a1", error: ERR });
+    expect(retrySource(s, "a1")?.context).toEqual([]);
   });
 });
 

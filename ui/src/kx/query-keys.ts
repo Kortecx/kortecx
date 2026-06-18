@@ -41,6 +41,9 @@ export const queryKeys = {
   /** The registered external MCP servers (`ListMcpServers`, PR-6b-1) — the live
    *  Connections govern surface. Server-derived ids; credentials by NAME only. */
   mcpServers: (endpoint: string) => ["kx", endpoint, "mcp-servers"] as const,
+  /** This party's context bundles (`ListContextBundles`, PR-7) — named,
+   *  content-addressed grounding. Caller-scoped; `bundleRef` is server-derived (SN-8). */
+  contextBundles: (endpoint: string) => ["kx", endpoint, "context-bundles"] as const,
   /** The datasets (RAG corpora) the gateway holds (`ListDatasets`). */
   datasets: (endpoint: string) => ["kx", endpoint, "datasets"] as const,
   /** A dataset query (`QueryDataset`), scoped by dataset + query text + k. */

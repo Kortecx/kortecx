@@ -52,7 +52,9 @@ interface CorpusCase {
   dsl: string;
   seed: number;
   tasks: Record<string, CorpusTask>;
-  expect?: Lowered;
+  /** PR-7b: chain-level context attachment (absent ⇒ []). */
+  context_bundles?: string[];
+  expect?: Partial<Lowered>;
   error?: "parse" | "unknown_handle" | "cycle";
 }
 
@@ -82,7 +84,12 @@ describe("Chains DSL — golden corpus parity", () => {
   for (const c of corpus) {
     if (c.error !== undefined) {
       it(`${c.name}: rejects with the '${c.error}' error class`, () => {
-        const run = () => chain(c.dsl, { tasks: tasksFromCorpus(c.tasks), seed: c.seed });
+        const run = () =>
+          chain(c.dsl, {
+            tasks: tasksFromCorpus(c.tasks),
+            seed: c.seed,
+            context: c.context_bundles,
+          });
         const expectedClass =
           c.error === "parse"
             ? ChainParseError
@@ -92,9 +99,15 @@ describe("Chains DSL — golden corpus parity", () => {
         expect(run).toThrow(expectedClass);
       });
     } else {
-      it(`${c.name}: lowers to the canonical (steps, edges)`, () => {
-        const lowered = chain(c.dsl, { tasks: tasksFromCorpus(c.tasks), seed: c.seed }).lower();
-        expect(lowered).toEqual(c.expect);
+      it(`${c.name}: lowers to the canonical (steps, edges, context_bundles)`, () => {
+        const lowered = chain(c.dsl, {
+          tasks: tasksFromCorpus(c.tasks),
+          seed: c.seed,
+          context: c.context_bundles,
+        }).lower();
+        // PR-7b: existing cases omit `context_bundles` in `expect` ⇒ default to []
+        // (matches the SPEC "absent ⇒ []" rule + Rust `#[serde(default)]`).
+        expect(lowered).toEqual({ context_bundles: [], ...c.expect });
       });
     }
   }
@@ -172,6 +185,52 @@ describe("Chains DSL — build() feeds the BlueprintBuilder", () => {
     expect(req.edges).toHaveLength(1);
     // The builder UTF-8-encodes params at build time.
     expect(req.steps?.[0]?.params?.topic).toEqual(new TextEncoder().encode("hi"));
+    // PR-7b: a chain with no attached context carries an empty repeated field.
+    expect(req.contextBundles ?? []).toEqual([]);
     expect(c).toBeInstanceOf(Chain);
+  });
+});
+
+describe("Chains DSL — context bundles (PR-7b, chain-level attachment)", () => {
+  it("the context option flows to the request verbatim", () => {
+    const a = task.pure();
+    const b = task.pure();
+    const req = chain("a > b", { tasks: { a, b }, context: ["team/ctx/spec"] }).build();
+    expect(req.contextBundles).toEqual(["team/ctx/spec"]);
+    expect(req.steps).toHaveLength(2); // context is chain-level, NOT a step
+  });
+
+  it("emits context_bundles in the lowering", () => {
+    const a = task.pure();
+    const lowered = chain("a", { tasks: { a }, context: ["x/y/z"] }).lower();
+    expect(lowered.context_bundles).toEqual(["x/y/z"]);
+  });
+
+  it("preserves caller order (no DSL-side sort/dedup — the server canonicalizes)", () => {
+    const a = task.pure();
+    const handles = ["z/ctx/two", "a/ctx/one"];
+    const req = chain("a", { tasks: { a }, context: handles }).build();
+    expect(req.contextBundles).toEqual(handles);
+  });
+
+  it("fluent .context() matches the option and appends (immutable)", () => {
+    const a = task.pure();
+    const b = task.pure();
+    const base = chain("a > b", { tasks: { a, b } });
+    const viaFluent = base.context("team/ctx/spec").context("team/ctx/notes");
+    const viaOption = chain("a > b", {
+      tasks: { a, b },
+      context: ["team/ctx/spec", "team/ctx/notes"],
+    });
+    expect(viaFluent.lower()).toEqual(viaOption.lower());
+    expect(base.lower().context_bundles).toEqual([]); // base unchanged
+  });
+
+  it("chainFrom carries context and matches the string form", () => {
+    const a = task.pure();
+    const b = task.pure();
+    const viaString = chain("a > b", { tasks: { a, b }, context: ["c/c/c"] }).lower();
+    const viaCombinator = chainFrom(seq(a, b), { context: ["c/c/c"] }).lower();
+    expect(viaCombinator).toEqual(viaString);
   });
 });

@@ -2535,6 +2535,89 @@ mod tests {
         assert!(cross_party.is_ok(), "alice resolves her own bundle");
     }
 
+    /// The SAME identity-bearing + fail-closed guarantees on the AUTHOR
+    /// (`SubmitWorkflow` / Chains `context()`) path — the binder test above covers
+    /// only `HostRecipeBinder` (Invoke). Both paths fold the resolved ref-set into
+    /// the entry Mote's `config_subset` before `compile`, so attaching a bundle
+    /// yields a different entry `MoteId` (exactly-once-per-(input+context)).
+    #[tokio::test]
+    async fn author_context_injection_is_identity_bearing_and_fail_closed() {
+        let dir = tempfile::tempdir().unwrap();
+        let lib = DemoLibrary::open(
+            dir.path(),
+            ExecutorClass::Bwrap,
+            &["alice@acme".to_string()],
+        )
+        .unwrap();
+        let bundles = std::sync::Arc::new(crate::bundles::BundlesDb::open(dir.path()).unwrap());
+        bundles
+            .upsert(
+                "alice@acme",
+                "team/ctx/notes",
+                "alice's notes",
+                &[kx_gateway_core::BundleItemRecord {
+                    name: "doc".into(),
+                    content_ref: [0xab; 32],
+                    media_type: String::new(),
+                }],
+            )
+            .unwrap();
+        let author = HostWorkflowAuthor::from_shared_with_tools(
+            std::sync::Arc::new(lib),
+            tool_registry_with("echo-tool", "1"),
+        )
+        .with_bundles(bundles);
+
+        let pure_step = AuthorStep {
+            kind: AuthorStepKind::Pure,
+            model_id: String::new(),
+            prompt: String::new(),
+            body_signature_id: None,
+            tool_contract: std::collections::BTreeMap::new(),
+            params: std::collections::BTreeMap::new(),
+        };
+        let author_run = |ctx: Vec<String>| {
+            let a = &author;
+            let step = pure_step.clone();
+            async move {
+                a.author(
+                    "alice@acme",
+                    0,
+                    std::slice::from_ref(&step),
+                    &[],
+                    AuthorExecutionMode::Frozen,
+                    &ctx,
+                )
+                .await
+            }
+        };
+
+        let plain = author_run(vec![]).await.expect("authors without context");
+        let grounded = author_run(vec!["team/ctx/notes".to_string()])
+            .await
+            .expect("authors with context");
+        assert_ne!(
+            plain.terminal_mote_id, grounded.terminal_mote_id,
+            "attaching a context bundle changes the entry MoteId on the author path"
+        );
+
+        // Identical (input + context) ⇒ identical identity (idempotent).
+        let grounded2 = author_run(vec!["team/ctx/notes".to_string()])
+            .await
+            .expect("re-authors with the same context");
+        assert_eq!(
+            grounded.terminal_mote_id, grounded2.terminal_mote_id,
+            "same input+context ⇒ same identity"
+        );
+
+        // An unknown handle FAILS CLOSED (never silently drops requested context).
+        let unknown = author_run(vec!["team/ctx/missing".to_string()]).await;
+        assert!(
+            matches!(unknown, Err(BinderError::InvalidArgs(_))),
+            "an unknown context bundle is refused at admission"
+        );
+    }
+
     #[tokio::test]
     async fn context_bundles_without_a_store_fail_closed() {
         // A binder with NO bundle store wired (the default) refuses a non-empty

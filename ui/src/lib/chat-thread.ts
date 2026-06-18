@@ -31,6 +31,10 @@ export interface ChatMessage {
   readonly status: ChatStatus;
   /** The uploads attached to a user message (display + the vision arg source). */
   readonly attachments?: readonly MessageAttachment[];
+  /** PR-7b: the context-bundle handles attached to a user turn (display + the
+   *  retry source). Threaded into the turn's Invoke `context`; a different attached
+   *  context ⇒ a different, independently-cached run. */
+  readonly context?: readonly string[];
   /** The paired user message id on an assistant turn (the retry join key). */
   readonly forUserId?: string;
   /** The run backing an assistant turn (set once Invoke returns). */
@@ -58,6 +62,7 @@ export type ChatAction =
       assistantId: string;
       text: string;
       attachments?: readonly MessageAttachment[];
+      context?: readonly string[];
     }
   | { type: "turn_started"; assistantId: string; instanceId: string; terminalMoteId: string }
   | { type: "turn_thinking"; assistantId: string }
@@ -89,6 +94,7 @@ export function chatReducer(state: ChatThread, action: ChatAction): ChatThread {
         text: action.text,
         status: "done",
         attachments: action.attachments,
+        context: action.context,
       };
       const assistant: ChatMessage = {
         id: action.assistantId,
@@ -155,7 +161,11 @@ export function chatReducer(state: ChatThread, action: ChatAction): ChatThread {
 export function retrySource(
   state: ChatThread,
   assistantId: string,
-): { text: string; attachments: readonly MessageAttachment[] } | null {
+): {
+  text: string;
+  attachments: readonly MessageAttachment[];
+  context: readonly string[];
+} | null {
   const assistant = state.messages.find((m) => m.id === assistantId);
   if (!assistant || assistant.role !== "assistant" || assistant.status !== "failed") {
     return null;
@@ -164,7 +174,7 @@ export function retrySource(
   if (!user) {
     return null;
   }
-  return { text: user.text, attachments: user.attachments ?? [] };
+  return { text: user.text, attachments: user.attachments ?? [], context: user.context ?? [] };
 }
 
 /** True while any assistant turn is still in flight (composer stays disabled). */

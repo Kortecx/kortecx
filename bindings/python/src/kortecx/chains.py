@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Sequence, Tuple, Union
 
 from .blueprints import TOOL_ARGS_KEY, BlueprintBuilder, EdgeInput, StepInput
 from .v1 import gateway_pb2 as _g
@@ -172,14 +172,47 @@ class Chain:
     """A composed chain ready to lower. Build one from operator sugar via
     :meth:`from_node`, or from the string DSL via :func:`chain`."""
 
-    def __init__(self, root: "_Node", *, seed: int = 0) -> None:
+    def __init__(
+        self,
+        root: "_Node",
+        *,
+        seed: int = 0,
+        context_bundles: Optional[Sequence[str]] = None,
+    ) -> None:
         self._root = root
         self._seed = seed
+        # PR-7b: chain-level context-bundle handles (verbatim caller order — the
+        # SERVER canonicalizes the sorted ref-set into each entry Mote at bind, SN-8).
+        self._context: List[str] = list(context_bundles or [])
 
     @classmethod
-    def from_node(cls, node: "_Node", *, seed: int = 0) -> "Chain":
-        """Wrap an operator-sugar AST (``a >> b``, ``a & b``, ...) as a chain."""
-        return cls(_as_node(node), seed=seed)
+    def from_node(
+        cls,
+        node: "_Node",
+        *,
+        seed: int = 0,
+        context: Optional[Sequence[str]] = None,
+    ) -> "Chain":
+        """Wrap an operator-sugar AST (``a >> b``, ``a & b``, ...) as a chain.
+
+        ``context`` is an optional list of context-bundle handles to attach to the
+        run (PR-7b) — chain-level, not a node (see :meth:`context`)."""
+        return cls(_as_node(node), seed=seed, context_bundles=context)
+
+    def context(self, *handles: str) -> "Chain":
+        """Attach context-bundle ``handles`` to this chain (PR-7b), returning a NEW
+        :class:`Chain` (immutable — the existing one is unchanged). Repeated calls
+        APPEND in order; the SERVER resolves each handle to its content-refs and
+        folds the sorted set into every entry Mote's identity-bearing config, so a
+        different attached context ⇒ a different run (exactly-once-per-input+context).
+
+        Context is request-level: it attaches to the chain's ENTRY Motes regardless
+        of where this is called — there is no ``context`` step."""
+        return Chain(
+            self._root,
+            seed=self._seed,
+            context_bundles=[*self._context, *handles],
+        )
 
     # --- lowering -------------------------------------------------------------
     def _lower(self) -> Tuple[List[Task], List[Tuple[int, int]]]:
@@ -251,18 +284,22 @@ class Chain:
             for t in nodes
         ]
         edge_rows = [{"parent": p, "child": c, "edge": "data"} for (p, c) in edges]
-        return {"steps": steps, "edges": edge_rows}
+        # PR-7b: the chain-level context attachment, emitted verbatim (the corpus
+        # pins its byte-identity across surfaces; absent ⇒ []).
+        return {"steps": steps, "edges": edge_rows, "context_bundles": list(self._context)}
 
     def build(self) -> "_g.SubmitWorkflowRequest":
         """Lower → :class:`~kortecx.blueprints.BlueprintBuilder` → the request. Nodes
         feed ``add_step`` in first-appearance order; the sorted deduped data edges
-        feed ``add_edge``; ``seed`` is the chain's seed; mode is ``frozen``."""
+        feed ``add_edge``; ``seed`` is the chain's seed; mode is ``frozen``; the
+        chain's context bundles (if any) ride on the request (PR-7b)."""
         nodes, edges = self._lower()
         builder = BlueprintBuilder(self._seed)
         for t in nodes:
             builder.add_step(t.step)
         for parent, child in edges:
             builder.add_edge(EdgeInput(parent=parent, child=child, edge="data"))
+        builder.context_bundles(self._context)
         return builder.build()
 
 
@@ -397,9 +434,19 @@ def _tokenize(expr: str) -> List[str]:
     return toks
 
 
-def chain(expr: str, tasks: Dict[str, Task], *, seed: int = 0) -> Chain:
+def chain(
+    expr: str,
+    tasks: Dict[str, Task],
+    *,
+    seed: int = 0,
+    context: Optional[Sequence[str]] = None,
+) -> Chain:
     """Parse a chain string expression (the exact grammar in SPEC.md), resolving
     handles via ``tasks``, into a :class:`Chain`.
+
+    ``context`` is an optional list of context-bundle handles to attach (PR-7b) —
+    chain-level grounding the server injects into every entry Mote (see
+    :meth:`Chain.context`); also settable fluently via ``.context(...)``.
 
     Raises :class:`ChainParseError` on an empty/malformed expression or empty
     group, :class:`UnknownHandleError` on a handle absent from ``tasks``, and
@@ -409,4 +456,4 @@ def chain(expr: str, tasks: Dict[str, Task], *, seed: int = 0) -> Chain:
     if not expr.strip():
         raise ChainParseError("empty chain expression")
     root = _Parser(expr, tasks).parse()
-    return Chain(root, seed=seed)
+    return Chain(root, seed=seed, context_bundles=context)

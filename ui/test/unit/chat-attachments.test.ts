@@ -62,6 +62,7 @@ describe("chatReducer attachments + retry", () => {
     expect(retrySource(failed, "a1")).toEqual({
       text: "what is this?",
       attachments: [ATT],
+      context: [],
     });
     // Not failed ⇒ no source.
     expect(retrySource(sendWithAttachment(EMPTY_THREAD), "a1")).toBeNull();

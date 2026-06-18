@@ -26,6 +26,9 @@ export interface MockClientImpl {
   getMoteDetail?: (...args: unknown[]) => Promise<unknown>;
   getContentBatch?: (...args: unknown[]) => Promise<unknown>;
   listModels?: (...args: unknown[]) => Promise<unknown>;
+  listContextBundles?: (...args: unknown[]) => Promise<unknown>;
+  putContextBundle?: (...args: unknown[]) => Promise<unknown>;
+  deleteContextBundle?: (...args: unknown[]) => Promise<unknown>;
 }
 
 export function makeMockClient(impl: MockClientImpl = {}) {
@@ -89,6 +92,12 @@ export function makeMockClient(impl: MockClientImpl = {}) {
   );
   const getContentBatch = vi.fn(impl.getContentBatch ?? (async () => []));
   const listModels = vi.fn(impl.listModels ?? (async () => []));
+  const listContextBundles = vi.fn(impl.listContextBundles ?? (async () => []));
+  const putContextBundle = vi.fn(
+    impl.putContextBundle ??
+      (async () => ({ bundleRef: "ab".repeat(8), handle: "", deduplicated: false })),
+  );
+  const deleteContextBundle = vi.fn(impl.deleteContextBundle ?? (async () => true));
   const close = vi.fn();
   const client = {
     listSignatures,
@@ -111,6 +120,9 @@ export function makeMockClient(impl: MockClientImpl = {}) {
     getMoteDetail,
     getContentBatch,
     listModels,
+    listContextBundles,
+    putContextBundle,
+    deleteContextBundle,
     close,
     submitRun: vi.fn(),
     registerSignature: vi.fn(),
@@ -137,6 +149,9 @@ export function makeMockClient(impl: MockClientImpl = {}) {
     getMoteDetail,
     getContentBatch,
     listModels,
+    listContextBundles,
+    putContextBundle,
+    deleteContextBundle,
     close,
   };
 }

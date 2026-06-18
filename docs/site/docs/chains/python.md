@@ -91,6 +91,20 @@ tasks = {
 spec = chain("gen > sum", tasks=tasks)   # two steps, edge 0→1
 ```
 
+## Attaching context bundles
+
+Ground the chain with [context bundles](../context.md) via the `context=` argument,
+or the fluent `.context(...)` (which appends and returns a new chain). Context is
+chain-level — the server injects it into the chain's entry step(s):
+
+```python
+chain("gen > sum", tasks=tasks, context=["team/ctx/spec"])
+chain("gen > sum", tasks=tasks).context("team/ctx/spec", "team/ctx/notes")
+```
+
+Handles ride verbatim into the request (the server canonicalizes at bind). A chain
+with no attached context is byte-identical to one authored before context bundles.
+
 ## Validation
 
 The same fail-closed rules as the [DSL reference](./dsl-reference.md#validation-fail-closed)

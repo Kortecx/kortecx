@@ -2045,6 +2045,26 @@ select {
   color: var(--fg-muted);
   cursor: not-allowed;
 }
+/* PR-7b: the LIVE Context picker group + an attached (checked) bundle row. */
+.popover__group {
+  border-top: 1px solid var(--border);
+  margin-top: 0.25rem;
+  padding-top: 0.25rem;
+}
+.popover__group-label {
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--fg-muted);
+  padding: 0.2rem 0.6rem;
+}
+.popover__item--active {
+  color: var(--teal);
+}
+.popover__check {
+  margin-left: auto;
+  color: var(--teal);
+}
 .popover__item .chip--soon {
   margin-left: auto;
 }
@@ -3234,6 +3254,78 @@ button.card-grid__title:hover {
   margin: 0.5rem 0 0;
   color: var(--fg-muted);
   font-size: 0.9rem;
+}
+
+/* ---- Context bundles (PR-7b: items list + author form) ---- */
+.context-bundle__items {
+  list-style: none;
+  margin: 0.4rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+.context-bundle__item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+}
+.context-bundle__item-name {
+  font-weight: 600;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.context-bundle__item-type {
+  font-size: 0.75rem;
+}
+.context-bundle-form__add {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 0.4rem;
+}
+.context-bundle-form__ref {
+  display: grid;
+  grid-template-columns: 0.6fr 1.4fr auto;
+  gap: 0.5rem;
+  align-items: center;
+}
+@media (max-width: 720px) {
+  .context-bundle-form__ref {
+    grid-template-columns: 1fr;
+  }
+}
+/* PR-7b: the chat composer's attached-context chip strip (above the input). */
+.context-strip {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  padding: 0.3rem 0;
+}
+.context-strip__label {
+  font-size: 0.78rem;
+}
+.context-strip__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.78rem;
+  padding: 0.1rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--teal) 9%, transparent);
+}
+.context-strip__remove {
+  border: none;
+  background: none;
+  cursor: pointer;
+  color: var(--fg-muted);
+  padding: 0;
+  line-height: 1;
+}
+.context-strip__remove:hover {
+  color: var(--fg);
 }
 
 /* ---- MCP Connections (PR-6b-1: the live external-MCP-gateway govern surface) ---- */
