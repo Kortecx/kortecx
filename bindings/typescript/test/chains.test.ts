@@ -24,6 +24,7 @@ import {
   task,
 } from "../src/chains.js";
 import type { Lowered, Task } from "../src/chains.js";
+import { fillDefaultModel } from "../src/client.js";
 
 // The golden corpus lives at the repo root; this test file is bindings/typescript/test.
 const CORPUS_PATH = join(
@@ -266,5 +267,52 @@ describe("Chains DSL — context bundles (PR-7b, chain-level attachment)", () =>
     const viaString = chain("a > b", { tasks: { a, b }, context: ["c/c/c"] }).lower();
     const viaCombinator = chainFrom(seq(a, b), { context: ["c/c/c"] }).lower();
     expect(viaCombinator).toEqual(viaString);
+  });
+});
+
+describe("Chains DSL — Batch A authoring veneers", () => {
+  it("modelId is optional and lowers to empty (server binds served)", () => {
+    const lowered = chain("p > q", {
+      tasks: { p: task.model("", "go"), q: task.pure() },
+    }).lower();
+    expect(lowered.steps[0]?.kind).toBe("model");
+    expect(lowered.steps[0]?.model_id).toBe("");
+    // A named model lowers verbatim.
+    const named = chain("p", { tasks: { p: task.model("kx-serve:m", "go") } }).lower();
+    expect(named.steps[0]?.model_id).toBe("kx-serve:m");
+  });
+
+  it("reasoning lowers to params; absent ⇒ byte-identical", () => {
+    for (const mode of ["full", "minimal", "off", "strip"] as const) {
+      const lowered = chain("p", {
+        tasks: { p: task.model("kx-serve:m", "go", {}, { reasoning: mode }) },
+      }).lower();
+      expect(lowered.steps[0]?.params).toEqual({ reasoning: mode });
+    }
+    const plain = chain("p", { tasks: { p: task.model("kx-serve:m", "go") } }).lower();
+    expect(plain.steps[0]?.params).toEqual({});
+  });
+
+  it("an invalid reasoning value throws", () => {
+    // @ts-expect-error — `loud` is not a ReasoningMode
+    expect(() => task.model("kx-serve:m", "go", {}, { reasoning: "loud" })).toThrow(/reasoning/);
+  });
+
+  it("fillDefaultModel fills only empty MODEL steps", () => {
+    const req = chain("p > q > r", {
+      tasks: {
+        p: task.model("", "go"), // empty ⇒ filled
+        q: task.model("kx-serve:explicit", "go"), // named ⇒ untouched
+        r: task.pure(), // pure ⇒ untouched
+      },
+    }).build();
+    fillDefaultModel(req, "kx-serve:default");
+    expect(req.steps?.[0]?.modelId).toBe("kx-serve:default");
+    expect(req.steps?.[1]?.modelId).toBe("kx-serve:explicit");
+    expect(req.steps?.[2]?.modelId ?? "").toBe("");
+    // No default ⇒ no-op.
+    const req2 = chain("p", { tasks: { p: task.model("", "go") } }).build();
+    fillDefaultModel(req2, "");
+    expect(req2.steps?.[0]?.modelId ?? "").toBe("");
   });
 });

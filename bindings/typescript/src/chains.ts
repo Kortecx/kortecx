@@ -109,6 +109,27 @@ export const REACT_MAX_TURNS_KEY = "max_turns";
 export const REACT_MAX_TOOL_CALLS_KEY = "max_tool_calls";
 
 /**
+ * Batch A: the canonical `params` key for the opt-in reasoning mode. The SERVER reads
+ * `config_subset["reasoning"]` (`kx-gateway` `REASONING_KEY`); `full` / `minimal` /
+ * `off` / `strip` steer the model's native think mode, any other / absent ⇒ the
+ * model's own behavior. Setting it ⇒ a new MoteId; absent ⇒ byte-identical.
+ */
+export const REASONING_KEY = "reasoning";
+
+const REASONING_MODES = ["full", "minimal", "off", "strip"] as const;
+/** The opt-in reasoning modes the `reasoning` kwarg accepts. */
+export type ReasoningMode = (typeof REASONING_MODES)[number];
+
+function validateReasoning(reasoning: string): string {
+  if (!(REASONING_MODES as readonly string[]).includes(reasoning)) {
+    throw new ChainParseError(
+      `reasoning must be one of ${REASONING_MODES.join(", ")}, got '${reasoning}'`,
+    );
+  }
+  return reasoning;
+}
+
+/**
  * The step's params with the agentic-loop budget injected for a MODEL step carrying
  * a non-empty `toolContract` (PR-9b — mirrors the Rust `to_request` + the Python
  * `_effective_params`). Pure; absent budget ⇒ the coordinator default.
@@ -175,28 +196,36 @@ export const task = {
     return new Task("pure", "", "", { ...params });
   },
   /**
-   * A `model` step: the model id + prompt (+ optional string params). PR-9b
-   * (D161.1): pass `opts.tools` (an array of names → version `"1"`, or a
+   * A `model` step. Batch A: `modelId` is OPTIONAL — omit it (or pass `""`) and the
+   * SERVER binds the served model (SN-8); set a client `defaultModel` to fill it, or
+   * name a specific served model. `opts.reasoning` (`full`/`minimal`/`off`/`strip`)
+   * sets the opt-in reasoning mode (absent ⇒ the model's own behavior + a byte-identical
+   * MoteId). PR-9b (D161.1): pass `opts.tools` (an array of names → version `"1"`, or a
    * `{ name: version }` map) to make it a **deterministic-agentic step** — the model
    * runs a bounded reason→tool→observe loop over the granted tool SET (the same step
    * the string DSL authors as `handle@tool@tool`). `opts.maxTurns` / `maxToolCalls`
    * bound the loop (default 8 / 6; ignored with no tools).
    */
   model(
-    modelId: string,
-    prompt: string,
+    modelId = "",
+    prompt = "",
     params: Readonly<Record<string, string>> = {},
     opts: {
       tools?: readonly string[] | Readonly<Record<string, string>>;
       maxTurns?: number;
       maxToolCalls?: number;
+      reasoning?: ReasoningMode;
     } = {},
   ): Task {
+    const stepParams: Record<string, string> = { ...params };
+    if (opts.reasoning !== undefined) {
+      stepParams[REASONING_KEY] = validateReasoning(opts.reasoning);
+    }
     return new Task(
       "model",
       modelId,
       prompt,
-      { ...params },
+      stepParams,
       grantsToContract(opts.tools),
       opts.maxTurns,
       opts.maxToolCalls,

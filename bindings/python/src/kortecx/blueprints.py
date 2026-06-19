@@ -37,6 +37,13 @@ TOOL_ARGS_KEY = "kx.tool.args"
 REACT_MAX_TURNS_KEY = "max_turns"
 REACT_MAX_TOOL_CALLS_KEY = "max_tool_calls"
 
+#: Batch A: the canonical ``params`` key for the opt-in reasoning mode. The SERVER
+#: reads ``config_subset["reasoning"]`` (``kx-gateway`` ``REASONING_KEY``); a value of
+#: ``full`` / ``minimal`` / ``off`` / ``strip`` steers the model's native think mode,
+#: any other / absent ⇒ the model's own behavior. Setting it ⇒ a new MoteId; absent ⇒
+#: byte-identical (the ``PROMPT_KEY`` / budget-key property).
+REASONING_KEY = "reasoning"
+
 
 @dataclass
 class StepInput:

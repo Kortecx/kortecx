@@ -54,7 +54,9 @@ export class KxClient extends KxClientBase {
         readMaxBytes: READ_MAX_BYTES,
         writeMaxBytes: WRITE_MAX_BYTES,
       });
-    super(endpoint, transport, { token, wsEndpoint: opts.wsEndpoint });
+    // Batch A: an explicit defaultModel wins over the KX_DEFAULT_MODEL env fallback.
+    const defaultModel = opts.defaultModel ?? process.env.KX_DEFAULT_MODEL ?? "";
+    super(endpoint, transport, { token, wsEndpoint: opts.wsEndpoint, defaultModel });
   }
 
   protected async *openWsMessages(url: string, token: string | undefined): AsyncIterable<string> {

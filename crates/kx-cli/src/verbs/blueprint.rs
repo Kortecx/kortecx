@@ -19,7 +19,10 @@
 //! }
 //! ```
 //! `params` values are UTF-8 strings (their bytes land in the step's config).
-//! `kind` ∈ {`pure`, `model`, `tool`} (`exec` is reserved); `edge` ∈ {`data`,
+//! `kind` ∈ {`pure`, `model`, `tool`} (`exec` is reserved) and is now **OPTIONAL**
+//! (Batch A): omit it and the kind is inferred from field presence (`model_id`/`prompt`
+//! ⇒ `model`, a `tool_contract` with no model fields ⇒ `tool`, else ⇒ `pure`); an
+//! explicit kind must agree with the fields (fail-closed). `edge` ∈ {`data`,
 //! `control`}. `context_bundles` (PR-7, optional) attaches named context bundles to
 //! the run — the server injects them into every entry Mote at bind (SN-8).
 //!
@@ -81,8 +84,16 @@ const REACT_MAX_TOOL_CALLS_KEY: &str = "max_tool_calls";
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct StepSpec {
-    /// `pure` | `model` | `exec` (reserved) | `tool` (PR-6b-2).
-    pub(crate) kind: String,
+    /// `pure` | `model` | `tool` (PR-6b-2); `exec` is reserved (rejected client-side).
+    /// OPTIONAL (Batch A authoring veneer): when omitted the kind is INFERRED from
+    /// field presence — a non-empty `model_id`/`prompt` ⇒ `model` (a `model` step that
+    /// also carries a `tool_contract` is the deterministic-agentic step — still
+    /// `model`), a non-empty `tool_contract` with no model fields ⇒ `tool`, else ⇒
+    /// `pure`. An explicit kind is an override that MUST agree with the present fields
+    /// (fail-closed on conflict, e.g. `kind:"pure"` + a `model_id`). The SDK factories
+    /// (`pure()`/`model()`/`tool()`) always set it; this only eases the JSON surface.
+    #[serde(default)]
+    pub(crate) kind: Option<String>,
     #[serde(default)]
     pub(crate) model_id: String,
     #[serde(default)]
@@ -109,6 +120,71 @@ pub(crate) struct StepSpec {
     pub(crate) max_turns: Option<u32>,
     #[serde(default)]
     pub(crate) max_tool_calls: Option<u32>,
+}
+
+impl StepSpec {
+    /// Resolve the step's wire kind (Batch A authoring veneer). When `kind` is omitted
+    /// it is INFERRED from field presence; when present it is an override that must
+    /// AGREE with the fields (fail-closed). `exec` is rejected client-side (the binder
+    /// reserves it — fail at authoring with a clear message rather than a server
+    /// round-trip). Pure derivation of `&self` — `to_request` and the chain `@`-grant
+    /// check both call it, and it is idempotent under grant injection (model fields are
+    /// checked before `tool_contract`, so injecting tags never re-classifies a step).
+    pub(crate) fn resolve_kind(&self) -> Result<proto::WorkflowStepKind, CliError> {
+        let has_model = !self.model_id.is_empty() || !self.prompt.is_empty();
+        let has_tool = !self.tool_contract.is_empty();
+        let has_args = !self.args.is_empty();
+        // Inference (kind omitted): model fields win (an agentic model step carries a
+        // tool_contract too — it is STILL a model step), then a tool contract, else pure.
+        let inferred = if has_model {
+            proto::WorkflowStepKind::Model
+        } else if has_tool {
+            proto::WorkflowStepKind::Tool
+        } else {
+            proto::WorkflowStepKind::Pure
+        };
+        let Some(explicit) = self.kind.as_deref() else {
+            return Ok(inferred);
+        };
+        let kind = match explicit {
+            "pure" => proto::WorkflowStepKind::Pure,
+            "model" => proto::WorkflowStepKind::Model,
+            "tool" => proto::WorkflowStepKind::Tool,
+            "exec" => {
+                return Err(CliError::Usage(
+                    "step kind `exec` is reserved (a registered body is not yet runnable); \
+                     use pure|model|tool"
+                        .into(),
+                ));
+            }
+            other => {
+                return Err(CliError::Usage(format!(
+                    "step kind must be pure|model|tool, got {other:?}"
+                )));
+            }
+        };
+        // Agreement: an explicit kind must not CONTRADICT the present fields (so a typo
+        // like `kind:"pure"` next to a `model_id` fails loudly instead of silently
+        // dropping the model identity).
+        let conflict = match kind {
+            proto::WorkflowStepKind::Pure if has_model || has_tool || has_args => Some(
+                "a `pure` step carries only params (no model_id / prompt / tool_contract / args)",
+            ),
+            proto::WorkflowStepKind::Model if has_args => Some(
+                "`args` are tool-only; a `model` step uses `prompt` + an optional `tool_contract`",
+            ),
+            proto::WorkflowStepKind::Tool if has_model => {
+                Some("a `tool` step has no model_id / prompt; name the tool in `tool_contract`")
+            }
+            _ => None,
+        };
+        if let Some(why) = conflict {
+            return Err(CliError::Usage(format!(
+                "step kind {explicit:?} conflicts with its fields ({why})"
+            )));
+        }
+        Ok(kind)
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -191,17 +267,9 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<BlueprintArgs, Cl
 pub(crate) fn to_request(spec: DagSpec) -> Result<proto::SubmitWorkflowRequest, CliError> {
     let mut steps = Vec::with_capacity(spec.steps.len());
     for s in spec.steps {
-        let kind = match s.kind.as_str() {
-            "pure" => proto::WorkflowStepKind::Pure,
-            "model" => proto::WorkflowStepKind::Model,
-            "exec" => proto::WorkflowStepKind::Exec,
-            "tool" => proto::WorkflowStepKind::Tool,
-            other => {
-                return Err(CliError::Usage(format!(
-                    "step kind must be pure|model|exec|tool, got {other:?}"
-                )));
-            }
-        };
+        // Batch A: the kind is resolved (inferred when omitted, validated when explicit;
+        // `exec` reserved) — see [`StepSpec::resolve_kind`].
+        let kind = s.resolve_kind()?;
         let body_signature_id = match s.body_signature_id {
             Some(h) => hex::decode_fixed::<32>(&h)
                 .map_err(|e| CliError::Usage(format!("body_signature_id: {e}")))?
@@ -366,5 +434,132 @@ mod tests {
         let spec: DagSpec =
             serde_json::from_str(r#"{ "steps": [ {"kind":"frobnicate"} ] }"#).unwrap();
         assert!(to_request(spec).is_err());
+    }
+
+    // ---- Batch A: kind inference + agreement (the JSON authoring veneer) ----
+
+    fn step(json: serde_json::Value) -> StepSpec {
+        serde_json::from_value(json).expect("a StepSpec")
+    }
+
+    #[test]
+    fn omitted_kind_is_inferred_from_field_presence() {
+        use proto::WorkflowStepKind::{Model, Pure, Tool};
+        // no fields ⇒ pure
+        assert_eq!(step(serde_json::json!({})).resolve_kind().unwrap(), Pure);
+        assert_eq!(
+            step(serde_json::json!({ "params": { "topic": "hi" } }))
+                .resolve_kind()
+                .unwrap(),
+            Pure
+        );
+        // model_id OR prompt ⇒ model
+        assert_eq!(
+            step(serde_json::json!({ "model_id": "m" }))
+                .resolve_kind()
+                .unwrap(),
+            Model
+        );
+        assert_eq!(
+            step(serde_json::json!({ "prompt": "go" }))
+                .resolve_kind()
+                .unwrap(),
+            Model
+        );
+        // tool_contract with no model fields ⇒ tool
+        assert_eq!(
+            step(serde_json::json!({ "tool_contract": { "echo": "1" } }))
+                .resolve_kind()
+                .unwrap(),
+            Tool
+        );
+        // an agentic model step (model fields + tool_contract) is STILL model, not tool
+        assert_eq!(
+            step(serde_json::json!({ "prompt": "go", "tool_contract": { "echo": "1" } }))
+                .resolve_kind()
+                .unwrap(),
+            Model
+        );
+    }
+
+    #[test]
+    fn omitted_kind_lowers_byte_identically_to_the_explicit_form() {
+        // The whole point of the veneer: an omitted kind must produce the SAME wire
+        // step as the explicit kind. Compare the lowered WorkflowStep for both.
+        for (omitted, explicit) in [
+            (
+                serde_json::json!({ "params": { "topic": "hi" } }),
+                serde_json::json!({ "kind": "pure", "params": { "topic": "hi" } }),
+            ),
+            (
+                serde_json::json!({ "model_id": "m", "prompt": "go" }),
+                serde_json::json!({ "kind": "model", "model_id": "m", "prompt": "go" }),
+            ),
+            (
+                serde_json::json!({ "tool_contract": { "echo": "1" }, "args": { "n": 3 } }),
+                serde_json::json!({ "kind": "tool", "tool_contract": { "echo": "1" }, "args": { "n": 3 } }),
+            ),
+        ] {
+            let lower = |s: serde_json::Value| {
+                to_request(DagSpec {
+                    seed: 0,
+                    steps: vec![step(s)],
+                    edges: vec![],
+                    execution_mode: None,
+                    context_bundles: vec![],
+                })
+                .unwrap()
+                .steps
+                .remove(0)
+            };
+            assert_eq!(lower(omitted.clone()), lower(explicit.clone()), "{omitted}");
+        }
+    }
+
+    #[test]
+    fn explicit_kind_conflicting_with_fields_is_rejected() {
+        // pure + a model field / tool_contract / args
+        assert!(step(serde_json::json!({ "kind": "pure", "model_id": "m" }))
+            .resolve_kind()
+            .is_err());
+        assert!(
+            step(serde_json::json!({ "kind": "pure", "tool_contract": { "echo": "1" } }))
+                .resolve_kind()
+                .is_err()
+        );
+        // model + tool-only args
+        assert!(
+            step(serde_json::json!({ "kind": "model", "args": { "n": 3 } }))
+                .resolve_kind()
+                .is_err()
+        );
+        // tool + a model field
+        assert!(step(
+            serde_json::json!({ "kind": "tool", "tool_contract": { "e": "1" }, "model_id": "m" })
+        )
+        .resolve_kind()
+        .is_err());
+    }
+
+    #[test]
+    fn exec_kind_is_reserved_and_rejected_client_side() {
+        let err = step(serde_json::json!({ "kind": "exec", "body_signature_id": null }))
+            .resolve_kind()
+            .expect_err("exec is reserved")
+            .to_string()
+            .to_lowercase();
+        assert!(err.contains("reserved"), "got: {err}");
+    }
+
+    #[test]
+    fn omitted_kind_round_trips_through_to_request() {
+        let spec: DagSpec = serde_json::from_str(
+            r#"{ "steps": [ {"params":{"topic":"hi"}}, {"model_id":"m","prompt":"go"} ],
+                 "edges": [ {"parent":0,"child":1} ] }"#,
+        )
+        .unwrap();
+        let req = to_request(spec).unwrap();
+        assert_eq!(req.steps[0].kind, proto::WorkflowStepKind::Pure as i32);
+        assert_eq!(req.steps[1].kind, proto::WorkflowStepKind::Model as i32);
     }
 }

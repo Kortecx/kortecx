@@ -44,7 +44,12 @@ export class KxClient extends KxClientBase {
         baseUrl: normalizeBaseUrl(endpoint),
         interceptors: [bearerInterceptor(token)],
       });
-    super(endpoint, transport, { token, wsEndpoint: opts.wsEndpoint });
+    // Batch A: no env fallback in the browser (no `process.env`).
+    super(endpoint, transport, {
+      token,
+      wsEndpoint: opts.wsEndpoint,
+      defaultModel: opts.defaultModel,
+    });
   }
 
   protected openWsMessages(url: string, token: string | undefined): AsyncIterable<string> {

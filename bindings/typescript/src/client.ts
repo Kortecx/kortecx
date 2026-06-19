@@ -37,6 +37,7 @@ import {
   KxGateway,
   type SubmitRunRequestSchema,
   type SubmitWorkflowRequestSchema,
+  WorkflowStepKind,
 } from "./gen/kortecx/v1/gateway_pb.js";
 import { AssetGrants } from "./grants.js";
 import { INSTANCE_LEN, REF_LEN, asBytes, encode } from "./hexids.js";
@@ -95,6 +96,30 @@ export interface KxClientOptions {
   transport?: Transport;
   /** Explicit WS bridge endpoint for `wsEvents` (else derived from the gRPC one). */
   wsEndpoint?: string;
+  /**
+   * Batch A: the default model to fill into MODEL steps that omit `modelId` (a
+   * multi-model convenience; the server binds `""` → served when unset). On Node an
+   * explicit value wins over the `KX_DEFAULT_MODEL` env fallback.
+   */
+  defaultModel?: string;
+}
+
+/**
+ * Batch A: fill any MODEL step that left `modelId` empty with `defaultModel`, in
+ * place, just before submit. A no-op when `defaultModel` is unset OR no step omitted
+ * its model — so the canonical lowering (corpus-pinned, client-free) is untouched and
+ * the server still binds `""` → served (SN-8) when neither is set.
+ */
+export function fillDefaultModel(
+  request: MessageInitShape<typeof SubmitWorkflowRequestSchema>,
+  defaultModel: string,
+): void {
+  if (!defaultModel || !request.steps) return;
+  for (const step of request.steps) {
+    if (step.kind === WorkflowStepKind.MODEL && !step.modelId) {
+      step.modelId = defaultModel;
+    }
+  }
 }
 
 /** Options for {@link KxClientBase.invoke}. */
@@ -123,16 +148,19 @@ export abstract class KxClientBase {
   readonly endpoint: string;
   protected readonly token: string | undefined;
   protected readonly wsEndpoint: string | undefined;
+  /** Batch A: the default model filled into MODEL steps that omit `modelId`. */
+  readonly defaultModel: string;
   protected readonly grpc: Client<typeof KxGateway>;
 
   protected constructor(
     endpoint: string,
     transport: Transport,
-    opts: { token?: string; wsEndpoint?: string },
+    opts: { token?: string; wsEndpoint?: string; defaultModel?: string },
   ) {
     this.endpoint = endpoint;
     this.token = opts.token;
     this.wsEndpoint = opts.wsEndpoint;
+    this.defaultModel = opts.defaultModel ?? "";
     this.grpc = createClient(KxGateway, transport);
   }
 
@@ -205,6 +233,7 @@ export abstract class KxClientBase {
     request: MessageInitShape<typeof SubmitWorkflowRequestSchema>,
     opts: { wait?: boolean; timeoutMs?: number } = {},
   ): Promise<{ instanceId: Uint8Array; recipeFingerprint: Uint8Array } | Result> {
+    fillDefaultModel(request, this.defaultModel);
     const handle = await rpc(this.grpc.submitWorkflow(request));
     if (!opts.wait) return handle;
     const outcome = await pollAny(this.grpc, handle.instanceId, opts.timeoutMs ?? 120_000);

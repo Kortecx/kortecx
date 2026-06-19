@@ -515,5 +515,61 @@
     "seed": 0,
     "tasks": { "p": { "kind": "model", "model_id": "kx-serve:qwen3-4b-q4_k_m", "prompt": "x" } },
     "error": "parse"
+  },
+  {
+    "name": "model_id_optional",
+    "dsl": "p > q",
+    "seed": 0,
+    "tasks": {
+      "p": { "kind": "model", "prompt": "go" },
+      "q": { "kind": "pure" }
+    },
+    "expect": {
+      "steps": [
+        {
+          "kind": "model",
+          "model_id": "",
+          "prompt": "go",
+          "body_signature_id": null,
+          "tool_contract": {},
+          "params": {}
+        },
+        {
+          "kind": "pure",
+          "model_id": "",
+          "prompt": "",
+          "body_signature_id": null,
+          "tool_contract": {},
+          "params": {}
+        }
+      ],
+      "edges": [{ "parent": 0, "child": 1, "edge": "data" }]
+    }
+  },
+  {
+    "name": "model_reasoning",
+    "dsl": "p",
+    "seed": 0,
+    "tasks": {
+      "p": {
+        "kind": "model",
+        "model_id": "kx-serve:qwen3-4b-q4_k_m",
+        "prompt": "go",
+        "params": { "reasoning": "minimal" }
+      }
+    },
+    "expect": {
+      "steps": [
+        {
+          "kind": "model",
+          "model_id": "kx-serve:qwen3-4b-q4_k_m",
+          "prompt": "go",
+          "body_signature_id": null,
+          "tool_contract": {},
+          "params": { "reasoning": "minimal" }
+        }
+      ],
+      "edges": []
+    }
   }
 ]

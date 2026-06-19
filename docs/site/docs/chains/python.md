@@ -119,6 +119,48 @@ tasks = {
 spec = chain("gen > sum", tasks=tasks)   # two steps, edge 0→1
 ```
 
+## Fewer inputs, sensible defaults
+
+Authoring asks only for what is essential — the runtime infers the rest.
+
+**Optional `model_id` + a client `default_model`.** Omit `model_id` and the server
+binds the served model (SN-8). Set a `default_model` on the client (or the
+`KX_DEFAULT_MODEL` env var) to fill it for every MODEL step that left it blank:
+
+```python
+from kortecx import KxClient
+from kortecx.chains import model
+
+with KxClient(default_model="kx-serve:qwen3-4b-q4_k_m") as kx:
+    spec = chain("plan > review", tasks={
+        "plan":   model(prompt="Research the topic."),   # no model_id
+        "review": model(prompt="Critique the findings."),
+    })
+    print(kx.run_chain(spec, wait=True).text)
+```
+
+The default fills in at submit — the canonical lowering is untouched (it carries an
+empty `model_id`, which the server binds to the served model).
+
+**`reasoning=` — the typed knob.** Steer the model's native think mode with a typed
+keyword instead of a raw param string. Omit it and the model's own behavior (and the
+step's identity) is unchanged; set it for a new, reproducible step:
+
+```python
+model(prompt="Solve it carefully.", reasoning="full")     # "full" | "minimal" | "off" | "strip"
+```
+
+:::tip Author a quick chain from the CLI with no file
+The `kx chain` CLI infers each step's `kind` (omit it — a `prompt` ⇒ a model step, a
+`tool_contract` ⇒ a tool step, else a pure step) and takes tasks inline:
+
+```bash
+kx chain run "plan > review" \
+  --task plan='{"prompt":"Research the topic."}' \
+  --task review='{"prompt":"Critique the findings."}' --wait
+```
+:::
+
 ## Attaching context bundles
 
 Ground the chain with [context bundles](../context.md) via the `context=` argument,
