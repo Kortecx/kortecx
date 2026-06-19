@@ -21,6 +21,31 @@ so `tool("web-search","1", q="kortecx", n=3)` lowers to `params["kx.tool.args"] 
 byte-identically across Python, TypeScript, and Rust. The coordinator re-derives + validates those
 args against the tool's typed schema fail-closed at every lease (`resolve_authored_tool_args`).
 
+### The deterministic-agentic step (PR-9b, D161.1)
+
+A MODEL handle may carry a `grants := ("@" handle)+` suffix — `plan@web-search@fs-list` — to
+become a **deterministic-agentic step**: a frozen-DAG model step that runs a *bounded*
+reason→tool→observe loop over a FIXED, author-declared, server-vetted tool-grant SET. This is
+the **authored/deterministic** lane (the `kx/recipes/react` recipe is the steered/non-deterministic
+lane). `@` binds **tighter than every operator** (it is part of the atom); whitespace around `@`
+is insignificant (`p @ echo` == `p@echo`).
+
+- Each `@tag` is a tool NAME; the version defaults to `"1"`. Tags are **order-preserving and
+  deduped** (`p@x@x` == `p@x`). The tags lower into the model step's `tool_contract`
+  (`{ tag: "1" }`) — the SAME field the standalone `tool` step uses; the SERVER resolves each
+  tagged tool in its live registry + builds the per-step warrant from the UNION of the declared
+  tools' scopes (the client never supplies a warrant or grants — SN-8).
+- The bounded-loop **budget** (`max_turns` / `max_tool_calls`) rides the task spec (NOT the `@`
+  grammar) and lowers to canonical-JSON `u32` bytes under `params["max_turns"]` /
+  `params["max_tool_calls"]`; absent ⇒ the coordinator default (8 turns / 6 tool calls); validated
+  `0 < max_tool_calls < max_turns ≤ 8`.
+- `@` on a **non-model** handle (`pure@tool`) is a fail-closed authoring error
+  (`agentic_non_model`). A dangling/misplaced `@` (`p@`, `p@@x`, `@tool`, `a > @tool`) is a parse
+  error.
+
+A model step with an EMPTY grant set lowers byte-identically to a plain model step ⇒ no existing
+case moves.
+
 ## Grammar (EBNF)
 
 ```
@@ -28,7 +53,8 @@ chain    := orexpr
 orexpr   := andexpr ( "|" andexpr )*     # parallel — LOOSEST
 andexpr  := seqexpr ( "&" seqexpr )*     # parallel — tighter
 seqexpr  := atom    ( ">" atom    )*     # sequential — tightest binary
-atom     := handle | "[" chain "]"
+atom     := handle grants? | "[" chain "]"
+grants   := ( "@" handle )+              # PR-9b: tool tags on a MODEL handle
 handle   := [A-Za-z_][A-Za-z0-9_-]*
 ```
 
@@ -100,6 +126,8 @@ the cross-surface byte-identity of the attachment is pinned by the corpus.
 - **Cycle / self-loop** (`a > a`, `a > b | b > a`): reject with a cycle error (a Kahn topo check
   client-side; the server compile is the backstop). The DSL CAN express cycles via handle reuse,
   so this check is required.
+- **`@` grants on a non-model step** (`pure@tool`): reject with `agentic_non_model` (the
+  deterministic-agentic step requires a MODEL handle). A dangling/misplaced `@` is a `parse` error.
 
 ## The corpus
 
@@ -126,6 +154,12 @@ to `[]` — so the existing cases stay byte-unchanged. `ctx_multi_order` pins or
 
 `steps` are in node order; `params` values are strings (the pre-encoding lowering form — each SDK
 UTF-8-encodes at `build()` time). An error case carries `"error": "<class>"` instead of `expect`,
-where class ∈ `{parse, unknown_handle, cycle}`. Each implementation's test parses every case, and
-for success cases asserts its lowered `(steps, edges)` deep-equals `expect`; for error cases
-asserts the matching error class is raised.
+where class ∈ `{parse, unknown_handle, cycle, agentic_non_model}`. Each implementation's test parses
+every case, and for success cases asserts its lowered `(steps, edges)` deep-equals `expect`; for
+error cases asserts the matching error class is raised.
+
+A deterministic-agentic step (PR-9b) is authored with the `@` grammar (`p@echo`) or an explicit
+`tool_contract` on a `model` task; its `expect` step is `kind:"model"` with the `tool_contract`
+populated (version `"1"` for `@`-tags) and, if a budget was set, `params["max_turns"]` /
+`params["max_tool_calls"]` = the decimal strings. `agentic_dedup` pins the order-preserving tag
+dedup; `agentic_non_model` pins the non-model rejection.

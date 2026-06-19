@@ -19,15 +19,20 @@ The builder sends only the **topology + params**. The server assigns each step's
 logic from its kind, derives all identity, and builds **every per-step warrant from
 your grants** — the client cannot inject an executable body or a warrant. A tampered
 client DAG only changes what is *proposed*, never the authority it is granted. The
-palette is therefore deliberately small: **PURE** (a deterministic transform) and
-**MODEL** (an agent step routed to the served model). Tool-using ReAct nodes arrive
-with the Tools batch (they need registered tools to call).
+palette is therefore deliberately small: **PURE** (a deterministic transform),
+**MODEL** (an agent step routed to the served model), and **TOOL** (fire one
+registered tool — the server resolves it + builds the per-step warrant). A MODEL
+step can also be tagged with tools in the Chains DSL (`model@tool`) to become a
+[deterministic-agentic step](./chains/dsl-reference.md#the-deterministic-agentic-step--modeltool-pr-9b)
+— authorable across the SDK/CLI today; its bounded-loop execution + a visual editor
+land in PR-9b-2.
 
 ## The visual builder
 
 Open **Blueprints → New blueprint** (`/blueprints/new`):
 
-- **+ Agent** adds a MODEL step; **+ Pure step** adds a PURE step.
+- **+ Agent** adds a MODEL step; **+ Pure step** adds a PURE step; **+ Tool** adds a
+  TOOL step (pick a registered tool + its JSON args).
 - **Drag** to arrange; **drag handle-to-handle** to connect two steps with a data
   edge (the parent's result flows into the child).
 - **Click a node** to open its config drawer — name, model, prompt (Monaco), the

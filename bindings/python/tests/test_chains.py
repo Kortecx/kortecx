@@ -16,6 +16,7 @@ from typing import Dict
 import pytest
 
 from kortecx.chains import (
+    AgenticStepError,
     Chain,
     ChainCycleError,
     ChainParseError,
@@ -36,6 +37,7 @@ _ERROR_CLASSES = {
     "parse": ChainParseError,
     "unknown_handle": UnknownHandleError,
     "cycle": ChainCycleError,
+    "agentic_non_model": AgenticStepError,
 }
 
 
@@ -49,7 +51,14 @@ def _task_from_spec(spec: Dict[str, object]) -> Task:
     kind = spec["kind"]
     params = spec.get("params") or {}
     if kind == "model":
-        return model(str(spec.get("model_id", "")), str(spec.get("prompt", "")), **params)
+        return model(
+            str(spec.get("model_id", "")),
+            str(spec.get("prompt", "")),
+            tools=spec.get("tool_contract"),
+            max_turns=spec.get("max_turns"),
+            max_tool_calls=spec.get("max_tool_calls"),
+            **params,
+        )
     if kind == "pure":
         return pure(**params)
     if kind == "tool":
@@ -236,3 +245,29 @@ def test_sugar_self_loop_raises_cycle() -> None:
     a = pure()
     with pytest.raises(ChainCycleError):
         Chain.from_node(a >> a).lowering()
+
+
+# --- PR-9b: the deterministic-agentic step (`@` grammar / `tools=`) ------------
+
+
+def test_sugar_agentic_step_matches_at_grammar() -> None:
+    """`model(tools=[...])` lowers IDENTICALLY to the string DSL `handle@tool`."""
+    sugar = Chain.from_node(model("kx-serve:qwen3-4b-q4_k_m", "go", tools=["echo"]))
+    string = chain("p@echo", {"p": model("kx-serve:qwen3-4b-q4_k_m", "go")})
+    assert sugar.lowering() == string.lowering()
+    step = sugar.lowering()["steps"][0]
+    assert step["kind"] == "model"
+    assert step["tool_contract"] == {"echo": "1"}
+
+
+def test_agentic_budget_lowers_to_params() -> None:
+    lowered = chain(
+        "p@echo",
+        {"p": model("kx-serve:qwen3-4b-q4_k_m", "go", max_turns=4, max_tool_calls=3)},
+    ).lowering()
+    assert lowered["steps"][0]["params"] == {"max_turns": "4", "max_tool_calls": "3"}
+
+
+def test_agentic_grants_on_non_model_raise() -> None:
+    with pytest.raises(AgenticStepError):
+        chain("p@echo", {"p": pure()}).lowering()

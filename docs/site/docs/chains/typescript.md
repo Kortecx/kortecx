@@ -12,14 +12,6 @@ ways: a **string DSL** and a **combinator API**. Both lower to the same canonica
 `(steps, edges)` as the CLI and the Python SDK — see the
 [DSL reference](./dsl-reference.md#canonical-lowering).
 
-:::info API surface is landing
-The string-DSL examples below match the cross-surface contract exactly. The TS
-builder/combinator names are stabilizing across releases — the shapes shown are
-illustrative where noted. Check
-[`bindings/typescript/README.md`](https://github.com/Kortecx/kortecx/blob/main/bindings/typescript/README.md)
-for the current signatures.
-:::
-
 ## Install
 
 ```bash
@@ -33,7 +25,7 @@ Compose published task handles into a DAG with a single expression. The `tasks`
 map resolves each handle to a typed step.
 
 ```ts
-import { KxClient, chain } from "@kortecx/sdk"; // API landing — see note above
+import { KxClient, chain } from "@kortecx/sdk";
 
 const tasks = {
   a: { kind: "pure" },
@@ -58,7 +50,7 @@ with data edges `0→1` and `0→2`, byte-identical to every other surface.
 For programmatic composition, the combinators map one-to-one onto the operators:
 
 ```ts
-import { seq, par, group } from "@kortecx/sdk"; // API landing — see note above
+import { seq, par, group } from "@kortecx/sdk";
 
 // Equivalent to chain("a > [b & c]")
 const spec = seq("a", group(par("b", "c")));
@@ -73,6 +65,44 @@ const spec = seq("a", group(par("b", "c")));
 Because the string DSL is the canonical contract, prefer `chain("…")` for
 readability; reach for the combinators when you are assembling topology
 dynamically.
+
+## Deterministic-agentic step — `model@tool` (PR-9b)
+
+Tag tools onto a MODEL step to make it a
+[deterministic-agentic step](./dsl-reference.md#the-deterministic-agentic-step--modeltool-pr-9b)
+— a bounded reason→tool→observe loop over a server-vetted tool-grant SET. The
+string DSL `@` grammar and the `task.model(..., { tools })` factory lower
+**identically**:
+
+```ts
+import { chain, task } from "@kortecx/sdk";
+
+// String DSL: `plan` is granted {web-search, fs-list}; `review` is downstream.
+const spec = chain("plan@web-search@fs-list > review", {
+  tasks: {
+    plan: task.model("kx-serve:my-model", "Research the topic.", {}, { maxTurns: 4, maxToolCalls: 3 }),
+    review: task.pure(),
+  },
+});
+
+// The factory form lowers to the same (steps, edges):
+const plan = task.model("kx-serve:my-model", "Research the topic.", {}, {
+  tools: ["web-search", "fs-list"],
+  maxTurns: 4,
+  maxToolCalls: 3,
+});
+```
+
+`tools` accepts an array of names (version `"1"`) or a `{ name: version }` record;
+the budget (`maxTurns` / `maxToolCalls`) defaults to 8 / 6 when omitted. The server
+vets every tagged tool and builds the per-step warrant (SN-8).
+
+:::info Authoring now, execution in PR-9b-2
+Authoring is available across every surface in PR-9b-1; the bounded-loop
+**execution** lands in PR-9b-2 — until then the server fails closed on a submitted
+`model@tool` step. For tool-calling today, use a standalone `tool()` step or the
+`react` / `react-auto` recipe.
+:::
 
 ## A model step
 

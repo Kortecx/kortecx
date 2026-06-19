@@ -30,6 +30,13 @@ _KIND = {
 #: ``is_authored_tool`` discriminant + args source.
 TOOL_ARGS_KEY = "kx.tool.args"
 
+#: PR-9b (D161.1): the canonical ``params`` keys a deterministic-agentic MODEL
+#: step's bounded-loop budget rides under (decimal-string bytes ⇒ canonical-JSON
+#: ``u32``, the form the coordinator's ``react_seed_params`` reads). MUST equal the
+#: Rust ``kx_mote::REACT_MAX_TURNS_KEY`` / ``REACT_MAX_TOOL_CALLS_KEY`` + the TS keys.
+REACT_MAX_TURNS_KEY = "max_turns"
+REACT_MAX_TOOL_CALLS_KEY = "max_tool_calls"
+
 
 @dataclass
 class StepInput:
@@ -41,6 +48,12 @@ class StepInput:
     body_signature_id: Optional[str] = None  # EXEC only: 64-char hex of the body id
     tool_contract: Dict[str, str] = field(default_factory=dict)
     params: Dict[str, Union[bytes, str]] = field(default_factory=dict)
+    #: Agentic MODEL step only (PR-9b, D161.1): the bounded reason→tool→observe loop
+    #: budget. Injected into ``params`` (canonical-JSON ``u32`` keys) at lowering
+    #: when the step is a MODEL step with a non-empty ``tool_contract``; ignored
+    #: otherwise. Absent ⇒ the coordinator default (8 turns / 6 tool calls).
+    max_turns: Optional[int] = None
+    max_tool_calls: Optional[int] = None
 
 
 @dataclass

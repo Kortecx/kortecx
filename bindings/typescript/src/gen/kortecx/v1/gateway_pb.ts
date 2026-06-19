@@ -2539,14 +2539,14 @@ export type WorkflowStep = Message<"kortecx.v1.WorkflowStep"> & {
   bodySignatureId: Uint8Array;
 
   /**
-   * tool_id -> tool_version; AUTHORITY still comes only from the party's grant
+   * TOOL: the single {tool_id: version} the step fires. MODEL (PR-9b/D161.1): a non-empty contract = the deterministic-agentic grant SET (`model@tool` in the chains DSL); authored cross-surface in PR-9b-1, the bounded reason→tool→observe LOOP executes in PR-9b-2 (until then the server fails closed). AUTHORITY still comes only from server vetting (client tool_grants stay refused — SN-8).
    *
    * @generated from field: map<string, string> tool_contract = 5;
    */
   toolContract: { [key: string]: string };
 
   /**
-   * free config_subset entries (size-capped server-side)
+   * free config_subset entries (size-capped server-side); an agentic MODEL step carries its bounded-loop budget under params["max_turns"]/["max_tool_calls"] (canonical-JSON u32)
    *
    * @generated from field: map<string, bytes> params = 6;
    */

@@ -25,7 +25,8 @@ chain    := orexpr
 orexpr   := andexpr ( "|" andexpr )*     # parallel — LOOSEST
 andexpr  := seqexpr ( "&" seqexpr )*     # parallel — tighter
 seqexpr  := atom    ( ">" atom    )*     # sequential — tightest binary
-atom     := handle | "[" chain "]"
+atom     := handle grants? | "[" chain "]"
+grants   := ( "@" handle )+              # tool tags on a MODEL handle (PR-9b)
 handle   := [A-Za-z_][A-Za-z0-9_-]*
 ```
 
@@ -37,6 +38,7 @@ Tightest → loosest:
 
 | Operator | Meaning | Precedence | Associativity |
 |---|---|---|---|
+| `@` | tag a tool onto a MODEL handle (PR-9b) | tightest (handle suffix) | — |
 | `[ ]` | grouping (overrides precedence) | tightest | — |
 | `>` | sequential (add data edges) | tighter | left |
 | `&` | parallel merge | looser | left |
@@ -70,6 +72,41 @@ So:
 - `[a & b] > c` **fans in** — `a→c`, `b→c`.
 - `[a & b] > [c & d]` is the full **bipartite join**.
 
+## The deterministic-agentic step — `model@tool` (PR-9b)
+
+A **MODEL** handle can tag tools with `@` to become a **deterministic-agentic
+step** — a frozen-DAG model step that runs a *bounded* reason→tool→observe loop
+over a fixed, author-declared, server-vetted tool-grant SET:
+
+```
+plan@web-search@fs-list > review
+```
+
+Here `plan` is one node (one DAG vertex) granted `{web-search, fs-list}`; `review`
+is a downstream pure/model step. This is the **authored/deterministic** lane — the
+DAG topology and the tool set are fixed at authoring (distinct from the *steered,
+non-deterministic* `react` recipe, where the model picks tools dynamically).
+
+- `@` binds **tighter than every operator** (it is a handle suffix); whitespace
+  around it is insignificant (`p @ echo` == `p@echo`).
+- Each `@tag` is a tool **name** (version defaults to `"1"`); tags are
+  **order-preserving and deduped** (`p@x@x` == `p@x`). They lower into the model
+  step's `tool_contract` (the same field a standalone `tool()` step uses). The
+  **server** resolves each tagged tool in its live registry and builds the per-step
+  warrant — you never supply a warrant or grants (SN-8).
+- The bounded-loop **budget** (`max_turns` / `max_tool_calls`) rides the task spec,
+  not the `@` grammar; absent ⇒ the server default (8 turns / 6 tool calls).
+- `@` on a **non-model** handle (`pure@tool`) is a fail-closed authoring error.
+
+:::info Authoring now, execution in PR-9b-2
+The cross-surface **authoring** of `model@tool` steps (this grammar, the SDK
+`tools=` factory, the golden corpus, the server-vetted per-step warrant) ships in
+**PR-9b-1**. The bounded reason→tool→observe **loop execution** lands in **PR-9b-2**
+— until then the server **fails closed** with a clear refusal when you submit one.
+For tool-calling today, use a standalone `tool()` step or the `react` / `react-auto`
+recipe.
+:::
+
 ## Canonical lowering
 
 A chain lowers deterministically to `(steps, edges)`:
@@ -91,8 +128,10 @@ lowering) and produces a `SubmitWorkflowRequest`.
 | Condition | Error class |
 |---|---|
 | Empty expression, or empty group `[]` | `parse` |
+| A dangling/misplaced `@` (`p@`, `p@@x`, `@tool`) | `parse` |
 | A parsed handle absent from `tasks` (`unknown task handle '<h>'`) | `unknown_handle` |
 | A cycle or self-loop (`a > a`, `a > b | b > a`) | `cycle` |
+| `@` tool grants on a non-model step (`pure@tool`) | `agentic_non_model` |
 
 Tasks that are defined but never used are ignored (lenient). The DSL *can*
 express cycles via handle reuse, so a client-side Kahn topological check rejects
