@@ -39,7 +39,12 @@ byte-identically — a Flow is sugar, never a new wire shape). Builders:
 `.agent(prompt, tools=…, reasoning=…)` · `.step(**params)` (pure) · `.tool(id, ver, **args)` ·
 `.then(item)` (sequential — a string is an agent) · `.parallel(*items)` (fan-out / fan-in) ·
 `.context(*handles)`. Terminate with `.run()` (waits for the `Result`), `.submit()` (a
-handle), or `.to_chain()` / `.build()` to inspect.
+non-blocking `Run` handle), or `.to_chain()` / `.build()` to inspect.
+
+A `Run` (from `.submit()` or `.run(wait=False)`) drives the run without blocking:
+`run.events()` (live projection deltas), `run.wait()` (the first committed Mote — the
+await-any path), `run.tokens(mote)` (one model mote's advisory token chunks). The
+`Result` exposes `.text` / `.bytes` and `.json()` (the `kx … --wait --json` shape).
 
 ### A reusable Agent
 
@@ -54,7 +59,8 @@ print(analyst.run("Summarize the kortecx README").text)
 lane is deterministic/frozen** — a single agent step with a FIXED tool-grant SET
 (replayable; the tools are part of the step's identity; execution lands with PR-9b-2).
 `dynamic=True` routes to the **steered** `kx/recipes/react` recipe, where the model picks
-tools turn by turn (works today).
+tools turn by turn (works today). `analyst.stream(task)` submits without blocking and
+returns a `Run` (consume `.events()` / `.tokens(mote)`).
 
 The tool set may include your own functions — decorate one with `@kx.tool` and pass it in
 `tools=[...]`; the SDK registers it as a local stdio MCP server the runtime dials. See

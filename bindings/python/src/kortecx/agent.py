@@ -30,7 +30,6 @@ if TYPE_CHECKING:
     from .client import KxClient
     from .flow import Flow
     from .run import Result, Run
-    from .v1 import gateway_pb2 as _g
 
 #: The steered, dynamic-tool recipe (the model chooses tools turn by turn).
 REACT_RECIPE_HANDLE = "kx/recipes/react"
@@ -86,7 +85,7 @@ class Agent:
         wait: bool = True,
         timeout: float = 120.0,
         client: "Optional[KxClient]" = None,
-    ) -> "Union[_g.RunHandle, Run, Result]":
+    ) -> "Union[Run, Result]":
         """Run ``task``.
 
         - **frozen lane (default)** ⇒ a single agent step. A tool-bearing frozen agent
@@ -135,3 +134,14 @@ class Agent:
                 "flow().tool(fn, **args) to fire one tool deterministically"
             )
         return self.as_flow(task).run(wait=wait, timeout=timeout, client=kx)
+
+    def stream(self, task: str, *, client: "Optional[KxClient]" = None) -> "Run":
+        """Start ``task`` WITHOUT waiting and return a :class:`~kortecx.run.Run`. Consume
+        the live tail with ``.events()`` (run-level deltas) or ``.tokens(mote)`` (one
+        model mote's ADVISORY token chunks). The ``dynamic=True`` lane returns a ``Run``
+        over the react recipe (its terminal supports ``.tokens()`` with no arg); the
+        frozen lane returns a workflow ``Run`` (pass a ``mote_id`` to ``.tokens()``).
+
+        The committed result stays the authority — finish with ``run.wait()``."""
+        run = self.run(task, wait=False, client=client)
+        return run  # type: ignore[return-value]

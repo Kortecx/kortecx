@@ -40,7 +40,39 @@ console.log(out.text);
 byte-identically — a Flow is sugar, never a new wire shape). Builders:
 `.agent(prompt, { tools, reasoning })` · `.step(params)` (pure) · `.tool(id, ver, args)` ·
 `.then(item)` (sequential — a string is an agent) · `.parallel(...items)` (fan-out / fan-in) ·
-`.context(...handles)`. Terminate with `.run({ client })`, or `.toChain()` / `.lower()` to inspect.
+`.context(...handles)`. Terminate with `.run({ client })` (waits for the `Result`),
+`.submit({ client })` (a non-blocking `Run` handle), or `.toChain()` / `.lower()` to inspect.
+
+### Zero-config (Node)
+
+On Node you can skip the constructor entirely — `run(...)` / `flow().run()` use a
+lazily-built default client (config order: explicit args → env `KX_ENDPOINT` /
+`KX_TOKEN` / `KX_DEFAULT_MODEL` → `~/.kortecx/config.toml` `[client]` table → loopback):
+
+```ts
+import { run, flow } from "@kortecx/sdk";
+
+const out = await run(flow().agent("Summarize this design doc."));   // no client
+// or a one-line agent: await run("Summarize this design doc.", { reasoning: "minimal" });
+// or omit { client }: await flow().agent("…").run();
+```
+
+Build one yourself with `makeClient()`, override the singleton with `setDefaultClient(...)`
+(handy in tests), or pass an explicit `{ client }` for full control. The zero-config default
+is **Node only** — the browser entry (`@kortecx/sdk/web`) and the transport-free
+`@kortecx/sdk/chains` are explicit-client by design (pass `{ client }`).
+
+### Working with a Run
+
+`.submit()` / `.run({ wait: false })` return a `Run` — drive it without blocking:
+
+```ts
+const run = await flow().agent("Draft a release note").submit();
+for await (const delta of run.events()) { /* live projection deltas */ }
+const result = await run.wait();          // the first committed Mote (await-any)
+console.log(result.json());               // the `kx … --wait --json` shape
+// run.tokens(moteId) streams ONE model mote's advisory token chunks.
+```
 
 ### A reusable Agent
 
@@ -48,16 +80,15 @@ byte-identically — a Flow is sugar, never a new wire shape). Builders:
 import { Agent } from "@kortecx/sdk";
 
 const analyst = new Agent("You are a research analyst.", { tools: ["web-search", "fs-list"] });
-const out = await analyst.run("Summarize the README", { client: kx });
-console.log(out.text);
+const out = await analyst.run("Summarize the README");   // zero-config on Node; or { client }
+console.log((out as Result).text);
 ```
 
 `Agent` carries instructions + an optional tool set + config. The **default lane is
 deterministic/frozen** — a single agent step with a FIXED tool-grant SET (replayable;
 execution lands with PR-9b-2). `{ dynamic: true }` routes to the **steered**
-`kx/recipes/react` recipe (the model picks tools turn by turn; works today). The TS
-`run` takes an explicit `{ client }` (browser-safe); the Python SDK adds a zero-config
-default client.
+`kx/recipes/react` recipe (the model picks tools turn by turn; works today). `agent.stream(task)`
+submits without blocking and returns a `Run` (consume `.events()` / `.tokens(mote)`).
 
 The tool set may include your own functions — wrap one with `localTool({ name, params, run })`
 and pass it in `tools: [...]`; the SDK registers it as a local stdio MCP server the runtime
