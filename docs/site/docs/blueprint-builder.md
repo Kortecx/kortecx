@@ -109,6 +109,50 @@ b.add_edge(EdgeInput(parent=draft, child=critique, edge="data"))
 handle = client.submit_workflow(b.build())
 ```
 
+## Portable blueprints — export & import
+
+A lowered chain can be saved as a **portable blueprint JSON** — the exact shape
+`kx blueprint run --file` consumes. Save it, version it in git, share it, and re-run
+it on any serve. (Cross-party sharing / a marketplace is a Cloud capability.)
+
+**Export from the CLI** — `--emit-blueprint` writes the blueprint alongside the run;
+pair with `--dry-run` to export offline (no gateway):
+
+```bash
+kx chain run "research > review" \
+  --task research='{"kind":"model","prompt":"Research the topic."}' \
+  --task review='{"kind":"model","prompt":"Critique the findings."}' \
+  --emit-blueprint plan.json --dry-run        # lower + validate + write, no submit
+
+kx blueprint run --file plan.json --wait      # run it (here, or anywhere)
+kx blueprint import --file plan.json          # validate + summarize offline (no run)
+```
+
+**Export from the SDKs** — `to_blueprint()` returns the dict; `export(path)` writes JSON:
+
+```python
+import kortecx as kx
+flow = kx.flow().agent("Research the topic").then("Critique the findings")
+flow.export("plan.json")                       # portable artifact
+req = kx.Chain.from_blueprint_file("plan.json")  # → a SubmitWorkflowRequest
+client.submit_workflow(req, wait=True)
+```
+
+```typescript
+import { flow, Chain } from "@kortecx/sdk";
+await flow().agent("Research the topic").then("Critique the findings").export("plan.json");
+const req = await Chain.fromBlueprintFile("plan.json");   // → a SubmitWorkflowRequest
+await client.submitWorkflow(req, { wait: true });
+```
+
+The artifact is **self-describing** (each step's `kind` is explicit) and **portable**:
+`model_id` is left as authored — empty binds the **serve's** model at submit (SN-8), so
+the same blueprint runs against whatever model a target serve hosts unless you pin a
+specific `model_id`. Export → import re-compiles to a **byte-identical**
+`SubmitWorkflowRequest` (and, on a fixed model, the identical committed result). The CLI
+emits the args-separated form and the SDKs the params-folded form; both import
+equivalently.
+
 ## Finding a blueprint
 
 The console's Blueprints section has a **search box** backed by `SearchRecipes` —

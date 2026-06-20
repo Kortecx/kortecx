@@ -19,7 +19,7 @@
  */
 
 import type { MessageInitShape } from "@bufbuild/protobuf";
-import { BlueprintBuilder, type EdgeInput, type StepInput } from "./blueprints.js";
+import { BlueprintBuilder, type EdgeInput, type StepInput, type StepKind } from "./blueprints.js";
 import type { SubmitWorkflowRequestSchema } from "./gen/kortecx/v1/gateway_pb.js";
 // V2b: a `@kx.localTool` function-as-tool def — type-only here (the runtime dep is
 // one-way tools.ts → chains.ts; this never creates an import cycle).
@@ -911,6 +911,141 @@ export class Chain {
     builder.contextBundles(this.contextBundles);
     return builder.build();
   }
+
+  // --- Batch B (D161.2): portable blueprint export / import -----------------
+
+  /**
+   * Export this chain as a PORTABLE blueprint object — the same shape
+   * `kx blueprint run --file` and {@link Chain.fromBlueprint} consume. Round-trips:
+   * feeding it back to {@link Chain.fromBlueprint} (or the CLI) re-compiles to the
+   * IDENTICAL `SubmitWorkflowRequest` as {@link Chain.build}. `params` are in their
+   * FOLDED form (a tool step's args under `kx.tool.args`; an agentic MODEL step's
+   * budget under `max_turns`/`max_tool_calls`) — import is fold-idempotent. `model_id`
+   * stays as authored (empty ⇒ the server binds the served model, SN-8) so the
+   * artifact is portable across serves. Each `kind` is explicit (self-describing).
+   */
+  toBlueprint(): DagSpecJson {
+    const low = this.lower();
+    const steps: DagSpecStep[] = low.steps.map((s) => {
+      const step: DagSpecStep = { kind: s.kind };
+      if (s.model_id) step.model_id = s.model_id;
+      if (s.prompt) step.prompt = s.prompt;
+      if (Object.keys(s.tool_contract).length > 0) step.tool_contract = s.tool_contract;
+      if (Object.keys(s.params).length > 0) step.params = s.params;
+      return step;
+    });
+    const bp: DagSpecJson = { seed: this.seed, execution_mode: "frozen", steps };
+    if (low.edges.length > 0) {
+      bp.edges = low.edges.map((e) => ({ parent: e.parent, child: e.child, edge: "data" }));
+    }
+    if (this.contextBundles.length > 0) bp.context_bundles = [...this.contextBundles];
+    return bp;
+  }
+
+  /**
+   * Write {@link Chain.toBlueprint} as pretty JSON to `path` — the portable artifact
+   * (save / version / share; re-run with `kx blueprint run --file` or
+   * {@link Chain.fromBlueprint}). NODE-ONLY: the dynamic `node:fs/promises` import
+   * keeps it out of the `web`/`chains` static bundle graph (a browser cannot write a
+   * file — author there, export from Node).
+   */
+  async export(path: string): Promise<void> {
+    const fs = await import("node:fs/promises");
+    await fs.writeFile(path, `${JSON.stringify(this.toBlueprint(), null, 2)}\n`);
+  }
+
+  /**
+   * Compile a portable blueprint object (from {@link Chain.toBlueprint}, the CLI
+   * `--emit-blueprint`, or a hand-authored DAG) into a `SubmitWorkflowRequest` init
+   * shape ready for `client.submitWorkflow`. Accepts BOTH artifact forms: the SDK
+   * FOLDED form (args/budget already in `params`) and the CLI ARGS-SEPARATED form (a
+   * tool step's `args` map + an agentic step's `max_turns`/`max_tool_calls` fields) —
+   * both fold to the same request. The chain TOPOLOGY is not recoverable from a DAG
+   * (only the request is), so this returns the request, not a {@link Chain}.
+   */
+  static fromBlueprint(spec: DagSpecJson): MessageInitShape<typeof SubmitWorkflowRequestSchema> {
+    const builder = new BlueprintBuilder(spec.seed ?? 0);
+    for (const d of spec.steps ?? []) {
+      builder.addStep(stepFromSpec(d));
+    }
+    for (const e of spec.edges ?? []) {
+      builder.addEdge({
+        parent: e.parent,
+        child: e.child,
+        edge: e.edge === "control" ? "control" : "data",
+        nonCascade: e.non_cascade ?? false,
+      });
+    }
+    builder.contextBundles(spec.context_bundles ?? []);
+    if (spec.execution_mode === "dynamic") builder.mode("dynamic");
+    return builder.build();
+  }
+
+  /** Read a portable blueprint JSON file (Node) and compile it (see
+   * {@link Chain.fromBlueprint}). */
+  static async fromBlueprintFile(
+    path: string,
+  ): Promise<MessageInitShape<typeof SubmitWorkflowRequestSchema>> {
+    const fs = await import("node:fs/promises");
+    const raw = await fs.readFile(path, "utf-8");
+    return Chain.fromBlueprint(JSON.parse(raw) as DagSpecJson);
+  }
+}
+
+/** One step in a portable blueprint (the `kx blueprint run --file` JSON shape). `kind`
+ * is optional on IMPORT (inferred from fields, like the CLI); {@link Chain.toBlueprint}
+ * always sets it. `args` / `max_turns` / `max_tool_calls` are the CLI ARGS-SEPARATED
+ * form; the SDK export folds them into `params` instead (both import-equivalent). */
+export interface DagSpecStep {
+  kind?: StepKind;
+  model_id?: string;
+  prompt?: string;
+  body_signature_id?: string | null;
+  tool_contract?: Record<string, string>;
+  params?: Record<string, string>;
+  args?: Record<string, string | number | boolean>;
+  max_turns?: number;
+  max_tool_calls?: number;
+}
+
+/** A portable blueprint (the `kx blueprint run --file` JSON shape). */
+export interface DagSpecJson {
+  seed: number;
+  execution_mode?: string;
+  steps: DagSpecStep[];
+  edges?: Array<{ parent: number; child: number; edge?: string; non_cascade?: boolean }>;
+  context_bundles?: string[];
+}
+
+/** Infer a step's kind from field presence when `kind` is omitted — mirrors the CLI
+ * `StepSpec::resolve_kind` (model fields win; then a tool contract; else pure). */
+function inferKind(d: DagSpecStep): StepKind {
+  if (d.model_id || d.prompt) return "model";
+  if (d.tool_contract && Object.keys(d.tool_contract).length > 0) return "tool";
+  return "pure";
+}
+
+/** One blueprint step object → a {@link StepInput}, folding the CLI args-separated form
+ * (a `args` map ⇒ `kx.tool.args`; `max_turns`/`max_tool_calls` ⇒ the budget keys) so
+ * both artifact forms import to the same request. */
+function stepFromSpec(d: DagSpecStep): StepInput {
+  const kind = d.kind ?? inferKind(d);
+  const params: Record<string, Uint8Array | string> = { ...(d.params ?? {}) };
+  if (d.args && Object.keys(d.args).length > 0) {
+    params[TOOL_ARGS_KEY] = canonicalArgsJson(d.args);
+  }
+  if (kind === "model" && d.tool_contract && Object.keys(d.tool_contract).length > 0) {
+    if (d.max_turns !== undefined) params[REACT_MAX_TURNS_KEY] = String(d.max_turns);
+    if (d.max_tool_calls !== undefined) params[REACT_MAX_TOOL_CALLS_KEY] = String(d.max_tool_calls);
+  }
+  return {
+    kind,
+    modelId: d.model_id ?? "",
+    prompt: d.prompt ?? "",
+    bodySignatureId: d.body_signature_id ?? undefined,
+    toolContract: d.tool_contract ?? {},
+    params,
+  };
 }
 
 /** Assemble a {@link Chain} from resolved node-ordered tasks + canonical edges + seed. */

@@ -45,8 +45,9 @@ usage: kx <command> [args]
 
   client verbs (gRPC over the gateway; common flags: --endpoint <url> --token <t> | --token-file <p> --tls-ca <path> --json):
     kx invoke <handle> --args <json> [--args-file <path>] [--wait] [--stream] [--timeout-secs N] [--out <file>] [--context <handle>]...
-    kx chain run \"<dsl>\" --tasks <tasks.json> [--seed N] [--wait] [--timeout-secs N] [--out <file>]
-                                                 (string-DSL DAG: a > [b & c]; see `kx help chain`)
+    kx chain run \"<dsl>\" --tasks <tasks.json> [--seed N] [--wait] [--out <file>] [--emit-blueprint <file>] [--dry-run]
+                                                 (string-DSL DAG: a > [b & c]; --emit-blueprint = a portable blueprint; see `kx help chain`)
+    kx blueprint run|import --file <dag.json> [--wait]    (run a portable DAG, or import = validate+summarize offline; `kx help blueprint`)
     kx projection --instance <hex16> [--at-seq N]
     kx runs list [--limit N] [--before-seq N]    (durable run history, newest-first)
     kx runs rerun <instance-hex16> [--set k=v]   (re-run a prior run with edited args)
@@ -475,16 +476,22 @@ kx invoke <handle> --args <json> [--args-file <path>] [--wait] [--stream] [--tim
   the committed result stays the authority), then resolve — handy for chat/vision recipes."
             .into(),
         "blueprint" => "\
-kx blueprint run --file <dag.json> [--wait] [--timeout-secs N] [--out <file>] [client flags]
-  Author a Tier-1 DAG (a vetted palette of PURE / MODEL steps + DATA/CONTROL edges)
-  and run it via SubmitWorkflow. The server COMPILES the DAG, derives all identity,
-  and builds every warrant from the party's grants (SN-8) — the client sends only the
-  topology + params. The authored run is then viewable in the console (Runs, Monitoring).
-  JSON: { \"seed\": N, \"steps\": [{\"kind\":\"pure\"|\"model\", \"prompt\":..., \"params\":{..}}],
+kx blueprint run    --file <dag.json> [--wait] [--timeout-secs N] [--out <file>] [client flags]
+kx blueprint import --file <dag.json> [--json]
+  run    Author a Tier-1 DAG (a vetted palette of PURE / MODEL / TOOL steps + DATA/CONTROL
+         edges) and run it via SubmitWorkflow. The server COMPILES the DAG, derives all
+         identity, and builds every warrant from the party's grants (SN-8) — the client
+         sends only the topology + params. Viewable in the console (Runs, Monitoring).
+  import Validate + summarize a portable blueprint JSON OFFLINE (no gateway) — the
+         counterpart of `chain run --emit-blueprint`. Compiles the DAG client-side (kinds /
+         edges / tool args / reserved `exec` all fail closed), prints the resolved shape,
+         and does NOT submit. Then run it with `blueprint run --file`.
+  JSON: { \"seed\": N, \"steps\": [{\"kind\":\"pure\"|\"model\"|\"tool\", \"prompt\":..., \"params\":{..}}],
           \"edges\": [{\"parent\":i, \"child\":j, \"edge\":\"data\"|\"control\"}], \"execution_mode\":\"frozen\" }"
             .into(),
         "chain" => "\
-kx chain run \"<dsl>\" --tasks <tasks.json> [--seed N] [--wait] [--timeout-secs N] [--out <file>] [client flags]
+kx chain run \"<dsl>\" --tasks <tasks.json> [--seed N] [--wait] [--timeout-secs N] [--out <file>]
+              [--emit-blueprint <file>] [--dry-run] [client flags]
   Author a Tier-1 DAG from the kortecx Chains STRING-DSL and run it via SubmitWorkflow
   (the same compile + warrant path `blueprint run` uses — a chain only changes how the
   topology is AUTHORED). The positional <dsl> composes task handles with operators:
@@ -496,8 +503,11 @@ kx chain run \"<dsl>\" --tasks <tasks.json> [--seed N] [--wait] [--timeout-secs 
   A handle that appears more than once is the SAME node (reuse builds DAGs). Examples:
     \"a > [b & c]\" fans out (a->b, a->c); \"[a & b] > c\" fans in (a->c, b->c).
   --tasks is a JSON object map { \"a\": {\"kind\":\"pure\"|\"model\", \"prompt\":..., \"params\":{..}}, ... };
-  each value is a step definition (P1 palette: pure | model). Tasks defined but unused are
-  ignored. Errors fail closed: empty/empty-group -> parse; an unknown handle; a cycle."
+  each value is a step definition (palette: pure | model | tool). Tasks defined but unused are
+  ignored. Errors fail closed: empty/empty-group -> parse; an unknown handle; a cycle.
+  --emit-blueprint <file> also writes the lowered chain as a PORTABLE blueprint JSON (the
+  exact `blueprint run --file` input — save / share / re-run it). --dry-run lowers +
+  validates (+ emits) WITHOUT submitting (needs no gateway), the offline export path."
             .into(),
         "projection" => "\
 kx projection --instance <hex16> [--at-seq N] [client flags]

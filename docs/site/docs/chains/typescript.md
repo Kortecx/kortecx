@@ -74,6 +74,27 @@ console.log(result.json());               // the `kx … --wait --json` shape
 // run.tokens(moteId) streams ONE model mote's advisory token chunks.
 ```
 
+### Export / import a portable blueprint
+
+`.export(path)` writes the lowered chain as a portable blueprint JSON (the exact
+`kx blueprint run --file` input — save / version / share / re-run it; `toBlueprint()`
+returns the object). `Chain.fromBlueprint(spec)` / `Chain.fromBlueprintFile(path)` compile
+one back into a `SubmitWorkflowRequest`:
+
+```ts
+import { flow, Chain } from "@kortecx/sdk";
+
+await flow().agent("Research the topic").then("Critique it").export("plan.json");
+const req = await Chain.fromBlueprintFile("plan.json");   // → a SubmitWorkflowRequest
+await client.submitWorkflow(req, { wait: true });
+```
+
+The artifact is self-describing (explicit `kind`) and portable — `model_id` stays as
+authored (empty binds the serve's model at submit, SN-8). Export → import re-compiles to
+the IDENTICAL request as `.build()`. `export` / `fromBlueprintFile` are Node-only (file
+I/O); `toBlueprint` / `fromBlueprint` (in-memory) work everywhere. See
+[Blueprint builder → Portable blueprints](../blueprint-builder.md#portable-blueprints--export--import).
+
 ### A reusable Agent
 
 ```ts

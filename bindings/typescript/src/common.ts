@@ -101,7 +101,17 @@ export {
   ChainUnknownHandleError,
   ChainCycleError,
 } from "./chains.js";
-export type { Frag, ChainOptions, Lowered, LoweredStep, LoweredEdge, ToolRef } from "./chains.js";
+export type {
+  Frag,
+  ChainOptions,
+  Lowered,
+  LoweredStep,
+  LoweredEdge,
+  ToolRef,
+  // Batch B (D161.2): the portable blueprint export/import shapes.
+  DagSpecJson,
+  DagSpecStep,
+} from "./chains.js";
 // Batch V2 — the fluent builder + first-class Agent (the headline authoring surface).
 export { Flow, flow } from "./flow.js";
 export type { FlowItem, AgentStepOptions, FlowClient } from "./flow.js";

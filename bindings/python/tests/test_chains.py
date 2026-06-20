@@ -100,6 +100,27 @@ def test_corpus_parity(case: Dict[str, object]) -> None:
     assert lowered == expected
 
 
+@pytest.mark.parametrize(
+    "case",
+    [c for c in _CORPUS if "expect" in c],
+    ids=[c["name"] for c in _CORPUS if "expect" in c],
+)
+def test_corpus_export_import_round_trip(case: Dict[str, object]) -> None:
+    """Batch B (D161.2): every corpus SUCCESS case round-trips through the portable
+    blueprint artifact — ``to_blueprint()`` → JSON → ``from_blueprint()`` re-compiles
+    to the IDENTICAL ``SubmitWorkflowRequest`` as ``build()`` (the cross-surface
+    export/import guarantee), with no new corpus cases needed."""
+    tasks = _tasks_from_spec(case["tasks"])
+    seed = case.get("seed", 0)
+    context = case.get("context_bundles")
+    c = chain(case["dsl"], tasks, seed=seed, context=context)
+
+    bp = c.to_blueprint()
+    # The artifact must survive a JSON round-trip (a real file write/read).
+    reparsed = json.loads(json.dumps(bp))
+    assert Chain.from_blueprint(reparsed) == c.build(), case["name"]
+
+
 def test_seed_flows_to_the_request() -> None:
     """``seed`` is opaque to the lowering inspector but reaches the built request."""
     tasks = {"a": pure(), "b": pure()}

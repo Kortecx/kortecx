@@ -79,6 +79,13 @@ pub struct ChainArgs {
     pub timeout_secs: u64,
     /// Write the committed result bytes to this file instead of inlining them.
     pub out: Option<PathBuf>,
+    /// Batch B (D161.2): `--emit-blueprint <file>` — also write the lowered chain as a
+    /// portable blueprint JSON (the exact `kx blueprint run --file` input). Pairs with
+    /// `--dry-run` to export without contacting a gateway.
+    pub emit_blueprint: Option<PathBuf>,
+    /// Batch B: `--dry-run` — lower + validate (+ `--emit-blueprint` if set) but do NOT
+    /// submit (needs no gateway). Useful to produce/lint a portable blueprint offline.
+    pub dry_run: bool,
     /// Common client flags.
     pub common: ClientCommon,
 }
@@ -103,6 +110,8 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<ChainArgs, CliErr
     let mut wait = false;
     let mut timeout_secs = DEFAULT_TIMEOUT_SECS;
     let mut out: Option<PathBuf> = None;
+    let mut emit_blueprint: Option<PathBuf> = None;
+    let mut dry_run = false;
     let mut common = ClientCommon::default();
 
     while let Some(flag) = args.next() {
@@ -143,6 +152,10 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<ChainArgs, CliErr
                 })?;
             }
             "--out" => out = Some(PathBuf::from(next_value(&mut args, "--out")?)),
+            "--emit-blueprint" => {
+                emit_blueprint = Some(PathBuf::from(next_value(&mut args, "--emit-blueprint")?));
+            }
+            "--dry-run" => dry_run = true,
             other if other.starts_with("--") => {
                 return Err(CliError::Usage(format!("unknown flag {other:?}")));
             }
@@ -177,6 +190,8 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<ChainArgs, CliErr
         wait,
         timeout_secs,
         out,
+        emit_blueprint,
+        dry_run,
         common,
     })
 }
@@ -546,15 +561,17 @@ fn detect_cycle(node_count: usize, edges: &[(u32, u32)]) -> Result<(), CliError>
     }
 }
 
-/// Resolve the lowered topology against the `--tasks` map and build the SAME
-/// `DagSpec` the visual `blueprint` authors, so the one canonical proto assembly
-/// (`blueprint::to_request`) is reused verbatim.
-fn build_request(
+/// Resolve the lowered topology against the `--tasks` map into the canonical
+/// [`DagSpec`] — the exact `kx blueprint run --file` shape, the single in-memory
+/// blueprint both the run path and the Batch-B `--emit-blueprint` export share. Each
+/// step's `kind` is set EXPLICITLY (the expanded/portable form) so the emitted JSON is
+/// self-describing and re-import re-compiles identically.
+fn build_dagspec(
     lowered: Lowered,
     mut tasks: BTreeMap<String, StepSpec>,
     seed: u32,
     context_bundles: Vec<String>,
-) -> Result<kx_proto::proto::SubmitWorkflowRequest, CliError> {
+) -> Result<DagSpec, CliError> {
     let mut steps = Vec::with_capacity(lowered.nodes.len());
     for (idx, handle) in lowered.nodes.iter().enumerate() {
         let mut step = tasks.remove(handle).ok_or_else(|| {
@@ -580,6 +597,16 @@ fn build_request(
                     .or_insert_with(|| "1".to_string());
             }
         }
+        // Batch B: pin the kind explicitly (the expanded/portable export form).
+        // Idempotent — `resolve_kind` already validated it; setting `Some(resolved)`
+        // re-resolves to the same kind, so the run path's proto is byte-unchanged.
+        let resolved = match step.resolve_kind()? {
+            kx_proto::proto::WorkflowStepKind::Model => "model",
+            kx_proto::proto::WorkflowStepKind::Tool => "tool",
+            // resolve_kind only ever yields Pure/Model/Tool (exec/unspecified are errors).
+            _ => "pure",
+        };
+        step.kind = Some(resolved.to_string());
         steps.push(step);
     }
     let edges = lowered
@@ -592,7 +619,7 @@ fn build_request(
             non_cascade: false,
         })
         .collect();
-    let spec = DagSpec {
+    Ok(DagSpec {
         seed,
         steps,
         edges,
@@ -600,7 +627,23 @@ fn build_request(
         execution_mode: Some("frozen".to_string()),
         // PR-7: chain-level context attachment, verbatim (the server canonicalizes).
         context_bundles,
-    };
+    })
+}
+
+/// Build the `SubmitWorkflowRequest` from a lowered chain — `build_dagspec` then the
+/// SAME canonical proto assembly (`blueprint::to_request`) the visual `blueprint`
+/// authors use, so a chain only changes *how* the `(steps, edges)` are authored.
+/// Test-only since Batch B: `execute` now goes through `build_dagspec` directly (so it
+/// can `--emit-blueprint` the pre-fold spec before `to_request` consumes it); the
+/// corpus parity tests still drive the full lower→request path through this helper.
+#[cfg(test)]
+fn build_request(
+    lowered: Lowered,
+    tasks: BTreeMap<String, StepSpec>,
+    seed: u32,
+    context_bundles: Vec<String>,
+) -> Result<kx_proto::proto::SubmitWorkflowRequest, CliError> {
+    let spec = build_dagspec(lowered, tasks, seed, context_bundles)?;
     crate::verbs::blueprint::to_request(spec)
 }
 
@@ -608,7 +651,26 @@ fn build_request(
 pub async fn execute(args: ChainArgs) -> Result<(), CliError> {
     let tasks = collect_tasks(&args)?;
     let lowered = lower(&args.dsl)?;
-    let req = build_request(lowered, tasks, args.seed, args.context)?;
+    let spec = build_dagspec(lowered, tasks, args.seed, args.context)?;
+
+    // Batch B (D161.2): also write the lowered chain as a portable blueprint JSON — the
+    // exact `kx blueprint run --file` input. Emit BEFORE `to_request` consumes the spec.
+    if let Some(path) = &args.emit_blueprint {
+        let json = serde_json::to_string_pretty(&spec)
+            .map_err(|e| CliError::Usage(format!("serialize blueprint: {e}")))?;
+        std::fs::write(path, json)
+            .map_err(|e| CliError::Usage(format!("write {}: {e}", path.display())))?;
+        eprintln!("wrote blueprint to {}", path.display());
+    }
+
+    // The canonical compile + client-side validation (kinds / edges / args fail-closed).
+    let req = crate::verbs::blueprint::to_request(spec)?;
+
+    // `--dry-run`: lowered + validated (+ emitted if requested) but NOT submitted — needs
+    // no gateway. The pairing with `--emit-blueprint` is the offline export path.
+    if args.dry_run {
+        return Ok(());
+    }
 
     let resolved = args.common.resolve()?;
     let mut client = resolved.connect().await?;
@@ -690,6 +752,25 @@ mod tests {
     fn no_context_flag_yields_an_empty_attachment() {
         let a = p(&["run", "a > b", "--tasks", "t.json"]).unwrap();
         assert!(a.context.is_empty());
+    }
+
+    #[test]
+    fn parses_emit_blueprint_and_dry_run() {
+        let a = p(&[
+            "run",
+            "a > b",
+            "--tasks",
+            "t.json",
+            "--emit-blueprint",
+            "bp.json",
+            "--dry-run",
+        ])
+        .unwrap();
+        assert_eq!(a.emit_blueprint, Some(PathBuf::from("bp.json")));
+        assert!(a.dry_run);
+        // absent ⇒ neither set (the default run path is unaffected).
+        let b = p(&["run", "a > b", "--tasks", "t.json"]).unwrap();
+        assert!(b.emit_blueprint.is_none() && !b.dry_run);
     }
 
     #[test]
@@ -949,6 +1030,41 @@ mod tests {
                 })
                 .collect();
             assert_eq!(got_edges, want_edges, "[{}] edges", case.name);
+        }
+    }
+
+    /// Batch B (D161.2): EVERY corpus success case must round-trip through the portable
+    /// blueprint artifact — `chain run --emit-blueprint` serializes the pre-fold
+    /// `DagSpec`; `blueprint run --file` re-reads + re-compiles it. The invariant: the
+    /// re-imported proto is byte-identical to the directly-compiled one. This is the
+    /// cross-surface export/import guarantee, pinned per case (no new corpus cases — the
+    /// existing tri-surface contract IS the fixture set).
+    #[test]
+    fn corpus_success_cases_export_import_round_trip_identically() {
+        use crate::verbs::blueprint::to_request;
+        for case in load_corpus().into_iter().filter(|c| c.expect.is_some()) {
+            let lowered =
+                lower(&case.dsl).unwrap_or_else(|e| panic!("[{}] lower failed: {e}", case.name));
+            // The export surface: the pre-`to_request` DagSpec the CLI emits.
+            let spec = build_dagspec(lowered, case.tasks, case.seed, case.context_bundles)
+                .unwrap_or_else(|e| panic!("[{}] build_dagspec failed: {e}", case.name));
+
+            // Serialize (export) → re-read (import) → a SECOND DagSpec from the artifact.
+            let json = serde_json::to_string(&spec)
+                .unwrap_or_else(|e| panic!("[{}] serialize: {e}", case.name));
+            let reparsed: crate::verbs::blueprint::DagSpec = serde_json::from_str(&json)
+                .unwrap_or_else(|e| panic!("[{}] re-parse: {e}\n{json}", case.name));
+
+            // Both compile through the SAME canonical assembly; the protos must match.
+            let direct = to_request(spec)
+                .unwrap_or_else(|e| panic!("[{}] direct to_request: {e}", case.name));
+            let round_trip = to_request(reparsed)
+                .unwrap_or_else(|e| panic!("[{}] round-trip to_request: {e}", case.name));
+            assert_eq!(
+                direct, round_trip,
+                "[{}] export→import must re-compile to a byte-identical request",
+                case.name
+            );
         }
     }
 
