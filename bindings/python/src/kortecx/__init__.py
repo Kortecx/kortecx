@@ -22,8 +22,17 @@ from .branch import (
     SnapshotResult,
 )
 from .capture import CaptureRecord, CaptureRecordPage
+from .agent import Agent
 from .chains import Chain, Task, chain, model, pure, tool
 from .client import DEFAULT_ENDPOINT, AsyncKxClient, KxClient
+from .defaults import (
+    default_client,
+    invoke,
+    make_client,
+    run,
+    set_default_client,
+)
+from .flow import Flow, flow
 from .content import ContentItem, PutResult
 from .context import ContextBundle, ContextBundleItem, PutContextBundleResult
 from .datasets import DatasetHit, DatasetSummary, FuzzyHit, IngestDocument, IngestResult
@@ -145,6 +154,15 @@ __all__ = [
     "pure",
     "model",
     "tool",
+    # Batch V2 — the fluent builder + first-class Agent + zero-config helpers.
+    "Flow",
+    "flow",
+    "Agent",
+    "run",
+    "invoke",
+    "make_client",
+    "default_client",
+    "set_default_client",
     "TeamSummary",
     "TeamMember",
     "TeamMembers",
