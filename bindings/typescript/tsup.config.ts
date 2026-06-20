@@ -11,6 +11,8 @@ export default defineConfig({
     node: "src/node.ts",
     web: "src/web.ts",
     chains: "src/chains.ts",
+    // V2b: the stdio MCP server the runtime spawns for local `localTool(...)` functions.
+    _toolserver: "src/_toolserver.ts",
   },
   format: ["esm", "cjs"],
   dts: true,

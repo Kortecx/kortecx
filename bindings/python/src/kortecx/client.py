@@ -318,7 +318,14 @@ class KxClient:
         and run it. A thin convenience over :meth:`submit_workflow` — the server
         still COMPILES the DAG + builds every warrant from the party's grants
         (SN-8). Returns the ``RunHandle``, or — with ``wait=True`` — the first
-        committed :class:`Result`."""
+        committed :class:`Result`.
+
+        V2b: any ``@kx.tool`` local functions referenced by the chain are registered
+        (as stdio MCP servers the runtime dials) + resolved into their steps' tool
+        contracts first; a chain with no local tools is unaffected."""
+        from .tools import resolve_local_tools
+
+        resolve_local_tools(self, chain)
         return self.submit_workflow(chain.build(), wait=wait, timeout=timeout)
 
     def get_projection(
@@ -1320,7 +1327,11 @@ class AsyncKxClient:
         self, chain: "_chains.Chain", *, wait: bool = False, timeout: float = 120.0
     ) -> Union["_g.RunHandle", Result]:
         """As :meth:`KxClient.run_chain` — lower a :class:`~kortecx.chains.Chain` and
-        run it over :meth:`submit_workflow`."""
+        run it over :meth:`submit_workflow`. V2b local tools (if any) are registered
+        + resolved first."""
+        from .tools import aresolve_local_tools
+
+        await aresolve_local_tools(self, chain)
         return await self.submit_workflow(chain.build(), wait=wait, timeout=timeout)
 
     async def get_projection(

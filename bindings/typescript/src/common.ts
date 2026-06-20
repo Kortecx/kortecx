@@ -101,12 +101,15 @@ export {
   ChainUnknownHandleError,
   ChainCycleError,
 } from "./chains.js";
-export type { Frag, ChainOptions, Lowered, LoweredStep, LoweredEdge } from "./chains.js";
+export type { Frag, ChainOptions, Lowered, LoweredStep, LoweredEdge, ToolRef } from "./chains.js";
 // Batch V2 — the fluent builder + first-class Agent (the headline authoring surface).
 export { Flow, flow } from "./flow.js";
 export type { FlowItem, AgentStepOptions, FlowClient } from "./flow.js";
-export { Agent, REACT_RECIPE_HANDLE } from "./agent.js";
+export { Agent, REACT_RECIPE_HANDLE, REACT_AUTO_RECIPE_HANDLE } from "./agent.js";
 export type { AgentOptions, AgentClient } from "./agent.js";
+// V2b — local function tools (localTool → a governed stdio MCP tool the runtime dials).
+export { localTool, isLocalTool, KxToolError } from "./tools.js";
+export type { LocalToolDef, LocalToolSpec, LocalParamType, LocalParamSpec } from "./tools.js";
 
 export { TeamSummary, TeamMember, TeamMembers, WarrantView, teamsFromProto } from "./teams.js";
 export { GrantView, AssetGrants } from "./grants.js";

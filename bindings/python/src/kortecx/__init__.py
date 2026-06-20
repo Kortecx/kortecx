@@ -23,7 +23,7 @@ from .branch import (
     SnapshotResult,
 )
 from .capture import CaptureRecord, CaptureRecordPage
-from .chains import Chain, Task, chain, model, pure, tool
+from .chains import Chain, Task, chain, model, pure
 from .client import DEFAULT_ENDPOINT, AsyncKxClient, KxClient
 from .content import ContentItem, PutResult
 from .context import ContextBundle, ContextBundleItem, PutContextBundleResult
@@ -73,6 +73,7 @@ from .run import AsyncRun, Result, Run
 from .runs import RunInputs, RunPage, RunSummary
 from .teams import TeamMember, TeamMembers, TeamSummary, WarrantView
 from .telemetry import ModelTokenRollup, MoteTelemetryRow, TelemetryPage, TelemetrySummary
+from .tools import LocalToolDef, ToolError, tool
 from .toolscout import (
     BundleScore,
     BundleSpec,
@@ -158,6 +159,9 @@ __all__ = [
     "Flow",
     "flow",
     "Agent",
+    # V2b — local function tools (@kx.tool → a governed stdio MCP tool).
+    "LocalToolDef",
+    "ToolError",
     "run",
     "invoke",
     "make_client",

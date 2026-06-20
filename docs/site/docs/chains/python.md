@@ -56,6 +56,10 @@ lane is deterministic/frozen** — a single agent step with a FIXED tool-grant S
 `dynamic=True` routes to the **steered** `kx/recipes/react` recipe, where the model picks
 tools turn by turn (works today).
 
+The tool set may include your own functions — decorate one with `@kx.tool` and pass it in
+`tools=[...]`; the SDK registers it as a local stdio MCP server the runtime dials. See
+[Local function tools](../tools.md#local-function-tools-kxtool--localtool).
+
 ### Zero-config
 
 `import kortecx as kx; kx.run(...)` uses a lazily-built default client. Config order:

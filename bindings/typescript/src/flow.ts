@@ -29,13 +29,15 @@ import {
   task,
 } from "./chains.js";
 import type { SubmitWorkflowRequestSchema } from "./gen/kortecx/v1/gateway_pb.js";
+import { type LocalToolDef, isLocalTool, localToolNode } from "./tools.js";
 
 /** A thing a builder method can fold in: a prompt (⇒ an agent step) or a `Frag`. */
 export type FlowItem = string | Frag;
 
 /** Options for {@link Flow.agent} (and the `then(string, …)` form). */
 export interface AgentStepOptions {
-  tools?: readonly string[] | Readonly<Record<string, string>>;
+  /** Tool grants — registered tool names and/or `localTool(...)` defs (V2b). */
+  tools?: readonly (string | LocalToolDef)[] | Readonly<Record<string, string>>;
   model?: string;
   maxTurns?: number;
   maxToolCalls?: number;
@@ -96,13 +98,25 @@ export class Flow {
     return this.append(task.pure(params));
   }
 
-  /** Append a standalone TOOL step — fire ONE registered tool (PR-6b-2). */
+  /** Append a standalone TOOL step — fire ONE tool (PR-6b-2). `toolId` is either a
+   * registered tool name OR a `localTool(...)` def (V2b — then the 2nd arg is its
+   * args object, registered at the run terminal + fired deterministically). */
   tool(
     toolId: string,
-    version = "1",
+    version?: string,
+    args?: Readonly<Record<string, string | number | boolean>>,
+  ): this;
+  tool(toolId: LocalToolDef, args?: Readonly<Record<string, string | number | boolean>>): this;
+  tool(
+    toolId: string | LocalToolDef,
+    versionOrArgs?: string | Readonly<Record<string, string | number | boolean>>,
     args: Readonly<Record<string, string | number | boolean>> = {},
   ): this {
-    return this.append(task.tool(toolId, version, args));
+    if (isLocalTool(toolId)) {
+      const a = (versionOrArgs as Readonly<Record<string, string | number | boolean>>) ?? {};
+      return this.append(localToolNode(toolId, a));
+    }
+    return this.append(task.tool(toolId, (versionOrArgs as string) ?? "1", args));
   }
 
   /** Append `item` sequentially. A bare string is an agent step (with `opts`); a `Frag`

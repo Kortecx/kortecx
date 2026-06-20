@@ -253,7 +253,11 @@ export abstract class KxClientBase {
     chain: Chain,
     opts: { wait?: boolean; timeoutMs?: number } = {},
   ): Promise<{ instanceId: Uint8Array; recipeFingerprint: Uint8Array } | Result> {
-    return this.submitWorkflow(chain.build(), opts);
+    // V2b: register + resolve any `localTool(...)` functions the chain references
+    // (a chain with none is unaffected — `resolved` is undefined ⇒ build() byte-identical).
+    const { resolveLocalTools } = await import("./tools.js");
+    const resolved = await resolveLocalTools(this, chain);
+    return this.submitWorkflow(chain.build(resolved), opts);
   }
 
   async getProjection(instanceId: Id, opts: { atSeq?: bigint } = {}): Promise<Projection> {

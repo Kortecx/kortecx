@@ -160,6 +160,73 @@ edit its **Args (JSON)** — the server resolves + warrants it on submit. The
 `q="…"`-style args lower **byte-identically across Python, TypeScript, Rust (CLI),
 and the UI** (the `tests/golden/chains` parity gate).
 
+## Local function tools (`@kx.tool` / `localTool`)
+
+Turn a plain function into a real, governed tool. The SDK exposes your decorated
+functions as a **local stdio MCP server**, and the runtime **dials it through the
+same external-MCP gateway** above — so a local function is just another dialed MCP
+tool the runtime fires under a server-built warrant (SN-8). **No new runtime
+substrate**, no proto change.
+
+```python
+import kortecx as kx
+
+@kx.tool
+def add(a: int, b: int) -> int:
+    "Add two integers."
+    return a + b
+
+# Deterministic — fire it as one node (works today, even model-free):
+print(kx.flow().tool(add, a=2, b=2).run().text)
+
+# Steered — let a model decide (the react-auto loop; needs KX_SERVE_AUTOGRANT=1):
+print(kx.Agent("Do the math.", tools=[add], dynamic=True).run("what is 2+2?").text)
+```
+
+```typescript
+import { localTool, flow, Agent } from "@kortecx/sdk/node";
+
+// TS types are erased at runtime, so the param schema is explicit:
+const add = localTool({
+  name: "add",
+  params: { a: "integer", b: "integer" },
+  run: ({ a, b }) => (a as number) + (b as number),
+});
+
+await flow().tool(add, { a: 2, b: 2 }).run({ client: kx });
+await new Agent("Do the math.", { tools: [add], dynamic: true }).run("2+2", { client: kx });
+```
+
+**Schema from the signature.** Python derives the MCP `inputSchema` from your type
+hints — `int` → integer, `str` → string, `bool` → boolean, `Literal[...]` / a
+string `Enum` → an exact-match enum; a parameter with no default is required.
+TypeScript declares the schema explicitly (`params`). **Floats are not type-gated**
+by the runtime (pass an `int` where you can); nested objects fall back to a JSON
+string.
+
+**Three firing lanes (be honest about what runs today):**
+
+| Lane | How | Status |
+| --- | --- | --- |
+| **Deterministic** | `flow().tool(fn, **args)` — one tool, fixed args | ✅ today (even model-free) — the reliable path for local tools |
+| **Steered / dynamic** | `Agent(tools=[fn], dynamic=True)` → `kx/recipes/react-auto` (the model chooses) | ⚠ the loop runs + the model proposes the call (needs a served model + `KX_SERVE_AUTOGRANT=1`), but a *dialed* tool is namespaced `&lt;server&gt;/&lt;name&gt;` and the autonomous authority gate doesn't yet match a model's bare-name call — a runtime improvement is tracked; use the deterministic lane for local tools today |
+| **Frozen / deterministic-agentic** | `Agent(tools=[fn])` — a fixed tool set, replayable bounded loop | ⏳ lands in PR-9b-2 (a clear pre-flight hint until then) |
+
+For the **deterministic** lane the SDK fires the tool by its exact server-derived name, so it always works. The other two depend on a *model* choosing the call: builtins (bare names like `fs-list`) match today; namespaced dialed/local tools wait on the runtime name-match improvement (and the frozen lane on PR-9b-2).
+
+**Dev-scoped & co-located.** The runtime *spawns* the stdio tool-server subprocess,
+so this is the **Node / local-Python** SDK on the **same machine** as `kx serve`:
+the interpreter, your tool module, and the runtime are co-located. Registering a
+local tool is the same host-trusted operation as `kx connections add --command`
+(see [Connections](#connections--the-external-mcp-gateway)) — V2b adds no new
+attack surface. In Cloud the bridge is governed.
+
+**Re-import contract.** The runtime spawns `python -m kortecx._toolserver`
+(Node: `node _toolserver.js`) which re-loads your module to recover the functions.
+Define your tools at **module level** and guard any `.run()` calls under
+`if __name__ == "__main__":` (the loader runs the module under a non-`__main__`
+name, so a guarded main block never re-executes).
+
 ## OSS / Cloud line
 
 Kortecx OSS is the **secure gateway to external MCP** — the runtime is the

@@ -175,7 +175,7 @@ def model(
     model_id: str = "",
     prompt: str = "",
     *,
-    tools: "Optional[Union[Sequence[str], Mapping[str, str]]]" = None,
+    tools: "Optional[Union[Sequence[object], Mapping[str, str]]]" = None,
     max_turns: Optional[int] = None,
     max_tool_calls: Optional[int] = None,
     reasoning: Optional[str] = None,
@@ -194,7 +194,14 @@ def model(
     ``{name: version}`` map) to make this a **deterministic-agentic step** — the
     model runs a bounded reason→tool→observe loop over the granted tool SET (the
     same step the string DSL authors as ``handle@tool@tool``). ``max_turns`` /
-    ``max_tool_calls`` bound the loop (default 8 / 6; ignored when no tools)."""
+    ``max_tool_calls`` bound the loop (default 8 / 6; ignored when no tools).
+
+    V2b: ``tools`` may also include ``@kx.tool``-decorated LOCAL functions — the SDK
+    registers each as a stdio MCP server at the run terminal and fills the
+    server-derived name into the contract (off the lowering until then)."""
+    from .tools import split_tools
+
+    str_tools, local_tools = split_tools(tools)
     step_params: Dict[str, Union[bytes, str]] = dict(params)
     if reasoning is not None:
         step_params[REASONING_KEY] = _validate_reasoning(reasoning)
@@ -203,10 +210,11 @@ def model(
             kind="model",
             model_id=model_id,
             prompt=prompt,
-            tool_contract=_grants_to_contract(tools),
+            tool_contract=_grants_to_contract(str_tools),
             params=step_params,
             max_turns=max_turns,
             max_tool_calls=max_tool_calls,
+            local_tools=local_tools,
         )
     )
 
@@ -362,6 +370,13 @@ class Chain:
         # PR-7b: the chain-level context attachment, emitted verbatim (the corpus
         # pins its byte-identity across surfaces; absent ⇒ []).
         return {"steps": steps, "edges": edge_rows, "context_bundles": list(self._context)}
+
+    def _iter_steps(self) -> List[StepInput]:
+        """The lowered steps (in first-appearance order) — the live ``StepInput``
+        objects, so the V2b local-tool resolver can fill resolved names into their
+        ``tool_contract`` in place before :meth:`build` reads them."""
+        nodes, _ = self._lower()
+        return [t.step for t in nodes]
 
     def build(self) -> "_g.SubmitWorkflowRequest":
         """Lower → :class:`~kortecx.blueprints.BlueprintBuilder` → the request. Nodes

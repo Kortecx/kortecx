@@ -11,11 +11,14 @@ only changes what is PROPOSED, never what identity it gets.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Sequence, Union
+from typing import TYPE_CHECKING, Dict, List, Optional, Sequence, Tuple, Union
 
 from . import hexids
 from .v1 import coordinator_pb2 as _c
 from .v1 import gateway_pb2 as _g
+
+if TYPE_CHECKING:
+    from .tools import LocalToolDef
 
 _KIND = {
     "pure": _g.WorkflowStepKind.WORKFLOW_STEP_KIND_PURE,
@@ -61,6 +64,11 @@ class StepInput:
     #: otherwise. Absent ⇒ the coordinator default (8 turns / 6 tool calls).
     max_turns: Optional[int] = None
     max_tool_calls: Optional[int] = None
+    #: V2b (local tools): ``@kx.tool``-decorated functions referenced by this step.
+    #: Off the wire + the lowering — resolved at the run terminal (the SDK registers
+    #: each as a stdio MCP server, then fills the server-derived names into
+    #: ``tool_contract``). Empty ⇒ byte-identical to a string-only tool set.
+    local_tools: Tuple["LocalToolDef", ...] = ()
 
 
 @dataclass

@@ -21,6 +21,9 @@
 import type { MessageInitShape } from "@bufbuild/protobuf";
 import { BlueprintBuilder, type EdgeInput, type StepInput } from "./blueprints.js";
 import type { SubmitWorkflowRequestSchema } from "./gen/kortecx/v1/gateway_pb.js";
+// V2b: a `@kx.localTool` function-as-tool def — type-only here (the runtime dep is
+// one-way tools.ts → chains.ts; this never creates an import cycle).
+import type { LocalToolDef } from "./tools.js";
 
 /** Error class for a malformed expression / empty group (the `parse` corpus class). */
 export class ChainParseError extends Error {
@@ -85,6 +88,12 @@ export class Task {
     /** Agentic MODEL step only (PR-9b): the bounded-loop budget (default 8 / 6). */
     readonly maxTurns?: number,
     readonly maxToolCalls?: number,
+    /**
+     * V2b (local tools): `localTool(...)` defs referenced by this step. Off the wire
+     * + the lowering — the SDK registers each as a stdio MCP server at the run
+     * terminal and folds the server-derived name into `toolContract` ({@link Chain.build}).
+     */
+    readonly localTools: readonly LocalToolDef[] = [],
   ) {}
 
   /** The {@link StepInput} this task lowers to (the builder encodes params). */
@@ -169,6 +178,32 @@ function grantsToContract(
   return { ...(tools as Record<string, string>) };
 }
 
+/** V2b: anything accepted in `tools: [...]` — a registered tool NAME or a `localTool(...)`. */
+export type ToolRef = string | LocalToolDef;
+
+/** Split a `tools=` value into (string/record grants, local-tool defs). A non-string,
+ * non-`localTool` array item is a fail-closed authoring error. */
+function splitTools(tools?: readonly ToolRef[] | Readonly<Record<string, string>>): {
+  strings?: readonly string[] | Readonly<Record<string, string>>;
+  locals: LocalToolDef[];
+} {
+  if (tools === undefined || !Array.isArray(tools)) {
+    return { strings: tools as Readonly<Record<string, string>> | undefined, locals: [] };
+  }
+  const strings: string[] = [];
+  const locals: LocalToolDef[] = [];
+  for (const t of tools) {
+    if (t && typeof t === "object" && (t as { __kxLocalTool?: boolean }).__kxLocalTool === true) {
+      locals.push(t as LocalToolDef);
+    } else if (typeof t === "string") {
+      strings.push(t);
+    } else {
+      throw new ChainParseError("a tool must be a registered name (string) or a localTool(...)");
+    }
+  }
+  return { strings: strings.length > 0 ? strings : undefined, locals };
+}
+
 /**
  * PR-6b-2: the single canonical `config_subset` key a `tool()` step's authored
  * args ride under. MUST equal the Rust `kx_mote::TOOL_ARGS_KEY` + the Python
@@ -211,7 +246,7 @@ export const task = {
     prompt = "",
     params: Readonly<Record<string, string>> = {},
     opts: {
-      tools?: readonly string[] | Readonly<Record<string, string>>;
+      tools?: readonly ToolRef[] | Readonly<Record<string, string>>;
       maxTurns?: number;
       maxToolCalls?: number;
       reasoning?: ReasoningMode;
@@ -221,14 +256,18 @@ export const task = {
     if (opts.reasoning !== undefined) {
       stepParams[REASONING_KEY] = validateReasoning(opts.reasoning);
     }
+    // V2b: `localTool(...)` defs ride off the contract (resolved at the run terminal);
+    // string/record grants lower as before (golden-corpus byte-identical).
+    const { strings, locals } = splitTools(opts.tools);
     return new Task(
       "model",
       modelId,
       prompt,
       stepParams,
-      grantsToContract(opts.tools),
+      grantsToContract(strings),
       opts.maxTurns,
       opts.maxToolCalls,
+      locals,
     );
   },
   /**
@@ -249,6 +288,25 @@ export const task = {
       {
         [toolId]: version,
       },
+    );
+  },
+  /**
+   * V2b: a standalone TOOL node firing a LOCAL `localTool(...)` function — the
+   * contract is filled at the run terminal (the server-derived `<server>/<name>`).
+   */
+  localTool(
+    def: LocalToolDef,
+    args: Readonly<Record<string, string | number | boolean>> = {},
+  ): Task {
+    return new Task(
+      "tool",
+      "",
+      "",
+      { [TOOL_ARGS_KEY]: canonicalArgsJson(args) },
+      {},
+      undefined,
+      undefined,
+      [def],
     );
   },
 };
@@ -679,6 +737,7 @@ function withGrants(base: Task, handle: string, tags: string[]): Task {
     contract,
     base.maxTurns,
     base.maxToolCalls,
+    base.localTools,
   );
 }
 
@@ -805,16 +864,45 @@ export class Chain {
     };
   }
 
+  /** The distinct {@link LocalToolDef}s referenced across this chain's steps (V2b) —
+   * what the run terminal registers + resolves. */
+  collectLocalTools(): LocalToolDef[] {
+    const seen = new Set<LocalToolDef>();
+    for (const t of this.nodes) {
+      for (const lt of t.localTools) {
+        seen.add(lt);
+      }
+    }
+    return [...seen];
+  }
+
   /**
    * The `SubmitWorkflowRequest` init shape, assembled via the EXISTING
    * {@link BlueprintBuilder} (kinds → enum, strings → UTF-8, mode → FROZEN).
    * The DSL only feeds the builder `StepInput`/`EdgeInput` lists — it never
    * reassembles the wire request itself.
+   *
+   * V2b: `resolved` maps each local-tool def → its server-derived `<server>/<name>`;
+   * those names are folded into the owning step's `tool_contract` at build time
+   * (absent ⇒ a chain with no local tools, byte-identical to before).
    */
-  build(): MessageInitShape<typeof SubmitWorkflowRequestSchema> {
+  build(
+    resolved?: ReadonlyMap<LocalToolDef, string>,
+  ): MessageInitShape<typeof SubmitWorkflowRequestSchema> {
     const builder = new BlueprintBuilder(this.seed);
     for (const t of this.nodes) {
-      builder.addStep(t.toStepInput());
+      const step = t.toStepInput();
+      if (resolved !== undefined && t.localTools.length > 0) {
+        const contract: Record<string, string> = { ...step.toolContract };
+        for (const lt of t.localTools) {
+          const name = resolved.get(lt);
+          if (name !== undefined && !(name in contract)) {
+            contract[name] = lt.version;
+          }
+        }
+        step.toolContract = contract;
+      }
+      builder.addStep(step);
     }
     for (const e of this.edgePairs) {
       const edge: EdgeInput = { parent: e.parent, child: e.child, edge: "data" };
