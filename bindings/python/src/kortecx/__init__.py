@@ -12,6 +12,7 @@ go::
 
 from __future__ import annotations
 
+from .agent import Agent
 from .alerts import AlertsPage, AlertSummary
 from .blueprints import BlueprintBuilder, EdgeInput, StepInput
 from .branch import (
@@ -22,9 +23,11 @@ from .branch import (
     SnapshotResult,
 )
 from .capture import CaptureRecord, CaptureRecordPage
-from .agent import Agent
 from .chains import Chain, Task, chain, model, pure, tool
 from .client import DEFAULT_ENDPOINT, AsyncKxClient, KxClient
+from .content import ContentItem, PutResult
+from .context import ContextBundle, ContextBundleItem, PutContextBundleResult
+from .datasets import DatasetHit, DatasetSummary, FuzzyHit, IngestDocument, IngestResult
 from .defaults import (
     default_client,
     invoke,
@@ -32,10 +35,6 @@ from .defaults import (
     run,
     set_default_client,
 )
-from .flow import Flow, flow
-from .content import ContentItem, PutResult
-from .context import ContextBundle, ContextBundleItem, PutContextBundleResult
-from .datasets import DatasetHit, DatasetSummary, FuzzyHit, IngestDocument, IngestResult
 from .errors import (
     ErrorCode,
     KxCatchupRequired,
@@ -54,6 +53,7 @@ from .errors import (
     KxWaitTimeout,
 )
 from .feedback import FeedbackPage, FeedbackRow, rating_from_proto, rating_to_proto
+from .flow import Flow, flow
 from .grants import AssetGrants, GrantView
 from .models import ModelSummary
 from .motes import MoteConfigItem, MoteDetail, effect_pattern_name, nd_class_name
