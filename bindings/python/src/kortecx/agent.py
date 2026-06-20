@@ -34,6 +34,10 @@ if TYPE_CHECKING:
 
 #: The steered, dynamic-tool recipe (the model chooses tools turn by turn).
 REACT_RECIPE_HANDLE = "kx/recipes/react"
+#: The steered lane that AUTO-GRANTS the live registered tool set (PR-6b-4) — the
+#: dynamic lane routes here when the agent carries tools (only react-auto can fire a
+#: dialed/registered tool). Requires the serve to run with ``KX_SERVE_AUTOGRANT=1``.
+REACT_AUTO_RECIPE_HANDLE = "kx/recipes/react-auto"
 
 
 class Agent:
@@ -44,7 +48,7 @@ class Agent:
         self,
         instructions: str = "",
         *,
-        tools: "Optional[Union[Sequence[str], Mapping[str, str]]]" = None,
+        tools: "Optional[Union[Sequence[object], Mapping[str, str]]]" = None,
         model: str = "",
         max_turns: Optional[int] = None,
         max_tool_calls: Optional[int] = None,
@@ -83,13 +87,51 @@ class Agent:
         timeout: float = 120.0,
         client: "Optional[KxClient]" = None,
     ) -> "Union[_g.RunHandle, Run, Result]":
-        """Run ``task``. Frozen lane (default) ⇒ a single agent step; ``dynamic=True``
-        ⇒ the steered ``kx/recipes/react`` recipe. Waits for the committed
-        :class:`~kortecx.run.Result` unless ``wait=False``."""
+        """Run ``task``.
+
+        - **frozen lane (default)** ⇒ a single agent step. A tool-bearing frozen agent
+          runs a deterministic-agentic loop that **lands in PR-9b-2** (refused at
+          submit today) — so a clear pre-flight hint is raised; use ``dynamic=True`` or
+          ``flow().tool(fn, **args)`` to call tools today.
+        - ``dynamic=True`` ⇒ the steered react lane. With tools it routes to
+          ``kx/recipes/react-auto`` (the only lane that fires registered/dialed tools;
+          needs ``KX_SERVE_AUTOGRANT=1``); without tools, plain ``kx/recipes/react``.
+
+        Waits for the committed :class:`~kortecx.run.Result` unless ``wait=False``."""
         from .defaults import default_client
 
         kx = client if client is not None else default_client()
+        has_tools = bool(self.tools)
         if self.dynamic:
-            args = {"instruction": self._prompt(task)}
-            return kx.invoke(REACT_RECIPE_HANDLE, args, wait=wait, timeout=timeout)
+            # The react / react-auto recipes REQUIRE the bounded-loop budget (the
+            # `react_contract` slots; the UI's planReactArgs mirrors this) — default
+            # to the recipe's anchored 8 / 6 when the agent didn't set them.
+            args = {
+                "instruction": self._prompt(task),
+                "max_turns": self.max_turns if self.max_turns is not None else 8,
+                "max_tool_calls": self.max_tool_calls if self.max_tool_calls is not None else 6,
+            }
+            if not has_tools:
+                return kx.invoke(REACT_RECIPE_HANDLE, args, wait=wait, timeout=timeout)
+            from .errors import KxNotFound
+            from .tools import ToolError, register_tools
+
+            register_tools(kx, self.tools)
+            try:
+                return kx.invoke(REACT_AUTO_RECIPE_HANDLE, args, wait=wait, timeout=timeout)
+            except KxNotFound as exc:
+                raise ToolError(
+                    "the dynamic tool lane needs the 'kx/recipes/react-auto' recipe — "
+                    "serve with KX_SERVE_AUTOGRANT=1 to enable it (it auto-grants the "
+                    "registered tool set to the loop)"
+                ) from exc
+        if has_tools:
+            from .tools import ToolError
+
+            raise ToolError(
+                "a frozen Agent with a tool set runs a deterministic-agentic loop that "
+                "lands in PR-9b-2 and is refused at submit today; use "
+                "Agent(..., dynamic=True) for the steered react lane, or "
+                "flow().tool(fn, **args) to fire one tool deterministically"
+            )
         return self.as_flow(task).run(wait=wait, timeout=timeout, client=kx)

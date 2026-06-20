@@ -59,6 +59,11 @@ execution lands with PR-9b-2). `{ dynamic: true }` routes to the **steered**
 `run` takes an explicit `{ client }` (browser-safe); the Python SDK adds a zero-config
 default client.
 
+The tool set may include your own functions — wrap one with `localTool({ name, params, run })`
+and pass it in `tools: [...]`; the SDK registers it as a local stdio MCP server the runtime
+dials (Node only). See
+[Local function tools](../tools.md#local-function-tools-kxtool--localtool).
+
 ## The string DSL
 
 The combinators (`seq`/`par`/`chainFrom`), the string DSL, and the raw blueprint JSON

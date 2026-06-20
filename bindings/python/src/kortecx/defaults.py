@@ -84,6 +84,15 @@ def default_client() -> KxClient:
     for scripts and sync use; for concurrent or async work, construct explicit
     :class:`~kortecx.client.KxClient` / :class:`~kortecx.client.AsyncKxClient`
     instances rather than relying on this singleton."""
+    # V2b guard: when re-imported inside `kortecx._toolserver` (the local-tool stdio
+    # server), an un-guarded top-level `.run()` would try to start a NEW run + recurse.
+    # Fail loudly with the fix (guard run calls under `if __name__ == "__main__":`).
+    if os.environ.get("KX_TOOLSERVE"):
+        raise RuntimeError(
+            "cannot start a run while serving @kx.tool local tools (the toolserver "
+            "re-import context) — put your .run()/.invoke() calls under "
+            '`if __name__ == "__main__":` so they do not re-execute.'
+        )
     global _DEFAULT_CLIENT
     if _DEFAULT_CLIENT is None:
         _DEFAULT_CLIENT = make_client()

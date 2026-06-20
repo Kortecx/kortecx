@@ -102,10 +102,21 @@ class Flow:
         """Append a PURE step (deterministic, no model/egress)."""
         return self._seq_append(_pure(**params))
 
-    def tool(self, tool_id: str, tool_version: str = "1", **args: object) -> "Flow":
-        """Append a standalone TOOL step — fire ONE registered tool (PR-6b-2). The
-        server resolves it in its live registry + builds the warrant (SN-8)."""
-        return self._seq_append(_tool(tool_id, tool_version, **args))
+    def tool(
+        self, tool_id: "Union[str, object]", tool_version: str = "1", **args: object
+    ) -> "Flow":
+        """Append a standalone TOOL step — fire ONE tool (PR-6b-2). The server
+        resolves it in its live registry + builds the warrant (SN-8).
+
+        ``tool_id`` is either a registered tool's name OR a ``@kx.tool``-decorated
+        LOCAL function (V2b) — the SDK registers the function as a stdio MCP server
+        at the run terminal and fires the resolved tool deterministically."""
+        from .tools import local_tool_def, local_tool_node
+
+        tdef = local_tool_def(tool_id)
+        if tdef is not None:
+            return self._seq_append(local_tool_node(tdef, args))
+        return self._seq_append(_tool(tool_id, tool_version, **args))  # type: ignore[arg-type]
 
     def then(self, item: "FlowItem", **agent_kwargs: object) -> "Flow":
         """Append ``item`` sequentially. A bare string is an agent step (with the
