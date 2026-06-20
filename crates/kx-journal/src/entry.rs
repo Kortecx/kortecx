@@ -178,21 +178,39 @@ use smallvec::SmallVec;
 ///   a `react_rounds` record), never an identity input, never folded into the
 ///   run-identity product digest. Strictly additive; `MAX_ENTRY_LEN` is unchanged.
 ///
+/// **v9 (PR-9b-2a, deterministic-agentic substrate) changes** vs v8:
+/// - `ReactRound` gains a trailing `step_salt: Option<[u8; 32]>` (encoded as a
+///   presence byte + an optional 32-byte salt at the very end of the body). It is
+///   the per-step salt that disjoins a deterministic-agentic step's private
+///   reason→tool→observe chain from the run-level react chain (and from other
+///   agentic steps in the same run); `None` ⇒ a run-level chain (every chain a v8
+///   binary ever wrote). Still off-DAG metadata — never an identity input, never
+///   folded into the run-identity product digest — so the canonical digest is
+///   invariant. `blake3` is one-way, so the salt MUST be stored (recovery cannot
+///   re-derive it), which is why this is a body change (not a recomputed field).
+///   Strictly additive at the tail; `MAX_ENTRY_LEN` is unchanged (+33 bytes max,
+///   far under the cap). The compound `(instance_id, step_salt)` chain key that
+///   *reads* this field lands with the execution path (PR-9b-2b); v9 only persists
+///   it (every v9 `ReactRound` written by this PR carries `None`).
+///
 /// The strict [`crate::SqliteJournal::open`] refuses any file whose
-/// `schema_version` is not exactly v8 (the loud-refusal contract is unchanged).
+/// `schema_version` is not exactly v9 (the loud-refusal contract is unchanged: an
+/// OLD binary refuses a v9 journal rather than misreading its trailing byte).
 ///
 /// **Migration (IMP-2, M2.x-E).** As of the schema-migration work, an older
 /// still-supported version is no longer a dead end: [`crate::migrate_entry`] /
 /// [`crate::ReplayJournal`] up-convert old entries to the current shape for
 /// replay/recovery, and [`crate::migrate_to`] rewrites an old journal into a fresh
-/// v8 one for resume-and-append. v7 → v8 is a pure pass-through (kinds 0..8 are
-/// byte-identical under v8; `ReactRound` is purely additive), as is v6 → v7
-/// (`ReplanRound` purely additive); v5 → v8 appends the safe-default
-/// `idempotency_class` byte (the lone v5→v6 delta) and is then v8-valid.
+/// v9 one for resume-and-append. v8 → v9 appends the safe-default `None` presence
+/// byte to each `ReactRound` (kind 9) body — the lone v8→v9 delta, exactly the
+/// v5→v6 trailing-byte shape — and is then v9-valid; v7 → v9 and v6 → v9 are pure
+/// pass-throughs (kinds 0..8 are byte-identical and v7/v6 predate `ReactRound`, so
+/// they carry no kind-9 entry to grow); v5 → v9 appends the safe-default
+/// `idempotency_class` byte (the lone v5→v6 delta) and is then v9-valid.
 /// The product identity digest is invariant across migration; see
 /// [`crate::migrate_entry`] for the full contract and the supported version window
-/// ([`crate::MIN_SUPPORTED_SCHEMA_VERSION`]..=v8).
-pub const JOURNAL_SCHEMA_VERSION: u16 = 8;
+/// ([`crate::MIN_SUPPORTED_SCHEMA_VERSION`]..=v9).
+pub const JOURNAL_SCHEMA_VERSION: u16 = 9;
 
 /// Fixed entry-header length in bytes (`journal-entry.md` §3).
 pub const HEADER_LEN: usize = 74;
@@ -1056,6 +1074,14 @@ pub enum JournalEntry {
         max_turns: u32,
         /// The run's durable tool-call cap (see `max_turns`).
         max_tool_calls: u32,
+        /// v9 (PR-9b-2a): the per-step salt that disjoins a deterministic-agentic
+        /// step's PRIVATE reason→tool→observe chain from the run-level react chain
+        /// (and from other agentic steps in the same run). `None` ⇒ a run-level
+        /// chain (every chain v8 ever wrote up-converts to `None`). The execution
+        /// path (PR-9b-2b) sets it to the launch step's `MoteId` and keys the
+        /// chain by `(instance_id, step_salt)`. Off-DAG metadata — never an
+        /// identity input, never folded into the run-identity product digest.
+        step_salt: Option<[u8; 32]>,
         /// Journal-assigned sequence (0 until appended).
         seq: u64,
     },
@@ -1290,6 +1316,10 @@ pub enum DecodeError {
     /// [`ReactBranch`] tags (v8, PR-2d-1).
     #[error("unknown ReactRound branch tag: {0}")]
     UnknownReactBranch(u8),
+    /// A `ReactRound` entry's trailing `step_salt` presence tag byte is not `0`
+    /// (absent) or `1` (present) (v9, PR-9b-2a).
+    #[error("unknown ReactRound step_salt presence tag: {0}")]
+    UnknownReactStepSaltTag(u8),
     /// Trailing bytes after a complete entry (§2 no-trailing-data rule).
     #[error("trailing bytes after entry: {0} extra")]
     TrailingBytes(usize),
@@ -1621,12 +1651,16 @@ pub fn encode_entry(entry: &JournalEntry) -> Result<Vec<u8>, EncodeError> {
             branch,
             max_turns,
             max_tool_calls,
+            step_salt,
             ..
         } => {
-            // v8 (PR-2d-1): body = turn(u32 LE) ‖ instance_id(16) ‖
+            // v9 (PR-9b-2a): body = turn(u32 LE) ‖ instance_id(16) ‖
             // base_prompt_ref(32) ‖ warrant_ref(32) ‖ u16-prefixed model_id ‖
             // branch_tag(u8) ‖ [if Tool: u16-prefixed tool_id ‖ u16-prefixed
-            // tool_version] ‖ max_turns(u32 LE) ‖ max_tool_calls(u32 LE).
+            // tool_version] ‖ max_turns(u32 LE) ‖ max_tool_calls(u32 LE) ‖
+            // step_salt_present(u8: 0|1) ‖ [if 1: step_salt(32)]. The step_salt
+            // presence byte is the lone v8→v9 delta (a trailing additive byte,
+            // exactly the v5→v6 shape); v8 bodies up-convert by appending `0`.
             out.extend_from_slice(&turn.to_le_bytes());
             out.extend_from_slice(instance_id);
             out.extend_from_slice(base_prompt_ref.as_bytes());
@@ -1643,6 +1677,13 @@ pub fn encode_entry(entry: &JournalEntry) -> Result<Vec<u8>, EncodeError> {
             }
             out.extend_from_slice(&max_turns.to_le_bytes());
             out.extend_from_slice(&max_tool_calls.to_le_bytes());
+            match step_salt {
+                None => out.push(0u8),
+                Some(salt) => {
+                    out.push(1u8);
+                    out.extend_from_slice(salt);
+                }
+            }
             // Pathological-id guard (mirrors ReplanRound) — refuse rather than
             // over-cap a single oversize entry.
             if out.len() > MAX_ENTRY_LEN {
@@ -2062,6 +2103,14 @@ pub fn decode_entry_with_def_hash(
             };
             let max_turns = read_u32(body, &mut cursor, kind)?;
             let max_tool_calls = read_u32(body, &mut cursor, kind)?;
+            // v9 (PR-9b-2a): the trailing step_salt presence byte (a v8 body
+            // up-converts by appending `0`). Strict: an unknown presence tag is a
+            // decode error; the trailing-bytes check below still fences the end.
+            let step_salt = match read_u8(body, &mut cursor, kind)? {
+                0 => None,
+                1 => Some(read_array32(body, &mut cursor, kind)?),
+                other => return Err(DecodeError::UnknownReactStepSaltTag(other)),
+            };
             if cursor != body.len() {
                 return Err(DecodeError::TrailingBytes(body.len() - cursor));
             }
@@ -2075,6 +2124,7 @@ pub fn decode_entry_with_def_hash(
                 branch,
                 max_turns,
                 max_tool_calls,
+                step_salt,
                 seq,
             })
         }
@@ -2532,7 +2582,9 @@ mod tests {
             anchor
         );
 
-        // v8 (PR-2d-1): ReactRound — every branch shape round-trips.
+        // v9 (PR-9b-2a): ReactRound — every branch shape round-trips, under both
+        // step_salt absent (None, the run-level chain) and present (Some, an
+        // agentic step's private chain).
         for (branch, seq) in [
             (ReactBranch::Pending, 500u64),
             (ReactBranch::Answer, 501),
@@ -2545,20 +2597,68 @@ mod tests {
             ),
             (ReactBranch::DeadLettered, 503),
         ] {
-            let rt = JournalEntry::ReactRound {
-                turn: 2,
-                turn_mote_id: MoteId::from_bytes([0x8e; 32]),
-                instance_id: [0x4d; INSTANCE_ID_LEN],
-                base_prompt_ref: ContentRef::from_bytes([0x12; 32]),
-                warrant_ref: ContentRef::from_bytes([0x34; 32]),
-                model_id: "kx-serve:qwen3-4b".to_string(),
-                branch,
-                max_turns: 8,
-                max_tool_calls: 8,
-                seq,
-            };
-            assert_eq!(decode_entry(&encode_entry(&rt).unwrap()).unwrap(), rt);
+            for step_salt in [None, Some([0x5a_u8; 32])] {
+                let rt = JournalEntry::ReactRound {
+                    turn: 2,
+                    turn_mote_id: MoteId::from_bytes([0x8e; 32]),
+                    instance_id: [0x4d; INSTANCE_ID_LEN],
+                    base_prompt_ref: ContentRef::from_bytes([0x12; 32]),
+                    warrant_ref: ContentRef::from_bytes([0x34; 32]),
+                    model_id: "kx-serve:qwen3-4b".to_string(),
+                    branch: branch.clone(),
+                    max_turns: 8,
+                    max_tool_calls: 8,
+                    step_salt,
+                    seq,
+                };
+                assert_eq!(decode_entry(&encode_entry(&rt).unwrap()).unwrap(), rt);
+            }
         }
+    }
+
+    /// v9 (PR-9b-2a): the step_salt presence byte is the lone v8→v9 delta — a v8
+    /// `ReactRound` body is EXACTLY a v9 `step_salt: None` body minus its final
+    /// `0` byte (the migration's append-`0` rule). Pin that byte relationship so a
+    /// drift in either the encode tail or the migration up-converter fails CI.
+    #[test]
+    fn react_round_v8_body_is_v9_none_minus_trailing_zero() {
+        let none = JournalEntry::ReactRound {
+            turn: 3,
+            turn_mote_id: MoteId::from_bytes([0x8e; 32]),
+            instance_id: [0x4d; INSTANCE_ID_LEN],
+            base_prompt_ref: ContentRef::from_bytes([0x12; 32]),
+            warrant_ref: ContentRef::from_bytes([0x34; 32]),
+            model_id: "m".to_string(),
+            branch: ReactBranch::Answer,
+            max_turns: 8,
+            max_tool_calls: 6,
+            step_salt: None,
+            seq: 600,
+        };
+        let v9_none = encode_entry(&none).unwrap();
+        // The final body byte is the `None` presence tag (`0`); dropping it yields
+        // the v8 byte shape, and appending `0` back recovers the v9 None encoding.
+        assert_eq!(*v9_none.last().unwrap(), 0u8);
+        let v8_shape = &v9_none[..v9_none.len() - 1];
+        let mut reappended = v8_shape.to_vec();
+        reappended.push(0u8);
+        assert_eq!(reappended, v9_none);
+        // A v9 Some(..) body is the v8 shape + presence(1) + 32 salt bytes.
+        let some = JournalEntry::ReactRound {
+            turn: 3,
+            turn_mote_id: MoteId::from_bytes([0x8e; 32]),
+            instance_id: [0x4d; INSTANCE_ID_LEN],
+            base_prompt_ref: ContentRef::from_bytes([0x12; 32]),
+            warrant_ref: ContentRef::from_bytes([0x34; 32]),
+            model_id: "m".to_string(),
+            branch: ReactBranch::Answer,
+            max_turns: 8,
+            max_tool_calls: 6,
+            step_salt: Some([0x5a; 32]),
+            seq: 600,
+        };
+        let v9_some = encode_entry(&some).unwrap();
+        assert_eq!(v9_some.len(), v9_none.len() + 32);
     }
 
     #[test]
@@ -2576,6 +2676,7 @@ mod tests {
             branch: ReactBranch::Pending,
             max_turns: 8,
             max_tool_calls: 8,
+            step_salt: None,
             seq: 11,
         };
         assert_eq!(e.kind(), KIND_REACT_ROUND);
@@ -2596,6 +2697,7 @@ mod tests {
             branch: ReactBranch::Answer,
             max_turns: 8,
             max_tool_calls: 8,
+            step_salt: None,
             seq: 12,
         };
         let bytes = encode_entry(&e).unwrap();
@@ -2607,6 +2709,14 @@ mod tests {
         assert!(matches!(
             decode_entry(&corrupt),
             Err(DecodeError::UnknownReactBranch(0xee))
+        ));
+        // v9 (PR-9b-2a): the trailing step_salt presence byte (the final body byte
+        // for a None entry) must be 0 or 1; an unknown tag is fail-closed.
+        let mut bad_salt_tag = bytes.clone();
+        *bad_salt_tag.last_mut().unwrap() = 0xee;
+        assert!(matches!(
+            decode_entry(&bad_salt_tag),
+            Err(DecodeError::UnknownReactStepSaltTag(0xee))
         ));
         // Trailing garbage after a complete entry is fail-closed (§2).
         let mut trailing = bytes;

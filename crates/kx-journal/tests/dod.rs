@@ -303,16 +303,16 @@ fn obligation_13_schema_version_mismatch_loud_refusal() {
     }
 }
 
-/// PR-2d-1 (react-substrate): pin the schema version so the v7→v8 bump (the
-/// additive `ReactRound` entry kind) is an intentional, reviewable change — a
-/// future edit that touches the entry encoding must bump this in lock-step.
-/// (Prior bumps: v3→v4 added `RunVersionsResolved`, M1.2/D79; v4→v5 added
-/// `DigestSealed`, M2.2c/D104; v5→v6 added
-/// `ResolvedCapabilityRecord.idempotency_class`, M2.3b/D105.4; v6→v7 added
-/// `ReplanRound`, PR-2c-2.)
+/// PR-9b-2a (deterministic-agentic substrate): pin the schema version so a bump
+/// is an intentional, reviewable change — a future edit that touches the entry
+/// encoding must bump this in lock-step. (Prior bumps: v3→v4 added
+/// `RunVersionsResolved`, M1.2/D79; v4→v5 added `DigestSealed`, M2.2c/D104; v5→v6
+/// added `ResolvedCapabilityRecord.idempotency_class`, M2.3b/D105.4; v6→v7 added
+/// `ReplanRound`, PR-2c-2; v7→v8 added the `ReactRound` kind, PR-2d-1; v8→v9 added
+/// the trailing `ReactRound.step_salt`, PR-9b-2a.)
 #[test]
-fn schema_version_is_v8() {
-    assert_eq!(JOURNAL_SCHEMA_VERSION, 8);
+fn schema_version_is_v9() {
+    assert_eq!(JOURNAL_SCHEMA_VERSION, 9);
 }
 
 /// IMP-2 (M2.x-E): pin the migration floor. The schema-migration ladder

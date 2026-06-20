@@ -133,6 +133,7 @@ mod tests {
             branch,
             max_turns: 8,
             max_tool_calls: 8,
+            step_salt: None,
             seq: 0,
         }
     }

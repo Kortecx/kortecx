@@ -47,7 +47,7 @@ use kx_mote::MoteDefHash;
 
 use crate::entry::{
     decode_entry_with_def_hash, IdempotencyClassTag, JournalEntry, HEADER_LEN, INSTANCE_ID_LEN,
-    JOURNAL_SCHEMA_VERSION, KIND_RUN_VERSIONS_RESOLVED,
+    JOURNAL_SCHEMA_VERSION, KIND_REACT_ROUND, KIND_RUN_VERSIONS_RESOLVED,
 };
 use crate::JournalError;
 
@@ -97,24 +97,49 @@ pub fn migrate_entry(
     // double-append its `idempotency_class` byte). `from_version` is guaranteed in
     // [MIN_SUPPORTED, CURRENT] by the guard above.
     match from_version {
-        // v8 (current): no transform, the single source of truth for decode.
+        // v9 (current): no transform, the single source of truth for decode.
         JOURNAL_SCHEMA_VERSION => Ok(decode_entry_with_def_hash(bytes, def_hash)?),
-        // v7 → v8: a PURE pass-through. Kinds 0..8 are byte-identical under v8 and
-        // `ReactRound` (kind 9) is purely additive, so a v7 journal's existing
-        // bytes already decode correctly under v8 — no transform.
+        // v8 → v9: append the safe-default `None` step_salt presence byte to each
+        // `ReactRound` (kind 9) body (the lone v8→v9 delta — a trailing additive
+        // byte, exactly the v5→v6 shape); every other kind is byte-identical and
+        // passes through. The result is v9-shaped.
+        8 => upconvert_v8_to_current(bytes, def_hash),
+        // v7 → v9: a PURE pass-through. Kinds 0..8 are byte-identical and v7
+        // predates `ReactRound` (kind 9, added v8), so a v7 journal carries no
+        // kind-9 body to grow — its existing bytes decode correctly under v9.
         7 => Ok(decode_entry_with_def_hash(bytes, def_hash)?),
-        // v6 → v8: a PURE pass-through. Kinds 0..7 are byte-identical and
-        // `ReplanRound` (kind 8) / `ReactRound` (kind 9) are purely additive, so a
-        // v6 journal's existing bytes already decode correctly — no transform.
+        // v6 → v9: a PURE pass-through. Kinds 0..7 are byte-identical and v6
+        // predates both `ReplanRound` (kind 8) and `ReactRound` (kind 9) — no
+        // kind-8/9 body to grow.
         6 => Ok(decode_entry_with_def_hash(bytes, def_hash)?),
-        // v5 → v8: append the safe-default `idempotency_class` byte (the lone v5→v6
-        // delta); the result is v6-shaped, which decodes identically under v8.
+        // v5 → v9: append the safe-default `idempotency_class` byte (the lone v5→v6
+        // delta); v5 predates `ReactRound`, so no step_salt byte is needed. The
+        // result is v6-shaped, which decodes identically under v9.
         5 => upconvert_v5_to_current(bytes, def_hash),
         // Unreachable (guarded above); kept total + fail-closed.
         other => Err(JournalError::SchemaVersionMismatch {
             expected: JOURNAL_SCHEMA_VERSION,
             found: other,
         }),
+    }
+}
+
+/// v8 → current up-converter. The lone transform is appending the safe-default
+/// `None` step_salt presence byte (`0`) to a `ReactRound` (kind 9) body; all other
+/// v8 bytes are already valid current-version bytes and pass through. A v8
+/// `ReactRound` body ends at `max_tool_calls` (no trailing byte), so appending `0`
+/// produces a valid v9 `step_salt: None` body that the canonical decoder accepts.
+fn upconvert_v8_to_current(
+    bytes: &[u8],
+    def_hash: MoteDefHash,
+) -> Result<JournalEntry, JournalError> {
+    if bytes.first() == Some(&KIND_REACT_ROUND) {
+        let mut upconverted = Vec::with_capacity(bytes.len() + 1);
+        upconverted.extend_from_slice(bytes);
+        upconverted.push(0u8); // step_salt present == false (None)
+        Ok(decode_entry_with_def_hash(&upconverted, def_hash)?)
+    } else {
+        Ok(decode_entry_with_def_hash(bytes, def_hash)?)
     }
 }
 
