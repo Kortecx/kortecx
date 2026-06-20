@@ -19,6 +19,7 @@ from kortecx.chains import (
     AgenticStepError,
     Chain,
     ChainCycleError,
+    ChainError,
     ChainParseError,
     Task,
     UnknownHandleError,
@@ -271,3 +272,51 @@ def test_agentic_budget_lowers_to_params() -> None:
 def test_agentic_grants_on_non_model_raise() -> None:
     with pytest.raises(AgenticStepError):
         chain("p@echo", {"p": pure()}).lowering()
+
+
+# ---- Batch A: omittable model_id + reasoning= veneer ----
+
+
+def test_model_id_is_optional_and_lowers_to_empty() -> None:
+    # Omit model_id (prompt-only) — the server binds the served model (SN-8). The
+    # lowering carries an empty model_id; a default_model fills it client-side at submit.
+    lowered = chain("p > q", {"p": model(prompt="go"), "q": pure()}).lowering()
+    assert lowered["steps"][0]["kind"] == "model"
+    assert lowered["steps"][0]["model_id"] == ""
+    # A named model still lowers verbatim (positional, unchanged).
+    lowered2 = chain("p", {"p": model("kx-serve:m", "go")}).lowering()
+    assert lowered2["steps"][0]["model_id"] == "kx-serve:m"
+
+
+def test_reasoning_kwarg_lowers_to_params() -> None:
+    for mode in ("full", "minimal", "off", "strip"):
+        lowered = chain("p", {"p": model("kx-serve:m", "go", reasoning=mode)}).lowering()
+        assert lowered["steps"][0]["params"] == {"reasoning": mode}
+    # Absent ⇒ byte-identical (no reasoning key).
+    assert chain("p", {"p": model("kx-serve:m", "go")}).lowering()["steps"][0]["params"] == {}
+
+
+def test_reasoning_invalid_value_is_rejected() -> None:
+    with pytest.raises(ChainError):
+        model("kx-serve:m", "go", reasoning="loud")
+
+
+def test_fill_default_model_fills_only_empty_model_steps() -> None:
+    from kortecx.client import _fill_default_model
+
+    req = chain(
+        "p > q > r",
+        {
+            "p": model(prompt="go"),  # empty model_id ⇒ filled
+            "q": model("kx-serve:explicit", "go"),  # named ⇒ untouched
+            "r": pure(),  # pure ⇒ untouched
+        },
+    ).build()
+    _fill_default_model(req, "kx-serve:default")
+    assert req.steps[0].model_id == "kx-serve:default"
+    assert req.steps[1].model_id == "kx-serve:explicit"
+    assert req.steps[2].model_id == ""
+    # No default ⇒ no-op (server binds "" → served).
+    req2 = chain("p", {"p": model(prompt="go")}).build()
+    _fill_default_model(req2, "")
+    assert req2.steps[0].model_id == ""

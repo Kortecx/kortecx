@@ -34,6 +34,7 @@ from typing import Dict, List, Mapping, Optional, Sequence, Tuple, Union
 from .blueprints import (
     REACT_MAX_TOOL_CALLS_KEY,
     REACT_MAX_TURNS_KEY,
+    REASONING_KEY,
     TOOL_ARGS_KEY,
     BlueprintBuilder,
     EdgeInput,
@@ -158,30 +159,52 @@ def _grants_to_contract(
     return contract
 
 
+#: Batch A: the opt-in reasoning modes a ``reasoning=`` kwarg accepts (the SERVER reads
+#: ``config_subset["reasoning"]``). Any other value is a client-side error (fail-closed
+#: at authoring rather than a silent server no-op).
+_REASONING_MODES = frozenset({"full", "minimal", "off", "strip"})
+
+
+def _validate_reasoning(reasoning: str) -> str:
+    if reasoning not in _REASONING_MODES:
+        raise ChainError(f"reasoning must be one of {sorted(_REASONING_MODES)}, got {reasoning!r}")
+    return reasoning
+
+
 def model(
-    model_id: str,
-    prompt: str,
+    model_id: str = "",
+    prompt: str = "",
     *,
     tools: "Optional[Union[Sequence[str], Mapping[str, str]]]" = None,
     max_turns: Optional[int] = None,
     max_tool_calls: Optional[int] = None,
+    reasoning: Optional[str] = None,
     **params: Union[bytes, str],
 ) -> Task:
-    """A MODEL step. ``model_id`` is the recipe enum the SERVER validates (SN-8);
-    ``prompt`` is the instruction; ``params`` are extra step params.
+    """A MODEL step. ``prompt`` is the instruction; ``params`` are extra step params.
+
+    Batch A: ``model_id`` is OPTIONAL — omit it (or pass ``""``) and the SERVER binds
+    the served model (SN-8); set a client ``default_model`` to fill it client-side, or
+    name a specific served model. ``reasoning`` (``"full"`` / ``"minimal"`` / ``"off"``
+    / ``"strip"``) sets the opt-in reasoning mode — absent ⇒ the model's own behavior
+    (and a byte-identical MoteId). Use ``reasoning=`` as the typed knob rather than a
+    raw ``params`` magic-string.
 
     PR-9b (D161.1): pass ``tools`` (a list of names → version ``"1"``, or a
     ``{name: version}`` map) to make this a **deterministic-agentic step** — the
     model runs a bounded reason→tool→observe loop over the granted tool SET (the
     same step the string DSL authors as ``handle@tool@tool``). ``max_turns`` /
     ``max_tool_calls`` bound the loop (default 8 / 6; ignored when no tools)."""
+    step_params: Dict[str, Union[bytes, str]] = dict(params)
+    if reasoning is not None:
+        step_params[REASONING_KEY] = _validate_reasoning(reasoning)
     return Task(
         StepInput(
             kind="model",
             model_id=model_id,
             prompt=prompt,
             tool_contract=_grants_to_contract(tools),
-            params=dict(params),
+            params=step_params,
             max_turns=max_turns,
             max_tool_calls=max_tool_calls,
         )

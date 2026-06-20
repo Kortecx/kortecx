@@ -186,6 +186,57 @@ step's `model_id` and `prompt` are carried into its `StepInput`; the pure step
 carries its `params`. Params values are strings in the lowering form — each SDK
 UTF-8-encodes them at `build()` time.
 
+### Fewer inputs from the JSON / CLI surface
+
+The author-side step is **terse**: the runtime infers what it can, and you only
+spell out what you actually mean.
+
+- **`kind` is optional.** Omit it and the CLI infers it from the fields present — a
+  `model_id`/`prompt` ⇒ `model`, a `tool_contract` (with no model fields) ⇒ `tool`,
+  anything else ⇒ `pure`. An explicit `kind` is an override that must *agree* with the
+  fields (a `kind:"pure"` next to a `model_id` is a fail-closed error, not a silent
+  drop). A `model` step that also carries a `tool_contract` stays a `model` step (the
+  deterministic-agentic step).
+- **`model_id` is optional.** Omit it and the server binds the served model; set a
+  client `default_model` (Python `KxClient(default_model=…)` / TS `{ defaultModel }` /
+  the `KX_DEFAULT_MODEL` env var) to fill it for every blank MODEL step at submit.
+- **`reasoning`** (`full` / `minimal` / `off` / `strip`) is a typed knob on the SDK
+  `model()` factory — absent leaves the model's own behavior (and the step identity)
+  unchanged.
+
+```bash
+# A whole chain authored inline — no tasks file, no `kind`:
+kx chain run "plan > review" \
+  --task plan='{"prompt":"Research the topic."}' \
+  --task review='{}' --wait
+```
+
+`--task name='{…}'` (repeatable) and `--tasks-json '{…}'` are inline alternatives to
+`--tasks <file>`; all three merge into one handle → step map (fail-closed on a handle
+defined twice).
+
+### The authoring ladder
+
+Reach for the lowest rung that fits — each lowers to the same `SubmitWorkflow` the
+server compiles and warrants (SN-8):
+
+1. **`kx invoke <recipe>`** — run a published recipe by handle (`--args '{…}'`). The
+   easiest front door for a ready-made capability.
+2. **The chain DSL** — `chain("a > [b & c]", …)` / `a >> (b & c)` — compose your own
+   handles into a DAG. This page.
+3. **A raw blueprint** — `kx blueprint run --file dag.json` — full control over every
+   step and edge.
+
+### Authored vs steered tool-calling
+
+There are two lanes for tool-calling, and the API names mirror the distinction:
+
+- **Authored / deterministic** — the `model@tool` step (above): a *fixed*, server-vetted
+  tool-grant SET on a frozen-DAG step. Replayable; the tool set is part of the step's
+  identity. (Execution lands in PR-9b-2; see the note above.)
+- **Steered / dynamic** — the `kx/recipes/react` recipe: the model picks tools turn by
+  turn from the granted set. Use this for open-ended agents today.
+
 ### Attaching context bundles
 
 A chain can attach [context bundles](../context.md) — named, content-addressed

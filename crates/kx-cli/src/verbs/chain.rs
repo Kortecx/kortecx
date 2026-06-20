@@ -14,11 +14,16 @@
 //!
 //! ```text
 //! kx chain run "a > [b & c]" --tasks tasks.json --context team/ctx/spec --wait
+//! # …or fully inline (Batch A — no file needed):
+//! kx chain run "a > b" --task a='{"prompt":"go"}' --task b='{}' --wait
+//! kx chain run "a > b" --tasks-json '{"a":{"prompt":"go"},"b":{}}' --wait
 //! ```
-//! `--tasks` is a JSON object map `{ "a": {"kind":"pure", ...}, ... }` — each value
-//! is a [`StepSpec`](crate::verbs::blueprint) (the same shape as a `blueprint`
-//! step). A handle that appears more than once is the SAME node (reuse builds DAGs);
-//! tasks defined but unused are ignored (lenient). Palette: `pure` / `model` /
+//! Tasks come from a `--tasks <file>`, an inline `--tasks-json '{…}'`, and/or repeated
+//! `--task name='{…}'` (Batch A) — merged into one handle → [`StepSpec`](crate::verbs::blueprint)
+//! map (fail-closed on a handle defined twice). Each step's `kind` is OPTIONAL (inferred
+//! from field presence; see the `StepSpec` shape). A handle that appears more than once is the
+//! SAME node (reuse builds DAGs); tasks defined but unused are ignored (lenient).
+//! Palette: `pure` / `model` /
 //! `tool` (PR-6b-2 — fire a registered tool; `args` lower to the canonical
 //! `kx.tool.args` blob). `--context <handle>` (PR-7, repeatable) attaches named
 //! context bundles to the run — the server injects them into every entry Mote at
@@ -54,8 +59,15 @@ struct TasksFile(BTreeMap<String, StepSpec>);
 pub struct ChainArgs {
     /// The chain DSL expression (the positional argument).
     pub dsl: String,
-    /// The `--tasks <tasks.json>` handle → step map.
-    pub tasks: PathBuf,
+    /// The `--tasks <tasks.json>` handle → step map FILE (optional — Batch A: a chain
+    /// can be authored entirely inline via `--task`/`--tasks-json` with no file).
+    pub tasks: Option<PathBuf>,
+    /// Batch A: `--tasks-json '{ "a": {…}, … }'` — the whole handle → step map as one
+    /// inline JSON string.
+    pub tasks_json: Option<String>,
+    /// Batch A: `--task name='{ … }'` (repeatable) — one handle → step at a time, so a
+    /// small chain needs no file. Each entry is `(handle, step-json)`.
+    pub inline_tasks: Vec<(String, String)>,
     /// The chain seed (`--seed`, default 0; folds into entrypoint identity).
     pub seed: u32,
     /// PR-7: context-bundle handles to attach (`--context <handle>`, repeatable).
@@ -84,6 +96,8 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<ChainArgs, CliErr
     }
     let mut dsl: Option<String> = None;
     let mut tasks: Option<PathBuf> = None;
+    let mut tasks_json: Option<String> = None;
+    let mut inline_tasks: Vec<(String, String)> = Vec::new();
     let mut seed: u32 = 0;
     let mut context: Vec<String> = Vec::new();
     let mut wait = false;
@@ -97,6 +111,23 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<ChainArgs, CliErr
         }
         match flag.as_str() {
             "--tasks" => tasks = Some(PathBuf::from(next_value(&mut args, "--tasks")?)),
+            "--tasks-json" => tasks_json = Some(next_value(&mut args, "--tasks-json")?),
+            "--task" => {
+                // `--task name={…}` — split on the FIRST `=` so the JSON value (which
+                // contains no bare `=` outside strings, but may inside) is preserved.
+                let kv = next_value(&mut args, "--task")?;
+                let (name, json) = kv.split_once('=').ok_or_else(|| {
+                    CliError::Usage(format!(
+                        "--task expects name=<step-json>, got {kv:?} (e.g. --task a='{{\"prompt\":\"go\"}}')"
+                    ))
+                })?;
+                if name.is_empty() {
+                    return Err(CliError::Usage(
+                        "--task handle name must be non-empty (name=<step-json>)".into(),
+                    ));
+                }
+                inline_tasks.push((name.to_string(), json.to_string()));
+            }
             "--seed" => {
                 let v = next_value(&mut args, "--seed")?;
                 seed = v.parse().map_err(|_| {
@@ -132,11 +163,15 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<ChainArgs, CliErr
     let dsl = dsl.ok_or_else(|| {
         CliError::Usage("chain run requires a DSL expression, e.g. \"a > [b & c]\"".into())
     })?;
-    let tasks =
-        tasks.ok_or_else(|| CliError::Usage("chain run requires --tasks <tasks.json>".into()))?;
+    // Batch A: tasks may come from a `--tasks` file, an inline `--tasks-json`, and/or
+    // repeated `--task name=…` — at least one source must define the DSL's handles, but
+    // the unknown-handle check (against the resolved map) is the authoritative gate, so
+    // parsing no longer REQUIRES `--tasks`.
     Ok(ChainArgs {
         dsl,
         tasks,
+        tasks_json,
+        inline_tasks,
         seed,
         context,
         wait,
@@ -144,6 +179,44 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<ChainArgs, CliErr
         out,
         common,
     })
+}
+
+/// Batch A: merge the task map from every source (`--tasks` file, `--tasks-json`,
+/// repeated `--task name=…`) into ONE handle → [`StepSpec`] map, fail-closed on a
+/// handle defined by more than one source (no silent last-wins).
+fn collect_tasks(args: &ChainArgs) -> Result<BTreeMap<String, StepSpec>, CliError> {
+    let mut tasks: BTreeMap<String, StepSpec> = BTreeMap::new();
+    let mut insert = |handle: String, spec: StepSpec| -> Result<(), CliError> {
+        if tasks.insert(handle.clone(), spec).is_some() {
+            return Err(CliError::Usage(format!(
+                "task handle {handle:?} is defined by more than one source \
+                 (--tasks / --tasks-json / --task)"
+            )));
+        }
+        Ok(())
+    };
+    if let Some(path) = &args.tasks {
+        let raw = std::fs::read(path)
+            .map_err(|e| CliError::Usage(format!("cannot read {}: {e}", path.display())))?;
+        let TasksFile(map) = serde_json::from_slice(&raw)
+            .map_err(|e| CliError::Usage(format!("invalid --tasks JSON: {e}")))?;
+        for (h, s) in map {
+            insert(h, s)?;
+        }
+    }
+    if let Some(json) = &args.tasks_json {
+        let TasksFile(map) = serde_json::from_str(json)
+            .map_err(|e| CliError::Usage(format!("invalid --tasks-json: {e}")))?;
+        for (h, s) in map {
+            insert(h, s)?;
+        }
+    }
+    for (name, json) in &args.inline_tasks {
+        let spec: StepSpec = serde_json::from_str(json)
+            .map_err(|e| CliError::Usage(format!("invalid --task {name:?} JSON: {e}")))?;
+        insert(name.clone(), spec)?;
+    }
+    Ok(tasks)
 }
 
 /// The deterministic lowering of a parsed chain: the node list in first-appearance
@@ -491,11 +564,14 @@ fn build_request(
         // tool_contract (version "1"), turning it into a deterministic-agentic step.
         // `@` tags on a non-model step are a fail-closed authoring error.
         if let Some(tags) = lowered.grants.get(&u32::try_from(idx).unwrap_or(u32::MAX)) {
-            if step.kind != "model" {
+            // Batch A: the kind is resolved (inferred/validated) — a `model` step that
+            // already carries a `tool_contract` is still `model`, so injecting the `@`
+            // tags below never re-classifies it ([`StepSpec::resolve_kind`] checks model
+            // fields before the tool contract). `@` on a non-model step is fail-closed.
+            if step.resolve_kind()? != kx_proto::proto::WorkflowStepKind::Model {
                 return Err(CliError::Usage(format!(
-                    "`@` tool grants on a non-model step {handle:?} (kind {:?}); \
-                     `@tool` tags require a model step (the deterministic-agentic step)",
-                    step.kind
+                    "`@` tool grants on a non-model step {handle:?}; \
+                     `@tool` tags require a model step (the deterministic-agentic step)"
                 )));
             }
             for tag in tags {
@@ -530,11 +606,7 @@ fn build_request(
 
 /// Execute `chain run`.
 pub async fn execute(args: ChainArgs) -> Result<(), CliError> {
-    let raw = std::fs::read(&args.tasks)
-        .map_err(|e| CliError::Usage(format!("cannot read {}: {e}", args.tasks.display())))?;
-    let TasksFile(tasks) = serde_json::from_slice(&raw)
-        .map_err(|e| CliError::Usage(format!("invalid --tasks JSON: {e}")))?;
-
+    let tasks = collect_tasks(&args)?;
     let lowered = lower(&args.dsl)?;
     let req = build_request(lowered, tasks, args.seed, args.context)?;
 
@@ -574,13 +646,15 @@ mod tests {
     // ---- arg parsing (the runs.rs / blueprint.rs precedent) ----
 
     #[test]
-    fn requires_run_subcommand_dsl_and_tasks() {
+    fn requires_run_subcommand_and_dsl() {
         assert!(p(&[]).is_err(), "no subcommand is a usage error");
         assert!(p(&["nope"]).is_err(), "unknown subcommand is a usage error");
         assert!(p(&["run"]).is_err(), "run without a DSL is a usage error");
+        // Batch A: `--tasks` is no longer required at PARSE time — tasks may be inline,
+        // and the unknown-handle check (at execute) is the authoritative gate.
         assert!(
-            p(&["run", "a > b"]).is_err(),
-            "run without --tasks is a usage error"
+            p(&["run", "a > b"]).is_ok(),
+            "run without --tasks now parses (tasks may be inline)"
         );
     }
 
@@ -604,7 +678,7 @@ mod tests {
         ])
         .unwrap();
         assert_eq!(a.dsl, "a > [b & c]");
-        assert_eq!(a.tasks, PathBuf::from("tasks.json"));
+        assert_eq!(a.tasks, Some(PathBuf::from("tasks.json")));
         assert_eq!(a.seed, 7);
         // PR-7: --context is repeatable, captured verbatim in order.
         assert_eq!(a.context, vec!["team/ctx/spec", "team/ctx/notes"]);
@@ -649,6 +723,70 @@ mod tests {
         assert!(p(&["run", "a", "--tasks", "t.json", "--bogus"]).is_err());
         assert!(p(&["run", "a", "--tasks", "t.json", "--seed", "many"]).is_err());
         assert!(p(&["run", "a", "--tasks", "t.json", "--timeout-secs", "soon"]).is_err());
+    }
+
+    // ---- Batch A: inline tasks (--task / --tasks-json) ----
+
+    #[test]
+    fn inline_task_flags_collect_into_the_task_map() {
+        // A 2-step chain authored entirely inline (no file), with omitted kinds.
+        let a = p(&[
+            "run",
+            "a > b",
+            "--task",
+            r#"a={"prompt":"go"}"#,
+            "--task",
+            "b={}",
+        ])
+        .unwrap();
+        let tasks = collect_tasks(&a).unwrap();
+        assert_eq!(tasks.len(), 2);
+        // `a` has a prompt ⇒ inferred model; `b` is empty ⇒ inferred pure.
+        assert_eq!(
+            tasks["a"].resolve_kind().unwrap(),
+            proto::WorkflowStepKind::Model
+        );
+        assert_eq!(
+            tasks["b"].resolve_kind().unwrap(),
+            proto::WorkflowStepKind::Pure
+        );
+        // It lowers end-to-end (build_request resolves the handles).
+        let req = build_request(lower(&a.dsl).unwrap(), tasks, a.seed, a.context).unwrap();
+        assert_eq!(req.steps.len(), 2);
+        assert_eq!(req.edges.len(), 1);
+    }
+
+    #[test]
+    fn tasks_json_flag_collects_the_whole_map() {
+        let a = p(&[
+            "run",
+            "a > b",
+            "--tasks-json",
+            r#"{"a":{"prompt":"go"},"b":{}}"#,
+        ])
+        .unwrap();
+        let tasks = collect_tasks(&a).unwrap();
+        assert_eq!(tasks.len(), 2);
+        assert!(tasks.contains_key("a") && tasks.contains_key("b"));
+    }
+
+    #[test]
+    fn a_handle_defined_by_two_sources_is_fail_closed() {
+        let a = p(&["run", "a", "--tasks-json", r#"{"a":{}}"#, "--task", "a={}"]).unwrap();
+        let err = collect_tasks(&a)
+            .expect_err("duplicate handle across sources")
+            .to_string()
+            .to_lowercase();
+        assert!(err.contains("more than one source"), "got: {err}");
+    }
+
+    #[test]
+    fn malformed_inline_task_is_a_usage_error() {
+        // `--task` without `name=`.
+        assert!(p(&["run", "a", "--task", "no-equals"]).is_err());
+        // valid flag, invalid JSON value → surfaced at collect time.
+        let a = p(&["run", "a", "--task", "a={not json}"]).unwrap();
+        assert!(collect_tasks(&a).is_err());
     }
 
     // ---- the golden-corpus parity gate (the tri-surface contract) ----

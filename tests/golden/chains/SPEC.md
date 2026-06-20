@@ -163,3 +163,11 @@ A deterministic-agentic step (PR-9b) is authored with the `@` grammar (`p@echo`)
 populated (version `"1"` for `@`-tags) and, if a budget was set, `params["max_turns"]` /
 `params["max_tool_calls"]` = the decimal strings. `agentic_dedup` pins the order-preserving tag
 dedup; `agentic_non_model` pins the non-model rejection.
+
+A `model` task MAY omit `model_id` (it lowers to `""` — the SERVER binds the served model, SN-8;
+`model_id_optional` pins this) and MAY carry a `params["reasoning"]` value (`full` / `minimal` /
+`off` / `strip`, the opt-in reasoning mode the server reads from `config_subset`; `model_reasoning`
+pins it). The SDK `model()` factories expose `model_id` as optional and `reasoning=` as a typed
+kwarg; both lower to exactly these params. (The author-side `kind` is a CLI/JSON-only convenience —
+omit it and the CLI infers it from field presence; the SDK factories always set it, so `kind` is
+not part of this cross-surface corpus.)

@@ -63,6 +63,27 @@ from .v1 import gateway_pb2_grpc as _gg
 #: The conventional gateway endpoint (matches ``kx serve`` / the CLI default).
 DEFAULT_ENDPOINT = "http://127.0.0.1:50151"
 
+#: Batch A: the env var a client reads for its default model when none is passed.
+DEFAULT_MODEL_ENV = "KX_DEFAULT_MODEL"
+
+
+def _fill_default_model(
+    request: "_g.SubmitWorkflowRequest", default_model: str
+) -> "_g.SubmitWorkflowRequest":
+    """Batch A: fill any MODEL step that left ``model_id`` empty with the client's
+    ``default_model``, in place, just before submit. A no-op when ``default_model`` is
+    unset OR no step omitted its model — so the canonical lowering (which the corpus
+    pins, client-free) is untouched and the server still binds ``""`` → the served
+    model (SN-8) when neither is set. Returns ``request`` for chaining."""
+    if not default_model:
+        return request
+    model_kind = _g.WorkflowStepKind.WORKFLOW_STEP_KIND_MODEL
+    for step in request.steps:
+        if step.kind == model_kind and not step.model_id:
+            step.model_id = default_model
+    return request
+
+
 #: The canonical ReAct recipe handle. A react run has NO statically-known terminal
 #: Mote (the gateway hands back a run-salted turn-0 id that never commits, and the
 #: settled Answer turn isn't known until the model emits it), so ``invoke(wait=True)``
@@ -170,10 +191,15 @@ class KxClient:
         *,
         token: Optional[str] = None,
         token_file: Optional[str] = None,
+        default_model: str = "",
         channel_options: Optional[list] = None,
     ) -> None:
         self.endpoint = endpoint
         self._token = _resolve_token(endpoint, token, token_file)
+        # Batch A: the default model to fill into MODEL steps that omit `model_id`
+        # (a multi-model convenience; the server binds `""` → served when unset). An
+        # explicit arg wins over the `KX_DEFAULT_MODEL` env fallback.
+        self.default_model = default_model or os.environ.get(DEFAULT_MODEL_ENV, "")
         self._md = [("authorization", f"Bearer {self._token}")] if self._token else []
         if endpoint.startswith("https://"):
             self._channel = grpc.secure_channel(
@@ -278,6 +304,7 @@ class KxClient:
         from the party's grants (SN-8) — the client sends only the topology + params.
         Returns the ``RunHandle``, or — with ``wait=True`` — the first committed
         :class:`Result`. An old gateway without the seam raises ``KxUnimplemented``."""
+        _fill_default_model(request, self.default_model)
         handle = self._call(lambda: self._stub.SubmitWorkflow(request, metadata=self._md))
         if not wait:
             return handle
@@ -1202,10 +1229,13 @@ class AsyncKxClient:
         *,
         token: Optional[str] = None,
         token_file: Optional[str] = None,
+        default_model: str = "",
         channel_options: Optional[list] = None,
     ) -> None:
         self.endpoint = endpoint
         self._token = _resolve_token(endpoint, token, token_file)
+        # Batch A: see `KxClient.default_model`.
+        self.default_model = default_model or os.environ.get(DEFAULT_MODEL_ENV, "")
         self._md = [("authorization", f"Bearer {self._token}")] if self._token else []
         if endpoint.startswith("https://"):
             self._channel = grpc.aio.secure_channel(
@@ -1279,6 +1309,7 @@ class AsyncKxClient:
     async def submit_workflow(
         self, request: "_g.SubmitWorkflowRequest", *, wait: bool = False, timeout: float = 120.0
     ) -> Union["_g.RunHandle", Result]:
+        _fill_default_model(request, self.default_model)
         handle = await self._acall(self._stub.SubmitWorkflow(request, metadata=self._md))
         if not wait:
             return handle
