@@ -158,6 +158,14 @@ class Flow:
         """The canonical pre-encoding lowering (the corpus-parity dict)."""
         return self.to_chain().lowering()
 
+    def to_blueprint(self):
+        """Export this flow as a portable blueprint dict (Batch B; via :meth:`to_chain`)."""
+        return self.to_chain().to_blueprint()
+
+    def export(self, path) -> None:
+        """Write the portable blueprint JSON to ``path`` (Batch B; via :meth:`to_chain`)."""
+        self.to_chain().export(path)
+
     def run(
         self, *, wait: bool = True, timeout: float = 120.0, client=None
     ) -> "Union[Run, Result]":

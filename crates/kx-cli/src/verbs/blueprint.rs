@@ -5,6 +5,13 @@
 //! topology + params. The authored run is then viewable in the console (Runs → the
 //! live DAG, Monitoring).
 //!
+//! `kx blueprint import --file <dag.json>` (Batch B / D161.2) — validate + summarize a
+//! portable blueprint JSON WITHOUT contacting a gateway (the symmetric counterpart of
+//! `kx chain run --emit-blueprint <file>`): the same `to_request` compile validates the
+//! DAG client-side (kinds / edges / tool args / reserved `exec` all fail-closed) and
+//! prints the resolved shape; then run it with `blueprint run --file`. A portable DAG
+//! JSON is the share/round-trip artifact; cross-party sharing/marketplace = Cloud.
+//!
 //! The `<dag.json>` shape:
 //! ```json
 //! {
@@ -39,7 +46,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use kx_proto::proto;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::client::{next_value, ClientCommon};
 use crate::error::CliError;
@@ -53,19 +60,23 @@ const DEFAULT_TIMEOUT_SECS: u64 = 120;
 /// the one canonical proto assembly ([`to_request`]) instead of re-deriving the
 /// `SubmitWorkflowRequest` — a chain only changes *how* the `(steps, edges)` are
 /// authored, never how they lower to the wire.
-#[derive(Debug, Deserialize)]
+/// `Serialize` (Batch B / D161.2): a parsed/lowered `DagSpec` re-serializes to a
+/// portable blueprint JSON (`kx chain run --emit-blueprint`). The `skip_serializing_if`
+/// guards keep the artifact clean — each skipped field's `#[serde(default)]` exactly
+/// reproduces the omitted value on re-read, so export→import is byte-stable.
+#[derive(Debug, Deserialize, Serialize)]
 pub(crate) struct DagSpec {
     #[serde(default)]
     pub(crate) seed: u32,
     pub(crate) steps: Vec<StepSpec>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) edges: Vec<EdgeSpec>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) execution_mode: Option<String>,
     /// PR-7: context-bundle handles to attach to the run (chain-level grounding the
     /// SERVER resolves + injects into every entry Mote at bind, SN-8). Verbatim
     /// order; empty ⇒ byte-identical to pre-PR-7.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) context_bundles: Vec<String>,
 }
 
@@ -82,7 +93,7 @@ const TOOL_ARGS_KEY: &str = "kx.tool.args";
 const REACT_MAX_TURNS_KEY: &str = "max_turns";
 const REACT_MAX_TOOL_CALLS_KEY: &str = "max_tool_calls";
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub(crate) struct StepSpec {
     /// `pure` | `model` | `tool` (PR-6b-2); `exec` is reserved (rejected client-side).
     /// OPTIONAL (Batch A authoring veneer): when omitted the kind is INFERRED from
@@ -92,33 +103,35 @@ pub(crate) struct StepSpec {
     /// `pure`. An explicit kind is an override that MUST agree with the present fields
     /// (fail-closed on conflict, e.g. `kind:"pure"` + a `model_id`). The SDK factories
     /// (`pure()`/`model()`/`tool()`) always set it; this only eases the JSON surface.
-    #[serde(default)]
+    /// Export (Batch B) sets it EXPLICITLY (the self-describing portable form); omitted
+    /// ⇒ inferred on re-read, so the round-trip is stable either way.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) kind: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub(crate) model_id: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub(crate) prompt: String,
     /// EXEC only: the registered body's content/signature id as 64-char hex.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) body_signature_id: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub(crate) tool_contract: BTreeMap<String, String>,
     /// Free config entries; values are UTF-8 strings.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub(crate) params: BTreeMap<String, String>,
     /// TOOL only (PR-6b-2): the tool-call arguments, serialized at lowering to ONE
     /// canonical-JSON object under [`TOOL_ARGS_KEY`] (sorted keys, compact) —
     /// byte-identical to the Py/TS `tool()` factories. No floats (SN-8).
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub(crate) args: BTreeMap<String, serde_json::Value>,
     /// Agentic MODEL step only (PR-9b, D161.1): the bounded reason→tool→observe
     /// loop budget. Lowered to canonical-JSON `u32` bytes under
     /// [`REACT_MAX_TURNS_KEY`] / [`REACT_MAX_TOOL_CALLS_KEY`] in `params` when the
     /// step is a MODEL step with a non-empty `tool_contract`; ignored otherwise.
     /// Absent ⇒ the coordinator default (8 turns / 6 tool calls).
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) max_turns: Option<u32>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) max_tool_calls: Option<u32>,
 }
 
@@ -187,14 +200,14 @@ impl StepSpec {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub(crate) struct EdgeSpec {
     pub(crate) parent: u32,
     pub(crate) child: u32,
-    /// `data` (default) | `control`.
-    #[serde(default = "default_edge")]
+    /// `data` (default) | `control`. Omitted on export when it is the `data` default.
+    #[serde(default = "default_edge", skip_serializing_if = "is_default_edge")]
     pub(crate) edge: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_false")]
     pub(crate) non_cascade: bool,
 }
 
@@ -202,9 +215,36 @@ fn default_edge() -> String {
     "data".to_string()
 }
 
+/// Export guard: a `data` edge is the default, so omit it from the emitted JSON
+/// (re-read restores it via [`default_edge`]) — keeps exported blueprints clean.
+fn is_default_edge(edge: &str) -> bool {
+    edge == "data"
+}
+
+/// Export guard for a plain `bool` default (serde's `skip_serializing_if` needs a
+/// `fn(&T) -> bool`, so the `&bool` is required by the trait, not a choice).
+#[allow(clippy::trivially_copy_pass_by_ref)]
+fn is_false(b: &bool) -> bool {
+    !*b
+}
+
+/// `blueprint run` (submit + optionally wait) vs `blueprint import` (validate +
+/// summarize a portable blueprint JSON WITHOUT contacting a gateway — the symmetric
+/// counterpart of `kx chain run --emit-blueprint`, Batch B / D161.2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BlueprintMode {
+    /// `blueprint run` — compile + submit (and optionally `--wait`) via the gateway.
+    Run,
+    /// `blueprint import` — compile + validate + summarize a portable blueprint JSON
+    /// offline (no gateway); the counterpart of `chain run --emit-blueprint`.
+    Import,
+}
+
 /// Parsed `blueprint` arguments.
 #[derive(Debug)]
 pub struct BlueprintArgs {
+    /// `run` (submit) or `import` (validate + summarize, no gateway).
+    pub mode: BlueprintMode,
     /// The author-side DAG JSON file to compile + run.
     pub file: PathBuf,
     /// Run to completion and print the committed result (`--wait`).
@@ -217,16 +257,21 @@ pub struct BlueprintArgs {
     pub common: ClientCommon,
 }
 
-/// Parse `blueprint run --file <p> [--wait] ...` (the verb already consumed `run`).
+/// Parse `blueprint run|import --file <p> [--wait] ...` (the verb already consumed the
+/// leading `blueprint`).
 pub fn parse(mut args: impl Iterator<Item = String>) -> Result<BlueprintArgs, CliError> {
     let sub = args
         .next()
-        .ok_or_else(|| CliError::Usage("blueprint expects a subcommand (run)".into()))?;
-    if sub != "run" {
-        return Err(CliError::Usage(format!(
-            "unknown blueprint subcommand {sub:?} (only `run`)"
-        )));
-    }
+        .ok_or_else(|| CliError::Usage("blueprint expects a subcommand (run|import)".into()))?;
+    let mode = match sub.as_str() {
+        "run" => BlueprintMode::Run,
+        "import" => BlueprintMode::Import,
+        other => {
+            return Err(CliError::Usage(format!(
+                "unknown blueprint subcommand {other:?} (run|import)"
+            )));
+        }
+    };
     let mut file: Option<PathBuf> = None;
     let mut wait = false;
     let mut timeout_secs = DEFAULT_TIMEOUT_SECS;
@@ -251,9 +296,10 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<BlueprintArgs, Cl
         }
     }
 
-    let file =
-        file.ok_or_else(|| CliError::Usage("blueprint run requires --file <dag.json>".into()))?;
+    let file = file
+        .ok_or_else(|| CliError::Usage("blueprint run|import requires --file <dag.json>".into()))?;
     Ok(BlueprintArgs {
+        mode,
         file,
         wait,
         timeout_secs,
@@ -345,13 +391,23 @@ pub(crate) fn to_request(spec: DagSpec) -> Result<proto::SubmitWorkflowRequest, 
     })
 }
 
-/// Execute `blueprint run`.
+/// Execute `blueprint run` / `blueprint import`.
 pub async fn execute(args: BlueprintArgs) -> Result<(), CliError> {
     let raw = std::fs::read(&args.file)
         .map_err(|e| CliError::Usage(format!("cannot read {}: {e}", args.file.display())))?;
     let spec: DagSpec = serde_json::from_slice(&raw)
         .map_err(|e| CliError::Usage(format!("invalid blueprint JSON: {e}")))?;
+    // `to_request` is the canonical compile + client-side validation (kinds / edges /
+    // tool args / reserved `exec` all fail-closed here, BEFORE any gateway contact).
     let req = to_request(spec)?;
+
+    // `import` = validate + summarize the portable blueprint WITHOUT a gateway (the
+    // counterpart of `chain run --emit-blueprint`): the compile above already validated
+    // it; print the resolved DAG shape and stop. No submit, no connection.
+    if args.mode == BlueprintMode::Import {
+        print_import_summary(&req, &args.file, args.common.json);
+        return Ok(());
+    }
 
     let resolved = args.common.resolve()?;
     let mut client = resolved.connect().await?;
@@ -373,6 +429,82 @@ pub async fn execute(args: BlueprintArgs) -> Result<(), CliError> {
     } else {
         println!("{}", format::render_submit(&handle, args.common.json));
         Ok(())
+    }
+}
+
+/// Map a proto `WorkflowStepKind` back to its DSL string (display helper).
+fn step_kind_name(k: i32) -> &'static str {
+    match proto::WorkflowStepKind::try_from(k) {
+        Ok(proto::WorkflowStepKind::Pure) => "pure",
+        Ok(proto::WorkflowStepKind::Model) => "model",
+        Ok(proto::WorkflowStepKind::Tool) => "tool",
+        Ok(proto::WorkflowStepKind::Exec) => "exec",
+        _ => "unspecified",
+    }
+}
+
+/// Print a human / JSON summary of an imported blueprint (`blueprint import`) — the
+/// resolved DAG shape, display-only, no run. The `to_request` compile already
+/// validated it (kinds / edges / args / reserved `exec`), so reaching here means valid.
+fn print_import_summary(req: &proto::SubmitWorkflowRequest, file: &std::path::Path, json: bool) {
+    let mode = if req.execution_mode == proto::WorkflowExecutionMode::Dynamic as i32 {
+        "dynamic"
+    } else {
+        "frozen"
+    };
+    let sorted_tools = |s: &proto::WorkflowStep| {
+        let mut t: Vec<String> = s.tool_contract.keys().cloned().collect();
+        t.sort();
+        t
+    };
+    if json {
+        let steps: Vec<serde_json::Value> = req
+            .steps
+            .iter()
+            .map(|s| {
+                serde_json::json!({
+                    "kind": step_kind_name(s.kind),
+                    "model_id": s.model_id,
+                    "tools": sorted_tools(s),
+                })
+            })
+            .collect();
+        let out = serde_json::json!({
+            "file": file.display().to_string(),
+            "valid": true,
+            "seed": req.seed,
+            "execution_mode": mode,
+            "steps": steps,
+            "edges": req.edges.len(),
+            "context_bundles": req.context_bundles,
+        });
+        println!("{}", serde_json::to_string_pretty(&out).unwrap_or_default());
+    } else {
+        println!("blueprint {} is valid", file.display());
+        println!(
+            "  seed={}  mode={}  steps={}  edges={}  context_bundles={}",
+            req.seed,
+            mode,
+            req.steps.len(),
+            req.edges.len(),
+            req.context_bundles.len()
+        );
+        for (i, s) in req.steps.iter().enumerate() {
+            let tools = sorted_tools(s);
+            let model = if s.model_id.is_empty() {
+                "<served>".to_string()
+            } else {
+                s.model_id.clone()
+            };
+            let detail = match step_kind_name(s.kind) {
+                "model" if !tools.is_empty() => format!("model {model} @{tools:?}"),
+                "model" => format!("model {model}"),
+                "tool" => format!("tool {tools:?}"),
+                k => k.to_string(),
+            };
+            println!("  [{i}] {detail}");
+        }
+        println!("run it with: kx blueprint run --file {}", file.display());
     }
 }
 
@@ -434,6 +566,51 @@ mod tests {
         let spec: DagSpec =
             serde_json::from_str(r#"{ "steps": [ {"kind":"frobnicate"} ] }"#).unwrap();
         assert!(to_request(spec).is_err());
+    }
+
+    #[test]
+    fn parses_import_subcommand() {
+        let a = p(&["import", "--file", "bp.json"]).unwrap();
+        assert_eq!(a.mode, BlueprintMode::Import);
+        assert_eq!(a.file, PathBuf::from("bp.json"));
+        assert_eq!(
+            p(&["run", "--file", "bp.json"]).unwrap().mode,
+            BlueprintMode::Run
+        );
+        assert!(
+            p(&["import"]).is_err(),
+            "import without --file is a usage error"
+        );
+    }
+
+    /// Batch B: a `DagSpec` survives Serialize → Deserialize and re-compiles to the
+    /// IDENTICAL proto — the export→import byte-stability invariant (covering the
+    /// `skip_serializing_if` guards: the tool `args` + the agentic budget round-trip).
+    #[test]
+    fn dagspec_serialize_round_trip_compiles_identically() {
+        let json = r#"{
+            "seed": 5,
+            "steps": [
+                {"kind":"pure","params":{"topic":"hi"}},
+                {"kind":"tool","tool_contract":{"echo":"1"},"args":{"n":3,"msg":"x"}},
+                {"kind":"model","prompt":"go","tool_contract":{"web-search":"1"},"max_turns":4,"max_tool_calls":3}
+            ],
+            "edges": [ {"parent":0,"child":1}, {"parent":1,"child":2,"non_cascade":true} ],
+            "context_bundles": ["team/ctx/spec"]
+        }"#;
+        let spec: DagSpec = serde_json::from_str(json).unwrap();
+        let req_direct = to_request(spec).unwrap();
+
+        // Re-parse the SAME source, serialize it (the export path), re-read, re-compile.
+        let spec2: DagSpec = serde_json::from_str(json).unwrap();
+        let emitted = serde_json::to_string_pretty(&spec2).unwrap();
+        let reparsed: DagSpec = serde_json::from_str(&emitted).unwrap();
+        let req_round_trip = to_request(reparsed).unwrap();
+
+        assert_eq!(
+            req_direct, req_round_trip,
+            "export→import must re-compile to a byte-identical SubmitWorkflowRequest"
+        );
     }
 
     // ---- Batch A: kind inference + agreement (the JSON authoring veneer) ----

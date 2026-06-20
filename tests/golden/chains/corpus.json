@@ -571,5 +571,45 @@
       ],
       "edges": []
     }
+  },
+  {
+    "name": "tool_args_and_agentic_budget_in_one_dag",
+    "dsl": "t > p@web-search",
+    "seed": 5,
+    "tasks": {
+      "t": {
+        "kind": "tool",
+        "tool_contract": { "echo": "1" },
+        "args": { "n": 3, "msg": "x" }
+      },
+      "p": {
+        "kind": "model",
+        "model_id": "kx-serve:qwen3-4b-q4_k_m",
+        "prompt": "summarize",
+        "max_turns": 4,
+        "max_tool_calls": 3
+      }
+    },
+    "expect": {
+      "steps": [
+        {
+          "kind": "tool",
+          "model_id": "",
+          "prompt": "",
+          "body_signature_id": null,
+          "tool_contract": { "echo": "1" },
+          "params": { "kx.tool.args": "{\"msg\":\"x\",\"n\":3}" }
+        },
+        {
+          "kind": "model",
+          "model_id": "kx-serve:qwen3-4b-q4_k_m",
+          "prompt": "summarize",
+          "body_signature_id": null,
+          "tool_contract": { "web-search": "1" },
+          "params": { "max_turns": "4", "max_tool_calls": "3" }
+        }
+      ],
+      "edges": [{ "parent": 0, "child": 1, "edge": "data" }]
+    }
   }
 ]

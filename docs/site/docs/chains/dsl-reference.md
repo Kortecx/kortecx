@@ -263,6 +263,23 @@ chain with no attached context lowers byte-identically to pre-context-bundle, an
 the attachment's byte-identity across Python, TypeScript, and the CLI is pinned by
 the golden corpus alongside the topology.
 
+## Portable blueprints (export / import)
+
+A lowered chain can be saved as a **portable blueprint JSON** — the exact shape
+`kx blueprint run --file` consumes — and re-run anywhere:
+
+```bash
+kx chain run "a > b" --tasks tasks.json --emit-blueprint plan.json --dry-run
+kx blueprint run    --file plan.json --wait     # run it
+kx blueprint import --file plan.json            # validate + summarize offline
+```
+
+The SDKs mirror this: `flow.export(path)` / `Chain.to_blueprint()` and
+`Chain.from_blueprint(_file)`. Export → import re-compiles to a **byte-identical**
+request. The artifact pins explicit `kind` but leaves `model_id` as authored (empty binds
+the serve's model, SN-8), so a blueprint is portable across serves. See
+[Blueprint builder → Portable blueprints](../blueprint-builder.md#portable-blueprints--export--import).
+
 ## Per-language authoring
 
 - **[Chains in Python](./python.md)** — the `chain()` string DSL plus the

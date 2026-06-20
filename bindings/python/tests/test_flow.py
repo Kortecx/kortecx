@@ -108,6 +108,30 @@ def test_flow_is_a_flow_instance() -> None:
     assert isinstance(flow(), Flow)
 
 
+# --- Batch B: portable blueprint export/import (Flow delegates to Chain) ----------
+
+
+def test_flow_to_blueprint_round_trips_to_build() -> None:
+    from kortecx.chains import Chain
+
+    f = flow(seed=3).step(topic="hi").then("write about it")
+    bp = f.to_blueprint()
+    assert bp["seed"] == 3
+    assert bp["execution_mode"] == "frozen"
+    assert [s["kind"] for s in bp["steps"]] == ["pure", "model"]
+    # The exported artifact re-compiles to the IDENTICAL request as the flow's build().
+    assert Chain.from_blueprint(bp) == f.build()
+
+
+def test_flow_export_writes_a_reimportable_file(tmp_path) -> None:
+    from kortecx.chains import Chain
+
+    f = flow(seed=1).agent("a").then("b")
+    path = tmp_path / "bp.json"
+    f.export(path)
+    assert Chain.from_blueprint_file(path) == f.build()
+
+
 # --- V2a g2/g4: Run-from-handle, await-any wait, Agent.stream, Result.json --------
 
 

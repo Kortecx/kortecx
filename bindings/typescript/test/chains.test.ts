@@ -23,7 +23,7 @@ import {
   seq,
   task,
 } from "../src/chains.js";
-import type { Lowered, Task } from "../src/chains.js";
+import type { DagSpecJson, Lowered, Task } from "../src/chains.js";
 import { fillDefaultModel } from "../src/client.js";
 
 // The golden corpus lives at the repo root; this test file is bindings/typescript/test.
@@ -122,6 +122,61 @@ describe("Chains DSL — golden corpus parity", () => {
       });
     }
   }
+});
+
+describe("Chains DSL — Batch B portable blueprint export/import round-trip", () => {
+  // Every corpus SUCCESS case: toBlueprint() → JSON → fromBlueprint() re-compiles to
+  // the IDENTICAL request as build() (the cross-surface export/import guarantee).
+  for (const c of corpus.filter((x) => x.expect !== undefined)) {
+    it(`${c.name}: export→import == build`, () => {
+      const chn = chain(c.dsl, {
+        tasks: tasksFromCorpus(c.tasks),
+        seed: c.seed,
+        context: c.context_bundles,
+      });
+      const bp = chn.toBlueprint();
+      // The artifact must survive a JSON round-trip (a real file write/read).
+      const reparsed = JSON.parse(JSON.stringify(bp));
+      expect(Chain.fromBlueprint(reparsed)).toEqual(chn.build());
+    });
+  }
+
+  it("imports the CLI args-separated form identical to the SDK folded form", () => {
+    // A CLI-exported artifact keeps `args` + `max_turns` SEPARATE (not folded); it
+    // must import to the same request as the equivalent SDK-authored chain.
+    const cliArtifact: DagSpecJson = {
+      seed: 2,
+      execution_mode: "frozen",
+      steps: [
+        { kind: "tool", tool_contract: { echo: "1" }, args: { n: 3, msg: "x" } },
+        {
+          kind: "model",
+          prompt: "res",
+          tool_contract: { "web-search": "1" },
+          max_turns: 4,
+          max_tool_calls: 3,
+        },
+      ],
+      edges: [{ parent: 0, child: 1, edge: "data" }],
+    };
+    const equiv = chain("t > p", {
+      tasks: {
+        t: task.tool("echo", "1", { n: 3, msg: "x" }),
+        p: task.model("", "res", {}, { tools: ["web-search"], maxTurns: 4, maxToolCalls: 3 }),
+      },
+      seed: 2,
+    }).build();
+    expect(Chain.fromBlueprint(cliArtifact)).toEqual(equiv);
+  });
+
+  it("infers kind when omitted (a hand-authored DAG) == explicit kind", () => {
+    const inferred = Chain.fromBlueprint({ seed: 0, steps: [{ model_id: "", prompt: "go" }] });
+    const explicit = Chain.fromBlueprint({
+      seed: 0,
+      steps: [{ kind: "model", model_id: "", prompt: "go" }],
+    });
+    expect(inferred).toEqual(explicit);
+  });
 });
 
 describe("Chains DSL — combinator API parity with the string form", () => {

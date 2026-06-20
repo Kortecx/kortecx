@@ -180,6 +180,16 @@ export class Flow {
     return this.toChain().lower();
   }
 
+  /** Export this flow as a portable blueprint object (Batch B; via {@link Flow.toChain}). */
+  toBlueprint(): ReturnType<Chain["toBlueprint"]> {
+    return this.toChain().toBlueprint();
+  }
+
+  /** Write the portable blueprint JSON to `path` (Batch B; NODE-only via {@link Flow.toChain}). */
+  export(path: string): Promise<void> {
+    return this.toChain().export(path);
+  }
+
   /** Submit and (by default) WAIT for the committed result, over `opts.client` or the
    * zero-config Node default client. `wait: false` returns a {@link Run} handle. */
   async run(

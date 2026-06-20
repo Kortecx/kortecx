@@ -28,6 +28,7 @@ Both produce a :class:`Chain`; :meth:`Chain.build` runs the one canonical loweri
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass, replace
 from typing import Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
@@ -391,6 +392,163 @@ class Chain:
             builder.add_edge(EdgeInput(parent=parent, child=child, edge="data"))
         builder.context_bundles(self._context)
         return builder.build()
+
+    # --- Batch B (D161.2): portable blueprint export / import -----------------
+    def to_blueprint(self) -> Dict[str, object]:
+        """Export this chain as a PORTABLE blueprint dict — the same shape
+        ``kx blueprint run --file`` and :meth:`from_blueprint` consume. Round-trips:
+        feeding it back to :meth:`from_blueprint` (or the CLI) re-compiles to the
+        IDENTICAL :class:`SubmitWorkflowRequest` as :meth:`build`.
+
+        ``params`` are in their FOLDED form (a tool step's args under
+        ``kx.tool.args``; an agentic MODEL step's budget under ``max_turns`` /
+        ``max_tool_calls``) — :meth:`from_blueprint` / the server import them WITHOUT
+        re-folding (fold-idempotent). ``model_id`` is left as authored (empty ⇒ the
+        server binds the served model, SN-8 — so the artifact is portable across
+        serves). Empty fields are omitted for a clean artifact; each ``kind`` is
+        explicit (self-describing)."""
+        nodes, edges = self._lower()
+        steps: List[Dict[str, object]] = []
+        for t in nodes:
+            s = t.step
+            step: Dict[str, object] = {"kind": s.kind}
+            if s.model_id:
+                step["model_id"] = s.model_id
+            if s.prompt:
+                step["prompt"] = s.prompt
+            if s.body_signature_id is not None:
+                step["body_signature_id"] = s.body_signature_id
+            if s.tool_contract:
+                step["tool_contract"] = dict(s.tool_contract)
+            params = _effective_params(s)
+            if params:
+                # params values are pre-encoding strings (the lowering form).
+                step["params"] = {k: _as_str(v) for k, v in params.items()}
+            steps.append(step)
+        bp: Dict[str, object] = {
+            "seed": self._seed,
+            "execution_mode": "frozen",
+            "steps": steps,
+        }
+        if edges:
+            bp["edges"] = [{"parent": p, "child": c, "edge": "data"} for (p, c) in edges]
+        if self._context:
+            bp["context_bundles"] = list(self._context)
+        return bp
+
+    def export(self, path: Union[str, "os.PathLike[str]"]) -> None:
+        """Write :meth:`to_blueprint` as pretty JSON to ``path`` — the portable
+        artifact (save / version / share; re-run with ``kx blueprint run --file`` or
+        :meth:`from_blueprint`)."""
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(self.to_blueprint(), fh, indent=2)
+            fh.write("\n")
+
+    @classmethod
+    def from_blueprint(cls, spec: Mapping[str, object]) -> "_g.SubmitWorkflowRequest":
+        """Compile a portable blueprint dict (from :meth:`to_blueprint`, the CLI
+        ``--emit-blueprint``, or a hand-authored DAG) into a
+        :class:`SubmitWorkflowRequest` ready for ``client.submit_workflow``.
+
+        Accepts BOTH artifact forms: the SDK FOLDED form (args/budget already in
+        ``params``) and the CLI ARGS-SEPARATED form (a tool step's ``args`` map + an
+        agentic step's ``max_turns`` / ``max_tool_calls`` as separate fields) — both
+        fold to the same request. The chain TOPOLOGY is not recoverable from a DAG
+        (only the request is), so this returns the request, not a :class:`Chain`."""
+        builder = BlueprintBuilder(_opt_int(spec.get("seed")) or 0)
+        raw_steps = _get(spec, "steps", [])
+        if not isinstance(raw_steps, list):
+            raise ChainError("blueprint `steps` must be a list")
+        for d in raw_steps:
+            if not isinstance(d, Mapping):
+                raise ChainError("each blueprint step must be an object")
+            step = _step_from_spec(d)
+            # Fold the budget exactly as `build()` does (a no-op when already folded).
+            builder.add_step(replace(step, params=_effective_params(step)))
+        raw_edges = _get(spec, "edges", [])
+        for e in raw_edges if isinstance(raw_edges, list) else []:
+            if not isinstance(e, Mapping):
+                raise ChainError("each blueprint edge must be an object")
+            parent = _opt_int(e.get("parent"))
+            child = _opt_int(e.get("child"))
+            if parent is None or child is None:
+                raise ChainError("a blueprint edge needs integer `parent` + `child`")
+            builder.add_edge(
+                EdgeInput(
+                    parent=parent,
+                    child=child,
+                    edge=str(e.get("edge", "data")),
+                    non_cascade=bool(e.get("non_cascade", False)),
+                )
+            )
+        ctx = _get(spec, "context_bundles", [])
+        if isinstance(ctx, list):
+            builder.context_bundles([str(h) for h in ctx])
+        if _get(spec, "execution_mode", "frozen") == "dynamic":
+            builder.mode("dynamic")
+        return builder.build()
+
+    @classmethod
+    def from_blueprint_file(
+        cls, path: "Union[str, os.PathLike[str]]"
+    ) -> "_g.SubmitWorkflowRequest":
+        """Read a portable blueprint JSON file and compile it (see
+        :meth:`from_blueprint`)."""
+        with open(path, encoding="utf-8") as fh:
+            spec = json.load(fh)
+        if not isinstance(spec, Mapping):
+            raise ChainError("a blueprint file must be a JSON object")
+        return cls.from_blueprint(spec)
+
+
+def _get(m: "Mapping[str, object]", key: str, default: object) -> object:
+    """Mapping ``.get`` with a default (a tiny helper so `from_blueprint` reads
+    cleanly over an untyped JSON dict)."""
+    return m.get(key, default)
+
+
+def _infer_kind(d: "Mapping[str, object]") -> str:
+    """Infer a step's kind from field presence when ``kind`` is omitted — mirrors the
+    CLI ``StepSpec::resolve_kind`` (model fields win; then a tool contract; else pure).
+    Our own exports always set ``kind`` explicitly; this covers hand-authored DAGs."""
+    if d.get("model_id") or d.get("prompt"):
+        return "model"
+    if d.get("tool_contract"):
+        return "tool"
+    return "pure"
+
+
+def _opt_int(v: object) -> Optional[int]:
+    """An optional integer field from an untyped JSON value (``None`` stays ``None``)."""
+    return int(v) if isinstance(v, (int, str)) else None
+
+
+def _str_map(v: object) -> Dict[str, str]:
+    """A ``{str: str}`` map from an untyped JSON value (non-maps ⇒ empty)."""
+    return {str(k): str(val) for k, val in v.items()} if isinstance(v, Mapping) else {}
+
+
+def _step_from_spec(d: "Mapping[str, object]") -> StepInput:
+    """One blueprint step dict → a :class:`StepInput`, folding the CLI args-separated
+    form (a ``args`` map ⇒ ``kx.tool.args``) so both artifact forms import identically.
+    The agentic budget rides as ``max_turns`` / ``max_tool_calls`` on the StepInput and
+    is folded by `_effective_params` at build time (matching `Chain.build`)."""
+    kind = str(d.get("kind") or _infer_kind(d))
+    params: Dict[str, Union[bytes, str]] = {k: v for k, v in _str_map(d.get("params")).items()}
+    args = d.get("args")
+    if isinstance(args, Mapping) and args:
+        params[TOOL_ARGS_KEY] = _canonical_args_json({str(k): v for k, v in args.items()})
+    body_sig = d.get("body_signature_id")
+    return StepInput(
+        kind=kind,
+        model_id=str(d.get("model_id", "")),
+        prompt=str(d.get("prompt", "")),
+        body_signature_id=str(body_sig) if body_sig is not None else None,
+        tool_contract=_str_map(d.get("tool_contract")),
+        params=params,
+        max_turns=_opt_int(d.get("max_turns")),
+        max_tool_calls=_opt_int(d.get("max_tool_calls")),
+    )
 
 
 def _as_str(v: Union[bytes, str]) -> str:

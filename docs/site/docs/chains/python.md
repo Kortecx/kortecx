@@ -39,12 +39,32 @@ byte-identically — a Flow is sugar, never a new wire shape). Builders:
 `.agent(prompt, tools=…, reasoning=…)` · `.step(**params)` (pure) · `.tool(id, ver, **args)` ·
 `.then(item)` (sequential — a string is an agent) · `.parallel(*items)` (fan-out / fan-in) ·
 `.context(*handles)`. Terminate with `.run()` (waits for the `Result`), `.submit()` (a
-non-blocking `Run` handle), or `.to_chain()` / `.build()` to inspect.
+non-blocking `Run` handle), `.to_chain()` / `.build()` to inspect, or `.export(path)` to
+save a **portable blueprint** (see [Export / import](#export--import-a-portable-blueprint)).
 
 A `Run` (from `.submit()` or `.run(wait=False)`) drives the run without blocking:
 `run.events()` (live projection deltas), `run.wait()` (the first committed Mote — the
 await-any path), `run.tokens(mote)` (one model mote's advisory token chunks). The
 `Result` exposes `.text` / `.bytes` and `.json()` (the `kx … --wait --json` shape).
+
+### Export / import a portable blueprint
+
+`.export(path)` writes the lowered chain as a portable blueprint JSON (the exact
+`kx blueprint run --file` input — save / version / share / re-run it); `to_blueprint()`
+returns the dict. `Chain.from_blueprint(spec)` / `Chain.from_blueprint_file(path)`
+compile one back into a `SubmitWorkflowRequest`:
+
+```python
+import kortecx as kx
+
+kx.flow().agent("Research the topic").then("Critique it").export("plan.json")
+req = kx.Chain.from_blueprint_file("plan.json")   # → a SubmitWorkflowRequest
+client.submit_workflow(req, wait=True)
+```
+
+The artifact is self-describing (explicit `kind`) and portable — `model_id` stays as
+authored (empty binds the serve's model at submit, SN-8). Export → import re-compiles to
+the IDENTICAL request as `.build()`. See [Blueprint builder → Portable blueprints](../blueprint-builder.md#portable-blueprints--export--import).
 
 ### A reusable Agent
 
