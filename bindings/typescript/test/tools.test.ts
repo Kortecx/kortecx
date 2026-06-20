@@ -3,12 +3,12 @@
  * spawned stdio MCP server round-trip against the built `dist/_toolserver.js`).
  */
 
-import { spawn } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { execFileSync, spawn } from "node:child_process";
+import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import { Agent, REACT_AUTO_RECIPE_HANDLE, REACT_RECIPE_HANDLE } from "../src/agent.js";
 import { flow } from "../src/flow.js";
 import {
@@ -210,14 +210,25 @@ function roundTrip(moduleUrl: string, reqs: object[]): Promise<Record<number, an
 }
 
 describe("the stdio toolserver", () => {
+  // The round-trip spawns the BUILT `dist/_toolserver.js` and imports the built
+  // `dist/index.js` — the CI `sdk-typescript` job runs vitest without a prior build,
+  // so build the bundle once here (idempotent; skipped if already present).
+  beforeAll(() => {
+    const pkgRoot = resolve(here, "..");
+    if (!existsSync(resolve(pkgRoot, "dist/_toolserver.js")) || !existsSync(distIndex)) {
+      execFileSync("npx", ["tsup"], { cwd: pkgRoot, stdio: "ignore" });
+    }
+  }, 120_000);
+
   it("serves initialize / tools/list / tools/call and skips a main guard", async () => {
     const dir = mkdtempSync(join(tmpdir(), "kxtool-"));
     const mod = join(dir, "mytools.mjs");
     writeFileSync(
       mod,
-      `import { localTool } from ${JSON.stringify(pathToFileURL(distIndex).href)};\n` +
-        `localTool({ name: "add", description: "Add.", params: { a: "integer", b: "integer" }, run: ({ a, b }) => a + b });\n` +
-        `globalThis.__MAIN_RAN = true; // not a guard; the toolserver must still answer\n`,
+      `import { localTool } from ${JSON.stringify(pathToFileURL(distIndex).href)};
+localTool({ name: "add", description: "Add.", params: { a: "integer", b: "integer" }, run: ({ a, b }) => a + b });
+globalThis.__MAIN_RAN = true; // not a guard; the toolserver must still answer
+`,
     );
     const byId = await roundTrip(pathToFileURL(mod).href, [
       { jsonrpc: "2.0", id: 1, method: "initialize", params: {} },
