@@ -12,6 +12,7 @@ go::
 
 from __future__ import annotations
 
+from .agent import Agent
 from .alerts import AlertsPage, AlertSummary
 from .blueprints import BlueprintBuilder, EdgeInput, StepInput
 from .branch import (
@@ -27,6 +28,13 @@ from .client import DEFAULT_ENDPOINT, AsyncKxClient, KxClient
 from .content import ContentItem, PutResult
 from .context import ContextBundle, ContextBundleItem, PutContextBundleResult
 from .datasets import DatasetHit, DatasetSummary, FuzzyHit, IngestDocument, IngestResult
+from .defaults import (
+    default_client,
+    invoke,
+    make_client,
+    run,
+    set_default_client,
+)
 from .errors import (
     ErrorCode,
     KxCatchupRequired,
@@ -45,6 +53,7 @@ from .errors import (
     KxWaitTimeout,
 )
 from .feedback import FeedbackPage, FeedbackRow, rating_from_proto, rating_to_proto
+from .flow import Flow, flow
 from .grants import AssetGrants, GrantView
 from .models import ModelSummary
 from .motes import MoteConfigItem, MoteDetail, effect_pattern_name, nd_class_name
@@ -145,6 +154,15 @@ __all__ = [
     "pure",
     "model",
     "tool",
+    # Batch V2 — the fluent builder + first-class Agent + zero-config helpers.
+    "Flow",
+    "flow",
+    "Agent",
+    "run",
+    "invoke",
+    "make_client",
+    "default_client",
+    "set_default_client",
     "TeamSummary",
     "TeamMember",
     "TeamMembers",

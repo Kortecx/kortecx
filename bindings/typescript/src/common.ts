@@ -102,6 +102,11 @@ export {
   ChainCycleError,
 } from "./chains.js";
 export type { Frag, ChainOptions, Lowered, LoweredStep, LoweredEdge } from "./chains.js";
+// Batch V2 — the fluent builder + first-class Agent (the headline authoring surface).
+export { Flow, flow } from "./flow.js";
+export type { FlowItem, AgentStepOptions, FlowClient } from "./flow.js";
+export { Agent, REACT_RECIPE_HANDLE } from "./agent.js";
+export type { AgentOptions, AgentClient } from "./agent.js";
 
 export { TeamSummary, TeamMember, TeamMembers, WarrantView, teamsFromProto } from "./teams.js";
 export { GrantView, AssetGrants } from "./grants.js";

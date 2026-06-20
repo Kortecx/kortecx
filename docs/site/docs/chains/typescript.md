@@ -19,7 +19,50 @@ npm install @kortecx/sdk       # node + browser entry points
 npm install ws                 # optional: node live-tail
 ```
 
+## The fluent builder (recommended)
+
+The friendliest way to author a chain reads top-to-bottom and fills in defaults — no
+`tasks` map, no `kind`, no `modelId`:
+
+```ts
+import { KxClient, flow } from "@kortecx/sdk";
+
+const kx = new KxClient("http://127.0.0.1:50151", { defaultModel: "kx-serve:qwen3-4b-q4_k_m" });
+
+const out = await flow()
+  .agent("Research the topic", { tools: ["web-search"] })   // an agent (MODEL) step
+  .then("Critique the findings")                            // a follow-on agent
+  .run({ client: kx });                                     // waits for the Result
+console.log(out.text);
+```
+
+`flow()` builds the SAME `(steps, edges)` as the combinator/DSL forms (it lowers
+byte-identically — a Flow is sugar, never a new wire shape). Builders:
+`.agent(prompt, { tools, reasoning })` · `.step(params)` (pure) · `.tool(id, ver, args)` ·
+`.then(item)` (sequential — a string is an agent) · `.parallel(...items)` (fan-out / fan-in) ·
+`.context(...handles)`. Terminate with `.run({ client })`, or `.toChain()` / `.lower()` to inspect.
+
+### A reusable Agent
+
+```ts
+import { Agent } from "@kortecx/sdk";
+
+const analyst = new Agent("You are a research analyst.", { tools: ["web-search", "fs-list"] });
+const out = await analyst.run("Summarize the README", { client: kx });
+console.log(out.text);
+```
+
+`Agent` carries instructions + an optional tool set + config. The **default lane is
+deterministic/frozen** — a single agent step with a FIXED tool-grant SET (replayable;
+execution lands with PR-9b-2). `{ dynamic: true }` routes to the **steered**
+`kx/recipes/react` recipe (the model picks tools turn by turn; works today). The TS
+`run` takes an explicit `{ client }` (browser-safe); the Python SDK adds a zero-config
+default client.
+
 ## The string DSL
+
+The combinators (`seq`/`par`/`chainFrom`), the string DSL, and the raw blueprint JSON
+remain as power forms — all lower identically to the fluent builder above.
 
 Compose published task handles into a DAG with a single expression. The `tasks`
 map resolves each handle to a typed step.

@@ -19,7 +19,59 @@ pip install kortecx            # core client (grpcio + protobuf)
 pip install 'kortecx[ws]'      # + the optional WebSocket live-tail
 ```
 
+## The fluent builder (recommended)
+
+The friendliest way to author a chain reads top-to-bottom and fills in defaults — no
+`tasks` map, no `kind`, no `model_id`:
+
+```python
+import kortecx as kx
+
+out = (kx.flow()
+       .agent("Research the topic", tools=["web-search"])   # an agent (MODEL) step
+       .then("Critique the findings")                       # a follow-on agent
+       .run())                                              # default client + wait
+print(out.text)
+```
+
+`kx.flow()` builds the SAME `(steps, edges)` as the operator/DSL forms (it lowers
+byte-identically — a Flow is sugar, never a new wire shape). Builders:
+`.agent(prompt, tools=…, reasoning=…)` · `.step(**params)` (pure) · `.tool(id, ver, **args)` ·
+`.then(item)` (sequential — a string is an agent) · `.parallel(*items)` (fan-out / fan-in) ·
+`.context(*handles)`. Terminate with `.run()` (waits for the `Result`), `.submit()` (a
+handle), or `.to_chain()` / `.build()` to inspect.
+
+### A reusable Agent
+
+```python
+import kortecx as kx
+
+analyst = kx.Agent("You are a research analyst.", tools=["web-search", "fs-list"])
+print(analyst.run("Summarize the kortecx README").text)
+```
+
+`kx.Agent` carries instructions + an optional tool set + model/loop config. The **default
+lane is deterministic/frozen** — a single agent step with a FIXED tool-grant SET
+(replayable; the tools are part of the step's identity; execution lands with PR-9b-2).
+`dynamic=True` routes to the **steered** `kx/recipes/react` recipe, where the model picks
+tools turn by turn (works today).
+
+### Zero-config
+
+`import kortecx as kx; kx.run(...)` uses a lazily-built default client. Config order:
+explicit → env (`KX_ENDPOINT` / `KX_TOKEN` / `KX_DEFAULT_MODEL`) → `~/.kortecx/config.toml`
+→ the loopback default. Pass an explicit `KxClient` (the `client=` kwarg, or
+`kx.set_default_client(...)`) for full control — the singleton is a script convenience
+(construct explicit clients for concurrent/async work).
+
+```python
+kx.run("Summarize this design doc.", reasoning="minimal")   # a one-line agent
+```
+
 ## The string DSL
+
+The operator sugar (`a >> b`), the string DSL, and the raw blueprint JSON remain as
+power forms — all lower identically to the fluent builder above.
 
 Compose published task handles into a DAG with a single expression. The `tasks`
 map resolves each handle to a typed step.
