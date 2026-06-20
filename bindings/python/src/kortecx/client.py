@@ -298,27 +298,29 @@ class KxClient:
 
     def submit_workflow(
         self, request: "_g.SubmitWorkflowRequest", *, wait: bool = False, timeout: float = 120.0
-    ) -> Union["_g.RunHandle", Result]:
+    ) -> Union[Run, Result]:
         """Author a Tier-1 DAG (a :class:`BlueprintBuilder` ``build()``) and run it.
         The server COMPILES the DAG, derives all identity, and builds every warrant
         from the party's grants (SN-8) — the client sends only the topology + params.
-        Returns the ``RunHandle``, or — with ``wait=True`` — the first committed
-        :class:`Result`. An old gateway without the seam raises ``KxUnimplemented``."""
+        Returns a :class:`~kortecx.run.Run` handle (V2a — ``.wait()`` / ``.events()``),
+        or — with ``wait=True`` — the first committed :class:`Result`. A workflow has no
+        statically-known terminal, so the ``Run`` waits for the FIRST committed Mote. An
+        old gateway without the seam raises ``KxUnimplemented``."""
         _fill_default_model(request, self.default_model)
         handle = self._call(lambda: self._stub.SubmitWorkflow(request, metadata=self._md))
         if not wait:
-            return handle
+            return Run(self, handle.instance_id, b"", handle.recipe_fingerprint)
         outcome = _wait.poll_any(self._stub, self._md, handle.instance_id, timeout)
         return self._finish(outcome)
 
     def run_chain(
         self, chain: "_chains.Chain", *, wait: bool = False, timeout: float = 120.0
-    ) -> Union["_g.RunHandle", Result]:
+    ) -> Union[Run, Result]:
         """Lower a :class:`~kortecx.chains.Chain` (operator sugar or the string DSL)
         and run it. A thin convenience over :meth:`submit_workflow` — the server
         still COMPILES the DAG + builds every warrant from the party's grants
-        (SN-8). Returns the ``RunHandle``, or — with ``wait=True`` — the first
-        committed :class:`Result`.
+        (SN-8). Returns a :class:`~kortecx.run.Run` handle, or — with ``wait=True`` —
+        the first committed :class:`Result`.
 
         V2b: any ``@kx.tool`` local functions referenced by the chain are registered
         (as stdio MCP servers the runtime dials) + resolved into their steps' tool
@@ -1202,6 +1204,11 @@ class KxClient:
             outcome = _wait.poll_result(self._stub, self._md, instance, terminal, timeout)
         return self._finish(outcome)
 
+    def _await_any(self, instance: bytes, timeout: float) -> Result:
+        """Wait for the FIRST committed Mote — the submit / run_chain path, which has no
+        statically-known terminal (backs :meth:`Run.wait` for a workflow run)."""
+        return self._finish(_wait.poll_any(self._stub, self._md, instance, timeout))
+
     @staticmethod
     def _finish(outcome: _wait.WaitOutcome) -> Result:
         result = Result.from_outcome(outcome)
@@ -1315,20 +1322,21 @@ class AsyncKxClient:
 
     async def submit_workflow(
         self, request: "_g.SubmitWorkflowRequest", *, wait: bool = False, timeout: float = 120.0
-    ) -> Union["_g.RunHandle", Result]:
+    ) -> Union[AsyncRun, Result]:
         _fill_default_model(request, self.default_model)
         handle = await self._acall(self._stub.SubmitWorkflow(request, metadata=self._md))
         if not wait:
-            return handle
+            return AsyncRun(self, handle.instance_id, b"", handle.recipe_fingerprint)
         outcome = await _wait.apoll_any(self._stub, self._md, handle.instance_id, timeout)
         return KxClient._finish(outcome)
 
     async def run_chain(
         self, chain: "_chains.Chain", *, wait: bool = False, timeout: float = 120.0
-    ) -> Union["_g.RunHandle", Result]:
+    ) -> Union[AsyncRun, Result]:
         """As :meth:`KxClient.run_chain` — lower a :class:`~kortecx.chains.Chain` and
-        run it over :meth:`submit_workflow`. V2b local tools (if any) are registered
-        + resolved first."""
+        run it over :meth:`submit_workflow` (V2a: returns an :class:`~kortecx.run.AsyncRun`
+        handle when ``wait=False``). V2b local tools (if any) are registered + resolved
+        first."""
         from .tools import aresolve_local_tools
 
         await aresolve_local_tools(self, chain)
@@ -1697,3 +1705,8 @@ class AsyncKxClient:
         else:
             outcome = await _wait.apoll_result(self._stub, self._md, instance, terminal, timeout)
         return KxClient._finish(outcome)
+
+    async def _await_any(self, instance: bytes, timeout: float) -> Result:
+        """Wait for the FIRST committed Mote (the submit / run_chain path — no static
+        terminal; backs :meth:`AsyncRun.wait` for a workflow run)."""
+        return KxClient._finish(await _wait.apoll_any(self._stub, self._md, instance, timeout))

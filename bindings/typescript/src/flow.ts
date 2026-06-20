@@ -28,7 +28,10 @@ import {
   seq,
   task,
 } from "./chains.js";
+import { getDefaultClient } from "./default-client.js";
+import { KxUsage } from "./errors.js";
 import type { SubmitWorkflowRequestSchema } from "./gen/kortecx/v1/gateway_pb.js";
+import type { Result, Run } from "./run.js";
 import { type LocalToolDef, isLocalTool, localToolNode } from "./tools.js";
 
 /** A thing a builder method can fold in: a prompt (⇒ an agent step) or a `Frag`. */
@@ -49,9 +52,28 @@ function toFrag(item: FlowItem): Frag {
   return typeof item === "string" ? task.model("", item) : item;
 }
 
-/** A minimal client surface the Flow terminals need (avoids a node/web import cycle). */
+/** A minimal client surface the Flow terminals need (avoids a node/web import cycle).
+ * Intentionally loose (`Promise<unknown>`) so test doubles satisfy it; the terminals
+ * narrow to `Run | Result` (the concrete {@link import("./client.js").KxClientBase}
+ * return). */
 export interface FlowClient {
   runChain(chain: Chain, opts?: { wait?: boolean; timeoutMs?: number }): Promise<unknown>;
+}
+
+/** Resolve the client for a terminal: the explicit one, else the zero-config Node
+ * default (installed by the `@kortecx/sdk` / `@kortecx/sdk/node` entry). The browser
+ * & chains entrypoints install no default ⇒ a clear, actionable error. */
+function resolveClient(explicit?: FlowClient): FlowClient {
+  if (explicit !== undefined) return explicit;
+  const c = getDefaultClient();
+  if (c === undefined) {
+    throw new KxUsage(
+      "run() needs a client — pass { client }, or import from '@kortecx/sdk' (Node) for the " +
+        "zero-config default (configurable via setDefaultClient / KX_ENDPOINT / ~/.kortecx/config.toml). " +
+        "The browser (@kortecx/sdk/web) & chains entrypoints are explicit-client by design.",
+    );
+  }
+  return c as FlowClient;
 }
 
 /**
@@ -158,12 +180,21 @@ export class Flow {
     return this.toChain().lower();
   }
 
-  /** Submit and (by default) WAIT for the committed result, over `opts.client`. */
-  async run(opts: { wait?: boolean; timeoutMs?: number; client: FlowClient }): Promise<unknown> {
-    return opts.client.runChain(this.toChain(), {
+  /** Submit and (by default) WAIT for the committed result, over `opts.client` or the
+   * zero-config Node default client. `wait: false` returns a {@link Run} handle. */
+  async run(
+    opts: { wait?: boolean; timeoutMs?: number; client?: FlowClient } = {},
+  ): Promise<Run | Result> {
+    return resolveClient(opts.client).runChain(this.toChain(), {
       wait: opts.wait ?? true,
       timeoutMs: opts.timeoutMs,
-    });
+    }) as Promise<Run | Result>;
+  }
+
+  /** Submit without waiting — return a {@link Run} handle. Drive it with `.wait()` (the
+   * first committed Mote), `.events()`, or `.tokens(mote)`. */
+  async submit(opts: { client?: FlowClient } = {}): Promise<Run> {
+    return (await this.run({ wait: false, client: opts.client })) as Run;
   }
 }
 

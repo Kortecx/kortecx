@@ -16,7 +16,7 @@ from .wait import WaitOutcome, WaitState
 
 if TYPE_CHECKING:  # avoid an import cycle at runtime
     from .client import AsyncKxClient, KxClient
-    from .types import Delta, Projection
+    from .types import Delta, Projection, TokenChunk
 
 
 @dataclass(frozen=True)
@@ -83,6 +83,11 @@ class Result:
                 out["result_hex"] = hexids.encode(self.payload)
         return out
 
+    def json(self, include_payload: bool = True) -> dict:
+        """The JSON-able dict shape — an alias of :meth:`to_dict` (mirrors the TS
+        ``Result.json()``, so the two SDKs read the same)."""
+        return self.to_dict(include_payload=include_payload)
+
 
 class _RunBase:
     """Common id surface for a started run (server-derived; never client-computed)."""
@@ -123,7 +128,11 @@ class Run(_RunBase):
         self._client = client
 
     def wait(self, timeout: float = 120.0, mode: str = "poll") -> Result:
-        """Block until this run's terminal Mote commits (or fails / times out)."""
+        """Block until this run's terminal Mote commits (or fails / times out). A run
+        started via ``submit`` / ``run_chain`` carries no statically-known terminal, so
+        it waits for the FIRST committed Mote (the await-any path, like ``kx … --wait``)."""
+        if not self._terminal:
+            return self._client._await_any(self._instance, timeout)
         return self._client._await_terminal(self._instance, self._terminal, timeout, mode)
 
     def projection(self, at_seq: Optional[int] = None) -> "Projection":
@@ -134,6 +143,21 @@ class Run(_RunBase):
 
     def events(self, since: int = 0, follow: bool = False) -> "Iterator[Delta]":
         return self._client.stream_events(self._instance, since=since, follow=follow)
+
+    def tokens(
+        self, mote_id: "Optional[str | bytes]" = None, *, since: int = 0
+    ) -> "Iterator[TokenChunk]":
+        """ADVISORY per-decode token tail for ONE model mote (the committed ``result_ref``
+        stays the authority — reconcile to it). Defaults to this run's terminal mote;
+        a ``submit`` / ``run_chain`` run has no static terminal, so pass ``mote_id`` (or
+        use :meth:`events` for the run-level delta tail)."""
+        mote = mote_id if mote_id is not None else (self._terminal or None)
+        if mote is None:
+            raise ValueError(
+                "Run.tokens() needs a mote id — this run has no statically-known terminal "
+                "mote (a submit/run_chain run); pass mote_id, or use .events()"
+            )
+        return self._client.stream_model_tokens(self._instance, mote, since=since)
 
     def result(self, timeout: float = 120.0) -> Result:
         """Alias for :meth:`wait` (read as "give me the result")."""
@@ -148,6 +172,8 @@ class AsyncRun(_RunBase):
         self._client = client
 
     async def wait(self, timeout: float = 120.0, mode: str = "poll") -> Result:
+        if not self._terminal:
+            return await self._client._await_any(self._instance, timeout)
         return await self._client._await_terminal(self._instance, self._terminal, timeout, mode)
 
     async def projection(self, at_seq: Optional[int] = None) -> "Projection":
@@ -159,6 +185,17 @@ class AsyncRun(_RunBase):
     def events(self, since: int = 0, follow: bool = False):
         """Return an async iterator of this run's event deltas."""
         return self._client.stream_events(self._instance, since=since, follow=follow)
+
+    def tokens(self, mote_id: "Optional[str | bytes]" = None, *, since: int = 0):
+        """Return an async iterator of ONE model mote's ADVISORY token chunks (defaults
+        to the terminal mote; a ``submit`` run with no static terminal needs ``mote_id``)."""
+        mote = mote_id if mote_id is not None else (self._terminal or None)
+        if mote is None:
+            raise ValueError(
+                "AsyncRun.tokens() needs a mote id — this run has no statically-known "
+                "terminal mote (a submit/run_chain run); pass mote_id, or use .events()"
+            )
+        return self._client.stream_model_tokens(self._instance, mote, since=since)
 
     async def result(self, timeout: float = 120.0) -> Result:
         return await self.wait(timeout=timeout)

@@ -232,10 +232,14 @@ export abstract class KxClientBase {
   async submitWorkflow(
     request: MessageInitShape<typeof SubmitWorkflowRequestSchema>,
     opts: { wait?: boolean; timeoutMs?: number } = {},
-  ): Promise<{ instanceId: Uint8Array; recipeFingerprint: Uint8Array } | Result> {
+  ): Promise<Run | Result> {
     fillDefaultModel(request, this.defaultModel);
     const handle = await rpc(this.grpc.submitWorkflow(request));
-    if (!opts.wait) return handle;
+    // V2a: a workflow has no statically-known terminal Mote — return a {@link Run} with
+    // an empty terminal whose `.wait()` resolves the FIRST committed Mote (await-any).
+    if (!opts.wait) {
+      return new Run(this, handle.instanceId, new Uint8Array(0), handle.recipeFingerprint);
+    }
     const outcome = await pollAny(this.grpc, handle.instanceId, opts.timeoutMs ?? 120_000);
     return this._finish(outcome);
   }
@@ -252,7 +256,7 @@ export abstract class KxClientBase {
   async runChain(
     chain: Chain,
     opts: { wait?: boolean; timeoutMs?: number } = {},
-  ): Promise<{ instanceId: Uint8Array; recipeFingerprint: Uint8Array } | Result> {
+  ): Promise<Run | Result> {
     // V2b: register + resolve any `localTool(...)` functions the chain references
     // (a chain with none is unaffected — `resolved` is undefined ⇒ build() byte-identical).
     const { resolveLocalTools } = await import("./tools.js");
@@ -1133,6 +1137,12 @@ export abstract class KxClientBase {
         ? await eventsResult(this.grpc, instance, terminal, timeoutMs)
         : await pollResult(this.grpc, instance, terminal, timeoutMs);
     return this._finish(outcome);
+  }
+
+  /** Wait for the FIRST committed Mote — the `submitWorkflow` / `runChain` path, which
+   * has no statically-known terminal (backs {@link Run.wait} for a workflow run). */
+  async _awaitAny(instance: Uint8Array, timeoutMs: number): Promise<Result> {
+    return this._finish(await pollAny(this.grpc, instance, timeoutMs));
   }
 
   protected _finish(outcome: WaitOutcome): Result {

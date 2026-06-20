@@ -8,7 +8,46 @@
 import { describe, expect, it } from "vitest";
 import { Agent } from "../src/agent.js";
 import { ChainParseError, chain, chainFrom, par, seq, task } from "../src/chains.js";
+import type { KxClientBase } from "../src/client.js";
+import { getDefaultClient, setDefaultClient } from "../src/default-client.js";
 import { Flow, flow } from "../src/flow.js";
+import { Result, Run } from "../src/run.js";
+
+/** A minimal stub for the Flow/Agent terminals — records which wait path runs. */
+class FakeClient {
+  anyCalls = 0;
+  termCalls = 0;
+  async runChain(_chain: unknown, opts: { wait?: boolean } = {}): Promise<unknown> {
+    // empty terminal ⇒ Run.wait() takes the await-any path.
+    const run = new Run(
+      this as unknown as KxClientBase,
+      new Uint8Array(16).fill(1),
+      new Uint8Array(0),
+      new Uint8Array(0),
+    );
+    return opts.wait ? this._awaitAny() : run;
+  }
+  async _awaitAny(): Promise<Result> {
+    this.anyCalls++;
+    return "ANY" as unknown as Result;
+  }
+  async _awaitTerminal(): Promise<Result> {
+    this.termCalls++;
+    return "TERM" as unknown as Result;
+  }
+  // AgentClient surface (the frozen no-tools lane never reaches these).
+  async invoke(): Promise<unknown> {
+    return "INVOKED";
+  }
+  async registerMcpServer(): Promise<unknown> {
+    return {};
+  }
+  async discoverServerTools(
+    _name: string,
+  ): Promise<{ tools: ReadonlyArray<{ toolName: string }> }> {
+    return { tools: [] };
+  }
+}
 
 describe("Flow — fluent builder", () => {
   it("a sequence matches the combinator form", () => {
@@ -92,5 +131,42 @@ describe("Agent", () => {
   it("a bare task (no instructions) is the prompt verbatim", () => {
     const lowered = new Agent().asFlow("just do it").lower();
     expect(lowered.steps[0]?.prompt).toBe("just do it");
+  });
+});
+
+describe("Result.json (g4)", () => {
+  it("aliases toJSON", () => {
+    const r = new Result("aa", "bb", "COMMITTED", "cc", new TextEncoder().encode("hi"));
+    expect(r.json()).toEqual(r.toJSON());
+    expect(r.json(false)).toEqual(r.toJSON(false));
+    expect(r.json().state).toBe("COMMITTED");
+  });
+});
+
+describe("V2a g1/g2 — Run-from-handle, await-any wait, zero-config, Agent.stream", () => {
+  it("flow().submit() returns a Run; .wait() uses await-any (no static terminal)", async () => {
+    const fc = new FakeClient();
+    const run = await flow().agent("a").submit({ client: fc });
+    expect(run).toBeInstanceOf(Run);
+    await run.wait();
+    expect(fc.anyCalls).toBe(1);
+    expect(fc.termCalls).toBe(0);
+  });
+
+  it("flow().run() uses the registry default client when none is passed", async () => {
+    const fc = new FakeClient();
+    setDefaultClient(fc);
+    try {
+      const out = await flow().agent("a").run({ wait: false });
+      expect(out).toBeInstanceOf(Run);
+      expect(getDefaultClient()).toBe(fc);
+    } finally {
+      setDefaultClient(undefined);
+    }
+  });
+
+  it("Agent.stream returns a Run", async () => {
+    const run = await new Agent("hi").stream("task", { client: new FakeClient() });
+    expect(run).toBeInstanceOf(Run);
   });
 });

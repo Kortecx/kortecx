@@ -13,8 +13,10 @@
  */
 
 import type { ReasoningMode } from "./chains.js";
-import { KxNotFound } from "./errors.js";
+import { getDefaultClient } from "./default-client.js";
+import { KxNotFound, KxUsage } from "./errors.js";
 import { type FlowClient, flow } from "./flow.js";
+import type { Result, Run } from "./run.js";
 import { KxToolError, type LocalToolDef, registerLocalTools } from "./tools.js";
 
 /** The steered, dynamic-tool recipe (the model chooses tools turn by turn). */
@@ -50,6 +52,21 @@ export interface AgentClient extends FlowClient {
     args: string[];
   }): Promise<unknown>;
   discoverServerTools(name: string): Promise<{ tools: ReadonlyArray<{ toolName: string }> }>;
+}
+
+/** Resolve the client for an Agent terminal: the explicit one, else the zero-config
+ * Node default. The browser & chains entrypoints install no default ⇒ a clear error. */
+function resolveAgentClient(explicit?: AgentClient): AgentClient {
+  if (explicit !== undefined) return explicit;
+  const c = getDefaultClient();
+  if (c === undefined) {
+    throw new KxUsage(
+      "agent.run() needs a client — pass { client }, or import from '@kortecx/sdk' (Node) for " +
+        "the zero-config default (set via setDefaultClient / KX_ENDPOINT / ~/.kortecx/config.toml). " +
+        "The browser & chains entrypoints are explicit-client by design.",
+    );
+  }
+  return c as AgentClient;
 }
 
 function hasTools(tools: AgentOptions["tools"]): boolean {
@@ -93,8 +110,9 @@ export class Agent {
    */
   async run(
     task: string,
-    opts: { wait?: boolean; timeoutMs?: number; client: AgentClient },
-  ): Promise<unknown> {
+    opts: { wait?: boolean; timeoutMs?: number; client?: AgentClient } = {},
+  ): Promise<Run | Result> {
+    const client = resolveAgentClient(opts.client);
     const tools = this.opts.tools;
     if (this.opts.dynamic) {
       // The react / react-auto recipes REQUIRE the bounded-loop budget (the
@@ -107,11 +125,11 @@ export class Agent {
       };
       const runOpts = { wait: opts.wait ?? true, timeoutMs: opts.timeoutMs };
       if (!hasTools(tools)) {
-        return opts.client.invoke(REACT_RECIPE_HANDLE, args, runOpts);
+        return client.invoke(REACT_RECIPE_HANDLE, args, runOpts) as Promise<Run | Result>;
       }
-      await registerLocalTools(opts.client, tools);
+      await registerLocalTools(client, tools);
       try {
-        return await opts.client.invoke(REACT_AUTO_RECIPE_HANDLE, args, runOpts);
+        return (await client.invoke(REACT_AUTO_RECIPE_HANDLE, args, runOpts)) as Run | Result;
       } catch (e) {
         if (e instanceof KxNotFound) {
           throw new KxToolError(
@@ -132,7 +150,19 @@ export class Agent {
     return this.asFlow(task).run({
       wait: opts.wait,
       timeoutMs: opts.timeoutMs,
-      client: opts.client,
+      client,
     });
+  }
+
+  /**
+   * Start `task` WITHOUT waiting and return a {@link Run}. Consume the live tail with
+   * `.events()` (run-level deltas) or `.tokens(mote)` (one model mote's ADVISORY token
+   * chunks). The `dynamic: true` lane returns a Run over the react recipe (its terminal
+   * supports `.tokens()` with no arg); the frozen lane returns a workflow Run (pass a
+   * `moteId` to `.tokens()`). The committed result stays the authority — finish with
+   * `run.wait()`.
+   */
+  async stream(task: string, opts: { client?: AgentClient } = {}): Promise<Run | Result> {
+    return this.run(task, { wait: false, client: opts.client });
   }
 }

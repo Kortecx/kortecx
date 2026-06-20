@@ -106,3 +106,73 @@ def test_zero_config_resolution(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_flow_is_a_flow_instance() -> None:
     assert isinstance(flow(), Flow)
+
+
+# --- V2a g2/g4: Run-from-handle, await-any wait, Agent.stream, Result.json --------
+
+
+class _FakeClient:
+    """A minimal stub for the Flow/Agent terminals — records which wait path runs."""
+
+    def __init__(self) -> None:
+        self.any_calls = 0
+        self.term_calls = 0
+
+    def run_chain(self, chain: object, *, wait: bool = False, timeout: float = 120.0) -> object:
+        from kortecx.run import Run
+
+        run = Run(self, b"\x01" * 16, b"", b"")  # empty terminal ⇒ await-any
+        return self._await_any(run._instance, timeout) if wait else run
+
+    def _await_any(self, instance: bytes, timeout: float) -> str:
+        self.any_calls += 1
+        return "ANY"
+
+    def _await_terminal(self, instance: bytes, terminal: bytes, timeout: float, mode: str) -> str:
+        self.term_calls += 1
+        return "TERM"
+
+
+def test_result_json_aliases_to_dict() -> None:
+    from kortecx.run import Result
+
+    r = Result(
+        instance_id="aa", terminal_mote_id="bb", state="COMMITTED", result_ref="cc", payload=b"hi"
+    )
+    assert r.json() == r.to_dict()
+    assert r.json(include_payload=False) == r.to_dict(include_payload=False)
+    assert r.json()["state"] == "COMMITTED"
+
+
+def test_flow_submit_returns_a_run() -> None:
+    from kortecx.run import Run
+
+    run = flow().agent("a").submit(client=_FakeClient())
+    assert isinstance(run, Run)
+
+
+def test_run_wait_with_no_terminal_uses_await_any() -> None:
+    fc = _FakeClient()
+    run = flow().agent("a").submit(client=fc)
+    assert run.wait() == "ANY"
+    assert fc.any_calls == 1 and fc.term_calls == 0
+
+
+def test_flow_run_uses_explicit_client_and_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    from kortecx import defaults
+
+    fc = _FakeClient()
+    # explicit client
+    out = flow().agent("a").run(wait=True, client=fc)
+    assert out == "ANY"
+    # zero-config default client
+    monkeypatch.setattr(defaults, "default_client", lambda: fc)
+    out2 = flow().agent("a").run(wait=True)
+    assert out2 == "ANY"
+
+
+def test_agent_stream_returns_a_run() -> None:
+    from kortecx.run import Run
+
+    run = Agent("hi").stream("task", client=_FakeClient())
+    assert isinstance(run, Run)

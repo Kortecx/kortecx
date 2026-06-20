@@ -37,8 +37,7 @@ from .chains import pure as _pure
 from .chains import tool as _tool
 
 if TYPE_CHECKING:
-    from .run import Result
-    from .v1 import gateway_pb2 as _g
+    from .run import Result, Run
 
 #: Anything a builder method can fold into the graph: a prompt (⇒ an agent step), a
 #: :class:`~kortecx.chains.Task`, another :class:`Flow`, or a raw operator node.
@@ -161,22 +160,23 @@ class Flow:
 
     def run(
         self, *, wait: bool = True, timeout: float = 120.0, client=None
-    ) -> "Union[_g.RunHandle, Result]":
+    ) -> "Union[Run, Result]":
         """Submit and (by default) WAIT for the committed :class:`~kortecx.run.Result`,
         over the given ``client`` or the zero-config default client. ``wait=False``
-        returns a run handle."""
+        returns a :class:`~kortecx.run.Run` handle (``.wait()`` / ``.events()``)."""
         from .defaults import default_client
 
         kx = client if client is not None else default_client()
         return kx.run_chain(self.to_chain(), wait=wait, timeout=timeout)
 
-    def submit(self, *, client=None) -> "_g.RunHandle":
-        """Submit without waiting — return the run handle."""
+    def submit(self, *, client=None) -> "Run":
+        """Submit without waiting — return a :class:`~kortecx.run.Run` handle. Drive it
+        with ``.wait()`` (the first committed Mote), ``.events()``, or ``.tokens(mote)``."""
         from .defaults import default_client
 
         kx = client if client is not None else default_client()
-        handle = kx.run_chain(self.to_chain(), wait=False)
-        return handle  # type: ignore[return-value]
+        run = kx.run_chain(self.to_chain(), wait=False)
+        return run  # type: ignore[return-value]
 
 
 def flow(*, seed: int = 0) -> Flow:

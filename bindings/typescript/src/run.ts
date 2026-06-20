@@ -9,6 +9,7 @@
 
 import type { KxClientBase } from "./client.js";
 import { encode } from "./hexids.js";
+import type { TokenChunk } from "./tokens.js";
 import type { Delta, Projection } from "./types.js";
 import type { WaitMode, WaitOutcome } from "./wait.js";
 
@@ -80,6 +81,12 @@ export class Result {
     }
     return out;
   }
+
+  /** The JSON-able shape — an alias of {@link toJSON} (mirrors the Python `Result.json()`,
+   * so the two SDKs read the same). */
+  json(includePayload = true): Record<string, unknown> {
+    return this.toJSON(includePayload);
+  }
 }
 
 /** A started run on a {@link KxClientBase}. */
@@ -113,8 +120,13 @@ export class Run {
     return this._terminal;
   }
 
-  /** Block until this run's terminal Mote commits (or fails / times out). */
+  /** Block until this run's terminal Mote commits (or fails / times out). A run started
+   * via `submitWorkflow` / `runChain` carries no statically-known terminal, so it waits
+   * for the FIRST committed Mote (the await-any path, like `kx … --wait`). */
   wait(opts: { timeoutMs?: number; mode?: WaitMode } = {}): Promise<Result> {
+    if (this._terminal.length === 0) {
+      return this.client._awaitAny(this._instance, opts.timeoutMs ?? 120_000);
+    }
     return this.client._awaitTerminal(
       this._instance,
       this._terminal,
@@ -138,5 +150,23 @@ export class Run {
 
   events(opts: { since?: bigint; follow?: boolean } = {}): AsyncIterable<Delta> {
     return this.client.streamEvents(this._instance, opts);
+  }
+
+  /** ADVISORY per-decode token tail for ONE model mote (the committed `resultRef` stays
+   * the authority — reconcile to it). Defaults to this run's terminal mote; a
+   * `submitWorkflow` / `runChain` run has no static terminal, so pass `moteId` (or use
+   * {@link events} for the run-level delta tail). */
+  tokens(
+    moteId?: string | Uint8Array,
+    opts: { since?: bigint; signal?: AbortSignal } = {},
+  ): AsyncIterable<TokenChunk> {
+    const mote = moteId ?? (this._terminal.length > 0 ? this._terminal : undefined);
+    if (mote === undefined) {
+      throw new Error(
+        "Run.tokens() needs a mote id — this run has no statically-known terminal mote " +
+          "(a submitWorkflow/runChain run); pass moteId, or use .events()",
+      );
+    }
+    return this.client.streamModelTokens(this._instance, mote, opts);
   }
 }
