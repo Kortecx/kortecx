@@ -21,7 +21,7 @@
 //! Tasks come from a `--tasks <file>`, an inline `--tasks-json '{…}'`, and/or repeated
 //! `--task name='{…}'` (Batch A) — merged into one handle → [`StepSpec`](crate::verbs::blueprint)
 //! map (fail-closed on a handle defined twice). Each step's `kind` is OPTIONAL (inferred
-//! from field presence; see [`StepSpec`]). A handle that appears more than once is the
+//! from field presence; see the `StepSpec` shape). A handle that appears more than once is the
 //! SAME node (reuse builds DAGs); tasks defined but unused are ignored (lenient).
 //! Palette: `pure` / `model` /
 //! `tool` (PR-6b-2 — fire a registered tool; `args` lower to the canonical
