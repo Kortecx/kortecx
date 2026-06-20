@@ -7,7 +7,6 @@
  */
 
 import type { KxClientBase } from "@kortecx/sdk/web";
-import { encode } from "@kortecx/sdk/web";
 import { useMutation } from "@tanstack/react-query";
 import { useConnection } from "./connection-context";
 
@@ -27,17 +26,16 @@ export function useSubmitWorkflow() {
       if (!client) {
         throw new Error("not connected");
       }
-      // No `wait` ⇒ resolves to the raw-bytes run handle; encode to the hex ids
-      // the run routes expect.
-      const handle = await client.submitWorkflow(request);
-      // The no-wait handle carries `recipeFingerprint` (a committed `Result` does
-      // not) — discriminate on it to narrow the union.
-      if (!("recipeFingerprint" in handle)) {
+      // No `wait` ⇒ resolves to a `Run` handle (V2a), whose ids are already hex.
+      const run = await client.submitWorkflow(request);
+      // A `Run` carries `recipeFingerprint` (a committed `Result` does not) —
+      // discriminate on it to narrow the union.
+      if (!("recipeFingerprint" in run)) {
         throw new Error("unexpected submitWorkflow result");
       }
       return {
-        instanceId: encode(handle.instanceId),
-        recipeFingerprint: encode(handle.recipeFingerprint),
+        instanceId: run.instanceId,
+        recipeFingerprint: run.recipeFingerprint,
       };
     },
   });
