@@ -23,11 +23,20 @@ use kx_tool_registry::{
 };
 use kx_warrant::{FsScope, NetScope, ResourceCeiling, ToolRequirement};
 
-/// The bundled tool's identity — `mcp-echo@1` (the vocabulary the PR-2d-1
-/// substrate tests froze).
+/// The bundled tool's identity — `mcp-echo/echo@1`. The id follows the
+/// `<server>/<remote>` convention every other MCP tool uses (a dialed/local tool
+/// registers `<server>/<remote>`, e.g. `kxlocal-a1b2c3d4/multiply` or a dialed
+/// `pr2echo/echo`), so the BUG-32 name-resolution leaf rule
+/// (`kx_toolcall::resolve_granted_name`) resolves the short remote leaf `echo`
+/// the model naturally emits. BEFORE this fix the bundled tool was a flat
+/// `mcp-echo` (server+remote conflated into one hyphenated token with no `/`),
+/// so a capable model that proposed the bare `echo` was refused `UngrantedTool`
+/// and the live ReAct chain dead-lettered with no answer (PR-2 deep-test campaign
+/// finding A1 / BUG-33). The remote method name passed to the MCP server stays
+/// `echo` (see [`register_echo_capability`]), so firing is unchanged.
 #[must_use]
 pub(crate) fn echo_tool() -> (ToolName, ToolVersion) {
-    (ToolName("mcp-echo".into()), ToolVersion("1".into()))
+    (ToolName("mcp-echo/echo".into()), ToolVersion("1".into()))
 }
 
 /// The bundled tool's [`ToolDef`]: an MCP stdio tool with NO egress requirement
@@ -252,4 +261,34 @@ fn echo_binary_path() -> Option<PathBuf> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// BUG-33 (PR-2 deep-test campaign finding A1) regression guard: the bundled
+    /// echo MUST be granted as `<server>/<remote>` (a `/`-bearing id) whose last
+    /// segment equals the MCP remote method name — so `kx_toolcall`'s leaf rule
+    /// resolves the bare remote name (`echo`) a capable model naturally emits. A
+    /// flat id (no `/`, the pre-fix shape) reintroduces the `UngrantedTool`
+    /// dead-letter that left the live ReAct chain with no answer.
+    #[test]
+    fn bundled_tool_id_is_server_slash_remote_so_the_model_leaf_resolves() {
+        let (name, _ver) = echo_tool();
+        assert!(
+            name.0.contains('/'),
+            "bundled tool id must be <server>/<remote>, got {:?}",
+            name.0
+        );
+        let leaf = name.0.rsplit('/').next().unwrap();
+        match &echo_tool_def().kind {
+            ToolKind::Mcp { remote_name, .. } => assert_eq!(
+                leaf, remote_name,
+                "the id leaf must equal the MCP remote name so the model's bare \
+                 remote name resolves to the grant"
+            ),
+            _ => panic!("bundled echo must be an MCP tool"),
+        }
+    }
 }

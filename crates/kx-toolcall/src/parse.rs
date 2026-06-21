@@ -461,6 +461,46 @@ mod tests {
     }
 
     #[test]
+    fn bundled_server_slash_remote_resolves_the_bare_remote_leaf() {
+        // BUG-33 (PR-2 deep-test campaign finding A1): the bundled echo is now granted
+        // as `mcp-echo/echo` (the <server>/<remote> convention every MCP tool uses — a
+        // dialed/local tool registers `<server>/<remote>`). A capable model
+        // (Gemma-4-12B) prompted to "use the echo tool" naturally proposes the bare
+        // remote leaf `echo`; it MUST resolve to the grant via the leaf rule. Before
+        // the fix the bundled tool was a flat `mcp-echo` (no `/`), so the bare `echo`
+        // was refused `UngrantedTool` and the live ReAct chain dead-lettered with no
+        // answer. SN-8: the leaf is EXACT segment equality, never prefix/substring.
+        let w = warrant_granting(Some(("mcp-echo/echo", "1")));
+
+        // (a) the bare remote leaf, version-less (JSON envelope) ⇒ resolves to the grant.
+        let env = br#"{"tool_call":{"name":"echo","version":"","args":{"q":"x"}}}"#;
+        let call = parse_tool_call(env, &w, 4096)
+            .unwrap()
+            .expect("the bare remote leaf resolves to the <server>/<remote> grant");
+        assert_eq!(call.name, ToolName("mcp-echo/echo".into()));
+        assert_eq!(call.version, ToolVersion("1".into())); // the GRANT's version, not the model's
+
+        // (b) the Gemma-4 NATIVE shape with the bare leaf ⇒ resolves too.
+        let native = b"<|tool_call>call:echo{\"q\":\"x\"}<tool_call|>";
+        let nc = parse_tool_call(native, &w, 4096)
+            .unwrap()
+            .expect("native bare leaf resolves");
+        assert_eq!(nc.name, ToolName("mcp-echo/echo".into()));
+
+        // (c) the full id still resolves (exact match path).
+        let env_full = br#"{"tool_call":{"name":"mcp-echo/echo","version":"1","args":{"q":"x"}}}"#;
+        assert!(parse_tool_call(env_full, &w, 4096).unwrap().is_some());
+
+        // (d) SN-8 boundary: the server PREFIX alone (`mcp-echo` — neither the full id
+        //     nor the leaf segment) does NOT resolve. No prefix/substring widening.
+        let env_prefix = br#"{"tool_call":{"name":"mcp-echo","version":"","args":{"q":"x"}}}"#;
+        assert!(matches!(
+            parse_tool_call(env_prefix, &w, 4096),
+            Err(DecodeError::UngrantedTool { .. })
+        ));
+    }
+
+    #[test]
     fn think_only_no_json_is_normal_completion() {
         let w = warrant_granting(Some(("mcp-echo", "1")));
         // Reasoning then prose (no JSON) ⇒ not a tool call.
