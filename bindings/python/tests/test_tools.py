@@ -2,8 +2,8 @@
 
 Covers the decorator + type-hint→inputSchema mapping, the ``tool`` overload
 (decorator vs the back-compat node factory), tool-set splitting, the run-terminal
-resolution against a mock client, the Agent routing (frozen pre-flight hint +
-dynamic→react-auto), and the hand-rolled stdio MCP server round-trip.
+resolution against a mock client, the Agent routing (frozen one-liner resolves +
+fires via run_chain; dynamic→react-auto), and the hand-rolled stdio MCP server round-trip.
 """
 
 from __future__ import annotations
@@ -143,6 +143,7 @@ class _FakeClient:
     def __init__(self) -> None:
         self.registered: List[tuple] = []
         self.invoked: List[tuple] = []
+        self.ran_chains: List[object] = []
 
     def register_mcp_server(self, *, name, transport, endpoint, args):  # noqa: ANN001
         self.registered.append((name, transport, endpoint, tuple(args)))
@@ -176,6 +177,14 @@ class _FakeClient:
     def invoke(self, handle, args, *, wait=True, timeout=120.0):  # noqa: ANN001
         self.invoked.append((handle, args, wait))
         return "INVOKED"
+
+    def run_chain(self, chain, *, wait=False, timeout=120.0):  # noqa: ANN001
+        # Mirror the real KxClient.run_chain: resolve local tools (register +
+        # rewrite each step's tool_contract to the namespaced name) then record the
+        # resolved chain for inspection. The frozen lane reaches here (NOT invoke).
+        resolve_local_tools(self, chain)
+        self.ran_chains.append(chain)
+        return "RAN"
 
 
 def _add_tool():  # noqa: ANN202
@@ -231,10 +240,19 @@ def test_resolve_noop_without_local_tools() -> None:
 # --- Agent routing ------------------------------------------------------------
 
 
-def test_agent_frozen_with_tools_raises_preflight_hint() -> None:
+def test_agent_frozen_with_tools_fires_via_resolved_contract() -> None:
+    # BUG-32 fix: the frozen `Agent(tools=[fn])` one-liner now RESOLVES the local
+    # tool onto its model step (no pre-flight raise) and runs it via run_chain —
+    # NOT through the dynamic react-auto invoke path.
     add = _add_tool()
-    with pytest.raises(ToolError, match="PR-9b-2"):
-        Agent("do math", tools=[add]).run("2+2", client=_FakeClient())
+    fc = _FakeClient()
+    Agent("do math", tools=[add]).run("2+2", client=fc)
+    assert fc.registered, "the frozen lane registers the local tool's stdio server"
+    assert not fc.invoked, "the frozen lane does NOT route through invoke / react-auto"
+    sname = _server_name_for(local_tool_def(add).script_path)
+    step = fc.ran_chains[0]._iter_steps()[0]
+    assert step.kind == "model"
+    assert step.tool_contract == {f"{sname}/add": "1"}
 
 
 def test_agent_dynamic_with_local_tools_routes_to_react_auto() -> None:

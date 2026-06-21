@@ -9,8 +9,10 @@
  *
  * Default lane = deterministic/frozen (a single agent step — replayable, the tool set
  * is part of identity); `dynamic: true` routes to the steered `kx/recipes/react`
- * recipe. The frozen tool-EXECUTION is LIVE as of PR-9b-2 (author with explicit tool
- * refs via `flow().model(prompt, { tools })`). SN-8: intent only.
+ * recipe. The frozen tool-EXECUTION is LIVE — the `Agent({ tools: [fn] })` one-liner over
+ * local `localTool(...)` defs now fires (`run` registers each as a stdio MCP tool and
+ * grants its namespaced `<server>/<name>` to the step; a model's bare/leaf call resolves
+ * to that grant). No `KX_SERVE_AUTOGRANT` needed. SN-8: intent only.
  */
 
 import type { ReasoningMode } from "./chains.js";
@@ -103,10 +105,10 @@ export class Agent {
    * Run `task`.
    *
    * - **frozen lane (default)** ⇒ a single agent step. The tool-bearing frozen loop
-   *   EXECUTION is LIVE (PR-9b-2) via EXPLICIT tool refs (`flow().model(prompt, { tools:
-   *   ["mcp-echo"] })` / the `model@tool` chain DSL / a UI builder model step); the
-   *   `Agent({ tools: [fn] })` one-liner over LOCAL functions throws a pre-flight hint
-   *   until the immediate follow-up wires its dialed-tool grant name.
+   *   EXECUTION is LIVE — the `Agent({ tools: [fn] })` one-liner over LOCAL functions
+   *   fires (`run` resolves each `localTool(...)` to its namespaced grant on the step),
+   *   as do EXPLICIT refs (`flow().model(prompt, { tools: ["mcp-echo"] })` / the
+   *   `model@tool` chain DSL / a UI builder model step). No `KX_SERVE_AUTOGRANT` needed.
    * - `dynamic: true` ⇒ the steered react lane. With tools it routes to
    *   `kx/recipes/react-auto` (the only lane that fires registered/dialed tools; needs
    *   `KX_SERVE_AUTOGRANT=1`); without tools, plain `kx/recipes/react`.
@@ -143,15 +145,13 @@ export class Agent {
         throw e;
       }
     }
-    if (hasTools(tools)) {
-      throw new KxToolError(
-        "the deterministic-agentic loop is LIVE (PR-9b-2), but the Agent({ tools }) " +
-          "one-liner over local tool functions completes in the immediate follow-up (the " +
-          "dialed-tool grant-name match); author it today with EXPLICIT refs via " +
-          "flow().model(prompt, { tools: ['mcp-echo'] }) or the `model@tool` chain DSL, use " +
-          "{ dynamic: true } for the steered react lane, or flow().tool(fn, args) to fire one tool",
-      );
-    }
+    // Frozen lane (with OR without tools): a single agent step whose tool-grant SET is
+    // part of the step's identity (replayable). `asFlow` → `runChain` resolves any local
+    // `localTool(...)` defs to their namespaced `<server>/<name>` and writes them into the
+    // step's toolContract; the served model fires them in a bounded reason→tool→observe
+    // loop (a model's bare/leaf name resolves to the grant — the BUG-32 fix). No
+    // `KX_SERVE_AUTOGRANT` needed: the step grants its OWN exact tools (SN-8 — the server
+    // still compiles + warrants every step).
     return this.asFlow(task).run({
       wait: opts.wait,
       timeoutMs: opts.timeoutMs,

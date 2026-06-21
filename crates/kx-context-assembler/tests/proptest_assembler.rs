@@ -23,8 +23,9 @@
 //!    `source_ref == ContentRef::of(bytes)` for the parent path; this property
 //!    proves the negative invariant ("bytes is never the hash") across BOTH
 //!    code paths in `assemble`.
-//! 7. **Tool-path shape (H-2)**: tool items carry `description.as_bytes()` as
-//!    `bytes` and `blake3(canonical_bincode(ToolDef))` as `source_ref`. The
+//! 7. **Tool-path shape (H-2)**: tool items carry the menu text
+//!    (`"name: <grant_id>\n<description>"`, PR-1/BUG-32 name-steering) as `bytes`
+//!    and `blake3(canonical_bincode(ToolDef))` as `source_ref`. The
 //!    `event.resolved_def_hash` MUST match the freshly-computed hash —
 //!    deviation would mean the registry handed out a wrong content-address.
 //! 8. **Control edges contribute no content (H-2)**: a parent on a Control
@@ -431,7 +432,7 @@ proptest! {
     /// **Why this is necessary**: property 3 only proved
     /// `source_ref == ContentRef::of(bytes)` for the parent path. The tool
     /// path has `source_ref = blake3(canonical_bincode(ToolDef))` and
-    /// `bytes = description.as_bytes()` — the two are NOT related by the
+    /// `bytes = "name: <grant_id>\n<description>"` — the two are NOT related by the
     /// `ContentRef::of` equation. The negative invariant ("bytes is never
     /// equal to the 32-byte hash") needs its own proof.
     #[test]
@@ -498,7 +499,7 @@ proptest! {
     /// Property 7 (tool-path shape):
     ///
     /// When tools are granted in the warrant, each emitted tool item has:
-    ///   - `bytes = description.as_bytes()` (literal description, not the def)
+    ///   - `bytes = "name: <grant_id>\n<description>"` (menu text, not the def)
     ///   - `source_ref = blake3(canonical_bincode(ToolDef))` (the def hash)
     /// Combined with property 6, this proves the tool path doesn't leak the
     /// def hash bytes into `bytes`. The registry's resolution event's
@@ -526,10 +527,12 @@ proptest! {
             "exactly one tool item should be emitted"
         );
         let item = &ctx.items[0];
+        // PR-1/BUG-32: the menu leads with the granted name, then the description.
+        let expected_menu = format!("name: {tool_name_seed}-only\n{description}");
         prop_assert_eq!(
             item.bytes.as_ref(),
-            description.as_bytes(),
-            "tool item bytes MUST equal the literal description bytes"
+            expected_menu.as_bytes(),
+            "tool item bytes MUST be the `name:` steering line then the description"
         );
         // source_ref MUST be the canonical def hash. We can't recompute the
         // def hash here without rebuilding the ToolDef; but we CAN assert
@@ -684,7 +687,7 @@ fn mixed_parents_and_tools_emit_independent_items_with_correct_shapes() {
         .expect("tool item present");
     assert_eq!(
         &tool_item.bytes[..],
-        b"describes a tool whose description bytes go to the model"
+        b"name: h2-mixed-tool\ndescribes a tool whose description bytes go to the model"
     );
     assert_ne!(
         tool_item.source_ref,

@@ -36,10 +36,11 @@ adds no new attack surface. Cloud governs the bridge.
   ``kx/recipes/react-auto`` loop where the model picks tools (needs a served model
   + ``KX_SERVE_AUTOGRANT=1``).
 - **frozen / deterministic-agentic** — a MODEL step with a fixed tool set; its bounded
-  loop EXECUTION is LIVE as of PR-9b-2 via EXPLICIT refs (``flow().model(prompt,
-  tools=["mcp-echo"])`` / the ``model@tool`` DSL). The ``Agent(tools=[fn])`` one-liner
-  over LOCAL functions completes in the immediate follow-up (the dialed-tool grant-name
-  match), so a tool-bearing frozen ``Agent`` raises a clear pre-flight hint until then.
+  loop EXECUTION is LIVE. The ``Agent(tools=[fn])`` one-liner over LOCAL functions fires
+  (``run`` registers each function as a stdio MCP tool and grants its namespaced
+  ``<server>/<name>`` to the step; a model's bare/leaf call resolves to that grant), as do
+  EXPLICIT refs (``flow().model(prompt, tools=["mcp-echo"])`` / the ``model@tool`` DSL).
+  No ``KX_SERVE_AUTOGRANT`` needed — the frozen step grants its OWN exact tools.
 
 **Re-import contract.** The runtime spawns ``python -m kortecx._toolserver`` which
 re-loads your module to recover the functions. Decorate at MODULE level and guard

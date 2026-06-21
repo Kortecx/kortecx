@@ -26,7 +26,9 @@
  *
  * **Firing lanes (GR15-honest):** deterministic `flow().tool(fn, args)` (today) ·
  * steered `new Agent({ tools:[fn], dynamic:true })` → `kx/recipes/react-auto` (today,
- * needs `KX_SERVE_AUTOGRANT=1`) · frozen agentic loop → PR-9b-2 (a clear pre-flight hint).
+ * needs `KX_SERVE_AUTOGRANT=1`) · frozen agentic loop → `new Agent({ tools:[fn] })`
+ * fires the bounded reason→tool→observe loop (the step grants its OWN resolved tools;
+ * no `KX_SERVE_AUTOGRANT` needed).
  */
 
 import { type Chain, type Task, task } from "./chains.js";

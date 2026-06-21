@@ -12,11 +12,12 @@ Two lanes (D161), one object — the API name mirrors the distinction:
 - **Default = deterministic / frozen** — a single agent step with a FIXED tool-grant
   SET (replayable; the tool set is part of the step's identity). Pure client sugar over
   :class:`~kortecx.flow.Flow`. The frozen tool-EXECUTION (the bounded reason→tool→observe
-  loop) is **LIVE as of PR-9b-2** — author it with EXPLICIT tool refs via
-  ``flow().model(prompt, tools=["mcp-echo"])`` / the ``model@tool`` chain DSL / a UI
-  builder model step. The ``Agent(tools=[fn])`` one-liner over LOCAL ``@kx.tool``
-  functions completes in the immediate follow-up (the dialed-tool grant-name match); a
-  tool-bearing frozen ``Agent`` raises a clear pre-flight hint until then.
+  loop) is **LIVE** — the ``Agent(tools=[fn])`` one-liner over LOCAL ``@kx.tool``
+  functions now fires: ``run`` registers each function as a stdio MCP tool and grants its
+  namespaced ``<server>/<name>`` to the step, and the served model dials it (a bare/leaf
+  name resolves to the grant). No ``KX_SERVE_AUTOGRANT`` needed (the step grants its own
+  tools). EXPLICIT refs (``flow().model(prompt, tools=["mcp-echo"])`` / the ``model@tool``
+  chain DSL / a UI builder model step) work the same way.
 - ``dynamic=True`` → the **steered** ``kx/recipes/react`` recipe, where the model picks
   tools turn by turn. Works today.
 
@@ -91,11 +92,11 @@ class Agent:
     ) -> "Union[Run, Result]":
         """Run ``task``.
 
-        - **frozen lane (default)** ⇒ a single agent step. The tool-bearing frozen
-          loop EXECUTION is LIVE (PR-9b-2) via EXPLICIT tool refs
-          (``flow().model(prompt, tools=["mcp-echo"])`` / ``model@tool`` / a UI builder
-          model step); the ``Agent(tools=[fn])`` one-liner over LOCAL functions raises a
-          pre-flight hint until the immediate follow-up wires its dialed-tool grant name.
+        - **frozen lane (default)** ⇒ a single agent step. The tool-bearing frozen loop
+          EXECUTION is LIVE — the ``Agent(tools=[fn])`` one-liner over LOCAL functions
+          fires (``run`` resolves each ``@kx.tool`` to its namespaced grant on the step),
+          as do EXPLICIT refs (``flow().model(prompt, tools=["mcp-echo"])`` / ``model@tool``
+          / a UI builder model step). No ``KX_SERVE_AUTOGRANT`` needed.
         - ``dynamic=True`` ⇒ the steered react lane. With tools it routes to
           ``kx/recipes/react-auto`` (the only lane that fires registered/dialed tools;
           needs ``KX_SERVE_AUTOGRANT=1``); without tools, plain ``kx/recipes/react``.
@@ -128,17 +129,13 @@ class Agent:
                     "serve with KX_SERVE_AUTOGRANT=1 to enable it (it auto-grants the "
                     "registered tool set to the loop)"
                 ) from exc
-        if has_tools:
-            from .tools import ToolError
-
-            raise ToolError(
-                "the deterministic-agentic loop is LIVE (PR-9b-2), but the Agent(tools=) "
-                "one-liner over local @kx.tool functions completes in the immediate "
-                "follow-up (the dialed-tool grant-name match); author it today with "
-                "EXPLICIT refs via flow().model(prompt, tools=['mcp-echo']) or the "
-                "`model@tool` chain DSL, use Agent(..., dynamic=True) for the steered "
-                "react lane, or flow().tool(fn, **args) to fire one tool deterministically"
-            )
+        # Frozen lane (with OR without tools): a single agent step whose tool-grant
+        # SET is part of the step's identity (replayable). `as_flow` → `run_chain`
+        # resolves any local `@kx.tool` functions to their namespaced `<server>/<name>`
+        # and writes them into the step's tool_contract; the served model fires them in
+        # a bounded reason→tool→observe loop (a model's bare/leaf name resolves to the
+        # grant — the BUG-32 fix). No `KX_SERVE_AUTOGRANT` needed: the step grants its
+        # OWN exact tools (SN-8 — the server still compiles + warrants every step).
         return self.as_flow(task).run(wait=wait, timeout=timeout, client=kx)
 
     def stream(self, task: str, *, client: "Optional[KxClient]" = None) -> "Run":

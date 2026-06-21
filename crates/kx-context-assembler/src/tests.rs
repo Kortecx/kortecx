@@ -205,8 +205,9 @@ fn assemble_two_parents_one_tool() {
     // Parent bytes are resolved content (NEVER hashes).
     assert_eq!(&ctx.items[0].bytes[..], parent_a_bytes);
     assert_eq!(&ctx.items[1].bytes[..], parent_b_bytes);
-    // Tool item carries the description.
-    assert_eq!(&ctx.items[2].bytes[..], b"reads files");
+    // Tool item leads with the granted name (PR-1/BUG-32 steering), then the
+    // description (this byte change is prompt-only — see `source_ref` below).
+    assert_eq!(&ctx.items[2].bytes[..], b"name: fs-read\nreads files");
 }
 
 // -----------------------------------------------------------------
