@@ -609,12 +609,20 @@ message ReactTurnSummary {
   bytes  turn_mote_id     = 2;           // 32B — the turn's RUN-SALTED Mote id
   bytes  instance_id      = 3;           // 16B — the run this fact belongs to (the salt)
   string model_id         = 4;           // the resolved model the turns run
-  string branch           = 5;           // "pending" | "answer" | "tool" | "dead_lettered" (frozen at append)
+  string branch           = 5;           // "pending" | "answer" | "tool" | "rejected" | "dead_lettered" (frozen at append)
   string tool_id          = 6;           // set iff branch == "tool"
   string tool_version     = 7;           // set iff branch == "tool"
   uint32 max_turns        = 8;           // the run's durable turn cap (anchor-recorded)
   uint32 max_tool_calls   = 9;           // the run's durable tool-call cap
   uint64 seq              = 10;          // journal seq of the ReactRound fact (ordering)
+  // PR-3 (A2): the fail-closed refusal detail for a "rejected" turn (the model's
+  // tool proposal was refused at the decode/validate authority site — ungranted
+  // name, schema-invalid args, or malformed) — the model re-prompts over it,
+  // bounded by the budget. Empty unless branch == "rejected". Display + operator
+  // troubleshooting only; derived from the durable ReactBranch::Rejected fact,
+  // NOT a journal/identity/digest input. Additive (D120.6); an old client ignores
+  // it, a new client reads "" from an old server.
+  string rejection_reason = 11;          // set iff branch == "rejected"
 }
 message ListReactTurnsResponse {
   repeated ReactTurnSummary turns = 1;   // newest-first (descending seq)

@@ -1884,6 +1884,7 @@ pub fn render_react_turns(resp: &proto::ListReactTurnsResponse, json: bool) -> S
                     "max_turns": t.max_turns,
                     "max_tool_calls": t.max_tool_calls,
                     "seq": t.seq,
+                    "rejection_reason": t.rejection_reason,
                 })
             })
             .collect();
@@ -1893,6 +1894,15 @@ pub fn render_react_turns(resp: &proto::ListReactTurnsResponse, json: bool) -> S
     } else {
         let mut out = String::new();
         for t in &resp.turns {
+            let detail = if !t.tool_id.is_empty() {
+                format!(" tool {}@{}", t.tool_id, t.tool_version)
+            } else if !t.rejection_reason.is_empty() {
+                // PR-3 (A2): show WHY a turn was rejected so an operator can see
+                // the model self-correct (or, at budget exhaustion, why it died).
+                format!(" reason {}", t.rejection_reason)
+            } else {
+                String::new()
+            };
             let _ = write!(
                 out,
                 "{}turn {}  inst {}  branch {}{}  model {}  caps {}/{}  seq {}",
@@ -1900,11 +1910,7 @@ pub fn render_react_turns(resp: &proto::ListReactTurnsResponse, json: bool) -> S
                 t.turn,
                 hex::encode(&t.instance_id),
                 t.branch,
-                if t.tool_id.is_empty() {
-                    String::new()
-                } else {
-                    format!(" tool {}@{}", t.tool_id, t.tool_version)
-                },
+                detail,
                 t.model_id,
                 t.max_turns,
                 t.max_tool_calls,
@@ -2173,6 +2179,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines)] // exhaustively mirrors 3 RPCs' wire field names
     fn replan_react_capture_json_mirror_proto_field_names() {
         let replan = proto::ListReplanRoundsResponse {
             rounds: vec![proto::ReplanRoundSummary {
@@ -2193,28 +2200,55 @@ mod tests {
         assert_eq!(v["has_more"], false);
 
         let react = proto::ListReactTurnsResponse {
-            turns: vec![proto::ReactTurnSummary {
-                turn: 2,
-                turn_mote_id: vec![5u8; 32],
-                instance_id: vec![6u8; 16],
-                model_id: "qwen3".into(),
-                branch: "tool".into(),
-                tool_id: "mcp-echo".into(),
-                tool_version: "1".into(),
-                max_turns: 8,
-                max_tool_calls: 6,
-                seq: 33,
-            }],
+            turns: vec![
+                proto::ReactTurnSummary {
+                    turn: 2,
+                    turn_mote_id: vec![5u8; 32],
+                    instance_id: vec![6u8; 16],
+                    model_id: "qwen3".into(),
+                    branch: "tool".into(),
+                    tool_id: "mcp-echo".into(),
+                    tool_version: "1".into(),
+                    max_turns: 8,
+                    max_tool_calls: 6,
+                    seq: 33,
+                    rejection_reason: String::new(),
+                },
+                // PR-3 (A2): a rejected turn carries its reason on both surfaces.
+                proto::ReactTurnSummary {
+                    turn: 1,
+                    turn_mote_id: vec![5u8; 32],
+                    instance_id: vec![6u8; 16],
+                    model_id: "qwen3".into(),
+                    branch: "rejected".into(),
+                    tool_id: String::new(),
+                    tool_version: String::new(),
+                    max_turns: 8,
+                    max_tool_calls: 6,
+                    seq: 32,
+                    rejection_reason: "args do not match inputSchema".into(),
+                },
+            ],
             has_more: true,
         };
         let v: Value = serde_json::from_str(&render_react_turns(&react, true)).unwrap();
         assert_eq!(v["turns"][0]["turn_mote_id"], "05".repeat(32));
+        // The rejected turn surfaces its reason in JSON + human output.
+        assert_eq!(v["turns"][1]["branch"], "rejected");
+        assert_eq!(
+            v["turns"][1]["rejection_reason"],
+            "args do not match inputSchema"
+        );
         assert_eq!(v["turns"][0]["instance_id"], "06".repeat(16));
         assert_eq!(v["turns"][0]["branch"], "tool");
         assert_eq!(v["turns"][0]["max_tool_calls"], 6);
         assert_eq!(v["has_more"], true);
         let human = render_react_turns(&react, false);
         assert!(human.contains("tool mcp-echo@1") && human.contains("caps 8/6"));
+        assert!(
+            human.contains("branch rejected") && human.contains("reason args do not match"),
+            "the rejected turn shows its reason in human output: {human}"
+        );
 
         let capture = proto::ListCaptureRecordsResponse {
             records: vec![proto::CaptureRecordSummary {

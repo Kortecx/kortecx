@@ -49,6 +49,45 @@ pub(crate) const REACT_MAX_TURNS: u32 = 8;
 /// under the old 8/8 default keep their recorded caps (durable per-anchor).
 pub(crate) const REACT_DEFAULT_MAX_TOOL_CALLS: u32 = 6;
 
+/// Truncate a refusal reason to [`kx_journal::MAX_REJECTED_REASON_LEN`] chars at a
+/// char boundary (deterministic, panic-free, total) before it freezes onto a
+/// [`kx_journal::ReactBranch::Rejected`] fact — the journal's `MAX_ENTRY_LEN`
+/// guard is the backstop, this is the per-field `DoS`/context-window bound.
+#[must_use]
+pub(crate) fn bounded_reason(reason: String) -> String {
+    if reason.chars().count() <= kx_journal::MAX_REJECTED_REASON_LEN {
+        reason
+    } else {
+        reason
+            .chars()
+            .take(kx_journal::MAX_REJECTED_REASON_LEN)
+            .collect()
+    }
+}
+
+/// PR-3 (A2 graceful recovery): render the NEXT turn's instruction after the
+/// previous turn's tool proposal was REJECTED at the decode/validate authority
+/// site. The model reads its own (rejected) proposal via the out-of-band
+/// trajectory (`resolve_parent_context` contributes every prior turn's output);
+/// this appends the fail-closed `reason` plus a fixed steer so it self-corrects
+/// (fix the args, pick a granted tool, or answer directly).
+///
+/// PURE + total + deterministic: a function of `(base_instruction, reason)` only,
+/// both frozen (the base prompt is the anchor's immutable blob; the reason is on
+/// the durable `ReactBranch::Rejected` fact). A constant template — no clock, no
+/// RNG, no map iteration — so the live drive and a recovery re-fold (and the
+/// harness twin) build the byte-identical re-prompt turn. The `reason` is already
+/// bounded to `MAX_REJECTED_REASON_LEN` at the fact, so this cannot blow the
+/// turn's context window.
+#[must_use]
+pub(crate) fn render_reprompt(base_instruction: &str, reason: &str) -> String {
+    format!(
+        "{base_instruction}\n\n[Your previous tool call was REJECTED: {reason}\n\
+         Correct it — call a tool you were granted with arguments that match its \
+         schema, or answer the question directly if you cannot.]"
+    )
+}
+
 /// The run-salted 32-byte identity material for a ReAct turn:
 /// `blake3(b"kx-react-turn" ‖ instance_id ‖ turn.to_le_bytes())`. Deterministic +
 /// distinct per `(run, turn)`, and cryptographically distinct from the
@@ -586,6 +625,43 @@ mod tests {
         );
         assert_ne!(obs.id, react_obs.id);
         assert_eq!(hex(obs.id.as_bytes()), AGENTIC_TOOL0_GOLDEN);
+    }
+
+    #[test]
+    fn render_reprompt_is_deterministic_and_embeds_the_reason() {
+        let a = render_reprompt("list the files", "tool `x@1` is not granted to this run");
+        // PURE: same inputs → byte-identical output (the recovery/replay law).
+        assert_eq!(
+            a,
+            render_reprompt("list the files", "tool `x@1` is not granted to this run")
+        );
+        assert!(
+            a.starts_with("list the files"),
+            "the base instruction leads"
+        );
+        assert!(a.contains("REJECTED"), "carries the rejection steer");
+        assert!(
+            a.contains("not granted"),
+            "embeds the durable reason verbatim"
+        );
+        // A different reason → a different re-prompt (the model sees what changed).
+        assert_ne!(
+            a,
+            render_reprompt("list the files", "args do not match schema")
+        );
+    }
+
+    #[test]
+    fn bounded_reason_truncates_at_a_char_boundary_total() {
+        // Under the cap: identity.
+        let short = "short reason".to_string();
+        assert_eq!(bounded_reason(short.clone()), short);
+        // Over the cap (multi-byte chars): truncated to exactly the cap, never
+        // panics on a char boundary, and is idempotent.
+        let long: String = "é".repeat(kx_journal::MAX_REJECTED_REASON_LEN + 50);
+        let bounded = bounded_reason(long);
+        assert_eq!(bounded.chars().count(), kx_journal::MAX_REJECTED_REASON_LEN);
+        assert_eq!(bounded_reason(bounded.clone()), bounded, "idempotent");
     }
 
     #[test]

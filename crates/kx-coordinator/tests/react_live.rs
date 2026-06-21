@@ -1101,10 +1101,11 @@ async fn crash_resume_mid_chain_converges_without_duplicates() {
     let _ = store; // keep the store alive through the asserts
 }
 
-/// A malformed (committed-to-but-garbled) proposal settles `DeadLettered` —
-/// fail-closed, mirroring the harness `malformed_proposal_dead_letters_no_effect`.
+/// PR-3 (A2): a malformed (committed-to-but-garbled) proposal is NOT terminal —
+/// it freezes a `Rejected` round (reason names the malformation) and the chain
+/// re-prompts the next turn (the model self-corrects), bounded by the budget.
 #[tokio::test]
-async fn malformed_committed_proposal_dead_letters_the_chain() {
+async fn malformed_committed_proposal_rejects_and_re_prompts() {
     let dir = TempDir::new().unwrap();
     let (svc, store) = coordinator(&dir);
     let w = warrant(true); // grants make the envelope path live
@@ -1115,8 +1116,8 @@ async fn malformed_committed_proposal_dead_letters_the_chain() {
     let turn0: Mote = leased[0].mote.clone().unwrap().try_into().unwrap();
 
     // Truncated envelope: committed to a call but malformed (the live gateway
-    // fences this pre-commit; the substrate must STILL fail closed if such bytes
-    // ever reach the journal — defense-in-depth).
+    // fences this pre-commit; the substrate must STILL recover gracefully if such
+    // bytes ever reach the journal — defense-in-depth).
     commit_raw(
         &svc,
         &store,
@@ -1127,21 +1128,48 @@ async fn malformed_committed_proposal_dead_letters_the_chain() {
     )
     .await;
     let facts = react_facts(&svc, &dir).await;
-    assert!(matches!(
-        facts.last().unwrap(),
-        JournalEntry::ReactRound {
-            turn: 0,
-            branch: ReactBranch::DeadLettered,
-            ..
-        }
-    ));
-    assert!(common::lease_work(&svc, worker, MAC, 16).await.is_empty());
+    // turn-0 settled REJECTED (not DeadLettered), and a turn-1 Pending spawned.
+    assert!(
+        facts.iter().any(|f| matches!(
+            f,
+            JournalEntry::ReactRound { turn: 0, branch: ReactBranch::Rejected { reason }, .. }
+                if reason.contains("malformed")
+        )),
+        "the malformed proposal freezes a Rejected round naming the malformation"
+    );
+    assert!(
+        facts.iter().any(|f| matches!(
+            f,
+            JournalEntry::ReactRound {
+                turn: 1,
+                branch: ReactBranch::Pending,
+                ..
+            }
+        )),
+        "the chain re-prompts: a next (turn-1) turn is materialized"
+    );
+    // The re-prompted turn IS leasable and carries the rejection steer.
+    let next = common::lease_work(&svc, worker, MAC, 16).await;
+    assert_eq!(next.len(), 1, "the re-prompted turn is leasable");
+    let turn1: Mote = next[0].mote.clone().unwrap().try_into().unwrap();
+    let prompt = turn1
+        .def
+        .config_subset
+        .get(&ConfigKey(PROMPT_KEY.to_string()))
+        .map(|v| String::from_utf8_lossy(&v.0).into_owned())
+        .unwrap_or_default();
+    assert!(
+        prompt.contains("REJECTED"),
+        "the re-prompted turn's instruction carries the rejection steer: {prompt}"
+    );
 }
 
-/// An UNGRANTED tool proposal settles `DeadLettered` (SN-8: the model cannot
-/// conjure a tool the warrant withheld — prompt injection cannot escalate).
+/// PR-3 (A2): an UNGRANTED tool proposal (SN-8: the model cannot conjure a tool
+/// the warrant withheld) freezes a `Rejected` round and re-prompts — the grant
+/// set is never widened, but the model gets a bounded chance to pick a granted
+/// tool or answer directly instead of the whole chain dying.
 #[tokio::test]
-async fn ungranted_proposal_dead_letters_the_chain() {
+async fn ungranted_proposal_rejects_and_re_prompts() {
     let dir = TempDir::new().unwrap();
     let (svc, store) = coordinator(&dir);
     let w = warrant(true); // grants mcp-echo@1 ONLY
@@ -1160,14 +1188,26 @@ async fn ungranted_proposal_dead_letters_the_chain() {
         worker,
     )
     .await;
-    assert!(matches!(
-        react_facts(&svc, &dir).await.last().unwrap(),
-        JournalEntry::ReactRound {
-            turn: 0,
-            branch: ReactBranch::DeadLettered,
-            ..
-        }
-    ));
+    let facts = react_facts(&svc, &dir).await;
+    assert!(
+        facts.iter().any(|f| matches!(
+            f,
+            JournalEntry::ReactRound { turn: 0, branch: ReactBranch::Rejected { reason }, .. }
+                if reason.contains("not granted")
+        )),
+        "an ungranted name freezes a Rejected round (SN-8 — never a grant widening)"
+    );
+    assert!(
+        facts.iter().any(|f| matches!(
+            f,
+            JournalEntry::ReactRound {
+                turn: 1,
+                branch: ReactBranch::Pending,
+                ..
+            }
+        )),
+        "the chain re-prompts the next turn"
+    );
 }
 
 /// A TOOL-EXECUTION failure (the worker F4 dead-letters the OBSERVATION — an
@@ -1213,12 +1253,14 @@ async fn failed_observation_dead_letters_the_chain_same_turn() {
     );
 }
 
-/// A proposal whose ARGS fail the tool's typed `inputSchema` is refused AT THE
-/// FREEZE (the settle's validate-at-freeze, the ONE authority site): the branch
-/// freezes `DeadLettered`, never `Tool` — so no observation is ever
-/// materialized and no effect can fire on schema-invalid args (D110.4).
+/// PR-3 (A2): a proposal whose ARGS fail the tool's typed `inputSchema` is
+/// refused AT THE FREEZE (the settle's validate-at-freeze, the ONE authority
+/// site) — the branch freezes `Rejected`, NEVER `Tool`, so no observation is
+/// ever materialized and no effect can fire on schema-invalid args (D110.4).
+/// The chain then re-prompts (A2), so the freeze invariant is preserved while
+/// the model gets a bounded chance to fix its arguments.
 #[tokio::test]
-async fn schema_invalid_args_dead_letter_at_the_freeze() {
+async fn schema_invalid_args_reject_at_the_freeze_then_re_prompt() {
     let dir = TempDir::new().unwrap();
     let (svc, store) = coordinator(&dir);
     let w = warrant(true);
@@ -1229,7 +1271,7 @@ async fn schema_invalid_args_dead_letter_at_the_freeze() {
     let turn0: Mote = leased[0].mote.clone().unwrap().try_into().unwrap();
 
     // Granted tool, well-formed envelope — but the args violate the schema
-    // (missing the required `q`, smuggling an undeclared key).
+    // (missing the required param, smuggling an undeclared key).
     commit_raw(
         &svc,
         &store,
@@ -1241,18 +1283,163 @@ async fn schema_invalid_args_dead_letter_at_the_freeze() {
     .await;
 
     let facts = react_facts(&svc, &dir).await;
-    assert_eq!(facts.len(), 2, "anchor + the DeadLettered freeze");
-    assert!(matches!(
-        facts.last().unwrap(),
-        JournalEntry::ReactRound {
-            turn: 0,
-            branch: ReactBranch::DeadLettered,
-            ..
-        }
-    ));
+    // anchor Pending@0 + Rejected@0 + Pending@1 — NO Tool, NO observation.
+    assert!(
+        facts.iter().any(|f| matches!(
+            f,
+            JournalEntry::ReactRound { turn: 0, branch: ReactBranch::Rejected { reason }, .. }
+                if reason.contains("inputSchema")
+        )),
+        "schema-invalid args freeze a Rejected round naming the inputSchema"
+    );
+    assert!(
+        !facts.iter().any(|f| matches!(
+            f,
+            JournalEntry::ReactRound {
+                branch: ReactBranch::Tool { .. },
+                ..
+            }
+        )),
+        "a schema-invalid proposal NEVER freezes a Tool fact (the freeze invariant)"
+    );
+    // The re-prompted next turn is leasable; no observation Mote was made (the
+    // only leasable work is the turn, never an observation).
+    let next = common::lease_work(&svc, worker, MAC, 16).await;
+    assert_eq!(next.len(), 1, "only the re-prompted turn is leasable");
+    let turn1: Mote = next[0].mote.clone().unwrap().try_into().unwrap();
+    assert!(
+        turn1.def.tool_contract.is_empty(),
+        "the leasable work is a TURN (no tool_contract), never an observation"
+    );
+}
+
+/// PR-3 (A2) — the headline recovery: a bad-args proposal is REJECTED, the model
+/// reads the reason on the re-prompted turn and ANSWERS, and the chain settles
+/// with a real answer (no dead-letter). This is the live-tool-calling fix the
+/// §2.246 campaign filed (A1 necessary-but-not-sufficient → A2).
+#[tokio::test]
+async fn bad_args_reject_then_the_model_recovers_with_an_answer() {
+    let dir = TempDir::new().unwrap();
+    let (svc, store) = coordinator(&dir);
+    let w = warrant(true);
+
+    let (_, _) = submit_react(&svc, &seed_mote(), &w).await;
+    let worker = common::register(&svc, "w").await;
+    let leased = common::lease_work(&svc, worker, MAC, 16).await;
+    let turn0: Mote = leased[0].mote.clone().unwrap().try_into().unwrap();
+
+    // Turn 0: bad args → Rejected → re-prompt.
+    commit_raw(
+        &svc,
+        &store,
+        &turn0,
+        &w,
+        br#"{"tool_call":{"name":"mcp-echo","version":"1","args":{"zz":"x"}}}"#,
+        worker,
+    )
+    .await;
+
+    // Turn 1: the re-prompted turn — the model now ANSWERS (no tool envelope).
+    let next = common::lease_work(&svc, worker, MAC, 16).await;
+    let turn1: Mote = next[0].mote.clone().unwrap().try_into().unwrap();
+    commit_raw(&svc, &store, &turn1, &w, b"the answer is 42", worker).await;
+
+    let facts = react_facts(&svc, &dir).await;
+    assert!(
+        facts.iter().any(|f| matches!(
+            f,
+            JournalEntry::ReactRound {
+                turn: 0,
+                branch: ReactBranch::Rejected { .. },
+                ..
+            }
+        )),
+        "turn 0 was rejected"
+    );
+    assert!(
+        matches!(
+            facts.last().unwrap(),
+            JournalEntry::ReactRound {
+                turn: 1,
+                branch: ReactBranch::Answer,
+                ..
+            }
+        ),
+        "turn 1 recovered with an Answer — the chain settled with a real result"
+    );
     assert!(
         common::lease_work(&svc, worker, MAC, 16).await.is_empty(),
-        "no observation was materialized — nothing fires"
+        "the chain is terminal on the answer"
+    );
+}
+
+/// PR-3 (A2) — the loop bound: a model that emits a bad proposal EVERY turn is
+/// bounded by the durable tool-call budget (each Rejected round spends one), then
+/// dead-letters LOUDLY (BUG-27: terminal, never silent; GR15: never a fabricated
+/// answer). This is the invariant that keeps graceful recovery from becoming an
+/// infinite re-prompt wedge.
+#[tokio::test]
+async fn repeated_bad_args_exhaust_the_budget_then_dead_letter() {
+    let dir = TempDir::new().unwrap();
+    let (svc, store) = coordinator(&dir);
+    let w = warrant(true); // default caps: 8 turns / 6 tool calls
+
+    let (_, _) = submit_react(&svc, &seed_mote(), &w).await;
+    let worker = common::register(&svc, "w").await;
+
+    let mut rejected_turns = 0u32;
+    for _ in 0..16 {
+        let leased = common::lease_work(&svc, worker, MAC, 16).await;
+        let Some(item) = leased.into_iter().next() else {
+            break;
+        };
+        let turn: Mote = item.mote.unwrap().try_into().unwrap();
+        // Every turn emits schema-invalid args → Rejected.
+        commit_raw(
+            &svc,
+            &store,
+            &turn,
+            &w,
+            br#"{"tool_call":{"name":"mcp-echo","version":"1","args":{"zz":"x"}}}"#,
+            worker,
+        )
+        .await;
+        rejected_turns += 1;
+    }
+
+    let facts = react_facts(&svc, &dir).await;
+    let rejected = facts
+        .iter()
+        .filter(|f| {
+            matches!(
+                f,
+                JournalEntry::ReactRound {
+                    branch: ReactBranch::Rejected { .. },
+                    ..
+                }
+            )
+        })
+        .count();
+    // Bounded by the tool-call budget (6), not the turn budget (8) — every round
+    // is a refused proposal, so the tool-call cap fires first.
+    assert_eq!(
+        rejected, 6,
+        "exactly max_tool_calls Rejected rounds, then bounded"
+    );
+    assert_eq!(rejected_turns, 6, "no turn 7 ever spawned");
+    assert!(
+        matches!(
+            facts.last().unwrap(),
+            JournalEntry::ReactRound {
+                branch: ReactBranch::DeadLettered,
+                ..
+            }
+        ),
+        "budget exhaustion freezes a LOUD terminal DeadLettered — never silent"
+    );
+    assert!(
+        common::lease_work(&svc, worker, MAC, 16).await.is_empty(),
+        "the chain is dead — no re-fire, no runaway"
     );
 }
 

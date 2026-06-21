@@ -33,15 +33,20 @@ const DEFAULT_PAGE: usize = 200;
 /// The closed wire vocabulary for a settled branch (frozen at append; mirrored
 /// in the proto doc-comment — a string, not an enum, so a future branch is
 /// additive on the wire).
-fn branch_wire(branch: &ReactBranch) -> (&'static str, String, String) {
+fn branch_wire(branch: &ReactBranch) -> (&'static str, String, String, String) {
     match branch {
-        ReactBranch::Answer => ("answer", String::new(), String::new()),
+        ReactBranch::Answer => ("answer", String::new(), String::new(), String::new()),
         ReactBranch::Tool {
             tool_id,
             tool_version,
-        } => ("tool", tool_id.clone(), tool_version.clone()),
-        ReactBranch::DeadLettered => ("dead_lettered", String::new(), String::new()),
-        ReactBranch::Pending => ("pending", String::new(), String::new()),
+        } => ("tool", tool_id.clone(), tool_version.clone(), String::new()),
+        // PR-3 (A2): a refused proposal the model re-prompts over — carry the
+        // durable reason for operator troubleshooting (display only).
+        ReactBranch::Rejected { reason } => {
+            ("rejected", String::new(), String::new(), reason.clone())
+        }
+        ReactBranch::DeadLettered => ("dead_lettered", String::new(), String::new(), String::new()),
+        ReactBranch::Pending => ("pending", String::new(), String::new(), String::new()),
     }
 }
 
@@ -84,7 +89,7 @@ pub(crate) fn list_react_turns(
                 seq,
                 ..
             } if filter.is_none_or(|f| f == instance_id) => {
-                let (branch_str, tool_id, tool_version) = branch_wire(&branch);
+                let (branch_str, tool_id, tool_version, rejection_reason) = branch_wire(&branch);
                 Some(proto::ReactTurnSummary {
                     turn,
                     turn_mote_id: turn_mote_id.as_bytes().to_vec(),
@@ -96,6 +101,7 @@ pub(crate) fn list_react_turns(
                     max_turns,
                     max_tool_calls,
                     seq,
+                    rejection_reason,
                 })
             }
             _ => None,
@@ -136,6 +142,39 @@ mod tests {
             step_salt: None,
             seq: 0,
         }
+    }
+
+    #[test]
+    fn rejected_branch_surfaces_its_reason_on_the_wire() {
+        // PR-3 (A2): a Rejected turn is a distinct wire branch carrying the
+        // durable reason for operator troubleshooting; other branches carry "".
+        let j = InMemoryJournal::new();
+        j.append(turn_fact(
+            0,
+            0xb0,
+            ReactBranch::Rejected {
+                reason: "the arguments for `mcp-echo/echo@1` do not match its inputSchema"
+                    .to_string(),
+            },
+        ))
+        .unwrap();
+        j.append(turn_fact(1, 0xb0, ReactBranch::Answer)).unwrap();
+        let r = ReadOnly::new(j);
+
+        let resp = list_react_turns(&r, None, None).unwrap();
+        let rejected = resp
+            .turns
+            .iter()
+            .find(|t| t.branch == "rejected")
+            .expect("a rejected turn");
+        assert!(
+            rejected.rejection_reason.contains("inputSchema"),
+            "the rejection reason surfaces on the wire"
+        );
+        assert!(rejected.tool_id.is_empty(), "no tool id on a rejected turn");
+        // A non-rejected branch carries an empty reason (forward-compat default).
+        let answer = resp.turns.iter().find(|t| t.branch == "answer").unwrap();
+        assert!(answer.rejection_reason.is_empty());
     }
 
     #[test]

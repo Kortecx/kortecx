@@ -118,6 +118,21 @@ the arguments against the tool's typed `inputSchema`, and dispatches via the
 capability broker. A prompt-injected call to an **ungranted** tool never fires.
 See the [Quickstart agent loop](./quickstart.md#run-the-agent-loop).
 
+### When a tool call fails
+
+A refused proposal does not kill the run — it settles `rejected` and the model
+re-prompts over the reason, bounded by the budget (see
+[Agents → Graceful tool-call recovery](./agent-runner.md#graceful-tool-call-recovery)).
+`kx react list --instance <id>` (or `ReactTurn.rejection_reason` in the SDKs)
+shows why each turn was refused:
+
+| What you see | What to do |
+| --- | --- |
+| `not granted to this run` | Grant the tool to the recipe/agent, or expect the model to pick a granted one. |
+| `do not match its inputSchema` | The model's argument keys/types are wrong — the menu now shows an `Example:`; check the tool's declared `inputSchema`. |
+| `could not be decoded` / `malformed` | The model emitted a non-tool or broken proposal — usually self-corrects on the next turn. |
+| chain `dead_lettered` after several `rejected` turns | The budget (`max_turns` / `max_tool_calls`) was exhausted without a usable answer — raise the caps or simplify the task/schema. |
+
 ## Authoring a `tool()` step
 
 Beyond the ReAct loop (where the *model* picks tools), you can author a **`tool()`

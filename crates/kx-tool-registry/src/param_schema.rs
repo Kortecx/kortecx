@@ -157,6 +157,14 @@ impl std::error::Error for SchemaError {}
 /// [`SchemaError`] on any structural or type mismatch — the dispatch is then
 /// refused before any effect fires.
 pub fn validate_args(schema: &InputSchema, args_bytes: &[u8]) -> Result<(), SchemaError> {
+    // PR-3 (A3c): tolerate the single most common, UNAMBIGUOUS model JSON
+    // malformation — a trailing comma — by normalizing FIRST, so the same bytes
+    // that validate are the bytes that fire (the coordinator re-derives the
+    // normalized form for `WorkItem.tool_args` — `normalize_lenient_args`).
+    // This relaxes only the arg SYNTAX surface, never the authority gate
+    // (name/grant resolution stays exact — SN-8).
+    let normalized = normalize_lenient_args(args_bytes);
+    let args_bytes: &[u8] = normalized.as_ref();
     // Empty args == `{}` (the no-arguments case), mirroring the MCP capability.
     let map: BTreeMap<String, &RawValue> = if args_bytes.is_empty() {
         BTreeMap::new()
@@ -196,6 +204,64 @@ pub fn validate_args(schema: &InputSchema, args_bytes: &[u8]) -> Result<(), Sche
         }
     }
     Ok(())
+}
+
+/// PR-3 (A3c): normalize a model's proposed args bytes by stripping a single
+/// class of UNAMBIGUOUS JSON malformation — a **trailing comma** before a closing
+/// `}` or `]` — so a capable model that emits `{"text":"hi",}` still fires.
+///
+/// PURE + total + panic-free + deterministic + idempotent (`f(f(x)) == f(x)`)
+/// over ARBITRARY bytes (proptest-pinned): it tracks string-literal + escape state
+/// so a comma INSIDE a string is never touched, and only removes a `,` that —
+/// after skipping ASCII whitespace — is immediately followed by `}` or `]`.
+/// Returns `Borrowed` when nothing changes (the common clean path), so it adds no
+/// allocation to a well-formed bag. SN-8: this relaxes ARG SYNTAX only — it never
+/// fuzzy-matches a parameter NAME or widens a grant; the authority gate stays
+/// exact. Deliberately NARROW: single-quoted strings / unquoted keys are
+/// string-boundary-ambiguous and are NOT tolerated (they stay fail-closed).
+#[must_use]
+pub fn normalize_lenient_args(args: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+    let mut in_string = false;
+    let mut escaped = false;
+    let mut remove: Vec<usize> = Vec::new();
+    for (i, &b) in args.iter().enumerate() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if b == b'\\' {
+                escaped = true;
+            } else if b == b'"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match b {
+            b'"' => in_string = true,
+            b',' => {
+                let mut j = i + 1;
+                while j < args.len() && args[j].is_ascii_whitespace() {
+                    j += 1;
+                }
+                if j < args.len() && (args[j] == b'}' || args[j] == b']') {
+                    remove.push(i);
+                }
+            }
+            _ => {}
+        }
+    }
+    if remove.is_empty() {
+        return std::borrow::Cow::Borrowed(args);
+    }
+    let mut out = Vec::with_capacity(args.len() - remove.len());
+    let mut ri = 0;
+    for (i, &b) in args.iter().enumerate() {
+        if ri < remove.len() && remove[ri] == i {
+            ri += 1;
+            continue;
+        }
+        out.push(b);
+    }
+    std::borrow::Cow::Owned(out)
 }
 
 /// Check one raw JSON value against a declared [`ParamType`] by deserializing into
@@ -356,5 +422,70 @@ mod tests {
             validate_args(&schema(), b""),
             Err(SchemaError::MissingRequired { .. })
         ));
+    }
+
+    // -----------------------------------------------------------------------
+    // PR-3 (A3c) — conservative JSON-malformation tolerance (trailing commas).
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn accepts_a_trailing_comma_in_an_object() {
+        // The model emits a trailing comma after the last key — now validates.
+        assert!(validate_args(&schema(), br#"{"count": 5,}"#).is_ok());
+        assert!(validate_args(&schema(), br#"{"count": 5, "label": "ok",}"#).is_ok());
+    }
+
+    #[test]
+    fn trailing_comma_inside_a_string_is_not_stripped() {
+        // A comma-then-brace INSIDE a string value must survive verbatim (it is
+        // not a trailing comma). The label `",}"` is 2 bytes ≤ max_len 8 → valid.
+        assert_eq!(
+            normalize_lenient_args(br#"{"count":1,"label":",}"}"#).as_ref(),
+            br#"{"count":1,"label":",}"}"#
+        );
+        assert!(validate_args(&schema(), br#"{"count":1,"label":",}"}"#).is_ok());
+    }
+
+    #[test]
+    fn normalize_is_idempotent_and_pure() {
+        let dirty = br#"{"a":[1,2,],"b":{"c":3,},}"#;
+        let once = normalize_lenient_args(dirty).into_owned();
+        let twice = normalize_lenient_args(&once).into_owned();
+        assert_eq!(once, twice, "idempotent: f(f(x)) == f(x)");
+        // The cleaned bytes have no trailing commas left.
+        assert_eq!(once, br#"{"a":[1,2],"b":{"c":3}}"#);
+        // Pure: a clean bag is returned BORROWED (zero allocation).
+        assert!(matches!(
+            normalize_lenient_args(br#"{"count":5}"#),
+            std::borrow::Cow::Borrowed(_)
+        ));
+    }
+
+    #[test]
+    fn normalize_does_not_invent_validity_for_other_malformations() {
+        // SN-8 / narrow-scope: single-quoted strings + unquoted keys stay
+        // fail-closed (we tolerate ONLY trailing commas).
+        assert!(validate_args(&schema(), br"{'count': 5}").is_err());
+        assert!(validate_args(&schema(), br"{count: 5}").is_err());
+    }
+
+    proptest::proptest! {
+        /// Totality + panic-freedom over ARBITRARY bytes — the security-gate
+        /// discipline. The normalizer never panics and never grows the input.
+        #[test]
+        fn normalize_is_total_and_never_grows(bytes: Vec<u8>) {
+            let out = normalize_lenient_args(&bytes);
+            proptest::prop_assert!(out.len() <= bytes.len());
+            // Idempotent on arbitrary input too.
+            let again = normalize_lenient_args(&out);
+            proptest::prop_assert_eq!(again.as_ref(), out.as_ref());
+        }
+
+        /// validate_args is total + panic-free over arbitrary bytes + arbitrary
+        /// (well-formed) schema usage — it only ever returns Ok/Err, never panics.
+        #[test]
+        fn validate_args_is_total(bytes: Vec<u8>) {
+            let _ = validate_args(&schema(), &bytes); // must not panic
+        }
     }
 }

@@ -3857,6 +3857,26 @@ button.card-grid__title:hover {
 .react-progress .badge[data-branch="dead_lettered"] {
   border-color: var(--danger, currentColor);
 }
+/* PR-3 (A2): a rejected turn — the model re-prompts over it (a recovery, not a
+ * death), so it reads as a WARNING, distinct from a terminal dead-letter. The
+ * disclosure summary stays a chip; the reason expands as muted prose. Both
+ * themes by construction (tokens only). */
+.react-progress .badge[data-branch="rejected"] {
+  border-color: var(--warn, var(--danger, currentColor));
+}
+.react-progress details.react-rejected {
+  cursor: pointer;
+}
+.react-progress details.react-rejected > summary {
+  list-style: none;
+}
+.react-progress .react-reject-reason {
+  display: block;
+  margin-top: 0.25rem;
+  max-width: 28rem;
+  white-space: normal;
+  font-size: 0.85em;
+}
 
 /* ----------------------------------------------------------------------------
  * PR-4 — the visual Blueprint builder (/blueprints/new). All colors come from

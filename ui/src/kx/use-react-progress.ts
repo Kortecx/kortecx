@@ -17,7 +17,7 @@ const PAGE = 32; // caps are ≤8 turns + ≤8 tool rounds — one page always c
 
 export interface ReactTurnVM {
   readonly turn: number;
-  /** `"pending" | "answer" | "tool" | "dead_lettered"` (frozen at append). */
+  /** `"pending" | "answer" | "tool" | "rejected" | "dead_lettered"` (frozen at append). */
   readonly branch: string;
   /** The fired tool (`id@version`) for a `tool` branch; "" otherwise. */
   readonly toolId: string;
@@ -25,6 +25,8 @@ export interface ReactTurnVM {
   /** The turn Mote (hex) — the `answer` branch's committed result is the reply. */
   readonly turnMoteId: string;
   readonly maxTurns: number;
+  /** PR-3 (A2): the fail-closed reason a `rejected` turn re-prompts over; "" otherwise. */
+  readonly rejectionReason: string;
 }
 
 export interface ReactProgress {
@@ -68,6 +70,7 @@ export function useReactProgress(instanceId: string | undefined) {
           toolVersion: t.toolVersion,
           turnMoteId: t.turnMoteId,
           maxTurns: t.maxTurns,
+          rejectionReason: t.rejectionReason,
         })),
       );
     },

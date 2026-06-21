@@ -1,9 +1,10 @@
 //! `kx react list` — ReAct-turn observability over the gateway
 //! (`ListReactTurns`, PR-2d-1). The durable `ReactRound` facts the live ReAct
 //! chain commits: each turn's run-salted Mote id, its settled branch
-//! (`pending` | `answer` | `tool` | `dead_lettered`), the fired tool for a
-//! `tool` branch, and the run's durable budget caps. Read-only, newest-first;
-//! `--instance` scopes to one run's chain.
+//! (`pending` | `answer` | `tool` | `rejected` | `dead_lettered`), the fired tool
+//! for a `tool` branch, the fail-closed reason for a `rejected` branch (PR-3/A2),
+//! and the run's durable budget caps. Read-only, newest-first; `--instance`
+//! scopes to one run's chain.
 
 use kx_proto::proto;
 

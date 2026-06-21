@@ -2,9 +2,11 @@
 
 The durable, queryable history of a live ReAct chain in ``kx serve`` (PR-2d-1/2):
 each turn's run-salted Mote id, its settled branch (``pending`` | ``answer`` |
-``tool`` | ``dead_lettered``), and — for a ``tool`` branch — the fired tool's
-``id@version``. Kept in its own module (the runs.py / module-per-concern
-precedent). SN-8: every id is server-derived; the SDK only hex-encodes the bytes.
+``tool`` | ``rejected`` | ``dead_lettered``), and — for a ``tool`` branch — the
+fired tool's ``id@version``, or — for a ``rejected`` branch (PR-3/A2) — the
+fail-closed ``rejection_reason`` the model re-prompts over. Kept in its own module
+(the runs.py / module-per-concern precedent). SN-8: every id is server-derived;
+the SDK only hex-encodes the bytes.
 """
 
 from __future__ import annotations
@@ -26,12 +28,13 @@ class ReactTurn:
     turn_mote_id: str  # hex
     instance_id: str  # hex
     model_id: str
-    branch: str  # "pending" | "answer" | "tool" | "dead_lettered"
+    branch: str  # "pending" | "answer" | "tool" | "rejected" | "dead_lettered"
     tool_id: str  # set iff branch == "tool"
     tool_version: str  # set iff branch == "tool"
     max_turns: int
     max_tool_calls: int
     seq: int
+    rejection_reason: str = ""  # set iff branch == "rejected" (PR-3/A2)
 
     @classmethod
     def from_proto(cls, r: "_g.ReactTurnSummary") -> "ReactTurn":
@@ -46,6 +49,7 @@ class ReactTurn:
             max_turns=r.max_turns,
             max_tool_calls=r.max_tool_calls,
             seq=r.seq,
+            rejection_reason=r.rejection_reason,
         )
 
 

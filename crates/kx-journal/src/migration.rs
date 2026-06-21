@@ -97,12 +97,18 @@ pub fn migrate_entry(
     // double-append its `idempotency_class` byte). `from_version` is guaranteed in
     // [MIN_SUPPORTED, CURRENT] by the guard above.
     match from_version {
-        // v9 (current): no transform, the single source of truth for decode.
+        // v10 (current): no transform, the single source of truth for decode.
         JOURNAL_SCHEMA_VERSION => Ok(decode_entry_with_def_hash(bytes, def_hash)?),
-        // v8 → v9: append the safe-default `None` step_salt presence byte to each
-        // `ReactRound` (kind 9) body (the lone v8→v9 delta — a trailing additive
-        // byte, exactly the v5→v6 shape); every other kind is byte-identical and
-        // passes through. The result is v9-shaped.
+        // v9 → v10: a PURE pass-through. The lone v9→v10 delta is the brand-new
+        // `ReactBranch::Rejected` (branch tag 4); no v9 journal can contain a tag-4
+        // `ReactRound` body, and every existing kind/tag is byte-identical, so v9
+        // bytes decode correctly under v10 unchanged.
+        9 => Ok(decode_entry_with_def_hash(bytes, def_hash)?),
+        // v8 → current: append the safe-default `None` step_salt presence byte to
+        // each `ReactRound` (kind 9) body (the lone v8→v9 delta — a trailing
+        // additive byte, exactly the v5→v6 shape); every other kind is
+        // byte-identical and passes through. The result is current-shaped (the
+        // v9→v10 delta adds nothing to an existing v8 entry).
         8 => upconvert_v8_to_current(bytes, def_hash),
         // v7 → v9: a PURE pass-through. Kinds 0..8 are byte-identical and v7
         // predates `ReactRound` (kind 9, added v8), so a v7 journal carries no

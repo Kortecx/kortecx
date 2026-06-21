@@ -158,6 +158,7 @@ describe("ReactTurn.fromProto", () => {
       max_turns: 8,
       max_tool_calls: 6,
       seq: 42,
+      rejection_reason: "",
     });
   });
 

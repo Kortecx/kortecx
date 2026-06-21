@@ -141,13 +141,15 @@ fn migrate_and_verify_preserves_product_identity() {
 
     let report = migrate_and_verify(&src, &dst).unwrap();
     assert_eq!(report.from_version, 5);
-    // The migration target tracks the current schema (v9 as of PR-9b-2a's additive
-    // `ReactRound.step_salt`; v8 was PR-2d-1's `ReactRound`; v7 was PR-2c-2's
-    // `ReplanRound`); the v5→current up-conversion still appends exactly the lone
-    // `idempotency_class` byte (this v5 fixture has no kind-9 ReactRound, so no
-    // step_salt byte is added). Pinned as a reviewable change — the PRODUCT
-    // identity digest below is the real invariant (unchanged across the bump).
-    assert_eq!(report.to_version, 9);
+    // The migration target tracks the current schema (v10 as of PR-3's additive
+    // `ReactBranch::Rejected`; v9 was PR-9b-2a's `ReactRound.step_salt`; v8 was
+    // PR-2d-1's `ReactRound`; v7 was PR-2c-2's `ReplanRound`); the v5→current
+    // up-conversion still appends exactly the lone `idempotency_class` byte (this
+    // v5 fixture has no kind-9 ReactRound, so no step_salt byte is added, and the
+    // v9→v10 delta is a brand-new branch tag that no v5 entry can carry). Pinned
+    // as a reviewable change — the PRODUCT identity digest below is the real
+    // invariant (unchanged across the bump).
+    assert_eq!(report.to_version, 10);
     assert_eq!(report.entries_upconverted, 1);
 
     // The up-converted source and the migrated destination fold to the same

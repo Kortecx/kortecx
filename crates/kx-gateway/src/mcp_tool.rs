@@ -40,8 +40,13 @@ pub(crate) fn echo_tool() -> (ToolName, ToolVersion) {
 }
 
 /// The bundled tool's [`ToolDef`]: an MCP stdio tool with NO egress requirement
-/// and a typed one-param schema (`q: Str`, required, unknown keys refused) —
-/// so `validate_args` genuinely gates every proposed call.
+/// and a typed one-param schema (`text: Str`, required, unknown keys refused) —
+/// so `validate_args` genuinely gates every proposed call. PR-3 (A3b): the param
+/// is `text` (not `q`) so a capable model told to "use the echo tool" emits the
+/// INTUITIVE key on the first try (the §2.246 finding: it guessed `{"text":…}`
+/// for a `q` param and the chain dead-lettered). The MCP remote method stays
+/// `echo` and the echo binary round-trips any args key, so this is semantically
+/// free at the world boundary.
 #[must_use]
 pub(crate) fn echo_tool_def() -> ToolDef {
     let (tool_id, tool_version) = echo_tool();
@@ -68,7 +73,7 @@ pub(crate) fn echo_tool_def() -> ToolDef {
         idempotency_class: IdempotencyClass::Staged,
         input_schema: Some(InputSchema {
             params: vec![ParamSpec {
-                name: "q".into(),
+                name: "text".into(),
                 ty: ParamType::Str { max_len: 4096 },
                 required: true,
             }],

@@ -20,9 +20,11 @@ import {
   MoteSnapshotSchema,
   MoteSnapshotState,
   ProjectionViewSchema,
+  ReactTurnSummarySchema,
 } from "../src/gen/kortecx/v1/gateway_pb.js";
 import { INSTANCE_LEN, REF_LEN, asBytes, decode, encode } from "../src/hexids.js";
 import { KxClient } from "../src/node.js";
+import { ReactTurn } from "../src/react.js";
 import { Result } from "../src/run.js";
 import {
   encodeArgs,
@@ -295,6 +297,21 @@ describe("pollReactResult (F13 — react wait via ListReactTurns)", () => {
     expect(out.state).toBe(WaitState.Committed);
     expect(encode(out.terminalMoteId)).toBe(encode(answer)); // NOT the seed
     expect(dec(out.payload as Uint8Array)).toBe("final");
+  });
+
+  it("ReactTurn.fromProto carries the rejection reason (PR-3/A2)", () => {
+    const t = ReactTurn.fromProto(
+      create(ReactTurnSummarySchema, {
+        turn: 1,
+        branch: "rejected",
+        rejectionReason: "args do not match inputSchema",
+        maxTurns: 8,
+        maxToolCalls: 6,
+      }),
+    );
+    expect(t.branch).toBe("rejected");
+    expect(t.rejectionReason).toBe("args do not match inputSchema");
+    expect(t.toJSON().rejection_reason).toBe("args do not match inputSchema");
   });
 
   it("settles FAILED on a dead_lettered branch", async () => {
