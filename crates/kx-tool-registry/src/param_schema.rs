@@ -206,62 +206,232 @@ pub fn validate_args(schema: &InputSchema, args_bytes: &[u8]) -> Result<(), Sche
     Ok(())
 }
 
-/// PR-3 (A3c): normalize a model's proposed args bytes by stripping a single
-/// class of UNAMBIGUOUS JSON malformation — a **trailing comma** before a closing
-/// `}` or `]` — so a capable model that emits `{"text":"hi",}` still fires.
+/// PR-3 (A3c): normalize a model's proposed args bytes by repairing the JSON5-style
+/// malformations a real model emits in a tool call — the **strict-JSON subset a
+/// live Gemma-4-12B actually produces** (witnessed across re-runs):
 ///
-/// PURE + total + panic-free + deterministic + idempotent (`f(f(x)) == f(x)`)
-/// over ARBITRARY bytes (proptest-pinned): it tracks string-literal + escape state
-/// so a comma INSIDE a string is never touched, and only removes a `,` that —
-/// after skipping ASCII whitespace — is immediately followed by `}` or `]`.
-/// Returns `Borrowed` when nothing changes (the common clean path), so it adds no
-/// allocation to a well-formed bag. SN-8: this relaxes ARG SYNTAX only — it never
-/// fuzzy-matches a parameter NAME or widens a grant; the authority gate stays
-/// exact. Deliberately NARROW: single-quoted strings / unquoted keys are
-/// string-boundary-ambiguous and are NOT tolerated (they stay fail-closed).
+/// 1. a **trailing comma** before a closing `}` / `]` (`{"text":"hi",}`);
+/// 2. an **unquoted object key** (`{text:"hi"}` → `{"text":"hi"}`); and
+/// 3. a **single-quoted string** (`{text:'hi'}` → `{"text":"hi"}`, escaping any
+///    interior `"`), the value form Gemma emits (*"expected value at column 10"*).
+///
+/// PURE + total + panic-free + deterministic + idempotent (`f(f(x)) == f(x)`) over
+/// ARBITRARY bytes (proptest-pinned). A context-aware single pass tracks
+/// double-quoted-string + single-quoted-string + escape state (a comma/identifier/
+/// quote INSIDE a string is never touched) and a container stack so a key is quoted
+/// ONLY at an object-member start. Returns `Borrowed` when nothing changes.
+///
+/// SN-8: this relaxes ARG SYNTAX only — a key/value is preserved BYTE-FOR-BYTE
+/// (only its delimiters change: `text`→`"text"`, `'hi'`→`"hi"`), so the parameter
+/// NAME the schema matches stays EXACT; it never fuzzy-matches a name, coerces a
+/// value type, or widens a grant. ACCEPT-side best effort: if the repair still does
+/// not parse, `validate_args` refuses fail-closed (an un-repairable bag is never
+/// fired). Comments and unquoted VALUES stay fail-closed (deliberately out of scope).
 #[must_use]
+#[allow(clippy::too_many_lines)] // one cohesive JSON5-repair state machine
 pub fn normalize_lenient_args(args: &[u8]) -> std::borrow::Cow<'_, [u8]> {
-    let mut in_string = false;
+    // Fast path: scan once; only allocate if a repair is actually needed.
+    if !needs_lenient_repair(args) {
+        return std::borrow::Cow::Borrowed(args);
+    }
+    let mut out: Vec<u8> = Vec::with_capacity(args.len() + 8);
     let mut escaped = false;
-    let mut remove: Vec<usize> = Vec::new();
-    for (i, &b) in args.iter().enumerate() {
-        if in_string {
-            if escaped {
-                escaped = false;
-            } else if b == b'\\' {
-                escaped = true;
-            } else if b == b'"' {
-                in_string = false;
-            }
-            continue;
-        }
+    let mut stack: Vec<u8> = Vec::new();
+    let mut expect_key = false; // true at an object-member start
+    let mut i = 0usize;
+    while i < args.len() {
+        let b = args[i];
         match b {
-            b'"' => in_string = true,
+            b'"' => {
+                // A double-quoted string: copy verbatim through its close.
+                expect_key = false;
+                out.push(b);
+                i += 1;
+                while i < args.len() {
+                    let c = args[i];
+                    out.push(c);
+                    i += 1;
+                    if escaped {
+                        escaped = false;
+                    } else if c == b'\\' {
+                        escaped = true;
+                    } else if c == b'"' {
+                        break;
+                    }
+                }
+            }
+            b'\'' => {
+                // A SINGLE-quoted string → re-emit as double-quoted, escaping any
+                // interior `"` and unescaping `\'`. Copies the content byte-for-byte
+                // otherwise (the value is preserved exactly).
+                expect_key = false;
+                out.push(b'"');
+                i += 1;
+                while i < args.len() {
+                    let c = args[i];
+                    if escaped {
+                        // `\'` → `'`; every other escape passes through verbatim.
+                        if c == b'\'' {
+                            out.push(b'\'');
+                        } else {
+                            out.push(b'\\');
+                            out.push(c);
+                        }
+                        escaped = false;
+                        i += 1;
+                    } else if c == b'\\' {
+                        escaped = true;
+                        i += 1;
+                    } else if c == b'\'' {
+                        out.push(b'"'); // close
+                        i += 1;
+                        break;
+                    } else if c == b'"' {
+                        out.push(b'\\'); // escape an interior double-quote
+                        out.push(b'"');
+                        i += 1;
+                    } else {
+                        out.push(c);
+                        i += 1;
+                    }
+                }
+            }
+            b'{' => {
+                stack.push(b'{');
+                expect_key = true;
+                out.push(b);
+                i += 1;
+            }
+            b'[' => {
+                stack.push(b'[');
+                expect_key = false;
+                out.push(b);
+                i += 1;
+            }
+            b'}' | b']' => {
+                stack.pop();
+                expect_key = false;
+                out.push(b);
+                i += 1;
+            }
+            b',' => {
+                // Trailing comma: drop it if the next non-ws byte closes a container.
+                let mut j = i + 1;
+                while j < args.len() && args[j].is_ascii_whitespace() {
+                    j += 1;
+                }
+                if j < args.len() && (args[j] == b'}' || args[j] == b']') {
+                    i += 1; // skip
+                } else {
+                    out.push(b);
+                    expect_key = stack.last() == Some(&b'{');
+                    i += 1;
+                }
+            }
+            b':' => {
+                expect_key = false;
+                out.push(b);
+                i += 1;
+            }
+            c if c.is_ascii_whitespace() => {
+                out.push(b);
+                i += 1;
+            }
+            _ => {
+                if expect_key {
+                    // An UNQUOTED key: copy the identifier verbatim, wrapped in
+                    // quotes. Scan to the next delimiter (total: the first byte is a
+                    // non-delimiter, so this advances ≥ 1).
+                    let start = i;
+                    while i < args.len() {
+                        let cc = args[i];
+                        if cc == b':' || cc == b'"' || cc == b'\'' || cc.is_ascii_whitespace() {
+                            break;
+                        }
+                        i += 1;
+                    }
+                    out.push(b'"');
+                    out.extend_from_slice(&args[start..i]);
+                    out.push(b'"');
+                    expect_key = false;
+                } else {
+                    out.push(b);
+                    i += 1;
+                }
+            }
+        }
+    }
+    std::borrow::Cow::Owned(out)
+}
+
+/// Cheap pre-scan: does `args` contain a trailing comma, an unquoted object key, OR
+/// a single-quoted string? Mirrors [`normalize_lenient_args`]'s state machine but
+/// only *detects* (no allocation), so a well-formed bag returns `Borrowed`.
+fn needs_lenient_repair(args: &[u8]) -> bool {
+    let mut escaped = false;
+    let mut stack: Vec<u8> = Vec::new();
+    let mut expect_key = false;
+    let mut i = 0usize;
+    while i < args.len() {
+        let b = args[i];
+        match b {
+            b'\'' => return true, // a single-quoted string (JSON has none)
+            b'"' => {
+                // Skip a double-quoted string verbatim.
+                expect_key = false;
+                i += 1;
+                while i < args.len() {
+                    let c = args[i];
+                    i += 1;
+                    if escaped {
+                        escaped = false;
+                    } else if c == b'\\' {
+                        escaped = true;
+                    } else if c == b'"' {
+                        break;
+                    }
+                }
+            }
+            b'{' => {
+                stack.push(b'{');
+                expect_key = true;
+                i += 1;
+            }
+            b'[' => {
+                stack.push(b'[');
+                expect_key = false;
+                i += 1;
+            }
+            b'}' | b']' => {
+                stack.pop();
+                expect_key = false;
+                i += 1;
+            }
             b',' => {
                 let mut j = i + 1;
                 while j < args.len() && args[j].is_ascii_whitespace() {
                     j += 1;
                 }
                 if j < args.len() && (args[j] == b'}' || args[j] == b']') {
-                    remove.push(i);
+                    return true; // trailing comma
                 }
+                expect_key = stack.last() == Some(&b'{');
+                i += 1;
             }
-            _ => {}
+            b':' => {
+                expect_key = false;
+                i += 1;
+            }
+            c if c.is_ascii_whitespace() => i += 1,
+            _ => {
+                if expect_key {
+                    return true; // unquoted key
+                }
+                i += 1;
+            }
         }
     }
-    if remove.is_empty() {
-        return std::borrow::Cow::Borrowed(args);
-    }
-    let mut out = Vec::with_capacity(args.len() - remove.len());
-    let mut ri = 0;
-    for (i, &b) in args.iter().enumerate() {
-        if ri < remove.len() && remove[ri] == i {
-            ri += 1;
-            continue;
-        }
-        out.push(b);
-    }
-    std::borrow::Cow::Owned(out)
+    false
 }
 
 /// Check one raw JSON value against a declared [`ParamType`] by deserializing into
@@ -447,12 +617,38 @@ mod tests {
     }
 
     #[test]
+    fn quotes_an_unquoted_object_key_the_gemma_malformation() {
+        // The live Gemma-4 witness: the model emits `{text: "pong"}` (unquoted key).
+        // The key is quoted BYTE-FOR-BYTE (name preserved exactly, SN-8) so it fires.
+        assert_eq!(
+            normalize_lenient_args(br"{count: 5}").as_ref(),
+            br#"{"count": 5}"#
+        );
+        assert!(validate_args(&schema(), br"{count: 5}").is_ok());
+        // A mixed bag (one quoted, one unquoted key + a trailing comma) repairs whole.
+        assert_eq!(
+            normalize_lenient_args(br#"{count: 5, "label":"hi",}"#).as_ref(),
+            br#"{"count": 5, "label":"hi"}"#
+        );
+        // An unquoted key INSIDE a string value is NOT touched.
+        assert_eq!(
+            normalize_lenient_args(br#"{"label":"a:b c"}"#).as_ref(),
+            br#"{"label":"a:b c"}"#
+        );
+        // Array elements are NEVER treated as keys (the `,` after `1` is array-level).
+        assert_eq!(
+            normalize_lenient_args(br#"{"xs":[1,2,3]}"#).as_ref(),
+            br#"{"xs":[1,2,3]}"#
+        );
+    }
+
+    #[test]
     fn normalize_is_idempotent_and_pure() {
-        let dirty = br#"{"a":[1,2,],"b":{"c":3,},}"#;
+        let dirty = br"{a:[1,2,],b:{c:3,},}";
         let once = normalize_lenient_args(dirty).into_owned();
         let twice = normalize_lenient_args(&once).into_owned();
         assert_eq!(once, twice, "idempotent: f(f(x)) == f(x)");
-        // The cleaned bytes have no trailing commas left.
+        // The cleaned bytes: keys quoted, trailing commas dropped.
         assert_eq!(once, br#"{"a":[1,2],"b":{"c":3}}"#);
         // Pure: a clean bag is returned BORROWED (zero allocation).
         assert!(matches!(
@@ -462,23 +658,51 @@ mod tests {
     }
 
     #[test]
-    fn normalize_does_not_invent_validity_for_other_malformations() {
-        // SN-8 / narrow-scope: single-quoted strings + unquoted keys stay
-        // fail-closed (we tolerate ONLY trailing commas).
-        assert!(validate_args(&schema(), br"{'count': 5}").is_err());
-        assert!(validate_args(&schema(), br"{count: 5}").is_err());
+    fn repairs_single_quoted_strings_the_gemma_value_malformation() {
+        // The live Gemma-4 witness, post unquoted-key fix: the model emits
+        // `{text: 'pong'}` (single-quoted value). The string is preserved
+        // byte-for-byte, only its delimiters change (SN-8).
+        assert_eq!(
+            normalize_lenient_args(br"{'label': 'hi'}").as_ref(),
+            br#"{"label": "hi"}"#
+        );
+        // The full Gemma shape: unquoted key + single-quoted value (with the
+        // required `count` present so the whole bag validates end-to-end).
+        assert_eq!(
+            normalize_lenient_args(br"{label: 'hi'}").as_ref(),
+            br#"{"label": "hi"}"#
+        );
+        assert!(validate_args(&schema(), br"{count: 5, label: 'hi'}").is_ok());
+        // An interior double-quote inside a single-quoted string is escaped.
+        assert_eq!(
+            normalize_lenient_args(br#"{'label': 'a"b'}"#).as_ref(),
+            br#"{"label": "a\"b"}"#.as_slice()
+        );
+        // A single quote INSIDE a double-quoted string is left alone.
+        assert_eq!(
+            normalize_lenient_args(br#"{"label":"it's"}"#).as_ref(),
+            br#"{"label":"it's"}"#
+        );
+    }
+
+    #[test]
+    fn normalize_does_not_invent_validity_for_out_of_scope_malformations() {
+        // SN-8 / narrow-scope: an unquoted VALUE (not a string) stays fail-closed
+        // (genuinely ambiguous — `five` could be a typo'd keyword, not a string).
+        assert!(validate_args(&schema(), br"{count: five}").is_err());
     }
 
     proptest::proptest! {
-        /// Totality + panic-freedom over ARBITRARY bytes — the security-gate
-        /// discipline. The normalizer never panics and never grows the input.
+        /// Totality + panic-freedom + IDEMPOTENCE over ARBITRARY bytes — the
+        /// security-gate discipline. The normalizer never panics; a second pass is
+        /// a fixed point (so the repaired bytes are stable across re-derivation /
+        /// replay). Growth is bounded (≤ 2 bytes per unquoted key) — quoting adds
+        /// the missing quotes — so a tight size bound is intentionally not asserted.
         #[test]
-        fn normalize_is_total_and_never_grows(bytes: Vec<u8>) {
-            let out = normalize_lenient_args(&bytes);
-            proptest::prop_assert!(out.len() <= bytes.len());
-            // Idempotent on arbitrary input too.
-            let again = normalize_lenient_args(&out);
-            proptest::prop_assert_eq!(again.as_ref(), out.as_ref());
+        fn normalize_is_total_and_idempotent(bytes: Vec<u8>) {
+            let out = normalize_lenient_args(&bytes).into_owned();
+            let again = normalize_lenient_args(&out).into_owned();
+            proptest::prop_assert_eq!(again, out);
         }
 
         /// validate_args is total + panic-free over arbitrary bytes + arbitrary
