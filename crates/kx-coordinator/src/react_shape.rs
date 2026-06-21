@@ -339,6 +339,67 @@ pub(crate) fn build_agentic_tool(
     )
 }
 
+/// Re-derive a chain TURN `Mote` keyed by the chain's `step_salt` (PR-9b-2b): the
+/// run-level react chain (`None`) uses the salt-1 [`build_react_turn`]; an agentic
+/// step's private chain (`Some(launch MoteId)`) uses the salt-2 [`build_agentic_turn`].
+/// One dispatch point so the coordinator's settle/recover/advance code is chain-shape
+/// agnostic and the two namespaces can never be confused.
+#[must_use]
+pub(crate) fn build_chain_turn(
+    model_id: &ModelId,
+    instruction: &str,
+    turn: u32,
+    instance_id: &[u8; INSTANCE_ID_LEN],
+    step_salt: Option<[u8; 32]>,
+    max_output_tokens: u32,
+) -> Mote {
+    match step_salt {
+        Some(salt) => build_agentic_turn(
+            model_id,
+            instruction,
+            turn,
+            instance_id,
+            &salt,
+            max_output_tokens,
+        ),
+        None => build_react_turn(model_id, instruction, turn, instance_id, max_output_tokens),
+    }
+}
+
+/// Re-derive a chain OBSERVATION `Mote` keyed by the chain's `step_salt` (PR-9b-2b):
+/// the salt-1 [`build_react_tool`] for the run-level chain, the salt-2
+/// [`build_agentic_tool`] for an agentic step's chain. The twin of [`build_chain_turn`].
+#[must_use]
+pub(crate) fn build_chain_tool(
+    model_id: &ModelId,
+    tool_id: &ToolName,
+    tool_version: &ToolVersion,
+    turn: u32,
+    instance_id: &[u8; INSTANCE_ID_LEN],
+    step_salt: Option<[u8; 32]>,
+    turn_mote_id: MoteId,
+) -> Mote {
+    match step_salt {
+        Some(salt) => build_agentic_tool(
+            model_id,
+            tool_id,
+            tool_version,
+            turn,
+            instance_id,
+            &salt,
+            turn_mote_id,
+        ),
+        None => build_react_tool(
+            model_id,
+            tool_id,
+            tool_version,
+            turn,
+            instance_id,
+            turn_mote_id,
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -534,7 +595,7 @@ mod tests {
         assert_ne!(a, react_turn_id_material2(&[1; 16], &[2; 32], 1)); // per turn
         assert_ne!(a, react_turn_id_material2(&[1; 16], &[3; 32], 0)); // per step
         assert_ne!(a, react_turn_id_material2(&[9; 16], &[2; 32], 0)); // per run
-        // Distinct from the agentic-tool namespace at the same coords.
+                                                                       // Distinct from the agentic-tool namespace at the same coords.
         assert_ne!(a, react_tool_id_material2(&[1; 16], &[2; 32], 0));
         // Distinct from BOTH salt-1 namespaces.
         assert_ne!(a, react_turn_id_material(&[1; 16], 0));

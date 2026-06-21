@@ -85,7 +85,7 @@ class Flow:
         """Append an agent (MODEL) step. ``model`` defaults to the served model (the
         client's ``default_model`` fills a blank one at submit, SN-8); pass ``tools``
         to make it a deterministic-agentic step — a bounded reason→tool→observe loop
-        over the granted SET (PR-9b; the execution lane lights up with PR-9b-2)."""
+        over the granted SET (PR-9b; the execution lane is LIVE as of PR-9b-2)."""
         return self._seq_append(
             _model(
                 model,

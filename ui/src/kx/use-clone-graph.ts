@@ -95,6 +95,10 @@ export function useCloneGraph(instanceId: string | null): UseCloneGraph {
           // TOOL step (the projection's stepKind is model|pure), so empty is correct.
           toolId: "",
           toolVersion: "",
+          // A cloned MODEL step's tool-grant set is re-authored in the builder (the
+          // projection exposes stepKind, not the agentic tool_contract); empty ⇒ a
+          // plain model step until the user grants a set.
+          toolContract: {},
         };
       });
       const edges: BuilderEdge[] = [];

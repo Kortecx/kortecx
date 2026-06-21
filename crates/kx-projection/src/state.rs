@@ -209,6 +209,14 @@ pub struct ReactRoundRecord {
     pub seq: u64,
 }
 
+/// PR-9b-2b: the DERIVED nested per-CHAIN react index — `instance_id → step_salt →
+/// indices into `react_rounds``. The inner `Option<[u8;32]>` disjoins an agentic
+/// step's private chain (`Some(launch MoteId)`) from the run-level chain (`None`)
+/// within one run. A named alias (vs the inline literal) keeps the `State` field
+/// readable + satisfies `clippy::type_complexity`.
+type ReactChainIndex =
+    BTreeMap<[u8; kx_journal::INSTANCE_ID_LEN], BTreeMap<Option<[u8; 32]>, Vec<usize>>>;
+
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct State {
     /// Per-MoteId info — declared, committed, and any in-flight state.
@@ -235,16 +243,23 @@ pub(crate) struct State {
     /// identity/scheduling/digest input. Emptiness is the `has_react_turn`
     /// sentinel that keeps react-free runs (and the demo) zero-cost.
     pub(crate) react_rounds: Vec<ReactRoundRecord>,
-    /// PR-2d-2 — DERIVED per-instance index over `react_rounds`: `instance_id`
-    /// → indices into the Vec, in append (= seq) order. `react_rounds` only
-    /// ever GROWS in serve's shared journal, so without this every per-chain
-    /// settle/recover/trajectory query is a scan over EVERY chain's facts
-    /// forever (the PR-2d-1 O(runs²) adversarial finding — the coordinator's
-    /// `ReactSettleCache` bounds the settle; this bounds the per-chain reads).
+    /// PR-2d-2 / PR-9b-2b — DERIVED per-CHAIN index over `react_rounds`,
+    /// NESTED `instance_id → step_salt → indices` into the Vec, in append (=
+    /// seq) order. The inner `Option<[u8;32]>` step_salt key disjoins an
+    /// agentic step's PRIVATE chain (`Some(launch MoteId)`, PR-9b-2b) from the
+    /// run-level react chain (`None`, every chain v8 wrote) within one
+    /// `instance_id` — so two chains sharing a run never alias (budget counts,
+    /// trajectory context). `react_rounds` only ever GROWS in serve's shared
+    /// journal, so without this every per-chain settle/recover/trajectory query
+    /// is a scan over EVERY chain's facts forever (the PR-2d-1 O(runs²)
+    /// adversarial finding — the coordinator's `ReactSettleCache` bounds the
+    /// settle; this bounds the per-chain reads). NESTED (not a flat compound
+    /// key) so [`crate::Projection::react_instances`] keeps returning
+    /// `instance_id`s and [`crate::Projection::is_react_turn_mote`] is untouched.
     /// Maintained by the fold; RE-DERIVED on checkpoint load — NEVER serialized
     /// (it is not in `CheckpointState`), so `encode_state`, the
-    /// `state_content_digest`, and the v4 checkpoint format are byte-unchanged.
-    pub(crate) react_index: BTreeMap<[u8; kx_journal::INSTANCE_ID_LEN], Vec<usize>>,
+    /// `state_content_digest`, and the checkpoint format are byte-unchanged.
+    pub(crate) react_index: ReactChainIndex,
     /// PR-2d-2 — DERIVED set of every react TURN's `MoteId` (each
     /// `ReactRound.turn_mote_id`). O(log n) membership for the coordinator's
     /// lease-time "is this Mote's parent a react turn?" check (the observation
@@ -269,6 +284,8 @@ impl State {
         let record = &self.react_rounds[idx];
         self.react_index
             .entry(record.instance_id)
+            .or_default()
+            .entry(record.step_salt)
             .or_default()
             .push(idx);
         self.react_turn_motes.insert(record.turn_mote_id);

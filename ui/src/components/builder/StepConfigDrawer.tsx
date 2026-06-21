@@ -163,6 +163,90 @@ export function StepConfigDrawer({
                 behavior (and the step's identity) unchanged.
               </span>
             </div>
+
+            <div className="builder-field">
+              <span className="builder-field__label">Tools (agentic loop)</span>
+              {toolsNotWired || tools.length === 0 ? (
+                <p className="muted" data-testid="step-config-no-agent-tools">
+                  No tools are registered. Register one in <strong>Tools → Registry</strong> or dial
+                  an external MCP server in <strong>Tools → Connections</strong> to grant a set
+                  here.
+                </p>
+              ) : (
+                <div className="builder-chips" data-testid="step-config-agent-tools">
+                  {tools.map((t) => {
+                    const granted = step.toolContract[t.toolName] === t.toolVersion;
+                    return (
+                      <button
+                        key={`grant-${t.toolName}@${t.toolVersion}`}
+                        type="button"
+                        className={`chip${granted ? " chip--active" : ""}`}
+                        title={t.description}
+                        aria-pressed={granted}
+                        onClick={() => {
+                          const next = { ...step.toolContract };
+                          if (next[t.toolName] === t.toolVersion) {
+                            delete next[t.toolName];
+                          } else {
+                            next[t.toolName] = t.toolVersion;
+                          }
+                          onChange({ ...step, toolContract: next });
+                        }}
+                      >
+                        {t.toolName}@{t.toolVersion}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+              <span className="builder-field__hint">
+                Grant a FIXED tool set to run a bounded reason→tool→observe loop (the set is part of
+                the step's identity). The SERVER builds the union warrant + drives the loop (SN-8).
+              </span>
+            </div>
+
+            {Object.keys(step.toolContract).length > 0 ? (
+              <>
+                <label className="builder-field">
+                  <span className="builder-field__label">Max turns</span>
+                  <input
+                    className="builder-input"
+                    type="number"
+                    min={2}
+                    max={8}
+                    data-testid="step-config-max-turns"
+                    value={step.maxTurns ?? 8}
+                    onChange={(e) =>
+                      onChange({
+                        ...step,
+                        maxTurns: Number.parseInt(e.target.value, 10) || undefined,
+                      })
+                    }
+                  />
+                </label>
+                <label className="builder-field">
+                  <span className="builder-field__label">Max tool calls</span>
+                  <input
+                    className="builder-input"
+                    type="number"
+                    min={1}
+                    max={7}
+                    data-testid="step-config-max-tool-calls"
+                    value={step.maxToolCalls ?? 6}
+                    onChange={(e) =>
+                      onChange({
+                        ...step,
+                        maxToolCalls: Number.parseInt(e.target.value, 10) || undefined,
+                      })
+                    }
+                  />
+                  <span className="builder-field__hint">
+                    Bounded loop: <code>0 &lt; tool-calls &lt; turns ≤ 8</code> (a turn is left to
+                    read the last observation and answer). Defaults 8 / 6.
+                  </span>
+                </label>
+              </>
+            ) : null}
           </>
         ) : null}
 

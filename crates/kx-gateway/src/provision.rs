@@ -35,7 +35,7 @@ use kx_warrant::{
     intersect, ExecutorClass, FsMode, FsScope, Host, ModelRoute, MoteClass, NetScope,
     ResourceCeiling, Role, ToolGrant, WarrantSpec,
 };
-use kx_workflow::{compile, tool_step, transform, StepDef, WorkflowDef};
+use kx_workflow::{compile, generator, tool_step, transform, StepDef, WorkflowDef};
 
 use crate::error::GatewayError;
 
@@ -1516,39 +1516,58 @@ impl HostWorkflowAuthor {
                         served.0
                     )));
                 }
-                // PR-9b (D161.1): a MODEL step carrying a non-empty tool_contract is a
-                // DETERMINISTIC-AGENTIC step (`model@tool` in the chains DSL). The
-                // AUTHORING contract — the `@` grammar, the SDK `tools=` factory, the
-                // golden corpus, the server-vetted per-step union warrant — ships in
-                // PR-9b-1, but the bounded reason→tool→observe LOOP execution (a new
-                // launch/park/terminal-commit hook in the sole-writer coordinator + a
-                // journal v8→v9 bump + the compound react-chain key + recovery) lands
-                // in PR-9b-2. Until then the server FAILS CLOSED rather than silently
-                // run the step greedy + drop the grant set (GR15): a clear refusal at
-                // authoring, before any Mote is created.
-                if !s.tool_contract.is_empty() {
-                    return Err(BinderError::InvalidArgs(
-                        "the deterministic-agentic step (a MODEL step with `@tool` grants) is \
-                         authored across the chains DSL/SDK/CLI/UI, but its bounded \
-                         reason→tool→observe loop is not yet runnable on this server (lands in \
-                         PR-9b-2); use a standalone tool() step or the `react`/`react-auto` \
-                         recipe for tool-calling today"
-                            .into(),
-                    ));
+                // PR-9b-2b (D161.1): a MODEL step carrying a non-empty tool_contract is
+                // a DETERMINISTIC-AGENTIC step (`model@tool` in the chains DSL). Build a
+                // GENERATOR StepDef (ReadOnlyNondet + StageThenCommit) + the SERVER-built
+                // UNION warrant over the AUTHOR-DECLARED tool set (`agentic_step_warrant`,
+                // resolved fail-closed). The non-empty `tool_grants` make `author()` admit
+                // the warrant DIRECTLY (SN-8: client `tool_grants` are NEVER accepted —
+                // BLOCKER-#5). The coordinator PARKS the launch at lease, drives its
+                // bounded reason→tool→observe loop on a private `step_salt`-keyed chain,
+                // and COMMITS the launch mote with the loop's final answer to advance the
+                // frozen DAG (kx-coordinator `state.rs`). Budget validated here (fail fast).
+                if s.tool_contract.is_empty() {
+                    // P1.1: the step warrant is `base` — and `blueprint_base` now carries
+                    // the SERVED model in its `model_route` (see `seed`), so the dispatch
+                    // id (served) == the warrant route id (served) and the dispatcher's
+                    // strict check passes (it used to be the demo PLACEHOLDER route ≠
+                    // served → the MODEL step dead-lettered). Using `base` verbatim keeps
+                    // the step warrant == the authoring grant ⇒ a guaranteed no-op
+                    // narrowing at admission (no `AttemptedWiden` on the model_route ceilings).
+                    transform(
+                        LogicRef::from_bytes(MODEL_LOGIC_REF),
+                        served.clone(),
+                        base.clone(),
+                        cap,
+                    )
+                } else {
+                    // A DETERMINISTIC-AGENTIC step: build the GENERATOR StepDef + the
+                    // server-built union warrant over the AUTHOR-DECLARED set (resolved
+                    // fail-closed). The non-empty `tool_grants` make `author()` admit it
+                    // DIRECTLY (SN-8: client `tool_grants` NEVER accepted — BLOCKER-#5);
+                    // the coordinator parks + drives the bounded loop + commits the launch.
+                    let tools = self.tools.as_ref().ok_or_else(|| {
+                        BinderError::InvalidArgs(
+                            "this serve has no tool registry; deterministic-agentic \
+                             (`@tool`) steps are unavailable"
+                                .into(),
+                        )
+                    })?;
+                    validate_agentic_budget(s)?;
+                    let warrant = agentic_step_warrant(base, &s.tool_contract, tools.as_ref())?;
+                    let mut sd = generator(
+                        LogicRef::from_bytes(MODEL_LOGIC_REF),
+                        served.clone(),
+                        warrant,
+                        cap.clone(),
+                    );
+                    let mut tc = std::collections::BTreeMap::new();
+                    for (name, version) in &s.tool_contract {
+                        tc.insert(ToolName(name.clone()), ToolVersion(version.clone()));
+                    }
+                    sd.tool_contract = tc;
+                    sd
                 }
-                // P1.1: the step warrant is `base` — and `blueprint_base` now carries
-                // the SERVED model in its `model_route` (see `seed`), so the dispatch
-                // id (served) == the warrant route id (served) and the dispatcher's
-                // strict check passes (it used to be the demo PLACEHOLDER route ≠
-                // served → the MODEL step dead-lettered). Using `base` verbatim keeps
-                // the step warrant == the authoring grant ⇒ a guaranteed no-op
-                // narrowing at admission (no `AttemptedWiden` on the model_route ceilings).
-                transform(
-                    LogicRef::from_bytes(MODEL_LOGIC_REF),
-                    served.clone(),
-                    base.clone(),
-                    cap,
-                )
             }
             // EXEC: references a registered body — reserved for a follow-up (Tier-1
             // PR-1 ships PURE + MODEL; EXEC needs the body-registry lookup wiring).
@@ -2509,6 +2528,103 @@ pub(crate) fn tool_union_warrant(
         executor_class: base.executor_class,
         ..Default::default()
     }
+}
+
+/// PR-9b-2b: the SERVER-built UNION warrant for a deterministic-AGENTIC step — a
+/// MODEL step carrying an AUTHOR-DECLARED `@tool` set. Mirrors [`tool_union_warrant`]
+/// (the react-auto auto-grant) but over the DECLARED contract resolved FAIL-CLOSED:
+/// every declared `(tool, version)` MUST be registered, carry the empty syscall
+/// profile (BUG-24 — a sandboxed-body tool cannot share the union warrant), and have
+/// an fs scope that unions (LUB-or-refuse); ANY miss REFUSES the whole step at
+/// authoring rather than silently drop a grant (GR15). `tool_grants` = the full
+/// declared set; `net_scope` / `fs_scope` = the LUB of their declared requirements;
+/// `syscall_profile_ref` = the empty sentinel (so the resolver's per-tool EQUALITY
+/// gate passes for every granted tool); `model_route` / `resource_ceiling` /
+/// `executor_class` from `base` (the served blueprint base) so the chain leases on
+/// the served worker. ReadOnlyNondet — a generator. Admitted DIRECTLY by `author()`
+/// (non-empty `tool_grants`, SN-8: client warrants NEVER accepted — BLOCKER-#5); the
+/// broker precheck + the coordinator's D66 re-verify every axis at each fire.
+fn agentic_step_warrant(
+    base: &WarrantSpec,
+    tool_contract: &std::collections::BTreeMap<String, String>,
+    tools: &dyn ToolRegistry,
+) -> Result<WarrantSpec, BinderError> {
+    if tool_contract.is_empty() {
+        return Err(BinderError::InvalidArgs(
+            "a deterministic-agentic step must declare at least one tool".into(),
+        ));
+    }
+    let mut grants: BTreeSet<ToolGrant> = BTreeSet::new();
+    let mut net_scope = NetScope::None;
+    let mut fs_scope = FsScope::empty();
+    for (name, version) in tool_contract {
+        let tool_name = ToolName(name.clone());
+        let tool_version = ToolVersion(version.clone());
+        let tdef = tools.lookup(&tool_name, &tool_version).ok_or_else(|| {
+            BinderError::InvalidArgs(format!(
+                "agentic step references unregistered tool {name}@{version}"
+            ))
+        })?;
+        let cap = &tdef.required_capability;
+        if cap.syscall_profile_ref != ContentRef::from_bytes(EMPTY_SYSCALL_PROFILE) {
+            return Err(BinderError::InvalidArgs(format!(
+                "tool {name}@{version} requires a sandboxed syscall profile and cannot be \
+                 granted to a deterministic-agentic step (BUG-24)"
+            )));
+        }
+        let Some(merged_fs) = fs_scope_union(&fs_scope, &cap.fs_scope_required) else {
+            return Err(BinderError::InvalidArgs(format!(
+                "tool {name}@{version} has an fs scope incompatible with the agentic step's \
+                 other tools"
+            )));
+        };
+        fs_scope = merged_fs;
+        net_scope = net_scope_union(&net_scope, &cap.net_scope_required);
+        grants.insert(ToolGrant {
+            tool_id: tool_name,
+            tool_version,
+        });
+    }
+    Ok(WarrantSpec {
+        mote_class: MoteClass::ReadOnlyNondet,
+        nd_class: MoteClass::ReadOnlyNondet,
+        fs_scope,
+        net_scope,
+        syscall_profile_ref: ContentRef::from_bytes(EMPTY_SYSCALL_PROFILE),
+        tool_grants: grants,
+        model_route: base.model_route.clone(),
+        resource_ceiling: base.resource_ceiling,
+        environment_ref: None,
+        executor_class: base.executor_class,
+        ..Default::default()
+    })
+}
+
+/// PR-9b-2b: validate a deterministic-agentic step's declared budget AT AUTHORING
+/// (fail fast) — the same `0 < max_tool_calls < max_turns ≤ 8` gate the coordinator
+/// enforces durably at anchor (`react_seed_params`) + the SDK enforces at lowering.
+/// The caps ride `params` as canonical-JSON `u32` under the react budget keys; an
+/// absent cap defaults (8 turns / 6 tool-calls — the coordinator `react_shape`
+/// constants), an explicit malformed/out-of-range cap is refused.
+fn validate_agentic_budget(s: &AuthorStep) -> Result<(), BinderError> {
+    let parse = |key: &str, default: u32| -> Result<u32, BinderError> {
+        match s.params.get(key) {
+            None => Ok(default),
+            Some(bytes) => serde_json::from_slice::<u32>(bytes).map_err(|_| {
+                BinderError::InvalidArgs(format!(
+                    "agentic budget `{key}` must be a canonical-JSON unsigned integer"
+                ))
+            }),
+        }
+    };
+    let max_turns = parse(kx_mote::REACT_MAX_TURNS_KEY, 8)?;
+    let max_tool_calls = parse(kx_mote::REACT_MAX_TOOL_CALLS_KEY, 6)?;
+    if max_tool_calls == 0 || max_tool_calls >= max_turns || max_turns > 8 {
+        return Err(BinderError::InvalidArgs(
+            "agentic budget must satisfy 0 < max_tool_calls < max_turns <= 8".into(),
+        ));
+    }
+    Ok(())
 }
 
 /// PR-6b-4: the seed-time PLACEHOLDER warrant for `kx/recipes/react-auto`. Mirrors

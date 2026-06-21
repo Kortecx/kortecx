@@ -1090,27 +1090,50 @@ impl Projection {
         &self.state.react_rounds
     }
 
-    /// The `ReactRound` records of ONE chain (`instance_id`), in journal (seq)
-    /// order — served off the DERIVED per-instance index (PR-2d-2), so a
-    /// per-chain read costs O(that chain's facts), never a scan over every
-    /// chain in serve's shared journal (the PR-2d-1 O(runs²) finding).
+    /// The `ReactRound` records of ONE chain — the `(instance_id, step_salt)`
+    /// pair — in journal (seq) order, served off the DERIVED nested per-chain
+    /// index (PR-2d-2 / PR-9b-2b), so a per-chain read costs O(that chain's
+    /// facts), never a scan over every chain in serve's shared journal (the
+    /// PR-2d-1 O(runs²) finding). `step_salt` is `None` for the run-level react
+    /// chain (every chain v8 wrote) and `Some(launch MoteId)` for an agentic
+    /// step's private chain (PR-9b-2b) — so the two never alias within one run.
     pub fn react_rounds_of(
         &self,
         instance_id: &[u8; kx_journal::INSTANCE_ID_LEN],
+        step_salt: &Option<[u8; 32]>,
     ) -> impl Iterator<Item = &crate::state::ReactRoundRecord> + '_ {
         self.state
             .react_index
             .get(instance_id)
+            .and_then(|chains| chains.get(step_salt))
             .into_iter()
             .flatten()
             .map(|&idx| &self.state.react_rounds[idx])
     }
 
-    /// The distinct `instance_id`s with folded react facts, ascending — each an
-    /// independent chain in serve's SHARED journal. Served off the index keys
-    /// (PR-2d-2): O(chains), not O(total facts).
+    /// The distinct `instance_id`s with folded react facts, ascending — each run
+    /// in serve's SHARED journal. Served off the index keys (PR-2d-2): O(runs).
     pub fn react_instances(&self) -> impl Iterator<Item = &[u8; kx_journal::INSTANCE_ID_LEN]> + '_ {
         self.state.react_index.keys()
+    }
+
+    /// Every distinct CHAIN — the `(instance_id, step_salt)` pairs — with folded
+    /// react facts (PR-9b-2b). The unit the coordinator settles/recovers: a run
+    /// may carry the run-level chain (`step_salt = None`) AND one or more agentic
+    /// step chains (`Some(launch MoteId)`). Served off the nested index keys:
+    /// O(chains), not O(total facts).
+    pub fn react_chains(
+        &self,
+    ) -> impl Iterator<Item = ([u8; kx_journal::INSTANCE_ID_LEN], Option<[u8; 32]>)> + '_ {
+        self.state
+            .react_index
+            .iter()
+            .flat_map(|(instance_id, chains)| {
+                let instance_id = *instance_id;
+                chains
+                    .keys()
+                    .map(move |step_salt| (instance_id, *step_salt))
+            })
     }
 
     /// `true` iff `id` is a react TURN's `MoteId` (some folded `ReactRound`
@@ -1121,18 +1144,20 @@ impl Projection {
         self.state.react_turn_motes.contains(id)
     }
 
-    /// The highest-`turn` `ReactRound` record for `instance_id` folded so far, or
-    /// `None` if that run has anchored no ReAct chain. Scoped by `instance_id`
-    /// (the run-salt) because serve's journal is SHARED across runs. On a turn
-    /// tie the highest-`seq` record wins — the LATEST fact for a turn is its
-    /// settled branch (anchor `Pending` then a resolution), so recovery reads
-    /// the freshest decision deterministically.
+    /// The highest-`turn` `ReactRound` record for ONE chain — the
+    /// `(instance_id, step_salt)` pair — folded so far, or `None` if that chain
+    /// has anchored no ReAct turn. Scoped by the chain key because serve's
+    /// journal is SHARED across runs AND a run may carry both a run-level and
+    /// agentic-step chain (PR-9b-2b). On a turn tie the highest-`seq` record
+    /// wins — the LATEST fact for a turn is its settled branch (anchor `Pending`
+    /// then a resolution), so recovery reads the freshest decision deterministically.
     #[must_use]
     pub fn latest_react_round(
         &self,
         instance_id: &[u8; kx_journal::INSTANCE_ID_LEN],
+        step_salt: &Option<[u8; 32]>,
     ) -> Option<&crate::state::ReactRoundRecord> {
-        self.react_rounds_of(instance_id)
+        self.react_rounds_of(instance_id, step_salt)
             .max_by(|a, b| a.turn.cmp(&b.turn).then(a.seq.cmp(&b.seq)))
     }
 

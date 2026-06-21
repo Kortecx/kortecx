@@ -26,8 +26,9 @@ use kx_coordinator::proto::{CommitOutcome, ExecutorClass as ProtoExecutorClass};
 use kx_coordinator::{CoordinatorService, InMemoryWorkerRegistry, MoteState, WorkerRegistry};
 use kx_journal::{Journal, JournalEntry, ReactBranch, SqliteJournal};
 use kx_mote::{
-    ConfigKey, ConfigVal, EffectPattern, GraphPosition, InputDataId, LogicRef, ModelId, Mote,
-    MoteDef, NdClass, PromptTemplateHash, MOTE_DEF_SCHEMA_VERSION, PROMPT_KEY, REACT_TURN_KEY,
+    ConfigKey, ConfigVal, EdgeMeta, EffectPattern, GraphPosition, InputDataId, LogicRef, ModelId,
+    Mote, MoteDef, NdClass, ParentRef, PromptTemplateHash, MOTE_DEF_SCHEMA_VERSION, PROMPT_KEY,
+    REACT_TURN_KEY,
 };
 use kx_warrant::{
     warrant_ref_of, ExecutorClass, FsScope, ModelRoute, MoteClass, NetScope, ResourceCeiling,
@@ -1386,5 +1387,255 @@ async fn worker_crash_does_not_dead_letter_and_a_late_commit_still_settles() {
             }
         ),
         "the committed answer settles the chain — never discarded"
+    );
+}
+
+// ============================================================================
+// PR-9b-2b — the deterministic-AGENTIC launch step (the `@tool` execution lane).
+// ============================================================================
+
+/// A deterministic-agentic LAUNCH step: a frozen-DAG MODEL mote (ROND +
+/// StageThenCommit) carrying an author-declared tool-grant SET + the instruction +
+/// the per-step budget. `budget = Some((turns, calls))` writes the caps into the
+/// config (`react_seed_params` reads them); `None` defaults to 8/6.
+fn launch_mote(parents: SmallVec<[ParentRef; 4]>, budget: Option<(u32, u32)>) -> Mote {
+    let mut config_subset = BTreeMap::new();
+    config_subset.insert(
+        ConfigKey(PROMPT_KEY.to_string()),
+        ConfigVal(INSTRUCTION.as_bytes().to_vec()),
+    );
+    if let Some((turns, calls)) = budget {
+        config_subset.insert(
+            ConfigKey(kx_mote::REACT_MAX_TURNS_KEY.to_string()),
+            ConfigVal(serde_json::to_vec(&turns).unwrap()),
+        );
+        config_subset.insert(
+            ConfigKey(kx_mote::REACT_MAX_TOOL_CALLS_KEY.to_string()),
+            ConfigVal(serde_json::to_vec(&calls).unwrap()),
+        );
+    }
+    let mut tool_contract = BTreeMap::new();
+    tool_contract.insert(
+        kx_mote::ToolName("mcp-echo".into()),
+        kx_mote::ToolVersion("1".into()),
+    );
+    let def = MoteDef {
+        critic_check: None,
+        logic_ref: LogicRef([0x9b; 32]),
+        model_id: ModelId(MODEL.into()),
+        prompt_template_hash: PromptTemplateHash([0x9b; 32]),
+        tool_contract,
+        nd_class: NdClass::ReadOnlyNondet,
+        config_subset,
+        effect_pattern: EffectPattern::StageThenCommit,
+        critic_for: None,
+        is_topology_shaper: false,
+        inference_params: kx_mote::InferenceParams::default(),
+        schema_version: MOTE_DEF_SCHEMA_VERSION,
+    };
+    Mote::new(
+        def,
+        InputDataId::from_bytes([0x9b; 32]),
+        GraphPosition(vec![0x9b]),
+        parents,
+    )
+}
+
+/// A plain PURE `> review` consumer of the launch step (its lone DAG parent),
+/// leasable only AFTER the launch commits.
+fn review_child(launch: &Mote) -> Mote {
+    let def = MoteDef {
+        critic_check: None,
+        logic_ref: LogicRef([0x5c; 32]),
+        model_id: ModelId(MODEL.into()),
+        prompt_template_hash: PromptTemplateHash([0x5c; 32]),
+        tool_contract: BTreeMap::new(),
+        nd_class: NdClass::Pure,
+        config_subset: BTreeMap::new(),
+        effect_pattern: EffectPattern::IdempotentByConstruction,
+        critic_for: None,
+        is_topology_shaper: false,
+        inference_params: kx_mote::InferenceParams::default(),
+        schema_version: MOTE_DEF_SCHEMA_VERSION,
+    };
+    Mote::new(
+        def,
+        InputDataId::from_bytes([0x5c; 32]),
+        GraphPosition(vec![0x5c]),
+        std::iter::once(ParentRef {
+            parent_id: launch.id,
+            edge: EdgeMeta::data(),
+        })
+        .collect(),
+    )
+}
+
+/// Submit `mote` plainly (`react_seed = false`) under the ALREADY-registered run —
+/// the SubmitWorkflow-mote path (vs `common::submit`, which registers a fresh run).
+async fn submit_plain(svc: &CoordinatorService, mote: &Mote, w: &WarrantSpec) {
+    let resp = svc
+        .submit_mote(Request::new(kx_coordinator::proto::SubmitMoteRequest {
+            mote: Some(mote.clone().into()),
+            warrant: Some(w.clone().into()),
+            accept_at_least_once: false,
+            react_seed: false,
+        }))
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(
+        resp.status,
+        kx_coordinator::proto::SubmitStatus::Accepted as i32
+    );
+}
+
+/// Flagship: a deterministic-agentic launch step is PARKED at lease (never dispatched
+/// as a plain model mote), its bounded reason→tool→observe loop is driven on a private
+/// `step_salt`-keyed chain (a WORLD-MUTATING observation COMMITS — the PR-9a
+/// effect-asserting pattern), and on the terminal Answer the LAUNCH mote COMMITS,
+/// advancing the frozen DAG so its `> review` consumer becomes ready.
+#[tokio::test]
+async fn agentic_launch_drives_loop_commits_and_advances_dag() {
+    let dir = TempDir::new().unwrap();
+    let (svc, store) = coordinator(&dir);
+    let w = warrant(true); // ROND + mcp-echo grant + the served route
+
+    let _ = common::register_run(&svc, [0x5a; 32]).await;
+    let launch = launch_mote(SmallVec::new(), None);
+    let review = review_child(&launch);
+    submit_plain(&svc, &launch, &w).await;
+    submit_plain(&svc, &review, &w).await;
+
+    // The launch is PARKED + the review child is Pending (parent uncommitted), so
+    // `settle_agentic_launches` anchored the launch + materialized its salt-2 turn 0
+    // — the ONLY leasable item.
+    let worker = common::register(&svc, "w").await;
+    let leased = common::lease_work(&svc, worker, MAC, 16).await;
+    assert_eq!(
+        leased.len(),
+        1,
+        "only the agentic turn 0 leases (launch parked, child pending)"
+    );
+    let turn0: Mote = leased[0].mote.clone().unwrap().try_into().unwrap();
+    assert_ne!(
+        turn0.id, launch.id,
+        "the launch is NEVER dispatched; a server-derived salt-2 turn drives the loop"
+    );
+    let marker = turn0
+        .def
+        .config_subset
+        .get(&ConfigKey(REACT_TURN_KEY.to_string()))
+        .unwrap()
+        .0
+        .clone();
+    assert_eq!(
+        marker.len(),
+        16 + 32,
+        "the agentic marker is instance_id‖step_salt"
+    );
+    assert_eq!(
+        &marker[16..],
+        launch.id.as_bytes(),
+        "step_salt = the launch MoteId"
+    );
+
+    // turn 0 proposes a tool call → settle freezes `Tool` + materializes the observation.
+    commit_raw(&svc, &store, &turn0, &w, TOOL_ENVELOPE, worker).await;
+    let (obs, args) = lease_observation(&svc, worker, &turn0).await;
+    assert_eq!(
+        args,
+        br#"{"q":"x"}"#.to_vec(),
+        "the observation leases WITH re-derived args"
+    );
+    // ★ the WORLD-MUTATING observation COMMITS (effect-asserting, not just "settled").
+    commit_raw(&svc, &store, &obs, &w, b"echo: x", worker).await;
+    assert_eq!(
+        svc.state_of(obs.id).await.unwrap(),
+        MoteState::Committed,
+        "the tool observation committed (a real tool round fired)"
+    );
+
+    // turn 1 answers → settle freezes `Answer` → the LAUNCH mote commits.
+    let leased = common::lease_work(&svc, worker, MAC, 16).await;
+    assert_eq!(
+        leased.len(),
+        1,
+        "turn 1 leases after the observation commits"
+    );
+    let turn1: Mote = leased[0].mote.clone().unwrap().try_into().unwrap();
+    assert_ne!(turn1.id, turn0.id);
+    // ★ the F-7 trajectory is NON-EMPTY — turn 1's 48-byte agentic marker decoded to
+    // the right `(instance_id, step_salt)` chain + the observation was rebuilt via
+    // `build_agentic_tool` (a 16-byte-only decode would yield an EMPTY transcript — the
+    // silent loop-break this guards). Interleaved `[turn0, obs0]`, transcript order.
+    let traj = &leased[0].parent_results;
+    assert_eq!(traj.len(), 2, "turn 1 sees [turn0, obs0] (the agentic marker decoded)");
+    assert_eq!(traj[0].parent_mote_id, turn0.id.as_bytes().to_vec());
+    assert_eq!(traj[1].parent_mote_id, obs.id.as_bytes().to_vec());
+    commit_raw(&svc, &store, &turn1, &w, b"All done.", worker).await;
+
+    // The launch COMMITTED (carrying the answer turn's result) ⇒ the frozen DAG
+    // advanced ⇒ the `> review` consumer is now leasable.
+    assert_eq!(
+        svc.state_of(launch.id).await.unwrap(),
+        MoteState::Committed,
+        "the agentic launch step committed — the DAG advanced"
+    );
+    let leased = common::lease_work(&svc, worker, MAC, 16).await;
+    assert_eq!(leased.len(), 1, "the `> review` child is now ready");
+    let child: Mote = leased[0].mote.clone().unwrap().try_into().unwrap();
+    assert_eq!(
+        child.id, review.id,
+        "the launch's DAG consumer leased only after the launch committed"
+    );
+
+    // Every fact of this chain is an AGENTIC fact (keyed by the launch's step_salt) —
+    // disjoint from any run-level react chain in the shared journal.
+    let facts = react_facts(&svc, &dir).await;
+    assert!(
+        facts.iter().all(|f| matches!(
+            f,
+            JournalEntry::ReactRound { step_salt: Some(s), .. } if s == launch.id.as_bytes()
+        )),
+        "every agentic ReactRound fact carries step_salt = the launch MoteId"
+    );
+}
+
+/// Budget-exhaust: a launch whose loop only ever tool-calls (never answers) within its
+/// declared budget fails CLOSED — the launch mote dead-letters (terminal `Failed`),
+/// never fabricating an answer (GR15) and never wedging its DAG consumer in `Scheduled`.
+#[tokio::test]
+async fn agentic_launch_budget_exhaust_dead_letters() {
+    let dir = TempDir::new().unwrap();
+    let (svc, store) = coordinator(&dir);
+    let w = warrant(true);
+
+    let _ = common::register_run(&svc, [0x5b; 32]).await;
+    // A 2-turn / 1-tool-call budget: after the first tool round commits, the chain is
+    // budget-exhausted with no Answer.
+    let launch = launch_mote(SmallVec::new(), Some((2, 1)));
+    submit_plain(&svc, &launch, &w).await;
+
+    let worker = common::register(&svc, "w").await;
+    let turn0: Mote = common::lease_work(&svc, worker, MAC, 16).await[0]
+        .mote
+        .clone()
+        .unwrap()
+        .try_into()
+        .unwrap();
+    commit_raw(&svc, &store, &turn0, &w, TOOL_ENVELOPE, worker).await;
+    let (obs, _) = lease_observation(&svc, worker, &turn0).await;
+    commit_raw(&svc, &store, &obs, &w, b"echo: x", worker).await;
+
+    // The tool budget (1) is now exhausted with no Answer ⇒ the launch dead-letters.
+    assert_eq!(
+        svc.state_of(launch.id).await.unwrap(),
+        MoteState::Failed,
+        "a budget-exhausted agentic launch fails closed (no fabricated answer)"
+    );
+    // No further work leases (the chain is terminal; nothing wedged in Scheduled).
+    assert!(
+        common::lease_work(&svc, worker, MAC, 16).await.is_empty(),
+        "a dead-lettered launch leaves no leasable work"
     );
 }

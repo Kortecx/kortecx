@@ -98,7 +98,7 @@ export class Flow {
 
   /** Append an agent (MODEL) step. `model` defaults to the served model (the client's
    * `defaultModel` fills a blank one at submit, SN-8); `tools` makes it a
-   * deterministic-agentic step (PR-9b; execution lights up with PR-9b-2). */
+   * deterministic-agentic step (PR-9b; execution is LIVE as of PR-9b-2). */
   agent(prompt: string, opts: AgentStepOptions = {}): this {
     return this.append(
       task.model(

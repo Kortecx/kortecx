@@ -804,6 +804,8 @@ fn derive_react_index(state: &mut State) {
             .react_index
             .entry(record.instance_id)
             .or_default()
+            .entry(record.step_salt)
+            .or_default()
             .push(idx);
         state.react_turn_motes.insert(record.turn_mote_id);
     }
@@ -1085,10 +1087,20 @@ mod tests {
             escalation_reason_ref: None,
             seq: 4,
         });
-        // PR-2d-1 (v4) + PR-9b-2 (v5): react-turn records covering a run-level
-        // anchor (step_salt None) + an AGENTIC Tool settle (step_salt Some), so the
-        // round-trip proves both the v4 payload field (the enum branch with payload)
-        // AND the v5 `step_salt` Option are preserved — the bumps' point.
+        push_sample_react_rounds(&mut s);
+        // PR-2d-2: a real State's derived react index/turn-set is ALWAYS
+        // consistent with `react_rounds` (the fold maintains it; the load path
+        // re-derives it) — the fixture must uphold the same invariant or the
+        // lossless-roundtrip assert would compare an unindexed source against
+        // a re-derived decode.
+        derive_react_index(&mut s);
+        s
+    }
+
+    /// PR-2d-1 (v4) + PR-9b-2b (v5): the fixture's react-turn records — a RUN-LEVEL
+    /// anchor (`step_salt None`) + an AGENTIC `Tool` settle (`step_salt Some`) — so the
+    /// round-trip proves BOTH the v4 payload branch AND the v5 `step_salt` Option survive.
+    fn push_sample_react_rounds(s: &mut State) {
         s.react_rounds.push(ReactRoundRecord {
             turn: 0,
             turn_mote_id: mid(40),
@@ -1118,13 +1130,6 @@ mod tests {
             step_salt: Some([0x77; 32]),
             seq: 4,
         });
-        // PR-2d-2: a real State's derived react index/turn-set is ALWAYS
-        // consistent with `react_rounds` (the fold maintains it; the load path
-        // re-derives it) — the fixture must uphold the same invariant or the
-        // lossless-roundtrip assert would compare an unindexed source against
-        // a re-derived decode.
-        derive_react_index(&mut s);
-        s
     }
 
     /// PR-9b-2b: pin the checkpoint format version so the v4→v5 bump (the
