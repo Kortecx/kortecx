@@ -11,9 +11,12 @@ Two lanes (D161), one object — the API name mirrors the distinction:
 
 - **Default = deterministic / frozen** — a single agent step with a FIXED tool-grant
   SET (replayable; the tool set is part of the step's identity). Pure client sugar over
-  :class:`~kortecx.flow.Flow`. The frozen tool-EXECUTION lights up with PR-9b-2; until
-  then a *tool-bearing* frozen agent is refused server-side at submit — use
-  ``dynamic=True`` (or a standalone ``tool()`` step) for tool-calling today.
+  :class:`~kortecx.flow.Flow`. The frozen tool-EXECUTION (the bounded reason→tool→observe
+  loop) is **LIVE as of PR-9b-2** — author it with EXPLICIT tool refs via
+  ``flow().model(prompt, tools=["mcp-echo"])`` / the ``model@tool`` chain DSL / a UI
+  builder model step. The ``Agent(tools=[fn])`` one-liner over LOCAL ``@kx.tool``
+  functions completes in the immediate follow-up (the dialed-tool grant-name match); a
+  tool-bearing frozen ``Agent`` raises a clear pre-flight hint until then.
 - ``dynamic=True`` → the **steered** ``kx/recipes/react`` recipe, where the model picks
   tools turn by turn. Works today.
 
@@ -88,10 +91,11 @@ class Agent:
     ) -> "Union[Run, Result]":
         """Run ``task``.
 
-        - **frozen lane (default)** ⇒ a single agent step. A tool-bearing frozen agent
-          runs a deterministic-agentic loop that **lands in PR-9b-2** (refused at
-          submit today) — so a clear pre-flight hint is raised; use ``dynamic=True`` or
-          ``flow().tool(fn, **args)`` to call tools today.
+        - **frozen lane (default)** ⇒ a single agent step. The tool-bearing frozen
+          loop EXECUTION is LIVE (PR-9b-2) via EXPLICIT tool refs
+          (``flow().model(prompt, tools=["mcp-echo"])`` / ``model@tool`` / a UI builder
+          model step); the ``Agent(tools=[fn])`` one-liner over LOCAL functions raises a
+          pre-flight hint until the immediate follow-up wires its dialed-tool grant name.
         - ``dynamic=True`` ⇒ the steered react lane. With tools it routes to
           ``kx/recipes/react-auto`` (the only lane that fires registered/dialed tools;
           needs ``KX_SERVE_AUTOGRANT=1``); without tools, plain ``kx/recipes/react``.
@@ -128,10 +132,12 @@ class Agent:
             from .tools import ToolError
 
             raise ToolError(
-                "a frozen Agent with a tool set runs a deterministic-agentic loop that "
-                "lands in PR-9b-2 and is refused at submit today; use "
-                "Agent(..., dynamic=True) for the steered react lane, or "
-                "flow().tool(fn, **args) to fire one tool deterministically"
+                "the deterministic-agentic loop is LIVE (PR-9b-2), but the Agent(tools=) "
+                "one-liner over local @kx.tool functions completes in the immediate "
+                "follow-up (the dialed-tool grant-name match); author it today with "
+                "EXPLICIT refs via flow().model(prompt, tools=['mcp-echo']) or the "
+                "`model@tool` chain DSL, use Agent(..., dynamic=True) for the steered "
+                "react lane, or flow().tool(fn, **args) to fire one tool deterministically"
             )
         return self.as_flow(task).run(wait=wait, timeout=timeout, client=kx)
 

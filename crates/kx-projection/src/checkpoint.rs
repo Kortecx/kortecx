@@ -77,7 +77,18 @@ use crate::state::{
 /// payload AND `state_digest()` move for every state, a stale v3 sidecar is
 /// rejected, recovery full-folds and re-seals (self-healing). Only the PRODUCT
 /// run-identity digest is invariant.
-pub const CURRENT_FORMAT_VERSION: u16 = 4;
+///
+/// `5` (PR-9b-2b, deterministic-agentic step): `ReactRoundRecordDto` gained
+/// `step_salt` (the per-step salt disjoining an agentic step's private chain) so a
+/// checkpoint-seeded recovery preserves which chain each turn belongs to. Same
+/// deliberate-break contract: the per-record payload grows by the `Option` tag,
+/// shifting the bincoded bytes + `state_digest()` of any state THAT HAS react
+/// records; a state with NO react rounds (the demo / a non-react run) encodes a
+/// length-0 `react_rounds` Vec either way, so its `encode_state` /
+/// `state_content_digest` are BYTE-UNCHANGED and the canonical PRODUCT digest
+/// `7d22d4bd` is invariant. A stale v4 sidecar is rejected; recovery full-folds
+/// from the v9 journal (which carries `step_salt`) and re-seals (self-healing).
+pub const CURRENT_FORMAT_VERSION: u16 = 5;
 
 /// Payload codec tag. `0` = canonical-bincode (LE + fixed-int, the house
 /// [`kx_mote::canonical_config`]). Reserved for a future rkyv zero-copy payload
@@ -523,6 +534,9 @@ struct ReactRoundRecordDto {
     branch: kx_journal::ReactBranch,
     max_turns: u32,
     max_tool_calls: u32,
+    /// PR-9b-2 — the per-step salt (`None` ⇒ run-level). The format-version bump
+    /// (v4→v5) covers this added field; absent in v4 sidecars (rejected → full-fold).
+    step_salt: Option<[u8; 32]>,
     seq: u64,
 }
 
@@ -710,6 +724,7 @@ impl From<&ReactRoundRecord> for ReactRoundRecordDto {
             branch,
             max_turns,
             max_tool_calls,
+            step_salt,
             seq,
         } = r;
         Self {
@@ -722,6 +737,7 @@ impl From<&ReactRoundRecord> for ReactRoundRecordDto {
             branch: branch.clone(),
             max_turns: *max_turns,
             max_tool_calls: *max_tool_calls,
+            step_salt: *step_salt,
             seq: *seq,
         }
     }
@@ -787,6 +803,8 @@ fn derive_react_index(state: &mut State) {
         state
             .react_index
             .entry(record.instance_id)
+            .or_default()
+            .entry(record.step_salt)
             .or_default()
             .push(idx);
         state.react_turn_motes.insert(record.turn_mote_id);
@@ -954,6 +972,7 @@ impl From<ReactRoundRecordDto> for ReactRoundRecord {
             branch,
             max_turns,
             max_tool_calls,
+            step_salt,
             seq,
         } = dto;
         ReactRoundRecord {
@@ -966,6 +985,7 @@ impl From<ReactRoundRecordDto> for ReactRoundRecord {
             branch,
             max_turns,
             max_tool_calls,
+            step_salt,
             seq,
         }
     }
@@ -1067,9 +1087,20 @@ mod tests {
             escalation_reason_ref: None,
             seq: 4,
         });
-        // PR-2d-1 (v4): react-turn records covering an anchor + a Tool settle, so
-        // the round-trip proves the v4 payload field (incl. the enum branch with
-        // payload) is preserved — the v4 bump's point.
+        push_sample_react_rounds(&mut s);
+        // PR-2d-2: a real State's derived react index/turn-set is ALWAYS
+        // consistent with `react_rounds` (the fold maintains it; the load path
+        // re-derives it) — the fixture must uphold the same invariant or the
+        // lossless-roundtrip assert would compare an unindexed source against
+        // a re-derived decode.
+        derive_react_index(&mut s);
+        s
+    }
+
+    /// PR-2d-1 (v4) + PR-9b-2b (v5): the fixture's react-turn records — a RUN-LEVEL
+    /// anchor (`step_salt None`) + an AGENTIC `Tool` settle (`step_salt Some`) — so the
+    /// round-trip proves BOTH the v4 payload branch AND the v5 `step_salt` Option survive.
+    fn push_sample_react_rounds(s: &mut State) {
         s.react_rounds.push(ReactRoundRecord {
             turn: 0,
             turn_mote_id: mid(40),
@@ -1080,6 +1111,7 @@ mod tests {
             branch: kx_journal::ReactBranch::Pending,
             max_turns: 8,
             max_tool_calls: 8,
+            step_salt: None,
             seq: 4,
         });
         s.react_rounds.push(ReactRoundRecord {
@@ -1095,33 +1127,27 @@ mod tests {
             },
             max_turns: 8,
             max_tool_calls: 8,
+            step_salt: Some([0x77; 32]),
             seq: 4,
         });
-        // PR-2d-2: a real State's derived react index/turn-set is ALWAYS
-        // consistent with `react_rounds` (the fold maintains it; the load path
-        // re-derives it) — the fixture must uphold the same invariant or the
-        // lossless-roundtrip assert would compare an unindexed source against
-        // a re-derived decode.
-        derive_react_index(&mut s);
-        s
     }
 
-    /// PR-2d-1: pin the checkpoint format version so the v3→v4 bump (the
-    /// additive `react_rounds` payload field) is an intentional, reviewable
-    /// change — and so a v3 sidecar written by the previous binary is REFUSED
-    /// (decode error → full-fold self-heal), never misread.
+    /// PR-9b-2b: pin the checkpoint format version so the v4→v5 bump (the
+    /// additive `ReactRoundRecordDto.step_salt` field) is an intentional,
+    /// reviewable change — and so a v4 sidecar written by the previous binary is
+    /// REFUSED (decode error → full-fold self-heal), never misread.
     #[test]
-    fn format_version_is_v4_and_v3_blobs_are_refused() {
-        assert_eq!(CURRENT_FORMAT_VERSION, 4);
+    fn format_version_is_v5_and_v4_blobs_are_refused() {
+        assert_eq!(CURRENT_FORMAT_VERSION, 5);
         let mut bytes = FoldCheckpoint::from_state(&sample_state()).to_bytes();
-        // Stamp the envelope version back to v3 (bytes 0..2, LE u16).
-        bytes[0..2].copy_from_slice(&3u16.to_le_bytes());
+        // Stamp the envelope version back to v4 (bytes 0..2, LE u16).
+        bytes[0..2].copy_from_slice(&4u16.to_le_bytes());
         assert!(matches!(
             FoldCheckpoint::from_bytes(&bytes),
-            // The version is part of the digest preimage, so a re-stamped v3
+            // The version is part of the digest preimage, so a re-stamped v4
             // envelope fails as UnsupportedVersion or DigestMismatch — both are
             // fail-safe discards (full fold).
-            Err(CheckpointError::UnsupportedVersion { got: 3 } | CheckpointError::DigestMismatch)
+            Err(CheckpointError::UnsupportedVersion { got: 4 } | CheckpointError::DigestMismatch)
         ));
     }
 

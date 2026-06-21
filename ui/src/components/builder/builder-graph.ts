@@ -42,6 +42,16 @@ export interface BuilderStep {
   readonly toolId: string;
   /** TOOL: the registered tool version (defaults to "1" when blank). */
   readonly toolVersion: string;
+  /** MODEL (PR-9b-2b): the author-declared tool-grant SET `{tool_id: version}` that
+   *  makes this a DETERMINISTIC-AGENTIC step — a bounded reason→tool→observe loop over
+   *  the FIXED set (the set is part of the step's identity). Empty ⇒ a plain model step
+   *  (byte-identical to before). The SERVER builds the union warrant + drives the loop
+   *  (SN-8: client tool_grants stay refused). */
+  readonly toolContract: Readonly<Record<string, string>>;
+  /** MODEL agentic: the per-step turn budget (default 8; `0 < maxToolCalls < maxTurns ≤ 8`). */
+  readonly maxTurns?: number;
+  /** MODEL agentic: the per-step tool-call budget (default 6). */
+  readonly maxToolCalls?: number;
 }
 
 /** One authored edge (by client-local node id). `instruction` (D141.5) is the
@@ -130,6 +140,16 @@ export function validationError(graph: BuilderGraph): string | null {
     if (s.kind === "tool" && s.toolId.trim() === "") {
       return `Tool step "${s.label}" needs a registered tool.`;
     }
+    // PR-9b-2b: a deterministic-agentic step's budget must satisfy the loop invariant
+    // (mirrors the server's `react_seed_params` + the SDK lowering gate). Defaults
+    // (8 / 6) are valid; an explicit out-of-range pair is refused at authoring.
+    if (s.kind === "model" && Object.keys(s.toolContract).length > 0) {
+      const turns = s.maxTurns ?? 8;
+      const calls = s.maxToolCalls ?? 6;
+      if (calls < 1 || calls >= turns || turns > 8) {
+        return `Agent step "${s.label}" tool budget must satisfy 0 < tool-calls < turns ≤ 8.`;
+      }
+    }
     if (s.paramsText.trim() !== "" && !isJsonObject(s.paramsText)) {
       return `Step "${s.label}" ${s.kind === "tool" ? "args" : "params"} must be a JSON object.`;
     }
@@ -184,6 +204,23 @@ export function toRequest(graph: BuilderGraph, seed = 0) {
       // is byte-identical to the Py/TS/CLI surfaces (the golden-corpus contract).
       step = task
         .tool(s.toolId, s.toolVersion.trim() === "" ? "1" : s.toolVersion, toolArgs(s))
+        .toStepInput();
+    } else if (s.kind === "model" && Object.keys(s.toolContract).length > 0) {
+      // PR-9b-2b: a DETERMINISTIC-AGENTIC step — reuse the SDK `task.model(tools=,
+      // maxTurns=, maxToolCalls=)` factory so the tool_contract + budget→params
+      // lowering is BYTE-IDENTICAL to the chains DSL / CLI (the golden corpus). The
+      // server builds the union warrant + parks/drives the bounded loop.
+      let prompt = s.prompt;
+      const instr = inbound.get(s.id);
+      if (instr && instr.length > 0) {
+        prompt = `${instr.join("\n\n")}\n\n${s.prompt}`.trim();
+      }
+      step = task
+        .model(s.modelId, prompt, paramsRecord(s), {
+          tools: s.toolContract,
+          maxTurns: s.maxTurns,
+          maxToolCalls: s.maxToolCalls,
+        })
         .toStepInput();
     } else {
       const params = paramsRecord(s);
@@ -270,5 +307,6 @@ export function newStep(kind: BuilderStepKind, id: string): BuilderStep {
     reasoning: "",
     toolId: "",
     toolVersion: "",
+    toolContract: {},
   };
 }

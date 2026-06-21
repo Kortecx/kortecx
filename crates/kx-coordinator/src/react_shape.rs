@@ -196,6 +196,210 @@ pub(crate) fn build_react_tool(
     )
 }
 
+// ===========================================================================
+// PR-9b-2b — the SALT-2 builders for a DETERMINISTIC-AGENTIC STEP.
+//
+// A deterministic-agentic step is a frozen-DAG MODEL step that becomes ready
+// MID-RUN and runs its OWN bounded reason→tool→observe loop (vs the run-level
+// react chain swapped in at submit). Its turn/observation Motes are salted by an
+// ADDITIONAL 32-byte `step_salt` (= the launch step's `MoteId`) on top of the run
+// `instance_id`, so multiple agentic steps in one run — and the run-level react
+// chain — never collide on `(instance_id, turn)`. The domain tags are DISTINCT
+// from the salt-1 namespaces (`b"kx-agentic-*"` vs `b"kx-react-*"`), and the
+// byte-frozen salt-1 builders above are deliberately UNTOUCHED (their cross-impl
+// goldens stay pinned). A NEW golden pins the salt-2 derivation below.
+// ===========================================================================
+
+/// The salt-2 identity material for an agentic-step turn:
+/// `blake3(b"kx-agentic-turn" ‖ instance_id ‖ step_salt ‖ turn.to_le_bytes())`.
+/// Deterministic + distinct per `(run, step, turn)` and cryptographically
+/// distinct from EVERY salt-1 namespace (different domain tag) — so an agentic
+/// step's chain can never dedup-collide with the run-level react chain.
+#[must_use]
+pub(crate) fn react_turn_id_material2(
+    instance_id: &[u8; INSTANCE_ID_LEN],
+    step_salt: &[u8; 32],
+    turn: u32,
+) -> [u8; 32] {
+    let mut material = b"kx-agentic-turn".to_vec();
+    material.extend_from_slice(instance_id);
+    material.extend_from_slice(step_salt);
+    material.extend_from_slice(&turn.to_le_bytes());
+    *ContentRef::of(&material).as_bytes()
+}
+
+/// Re-derive an agentic-step turn `Mote` — the salt-2 twin of [`build_react_turn`].
+/// Identical SHAPE (ROND, edge-free, instruction in `config_subset[PROMPT_KEY]`,
+/// greedy at `max_output_tokens`) EXCEPT: (a) the id is salt-2 derived, and
+/// (b) the [`REACT_TURN_KEY`] routing marker carries `instance_id ‖ step_salt`
+/// (48 bytes) so the coordinator's `resolve_parent_context` reconstructs the
+/// compound `(instance_id, step_salt)` chain key (a 16-byte marker = run-level).
+#[must_use]
+pub(crate) fn build_agentic_turn(
+    model_id: &ModelId,
+    instruction: &str,
+    turn: u32,
+    instance_id: &[u8; INSTANCE_ID_LEN],
+    step_salt: &[u8; 32],
+    max_output_tokens: u32,
+) -> Mote {
+    let id_bytes = react_turn_id_material2(instance_id, step_salt, turn);
+
+    let mut marker = instance_id.to_vec();
+    marker.extend_from_slice(step_salt);
+
+    let mut config_subset = BTreeMap::new();
+    config_subset.insert(
+        ConfigKey(PROMPT_KEY.to_string()),
+        ConfigVal(instruction.as_bytes().to_vec()),
+    );
+    config_subset.insert(ConfigKey(REACT_TURN_KEY.to_string()), ConfigVal(marker));
+    let def = MoteDef {
+        critic_check: None,
+        logic_ref: LogicRef::from_bytes(id_bytes),
+        model_id: model_id.clone(),
+        prompt_template_hash: PromptTemplateHash::from_bytes(id_bytes),
+        tool_contract: BTreeMap::new(),
+        nd_class: NdClass::ReadOnlyNondet,
+        config_subset,
+        effect_pattern: EffectPattern::IdempotentByConstruction,
+        critic_for: None,
+        is_topology_shaper: false,
+        inference_params: InferenceParams {
+            max_output_tokens,
+            ..InferenceParams::default()
+        },
+        schema_version: MOTE_DEF_SCHEMA_VERSION,
+    };
+    Mote::new(
+        def,
+        InputDataId::from_bytes(id_bytes),
+        GraphPosition(id_bytes.to_vec()),
+        SmallVec::new(),
+    )
+}
+
+/// The salt-2 identity material for an agentic-step OBSERVATION:
+/// `blake3(b"kx-agentic-tool" ‖ instance_id ‖ step_salt ‖ turn.to_le_bytes())`.
+#[must_use]
+pub(crate) fn react_tool_id_material2(
+    instance_id: &[u8; INSTANCE_ID_LEN],
+    step_salt: &[u8; 32],
+    turn: u32,
+) -> [u8; 32] {
+    let mut material = b"kx-agentic-tool".to_vec();
+    material.extend_from_slice(instance_id);
+    material.extend_from_slice(step_salt);
+    material.extend_from_slice(&turn.to_le_bytes());
+    *ContentRef::of(&material).as_bytes()
+}
+
+/// Re-derive an agentic-step OBSERVATION `Mote` — the salt-2 twin of
+/// [`build_react_tool`]. Identical SHAPE (WM `StageThenCommit`, one Data edge to
+/// its proposing turn, EMPTY config = the out-of-band args contract, declared
+/// `(tool_id, tool_version)` in `tool_contract`) EXCEPT the id is salt-2 derived
+/// and the parent is the agentic turn.
+#[must_use]
+pub(crate) fn build_agentic_tool(
+    model_id: &ModelId,
+    tool_id: &ToolName,
+    tool_version: &ToolVersion,
+    turn: u32,
+    instance_id: &[u8; INSTANCE_ID_LEN],
+    step_salt: &[u8; 32],
+    turn_mote_id: MoteId,
+) -> Mote {
+    let id_bytes = react_tool_id_material2(instance_id, step_salt, turn);
+
+    let mut tool_contract = BTreeMap::new();
+    tool_contract.insert(tool_id.clone(), tool_version.clone());
+    let def = MoteDef {
+        critic_check: None,
+        logic_ref: LogicRef::from_bytes(id_bytes),
+        model_id: model_id.clone(),
+        prompt_template_hash: PromptTemplateHash::from_bytes(id_bytes),
+        tool_contract,
+        nd_class: NdClass::WorldMutating,
+        config_subset: BTreeMap::new(),
+        effect_pattern: EffectPattern::StageThenCommit,
+        critic_for: None,
+        is_topology_shaper: false,
+        inference_params: InferenceParams::default(),
+        schema_version: MOTE_DEF_SCHEMA_VERSION,
+    };
+    Mote::new(
+        def,
+        InputDataId::from_bytes(id_bytes),
+        GraphPosition(id_bytes.to_vec()),
+        std::iter::once(ParentRef {
+            parent_id: turn_mote_id,
+            edge: EdgeMeta::data(),
+        })
+        .collect::<SmallVec<[ParentRef; 4]>>(),
+    )
+}
+
+/// Re-derive a chain TURN `Mote` keyed by the chain's `step_salt` (PR-9b-2b): the
+/// run-level react chain (`None`) uses the salt-1 [`build_react_turn`]; an agentic
+/// step's private chain (`Some(launch MoteId)`) uses the salt-2 [`build_agentic_turn`].
+/// One dispatch point so the coordinator's settle/recover/advance code is chain-shape
+/// agnostic and the two namespaces can never be confused.
+#[must_use]
+pub(crate) fn build_chain_turn(
+    model_id: &ModelId,
+    instruction: &str,
+    turn: u32,
+    instance_id: &[u8; INSTANCE_ID_LEN],
+    step_salt: Option<[u8; 32]>,
+    max_output_tokens: u32,
+) -> Mote {
+    match step_salt {
+        Some(salt) => build_agentic_turn(
+            model_id,
+            instruction,
+            turn,
+            instance_id,
+            &salt,
+            max_output_tokens,
+        ),
+        None => build_react_turn(model_id, instruction, turn, instance_id, max_output_tokens),
+    }
+}
+
+/// Re-derive a chain OBSERVATION `Mote` keyed by the chain's `step_salt` (PR-9b-2b):
+/// the salt-1 [`build_react_tool`] for the run-level chain, the salt-2
+/// [`build_agentic_tool`] for an agentic step's chain. The twin of [`build_chain_turn`].
+#[must_use]
+pub(crate) fn build_chain_tool(
+    model_id: &ModelId,
+    tool_id: &ToolName,
+    tool_version: &ToolVersion,
+    turn: u32,
+    instance_id: &[u8; INSTANCE_ID_LEN],
+    step_salt: Option<[u8; 32]>,
+    turn_mote_id: MoteId,
+) -> Mote {
+    match step_salt {
+        Some(salt) => build_agentic_tool(
+            model_id,
+            tool_id,
+            tool_version,
+            turn,
+            instance_id,
+            &salt,
+            turn_mote_id,
+        ),
+        None => build_react_tool(
+            model_id,
+            tool_id,
+            tool_version,
+            turn,
+            instance_id,
+            turn_mote_id,
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -302,5 +506,99 @@ mod tests {
         assert_ne!(build_react_turn(&model, "p2", 1, &[1; 16], 64).id, x.id);
         assert_ne!(build_react_turn(&model, "p", 2, &[1; 16], 64).id, x.id);
         assert_ne!(build_react_turn(&model, "p", 1, &[1; 16], 65).id, x.id);
+    }
+
+    // -----------------------------------------------------------------------
+    // PR-9b-2b — salt-2 (deterministic-agentic step) builder goldens.
+    // -----------------------------------------------------------------------
+
+    /// The frozen golden for the salt-2 turn-0 `MoteId`. Inputs: model
+    /// `kx-test:q8:deadbeef`, instruction "list the files", turn 0, salt
+    /// `[0x4d; 16]`, step_salt `[0x9a; 32]`, max_output_tokens 64. Coordinator-
+    /// local (no harness twin — agentic steps are a serve-only construct); pins
+    /// the salt-2 derivation so a drift in the domain tag / material order fails
+    /// CI. MUST differ from `SALTED_TURN0_GOLDEN` (distinct domain namespaces).
+    const AGENTIC_TURN0_GOLDEN: &str =
+        "8bed4369abcfd6da5f334ea1e2e28358773a83596d58d2e16ea12a84b0312dc2";
+
+    #[test]
+    fn agentic_turn_matches_its_golden_and_is_namespace_distinct() {
+        let model = ModelId("kx-test:q8:deadbeef".to_string());
+        let salt = [0x4d_u8; 16];
+        let step_salt = [0x9a_u8; 32];
+        let turn = build_agentic_turn(&model, "list the files", 0, &salt, &step_salt, 64);
+        // Property contract (the golden hex is bootstrapped by `just`-running this
+        // once; pinned below). Shape mirrors a salt-1 react turn.
+        assert!(turn.parents.is_empty(), "an agentic turn MUST be edge-free");
+        assert!(!turn.def.is_topology_shaper);
+        assert_eq!(turn.def.nd_class, NdClass::ReadOnlyNondet);
+        // The marker carries instance_id ‖ step_salt (48 bytes).
+        let marker = turn
+            .def
+            .config_subset
+            .get(&ConfigKey(REACT_TURN_KEY.to_string()))
+            .map(|v| v.0.clone())
+            .expect("marker present");
+        assert_eq!(marker.len(), INSTANCE_ID_LEN + 32);
+        assert_eq!(&marker[..INSTANCE_ID_LEN], &salt[..]);
+        assert_eq!(&marker[INSTANCE_ID_LEN..], &step_salt[..]);
+        // CRYPTOGRAPHICALLY distinct from the salt-1 react turn at the same coords.
+        let react = build_react_turn(&model, "list the files", 0, &salt, 64);
+        assert_ne!(turn.id, react.id, "salt-2 must not collide with salt-1");
+        assert_eq!(hex(turn.id.as_bytes()), AGENTIC_TURN0_GOLDEN);
+    }
+
+    /// The frozen golden for the salt-2 observation-0 `MoteId`. Same inputs +
+    /// tool `mcp-echo@1`, parent = the salt-2 turn-0.
+    const AGENTIC_TOOL0_GOLDEN: &str =
+        "95b763ae1384952b004b5e16d0ee47ce02c08b403b18ebc0a629e65db91b8b98";
+
+    #[test]
+    fn agentic_tool_matches_its_golden_and_is_namespace_distinct() {
+        let model = ModelId("kx-test:q8:deadbeef".to_string());
+        let salt = [0x4d_u8; 16];
+        let step_salt = [0x9a_u8; 32];
+        let turn = build_agentic_turn(&model, "list the files", 0, &salt, &step_salt, 64);
+        let obs = build_agentic_tool(
+            &model,
+            &ToolName("mcp-echo".to_string()),
+            &ToolVersion("1".to_string()),
+            0,
+            &salt,
+            &step_salt,
+            turn.id,
+        );
+        // Shape: one Data edge to the turn, empty config (out-of-band args), WM +
+        // StageThenCommit, the declared tool contract.
+        assert_eq!(obs.parents.len(), 1);
+        assert_eq!(obs.parents[0].parent_id, turn.id);
+        assert!(obs.def.config_subset.is_empty());
+        assert_eq!(obs.def.nd_class, NdClass::WorldMutating);
+        assert_eq!(obs.def.effect_pattern, EffectPattern::StageThenCommit);
+        // Distinct from the salt-1 observation at the same coords.
+        let react_obs = build_react_tool(
+            &model,
+            &ToolName("mcp-echo".to_string()),
+            &ToolVersion("1".to_string()),
+            0,
+            &salt,
+            turn.id,
+        );
+        assert_ne!(obs.id, react_obs.id);
+        assert_eq!(hex(obs.id.as_bytes()), AGENTIC_TOOL0_GOLDEN);
+    }
+
+    #[test]
+    fn agentic_ids_are_deterministic_and_step_isolated() {
+        let a = react_turn_id_material2(&[1; 16], &[2; 32], 0);
+        assert_eq!(a, react_turn_id_material2(&[1; 16], &[2; 32], 0));
+        assert_ne!(a, react_turn_id_material2(&[1; 16], &[2; 32], 1)); // per turn
+        assert_ne!(a, react_turn_id_material2(&[1; 16], &[3; 32], 0)); // per step
+        assert_ne!(a, react_turn_id_material2(&[9; 16], &[2; 32], 0)); // per run
+                                                                       // Distinct from the agentic-tool namespace at the same coords.
+        assert_ne!(a, react_tool_id_material2(&[1; 16], &[2; 32], 0));
+        // Distinct from BOTH salt-1 namespaces.
+        assert_ne!(a, react_turn_id_material(&[1; 16], 0));
+        assert_ne!(a, react_tool_id_material(&[1; 16], 0));
     }
 }

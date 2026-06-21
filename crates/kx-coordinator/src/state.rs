@@ -627,7 +627,18 @@ fn lease_ready(
         if projection.state_of(&mote_id) == MoteState::Committed {
             continue;
         }
-        if let Some((_mote, warrant)) = submitted_defs.get(&mote_id) {
+        if let Some((mote, warrant)) = submitted_defs.get(&mote_id) {
+            // PR-9b-2b: a deterministic-AGENTIC launch step is NEVER dispatched as a
+            // plain model mote — the coordinator drives its bounded reason→tool→observe
+            // loop on a private chain (`settle_agentic_launches`) and COMMITS the launch
+            // mote with the loop's final answer to advance the frozen DAG. PARK it here
+            // (skip candidate selection) BEFORE `.take(max)` so a launch — uniquely
+            // long-lived in the ready-set (it stays `Pending` for its whole loop) — never
+            // consumes a per-poll lease slot from genuinely-dispatchable motes. The
+            // shape is disjoint from the observation/authored-tool arms (B1 tests).
+            if is_agentic_launch(mote) {
+                continue;
+            }
             if warrant.executor_class == executor_class {
                 if placement.place(&mote_id) == worker {
                     preferred.push(mote_id);
@@ -878,6 +889,37 @@ fn is_authored_tool(mote: &Mote, projection: &Projection) -> bool {
         && !is_react_observation(mote, projection)
 }
 
+/// PR-9b-2b: `true` iff `mote` is a deterministic-AGENTIC launch step — a frozen-DAG
+/// MODEL step carrying an author-declared tool-grant SET that the coordinator must
+/// run as a BOUNDED reason→tool→observe loop (never dispatch as a plain model mote).
+/// The discriminant MIRRORS the gateway binder's own Model arm (`provision.rs`): a
+/// non-empty `tool_contract` + `PROMPT_KEY` (the model directive) + NO `TOOL_ARGS_KEY`
+/// (the loop GENERATES its own tool calls — vs an authored `tool()` node) +
+/// ReadOnlyNondet + StageThenCommit (a `generator`). Provably DISJOINT from every
+/// other tool-contract shape, so the lease-time park can never mis-fire on an
+/// ordinary mote (the `is_react_observation` / `is_authored_tool` tightness contract):
+/// - a react OBSERVATION ([`is_react_observation`]) carries an EMPTY `config_subset`
+///   (no `PROMPT_KEY`) and a folded react-turn Data parent;
+/// - an authored `tool()` node ([`is_authored_tool`]) carries `TOOL_ARGS_KEY` and is
+///   WorldMutating (not ReadOnlyNondet);
+/// - a react TURN has an EMPTY `tool_contract`.
+///
+/// PURE (no projection arg): the mote SHAPE alone is decisive, so a launch is parked
+/// + the readiness scan keyed on the same shape BEFORE any chain fact exists.
+fn is_agentic_launch(mote: &Mote) -> bool {
+    !mote.def.tool_contract.is_empty()
+        && mote.nd_class() == NdClass::ReadOnlyNondet
+        && mote.effect_pattern() == EffectPattern::StageThenCommit
+        && mote
+            .def
+            .config_subset
+            .contains_key(&ConfigKey(PROMPT_KEY.to_string()))
+        && !mote
+            .def
+            .config_subset
+            .contains_key(&ConfigKey(TOOL_ARGS_KEY.to_string()))
+}
+
 /// PR-6b-2: derive a standalone authored `tool()` node's `(args_bytes, net_scope,
 /// fs_scope)` — a PURE function of the Mote's OWN identity-bearing `config_subset`
 /// (NO parent, NO store I/O), run on the sole-writer thread at every (re-)lease:
@@ -995,66 +1037,87 @@ fn resolve_parent_context(
         .config_subset
         .contains_key(&ConfigKey(REACT_TURN_KEY.to_string()))
     {
-        // The marker VALUE is the run-salt (= the registered `instance_id`),
-        // so the chain is addressed DIRECTLY off the per-instance index
-        // (PR-2d-2) — never a scan across every chain's facts.
-        let instance: Option<[u8; INSTANCE_ID_LEN]> = mote
+        // The marker VALUE addresses the CHAIN directly (PR-2d-2 / PR-9b-2b) off
+        // the derived index — never a scan across every chain's facts. 16 bytes =
+        // `instance_id` (the run-level react chain, `step_salt = None`); 48 bytes =
+        // `instance_id ‖ step_salt` (an agentic step's PRIVATE chain). Decoding
+        // BOTH lengths is LOAD-BEARING: an agentic turn's 48-byte marker decoded as
+        // a 16-byte `instance_id` (the PR-2d-1 shape) would `try_into`-fail → no
+        // chain → an EMPTY trajectory, so every agentic turn past turn 0 would
+        // reason with no memory of its own tool observations (a silent loop break).
+        let chain: Option<([u8; INSTANCE_ID_LEN], Option<[u8; 32]>)> = mote
             .def
             .config_subset
             .get(&ConfigKey(REACT_TURN_KEY.to_string()))
-            .and_then(|v| v.0.as_slice().try_into().ok());
-        if let Some(this) = instance.as_ref().and_then(|i| {
-            projection
-                .react_rounds_of(i)
+            .and_then(|v| {
+                let bytes = v.0.as_slice();
+                if bytes.len() == INSTANCE_ID_LEN {
+                    bytes.try_into().ok().map(|i| (i, None))
+                } else if bytes.len() == INSTANCE_ID_LEN + 32 {
+                    let instance_id: [u8; INSTANCE_ID_LEN] =
+                        bytes[..INSTANCE_ID_LEN].try_into().ok()?;
+                    let step_salt: [u8; 32] = bytes[INSTANCE_ID_LEN..].try_into().ok()?;
+                    Some((instance_id, Some(step_salt)))
+                } else {
+                    None // malformed marker — fail-closed (no context)
+                }
+            });
+        if let Some((instance_id, step_salt)) = chain {
+            if let Some(this) = projection
+                .react_rounds_of(&instance_id, &step_salt)
                 .find(|r| r.turn_mote_id == mote.id)
-        }) {
-            // One entry per prior turn: its Mote id + its SETTLED branch (the
-            // highest-seq fact — a turn's facts are `Pending` then a frozen
-            // branch). PR-2d-2: a `Tool` turn ALSO contributes its OBSERVATION
-            // immediately after it — the harness transcript shape
-            // `[turn0, obs0, turn1, …]` (`react.rs` pushes turn + obs pairs), so
-            // the model reads tool results in time order. The observation's Mote
-            // is re-derived from the frozen fact (pure — `build_react_tool`); an
-            // uncommitted/absent observation (a PR-2d-1 substrate-only journal,
-            // or one still in flight) contributes nothing (fail-safe filter).
-            let mut turns: Vec<&ReactRoundRecord> = Vec::new();
-            for r in projection
-                .react_rounds_of(&this.instance_id)
-                .filter(|r| r.turn < this.turn)
             {
-                match turns.iter_mut().find(|t| t.turn == r.turn) {
-                    Some(slot) if r.seq > slot.seq => *slot = r,
-                    Some(_) => {}
-                    None => turns.push(r),
-                }
-            }
-            turns.sort_unstable_by_key(|r| r.turn);
-            let mut out: Vec<(MoteId, ContentRef)> = Vec::new();
-            for r in turns {
-                if let Some(turn_ref) = projection.result_ref_of(&r.turn_mote_id) {
-                    out.push((r.turn_mote_id, turn_ref));
-                }
-                if let ReactBranch::Tool {
-                    tool_id,
-                    tool_version,
-                } = &r.branch
+                // One entry per prior turn: its Mote id + its SETTLED branch (the
+                // highest-seq fact — a turn's facts are `Pending` then a frozen
+                // branch). PR-2d-2: a `Tool` turn ALSO contributes its OBSERVATION
+                // immediately after it — the harness transcript shape
+                // `[turn0, obs0, turn1, …]` (`react.rs` pushes turn + obs pairs), so
+                // the model reads tool results in time order. The observation's Mote
+                // is re-derived from the frozen fact (pure — `build_react_tool`); an
+                // uncommitted/absent observation (a PR-2d-1 substrate-only journal,
+                // or one still in flight) contributes nothing (fail-safe filter).
+                let this_turn = this.turn;
+                let mut turns: Vec<&ReactRoundRecord> = Vec::new();
+                for r in projection
+                    .react_rounds_of(&instance_id, &step_salt)
+                    .filter(|r| r.turn < this_turn)
                 {
-                    let obs = crate::react_shape::build_react_tool(
-                        &ModelId(r.model_id.clone()),
-                        &ToolName(tool_id.clone()),
-                        &ToolVersion(tool_version.clone()),
-                        r.turn,
-                        &this.instance_id,
-                        r.turn_mote_id,
-                    );
-                    if let Some(obs_ref) = projection.result_ref_of(&obs.id) {
-                        out.push((obs.id, obs_ref));
+                    match turns.iter_mut().find(|t| t.turn == r.turn) {
+                        Some(slot) if r.seq > slot.seq => *slot = r,
+                        Some(_) => {}
+                        None => turns.push(r),
                     }
                 }
+                turns.sort_unstable_by_key(|r| r.turn);
+                let mut out: Vec<(MoteId, ContentRef)> = Vec::new();
+                for r in turns {
+                    if let Some(turn_ref) = projection.result_ref_of(&r.turn_mote_id) {
+                        out.push((r.turn_mote_id, turn_ref));
+                    }
+                    if let ReactBranch::Tool {
+                        tool_id,
+                        tool_version,
+                    } = &r.branch
+                    {
+                        let obs = crate::react_shape::build_chain_tool(
+                            &ModelId(r.model_id.clone()),
+                            &ToolName(tool_id.clone()),
+                            &ToolVersion(tool_version.clone()),
+                            r.turn,
+                            &instance_id,
+                            step_salt,
+                            r.turn_mote_id,
+                        );
+                        if let Some(obs_ref) = projection.result_ref_of(&obs.id) {
+                            out.push((obs.id, obs_ref));
+                        }
+                    }
+                }
+                return out;
             }
-            return out;
+            return Vec::new(); // a chain marker with no matching turn fact (fail-closed)
         }
-        return Vec::new(); // a marker without folded facts: no context (fail-closed)
+        return Vec::new(); // a malformed / absent marker: no context (fail-closed)
     }
     let mut out: Vec<(MoteId, ContentRef)> = Vec::new();
     for parent in &mote.parents {
@@ -1377,6 +1440,16 @@ struct Dispatch {
     submitted: BTreeSet<MoteId>,
     defs: BTreeMap<MoteId, (Mote, WarrantSpec)>,
     tracker: LeaseTracker,
+    /// PR-9b-2b — the admitted-but-PARKED deterministic-agentic launch steps
+    /// (`is_agentic_launch`), mapped to their run's `instance_id` (the chain
+    /// salt-1 component, captured at submit where it is known — serve's journal
+    /// is SHARED across runs, so it cannot be re-derived globally at anchor time).
+    /// O(1) populated at submit (`submit_and_capture`) so `settle_agentic_launches`
+    /// need not scan all `defs` every drain; an id is dropped once its turn-0
+    /// anchor is written (the durable anchor is then the marker). In-memory only —
+    /// repopulated on a recovery re-submit (the `defs`/`tracker` precedent); the
+    /// skip-if-already-anchored guard prevents a double anchor.
+    parked_launches: BTreeMap<MoteId, [u8; INSTANCE_ID_LEN]>,
 }
 
 /// The owner-thread loop. Recovers the projection from the journal, then services
@@ -1400,6 +1473,7 @@ fn core_loop<J: Journal>(
         submitted,
         defs: BTreeMap::new(),
         tracker: LeaseTracker::default(),
+        parked_launches: BTreeMap::new(),
     };
     // PR-2c-2: re-derive the live re-plan chain from committed facts (re-materialize
     // committed round shapers' children, re-insert the in-flight round shaper, and
@@ -1487,22 +1561,10 @@ fn core_loop<J: Journal>(
             &mut dispatch,
             &mut pending,
         );
-        // PR-2c-2: after this drain's commits + dead-letters fold, drive any re-plan
-        // round that just settled (a shaper's children all reached a terminal state
-        // with ≥1 failure). Idempotent + O(rounds≤4); a no-op without a round-0 anchor.
-        settle_replan_rounds(
-            journal,
-            store,
-            &mut projection,
-            &mut folded_through,
-            &mut dispatch,
-        );
-        // PR-2d-1: after this drain's commits + dead-letters fold, settle any ReAct
-        // turn that just reached a terminal state (decode → freeze the branch →
-        // advance under budget). Idempotent; a one-bool no-op without react facts;
-        // proportional to the ACTIVE chains only (the settle cache — settled
-        // chains are skipped, the fact log is re-scanned only when it grows).
-        settle_react_rounds(
+        // After this drain's commits + dead-letters fold, run the idempotent settle
+        // passes (re-plan rounds · agentic-launch anchoring · react/agentic chain
+        // settle). Each is gated to zero cost when its feature is unused.
+        run_settle_passes(
             journal,
             store,
             &mut projection,
@@ -1824,6 +1886,13 @@ fn submit_and_capture<J: Journal>(
     let shaper_def = mote.def.is_topology_shaper.then(|| mote.def.clone());
     let shaper_mote_id = mote.id;
     let shaper_warrant = warrant.clone();
+    // PR-9b-2b: a deterministic-AGENTIC launch step is admitted (its def lands in
+    // `dispatch.defs` for the eventual terminal launch-commit) but the coordinator
+    // PARKS it here, keyed to THIS run's `instance_id` — `settle_agentic_launches`
+    // anchors + drives its bounded loop once its DAG parents commit. Captured BEFORE
+    // `handle_submit` consumes `mote`. The react seed-swap path is never a launch
+    // (the swapped turn-0 carries an empty `tool_contract`).
+    let launch_park = (!react_seed && is_agentic_launch(&mote)).then_some(mote.id);
 
     // Admit through the hosted scheduler (verbatim — the P2 thesis test).
     let warrant_for_capture = warrant.clone();
@@ -1839,6 +1908,11 @@ fn submit_and_capture<J: Journal>(
     // never reaches here — refused at Gate 2; a PURE/ROND Unresolved submit reaches
     // here and skips capture, the M1.2 behavior.)
     outcome.instance_id = Some(instance_id);
+    // PR-9b-2b: park a freshly-admitted agentic launch keyed to its run (a duplicate
+    // re-submit is already parked / anchored — the idempotency guard handles it).
+    if let (Some(launch_id), false) = (launch_park, outcome.duplicate) {
+        dispatch.parked_launches.insert(launch_id, instance_id);
+    }
     if !outcome.duplicate {
         if let ToolResolution::Resolved(_) = resolution {
             capture_run_versions(
@@ -1876,6 +1950,7 @@ fn submit_and_capture<J: Journal>(
                 projection,
                 folded_through,
                 instance_id,
+                None, // run-level react chain (the seed-swap path); agentic chains anchor via settle
                 turn0,
                 &shaper_warrant,
                 max_turns,
@@ -2360,17 +2435,17 @@ fn write_react_anchor<J: Journal>(
     projection: &mut Projection,
     folded_through: &mut u64,
     instance_id: [u8; INSTANCE_ID_LEN],
+    step_salt: Option<[u8; 32]>,
     turn0: &Mote,
     warrant: &WarrantSpec,
     max_turns: u32,
     max_tool_calls: u32,
 ) -> Result<(), CoordinatorError> {
     if projection
-        .react_rounds()
-        .iter()
-        .any(|r| r.instance_id == instance_id && r.turn == 0)
+        .react_rounds_of(&instance_id, &step_salt)
+        .any(|r| r.turn == 0)
     {
-        return Ok(()); // already anchored (idempotent re-submit / replay)
+        return Ok(()); // already anchored (idempotent re-submit / replay / re-park)
     }
     let Some(instruction) = turn0
         .def
@@ -2401,9 +2476,9 @@ fn write_react_anchor<J: Journal>(
         branch: ReactBranch::Pending,
         max_turns,
         max_tool_calls,
-        // v9 (PR-9b-2a): run-level chain. The agentic-launch anchor (PR-9b-2b)
-        // sets this to the launch step's MoteId.
-        step_salt: None,
+        // v9 (PR-9b-2b): `None` for the run-level react chain; `Some(launch
+        // MoteId)` for a deterministic-agentic step's private chain.
+        step_salt,
         seq: 0,
     };
     let durable = journal.append(entry)?;
@@ -2475,6 +2550,42 @@ fn materialize_react_tool(
     dispatch.defs.insert(obs.id, (obs.clone(), warrant));
 }
 
+/// PR-9b-2b: the post-drain settle passes — re-plan rounds (PR-2c-2), then
+/// agentic-launch anchoring (turn-0 anchor + materialize for any parked launch whose
+/// DAG parents committed), then the react/agentic chain settle (decode → freeze the
+/// branch → advance under budget; an agentic chain's terminal Answer COMMITS its launch
+/// mote, advancing the frozen DAG). Agentic anchoring runs BEFORE the react settle so a
+/// freshly-anchored chain drives in the same drain. Each pass is idempotent + gated to
+/// zero cost when its feature is unused. Extracted so `core_loop` stays under the line
+/// budget (a pure refactor — same call order as the inline block it replaced).
+#[allow(clippy::too_many_arguments)]
+fn run_settle_passes<J: Journal>(
+    journal: &J,
+    store: Option<&LocalFsContentStore>,
+    projection: &mut Projection,
+    folded_through: &mut u64,
+    dispatch: &mut Dispatch,
+    react_cache: &mut ReactSettleCache,
+    tool_registry: &dyn ToolRegistry,
+) {
+    settle_replan_rounds(journal, store, projection, folded_through, dispatch);
+    settle_agentic_launches(journal, store, projection, folded_through, dispatch);
+    settle_react_rounds(
+        journal,
+        store,
+        projection,
+        folded_through,
+        dispatch,
+        react_cache,
+        tool_registry,
+    );
+}
+
+/// PR-9b-2b: the settle/cache CHAIN key — `(instance_id, step_salt)`, not just the
+/// run — so a run carrying BOTH a run-level react chain (`step_salt = None`) and one or
+/// more agentic-step chains (`Some(launch MoteId)`) tracks each independently.
+type ChainKey = ([u8; INSTANCE_ID_LEN], Option<[u8; 32]>);
+
 /// The settle pass's incremental working set (adversarial-review finding,
 /// PR-2d-1): `react_rounds` only ever GROWS in serve's shared journal, so a
 /// naive per-drain pass over every fact of every chain is O(total-runs²) at the
@@ -2486,14 +2597,14 @@ fn materialize_react_tool(
 ///   FROZEN at append and a settled chain accepts no new facts, so membership is
 ///   monotonic — skipping is always sound. Purely in-memory: recovery starts
 ///   empty and the first pass re-derives it from the durable facts.
-/// - `active` — the distinct unsettled instances, REBUILT only when the folded
+/// - `active` — the distinct unsettled chains, REBUILT only when the folded
 ///   fact count changes (`seen_facts`); between fact-appends the pass iterates
 ///   this (usually tiny) list and touches nothing else.
 #[derive(Default)]
 struct ReactSettleCache {
     seen_facts: usize,
-    active: Vec<[u8; INSTANCE_ID_LEN]>,
-    settled: BTreeSet<[u8; INSTANCE_ID_LEN]>,
+    active: Vec<ChainKey>,
+    settled: BTreeSet<ChainKey>,
 }
 
 /// Whether one settle pass left a chain able to settle again ([`ReactChainStatus::Active`])
@@ -2538,14 +2649,13 @@ fn settle_react_rounds<J: Journal>(
     // the (usually tiny) active list — never the full accumulated fact log.
     if projection.react_rounds().len() != cache.seen_facts {
         cache.active = projection
-            .react_instances()
-            .filter(|i| !cache.settled.contains(*i))
-            .copied()
+            .react_chains()
+            .filter(|chain| !cache.settled.contains(chain))
             .collect();
         cache.seen_facts = projection.react_rounds().len();
     }
-    let mut still_active: Vec<[u8; INSTANCE_ID_LEN]> = Vec::with_capacity(cache.active.len());
-    for instance_id in std::mem::take(&mut cache.active) {
+    let mut still_active: Vec<ChainKey> = Vec::with_capacity(cache.active.len());
+    for (instance_id, step_salt) in std::mem::take(&mut cache.active) {
         let status = settle_react_chain(
             journal,
             store,
@@ -2553,12 +2663,13 @@ fn settle_react_rounds<J: Journal>(
             folded_through,
             dispatch,
             instance_id,
+            step_salt,
             tool_registry,
         );
         if status == ReactChainStatus::Settled {
-            cache.settled.insert(instance_id);
+            cache.settled.insert((instance_id, step_salt));
         } else {
-            still_active.push(instance_id);
+            still_active.push((instance_id, step_salt));
         }
     }
     cache.active = still_active;
@@ -2567,10 +2678,13 @@ fn settle_react_rounds<J: Journal>(
     cache.seen_facts = projection.react_rounds().len();
 }
 
-/// Settle ONE run's chain (see [`settle_react_rounds`]). Bounded: at most one
-/// branch fact + one advance per pass per chain (the next pass continues).
-/// Returns whether the chain can ever settle again (the cache classification).
-#[allow(clippy::too_many_lines, clippy::too_many_arguments)]
+/// Settle ONE chain — the `(instance_id, step_salt)` pair (see
+/// [`settle_react_rounds`]). For an AGENTIC chain (`step_salt.is_some()`) this
+/// wraps the run-level [`drive_react_chain`] with the terminal launch disposition
+/// ([`finalize_agentic_launch`]): a terminal `Answer` COMMITS the launch mote (so
+/// the frozen DAG advances), a budget-exhausted / dead-lettered chain fail-closed
+/// dead-letters it. The run-level chain (`None`) is byte-unchanged (driver only).
+#[allow(clippy::too_many_arguments)]
 fn settle_react_chain<J: Journal>(
     journal: &J,
     store: &LocalFsContentStore,
@@ -2578,9 +2692,60 @@ fn settle_react_chain<J: Journal>(
     folded_through: &mut u64,
     dispatch: &mut Dispatch,
     instance_id: [u8; INSTANCE_ID_LEN],
+    step_salt: Option<[u8; 32]>,
     tool_registry: &dyn ToolRegistry,
 ) -> ReactChainStatus {
-    let rounds: Vec<ReactRoundRecord> = projection.react_rounds_of(&instance_id).cloned().collect();
+    let status = drive_react_chain(
+        journal,
+        store,
+        projection,
+        folded_through,
+        dispatch,
+        instance_id,
+        step_salt,
+        tool_registry,
+    );
+    // PR-9b-2b: an AGENTIC chain that reached a permanent state must dispose of its
+    // LAUNCH mote (commit on Answer / dead-letter otherwise) before it is truly
+    // settled — the launch-commit is drain-driven + idempotent, so the chain stays
+    // ACTIVE until the launch reaches a terminal state (RISK 4: the launch def is
+    // lost on a crash and only repopulated by re-submit). The run-level chain
+    // (`None`) terminates the run via the seed-swap and needs no launch disposition.
+    match step_salt {
+        Some(salt) if status == ReactChainStatus::Settled => finalize_agentic_launch(
+            journal,
+            store,
+            projection,
+            folded_through,
+            dispatch,
+            instance_id,
+            salt,
+        ),
+        _ => status,
+    }
+}
+
+/// Drive ONE chain's reason→tool→observe loop one pass (the PR-2d-1/2d-2 logic,
+/// now chain-keyed by `(instance_id, step_salt)`). Bounded: at most one branch fact
+/// plus one advance per pass (the next pass continues). Returns whether the chain can
+/// ever settle again (the cache classification). The chain's `step_salt` selects
+/// the salt-1 (run-level) vs salt-2 (agentic) identity builders via the `anchor`'s
+/// own `step_salt` field, so the drive helpers stay chain-shape agnostic.
+#[allow(clippy::too_many_lines, clippy::too_many_arguments)]
+fn drive_react_chain<J: Journal>(
+    journal: &J,
+    store: &LocalFsContentStore,
+    projection: &mut Projection,
+    folded_through: &mut u64,
+    dispatch: &mut Dispatch,
+    instance_id: [u8; INSTANCE_ID_LEN],
+    step_salt: Option<[u8; 32]>,
+    tool_registry: &dyn ToolRegistry,
+) -> ReactChainStatus {
+    let rounds: Vec<ReactRoundRecord> = projection
+        .react_rounds_of(&instance_id, &step_salt)
+        .cloned()
+        .collect();
     // The run-fixed anchor (turn 0) carries base_prompt_ref / warrant_ref /
     // model_id / the durable budget caps.
     let Some(anchor) = rounds.iter().find(|r| r.turn == 0) else {
@@ -2744,8 +2909,10 @@ fn settle_react_chain<J: Journal>(
                 // start the tool round in the same pass (no wasted drain) —
                 // materializes the observation; the advance to the next turn
                 // happens on a later pass, once the observation commits.
-                let rounds: Vec<ReactRoundRecord> =
-                    projection.react_rounds_of(&instance_id).cloned().collect();
+                let rounds: Vec<ReactRoundRecord> = projection
+                    .react_rounds_of(&instance_id, &step_salt)
+                    .cloned()
+                    .collect();
                 progress_tool_round(
                     journal,
                     store,
@@ -2815,12 +2982,13 @@ fn progress_tool_round<J: Journal>(
     round: &ToolRound,
     tool_registry: &dyn ToolRegistry,
 ) -> ReactChainStatus {
-    let obs = crate::react_shape::build_react_tool(
+    let obs = crate::react_shape::build_chain_tool(
         &ModelId(anchor.model_id.clone()),
         &ToolName(round.tool_id.clone()),
         &ToolVersion(round.tool_version.clone()),
         turn,
         &anchor.instance_id,
+        anchor.step_salt,
         round.turn_mote_id,
     );
     let obs_state = projection.state_of(&obs.id);
@@ -2934,7 +3102,7 @@ fn append_react_branch<J: Journal>(
     branch: ReactBranch,
 ) {
     if projection
-        .react_rounds_of(&anchor.instance_id)
+        .react_rounds_of(&anchor.instance_id, &anchor.step_salt)
         .any(|r| r.turn == turn && r.branch == branch)
     {
         return; // already recorded (recovery re-drive)
@@ -2949,9 +3117,9 @@ fn append_react_branch<J: Journal>(
         branch,
         max_turns: anchor.max_turns,
         max_tool_calls: anchor.max_tool_calls,
-        // v9 (PR-9b-2a): run-level chain. PR-9b-2b will propagate the anchor's
-        // step_salt here so a settled branch joins the right agentic chain.
-        step_salt: None,
+        // v9 (PR-9b-2b): a settled branch joins the SAME chain as its anchor —
+        // `None` for the run-level chain, `Some(launch MoteId)` for an agentic step.
+        step_salt: anchor.step_salt,
         seq: 0,
     };
     match journal.append(entry) {
@@ -3022,11 +3190,12 @@ fn advance_react_chain<J: Journal>(
     };
     let next_turn = turn + 1;
     let model_id = ModelId(anchor.model_id.clone());
-    let next = crate::react_shape::build_react_turn(
+    let next = crate::react_shape::build_chain_turn(
         &model_id,
         instruction,
         next_turn,
         &anchor.instance_id,
+        anchor.step_salt,
         warrant.model_route.max_output_tokens,
     );
     // Fact BEFORE materialize (crash-safety order, the replan precedent).
@@ -3049,6 +3218,300 @@ fn advance_react_chain<J: Journal>(
     );
     tracing::info!(turn = next_turn, mote = ?next.id, "react turn materialized");
     ReactChainStatus::Active
+}
+
+/// PR-9b-2b: dispose of an AGENTIC chain's LAUNCH mote once the bounded loop has
+/// permanently settled — the contrast with the run-level chain (which terminates
+/// the run on its final Answer). A terminal `Answer` ⇒ COMMIT the launch mote with
+/// the answer turn's `result_ref` + the launch's DECLARED DAG parents (advancing the
+/// frozen DAG so its consumers become ready); any other terminal shape (a
+/// budget-exhausted `Tool` tail, a `DeadLettered` branch) ⇒ fail-closed dead-letter
+/// (the step fails honestly — never fabricate an answer, GR15).
+///
+/// **Drain-driven + idempotent** (RISK 4): the launch's def (declared parents /
+/// `mote_def_hash` / warrant) lives only in the in-memory `dispatch.defs`, lost on a
+/// coordinator restart and repopulated by the run's re-submit (the shaper-recovery
+/// precedent). When absent (the recovery PROLOGUE, before re-submit) this returns
+/// `Active` (dormant) so the FIRST drain after re-submit completes the commit; once
+/// the launch is terminal it is a no-op `Settled`.
+#[allow(clippy::too_many_arguments)]
+fn finalize_agentic_launch<J: Journal>(
+    journal: &J,
+    store: &LocalFsContentStore,
+    projection: &mut Projection,
+    folded_through: &mut u64,
+    dispatch: &mut Dispatch,
+    instance_id: [u8; INSTANCE_ID_LEN],
+    step_salt: [u8; 32],
+) -> ReactChainStatus {
+    let launch_id = MoteId::from_bytes(step_salt);
+    // Idempotent: the launch already committed (Answer) or dead-lettered on a prior
+    // pass / a recovery re-derive.
+    if is_terminal(projection.state_of(&launch_id)) {
+        return ReactChainStatus::Settled;
+    }
+    let Some((launch_mote, launch_warrant)) = dispatch.defs.get(&launch_id).cloned() else {
+        // Recovery prologue (def lost, not yet re-submitted): stay dormant.
+        return ReactChainStatus::Active;
+    };
+    // The chain's terminal decision: a frozen `Answer` ⇒ commit; otherwise (budget
+    // exhausted without an answer, or a dead-lettered branch) ⇒ dead-letter.
+    let answer_turn = projection
+        .react_rounds_of(&instance_id, &Some(step_salt))
+        .filter(|r| r.branch == ReactBranch::Answer)
+        .max_by_key(|r| r.turn)
+        .map(|r| r.turn_mote_id);
+    let Some(turn_mote_id) = answer_turn else {
+        // No frozen Answer — budget exhausted / dead-lettered. Fail-closed.
+        dead_letter_agentic_launch(journal, projection, folded_through, dispatch, launch_id);
+        return ReactChainStatus::Settled;
+    };
+    let Some(result_ref) = projection.result_ref_of(&turn_mote_id) else {
+        return ReactChainStatus::Active; // committed turn, result_ref not folded yet
+    };
+    // RISK 3: this commit is a DIRECT append (it bypasses `flush_commits`' admission
+    // + phantom-ref guards), so re-verify the answer payload is present in the store
+    // before committing — a store fault retries next pass.
+    if store.get(&result_ref).is_err() {
+        return ReactChainStatus::Active;
+    }
+    commit_agentic_launch(
+        journal,
+        projection,
+        folded_through,
+        dispatch,
+        &launch_mote,
+        &launch_warrant,
+        result_ref,
+    );
+    ReactChainStatus::Settled
+}
+
+/// PR-9b-2b: COMMIT the launch mote of an agentic step with its loop's final answer.
+/// A coordinator-SYNTHESIZED `Committed` (the launch never ran on a worker — the
+/// chain did), so the `idempotency_key` is the launch `MoteId` itself
+/// (`idempotency.md`: key == derived `MoteId`, the `failed_worker_crashed_entry`
+/// precedent). Carries the launch's DECLARED DAG parents so the projection's
+/// children-index releases the launch's consumers on the next ready-set pass. Guarded
+/// BEFORE the append by the caller's `state_of==terminal` check; the fold's
+/// `DuplicateCommitted` is the backstop. Frees the def (a committed mote never re-leases).
+fn commit_agentic_launch<J: Journal>(
+    journal: &J,
+    projection: &mut Projection,
+    folded_through: &mut u64,
+    dispatch: &mut Dispatch,
+    launch_mote: &Mote,
+    launch_warrant: &WarrantSpec,
+    result_ref: ContentRef,
+) {
+    let parents: SmallVec<[kx_journal::ParentEntry; 4]> = launch_mote
+        .parents
+        .iter()
+        .map(kx_journal::ParentEntry::from_parent_ref)
+        .collect();
+    let entry = JournalEntry::Committed {
+        mote_id: launch_mote.id,
+        idempotency_key: *launch_mote.id.as_bytes(),
+        seq: 0,
+        nondeterminism: launch_mote.def.nd_class,
+        result_ref,
+        parents,
+        warrant_ref: warrant_ref_of(launch_warrant),
+        mote_def_hash: launch_mote.def.hash(),
+    };
+    match journal.append(entry) {
+        Ok(durable) => {
+            let seq = durable.seq();
+            if seq > *folded_through && projection.fold(&durable).is_ok() {
+                *folded_through = seq;
+            }
+            dispatch.submitted.remove(&launch_mote.id);
+            dispatch.defs.remove(&launch_mote.id);
+            dispatch.parked_launches.remove(&launch_mote.id);
+            dispatch.tracker.resolve_committed(launch_mote.id);
+            tracing::info!(launch = ?launch_mote.id, "agentic launch step committed — frozen DAG advanced");
+        }
+        Err(error) => tracing::error!(%error, "failed to append agentic launch Committed"),
+    }
+}
+
+/// PR-9b-2b: fail-closed dead-letter an agentic launch whose bounded loop exhausted
+/// its budget (or dead-lettered) without a terminal answer — the step FAILS honestly
+/// rather than fabricate one (GR15). A terminal coordinator-reported
+/// `FailureReason::DeadLettered` (classified terminal by `is_pre_commit_crash` ⇒
+/// `terminal_failure_observed` ⇒ `state_of == Failed`, never re-dispatched). The
+/// launch leaves the ready-set; its DAG consumers stay `Pending` exactly as for ANY
+/// terminally-failed DAG mote (the standing ready-set semantic — a `Failed` parent is
+/// not `Committed`). Visible via the alerts inbox + `ListReactTurns`. Idempotent (the
+/// caller's `state_of==terminal` guard).
+fn dead_letter_agentic_launch<J: Journal>(
+    journal: &J,
+    projection: &mut Projection,
+    folded_through: &mut u64,
+    dispatch: &mut Dispatch,
+    launch_id: MoteId,
+) {
+    let entry = JournalEntry::Failed {
+        mote_id: launch_id,
+        idempotency_key: *launch_id.as_bytes(),
+        seq: 0,
+        reason_class: FailureReason::DeadLettered,
+        reporter_id: COORDINATOR_REPORTER_ID,
+    };
+    match journal.append(entry) {
+        Ok(durable) => {
+            let seq = durable.seq();
+            if seq > *folded_through && projection.fold(&durable).is_ok() {
+                *folded_through = seq;
+            }
+            dispatch.submitted.remove(&launch_id);
+            dispatch.defs.remove(&launch_id);
+            dispatch.parked_launches.remove(&launch_id);
+            dispatch.tracker.resolve_committed(launch_id);
+            tracing::warn!(launch = ?launch_id, "agentic launch step dead-lettered (budget exhausted without an answer)");
+        }
+        Err(error) => tracing::error!(%error, "failed to append agentic launch Failed"),
+    }
+}
+
+/// PR-9b-2b: anchor every PARKED agentic launch whose DAG parents have all committed
+/// (the launch became "ready" but `lease_ready` parked it). For each: validate the
+/// declared budget + prompt (`react_seed_params`, the `0 < tc < turns ≤ 8` gate),
+/// build the salt-2 turn-0 (`build_agentic_turn` keyed by `step_salt = launch MoteId`),
+/// write the durable turn-0 `ReactRound` anchor, and materialize turn-0 into dispatch
+/// so a worker leases it — `settle_react_rounds` then drives the loop. Idempotent:
+/// `write_react_anchor` no-ops on an existing turn-0 (a recovery re-submit re-parks).
+/// Gated O(1) on the parked set being non-empty (zero cost for a launch-free run).
+///
+/// **KNOWN LIMITATION (turn-0 reasons over the static prompt only).** turn-0 is built
+/// from the launch's `PROMPT_KEY` instruction (via `react_seed_params`) + the chain's
+/// own tool observations; the launch's committed DAG-PARENT results are carried into
+/// the terminal launch-commit (`commit_agentic_launch`) so the launch's CONSUMERS
+/// release, but they are NOT injected into the launch's own model context (turn-0 is
+/// edge-free; `resolve_parent_context` serves only the chain trajectory). So an agentic
+/// step wired DOWNSTREAM of producers (`producer > plan@tool`) reasons only over its
+/// prompt — the headline use is the agentic step as a generator/root, which is correct.
+/// Wiring upstream context into the agentic loop is the PR-9d context-carry follow-up
+/// (it re-baselines the salt-2 golden + must keep recovery's rebuild byte-identical).
+fn settle_agentic_launches<J: Journal>(
+    journal: &J,
+    store: Option<&LocalFsContentStore>,
+    projection: &mut Projection,
+    folded_through: &mut u64,
+    dispatch: &mut Dispatch,
+) {
+    if dispatch.parked_launches.is_empty() {
+        return;
+    }
+    let Some(store) = store else {
+        return; // an agentic chain needs a store for its durable anchor
+    };
+    let parked: Vec<(MoteId, [u8; INSTANCE_ID_LEN])> = dispatch
+        .parked_launches
+        .iter()
+        .map(|(id, instance)| (*id, *instance))
+        .collect();
+    for (launch_id, instance_id) in parked {
+        let Some((launch_mote, launch_warrant)) = dispatch.defs.get(&launch_id).cloned() else {
+            dispatch.parked_launches.remove(&launch_id); // def gone — drop the stale park
+            continue;
+        };
+        // Not ready until still-Pending AND every declared DAG parent committed.
+        if projection.state_of(&launch_id) != MoteState::Pending {
+            dispatch.parked_launches.remove(&launch_id);
+            continue;
+        }
+        // A launch becomes ready when EVERY declared DAG parent commits. Distinguish
+        // "still pending" (re-check next drain) from "permanently unsatisfiable" (a
+        // parent TERMINALLY failed): a `Failed` parent never cascades the launch to a
+        // terminal state (the standing ready-set semantic — a `Failed` parent is not
+        // `Committed`), so without this the launch would sit `Pending` forever and its
+        // `parked_launches` + `dispatch.defs` entries would never be reclaimed — a slow
+        // in-memory leak in a long-lived serve. Fail-closed: dead-letter the launch (it
+        // can never run) and reclaim the park, mirroring "a Failed parent strands its
+        // consumers" while bounding the in-memory set.
+        let mut all_committed = true;
+        let mut parent_terminally_failed = false;
+        for p in &launch_mote.parents {
+            match projection.state_of(&p.parent_id) {
+                MoteState::Committed => {}
+                MoteState::Failed | MoteState::Inconsistent | MoteState::Repudiated => {
+                    parent_terminally_failed = true;
+                    all_committed = false;
+                    break;
+                }
+                _ => all_committed = false,
+            }
+        }
+        if parent_terminally_failed {
+            tracing::warn!(launch = ?launch_id, "agentic launch parent terminally failed — dead-lettering (can never become ready)");
+            dead_letter_agentic_launch(journal, projection, folded_through, dispatch, launch_id);
+            dispatch.parked_launches.remove(&launch_id);
+            continue;
+        }
+        if !all_committed {
+            continue; // parents still pending — re-check next drain
+        }
+        let step_salt = *launch_id.as_bytes();
+        // Already anchored (recovery re-submit / a prior drain): idempotent — unpark.
+        if projection
+            .react_rounds_of(&instance_id, &Some(step_salt))
+            .any(|r| r.turn == 0)
+        {
+            dispatch.parked_launches.remove(&launch_id);
+            continue;
+        }
+        // Validate the declared budget + prompt (server-vetted at authoring; a
+        // defensive failure here dead-letters rather than wedge).
+        let (instruction, (max_turns, max_tool_calls)) = match react_seed_params(&launch_mote) {
+            Ok(decoded) => decoded,
+            Err(reason) => {
+                tracing::error!(launch = ?launch_id, %reason, "agentic launch budget/prompt invalid — dead-lettering");
+                dead_letter_agentic_launch(
+                    journal,
+                    projection,
+                    folded_through,
+                    dispatch,
+                    launch_id,
+                );
+                dispatch.parked_launches.remove(&launch_id);
+                continue;
+            }
+        };
+        let turn0 = crate::react_shape::build_agentic_turn(
+            &launch_mote.def.model_id,
+            &instruction,
+            0,
+            &instance_id,
+            &step_salt,
+            launch_warrant.model_route.max_output_tokens,
+        );
+        if let Err(error) = write_react_anchor(
+            journal,
+            store,
+            projection,
+            folded_through,
+            instance_id,
+            Some(step_salt),
+            &turn0,
+            &launch_warrant,
+            max_turns,
+            max_tool_calls,
+        ) {
+            tracing::error!(launch = ?launch_id, %error, "failed to anchor agentic launch chain");
+            continue; // transient — retry next drain (still parked)
+        }
+        materialize_react_turn(
+            projection,
+            dispatch,
+            Some(store),
+            &turn0,
+            warrant_ref_of(&launch_warrant),
+            launch_warrant.clone(),
+        );
+        dispatch.parked_launches.remove(&launch_id);
+        tracing::info!(launch = ?launch_id, turn0 = ?turn0.id, "agentic launch chain anchored");
+    }
 }
 
 /// Recover the live ReAct chains from committed facts after a restart (PR-2d-1).
@@ -3074,16 +3537,21 @@ fn recover_react_chain<J: Journal>(
     let Some(store) = store else {
         return;
     };
-    // Phase B — re-insert each chain's in-flight turn (its fact is Pending and its
-    // Mote is not yet terminal) so a worker can re-lease it. Per-chain reads off
-    // the projection's derived index (PR-2d-2).
-    let instances: Vec<[u8; INSTANCE_ID_LEN]> = projection.react_instances().copied().collect();
-    for instance_id in instances {
-        let Some(latest) = projection.latest_react_round(&instance_id).cloned() else {
+    // Phase B — re-insert each CHAIN's in-flight turn (its fact is Pending and its
+    // Mote is not yet terminal) so a worker can re-lease it. Per-chain reads off the
+    // projection's derived nested index (PR-2d-2 / PR-9b-2b): a run may carry the
+    // run-level chain (`step_salt = None`) AND agentic-step chains (`Some(..)`); the
+    // builder is selected by the chain's `step_salt` (`build_chain_turn`).
+    let chains: Vec<ChainKey> = projection.react_chains().collect();
+    for (instance_id, step_salt) in chains {
+        let Some(latest) = projection
+            .latest_react_round(&instance_id, &step_salt)
+            .cloned()
+        else {
             continue;
         };
         if !matches!(latest.branch, ReactBranch::Pending) {
-            continue; // settled tail — Phase C re-drives it
+            continue; // settled tail — Phase C re-drives it (incl. an agentic launch-commit)
         }
         if is_terminal(projection.state_of(&latest.turn_mote_id)) {
             continue; // committed/failed — Phase C decodes/settles it
@@ -3101,11 +3569,12 @@ fn recover_react_chain<J: Journal>(
             continue;
         };
         let model_id = ModelId(latest.model_id.clone());
-        let rebuilt = crate::react_shape::build_react_turn(
+        let rebuilt = crate::react_shape::build_chain_turn(
             &model_id,
             instruction,
             latest.turn,
             &instance_id,
+            step_salt,
             warrant.model_route.max_output_tokens,
         );
         if rebuilt.id != latest.turn_mote_id {
@@ -3610,5 +4079,162 @@ mod authored_tool_tests {
             .into_resolved()
             .expect("passes through");
         assert_eq!(got.0, br#"{"anything":true}"#.to_vec());
+    }
+}
+
+#[cfg(test)]
+mod agentic_launch_disjointness_tests {
+    //! PR-9b-2b: `is_agentic_launch` is provably DISJOINT from every other
+    //! tool-contract Mote shape, so the lease-time PARK (and the parked-set
+    //! population) can never mis-fire on an ordinary mote. The four shapes
+    //! partition by `(nd_class, config keys, parent shape)`:
+    //! - agentic launch — ROND + StageThenCommit + non-empty contract + `PROMPT_KEY`
+    //!   + NO `TOOL_ARGS_KEY` (a generator that emits its own tool calls);
+    //! - react turn — EMPTY contract;
+    //! - react observation — non-empty contract + EMPTY config (no `PROMPT_KEY`) +
+    //!   a react-turn Data parent;
+    //! - authored tool — non-empty contract + `TOOL_ARGS_KEY` + WorldMutating.
+    use super::*;
+    use kx_mote::{
+        ConfigVal, EdgeMeta, GraphPosition, InferenceParams, InputDataId, LogicRef, ParentRef,
+        PromptTemplateHash, MOTE_DEF_SCHEMA_VERSION,
+    };
+
+    const INSTANCE: [u8; INSTANCE_ID_LEN] = [9u8; INSTANCE_ID_LEN];
+    const STEP_SALT: [u8; 32] = [3u8; 32];
+
+    fn served() -> ModelId {
+        ModelId("served".into())
+    }
+
+    /// The B3-binder shape: a generator MODEL step carrying an author-declared
+    /// tool-grant set + the model directive, with a declared DAG parent.
+    fn launch_mote(config: BTreeMap<ConfigKey, ConfigVal>, nd: NdClass) -> Mote {
+        let mut tool_contract = BTreeMap::new();
+        tool_contract.insert(ToolName("mcp-echo".into()), ToolVersion("1".into()));
+        let def = MoteDef {
+            logic_ref: LogicRef::from_bytes([1u8; 32]),
+            model_id: served(),
+            prompt_template_hash: PromptTemplateHash::from_bytes([1u8; 32]),
+            tool_contract,
+            nd_class: nd,
+            config_subset: config,
+            effect_pattern: EffectPattern::StageThenCommit,
+            critic_for: None,
+            is_topology_shaper: false,
+            inference_params: InferenceParams::default(),
+            critic_check: None,
+            schema_version: MOTE_DEF_SCHEMA_VERSION,
+        };
+        Mote::new(
+            def,
+            InputDataId::from_bytes([1u8; 32]),
+            GraphPosition(vec![2]),
+            std::iter::once(ParentRef {
+                parent_id: MoteId::from_bytes([8u8; 32]),
+                edge: EdgeMeta::data(),
+            })
+            .collect(),
+        )
+    }
+
+    fn prompt_only() -> BTreeMap<ConfigKey, ConfigVal> {
+        let mut c = BTreeMap::new();
+        c.insert(
+            ConfigKey(PROMPT_KEY.to_string()),
+            ConfigVal(b"do it".to_vec()),
+        );
+        c
+    }
+
+    #[test]
+    fn launch_shape_is_an_agentic_launch() {
+        assert!(is_agentic_launch(&launch_mote(
+            prompt_only(),
+            NdClass::ReadOnlyNondet
+        )));
+    }
+
+    #[test]
+    fn launch_is_neither_authored_tool_nor_observation() {
+        let p = kx_projection::Projection::new();
+        let launch = launch_mote(prompt_only(), NdClass::ReadOnlyNondet);
+        assert!(
+            !is_authored_tool(&launch, &p),
+            "no TOOL_ARGS_KEY ⇒ not authored tool"
+        );
+        assert!(
+            !is_react_observation(&launch, &p),
+            "a DAG parent (not a folded react turn) ⇒ not an observation"
+        );
+    }
+
+    #[test]
+    fn react_turns_are_not_launches() {
+        // build_react_turn / build_agentic_turn ⇒ EMPTY tool_contract.
+        let run = crate::react_shape::build_react_turn(&served(), "go", 0, &INSTANCE, 256);
+        let agentic =
+            crate::react_shape::build_agentic_turn(&served(), "go", 0, &INSTANCE, &STEP_SALT, 256);
+        assert!(!is_agentic_launch(&run));
+        assert!(!is_agentic_launch(&agentic));
+    }
+
+    #[test]
+    fn react_observations_are_not_launches() {
+        // build_react_tool / build_agentic_tool ⇒ EMPTY config (no PROMPT_KEY).
+        let parent = MoteId::from_bytes([5u8; 32]);
+        let run = crate::react_shape::build_react_tool(
+            &served(),
+            &ToolName("mcp-echo".into()),
+            &ToolVersion("1".into()),
+            0,
+            &INSTANCE,
+            parent,
+        );
+        let agentic = crate::react_shape::build_agentic_tool(
+            &served(),
+            &ToolName("mcp-echo".into()),
+            &ToolVersion("1".into()),
+            0,
+            &INSTANCE,
+            &STEP_SALT,
+            parent,
+        );
+        assert!(!is_agentic_launch(&run));
+        assert!(!is_agentic_launch(&agentic));
+    }
+
+    #[test]
+    fn world_mutating_with_tool_args_is_authored_tool_not_launch() {
+        // The authored-tool shape: WorldMutating + TOOL_ARGS_KEY ⇒ NOT a launch
+        // (fails both the ReadOnlyNondet AND the no-TOOL_ARGS_KEY clauses).
+        let mut config = prompt_only();
+        config.insert(
+            ConfigKey(TOOL_ARGS_KEY.to_string()),
+            ConfigVal(b"{}".to_vec()),
+        );
+        assert!(!is_agentic_launch(&launch_mote(
+            config,
+            NdClass::WorldMutating
+        )));
+    }
+
+    #[test]
+    fn launch_needs_prompt_and_no_tool_args() {
+        // No PROMPT_KEY ⇒ not a runnable launch (cannot reason).
+        assert!(!is_agentic_launch(&launch_mote(
+            BTreeMap::new(),
+            NdClass::ReadOnlyNondet
+        )));
+        // PROMPT_KEY + TOOL_ARGS_KEY ⇒ the authored-tool discriminant wins, not a launch.
+        let mut config = prompt_only();
+        config.insert(
+            ConfigKey(TOOL_ARGS_KEY.to_string()),
+            ConfigVal(b"{}".to_vec()),
+        );
+        assert!(!is_agentic_launch(&launch_mote(
+            config,
+            NdClass::ReadOnlyNondet
+        )));
     }
 }

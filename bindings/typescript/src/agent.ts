@@ -9,7 +9,8 @@
  *
  * Default lane = deterministic/frozen (a single agent step — replayable, the tool set
  * is part of identity); `dynamic: true` routes to the steered `kx/recipes/react`
- * recipe. The frozen tool-EXECUTION lights up with PR-9b-2. SN-8: intent only.
+ * recipe. The frozen tool-EXECUTION is LIVE as of PR-9b-2 (author with explicit tool
+ * refs via `flow().model(prompt, { tools })`). SN-8: intent only.
  */
 
 import type { ReasoningMode } from "./chains.js";
@@ -101,9 +102,11 @@ export class Agent {
   /**
    * Run `task`.
    *
-   * - **frozen lane (default)** ⇒ a single agent step. A tool-bearing frozen agent runs
-   *   a deterministic-agentic loop that **lands in PR-9b-2** (refused at submit today),
-   *   so a clear pre-flight hint is thrown; use `dynamic: true` or `flow().tool(fn, args)`.
+   * - **frozen lane (default)** ⇒ a single agent step. The tool-bearing frozen loop
+   *   EXECUTION is LIVE (PR-9b-2) via EXPLICIT tool refs (`flow().model(prompt, { tools:
+   *   ["mcp-echo"] })` / the `model@tool` chain DSL / a UI builder model step); the
+   *   `Agent({ tools: [fn] })` one-liner over LOCAL functions throws a pre-flight hint
+   *   until the immediate follow-up wires its dialed-tool grant name.
    * - `dynamic: true` ⇒ the steered react lane. With tools it routes to
    *   `kx/recipes/react-auto` (the only lane that fires registered/dialed tools; needs
    *   `KX_SERVE_AUTOGRANT=1`); without tools, plain `kx/recipes/react`.
@@ -142,9 +145,11 @@ export class Agent {
     }
     if (hasTools(tools)) {
       throw new KxToolError(
-        "a frozen Agent with a tool set runs a deterministic-agentic loop that lands in " +
-          "PR-9b-2 and is refused at submit today; use { dynamic: true } for the steered react " +
-          "lane, or flow().tool(fn, args) to fire one tool deterministically",
+        "the deterministic-agentic loop is LIVE (PR-9b-2), but the Agent({ tools }) " +
+          "one-liner over local tool functions completes in the immediate follow-up (the " +
+          "dialed-tool grant-name match); author it today with EXPLICIT refs via " +
+          "flow().model(prompt, { tools: ['mcp-echo'] }) or the `model@tool` chain DSL, use " +
+          "{ dynamic: true } for the steered react lane, or flow().tool(fn, args) to fire one tool",
       );
     }
     return this.asFlow(task).run({
