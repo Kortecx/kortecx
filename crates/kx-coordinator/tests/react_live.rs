@@ -1569,7 +1569,11 @@ async fn agentic_launch_drives_loop_commits_and_advances_dag() {
     // `build_agentic_tool` (a 16-byte-only decode would yield an EMPTY transcript — the
     // silent loop-break this guards). Interleaved `[turn0, obs0]`, transcript order.
     let traj = &leased[0].parent_results;
-    assert_eq!(traj.len(), 2, "turn 1 sees [turn0, obs0] (the agentic marker decoded)");
+    assert_eq!(
+        traj.len(),
+        2,
+        "turn 1 sees [turn0, obs0] (the agentic marker decoded)"
+    );
     assert_eq!(traj[0].parent_mote_id, turn0.id.as_bytes().to_vec());
     assert_eq!(traj[1].parent_mote_id, obs.id.as_bytes().to_vec());
     commit_raw(&svc, &store, &turn1, &w, b"All done.", worker).await;
@@ -1637,5 +1641,60 @@ async fn agentic_launch_budget_exhaust_dead_letters() {
     assert!(
         common::lease_work(&svc, worker, MAC, 16).await.is_empty(),
         "a dead-lettered launch leaves no leasable work"
+    );
+}
+
+/// A parked agentic launch whose DAG parent TERMINALLY fails is dead-lettered + its
+/// in-memory park reclaimed — a `Failed` parent never makes the launch ready (it is not
+/// `Committed`), so without fail-closing the launch would sit `Pending` forever and its
+/// `parked_launches`/`dispatch.defs` entries would leak for the life of a long-lived serve.
+#[tokio::test]
+async fn agentic_launch_with_failed_parent_is_dead_lettered() {
+    let dir = TempDir::new().unwrap();
+    let (svc, _store) = coordinator(&dir);
+    let w = warrant(true);
+
+    let _ = common::register_run(&svc, [0x5d; 32]).await;
+    // A plain producer P (root model mote, empty tool_contract ⇒ not a launch) + the
+    // agentic launch wired downstream of it.
+    let parent = seed_mote();
+    let launch = launch_mote(
+        std::iter::once(ParentRef {
+            parent_id: parent.id,
+            edge: EdgeMeta::data(),
+        })
+        .collect(),
+        None,
+    );
+    submit_plain(&svc, &parent, &w).await;
+    submit_plain(&svc, &launch, &w).await;
+
+    // Only P leases (the launch is parked, its parent uncommitted). Lease P, then
+    // TERMINALLY fail it.
+    let worker = common::register(&svc, "w").await;
+    let leased = common::lease_work(&svc, worker, MAC, 16).await;
+    assert_eq!(leased.len(), 1, "only the producer leases (launch parked)");
+    let p: Mote = leased[0].mote.clone().unwrap().try_into().unwrap();
+    assert_eq!(p.id, parent.id);
+    common::report_failure(
+        &svc,
+        &p,
+        worker,
+        kx_coordinator::proto::FailureReason::DeadLettered,
+    )
+    .await
+    .unwrap();
+
+    // The next drain's settle sees the launch's parent terminally failed ⇒ dead-letters
+    // the launch (it can NEVER become ready) + reclaims the park — no leaked entry.
+    let _ = svc.committed_count().await; // ordering barrier (a later drain runs the settle)
+    assert_eq!(
+        svc.state_of(launch.id).await.unwrap(),
+        MoteState::Failed,
+        "the launch dead-lettered — its parent can never satisfy it (no Pending-forever leak)"
+    );
+    assert!(
+        common::lease_work(&svc, worker, MAC, 16).await.is_empty(),
+        "nothing leasable — the park + def were reclaimed, not leaked"
     );
 }

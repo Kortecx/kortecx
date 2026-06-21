@@ -627,7 +627,18 @@ fn lease_ready(
         if projection.state_of(&mote_id) == MoteState::Committed {
             continue;
         }
-        if let Some((_mote, warrant)) = submitted_defs.get(&mote_id) {
+        if let Some((mote, warrant)) = submitted_defs.get(&mote_id) {
+            // PR-9b-2b: a deterministic-AGENTIC launch step is NEVER dispatched as a
+            // plain model mote — the coordinator drives its bounded reason→tool→observe
+            // loop on a private chain (`settle_agentic_launches`) and COMMITS the launch
+            // mote with the loop's final answer to advance the frozen DAG. PARK it here
+            // (skip candidate selection) BEFORE `.take(max)` so a launch — uniquely
+            // long-lived in the ready-set (it stays `Pending` for its whole loop) — never
+            // consumes a per-poll lease slot from genuinely-dispatchable motes. The
+            // shape is disjoint from the observation/authored-tool arms (B1 tests).
+            if is_agentic_launch(mote) {
+                continue;
+            }
             if warrant.executor_class == executor_class {
                 if placement.place(&mote_id) == worker {
                     preferred.push(mote_id);
@@ -643,17 +654,6 @@ fn lease_ready(
         .take(max)
         .filter_map(|id| {
             submitted_defs.get(&id).and_then(|(mote, warrant)| {
-                // PR-9b-2b: a deterministic-AGENTIC launch step is NEVER dispatched
-                // as a plain model mote — PARK it (return None). The coordinator
-                // drives its bounded reason→tool→observe loop on a private chain
-                // (`settle_agentic_launches`) and COMMITS the launch mote with the
-                // loop's final answer to advance the frozen DAG. Parked on every poll
-                // (it stays `Pending` until that commit); the readiness scan keys on
-                // the same shape. Placed FIRST so a launch can never fall into the
-                // observation/authored-tool arms (defensive; the shapes are disjoint).
-                if is_agentic_launch(mote) {
-                    return None;
-                }
                 let parent_results = resolve_parent_context(mote, projection, submitted_defs);
                 // PR-2d-2: a ReAct OBSERVATION leases WITH its coordinator-
                 // validated args or NOT AT ALL — a transient resolution fault
@@ -3382,6 +3382,17 @@ fn dead_letter_agentic_launch<J: Journal>(
 /// so a worker leases it — `settle_react_rounds` then drives the loop. Idempotent:
 /// `write_react_anchor` no-ops on an existing turn-0 (a recovery re-submit re-parks).
 /// Gated O(1) on the parked set being non-empty (zero cost for a launch-free run).
+///
+/// **KNOWN LIMITATION (turn-0 reasons over the static prompt only).** turn-0 is built
+/// from the launch's `PROMPT_KEY` instruction (via `react_seed_params`) + the chain's
+/// own tool observations; the launch's committed DAG-PARENT results are carried into
+/// the terminal launch-commit (`commit_agentic_launch`) so the launch's CONSUMERS
+/// release, but they are NOT injected into the launch's own model context (turn-0 is
+/// edge-free; `resolve_parent_context` serves only the chain trajectory). So an agentic
+/// step wired DOWNSTREAM of producers (`producer > plan@tool`) reasons only over its
+/// prompt — the headline use is the agentic step as a generator/root, which is correct.
+/// Wiring upstream context into the agentic loop is the PR-9d context-carry follow-up
+/// (it re-baselines the salt-2 golden + must keep recovery's rebuild byte-identical).
 fn settle_agentic_launches<J: Journal>(
     journal: &J,
     store: Option<&LocalFsContentStore>,
@@ -3410,11 +3421,35 @@ fn settle_agentic_launches<J: Journal>(
             dispatch.parked_launches.remove(&launch_id);
             continue;
         }
-        let ready = launch_mote
-            .parents
-            .iter()
-            .all(|p| projection.state_of(&p.parent_id) == MoteState::Committed);
-        if !ready {
+        // A launch becomes ready when EVERY declared DAG parent commits. Distinguish
+        // "still pending" (re-check next drain) from "permanently unsatisfiable" (a
+        // parent TERMINALLY failed): a `Failed` parent never cascades the launch to a
+        // terminal state (the standing ready-set semantic — a `Failed` parent is not
+        // `Committed`), so without this the launch would sit `Pending` forever and its
+        // `parked_launches` + `dispatch.defs` entries would never be reclaimed — a slow
+        // in-memory leak in a long-lived serve. Fail-closed: dead-letter the launch (it
+        // can never run) and reclaim the park, mirroring "a Failed parent strands its
+        // consumers" while bounding the in-memory set.
+        let mut all_committed = true;
+        let mut parent_terminally_failed = false;
+        for p in &launch_mote.parents {
+            match projection.state_of(&p.parent_id) {
+                MoteState::Committed => {}
+                MoteState::Failed | MoteState::Inconsistent | MoteState::Repudiated => {
+                    parent_terminally_failed = true;
+                    all_committed = false;
+                    break;
+                }
+                _ => all_committed = false,
+            }
+        }
+        if parent_terminally_failed {
+            tracing::warn!(launch = ?launch_id, "agentic launch parent terminally failed — dead-lettering (can never become ready)");
+            dead_letter_agentic_launch(journal, projection, folded_through, dispatch, launch_id);
+            dispatch.parked_launches.remove(&launch_id);
+            continue;
+        }
+        if !all_committed {
             continue; // parents still pending — re-check next drain
         }
         let step_salt = *launch_id.as_bytes();
