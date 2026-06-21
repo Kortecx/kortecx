@@ -10,9 +10,9 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { beforeAll, describe, expect, it } from "vitest";
 import { Agent, REACT_AUTO_RECIPE_HANDLE, REACT_RECIPE_HANDLE } from "../src/agent.js";
+import type { Chain } from "../src/chains.js";
 import { flow } from "../src/flow.js";
 import {
-  KxToolError,
   type LocalToolDef,
   isLocalTool,
   localTool,
@@ -95,6 +95,7 @@ describe("tools=[...] splitting", () => {
 class FakeClient {
   registered: Array<{ name: string; transport: string; endpoint: string; args: string[] }> = [];
   invoked: Array<{ handle: string }> = [];
+  ranChains: Array<{ resolved: ReadonlyMap<LocalToolDef, string> | undefined }> = [];
 
   async registerMcpServer(input: {
     name: string;
@@ -115,8 +116,11 @@ class FakeClient {
     return "INVOKED";
   }
 
-  // The frozen-tools Agent lane throws before this is reached (it satisfies AgentClient).
-  async runChain(): Promise<unknown> {
+  // Mirror KxClientBase.runChain: resolve any local tools (register + build the
+  // namespaced map) and record it. The frozen `Agent(tools=[fn])` lane reaches here.
+  async runChain(chain: Chain, _opts?: { wait?: boolean; timeoutMs?: number }): Promise<unknown> {
+    const resolved = await resolveLocalTools(this, chain);
+    this.ranChains.push({ resolved });
     return "RAN";
   }
 }
@@ -152,10 +156,15 @@ describe("resolveLocalTools", () => {
 describe("Agent routing", () => {
   const add = localTool({ name: "add", params: { a: "integer" }, run: ({ a }) => a });
 
-  it("frozen + tools throws a pre-flight hint", async () => {
-    await expect(
-      new Agent("go", { tools: [add] }).run("2+2", { client: new FakeClient() }),
-    ).rejects.toThrow(KxToolError);
+  it("frozen + tools resolves the local tool + fires via runChain", async () => {
+    // BUG-32 fix: the frozen one-liner now RESOLVES the local tool onto its step and
+    // runs it via runChain — no pre-flight throw, NOT the dynamic react-auto invoke.
+    const fc = new FakeClient();
+    await new Agent("go", { tools: [add] }).run("2+2", { client: fc });
+    expect(fc.registered.length).toBeGreaterThan(0);
+    expect(fc.invoked.length).toBe(0);
+    const serverName = serverNameFor(add.module);
+    expect(fc.ranChains[0]?.resolved?.get(add)).toBe(`${serverName}/add`);
   });
 
   it("dynamic + local tools registers + routes to react-auto", async () => {

@@ -12,18 +12,23 @@ use kx_warrant::WarrantSpec;
 use crate::errors::AssemblyError;
 use crate::types::{AssembledContext, AssembledItem};
 
-/// PR-6a: render the tool-menu text the model sees for a granted tool — its
-/// description PLUS, when the tool declares a typed `inputSchema`, a deterministic
+/// PR-6a/PR-1: render the tool-menu text the model sees for a granted tool — the
+/// EXACT callable name (`grant_id`, PR-1/BUG-32 name-steering), then its description
+/// PLUS, when the tool declares a typed `inputSchema`, a deterministic
 /// one-line-per-parameter block (name · type · required/optional). This is the
-/// "suggest better tools/steps" lever: the model proposes well-formed calls
-/// instead of guessing argument shapes; the runtime still validates the proposed
-/// args fail-closed against the SAME schema (SN-8 — advisory in, exact enforced).
-/// A tool with NO schema yields its description verbatim (legacy-byte-identical).
-fn tool_menu_text(def: &ToolDef) -> String {
+/// "suggest better tools/steps" lever: the model proposes well-formed calls with
+/// the granted name (a dialed/local tool is registered NAMESPACED `<server>/<remote>`
+/// — leading with `name:` steers the model to emit it verbatim) instead of guessing.
+/// The runtime still validates the proposed name+args fail-closed against the grant
+/// set and the SAME schema (SN-8 — advisory in, exact enforced). The `name:` line is
+/// advisory prompt bytes only: it lands in `AssembledItem.bytes` (read by the model),
+/// never in `source_ref`/the journal/`MoteId`, so it moves no committed-fact digest.
+fn tool_menu_text(grant_id: &str, def: &ToolDef) -> String {
+    let head = format!("name: {grant_id}\n");
     let Some(schema) = &def.input_schema else {
-        return def.description.clone();
+        return format!("{head}{}", def.description);
     };
-    let mut text = def.description.clone();
+    let mut text = format!("{head}{}", def.description);
     text.push_str("\nInputs:");
     for p in &schema.params {
         let ty = match &p.ty {
@@ -172,7 +177,8 @@ pub fn assemble<S: ContentStore>(
         // tool calls (the runtime still validates args fail-closed against the
         // same `inputSchema`, SN-8). A tool with NO schema is byte-unchanged (the
         // description alone), so legacy menus are identical.
-        let desc_bytes = Bytes::copy_from_slice(tool_menu_text(&resolved.def).as_bytes());
+        let desc_bytes =
+            Bytes::copy_from_slice(tool_menu_text(&grant.tool_id.0, &resolved.def).as_bytes());
         let label = format!("tool.{}@{}", grant.tool_id.0, grant.tool_version.0);
         items.push(AssembledItem {
             label,
@@ -244,9 +250,23 @@ mod tool_menu_tests {
     }
 
     #[test]
-    fn no_schema_is_description_verbatim() {
-        // Legacy-byte-identical: a tool with no schema yields its description.
-        assert_eq!(tool_menu_text(&def(None)), "List a directory.");
+    fn no_schema_is_name_then_description() {
+        // PR-1/BUG-32 name-steering: the menu leads with the EXACT granted name so a
+        // model emits it verbatim, then the description.
+        assert_eq!(
+            tool_menu_text("fs-list", &def(None)),
+            "name: fs-list\nList a directory."
+        );
+    }
+
+    #[test]
+    fn namespaced_grant_id_steers_the_model() {
+        // A dialed/local tool is granted NAMESPACED; the `name:` line carries the
+        // full callable id (the grant id, not the def's bare name).
+        assert_eq!(
+            tool_menu_text("kxlocal-a1b2c3d4/multiply", &def(None)),
+            "name: kxlocal-a1b2c3d4/multiply\nList a directory."
+        );
     }
 
     #[test]
@@ -260,8 +280,8 @@ mod tool_menu_tests {
             deny_unknown: true,
         };
         assert_eq!(
-            tool_menu_text(&def(Some(schema))),
-            "List a directory.\nInputs:\n  - path (string, optional)"
+            tool_menu_text("fs-list", &def(Some(schema))),
+            "name: fs-list\nList a directory.\nInputs:\n  - path (string, optional)"
         );
     }
 }

@@ -80,6 +80,9 @@ When an agent is granted tools, the loop **plans** topology, **re-plans** on fai
 passes **critic** gates, and runs **ReAct turns** against real MCP tools — every turn
 a durable fact, bounded by `max_turns` / `max_tool_calls`. Crash the server mid-loop
 and it resumes from its committed turns. Inspect a run's turns with `ListReactTurns`
-(`kx react list`). See the
+(`kx react list`). The same loop powers the `Agent(tools=[fn])` one-liner (Python / TS)
+and the `model@tool` chain step — the granted tool set is part of the step's identity,
+so the loop replays deterministically (and a model's bare/leaf tool name resolves to the
+granted `&lt;server&gt;/&lt;name&gt;`). See the
 [Quickstart agent loop](./quickstart.md#run-the-agent-loop) and
 [Concepts → ReAct chain](./concepts.md#react-chain--reactround).

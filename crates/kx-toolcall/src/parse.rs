@@ -161,24 +161,61 @@ fn balanced_object(s: &str) -> Option<&str> {
     None
 }
 
-/// Resolve a model-emitted (often separator-variant, version-less) tool name to a
-/// GRANTED `(ToolName, ToolVersion)`, SN-8-safe. Normalization is SEPARATOR-ONLY
-/// (`_`→`-`, matching how Gemma renders `fs-list` as `fs_list`) — never an
-/// arbitrary remap. Resolution = the UNIQUE granted tool whose name, after the
-/// SAME separator-normalization on BOTH sides, equals the model's. Ambiguity (two
-/// granted tools collapsing to one normalized name) ⇒ `None` (fail-closed — no
-/// guessing). The returned version is whatever the grant pins, so the downstream
-/// `tool_grants.contains` check is exact by construction.
-fn resolve_granted_name(raw_name: &str, warrant: &WarrantSpec) -> Option<ToolGrant> {
-    fn norm(s: &str) -> String {
-        s.replace('_', "-")
+/// Separator-canonicalize a single name segment: `_`→`-` (matching how Gemma
+/// renders `fs-list` as `fs_list`), trimmed. This is the EXISTING gate
+/// normalization, factored out — NEVER a fuzzy/similarity/edit-distance remap
+/// (SN-8: no similarity on any identity path).
+fn canon(s: &str) -> String {
+    s.trim().replace('_', "-")
+}
+
+/// Reduce a model-emitted name to its identity core: drop an `@version` tail, then
+/// a `:remote` tail — decorations a grant's `tool_id` never carries (the model
+/// reconstructs `<id>:<remote>` from the menu, or copies the `tool.<id>@<ver>`
+/// label), then `canon`. The version is authoritatively the grant's (taken by the
+/// caller) and the remote-name is the tool's internal wiring, never an identity the
+/// warrant grants on — so dropping them cannot reach a tool outside the grant set.
+/// Total + panic-free (`split` always yields at least one element).
+fn model_name_core(raw_name: &str) -> String {
+    let no_ver = raw_name.split('@').next().unwrap_or(raw_name);
+    let no_remote = no_ver.split(':').next().unwrap_or(no_ver);
+    canon(no_remote)
+}
+
+/// True iff `target` (an already-`canon`'d model name core) addresses `tool_id` by
+/// one of its canonical aliases: the FULL id (today's behavior) OR the leaf segment
+/// after the last `/` (the namespace strip — a dialed/local MCP tool is registered
+/// `<server>/<remote>`, but a model proposes the short leaf `<remote>`). EXACT
+/// segment equality only — never a prefix/substring/fuzzy match (SN-8).
+fn id_matches(target: &str, tool_id: &str) -> bool {
+    let full = canon(tool_id);
+    if full == target {
+        return true;
     }
-    let target = norm(raw_name);
+    match full.rsplit_once('/') {
+        Some((_, leaf)) => !leaf.is_empty() && leaf == target,
+        None => false,
+    }
+}
+
+/// Resolve a model-emitted (often separator-variant, version-less, or
+/// namespace-stripped) tool name to a GRANTED `(ToolName, ToolVersion)`, SN-8-safe.
+/// Resolution = the UNIQUE granted tool addressed by the model's name core (its
+/// full id OR the leaf after the last `/`, both `canon`-normalized). ANY ambiguity
+/// (two distinct grants addressed by the same core) ⇒ `None` (fail-closed — no
+/// guessing). The returned version is whatever the grant pins, so the downstream
+/// `tool_grants` membership is exact by construction. NEVER widens the grant set:
+/// the result is always an element of `warrant.tool_grants` (cloned) or `None`.
+fn resolve_granted_name(raw_name: &str, warrant: &WarrantSpec) -> Option<ToolGrant> {
+    let target = model_name_core(raw_name);
+    if target.is_empty() {
+        return None; // a name that canonicalizes to nothing addresses no grant
+    }
     let mut hit: Option<&ToolGrant> = None;
     for g in &warrant.tool_grants {
-        if norm(&g.tool_id.0) == target {
+        if id_matches(&target, &g.tool_id.0) {
             if hit.is_some() {
-                return None; // ambiguous ⇒ fail-closed
+                return None; // ambiguous ⇒ fail-closed (SN-8)
             }
             hit = Some(g);
         }
@@ -270,17 +307,31 @@ pub fn parse_tool_call(
         return Ok(None);
     };
 
-    // (3) The model committed to a tool call. Enforce tool ∈ warrant.tool_grants
-    //     by EXACT (name, version) crypto-equality — never fuzzy (SN-8 / D70).
+    // (3) The model committed to a tool call. Enforce tool ∈ warrant.tool_grants.
+    //     EXACT (name, version) crypto-equality is tried FIRST — byte-identical to
+    //     every prior row (SN-8 / D70). Only on an exact MISS *with an empty
+    //     version* (the `mcp-echo:echo` separator/version-drift shape a model emits
+    //     when it copies the menu label) do we resolve the name to a UNIQUE grant
+    //     and take the GRANT's version — never the model's. A NON-empty wrong
+    //     version stays `UngrantedTool` (the model pinned a different tool — SN-8;
+    //     keeps `ungranted_tool_is_refused` valid). The returned call is an element
+    //     of `tool_grants` by construction (never widens the set).
     let name = ToolName(raw.name);
     let version = ToolVersion(raw.version);
-    let grant = ToolGrant {
+    let exact = ToolGrant {
         tool_id: name.clone(),
         tool_version: version.clone(),
     };
-    if !warrant.tool_grants.contains(&grant) {
+    let grant = if warrant.tool_grants.contains(&exact) {
+        exact
+    } else if version.0.trim().is_empty() {
+        match resolve_granted_name(&name.0, warrant) {
+            Some(g) => g,
+            None => return Err(DecodeError::UngrantedTool { name, version }),
+        }
+    } else {
         return Err(DecodeError::UngrantedTool { name, version });
-    }
+    };
 
     // (4) Carry the args verbatim, size-capped (IMP-16).
     let args_bytes = raw.args.get().as_bytes().to_vec();
@@ -292,8 +343,8 @@ pub fn parse_tool_call(
     }
 
     Ok(Some(ToolCall {
-        name,
-        version,
+        name: grant.tool_id,
+        version: grant.tool_version,
         args_bytes,
     }))
 }
@@ -600,5 +651,141 @@ mod tests {
         // Open delim but no `{` ⇒ not extractable ⇒ falls through ⇒ Ok(None).
         let env = b"<|tool_call>call:fs_list no args here";
         assert_eq!(parse_tool_call(env, &w, 4096), Ok(None));
+    }
+
+    // ---- BUG-32: namespace-strip + version-drift resolution (lane-agnostic) ----
+
+    /// Grant several tools at once (the namespaced dialed-tool case the single-grant
+    /// `warrant_granting` cannot express).
+    fn warrant_granting_many(tools: &[(&str, &str)]) -> WarrantSpec {
+        let mut w = warrant_granting(None);
+        for (id, ver) in tools {
+            w.tool_grants.insert(ToolGrant {
+                tool_id: ToolName((*id).into()),
+                tool_version: ToolVersion((*ver).into()),
+            });
+        }
+        w
+    }
+
+    #[test]
+    fn bug32_native_bare_leaf_resolves_namespaced_grant() {
+        // The headline BUG-32 shape: a dialed/local tool is granted NAMESPACED, the
+        // model proposes the bare leaf. The leaf must resolve to the namespaced grant.
+        let w = warrant_granting_many(&[("kxlocal-a1b2c3d4/multiply", "1")]);
+        let env = br#"<|tool_call>call:multiply{"a":2,"b":3}<tool_call|>"#;
+        let call = parse_tool_call(env, &w, 4096)
+            .unwrap()
+            .expect("a native call");
+        assert_eq!(call.name, ToolName("kxlocal-a1b2c3d4/multiply".into()));
+        assert_eq!(call.version, ToolVersion("1".into()));
+        assert_eq!(call.args_bytes, br#"{"a":2,"b":3}"#.to_vec());
+    }
+
+    #[test]
+    fn bug32_envelope_bare_leaf_versionless_resolves_namespaced_grant() {
+        // Same shape via the JSON envelope, with the empty version a model emits when
+        // it copied the leaf rather than the full `tool.<id>@<ver>` label.
+        let w = warrant_granting_many(&[("kxlocal-a1b2c3d4/multiply", "1")]);
+        let env = br#"{"tool_call":{"name":"multiply","version":"","args":{"a":2}}}"#;
+        let call = parse_tool_call(env, &w, 4096).unwrap().expect("a call");
+        assert_eq!(call.name, ToolName("kxlocal-a1b2c3d4/multiply".into()));
+        assert_eq!(call.version, ToolVersion("1".into()));
+    }
+
+    #[test]
+    fn bug32_envelope_separator_version_drift_resolves() {
+        // The LIVE Gemma-4-12B shape from PR-9b-2b: the model emitted `mcp-echo:echo`
+        // (the `<id>:<remote>` join) with an empty version against the `mcp-echo@1`
+        // grant. The `:remote` tail is dropped, the head resolves, the grant's
+        // version is taken. (Leaf-on-`/` alone would MISS this — there is no `/`.)
+        let w = warrant_granting(Some(("mcp-echo", "1")));
+        let env = br#"{"tool_call":{"name":"mcp-echo:echo","version":"","args":{"q":"x"}}}"#;
+        let call = parse_tool_call(env, &w, 4096).unwrap().expect("a call");
+        assert_eq!(call.name, ToolName("mcp-echo".into()));
+        assert_eq!(call.version, ToolVersion("1".into()));
+        assert_eq!(call.args_bytes, br#"{"q":"x"}"#.to_vec());
+    }
+
+    #[test]
+    fn bug32_ambiguous_leaf_is_fail_closed() {
+        // Two distinct grants sharing the leaf `run` ⇒ the bare `run` is ambiguous ⇒
+        // refused (SN-8: never guess which tool the model meant).
+        let w = warrant_granting_many(&[("svc-a/run", "1"), ("svc-b/run", "1")]);
+        let env = b"<|tool_call>call:run{}<tool_call|>";
+        assert!(matches!(
+            parse_tool_call(env, &w, 4096),
+            Err(DecodeError::UngrantedTool { .. })
+        ));
+    }
+
+    #[test]
+    fn bug32_exact_full_id_still_wins_byte_identical() {
+        // An exact full-id call against a namespaced grant resolves to itself — the
+        // exact branch is preserved even though the leaf alias also exists.
+        let w = warrant_granting_many(&[("kxlocal-a1b2c3d4/multiply", "1")]);
+        let env = br#"{"tool_call":{"name":"kxlocal-a1b2c3d4/multiply","version":"1","args":{}}}"#;
+        let call = parse_tool_call(env, &w, 4096).unwrap().expect("a call");
+        assert_eq!(call.name, ToolName("kxlocal-a1b2c3d4/multiply".into()));
+        assert_eq!(call.version, ToolVersion("1".into()));
+    }
+
+    #[test]
+    fn bug32_nonempty_wrong_version_still_refused() {
+        // A NON-empty mismatching version is the model pinning a DIFFERENT tool —
+        // stays refused (no version-recovery for non-empty versions; SN-8). Pins the
+        // tightening that keeps `ungranted_tool_is_refused`'s @2 assertion valid.
+        let w = warrant_granting(Some(("mcp-echo", "1")));
+        let env = br#"{"tool_call":{"name":"mcp-echo","version":"2","args":{}}}"#;
+        assert!(matches!(
+            parse_tool_call(env, &w, 4096),
+            Err(DecodeError::UngrantedTool { .. })
+        ));
+    }
+
+    #[test]
+    fn bug32_leaf_of_non_granted_tool_is_refused() {
+        // A leaf that addresses NO grant ⇒ refused — the candidate set is exactly
+        // `tool_grants`; a model cannot conjure a tool by naming a plausible leaf.
+        let w = warrant_granting_many(&[("safe/list", "1")]);
+        let env = b"<|tool_call>call:delete{}<tool_call|>";
+        assert!(matches!(
+            parse_tool_call(env, &w, 4096),
+            Err(DecodeError::UngrantedTool { .. })
+        ));
+    }
+
+    #[test]
+    fn bug32_colon_injection_resolves_to_head_only_no_escalation() {
+        // `mcp-echo:rm-rf` drops the `:rm-rf` tail and resolves to the granted
+        // `mcp-echo` — the injected segment never reaches a tool (the remote-name is
+        // fixed by the registry, not selectable by the model).
+        let w = warrant_granting(Some(("mcp-echo", "1")));
+        let env = br#"{"tool_call":{"name":"mcp-echo:rm-rf","version":"","args":{}}}"#;
+        let call = parse_tool_call(env, &w, 4096).unwrap().expect("a call");
+        assert_eq!(call.name, ToolName("mcp-echo".into()));
+        assert_eq!(call.version, ToolVersion("1".into()));
+    }
+
+    #[test]
+    fn bug32_at_in_name_field_cannot_override_grant_version() {
+        // An `@version` baked into the NAME field (version field empty) drops to the
+        // grant's version — the model cannot force a version it was not granted.
+        let w = warrant_granting(Some(("mcp-echo", "1")));
+        let env = br#"{"tool_call":{"name":"mcp-echo@999","version":"","args":{}}}"#;
+        let call = parse_tool_call(env, &w, 4096).unwrap().expect("a call");
+        assert_eq!(call.version, ToolVersion("1".into()));
+    }
+
+    #[test]
+    fn bug32_empty_core_name_is_refused() {
+        // A name that canonicalizes to nothing (just a `:` decoration) addresses no
+        // grant ⇒ refused, never a silent match.
+        let w = warrant_granting(Some(("mcp-echo", "1")));
+        let env = br#"{"tool_call":{"name":":echo","version":"","args":{}}}"#;
+        assert!(matches!(
+            parse_tool_call(env, &w, 4096),
+            Err(DecodeError::UngrantedTool { .. })
+        ));
     }
 }

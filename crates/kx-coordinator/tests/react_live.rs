@@ -621,6 +621,143 @@ async fn tool_branch_fires_and_commits_via_gemma_native_shape() {
     );
 }
 
+/// The PR-9b-2b LIVE Gemma-4-12B shape that BUG-32 made fail-closed: the model
+/// proposed `mcp-echo:echo` (the `<id>:<remote>` join) with an EMPTY version against
+/// the `mcp-echo@1` grant. Before the fix the JSON-envelope arm's exact
+/// `(name, version)` membership refused it ⇒ `UngrantedTool` ⇒ the chain
+/// dead-lettered (honest, no fabricated answer). After the fix the `:remote` tail is
+/// dropped, the head resolves to the unique grant, the GRANT's version is taken, and
+/// the tool FIRES + commits — driven through the REAL coordinator settle here.
+#[tokio::test]
+async fn bug32_envelope_versionless_drift_fires_and_commits() {
+    const TOOL_ENVELOPE_DRIFT: &[u8] =
+        br#"{"tool_call":{"name":"mcp-echo:echo","version":"","args":{"q":"x"}}}"#;
+    let dir = TempDir::new().unwrap();
+    let (svc, store) = coordinator(&dir);
+    let w = warrant(true); // mcp-echo@1 GRANTED
+
+    let (_, _) = submit_react(&svc, &seed_mote(), &w).await;
+    let worker = common::register(&svc, "w").await;
+    let leased = common::lease_work(&svc, worker, MAC, 16).await;
+    let turn0: Mote = leased[0].mote.clone().unwrap().try_into().unwrap();
+    commit_raw(&svc, &store, &turn0, &w, TOOL_ENVELOPE_DRIFT, worker).await;
+
+    // (a) the settle resolved the drifted name to `mcp-echo@1` and froze a Tool fact.
+    let facts = react_facts(&svc, &dir).await;
+    assert_eq!(
+        facts.len(),
+        2,
+        "anchor + the Tool settle (the drift shape FIRED)"
+    );
+    assert!(
+        matches!(
+            &facts[1],
+            JournalEntry::ReactRound {
+                turn: 0,
+                branch: ReactBranch::Tool { tool_id, tool_version },
+                ..
+            } if tool_id == "mcp-echo" && tool_version == "1"
+        ),
+        "`mcp-echo:echo`+empty-version resolves to the granted `mcp-echo@1`"
+    );
+
+    // (b) + (c) the observation leases with the args and COMMITS (the tool fired).
+    let (obs, args) = lease_observation(&svc, worker, &turn0).await;
+    assert_eq!(args, br#"{"q":"x"}"#.to_vec());
+    commit_raw(&svc, &store, &obs, &w, br#"{"echoed":{"q":"x"}}"#, worker).await;
+    assert_eq!(
+        svc.state_of(obs.id).await.unwrap(),
+        MoteState::Committed,
+        "the world-mutating observation COMMITTED — a drifted-name tool genuinely fired"
+    );
+}
+
+/// The headline BUG-32 shape (V2b): a dialed/local tool is granted NAMESPACED
+/// (`kxlocal-<hash>/echo`) but the model proposes the BARE LEAF (`echo`). The
+/// leaf must resolve to the namespaced grant (unambiguously) and the tool must
+/// fire + commit. Uses a registry + warrant whose ONLY echo tool is namespaced.
+#[tokio::test]
+async fn bug32_native_bare_leaf_against_namespaced_grant_fires_and_commits() {
+    const NS_TOOL: &str = "kxlocal-a1b2c3d4/echo";
+    const BARE_LEAF_NATIVE: &[u8] = br#"<|tool_call>call:echo{"q":"x"}<tool_call|>"#;
+
+    let namespaced_def = {
+        let mut d = echo_tool_def();
+        d.tool_id = kx_mote::ToolName(NS_TOOL.into());
+        d
+    };
+    let registry: Arc<dyn kx_tool_registry::ToolRegistry> = {
+        use kx_tool_registry::{InMemoryToolRegistry, ToolProvenance, ToolRegistry};
+        let mut reg = InMemoryToolRegistry::with_builtins();
+        let _ = reg.register(
+            namespaced_def,
+            ToolProvenance::HumanAuthored {
+                author: "test".into(),
+            },
+        );
+        Arc::new(reg)
+    };
+    let mut w = warrant(false);
+    w.tool_grants.insert(ToolGrant {
+        tool_id: kx_mote::ToolName(NS_TOOL.into()),
+        tool_version: kx_mote::ToolVersion("1".into()),
+    });
+
+    let dir = TempDir::new().unwrap();
+    let (svc, store) = coordinator_with(&dir, registry);
+
+    let (_, _) = submit_react(&svc, &seed_mote(), &w).await;
+    let worker = common::register(&svc, "w").await;
+    let leased = common::lease_work(&svc, worker, MAC, 16).await;
+    let turn0: Mote = leased[0].mote.clone().unwrap().try_into().unwrap();
+    commit_raw(&svc, &store, &turn0, &w, BARE_LEAF_NATIVE, worker).await;
+
+    // (a) the bare leaf resolved to the NAMESPACED grant and froze a Tool fact.
+    let facts = react_facts(&svc, &dir).await;
+    assert_eq!(
+        facts.len(),
+        2,
+        "anchor + the Tool settle (the bare leaf FIRED)"
+    );
+    assert!(
+        matches!(
+            &facts[1],
+            JournalEntry::ReactRound {
+                turn: 0,
+                branch: ReactBranch::Tool { tool_id, tool_version },
+                ..
+            } if tool_id == NS_TOOL && tool_version == "1"
+        ),
+        "the bare `echo` resolves to the namespaced grant `{NS_TOOL}@1`"
+    );
+
+    // (b) the observation leases (declaring the namespaced tool) WITH its args, and
+    // (c) commits — a bare-leaf model call against a namespaced grant genuinely fired.
+    let leased = common::lease_work(&svc, worker, MAC, 16).await;
+    assert_eq!(leased.len(), 1, "the observation is leasable");
+    let item = &leased[0];
+    let obs: Mote = item.mote.clone().unwrap().try_into().unwrap();
+    assert_eq!(
+        obs.def
+            .tool_contract
+            .get(&kx_mote::ToolName(NS_TOOL.into()))
+            .map(|v| v.0.clone()),
+        Some("1".to_string()),
+        "the observation declares the resolved NAMESPACED tool"
+    );
+    let args = item
+        .tool_args
+        .as_ref()
+        .expect("the observation leases WITH its validated args");
+    assert_eq!(args.args_bytes, br#"{"q":"x"}"#.to_vec());
+    commit_raw(&svc, &store, &obs, &w, br#"{"echoed":{"q":"x"}}"#, worker).await;
+    assert_eq!(
+        svc.state_of(obs.id).await.unwrap(),
+        MoteState::Committed,
+        "the world-mutating observation COMMITTED — a bare-leaf dialed tool fired"
+    );
+}
+
 /// PR-9a (the format-drift fail-closed invariant): an UNRECOGNIZED tool-shaped
 /// completion under a GRANTING warrant commits as an ANSWER and fires NOTHING —
 /// the SN-8 default. This is the durable invariant a format guard can hold: a

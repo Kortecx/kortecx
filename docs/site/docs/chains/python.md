@@ -77,10 +77,12 @@ print(analyst.run("Summarize the kortecx README").text)
 
 `kx.Agent` carries instructions + an optional tool set + model/loop config. The **default
 lane is deterministic/frozen** — a single agent step with a FIXED tool-grant SET
-(replayable; the tools are part of the step's identity; execution lands with PR-9b-2).
-`dynamic=True` routes to the **steered** `kx/recipes/react` recipe, where the model picks
-tools turn by turn (works today). `analyst.stream(task)` submits without blocking and
-returns a `Run` (consume `.events()` / `.tokens(mote)`).
+(replayable; the tools are part of the step's identity). Execution is **live**: a
+tool-bearing `Agent(tools=[fn])` fires the granted set in a bounded reason→tool→observe
+loop (no `KX_SERVE_AUTOGRANT` needed — the step grants its own tools). `dynamic=True`
+routes to the **steered** `kx/recipes/react` recipe, where the model picks tools turn by
+turn. `analyst.stream(task)` submits without blocking and returns a `Run` (consume
+`.events()` / `.tokens(mote)`).
 
 The tool set may include your own functions — decorate one with `@kx.tool` and pass it in
 `tools=[...]`; the SDK registers it as a local stdio MCP server the runtime dials. See
@@ -177,11 +179,12 @@ plan = model("kx-serve:my-model", "Research the topic.",
 budget (`max_turns` / `max_tool_calls`) defaults to 8 / 6 when omitted. The server
 vets every tagged tool and builds the per-step warrant (SN-8).
 
-:::info Authoring now, execution in PR-9b-2
-Authoring is available across every surface in PR-9b-1; the bounded-loop
-**execution** lands in PR-9b-2 — until then the server fails closed on a submitted
-`model@tool` step. For tool-calling today, use a standalone `tool()` step or the
-`react` / `react-auto` recipe.
+:::info Live
+The bounded-loop **execution** is live: a `model@tool` step (and the
+`Agent(tools=[fn])` one-liner) runs a reason→tool→observe loop, firing its granted
+tools and committing each observation. The tool set is part of the step's identity, so
+the run replays deterministically. A standalone `tool()` step and the `react` /
+`react-auto` recipes remain available for one-shot and steered tool-calling.
 :::
 
 ## A model step

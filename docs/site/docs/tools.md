@@ -208,11 +208,11 @@ string.
 
 | Lane | How | Status |
 | --- | --- | --- |
-| **Deterministic** | `flow().tool(fn, **args)` — one tool, fixed args | ✅ today (even model-free) — the reliable path for local tools |
-| **Steered / dynamic** | `Agent(tools=[fn], dynamic=True)` → `kx/recipes/react-auto` (the model chooses) | ⚠ the loop runs + the model proposes the call (needs a served model + `KX_SERVE_AUTOGRANT=1`), but a *dialed* tool is namespaced `&lt;server&gt;/&lt;name&gt;` and the autonomous authority gate doesn't yet match a model's bare-name call — a runtime improvement is tracked; use the deterministic lane for local tools today |
-| **Frozen / deterministic-agentic** | `Agent(tools=[fn])` — a fixed tool set, replayable bounded loop | ⏳ lands in PR-9b-2 (a clear pre-flight hint until then) |
+| **Deterministic** | `flow().tool(fn, **args)` — one tool, fixed args | ✅ today (even model-free) — the reliable path for one fixed call |
+| **Steered / dynamic** | `Agent(tools=[fn], dynamic=True)` → `kx/recipes/react-auto` (the model chooses) | ✅ the model picks tools turn by turn and fires them (needs a served model + `KX_SERVE_AUTOGRANT=1`) — a dialed tool's namespaced `&lt;server&gt;/&lt;name&gt;` name resolves from the model's bare/leaf call |
+| **Frozen / deterministic-agentic** | `Agent(tools=[fn])` — a fixed tool set, replayable bounded loop | ✅ fires the granted SET in a bounded reason→tool→observe loop — **no** `KX_SERVE_AUTOGRANT` needed (the step grants its OWN exact tools) |
 
-For the **deterministic** lane the SDK fires the tool by its exact server-derived name, so it always works. The other two depend on a *model* choosing the call: builtins (bare names like `fs-list`) match today; namespaced dialed/local tools wait on the runtime name-match improvement (and the frozen lane on PR-9b-2).
+All three lanes fire today. The SN-8 authority gate stays exact: a model's bare/leaf or version-less name resolves to a **unique** granted tool (`&lt;server&gt;/&lt;name&gt;` → the grant), and ambiguity or an unknown name is refused fail-closed — the model never widens its grants.
 
 **Dev-scoped & co-located.** The runtime *spawns* the stdio tool-server subprocess,
 so this is the **Node / local-Python** SDK on the **same machine** as `kx serve`:
