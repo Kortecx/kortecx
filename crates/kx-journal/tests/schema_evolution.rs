@@ -350,10 +350,10 @@ fn replay_reads_v7_as_pure_passthrough() {
 }
 
 #[test]
-fn migrate_v7_to_v8_upconverts_nothing_and_preserves_committed_facts() {
+fn migrate_v7_to_current_upconverts_nothing_and_preserves_committed_facts() {
     let tmp = tempfile::tempdir().unwrap();
     let src = build_v7_journal(tmp.path());
-    let dst = tmp.path().join("migrated_v8.kxjournal");
+    let dst = tmp.path().join("migrated_from_v7.kxjournal");
 
     let report = migrate_to(&src, &dst).unwrap();
     assert_eq!(report.from_version, 7);
@@ -378,12 +378,204 @@ fn migrate_v7_to_v8_upconverts_nothing_and_preserves_committed_facts() {
     assert_eq!(committed_bytes(&src), committed_bytes(&dst));
 }
 
+// ---------------------------------------------------------------------------
+// The frozen v8 representation (PR-9b-2a): v8 = v9 minus the trailing ReactRound
+// step_salt presence byte. Kinds 0..8 are byte-identical under v9; the lone v8→v9
+// delta is a `0` (None) byte appended to each kind-9 `ReactRound` body.
+// ---------------------------------------------------------------------------
+
+/// Build the v8 fixture journal: the curated entry set PLUS a `ReplanRound`
+/// (kind 8) AND two `ReactRound` facts (kind 9, the v8 addition — an anchor +
+/// settle), then DOWNGRADE the kind-9 bodies to the v8 byte shape (strip the
+/// trailing `0` step_salt presence byte the v9 encoder now writes) and stamp
+/// `metadata.schema_version = 8`.
+fn build_v8_journal(dir: &Path) -> PathBuf {
+    let path = dir.join("sample_v8.kxjournal");
+    {
+        let j = SqliteJournal::open(&path).unwrap();
+        let mut entries = curated_v6_entries();
+        entries.push(JournalEntry::ReplanRound {
+            round: 1,
+            shaper_mote_id: MoteId::from_bytes([0x7c; 32]),
+            base_prompt_ref: ContentRef::from_bytes([0x11; 32]),
+            corrected_prompt_ref: ContentRef::from_bytes([0x22; 32]),
+            warrant_ref: ContentRef::from_bytes([0xaa; 32]),
+            model_id: "qwen2-0_5b".to_string(),
+            failed_steps: SmallVec::new(),
+            escalation_reason_ref: None,
+            seq: 0,
+        });
+        entries.push(JournalEntry::ReactRound {
+            turn: 0,
+            turn_mote_id: MoteId::from_bytes([0x8e; 32]),
+            instance_id: [0x4d; INSTANCE_ID_LEN],
+            base_prompt_ref: ContentRef::from_bytes([0x12; 32]),
+            warrant_ref: ContentRef::from_bytes([0x34; 32]),
+            model_id: "qwen2-0_5b".to_string(),
+            branch: ReactBranch::Pending,
+            max_turns: 8,
+            max_tool_calls: 6,
+            step_salt: None,
+            seq: 0,
+        });
+        entries.push(JournalEntry::ReactRound {
+            turn: 0,
+            turn_mote_id: MoteId::from_bytes([0x8e; 32]),
+            instance_id: [0x4d; INSTANCE_ID_LEN],
+            base_prompt_ref: ContentRef::from_bytes([0x12; 32]),
+            warrant_ref: ContentRef::from_bytes([0x34; 32]),
+            model_id: "qwen2-0_5b".to_string(),
+            branch: ReactBranch::Answer,
+            max_turns: 8,
+            max_tool_calls: 6,
+            step_salt: None,
+            seq: 0,
+        });
+        j.append_batch(entries).unwrap();
+    }
+    downgrade_to_v8(&path);
+    path
+}
+
+/// Raw-SQL downgrade of a v9 journal file to the v8 byte shape: strip the trailing
+/// `0` (None) step_salt presence byte from each `ReactRound` (kind 9), and stamp
+/// `metadata.schema_version = 8`. Wrapped in one transaction.
+fn downgrade_to_v8(path: &Path) {
+    let mut conn = Connection::open(path).unwrap();
+    let kind9: Vec<(i64, Vec<u8>)> = {
+        let mut stmt = conn
+            .prepare("SELECT seq, entry_bytes FROM entries WHERE kind = 9")
+            .unwrap();
+        stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap()
+    };
+    let txn = conn.transaction().unwrap();
+    for (seq, bytes) in kind9 {
+        // The fixture only writes step_salt: None, so the v9 tail byte is `0`;
+        // dropping it yields the exact v8 shape.
+        assert_eq!(
+            *bytes.last().unwrap(),
+            0u8,
+            "fixture ReactRound must be None"
+        );
+        let v8 = &bytes[..bytes.len() - 1];
+        txn.execute(
+            "UPDATE entries SET entry_bytes = ?1 WHERE seq = ?2",
+            params![v8, seq],
+        )
+        .unwrap();
+    }
+    let v8_ver: [u8; 2] = 8u16.to_le_bytes();
+    txn.execute(
+        "UPDATE metadata SET value = ?1 WHERE key = 'schema_version'",
+        params![&v8_ver[..]],
+    )
+    .unwrap();
+    txn.commit().unwrap();
+    conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
+        .unwrap();
+}
+
 #[test]
-fn v8_react_round_persists_and_resumes() {
-    // A fresh (v8) journal carrying ReactRound facts round-trips the strict
-    // open + resume path: the anchor and a settled branch read back verbatim.
+fn open_still_refuses_v8_loudly() {
+    // The strict open() contract is unchanged by the v9 bump: a v8 journal is
+    // refused loudly (migration is the separate, additive path) — the same
+    // contract that makes an OLD binary refuse a v9 journal rather than misread
+    // its trailing step_salt byte (forward-compat = refusal, never corruption).
     let tmp = tempfile::tempdir().unwrap();
-    let path = tmp.path().join("react_v8.kxjournal");
+    let path = build_v8_journal(tmp.path());
+    let err = SqliteJournal::open(&path).unwrap_err();
+    assert!(matches!(
+        err,
+        JournalError::SchemaVersionMismatch { found: 8, expected } if expected == JOURNAL_SCHEMA_VERSION
+    ));
+}
+
+#[test]
+fn replay_reads_v8_and_upconverts_react_step_salt() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = build_v8_journal(tmp.path());
+
+    let replay = ReplayJournal::open(&path).unwrap();
+    assert_eq!(replay.from_version(), 8);
+    assert_eq!(replay.count_entries().unwrap(), 10);
+
+    // The two v8 ReactRound facts up-convert to step_salt: None (the run-level
+    // chain — every chain a v8 binary ever wrote); capability classes from the
+    // curated set are PRESERVED (not defaulted — that is the v5 path).
+    let entries = read_all(&replay);
+    let react: Vec<_> = entries
+        .iter()
+        .filter_map(|e| match e {
+            JournalEntry::ReactRound { step_salt, .. } => Some(*step_salt),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(react, vec![None, None]);
+    let cap = entries
+        .iter()
+        .find_map(|e| match e {
+            JournalEntry::RunVersionsResolved {
+                capability: Some(c),
+                ..
+            } => Some(c),
+            _ => None,
+        })
+        .expect("a capability-present RunVersionsResolved");
+    assert_eq!(cap.idempotency_class, IdempotencyClassTag::Token);
+}
+
+#[test]
+fn migrate_v8_to_v9_upconverts_react_and_preserves_committed_facts() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = build_v8_journal(tmp.path());
+    let dst = tmp.path().join("migrated_v9.kxjournal");
+
+    let report = migrate_to(&src, &dst).unwrap();
+    assert_eq!(report.from_version, 8);
+    assert_eq!(report.to_version, JOURNAL_SCHEMA_VERSION);
+    assert_eq!(report.entries_migrated, 10);
+    assert_eq!(report.entries_upconverted, 2); // exactly the two ReactRound facts
+
+    // Strict open accepts the result; committed facts are byte-identical (product
+    // identity invariant — the durability law; only kind-9 bodies grow by 1 byte).
+    let j = SqliteJournal::open(&dst).unwrap();
+    assert_eq!(j.count_entries().unwrap(), 10);
+    let committed_bytes = |p: &Path| -> Vec<Vec<u8>> {
+        let conn = Connection::open(p).unwrap();
+        let mut stmt = conn
+            .prepare("SELECT entry_bytes FROM entries WHERE kind = 1 ORDER BY seq")
+            .unwrap();
+        stmt.query_map([], |r| r.get::<_, Vec<u8>>(0))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect()
+    };
+    assert_eq!(committed_bytes(&src), committed_bytes(&dst));
+
+    // The migrated ReactRound facts now carry the explicit None step_salt.
+    let via_migrate = read_all(&j);
+    assert!(via_migrate
+        .iter()
+        .filter(|e| matches!(e, JournalEntry::ReactRound { .. }))
+        .all(|e| matches!(
+            e,
+            JournalEntry::ReactRound {
+                step_salt: None,
+                ..
+            }
+        )));
+}
+
+#[test]
+fn v9_react_round_persists_and_resumes() {
+    // A fresh (v9) journal carrying ReactRound facts round-trips the strict
+    // open + resume path: the anchor (run-level, step_salt None) and a settled
+    // branch carrying a step_salt (the agentic-step shape) read back verbatim.
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("react_v9.kxjournal");
     let anchor = JournalEntry::ReactRound {
         turn: 0,
         turn_mote_id: MoteId::from_bytes([0x8e; 32]),
@@ -394,6 +586,7 @@ fn v8_react_round_persists_and_resumes() {
         branch: ReactBranch::Pending,
         max_turns: 8,
         max_tool_calls: 8,
+        step_salt: None,
         seq: 0,
     };
     let settle = JournalEntry::ReactRound {
@@ -406,6 +599,7 @@ fn v8_react_round_persists_and_resumes() {
         branch: ReactBranch::Answer,
         max_turns: 8,
         max_tool_calls: 8,
+        step_salt: Some([0x5a; 32]),
         seq: 0,
     };
     {
@@ -421,6 +615,7 @@ fn v8_react_round_persists_and_resumes() {
             turn: 0,
             branch: ReactBranch::Pending,
             max_turns: 8,
+            step_salt: None,
             ..
         }
     ));
@@ -428,8 +623,9 @@ fn v8_react_round_persists_and_resumes() {
         &entries[1],
         JournalEntry::ReactRound {
             branch: ReactBranch::Answer,
+            step_salt: Some(salt),
             ..
-        }
+        } if *salt == [0x5a; 32]
     ));
 }
 

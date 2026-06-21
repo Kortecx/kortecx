@@ -787,17 +787,21 @@ fn migrate_into_temp(
         let head = replay.current_seq()?;
         for entry in replay.read_entries_by_seq(0..head + 1)? {
             let src_seq = entry.seq();
-            // Only the v5 arm TRANSFORMS bytes (appends the idempotency_class
-            // byte to a capability-present record); v6/v7 → current are pure
-            // pass-throughs (additive kinds only), so nothing "up-converts".
-            let upconverted = from_version < 6
+            // Two arms TRANSFORM bytes (everything else is a pure pass-through —
+            // additive kinds only): v5→ appends the idempotency_class byte to a
+            // capability-present record; v8→v9 appends the `None` step_salt
+            // presence byte to every `ReactRound` (kind 9, the only pre-v9 version
+            // carrying one is v8). Mirror `migrate_entry`'s transform predicate so
+            // the report's `entries_upconverted` is accurate.
+            let upconverted = (from_version < 6
                 && matches!(
                     &entry,
                     JournalEntry::RunVersionsResolved {
                         capability: Some(_),
                         ..
                     }
-                );
+                ))
+                || (from_version == 8 && matches!(&entry, JournalEntry::ReactRound { .. }));
             let durable = append_one(&txn, entry)?;
             if durable.seq() != src_seq {
                 return Err(JournalError::Invariant(

@@ -2401,6 +2401,9 @@ fn write_react_anchor<J: Journal>(
         branch: ReactBranch::Pending,
         max_turns,
         max_tool_calls,
+        // v9 (PR-9b-2a): run-level chain. The agentic-launch anchor (PR-9b-2b)
+        // sets this to the launch step's MoteId.
+        step_salt: None,
         seq: 0,
     };
     let durable = journal.append(entry)?;
@@ -2946,6 +2949,9 @@ fn append_react_branch<J: Journal>(
         branch,
         max_turns: anchor.max_turns,
         max_tool_calls: anchor.max_tool_calls,
+        // v9 (PR-9b-2a): run-level chain. PR-9b-2b will propagate the anchor's
+        // step_salt here so a settled branch joins the right agentic chain.
+        step_salt: None,
         seq: 0,
     };
     match journal.append(entry) {
