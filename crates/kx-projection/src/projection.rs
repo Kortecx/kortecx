@@ -646,11 +646,7 @@ impl Projection {
                 branch,
                 max_turns,
                 max_tool_calls,
-                // v9 (PR-9b-2a): the compound `(instance_id, step_salt)` chain key
-                // that READS this lands with the execution path (PR-9b-2b); the
-                // run-level fold here ignores it (every v9 record this PR writes
-                // carries None), keeping the run-level query path byte-unchanged.
-                step_salt: _,
+                step_salt,
                 seq,
             } => {
                 // v8 (PR-2d-1). Append-many: a run accrues one record per turn
@@ -671,6 +667,7 @@ impl Projection {
                         branch: branch.clone(),
                         max_turns: *max_turns,
                         max_tool_calls: *max_tool_calls,
+                        step_salt: *step_salt,
                         seq: *seq,
                     });
                 // PR-2d-2: maintain the DERIVED per-instance index + turn-Mote

@@ -198,6 +198,13 @@ pub struct ReactRoundRecord {
     pub max_turns: u32,
     /// The run's durable tool-call cap (recorded on the anchor).
     pub max_tool_calls: u32,
+    /// PR-9b-2 (deterministic-agentic step): the per-step salt (= the launch
+    /// step's `MoteId`) that disjoins an agentic step's PRIVATE chain from the
+    /// run-level react chain. `None` ⇒ a run-level chain (every chain v8 wrote;
+    /// the v8→v9 up-convert default). The compound `(instance_id, step_salt)`
+    /// chain key that READS this lands with the execution path (PR-9b-2b); B0
+    /// only persists it across the fold + checkpoint round-trip.
+    pub step_salt: Option<[u8; 32]>,
     /// The entry's journal seq (audit/order).
     pub seq: u64,
 }
