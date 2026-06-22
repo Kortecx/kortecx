@@ -194,7 +194,7 @@ fn marked_object<'a>(text: &'a str, open: &str) -> Option<&'a str> {
 /// and the downstream schema `validate_args`. Unknown sibling keys are ignored here
 /// (tolerant envelope), but a smuggled ARG key is still rejected by the typed schema
 /// downstream, so the authority surface is unchanged. Total + panic-free.
-fn decode_named_object(obj: &str) -> Option<(String, Vec<u8>)> {
+fn decode_named_object(obj: &str, require_explicit_args: bool) -> Option<(String, Vec<u8>)> {
     #[derive(Deserialize)]
     struct Named<'a> {
         name: Option<String>,
@@ -214,7 +214,11 @@ fn decode_named_object(obj: &str) -> Option<(String, Vec<u8>)> {
         .into_iter()
         .flatten();
     let args_bytes = match present.next() {
-        // No args alias ⇒ an empty args object (matches `validate_args`' empty == `{}`).
+        // No args alias. A MARKED caller treats absent as an empty args object
+        // (matches `validate_args`' empty == `{}`); a MARKERLESS caller (PR-R1)
+        // REQUIRES an explicit args bag (commitment-aware — a bare object with only
+        // a `name` and no args key is far likelier prose than a tool call).
+        None if require_explicit_args => return None,
         None => b"{}".to_vec(),
         Some(v) => {
             if present.next().is_some() {
@@ -267,19 +271,18 @@ fn model_name_core(raw_name: &str) -> String {
 }
 
 /// True iff `target` (an already-`canon`'d model name core) addresses `tool_id` by
-/// one of its canonical aliases: the FULL id (today's behavior) OR the leaf segment
-/// after the last `/` (the namespace strip — a dialed/local MCP tool is registered
-/// `<server>/<remote>`, but a model proposes the short leaf `<remote>`). EXACT
-/// segment equality only — never a prefix/substring/fuzzy match (SN-8).
+/// one of its canonical aliases: the FULL id, OR ANY `/`-delimited segment of it. A
+/// dialed/local MCP tool is registered `<server>/<remote>`, and real models propose
+/// EITHER end — the short leaf `<remote>` (e.g. `echo`) OR the server prefix
+/// `<server>` (Gemma-4 emits the bare `mcp-echo` for `mcp-echo/echo`). EXACT segment
+/// equality ONLY — never a prefix/substring/fuzzy match (SN-8); cross-grant ambiguity
+/// (two grants sharing the addressed segment) is fail-closed in [`resolve_granted_name`].
 fn id_matches(target: &str, tool_id: &str) -> bool {
     let full = canon(tool_id);
     if full == target {
         return true;
     }
-    match full.rsplit_once('/') {
-        Some((_, leaf)) => !leaf.is_empty() && leaf == target,
-        None => false,
-    }
+    full.split('/').any(|seg| !seg.is_empty() && seg == target)
 }
 
 /// Resolve a model-emitted (often separator-variant, version-less, or
@@ -305,6 +308,74 @@ fn resolve_granted_name(raw_name: &str, warrant: &WarrantSpec) -> Option<ToolGra
         }
     }
     hit.cloned()
+}
+
+/// Resolve a MARKERLESS named call to a granted `ToolCall`, fail-closed. Unlike the
+/// MARKED arms (a marker IS the model's commitment, so a bad name is a loud refusal),
+/// a markerless object carries no commitment signal — so a name that addresses NO
+/// grant is a normal completion (`Ok(None)`), NEVER a false-positive refusal. The
+/// authority surface is unchanged: `resolve_granted_name` (exact grant membership,
+/// SN-8) + the downstream schema; only ENVELOPE recognition widens.
+fn markerless_call(
+    raw_name: &str,
+    args_bytes: Vec<u8>,
+    warrant: &WarrantSpec,
+    max_args_bytes: usize,
+) -> Result<Option<ToolCall>, DecodeError> {
+    let Some(grant) = resolve_granted_name(raw_name, warrant) else {
+        return Ok(None); // markerless: a non-granted name is prose, not a refusal
+    };
+    if args_bytes.len() > max_args_bytes {
+        return Err(DecodeError::Oversize {
+            got: args_bytes.len(),
+            max: max_args_bytes,
+        });
+    }
+    Ok(Some(ToolCall {
+        name: grant.tool_id,
+        version: grant.tool_version,
+        args_bytes,
+    }))
+}
+
+/// PR-R1: the COMMITMENT-AWARE markerless tool-call shapes — the JSON-envelope arm's
+/// complement to the marked detectors. Recognizes two shapes more model families emit
+/// with no `tool_call` wrapper and no marker: a bare named object
+/// `{"name":…, "arguments":{…}}` (`OpenAI` / Hermes), and a SINGLE-element
+/// `{"tool_calls":[ {"name":…, "arguments":{…}} ]}` wrapper. Each fires ONLY when the
+/// name resolves to a granted tool AND an EXPLICIT args bag is present (the
+/// commitment-aware guard — see [`markerless_call`] / [`decode_named_object`]);
+/// otherwise it degrades to a normal completion (never a false-positive refusal). A
+/// MULTI-element `tool_calls` array is DEFERRED — multiple-tool-calls-per-turn is a
+/// coordinator loop-semantics change (the react loop freezes one `Tool` fact/turn) —
+/// and yields `None` with NO silent first-element cap. Total + panic-free.
+fn decode_markerless(
+    trimmed: &str,
+    warrant: &WarrantSpec,
+    max_args_bytes: usize,
+) -> Result<Option<ToolCall>, DecodeError> {
+    // The `{"tool_calls":[…]}` wrapper shape (declared here, before the first stmt).
+    #[derive(Deserialize)]
+    struct ToolCalls<'a> {
+        #[serde(borrow)]
+        tool_calls: Vec<&'a RawValue>,
+    }
+    // (a) a bare named object — top-level `{"name":…, <args alias>:{…}}`.
+    if let Some((raw_name, args_bytes)) = decode_named_object(trimmed, true) {
+        return markerless_call(&raw_name, args_bytes, warrant, max_args_bytes);
+    }
+    // (b) a `{"tool_calls":[…]}` wrapper (OpenAI plural form). ONLY a single call is
+    //     accepted; a 0- or multi-element array falls through (deferred, no silent cap).
+    if let Ok(wrapper) = serde_json::from_str::<ToolCalls>(trimmed) {
+        if wrapper.tool_calls.len() == 1 {
+            if let Some((raw_name, args_bytes)) =
+                decode_named_object(wrapper.tool_calls[0].get(), true)
+            {
+                return markerless_call(&raw_name, args_bytes, warrant, max_args_bytes);
+            }
+        }
+    }
+    Ok(None)
 }
 
 /// Decode a model-proposed tool call from raw model output, fail-closed.
@@ -389,7 +460,7 @@ pub fn parse_tool_call(
         let Some(obj) = marked_object(trimmed, open) else {
             continue;
         };
-        let Some((raw_name, args_bytes)) = decode_named_object(obj) else {
+        let Some((raw_name, args_bytes)) = decode_named_object(obj, false) else {
             continue; // marked but not a recognizable named call ⇒ normal completion
         };
         // The model COMMITTED to a named marked call ⇒ resolve or fail-closed (a bad
@@ -423,8 +494,12 @@ pub fn parse_tool_call(
         diagnostic: e.to_string(),
     })?;
     let Some(raw) = envelope.tool_call else {
-        // Valid JSON, but not a tool-call envelope ⇒ a normal completion.
-        return Ok(None);
+        // No `tool_call` envelope. PR-R1: try the COMMITMENT-AWARE markerless shapes
+        // (a bare `{"name":…,"arguments":…}` object, a single-element `{"tool_calls":
+        // […]}` wrapper) — they fire only when the name resolves to a grant AND carry
+        // an explicit args bag, else degrade to a normal completion (no false-positive
+        // refusal). Otherwise: valid JSON, not a tool call ⇒ a normal completion.
+        return decode_markerless(trimmed, warrant, max_args_bytes);
     };
 
     // (3) The model committed to a tool call. Enforce tool ∈ warrant.tool_grants.
@@ -616,13 +691,43 @@ mod tests {
         let env_full = br#"{"tool_call":{"name":"mcp-echo/echo","version":"1","args":{"q":"x"}}}"#;
         assert!(parse_tool_call(env_full, &w, 4096).unwrap().is_some());
 
-        // (d) SN-8 boundary: the server PREFIX alone (`mcp-echo` — neither the full id
-        //     nor the leaf segment) does NOT resolve. No prefix/substring widening.
+        // (d) PR-R1 (live Gemma-4 finding): the SERVER PREFIX `mcp-echo` (the first
+        //     `/`-segment of `mcp-echo/echo`) ALSO resolves — Gemma-4-12B emits the bare
+        //     `mcp-echo` for the bundled tool. UNAMBIGUOUS here (one grant on that
+        //     server), so it resolves to the grant's full id + version. EXACT segment
+        //     equality (never prefix/substring): a non-segment like `mcp` stays refused.
         let env_prefix = br#"{"tool_call":{"name":"mcp-echo","version":"","args":{"q":"x"}}}"#;
+        let pc = parse_tool_call(env_prefix, &w, 4096)
+            .unwrap()
+            .expect("the server-prefix segment resolves the unique grant on that server");
+        assert_eq!(pc.name, ToolName("mcp-echo/echo".into()));
+        let env_partial = br#"{"tool_call":{"name":"mcp","version":"","args":{"q":"x"}}}"#;
+        assert!(
+            matches!(
+                parse_tool_call(env_partial, &w, 4096),
+                Err(DecodeError::UngrantedTool { .. })
+            ),
+            "a non-segment substring (`mcp`) never resolves — exact segment equality only"
+        );
+    }
+
+    #[test]
+    fn shared_server_segment_is_ambiguous_fail_closed_but_distinct_leaves_resolve() {
+        // SN-8: when two grants SHARE the addressed segment (the `mcp-echo` server of
+        // both `mcp-echo/echo` and `mcp-echo/reverse`), the bare `mcp-echo` is
+        // AMBIGUOUS ⇒ fail-closed (no guessing). The DISTINCT leaves still resolve.
+        let w = warrant_granting_many(&[("mcp-echo/echo", "1"), ("mcp-echo/reverse", "2")]);
+        let ambiguous = br#"{"tool_call":{"name":"mcp-echo","version":"","args":{"q":"x"}}}"#;
         assert!(matches!(
-            parse_tool_call(env_prefix, &w, 4096),
+            parse_tool_call(ambiguous, &w, 4096),
             Err(DecodeError::UngrantedTool { .. })
         ));
+        let leaf = br#"{"tool_call":{"name":"reverse","version":"","args":{"q":"x"}}}"#;
+        let call = parse_tool_call(leaf, &w, 4096)
+            .unwrap()
+            .expect("the distinct leaf resolves to its unique grant");
+        assert_eq!(call.name, ToolName("mcp-echo/reverse".into()));
+        assert_eq!(call.version, ToolVersion("2".into()));
     }
 
     #[test]
@@ -1096,31 +1201,109 @@ mod tests {
         assert_eq!(parse_tool_call(env, &w, 4096), Ok(None));
     }
 
-    // ---- PR-9c-1: DEFERRED shapes degrade to a normal completion (pinned) ----
+    // ---- PR-R1: COMMITMENT-AWARE markerless shapes — fire on a granted name +
+    //      explicit args, degrade to a normal completion otherwise (no false-positive
+    //      refusal); a MULTI-element `tool_calls` array stays DEFERRED. ----
 
     #[test]
-    fn bare_function_object_is_deferred_normal_completion() {
-        // Markerless `{"name":…,"arguments":…}` (Hermes/OpenAI) is DEFERRED: no
-        // `tool_call` wrapper, no marker ⇒ the JSON path finds no `tool_call` key ⇒
-        // Ok(None). Pins the boundary for a future markerless detector.
+    fn bare_function_object_with_granted_name_fires() {
+        // Markerless `{"name":…,"arguments":…}` (Hermes/OpenAI): the name resolves to
+        // a grant + an explicit args bag is present ⇒ FIRES (the same authority gate
+        // as every other arm; only envelope recognition widened).
         let w = warrant_granting(Some(("mcp-echo", "1")));
         let env = br#"{"name":"mcp-echo","arguments":{"q":"x"}}"#;
+        let call = parse_tool_call(env, &w, 4096)
+            .unwrap()
+            .expect("a markerless call");
+        assert_eq!(call.name, ToolName("mcp-echo".into()));
+        assert_eq!(call.version, ToolVersion("1".into()));
+        assert_eq!(call.args_bytes, br#"{"q":"x"}"#);
+    }
+
+    #[test]
+    fn bare_object_with_ungranted_name_is_normal_completion() {
+        // ADVERSARIAL (SN-8): a markerless object has NO commitment marker, so a name
+        // that addresses no grant is PROSE, never a refusal — Ok(None), not UngrantedTool.
+        let w = warrant_granting(Some(("mcp-echo", "1")));
+        let env = br#"{"name":"not-a-tool","arguments":{"q":"x"}}"#;
+        assert_eq!(parse_tool_call(env, &w, 4096), Ok(None));
+    }
+
+    #[test]
+    fn bare_object_without_args_key_is_normal_completion() {
+        // ADVERSARIAL: a bare object with ONLY a `name` and no args alias is far
+        // likelier prose than a call (the markerless path requires an explicit args
+        // bag) ⇒ Ok(None), even when the name happens to match a grant.
+        let w = warrant_granting(Some(("mcp-echo", "1")));
+        let env = br#"{"name":"mcp-echo"}"#;
+        assert_eq!(parse_tool_call(env, &w, 4096), Ok(None));
+        // A JSON object that merely carries a `name` key (prose) never fires.
+        let prose = br#"{"name":"Ada Lovelace","born":1815}"#;
+        assert_eq!(parse_tool_call(prose, &w, 4096), Ok(None));
+    }
+
+    #[test]
+    fn bare_object_with_two_args_aliases_is_normal_completion() {
+        // ADVERSARIAL: two args aliases ⇒ ambiguous ⇒ fail-closed (Ok(None)).
+        let w = warrant_granting(Some(("mcp-echo", "1")));
+        let env = br#"{"name":"mcp-echo","args":{"q":"x"},"arguments":{"q":"y"}}"#;
+        assert_eq!(parse_tool_call(env, &w, 4096), Ok(None));
+    }
+
+    #[test]
+    fn bare_object_oversize_args_refused() {
+        // A markerless call's args are still size-capped (IMP-16) — a committed call.
+        let w = warrant_granting(Some(("mcp-echo", "1")));
+        let big = "x".repeat(100);
+        let env = format!(r#"{{"name":"mcp-echo","arguments":{{"q":"{big}"}}}}"#);
+        assert!(matches!(
+            parse_tool_call(env.as_bytes(), &w, 8),
+            Err(DecodeError::Oversize { .. })
+        ));
+    }
+
+    #[test]
+    fn tool_calls_single_wrapper_fires() {
+        // The OpenAI plural `{"tool_calls":[ <single> ]}` wrapper with one call FIRES.
+        let w = warrant_granting(Some(("mcp-echo", "1")));
+        let env = br#"{"tool_calls":[{"name":"mcp-echo","arguments":{"q":"x"}}]}"#;
+        let call = parse_tool_call(env, &w, 4096)
+            .unwrap()
+            .expect("a single tool_calls wrapper call");
+        assert_eq!(call.name, ToolName("mcp-echo".into()));
+        assert_eq!(call.version, ToolVersion("1".into()));
+    }
+
+    #[test]
+    fn tool_calls_multi_element_array_is_deferred() {
+        // DEFERRED: multiple-tool-calls-per-turn is a coordinator loop-semantics change
+        // (one Tool fact/turn). A multi-element wrapper yields Ok(None) — NO silent
+        // first-element cap (GR: no silent caps).
+        let w = warrant_granting(Some(("mcp-echo", "1")));
+        let env = br#"{"tool_calls":[{"name":"mcp-echo","arguments":{}},{"name":"mcp-echo","arguments":{}}]}"#;
+        assert_eq!(parse_tool_call(env, &w, 4096), Ok(None));
+    }
+
+    #[test]
+    fn tool_calls_empty_array_is_normal_completion() {
+        let w = warrant_granting(Some(("mcp-echo", "1")));
+        let env = br#"{"tool_calls":[]}"#;
         assert_eq!(parse_tool_call(env, &w, 4096), Ok(None));
     }
 
     #[test]
     fn multiple_tool_calls_array_is_deferred_normal_completion() {
-        // A multi-call array is a LOOP-SEMANTICS change (one Tool fact/turn) ⇒ DEFERRED;
-        // a `[` start never passes the `{`-gate ⇒ Ok(None) (fires nothing, fail-closed).
+        // A bare `[…]` array never passes the `{`-gate ⇒ Ok(None) (fires nothing).
         let w = warrant_granting(Some(("mcp-echo", "1")));
         let env = br#"[{"name":"mcp-echo","arguments":{}},{"name":"mcp-echo","arguments":{}}]"#;
         assert_eq!(parse_tool_call(env, &w, 4096), Ok(None));
     }
 
     #[test]
-    fn tool_calls_plural_wrapper_is_deferred_normal_completion() {
-        let w = warrant_granting(Some(("mcp-echo", "1")));
-        let env = br#"{"tool_calls":[{"name":"mcp-echo","arguments":{}}]}"#;
+    fn markerless_shape_empty_grants_is_none() {
+        // Step (0) short-circuits before ANY arm when the warrant grants no tools.
+        let w = warrant_granting(None);
+        let env = br#"{"name":"mcp-echo","arguments":{"q":"x"}}"#;
         assert_eq!(parse_tool_call(env, &w, 4096), Ok(None));
     }
 

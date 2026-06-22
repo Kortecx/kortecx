@@ -56,6 +56,9 @@ interface ActiveTurn {
   /** An agent (react) turn — resolved via ListReactTurns, never the terminal
    *  projection settle (the seed Mote is SWAPPED; the chain extends). */
   readonly react: boolean;
+  /** PR-R1: the per-invocation react chain key — scopes this turn's progress to
+   *  ITS chain on serve's shared journal (every chat turn shares one instanceId). */
+  readonly reactChainSalt: string;
 }
 
 export interface UseChatOptions {
@@ -186,7 +189,10 @@ export function useChat({ handle, promptKey, modelId, agentMode }: UseChatOption
   );
 
   // Agent turns: the loop's durable facts narrate progress + completion.
-  const reactProgress = useReactProgress(active?.react ? active.instanceId : undefined);
+  const reactProgress = useReactProgress(
+    active?.react ? active.instanceId : undefined,
+    active?.react ? active.reactChainSalt : undefined,
+  );
 
   // PR-4.2 (T-STREAM1): the live token stream for the in-flight mote. For a
   // simple/vision turn it's the terminal mote (streams into the answer bubble);
@@ -380,7 +386,7 @@ export function useChat({ handle, promptKey, modelId, agentMode }: UseChatOption
         const plan = await planTurn(text, attachments);
         // PR-7b: context is request-level — it attaches to the run regardless of
         // which recipe route (chat / vision / react) the plan picked.
-        const { instanceId, terminalMoteId } = await invoke.mutateAsync({
+        const { instanceId, terminalMoteId, reactChainSalt } = await invoke.mutateAsync({
           ...plan,
           context: context.length > 0 ? context : undefined,
         });
@@ -394,6 +400,7 @@ export function useChat({ handle, promptKey, modelId, agentMode }: UseChatOption
           instanceId,
           terminalMoteId,
           react: plan.handle === REACT_RECIPE_HANDLE,
+          reactChainSalt,
         });
       } catch (e) {
         const ui = toUiError(e);

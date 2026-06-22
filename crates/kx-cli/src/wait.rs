@@ -217,14 +217,21 @@ pub async fn await_react_result(
     client: &mut KxGatewayClient<Channel>,
     resolved: &Resolved,
     instance_id: Vec<u8>,
+    chain_salt: Vec<u8>,
     timeout: Duration,
 ) -> Result<WaitOutcome, CliError> {
+    // PR-R1: scope the poll to THIS invocation's chain (serve shares one journal /
+    // instance_id across every Invoke). A 32-byte `react_chain_salt` from Invoke
+    // selects the chain; an EMPTY salt (a non-react run, or an old server) falls back
+    // to instance_id-only scoping (the pre-PR-R1 behaviour).
+    let step_salt = (!chain_salt.is_empty()).then(|| chain_salt.clone());
     let start = tokio::time::Instant::now();
     loop {
         let turns = client
             .list_react_turns(resolved.request(proto::ListReactTurnsRequest {
                 limit: None,
                 instance_id: Some(instance_id.clone()),
+                step_salt: step_salt.clone(),
             })?)
             .await
             .map_err(CliError::from_status)?

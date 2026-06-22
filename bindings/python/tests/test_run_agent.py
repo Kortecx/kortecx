@@ -55,9 +55,13 @@ class _FakeClient:
             state="COMMITTED",
             result_ref="ef" * 32,
             payload=self.payload,
+            react_chain_salt="5a" * 32,
         )
 
-    def list_react_turns(self, *, instance_id=None, limit=None):
+    def list_react_turns(self, *, instance_id=None, step_salt=None, limit=None):
+        # PR-R1: the runner scopes the action fetch to the invocation's chain.
+        self.list_calls = getattr(self, "list_calls", [])
+        self.list_calls.append({"instance_id": instance_id, "step_salt": step_salt})
         return _FakeTurnPage(self.turns)
 
 

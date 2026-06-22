@@ -179,7 +179,13 @@ export abstract class KxClientBase {
         contextRefs: opts.contextRefs ? [...opts.contextRefs] : [],
       }),
     );
-    const run = new Run(this, resp.instanceId, resp.terminalMoteId, resp.recipeFingerprint);
+    const run = new Run(
+      this,
+      resp.instanceId,
+      resp.terminalMoteId,
+      resp.recipeFingerprint,
+      resp.reactChainSalt,
+    );
     if (!opts.wait) return run;
     const result =
       // React CHAIN recipes (react / react-fs / react-auto) settle via
@@ -187,13 +193,16 @@ export abstract class KxClientBase {
       // react-edit is EXCLUDED — a single model step settling on its terminal mote.
       handle.startsWith(REACT_RECIPE_HANDLE) && handle !== "kx/recipes/react-edit"
         ? // F13: a react chain settles via ListReactTurns, not a terminal Mote.
+          // PR-R1: scope the settle poll to THIS invocation's chain via reactChainSalt.
           this._finish(
             await pollReactResult(
               this.grpc,
               resp.instanceId,
               resp.terminalMoteId,
               opts.timeoutMs ?? 120_000,
+              resp.reactChainSalt,
             ),
+            resp.reactChainSalt.length > 0 ? encode(resp.reactChainSalt) : "",
           )
         : await this._awaitTerminal(
             resp.instanceId,
@@ -662,10 +671,18 @@ export abstract class KxClientBase {
    * scopes to one run; absent enumerates every chain. The server clamps `limit`
    * to its max page. An old gateway without this RPC throws {@link KxUnimplemented}.
    */
-  async listReactTurns(opts: { instanceId?: string; limit?: number } = {}): Promise<ReactTurnPage> {
+  async listReactTurns(
+    opts: { instanceId?: string; stepSalt?: string; limit?: number } = {},
+  ): Promise<ReactTurnPage> {
     const instanceId =
       opts.instanceId === undefined ? undefined : asBytes(opts.instanceId, INSTANCE_LEN);
-    const resp = await rpc(this.grpc.listReactTurns({ instanceId, limit: opts.limit }));
+    // PR-R1: stepSalt (hex 32B) scopes to ONE chain within a run (serve's shared
+    // journal carries one chain per Invoke plus agentic-step chains).
+    const stepSalt =
+      opts.stepSalt === undefined || opts.stepSalt === ""
+        ? undefined
+        : asBytes(opts.stepSalt, REF_LEN);
+    const resp = await rpc(this.grpc.listReactTurns({ instanceId, stepSalt, limit: opts.limit }));
     return { turns: resp.turns.map((t) => ReactTurn.fromProto(t)), hasMore: resp.hasMore };
   }
 
@@ -1145,8 +1162,8 @@ export abstract class KxClientBase {
     return this._finish(await pollAny(this.grpc, instance, timeoutMs));
   }
 
-  protected _finish(outcome: WaitOutcome): Result {
-    const result = Result.fromOutcome(outcome);
+  protected _finish(outcome: WaitOutcome, reactChainSalt = ""): Result {
+    const result = Result.fromOutcome(outcome, reactChainSalt);
     if (outcome.state === "FAILED") {
       throw new KxRunFailed("the run's terminal Mote failed", {
         instanceId: result.instanceId,

@@ -123,6 +123,13 @@ message InvokeResponse {
   bytes instance_id = 1;                 // 16B — the run this invocation joined (coordinator-assigned)
   bytes recipe_fingerprint = 2;          // 32B — the resolved recipe identity
   bytes terminal_mote_id = 3;            // 32B — SERVER-DERIVED sink Mote; its committed result is THIS invocation's output
+  // PR-R1 (additive): the per-invocation ReAct chain key for a react Invoke. A live
+  // `kx serve` shares ONE journal/instance_id across every Invoke, so the chain key
+  // (= the bound react seed Mote's id, server-derived from the bound args — SN-8)
+  // scopes ListReactTurns/the answer poll to THIS invocation's chain. Empty (0 bytes)
+  // for a non-react Invoke. An old client ignores it; a new client reads "" from an
+  // old server (D120.6) and falls back to instance_id-only scoping.
+  bytes react_chain_salt = 4;            // 32B — the react chain key; EMPTY for a non-react Invoke
 }
 
 // ---------------------------------------------------------------------------
@@ -602,7 +609,14 @@ message ListReplanRoundsResponse {
 
 message ListReactTurnsRequest {
   optional uint32 limit = 1;             // page size; server clamps to a max (absent = the default page)
-  optional bytes instance_id = 2;        // 16B — scope to one run's chain (absent = all runs)
+  optional bytes instance_id = 2;        // 16B — scope to one run (absent = all runs)
+  // PR-R1 (additive): scope to ONE chain within a run. A serve's shared journal can
+  // carry many react chains under one instance_id (one per Invoke, since PR-R1, plus
+  // agentic-step chains) — this is the per-chain key from InvokeResponse.react_chain_salt
+  // / ReactTurnSummary.step_salt. 32B = match that chain; EMPTY (0 bytes, the encoded
+  // form of a legacy run-level `None` salt) = the unsalted run-level chain; absent =
+  // every chain under the instance_id filter (the pre-PR-R1 behaviour).
+  optional bytes step_salt = 3;
 }
 message ReactTurnSummary {
   uint32 turn             = 1;           // 0 = the run's submit anchor; settles/advances reference 1..
@@ -623,6 +637,13 @@ message ReactTurnSummary {
   // NOT a journal/identity/digest input. Additive (D120.6); an old client ignores
   // it, a new client reads "" from an old server.
   string rejection_reason = 11;          // set iff branch == "rejected"
+  // PR-R1 (additive): the chain key this turn belongs to (the durable
+  // ReactRound.step_salt). 32B = a per-invocation run-level chain (= the seed MoteId,
+  // since PR-R1) OR an agentic-step chain (= the launch MoteId); EMPTY = a legacy
+  // run-level chain (`None` salt, old journal). Lets a client group/scope turns by
+  // chain on serve's shared journal. Additive (D120.6): old client ignores it; a new
+  // client reads "" from an old server.
+  bytes step_salt = 12;                  // 32B chain key; EMPTY for a legacy run-level chain
 }
 message ListReactTurnsResponse {
   repeated ReactTurnSummary turns = 1;   // newest-first (descending seq)

@@ -142,14 +142,16 @@ class InvokeRequest(_message.Message):
     def __init__(self, handle: _Optional[str] = ..., args: _Optional[bytes] = ..., context_bundles: _Optional[_Iterable[str]] = ..., context_refs: _Optional[_Iterable[str]] = ...) -> None: ...
 
 class InvokeResponse(_message.Message):
-    __slots__ = ("instance_id", "recipe_fingerprint", "terminal_mote_id")
+    __slots__ = ("instance_id", "recipe_fingerprint", "terminal_mote_id", "react_chain_salt")
     INSTANCE_ID_FIELD_NUMBER: _ClassVar[int]
     RECIPE_FINGERPRINT_FIELD_NUMBER: _ClassVar[int]
     TERMINAL_MOTE_ID_FIELD_NUMBER: _ClassVar[int]
+    REACT_CHAIN_SALT_FIELD_NUMBER: _ClassVar[int]
     instance_id: bytes
     recipe_fingerprint: bytes
     terminal_mote_id: bytes
-    def __init__(self, instance_id: _Optional[bytes] = ..., recipe_fingerprint: _Optional[bytes] = ..., terminal_mote_id: _Optional[bytes] = ...) -> None: ...
+    react_chain_salt: bytes
+    def __init__(self, instance_id: _Optional[bytes] = ..., recipe_fingerprint: _Optional[bytes] = ..., terminal_mote_id: _Optional[bytes] = ..., react_chain_salt: _Optional[bytes] = ...) -> None: ...
 
 class GetProjectionRequest(_message.Message):
     __slots__ = ("instance_id", "at_seq")
@@ -689,15 +691,17 @@ class ListReplanRoundsResponse(_message.Message):
     def __init__(self, rounds: _Optional[_Iterable[_Union[ReplanRoundSummary, _Mapping]]] = ..., has_more: bool = ...) -> None: ...
 
 class ListReactTurnsRequest(_message.Message):
-    __slots__ = ("limit", "instance_id")
+    __slots__ = ("limit", "instance_id", "step_salt")
     LIMIT_FIELD_NUMBER: _ClassVar[int]
     INSTANCE_ID_FIELD_NUMBER: _ClassVar[int]
+    STEP_SALT_FIELD_NUMBER: _ClassVar[int]
     limit: int
     instance_id: bytes
-    def __init__(self, limit: _Optional[int] = ..., instance_id: _Optional[bytes] = ...) -> None: ...
+    step_salt: bytes
+    def __init__(self, limit: _Optional[int] = ..., instance_id: _Optional[bytes] = ..., step_salt: _Optional[bytes] = ...) -> None: ...
 
 class ReactTurnSummary(_message.Message):
-    __slots__ = ("turn", "turn_mote_id", "instance_id", "model_id", "branch", "tool_id", "tool_version", "max_turns", "max_tool_calls", "seq", "rejection_reason")
+    __slots__ = ("turn", "turn_mote_id", "instance_id", "model_id", "branch", "tool_id", "tool_version", "max_turns", "max_tool_calls", "seq", "rejection_reason", "step_salt")
     TURN_FIELD_NUMBER: _ClassVar[int]
     TURN_MOTE_ID_FIELD_NUMBER: _ClassVar[int]
     INSTANCE_ID_FIELD_NUMBER: _ClassVar[int]
@@ -709,6 +713,7 @@ class ReactTurnSummary(_message.Message):
     MAX_TOOL_CALLS_FIELD_NUMBER: _ClassVar[int]
     SEQ_FIELD_NUMBER: _ClassVar[int]
     REJECTION_REASON_FIELD_NUMBER: _ClassVar[int]
+    STEP_SALT_FIELD_NUMBER: _ClassVar[int]
     turn: int
     turn_mote_id: bytes
     instance_id: bytes
@@ -720,7 +725,8 @@ class ReactTurnSummary(_message.Message):
     max_tool_calls: int
     seq: int
     rejection_reason: str
-    def __init__(self, turn: _Optional[int] = ..., turn_mote_id: _Optional[bytes] = ..., instance_id: _Optional[bytes] = ..., model_id: _Optional[str] = ..., branch: _Optional[str] = ..., tool_id: _Optional[str] = ..., tool_version: _Optional[str] = ..., max_turns: _Optional[int] = ..., max_tool_calls: _Optional[int] = ..., seq: _Optional[int] = ..., rejection_reason: _Optional[str] = ...) -> None: ...
+    step_salt: bytes
+    def __init__(self, turn: _Optional[int] = ..., turn_mote_id: _Optional[bytes] = ..., instance_id: _Optional[bytes] = ..., model_id: _Optional[str] = ..., branch: _Optional[str] = ..., tool_id: _Optional[str] = ..., tool_version: _Optional[str] = ..., max_turns: _Optional[int] = ..., max_tool_calls: _Optional[int] = ..., seq: _Optional[int] = ..., rejection_reason: _Optional[str] = ..., step_salt: _Optional[bytes] = ...) -> None: ...
 
 class ListReactTurnsResponse(_message.Message):
     __slots__ = ("turns", "has_more")

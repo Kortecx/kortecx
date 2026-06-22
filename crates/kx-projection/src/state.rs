@@ -205,6 +205,13 @@ pub struct ReactRoundRecord {
     /// chain key that READS this lands with the execution path (PR-9b-2b); B0
     /// only persists it across the fold + checkpoint round-trip.
     pub step_salt: Option<[u8; 32]>,
+    /// PR-R1: `true` iff this chain's anchor is a launched deterministic-agentic
+    /// step (needs the launch-mote disposition on settle); `false` for a run-level
+    /// react chain (settles on its own Answer) and every legacy chain. Since PR-R1 a
+    /// run-level chain is ALSO `step_salt`-salted (by its seed `MoteId`), so this
+    /// explicit flag — not `step_salt.is_some()` — is the run-level/agentic
+    /// discriminator. Recovery-stable; off-DAG; never a digest input.
+    pub is_agentic_launch: bool,
     /// The entry's journal seq (audit/order).
     pub seq: u64,
 }

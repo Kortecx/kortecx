@@ -67,7 +67,11 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentResult | Run
     wait: true,
     timeoutMs: opts.timeoutMs,
   })) as Result;
-  const page = await kx.listReactTurns({ instanceId: result.instanceId });
+  // PR-R1: scope the action fetch to THIS invocation's chain (serve's shared journal).
+  const page = await kx.listReactTurns({
+    instanceId: result.instanceId,
+    stepSalt: result.reactChainSalt || undefined,
+  });
   return new AgentResult(
     result.text,
     result.payload,

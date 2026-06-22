@@ -2060,6 +2060,7 @@ mod tests {
             instance_id: vec![0xab; 16],
             recipe_fingerprint: vec![0xcd; 32],
             terminal_mote_id: vec![0xef; 32],
+            react_chain_salt: Vec::new(),
         };
         let v: Value = serde_json::from_str(&render_invoke(&resp, true)).unwrap();
         assert_eq!(v["instance_id"].as_str().unwrap().len(), 32); // 16B -> 32 hex
@@ -2280,6 +2281,7 @@ mod tests {
                     max_tool_calls: 6,
                     seq: 33,
                     rejection_reason: String::new(),
+                    step_salt: Vec::new(),
                 },
                 // PR-3 (A2): a rejected turn carries its reason on both surfaces.
                 proto::ReactTurnSummary {
@@ -2294,6 +2296,7 @@ mod tests {
                     max_tool_calls: 6,
                     seq: 32,
                     rejection_reason: "args do not match inputSchema".into(),
+                    step_salt: Vec::new(),
                 },
             ],
             has_more: true,

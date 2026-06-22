@@ -63,12 +63,24 @@ pub(crate) fn list_react_turns(
     reader: &dyn JournalReader,
     limit: Option<u32>,
     instance_filter: Option<&[u8]>,
+    step_salt_filter: Option<&[u8]>,
 ) -> Result<proto::ListReactTurnsResponse, GatewayError> {
     let filter: Option<[u8; INSTANCE_ID_LEN]> = match instance_filter {
         None => None,
         Some(raw) => Some(<[u8; INSTANCE_ID_LEN]>::try_from(raw).map_err(|_| {
             GatewayError::InvalidArgument("react instance_id filter must be 16 bytes")
         })?),
+    };
+    // PR-R1: optional per-chain scope. Absent = every chain under the instance
+    // filter (the pre-PR-R1 behaviour). Present: 0 bytes = the legacy run-level
+    // (`None`-salt) chain; 32 bytes = exactly that chain (a per-invocation run-level
+    // chain or an agentic step). `Option<Option<[u8;32]>>`: outer None = no filter.
+    let chain_filter: Option<Option<[u8; 32]>> = match step_salt_filter {
+        None => None,
+        Some([]) => Some(None),
+        Some(raw) => Some(Some(<[u8; 32]>::try_from(raw).map_err(|_| {
+            GatewayError::InvalidArgument("react step_salt filter must be 0 or 32 bytes")
+        })?)),
     };
     let head = reader.current_seq().map_err(internal)?;
     // Collect ReactRound facts in ascending journal order, then reverse for
@@ -86,9 +98,12 @@ pub(crate) fn list_react_turns(
                 branch,
                 max_turns,
                 max_tool_calls,
+                step_salt,
                 seq,
                 ..
-            } if filter.is_none_or(|f| f == instance_id) => {
+            } if filter.is_none_or(|f| f == instance_id)
+                && chain_filter.is_none_or(|cf| cf == step_salt) =>
+            {
                 let (branch_str, tool_id, tool_version, rejection_reason) = branch_wire(&branch);
                 Some(proto::ReactTurnSummary {
                     turn,
@@ -102,6 +117,8 @@ pub(crate) fn list_react_turns(
                     max_tool_calls,
                     seq,
                     rejection_reason,
+                    // PR-R1: the chain key (empty for a legacy run-level `None` chain).
+                    step_salt: step_salt.map(|s| s.to_vec()).unwrap_or_default(),
                 })
             }
             _ => None,
@@ -127,8 +144,17 @@ mod tests {
 
     use super::*;
 
-    #[allow(clippy::cast_possible_truncation)] // test turns are tiny
     fn turn_fact(turn: u32, instance: u8, branch: ReactBranch) -> JournalEntry {
+        turn_fact_chain(turn, instance, None, branch)
+    }
+
+    #[allow(clippy::cast_possible_truncation)] // test turns are tiny
+    fn turn_fact_chain(
+        turn: u32,
+        instance: u8,
+        step_salt: Option<[u8; 32]>,
+        branch: ReactBranch,
+    ) -> JournalEntry {
         JournalEntry::ReactRound {
             turn,
             turn_mote_id: MoteId::from_bytes([instance.wrapping_add(turn as u8); 32]),
@@ -139,7 +165,8 @@ mod tests {
             branch,
             max_turns: 8,
             max_tool_calls: 8,
-            step_salt: None,
+            step_salt,
+            is_agentic_launch: false,
             seq: 0,
         }
     }
@@ -161,7 +188,7 @@ mod tests {
         j.append(turn_fact(1, 0xb0, ReactBranch::Answer)).unwrap();
         let r = ReadOnly::new(j);
 
-        let resp = list_react_turns(&r, None, None).unwrap();
+        let resp = list_react_turns(&r, None, None, None).unwrap();
         let rejected = resp
             .turns
             .iter()
@@ -180,7 +207,7 @@ mod tests {
     #[test]
     fn empty_journal_lists_nothing() {
         let r = ReadOnly::new(InMemoryJournal::new());
-        let resp = list_react_turns(&r, None, None).unwrap();
+        let resp = list_react_turns(&r, None, None, None).unwrap();
         assert!(resp.turns.is_empty());
         assert!(!resp.has_more);
     }
@@ -201,7 +228,7 @@ mod tests {
         j.append(turn_fact(1, 0xa0, ReactBranch::Answer)).unwrap();
         let r = ReadOnly::new(j);
 
-        let resp = list_react_turns(&r, None, None).unwrap();
+        let resp = list_react_turns(&r, None, None, None).unwrap();
         assert_eq!(resp.turns.len(), 3);
         assert!(!resp.has_more);
         // Newest-first: the turn-1 Answer settle (highest seq) leads.
@@ -228,7 +255,7 @@ mod tests {
         j.append(turn_fact(1, 0xa1, ReactBranch::Answer)).unwrap();
         let r = ReadOnly::new(j);
 
-        let resp = list_react_turns(&r, None, Some(&[0xa1; INSTANCE_ID_LEN])).unwrap();
+        let resp = list_react_turns(&r, None, Some(&[0xa1; INSTANCE_ID_LEN]), None).unwrap();
         assert_eq!(resp.turns.len(), 2, "only run 0xa1's facts");
         assert!(resp
             .turns
@@ -237,10 +264,47 @@ mod tests {
     }
 
     #[test]
+    fn step_salt_filter_scopes_to_one_chain() {
+        // PR-R1: serve's shared journal can carry many chains under one instance_id
+        // (one per Invoke). The step_salt filter isolates a single chain.
+        let salt_a = [0x11u8; 32];
+        let salt_b = [0x22u8; 32];
+        let j = InMemoryJournal::new();
+        j.append(turn_fact_chain(0, 0xd0, Some(salt_a), ReactBranch::Pending))
+            .unwrap();
+        j.append(turn_fact_chain(0, 0xd0, Some(salt_b), ReactBranch::Pending))
+            .unwrap();
+        j.append(turn_fact_chain(1, 0xd0, Some(salt_a), ReactBranch::Answer))
+            .unwrap();
+        // A legacy run-level chain (None salt) under the same run.
+        j.append(turn_fact_chain(0, 0xd0, None, ReactBranch::Pending))
+            .unwrap();
+        let r = ReadOnly::new(j);
+
+        // Scope to chain A: its anchor + answer only.
+        let resp =
+            list_react_turns(&r, None, Some(&[0xd0; INSTANCE_ID_LEN]), Some(&salt_a)).unwrap();
+        assert_eq!(resp.turns.len(), 2, "only chain A's two facts");
+        assert!(resp.turns.iter().all(|t| t.step_salt == salt_a.to_vec()));
+        // Empty step_salt scopes to the legacy run-level (None) chain only.
+        let run_level =
+            list_react_turns(&r, None, Some(&[0xd0; INSTANCE_ID_LEN]), Some(&[])).unwrap();
+        assert_eq!(run_level.turns.len(), 1, "only the None-salt chain");
+        assert!(run_level.turns[0].step_salt.is_empty());
+        // Absent step_salt = every chain under the run (4 facts).
+        let all = list_react_turns(&r, None, Some(&[0xd0; INSTANCE_ID_LEN]), None).unwrap();
+        assert_eq!(all.turns.len(), 4);
+    }
+
+    #[test]
     fn malformed_instance_filter_is_refused_loudly() {
         let r = ReadOnly::new(InMemoryJournal::new());
-        let err = list_react_turns(&r, None, Some(&[1, 2, 3])).unwrap_err();
+        let err = list_react_turns(&r, None, Some(&[1, 2, 3]), None).unwrap_err();
         assert!(matches!(err, GatewayError::InvalidArgument(_)));
+        // PR-R1: a non-empty, non-32-byte step_salt filter is refused loudly too.
+        let r2 = ReadOnly::new(InMemoryJournal::new());
+        let err2 = list_react_turns(&r2, None, None, Some(&[9, 9, 9])).unwrap_err();
+        assert!(matches!(err2, GatewayError::InvalidArgument(_)));
     }
 
     #[test]
@@ -250,7 +314,7 @@ mod tests {
             j.append(turn_fact(i, 0xb0, ReactBranch::Pending)).unwrap();
         }
         let r = ReadOnly::new(j);
-        let resp = list_react_turns(&r, Some(2), None).unwrap();
+        let resp = list_react_turns(&r, Some(2), None, None).unwrap();
         assert_eq!(resp.turns.len(), 2);
         assert!(resp.has_more, "3 turns remain beyond a page of 2");
     }
@@ -267,7 +331,7 @@ mod tests {
         .unwrap();
         j.append(turn_fact(0, 0xc0, ReactBranch::Pending)).unwrap();
         let r = ReadOnly::new(j);
-        let resp = list_react_turns(&r, None, None).unwrap();
+        let resp = list_react_turns(&r, None, None, None).unwrap();
         assert_eq!(resp.turns.len(), 1, "only ReactRound facts are enumerated");
         assert_eq!(resp.turns[0].turn, 0);
     }
