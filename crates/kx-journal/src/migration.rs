@@ -97,13 +97,19 @@ pub fn migrate_entry(
     // double-append its `idempotency_class` byte). `from_version` is guaranteed in
     // [MIN_SUPPORTED, CURRENT] by the guard above.
     match from_version {
-        // v11 (current): no transform, the single source of truth for decode.
+        // v12 (current): no transform, the single source of truth for decode.
         JOURNAL_SCHEMA_VERSION => Ok(decode_entry_with_def_hash(bytes, def_hash)?),
-        // v10 → v11: a PURE pass-through. The lone v10→v11 delta is the trailing
-        // `is_agentic_launch` byte on a `ReactRound` (kind 9) body; a v10 body lacks
-        // it, and the canonical decoder up-converts a byte-absent body to
-        // `step_salt.is_some()` (the OLD Some-means-agentic semantics) — so v10 bytes
-        // decode correctly + with the SAME disposition under v11 unchanged.
+        // v11 → v12: a PURE pass-through. The lone v11→v12 delta is the trailing
+        // `context_items_ref` presence byte on a `ReactRound` (kind 9) body; a v11
+        // body lacks it, and the canonical decoder up-converts a byte-absent body to
+        // `context_items_ref == None` — so v11 bytes decode correctly under v12 unchanged.
+        11 => Ok(decode_entry_with_def_hash(bytes, def_hash)?),
+        // v10 → v12: a PURE pass-through. A v10 `ReactRound` body lacks BOTH the
+        // `is_agentic_launch` (v11) and `context_items_ref` (v12) trailing bytes; the
+        // canonical decoder up-converts a byte-absent body to `is_agentic_launch ==
+        // step_salt.is_some()` (the OLD Some-means-agentic semantics) and
+        // `context_items_ref == None` — so v10 bytes decode correctly + with the SAME
+        // disposition under v12 unchanged.
         10 => Ok(decode_entry_with_def_hash(bytes, def_hash)?),
         // v9 → v11: a PURE pass-through. The v9→v10 delta is the brand-new
         // `ReactBranch::Rejected` (branch tag 4) — no v9 journal can contain a tag-4

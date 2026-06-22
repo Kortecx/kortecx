@@ -418,6 +418,7 @@ fn build_v8_journal(dir: &Path) -> PathBuf {
             max_tool_calls: 6,
             step_salt: None,
             is_agentic_launch: false,
+            context_items_ref: None,
             seq: 0,
         });
         entries.push(JournalEntry::ReactRound {
@@ -432,6 +433,7 @@ fn build_v8_journal(dir: &Path) -> PathBuf {
             max_tool_calls: 6,
             step_salt: None,
             is_agentic_launch: false,
+            context_items_ref: None,
             seq: 0,
         });
         j.append_batch(entries).unwrap();
@@ -457,15 +459,16 @@ fn downgrade_to_v8(path: &Path) {
     };
     let txn = conn.transaction().unwrap();
     for (seq, bytes) in kind9 {
-        // The fixture only writes step_salt: None + is_agentic_launch: false, so
-        // the two v11 tail bytes are `[step_salt_present=0, is_agentic_launch=0]`;
-        // dropping both yields the exact v8 shape.
+        // The fixture only writes step_salt: None + is_agentic_launch: false +
+        // context_items_ref: None, so the three current tail bytes are
+        // `[step_salt_present=0, is_agentic_launch=0, context_items_present=0]`;
+        // dropping all three yields the exact v8 shape.
         assert_eq!(
-            bytes[bytes.len() - 2..],
-            [0u8, 0u8],
-            "fixture ReactRound must be step_salt None + is_agentic_launch false"
+            bytes[bytes.len() - 3..],
+            [0u8, 0u8, 0u8],
+            "fixture ReactRound must be step_salt None + is_agentic_launch false + context None"
         );
-        let v8 = &bytes[..bytes.len() - 2];
+        let v8 = &bytes[..bytes.len() - 3];
         txn.execute(
             "UPDATE entries SET entry_bytes = ?1 WHERE seq = ?2",
             params![v8, seq],
@@ -593,6 +596,7 @@ fn v9_react_round_persists_and_resumes() {
         max_tool_calls: 8,
         step_salt: None,
         is_agentic_launch: false,
+        context_items_ref: None,
         seq: 0,
     };
     let settle = JournalEntry::ReactRound {
@@ -607,6 +611,7 @@ fn v9_react_round_persists_and_resumes() {
         max_tool_calls: 8,
         step_salt: Some([0x5a; 32]),
         is_agentic_launch: true,
+        context_items_ref: None,
         seq: 0,
     };
     {
@@ -680,6 +685,7 @@ fn build_v9_journal(dir: &Path) -> PathBuf {
             max_tool_calls: 6,
             step_salt: None,
             is_agentic_launch: false,
+            context_items_ref: None,
             seq: 0,
         });
         entries.push(JournalEntry::ReactRound {
@@ -694,6 +700,7 @@ fn build_v9_journal(dir: &Path) -> PathBuf {
             max_tool_calls: 6,
             step_salt: None,
             is_agentic_launch: false,
+            context_items_ref: None,
             seq: 0,
         });
         j.append_batch(entries).unwrap();
@@ -719,14 +726,15 @@ fn downgrade_to_v9(path: &Path) {
     };
     let txn = conn.transaction().unwrap();
     for (seq, bytes) in kind9 {
-        // The fixture only writes is_agentic_launch: false (the run-level chain),
-        // so the v11 tail byte is `0`; dropping it yields the exact v9 shape.
+        // The fixture only writes is_agentic_launch: false + context_items_ref: None
+        // (the run-level chain), so the two current tail bytes are `[is_agentic=0,
+        // context_present=0]`; dropping both (leaving step_salt) yields the v9 shape.
         assert_eq!(
-            *bytes.last().unwrap(),
-            0u8,
-            "fixture ReactRound must be is_agentic_launch false"
+            bytes[bytes.len() - 2..],
+            [0u8, 0u8],
+            "fixture ReactRound must be is_agentic_launch false + context None"
         );
-        let v9 = &bytes[..bytes.len() - 1];
+        let v9 = &bytes[..bytes.len() - 2];
         txn.execute(
             "UPDATE entries SET entry_bytes = ?1 WHERE seq = ?2",
             params![v9, seq],
@@ -793,8 +801,10 @@ fn migrate_v9_to_current_upconverts_react_launch_flag_and_preserves_committed_fa
     let dst9 = kind_bytes(&dst, 9);
     assert_eq!(src9.len(), dst9.len());
     for (src_body, dst_body) in src9.iter().zip(dst9.iter()) {
-        // Each dst body = the src v9 body + one trailing `0` launch byte.
-        assert_eq!(*dst_body, [src_body.clone(), vec![0u8]].concat());
+        // Each dst body = the src v9 body + two trailing `0` bytes: the up-converted
+        // run-level is_agentic_launch flag (step_salt.is_some() == false) + the absent
+        // context_items_ref (None).
+        assert_eq!(*dst_body, [src_body.clone(), vec![0u8, 0u8]].concat());
     }
 
     // The migrated ReactRound facts decode with the run-level launch flag.
@@ -839,9 +849,12 @@ fn downgrade_to_v10(path: &Path) {
     };
     let txn = conn.transaction().unwrap();
     for (seq, bytes) in kind9 {
-        // Drop the final is_agentic_launch byte unconditionally (it may be `1` for
-        // the agentic-step settle in this fixture).
-        let v10 = &bytes[..bytes.len() - 1];
+        // Drop the final TWO bytes unconditionally — the v12 context_items_ref
+        // present byte (`0`, the fixture attaches no context) and the v11
+        // is_agentic_launch byte (which may be `1` for the agentic-step settle).
+        // v9 and v10 ReactRound bodies are byte-identical (the v9→v10 delta is the
+        // Rejected branch tag, not a trailing byte), so this strips to the v10 shape.
+        let v10 = &bytes[..bytes.len() - 2];
         txn.execute(
             "UPDATE entries SET entry_bytes = ?1 WHERE seq = ?2",
             params![v10, seq],
@@ -894,6 +907,7 @@ fn build_v10_journal(dir: &Path) -> PathBuf {
             max_tool_calls: 6,
             step_salt: None,
             is_agentic_launch: false,
+            context_items_ref: None,
             seq: 0,
         });
         entries.push(JournalEntry::ReactRound {
@@ -908,6 +922,7 @@ fn build_v10_journal(dir: &Path) -> PathBuf {
             max_tool_calls: 6,
             step_salt: Some([0x77; 32]),
             is_agentic_launch: true,
+            context_items_ref: None,
             seq: 0,
         });
         j.append_batch(entries).unwrap();

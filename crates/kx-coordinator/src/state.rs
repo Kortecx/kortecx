@@ -26,8 +26,8 @@ use kx_journal::{
 };
 use kx_mote::{
     ConfigKey, EdgeKind, EffectPattern, ModelId, Mote, MoteDef, MoteId, NdClass, ToolName,
-    ToolVersion, PROMPT_KEY, REACT_INSTRUCTION_KEY, REACT_MAX_TOOL_CALLS_KEY, REACT_MAX_TURNS_KEY,
-    REACT_TURN_KEY, TOOL_ARGS_KEY,
+    ToolVersion, CONTEXT_ITEMS_KEY, PROMPT_KEY, REACT_INSTRUCTION_KEY, REACT_MAX_TOOL_CALLS_KEY,
+    REACT_MAX_TURNS_KEY, REACT_TURN_KEY, TOOL_ARGS_KEY,
 };
 use kx_projection::{
     ContentStoreVerdicts, MoteState, Projection, ReactRoundRecord, RegisterMote, ReplanRoundRecord,
@@ -100,6 +100,14 @@ pub(crate) struct LeasedItem {
     /// args with nothing staged. `None` for every non-observation Mote (the
     /// legacy WM/leaf paths are byte-unchanged).
     pub(crate) tool_args: Option<(Vec<u8>, kx_warrant::NetScope, kx_warrant::FsScope)>,
+    /// PR-9d (per-turn context-carry): the content-store ref of the run's encoded
+    /// context-items bundle, re-derived at every (re-)lease as a PURE function of
+    /// committed facts (the chain's turn-0 `ReactRound` anchor `context_items_ref`).
+    /// `None` for every Mote that already carries its bundle inline in
+    /// `config_subset[CONTEXT_ITEMS_KEY]` (turn 0 / a non-react leaf) or has no
+    /// attached context — the legacy path is byte-unchanged. Delivered out-of-band
+    /// via `WorkItem.context_items` (edge-free, the F-7 / tool_args precedent).
+    pub(crate) context_items: Option<ContentRef>,
 }
 
 /// Leased work plus the run's `instance_id` (if registered) — the `LeaseWork`
@@ -691,11 +699,17 @@ fn lease_ready(
                 } else {
                     None
                 };
+                // PR-9d: re-derive the run's grounding-context ref for a SUCCESSOR
+                // ReAct turn from the chain's turn-0 anchor (pure over committed facts,
+                // edge-free). `None` for turn 0 / a non-react leaf (which carries its
+                // bundle inline) ⇒ the wire payload is byte-identical to pre-PR-9d.
+                let context_items = resolve_react_context_items(mote, projection);
                 Some(LeasedItem {
                     mote: mote.clone(),
                     warrant: warrant.clone(),
                     parent_results,
                     tool_args,
+                    context_items,
                 })
             })
         })
@@ -997,6 +1011,52 @@ fn resolve_authored_tool_args(mote: &Mote, tool_registry: &dyn ToolRegistry) -> 
     ))
 }
 
+/// Decode a [`REACT_TURN_KEY`] marker value into its `(instance_id, step_salt)` chain
+/// key. 16 bytes = a LEGACY run-level chain (`step_salt = None`); 48 bytes =
+/// `instance_id ‖ step_salt` (an agentic step's private chain OR, since PR-R1, a
+/// per-invocation run-level chain salted by its seed `MoteId`). Any other length is a
+/// malformed marker ⇒ `None` (fail-closed). Decoding BOTH lengths is LOAD-BEARING (a
+/// 48-byte marker mis-read as 16 would lose the chain → an empty trajectory).
+fn decode_react_marker(bytes: &[u8]) -> Option<([u8; INSTANCE_ID_LEN], Option<[u8; 32]>)> {
+    if bytes.len() == INSTANCE_ID_LEN {
+        bytes.try_into().ok().map(|i| (i, None))
+    } else if bytes.len() == INSTANCE_ID_LEN + 32 {
+        let instance_id: [u8; INSTANCE_ID_LEN] = bytes[..INSTANCE_ID_LEN].try_into().ok()?;
+        let step_salt: [u8; 32] = bytes[INSTANCE_ID_LEN..].try_into().ok()?;
+        Some((instance_id, Some(step_salt)))
+    } else {
+        None
+    }
+}
+
+/// PR-9d: the run's grounding-context ref for a SUCCESSOR ReAct turn — the chain's
+/// turn-0 `ReactRound` anchor `context_items_ref`, looked up EDGE-FREE from committed
+/// facts (the F-7 / `tool_args` precedent — a pure projection read, never a fact
+/// append). Returns `None` when the Mote already carries its bundle INLINE in
+/// `config_subset[CONTEXT_ITEMS_KEY]` (turn 0 / the seed — `model_exec` prepends that
+/// directly, so delivering it again out-of-band would double-prepend), or is not a
+/// ReAct turn, or the run has no attached/retrieved context. So a successor turn (no
+/// inline bundle) reasons over the SAME grounding context turn 0 saw — fixing the
+/// drop where `build_react_turn` omits `CONTEXT_ITEMS_KEY` from a turn's config_subset.
+fn resolve_react_context_items(mote: &Mote, projection: &Projection) -> Option<ContentRef> {
+    if mote
+        .def
+        .config_subset
+        .contains_key(&ConfigKey(CONTEXT_ITEMS_KEY.to_string()))
+    {
+        return None; // an inline bundle (turn 0 / leaf) — the config_subset path serves it
+    }
+    let marker = mote
+        .def
+        .config_subset
+        .get(&ConfigKey(REACT_TURN_KEY.to_string()))?;
+    let (instance_id, step_salt) = decode_react_marker(marker.0.as_slice())?;
+    projection
+        .react_rounds_of(&instance_id, &step_salt)
+        .find(|r| r.turn == 0)
+        .and_then(|anchor| anchor.context_items_ref)
+}
+
 /// F-7 (assemble-into-serve): resolve, on the sole-writer thread, the committed
 /// `(MoteId, ContentRef)` of `mote`'s **Data context** — the upstream a model Mote
 /// must see to reason. This is a pure projection read (NO journal write, NO edge
@@ -1055,19 +1115,7 @@ fn resolve_parent_context(
             .def
             .config_subset
             .get(&ConfigKey(REACT_TURN_KEY.to_string()))
-            .and_then(|v| {
-                let bytes = v.0.as_slice();
-                if bytes.len() == INSTANCE_ID_LEN {
-                    bytes.try_into().ok().map(|i| (i, None))
-                } else if bytes.len() == INSTANCE_ID_LEN + 32 {
-                    let instance_id: [u8; INSTANCE_ID_LEN] =
-                        bytes[..INSTANCE_ID_LEN].try_into().ok()?;
-                    let step_salt: [u8; 32] = bytes[INSTANCE_ID_LEN..].try_into().ok()?;
-                    Some((instance_id, Some(step_salt)))
-                } else {
-                    None // malformed marker — fail-closed (no context)
-                }
-            });
+            .and_then(|v| decode_react_marker(v.0.as_slice()));
         if let Some((instance_id, step_salt)) = chain {
             if let Some(this) = projection
                 .react_rounds_of(&instance_id, &step_salt)
@@ -2489,6 +2537,27 @@ fn write_react_anchor<J: Journal>(
             "content store fault while writing the react anchor",
         ));
     };
+    // PR-9d: stage the run's grounding-context bundle (the seed's inline
+    // `config_subset[CONTEXT_ITEMS_KEY]`) into the content store and record its ref on
+    // the anchor, so a recovered coordinator re-derives per-turn context EDGE-FREE for
+    // every successor turn (the seed's config_subset is GONE after recovery — only its
+    // `mote_def_hash` survives, the same reason base_prompt_ref is anchored here).
+    // Absent ⇒ `None`, byte-identical to pre-PR-9d. A store fault is LOUD (like base).
+    let context_items_ref = match turn0
+        .def
+        .config_subset
+        .get(&ConfigKey(CONTEXT_ITEMS_KEY.to_string()))
+    {
+        Some(items) => match store.put(&items.0) {
+            Ok(r) => Some(r),
+            Err(_) => {
+                return Err(CoordinatorError::ReactSeedRefused(
+                    "content store fault while staging the react context bundle",
+                ))
+            }
+        },
+        None => None,
+    };
     let entry = JournalEntry::ReactRound {
         turn: 0,
         turn_mote_id: turn0.id,
@@ -2506,6 +2575,7 @@ fn write_react_anchor<J: Journal>(
         // chain (old journal), always `is_agentic_launch = false`.
         step_salt,
         is_agentic_launch,
+        context_items_ref,
         seq: 0,
     };
     let durable = journal.append(entry)?;
@@ -3244,6 +3314,9 @@ fn append_react_branch<J: Journal>(
         // PR-R1: every round of a chain inherits its anchor's launch discriminator,
         // so any round (not just turn 0) reports the chain's true kind.
         is_agentic_launch: anchor.is_agentic_launch,
+        // PR-9d: every round inherits the anchor's grounding-context ref too, so the
+        // resolver finds it on ANY turn-0 record (robust to fold/find order).
+        context_items_ref: anchor.context_items_ref,
         seq: 0,
     };
     match journal.append(entry) {
@@ -4461,5 +4534,143 @@ mod agentic_launch_disjointness_tests {
             config,
             NdClass::ReadOnlyNondet
         )));
+    }
+}
+
+#[cfg(test)]
+mod context_carry_tests {
+    //! PR-9d: the per-turn upstream context-carry resolver — `decode_react_marker`
+    //! (the shared both-lengths chain-key decoder) + `resolve_react_context_items`
+    //! (the edge-free turn-0-anchor lookup that delivers a SUCCESSOR ReAct turn its
+    //! grounding context, returning `None` for a Mote that already carries its bundle
+    //! inline so it is never double-prepended).
+    use super::*;
+    use kx_journal::{InMemoryJournal, Journal};
+    use kx_mote::{
+        ConfigVal, GraphPosition, InferenceParams, InputDataId, LogicRef, PromptTemplateHash,
+        MOTE_DEF_SCHEMA_VERSION,
+    };
+
+    const INSTANCE: [u8; INSTANCE_ID_LEN] = [7u8; INSTANCE_ID_LEN];
+    const SALT: [u8; 32] = [9u8; 32];
+    const CTX_REF: ContentRef = ContentRef([0x44; 32]);
+
+    #[test]
+    fn decode_react_marker_handles_both_lengths_and_rejects_others() {
+        // 16 bytes ⇒ a LEGACY run-level chain (no salt).
+        assert_eq!(decode_react_marker(&[7u8; 16]), Some(([7u8; 16], None)));
+        // 48 bytes ⇒ `instance_id ‖ step_salt` (an agentic / per-invocation chain).
+        let mut m = INSTANCE.to_vec();
+        m.extend_from_slice(&SALT);
+        assert_eq!(decode_react_marker(&m), Some((INSTANCE, Some(SALT))));
+        // Any other length is a malformed marker ⇒ fail-closed.
+        assert_eq!(decode_react_marker(&[0u8; 10]), None);
+        assert_eq!(decode_react_marker(&[]), None);
+    }
+
+    /// A ReAct-turn-shaped Mote (edge-free, ROND) carrying the given `config_subset`.
+    /// The resolver reads only `config_subset`, so the other def fields are arbitrary.
+    fn turn_mote(config: BTreeMap<ConfigKey, ConfigVal>) -> Mote {
+        let def = MoteDef {
+            logic_ref: LogicRef::from_bytes([1u8; 32]),
+            model_id: ModelId("served".into()),
+            prompt_template_hash: PromptTemplateHash::from_bytes([1u8; 32]),
+            tool_contract: BTreeMap::new(),
+            nd_class: NdClass::ReadOnlyNondet,
+            config_subset: config,
+            effect_pattern: EffectPattern::StageThenCommit,
+            critic_for: None,
+            is_topology_shaper: false,
+            inference_params: InferenceParams::default(),
+            critic_check: None,
+            schema_version: MOTE_DEF_SCHEMA_VERSION,
+        };
+        Mote::new(
+            def,
+            InputDataId::from_bytes([1u8; 32]),
+            GraphPosition(vec![1]),
+            std::iter::empty().collect(),
+        )
+    }
+
+    fn marker(instance: [u8; INSTANCE_ID_LEN], salt: [u8; 32]) -> ConfigVal {
+        let mut m = instance.to_vec();
+        m.extend_from_slice(&salt);
+        ConfigVal(m)
+    }
+
+    #[test]
+    fn resolves_anchor_context_for_a_successor_turn_but_not_an_inline_mote() {
+        // Fold a turn-0 anchor carrying a context-bundle ref into a fresh projection.
+        let mut projection = Projection::new();
+        let journal = InMemoryJournal::new();
+        let anchor = JournalEntry::ReactRound {
+            turn: 0,
+            turn_mote_id: MoteId::from_bytes([2u8; 32]),
+            instance_id: INSTANCE,
+            base_prompt_ref: ContentRef::from_bytes([1u8; 32]),
+            warrant_ref: ContentRef::from_bytes([2u8; 32]),
+            model_id: "served".into(),
+            branch: ReactBranch::Pending,
+            max_turns: 8,
+            max_tool_calls: 6,
+            step_salt: Some(SALT),
+            is_agentic_launch: false,
+            context_items_ref: Some(CTX_REF),
+            seq: 0,
+        };
+        let durable = journal.append(anchor).unwrap();
+        projection.fold(&durable).unwrap();
+
+        // A SUCCESSOR turn (chain marker, NO inline bundle) gets the anchor's ref.
+        let mut successor = BTreeMap::new();
+        successor.insert(
+            ConfigKey(REACT_TURN_KEY.to_string()),
+            marker(INSTANCE, SALT),
+        );
+        successor.insert(
+            ConfigKey(PROMPT_KEY.to_string()),
+            ConfigVal(b"turn 1".to_vec()),
+        );
+        assert_eq!(
+            resolve_react_context_items(&turn_mote(successor), &projection),
+            Some(CTX_REF),
+            "a successor turn reasons over the chain's turn-0 grounding context",
+        );
+
+        // A Mote carrying its bundle INLINE (turn 0 / a leaf) ⇒ `None` (the
+        // config_subset path serves it; delivering it again would double-prepend).
+        let mut inline = BTreeMap::new();
+        inline.insert(
+            ConfigKey(REACT_TURN_KEY.to_string()),
+            marker(INSTANCE, SALT),
+        );
+        inline.insert(
+            ConfigKey(CONTEXT_ITEMS_KEY.to_string()),
+            ConfigVal(vec![1, 2, 3]),
+        );
+        assert_eq!(
+            resolve_react_context_items(&turn_mote(inline), &projection),
+            None,
+            "an inline-bundle Mote is never double-prepended",
+        );
+
+        // A non-ReAct Mote (no marker) ⇒ `None`.
+        assert_eq!(
+            resolve_react_context_items(&turn_mote(BTreeMap::new()), &projection),
+            None,
+        );
+
+        // A successor turn of a DIFFERENT chain (no matching anchor) ⇒ `None`
+        // (fail-closed — never another run's context).
+        let mut other = BTreeMap::new();
+        other.insert(
+            ConfigKey(REACT_TURN_KEY.to_string()),
+            marker([8u8; INSTANCE_ID_LEN], SALT),
+        );
+        assert_eq!(
+            resolve_react_context_items(&turn_mote(other), &projection),
+            None
+        );
     }
 }

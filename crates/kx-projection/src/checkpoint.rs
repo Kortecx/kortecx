@@ -99,7 +99,18 @@ use crate::state::{
 /// the canonical PRODUCT digest `7d22d4bd` is invariant. A stale v5 sidecar is
 /// rejected; recovery full-folds from the journal (a byte-absent v10 `ReactRound`
 /// up-converts `is_agentic_launch` to `step_salt.is_some()`) and re-seals.
-pub const CURRENT_FORMAT_VERSION: u16 = 6;
+///
+/// `7` (PR-9d, per-turn upstream context-carry): `ReactRoundRecordDto` gained
+/// `context_items_ref` (the run's encoded context-items bundle ref, recorded on the
+/// turn-0 anchor). SAME deliberate-break contract: the per-record payload grows by an
+/// `Option<ContentRef>` tag, shifting the bincoded bytes + `state_digest()` of any
+/// state THAT HAS react records; a state with NO react rounds (the demo / a non-react
+/// run) encodes a length-0 `react_rounds` Vec either way, so its `encode_state` /
+/// `state_content_digest` are BYTE-UNCHANGED and the canonical PRODUCT digest
+/// `7d22d4bd` is invariant. A stale v6 sidecar is rejected; recovery full-folds from
+/// the v12 journal (a byte-absent v11 `ReactRound` up-converts `context_items_ref` to
+/// `None`) and re-seals.
+pub const CURRENT_FORMAT_VERSION: u16 = 7;
 
 /// Payload codec tag. `0` = canonical-bincode (LE + fixed-int, the house
 /// [`kx_mote::canonical_config`]). Reserved for a future rkyv zero-copy payload
@@ -552,6 +563,10 @@ struct ReactRoundRecordDto {
     /// v5→v6 covers it; absent in v5 sidecars → rejected → full-fold from the journal,
     /// which up-converts a byte-absent v10 `ReactRound` to `step_salt.is_some()`).
     is_agentic_launch: bool,
+    /// PR-9d — the run's encoded context-items bundle ref (`None` ⇒ no attached/
+    /// retrieved context). The format-version bump (v6→v7) covers this added field;
+    /// absent in v6 sidecars (rejected → full-fold from the v12 journal).
+    context_items_ref: Option<ContentRef>,
     seq: u64,
 }
 
@@ -741,6 +756,7 @@ impl From<&ReactRoundRecord> for ReactRoundRecordDto {
             max_tool_calls,
             step_salt,
             is_agentic_launch,
+            context_items_ref,
             seq,
         } = r;
         Self {
@@ -755,6 +771,7 @@ impl From<&ReactRoundRecord> for ReactRoundRecordDto {
             max_tool_calls: *max_tool_calls,
             step_salt: *step_salt,
             is_agentic_launch: *is_agentic_launch,
+            context_items_ref: *context_items_ref,
             seq: *seq,
         }
     }
@@ -991,6 +1008,7 @@ impl From<ReactRoundRecordDto> for ReactRoundRecord {
             max_tool_calls,
             step_salt,
             is_agentic_launch,
+            context_items_ref,
             seq,
         } = dto;
         ReactRoundRecord {
@@ -1005,6 +1023,7 @@ impl From<ReactRoundRecordDto> for ReactRoundRecord {
             max_tool_calls,
             step_salt,
             is_agentic_launch,
+            context_items_ref,
             seq,
         }
     }
@@ -1133,6 +1152,7 @@ mod tests {
             max_tool_calls: 8,
             step_salt: None,
             is_agentic_launch: false,
+            context_items_ref: None,
             seq: 4,
         });
         s.react_rounds.push(ReactRoundRecord {
@@ -1150,26 +1170,27 @@ mod tests {
             max_tool_calls: 8,
             step_salt: Some([0x77; 32]),
             is_agentic_launch: true,
+            context_items_ref: Some(ContentRef::from_bytes([0xf3; 32])),
             seq: 4,
         });
     }
 
-    /// PR-R1: pin the checkpoint format version so the v5→v6 bump (the additive
-    /// `ReactRoundRecordDto.is_agentic_launch` field) is an intentional, reviewable
-    /// change — and so a v5 sidecar written by the previous binary is REFUSED
+    /// PR-9d: pin the checkpoint format version so the v6→v7 bump (the additive
+    /// `ReactRoundRecordDto.context_items_ref` field) is an intentional, reviewable
+    /// change — and so a v6 sidecar written by the previous binary is REFUSED
     /// (decode error → full-fold self-heal), never misread.
     #[test]
-    fn format_version_is_v6_and_v5_blobs_are_refused() {
-        assert_eq!(CURRENT_FORMAT_VERSION, 6);
+    fn format_version_is_v7_and_v6_blobs_are_refused() {
+        assert_eq!(CURRENT_FORMAT_VERSION, 7);
         let mut bytes = FoldCheckpoint::from_state(&sample_state()).to_bytes();
-        // Stamp the envelope version back to v5 (bytes 0..2, LE u16).
-        bytes[0..2].copy_from_slice(&5u16.to_le_bytes());
+        // Stamp the envelope version back to v6 (bytes 0..2, LE u16).
+        bytes[0..2].copy_from_slice(&6u16.to_le_bytes());
         assert!(matches!(
             FoldCheckpoint::from_bytes(&bytes),
-            // The version is part of the digest preimage, so a re-stamped v5
+            // The version is part of the digest preimage, so a re-stamped v6
             // envelope fails as UnsupportedVersion or DigestMismatch — both are
             // fail-safe discards (full fold).
-            Err(CheckpointError::UnsupportedVersion { got: 5 } | CheckpointError::DigestMismatch)
+            Err(CheckpointError::UnsupportedVersion { got: 6 } | CheckpointError::DigestMismatch)
         ));
     }
 

@@ -27,4 +27,13 @@ pub trait ContextSink: Send + Sync {
     /// no-Data-context Mote) is delivered too, so a stale prior slot can never leak
     /// into the wrong Mote.
     fn set_parent_results(&self, mote_id: MoteId, parents: Vec<(MoteId, ContentRef)>);
+
+    /// PR-9d (per-turn upstream context-carry): stash the run's grounding-context
+    /// bundle ref for a SUCCESSOR ReAct turn (`WorkItem.context_items`). `None` ⇒ no
+    /// carried context — the common case (turn 0 / a leaf carries its bundle inline in
+    /// `config_subset`, a non-react Mote has none). Consumed on the next `run` of
+    /// `mote_id` and prepended ahead of the F-7 trajectory, so the served model stays
+    /// grounded across the whole chain. Default no-op: an executor that doesn't
+    /// assemble context ignores it (byte-identical to pre-PR-9d).
+    fn set_context_items(&self, _mote_id: MoteId, _context_items_ref: Option<ContentRef>) {}
 }

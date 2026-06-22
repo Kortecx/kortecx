@@ -458,6 +458,7 @@ mod tests {
             max_tool_calls: 6,
             step_salt: None,
             is_agentic_launch: false,
+            context_items_ref: None,
             seq,
         }
     }

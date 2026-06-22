@@ -221,7 +221,16 @@ use smallvec::SmallVec;
 /// journal contains a tag-4 `ReactRound` — the variant is brand new), exactly like
 /// v7/v6 → current. An OLD binary still refuses a v10 journal loudly. The product
 /// identity digest is invariant (the PURE-8-mote demo never writes a `ReactRound`).
-pub const JOURNAL_SCHEMA_VERSION: u16 = 11;
+///
+/// **v11 → v12 (PR-9d, per-turn upstream context-carry).** Adds a trailing
+/// `context_items_ref: Option<ContentRef>` to each `ReactRound` (kind 9) body —
+/// `present(u8: 0|1) ‖ [if 1: content_ref(32)]`, the same shape as the v8→v9
+/// `step_salt` delta and recorded on the turn-0 anchor. A v11 body has no such
+/// byte and up-converts on decode to `None`. A v11 → v12 migration appends the
+/// safe-default `None` presence byte (`0`) to each kind-9 body; kinds 0..=8 are
+/// byte-identical. An OLD binary still refuses a v12 journal loudly. The product
+/// identity digest is invariant (the PURE-8-mote demo never writes a `ReactRound`).
+pub const JOURNAL_SCHEMA_VERSION: u16 = 12;
 
 /// Fixed entry-header length in bytes (`journal-entry.md` §3).
 pub const HEADER_LEN: usize = 74;
@@ -1125,6 +1134,17 @@ pub enum JournalEntry {
         /// up-converts to `step_salt.is_some()` (the OLD semantics, preserved). Off-DAG
         /// metadata — never an identity input, never a run-identity-digest input.
         is_agentic_launch: bool,
+        /// v12 (PR-9d): `ContentRef` of the run's ENCODED context-items bundle (the
+        /// `encode_context_items` bytes, staged in the content store), recorded on
+        /// the turn-0 anchor so a recovered coordinator re-derives per-turn grounding
+        /// context EDGE-FREE for turns ≥1 — the entry/seed Mote's identity-bearing
+        /// `config_subset[CONTEXT_ITEMS_KEY]` is GONE after recovery (the projection
+        /// retains only its `mote_def_hash`), exactly the reason `base_prompt_ref` /
+        /// `warrant_ref` are anchored here too. `None` ⇒ no attached/retrieved context
+        /// (every chain ≤v11 up-converts to `None`). Off-DAG metadata — never an
+        /// identity input, never a run-identity-digest input (the canonical 8-Mote
+        /// demo writes no `ReactRound`, so the projection identity digest is invariant).
+        context_items_ref: Option<ContentRef>,
         /// Journal-assigned sequence (0 until appended).
         seq: u64,
     },
@@ -1363,6 +1383,10 @@ pub enum DecodeError {
     /// (run-level) nor `1` (agentic launch) (v11, PR-R1).
     #[error("unknown ReactRound is_agentic_launch tag: {0}")]
     UnknownReactAgenticLaunchTag(u8),
+    /// A `ReactRound` entry's trailing `context_items_ref` presence tag byte is not
+    /// `0` (absent) or `1` (present) (v12, PR-9d).
+    #[error("unknown ReactRound context_items_ref tag: {0}")]
+    UnknownReactContextItemsTag(u8),
     /// A `ReactRound` entry's trailing `step_salt` presence tag byte is not `0`
     /// (absent) or `1` (present) (v9, PR-9b-2a).
     #[error("unknown ReactRound step_salt presence tag: {0}")]
@@ -1700,6 +1724,7 @@ pub fn encode_entry(entry: &JournalEntry) -> Result<Vec<u8>, EncodeError> {
             max_tool_calls,
             step_salt,
             is_agentic_launch,
+            context_items_ref,
             ..
         } => {
             // v9 (PR-9b-2a): body = turn(u32 LE) ‖ instance_id(16) ‖
@@ -1747,6 +1772,17 @@ pub fn encode_entry(entry: &JournalEntry) -> Result<Vec<u8>, EncodeError> {
             // A v10 body has no such byte and up-converts on decode to
             // `step_salt.is_some()` (the OLD Some-means-agentic semantics).
             out.push(u8::from(*is_agentic_launch));
+            // v12 (PR-9d): the trailing context_items_ref — `present(0|1) ‖ [if 1:
+            // content_ref(32)]`, the same additive-trailing shape as the v8→v9
+            // step_salt delta. A v11 body has no such byte and up-converts on decode
+            // to `None`. Recorded on the turn-0 anchor (None on every other fact).
+            match context_items_ref {
+                None => out.push(0u8),
+                Some(r) => {
+                    out.push(1u8);
+                    out.extend_from_slice(r.as_bytes());
+                }
+            }
             // Pathological-id guard (mirrors ReplanRound) — refuse rather than
             // over-cap a single oversize entry.
             if out.len() > MAX_ENTRY_LEN {
@@ -2193,6 +2229,23 @@ pub fn decode_entry_with_def_hash(
             } else {
                 step_salt.is_some()
             };
+            // v12 (PR-9d): the trailing context_items_ref — `present(0|1) ‖ [if 1:
+            // content_ref(32)]`. A v11 (or older) body has no such byte (cursor is at
+            // the end after is_agentic_launch) ⇒ up-convert to `None`. The trailing-
+            // bytes check below still fences a malformed tail.
+            let context_items_ref = if cursor < body.len() {
+                match read_u8(body, &mut cursor, kind)? {
+                    0 => None,
+                    1 => Some(ContentRef::from_bytes(read_array32(
+                        body,
+                        &mut cursor,
+                        kind,
+                    )?)),
+                    other => return Err(DecodeError::UnknownReactContextItemsTag(other)),
+                }
+            } else {
+                None
+            };
             if cursor != body.len() {
                 return Err(DecodeError::TrailingBytes(body.len() - cursor));
             }
@@ -2208,6 +2261,7 @@ pub fn decode_entry_with_def_hash(
                 max_tool_calls,
                 step_salt,
                 is_agentic_launch,
+                context_items_ref,
                 seq,
             })
         }
@@ -2699,34 +2753,39 @@ mod tests {
             // — run-level (None/false, Some/false) and agentic (Some/true).
             for step_salt in [None, Some([0x5a_u8; 32])] {
                 for is_agentic_launch in [false, true] {
-                    let rt = JournalEntry::ReactRound {
-                        turn: 2,
-                        turn_mote_id: MoteId::from_bytes([0x8e; 32]),
-                        instance_id: [0x4d; INSTANCE_ID_LEN],
-                        base_prompt_ref: ContentRef::from_bytes([0x12; 32]),
-                        warrant_ref: ContentRef::from_bytes([0x34; 32]),
-                        model_id: "kx-serve:qwen3-4b".to_string(),
-                        branch: branch.clone(),
-                        max_turns: 8,
-                        max_tool_calls: 8,
-                        step_salt,
-                        is_agentic_launch,
-                        seq,
-                    };
-                    assert_eq!(decode_entry(&encode_entry(&rt).unwrap()).unwrap(), rt);
+                    // v12 (PR-9d): every context_items_ref (absent + present) round-trips.
+                    for context_items_ref in [None, Some(ContentRef::from_bytes([0x77; 32]))] {
+                        let rt = JournalEntry::ReactRound {
+                            turn: 2,
+                            turn_mote_id: MoteId::from_bytes([0x8e; 32]),
+                            instance_id: [0x4d; INSTANCE_ID_LEN],
+                            base_prompt_ref: ContentRef::from_bytes([0x12; 32]),
+                            warrant_ref: ContentRef::from_bytes([0x34; 32]),
+                            model_id: "kx-serve:qwen3-4b".to_string(),
+                            branch: branch.clone(),
+                            max_turns: 8,
+                            max_tool_calls: 8,
+                            step_salt,
+                            is_agentic_launch,
+                            context_items_ref,
+                            seq,
+                        };
+                        assert_eq!(decode_entry(&encode_entry(&rt).unwrap()).unwrap(), rt);
+                    }
                 }
             }
         }
     }
 
-    /// v11 (PR-R1): the `is_agentic_launch` byte is the lone v10→v11 delta — a v10
-    /// `ReactRound` body is EXACTLY a v11 body minus its final byte, and a byte-absent
-    /// (v10) body up-converts on decode to `is_agentic_launch == step_salt.is_some()`
-    /// (the OLD Some-means-agentic semantics). Pin that byte relationship so a drift
-    /// in either the encode tail or the migration up-converter fails CI.
+    /// v12 (PR-9d): the `context_items_ref` presence byte is the lone v11→v12 delta,
+    /// stacked on the v10→v11 `is_agentic_launch` byte. For a None/false/None entry the
+    /// body tail is `step_salt(0) ‖ is_agentic_launch(0) ‖ context_items_ref(0)`: a v11
+    /// body is the v12 body minus its FINAL byte (context up-converts to None); a v10
+    /// body is the v12 body minus its final TWO bytes (is_agentic up-converts to
+    /// step_salt.is_some()). Pin both relationships so a drift in the encode tail or the
+    /// migration up-converters fails CI.
     #[test]
-    fn react_round_v10_body_is_v11_minus_trailing_launch_byte() {
-        // None/false: the body ends `... ‖ step_salt(0) ‖ is_agentic_launch(0)`.
+    fn react_round_v11_and_v10_bodies_are_v12_minus_trailing_bytes() {
         let run_level = JournalEntry::ReactRound {
             turn: 3,
             turn_mote_id: MoteId::from_bytes([0x8e; 32]),
@@ -2739,22 +2798,28 @@ mod tests {
             max_tool_calls: 6,
             step_salt: None,
             is_agentic_launch: false,
+            context_items_ref: None,
             seq: 600,
         };
-        let v11 = encode_entry(&run_level).unwrap();
-        // The final body byte is the is_agentic_launch tag (`0`); dropping it yields a
-        // valid v10 `step_salt: None` body whose byte-absent up-convert is `false`.
-        assert_eq!(*v11.last().unwrap(), 0u8);
-        let v10_shape = v11[..v11.len() - 1].to_vec();
+        let v12 = encode_entry(&run_level).unwrap();
+        // Final body byte = context_items_ref present tag (`0`); dropping it yields a
+        // valid v11 body whose byte-absent context up-converts to None.
+        assert_eq!(*v12.last().unwrap(), 0u8);
+        let v11_shape = v12[..v12.len() - 1].to_vec();
+        assert_eq!(decode_entry(&v11_shape).unwrap(), run_level);
+        // Dropping the final TWO bytes (context + is_agentic) yields a v10 body whose
+        // byte-absent is_agentic up-converts to step_salt.is_some() == false.
+        let v10_shape = v12[..v12.len() - 2].to_vec();
         assert_eq!(decode_entry(&v10_shape).unwrap(), run_level);
-        // Re-appending `0` recovers the v11 encoding exactly.
+        // Re-appending the two safe-default `0` bytes recovers the v12 encoding exactly.
         let mut reappended = v10_shape;
-        reappended.push(0u8);
-        assert_eq!(reappended, v11);
-        // A Some/true body is the None/false body + 32 salt bytes (the salt is encoded
-        // between max_tool_calls and the launch byte), and its v10-shape (no launch
-        // byte) up-converts to `is_agentic_launch == true` (step_salt.is_some()).
-        let agentic = JournalEntry::ReactRound {
+        reappended.push(0u8); // is_agentic_launch
+        reappended.push(0u8); // context_items_ref present
+        assert_eq!(reappended, v12);
+        // A present context_items_ref appends `present(1) ‖ ref(32)`; the entry round-
+        // trips, and its v11-shape (those 33 bytes dropped) up-converts to None — an old
+        // binary simply can't see the context (the deliberate one-way forward break).
+        let with_ctx = JournalEntry::ReactRound {
             turn: 3,
             turn_mote_id: MoteId::from_bytes([0x8e; 32]),
             instance_id: [0x4d; INSTANCE_ID_LEN],
@@ -2764,14 +2829,18 @@ mod tests {
             branch: ReactBranch::Answer,
             max_turns: 8,
             max_tool_calls: 6,
-            step_salt: Some([0x5a; 32]),
-            is_agentic_launch: true,
+            step_salt: None,
+            is_agentic_launch: false,
+            context_items_ref: Some(ContentRef::from_bytes([0x77; 32])),
             seq: 600,
         };
-        let v11_some = encode_entry(&agentic).unwrap();
-        assert_eq!(v11_some.len(), v11.len() + 32);
-        let v10_some_shape = &v11_some[..v11_some.len() - 1];
-        assert_eq!(decode_entry(v10_some_shape).unwrap(), agentic);
+        let v12_ctx = encode_entry(&with_ctx).unwrap();
+        assert_eq!(v12_ctx.len(), v12.len() + 32); // present byte same; +32 for the ref
+        assert_eq!(decode_entry(&v12_ctx).unwrap(), with_ctx);
+        assert_eq!(
+            decode_entry(&v12_ctx[..v12_ctx.len() - 33]).unwrap(),
+            run_level
+        );
     }
 
     #[test]
@@ -2791,6 +2860,7 @@ mod tests {
             max_tool_calls: 8,
             step_salt: None,
             is_agentic_launch: false,
+            context_items_ref: None,
             seq: 11,
         };
         assert_eq!(e.kind(), KIND_REACT_ROUND);
@@ -2813,6 +2883,7 @@ mod tests {
             max_tool_calls: 8,
             step_salt: None,
             is_agentic_launch: false,
+            context_items_ref: None,
             seq: 12,
         };
         let bytes = encode_entry(&e).unwrap();
@@ -2825,18 +2896,27 @@ mod tests {
             decode_entry(&corrupt),
             Err(DecodeError::UnknownReactBranch(0xee))
         ));
-        // v11 (PR-R1): the FINAL body byte is the is_agentic_launch tag (0|1 for a
-        // None entry); an unknown tag is fail-closed.
+        // v12 (PR-9d): the FINAL body byte is now the context_items_ref present tag
+        // (0|1 for a None-context entry); an unknown tag is fail-closed.
+        let mut bad_context_tag = bytes.clone();
+        *bad_context_tag.last_mut().unwrap() = 0xee;
+        assert!(matches!(
+            decode_entry(&bad_context_tag),
+            Err(DecodeError::UnknownReactContextItemsTag(0xee))
+        ));
+        // v11 (PR-R1): the is_agentic_launch tag now sits SECOND-to-last (before the
+        // v12 context byte) for a None entry; an unknown tag is fail-closed.
         let mut bad_launch_tag = bytes.clone();
-        *bad_launch_tag.last_mut().unwrap() = 0xee;
+        let launch_pos = bad_launch_tag.len() - 2;
+        bad_launch_tag[launch_pos] = 0xee;
         assert!(matches!(
             decode_entry(&bad_launch_tag),
             Err(DecodeError::UnknownReactAgenticLaunchTag(0xee))
         ));
-        // v9 (PR-9b-2a): the step_salt presence byte now sits SECOND-to-last (before
-        // the is_agentic_launch tag) for a None entry; an unknown tag is fail-closed.
+        // v9 (PR-9b-2a): the step_salt presence byte now sits THIRD-to-last (before
+        // the is_agentic_launch + context bytes) for a None entry; fail-closed.
         let mut bad_salt_tag = bytes.clone();
-        let salt_pos = bad_salt_tag.len() - 2;
+        let salt_pos = bad_salt_tag.len() - 3;
         bad_salt_tag[salt_pos] = 0xee;
         assert!(matches!(
             decode_entry(&bad_salt_tag),

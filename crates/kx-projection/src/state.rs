@@ -212,6 +212,11 @@ pub struct ReactRoundRecord {
     /// explicit flag — not `step_salt.is_some()` — is the run-level/agentic
     /// discriminator. Recovery-stable; off-DAG; never a digest input.
     pub is_agentic_launch: bool,
+    /// PR-9d: `ContentRef` of the run's ENCODED context-items bundle, recorded on
+    /// the turn-0 anchor so a recovered coordinator re-derives per-turn grounding
+    /// context EDGE-FREE for turns ≥1. `None` ⇒ no attached/retrieved context (every
+    /// chain ≤v11 up-converts to `None`). Off-DAG metadata — never an identity input.
+    pub context_items_ref: Option<ContentRef>,
     /// The entry's journal seq (audit/order).
     pub seq: u64,
 }

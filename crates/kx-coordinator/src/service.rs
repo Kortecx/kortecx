@@ -644,6 +644,15 @@ impl Coordinator for CoordinatorService {
                         fs_scope: Some(fs_scope.into()),
                     }
                 }),
+                // PR-9d (per-turn context-carry): the run's grounding-context bundle
+                // ref for a SUCCESSOR ReAct turn (re-derived edge-free at lease). EMPTY
+                // for every other Mote ⇒ byte-identical to pre-PR-9d. An older worker
+                // that ignores it simply serves no carried context (the turn-0 inline
+                // bundle path is unchanged).
+                context_items: item
+                    .context_items
+                    .map(|r| r.as_bytes().to_vec())
+                    .unwrap_or_default(),
             })
             .collect();
         Ok(Response::new(proto::LeaseWorkResponse {

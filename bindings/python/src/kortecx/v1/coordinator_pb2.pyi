@@ -443,16 +443,18 @@ class ToolArgs(_message.Message):
     def __init__(self, args_bytes: _Optional[bytes] = ..., net_scope: _Optional[_Union[NetScope, _Mapping]] = ..., fs_scope: _Optional[_Union[FsScope, _Mapping]] = ...) -> None: ...
 
 class WorkItem(_message.Message):
-    __slots__ = ("mote", "warrant", "parent_results", "tool_args")
+    __slots__ = ("mote", "warrant", "parent_results", "tool_args", "context_items")
     MOTE_FIELD_NUMBER: _ClassVar[int]
     WARRANT_FIELD_NUMBER: _ClassVar[int]
     PARENT_RESULTS_FIELD_NUMBER: _ClassVar[int]
     TOOL_ARGS_FIELD_NUMBER: _ClassVar[int]
+    CONTEXT_ITEMS_FIELD_NUMBER: _ClassVar[int]
     mote: Mote
     warrant: WarrantSpec
     parent_results: _containers.RepeatedCompositeFieldContainer[ParentResult]
     tool_args: ToolArgs
-    def __init__(self, mote: _Optional[_Union[Mote, _Mapping]] = ..., warrant: _Optional[_Union[WarrantSpec, _Mapping]] = ..., parent_results: _Optional[_Iterable[_Union[ParentResult, _Mapping]]] = ..., tool_args: _Optional[_Union[ToolArgs, _Mapping]] = ...) -> None: ...
+    context_items: bytes
+    def __init__(self, mote: _Optional[_Union[Mote, _Mapping]] = ..., warrant: _Optional[_Union[WarrantSpec, _Mapping]] = ..., parent_results: _Optional[_Iterable[_Union[ParentResult, _Mapping]]] = ..., tool_args: _Optional[_Union[ToolArgs, _Mapping]] = ..., context_items: _Optional[bytes] = ...) -> None: ...
 
 class LeaseWorkResponse(_message.Message):
     __slots__ = ("items", "instance_id")

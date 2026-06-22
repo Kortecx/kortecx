@@ -141,16 +141,16 @@ fn migrate_and_verify_preserves_product_identity() {
 
     let report = migrate_and_verify(&src, &dst).unwrap();
     assert_eq!(report.from_version, 5);
-    // The migration target tracks the current schema (v11 as of PR-R1's additive
-    // `ReactRound.is_agentic_launch`; v10 was PR-3's `ReactBranch::Rejected`; v9 was
-    // PR-9b-2a's `ReactRound.step_salt`; v8 was PR-2d-1's `ReactRound`; v7 was
-    // PR-2c-2's `ReplanRound`); the v5→current up-conversion still appends exactly the
-    // lone `idempotency_class` byte (this v5 fixture has no kind-9 ReactRound, so
-    // neither the step_salt nor the is_agentic_launch byte is added, and the v9→v10
-    // and v10→v11 deltas only touch kind-9 bodies no v5 entry can carry). Pinned as a
-    // reviewable change — the PRODUCT identity digest below is the real invariant
-    // (unchanged across the bump).
-    assert_eq!(report.to_version, 11);
+    // The migration target tracks the current schema (v12 as of PR-9d's additive
+    // `ReactRound.context_items_ref`; v11 was PR-R1's `ReactRound.is_agentic_launch`;
+    // v10 was PR-3's `ReactBranch::Rejected`; v9 was PR-9b-2a's `ReactRound.step_salt`;
+    // v8 was PR-2d-1's `ReactRound`; v7 was PR-2c-2's `ReplanRound`); the v5→current
+    // up-conversion still appends exactly the lone `idempotency_class` byte (this v5
+    // fixture has no kind-9 ReactRound, so none of the step_salt / is_agentic_launch /
+    // context_items_ref trailing bytes is added, and the v9→v10..v11→v12 deltas only
+    // touch kind-9 bodies no v5 entry can carry). Pinned as a reviewable change — the
+    // PRODUCT identity digest below is the real invariant (unchanged across the bump).
+    assert_eq!(report.to_version, 12);
     assert_eq!(report.entries_upconverted, 1);
 
     // The up-converted source and the migrated destination fold to the same

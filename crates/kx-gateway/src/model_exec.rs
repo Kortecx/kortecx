@@ -452,6 +452,12 @@ pub(crate) struct ModelRouterExecutor<B: InferenceBackend> {
     /// wrong Mote; consumed (taken) inside `dispatch_model`. The worker runs a lease
     /// batch sequentially on one thread, so the slot is set-then-consumed with no race.
     parent_ctx: Mutex<Option<(MoteId, ParentResults)>>,
+    /// PR-9d (per-turn context-carry): the worker → executor side-channel for a
+    /// SUCCESSOR ReAct turn's grounding-context bundle ref (set by
+    /// [`kx_worker::ContextSink::set_context_items`] BEFORE each `run`, consumed inside
+    /// `dispatch_model`). `None`/non-matching ⇒ no carried context (byte-identical to
+    /// pre-PR-9d). Same set-then-consume single-thread discipline as `parent_ctx`.
+    context_items_ctx: Mutex<Option<(MoteId, Option<ContentRef>)>>,
     /// Batch C: the optional telemetry usage hook — records `(mote, model that
     /// ACTUALLY ran, output_tokens)` at the ONE place `InferenceOutput` exists
     /// (every model arm funnels through `dispatch_model`). Non-blocking +
@@ -484,6 +490,7 @@ impl<B: InferenceBackend> ModelRouterExecutor<B> {
             store,
             recipes,
             parent_ctx: Mutex::new(None),
+            context_items_ctx: Mutex::new(None),
             usage: None,
             token_publisher: None,
         }
@@ -516,6 +523,19 @@ impl<B: InferenceBackend> ModelRouterExecutor<B> {
         let mut slot = self.parent_ctx.lock().ok()?;
         match slot.as_ref() {
             Some((id, _)) if *id == mote_id => slot.take().map(|(_, parents)| parents),
+            _ => None,
+        }
+    }
+
+    /// PR-9d: take this Mote's carried grounding-context ref (and clear the slot).
+    /// Returns the ref iff the slot matches `mote_id` AND is `Some` — a non-matching /
+    /// empty / `None` slot yields `None` (so a turn-0 / leaf Mote, which carries its
+    /// bundle inline, assembles nothing here — byte-identical to pre-PR-9d). A poisoned
+    /// lock degrades to "no carried context" rather than aborting the dispatch.
+    fn take_context_items(&self, mote_id: MoteId) -> Option<ContentRef> {
+        let mut slot = self.context_items_ctx.lock().ok()?;
+        match slot.as_ref() {
+            Some((id, _)) if *id == mote_id => slot.take().and_then(|(_, r)| r),
             _ => None,
         }
     }
@@ -639,6 +659,26 @@ impl<B: InferenceBackend> ModelRouterExecutor<B> {
                 let items = decode_context_items(&encoded.0);
                 let context = crate::assemble_serve::assemble_context_items(&items, &self.store)
                     .map_err(|e| internal(&format!("assemble context items: {e}")))?;
+                format!("{context}{instruction}")
+            }
+            None => instruction,
+        };
+        // PR-9d (per-turn context-carry): a SUCCESSOR ReAct turn carries NO inline
+        // CONTEXT_ITEMS_KEY (the seed-swap drops it), so its grounding context arrives
+        // OUT-OF-BAND via the ContextSink — the run's turn-0 anchor bundle ref, re-
+        // derived edge-free by the coordinator. Prepend it in the SAME slot the inline
+        // bundle occupies (ahead of the F-7 trajectory). Turn 0 / a leaf returns `None`
+        // here (it used the inline path above) ⇒ never double-prepended; absent ⇒
+        // byte-identical to pre-PR-9d. A missing / oversized bundle fails closed.
+        let instruction = match self.take_context_items(mote.id) {
+            Some(items_ref) => {
+                let encoded = self
+                    .store
+                    .get(&items_ref)
+                    .map_err(|e| internal(&format!("fetch carried context bundle: {e}")))?;
+                let items = decode_context_items(&encoded);
+                let context = crate::assemble_serve::assemble_context_items(&items, &self.store)
+                    .map_err(|e| internal(&format!("assemble carried context items: {e}")))?;
                 format!("{context}{instruction}")
             }
             None => instruction,
@@ -1087,6 +1127,12 @@ impl<B: InferenceBackend> kx_worker::ContextSink for ModelRouterExecutor<B> {
             *slot = Some((mote_id, parents));
         }
     }
+
+    fn set_context_items(&self, mote_id: MoteId, context_items_ref: Option<ContentRef>) {
+        if let Ok(mut slot) = self.context_items_ctx.lock() {
+            *slot = Some((mote_id, context_items_ref));
+        }
+    }
 }
 
 /// Extract the model Mote's prompt from `config_subset[PROMPT_KEY]`.
@@ -1455,15 +1501,21 @@ mod tests {
     struct StubBackend {
         reply: Vec<u8>,
         calls: AtomicUsize,
+        /// PR-9d: the last `Text` prompt the backend was dispatched (so a test can
+        /// assert what `dispatch_model` assembled — e.g. the carried context prefix).
+        last_prompt: std::sync::Mutex<Option<String>>,
     }
     impl InferenceBackend for StubBackend {
         fn dispatch(
             &self,
             model_id: &ModelId,
-            _input: &InferenceInput,
+            input: &InferenceInput,
             _params: &kx_mote::InferenceParams,
             _warrant: &WarrantSpec,
         ) -> Result<InferenceOutput, InferenceError> {
+            if let InferenceInput::Text(s) = input {
+                *self.last_prompt.lock().unwrap() = Some(s.clone());
+            }
             self.calls.fetch_add(1, Ordering::SeqCst);
             Ok(InferenceOutput {
                 bytes: self.reply.clone(),
@@ -1539,6 +1591,7 @@ mod tests {
         let backend = Arc::new(StubBackend {
             reply: reply.to_vec(),
             calls: AtomicUsize::new(0),
+            last_prompt: std::sync::Mutex::new(None),
         });
         let exec = ModelRouterExecutor::new(
             Arc::new(NeverInner),
@@ -2090,6 +2143,54 @@ mod tests {
         let bytes = store.get(&out.result_ref).unwrap();
         assert_eq!(bytes.as_ref(), b"The answer is blue.");
         assert_eq!(out.result_ref, ContentRef::of(b"The answer is blue."));
+    }
+
+    /// PR-9d (model-side half): `dispatch_model` PREPENDS the carried grounding context
+    /// (delivered via the `ContextSink::set_context_items` side-channel) to a SUCCESSOR
+    /// ReAct turn's prompt. The coordinator-side delivery is proven in `kx-coordinator`
+    /// `context_carry_tests`; this closes the loop on the executor's consumption.
+    /// WITHOUT the carry the prompt is byte-identical to pre-PR-9d (the control).
+    #[test]
+    fn dispatch_model_prepends_carried_context_for_a_successor_turn() {
+        use kx_worker::ContextSink as _; // bring `set_context_items` into scope.
+
+        let dir = tempfile::tempdir().unwrap();
+        let store = LocalFsContentStore::open(dir.path()).unwrap();
+        let (exec, backend) = executor(&store, b"ack", None);
+        let warrant = shaper_warrant(&model_id(), ExecutorClass::MacOsSandbox);
+
+        // Stage the run's context bundle: a blob + its encoded single-item bundle ref
+        // (exactly what the coordinator's anchor records + delivers via WorkItem).
+        let blob = store
+            .put(b"CLASSIFIED: the mission codename is ZEPHYR-NINE.")
+            .unwrap();
+        let bundle = kx_mote::encode_context_items(&[kx_mote::ContextItemRef {
+            name: "classified".to_string(),
+            content_ref: blob.0,
+        }]);
+        let bundle_ref = store.put(&bundle).unwrap();
+
+        let turn = react_turn_mote();
+
+        // CONTROL: no carried context ⇒ the successor prompt has no grounding (the slot
+        // starts empty; `take_context_items` returns `None`) — byte-identical pre-PR-9d.
+        exec.run(&turn, &warrant, None).expect("control turn runs");
+        let control = backend.last_prompt.lock().unwrap().clone().unwrap();
+        assert!(
+            !control.contains("ZEPHYR-NINE"),
+            "a successor prompt without the carry must NOT contain the run's context"
+        );
+
+        // CARRY: stash the bundle ref for this turn (the worker's ContextSink call),
+        // run, and assert dispatch_model fetched + decoded + assembled + prepended it.
+        exec.set_context_items(turn.id, Some(bundle_ref));
+        exec.run(&turn, &warrant, None).expect("carried turn runs");
+        let carried = backend.last_prompt.lock().unwrap().clone().unwrap();
+        assert!(
+            carried.contains("ZEPHYR-NINE"),
+            "PR-9d: dispatch_model must prepend the carried context to a successor turn's \
+             prompt. Got: {carried}"
+        );
     }
 
     // --- T-AGENT2: the opt-in LLM-judge gate (run_judge) ---------------------
