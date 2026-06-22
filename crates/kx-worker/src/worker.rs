@@ -207,6 +207,14 @@ impl Worker {
                     })
                     .collect();
                 sink.set_parent_results(mote.id, parents);
+                // PR-9d: stash the run's grounding-context ref (empty ⇒ None — the
+                // common case) for a SUCCESSOR ReAct turn; the executor prepends it
+                // ahead of the F-7 trajectory on the next `run`. A 32-byte ref decodes;
+                // anything else (incl. empty) is None ⇒ byte-identical to pre-PR-9d.
+                let context_items_ref = <[u8; 32]>::try_from(item.context_items.as_slice())
+                    .ok()
+                    .map(ContentRef::from_bytes);
+                sink.set_context_items(mote.id, context_items_ref);
             }
 
             // PURE recomputes locally through the hosted executor (verbatim, D40 — a

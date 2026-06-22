@@ -95,6 +95,7 @@ impl Coordinator for NoopCoordinator {
                 warrant: Some(sample_warrant().into()),
                 parent_results: vec![],
                 tool_args: None,
+                context_items: vec![],
             }],
             instance_id: vec![0u8; 16],
         }))

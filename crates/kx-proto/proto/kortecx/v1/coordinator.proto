@@ -396,6 +396,14 @@ message WorkItem {
   WarrantSpec warrant = 2;
   repeated ParentResult parent_results = 3;
   ToolArgs tool_args = 4;
+  // PR-9d (per-turn upstream context-carry): the 32-byte content-store ref of the
+  // run's ENCODED context-items bundle, re-derived on the sole-writer thread at lease
+  // time from the chain's turn-0 ReactRound anchor (edge-free, the tool_args
+  // precedent). EMPTY for every Mote that already carries its bundle inline in
+  // config_subset[CONTEXT_ITEMS_KEY] (turn 0 / a non-react leaf) or has no attached
+  // context ⇒ byte-identical to pre-PR-9d. A successor ReAct turn (no inline bundle)
+  // carries it so the served model stays grounded across the whole chain.
+  bytes context_items = 5;
 }
 
 message LeaseWorkResponse {

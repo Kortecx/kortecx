@@ -452,6 +452,12 @@ pub(crate) struct ModelRouterExecutor<B: InferenceBackend> {
     /// wrong Mote; consumed (taken) inside `dispatch_model`. The worker runs a lease
     /// batch sequentially on one thread, so the slot is set-then-consumed with no race.
     parent_ctx: Mutex<Option<(MoteId, ParentResults)>>,
+    /// PR-9d (per-turn context-carry): the worker → executor side-channel for a
+    /// SUCCESSOR ReAct turn's grounding-context bundle ref (set by
+    /// [`kx_worker::ContextSink::set_context_items`] BEFORE each `run`, consumed inside
+    /// `dispatch_model`). `None`/non-matching ⇒ no carried context (byte-identical to
+    /// pre-PR-9d). Same set-then-consume single-thread discipline as `parent_ctx`.
+    context_items_ctx: Mutex<Option<(MoteId, Option<ContentRef>)>>,
     /// Batch C: the optional telemetry usage hook — records `(mote, model that
     /// ACTUALLY ran, output_tokens)` at the ONE place `InferenceOutput` exists
     /// (every model arm funnels through `dispatch_model`). Non-blocking +
@@ -484,6 +490,7 @@ impl<B: InferenceBackend> ModelRouterExecutor<B> {
             store,
             recipes,
             parent_ctx: Mutex::new(None),
+            context_items_ctx: Mutex::new(None),
             usage: None,
             token_publisher: None,
         }
@@ -516,6 +523,19 @@ impl<B: InferenceBackend> ModelRouterExecutor<B> {
         let mut slot = self.parent_ctx.lock().ok()?;
         match slot.as_ref() {
             Some((id, _)) if *id == mote_id => slot.take().map(|(_, parents)| parents),
+            _ => None,
+        }
+    }
+
+    /// PR-9d: take this Mote's carried grounding-context ref (and clear the slot).
+    /// Returns the ref iff the slot matches `mote_id` AND is `Some` — a non-matching /
+    /// empty / `None` slot yields `None` (so a turn-0 / leaf Mote, which carries its
+    /// bundle inline, assembles nothing here — byte-identical to pre-PR-9d). A poisoned
+    /// lock degrades to "no carried context" rather than aborting the dispatch.
+    fn take_context_items(&self, mote_id: MoteId) -> Option<ContentRef> {
+        let mut slot = self.context_items_ctx.lock().ok()?;
+        match slot.as_ref() {
+            Some((id, _)) if *id == mote_id => slot.take().and_then(|(_, r)| r),
             _ => None,
         }
     }
@@ -639,6 +659,26 @@ impl<B: InferenceBackend> ModelRouterExecutor<B> {
                 let items = decode_context_items(&encoded.0);
                 let context = crate::assemble_serve::assemble_context_items(&items, &self.store)
                     .map_err(|e| internal(&format!("assemble context items: {e}")))?;
+                format!("{context}{instruction}")
+            }
+            None => instruction,
+        };
+        // PR-9d (per-turn context-carry): a SUCCESSOR ReAct turn carries NO inline
+        // CONTEXT_ITEMS_KEY (the seed-swap drops it), so its grounding context arrives
+        // OUT-OF-BAND via the ContextSink — the run's turn-0 anchor bundle ref, re-
+        // derived edge-free by the coordinator. Prepend it in the SAME slot the inline
+        // bundle occupies (ahead of the F-7 trajectory). Turn 0 / a leaf returns `None`
+        // here (it used the inline path above) ⇒ never double-prepended; absent ⇒
+        // byte-identical to pre-PR-9d. A missing / oversized bundle fails closed.
+        let instruction = match self.take_context_items(mote.id) {
+            Some(items_ref) => {
+                let encoded = self
+                    .store
+                    .get(&items_ref)
+                    .map_err(|e| internal(&format!("fetch carried context bundle: {e}")))?;
+                let items = decode_context_items(&encoded);
+                let context = crate::assemble_serve::assemble_context_items(&items, &self.store)
+                    .map_err(|e| internal(&format!("assemble carried context items: {e}")))?;
                 format!("{context}{instruction}")
             }
             None => instruction,
@@ -1085,6 +1125,12 @@ impl<B: InferenceBackend> kx_worker::ContextSink for ModelRouterExecutor<B> {
     fn set_parent_results(&self, mote_id: MoteId, parents: Vec<(MoteId, ContentRef)>) {
         if let Ok(mut slot) = self.parent_ctx.lock() {
             *slot = Some((mote_id, parents));
+        }
+    }
+
+    fn set_context_items(&self, mote_id: MoteId, context_items_ref: Option<ContentRef>) {
+        if let Ok(mut slot) = self.context_items_ctx.lock() {
+            *slot = Some((mote_id, context_items_ref));
         }
     }
 }
