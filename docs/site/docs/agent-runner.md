@@ -207,3 +207,51 @@ kx react list --instance <id>        # turn 1  branch rejected  reason <why> …
 
 The reason is also on `ReactTurn.rejection_reason` (Python / TypeScript SDK) and
 expands inline on the rejected chip in the console's agent-loop strip.
+
+## Self-checking with an LLM judge (opt-in)
+
+Reasoning loops can be wrong. The **LLM-judge** is an *opt-in* verification gate
+(T-AGENT2): the served model answers your prompt, then grades its own answer
+against a rubric and commits a discrete **VALID** / **INVALID** verdict. It is a
+durable, replayed fact — sampled once, committed, and reused on recovery (never
+re-queried), so a run's outcome is stable.
+
+Run the bundled `kx/recipes/judge` recipe (available when `kx serve` runs with a
+model, `--features inference`):
+
+```bash
+kx invoke kx/recipes/judge --args '{"prompt":"What is the capital of France?"}' --wait
+# state            COMMITTED
+# verdict          valid
+```
+
+```python
+import kortecx as kx
+r = kx.invoke("kx/recipes/judge", {"prompt": "What is the capital of France?"}, wait=True)
+print(r.verdict)        # "valid" | "invalid: judge: answer did not satisfy the rubric"
+```
+
+```typescript
+const r = await kx.invoke(
+  "kx/recipes/judge",
+  { prompt: "What is the capital of France?" },
+  { wait: true },
+);
+console.log(r.verdict); // "valid" | "invalid: …"
+```
+
+The graded answer itself is the producer step's committed output (visible in the
+run's DAG and the mote inspector); the judge node carries the verdict.
+
+**How it stays honest and reproducible:**
+
+- **Server-derived authority (SN-8).** The judge runs under a server-built warrant
+  — it dispatches the model but **cannot escalate authority** (no tools, no network
+  unless explicitly granted). The model *proposes* a verdict; the runtime *parses*
+  it to a discrete decision. There is **no similarity score** — only `VALID` /
+  `INVALID`. An unparseable or ambiguous judge response **fails closed to invalid**
+  (it never silently passes unverified output).
+- **Opt-in, digest-scoped.** The default deterministic critics (schema / dedup /
+  PII / stat-bounds) and the canonical demo are unchanged. A workflow that opts the
+  judge **in** commits a `ReadOnlyNondet` verdict and so gets its *own* honest,
+  replay-stable digest; a workflow that doesn't is byte-for-byte unaffected.

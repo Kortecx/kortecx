@@ -223,13 +223,20 @@ impl Worker {
             // next item. Transport/RPC errors on the lease/commit calls stay batch-level.
             let exec = if mote.nd_class() == NdClass::Pure {
                 run::run_pure(&mote, &warrant, &*self.executor, &self.resource_manager)
-            } else if is_react_turn(&mote) {
+            } else if is_react_turn(&mote) || mote.def.critic_check.is_some() {
                 // PR-2d-2: a coordinator-materialized ReAct TURN (the identity-
                 // bearing marker, NO tool_contract) is a prompt-carrying ROND
                 // model Mote — it dispatches through the hosted EXECUTOR (whose
                 // react arm decodes + fences pre-commit), never the capability
                 // broker (it proposes; the observation Mote fires). Direct
                 // dispatch matches the IdempotentByConstruction pattern.
+                //
+                // T-AGENT2: the opt-in LLM-JUDGE critic is the SAME shape — a ROND
+                // model Mote the executor's `run_judge` arm grades + commits as a
+                // verdict (no broker effect). A *native* critic is `Pure` (caught by
+                // the first arm ⇒ `run_pure`), so `critic_check.is_some()` HERE
+                // uniquely identifies the ReadOnlyNondet judge; the executor routes
+                // both react turns and judges through this direct dispatch.
                 run::run_react_turn(&mote, &warrant, &*self.executor)
             } else {
                 // PR-2d-2: the coordinator-validated args + egress for a ReAct

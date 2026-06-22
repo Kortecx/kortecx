@@ -13,8 +13,8 @@ use kx_mote::{
     PromptTemplateHash, ToolName, ToolVersion, MOTE_DEF_SCHEMA_VERSION,
 };
 use kx_refusal::{
-    validate_mote_submission, validate_submission, SubmissionRefusal, ToolResolution,
-    WorkflowSubmission,
+    native_critic_shape, native_judge_shape, validate_mote_submission, validate_submission,
+    SubmissionRefusal, ToolResolution, WorkflowSubmission,
 };
 use kx_tool_registry::IdempotencyClass;
 use smallvec::SmallVec;
@@ -342,4 +342,115 @@ fn refusal_code_matches_display_prefix_for_every_variant() {
             refusal.code(),
         );
     }
+}
+
+// ===================== T-AGENT2 — the LLM-judge SHAPE gate =====================
+
+/// Build a critic Mote carrying the given `critic_check` spec + nd_class + producer.
+fn build_critic(
+    nd_class: NdClass,
+    critic_for: Option<MoteId>,
+    is_topology_shaper: bool,
+    spec: Option<kx_critic_types::CheckSpec>,
+) -> Mote {
+    let def = MoteDef {
+        critic_check: spec,
+        logic_ref: LogicRef::from_bytes([1; 32]),
+        model_id: ModelId("local".into()),
+        prompt_template_hash: PromptTemplateHash::from_bytes([2; 32]),
+        tool_contract: BTreeMap::new(),
+        nd_class,
+        config_subset: BTreeMap::new(),
+        effect_pattern: EffectPattern::IdempotentByConstruction,
+        critic_for,
+        is_topology_shaper,
+        inference_params: kx_mote::InferenceParams::default(),
+        schema_version: MOTE_DEF_SCHEMA_VERSION,
+    };
+    Mote::new(
+        def,
+        InputDataId::from_bytes([0; 32]),
+        GraphPosition(vec![0xAA]),
+        SmallVec::new(),
+    )
+}
+
+fn llm_judge_spec() -> kx_critic_types::CheckSpec {
+    kx_critic_types::CheckSpec::LlmJudge(kx_critic_types::LlmJudgeSpec {
+        max_output_tokens: 64,
+    })
+}
+
+#[test]
+fn judge_shape_accepts_read_only_nondet_judge() {
+    let producer = MoteId::from_bytes([5; 32]);
+    let judge = build_critic(
+        NdClass::ReadOnlyNondet,
+        Some(producer),
+        false,
+        Some(llm_judge_spec()),
+    );
+    // The judge gate accepts a well-formed ReadOnlyNondet judge.
+    assert!(native_judge_shape(&judge).is_ok());
+    // The Pure-only native gate SKIPS a judge (so it can never mis-refuse it AND
+    // stays a byte-mirror of the frozen executor's native-only R-15).
+    assert!(native_critic_shape(&judge).is_ok());
+    // The submission dispatch routes the judge to the judge gate ⇒ accepted.
+    assert!(
+        validate_mote_submission(&judge, false, &ToolResolution::Unresolved).is_ok(),
+        "a well-formed ReadOnlyNondet LLM-judge must be admitted"
+    );
+}
+
+#[test]
+fn judge_shape_refuses_pure_judge() {
+    // A judge that is Pure (the native-critic class) is ill-formed — a judge
+    // samples the model, so it MUST be ReadOnlyNondet. Fail-closed under R-15.
+    let producer = MoteId::from_bytes([5; 32]);
+    let bad = build_critic(NdClass::Pure, Some(producer), false, Some(llm_judge_spec()));
+    assert!(matches!(
+        native_judge_shape(&bad),
+        Err(SubmissionRefusal::R15NativeCheckShape { .. })
+    ));
+    assert!(matches!(
+        validate_mote_submission(&bad, false, &ToolResolution::Unresolved),
+        Err(SubmissionRefusal::R15NativeCheckShape { .. })
+    ));
+}
+
+#[test]
+fn judge_shape_refuses_judge_without_producer_or_as_shaper() {
+    // No producer ⇒ R-15.
+    let orphan = build_critic(NdClass::ReadOnlyNondet, None, false, Some(llm_judge_spec()));
+    assert!(native_judge_shape(&orphan).is_err());
+    // A topology shaper that is also a judge ⇒ refused by the judge gate.
+    let producer = MoteId::from_bytes([5; 32]);
+    let shaper_judge = build_critic(
+        NdClass::ReadOnlyNondet,
+        Some(producer),
+        true,
+        Some(llm_judge_spec()),
+    );
+    assert!(native_judge_shape(&shaper_judge).is_err());
+}
+
+#[test]
+fn native_gate_still_refuses_read_only_nondet_native_critic() {
+    // A NATIVE check (not a judge) that is ReadOnlyNondet stays refused — the
+    // judge relaxation must NOT leak into the deterministic-check class.
+    let producer = MoteId::from_bytes([5; 32]);
+    let native_spec = kx_critic_types::CheckSpec::Schema(kx_critic_types::SchemaSpec {
+        expected: kx_critic_types::SchemaTag::Json,
+    });
+    let bad = build_critic(
+        NdClass::ReadOnlyNondet,
+        Some(producer),
+        false,
+        Some(native_spec),
+    );
+    assert!(matches!(
+        native_critic_shape(&bad),
+        Err(SubmissionRefusal::R15NativeCheckShape { .. })
+    ));
+    assert!(validate_mote_submission(&bad, false, &ToolResolution::Unresolved).is_err());
 }

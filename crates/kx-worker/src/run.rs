@@ -48,6 +48,11 @@ where
 /// decode is serve-once via the coordinator's first-wins commit dedup, R49) and
 /// propose the staged `result_ref`. Warrant ceilings are enforced INSIDE the
 /// model dispatch (`inference_params_from_mote` refuses a widening, D35).
+///
+/// **Also serves the T-AGENT2 LLM-JUDGE critic** (any ReadOnlyNondet model Mote
+/// dispatched directly through the executor, never the broker): the executor's
+/// `run_judge` arm grades the producer + commits a `CriticVerdict`. The function
+/// is intentionally generic — it is `executor.run` plus the result-ref extraction.
 pub(crate) fn run_react_turn<E>(
     mote: &Mote,
     warrant: &WarrantSpec,

@@ -56,6 +56,8 @@ fn all_reason_samples() -> Vec<CriticReason> {
             check: crate::CheckKind::Dedup,
             at_offset: 11,
         },
+        CriticReason::JudgeRejected { reason_code: 0 },
+        CriticReason::JudgeRejected { reason_code: 1 },
     ]
 }
 
@@ -63,6 +65,49 @@ fn all_reason_samples() -> Vec<CriticReason> {
 fn verdict_encode_carries_version_prefix() {
     let bytes = CriticVerdict::Valid.encode();
     assert_eq!(&bytes[0..2], &CRITIC_SCHEMA_VERSION.to_le_bytes());
+}
+
+#[test]
+fn trailing_judge_variants_are_byte_neutral() {
+    // T-AGENT2 digest-neutrality pin: adding the trailing `LlmJudge` /
+    // `JudgeRejected` / `CheckKind::LlmJudge` variants must NOT change the
+    // canonical bytes of any EXISTING value (else every committed native verdict
+    // / critic Mote would re-address and the projection digest would move).
+    // `Valid` = version 1 LE (`[1,0]`) ‖ bincode-fixint enum index 0 (`[0,0,0,0]`).
+    assert_eq!(CriticVerdict::Valid.encode(), vec![1, 0, 0, 0, 0, 0]);
+    // A native critic spec folds byte-identically (Schema is discriminant 0).
+    let schema = CheckSpec::Schema(SchemaSpec {
+        expected: SchemaTag::Json,
+    });
+    let mut h = blake3::Hasher::new();
+    schema.hash_into(&mut h);
+    // Discriminant tag `0` then the `Json` tag `2` — fixed regardless of how many
+    // trailing variants the enum gains.
+    let mut expected = blake3::Hasher::new();
+    expected.update(&[0, 2]);
+    assert_eq!(h.finalize(), expected.finalize());
+}
+
+#[test]
+fn llmjudge_spec_round_trips_and_discriminates() {
+    use crate::LlmJudgeSpec;
+    let spec = CheckSpec::LlmJudge(LlmJudgeSpec {
+        max_output_tokens: 64,
+    });
+    // Folds deterministically (reproducible-by-construction identity).
+    assert_eq!(digest(&spec), digest(&spec));
+    // Distinct output bound ⇒ distinct fold (the rubric, delivered via
+    // config_subset, discriminates identity at the MoteDef level).
+    let other = CheckSpec::LlmJudge(LlmJudgeSpec {
+        max_output_tokens: 128,
+    });
+    assert_ne!(digest(&spec), digest(&other));
+    // Distinct from every native kind.
+    let native = CheckSpec::Schema(SchemaSpec {
+        expected: SchemaTag::Blob,
+    });
+    assert_ne!(digest(&spec), digest(&native));
+    assert_eq!(spec.kind(), crate::CheckKind::LlmJudge);
 }
 
 #[test]

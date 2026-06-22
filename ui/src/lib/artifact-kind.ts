@@ -21,6 +21,7 @@ const VISUALS: Record<DecodedKind, ArtifactKindVisual> = {
   text: { label: "Text", glyph: "¶" },
   markdown: { label: "Markdown", glyph: "M↓" },
   binary: { label: "Binary", glyph: "⬚" },
+  verdict: { label: "Verdict", glyph: "✓" },
   empty: { label: "Empty", glyph: "∅" },
   image: { label: "Image", glyph: "🖼" },
   video: { label: "Video", glyph: "▶" },

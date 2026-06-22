@@ -13,10 +13,12 @@
  * fuzzy content heuristic, so a plain-text artifact never silently re-renders.
  */
 
+import { decodeCriticVerdict } from "@kortecx/sdk/web";
+
 /** A media MIME sniffed from magic bytes (or supplied as an advisory hint). */
 type MediaKind = "image" | "video" | "audio";
 
-export type DecodedKind = "empty" | "json" | "text" | "markdown" | "binary" | MediaKind;
+export type DecodedKind = "empty" | "json" | "text" | "markdown" | "binary" | "verdict" | MediaKind;
 
 export interface DecodedContent {
   readonly kind: DecodedKind;
@@ -131,6 +133,16 @@ function isMarkdownHint(hints: DecodeHints): boolean {
 export function decodeContent(bytes: Uint8Array, hints: DecodeHints = {}): DecodedContent {
   if (bytes.length === 0) {
     return { kind: "empty", text: "", byteLength: 0, truncated: false };
+  }
+
+  // T-AGENT2: a committed LLM-judge / critic verdict has a specific binary header
+  // (2-byte schema version ‖ fixed-int variant) — recognize it BEFORE the text /
+  // media classification, since its low control bytes decode as valid UTF-8. The
+  // decoder is exact + conservative (version + variant must match), so a real text
+  // / JSON payload is never mis-read as a verdict. Display-only (SN-8).
+  const verdict = decodeCriticVerdict(bytes);
+  if (verdict !== null) {
+    return { kind: "verdict", text: verdict, byteLength: bytes.length, truncated: false };
   }
 
   // Media first: a magic-byte sniff, then an advisory image/video/audio hint. The

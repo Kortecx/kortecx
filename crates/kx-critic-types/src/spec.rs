@@ -13,8 +13,16 @@ use smallvec::SmallVec;
 
 use crate::verdict::{CheckKind, PiiClass, StatKind};
 
-/// One deterministic check. The runtime evaluates exactly one of these against a
-/// producer's committed output bytes (see `kx_critic::evaluate`).
+/// One check the runtime evaluates against a producer's committed output bytes.
+///
+/// The first four kinds are **deterministic** in-process checks (see
+/// `kx_critic::evaluate`) committed `Pure`. [`CheckSpec::LlmJudge`] is the
+/// opt-in **model-graded** kind (T-AGENT2): a `ReadOnlyNondet` gate dispatched
+/// by the live serve executor (NOT in-process — `kx_critic::evaluate` fails it
+/// closed to `Invalid`). It is a **trailing variant**: the four deterministic
+/// variants keep their canonical discriminants, so a `critic_check: None` (the
+/// canonical demo) and every existing native critic fold byte-identically —
+/// the projection digest is unaffected (no `CRITIC_SCHEMA_VERSION` bump).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CheckSpec {
     /// Validate that the output conforms to a declared [`SchemaTag`].
@@ -25,6 +33,11 @@ pub enum CheckSpec {
     StatBounds(StatBoundsSpec),
     /// Reject when a forbidden PII pattern class matches.
     PiiLeak(PiiSpec),
+    /// Opt-in **LLM-judge** gate (T-AGENT2): grade the producer output against a
+    /// content-addressed rubric using the served model. A `ReadOnlyNondet` gate
+    /// — sampled once, committed, replayed (never re-queried). SN-8: the judge
+    /// returns a discrete Valid/Invalid decision, **never a similarity score**.
+    LlmJudge(LlmJudgeSpec),
 }
 
 /// The element type of a tensor payload. Self-contained mirror of
@@ -219,6 +232,27 @@ pub struct PiiSpec {
     pub forbidden: BTreeSet<PiiClass>,
 }
 
+/// Spec for the opt-in LLM-judge gate (T-AGENT2).
+///
+/// The judge dispatches the **served model** (not a spec-named model — for the
+/// OSS single-served-model RC the served model IS the judge; a future PR can add
+/// a per-spec model selector) over a rubric + the producer's committed bytes,
+/// and parses the completion into a discrete `Valid`/`Invalid` verdict.
+///
+/// The rubric (the grading instruction) is delivered via the judge Mote's
+/// `config_subset[JUDGE_RUBRIC_KEY]` (identity-bearing, like a model step's
+/// prompt) — NOT carried here — so two judges with different rubrics are distinct
+/// Motes by construction without a content-store read on the hot path. This spec
+/// carries only the integer output-token bound (the verdict is a short discrete
+/// decision). Integer-only — **no floats** on the identity path.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LlmJudgeSpec {
+    /// Authored fail-closed cap on the judge model's output tokens. Folds into the
+    /// critic Mote's `MoteId`; the recipe also mirrors it into the step warrant's
+    /// `model_route.max_output_tokens`, which `inference_params_from_mote` enforces.
+    pub max_output_tokens: u32,
+}
+
 impl CheckSpec {
     /// Which check kind this is.
     #[must_use]
@@ -228,7 +262,19 @@ impl CheckSpec {
             CheckSpec::Dedup(_) => CheckKind::Dedup,
             CheckSpec::StatBounds(_) => CheckKind::StatBounds,
             CheckSpec::PiiLeak(_) => CheckKind::PiiLeak,
+            CheckSpec::LlmJudge(_) => CheckKind::LlmJudge,
         }
+    }
+
+    /// `true` iff this is the opt-in model-graded [`CheckSpec::LlmJudge`] gate
+    /// (T-AGENT2) — a `ReadOnlyNondet` critic dispatched by the live serve
+    /// executor — as opposed to one of the four deterministic, `Pure`,
+    /// in-process checks. An inherent helper so downstream crates that hold a
+    /// `CheckSpec` (the refusal gate, the worker dispatch) can branch the judge
+    /// vs native path WITHOUT importing the type or matching its variants.
+    #[must_use]
+    pub const fn is_llm_judge(&self) -> bool {
+        matches!(self, CheckSpec::LlmJudge(_))
     }
 
     /// Fold this spec into a hasher canonically. Stable per-variant u8 tag,
@@ -266,6 +312,10 @@ impl CheckSpec {
                 for class in &s.forbidden {
                     h.update(&[pii_tag(*class)]);
                 }
+            }
+            CheckSpec::LlmJudge(s) => {
+                h.update(&[4]);
+                h.update(&s.max_output_tokens.to_le_bytes());
             }
         }
     }

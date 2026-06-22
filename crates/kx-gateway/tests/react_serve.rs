@@ -132,6 +132,7 @@ async fn invoke_react_recipe_drives_a_live_chain_to_answer() {
             .list_react_turns(proto::ListReactTurnsRequest {
                 limit: None,
                 instance_id: Some(resp.instance_id.clone()),
+                step_salt: None,
             })
             .await
             .unwrap()

@@ -203,6 +203,45 @@ pub fn deterministic_critic(
     )
 }
 
+/// An opt-in **LLM-JUDGE** critic validating `producer` (T-AGENT2): the
+/// model-graded sibling of [`deterministic_critic`]. Same `DeterministicCritic`
+/// role carrying a [`CheckSpec::LlmJudge`] check, but **READ-ONLY-NONDET** (it
+/// samples the served model) — so it compiles to a judge Mote the gateway's
+/// `run_judge` arm grades + commits as a `CriticVerdict` (`ReadOnlyNondet` ⇒
+/// sampled once, committed, replayed). The grading RUBRIC is delivered via the
+/// step's `config_subset[kx_mote::JUDGE_RUBRIC_KEY]` (set by the caller), exactly
+/// like a model step's prompt. The compiled `MoteDef` satisfies R-15's judge
+/// shape by construction (`ReadOnlyNondet` + `critic_for=Some` + `!is_topology_shaper`).
+/// Declare a dependency edge from `producer` to this step so it precedes the judge.
+///
+/// # Panics
+///
+/// Debug-asserts `check` is a [`CheckSpec::LlmJudge`] — a native check here would
+/// compile to a `ReadOnlyNondet` *native* critic, which the executor refuses (R-15).
+#[must_use]
+pub fn judge(
+    producer: StepRef,
+    check: CheckSpec,
+    logic_ref: LogicRef,
+    model_id: ModelId,
+    warrant: WarrantSpec,
+    capability: ToolName,
+) -> StepDef {
+    debug_assert!(
+        check.is_llm_judge(),
+        "judge() requires a CheckSpec::LlmJudge (a native check must use deterministic_critic)"
+    );
+    step(
+        logic_ref,
+        model_id,
+        NdClass::ReadOnlyNondet,
+        EffectPattern::IdempotentByConstruction,
+        StepRole::DeterministicCritic { producer, check },
+        warrant,
+        capability,
+    )
+}
+
 /// A topology shaper (READ-ONLY-NONDET; R-14 forbids WORLD-MUTATING shapers).
 /// At runtime it commits a `TopologyDecision` from which the projection
 /// materializes children deterministically — its dynamic fan-out is not static

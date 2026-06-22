@@ -62,7 +62,7 @@ pub use evaluate::evaluate;
 
 // Re-export the full vocabulary so downstream crates depend on `kx-critic` alone.
 pub use kx_critic_types::{
-    canonical_config, CheckKind, CheckSpec, CriticReason, CriticVerdict, DedupSpec, PiiClass,
-    PiiSpec, RecordFraming, SchemaFault, SchemaSpec, SchemaTag, StatBoundsSpec, StatKind,
+    canonical_config, CheckKind, CheckSpec, CriticReason, CriticVerdict, DedupSpec, LlmJudgeSpec,
+    PiiClass, PiiSpec, RecordFraming, SchemaFault, SchemaSpec, SchemaTag, StatBoundsSpec, StatKind,
     TensorDTypeTag, VerdictDecodeError, CRITIC_SCHEMA_VERSION,
 };

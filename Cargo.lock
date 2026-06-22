@@ -1352,6 +1352,7 @@ dependencies = [
 name = "kx-cli"
 version = "0.1.1"
 dependencies = [
+ "kx-critic-types",
  "kx-gateway",
  "kx-proto",
  "kx-runtime",
@@ -1946,6 +1947,7 @@ name = "kx-refusal"
 version = "0.1.1"
 dependencies = [
  "kx-content",
+ "kx-critic-types",
  "kx-mote",
  "kx-tool-registry",
  "kx-warrant",

@@ -10,12 +10,29 @@ const withMagic = (magic: number[], len = 32) => {
   return b;
 };
 
+// T-AGENT2: canonical `CriticVerdict::encode` bytes (2-byte LE schema version ‖
+// fixed-int bincode) — must match the Rust/SDK byte layout.
+const VERDICT_VALID = new Uint8Array([1, 0, 0, 0, 0, 0]);
+const VERDICT_INVALID_JUDGE = new Uint8Array([1, 0, 1, 0, 0, 0, 5, 0, 0, 0, 0, 0]);
+
 describe("decodeContent", () => {
   it("empty bytes → empty", () => {
     const d = decodeContent(new Uint8Array());
     expect(d.kind).toBe("empty");
     expect(d.byteLength).toBe(0);
     expect(d.text).toBe("");
+  });
+
+  it("a committed VALID judge verdict → verdict kind", () => {
+    const d = decodeContent(VERDICT_VALID);
+    expect(d.kind).toBe("verdict");
+    expect(d.text).toBe("valid");
+  });
+
+  it("a committed INVALID judge verdict → verdict kind with the reason", () => {
+    const d = decodeContent(VERDICT_INVALID_JUDGE);
+    expect(d.kind).toBe("verdict");
+    expect(d.text).toBe("invalid: judge: answer did not satisfy the rubric");
   });
 
   it("plain UTF-8 text → text", () => {

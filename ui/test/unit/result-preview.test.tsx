@@ -48,6 +48,25 @@ describe("ResultPreview", () => {
     expect(el).toHaveTextContent("(empty)");
   });
 
+  it("a committed judge verdict renders a VALID badge (not a hex dump)", () => {
+    // canonical CriticVerdict::Valid bytes (version 1 ‖ enum variant 0)
+    const valid = new Uint8Array([1, 0, 0, 0, 0, 0]);
+    render(<ResultPreview resultRef={REF} content={decodeContent(valid)} />);
+    const el = screen.getByTestId("result-preview");
+    expect(el).toHaveAttribute("data-state", "verdict");
+    expect(el).toHaveAttribute("data-verdict", "valid");
+    expect(el).toHaveTextContent("valid");
+    expect(screen.getByTestId("digest-chip")).toBeInTheDocument();
+  });
+
+  it("a committed INVALID verdict renders the reason badge", () => {
+    const invalid = new Uint8Array([1, 0, 1, 0, 0, 0, 5, 0, 0, 0, 0, 0]);
+    render(<ResultPreview resultRef={REF} content={decodeContent(invalid)} />);
+    const el = screen.getByTestId("result-preview");
+    expect(el).toHaveAttribute("data-verdict", "invalid");
+    expect(el).toHaveTextContent("invalid: judge: answer did not satisfy the rubric");
+  });
+
   it("text result shows the resolved TEXT as the headline (not the hash)", () => {
     render(<ResultPreview resultRef={REF} content={decodeContent(enc("the model said hello"))} />);
     const el = screen.getByTestId("result-preview");

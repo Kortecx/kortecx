@@ -465,6 +465,19 @@ button:disabled {
   flex: 1 1 auto;
 }
 
+/* T-AGENT2: the LLM-judge / critic verdict badge (token-driven, both themes; the
+ * tone follows the durable VALID/INVALID fact — display-only, never authority). */
+.result-verdict {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.result-verdict[data-verdict="valid"] {
+  color: var(--success);
+}
+.result-verdict[data-verdict="invalid"] {
+  color: var(--error);
+}
+
 /* ---- view toggle (DAG / table) ---- */
 .view-toggle {
   display: inline-flex;

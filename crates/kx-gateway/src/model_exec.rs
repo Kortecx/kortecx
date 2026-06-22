@@ -194,6 +194,86 @@ fn chatml(prompt: &str) -> String {
     )
 }
 
+/// The fixed system instruction for the opt-in LLM-JUDGE gate (T-AGENT2). It
+/// constrains the judge to a single discrete decision token — SN-8: the runtime
+/// parses a Valid/Invalid VERDICT, never a similarity score; the model proposes,
+/// the runtime decides promotion.
+const JUDGE_SYSTEM: &str = "You are a strict output evaluator. Decide whether the OUTPUT \
+satisfies the RUBRIC. Reply with exactly one word: VALID if it fully satisfies the rubric, \
+otherwise INVALID. Do not explain.";
+
+/// ChatML fallback for the judge turn (used only when the backend cannot render
+/// the served model's own chat template — the deterministic test stub). Mirrors
+/// [`chatml`] but with the judge system instruction; kept separate so the
+/// byte-sensitive model path's `chatml` is untouched.
+#[must_use]
+fn judge_chatml(prompt: &str) -> String {
+    format!(
+        "<|im_start|>system\n{JUDGE_SYSTEM}<|im_end|>\n<|im_start|>user\n{prompt}<|im_end|>\n<|im_start|>assistant\n"
+    )
+}
+
+/// Build the judge USER turn: the original QUESTION (so the judge can grade
+/// whether the answer addresses it — without it a rubric like "addresses the
+/// prompt" is ungradeable), the RUBRIC, then the producer's ANSWER to grade. A
+/// pure, deterministic framing — the model's only input besides `JUDGE_SYSTEM`.
+/// An empty `question` (a workflow-authored judge that didn't bind one) omits the
+/// QUESTION section rather than emitting a blank one.
+#[must_use]
+fn render_judge_user(question: &str, rubric: &str, output: &str) -> String {
+    let q = question.trim();
+    let head = if q.is_empty() {
+        String::new()
+    } else {
+        format!("QUESTION:\n{q}\n\n")
+    };
+    format!("{head}RUBRIC:\n{rubric}\n\nANSWER:\n{output}\n\nVerdict (VALID or INVALID):")
+}
+
+/// Reason code: the judge model graded the output INVALID against the rubric.
+const JUDGE_INVALID_CODE: u16 = 0;
+/// Reason code: the judge completion was unparseable/ambiguous → fail closed to
+/// `Invalid` (withhold). Mirrors `kx_critic::evaluate`'s in-process fail-closed.
+const JUDGE_UNPARSEABLE_CODE: u16 = 1;
+
+/// Parse a judge model completion into a discrete [`kx_critic::CriticVerdict`].
+///
+/// **Total + fail-closed** (SN-8 / GR15). The decision is the **LAST standalone
+/// `VALID` / `INVALID` token** in the completion: a reasoning model (Gemma-4's
+/// `<|think|>`, Qwen's `<think>`, …) concludes with its verdict, so an earlier
+/// reasoning mention ("is this *invalid*? no") does NOT override the final
+/// answer. Matching on word boundaries (not a substring) also kills the trap
+/// where `INVALID` contains `VALID`. No decision token at all ⇒ `Invalid`
+/// (withhold) — NEVER a silent `Valid` on unparseable / reasoning-only output.
+#[must_use]
+fn parse_judge_verdict(bytes: &[u8]) -> kx_critic::CriticVerdict {
+    use kx_critic::{CriticReason, CriticVerdict};
+    let invalid = |code| CriticVerdict::Invalid {
+        reason: CriticReason::JudgeRejected { reason_code: code },
+    };
+    let Ok(text) = std::str::from_utf8(bytes) else {
+        return invalid(JUDGE_UNPARSEABLE_CODE);
+    };
+    // The last alphabetic token equal to VALID/INVALID is the verdict. Tokenizing
+    // on non-alphabetic boundaries makes `INVALID` its own token (never `VALID`).
+    let mut decision: Option<bool> = None;
+    for tok in text
+        .to_ascii_uppercase()
+        .split(|c: char| !c.is_ascii_alphabetic())
+    {
+        match tok {
+            "INVALID" => decision = Some(false),
+            "VALID" => decision = Some(true),
+            _ => {}
+        }
+    }
+    match decision {
+        Some(true) => CriticVerdict::Valid,
+        Some(false) => invalid(JUDGE_INVALID_CODE),
+        None => invalid(JUDGE_UNPARSEABLE_CODE),
+    }
+}
+
 /// Resolve the serve model GGUF: the `KX_SERVE_MODEL_GGUF` env path, iff it
 /// exists. `None` ⇒ no model serving (the model recipe is not provisioned), so
 /// `kx serve --features inference` still runs the durable spine + demo recipes.
@@ -813,6 +893,127 @@ impl<B: InferenceBackend> ModelRouterExecutor<B> {
             finished_at_epoch_ms: 0,
         })
     }
+
+    /// Run an opt-in **LLM-JUDGE** critic Mote (T-AGENT2) — the model-graded
+    /// sibling of [`Self::run_critic`]. Where the native critic evaluates a
+    /// deterministic check in-process (`Pure`), the judge dispatches the SERVED
+    /// model under the step warrant to grade the producer's committed output
+    /// against a content-addressed rubric, and commits a discrete
+    /// [`kx_critic::CriticVerdict`]. The Mote is `ReadOnlyNondet`
+    /// (StageThenCommit): sampled once, committed, and served-not-re-queried on
+    /// replay (a committed verdict is never re-dispatched — the digest of an
+    /// opt-in workflow is replay-stable).
+    ///
+    /// **SN-8 / GR15 — fail-closed on EVERY path** (never promote unverified
+    /// output): an ill-formed judge shape (R-15), an unserved model, a missing
+    /// producer, an oversized input, or an unparseable judge completion all
+    /// withhold (`Invalid`), never `Valid`. The judge cannot escalate authority —
+    /// `backend.dispatch` enforces the warrant's `model_route`/ceilings (D35); the
+    /// model PROPOSES a verdict, the runtime PARSES it to a discrete decision.
+    fn run_judge(
+        &self,
+        mote: &Mote,
+        warrant: &WarrantSpec,
+    ) -> Result<MoteExecutionResult, MoteExecutorError> {
+        // (1) Judge SHAPE gate (R-15: ReadOnlyNondet + critic_for + !shaper). Terminal.
+        kx_refusal::native_judge_shape(mote)
+            .map_err(|e| internal(&format!("LLM-judge shape (R-15): {e}")))?;
+        if !matches!(
+            mote.def.critic_check.as_ref(),
+            Some(kx_critic::CheckSpec::LlmJudge(_))
+        ) {
+            return Err(internal(
+                "run_judge reached without an LlmJudge critic_check",
+            ));
+        }
+        let producer_id = mote
+            .def
+            .critic_for
+            .ok_or_else(|| internal("judge critic_for vanished after shape gate"))?;
+        // The rubric (grading instruction) rides config_subset (identity-bearing,
+        // like a model step's prompt); absent ⇒ fail closed (a judge with no
+        // rubric cannot grade — never a silent VALID).
+        let rubric = rubric_from_config(mote)
+            .ok_or_else(|| internal("LLM-judge Mote carries no rubric (config_subset)"))?;
+        // The original QUESTION (the recipe binds the same `prompt` free-param to the
+        // judge step) — so the judge can grade whether the answer ADDRESSES it. Empty
+        // for a workflow-authored judge that bound none (graded on the rubric alone).
+        let question = prompt_from_config(mote).unwrap_or_default();
+
+        // (2) The judge dispatches the SERVED model — fail closed on an unserved
+        // model (never fall through to a placeholder verdict).
+        if !self.backend.supports(&mote.def.model_id) {
+            return Err(internal(&format!(
+                "LLM-judge Mote {:?} routes to an unserved model {:?} (fail-closed)",
+                mote.id, mote.def.model_id
+            )));
+        }
+
+        // (3) The producer's committed bytes via the F-7 seam (EXACTLY `critic_for`),
+        // bounded fail-closed (never truncate — that would corrupt the gate).
+        let parents = self.take_parent_context(mote.id).unwrap_or_default();
+        let producer_ref = parents
+            .iter()
+            .find(|(id, _)| *id == producer_id)
+            .map(|(_, r)| *r)
+            .ok_or_else(|| {
+                internal(&format!(
+                    "judge producer {producer_id:?} bytes not delivered via F-7 \
+                     (scheduling/D55 invariant) — withholding fail-closed"
+                ))
+            })?;
+        let producer_bytes = self
+            .store
+            .get(&producer_ref)
+            .map_err(|e| internal(&format!("read judge producer bytes: {e}")))?;
+        if producer_bytes.len() > CRITIC_MAX_INPUT_BYTES {
+            return Err(internal(&format!(
+                "judge producer output {} bytes exceeds max {CRITIC_MAX_INPUT_BYTES}",
+                producer_bytes.len()
+            )));
+        }
+
+        // (4) Build the judge prompt + dispatch under the warrant (the warrant's
+        // `model_route` bounds output tokens — set by the recipe from the spec's
+        // `max_output_tokens`; `inference_params_from_mote` refuses a widening, D35).
+        let user = render_judge_user(
+            &question,
+            &rubric,
+            &String::from_utf8_lossy(&producer_bytes),
+        );
+        let rendered = self
+            .backend
+            .render_chat(&mote.def.model_id, JUDGE_SYSTEM, &user)
+            .unwrap_or_else(|| judge_chatml(&user));
+        let input = InferenceInput::text(rendered);
+        let params = inference_params_from_mote(mote, warrant)
+            .map_err(|e| internal(&format!("judge inference params: {e}")))?;
+        let out = self
+            .backend
+            .dispatch(&mote.def.model_id, &input, &params, warrant)
+            .map_err(|e| internal(&format!("judge dispatch: {e}")))?;
+        if let Some(usage) = &self.usage {
+            usage.record_usage(
+                *mote.id.as_bytes(),
+                &out.model_id.0,
+                u64::from(out.output_tokens),
+            );
+        }
+
+        // (6) Parse the completion → a discrete verdict (fail-closed to Invalid),
+        // commit its canonical bytes. The committed Mote's `nd_class`
+        // (ReadOnlyNondet) is what the projection folds into the digest.
+        let verdict = parse_judge_verdict(&out.bytes);
+        let result_ref = self
+            .store
+            .put(&verdict.encode())
+            .map_err(|e| internal(&format!("content store put (judge verdict): {e}")))?;
+        Ok(MoteExecutionResult {
+            result_ref,
+            started_at_epoch_ms: 0,
+            finished_at_epoch_ms: 0,
+        })
+    }
 }
 
 impl<B: InferenceBackend> MoteExecutor for ModelRouterExecutor<B> {
@@ -822,12 +1023,18 @@ impl<B: InferenceBackend> MoteExecutor for ModelRouterExecutor<B> {
         warrant: &WarrantSpec,
         env: Option<Rootfs>,
     ) -> Result<MoteExecutionResult, MoteExecutorError> {
-        // Native deterministic CRITIC FIRST (PR-2c-3 critic-live): a critic carries no
+        // CRITIC FIRST (PR-2c-3 critic-live; T-AGENT2 judge): a critic carries no
         // prompt (so `has_prompt` is false) and would otherwise fall to the inner
-        // echo/real-body router, committing the wrong bytes instead of a verdict. Route
-        // it to the in-process check (mirrors the FROZEN `run_native_critic_mote`).
-        if mote.def.critic_check.is_some() {
-            return self.run_critic(mote);
+        // echo/real-body router, committing the wrong bytes instead of a verdict.
+        // The opt-in LLM-JUDGE gate routes to the model-graded `run_judge` (which
+        // needs the warrant for dispatch); every native check routes to the
+        // in-process `run_critic` (mirrors the FROZEN `run_native_critic_mote`).
+        if let Some(check) = mote.def.critic_check.as_ref() {
+            return if check.is_llm_judge() {
+                self.run_judge(mote, warrant)
+            } else {
+                self.run_critic(mote)
+            };
         }
         // A prompt-bearing Mote is a MODEL step. If the backend does NOT serve its
         // model_id, FAIL CLOSED — never delegate to the inner demo/echo executor.
@@ -893,6 +1100,22 @@ fn prompt_from_config(mote: &Mote) -> Option<String> {
         .def
         .config_subset
         .get(&ConfigKey(PROMPT_KEY.to_string()))?
+        .0;
+    Some(
+        serde_json::from_slice::<String>(raw)
+            .unwrap_or_else(|_| String::from_utf8_lossy(raw).into_owned()),
+    )
+}
+
+/// The T-AGENT2 judge's RUBRIC from `config_subset[JUDGE_RUBRIC_KEY]` (the
+/// grading instruction), decoded JSON-quoted-or-raw exactly like
+/// [`prompt_from_config`]. `None` ⇒ the judge mote carries no rubric (run_judge
+/// fails closed — a judge with no rubric cannot grade).
+fn rubric_from_config(mote: &Mote) -> Option<String> {
+    let raw = &mote
+        .def
+        .config_subset
+        .get(&ConfigKey(kx_mote::JUDGE_RUBRIC_KEY.to_string()))?
         .0;
     Some(
         serde_json::from_slice::<String>(raw)
@@ -1869,6 +2092,131 @@ mod tests {
         assert_eq!(out.result_ref, ContentRef::of(b"The answer is blue."));
     }
 
+    // --- T-AGENT2: the opt-in LLM-judge gate (run_judge) ---------------------
+
+    /// A judge critic Mote: `ReadOnlyNondet` (samples the model), `critic_for` the
+    /// producer, `critic_check = LlmJudge`, rubric in `config_subset` — the exact
+    /// shape the recipe + `compile.rs` (`DeterministicCritic` role + ROND) produce.
+    fn judge_mote(producer: MoteId) -> Mote {
+        let mut cfg = BTreeMap::new();
+        cfg.insert(
+            ConfigKey(kx_mote::JUDGE_RUBRIC_KEY.to_string()),
+            ConfigVal(b"The answer must be a single capital city.".to_vec()),
+        );
+        let def = MoteDef {
+            logic_ref: LogicRef::from_bytes([0x56u8; 32]),
+            model_id: model_id(),
+            prompt_template_hash: PromptTemplateHash::from_bytes([4u8; 32]),
+            tool_contract: BTreeMap::new(),
+            nd_class: NdClass::ReadOnlyNondet,
+            config_subset: cfg,
+            effect_pattern: EffectPattern::IdempotentByConstruction,
+            critic_for: Some(producer),
+            is_topology_shaper: false,
+            inference_params: InferenceParams::default(),
+            critic_check: Some(kx_critic::CheckSpec::LlmJudge(kx_critic::LlmJudgeSpec {
+                max_output_tokens: 8,
+            })),
+            schema_version: MOTE_DEF_SCHEMA_VERSION,
+        };
+        Mote::new(
+            def,
+            InputDataId::from_bytes([21u8; 32]),
+            GraphPosition(b"/judge".to_vec()),
+            SmallVec::new(),
+        )
+    }
+
+    #[test]
+    fn judge_dispatches_once_and_grades_valid_then_invalid() {
+        use kx_critic::{CriticReason, CriticVerdict};
+        let producer = MoteId::from_bytes([0x70u8; 32]);
+        let judge = judge_mote(producer);
+
+        // VALID reply ⇒ a `Valid` verdict, the model dispatched EXACTLY once.
+        let dir = tempfile::tempdir().unwrap();
+        let store = LocalFsContentStore::open(dir.path()).unwrap();
+        let producer_ref = store.put(b"Paris").unwrap();
+        let (exec, backend) = executor(&store, b"VALID", None);
+        let out =
+            run_critic_with_context(&exec, &judge, vec![(producer, producer_ref)]).expect("judge");
+        assert_eq!(
+            backend.calls.load(Ordering::SeqCst),
+            1,
+            "the judge dispatches the served model exactly once"
+        );
+        let verdict = CriticVerdict::decode(store.get(&out.result_ref).unwrap().as_ref()).unwrap();
+        assert!(matches!(verdict, CriticVerdict::Valid));
+        // Determinism-after-commit: the verdict's content ref is `blake3(encode)`,
+        // so re-deriving the SAME verdict yields the SAME ref (replay dedups it —
+        // the projection never re-queries the judge).
+        assert_eq!(
+            out.result_ref,
+            ContentRef::of(&CriticVerdict::Valid.encode())
+        );
+
+        // INVALID reply ⇒ the judge actually grades (not a rubber-stamp).
+        let dir2 = tempfile::tempdir().unwrap();
+        let store2 = LocalFsContentStore::open(dir2.path()).unwrap();
+        let producer_ref2 = store2.put(b"a long rambling non-answer").unwrap();
+        let (exec2, _) = executor(&store2, b"INVALID", None);
+        let out2 = run_critic_with_context(&exec2, &judge, vec![(producer, producer_ref2)])
+            .expect("judge");
+        let verdict2 =
+            CriticVerdict::decode(store2.get(&out2.result_ref).unwrap().as_ref()).unwrap();
+        assert!(matches!(
+            verdict2,
+            CriticVerdict::Invalid {
+                reason: CriticReason::JudgeRejected { reason_code: 0 }
+            }
+        ));
+        // The two honest verdicts are DISTINCT facts (distinct content refs) — the
+        // gate is data-dependent, the basis of the opt-in workflow's own digest.
+        assert_ne!(out.result_ref, out2.result_ref);
+    }
+
+    #[test]
+    fn judge_fails_closed_on_unparseable_completion_and_missing_rubric() {
+        use kx_critic::{CriticReason, CriticVerdict};
+        let producer = MoteId::from_bytes([0x70u8; 32]);
+        let judge = judge_mote(producer);
+
+        // Ambiguous completion ⇒ withhold (Invalid/unparseable), never silent Valid.
+        let dir = tempfile::tempdir().unwrap();
+        let store = LocalFsContentStore::open(dir.path()).unwrap();
+        let producer_ref = store.put(b"Paris").unwrap();
+        let (exec, _) = executor(&store, b"hmm, hard to say", None);
+        let out =
+            run_critic_with_context(&exec, &judge, vec![(producer, producer_ref)]).expect("judge");
+        let verdict = CriticVerdict::decode(store.get(&out.result_ref).unwrap().as_ref()).unwrap();
+        assert!(matches!(
+            verdict,
+            CriticVerdict::Invalid {
+                reason: CriticReason::JudgeRejected { reason_code: 1 }
+            }
+        ));
+
+        // A judge with NO rubric fails closed (terminal) — never grades blind.
+        let mut no_rubric = judge.def.clone();
+        no_rubric
+            .config_subset
+            .remove(&ConfigKey(kx_mote::JUDGE_RUBRIC_KEY.to_string()));
+        let no_rubric = Mote::new(
+            no_rubric,
+            InputDataId::from_bytes([21u8; 32]),
+            GraphPosition(b"/judge".to_vec()),
+            SmallVec::new(),
+        );
+        let dir2 = tempfile::tempdir().unwrap();
+        let store2 = LocalFsContentStore::open(dir2.path()).unwrap();
+        let producer_ref2 = store2.put(b"Paris").unwrap();
+        let (exec2, _) = executor(&store2, b"VALID", None);
+        assert!(
+            run_critic_with_context(&exec2, &no_rubric, vec![(producer, producer_ref2)]).is_err(),
+            "a rubric-less judge is terminal (fail-closed), never a silent VALID"
+        );
+    }
+
     #[test]
     fn react_arm_commits_a_granted_tool_proposal_raw() {
         // PR-2d-2 (the live tool round): a well-formed, warrant-GRANTED proposal
@@ -1951,5 +2299,53 @@ mod tests {
             .run(&leaf, &granted_warrant(), None)
             .expect("a leaf model Mote has no fence");
         assert_eq!(store.get(&out.result_ref).unwrap().as_ref(), env.as_slice());
+    }
+
+    // --- T-AGENT2: judge verdict parsing (total + fail-closed) ---------------
+
+    #[test]
+    fn parse_judge_verdict_total_and_fail_closed() {
+        use kx_critic::{CriticReason, CriticVerdict};
+        let is_invalid = |b: &[u8], code: u16| {
+            matches!(parse_judge_verdict(b), CriticVerdict::Invalid { reason }
+                if reason == CriticReason::JudgeRejected { reason_code: code })
+        };
+        // A clear VALID ⇒ Valid (case-insensitive; trailing prose ignored).
+        assert!(matches!(
+            parse_judge_verdict(b"VALID"),
+            CriticVerdict::Valid
+        ));
+        assert!(matches!(
+            parse_judge_verdict(b"valid, it satisfies the rubric"),
+            CriticVerdict::Valid
+        ));
+        // A clear INVALID ⇒ Invalid (the word-boundary token, not a substring).
+        assert!(is_invalid(b"INVALID", 0));
+        // ★ The live-Gemma fix (GR20): a reasoning block that MENTIONS "invalid"
+        // while concluding VALID must read as VALID — the LAST decision token wins.
+        assert!(matches!(
+            parse_judge_verdict(
+                b"<|think|>Is the answer invalid? No, Paris is correct.</|think|>\nVALID"
+            ),
+            CriticVerdict::Valid
+        ));
+        assert!(matches!(
+            parse_judge_verdict(b"<think>checking... not invalid</think> valid"),
+            CriticVerdict::Valid
+        ));
+        // A reasoning block concluding INVALID stays INVALID.
+        assert!(is_invalid(b"<think>the answer is wrong</think> INVALID", 0));
+        // Ambiguous / neither token / non-UTF-8 / reasoning-only ⇒ fail-closed.
+        for bad in [
+            &b"maybe"[..],
+            &b""[..],
+            &[0xFF, 0xFE][..],
+            &b"hmm, hard to say"[..],
+        ] {
+            assert!(
+                is_invalid(bad, 1),
+                "expected unparseable-Invalid for {bad:?}"
+            );
+        }
     }
 }

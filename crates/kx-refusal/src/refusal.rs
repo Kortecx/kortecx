@@ -200,15 +200,16 @@ pub enum SubmissionRefusal {
         mote_id: MoteId,
     },
 
-    /// **R-15** (D60 / P4.2-2). A `MoteDef` carrying a `critic_check` (a native
-    /// deterministic-critic Mote) whose shape is illegal: a native check is
-    /// evaluated in-process against a producer's committed bytes, so the Mote
-    /// MUST be `Pure` (no nondet/world-mutation), MUST declare `critic_for`
-    /// (the producer it gates), and MUST NOT be a topology shaper. Refusing
-    /// these at submission keeps the executor's native-check path
-    /// (`run_native_critic_mote`) total and the deterministic gate decorrelated
-    /// from the model that produced the output (D60).
-    #[error("R-15: Mote {mote_id:?} carries a critic_check but is not a well-formed native critic (must be Pure + critic_for=Some + !is_topology_shaper) (D60 / P4.2-2)")]
+    /// **R-15** (D60 / P4.2-2; T-AGENT2 extends it to the judge gate). A `MoteDef`
+    /// carrying a `critic_check` whose shape is illegal. A *native* check is
+    /// evaluated in-process against a producer's committed bytes, so the Mote MUST
+    /// be `Pure`; the opt-in *LLM-judge* gate samples the served model, so it MUST
+    /// be `ReadOnlyNondet`. EITHER kind MUST declare `critic_for` (the producer it
+    /// gates) and MUST NOT be a topology shaper. Refusing these at submission keeps
+    /// the executor's critic path total and the gate decorrelated from the model
+    /// that produced the output (D60). The closed refusal vocabulary reuses this
+    /// one R-15 code for both shapes (a new code would need its own D-number).
+    #[error("R-15: Mote {mote_id:?} carries a critic_check but is not a well-formed critic (native ⇒ Pure, LLM-judge ⇒ ReadOnlyNondet; either ⇒ critic_for=Some + !is_topology_shaper) (D60 / P4.2-2 / T-AGENT2)")]
     R15NativeCheckShape {
         /// The offending Mote.
         mote_id: MoteId,
@@ -670,8 +671,16 @@ fn check_r14(mote: &Mote) -> Result<(), SubmissionRefusal> {
 /// `critic_check` but is not a well-formed native critic (not `Pure`, missing
 /// `critic_for`, or a topology shaper).
 pub fn native_critic_shape(mote: &Mote) -> Result<(), SubmissionRefusal> {
-    if mote.def.critic_check.is_none() {
-        return Ok(());
+    match &mote.def.critic_check {
+        // Not a critic, or the opt-in LLM-judge gate — neither is enforced by THIS
+        // (frozen-mirror, Pure-only) predicate. A judge is gated by
+        // [`native_judge_shape`]; routing it here would mis-refuse a legal
+        // `ReadOnlyNondet` judge AND drift this byte-mirror from the frozen
+        // executor's Pure-only R-15 guard. The judge never reaches the frozen
+        // executor (the serve `run` arm routes it to `run_judge`).
+        None => return Ok(()),
+        Some(c) if c.is_llm_judge() => return Ok(()),
+        Some(_) => {}
     }
     if mote.def.nd_class != NdClass::Pure
         || mote.def.critic_for.is_none()
@@ -682,10 +691,47 @@ pub fn native_critic_shape(mote: &Mote) -> Result<(), SubmissionRefusal> {
     Ok(())
 }
 
-/// **R-15** (D60 / P4.2-2). Refuse a `critic_check`-bearing Mote that is not a
-/// well-formed native critic. Delegates to the shared [`native_critic_shape`] gate.
+/// **R-15** (T-AGENT2) — the SHAPE gate for the opt-in model-graded judge gate
+/// (`CheckSpec::LlmJudge`). The judge
+/// samples the served model, so it MUST be [`NdClass::ReadOnlyNondet`] (NOT
+/// `Pure` — that is the native-check requirement), MUST declare `critic_for`, and
+/// MUST NOT be a topology shaper. A non-judge (`!is_llm_judge`) trivially passes.
+///
+/// Distinct from [`native_critic_shape`] (the Pure-only frozen-executor mirror):
+/// the judge is dispatched by `kx-gateway`'s `ModelRouterExecutor::run_judge`, an
+/// arm the FROZEN `kx_executor::run_native_critic_mote` never reaches, so the two
+/// shapes stay structurally disjoint (a Mote is a native critic XOR a judge).
+/// Reuses the closed R-15 refusal code (see [`SubmissionRefusal::R15NativeCheckShape`]).
+///
+/// # Errors
+///
+/// [`SubmissionRefusal::R15NativeCheckShape`] iff `mote` carries an `LlmJudge`
+/// `critic_check` but is not `ReadOnlyNondet` + `critic_for=Some` + non-shaper.
+pub fn native_judge_shape(mote: &Mote) -> Result<(), SubmissionRefusal> {
+    match &mote.def.critic_check {
+        Some(c) if c.is_llm_judge() => {}
+        _ => return Ok(()),
+    }
+    if mote.def.nd_class != NdClass::ReadOnlyNondet
+        || mote.def.critic_for.is_none()
+        || mote.def.is_topology_shaper
+    {
+        return Err(SubmissionRefusal::R15NativeCheckShape { mote_id: mote.id });
+    }
+    Ok(())
+}
+
+/// **R-15** (D60 / P4.2-2 / T-AGENT2). Refuse a `critic_check`-bearing Mote that
+/// is not a well-formed critic — routing the opt-in LLM-judge to
+/// [`native_judge_shape`] (`ReadOnlyNondet`) and every native check to
+/// [`native_critic_shape`] (`Pure`). Both ill-formed shapes trip the same R-15 code.
 fn check_r15(mote: &Mote) -> Result<(), SubmissionRefusal> {
-    native_critic_shape(mote)
+    let is_judge = matches!(&mote.def.critic_check, Some(c) if c.is_llm_judge());
+    if is_judge {
+        native_judge_shape(mote)
+    } else {
+        native_critic_shape(mote)
+    }
 }
 
 fn check_r9(mote: &Mote, motes: &BTreeMap<MoteId, Mote>) -> Result<(), SubmissionRefusal> {

@@ -64,6 +64,17 @@ class Result:
         except UnicodeDecodeError:
             return None
 
+    @property
+    def verdict(self) -> Optional[str]:
+        """T-AGENT2: if this run's terminal is an LLM-judge (``kx/recipes/judge``),
+        the decoded ``"valid"`` / ``"invalid: <reason>"`` summary; ``None`` otherwise.
+        Display-only (SN-8)."""
+        from .critic import decode_critic_verdict
+
+        if self.payload is None:
+            return None
+        return decode_critic_verdict(self.payload)
+
     def to_dict(self, include_payload: bool = True) -> dict:
         """The CLI ``--wait --json`` shape (parity with ``render_wait``)."""
         out: dict = {
@@ -77,6 +88,9 @@ class Result:
             out["timed_out"] = True
         if self.payload is not None:
             out["result_len"] = len(self.payload)
+            verdict = self.verdict
+            if verdict is not None:
+                out["verdict"] = verdict
             if include_payload:
                 text = self.text
                 if text is not None:
