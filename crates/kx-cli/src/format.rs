@@ -494,6 +494,12 @@ pub fn render_agent_result(
                 }
             },
             None => out.push_str(match outcome.state {
+                // W2: a dead-lettered agent that fired tools but never settled looped
+                // on its tool budget without answering — say so specifically (the
+                // honest terminal, exit 1; never a masquerading "timed out; resume").
+                WaitState::Failed if !actions.is_empty() => {
+                    "(no answer — the agent exhausted its tool-call budget without settling on an answer)"
+                }
                 WaitState::Failed => "(no answer — the agent run failed)",
                 WaitState::Running => {
                     "(no answer yet — timed out; resume with `kx react list --instance <id>`)"
@@ -2226,6 +2232,29 @@ mod tests {
         let v: Value = serde_json::from_str(&render_wait(&outcome, true, true)).unwrap();
         assert_eq!(v["state"], "RUNNING");
         assert_eq!(v["timed_out"], true);
+    }
+
+    #[test]
+    fn agent_result_failed_with_tool_actions_names_the_tool_loop() {
+        // W2: a dead-lettered agent that FIRED tools but never settled reports the
+        // tool-loop specifically (the honest terminal, not a generic failure).
+        let outcome = WaitOutcome {
+            instance_id: vec![1u8; 16],
+            terminal_mote_id: vec![2u8; 32],
+            state: WaitState::Failed,
+            result_ref: None,
+            payload: None,
+        };
+        let actions = vec![("mcp-echo/echo".to_string(), "1".to_string(), 0u32)];
+        let human = render_agent_result(&outcome, &actions, false);
+        assert!(
+            human.contains("exhausted its tool-call budget without settling"),
+            "names the W2 tool-loop: {human}"
+        );
+        // No tool actions ⇒ the generic failure message (e.g. all proposals refused).
+        let generic = render_agent_result(&outcome, &[], false);
+        assert!(generic.contains("the agent run failed"));
+        assert!(!generic.contains("tool-call budget"));
     }
 
     #[test]

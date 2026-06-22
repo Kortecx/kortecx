@@ -88,6 +88,33 @@ pub(crate) fn render_reprompt(base_instruction: &str, reason: &str) -> String {
     )
 }
 
+/// W2 (settle-nudge): render the LAST useful tool-firing turn's instruction when a
+/// chain is one round from exhausting its budget on a `Tool` tail. The model has
+/// already gathered tool observations (served out-of-band via the F-7 trajectory)
+/// but keeps proposing more tool calls; this appends a fixed steer instructing it
+/// to STOP calling tools and answer directly from what it has observed, so the
+/// chain settles on an `Answer` instead of quiescing answerless (the W2 finding —
+/// a tool-looping model that never settles and dead-letters / `agent run` exit-1).
+///
+/// PURE + total + deterministic: a function of `base_instruction` ALONE (the
+/// anchor's immutable base prompt). A CONSTANT suffix — no clock, RNG, reason
+/// interpolation, or map iteration — so the live drive and a recovery re-fold build
+/// the byte-identical nudged turn (and thus the byte-identical turn `MoteId`, since
+/// the instruction rides `config_subset[PROMPT_KEY]`). The nudge needs NO durable
+/// state: the decision is re-derived from the frozen `(tool_calls, turns_used,
+/// caps, prev branch)` on every pass, exactly like the A2 [`render_reprompt`]. The
+/// suffix is shorter than the worst-case re-prompt (no reason), so it can never
+/// blow the turn's context window beyond what a non-nudged turn already carries.
+#[must_use]
+pub(crate) fn render_settle_nudge(base_instruction: &str) -> String {
+    format!(
+        "{base_instruction}\n\n[You have already gathered tool results, and your \
+         tool-call budget is nearly exhausted. Do NOT call another tool. Using the \
+         observations you already have, give your FINAL answer to the question now, \
+         directly and in prose.]"
+    )
+}
+
 /// The run-salted 32-byte identity material for a ReAct turn:
 /// `blake3(b"kx-react-turn" ‖ instance_id ‖ turn.to_le_bytes())`. Deterministic +
 /// distinct per `(run, turn)`, and cryptographically distinct from the
@@ -635,19 +662,51 @@ mod tests {
             a,
             render_reprompt("list the files", "tool `x@1` is not granted to this run")
         );
-        assert!(
-            a.starts_with("list the files"),
-            "the base instruction leads"
-        );
-        assert!(a.contains("REJECTED"), "carries the rejection steer");
-        assert!(
-            a.contains("not granted"),
-            "embeds the durable reason verbatim"
+        // CROSS-IMPL pin (R49): the EXACT bytes the harness twin
+        // `kx_model_harness::react_reason::render_reprompt` must also produce — pinned
+        // as a literal on BOTH sides (the `SALTED_TURN0_GOLDEN` convention) so a drift
+        // on either copy fails CI and a re-prompted turn's MoteId stays identical
+        // across the dep wall. Keep this literal in sync with the harness test
+        // `reprompt_text_matches_the_coordinator`.
+        assert_eq!(
+            render_reprompt("list the files", "tool `x@1` is not granted to this run"),
+            "list the files\n\n[Your previous tool call was REJECTED: \
+             tool `x@1` is not granted to this run\nCorrect it — call a tool you \
+             were granted with arguments that match its schema, or answer the \
+             question directly if you cannot.]"
         );
         // A different reason → a different re-prompt (the model sees what changed).
         assert_ne!(
             a,
             render_reprompt("list the files", "args do not match schema")
+        );
+    }
+
+    #[test]
+    fn render_settle_nudge_is_deterministic_and_keeps_the_base() {
+        let a = render_settle_nudge("list the files");
+        // PURE: same input → byte-identical output (the recovery/replay law).
+        assert_eq!(a, render_settle_nudge("list the files"));
+        assert!(
+            a.starts_with("list the files"),
+            "the base instruction leads"
+        );
+        assert!(
+            a.contains("Do NOT call another tool"),
+            "carries the stop-calling-tools steer"
+        );
+        assert!(
+            a.contains("give your FINAL answer"),
+            "carries the answer-now steer"
+        );
+        // A different base → a different nudge.
+        assert_ne!(a, render_settle_nudge("summarize the doc"));
+        // The nudge is strictly the base + a CONSTANT suffix (no reason), so it is
+        // shorter than the worst-case A2 re-prompt for the same base.
+        let reprompt = render_reprompt("list the files", &"x".repeat(512));
+        assert!(
+            a.len() < reprompt.len(),
+            "the nudge has no unbounded reason"
         );
     }
 

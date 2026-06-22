@@ -20,14 +20,10 @@ use kx_proto::proto::kx_gateway_client::KxGatewayClient;
 use tonic::transport::Channel;
 
 async fn client(addr: SocketAddr) -> KxGatewayClient<Channel> {
-    let endpoint = format!("http://{addr}");
-    for _ in 0..100 {
-        if let Ok(c) = KxGatewayClient::connect(endpoint.clone()).await {
-            return c;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-    panic!("client connects to the gateway at {endpoint}");
+    // Delegate to the hardened shared readiness probe (TCP-accept gate + eager
+    // gRPC connect) so a slow CI serve-startup never trips the old 1 s connect
+    // loop (the pre-existing capture_e2e tcp-connect flake).
+    common::connect_client(addr).await
 }
 
 /// Poll `ListCaptureRecords` until at least `n` records are captured (the poller

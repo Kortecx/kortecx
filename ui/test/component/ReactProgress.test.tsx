@@ -50,4 +50,28 @@ describe("ReactProgress (PR-3/A2 rejected disclosure)", () => {
     expect(chip).toHaveTextContent(/rejected/i);
     expect(screen.queryByTestId("react-turn-0-reason")).toBeNull();
   });
+
+  it("W2: a dead-letter AFTER firing tools shows the looped-on-tools hint", () => {
+    // The hook keeps one VM per turn (newest fact wins), so the last tool turn —
+    // where the DeadLettered branch is appended at the same index — surfaces as
+    // `dead_lettered`; the earlier turns remain `tool`.
+    const turns = [
+      vm({ turn: 0, branch: "tool", toolId: "mcp-echo/echo", toolVersion: "1" }),
+      vm({ turn: 1, branch: "tool", toolId: "mcp-echo/echo", toolVersion: "1" }),
+      vm({ turn: 2, branch: "dead_lettered" }),
+    ];
+    render(<ReactProgress turns={turns} />);
+    expect(screen.getByTestId("react-deadletter-hint")).toHaveTextContent(
+      /exhausted its tool-call budget without settling/i,
+    );
+  });
+
+  it("an all-rejected dead-letter (no tools fired) shows NO looped-on-tools hint", () => {
+    const turns = [
+      vm({ turn: 0, branch: "rejected", rejectionReason: "not granted" }),
+      vm({ turn: 1, branch: "dead_lettered" }),
+    ];
+    render(<ReactProgress turns={turns} />);
+    expect(screen.queryByTestId("react-deadletter-hint")).toBeNull();
+  });
 });

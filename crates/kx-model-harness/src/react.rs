@@ -32,10 +32,13 @@
 //!
 //! Two independent hard caps ([`ReactBudget`]): `max_turns` (model turns) and
 //! `max_tool_calls` (observations) — either exhausting stops the loop cleanly
-//! ([`ReactStop::BudgetExhausted`]). A malformed / ungranted / oversize proposal
-//! dead-letters the turn (a terminal `Failed` fact, never a panic, never a blind
-//! re-run) and stops ([`ReactStop::DeadLettered`]). The unbounded durable loop
-//! stays cloud (D126 cat-B).
+//! ([`ReactStop::BudgetExhausted`]). PR-3 (A2) graceful recovery: a malformed /
+//! ungranted / oversize proposal is NOT terminal — the rejected turn COMMITS (the
+//! model sees its own bad proposal next turn), counts as a spent tool-call, and the
+//! next turn is RE-PROMPTED with the durable reason so the model self-corrects
+//! (mirrors the live serve coordinator). The loud [`ReactStop::DeadLettered`] fires
+//! ONLY at budget exhaustion on a refused tail (never a panic, never a blind re-run,
+//! never a fabricated answer). The unbounded durable loop stays cloud (D126 cat-B).
 //!
 //! ## Security (the prompt-injection surface)
 //!
@@ -54,7 +57,7 @@ use kx_capability::{BrokerError, BrokerHandle, CapabilityBroker, EffectRequest, 
 use kx_content::{ContentRef, ContentStore};
 use kx_executor::{LocalResourceManager, StandardCommitProtocol};
 use kx_inference::{inference_params_from_mote, InferenceBackend};
-use kx_journal::{FailureReason, Journal, JournalEntry, SqliteJournal};
+use kx_journal::SqliteJournal;
 use kx_mote::{ModelId, Mote, MoteId, ToolName, ToolVersion};
 use kx_projection::{MoteState, Projection, Snapshot};
 use kx_runtime::workflow::WorkflowMote;
@@ -67,15 +70,10 @@ use kx_warrant::WarrantSpec;
 
 use crate::broker::dispatch_decoded_call;
 use crate::toolcall::{self, ToolCall};
-use crate::{context, prompt, workflows, ModelExecutor};
+use crate::{context, prompt, react_reason, workflows, ModelExecutor};
 
 /// Capability version reported on a ReAct turn's served fact (provenance only).
 const REACT_CAPABILITY_VERSION: &str = "kx-react-0.1.0";
-
-/// Reporter id stamped on a dead-lettered turn's terminal `Failed` entry — a
-/// fixed, UUID-shaped provenance marker (never identity or dedup input, D19),
-/// distinct from the engine/coordinator/topology-provider reporter ids.
-const REACT_REPORTER_ID: u128 = 0x6b78_5f72_6561_6374_0000_0000_0000_0001;
 
 /// The per-run bound on a ReAct loop — the OSS "bounded additive" cap (the
 /// unbounded durable loop stays cloud, D126 cat-B). Two INDEPENDENT bounds: a
@@ -108,8 +106,12 @@ pub enum ReactStop {
     /// A budget (`max_turns` or `max_tool_calls`) was exhausted; the loop stopped
     /// cleanly with the work so far durably committed.
     BudgetExhausted,
-    /// The model's proposal was refused fail-closed (malformed / ungranted /
-    /// oversize); the turn is a terminal dead-lettered `Failed` fact.
+    /// The loop exhausted its budget on REFUSED proposals (malformed / ungranted /
+    /// oversize) without ever producing an answer — the loud terminal (PR-3/A2).
+    /// Each refused turn COMMITS its output (the model self-corrects via the
+    /// re-prompt); this fires only when the refused tail hits the budget. Also the
+    /// terminal for a tool dispatch that fails fail-closed (the observation never
+    /// commits) and for resuming a journal an OLD harness dead-lettered (`Failed`).
     DeadLettered,
 }
 
@@ -183,12 +185,24 @@ where
     let mut turns_used: u32 = 0;
     let mut tool_calls: u32 = 0;
     let mut final_answer: Option<ContentRef> = None;
+    // PR-3 (A2): when the prior turn's proposal was refused, the next turn is
+    // re-prompted with the durable reason so the model self-corrects (mirrors the
+    // live serve coordinator's `advance_react_chain`). `None` ⇒ the base instruction.
+    let mut pending_reprompt: Option<String> = None;
 
     // The loop ALWAYS drives at least turn 0; every exit `break`s with
     // `(RunOutcome, ReactStop)` (the run's `digest` is the whole-journal surface).
     let (run, outcome): (RunOutcome, ReactStop) = loop {
         let turn = turns_used;
-        let turn_wf = workflows::react_turn(model_id, warrant, instruction, turn, &trajectory);
+        // PR-3 (A2): a refused prior turn re-prompts THIS turn (deterministic — a
+        // pure function of the prior decode); the instruction rides the turn's
+        // identity (PROMPT_KEY), so a re-prompted turn gets a distinct MoteId.
+        let turn_instruction = match &pending_reprompt {
+            Some(reason) => react_reason::render_reprompt(instruction, reason),
+            None => instruction.to_string(),
+        };
+        let turn_wf =
+            workflows::react_turn(model_id, warrant, &turn_instruction, turn, &trajectory);
         let turn_wm = turn_wf.motes[0].clone();
         let turn_id = turn_wm.mote.id;
         turns_used += 1;
@@ -238,37 +252,70 @@ where
             )?
         };
 
-        // Decode the proposal FAIL-CLOSED. A COMMITTED turn cannot be `Err` (it
-        // committed its output only on `Ok`); a fresh `Err` dead-letters the turn.
+        // Decode the proposal FAIL-CLOSED via the ONE authority gate.
         let branch = toolcall::parse_tool_call(&raw, warrant, toolcall::max_args_bytes(warrant));
-        if turn_state != MoteState::Committed {
-            if let Err(reason) = &branch {
-                tracing::warn!(
-                    ?reason,
-                    turn,
-                    "react: model proposal refused — dead-lettering the turn"
-                );
-                dead_letter(&journal, turn_id)?;
-                let run = drive_react_round(
-                    config,
-                    &store,
-                    &journal,
-                    &backend,
-                    &registry,
-                    &tool_broker,
-                    instance_id,
-                    &rm,
-                    &failure_policy,
-                    &turn_wf,
-                    BTreeMap::new(),
-                    BTreeMap::new(),
-                )?;
+
+        // PR-3 (A2): a refused proposal is NOT terminal — mirror the live serve
+        // coordinator. COMMIT the rejected turn (so the next turn sees the bad
+        // proposal in its trajectory), count it as a spent tool-call, and re-prompt
+        // with the durable reason. The loud `DeadLettered` fires ONLY at budget
+        // exhaustion on a refused tail (BUG-27 preserved; never a fabricated answer,
+        // GR15). A COMMITTED turn that re-decodes to `Err` is a previously-rejected
+        // turn on REPLAY: the SAME path re-derives its in-memory state (trajectory,
+        // count, re-prompt) from the served fact WITHOUT re-committing or
+        // mis-classifying it as an answer (the deterministic re-fold law —
+        // `parse_tool_call` is pure over the same bytes). A registry-miss /
+        // schema-invalid resolves to `Ok(Some)` and fails closed later at dispatch
+        // (out of A2's decode-refusal scope — its own fail-closed stop below).
+        if let Err(error) = &branch {
+            let reason = react_reason::bounded_reason(react_reason::decode_error_reason(error));
+            tracing::warn!(turn, %reason, "react: proposal refused — re-prompting (A2)");
+            // Commit the rejected turn alone (turn-only round; a committed turn is
+            // served by the engine's P0.4 gate, its map entry then inert).
+            let mut turn_responses: BTreeMap<MoteId, Vec<u8>> = BTreeMap::new();
+            if turn_state != MoteState::Committed {
+                turn_responses.insert(turn_id, raw.clone());
+            }
+            let reject_wf = DemoWorkflow {
+                motes: vec![turn_wm.clone()],
+                stc_crash_target: workflows::sentinel_shaper(),
+                vtc_crash_target: workflows::sentinel_shaper(),
+                shaper_id: workflows::sentinel_shaper(),
+            };
+            let run = drive_react_round(
+                config,
+                &store,
+                &journal,
+                &backend,
+                &registry,
+                &tool_broker,
+                instance_id,
+                &rm,
+                &failure_policy,
+                &reject_wf,
+                turn_responses,
+                BTreeMap::new(),
+            )?;
+            // The rejected turn MUST have committed (defensive: a store fault leaves
+            // it non-committed ⇒ stop fail-closed rather than loop on a phantom turn).
+            if Projection::from_journal(&*journal)?.state_of(&turn_id) != MoteState::Committed {
                 break (run, ReactStop::DeadLettered);
             }
+            trajectory.push(turn_id);
+            tool_calls += 1; // a refused proposal is a spent tool-call attempt
+                             // Budget gate (the harness mirror, line-for-line with the tool path): a
+                             // refused TAIL at exhaustion is the LOUD terminal; otherwise re-prompt.
+            if tool_calls >= budget.max_tool_calls || turns_used >= budget.max_turns {
+                break (run, ReactStop::DeadLettered);
+            }
+            pending_reprompt = Some(reason);
+            continue;
         }
-        // A fresh `Err` already broke above (dead-letter), and a committed turn
-        // re-decodes to the SAME `Ok` it committed on — so an `Err` here is
-        // unreachable and collapses to "no call" (treated as a final answer).
+
+        // A non-refused turn clears any prior re-prompt steer. A committed turn
+        // re-decodes to the SAME `Ok` it committed on; `None` ⇒ final answer,
+        // `Some` ⇒ a tool proposal.
+        pending_reprompt = None;
         let call: Option<ToolCall> = branch.ok().flatten();
 
         // Build this round's workflow: [turn] (+ [observation] if a tool was named).
@@ -450,20 +497,6 @@ where
         None, // audit_sink (R4) — off for the loop foundation
         Some(failure_policy),
     )
-}
-
-/// Journal a terminal `Failed` for a turn whose proposal was refused — the same
-/// dead-letter fact PR-1 writes (a durable, auditable record; the engine then
-/// skips the now-terminal turn).
-fn dead_letter(journal: &SqliteJournal, mote_id: MoteId) -> Result<(), RuntimeError> {
-    journal.append(JournalEntry::Failed {
-        mote_id,
-        idempotency_key: *mote_id.as_bytes(),
-        seq: 0, // journal assigns
-        reason_class: FailureReason::ExecutorRefused,
-        reporter_id: REACT_REPORTER_ID,
-    })?;
-    Ok(())
 }
 
 /// A [`CapabilityBroker`] for one ReAct round: it SERVES each turn's pre-computed

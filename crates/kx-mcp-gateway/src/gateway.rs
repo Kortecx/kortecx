@@ -20,7 +20,7 @@
 
 use std::sync::Arc;
 
-use kx_mcp::{HttpTransport, McpSessionCapability, McpTransport, StdioTransport};
+use kx_mcp::{HttpTransport, McpSessionCapability, McpTransport, RemoteToolDecl, StdioTransport};
 use kx_mote::{ToolName, ToolVersion};
 use kx_tool_registry::{
     IdempotencyClass, InputSchema, McpEndpointId, ParamSpec, ParamType, SqliteToolRegistry,
@@ -246,11 +246,12 @@ impl McpGateway {
         if !self.rate_limiter.try_acquire(&conn.name) {
             return Err(GatewayError::RateLimited(conn.name));
         }
-        let transport = build_transport(&conn)?;
-        let reachable = match transport.open_session() {
-            Ok(mut session) => session.initialize(DIAL_WALL_CLOCK_MS).is_ok(),
-            Err(_) => false,
-        };
+        // T-CONN: reachable iff the FULL handshake the gateway needs to USE the
+        // server succeeds (`initialize` + `tools/list`) — the SAME `probe` that
+        // `register`/`dial_and_register` uses, so `test` and `add` can never
+        // disagree. Discards the decls (test only checks reachability + folds
+        // health; it never registers tools, so `conn.tool_count` is preserved).
+        let reachable = Self::probe(&conn, DIAL_WALL_CLOCK_MS).is_ok();
         let health = if reachable {
             ConnectionHealth::Connected
         } else {
@@ -321,19 +322,17 @@ impl McpGateway {
         Ok(())
     }
 
-    /// Dial a server, `tools/list`, and register each discovered tool into the
-    /// registry + the broker. Returns the count actually registered. A per-tool
-    /// registration failure is logged + skipped (best-effort) rather than failing
-    /// the whole dial, so `count` (and the folded health) reflect what truly
-    /// registered — never a hard zero while some tools are live (review #7).
-    fn dial_and_register(
-        &self,
-        conn: &Connection,
-        wall_clock_ms: u64,
-    ) -> Result<u32, GatewayError> {
-        if !self.rate_limiter.try_acquire(&conn.name) {
-            return Err(GatewayError::RateLimited(conn.name.clone()));
-        }
+    /// T-CONN: the ONE reachability probe — open a session, complete the MCP
+    /// handshake (`initialize`), and `tools/list`. This is the single definition of
+    /// "reachable": the full handshake the gateway needs to actually USE the server.
+    /// Both callers route through it — `dial_and_register` registers the returned
+    /// decls, `test` discards them — so the two paths can NEVER disagree. Before
+    /// this, `test` stopped at `initialize` while register went on to `tools/list`,
+    /// so a server that handshakes but fails `tools/list` reported reachable via
+    /// `test` yet unreachable via `add` (register). Does NOT rate-limit — each
+    /// caller keeps its own single `try_acquire` (no double-acquire); a pure dial
+    /// helper (no `self`), so the rate-limit + store fold stay with the callers.
+    fn probe(conn: &Connection, wall_clock_ms: u64) -> Result<Vec<RemoteToolDecl>, GatewayError> {
         let transport = build_transport(conn)?;
         let mut session = transport
             .open_session()
@@ -350,9 +349,25 @@ impl McpGateway {
             session_mode = conn.session_mode.tag(),
             "dialed external MCP server"
         );
-        let decls = session
+        session
             .list_tools(DISCOVERY_MAX_BYTES, wall_clock_ms)
-            .map_err(|e| GatewayError::Dial(e.to_string()))?;
+            .map_err(|e| GatewayError::Dial(e.to_string()))
+    }
+
+    /// Dial a server, `tools/list`, and register each discovered tool into the
+    /// registry + the broker. Returns the count actually registered. A per-tool
+    /// registration failure is logged + skipped (best-effort) rather than failing
+    /// the whole dial, so `count` (and the folded health) reflect what truly
+    /// registered — never a hard zero while some tools are live (review #7).
+    fn dial_and_register(
+        &self,
+        conn: &Connection,
+        wall_clock_ms: u64,
+    ) -> Result<u32, GatewayError> {
+        if !self.rate_limiter.try_acquire(&conn.name) {
+            return Err(GatewayError::RateLimited(conn.name.clone()));
+        }
+        let decls = Self::probe(conn, wall_clock_ms)?;
 
         let mut count = 0u32;
         for decl in decls {

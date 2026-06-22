@@ -30,14 +30,29 @@ use smallvec::SmallVec;
 use tempfile::TempDir;
 use tonic::transport::Channel;
 
-/// Connect a gRPC client to `addr`, retrying briefly while the server binds.
+/// Connect a gRPC client to `addr`, waiting out the serve-startup window.
+///
+/// The serve task may bind just AFTER `start` returns the resolved addr, so two
+/// gates run: first wait (≈5 s, the proven `kx-cli` `start_gateway` budget) for the
+/// TCP port to ACCEPT, then complete the eager gRPC connect (≈1 s of retries) for
+/// the H2 handshake. The old single 1 s connect-loop was the pre-existing CI
+/// tcp-connect flake (`capture_*` under load) — under a slow CI start the port was
+/// not yet accepting within 1 s and the loop panicked.
 pub async fn connect_client(addr: SocketAddr) -> KxGatewayClient<Channel> {
     let endpoint = format!("http://{addr}");
-    for _ in 0..100 {
+    // Gate 1: the listener is bound + accepting (TCP).
+    for _ in 0..500 {
+        if tokio::net::TcpStream::connect(addr).await.is_ok() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    // Gate 2: the eager gRPC connect completes the H2 handshake.
+    for _ in 0..50 {
         if let Ok(c) = KxGatewayClient::connect(endpoint.clone()).await {
             return c;
         }
-        tokio::time::sleep(Duration::from_millis(10)).await;
+        tokio::time::sleep(Duration::from_millis(20)).await;
     }
     panic!("client connects to the gateway at {endpoint}");
 }

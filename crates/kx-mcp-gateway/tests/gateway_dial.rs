@@ -142,6 +142,44 @@ fn unreachable_server_registers_with_unreachable_health() {
     assert_eq!(outcome.health, ConnectionHealth::Unreachable);
     assert_eq!(outcome.discovered, 0);
     assert_eq!(gateway.list_servers().unwrap().len(), 1);
+    // T-CONN: `test` AGREES with `register` on a dead server (both Unreachable/false).
+    assert!(
+        !gateway.test("dead").unwrap(),
+        "test agrees with register that a dead server is unreachable"
+    );
+}
+
+/// T-CONN regression: a server whose `initialize` SUCCEEDS but whose `tools/list`
+/// FAILS must report the SAME reachability from `register` (the `add` path) and
+/// `test`. Before the shared `probe`, `test` stopped at `initialize` (→ reachable)
+/// while `register` went on to `tools/list` (→ unreachable) — the two disagreed.
+#[test]
+fn register_and_test_agree_on_an_initialize_only_server() {
+    let registry = Arc::new(SqliteToolRegistry::open_in_memory().unwrap());
+    let store = SqliteConnectionStore::open_in_memory().unwrap();
+    let sink = Arc::new(CollectingSink::default());
+    let gateway = McpGateway::new(store, registry, sink as Arc<dyn CapabilitySink>, vec![]);
+
+    // The support bin handshakes (`initialize`) but errors on `tools/list`.
+    let outcome = gateway
+        .register_server(
+            "halflive",
+            TransportSpec::Stdio {
+                command: test_server_command(),
+                args: vec!["--tools-list-error".into()],
+            },
+            None,
+            SessionMode::Stateless,
+        )
+        .unwrap();
+    // register: the full handshake the gateway needs failed ⇒ Unreachable, 0 tools.
+    assert_eq!(outcome.health, ConnectionHealth::Unreachable);
+    assert_eq!(outcome.discovered, 0);
+    // test: routes through the SAME probe ⇒ also unreachable. The two AGREE (the fix).
+    assert!(
+        !gateway.test("halflive").unwrap(),
+        "test agrees with register: a server that can't list tools is unreachable"
+    );
 }
 
 #[test]

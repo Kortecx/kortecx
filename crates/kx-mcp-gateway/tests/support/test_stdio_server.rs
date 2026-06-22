@@ -32,6 +32,11 @@ fn main() {
     // echoed back so a test can PROVE stateful session reuse (the same process
     // serves call 1 then call 2) vs stateless (a fresh process resets to 1).
     let version = protocol_version_from_args();
+    // T-CONN: `--tools-list-error` makes `initialize` SUCCEED but `tools/list`
+    // return a JSON-RPC error — a server that handshakes but can't list tools.
+    // Pre-fix, `test` (initialize-only) called this reachable while `register`
+    // (initialize + tools/list) called it unreachable.
+    let tools_list_error = std::env::args().any(|a| a == "--tools-list-error");
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
@@ -61,7 +66,7 @@ fn main() {
                 if req.method == "tools/call" {
                     call_count += 1;
                 }
-                handle(&req, &version, call_count)
+                handle(&req, &version, call_count, tools_list_error)
             }
             None => r#"{"jsonrpc":"2.0","id":0,"error":{"code":-32700,"message":"parse error"}}"#
                 .to_string(),
@@ -85,11 +90,15 @@ fn protocol_version_from_args() -> String {
     "2025-06-18".to_string()
 }
 
-fn handle(req: &Req, version: &str, call_count: u64) -> String {
+fn handle(req: &Req, version: &str, call_count: u64, tools_list_error: bool) -> String {
     let id = req.id;
     match req.method.as_str() {
         "initialize" => format!(
             r#"{{"jsonrpc":"2.0","id":{id},"result":{{"protocolVersion":"{version}","capabilities":{{}},"serverInfo":{{"name":"kx-test","version":"1"}}}}}}"#
+        ),
+        // T-CONN: a server up + handshaking but failing tools/list.
+        "tools/list" if tools_list_error => format!(
+            r#"{{"jsonrpc":"2.0","id":{id},"error":{{"code":-32603,"message":"tools/list unavailable"}}}}"#
         ),
         "tools/list" => format!(
             r#"{{"jsonrpc":"2.0","id":{id},"result":{{"tools":[{{"name":"echo","description":"echo the args back","inputSchema":{{"type":"object","properties":{{"q":{{"type":"string"}}}},"required":["q"]}}}},{{"name":"ping","description":"liveness","inputSchema":{{"type":"object","properties":{{}}}}}}]}}}}"#
