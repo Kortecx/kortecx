@@ -33,6 +33,11 @@ export function ReactProgress({ turns }: { turns: readonly ReactTurnVM[] }) {
     );
   }
   const cap = turns[0]?.maxTurns ?? 8;
+  // PR-9c-1: the AUDITED action set — the chain's settled `tool` turns. A pure
+  // derivation over the same durable facts (no new RPC/state); shown as an honest
+  // summary so the action set reads as a *set*, not only per-turn chips.
+  const actions = turns.filter((t) => t.branch === "tool");
+  const distinctTools = [...new Set(actions.map((t) => `${t.toolId}@${t.toolVersion}`))];
   return (
     <div className="react-progress" data-testid="react-progress">
       <span className="muted">
@@ -65,6 +70,11 @@ export function ReactProgress({ turns }: { turns: readonly ReactTurnVM[] }) {
             {chipLabel(t)}
           </span>
         ),
+      )}
+      {actions.length > 0 && (
+        <span className="muted react-actions" data-testid="react-actions">
+          Actions taken: {actions.length} ({distinctTools.join(", ")})
+        </span>
       )}
     </div>
   );

@@ -44,6 +44,8 @@ usage: kx <command> [args]
               --cors-origin enables the gRPC-web browser shim for the listed origins, deny-by-default)
 
   client verbs (gRPC over the gateway; common flags: --endpoint <url> --token <t> | --token-file <p> --tls-ca <path> --json):
+    kx agent run --goal <text> [--context <handle>]... [--context-ref <hex>]... [--input k=v]... [--timeout-secs N]
+                                                 (the embeddable agent-runner: goal → answer + audited actions; see `kx help agent`)
     kx invoke <handle> --args <json> [--args-file <path>] [--wait] [--stream] [--timeout-secs N] [--out <file>] [--context <handle>]...
     kx chain run \"<dsl>\" --tasks <tasks.json> [--seed N] [--wait] [--out <file>] [--emit-blueprint <file>] [--dry-run]
                                                  (string-DSL DAG: a > [b & c]; --emit-blueprint = a portable blueprint; see `kx help chain`)
@@ -94,6 +96,8 @@ pub enum Cli {
     },
     /// Forward to the gateway server: the `serve` args (verb stripped).
     Serve(Vec<String>),
+    /// `agent run` — the embeddable agent-runner (PR-9c-1; Invoke-of-react wrapper).
+    Agent(verbs::agent::AgentArgs),
     /// `invoke` a published blueprint by handle (wire-legacy: recipe).
     Invoke(verbs::invoke::InvokeArgs),
     /// `blueprint run` — author a Tier-1 DAG and run it (SubmitWorkflow).
@@ -172,6 +176,7 @@ impl Cli {
                 })
             }
             Some("serve") => Ok(Cli::Serve(args.collect())),
+            Some("agent") => Ok(Cli::Agent(verbs::agent::parse(args)?)),
             Some("invoke") => Ok(Cli::Invoke(verbs::invoke::parse(args)?)),
             Some("blueprint") => Ok(Cli::Blueprint(verbs::blueprint::parse(args)?)),
             Some("chain") => Ok(Cli::Chain(verbs::chain::parse(args)?)),
@@ -245,6 +250,7 @@ async fn dispatch(cli: Cli) -> Result<(), CliError> {
         }
         Cli::Runtime { argv, json } => run_engine(argv, json).await,
         Cli::Serve(rest) => serve(rest).await,
+        Cli::Agent(a) => verbs::agent::execute(a).await,
         Cli::Invoke(a) => verbs::invoke::execute(a).await,
         Cli::Blueprint(a) => verbs::blueprint::execute(a).await,
         Cli::Chain(a) => verbs::chain::execute(a).await,
@@ -466,6 +472,17 @@ kx serve --dev-allow-local [--journal <path>] [--content <dir>] [--catalog-dir <
   loopback only) or --auth-token(-file); a bare `kx serve` with neither errors with a hint.
   Browser SPAs: --cors-origin <scheme://host[:port]> (repeatable, deny-by-default) enables the
   gRPC-web shim for the listed origins (pair with --tls-cert/--tls-key for https)."
+            .into(),
+        "agent" => "\
+kx agent run --goal <text> [--context <handle>]... [--context-ref <hex>]... [--input k=v]... [--timeout-secs N] [client flags]
+  The embeddable agent-runner (PR-9c-1): give a GOAL and the runtime completes it
+  AGENTICALLY — reasoning, calling permission-gated tools in a bounded loop, and
+  returning a reasoned answer PLUS the AUDITED action set (the tools it fired).
+  A thin wrapper over Invoke of `kx/recipes/react` — NEVER SubmitRun (BLOCKER #5);
+  the warrant is always server-derived (SN-8). --context attaches published context
+  bundles; --input k=v folds into the goal prompt (the react contract has no
+  structured input slot yet). --json prints {answer, actions, run_handle, instance_id};
+  exit 0 = answered, 1 = the run failed, 3 = timed out (resume with `kx react list`)."
             .into(),
         "invoke" => "\
 kx invoke <handle> --args <json> [--args-file <path>] [--wait] [--stream] [--timeout-secs N] [--out <file>] [client flags]

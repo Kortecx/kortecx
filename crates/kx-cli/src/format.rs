@@ -396,6 +396,73 @@ pub fn render_wait(outcome: &WaitOutcome, json: bool, include_payload: bool) -> 
     }
 }
 
+/// Render `kx agent run` (PR-9c-1) — the agent's final answer plus its AUDITED
+/// tool-action set (the chain's settled `tool` turns, in order). `--json` mirrors
+/// the SDK `AgentResult.json()` shape (`instance_id` / `run_handle` / `actions` /
+/// `answer`); a non-committed disposition is surfaced honestly via `state`.
+/// `actions` is a pre-filtered `(tool_id, tool_version, turn)` list.
+#[must_use]
+pub fn render_agent_result(
+    outcome: &WaitOutcome,
+    actions: &[(String, String, u32)],
+    json: bool,
+) -> String {
+    if json {
+        let action_vals: Vec<Value> = actions
+            .iter()
+            .map(|(id, ver, turn)| json!({ "tool_id": id, "tool_version": ver, "turn": turn }))
+            .collect();
+        let mut map = serde_json::Map::new();
+        map.insert(
+            "instance_id".into(),
+            json!(hex::encode(&outcome.instance_id)),
+        );
+        // `run_handle` is the durable, re-attachable handle = the instance id.
+        map.insert(
+            "run_handle".into(),
+            json!(hex::encode(&outcome.instance_id)),
+        );
+        map.insert("actions".into(), json!(action_vals));
+        if let Some(payload) = &outcome.payload {
+            if let Ok(text) = std::str::from_utf8(payload) {
+                map.insert("answer".into(), json!(text));
+            }
+        }
+        if outcome.state != WaitState::Committed {
+            let st = match outcome.state {
+                WaitState::Failed => "FAILED",
+                WaitState::Running => "RUNNING",
+                WaitState::Committed => "COMMITTED",
+            };
+            map.insert("state".into(), json!(st));
+        }
+        Value::Object(map).to_string()
+    } else {
+        let mut out = String::new();
+        match &outcome.payload {
+            Some(payload) => match std::str::from_utf8(payload) {
+                Ok(text) => out.push_str(text),
+                Err(_) => {
+                    let _ = write!(out, "(binary answer, {} bytes)", payload.len());
+                }
+            },
+            None => out.push_str(match outcome.state {
+                WaitState::Failed => "(no answer — the agent run failed)",
+                WaitState::Running => {
+                    "(no answer yet — timed out; resume with `kx react list --instance <id>`)"
+                }
+                WaitState::Committed => "(no answer payload)",
+            }),
+        }
+        let _ = write!(out, "\n\nActions taken: {}", actions.len());
+        for (id, ver, turn) in actions {
+            let _ = write!(out, "\n  turn {turn}: {id}@{ver}");
+        }
+        let _ = write!(out, "\ninstance_id {}", hex::encode(&outcome.instance_id));
+        out
+    }
+}
+
 /// Render the JSON form of a fetched content blob (the human path writes raw
 /// bytes; this is only used under `--json`).
 #[must_use]

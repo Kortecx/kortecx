@@ -2,6 +2,7 @@
 //! `parse(...)`, and an async `execute(...)`. Shared `--wait` finishing lives
 //! here (used by `invoke` + `chain`).
 
+pub mod agent;
 pub mod alerts;
 pub mod blueprint;
 pub mod branch;

@@ -161,6 +161,90 @@ fn balanced_object(s: &str) -> Option<&str> {
     None
 }
 
+/// Llama-3.1/3.2's native tool-call open delimiter (`<|python_tag|>{"name":…}`).
+const PYTHON_TAG_OPEN: &str = "<|python_tag|>";
+/// Qwen3/Hermes XML-ish tool-call open tag (`<tool_call>{"name":…}</tool_call>`).
+/// DISTINCT from Gemma's `<|tool_call>` (note the `|`): `strip_prefix` is exact, so
+/// the two delimiters never collide, and the Gemma arm runs first.
+const XML_TOOL_OPEN: &str = "<tool_call>";
+
+/// Strip a DEFINED open delimiter, then return the brace-balanced inner `{ … }`
+/// object that follows it (after optional whitespace) — or `None`. Shared by the
+/// `<|python_tag|>` and `<tool_call>` shapes, which both wrap a
+/// `{"name":…, "arguments"|"parameters"|"args":…}` object after a marker. NEVER a
+/// mid-string `{` search (the marker is the boundary, and `balanced_object` bounds
+/// the object so a `</tool_call>` close tag / trailing prose can never leak in) —
+/// so the SN-8 injection boundary is unchanged. Total + panic-free.
+fn marked_object<'a>(text: &'a str, open: &str) -> Option<&'a str> {
+    let after = text.trim_start().strip_prefix(open)?;
+    balanced_object(after.trim_start())
+}
+
+/// Decode an inner `{"name":…, <args-alias>:…}` object (the body of a
+/// `<|python_tag|>` / `<tool_call>` shape) into `(raw_name, args_bytes)`, or `None`
+/// if it is not a recognizable named-tool object (fail-closed → the caller falls
+/// through to a normal completion). The args bag is accepted under ANY of
+/// `args` | `arguments` | `parameters` (models differ) — EXACTLY one present (two or
+/// more ⇒ `None`, ambiguous), as either a JSON object (carried verbatim) OR a
+/// pre-serialized JSON STRING (unescaped to its inner JSON — some models emit
+/// `"arguments":"{…}"`). Requires a non-empty `name`.
+///
+/// SN-8: this widens only ENVELOPE recognition — the `name` and the args bytes are
+/// preserved and still flow through `resolve_granted_name` (exact grant membership)
+/// and the downstream schema `validate_args`. Unknown sibling keys are ignored here
+/// (tolerant envelope), but a smuggled ARG key is still rejected by the typed schema
+/// downstream, so the authority surface is unchanged. Total + panic-free.
+fn decode_named_object(obj: &str) -> Option<(String, Vec<u8>)> {
+    #[derive(Deserialize)]
+    struct Named<'a> {
+        name: Option<String>,
+        #[serde(borrow, default)]
+        args: Option<&'a RawValue>,
+        #[serde(borrow, default)]
+        arguments: Option<&'a RawValue>,
+        #[serde(borrow, default)]
+        parameters: Option<&'a RawValue>,
+    }
+    let parsed: Named = serde_json::from_str(obj).ok()?;
+    let name = parsed.name?;
+    if name.trim().is_empty() {
+        return None;
+    }
+    let mut present = [parsed.args, parsed.arguments, parsed.parameters]
+        .into_iter()
+        .flatten();
+    let args_bytes = match present.next() {
+        // No args alias ⇒ an empty args object (matches `validate_args`' empty == `{}`).
+        None => b"{}".to_vec(),
+        Some(v) => {
+            if present.next().is_some() {
+                return None; // two+ aliases ⇒ ambiguous ⇒ fail-closed
+            }
+            args_value_bytes(v)?
+        }
+    };
+    Some((name, args_bytes))
+}
+
+/// Resolve a tool-call args VALUE (a `RawValue`) to verbatim args-object bytes: a
+/// JSON object is carried byte-for-byte; a pre-serialized JSON STRING is unescaped
+/// to its inner JSON (then JSON5-repaired + schema-validated downstream); any other
+/// kind (array/scalar) ⇒ `None` (a tool's args are an object). Total + panic-free.
+fn args_value_bytes(v: &RawValue) -> Option<Vec<u8>> {
+    let raw = v.get();
+    let head = raw.trim_start();
+    if head.starts_with('{') {
+        Some(raw.as_bytes().to_vec())
+    } else if head.starts_with('"') {
+        // A pre-serialized JSON string: unescape to the inner JSON bytes.
+        serde_json::from_str::<String>(raw)
+            .ok()
+            .map(String::into_bytes)
+    } else {
+        None
+    }
+}
+
 /// Separator-canonicalize a single name segment: `_`→`-` (matching how Gemma
 /// renders `fs-list` as `fs_list`), trimmed. This is the EXISTING gate
 /// normalization, factored out — NEVER a fuzzy/similarity/edit-distance remap
@@ -293,6 +377,42 @@ pub fn parse_tool_call(
         }));
     }
 
+    // (1b) Llama-3.1 `<|python_tag|>{…}` and Qwen3/Hermes `<tool_call>{…}</tool_call>`
+    //      — two MORE DEFINED-delimiter shapes (markers required; never a `{` search),
+    //      each wrapping a `{"name":…, "arguments"|"parameters"|"args":…}` object.
+    //      The name + args flow through the SAME grant resolution + exact
+    //      `tool_grants` equality (SN-8) as every other arm; the args bag tolerates
+    //      the model's alias + a pre-serialized-string value. A marker that does not
+    //      wrap a NAMED object falls through (like a bare Gemma marker), byte-identical
+    //      for every existing row (no current input begins with these markers).
+    for open in [PYTHON_TAG_OPEN, XML_TOOL_OPEN] {
+        let Some(obj) = marked_object(trimmed, open) else {
+            continue;
+        };
+        let Some((raw_name, args_bytes)) = decode_named_object(obj) else {
+            continue; // marked but not a recognizable named call ⇒ normal completion
+        };
+        // The model COMMITTED to a named marked call ⇒ resolve or fail-closed (a bad
+        // name is a refusal, never silent prose — mirrors the Gemma-native arm).
+        let Some(grant) = resolve_granted_name(&raw_name, warrant) else {
+            return Err(DecodeError::UngrantedTool {
+                name: ToolName(raw_name),
+                version: ToolVersion(String::new()),
+            });
+        };
+        if args_bytes.len() > max_args_bytes {
+            return Err(DecodeError::Oversize {
+                got: args_bytes.len(),
+                max: max_args_bytes,
+            });
+        }
+        return Ok(Some(ToolCall {
+            name: grant.tool_id,
+            version: grant.tool_version,
+            args_bytes,
+        }));
+    }
+
     if !trimmed.starts_with('{') {
         return Ok(None);
     }
@@ -333,8 +453,13 @@ pub fn parse_tool_call(
         return Err(DecodeError::UngrantedTool { name, version });
     };
 
-    // (4) Carry the args verbatim, size-capped (IMP-16).
-    let args_bytes = raw.args.get().as_bytes().to_vec();
+    // (4) Carry the args verbatim, size-capped (IMP-16). An args OBJECT is carried
+    //     byte-for-byte (the PR-2d-1 pin); a pre-serialized JSON-STRING value (some
+    //     models emit `"args":"{…}"`) is unescaped to its inner JSON, then repaired +
+    //     schema-validated downstream — the envelope-side complement to PR-3's args
+    //     repair. A non-object/non-string value carries verbatim (refused downstream).
+    let args_bytes =
+        args_value_bytes(&raw.args).unwrap_or_else(|| raw.args.get().as_bytes().to_vec());
     if args_bytes.len() > max_args_bytes {
         return Err(DecodeError::Oversize {
             got: args_bytes.len(),
@@ -827,5 +952,186 @@ mod tests {
             parse_tool_call(env, &w, 4096),
             Err(DecodeError::UngrantedTool { .. })
         ));
+    }
+
+    // ---- PR-9c-1: dynamic multi-format envelopes (accept-side; common open set) ----
+    // Llama `<|python_tag|>{…}` · Qwen3/Hermes `<tool_call>{…}</tool_call>` · args
+    // under args|arguments|parameters · args as a pre-serialized JSON string. All
+    // are ACCEPT-side, fail-closed, and flow through the SAME grant resolution (SN-8)
+    // as every other arm — the envelope-side complement to PR-3's args-side JSON5
+    // repair. The markerless bare `{name,arguments}` object + multiple-calls-per-turn
+    // are DEFERRED (pinned to Ok(None) below).
+
+    #[test]
+    fn python_tag_call_with_parameters_alias_is_decoded() {
+        let w = warrant_granting(Some(("mcp-echo", "1")));
+        // Llama-3.1/3.2 native: `<|python_tag|>` + a `{"name","parameters"}` object.
+        let env = br#"<|python_tag|>{"name":"mcp-echo","parameters":{"q":"x"}}"#;
+        let call = parse_tool_call(env, &w, 4096)
+            .unwrap()
+            .expect("a python_tag call");
+        assert_eq!(call.name, ToolName("mcp-echo".into()));
+        assert_eq!(call.version, ToolVersion("1".into())); // the GRANT's version
+        assert_eq!(call.args_bytes, br#"{"q":"x"}"#.to_vec());
+    }
+
+    #[test]
+    fn python_tag_name_normalized_and_resolved() {
+        let w = warrant_granting(Some(("fs-list", "1")));
+        let env = br#"<|python_tag|>{"name":"fs_list","arguments":{}}"#;
+        let call = parse_tool_call(env, &w, 4096).unwrap().expect("a call");
+        assert_eq!(call.name, ToolName("fs-list".into())); // `_`→`-` normalized
+        assert_eq!(call.args_bytes, b"{}".to_vec());
+    }
+
+    #[test]
+    fn python_tag_bare_leaf_resolves_namespaced_grant() {
+        let w = warrant_granting_many(&[("kxlocal-a1b2c3d4/multiply", "1")]);
+        let env = br#"<|python_tag|>{"name":"multiply","parameters":{"a":2,"b":3}}"#;
+        let call = parse_tool_call(env, &w, 4096).unwrap().expect("a call");
+        assert_eq!(call.name, ToolName("kxlocal-a1b2c3d4/multiply".into()));
+        assert_eq!(call.args_bytes, br#"{"a":2,"b":3}"#.to_vec());
+    }
+
+    #[test]
+    fn python_tag_non_json_body_is_normal_completion() {
+        // Llama's `<|python_tag|>func.call(...)` (non-JSON) form is OUT OF SCOPE:
+        // no `{` after the marker ⇒ no balanced object ⇒ falls through ⇒ Ok(None).
+        let w = warrant_granting(Some(("mcp-echo", "1")));
+        let env = b"<|python_tag|>echo(\"x\")";
+        assert_eq!(parse_tool_call(env, &w, 4096), Ok(None));
+    }
+
+    #[test]
+    fn python_tag_ungranted_tool_is_refused() {
+        let w = warrant_granting(Some(("mcp-echo", "1")));
+        let env = br#"<|python_tag|>{"name":"mcp-danger","arguments":{}}"#;
+        assert!(matches!(
+            parse_tool_call(env, &w, 4096),
+            Err(DecodeError::UngrantedTool { .. })
+        ));
+    }
+
+    #[test]
+    fn xml_tool_call_newline_wrapped_is_decoded() {
+        let w = warrant_granting(Some(("mcp-echo", "1")));
+        // Qwen3's native: `<tool_call>\n{"name","arguments"}\n</tool_call>`.
+        let env = b"<tool_call>\n{\"name\":\"mcp-echo\",\"arguments\":{\"q\":\"x\"}}\n</tool_call>";
+        let call = parse_tool_call(env, &w, 4096)
+            .unwrap()
+            .expect("an xml call");
+        assert_eq!(call.name, ToolName("mcp-echo".into()));
+        assert_eq!(call.args_bytes, br#"{"q":"x"}"#.to_vec());
+    }
+
+    #[test]
+    fn xml_tool_call_tolerates_missing_close_tag() {
+        let w = warrant_granting(Some(("mcp-echo", "1")));
+        // Truncated close tag — `balanced_object` still bounds the object.
+        let env = br#"<tool_call>{"name":"mcp-echo","arguments":{"q":"x"}}"#;
+        let call = parse_tool_call(env, &w, 4096).unwrap().expect("a call");
+        assert_eq!(call.args_bytes, br#"{"q":"x"}"#.to_vec());
+    }
+
+    #[test]
+    fn xml_tool_call_does_not_collide_with_gemma_native() {
+        // `<tool_call>` (no pipe) must NOT be mistaken for Gemma's `<|tool_call>`
+        // (with pipe) — the delimiters are distinct and the Gemma arm runs first.
+        let w = warrant_granting(Some(("mcp-echo", "1")));
+        let env = br#"<tool_call>{"name":"mcp-echo","args":{"q":"x"}}</tool_call>"#;
+        let call = parse_tool_call(env, &w, 4096).unwrap().expect("a call");
+        assert_eq!(call.args_bytes, br#"{"q":"x"}"#.to_vec());
+    }
+
+    #[test]
+    fn marked_object_without_name_is_normal_completion() {
+        // A marked but un-named object is not a recognizable call ⇒ falls through.
+        let w = warrant_granting(Some(("mcp-echo", "1")));
+        let env = br#"<tool_call>{"foo":"bar"}</tool_call>"#;
+        assert_eq!(parse_tool_call(env, &w, 4096), Ok(None));
+    }
+
+    #[test]
+    fn two_args_aliases_is_fail_closed() {
+        // Both `args` and `arguments` present ⇒ ambiguous ⇒ not a call ⇒ Ok(None).
+        let w = warrant_granting(Some(("mcp-echo", "1")));
+        let env =
+            br#"<tool_call>{"name":"mcp-echo","args":{"q":"x"},"arguments":{"q":"y"}}</tool_call>"#;
+        assert_eq!(parse_tool_call(env, &w, 4096), Ok(None));
+    }
+
+    #[test]
+    fn string_args_are_reparsed_in_marked_shape() {
+        let w = warrant_granting(Some(("mcp-echo", "1")));
+        // Some models emit the args as a pre-serialized JSON string.
+        let env = br#"<tool_call>{"name":"mcp-echo","arguments":"{\"q\":\"x\"}"}</tool_call>"#;
+        let call = parse_tool_call(env, &w, 4096).unwrap().expect("a call");
+        assert_eq!(call.args_bytes, br#"{"q":"x"}"#.to_vec());
+    }
+
+    #[test]
+    fn string_args_are_reparsed_in_wrapped_envelope() {
+        let w = warrant_granting(Some(("mcp-echo", "1")));
+        // The Kortecx `{"tool_call":{…}}` envelope with a STRING args value.
+        let env = br#"{"tool_call":{"name":"mcp-echo","version":"1","args":"{\"q\":\"x\"}"}}"#;
+        let call = parse_tool_call(env, &w, 4096).unwrap().expect("a call");
+        assert_eq!(call.args_bytes, br#"{"q":"x"}"#.to_vec());
+    }
+
+    #[test]
+    fn python_tag_oversize_args_refused() {
+        let w = warrant_granting(Some(("mcp-echo", "1")));
+        let big = "x".repeat(100);
+        let env = format!(r#"<|python_tag|>{{"name":"mcp-echo","parameters":{{"q":"{big}"}}}}"#);
+        assert!(matches!(
+            parse_tool_call(env.as_bytes(), &w, 8),
+            Err(DecodeError::Oversize { .. })
+        ));
+    }
+
+    #[test]
+    fn marked_shape_empty_grants_is_none() {
+        let w = warrant_granting(None); // step (0) short-circuits before any arm
+        let env = br#"<|python_tag|>{"name":"mcp-echo","parameters":{}}"#;
+        assert_eq!(parse_tool_call(env, &w, 4096), Ok(None));
+    }
+
+    // ---- PR-9c-1: DEFERRED shapes degrade to a normal completion (pinned) ----
+
+    #[test]
+    fn bare_function_object_is_deferred_normal_completion() {
+        // Markerless `{"name":…,"arguments":…}` (Hermes/OpenAI) is DEFERRED: no
+        // `tool_call` wrapper, no marker ⇒ the JSON path finds no `tool_call` key ⇒
+        // Ok(None). Pins the boundary for a future markerless detector.
+        let w = warrant_granting(Some(("mcp-echo", "1")));
+        let env = br#"{"name":"mcp-echo","arguments":{"q":"x"}}"#;
+        assert_eq!(parse_tool_call(env, &w, 4096), Ok(None));
+    }
+
+    #[test]
+    fn multiple_tool_calls_array_is_deferred_normal_completion() {
+        // A multi-call array is a LOOP-SEMANTICS change (one Tool fact/turn) ⇒ DEFERRED;
+        // a `[` start never passes the `{`-gate ⇒ Ok(None) (fires nothing, fail-closed).
+        let w = warrant_granting(Some(("mcp-echo", "1")));
+        let env = br#"[{"name":"mcp-echo","arguments":{}},{"name":"mcp-echo","arguments":{}}]"#;
+        assert_eq!(parse_tool_call(env, &w, 4096), Ok(None));
+    }
+
+    #[test]
+    fn tool_calls_plural_wrapper_is_deferred_normal_completion() {
+        let w = warrant_granting(Some(("mcp-echo", "1")));
+        let env = br#"{"tool_calls":[{"name":"mcp-echo","arguments":{}}]}"#;
+        assert_eq!(parse_tool_call(env, &w, 4096), Ok(None));
+    }
+
+    #[test]
+    fn existing_shapes_a_and_b_unchanged_smoke() {
+        // Re-assert both pre-existing shapes still decode after the widening.
+        let w = warrant_granting(Some(("mcp-echo", "1")));
+        let a = br#"{"tool_call":{"name":"mcp-echo","version":"1","args":{"q":"x"}}}"#;
+        assert!(parse_tool_call(a, &w, 4096).unwrap().is_some());
+        let wf = warrant_granting(Some(("fs-list", "1")));
+        let b = b"<|tool_call>call:fs_list{}<tool_call|>";
+        assert!(parse_tool_call(b, &wf, 4096).unwrap().is_some());
     }
 }
