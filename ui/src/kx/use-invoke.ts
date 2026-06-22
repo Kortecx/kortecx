@@ -27,6 +27,9 @@ export interface StartedRun {
   terminalMoteId: string;
   /** The resolved recipe identity — the PR-2.1 fingerprint→handle naming join. */
   recipeFingerprint: string;
+  /** PR-R1: the react chain key ("" for a non-react run). Scopes ListReactTurns to
+   *  THIS invocation's chain on serve's shared journal (one chain per Invoke). */
+  reactChainSalt: string;
 }
 
 export function useInvoke() {
@@ -45,6 +48,7 @@ export function useInvoke() {
         instanceId: run.instanceId,
         terminalMoteId: run.terminalMoteId,
         recipeFingerprint: run.recipeFingerprint,
+        reactChainSalt: run.reactChainSalt,
       };
     },
   });

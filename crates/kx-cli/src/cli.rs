@@ -63,7 +63,7 @@ usage: kx <command> [args]
     kx feedback submit --rating up|down --message-id <id> [--instance <hex16>] [--comment <s>]
     kx feedback list [--instance <hex16>] [--limit N] [--before-rowid N]
     kx replan list [--limit N]                   (re-plan rounds, newest-first)
-    kx react list [--instance <hex16>] [--limit N]     (ReAct turns, newest-first)
+    kx react list [--instance <hex16>] [--chain <hex32>] [--limit N]   (ReAct turns, newest-first)
     kx capture list [--instance <hex16>] [--limit N]   (captured actions, newest-first)
     kx alerts list [--instance <hex16>] [--limit N] [--before-seq N]   (terminal-failure alerts, newest-first)
     kx signatures list | get --id <hex32> | register --manifest-file <path>
@@ -607,12 +607,13 @@ kx replan list [--limit N] [client flags]
   Newest-first; operator-global on single-node OSS."
             .into(),
         "react" => "\
-kx react list [--instance <hex16>] [--limit N] [client flags]
+kx react list [--instance <hex16>] [--chain <hex32>] [--limit N] [client flags]
   ReAct-turn observability (read-only): the durable ReactRound facts the live
   ReAct chain commits — each turn's run-salted Mote id, its settled branch
-  (pending | answer | tool | dead_lettered), the fired tool for a tool branch,
-  and the run's durable budget caps. Newest-first; --instance scopes to one
-  run's chain."
+  (pending | answer | tool | rejected | dead_lettered), the fired tool for a tool
+  branch, and the run's durable budget caps. Newest-first; --instance scopes to
+  one run, --chain to a single chain within it (a serve's shared journal carries
+  one chain per Invoke plus agentic-step chains)."
             .into(),
         "capture" => "\
 kx capture list [--instance <hex16>] [--limit N] [client flags]

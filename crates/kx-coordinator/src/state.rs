@@ -1044,12 +1044,13 @@ fn resolve_parent_context(
     {
         // The marker VALUE addresses the CHAIN directly (PR-2d-2 / PR-9b-2b) off
         // the derived index — never a scan across every chain's facts. 16 bytes =
-        // `instance_id` (the run-level react chain, `step_salt = None`); 48 bytes =
-        // `instance_id ‖ step_salt` (an agentic step's PRIVATE chain). Decoding
-        // BOTH lengths is LOAD-BEARING: an agentic turn's 48-byte marker decoded as
+        // `instance_id` (a LEGACY run-level chain from an old journal, `step_salt =
+        // None`); 48 bytes = `instance_id ‖ step_salt` (an agentic step's PRIVATE
+        // chain OR, since PR-R1, a per-invocation run-level chain salted by its seed
+        // MoteId). Decoding BOTH lengths is LOAD-BEARING: a 48-byte marker decoded as
         // a 16-byte `instance_id` (the PR-2d-1 shape) would `try_into`-fail → no
-        // chain → an EMPTY trajectory, so every agentic turn past turn 0 would
-        // reason with no memory of its own tool observations (a silent loop break).
+        // chain → an EMPTY trajectory, so every turn past turn 0 would reason with no
+        // memory of its own tool observations (a silent loop break).
         let chain: Option<([u8; INSTANCE_ID_LEN], Option<[u8; 32]>)> = mote
             .def
             .config_subset
@@ -1860,6 +1861,7 @@ fn submit_and_capture<J: Journal>(
     // storeless coordinator cannot write the durable anchor, so the chain could
     // never crash-recover (the durability law).
     let mut react_caps: Option<(u32, u32)> = None;
+    let mut react_chain_salt: Option<[u8; 32]> = None;
     let mote = if react_seed {
         if store.is_none() {
             return Err(CoordinatorError::ReactSeedRefused(
@@ -1872,11 +1874,25 @@ fn submit_and_capture<J: Journal>(
         // the clean instruction; the caps go to the durable anchor.
         let (instruction, caps) = react_seed_params(&mote)?;
         react_caps = Some(caps);
-        crate::react_shape::build_react_turn(
+        // PR-R1 — per-invocation run identity (FINDING-REACT-SHARED-INSTANCE). `kx
+        // serve` shares ONE journal / `instance_id` across every Invoke, so a run-
+        // level react chain salted by `instance_id` alone collides at turn-0 and the
+        // 2nd+ chain DEDUPS to the first. Salt the chain by its SEED MoteId — a
+        // content hash of the bound args (the swapped-out seed is NEVER admitted, so
+        // its id stays `Pending` in the projection, the run-level/agentic
+        // discriminator the settle pass uses): distinct goals ⇒ distinct chains;
+        // identical goals ⇒ the SAME chain (Invoke exactly-once preserved). Threaded
+        // as the existing per-chain `step_salt`, so every downstream site (index,
+        // marker, settle, recovery) is byte-unchanged — the run-level chain simply
+        // joins the salt-2 builders an agentic step already uses.
+        let chain_salt = *mote.id.as_bytes();
+        react_chain_salt = Some(chain_salt);
+        crate::react_shape::build_chain_turn(
             &mote.def.model_id,
             &instruction,
             0,
             &instance_id,
+            Some(chain_salt),
             warrant.model_route.max_output_tokens,
         )
     } else {
@@ -1955,7 +1971,8 @@ fn submit_and_capture<J: Journal>(
                 projection,
                 folded_through,
                 instance_id,
-                None, // run-level react chain (the seed-swap path); agentic chains anchor via settle
+                react_chain_salt, // PR-R1: the per-invocation run-level chain salt (= seed MoteId); was None
+                false, // PR-R1: a run-level react chain settles on its own Answer (no launch disposition)
                 turn0,
                 &shaper_warrant,
                 max_turns,
@@ -2441,6 +2458,7 @@ fn write_react_anchor<J: Journal>(
     folded_through: &mut u64,
     instance_id: [u8; INSTANCE_ID_LEN],
     step_salt: Option<[u8; 32]>,
+    is_agentic_launch: bool,
     turn0: &Mote,
     warrant: &WarrantSpec,
     max_turns: u32,
@@ -2481,9 +2499,13 @@ fn write_react_anchor<J: Journal>(
         branch: ReactBranch::Pending,
         max_turns,
         max_tool_calls,
-        // v9 (PR-9b-2b): `None` for the run-level react chain; `Some(launch
-        // MoteId)` for a deterministic-agentic step's private chain.
+        // PR-R1: `step_salt` is now `Some` for BOTH a per-invocation run-level chain
+        // (= seed MoteId) and an agentic step (= launch MoteId); `is_agentic_launch`
+        // is the durable discriminator the settle disposition reads (only an agentic
+        // launch disposes its launch mote). `None` step_salt = a legacy run-level
+        // chain (old journal), always `is_agentic_launch = false`.
         step_salt,
+        is_agentic_launch,
         seq: 0,
     };
     let durable = journal.append(entry)?;
@@ -2717,17 +2739,47 @@ fn settle_react_chain<J: Journal>(
     // lost on a crash and only repopulated by re-submit). The run-level chain
     // (`None`) terminates the run via the seed-swap and needs no launch disposition.
     match step_salt {
-        Some(salt) if status == ReactChainStatus::Settled => finalize_agentic_launch(
-            journal,
-            store,
-            projection,
-            folded_through,
-            dispatch,
-            instance_id,
-            salt,
-        ),
+        // PR-R1: a per-invocation RUN-LEVEL chain is ALSO salted now (by its
+        // swapped-out seed MoteId), so `Some` no longer implies "agentic". The
+        // durable `is_agentic_launch` flag on the chain's anchor is the discriminator:
+        // only a launched AGENTIC step runs the launch disposition (commit-on-Answer /
+        // dead-letter) to advance the frozen DAG; a run-level chain's terminal Answer
+        // settles the run directly (the `_` arm). The flag is recovery-stable (read
+        // off the committed anchor), so a reaped agentic launch still resumes its
+        // disposition while a run-level chain never busy-loops the settle cache.
+        Some(salt)
+            if status == ReactChainStatus::Settled
+                && chain_is_agentic_launch(projection, instance_id, Some(salt)) =>
+        {
+            finalize_agentic_launch(
+                journal,
+                store,
+                projection,
+                folded_through,
+                dispatch,
+                instance_id,
+                salt,
+            )
+        }
         _ => status,
     }
+}
+
+/// PR-R1: is the chain `(instance_id, step_salt)` a launched AGENTIC step (needs the
+/// launch disposition) or a run-level react chain (settles on its own Answer)? Reads
+/// the durable `is_agentic_launch` flag off the chain's anchor (turn 0) — recovery-
+/// stable, so the launch disposition resumes correctly after a crash. A legacy
+/// `None`-salted chain (old journal) and a per-invocation run-level chain both report
+/// `false`; only an agentic-step anchor reports `true`.
+fn chain_is_agentic_launch(
+    projection: &Projection,
+    instance_id: [u8; INSTANCE_ID_LEN],
+    step_salt: Option<[u8; 32]>,
+) -> bool {
+    projection
+        .react_rounds_of(&instance_id, &step_salt)
+        .find(|r| r.turn == 0)
+        .is_some_and(|r| r.is_agentic_launch)
 }
 
 /// Drive ONE chain's reason→tool→observe loop one pass (the PR-2d-1/2d-2 logic,
@@ -3187,8 +3239,11 @@ fn append_react_branch<J: Journal>(
         max_turns: anchor.max_turns,
         max_tool_calls: anchor.max_tool_calls,
         // v9 (PR-9b-2b): a settled branch joins the SAME chain as its anchor —
-        // `None` for the run-level chain, `Some(launch MoteId)` for an agentic step.
+        // `None` for a legacy run-level chain, `Some(salt)` otherwise.
         step_salt: anchor.step_salt,
+        // PR-R1: every round of a chain inherits its anchor's launch discriminator,
+        // so any round (not just turn 0) reports the chain's true kind.
+        is_agentic_launch: anchor.is_agentic_launch,
         seq: 0,
     };
     match journal.append(entry) {
@@ -3612,6 +3667,7 @@ fn settle_agentic_launches<J: Journal>(
             folded_through,
             instance_id,
             Some(step_salt),
+            true, // PR-R1: a launched deterministic-agentic step (disposes its launch mote)
             &turn0,
             &launch_warrant,
             max_turns,

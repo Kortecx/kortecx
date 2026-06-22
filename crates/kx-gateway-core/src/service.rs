@@ -1574,6 +1574,21 @@ impl KxGateway for GatewayService {
         }
 
         let react_seed = bound.react_seed;
+        // PR-R1: the per-invocation ReAct chain key = the bound react seed Mote's id.
+        // The coordinator salts the run-level chain by this SAME id at the seed-swap
+        // (`chain_salt = seed.id`), so the value the client gets back scopes
+        // ListReactTurns / the answer poll to THIS invocation's chain on serve's
+        // shared journal — they agree by construction (SN-8: server-derived). Empty
+        // for a non-react Invoke.
+        let react_chain_salt: Vec<u8> = if react_seed {
+            bound
+                .motes
+                .first()
+                .map(|(m, _)| m.id.as_bytes().to_vec())
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
         for (mote, warrant) in bound.motes {
             self.submitter
                 .submit_mote(mote, warrant, false, react_seed)
@@ -1586,6 +1601,7 @@ impl KxGateway for GatewayService {
             recipe_fingerprint: bound.recipe_fingerprint.to_vec(),
             // SERVER-DERIVED (from bind → compile, never client-supplied — SN-8).
             terminal_mote_id: bound.terminal_mote_id.as_bytes().to_vec(),
+            react_chain_salt,
         }))
     }
 
@@ -2056,6 +2072,7 @@ impl KxGateway for GatewayService {
             self.reader.as_ref(),
             req.limit,
             req.instance_id.as_deref(),
+            req.step_salt.as_deref(), // PR-R1: optional per-chain scope
         )?;
         Ok(Response::new(resp))
     }

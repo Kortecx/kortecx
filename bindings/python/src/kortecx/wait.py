@@ -114,9 +114,12 @@ _REACT_ANSWER = "answer"
 _REACT_DEAD = "dead_lettered"
 
 
-def _list_react_turns(stub, md, instance_id: bytes):
+def _list_react_turns(stub, md, instance_id: bytes, step_salt: bytes = b""):
     try:
-        resp = stub.ListReactTurns(_g.ListReactTurnsRequest(instance_id=instance_id), metadata=md)
+        req = _g.ListReactTurnsRequest(instance_id=instance_id)
+        if step_salt:  # PR-R1: scope to one chain on serve's shared journal
+            req.step_salt = step_salt
+        resp = stub.ListReactTurns(req, metadata=md)
         return list(resp.turns)
     except grpc.RpcError as e:
         raise from_rpc_error(e) from e
@@ -128,7 +131,9 @@ def _projection_result_ref(stub, md, instance_id: bytes, mote_id: bytes) -> Opti
     return _snapshot_result_ref(m) if m is not None else None
 
 
-def poll_react_result(stub, md, instance_id, terminal_mote_id, timeout) -> WaitOutcome:
+def poll_react_result(
+    stub, md, instance_id, terminal_mote_id, timeout, chain_salt: bytes = b""
+) -> WaitOutcome:
     """Wait for a ReAct CHAIN to settle (the ``invoke`` react path).
 
     A react chain has no statically-known terminal Mote: the run-salted turn-0 id
@@ -141,7 +146,7 @@ def poll_react_result(stub, md, instance_id, terminal_mote_id, timeout) -> WaitO
     """
     deadline = time.monotonic() + timeout
     while True:
-        turns = _list_react_turns(stub, md, instance_id)
+        turns = _list_react_turns(stub, md, instance_id, chain_salt)
         answer = next((t for t in turns if t.branch == _REACT_ANSWER), None)
         if answer is not None:
             rr = _projection_result_ref(stub, md, instance_id, answer.turn_mote_id)
@@ -260,11 +265,12 @@ async def apoll_result(stub, md, instance_id, terminal_mote_id, timeout) -> Wait
         await asyncio.sleep(POLL_INTERVAL)
 
 
-async def _alist_react_turns(stub, md, instance_id: bytes):
+async def _alist_react_turns(stub, md, instance_id: bytes, step_salt: bytes = b""):
     try:
-        resp = await stub.ListReactTurns(
-            _g.ListReactTurnsRequest(instance_id=instance_id), metadata=md
-        )
+        req = _g.ListReactTurnsRequest(instance_id=instance_id)
+        if step_salt:  # PR-R1: scope to one chain on serve's shared journal
+            req.step_salt = step_salt
+        resp = await stub.ListReactTurns(req, metadata=md)
         return list(resp.turns)
     except grpc.RpcError as e:
         raise from_rpc_error(e) from e
@@ -276,12 +282,14 @@ async def _aprojection_result_ref(stub, md, instance_id: bytes, mote_id: bytes) 
     return _snapshot_result_ref(m) if m is not None else None
 
 
-async def apoll_react_result(stub, md, instance_id, terminal_mote_id, timeout) -> WaitOutcome:
+async def apoll_react_result(
+    stub, md, instance_id, terminal_mote_id, timeout, chain_salt: bytes = b""
+) -> WaitOutcome:
     """Async mirror of :func:`poll_react_result` (the react ``invoke`` path)."""
     loop = asyncio.get_event_loop()
     deadline = loop.time() + timeout
     while True:
-        turns = await _alist_react_turns(stub, md, instance_id)
+        turns = await _alist_react_turns(stub, md, instance_id, chain_salt)
         answer = next((t for t in turns if t.branch == _REACT_ANSWER), None)
         if answer is not None:
             rr = await _aprojection_result_ref(stub, md, instance_id, answer.turn_mote_id)

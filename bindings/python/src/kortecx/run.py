@@ -28,6 +28,7 @@ class Result:
     state: str  # COMMITTED / FAILED / RUNNING
     result_ref: Optional[str]  # hex (32B) when committed
     payload: Optional[bytes]
+    react_chain_salt: str = ""  # PR-R1: the react chain key (hex 32B); "" for a non-react run
 
     @classmethod
     def from_outcome(cls, o: WaitOutcome) -> "Result":

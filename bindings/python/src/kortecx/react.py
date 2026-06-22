@@ -35,6 +35,7 @@ class ReactTurn:
     max_tool_calls: int
     seq: int
     rejection_reason: str = ""  # set iff branch == "rejected" (PR-3/A2)
+    step_salt: str = ""  # PR-R1: the chain key (hex 32B); "" for a legacy run-level chain
 
     @classmethod
     def from_proto(cls, r: "_g.ReactTurnSummary") -> "ReactTurn":
@@ -50,6 +51,7 @@ class ReactTurn:
             max_tool_calls=r.max_tool_calls,
             seq=r.seq,
             rejection_reason=r.rejection_reason,
+            step_salt=hexids.encode(r.step_salt) if r.step_salt else "",
         )
 
 

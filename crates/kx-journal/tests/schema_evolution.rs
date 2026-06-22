@@ -386,8 +386,9 @@ fn migrate_v7_to_current_upconverts_nothing_and_preserves_committed_facts() {
 
 /// Build the v8 fixture journal: the curated entry set PLUS a `ReplanRound`
 /// (kind 8) AND two `ReactRound` facts (kind 9, the v8 addition — an anchor +
-/// settle), then DOWNGRADE the kind-9 bodies to the v8 byte shape (strip the
-/// trailing `0` step_salt presence byte the v9 encoder now writes) and stamp
+/// settle), then DOWNGRADE the kind-9 bodies to the v8 byte shape (strip the two
+/// trailing additive bytes the current v11 encoder now writes — the v11
+/// `is_agentic_launch` byte and the v9 `step_salt` presence byte) and stamp
 /// `metadata.schema_version = 8`.
 fn build_v8_journal(dir: &Path) -> PathBuf {
     let path = dir.join("sample_v8.kxjournal");
@@ -416,6 +417,7 @@ fn build_v8_journal(dir: &Path) -> PathBuf {
             max_turns: 8,
             max_tool_calls: 6,
             step_salt: None,
+            is_agentic_launch: false,
             seq: 0,
         });
         entries.push(JournalEntry::ReactRound {
@@ -429,6 +431,7 @@ fn build_v8_journal(dir: &Path) -> PathBuf {
             max_turns: 8,
             max_tool_calls: 6,
             step_salt: None,
+            is_agentic_launch: false,
             seq: 0,
         });
         j.append_batch(entries).unwrap();
@@ -437,8 +440,9 @@ fn build_v8_journal(dir: &Path) -> PathBuf {
     path
 }
 
-/// Raw-SQL downgrade of a v9 journal file to the v8 byte shape: strip the trailing
-/// `0` (None) step_salt presence byte from each `ReactRound` (kind 9), and stamp
+/// Raw-SQL downgrade of a v11 journal file to the v8 byte shape: strip the two
+/// trailing additive bytes from each `ReactRound` (kind 9) — the v11
+/// `is_agentic_launch` byte AND the v9 `step_salt` presence byte — and stamp
 /// `metadata.schema_version = 8`. Wrapped in one transaction.
 fn downgrade_to_v8(path: &Path) {
     let mut conn = Connection::open(path).unwrap();
@@ -453,14 +457,15 @@ fn downgrade_to_v8(path: &Path) {
     };
     let txn = conn.transaction().unwrap();
     for (seq, bytes) in kind9 {
-        // The fixture only writes step_salt: None, so the v9 tail byte is `0`;
-        // dropping it yields the exact v8 shape.
+        // The fixture only writes step_salt: None + is_agentic_launch: false, so
+        // the two v11 tail bytes are `[step_salt_present=0, is_agentic_launch=0]`;
+        // dropping both yields the exact v8 shape.
         assert_eq!(
-            *bytes.last().unwrap(),
-            0u8,
-            "fixture ReactRound must be None"
+            bytes[bytes.len() - 2..],
+            [0u8, 0u8],
+            "fixture ReactRound must be step_salt None + is_agentic_launch false"
         );
-        let v8 = &bytes[..bytes.len() - 1];
+        let v8 = &bytes[..bytes.len() - 2];
         txn.execute(
             "UPDATE entries SET entry_bytes = ?1 WHERE seq = ?2",
             params![v8, seq],
@@ -587,6 +592,7 @@ fn v9_react_round_persists_and_resumes() {
         max_turns: 8,
         max_tool_calls: 8,
         step_salt: None,
+        is_agentic_launch: false,
         seq: 0,
     };
     let settle = JournalEntry::ReactRound {
@@ -600,6 +606,7 @@ fn v9_react_round_persists_and_resumes() {
         max_turns: 8,
         max_tool_calls: 8,
         step_salt: Some([0x5a; 32]),
+        is_agentic_launch: true,
         seq: 0,
     };
     {
@@ -639,10 +646,12 @@ fn v9_react_round_persists_and_resumes() {
 
 /// Build the v9 fixture journal: the curated entry set PLUS a `ReplanRound`
 /// (kind 8) AND two `ReactRound` facts (kind 9 — an anchor + a settled answer),
-/// then stamp `metadata.schema_version = 9`. No byte downgrade is needed: a v9
-/// `ReactRound` body carrying a tag 0..=3 branch is byte-identical to its v10
-/// encoding (the lone v9→v10 delta is the new tag-4 reason slot, which no v9
-/// journal exercises).
+/// then DOWNGRADE the kind-9 bodies to the v9 byte shape (strip the trailing v11
+/// `is_agentic_launch` byte the current encoder now writes — a v9 `ReactRound`
+/// body carries the v9 `step_salt` presence byte but NOT the launch byte) and
+/// stamp `metadata.schema_version = 9`. A v9 body carrying a tag 0..=3 branch is
+/// otherwise byte-identical to its v10 encoding (the lone v9→v10 delta is the new
+/// tag-4 reason slot, which no v9 journal exercises).
 fn build_v9_journal(dir: &Path) -> PathBuf {
     let path = dir.join("sample_v9.kxjournal");
     {
@@ -670,6 +679,7 @@ fn build_v9_journal(dir: &Path) -> PathBuf {
             max_turns: 8,
             max_tool_calls: 6,
             step_salt: None,
+            is_agentic_launch: false,
             seq: 0,
         });
         entries.push(JournalEntry::ReactRound {
@@ -683,12 +693,55 @@ fn build_v9_journal(dir: &Path) -> PathBuf {
             max_turns: 8,
             max_tool_calls: 6,
             step_salt: None,
+            is_agentic_launch: false,
             seq: 0,
         });
         j.append_batch(entries).unwrap();
     }
-    set_schema_version(&path, 9);
+    downgrade_to_v9(&path);
     path
+}
+
+/// Raw-SQL downgrade of a v11 journal file to the v9 byte shape: strip ONLY the
+/// trailing v11 `is_agentic_launch` byte from each `ReactRound` (kind 9), leaving
+/// the v9 `step_salt` presence byte in place, and stamp `metadata.schema_version
+/// = 9`. Wrapped in one transaction.
+fn downgrade_to_v9(path: &Path) {
+    let mut conn = Connection::open(path).unwrap();
+    let kind9: Vec<(i64, Vec<u8>)> = {
+        let mut stmt = conn
+            .prepare("SELECT seq, entry_bytes FROM entries WHERE kind = 9")
+            .unwrap();
+        stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap()
+    };
+    let txn = conn.transaction().unwrap();
+    for (seq, bytes) in kind9 {
+        // The fixture only writes is_agentic_launch: false (the run-level chain),
+        // so the v11 tail byte is `0`; dropping it yields the exact v9 shape.
+        assert_eq!(
+            *bytes.last().unwrap(),
+            0u8,
+            "fixture ReactRound must be is_agentic_launch false"
+        );
+        let v9 = &bytes[..bytes.len() - 1];
+        txn.execute(
+            "UPDATE entries SET entry_bytes = ?1 WHERE seq = ?2",
+            params![v9, seq],
+        )
+        .unwrap();
+    }
+    let v9_ver: [u8; 2] = 9u16.to_le_bytes();
+    txn.execute(
+        "UPDATE metadata SET value = ?1 WHERE key = 'schema_version'",
+        params![&v9_ver[..]],
+    )
+    .unwrap();
+    txn.commit().unwrap();
+    conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
+        .unwrap();
 }
 
 #[test]
@@ -707,7 +760,7 @@ fn open_still_refuses_v9_loudly() {
 }
 
 #[test]
-fn migrate_v9_to_current_upconverts_nothing_and_preserves_committed_facts() {
+fn migrate_v9_to_current_upconverts_react_launch_flag_and_preserves_committed_facts() {
     let tmp = tempfile::tempdir().unwrap();
     let src = build_v9_journal(tmp.path());
     let dst = tmp.path().join("migrated_from_v9.kxjournal");
@@ -716,10 +769,13 @@ fn migrate_v9_to_current_upconverts_nothing_and_preserves_committed_facts() {
     assert_eq!(report.from_version, 9);
     assert_eq!(report.to_version, JOURNAL_SCHEMA_VERSION);
     assert_eq!(report.entries_migrated, 10);
-    assert_eq!(report.entries_upconverted, 0); // pure pass-through (no tag-4 body)
+    // The two ReactRound facts grow by the trailing is_agentic_launch byte.
+    assert_eq!(report.entries_upconverted, 2);
 
-    // Strict open accepts the result; committed facts AND ReactRound bodies are
-    // byte-identical (product identity invariant — the durability law).
+    // Strict open accepts the result; committed facts are byte-identical (product
+    // identity invariant — the durability law). The kind-9 ReactRound bodies grow
+    // by exactly one trailing `0` byte: the up-converted run-level launch flag
+    // (is_agentic_launch == step_salt.is_some() == false).
     let j = SqliteJournal::open(&dst).unwrap();
     assert_eq!(j.count_entries().unwrap(), 10);
     let kind_bytes = |p: &Path, kind: i64| -> Vec<Vec<u8>> {
@@ -732,8 +788,193 @@ fn migrate_v9_to_current_upconverts_nothing_and_preserves_committed_facts() {
             .map(Result::unwrap)
             .collect()
     };
-    assert_eq!(kind_bytes(&src, 1), kind_bytes(&dst, 1)); // committed facts
-    assert_eq!(kind_bytes(&src, 9), kind_bytes(&dst, 9)); // ReactRound bodies
+    assert_eq!(kind_bytes(&src, 1), kind_bytes(&dst, 1)); // committed facts byte-identical
+    let src9 = kind_bytes(&src, 9);
+    let dst9 = kind_bytes(&dst, 9);
+    assert_eq!(src9.len(), dst9.len());
+    for (src_body, dst_body) in src9.iter().zip(dst9.iter()) {
+        // Each dst body = the src v9 body + one trailing `0` launch byte.
+        assert_eq!(*dst_body, [src_body.clone(), vec![0u8]].concat());
+    }
+
+    // The migrated ReactRound facts decode with the run-level launch flag.
+    let via_migrate = read_all(&j);
+    assert!(via_migrate
+        .iter()
+        .filter(|e| matches!(e, JournalEntry::ReactRound { .. }))
+        .all(|e| matches!(
+            e,
+            JournalEntry::ReactRound {
+                is_agentic_launch: false,
+                ..
+            }
+        )));
+}
+
+// ---------------------------------------------------------------------------
+// The frozen v10 representation (PR-R1): v10 = v11 minus the trailing ReactRound
+// `is_agentic_launch` byte. Kinds 0..9 (and the ReactRound branch tags 0..=4) are
+// byte-identical under v10 and v11; the lone v10→v11 delta is the `is_agentic_launch`
+// byte appended to each kind-9 `ReactRound` body, which DECODE-time up-converts to
+// `step_salt.is_some()` (the OLD Some-means-agentic semantics).
+// ---------------------------------------------------------------------------
+
+/// Raw-SQL downgrade of a v11 journal file to the v10 byte shape: strip ONLY the
+/// trailing v11 `is_agentic_launch` byte from each `ReactRound` (kind 9), and stamp
+/// `metadata.schema_version = 10`. Wrapped in one transaction. Unlike the v8/v9
+/// downgrades, the stripped byte is NOT asserted to be `0`: the v10 fixture
+/// includes an agentic-step settle (step_salt Some ⇒ is_agentic_launch true ⇒
+/// launch byte `1`), and dropping it correctly yields the v10 shape (which then
+/// up-converts on migration to `is_agentic_launch == step_salt.is_some()`).
+fn downgrade_to_v10(path: &Path) {
+    let mut conn = Connection::open(path).unwrap();
+    let kind9: Vec<(i64, Vec<u8>)> = {
+        let mut stmt = conn
+            .prepare("SELECT seq, entry_bytes FROM entries WHERE kind = 9")
+            .unwrap();
+        stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap()
+    };
+    let txn = conn.transaction().unwrap();
+    for (seq, bytes) in kind9 {
+        // Drop the final is_agentic_launch byte unconditionally (it may be `1` for
+        // the agentic-step settle in this fixture).
+        let v10 = &bytes[..bytes.len() - 1];
+        txn.execute(
+            "UPDATE entries SET entry_bytes = ?1 WHERE seq = ?2",
+            params![v10, seq],
+        )
+        .unwrap();
+    }
+    let v10_ver: [u8; 2] = 10u16.to_le_bytes();
+    txn.execute(
+        "UPDATE metadata SET value = ?1 WHERE key = 'schema_version'",
+        params![&v10_ver[..]],
+    )
+    .unwrap();
+    txn.commit().unwrap();
+    conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
+        .unwrap();
+}
+
+/// Build the v10 fixture journal: the curated entry set PLUS a `ReplanRound`
+/// (kind 8) AND two `ReactRound` facts (kind 9 — a run-level anchor [step_salt
+/// None] and an agentic-step settle [step_salt Some]), then DOWNGRADE the kind-9
+/// bodies to the v10 byte shape (strip the trailing v11 `is_agentic_launch` byte)
+/// and stamp `metadata.schema_version = 10`. On migration the run-level anchor
+/// up-converts to `is_agentic_launch == false` and the agentic settle to
+/// `is_agentic_launch == true` (the OLD `step_salt.is_some()` semantics).
+fn build_v10_journal(dir: &Path) -> PathBuf {
+    let path = dir.join("sample_v10.kxjournal");
+    {
+        let j = SqliteJournal::open(&path).unwrap();
+        let mut entries = curated_v6_entries();
+        entries.push(JournalEntry::ReplanRound {
+            round: 1,
+            shaper_mote_id: MoteId::from_bytes([0x7c; 32]),
+            base_prompt_ref: ContentRef::from_bytes([0x11; 32]),
+            corrected_prompt_ref: ContentRef::from_bytes([0x22; 32]),
+            warrant_ref: ContentRef::from_bytes([0xaa; 32]),
+            model_id: "qwen2-0_5b".to_string(),
+            failed_steps: SmallVec::new(),
+            escalation_reason_ref: None,
+            seq: 0,
+        });
+        entries.push(JournalEntry::ReactRound {
+            turn: 0,
+            turn_mote_id: MoteId::from_bytes([0x8e; 32]),
+            instance_id: [0x4d; INSTANCE_ID_LEN],
+            base_prompt_ref: ContentRef::from_bytes([0x12; 32]),
+            warrant_ref: ContentRef::from_bytes([0x34; 32]),
+            model_id: "qwen2-0_5b".to_string(),
+            branch: ReactBranch::Pending,
+            max_turns: 8,
+            max_tool_calls: 6,
+            step_salt: None,
+            is_agentic_launch: false,
+            seq: 0,
+        });
+        entries.push(JournalEntry::ReactRound {
+            turn: 0,
+            turn_mote_id: MoteId::from_bytes([0x8e; 32]),
+            instance_id: [0x4d; INSTANCE_ID_LEN],
+            base_prompt_ref: ContentRef::from_bytes([0x12; 32]),
+            warrant_ref: ContentRef::from_bytes([0x34; 32]),
+            model_id: "qwen2-0_5b".to_string(),
+            branch: ReactBranch::Answer,
+            max_turns: 8,
+            max_tool_calls: 6,
+            step_salt: Some([0x77; 32]),
+            is_agentic_launch: true,
+            seq: 0,
+        });
+        j.append_batch(entries).unwrap();
+    }
+    downgrade_to_v10(&path);
+    path
+}
+
+#[test]
+fn open_still_refuses_v10_loudly() {
+    // The strict open() contract is unchanged by the v11 bump: a v10 journal is
+    // refused loudly (migration is the separate, additive path) — the same
+    // contract that makes an OLD binary refuse a v11 journal (carrying the new
+    // is_agentic_launch byte) rather than misread it.
+    let tmp = tempfile::tempdir().unwrap();
+    let path = build_v10_journal(tmp.path());
+    let err = SqliteJournal::open(&path).unwrap_err();
+    assert!(matches!(
+        err,
+        JournalError::SchemaVersionMismatch { found: 10, expected } if expected == JOURNAL_SCHEMA_VERSION
+    ));
+}
+
+#[test]
+fn migrate_v10_to_current_upconverts_react_launch_flag() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = build_v10_journal(tmp.path());
+    let dst = tmp.path().join("migrated_from_v10.kxjournal");
+
+    let report = migrate_to(&src, &dst).unwrap();
+    assert_eq!(report.from_version, 10);
+    assert_eq!(report.to_version, JOURNAL_SCHEMA_VERSION);
+    assert_eq!(report.entries_migrated, 10);
+    // The two ReactRound facts grow by the trailing is_agentic_launch byte.
+    assert_eq!(report.entries_upconverted, 2);
+
+    // Strict open accepts the result; committed facts are byte-identical.
+    let j = SqliteJournal::open(&dst).unwrap();
+    assert_eq!(j.count_entries().unwrap(), 10);
+    let kind_bytes = |p: &Path, kind: i64| -> Vec<Vec<u8>> {
+        let conn = Connection::open(p).unwrap();
+        let mut stmt = conn
+            .prepare("SELECT entry_bytes FROM entries WHERE kind = ?1 ORDER BY seq")
+            .unwrap();
+        stmt.query_map(params![kind], |r| r.get::<_, Vec<u8>>(0))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect()
+    };
+    assert_eq!(kind_bytes(&src, 1), kind_bytes(&dst, 1)); // committed facts byte-identical
+
+    // The run-level anchor up-converts to is_agentic_launch == false; the agentic
+    // settle (step_salt Some) up-converts to is_agentic_launch == true (the OLD
+    // step_salt.is_some() discriminator).
+    let via_migrate = read_all(&j);
+    let react: Vec<(Option<[u8; 32]>, bool)> = via_migrate
+        .iter()
+        .filter_map(|e| match e {
+            JournalEntry::ReactRound {
+                step_salt,
+                is_agentic_launch,
+                ..
+            } => Some((*step_salt, *is_agentic_launch)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(react, vec![(None, false), (Some([0x77; 32]), true)]);
 }
 
 // ---------------------------------------------------------------------------

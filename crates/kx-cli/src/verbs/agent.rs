@@ -127,10 +127,16 @@ pub async fn execute(args: AgentArgs) -> Result<(), CliError> {
         .map_err(CliError::from_status)?
         .into_inner();
 
+    // PR-R1: serve shares ONE journal/instance_id across every Invoke, so scope the
+    // settle poll + the action fetch to THIS invocation's chain via the per-invocation
+    // `react_chain_salt` (32B; EMPTY ⇒ fall back to instance_id-only scoping).
+    let chain_salt = resp.react_chain_salt.clone();
+    let step_salt = (!chain_salt.is_empty()).then(|| chain_salt.clone());
     let outcome = wait::await_react_result(
         &mut client,
         &resolved,
         resp.instance_id.clone(),
+        chain_salt,
         Duration::from_secs(args.timeout_secs),
     )
     .await?;
@@ -140,6 +146,7 @@ pub async fn execute(args: AgentArgs) -> Result<(), CliError> {
         .list_react_turns(resolved.request(proto::ListReactTurnsRequest {
             limit: None,
             instance_id: Some(resp.instance_id.clone()),
+            step_salt,
         })?)
         .await
         .map_err(CliError::from_status)?

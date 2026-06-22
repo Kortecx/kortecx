@@ -8,6 +8,7 @@ channel lifecycle, and the eight RPCs, plus the high-level ``invoke(..., wait=Tr
 
 from __future__ import annotations
 
+import dataclasses as _dataclasses
 import json
 import os
 import warnings
@@ -271,10 +272,22 @@ class KxClient:
             return run
         if _is_react_handle(handle):
             # F13: a react chain settles via ListReactTurns, not a terminal Mote.
+            # PR-R1: scope the settle poll to THIS invocation's chain (serve shares
+            # one journal/instance_id across every Invoke) via react_chain_salt.
             outcome = _wait.poll_react_result(
-                self._stub, self._md, resp.instance_id, resp.terminal_mote_id, timeout
+                self._stub,
+                self._md,
+                resp.instance_id,
+                resp.terminal_mote_id,
+                timeout,
+                resp.react_chain_salt,
             )
-            result = self._finish(outcome)
+            result = _dataclasses.replace(
+                self._finish(outcome),
+                react_chain_salt=hexids.encode(resp.react_chain_salt)
+                if resp.react_chain_salt
+                else "",
+            )
         else:
             result = self._await_terminal(
                 resp.instance_id, resp.terminal_mote_id, timeout, wait_mode
@@ -724,15 +737,23 @@ class KxClient:
         return MoteDetail.from_proto(resp)
 
     def list_react_turns(
-        self, *, instance_id: Optional[str] = None, limit: Optional[int] = None
+        self,
+        *,
+        instance_id: Optional[str] = None,
+        step_salt: Optional[str] = None,
+        limit: Optional[int] = None,
     ) -> ReactTurnPage:
         """Enumerate a live ReAct chain's durable turn facts (newest-first,
         paginated) — the queryable Reason→Act→Observe history. ``instance_id``
-        (hex) scopes to one run; absent enumerates every chain. The server
-        clamps ``limit`` to its max page."""
+        (hex) scopes to one run; ``step_salt`` (hex 32B, PR-R1) further scopes to one
+        CHAIN within it (serve's shared journal carries one chain per Invoke plus
+        agentic-step chains) — pass ``Result.react_chain_salt`` from a react invoke.
+        Absent enumerates every chain. The server clamps ``limit`` to its max page."""
         req = _g.ListReactTurnsRequest()
         if instance_id is not None:
             req.instance_id = hexids.decode(instance_id)
+        if step_salt:
+            req.step_salt = hexids.decode(step_salt)
         if limit is not None:
             req.limit = limit
         resp = self._call(lambda: self._stub.ListReactTurns(req, metadata=self._md))
@@ -1306,10 +1327,21 @@ class AsyncKxClient:
             return run
         if _is_react_handle(handle):
             # F13: a react chain settles via ListReactTurns, not a terminal Mote.
+            # PR-R1: scope the settle poll to THIS invocation's chain.
             outcome = await _wait.apoll_react_result(
-                self._stub, self._md, resp.instance_id, resp.terminal_mote_id, timeout
+                self._stub,
+                self._md,
+                resp.instance_id,
+                resp.terminal_mote_id,
+                timeout,
+                resp.react_chain_salt,
             )
-            result = KxClient._finish(outcome)
+            result = _dataclasses.replace(
+                KxClient._finish(outcome),
+                react_chain_salt=hexids.encode(resp.react_chain_salt)
+                if resp.react_chain_salt
+                else "",
+            )
         else:
             result = await self._await_terminal(
                 resp.instance_id, resp.terminal_mote_id, timeout, wait_mode
@@ -1478,12 +1510,18 @@ class AsyncKxClient:
         return MoteDetail.from_proto(resp)
 
     async def list_react_turns(
-        self, *, instance_id: Optional[str] = None, limit: Optional[int] = None
+        self,
+        *,
+        instance_id: Optional[str] = None,
+        step_salt: Optional[str] = None,
+        limit: Optional[int] = None,
     ) -> ReactTurnPage:
         """Async :meth:`KxClient.list_react_turns`."""
         req = _g.ListReactTurnsRequest()
         if instance_id is not None:
             req.instance_id = hexids.decode(instance_id)
+        if step_salt:
+            req.step_salt = hexids.decode(step_salt)
         if limit is not None:
             req.limit = limit
         resp = await self._acall(self._stub.ListReactTurns(req, metadata=self._md))

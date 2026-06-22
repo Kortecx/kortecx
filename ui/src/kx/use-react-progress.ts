@@ -51,17 +51,23 @@ function toProgress(turns: ReactTurnVM[]): ReactProgress {
   return { turns: ordered, terminal };
 }
 
-/** Poll the chain for `instanceId` (undefined ⇒ idle). Stops on terminal. */
-export function useReactProgress(instanceId: string | undefined) {
+/** Poll the chain for `instanceId` (undefined ⇒ idle). Stops on terminal. PR-R1:
+ *  `chainSalt` scopes to ONE chain on serve's shared journal (one chain per Invoke)
+ *  so concurrent/sequential agent turns never mix their reason→act→observe trails. */
+export function useReactProgress(instanceId: string | undefined, chainSalt?: string) {
   const { client, endpoint, status } = useConnection();
   const query = useQuery({
-    queryKey: queryKeys.reactTurns(endpoint, instanceId, PAGE),
+    queryKey: queryKeys.reactTurns(endpoint, instanceId, PAGE, chainSalt),
     enabled: status === "connected" && client !== null && Boolean(instanceId),
     queryFn: async (): Promise<ReactProgress> => {
       if (!client || !instanceId) {
         throw new Error("not connected");
       }
-      const page = await client.listReactTurns({ instanceId, limit: PAGE });
+      const page = await client.listReactTurns({
+        instanceId,
+        stepSalt: chainSalt || undefined,
+        limit: PAGE,
+      });
       return toProgress(
         page.turns.map((t) => ({
           turn: t.turn,

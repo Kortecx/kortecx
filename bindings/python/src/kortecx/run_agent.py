@@ -72,7 +72,10 @@ def run_agent(
     result = cast(
         "Result", kx.invoke(REACT_RECIPE_HANDLE, args, context=context, wait=True, timeout=timeout)
     )
-    turns = kx.list_react_turns(instance_id=result.instance_id).turns
+    # PR-R1: scope the action fetch to THIS invocation's chain (serve's shared journal).
+    turns = kx.list_react_turns(
+        instance_id=result.instance_id, step_salt=result.react_chain_salt or None
+    ).turns
     return AgentResult(
         answer=result.text,
         answer_bytes=result.payload,
@@ -103,7 +106,9 @@ async def run_agent_async(
         "Result",
         await client.invoke(REACT_RECIPE_HANDLE, args, context=context, wait=True, timeout=timeout),
     )
-    page = await client.list_react_turns(instance_id=result.instance_id)
+    page = await client.list_react_turns(
+        instance_id=result.instance_id, step_salt=result.react_chain_salt or None
+    )
     return AgentResult(
         answer=result.text,
         answer_bytes=result.payload,

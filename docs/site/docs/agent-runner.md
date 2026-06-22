@@ -136,7 +136,11 @@ When an agent is granted tools, the loop **plans** topology, **re-plans** on fai
 passes **critic** gates, and runs **ReAct turns** against real MCP tools — every turn
 a durable fact, bounded by `max_turns` / `max_tool_calls`. Crash the server mid-loop
 and it resumes from its committed turns. Inspect a run's turns with `ListReactTurns`
-(`kx react list`). The same loop powers the `Agent(tools=[fn])` one-liner (Python / TS)
+(`kx react list`). Each agent run on a server is its **own chain** even though a server
+shares one run identity across calls, so `run_agent` returns the answer + actions for
+*that* call (scope `kx react list` to one chain with `--chain <key>`, or pass the
+`react_chain_salt` the SDKs return). The same loop powers the `Agent(tools=[fn])`
+one-liner (Python / TS)
 and the `model@tool` chain step — the granted tool set is part of the step's identity,
 so the loop replays deterministically (and a model's bare/leaf tool name resolves to the
 granted `&lt;server&gt;/&lt;name&gt;`). See the
@@ -178,6 +182,8 @@ same exact grant check:
 | Gemma | `<\|tool_call>call:NAME{…}<tool_call\|>` |
 | Llama 3.x | `<\|python_tag\|>{"name":…,"parameters":…}` |
 | Qwen / Hermes | `<tool_call>{"name":…,"arguments":…}</tool_call>` |
+| OpenAI / Hermes (markerless) | `{"name":…,"arguments":{…}}` |
+| OpenAI (plural wrapper) | `{"tool_calls":[ {"name":…,"arguments":{…}} ]}` |
 
 The arguments bag is accepted under `args`, `arguments`, or `parameters`, as either
 a JSON object or a pre-serialized JSON string. A reasoning preamble
@@ -185,7 +191,12 @@ a JSON object or a pre-serialized JSON string. A reasoning preamble
 is stripped first. Anything the runtime doesn't recognize as a call is treated as a
 normal answer (it never mis-fires a tool). This is **acceptance** only — the tool
 name still resolves to an exact grant (SN-8); a model can never widen its own
-authority by how it phrases a call.
+authority by how it phrases a call. The two **markerless** shapes carry no commitment
+marker, so they fire only when the name resolves to a granted tool *and* an explicit
+arguments bag is present — otherwise the output is a normal answer, never a
+false-positive refusal. A `tool_calls` array with **more than one** call is not yet
+run in a single turn (one tool fact per turn); it degrades to a normal answer rather
+than silently dropping calls.
 
 Inspect what happened per turn:
 

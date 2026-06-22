@@ -26,15 +26,18 @@ export class Result {
     /** hex (32B) when committed. */
     readonly resultRef: string | null,
     readonly payload: Uint8Array | null,
+    /** PR-R1: the react chain key (hex 32B); "" for a non-react run. */
+    readonly reactChainSalt: string = "",
   ) {}
 
-  static fromOutcome(o: WaitOutcome): Result {
+  static fromOutcome(o: WaitOutcome, reactChainSalt = ""): Result {
     return new Result(
       encode(o.instanceId),
       encode(o.terminalMoteId),
       o.state,
       o.resultRef !== undefined ? encode(o.resultRef) : null,
       o.payload ?? null,
+      reactChainSalt,
     );
   }
 
@@ -96,11 +99,19 @@ export class Run {
     private readonly _instance: Uint8Array,
     private readonly _terminal: Uint8Array,
     private readonly _fingerprint: Uint8Array,
+    /** PR-R1: the react chain key (32B); empty for a non-react run. */
+    private readonly _reactChainSalt: Uint8Array = new Uint8Array(0),
   ) {}
 
   /** The run instance id (hex, 16B). */
   get instanceId(): string {
     return encode(this._instance);
+  }
+
+  /** PR-R1: the react chain key (hex 32B); "" for a non-react run. Scope
+   * `listReactTurns` to THIS invocation's chain on serve's shared journal. */
+  get reactChainSalt(): string {
+    return this._reactChainSalt.length > 0 ? encode(this._reactChainSalt) : "";
   }
 
   /** The sink Mote whose committed result is this invocation's output (hex). */

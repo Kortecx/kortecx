@@ -138,6 +138,7 @@ describe("ReactTurn.fromProto", () => {
       maxTurns: 8,
       maxToolCalls: 6,
       seq: 42n,
+      stepSalt: fill(0x5a, 32), // PR-R1: the chain key
     });
     const r = ReactTurn.fromProto(t);
     expect(r.turn).toBe(2);
@@ -147,6 +148,7 @@ describe("ReactTurn.fromProto", () => {
     expect(r.toolId).toBe("mcp-echo");
     expect(r.maxToolCalls).toBe(6);
     expect(r.seq).toBe(42);
+    expect(r.stepSalt).toBe("5a".repeat(32));
     expect(r.toJSON()).toEqual({
       turn: 2,
       turn_mote_id: "28".repeat(32),
@@ -159,6 +161,7 @@ describe("ReactTurn.fromProto", () => {
       max_tool_calls: 6,
       seq: 42,
       rejection_reason: "",
+      step_salt: "5a".repeat(32),
     });
   });
 

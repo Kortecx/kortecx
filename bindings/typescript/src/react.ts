@@ -28,6 +28,8 @@ export class ReactTurn {
     readonly maxToolCalls: number,
     readonly seq: number,
     readonly rejectionReason: string = "",
+    /** PR-R1: the chain key (hex 32B); "" for a legacy run-level chain. */
+    readonly stepSalt: string = "",
   ) {}
 
   static fromProto(t: PbReactTurnSummary): ReactTurn {
@@ -43,6 +45,7 @@ export class ReactTurn {
       t.maxToolCalls,
       Number(t.seq),
       t.rejectionReason,
+      t.stepSalt.length > 0 ? encode(t.stepSalt) : "",
     );
   }
 
@@ -60,6 +63,7 @@ export class ReactTurn {
       max_tool_calls: this.maxToolCalls,
       seq: this.seq,
       rejection_reason: this.rejectionReason,
+      step_salt: this.stepSalt,
     };
   }
 }

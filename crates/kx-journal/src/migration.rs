@@ -97,12 +97,19 @@ pub fn migrate_entry(
     // double-append its `idempotency_class` byte). `from_version` is guaranteed in
     // [MIN_SUPPORTED, CURRENT] by the guard above.
     match from_version {
-        // v10 (current): no transform, the single source of truth for decode.
+        // v11 (current): no transform, the single source of truth for decode.
         JOURNAL_SCHEMA_VERSION => Ok(decode_entry_with_def_hash(bytes, def_hash)?),
-        // v9 → v10: a PURE pass-through. The lone v9→v10 delta is the brand-new
-        // `ReactBranch::Rejected` (branch tag 4); no v9 journal can contain a tag-4
-        // `ReactRound` body, and every existing kind/tag is byte-identical, so v9
-        // bytes decode correctly under v10 unchanged.
+        // v10 → v11: a PURE pass-through. The lone v10→v11 delta is the trailing
+        // `is_agentic_launch` byte on a `ReactRound` (kind 9) body; a v10 body lacks
+        // it, and the canonical decoder up-converts a byte-absent body to
+        // `step_salt.is_some()` (the OLD Some-means-agentic semantics) — so v10 bytes
+        // decode correctly + with the SAME disposition under v11 unchanged.
+        10 => Ok(decode_entry_with_def_hash(bytes, def_hash)?),
+        // v9 → v11: a PURE pass-through. The v9→v10 delta is the brand-new
+        // `ReactBranch::Rejected` (branch tag 4) — no v9 journal can contain a tag-4
+        // `ReactRound` body — and the v10→v11 delta is the byte-absent
+        // `is_agentic_launch` up-convert above; every existing kind/tag is
+        // byte-identical, so v9 bytes decode correctly under v11 unchanged.
         9 => Ok(decode_entry_with_def_hash(bytes, def_hash)?),
         // v8 → current: append the safe-default `None` step_salt presence byte to
         // each `ReactRound` (kind 9) body (the lone v8→v9 delta — a trailing

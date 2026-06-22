@@ -131,10 +131,14 @@ export async function pollReactResult(
   instance: Uint8Array,
   terminal: Uint8Array,
   timeoutMs: number,
+  chainSalt: Uint8Array = new Uint8Array(0),
 ): Promise<WaitOutcome> {
+  // PR-R1: scope the settle poll to THIS invocation's chain (serve shares one
+  // journal/instance_id across every Invoke). An empty salt = instance-only scoping.
+  const stepSalt = chainSalt.length > 0 ? chainSalt : undefined;
   const deadline = Date.now() + timeoutMs;
   for (;;) {
-    const resp = await rpc(gw.listReactTurns({ instanceId: instance }));
+    const resp = await rpc(gw.listReactTurns({ instanceId: instance, stepSalt }));
     const answer = resp.turns.find((t) => t.branch === REACT_ANSWER);
     if (answer !== undefined) {
       const view = await rpc(gw.getProjection({ instanceId: instance }));

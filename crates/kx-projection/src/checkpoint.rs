@@ -88,7 +88,18 @@ use crate::state::{
 /// `state_content_digest` are BYTE-UNCHANGED and the canonical PRODUCT digest
 /// `7d22d4bd` is invariant. A stale v4 sidecar is rejected; recovery full-folds
 /// from the v9 journal (which carries `step_salt`) and re-seals (self-healing).
-pub const CURRENT_FORMAT_VERSION: u16 = 5;
+///
+/// `6` (PR-R1, per-invocation run identity): `ReactRoundRecordDto` gained
+/// `is_agentic_launch` — the run-level/agentic-launch discriminator a salted
+/// run-level chain needs (its `step_salt` is now `Some`). SAME deliberate-break
+/// contract as v5: the per-record payload grows by the bool, shifting the bincoded
+/// bytes + `state_digest()` of any state THAT HAS react records; a state with NO
+/// react rounds (the demo / a non-react run) encodes a length-0 `react_rounds` Vec
+/// either way, so its `encode_state` / `state_content_digest` are BYTE-UNCHANGED and
+/// the canonical PRODUCT digest `7d22d4bd` is invariant. A stale v5 sidecar is
+/// rejected; recovery full-folds from the journal (a byte-absent v10 `ReactRound`
+/// up-converts `is_agentic_launch` to `step_salt.is_some()`) and re-seals.
+pub const CURRENT_FORMAT_VERSION: u16 = 6;
 
 /// Payload codec tag. `0` = canonical-bincode (LE + fixed-int, the house
 /// [`kx_mote::canonical_config`]). Reserved for a future rkyv zero-copy payload
@@ -537,6 +548,10 @@ struct ReactRoundRecordDto {
     /// PR-9b-2 — the per-step salt (`None` ⇒ run-level). The format-version bump
     /// (v4→v5) covers this added field; absent in v4 sidecars (rejected → full-fold).
     step_salt: Option<[u8; 32]>,
+    /// PR-R1 — the run-level/agentic-launch discriminator (the format-version bump
+    /// v5→v6 covers it; absent in v5 sidecars → rejected → full-fold from the journal,
+    /// which up-converts a byte-absent v10 `ReactRound` to `step_salt.is_some()`).
+    is_agentic_launch: bool,
     seq: u64,
 }
 
@@ -725,6 +740,7 @@ impl From<&ReactRoundRecord> for ReactRoundRecordDto {
             max_turns,
             max_tool_calls,
             step_salt,
+            is_agentic_launch,
             seq,
         } = r;
         Self {
@@ -738,6 +754,7 @@ impl From<&ReactRoundRecord> for ReactRoundRecordDto {
             max_turns: *max_turns,
             max_tool_calls: *max_tool_calls,
             step_salt: *step_salt,
+            is_agentic_launch: *is_agentic_launch,
             seq: *seq,
         }
     }
@@ -973,6 +990,7 @@ impl From<ReactRoundRecordDto> for ReactRoundRecord {
             max_turns,
             max_tool_calls,
             step_salt,
+            is_agentic_launch,
             seq,
         } = dto;
         ReactRoundRecord {
@@ -986,6 +1004,7 @@ impl From<ReactRoundRecordDto> for ReactRoundRecord {
             max_turns,
             max_tool_calls,
             step_salt,
+            is_agentic_launch,
             seq,
         }
     }
@@ -1097,9 +1116,10 @@ mod tests {
         s
     }
 
-    /// PR-2d-1 (v4) + PR-9b-2b (v5): the fixture's react-turn records — a RUN-LEVEL
-    /// anchor (`step_salt None`) + an AGENTIC `Tool` settle (`step_salt Some`) — so the
-    /// round-trip proves BOTH the v4 payload branch AND the v5 `step_salt` Option survive.
+    /// PR-2d-1 (v4) + PR-9b-2b (v5) + PR-R1 (v6): the fixture's react-turn records — a
+    /// RUN-LEVEL anchor (`step_salt None`, `is_agentic_launch false`) + an AGENTIC `Tool`
+    /// settle (`step_salt Some`, `is_agentic_launch true`) — so the round-trip proves the
+    /// v4 payload branch AND the v5 `step_salt` Option AND the v6 launch flag survive.
     fn push_sample_react_rounds(s: &mut State) {
         s.react_rounds.push(ReactRoundRecord {
             turn: 0,
@@ -1112,6 +1132,7 @@ mod tests {
             max_turns: 8,
             max_tool_calls: 8,
             step_salt: None,
+            is_agentic_launch: false,
             seq: 4,
         });
         s.react_rounds.push(ReactRoundRecord {
@@ -1128,26 +1149,27 @@ mod tests {
             max_turns: 8,
             max_tool_calls: 8,
             step_salt: Some([0x77; 32]),
+            is_agentic_launch: true,
             seq: 4,
         });
     }
 
-    /// PR-9b-2b: pin the checkpoint format version so the v4→v5 bump (the
-    /// additive `ReactRoundRecordDto.step_salt` field) is an intentional,
-    /// reviewable change — and so a v4 sidecar written by the previous binary is
-    /// REFUSED (decode error → full-fold self-heal), never misread.
+    /// PR-R1: pin the checkpoint format version so the v5→v6 bump (the additive
+    /// `ReactRoundRecordDto.is_agentic_launch` field) is an intentional, reviewable
+    /// change — and so a v5 sidecar written by the previous binary is REFUSED
+    /// (decode error → full-fold self-heal), never misread.
     #[test]
-    fn format_version_is_v5_and_v4_blobs_are_refused() {
-        assert_eq!(CURRENT_FORMAT_VERSION, 5);
+    fn format_version_is_v6_and_v5_blobs_are_refused() {
+        assert_eq!(CURRENT_FORMAT_VERSION, 6);
         let mut bytes = FoldCheckpoint::from_state(&sample_state()).to_bytes();
-        // Stamp the envelope version back to v4 (bytes 0..2, LE u16).
-        bytes[0..2].copy_from_slice(&4u16.to_le_bytes());
+        // Stamp the envelope version back to v5 (bytes 0..2, LE u16).
+        bytes[0..2].copy_from_slice(&5u16.to_le_bytes());
         assert!(matches!(
             FoldCheckpoint::from_bytes(&bytes),
-            // The version is part of the digest preimage, so a re-stamped v4
+            // The version is part of the digest preimage, so a re-stamped v5
             // envelope fails as UnsupportedVersion or DigestMismatch — both are
             // fail-safe discards (full fold).
-            Err(CheckpointError::UnsupportedVersion { got: 4 } | CheckpointError::DigestMismatch)
+            Err(CheckpointError::UnsupportedVersion { got: 5 } | CheckpointError::DigestMismatch)
         ));
     }
 

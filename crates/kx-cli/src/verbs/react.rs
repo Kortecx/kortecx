@@ -4,7 +4,8 @@
 //! (`pending` | `answer` | `tool` | `rejected` | `dead_lettered`), the fired tool
 //! for a `tool` branch, the fail-closed reason for a `rejected` branch (PR-3/A2),
 //! and the run's durable budget caps. Read-only, newest-first; `--instance`
-//! scopes to one run's chain.
+//! scopes to one run, `--chain <64-hex>` to a single chain within it (PR-R1: a
+//! serve's shared journal carries one chain per Invoke plus agentic-step chains).
 
 use kx_proto::proto;
 
@@ -17,8 +18,10 @@ use crate::format;
 pub struct ReactArgs {
     /// Common client flags.
     pub common: ClientCommon,
-    /// Scope to one run's chain (16B instance id).
+    /// Scope to one run (16B instance id).
     pub instance: Option<[u8; 16]>,
+    /// PR-R1: scope to one chain within the run (32B step_salt / chain key).
+    pub chain: Option<[u8; 32]>,
     /// Page size (server clamps to its max page).
     pub limit: Option<u32>,
 }
@@ -36,6 +39,7 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<ReactArgs, CliErr
     }
     let mut common = ClientCommon::default();
     let mut instance = None;
+    let mut chain = None;
     let mut limit = None;
     while let Some(flag) = args.next() {
         if common.try_consume(&flag, &mut args)? {
@@ -43,6 +47,7 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<ReactArgs, CliErr
         }
         match flag.as_str() {
             "--instance" => instance = Some(take_fixed::<_, 16>(&mut args, "--instance")?),
+            "--chain" => chain = Some(take_fixed::<_, 32>(&mut args, "--chain")?),
             "--limit" => {
                 let v = next_value(&mut args, "--limit")?;
                 limit = Some(v.parse::<u32>().map_err(|_| {
@@ -55,6 +60,7 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<ReactArgs, CliErr
     Ok(ReactArgs {
         common,
         instance,
+        chain,
         limit,
     })
 }
@@ -67,6 +73,7 @@ pub async fn execute(args: ReactArgs) -> Result<(), CliError> {
         .list_react_turns(resolved.request(proto::ListReactTurnsRequest {
             limit: args.limit,
             instance_id: args.instance.map(|b| b.to_vec()),
+            step_salt: args.chain.map(|b| b.to_vec()),
         })?)
         .await
         .map_err(CliError::from_status)?

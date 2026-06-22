@@ -58,14 +58,28 @@ const PYTHON_TAG_NATIVE: &[u8] = br#"<|python_tag|>{"name":"mcp-echo","parameter
 /// XML-ish shape (newline-wrapped, as Qwen3 emits) — the other new accept-side arm.
 const XML_TOOL_NATIVE: &[u8] =
     b"<tool_call>\n{\"name\":\"mcp-echo\",\"arguments\":{\"q\":\"x\"}}\n</tool_call>";
+/// PR-R1: the markerless `{"name":…,"arguments":…}` (OpenAI / Hermes) shape — fires
+/// via the new COMMITMENT-AWARE accept-side arm (a granted name + an explicit args bag).
+const MARKERLESS_NATIVE: &[u8] = br#"{"name":"mcp-echo","arguments":{"q":"x"}}"#;
+/// PR-R1: the single-element `{"tool_calls":[…]}` (OpenAI plural) wrapper shape.
+const TOOL_CALLS_NATIVE: &[u8] = br#"{"tool_calls":[{"name":"mcp-echo","arguments":{"q":"x"}}]}"#;
 
 /// The client's SEED Mote: an ordinary ROND model Mote carrying the instruction.
-/// Its identity is advisory — the coordinator swaps in the run-salted turn 0.
+/// Its identity is advisory — the coordinator swaps in the run-salted turn 0. Since
+/// PR-R1 the swapped chain is SALTED by this seed's `MoteId` (a content hash that
+/// includes the instruction), so a distinct instruction ⇒ a distinct chain.
 fn seed_mote() -> Mote {
+    seed_mote_with(INSTRUCTION)
+}
+
+/// A SEED Mote carrying `instruction` — distinct instructions yield distinct seed
+/// `MoteId`s (the def hash folds `config_subset[PROMPT_KEY]`), hence distinct PR-R1
+/// chain salts. Used by the per-invocation-identity proofs.
+fn seed_mote_with(instruction: &str) -> Mote {
     let mut config_subset = BTreeMap::new();
     config_subset.insert(
         ConfigKey(PROMPT_KEY.to_string()),
-        ConfigVal(INSTRUCTION.as_bytes().to_vec()),
+        ConfigVal(instruction.as_bytes().to_vec()),
     );
     let def = MoteDef {
         critic_check: None,
@@ -201,12 +215,26 @@ fn coordinator(dir: &TempDir) -> (CoordinatorService, Arc<LocalFsContentStore>) 
     coordinator_with(dir, registry_with_mcp())
 }
 
-/// Submit `mote` with `react_seed = true`; returns `(turn0_mote_id, instance_id)`.
+/// Submit `mote` with `react_seed = true`; asserts Accepted; returns
+/// `(turn0_mote_id, instance_id)`.
 async fn submit_react(
     svc: &CoordinatorService,
     mote: &Mote,
     w: &WarrantSpec,
 ) -> (Vec<u8>, Vec<u8>) {
+    let (mote_id, instance_id, status) = submit_react_status(svc, mote, w).await;
+    assert_eq!(status, kx_coordinator::proto::SubmitStatus::Accepted as i32);
+    (mote_id, instance_id)
+}
+
+/// Submit a react seed WITHOUT asserting the status — the per-invocation-identity
+/// proofs need the raw `(mote_id, instance_id, status)` to distinguish a fresh chain
+/// (Accepted) from an idempotent re-submit of the SAME goal (Duplicate).
+async fn submit_react_status(
+    svc: &CoordinatorService,
+    mote: &Mote,
+    w: &WarrantSpec,
+) -> (Vec<u8>, Vec<u8>, i32) {
     let _ = common::register_run(svc, [0x5a; 32]).await;
     let resp = svc
         .submit_mote(Request::new(kx_coordinator::proto::SubmitMoteRequest {
@@ -218,11 +246,7 @@ async fn submit_react(
         .await
         .unwrap()
         .into_inner();
-    assert_eq!(
-        resp.status,
-        kx_coordinator::proto::SubmitStatus::Accepted as i32
-    );
-    (resp.mote_id, resp.instance_id)
+    (resp.mote_id, resp.instance_id, resp.status)
 }
 
 async fn commit_raw(
@@ -348,8 +372,8 @@ async fn react_seed_swaps_in_a_salted_turn0_and_anchors() {
         other => panic!("expected a ReactRound anchor, got {other:?}"),
     }
 
-    // The leased turn: run-salted id, the marker (value = the salt), the
-    // instruction, EDGE-FREE, not a shaper.
+    // The leased turn: run-salted id, the marker (value = the COMPOUND chain key,
+    // PR-R1), the instruction, EDGE-FREE, not a shaper.
     let worker = common::register(&svc, "w").await;
     let leased = common::lease_work(&svc, worker, MAC, 16).await;
     assert_eq!(leased.len(), 1, "turn 0 is immediately leasable");
@@ -357,14 +381,19 @@ async fn react_seed_swaps_in_a_salted_turn0_and_anchors() {
     assert_eq!(turn0.id.as_bytes().to_vec(), turn0_id);
     assert!(turn0.parents.is_empty(), "a react turn is edge-free");
     assert!(!turn0.def.is_topology_shaper);
+    // PR-R1: a run-level chain is now salted by its SEED MoteId (so distinct Invokes
+    // split), so the routing marker is the 48-byte `instance_id ‖ chain_salt`
+    // (chain_salt = the seed's MoteId) — NOT the bare 16-byte instance_id.
+    let mut expected_marker = instance_id.clone();
+    expected_marker.extend_from_slice(seed.id.as_bytes());
     assert_eq!(
         turn0
             .def
             .config_subset
             .get(&ConfigKey(REACT_TURN_KEY.to_string()))
             .map(|v| v.0.clone()),
-        Some(instance_id),
-        "the routing marker carries the run-salt"
+        Some(expected_marker),
+        "the routing marker carries instance_id ‖ chain_salt (the per-invocation key)"
     );
     assert_eq!(
         turn0
@@ -730,6 +759,183 @@ async fn tool_branch_fires_and_commits_via_xml_tool_call_shape() {
         MoteState::Committed,
         "the world-mutating observation COMMITTED — an `<tool_call>` tool genuinely fired"
     );
+}
+
+/// PR-R1: drive a single staged tool-call `shape` through the REAL settle and assert
+/// it FIRES end-to-end — the settle freezes a `mcp-echo@1` Tool fact, the observation
+/// leases WITH `{"q":"x"}`, and it COMMITS (the tool genuinely fired). The accept-side
+/// complement to the per-format `kx-toolcall` unit tests.
+async fn assert_shape_fires(shape: &[u8]) {
+    let dir = TempDir::new().unwrap();
+    let (svc, store) = coordinator(&dir);
+    let w = warrant(true); // mcp-echo@1 GRANTED
+    let (_, _) = submit_react(&svc, &seed_mote(), &w).await;
+    let worker = common::register(&svc, "w").await;
+    let leased = common::lease_work(&svc, worker, MAC, 16).await;
+    let turn0: Mote = leased[0].mote.clone().unwrap().try_into().unwrap();
+    commit_raw(&svc, &store, &turn0, &w, shape, worker).await;
+
+    let facts = react_facts(&svc, &dir).await;
+    assert!(
+        matches!(
+            &facts[1],
+            JournalEntry::ReactRound {
+                turn: 0,
+                branch: ReactBranch::Tool { tool_id, tool_version },
+                ..
+            } if tool_id == "mcp-echo" && tool_version == "1"
+        ),
+        "the markerless shape decodes + freezes a Tool fact (it FIRED)"
+    );
+    let (obs, args) = lease_observation(&svc, worker, &turn0).await;
+    assert_eq!(
+        args,
+        br#"{"q":"x"}"#.to_vec(),
+        "args decode from the markerless shape"
+    );
+    commit_raw(&svc, &store, &obs, &w, br#"{"echoed":{"q":"x"}}"#, worker).await;
+    assert_eq!(
+        svc.state_of(obs.id).await.unwrap(),
+        MoteState::Committed,
+        "the observation COMMITTED — the markerless tool genuinely fired"
+    );
+}
+
+/// PR-R1: the markerless `{"name":…,"arguments":…}` (OpenAI / Hermes) shape FIRES +
+/// commits through the live settle — the new commitment-aware accept-side arm wired
+/// end-to-end (not just unit-tested in the parser leaf).
+#[tokio::test]
+async fn tool_branch_fires_and_commits_via_markerless_shape() {
+    assert_shape_fires(MARKERLESS_NATIVE).await;
+}
+
+/// PR-R1: the single-element `{"tool_calls":[…]}` (OpenAI plural) wrapper FIRES too.
+#[tokio::test]
+async fn tool_branch_fires_and_commits_via_tool_calls_wrapper_shape() {
+    assert_shape_fires(TOOL_CALLS_NATIVE).await;
+}
+
+/// PR-R1 — FINDING-REACT-SHARED-INSTANCE FIXED (the headline reliability proof).
+/// `kx serve` shares ONE journal / `instance_id` across every Invoke, so two DISTINCT
+/// react goals must NOT dedup-collide at turn 0 (pre-fix the 2nd chain reused the
+/// 1st's turns + answer — `run_agent` returned the first goal's answer for every later
+/// run). Salting the run-level chain by its seed `MoteId` SPLITS them into distinct
+/// chains with distinct answers — model-free + deterministic.
+#[tokio::test]
+async fn distinct_goals_split_into_distinct_chains_on_one_journal() {
+    let dir = TempDir::new().unwrap();
+    let (svc, store) = coordinator(&dir);
+    let w = warrant(false); // answer-only ⇒ each chain settles on its own Answer
+
+    let seed_a = seed_mote_with("What is 2 + 2?");
+    let seed_b = seed_mote_with("What is the capital of France?");
+    let (turn0_a, inst_a) = submit_react(&svc, &seed_a, &w).await;
+    let (turn0_b, inst_b) = submit_react(&svc, &seed_b, &w).await;
+
+    // ONE shared journal ⇒ ONE instance_id; PR-R1 splits the CHAINS by their seed salt.
+    assert_eq!(
+        inst_a, inst_b,
+        "a shared serve journal hands every Invoke the SAME instance_id"
+    );
+    assert_ne!(
+        turn0_a, turn0_b,
+        "distinct goals ⇒ distinct turn-0 ids (no dedup-collision — the fix)"
+    );
+
+    // BOTH chains' turn-0 are ready (the 2nd was NOT deduped onto the 1st).
+    let worker = common::register(&svc, "w").await;
+    let leased = common::lease_work(&svc, worker, MAC, 16).await;
+    assert_eq!(leased.len(), 2, "two independent chains, both leasable");
+
+    // Settle each chain to its OWN distinct answer.
+    for item in &leased {
+        let turn0: Mote = item.mote.clone().unwrap().try_into().unwrap();
+        let answer: &[u8] = if turn0.id.as_bytes().to_vec() == turn0_a {
+            b"4"
+        } else {
+            b"Paris"
+        };
+        commit_raw(&svc, &store, &turn0, &w, answer, worker).await;
+    }
+
+    // Two DISTINCT run-level chains, each salted (PR-R1) + each with its OWN answer.
+    let facts = react_facts(&svc, &dir).await;
+    let anchor_salts: Vec<Option<[u8; 32]>> = facts
+        .iter()
+        .filter_map(|f| match f {
+            JournalEntry::ReactRound {
+                turn: 0,
+                branch: ReactBranch::Pending,
+                step_salt,
+                is_agentic_launch,
+                ..
+            } => {
+                assert!(
+                    !is_agentic_launch,
+                    "a run-level chain is never an agentic launch"
+                );
+                Some(*step_salt)
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(anchor_salts.len(), 2, "two run-level chain anchors");
+    assert!(
+        anchor_salts.iter().all(Option::is_some),
+        "each run-level chain is now SALTED (PR-R1), never the bare None"
+    );
+    assert_ne!(
+        anchor_salts[0], anchor_salts[1],
+        "the two chains carry DISTINCT step_salts (= their distinct seed MoteIds)"
+    );
+    let answer_ids: Vec<_> = facts
+        .iter()
+        .filter_map(|f| match f {
+            JournalEntry::ReactRound {
+                branch: ReactBranch::Answer,
+                turn_mote_id,
+                ..
+            } => Some(*turn_mote_id),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        answer_ids.len(),
+        2,
+        "each chain settled its OWN answer (no dedup)"
+    );
+    assert_ne!(
+        answer_ids[0], answer_ids[1],
+        "the two answers are DISTINCT committed motes (distinct goals, distinct results)"
+    );
+}
+
+/// PR-R1: an IDENTICAL goal re-submitted on the same journal DEDUPS to one chain —
+/// Invoke exactly-once is PRESERVED (a network retry of the same agent run is a no-op,
+/// not a second chain). The complement to the distinct-goals split above.
+#[tokio::test]
+async fn identical_goal_dedups_to_one_chain() {
+    let dir = TempDir::new().unwrap();
+    let (svc, _store) = coordinator(&dir);
+    let w = warrant(false);
+
+    let seed = seed_mote_with("the very same question, twice");
+    let (turn0_1, _, st1) = submit_react_status(&svc, &seed, &w).await;
+    let (turn0_2, _, st2) = submit_react_status(&svc, &seed, &w).await;
+    assert_eq!(st1, kx_coordinator::proto::SubmitStatus::Accepted as i32);
+    assert_eq!(
+        st2,
+        kx_coordinator::proto::SubmitStatus::Duplicate as i32,
+        "an identical goal is an idempotent re-submit (Invoke exactly-once)"
+    );
+    assert_eq!(
+        turn0_1, turn0_2,
+        "identical goal ⇒ the SAME chain (same turn-0 id)"
+    );
+
+    let worker = common::register(&svc, "w").await;
+    let leased = common::lease_work(&svc, worker, MAC, 16).await;
+    assert_eq!(leased.len(), 1, "one chain only — the re-submit deduped");
 }
 
 /// The PR-9b-2b LIVE Gemma-4-12B shape that BUG-32 made fail-closed: the model

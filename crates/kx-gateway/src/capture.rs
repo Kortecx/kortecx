@@ -457,6 +457,7 @@ mod tests {
             max_turns: 8,
             max_tool_calls: 6,
             step_salt: None,
+            is_agentic_launch: false,
             seq,
         }
     }
