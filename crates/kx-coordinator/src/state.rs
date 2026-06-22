@@ -3262,7 +3262,7 @@ fn append_react_branch<J: Journal>(
 /// tool-budget-then-turn-budget, counters FOLD-RE-DERIVED from the recorded
 /// branches) and, under budget, append the next turn's `Pending` fact BEFORE
 /// materializing its Mote (crash-safety order: recovery resumes from the fact).
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn advance_react_chain<J: Journal>(
     journal: &J,
     store: &LocalFsContentStore,
@@ -3274,6 +3274,12 @@ fn advance_react_chain<J: Journal>(
     turn: u32,
 ) -> ReactChainStatus {
     // Dedup: the successor turn already exists (live double-settle or recovery).
+    // CROSS-VERSION STABILITY (load-bearing for the A2 re-prompt + the W2 nudge): a
+    // turn whose `Pending` fact was already appended by an earlier binary is NEVER
+    // rebuilt here, so an old binary's base-instruction turn stands even if a newer
+    // binary would re-derive a re-prompted/nudged instruction (a different MoteId)
+    // for the same `(instance_id, turn)`. The re-prompt/nudge only ever shape a turn
+    // THIS pass builds from scratch — keep this dedup check first.
     if rounds.iter().any(|r| r.turn == turn + 1) {
         return ReactChainStatus::Active;
     }
@@ -3296,39 +3302,62 @@ fn advance_react_chain<J: Journal>(
     )
     .unwrap_or(u32::MAX);
     let turns_used = turn.saturating_add(1);
-    // PR-3 (A2): the just-settled turn's branch (its turn_mote_id + the durable
-    // reason if it was REJECTED). Drives both the budget-exhaustion terminal
-    // flavor and the next turn's re-prompt — a pure function of frozen facts.
-    let prev_reject: Option<(MoteId, String)> = rounds
+    // PR-3 (A2): the just-settled turn (max-seq round at `turn`) — its branch
+    // drives both the budget-exhaustion terminal flavor and the next turn's
+    // re-prompt/nudge. A pure function of frozen facts.
+    let prev_round = rounds
         .iter()
         .filter(|r| r.turn == turn)
-        .max_by_key(|r| r.seq)
-        .and_then(|r| match &r.branch {
-            ReactBranch::Rejected { reason } => Some((r.turn_mote_id, reason.clone())),
-            _ => None,
-        });
+        .max_by_key(|r| r.seq);
+    // PR-3 (A2): a REJECTED tail carries a durable reason for the re-prompt.
+    let prev_reject: Option<(MoteId, String)> = prev_round.and_then(|r| match &r.branch {
+        ReactBranch::Rejected { reason } => Some((r.turn_mote_id, reason.clone())),
+        _ => None,
+    });
     if tool_calls >= anchor.max_tool_calls || turns_used >= anchor.max_turns {
         // BudgetExhausted (the harness ReactStop semantics). The gate is a pure
         // function of frozen facts — it fires identically on every later pass,
         // so the chain is permanently done: skip it (the cache classification).
-        // PR-3 (A2): a REJECTED tail means the model spent its whole budget on
-        // refused proposals and never produced an answer — freeze the LOUD
-        // terminal `DeadLettered` (BUG-27: terminal, never silent; never a
-        // fabricated answer, GR15). A `Tool` tail keeps the pre-A2 quiesce (its
-        // last observation legitimately stands). Idempotent: `append_react_branch`
-        // dedups `(turn, DeadLettered)`, so a recovery re-drive is a no-op.
-        if let Some((turn_mote_id, reason)) = &prev_reject {
-            tracing::warn!(
-                turn,
-                %reason,
-                "react chain exhausted its budget on refused tool proposals — dead-lettering"
-            );
+        // The model spent its whole budget without ever producing an answer →
+        // freeze the LOUD terminal `DeadLettered` (BUG-27: terminal, never silent;
+        // never a fabricated answer, GR15). Two no-answer tails dead-letter:
+        //   - a REJECTED tail (PR-3/A2): every proposal was refused; logs the reason.
+        //   - a TOOL tail (W2, this PR): the model kept calling tools and never
+        //     settled. Previously this QUIESCED with no terminal — so a run-level
+        //     chain exposed neither `answer` nor `dead_lettered`, the client wait
+        //     timed out, and `kx agent run` exited 3 (a resumable timeout) for a
+        //     PERMANENT failure. Dead-lettering it (the existing tag, NO schema
+        //     change) makes the terminal honest (→ exit 1) and aligns the run-level
+        //     chain with `finalize_agentic_launch`, which ALREADY dead-letters a
+        //     no-answer tail. An `Answer`/`Pending`/already-`DeadLettered` tail is a
+        //     no-op. Idempotent: `append_react_branch` dedups `(turn, DeadLettered)`,
+        //     and a `DeadLettered`/`Answer` tail matches neither arm on a re-drive.
+        let dead_letter_tail: Option<(MoteId, Option<&str>)> = match prev_round.map(|r| &r.branch) {
+            Some(ReactBranch::Rejected { .. }) => prev_reject
+                .as_ref()
+                .map(|(id, reason)| (*id, Some(reason.as_str()))),
+            Some(ReactBranch::Tool { .. }) => prev_round.map(|r| (r.turn_mote_id, None)),
+            _ => None,
+        };
+        if let Some((turn_mote_id, reason)) = dead_letter_tail {
+            if let Some(reason) = reason {
+                tracing::warn!(
+                    turn,
+                    %reason,
+                    "react chain exhausted its budget on refused tool proposals — dead-lettering"
+                );
+            } else {
+                tracing::warn!(
+                    turn,
+                    "react chain exhausted its budget calling tools without ever answering — dead-lettering"
+                );
+            }
             append_react_branch(
                 journal,
                 projection,
                 folded_through,
                 anchor,
-                *turn_mote_id,
+                turn_mote_id,
                 turn,
                 ReactBranch::DeadLettered,
             );
@@ -3350,15 +3379,36 @@ fn advance_react_chain<J: Journal>(
     let Ok(warrant) = decode_warrant(warrant_bytes.as_ref()) else {
         return ReactChainStatus::Active;
     };
-    // PR-3 (A2): if the just-settled turn was REJECTED, re-prompt the next turn
-    // with the durable reason so the model self-corrects. Deterministic (a pure
-    // function of the frozen Rejected fact + the anchor's immutable base prompt),
-    // so a recovery re-fold re-derives the byte-identical turn Mote.
+    // W2 (settle-nudge): the turn we are about to build (turn + 1) is the LAST one
+    // that can fire a tool before the budget gate above closes — we just passed
+    // `tool_calls < max_tool_calls` AND `turns_used < max_turns`, so `+1 >= cap`
+    // means "one more tool round exhausts the budget". A `Tool` tail (prev_reject
+    // None ⇒ the model has ≥1 real observation) that keeps proposing tools would
+    // quiesce answerless → the chain dead-letters (the W2 finding). Nudge the model
+    // to settle on a final answer on this last useful turn. A `Rejected` tail
+    // already gets the A2 re-prompt (which itself says "answer directly if you
+    // cannot"), so the reject arm takes precedence and the nudge requires
+    // `prev_reject.is_none()`. PURE over frozen facts (counters fold-re-derived,
+    // caps anchor-durable) ⇒ recovery-stable, no new durable state (the A2
+    // precedent). `saturating_add` matches the house style (cf. `turns_used` above).
+    let nudge = prev_reject.is_none()
+        && (tool_calls.saturating_add(1) >= anchor.max_tool_calls
+            || turns_used.saturating_add(1) >= anchor.max_turns);
+    // PR-3 (A2) / W2: build the next turn's instruction. A REJECTED tail re-prompts
+    // with the durable reason so the model self-corrects; a TOOL tail one round from
+    // exhaustion gets the settle-nudge. Both are deterministic (pure functions of
+    // frozen facts + the anchor's immutable base prompt), so a recovery re-fold
+    // re-derives the byte-identical turn Mote (the instruction rides PROMPT_KEY).
     let reprompt;
+    let nudged;
     let turn_instruction: &str = match &prev_reject {
         Some((_, reason)) => {
             reprompt = crate::react_shape::render_reprompt(instruction, reason);
             &reprompt
+        }
+        None if nudge => {
+            nudged = crate::react_shape::render_settle_nudge(instruction);
+            &nudged
         }
         None => instruction,
     };

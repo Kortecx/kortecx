@@ -59,6 +59,7 @@ pub mod metered;
 pub mod prompt;
 pub mod rag;
 pub mod react;
+mod react_reason;
 pub mod registration;
 /// The model-proposed tool-call authority gate (IMP-5) — extracted to the pure
 /// leaf `kx-toolcall` in PR-2d-1 (gateway + coordinator share the ONE gate;

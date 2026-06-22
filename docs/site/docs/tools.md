@@ -293,6 +293,12 @@ The console's **Tools → Connections** panel is the live UI for this (add / tes
 re-discover / remove, with per-server health). Manage it from whichever surface
 fits your workflow.
 
+**Reachability is one definition.** `kx connections test` and `kx connections add`
+run the **same** probe — `initialize` *plus* `tools/list` (the full handshake the
+gateway needs to actually use a server) — so they never disagree. A server that
+handshakes but can't list its tools reports **unreachable** from both (honest: a
+server that exposes no usable tools is unreachable to the gateway).
+
 ### Session mode (stateless-first)
 
 Each connection has a **firing posture**, chosen at registration (`--session-mode`,

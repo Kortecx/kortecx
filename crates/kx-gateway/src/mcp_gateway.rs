@@ -160,10 +160,13 @@ impl McpGatewayAdmin for HostMcpGateway {
 
     fn test_server(&self, server_name: &str) -> Result<(bool, String), McpAdminError> {
         let reachable = self.gateway.test(server_name).map_err(map_err)?;
+        // T-CONN: `test` now runs the SAME probe as `register` (initialize +
+        // tools/list), so the detail names what was actually checked — `test` and
+        // `add` can no longer disagree on reachability.
         let detail = if reachable {
-            "reachable".to_string()
+            "reachable (initialize + tools/list)".to_string()
         } else {
-            "unreachable (dial/handshake failed)".to_string()
+            "unreachable (initialize/tools-list handshake failed)".to_string()
         };
         Ok((reachable, detail))
     }

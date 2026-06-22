@@ -1123,6 +1123,49 @@ async fn unrecognized_tool_shape_under_grant_answers_and_fires_nothing() {
     );
 }
 
+/// PR-9c-1 deferral pin (coordinator surface): a multi-element `{"tool_calls":[…,…]}`
+/// body is NOT yet run in a single turn — one Tool fact per turn (the loop-semantics
+/// change is deferred to its own PR). It degrades to a normal `Answer` at the SETTLE
+/// authority site (not just the parser leaf), NEVER a silent first-element fire.
+#[tokio::test]
+async fn multi_element_tool_calls_settles_as_answer_not_fire() {
+    let dir = TempDir::new().unwrap();
+    let (svc, store) = coordinator(&dir);
+    let w = warrant(true); // mcp-echo@1 GRANTED — yet a multi-element body must NOT fire
+
+    let (_, _) = submit_react(&svc, &seed_mote(), &w).await;
+    let worker = common::register(&svc, "w").await;
+    let leased = common::lease_work(&svc, worker, MAC, 16).await;
+    let turn0: Mote = leased[0].mote.clone().unwrap().try_into().unwrap();
+    commit_raw(
+        &svc,
+        &store,
+        &turn0,
+        &w,
+        br#"{"tool_calls":[{"name":"mcp-echo","arguments":{"q":"x"}},{"name":"mcp-echo","arguments":{"q":"y"}}]}"#,
+        worker,
+    )
+    .await;
+
+    let facts = react_facts(&svc, &dir).await;
+    assert_eq!(facts.len(), 2, "anchor + the Answer settle");
+    assert!(
+        matches!(
+            &facts[1],
+            JournalEntry::ReactRound {
+                turn: 0,
+                branch: ReactBranch::Answer,
+                ..
+            }
+        ),
+        "a multi-element tool_calls body is deferred — it ANSWERS, never fires a tool"
+    );
+    assert!(
+        common::lease_work(&svc, worker, MAC, 16).await.is_empty(),
+        "no observation materialized — no tool fired (no silent first-element cap)"
+    );
+}
+
 /// PR-9a (BUG-27 Path 2, end-to-end): when the tool a frozen `Tool` branch
 /// references is DEREGISTERED before its observation can lease, the chain
 /// DEAD-LETTERS (a loud terminal) instead of WEDGING forever — the pre-PR-9a
@@ -1242,11 +1285,13 @@ async fn failed_turn_dead_letters_the_chain() {
 }
 
 /// Every turn proposes a tool ⇒ the chain is bounded by the durable budget
-/// (the default 6 tool calls), then quiesces — no runaway chain / unbounded
-/// journal growth. PR-2d-2: each round now alternates turn → observation (the
-/// observation FIRES even on the final tool call — the harness order: fire,
+/// (the default 6 tool calls), then dead-letters honestly — no runaway chain /
+/// unbounded journal growth. PR-2d-2: each round now alternates turn → observation
+/// (the observation FIRES even on the final tool call — the harness order: fire,
 /// THEN bound the loop). The gate is the harness mirror: tool-budget first,
-/// `>=`, fold-re-derived.
+/// `>=`, fold-re-derived. W2 (this PR): a no-answer `Tool` tail at exhaustion now
+/// freezes a LOUD terminal `DeadLettered` (was a silent quiesce) so a run-level
+/// chain's terminal is honest (`agent run` → exit 1, not a masquerading timeout).
 #[tokio::test]
 async fn chain_is_bounded_by_the_durable_budget() {
     let dir = TempDir::new().unwrap();
@@ -1287,8 +1332,23 @@ async fn chain_is_bounded_by_the_durable_budget() {
         "every frozen Tool decision fired its observation, the last included"
     );
     assert!(common::lease_work(&svc, worker, MAC, 16).await.is_empty());
+    // W2: the no-answer Tool tail at exhaustion freezes a LOUD terminal DeadLettered
+    // (the honest terminal — never a silent quiesce that masquerades as a resumable
+    // timeout). The terminal lands on the LAST tool turn (index max_tool_calls - 1).
+    let facts = react_facts(&svc, &dir).await;
+    assert!(
+        facts.iter().any(|f| matches!(
+            f,
+            JournalEntry::ReactRound {
+                turn: 5,
+                branch: ReactBranch::DeadLettered,
+                ..
+            }
+        )),
+        "a budget-exhausted Tool tail dead-letters honestly (W2) — no silent quiesce"
+    );
     // Every recorded fact carries the durable caps the run was admitted under.
-    for fact in react_facts(&svc, &dir).await {
+    for fact in facts {
         if let JournalEntry::ReactRound {
             max_turns,
             max_tool_calls,
@@ -1298,6 +1358,180 @@ async fn chain_is_bounded_by_the_durable_budget() {
             assert_eq!((max_turns, max_tool_calls), (8, 6));
         }
     }
+}
+
+/// Read a turn Mote's instruction (the bytes that ride `config_subset[PROMPT_KEY]`).
+fn turn_prompt(mote: &Mote) -> String {
+    mote.def
+        .config_subset
+        .get(&ConfigKey(PROMPT_KEY.to_string()))
+        .map(|v| String::from_utf8_lossy(&v.0).into_owned())
+        .unwrap_or_default()
+}
+
+const NUDGE_MARK: &str = "Do NOT call another tool";
+
+/// W2 (settle-nudge): a model that proposes a `Tool` every turn gets ONE explicit
+/// "answer now, do not call a tool" turn on its LAST useful round (turn index
+/// `max_tool_calls - 1`), so a tool-looping model can settle instead of quiescing
+/// answerless. Model-free + deterministic.
+#[tokio::test]
+async fn last_useful_turn_is_settle_nudged() {
+    let dir = TempDir::new().unwrap();
+    let (svc, store) = coordinator(&dir);
+    let w = warrant(true); // default caps: 8 turns / 6 tool calls
+
+    let (_, _) = submit_react(&svc, &seed_mote(), &w).await;
+    let worker = common::register(&svc, "w").await;
+
+    let mut turn_prompts: Vec<String> = Vec::new();
+    for _ in 0..24 {
+        let leased = common::lease_work(&svc, worker, MAC, 16).await;
+        let Some(item) = leased.into_iter().next() else {
+            break;
+        };
+        let mote: Mote = item.mote.unwrap().try_into().unwrap();
+        if mote.def.tool_contract.is_empty() {
+            // A TURN — record its instruction, then propose a tool again.
+            turn_prompts.push(turn_prompt(&mote));
+            commit_raw(&svc, &store, &mote, &w, TOOL_ENVELOPE, worker).await;
+        } else {
+            // The OBSERVATION fires its staged result.
+            commit_raw(&svc, &store, &mote, &w, br#"{"echoed":{"q":"x"}}"#, worker).await;
+        }
+    }
+
+    // 6 turns (max_tool_calls), and EXACTLY the last one (turn index 5) is nudged.
+    assert_eq!(turn_prompts.len(), 6, "exactly max_tool_calls turns");
+    let nudged: Vec<usize> = turn_prompts
+        .iter()
+        .enumerate()
+        .filter(|(_, p)| p.contains(NUDGE_MARK))
+        .map(|(i, _)| i)
+        .collect();
+    assert_eq!(
+        nudged,
+        vec![5],
+        "exactly one nudged turn, on the last useful round (index max_tool_calls-1)"
+    );
+    assert!(
+        turn_prompts[5].contains("give your FINAL answer"),
+        "the nudged turn carries the answer-now steer"
+    );
+    // Bounded + honest terminal (the model never answered ⇒ DeadLettered, W2).
+    assert!(common::lease_work(&svc, worker, MAC, 16).await.is_empty());
+    assert!(
+        react_facts(&svc, &dir).await.iter().any(|f| matches!(
+            f,
+            JournalEntry::ReactRound {
+                branch: ReactBranch::DeadLettered,
+                ..
+            }
+        )),
+        "a looping model that ignores the nudge dead-letters honestly"
+    );
+}
+
+/// W2 (settle-nudge): the POSITIVE path — a model that loops on tools but heeds the
+/// nudge on its last useful turn settles on an `Answer` (no dead-letter). This is
+/// the user-visible value: a tool-looper that would have exited-3 now returns.
+#[tokio::test]
+async fn settle_nudge_lets_a_looping_model_answer() {
+    let dir = TempDir::new().unwrap();
+    let (svc, store) = coordinator(&dir);
+    let w = warrant(true);
+
+    let (_, _) = submit_react(&svc, &seed_mote(), &w).await;
+    let worker = common::register(&svc, "w").await;
+
+    let mut answered_on_nudge = false;
+    for _ in 0..24 {
+        let leased = common::lease_work(&svc, worker, MAC, 16).await;
+        let Some(item) = leased.into_iter().next() else {
+            break;
+        };
+        let mote: Mote = item.mote.unwrap().try_into().unwrap();
+        if mote.def.tool_contract.is_empty() {
+            // When the turn is the nudged one, ANSWER instead of calling a tool.
+            if turn_prompt(&mote).contains(NUDGE_MARK) {
+                answered_on_nudge = true;
+                commit_raw(&svc, &store, &mote, &w, b"the final answer", worker).await;
+            } else {
+                commit_raw(&svc, &store, &mote, &w, TOOL_ENVELOPE, worker).await;
+            }
+        } else {
+            commit_raw(&svc, &store, &mote, &w, br#"{"echoed":{"q":"x"}}"#, worker).await;
+        }
+    }
+
+    assert!(answered_on_nudge, "the model reached the nudged turn");
+    let facts = react_facts(&svc, &dir).await;
+    // The chain settled on an Answer — NOT a dead-letter.
+    assert!(
+        facts.iter().any(|f| matches!(
+            f,
+            JournalEntry::ReactRound {
+                branch: ReactBranch::Answer,
+                ..
+            }
+        )),
+        "heeding the nudge settles the chain on an Answer"
+    );
+    assert!(
+        !facts.iter().any(|f| matches!(
+            f,
+            JournalEntry::ReactRound {
+                branch: ReactBranch::DeadLettered,
+                ..
+            }
+        )),
+        "a settled chain never dead-letters"
+    );
+    assert!(common::lease_work(&svc, worker, MAC, 16).await.is_empty());
+}
+
+/// W2 vs A2 precedence: a chain that REJECTS every turn re-prompts with the
+/// rejection reason and NEVER gets the settle-nudge — the reject arm takes
+/// precedence (the nudge requires `prev_reject.is_none()`), so a model is never
+/// told both "you were rejected" and "stop calling tools" in the same turn.
+#[tokio::test]
+async fn reject_tail_takes_precedence_over_the_nudge() {
+    let dir = TempDir::new().unwrap();
+    let (svc, store) = coordinator(&dir);
+    let w = warrant(true);
+
+    let (_, _) = submit_react(&svc, &seed_mote(), &w).await;
+    let worker = common::register(&svc, "w").await;
+
+    let mut turn_prompts: Vec<String> = Vec::new();
+    for _ in 0..16 {
+        let leased = common::lease_work(&svc, worker, MAC, 16).await;
+        let Some(item) = leased.into_iter().next() else {
+            break;
+        };
+        let turn: Mote = item.mote.unwrap().try_into().unwrap();
+        turn_prompts.push(turn_prompt(&turn));
+        // Every turn emits schema-invalid args → Rejected (the A2 re-prompt path).
+        commit_raw(
+            &svc,
+            &store,
+            &turn,
+            &w,
+            br#"{"tool_call":{"name":"mcp-echo","version":"1","args":{"zz":"x"}}}"#,
+            worker,
+        )
+        .await;
+    }
+
+    // turns 1.. all re-prompt with REJECTED; NONE ever carries the settle-nudge.
+    assert!(
+        turn_prompts.iter().skip(1).all(|p| p.contains("REJECTED")),
+        "every post-rejection turn carries the A2 re-prompt"
+    );
+    assert!(
+        turn_prompts.iter().all(|p| !p.contains(NUDGE_MARK)),
+        "a rejected tail never gets the settle-nudge (reject precedence)"
+    );
 }
 
 /// Crash with turn 0 leased-but-uncommitted ⇒ recovery re-inserts the SAME

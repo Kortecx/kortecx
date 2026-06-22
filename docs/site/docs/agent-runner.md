@@ -160,6 +160,23 @@ budget, so the recovery is bounded: when `max_turns` / `max_tool_calls` is
 exhausted with no answer, the chain **dead-letters loudly** (never a silent wedge,
 never a fabricated answer).
 
+### Settling a tool-looping model
+
+Some models keep calling tools without ever giving a final answer. On the **last
+useful turn** — the one round before another tool call would exhaust the budget —
+the runtime **nudges** the model: it appends a fixed steer telling it to stop
+calling tools and answer directly from the observations it already has. Keep
+`max_tool_calls < max_turns` (the default is `6 < 8`, and the runtime enforces it)
+so there is always a turn left to settle on.
+
+If the model ignores the nudge and still never answers, the chain **dead-letters
+honestly** rather than silently quiescing: `kx agent run` exits **1** (a real
+failure: "exhausted its tool-call budget without settling on an answer"), not
+**3** (the resumable-timeout code). The Python and TypeScript SDKs raise
+`KxRunFailed` (not `KxWaitTimeout`); the console's agent-loop strip flags it. This
+graceful-recovery behavior is identical in the live server and in the embeddable
+in-process loop (`kx-model-harness`), so an embedded agent recovers the same way.
+
 Two things make the model more likely to get it right the first time:
 
 - The tool menu the model sees includes a well-formed **`Example:`** call for

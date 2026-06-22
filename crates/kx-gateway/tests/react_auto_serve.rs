@@ -281,3 +281,105 @@ async fn react_auto_dialed_tool_resolves_and_the_chain_settles() {
     running.shutdown().await.unwrap();
     std::env::remove_var("KX_SERVE_AUTOGRANT");
 }
+
+/// W2 (real-model integration witness, LOCAL / `--ignored`): a served Gemma-4 model
+/// driven on a tool-forcing goal ALWAYS reaches a TERMINAL branch — `answer` (the
+/// settle-nudge steered it to settle on its last useful turn) or `dead_lettered`
+/// (the honest terminal: it looped on tools and exhausted its budget without
+/// answering). Before W2, a tool-looping chain quiesced on a Tool tail with NO
+/// terminal branch, so the client wait timed out and `kx agent run` exited 3 (a
+/// masquerading "resumable timeout") for a permanent failure. The non-flaky
+/// invariant asserted here is exactly that fix: the chain settles to a terminal,
+/// NEVER a no-terminal hang. Whether it is `answer` vs `dead_lettered` is
+/// model-nondeterministic, so it is LOGGED. CI keeps the deterministic model-free
+/// proofs (`kx-coordinator/tests/react_live.rs`: `last_useful_turn_is_settle_nudged`,
+/// `settle_nudge_lets_a_looping_model_answer`, `chain_is_bounded_by_the_durable_budget`).
+/// Run with `KX_SERVE_MODEL_GGUF=<gemma>` (Gemma-4 ONLY for the manual loop — Qwen3
+/// is too weak to drive a multi-turn tool loop and would false-green W2).
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "real in-process LLM inference; needs a Gemma GGUF; opt in with --ignored"]
+async fn react_auto_w2_tool_looper_reaches_a_terminal_via_nudge_or_honest_deadletter() {
+    let Some(gguf) = serve_model() else {
+        eprintln!("skipping: no serve model — set KX_SERVE_MODEL_GGUF (a real GGUF)");
+        return;
+    };
+    std::env::set_var("KX_SERVE_MODEL_GGUF", &gguf);
+    std::env::set_var("KX_SERVE_AUTOGRANT", "1");
+
+    let dir = tempfile::TempDir::new().unwrap();
+    let running = start(common::gateway_config(&dir, true, HashMap::new()))
+        .await
+        .unwrap();
+    let mut c = client(running.local_addr()).await;
+
+    let recipes = c
+        .list_recipes(proto::ListRecipesRequest {})
+        .await
+        .unwrap()
+        .into_inner();
+    if !recipes
+        .recipes
+        .iter()
+        .any(|r| r.handle == REACT_AUTO_RECIPE_HANDLE)
+    {
+        eprintln!("skipping: react-auto not provisioned — bundled kx-mcp-echo missing");
+        running.shutdown().await.unwrap();
+        std::env::remove_var("KX_SERVE_AUTOGRANT");
+        return;
+    }
+
+    // A goal designed to tempt a model into looping on the tool without settling.
+    // max_tool_calls (4) < max_turns (8) leaves room for the settle-nudge to fire.
+    let resp = c
+        .invoke(proto::InvokeRequest {
+            handle: REACT_AUTO_RECIPE_HANDLE.to_string(),
+            args: br#"{"instruction":"Investigate thoroughly using the echo tool: echo 'alpha', then echo 'beta', then echo 'gamma', then keep gathering more with the tool before you answer. Only when you are completely done, give a final summary.","max_turns":8,"max_tool_calls":4}"#
+                .to_vec(),
+            context_bundles: vec![],
+            context_refs: vec![],
+        })
+        .await
+        .expect("invoke kx/recipes/react-auto")
+        .into_inner();
+
+    let mut terminal_branch: Option<String> = None;
+    let mut last = String::new();
+    for _ in 0..3600 {
+        let turns = c
+            .list_react_turns(proto::ListReactTurnsRequest {
+                limit: None,
+                instance_id: Some(resp.instance_id.clone()),
+                step_salt: None,
+            })
+            .await
+            .unwrap()
+            .into_inner();
+        let branches: Vec<&str> = turns.turns.iter().map(|t| t.branch.as_str()).collect();
+        let snap = format!("{branches:?}");
+        if snap != last {
+            eprintln!("W2 witness — trajectory so far: {snap}");
+            last = snap;
+        }
+        if let Some(t) = turns
+            .turns
+            .iter()
+            .find(|t| t.branch == "answer" || t.branch == "dead_lettered")
+        {
+            terminal_branch = Some(t.branch.clone());
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+
+    // THE W2 invariant: a tool-looping chain reaches a TERMINAL branch (the nudge
+    // settled it to `answer`, or it dead-lettered honestly) — it NEVER quiesces on a
+    // Tool tail with no terminal (the pre-W2 exit-3 masquerade).
+    let branch = terminal_branch.expect(
+        "the W2 chain reached a terminal branch (answer via the settle-nudge, or an \
+         honest dead_lettered) — never a no-terminal hang",
+    );
+    eprintln!("W2 witness — terminal branch: {branch} (nudge-settled or honest dead-letter)");
+
+    running.shutdown().await.unwrap();
+    std::env::remove_var("KX_SERVE_AUTOGRANT");
+}
