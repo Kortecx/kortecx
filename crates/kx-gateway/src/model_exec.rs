@@ -1501,15 +1501,21 @@ mod tests {
     struct StubBackend {
         reply: Vec<u8>,
         calls: AtomicUsize,
+        /// PR-9d: the last `Text` prompt the backend was dispatched (so a test can
+        /// assert what `dispatch_model` assembled — e.g. the carried context prefix).
+        last_prompt: std::sync::Mutex<Option<String>>,
     }
     impl InferenceBackend for StubBackend {
         fn dispatch(
             &self,
             model_id: &ModelId,
-            _input: &InferenceInput,
+            input: &InferenceInput,
             _params: &kx_mote::InferenceParams,
             _warrant: &WarrantSpec,
         ) -> Result<InferenceOutput, InferenceError> {
+            if let InferenceInput::Text(s) = input {
+                *self.last_prompt.lock().unwrap() = Some(s.clone());
+            }
             self.calls.fetch_add(1, Ordering::SeqCst);
             Ok(InferenceOutput {
                 bytes: self.reply.clone(),
@@ -1585,6 +1591,7 @@ mod tests {
         let backend = Arc::new(StubBackend {
             reply: reply.to_vec(),
             calls: AtomicUsize::new(0),
+            last_prompt: std::sync::Mutex::new(None),
         });
         let exec = ModelRouterExecutor::new(
             Arc::new(NeverInner),
@@ -2136,6 +2143,52 @@ mod tests {
         let bytes = store.get(&out.result_ref).unwrap();
         assert_eq!(bytes.as_ref(), b"The answer is blue.");
         assert_eq!(out.result_ref, ContentRef::of(b"The answer is blue."));
+    }
+
+    /// PR-9d (model-side half): `dispatch_model` PREPENDS the carried grounding context
+    /// (delivered via the `ContextSink::set_context_items` side-channel) to a SUCCESSOR
+    /// ReAct turn's prompt. The coordinator-side delivery is proven in `kx-coordinator`
+    /// `context_carry_tests`; this closes the loop on the executor's consumption.
+    /// WITHOUT the carry the prompt is byte-identical to pre-PR-9d (the control).
+    #[test]
+    fn dispatch_model_prepends_carried_context_for_a_successor_turn() {
+        use kx_worker::ContextSink as _; // bring `set_context_items` into scope.
+
+        let dir = tempfile::tempdir().unwrap();
+        let store = LocalFsContentStore::open(dir.path()).unwrap();
+        let (exec, backend) = executor(&store, b"ack", None);
+        let warrant = shaper_warrant(&model_id(), ExecutorClass::MacOsSandbox);
+
+        // Stage the run's context bundle: a blob + its encoded single-item bundle ref
+        // (exactly what the coordinator's anchor records + delivers via WorkItem).
+        let blob = store.put(b"CLASSIFIED: the mission codename is ZEPHYR-NINE.").unwrap();
+        let bundle = kx_mote::encode_context_items(&[kx_mote::ContextItemRef {
+            name: "classified".to_string(),
+            content_ref: blob.0,
+        }]);
+        let bundle_ref = store.put(&bundle).unwrap();
+
+        let turn = react_turn_mote();
+
+        // CONTROL: no carried context ⇒ the successor prompt has no grounding (the slot
+        // starts empty; `take_context_items` returns `None`) — byte-identical pre-PR-9d.
+        exec.run(&turn, &warrant, None).expect("control turn runs");
+        let control = backend.last_prompt.lock().unwrap().clone().unwrap();
+        assert!(
+            !control.contains("ZEPHYR-NINE"),
+            "a successor prompt without the carry must NOT contain the run's context"
+        );
+
+        // CARRY: stash the bundle ref for this turn (the worker's ContextSink call),
+        // run, and assert dispatch_model fetched + decoded + assembled + prepended it.
+        exec.set_context_items(turn.id, Some(bundle_ref));
+        exec.run(&turn, &warrant, None).expect("carried turn runs");
+        let carried = backend.last_prompt.lock().unwrap().clone().unwrap();
+        assert!(
+            carried.contains("ZEPHYR-NINE"),
+            "PR-9d: dispatch_model must prepend the carried context to a successor turn's \
+             prompt. Got: {carried}"
+        );
     }
 
     // --- T-AGENT2: the opt-in LLM-judge gate (run_judge) ---------------------
