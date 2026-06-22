@@ -2236,7 +2236,11 @@ pub fn decode_entry_with_def_hash(
             let context_items_ref = if cursor < body.len() {
                 match read_u8(body, &mut cursor, kind)? {
                     0 => None,
-                    1 => Some(ContentRef::from_bytes(read_array32(body, &mut cursor, kind)?)),
+                    1 => Some(ContentRef::from_bytes(read_array32(
+                        body,
+                        &mut cursor,
+                        kind,
+                    )?)),
                     other => return Err(DecodeError::UnknownReactContextItemsTag(other)),
                 }
             } else {
@@ -2833,7 +2837,10 @@ mod tests {
         let v12_ctx = encode_entry(&with_ctx).unwrap();
         assert_eq!(v12_ctx.len(), v12.len() + 32); // present byte same; +32 for the ref
         assert_eq!(decode_entry(&v12_ctx).unwrap(), with_ctx);
-        assert_eq!(decode_entry(&v12_ctx[..v12_ctx.len() - 33]).unwrap(), run_level);
+        assert_eq!(
+            decode_entry(&v12_ctx[..v12_ctx.len() - 33]).unwrap(),
+            run_level
+        );
     }
 
     #[test]

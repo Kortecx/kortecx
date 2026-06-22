@@ -25,9 +25,9 @@ use kx_journal::{
     ResolvedCapabilityRecord, ResolvedKindTag, INSTANCE_ID_LEN,
 };
 use kx_mote::{
-    ConfigKey, CONTEXT_ITEMS_KEY, EdgeKind, EffectPattern, ModelId, Mote, MoteDef, MoteId, NdClass, ToolName,
-    ToolVersion, PROMPT_KEY, REACT_INSTRUCTION_KEY, REACT_MAX_TOOL_CALLS_KEY, REACT_MAX_TURNS_KEY,
-    REACT_TURN_KEY, TOOL_ARGS_KEY,
+    ConfigKey, EdgeKind, EffectPattern, ModelId, Mote, MoteDef, MoteId, NdClass, ToolName,
+    ToolVersion, CONTEXT_ITEMS_KEY, PROMPT_KEY, REACT_INSTRUCTION_KEY, REACT_MAX_TOOL_CALLS_KEY,
+    REACT_MAX_TURNS_KEY, REACT_TURN_KEY, TOOL_ARGS_KEY,
 };
 use kx_projection::{
     ContentStoreVerdicts, MoteState, Projection, ReactRoundRecord, RegisterMote, ReplanRoundRecord,
@@ -4624,8 +4624,14 @@ mod context_carry_tests {
 
         // A SUCCESSOR turn (chain marker, NO inline bundle) gets the anchor's ref.
         let mut successor = BTreeMap::new();
-        successor.insert(ConfigKey(REACT_TURN_KEY.to_string()), marker(INSTANCE, SALT));
-        successor.insert(ConfigKey(PROMPT_KEY.to_string()), ConfigVal(b"turn 1".to_vec()));
+        successor.insert(
+            ConfigKey(REACT_TURN_KEY.to_string()),
+            marker(INSTANCE, SALT),
+        );
+        successor.insert(
+            ConfigKey(PROMPT_KEY.to_string()),
+            ConfigVal(b"turn 1".to_vec()),
+        );
         assert_eq!(
             resolve_react_context_items(&turn_mote(successor), &projection),
             Some(CTX_REF),
@@ -4635,7 +4641,10 @@ mod context_carry_tests {
         // A Mote carrying its bundle INLINE (turn 0 / a leaf) ⇒ `None` (the
         // config_subset path serves it; delivering it again would double-prepend).
         let mut inline = BTreeMap::new();
-        inline.insert(ConfigKey(REACT_TURN_KEY.to_string()), marker(INSTANCE, SALT));
+        inline.insert(
+            ConfigKey(REACT_TURN_KEY.to_string()),
+            marker(INSTANCE, SALT),
+        );
         inline.insert(
             ConfigKey(CONTEXT_ITEMS_KEY.to_string()),
             ConfigVal(vec![1, 2, 3]),
@@ -4655,7 +4664,13 @@ mod context_carry_tests {
         // A successor turn of a DIFFERENT chain (no matching anchor) ⇒ `None`
         // (fail-closed — never another run's context).
         let mut other = BTreeMap::new();
-        other.insert(ConfigKey(REACT_TURN_KEY.to_string()), marker([8u8; INSTANCE_ID_LEN], SALT));
-        assert_eq!(resolve_react_context_items(&turn_mote(other), &projection), None);
+        other.insert(
+            ConfigKey(REACT_TURN_KEY.to_string()),
+            marker([8u8; INSTANCE_ID_LEN], SALT),
+        );
+        assert_eq!(
+            resolve_react_context_items(&turn_mote(other), &projection),
+            None
+        );
     }
 }
