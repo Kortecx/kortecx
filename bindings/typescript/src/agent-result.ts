@@ -9,6 +9,7 @@
  * and web entries via `common`. SN-8: every id + action is server-derived.
  */
 
+import { decodeCriticVerdict } from "./critic.js";
 import type { ReactTurn } from "./react.js";
 
 /** One tool action the agent took — a settled ReAct `tool` turn. The `toolId` /
@@ -50,6 +51,13 @@ export class AgentResult {
     return this.answerBytes !== null;
   }
 
+  /** T-AGENT2: if this run's terminal is an LLM-judge (`kx/recipes/judge`), the
+   *  decoded `"valid"` / `"invalid: <reason>"` summary; `null` for a plain answer.
+   *  Display-only (SN-8). */
+  get verdict(): string | null {
+    return this.answerBytes === null ? null : decodeCriticVerdict(this.answerBytes);
+  }
+
   /** A JSON-able view (the `kx agent run --json` shape; parity with the Python SDK). */
   toJSON(): Record<string, unknown> {
     const out: Record<string, unknown> = {
@@ -58,6 +66,8 @@ export class AgentResult {
       actions: this.actions.map((a) => a.toJSON()),
     };
     if (this.answer !== null) out.answer = this.answer;
+    const verdict = this.verdict;
+    if (verdict !== null) out.verdict = verdict;
     return out;
   }
 

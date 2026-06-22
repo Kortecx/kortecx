@@ -76,6 +76,29 @@ export function ResultPreview({
       </span>
     );
   }
+  // T-AGENT2: a committed LLM-judge / critic verdict — render the decoded VALID /
+  // INVALID summary as a badge (the durable fact, display-only). `valid` reads as
+  // a positive accent; any `invalid: …` as a caution. Both themes via tokens.
+  if (content.kind === "verdict") {
+    const ok = content.text === "valid";
+    return (
+      <span
+        className="result-preview"
+        data-testid="result-preview"
+        data-state="verdict"
+        data-verdict={ok ? "valid" : "invalid"}
+      >
+        <span
+          className="result-verdict"
+          data-verdict={ok ? "valid" : "invalid"}
+          title={content.text}
+        >
+          {ok ? "✓ valid" : `✗ ${content.text}`}
+        </span>{" "}
+        {chipEl}
+      </span>
+    );
+  }
   // text | json: the resolved text IS the headline; the digest is the pointer.
   return (
     <span className="result-preview" data-testid="result-preview" data-state="text">

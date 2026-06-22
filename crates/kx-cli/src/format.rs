@@ -332,6 +332,39 @@ pub fn render_global_delta(delta: &proto::GlobalEventDelta, json: bool) -> Strin
     }
 }
 
+/// T-AGENT2: decode a committed payload as a [`kx_critic_types::CriticVerdict`]
+/// (the `kx/recipes/judge` terminal, or any critic mote's result) to a readable
+/// `"valid"` / `"invalid: <reason>"` summary. Returns `None` for any payload that
+/// is not a well-formed verdict (a model answer, a tool observation, …), so the
+/// caller falls back to the raw UTF-8/hex display. Display-only (SN-8): the
+/// summary never authorizes anything.
+#[must_use]
+pub fn critic_verdict_summary(payload: &[u8]) -> Option<String> {
+    use kx_critic_types::{CriticReason, CriticVerdict};
+    match CriticVerdict::decode(payload).ok()? {
+        CriticVerdict::Valid => Some("valid".to_string()),
+        CriticVerdict::Invalid { reason } => {
+            let detail = match reason {
+                CriticReason::JudgeRejected { reason_code: 0 } => {
+                    "judge: answer did not satisfy the rubric".to_string()
+                }
+                CriticReason::JudgeRejected { reason_code: 1 } => {
+                    "judge: response was unparseable (fail-closed)".to_string()
+                }
+                CriticReason::JudgeRejected { reason_code } => {
+                    format!("judge: rejected (code {reason_code})")
+                }
+                CriticReason::SchemaMismatch { .. } => "schema mismatch".to_string(),
+                CriticReason::DuplicateDetected { .. } => "duplicate detected".to_string(),
+                CriticReason::StatOutOfBounds { .. } => "stat out of bounds".to_string(),
+                CriticReason::PiiLeak { .. } => "PII leak".to_string(),
+                CriticReason::Unparseable { .. } => "unparseable input".to_string(),
+            };
+            Some(format!("invalid: {detail}"))
+        }
+    }
+}
+
 /// Render the result of a `--wait` run. `include_payload` is `false` when the
 /// caller wrote the payload to `--out` (then only metadata is emitted).
 #[must_use]
@@ -362,6 +395,11 @@ pub fn render_wait(outcome: &WaitOutcome, json: bool, include_payload: bool) -> 
         }
         if let Some(payload) = &outcome.payload {
             map.insert("result_len".into(), json!(payload.len()));
+            // T-AGENT2: a judge/critic terminal commits a `CriticVerdict` — surface
+            // the decoded VALID/INVALID summary alongside the raw bytes.
+            if let Some(verdict) = critic_verdict_summary(payload) {
+                map.insert("verdict".into(), json!(verdict));
+            }
             if include_payload {
                 if let Ok(text) = std::str::from_utf8(payload) {
                     map.insert("result_utf8".into(), json!(text));
@@ -381,11 +419,20 @@ pub fn render_wait(outcome: &WaitOutcome, json: bool, include_payload: bool) -> 
         }
         if let Some(payload) = &outcome.payload {
             let _ = write!(out, "\nresult_len       {}", payload.len());
+            // T-AGENT2: a judge/critic terminal commits a `CriticVerdict` — show the
+            // decoded VALID/INVALID summary (the raw bytes follow as result/hex).
+            let verdict = critic_verdict_summary(payload);
+            if let Some(ref v) = verdict {
+                let _ = write!(out, "\nverdict          {v}");
+            }
             if include_payload {
                 match std::str::from_utf8(payload) {
+                    // A judge verdict is non-UTF-8 bincode; the `verdict` line above
+                    // is the readable form, so suppress the redundant raw hex for it.
                     Ok(text) => {
                         let _ = write!(out, "\nresult           {text}");
                     }
+                    Err(_) if verdict.is_some() => {}
                     Err(_) => {
                         let _ = write!(out, "\nresult_hex       {}", hex::encode(payload));
                     }
@@ -2044,6 +2091,43 @@ pub fn render_capture_records(resp: &proto::ListCaptureRecordsResponse, json: bo
 mod tests {
     use super::*;
     use crate::wait::{WaitOutcome, WaitState};
+
+    #[test]
+    fn critic_verdict_summary_decodes_judge_and_ignores_prose() {
+        use kx_critic_types::{CriticReason, CriticVerdict};
+        // A committed judge verdict decodes to a readable summary.
+        assert_eq!(
+            critic_verdict_summary(&CriticVerdict::Valid.encode()).as_deref(),
+            Some("valid")
+        );
+        let invalid = CriticVerdict::Invalid {
+            reason: CriticReason::JudgeRejected { reason_code: 0 },
+        }
+        .encode();
+        assert_eq!(
+            critic_verdict_summary(&invalid).as_deref(),
+            Some("invalid: judge: answer did not satisfy the rubric")
+        );
+        // A plain model answer (not a verdict) is left alone (raw display).
+        assert_eq!(critic_verdict_summary(b"Paris"), None);
+        assert_eq!(critic_verdict_summary(b""), None);
+    }
+
+    #[test]
+    fn render_wait_shows_decoded_verdict_for_a_judge_terminal() {
+        use kx_critic_types::CriticVerdict;
+        let outcome = WaitOutcome {
+            instance_id: vec![1; 16],
+            terminal_mote_id: vec![2; 32],
+            state: WaitState::Committed,
+            result_ref: Some(vec![3; 32]),
+            payload: Some(CriticVerdict::Valid.encode()),
+        };
+        let text = render_wait(&outcome, false, true);
+        assert!(text.contains("verdict          valid"), "got: {text}");
+        // The non-UTF-8 bincode is NOT dumped as redundant hex when decoded.
+        assert!(!text.contains("result_hex"), "got: {text}");
+    }
 
     #[test]
     fn state_names_cover_range_and_unknown() {

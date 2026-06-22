@@ -8,6 +8,7 @@
  */
 
 import type { KxClientBase } from "./client.js";
+import { decodeCriticVerdict } from "./critic.js";
 import { encode } from "./hexids.js";
 import type { TokenChunk } from "./tokens.js";
 import type { Delta, Projection } from "./types.js";
@@ -65,6 +66,13 @@ export class Result {
     }
   }
 
+  /** T-AGENT2: if this run's terminal is an LLM-judge (`kx/recipes/judge`), the
+   *  decoded `"valid"` / `"invalid: <reason>"` summary; `null` otherwise.
+   *  Display-only (SN-8). */
+  get verdict(): string | null {
+    return this.payload === null ? null : decodeCriticVerdict(this.payload);
+  }
+
   /** The CLI `--wait --json` shape (parity with `render_wait` / the Python SDK). */
   toJSON(includePayload = true): Record<string, unknown> {
     const out: Record<string, unknown> = {
@@ -76,6 +84,8 @@ export class Result {
     if (this.timedOut) out.timed_out = true;
     if (this.payload !== null) {
       out.result_len = this.payload.length;
+      const verdict = this.verdict;
+      if (verdict !== null) out.verdict = verdict;
       if (includePayload) {
         const t = this.text;
         if (t !== null) out.result_utf8 = t;

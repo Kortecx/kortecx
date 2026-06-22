@@ -27,6 +27,8 @@ kx-content = { workspace = true }
 smallvec   = { workspace = true }
 # Property tests: validate_mote_submission is pure/total over arbitrary inputs.
 proptest   = { workspace = true }
+# T-AGENT2: construct an `LlmJudge` CheckSpec to exercise `native_judge_shape`.
+kx-critic-types = { workspace = true }
 
 [lints]
 workspace = true

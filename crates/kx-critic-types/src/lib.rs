@@ -62,8 +62,8 @@ mod verdict;
 mod tests;
 
 pub use spec::{
-    CheckSpec, DedupSpec, PiiSpec, RecordFraming, SchemaSpec, SchemaTag, StatBoundsSpec,
-    TensorDTypeTag,
+    CheckSpec, DedupSpec, LlmJudgeSpec, PiiSpec, RecordFraming, SchemaSpec, SchemaTag,
+    StatBoundsSpec, TensorDTypeTag,
 };
 pub use verdict::{
     canonical_config, CheckKind, CriticReason, CriticVerdict, PiiClass, SchemaFault, StatKind,

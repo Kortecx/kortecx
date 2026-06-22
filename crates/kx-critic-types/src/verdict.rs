@@ -8,9 +8,18 @@ use thiserror::Error;
 use crate::spec::SchemaTag;
 
 /// Schema version of the [`CriticVerdict`] / `CheckSpec` wire encodings. Bumped
-/// on ANY change to the canonical bytes of either (the verdict bytes are a
-/// committed content-addressed fact; the spec bytes fold into a critic Mote's
-/// `MoteId`). Encoded as the first two bytes of [`CriticVerdict::encode`].
+/// on ANY change to the canonical bytes of an EXISTING value (the verdict bytes
+/// are a committed content-addressed fact; the spec bytes fold into a critic
+/// Mote's `MoteId`). Encoded as the first two bytes of [`CriticVerdict::encode`].
+///
+/// **Not bumped for a *trailing* enum variant** (T-AGENT2's `LlmJudge` /
+/// `JudgeRejected` / `CheckKind::LlmJudge`): a trailing variant leaves every
+/// existing variant's discriminant — and therefore every previously-encoded
+/// verdict/spec's bytes and content ref — byte-identical. Bumping would instead
+/// re-prefix EVERY verdict (native included) and break decode of version-`1`
+/// verdicts already committed in a user's journal (a back-compat regression);
+/// staying at `1` keeps recovery/replay of existing native-critic runs intact
+/// while a forward judge verdict simply fails closed on an old binary.
 pub const CRITIC_SCHEMA_VERSION: u16 = 1;
 
 /// A critic's committed verdict — the value a critic Mote's `result_ref` payload
@@ -86,6 +95,18 @@ pub enum CriticReason {
         /// Byte offset where parsing failed.
         at_offset: u64,
     },
+    /// The opt-in LLM-judge gate ([`crate::CheckSpec::LlmJudge`]) rejected the
+    /// output. **Trailing variant** — existing reasons keep their discriminants,
+    /// so native verdicts fold byte-identically (no `CRITIC_SCHEMA_VERSION` bump).
+    /// `reason_code` is a small, deterministic, integer-only classification of the
+    /// judge's discrete decision (see `kx_gateway`'s judge reason codes); it carries
+    /// no free-text / host-derived data, preserving the no-float identity rule.
+    JudgeRejected {
+        /// Integer classification of the rejection (`0` = the judge graded the
+        /// output invalid against the rubric; `1` = the judge completion was
+        /// unparseable/ambiguous and the gate failed closed to `Invalid`).
+        reason_code: u16,
+    },
 }
 
 /// Stable, u8-tagged discriminant naming a deterministic check kind. Carried by
@@ -100,6 +121,9 @@ pub enum CheckKind {
     StatBounds,
     /// The PII-leakage check.
     PiiLeak,
+    /// The opt-in LLM-judge gate (T-AGENT2). **Trailing variant** — the four
+    /// deterministic kinds keep their discriminants (digest-neutral).
+    LlmJudge,
 }
 
 /// The first structural fact that failed a schema check.

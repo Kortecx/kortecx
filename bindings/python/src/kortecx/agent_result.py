@@ -12,6 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import List, Optional
 
+from .critic import decode_critic_verdict
 from .react import ReactTurn
 
 
@@ -46,6 +47,15 @@ class AgentResult:
         """True iff the agent produced a committed answer."""
         return self.answer_bytes is not None
 
+    @property
+    def verdict(self) -> Optional[str]:
+        """T-AGENT2: if this run's terminal is an LLM-judge (``kx/recipes/judge``),
+        the decoded ``"valid"`` / ``"invalid: <reason>"`` summary; ``None`` for a
+        plain answer. Display-only (SN-8)."""
+        if self.answer_bytes is None:
+            return None
+        return decode_critic_verdict(self.answer_bytes)
+
     def to_dict(self) -> dict:
         """A JSON-able view (the ``kx agent run --json`` shape)."""
         out: dict = {
@@ -58,6 +68,9 @@ class AgentResult:
         }
         if self.answer is not None:
             out["answer"] = self.answer
+        verdict = self.verdict
+        if verdict is not None:
+            out["verdict"] = verdict
         return out
 
     def json(self) -> dict:

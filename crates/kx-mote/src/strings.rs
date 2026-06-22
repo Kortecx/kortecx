@@ -60,6 +60,17 @@ pub struct ConfigVal(pub Vec<u8>);
 /// or referencing it cannot move any digest.
 pub const PROMPT_KEY: &str = "prompt";
 
+/// The [`ConfigKey`] *name* under which an opt-in LLM-JUDGE critic Mote
+/// (T-AGENT2) carries its RUBRIC — the grading instruction the judge model
+/// evaluates the producer's output against. Delivered like [`PROMPT_KEY`]
+/// (identity-bearing in `config_subset` ⇒ folds into `MoteId`), so two judges
+/// with different rubrics are distinct Motes without a content-store read; the
+/// `CheckSpec::LlmJudge` spec itself carries only the integer output bound.
+///
+/// Only the *string value* participates in identity; adding or referencing the
+/// constant cannot move any digest (the canonical demo declares no judge).
+pub const JUDGE_RUBRIC_KEY: &str = "kx.judge.rubric";
+
 /// The single canonical [`ConfigKey`] *name* marking a Mote as a live ReAct
 /// TURN (PR-2d-1, react-substrate). The value is the run-salt (the registered
 /// `instance_id`) — the same bytes salted into the turn's identity material.

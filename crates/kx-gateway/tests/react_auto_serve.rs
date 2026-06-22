@@ -125,6 +125,7 @@ async fn autogrant_serve_provisions_react_auto_and_drives_a_live_chain() {
             .list_react_turns(proto::ListReactTurnsRequest {
                 limit: None,
                 instance_id: Some(resp.instance_id.clone()),
+                step_salt: None,
             })
             .await
             .unwrap()
@@ -216,6 +217,7 @@ async fn react_auto_dialed_tool_resolves_and_the_chain_settles() {
             .list_react_turns(proto::ListReactTurnsRequest {
                 limit: None,
                 instance_id: Some(resp.instance_id.clone()),
+                step_salt: None,
             })
             .await
             .unwrap()

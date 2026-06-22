@@ -50,6 +50,8 @@ export type { ReactTurnPage } from "./react.js";
 // data (no Node imports) — safe in both the node and web bundles. `runAgent` itself
 // (the zero-config entry) is node-only and exported from the root `index`.
 export { AgentResult, AuditedAction, assembleActions } from "./agent-result.js";
+// T-AGENT2: decode a committed CriticVerdict (the kx/recipes/judge terminal).
+export { decodeCriticVerdict } from "./critic.js";
 
 export { TokenChunk } from "./tokens.js";
 

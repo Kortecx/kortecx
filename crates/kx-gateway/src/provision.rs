@@ -220,6 +220,31 @@ pub const REACT_EDIT_RECIPE_HANDLE: &str = "kx/recipes/react-edit";
 /// `0x55` is the next free sentinel after react-fs (`0x54`).
 const REACT_EDIT_LOGIC_REF: [u8; 32] = [0x55; 32];
 
+/// T-AGENT2: the opt-in self-checking model recipe — a single greedy model
+/// PRODUCER step (a `prompt` free-param) gated by an LLM-JUDGE critic that grades
+/// the answer against a fixed rubric using the served model. The terminal is the
+/// judge, so `Invoke` returns the discrete `CriticVerdict` (`VALID`/`INVALID`); the
+/// graded answer is the producer Mote's committed output (shown in the run DAG and
+/// the mote inspector). A SEPARATE recipe (the react-fs/react-edit precedent) keeps
+/// the canonical recipes and the projection digest byte-unchanged; inference-gated
+/// (default-OFF without a served model, so the digest is unaffected).
+pub const JUDGE_RECIPE_HANDLE: &str = "kx/recipes/judge";
+
+/// Distinct `logic_ref` sentinels for the judge recipe's two steps (BUG-25 — a
+/// shared ref collides at seed). `0x56`/`0x57` are the next free after react-edit
+/// (`0x55`); the storing executor ignores `logic_ref`, so these give the producer
+/// and judge steps distinct identities.
+const JUDGE_PRODUCER_LOGIC_REF: [u8; 32] = [0x56; 32];
+const JUDGE_CRITIC_LOGIC_REF: [u8; 32] = [0x57; 32];
+
+/// The default grading rubric the judge evaluates the producer's answer against
+/// (delivered via the judge step's `config_subset[JUDGE_RUBRIC_KEY]`). Advisory
+/// prompt bytes only — never an authority/identity input beyond the judge Mote's
+/// own `MoteId` (SN-8).
+const JUDGE_DEFAULT_RUBRIC: &str =
+    "The answer must directly and correctly address the user's prompt, be free of \
+hedging or refusals, and contain no obvious factual error.";
+
 /// Schema-refs of the react recipe's typed free-params.
 const REACT_INSTRUCTION_SCHEMA_REF: [u8; 32] = [0x4f; 32];
 /// See [`REACT_INSTRUCTION_SCHEMA_REF`].
@@ -664,6 +689,37 @@ impl DemoLibrary {
             ));
         }
 
+        // (judge) T-AGENT2: a SEPARATE opt-in self-checking recipe — a greedy model
+        // PRODUCER (a `prompt` free-param) gated by an LLM-JUDGE critic (ReadOnlyNondet)
+        // that grades the answer against a fixed rubric using the served model. Seeded
+        // only when a model is served (default-OFF without ⇒ the canonical recipes +
+        // the projection digest are byte-unchanged). The judge warrant is the
+        // text-model warrant (model_route bounds the judge's output tokens; the
+        // executor's `inference_params_from_mote` refuses a widening, D35). OWN logic
+        // refs (BUG-25). The verdict commits ReadOnlyNondet ⇒ an opt-in run gets its
+        // OWN honest digest; the canonical demo never invokes it (digest-SCOPE).
+        if let Some(model_id) = serve_model {
+            let judge_w = model_warrant(exec_class, model_id);
+            let judge_h = judge_handle()?;
+            seed_recipe(
+                &versions,
+                &bodies,
+                &grants,
+                &owner,
+                parties,
+                &judge_h,
+                judge_body(&judge_w)?,
+                &judge_w,
+            )?;
+            recipes.push((
+                judge_h,
+                RecipeMeta {
+                    owner_root: judge_w,
+                    free_params: judge_contract(),
+                },
+            ));
+        }
+
         // (blueprints/author) the Tier-1 DAG-authoring asset — granted Use to each
         // party so `SubmitWorkflow` resolves the party's authority from this same
         // ledger (no body/version; authoring submits one-off DAGs). Always seeded.
@@ -928,6 +984,10 @@ fn recipe_advisory(handle: &str) -> (&'static str, &'static [&'static str]) {
         VISION_RECIPE_HANDLE => (
             "Vision — a multimodal completion over an attached image.",
             &["model", "vision", "image", "multimodal", "agent"],
+        ),
+        JUDGE_RECIPE_HANDLE => (
+            "Judge — a self-checking completion: the served model answers the prompt, then an LLM-judge grades the answer against a rubric (VALID / INVALID). Opt-in model-graded verification (T-AGENT2).",
+            &["agent", "judge", "critic", "verify", "llm-judge", "reasoning"],
         ),
         _ => ("", &[]),
     }
@@ -2363,6 +2423,78 @@ pub(crate) fn react_edit_warrant(exec_class: ExecutorClass, model_id: &ModelId) 
 fn react_edit_handle() -> Result<AssetPath, GatewayError> {
     parse_handle(REACT_EDIT_RECIPE_HANDLE)
         .ok_or_else(|| GatewayError::Catalog("invalid react-edit recipe handle".into()))
+}
+
+fn judge_handle() -> Result<AssetPath, GatewayError> {
+    parse_handle(JUDGE_RECIPE_HANDLE)
+        .ok_or_else(|| GatewayError::Catalog("invalid judge recipe handle".into()))
+}
+
+/// The judge recipe's free-param contract: one `prompt` slot (the producer's
+/// question) — the rubric is FIXED (not a free-param) so the judge's grading
+/// criterion is stable + server-controlled. Same shape as [`prompt_contract`].
+fn judge_contract() -> FreeParamContract {
+    FreeParamContract::new().with_slot(
+        PROMPT_KEY,
+        FreeParamSlot::variable(Some(MODEL_PROMPT_SCHEMA_REF)),
+    )
+}
+
+/// The T-AGENT2 judge recipe body (producer → judge): a greedy model PRODUCER
+/// (a `prompt` free-param) and an LLM-JUDGE critic on it (`ReadOnlyNondet`, the
+/// fixed rubric in `config_subset[JUDGE_RUBRIC_KEY]`). A DATA edge wires
+/// producer → judge so the producer precedes the judge (compile resolves the
+/// judge's `critic_for` to the producer's MoteId) and the coordinator delivers
+/// the producer's committed bytes to `run_judge` via the F-7 critic special-case.
+/// The judge is added last ⇒ the run's terminal (Invoke returns the verdict).
+fn judge_body(warrant: &WarrantSpec) -> Result<WorkflowDef, GatewayError> {
+    let edge_err = |e: kx_workflow::CompileError| GatewayError::Catalog(format!("judge edge: {e}"));
+    let b = JUDGE_PRODUCER_LOGIC_REF;
+    let seed = u32::from_le_bytes([b[0], b[1], b[2], b[3]]);
+    let mut wf = WorkflowDef::new(seed);
+    let model = warrant.model_route.model_id.clone();
+
+    // The PRODUCER: a greedy model step answering the bound `prompt` (the model
+    // recipe shape — routed by config_subset[PROMPT_KEY] + the served model_id).
+    let mut producer = transform(
+        LogicRef::from_bytes(JUDGE_PRODUCER_LOGIC_REF),
+        model.clone(),
+        warrant.clone(),
+        ToolName("demo".into()),
+    );
+    producer
+        .config_subset
+        .insert(ConfigKey(PROMPT_KEY.into()), ConfigVal(Vec::new()));
+    let producer_ref = wf.add_step(producer);
+
+    // The JUDGE: a ReadOnlyNondet LLM-judge critic on the producer, carrying the
+    // fixed rubric. The output bound mirrors the warrant's model_route ceiling.
+    let mut judge_step = kx_workflow::judge(
+        producer_ref,
+        kx_workflow::CheckSpec::LlmJudge(kx_workflow::LlmJudgeSpec {
+            max_output_tokens: warrant.model_route.max_output_tokens,
+        }),
+        LogicRef::from_bytes(JUDGE_CRITIC_LOGIC_REF),
+        model,
+        warrant.clone(),
+        ToolName("demo".into()),
+    );
+    judge_step.config_subset.insert(
+        ConfigKey(kx_mote::JUDGE_RUBRIC_KEY.into()),
+        ConfigVal(JUDGE_DEFAULT_RUBRIC.as_bytes().to_vec()),
+    );
+    // The judge ALSO carries the `prompt` free-param slot (empty here): `bind_param`
+    // fills EVERY step with the slot, so the bound question reaches the judge too —
+    // it grades whether the producer's answer ADDRESSES the question (the rubric
+    // references "the user's prompt"). Identity-bearing, like the producer's slot.
+    judge_step
+        .config_subset
+        .insert(ConfigKey(PROMPT_KEY.into()), ConfigVal(Vec::new()));
+    let judge_ref = wf.add_step(judge_step);
+
+    wf.add_edge(producer_ref, judge_ref, EdgeMeta::data())
+        .map_err(edge_err)?;
+    Ok(wf)
 }
 
 /// The model-executor config key for the opt-in reasoning mode (mirrors

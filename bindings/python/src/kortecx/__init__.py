@@ -28,6 +28,7 @@ from .chains import Chain, Task, chain, model, pure
 from .client import DEFAULT_ENDPOINT, AsyncKxClient, KxClient
 from .content import ContentItem, PutResult
 from .context import ContextBundle, ContextBundleItem, PutContextBundleResult
+from .critic import decode_critic_verdict
 from .datasets import DatasetHit, DatasetSummary, FuzzyHit, IngestDocument, IngestResult
 from .defaults import (
     default_client,
@@ -166,6 +167,8 @@ __all__ = [
     "run_agent_async",
     "AgentResult",
     "AuditedAction",
+    # T-AGENT2 — decode a committed CriticVerdict (the kx/recipes/judge terminal).
+    "decode_critic_verdict",
     # V2b — local function tools (@kx.tool → a governed stdio MCP tool).
     "LocalToolDef",
     "ToolError",

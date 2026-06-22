@@ -69,9 +69,13 @@ pub use recipes::{
 pub use retrieval::{encode_retrieval_fact, retrieval, retrieval_result_ref};
 pub use share::{Manifest, ManifestId};
 pub use synthesis::{
-    critic, deterministic_critic, generator, permissive_warrant, synthesis_pipeline, tool_step,
-    topology_shaper, transform,
+    critic, deterministic_critic, generator, judge, permissive_warrant, synthesis_pipeline,
+    tool_step, topology_shaper, transform,
 };
+// Re-export the check vocabulary so a workflow author building a critic / judge
+// step depends on `kx-workflow` alone (the `deterministic_critic` / `judge`
+// builders take a `CheckSpec`).
+pub use kx_critic_types::{CheckSpec, LlmJudgeSpec};
 
 #[cfg(test)]
 mod tests;
