@@ -2161,7 +2161,9 @@ mod tests {
 
         // Stage the run's context bundle: a blob + its encoded single-item bundle ref
         // (exactly what the coordinator's anchor records + delivers via WorkItem).
-        let blob = store.put(b"CLASSIFIED: the mission codename is ZEPHYR-NINE.").unwrap();
+        let blob = store
+            .put(b"CLASSIFIED: the mission codename is ZEPHYR-NINE.")
+            .unwrap();
         let bundle = kx_mote::encode_context_items(&[kx_mote::ContextItemRef {
             name: "classified".to_string(),
             content_ref: blob.0,

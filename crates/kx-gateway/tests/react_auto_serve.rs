@@ -408,9 +408,11 @@ async fn await_committed_ref(
             .await
             .unwrap()
             .into_inner();
-        if let Some(m) = view.motes.iter().find(|m| {
-            m.mote_id == mote_id && m.state == proto::MoteSnapshotState::Committed as i32
-        }) {
+        if let Some(m) = view
+            .motes
+            .iter()
+            .find(|m| m.mote_id == mote_id && m.state == proto::MoteSnapshotState::Committed as i32)
+        {
             return m
                 .result_ref
                 .clone()
