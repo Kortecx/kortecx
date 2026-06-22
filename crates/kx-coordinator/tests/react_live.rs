@@ -49,6 +49,15 @@ const TOOL_ENVELOPE: &[u8] = br#"{"tool_call":{"name":"mcp-echo","version":"1","
 /// decode→Tool-freeze→observation-fire→commit path; this const lets the fire-commits
 /// test assert that invariant for BOTH the JSON envelope and the native shape.
 const GEMMA_NATIVE: &[u8] = br#"<|tool_call>call:mcp_echo{"q":"x"}<tool_call|>"#;
+/// PR-9c-1 (dynamic multi-format tool-calling): Llama-3.1/3.2's native
+/// `<|python_tag|>{"name":…,"parameters":…}` shape — drives the new accept-side arm
+/// through the SAME settle→Tool-freeze→observation-fire→commit path. `parameters`
+/// (Llama's alias) exercises the tolerant args-key resolution.
+const PYTHON_TAG_NATIVE: &[u8] = br#"<|python_tag|>{"name":"mcp-echo","parameters":{"q":"x"}}"#;
+/// PR-9c-1: Qwen3/Hermes's native `<tool_call>\n{"name":…,"arguments":…}\n</tool_call>`
+/// XML-ish shape (newline-wrapped, as Qwen3 emits) — the other new accept-side arm.
+const XML_TOOL_NATIVE: &[u8] =
+    b"<tool_call>\n{\"name\":\"mcp-echo\",\"arguments\":{\"q\":\"x\"}}\n</tool_call>";
 
 /// The client's SEED Mote: an ordinary ROND model Mote carrying the instruction.
 /// Its identity is advisory — the coordinator swaps in the run-salted turn 0.
@@ -618,6 +627,108 @@ async fn tool_branch_fires_and_commits_via_gemma_native_shape() {
         svc.state_of(obs.id).await.unwrap(),
         MoteState::Committed,
         "the world-mutating observation COMMITTED — a tool genuinely fired"
+    );
+}
+
+/// PR-9c-1: the Llama `<|python_tag|>{…}` shape FIRES + commits through the real
+/// settle — proving the new accept-side arm is wired end-to-end (not just unit
+/// tested in the parser leaf). The `parameters` alias + a non-namespaced grant.
+#[tokio::test]
+async fn tool_branch_fires_and_commits_via_python_tag_shape() {
+    let dir = TempDir::new().unwrap();
+    let (svc, store) = coordinator(&dir);
+    let w = warrant(true); // mcp-echo@1 GRANTED
+
+    let (_, _) = submit_react(&svc, &seed_mote(), &w).await;
+    let worker = common::register(&svc, "w").await;
+    let leased = common::lease_work(&svc, worker, MAC, 16).await;
+    let turn0: Mote = leased[0].mote.clone().unwrap().try_into().unwrap();
+    commit_raw(&svc, &store, &turn0, &w, PYTHON_TAG_NATIVE, worker).await;
+
+    // (a) the settle decoded the python_tag shape + froze a Tool fact for mcp-echo@1.
+    let facts = react_facts(&svc, &dir).await;
+    assert_eq!(
+        facts.len(),
+        2,
+        "anchor + the Tool settle (python_tag FIRED)"
+    );
+    assert!(
+        matches!(
+            &facts[1],
+            JournalEntry::ReactRound {
+                turn: 0,
+                branch: ReactBranch::Tool { tool_id, tool_version },
+                ..
+            } if tool_id == "mcp-echo" && tool_version == "1"
+        ),
+        "the Llama `<|python_tag|>{{…}}` shape decodes + freezes a Tool fact"
+    );
+
+    // (b) the observation leases WITH the args decoded from `parameters`.
+    let (obs, args) = lease_observation(&svc, worker, &turn0).await;
+    assert_eq!(
+        args,
+        br#"{"q":"x"}"#.to_vec(),
+        "args decode from `parameters`"
+    );
+
+    // (c) the observation commits (the tool FIRED) ⇒ turn 1 spawns.
+    commit_raw(&svc, &store, &obs, &w, br#"{"echoed":{"q":"x"}}"#, worker).await;
+    assert_eq!(
+        svc.state_of(obs.id).await.unwrap(),
+        MoteState::Committed,
+        "the world-mutating observation COMMITTED — a python_tag tool genuinely fired"
+    );
+}
+
+/// PR-9c-1: the Qwen3/Hermes `<tool_call>\n{…}\n</tool_call>` shape FIRES + commits
+/// through the real settle — the other new accept-side arm, end-to-end. The
+/// `arguments` alias + the newline-wrapped form Qwen3 actually emits.
+#[tokio::test]
+async fn tool_branch_fires_and_commits_via_xml_tool_call_shape() {
+    let dir = TempDir::new().unwrap();
+    let (svc, store) = coordinator(&dir);
+    let w = warrant(true); // mcp-echo@1 GRANTED
+
+    let (_, _) = submit_react(&svc, &seed_mote(), &w).await;
+    let worker = common::register(&svc, "w").await;
+    let leased = common::lease_work(&svc, worker, MAC, 16).await;
+    let turn0: Mote = leased[0].mote.clone().unwrap().try_into().unwrap();
+    commit_raw(&svc, &store, &turn0, &w, XML_TOOL_NATIVE, worker).await;
+
+    // (a) the settle decoded the `<tool_call>` shape + froze a Tool fact for mcp-echo@1.
+    let facts = react_facts(&svc, &dir).await;
+    assert_eq!(
+        facts.len(),
+        2,
+        "anchor + the Tool settle (`<tool_call>` FIRED)"
+    );
+    assert!(
+        matches!(
+            &facts[1],
+            JournalEntry::ReactRound {
+                turn: 0,
+                branch: ReactBranch::Tool { tool_id, tool_version },
+                ..
+            } if tool_id == "mcp-echo" && tool_version == "1"
+        ),
+        "the Qwen3 `<tool_call>{{…}}</tool_call>` shape decodes + freezes a Tool fact"
+    );
+
+    // (b) the observation leases WITH the args decoded from `arguments`.
+    let (obs, args) = lease_observation(&svc, worker, &turn0).await;
+    assert_eq!(
+        args,
+        br#"{"q":"x"}"#.to_vec(),
+        "args decode from `arguments`"
+    );
+
+    // (c) the observation commits (the tool FIRED) ⇒ turn 1 spawns.
+    commit_raw(&svc, &store, &obs, &w, br#"{"echoed":{"q":"x"}}"#, worker).await;
+    assert_eq!(
+        svc.state_of(obs.id).await.unwrap(),
+        MoteState::Committed,
+        "the world-mutating observation COMMITTED — an `<tool_call>` tool genuinely fired"
     );
 }
 

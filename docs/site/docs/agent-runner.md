@@ -12,6 +12,62 @@ agents into workflows (a **chain of agents**), control how much a model **reason
 and read that reasoning back from a run. The live tool-using loop (plan / re-plan /
 critic / ReAct turns) runs **inside `kx serve`** and is crash-safe end to end.
 
+## Run an agent (the agent-runner)
+
+The fastest way to put the loop to work: give a **goal**, get back a reasoned
+**answer** plus the **audited set of actions** the agent took. `run_agent` is a thin,
+permission-gated wrapper over the live ReAct recipe — the runtime **derives the
+warrant** (you never author one, SN-8) and runs the bounded reason → tool → observe
+loop, then returns the committed answer with the tools it fired. It never uses
+`SubmitRun` (admission is identical to `kx invoke`).
+
+**Python** — `run_agent(goal, *, context=…, inputs=…, wait=True)`:
+
+```python
+import kortecx as kx
+
+result = kx.run_agent("Use the echo tool to repeat 'pong'.")
+print(result.answer)                        # the reasoned final answer
+for a in result.actions:                    # the audited action set
+    print(f"  turn {a.turn}: {a.tool_id}@{a.tool_version}")
+# async: await kx.run_agent_async(goal, client=async_client)
+```
+
+**TypeScript** — `runAgent({ goal, context?, inputs?, wait? })`:
+
+```ts
+import { runAgent } from "@kortecx/sdk";
+
+const result = await runAgent({ goal: "Use the echo tool to repeat 'pong'." });
+console.log(result.answer);
+for (const a of result.actions) {
+  console.log(`  turn ${a.turn}: ${a.toolId}@${a.toolVersion}`);
+}
+```
+
+**CLI** — `kx agent run`:
+
+```bash
+kx agent run --goal "Use the echo tool to repeat 'pong'." --json
+# { "answer": "...", "actions": [{ "tool_id": "mcp-echo/echo", "tool_version": "1", "turn": 1 }],
+#   "run_handle": "<hex>", "instance_id": "<hex>" }
+# exit 0 = answered · 1 = the run failed · 3 = timed out (resume with `kx react list`)
+```
+
+- **`context`** attaches published [context bundles](./context.md) the server resolves
+  and injects (identity-bearing — a different context is a different run).
+- **`inputs`** (`k=v` on the CLI, a map in the SDKs) fold into the goal prompt.
+- The returned **`AgentResult`** carries `answer` (+ `answer_bytes`), `actions` (the
+  audited tool set), and the re-attachable `run_handle` / `instance_id`. With
+  `wait=False` you get the run handle back instead and assemble the result later.
+
+> **Composing in a chain.** The agent-runner is the *steered* whole-run entry (the
+> model picks tools turn by turn). To put a tool-using agent *step* inside a larger
+> DAG, use the deterministic lane — `flow().agent(prompt, tools=[…])` or the
+> `model@tool` chain step (see the [DSL reference](./chains/dsl-reference.md)) — where
+> the granted tool set is fixed and part of the step's identity. There is no separate
+> chains `agent()` node by design (it would be a second, divergent wire shape).
+
 ## Chains of agents
 
 Wire one agent's output into the next with a **data edge** — the upstream result
@@ -105,9 +161,31 @@ Two things make the model more likely to get it right the first time:
 - The tool menu the model sees includes a well-formed **`Example:`** call for
   each tool (the exact JSON keys + a typed placeholder), so it emits the right
   shape.
-- Common, unambiguous JSON malformations (a **trailing comma**) are tolerated
-  when validating arguments — the authority gate (which tool, which grant) stays
-  exact; only the argument *syntax* is forgiven.
+- Common, unambiguous JSON malformations in the **arguments** — a trailing comma,
+  an unquoted key, a single-quoted string (the JSON5-ish subset real models emit)
+  — are repaired when validating; the authority gate (which tool, which grant)
+  stays exact, only the argument *syntax* is forgiven.
+
+### Different models, different shapes
+
+Tool-calling output varies by model, so the runtime recognizes the common
+**call envelopes** — accept-side and fail-closed — and routes them all through the
+same exact grant check:
+
+| Model family | Shape recognized |
+|---|---|
+| Kortecx / generic JSON | `{"tool_call":{"name":…,"args":…}}` |
+| Gemma | `<\|tool_call>call:NAME{…}<tool_call\|>` |
+| Llama 3.x | `<\|python_tag\|>{"name":…,"parameters":…}` |
+| Qwen / Hermes | `<tool_call>{"name":…,"arguments":…}</tool_call>` |
+
+The arguments bag is accepted under `args`, `arguments`, or `parameters`, as either
+a JSON object or a pre-serialized JSON string. A reasoning preamble
+(`<think>…</think>` / Gemma `<|channel>…`) or a Markdown code fence around the call
+is stripped first. Anything the runtime doesn't recognize as a call is treated as a
+normal answer (it never mis-fires a tool). This is **acceptance** only — the tool
+name still resolves to an exact grant (SN-8); a model can never widen its own
+authority by how it phrases a call.
 
 Inspect what happened per turn:
 

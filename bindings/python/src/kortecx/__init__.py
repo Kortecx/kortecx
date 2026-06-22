@@ -13,6 +13,7 @@ go::
 from __future__ import annotations
 
 from .agent import Agent
+from .agent_result import AgentResult, AuditedAction
 from .alerts import AlertsPage, AlertSummary
 from .blueprints import BlueprintBuilder, EdgeInput, StepInput
 from .branch import (
@@ -70,6 +71,7 @@ from .recipes import (
 )
 from .replan import ReplanRound, ReplanRoundPage
 from .run import AsyncRun, Result, Run
+from .run_agent import run_agent, run_agent_async
 from .runs import RunInputs, RunPage, RunSummary
 from .teams import TeamMember, TeamMembers, TeamSummary, WarrantView
 from .telemetry import ModelTokenRollup, MoteTelemetryRow, TelemetryPage, TelemetrySummary
@@ -159,6 +161,11 @@ __all__ = [
     "Flow",
     "flow",
     "Agent",
+    # PR-9c-1 — the embeddable agent-runner (goal → answer + audited actions).
+    "run_agent",
+    "run_agent_async",
+    "AgentResult",
+    "AuditedAction",
     # V2b — local function tools (@kx.tool → a governed stdio MCP tool).
     "LocalToolDef",
     "ToolError",

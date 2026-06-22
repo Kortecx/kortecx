@@ -27,3 +27,7 @@ export * from "./common.js";
 // setDefaultClient) — importing this entry installs the lazy default-client factory the
 // Flow/Agent terminals use. NODE-ONLY (the web/chains entries are explicit-client).
 export * from "./defaults.js";
+// PR-9c-1: the embeddable agent-runner. NODE-ONLY (uses the zero-config default
+// client); the `AgentResult`/`AuditedAction` data types ride `common` (web-safe).
+export { runAgent } from "./run-agent.js";
+export type { RunAgentOptions } from "./run-agent.js";

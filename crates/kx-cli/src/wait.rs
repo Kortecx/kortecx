@@ -202,6 +202,66 @@ pub async fn await_any_result(
     }
 }
 
+/// The branch a settled ReAct turn freezes to (vs the live `pending` / `tool` states).
+const REACT_ANSWER: &str = "answer";
+const REACT_DEAD: &str = "dead_lettered";
+
+/// Wait for a ReAct CHAIN to settle (the `kx/recipes/react` path). A react chain
+/// has no statically-known terminal Mote — the run-salted turn-0 id the gateway
+/// returns never commits, and the settled Answer turn is unknown until the model
+/// emits it — so completion is observed via `ListReactTurns`: done when a turn
+/// settles to `answer` (resolve its committed content) or `dead_lettered` (terminal
+/// failure). Mirrors the SDK `poll_react_result` (campaign finding F13). The
+/// `agent run` verb collects the tool ACTIONS with a final `ListReactTurns`.
+pub async fn await_react_result(
+    client: &mut KxGatewayClient<Channel>,
+    resolved: &Resolved,
+    instance_id: Vec<u8>,
+    timeout: Duration,
+) -> Result<WaitOutcome, CliError> {
+    let start = tokio::time::Instant::now();
+    loop {
+        let turns = client
+            .list_react_turns(resolved.request(proto::ListReactTurnsRequest {
+                limit: None,
+                instance_id: Some(instance_id.clone()),
+            })?)
+            .await
+            .map_err(CliError::from_status)?
+            .into_inner()
+            .turns;
+        if let Some(answer) = turns.iter().find(|t| t.branch == REACT_ANSWER) {
+            // The answer turn's committed result lives at its `result_ref` in the
+            // projection (the run-salted turn id is not statically known up front).
+            let view = get_projection(client, resolved, &instance_id).await?;
+            let result_ref = view
+                .motes
+                .iter()
+                .find(|m| m.mote_id == answer.turn_mote_id)
+                .and_then(|m| m.result_ref.clone());
+            return committed_outcome(
+                client,
+                resolved,
+                instance_id,
+                answer.turn_mote_id.clone(),
+                result_ref,
+            )
+            .await;
+        }
+        if let Some(dead) = turns.iter().find(|t| t.branch == REACT_DEAD) {
+            return Ok(terminal(
+                instance_id,
+                dead.turn_mote_id.clone(),
+                WaitState::Failed,
+            ));
+        }
+        if start.elapsed() >= timeout {
+            return Ok(terminal(instance_id, Vec::new(), WaitState::Running));
+        }
+        tokio::time::sleep(POLL).await;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

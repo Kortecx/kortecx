@@ -46,6 +46,11 @@ export type { RunPage } from "./runs.js";
 export { ReactTurn } from "./react.js";
 export type { ReactTurnPage } from "./react.js";
 
+// PR-9c-1: the embeddable agent-runner's result (answer + audited actions). Pure
+// data (no Node imports) — safe in both the node and web bundles. `runAgent` itself
+// (the zero-config entry) is node-only and exported from the root `index`.
+export { AgentResult, AuditedAction, assembleActions } from "./agent-result.js";
+
 export { TokenChunk } from "./tokens.js";
 
 export { ReplanRound } from "./replan.js";

@@ -1287,10 +1287,18 @@ class AsyncKxClient:
         timeout: float = 120.0,
         wait_mode: str = "poll",
         out: Optional[str] = None,
+        context: Optional[Sequence[str]] = None,
+        context_refs: Optional[Sequence[str]] = None,
     ) -> Union[AsyncRun, Result]:
         resp = await self._acall(
             self._stub.Invoke(
-                _g.InvokeRequest(handle=handle, args=_encode_args(args)), metadata=self._md
+                _g.InvokeRequest(
+                    handle=handle,
+                    args=_encode_args(args),
+                    context_bundles=list(context or []),
+                    context_refs=list(context_refs or []),
+                ),
+                metadata=self._md,
             )
         )
         run = AsyncRun(self, resp.instance_id, resp.terminal_mote_id, resp.recipe_fingerprint)
