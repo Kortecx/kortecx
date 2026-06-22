@@ -6,7 +6,7 @@ use bytes::Bytes;
 use kx_content::{ContentRef, ContentStore};
 use kx_mote::{decode_context_items, ConfigKey, EdgeKind, Mote, MoteId, CONTEXT_ITEMS_KEY};
 use kx_projection::Snapshot;
-use kx_tool_registry::{ParamType, ToolDef, ToolRegistry};
+use kx_tool_registry::{InputSchema, ParamType, ToolDef, ToolRegistry};
 use kx_warrant::WarrantSpec;
 
 use crate::errors::AssemblyError;
@@ -47,7 +47,45 @@ fn tool_menu_text(grant_id: &str, def: &ToolDef) -> String {
         text.push_str(req);
         text.push(')');
     }
+    // PR-3 (A3a): a deterministic, well-formed `Example:` call so the model emits
+    // a syntactically-correct args bag with the RIGHT keys on the first try
+    // (the §2.246 finding: a capable model guessed `{"text":…}` for a `q` param).
+    // Required params only (the minimal valid call), declared order, type-keyed
+    // placeholders. Advisory prompt bytes only (digest-neutral — see the fn doc);
+    // the runtime still validates the model's REAL proposal fail-closed (SN-8).
+    text.push_str("\nExample: ");
+    text.push_str(&example_call_json(schema));
     text
+}
+
+/// Render a deterministic, well-formed example JSON args object over a schema's
+/// REQUIRED params (declared order; optionals omitted to model the minimal valid
+/// call). PURE + total: type-keyed constant placeholders (`Int` → an in-range
+/// integer; `Bool` → `false`; `Enum` → the `BTreeSet`-least allowed value;
+/// `Str`/`Bytes` → a quoted placeholder), no map re-sort (declared order is the
+/// tool's identity contract), no clock/RNG. Zero required params → `{}`.
+fn example_call_json(schema: &InputSchema) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    for p in schema.params.iter().filter(|p| p.required) {
+        let val = match &p.ty {
+            ParamType::Int { min, max } => match (min, max) {
+                (Some(lo), _) => lo.to_string(),
+                (None, Some(hi)) if *hi < 0 => hi.to_string(),
+                _ => "0".to_string(),
+            },
+            ParamType::Bytes { .. } => "\"<bytes>\"".to_string(),
+            ParamType::Str { .. } => "\"<string>\"".to_string(),
+            ParamType::Bool => "false".to_string(),
+            ParamType::Enum { allowed } => allowed
+                .iter()
+                .next()
+                .map_or_else(|| "\"<enum>\"".to_string(), |v| format!("\"{v}\"")),
+        };
+        // Param names are declared identifiers; the example is advisory prompt
+        // text (never parsed back), so a literal-quoted key is sufficient.
+        parts.push(format!("\"{}\": {val}", p.name));
+    }
+    format!("{{{}}}", parts.join(", "))
 }
 
 /// Assemble the Mote's explicit dependency closure into byte-deterministic
@@ -218,7 +256,7 @@ pub fn assemble<S: ContentStore>(
 
 #[cfg(test)]
 mod tool_menu_tests {
-    use super::tool_menu_text;
+    use super::{example_call_json, tool_menu_text};
     use kx_content::ContentRef;
     use kx_mote::{ToolName, ToolVersion};
     use kx_tool_registry::{
@@ -270,7 +308,7 @@ mod tool_menu_tests {
     }
 
     #[test]
-    fn schema_appends_typed_params() {
+    fn schema_appends_typed_params_and_an_example() {
         let schema = InputSchema {
             params: vec![ParamSpec {
                 name: "path".into(),
@@ -279,9 +317,89 @@ mod tool_menu_tests {
             }],
             deny_unknown: true,
         };
+        // `path` is OPTIONAL, so the minimal valid call has zero required keys: {}.
         assert_eq!(
             tool_menu_text("fs-list", &def(Some(schema))),
-            "name: fs-list\nList a directory.\nInputs:\n  - path (string, optional)"
+            "name: fs-list\nList a directory.\nInputs:\n  - path (string, optional)\nExample: {}"
+        );
+    }
+
+    #[test]
+    fn example_shows_a_required_string_param() {
+        // The echo-shape: ONE required string param → the model sees the exact
+        // well-formed call (the §2.246 A3a fix).
+        let schema = InputSchema {
+            params: vec![ParamSpec {
+                name: "text".into(),
+                ty: ParamType::Str { max_len: 4096 },
+                required: true,
+            }],
+            deny_unknown: true,
+        };
+        assert_eq!(
+            tool_menu_text("mcp-echo/echo", &def(Some(schema))),
+            "name: mcp-echo/echo\nList a directory.\nInputs:\n  - text (string, required)\n\
+             Example: {\"text\": \"<string>\"}"
+        );
+    }
+
+    #[test]
+    fn example_omits_optional_params() {
+        let schema = InputSchema {
+            params: vec![
+                ParamSpec {
+                    name: "query".into(),
+                    ty: ParamType::Str { max_len: 256 },
+                    required: true,
+                },
+                ParamSpec {
+                    name: "limit".into(),
+                    ty: ParamType::Int {
+                        min: Some(1),
+                        max: Some(100),
+                    },
+                    required: false,
+                },
+            ],
+            deny_unknown: true,
+        };
+        // Only the REQUIRED `query` appears in the example; `limit` is omitted.
+        assert_eq!(example_call_json(&schema), "{\"query\": \"<string>\"}");
+    }
+
+    #[test]
+    fn example_renders_each_type_in_declared_order() {
+        let mut allowed = std::collections::BTreeSet::new();
+        allowed.insert("zebra".to_string());
+        allowed.insert("alpha".to_string()); // BTreeSet-least → picked
+        let schema = InputSchema {
+            params: vec![
+                ParamSpec {
+                    name: "n".into(),
+                    ty: ParamType::Int {
+                        min: Some(5),
+                        max: None,
+                    },
+                    required: true,
+                },
+                ParamSpec {
+                    name: "flag".into(),
+                    ty: ParamType::Bool,
+                    required: true,
+                },
+                ParamSpec {
+                    name: "mode".into(),
+                    ty: ParamType::Enum { allowed },
+                    required: true,
+                },
+            ],
+            deny_unknown: true,
+        };
+        // Declared order preserved (NOT alphabetical); Int uses its min, Bool is a
+        // bare `false`, Enum picks the lexicographically-least allowed value.
+        assert_eq!(
+            example_call_json(&schema),
+            "{\"n\": 5, \"flag\": false, \"mode\": \"alpha\"}"
         );
     }
 }

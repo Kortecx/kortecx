@@ -630,6 +630,113 @@ fn v9_react_round_persists_and_resumes() {
 }
 
 // ---------------------------------------------------------------------------
+// The frozen v9 representation (PR-3, A2). v9 = v10 minus the brand-new
+// `ReactBranch::Rejected` (branch tag 4). Every existing kind/tag (including the
+// kind-9 `ReactRound` bodies for tags 0..=3) is byte-identical under v9 and v10,
+// and no v9 journal can contain a tag-4 body — so v9 → v10 is a PURE pass-through
+// (exactly the v7/v6 → current shape, but proving the ReactRound facts survive).
+// ---------------------------------------------------------------------------
+
+/// Build the v9 fixture journal: the curated entry set PLUS a `ReplanRound`
+/// (kind 8) AND two `ReactRound` facts (kind 9 — an anchor + a settled answer),
+/// then stamp `metadata.schema_version = 9`. No byte downgrade is needed: a v9
+/// `ReactRound` body carrying a tag 0..=3 branch is byte-identical to its v10
+/// encoding (the lone v9→v10 delta is the new tag-4 reason slot, which no v9
+/// journal exercises).
+fn build_v9_journal(dir: &Path) -> PathBuf {
+    let path = dir.join("sample_v9.kxjournal");
+    {
+        let j = SqliteJournal::open(&path).unwrap();
+        let mut entries = curated_v6_entries();
+        entries.push(JournalEntry::ReplanRound {
+            round: 1,
+            shaper_mote_id: MoteId::from_bytes([0x7c; 32]),
+            base_prompt_ref: ContentRef::from_bytes([0x11; 32]),
+            corrected_prompt_ref: ContentRef::from_bytes([0x22; 32]),
+            warrant_ref: ContentRef::from_bytes([0xaa; 32]),
+            model_id: "qwen2-0_5b".to_string(),
+            failed_steps: SmallVec::new(),
+            escalation_reason_ref: None,
+            seq: 0,
+        });
+        entries.push(JournalEntry::ReactRound {
+            turn: 0,
+            turn_mote_id: MoteId::from_bytes([0x8e; 32]),
+            instance_id: [0x4d; INSTANCE_ID_LEN],
+            base_prompt_ref: ContentRef::from_bytes([0x12; 32]),
+            warrant_ref: ContentRef::from_bytes([0x34; 32]),
+            model_id: "qwen2-0_5b".to_string(),
+            branch: ReactBranch::Pending,
+            max_turns: 8,
+            max_tool_calls: 6,
+            step_salt: None,
+            seq: 0,
+        });
+        entries.push(JournalEntry::ReactRound {
+            turn: 0,
+            turn_mote_id: MoteId::from_bytes([0x8e; 32]),
+            instance_id: [0x4d; INSTANCE_ID_LEN],
+            base_prompt_ref: ContentRef::from_bytes([0x12; 32]),
+            warrant_ref: ContentRef::from_bytes([0x34; 32]),
+            model_id: "qwen2-0_5b".to_string(),
+            branch: ReactBranch::Answer,
+            max_turns: 8,
+            max_tool_calls: 6,
+            step_salt: None,
+            seq: 0,
+        });
+        j.append_batch(entries).unwrap();
+    }
+    set_schema_version(&path, 9);
+    path
+}
+
+#[test]
+fn open_still_refuses_v9_loudly() {
+    // The strict open() contract is unchanged by the v10 bump: a v9 journal is
+    // refused loudly (migration is the separate, additive path) — the same
+    // contract that makes an OLD binary refuse a v10 journal (carrying a Rejected
+    // branch it cannot decode) rather than misread it.
+    let tmp = tempfile::tempdir().unwrap();
+    let path = build_v9_journal(tmp.path());
+    let err = SqliteJournal::open(&path).unwrap_err();
+    assert!(matches!(
+        err,
+        JournalError::SchemaVersionMismatch { found: 9, expected } if expected == JOURNAL_SCHEMA_VERSION
+    ));
+}
+
+#[test]
+fn migrate_v9_to_current_upconverts_nothing_and_preserves_committed_facts() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = build_v9_journal(tmp.path());
+    let dst = tmp.path().join("migrated_from_v9.kxjournal");
+
+    let report = migrate_to(&src, &dst).unwrap();
+    assert_eq!(report.from_version, 9);
+    assert_eq!(report.to_version, JOURNAL_SCHEMA_VERSION);
+    assert_eq!(report.entries_migrated, 10);
+    assert_eq!(report.entries_upconverted, 0); // pure pass-through (no tag-4 body)
+
+    // Strict open accepts the result; committed facts AND ReactRound bodies are
+    // byte-identical (product identity invariant — the durability law).
+    let j = SqliteJournal::open(&dst).unwrap();
+    assert_eq!(j.count_entries().unwrap(), 10);
+    let kind_bytes = |p: &Path, kind: i64| -> Vec<Vec<u8>> {
+        let conn = Connection::open(p).unwrap();
+        let mut stmt = conn
+            .prepare("SELECT entry_bytes FROM entries WHERE kind = ?1 ORDER BY seq")
+            .unwrap();
+        stmt.query_map(params![kind], |r| r.get::<_, Vec<u8>>(0))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect()
+    };
+    assert_eq!(kind_bytes(&src, 1), kind_bytes(&dst, 1)); // committed facts
+    assert_eq!(kind_bytes(&src, 9), kind_bytes(&dst, 9)); // ReactRound bodies
+}
+
+// ---------------------------------------------------------------------------
 // Write-side: migrate_to rewrites a v5 journal into a strict v6 journal
 // ---------------------------------------------------------------------------
 

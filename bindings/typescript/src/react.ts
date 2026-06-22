@@ -2,9 +2,10 @@
  * The ReAct-chain turn view — one `ReactRound` fact enumerated by `ListReactTurns`
  * (PR-2d-1/2): the durable, queryable Reason→Act→Observe history of a live ReAct
  * chain in `kx serve`. Each turn carries its run-salted Mote id, its settled
- * branch (`pending` | `answer` | `tool` | `dead_lettered`) and — for a `tool`
- * branch — the fired tool's `id@version`. Kept in its own module (the runs.ts
- * module-per-concern precedent).
+ * branch (`pending` | `answer` | `tool` | `rejected` | `dead_lettered`) and —
+ * for a `tool` branch — the fired tool's `id@version`, or — for a `rejected`
+ * branch (PR-3/A2) — the fail-closed `rejectionReason` the model re-prompts over.
+ * Kept in its own module (the runs.ts module-per-concern precedent).
  *
  * SN-8: every id is server-derived; the SDK only *encodes* the bytes to hex.
  */
@@ -26,6 +27,7 @@ export class ReactTurn {
     readonly maxTurns: number,
     readonly maxToolCalls: number,
     readonly seq: number,
+    readonly rejectionReason: string = "",
   ) {}
 
   static fromProto(t: PbReactTurnSummary): ReactTurn {
@@ -40,6 +42,7 @@ export class ReactTurn {
       t.maxTurns,
       t.maxToolCalls,
       Number(t.seq),
+      t.rejectionReason,
     );
   }
 
@@ -56,6 +59,7 @@ export class ReactTurn {
       max_turns: this.maxTurns,
       max_tool_calls: this.maxToolCalls,
       seq: this.seq,
+      rejection_reason: this.rejectionReason,
     };
   }
 }

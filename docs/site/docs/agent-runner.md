@@ -86,3 +86,35 @@ so the loop replays deterministically (and a model's bare/leaf tool name resolve
 granted `&lt;server&gt;/&lt;name&gt;`). See the
 [Quickstart agent loop](./quickstart.md#run-the-agent-loop) and
 [Concepts → ReAct chain](./concepts.md#react-chain--reactround).
+
+## Graceful tool-call recovery
+
+A real model occasionally proposes a tool call the runtime can't honor — an
+**ungranted name**, **arguments that don't match the tool's schema**, or a
+**malformed proposal**. The loop does **not** die on the first such mistake.
+Instead the turn settles as **`rejected`** (a non-terminal branch), the
+fail-closed reason is fed back to the model on the next turn, and the model
+**self-corrects** — fixing its arguments, picking a tool it was actually granted,
+or answering directly. Each rejected attempt spends one tool-call from the
+budget, so the recovery is bounded: when `max_turns` / `max_tool_calls` is
+exhausted with no answer, the chain **dead-letters loudly** (never a silent wedge,
+never a fabricated answer).
+
+Two things make the model more likely to get it right the first time:
+
+- The tool menu the model sees includes a well-formed **`Example:`** call for
+  each tool (the exact JSON keys + a typed placeholder), so it emits the right
+  shape.
+- Common, unambiguous JSON malformations (a **trailing comma**) are tolerated
+  when validating arguments — the authority gate (which tool, which grant) stays
+  exact; only the argument *syntax* is forgiven.
+
+Inspect what happened per turn:
+
+```bash
+kx react list --instance <id>        # turn 1  branch rejected  reason <why> …
+                                     # turn 2  branch answer
+```
+
+The reason is also on `ReactTurn.rejection_reason` (Python / TypeScript SDK) and
+expands inline on the rejected chip in the console's agent-loop strip.

@@ -91,6 +91,10 @@ fn branch_wire(branch: &ReactBranch) -> &'static str {
     match branch {
         ReactBranch::Answer => "answer",
         ReactBranch::Tool { .. } => "tool",
+        // PR-3 (A2): the JOIN-KEY token only — the capture is deliberately
+        // payload-free, so the reason is NOT captured here (it lives on the
+        // durable fact + the ListReactTurns read surface).
+        ReactBranch::Rejected { .. } => "rejected",
         ReactBranch::DeadLettered => "dead_lettered",
         ReactBranch::Pending => "pending",
     }

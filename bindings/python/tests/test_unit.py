@@ -295,6 +295,23 @@ def test_react_wait_settles_on_answer_via_list_react_turns():
     assert out.payload == b"the final answer"
 
 
+def test_react_turn_carries_the_rejection_reason():
+    """PR-3 (A2): a rejected ReactTurn surfaces its fail-closed reason."""
+    from kortecx.react import ReactTurn
+
+    t = ReactTurn.from_proto(
+        g.ReactTurnSummary(
+            turn=1,
+            branch="rejected",
+            rejection_reason="args do not match inputSchema",
+            max_turns=8,
+            max_tool_calls=6,
+        )
+    )
+    assert t.branch == "rejected"
+    assert t.rejection_reason == "args do not match inputSchema"
+
+
 def test_react_wait_dead_letter_is_failed():
     from kortecx.wait import poll_react_result
 

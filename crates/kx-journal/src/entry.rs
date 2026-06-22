@@ -168,7 +168,8 @@ use smallvec::SmallVec;
 ///   SHARED journal — a deliberate difference from `ReplanRound`'s
 ///   shaper-id+round keying), the `ContentRef`s of the immutable base prompt +
 ///   the turn warrant, the resolved `model_id`, the turn's settled branch
-///   ([`ReactBranch`]: `Answer` / `Tool` / `DeadLettered` / `Pending` — FROZEN at
+///   ([`ReactBranch`]: `Answer` / `Tool` / `DeadLettered` / `Pending` /
+///   `Rejected` (v10) — FROZEN at
 ///   append so recovery never re-decodes a re-sampled tail), and the run's durable
 ///   `max_turns`/`max_tool_calls` caps. Body is variable-length. The header
 ///   `mote_id` slot carries the turn's id directly (a real Mote id, like
@@ -194,8 +195,8 @@ use smallvec::SmallVec;
 ///   it (every v9 `ReactRound` written by this PR carries `None`).
 ///
 /// The strict [`crate::SqliteJournal::open`] refuses any file whose
-/// `schema_version` is not exactly v9 (the loud-refusal contract is unchanged: an
-/// OLD binary refuses a v9 journal rather than misreading its trailing byte).
+/// `schema_version` is not exactly the current version (the loud-refusal contract
+/// is unchanged: an OLD binary refuses a newer journal rather than misreading it).
 ///
 /// **Migration (IMP-2, M2.x-E).** As of the schema-migration work, an older
 /// still-supported version is no longer a dead end: [`crate::migrate_entry`] /
@@ -209,8 +210,18 @@ use smallvec::SmallVec;
 /// `idempotency_class` byte (the lone v5→v6 delta) and is then v9-valid.
 /// The product identity digest is invariant across migration; see
 /// [`crate::migrate_entry`] for the full contract and the supported version window
-/// ([`crate::MIN_SUPPORTED_SCHEMA_VERSION`]..=v9).
-pub const JOURNAL_SCHEMA_VERSION: u16 = 9;
+/// ([`crate::MIN_SUPPORTED_SCHEMA_VERSION`]..=v10).
+///
+/// **v9 → v10 (PR-3, A2 graceful tool-call recovery).** Adds the
+/// [`ReactBranch::Rejected`] variant (branch tag 4, carrying a length-prefixed
+/// `reason`) so a refused/invalid tool proposal becomes a NON-terminal round the
+/// model reasons over (bounded by the turn/tool-call budget) instead of
+/// dead-lettering the whole chain on the first imperfect proposal. A v9 → v10
+/// migration is a pure pass-through (kinds 0..=9 are byte-identical and no v9
+/// journal contains a tag-4 `ReactRound` — the variant is brand new), exactly like
+/// v7/v6 → current. An OLD binary still refuses a v10 journal loudly. The product
+/// identity digest is invariant (the PURE-8-mote demo never writes a `ReactRound`).
+pub const JOURNAL_SCHEMA_VERSION: u16 = 10;
 
 /// Fixed entry-header length in bytes (`journal-entry.md` §3).
 pub const HEADER_LEN: usize = 74;
@@ -378,12 +389,34 @@ pub enum ReactBranch {
         /// The proposed tool's pinned version.
         tool_version: String,
     },
-    /// The turn dead-lettered (malformed proposal / dispatch failure) — terminal.
+    /// The turn dead-lettered (an UNRECOVERABLE dispatch/execution failure, or
+    /// the chain's turn/tool-call budget was exhausted) — terminal.
     DeadLettered,
     /// The turn is materialized but not yet settled (the anchor state of every
     /// turn). Recovery treats a trailing `Pending` as the work frontier.
     Pending,
+    /// v10 (PR-3, A2): the turn proposed a tool call that was REFUSED at the
+    /// decode/validate authority site (ungranted/deregistered name, args that
+    /// fail the typed `inputSchema`, or a malformed proposal) — but the chain
+    /// still has budget, so this is NON-terminal: the `reason` is rendered into
+    /// the next turn's context so the model self-corrects (fixes its args, picks
+    /// a granted tool, or answers directly). A `Rejected` round counts as one
+    /// tool-call AND one turn against the budget, so the loop is bounded; the
+    /// chain dead-letters loudly only once the budget is exhausted (BUG-27's
+    /// "loud, never silent" terminal is preserved). The `reason` is a pure,
+    /// deterministic function of the frozen turn output + the tool schema, so
+    /// recovery/replay re-derive identical bytes.
+    Rejected {
+        /// The fail-closed refusal detail (bounded to [`MAX_REJECTED_REASON_LEN`]
+        /// chars at construction); display + next-turn context only.
+        reason: String,
+    },
 }
+
+/// Hard cap on a [`ReactBranch::Rejected`] `reason`'s length (char count) — a
+/// `DoS`/context-window bound. The coordinator truncates at a char boundary
+/// before building the entry; [`MAX_ENTRY_LEN`] still fences the total body.
+pub const MAX_REJECTED_REASON_LEN: usize = 512;
 
 impl ReactBranch {
     /// The branch's closed `u8` tag (the on-disk discriminant).
@@ -394,6 +427,7 @@ impl ReactBranch {
             Self::Tool { .. } => 1,
             Self::DeadLettered => 2,
             Self::Pending => 3,
+            Self::Rejected { .. } => 4,
         }
     }
 }
@@ -1657,23 +1691,33 @@ pub fn encode_entry(entry: &JournalEntry) -> Result<Vec<u8>, EncodeError> {
             // v9 (PR-9b-2a): body = turn(u32 LE) ‖ instance_id(16) ‖
             // base_prompt_ref(32) ‖ warrant_ref(32) ‖ u16-prefixed model_id ‖
             // branch_tag(u8) ‖ [if Tool: u16-prefixed tool_id ‖ u16-prefixed
-            // tool_version] ‖ max_turns(u32 LE) ‖ max_tool_calls(u32 LE) ‖
+            // tool_version] [if Rejected (v10): u16-prefixed reason] ‖
+            // max_turns(u32 LE) ‖ max_tool_calls(u32 LE) ‖
             // step_salt_present(u8: 0|1) ‖ [if 1: step_salt(32)]. The step_salt
             // presence byte is the lone v8→v9 delta (a trailing additive byte,
             // exactly the v5→v6 shape); v8 bodies up-convert by appending `0`.
+            // v10 (PR-3) adds branch tag 4 (Rejected) with its reason in the
+            // between-tag-and-caps slot — a brand-new tag, so no v9 body grows.
             out.extend_from_slice(&turn.to_le_bytes());
             out.extend_from_slice(instance_id);
             out.extend_from_slice(base_prompt_ref.as_bytes());
             out.extend_from_slice(warrant_ref.as_bytes());
             push_len_prefixed_str(&mut out, model_id)?;
             out.push(branch.as_u8());
-            if let ReactBranch::Tool {
-                tool_id,
-                tool_version,
-            } = branch
-            {
-                push_len_prefixed_str(&mut out, tool_id)?;
-                push_len_prefixed_str(&mut out, tool_version)?;
+            match branch {
+                ReactBranch::Tool {
+                    tool_id,
+                    tool_version,
+                } => {
+                    push_len_prefixed_str(&mut out, tool_id)?;
+                    push_len_prefixed_str(&mut out, tool_version)?;
+                }
+                // v10 (PR-3): a Rejected round carries its u16-prefixed reason in
+                // the same between-tag-and-caps slot the Tool fields occupy.
+                ReactBranch::Rejected { reason } => {
+                    push_len_prefixed_str(&mut out, reason)?;
+                }
+                ReactBranch::Answer | ReactBranch::DeadLettered | ReactBranch::Pending => {}
             }
             out.extend_from_slice(&max_turns.to_le_bytes());
             out.extend_from_slice(&max_tool_calls.to_le_bytes());
@@ -2099,6 +2143,11 @@ pub fn decode_entry_with_def_hash(
                 }
                 2 => ReactBranch::DeadLettered,
                 3 => ReactBranch::Pending,
+                // v10 (PR-3): a Rejected round's u16-prefixed reason.
+                4 => {
+                    let reason = read_len_prefixed_str(body, &mut cursor, kind)?;
+                    ReactBranch::Rejected { reason }
+                }
                 other => return Err(DecodeError::UnknownReactBranch(other)),
             };
             let max_turns = read_u32(body, &mut cursor, kind)?;
@@ -2584,7 +2633,8 @@ mod tests {
 
         // v9 (PR-9b-2a): ReactRound — every branch shape round-trips, under both
         // step_salt absent (None, the run-level chain) and present (Some, an
-        // agentic step's private chain).
+        // agentic step's private chain). v10 (PR-3) adds the Rejected branch,
+        // whose u16-prefixed reason must survive the round-trip too.
         for (branch, seq) in [
             (ReactBranch::Pending, 500u64),
             (ReactBranch::Answer, 501),
@@ -2596,6 +2646,20 @@ mod tests {
                 502,
             ),
             (ReactBranch::DeadLettered, 503),
+            (
+                ReactBranch::Rejected {
+                    reason: "args do not match mcp-echo/echo@1 inputSchema: unknown param `text`"
+                        .to_string(),
+                },
+                504,
+            ),
+            // An empty reason is a valid edge (the encoder length-prefixes it).
+            (
+                ReactBranch::Rejected {
+                    reason: String::new(),
+                },
+                505,
+            ),
         ] {
             for step_salt in [None, Some([0x5a_u8; 32])] {
                 let rt = JournalEntry::ReactRound {

@@ -104,7 +104,9 @@ mod tool_kind;
 pub use errors::{RegistrationError, ResolutionError};
 pub use idempotency_class::IdempotencyClass;
 pub use ids::{McpEndpointId, RegistrationToken, ReviewerId};
-pub use param_schema::{validate_args, InputSchema, ParamSpec, ParamType, SchemaError};
+pub use param_schema::{
+    normalize_lenient_args, validate_args, InputSchema, ParamSpec, ParamType, SchemaError,
+};
 pub use provenance::{RegistrationStatus, ToolProvenance};
 pub use registry::{resolve_run_versions, InMemoryToolRegistry, ToolRegistry};
 pub use sqlite::{tool_id_of, RegisteredEntry, SqliteToolRegistry, TOOL_REGISTRY_SCHEMA_VERSION};

@@ -862,8 +862,12 @@ fn resolve_tool_args(
     // PR-6a/D155 (fs-list): the resolved tool's declared fs requirement is taken
     // as the request's fs_scope (empty for echo ⇒ byte-identical). The broker's
     // precheck still enforces request.fs_scope ⊆ warrant.fs_scope at dispatch.
+    // PR-3 (A3c): FIRE the normalized bytes (the same form `validate_args`
+    // accepted) so a trailing-comma bag that validated also dispatches cleanly to
+    // the MCP remote — a PURE function of the frozen turn output, so a recovery
+    // re-derive yields byte-identical `WorkItem.tool_args` (args are off-digest).
     ArgResolution::Resolved((
-        call.args_bytes,
+        kx_tool_registry::normalize_lenient_args(&call.args_bytes).into_owned(),
         def.required_capability.net_scope_required.clone(),
         def.required_capability.fs_scope_required.clone(),
     ))
@@ -985,8 +989,9 @@ fn resolve_authored_tool_args(mote: &Mote, tool_registry: &dyn ToolRegistry) -> 
             };
         }
     }
+    // PR-3 (A3c): fire the normalized bytes (matching `validate_args`).
     ArgResolution::Resolved((
-        args_bytes,
+        kx_tool_registry::normalize_lenient_args(&args_bytes).into_owned(),
         def.required_capability.net_scope_required.clone(),
         def.required_capability.fs_scope_required.clone(),
     ))
@@ -2767,6 +2772,22 @@ fn drive_react_chain<J: Journal>(
         // Branches are frozen and a terminal chain accepts no new facts — skip
         // it on every later pass (the cache classification).
         ReactBranch::Answer | ReactBranch::DeadLettered => ReactChainStatus::Settled,
+        // PR-3 (A2): a frozen `Rejected` round whose advance was interrupted (a
+        // crash between the Rejected fact and the next turn's `Pending` fact) —
+        // re-drive the advance idempotently (the `turn + 1` dedup in
+        // `advance_react_chain` guards a double-spawn; budget exhaustion freezes
+        // the loud terminal). On the live happy path the freeze pass already
+        // advanced, so this arm fires only on recovery.
+        ReactBranch::Rejected { .. } => advance_react_chain(
+            journal,
+            store,
+            projection,
+            folded_through,
+            dispatch,
+            anchor,
+            &rounds,
+            turn,
+        ),
         // A frozen Tool decision (just decided this pass on an earlier drain, or
         // an advance interrupted by a crash): PR-2d-2 — drive the OBSERVATION
         // lifecycle (materialize → fire via the worker → commit), then advance
@@ -2862,25 +2883,53 @@ fn drive_react_chain<J: Journal>(
                 // the irreversible branch, so a frozen `Tool` fact GUARANTEES
                 // registered, schema-valid args (the lease-time re-derivation
                 // can then only fail on I/O, never on a decode disagreement).
+                // PR-3 (A2): a refused proposal is NOT terminal — it freezes a
+                // `Rejected { reason }` round that the next turn reads (via the
+                // re-prompt) and self-corrects over, bounded by the budget (the
+                // loud `DeadLettered` happens only at exhaustion). The `Tool`
+                // arm is byte-unchanged, so the invariant above still holds.
                 Ok(Some(call)) => match tool_registry.lookup(&call.name, &call.version) {
-                    None => ReactBranch::DeadLettered,
-                    Some(def) => {
-                        let args_valid = def.input_schema.as_ref().is_none_or(|schema| {
-                            kx_tool_registry::validate_args(schema, &call.args_bytes).is_ok()
-                        });
-                        if args_valid {
-                            ReactBranch::Tool {
-                                tool_id: call.name.0,
-                                tool_version: call.version.0,
-                            }
-                        } else {
-                            ReactBranch::DeadLettered
-                        }
-                    }
+                    None => ReactBranch::Rejected {
+                        reason: crate::react_shape::bounded_reason(format!(
+                            "the proposed tool `{}@{}` is not granted to this run \
+                             or is no longer registered",
+                            call.name.0, call.version.0
+                        )),
+                    },
+                    Some(def) => match def.input_schema.as_ref().map_or(Ok(()), |schema| {
+                        kx_tool_registry::validate_args(schema, &call.args_bytes)
+                    }) {
+                        Ok(()) => ReactBranch::Tool {
+                            tool_id: call.name.0,
+                            tool_version: call.version.0,
+                        },
+                        Err(error) => ReactBranch::Rejected {
+                            reason: crate::react_shape::bounded_reason(format!(
+                                "the arguments for `{}@{}` do not match its \
+                                 inputSchema: {error}",
+                                call.name.0, call.version.0
+                            )),
+                        },
+                    },
                 },
-                // Malformed / ungranted / oversize ⇒ the chain dead-letters
-                // (fail-closed; the committed turn fact remains, the CHAIN ends).
-                Err(_) => ReactBranch::DeadLettered,
+                // Malformed / oversize / a name that decoded to no grant ⇒ a
+                // `Rejected` round (the committed turn fact remains; the model
+                // gets a chance to re-propose under the budget).
+                Err(error) => ReactBranch::Rejected {
+                    reason: crate::react_shape::bounded_reason(match error {
+                        kx_toolcall::DecodeError::Malformed { diagnostic } => {
+                            format!("the tool proposal was malformed: {diagnostic}")
+                        }
+                        kx_toolcall::DecodeError::UngrantedTool { name, version } => format!(
+                            "the proposed tool `{}@{}` is not granted to this run",
+                            name.0, version.0
+                        ),
+                        kx_toolcall::DecodeError::Oversize { got, max } => format!(
+                            "the proposed tool arguments are too large \
+                             ({got} bytes > {max} max)"
+                        ),
+                    }),
+                },
             };
             let advanced = if let ReactBranch::Tool {
                 tool_id,
@@ -2895,6 +2944,7 @@ fn drive_react_chain<J: Journal>(
             } else {
                 None
             };
+            let rejected = matches!(branch, ReactBranch::Rejected { .. });
             append_react_branch(
                 journal,
                 projection,
@@ -2925,8 +2975,27 @@ fn drive_react_chain<J: Journal>(
                     &round,
                     tool_registry,
                 )
+            } else if rejected {
+                // PR-3 (A2): a refused proposal just froze a `Rejected` round —
+                // advance to the next (re-prompted) turn under the budget gate.
+                // At budget exhaustion `advance_react_chain` freezes the loud
+                // terminal `DeadLettered` (never a silent wedge).
+                let rounds: Vec<ReactRoundRecord> = projection
+                    .react_rounds_of(&instance_id, &step_salt)
+                    .cloned()
+                    .collect();
+                advance_react_chain(
+                    journal,
+                    store,
+                    projection,
+                    folded_through,
+                    dispatch,
+                    anchor,
+                    &rounds,
+                    turn,
+                )
             } else {
-                // Answer / DeadLettered just froze — the chain is done.
+                // Answer just froze — the chain is done.
                 ReactChainStatus::Settled
             }
         }
@@ -3154,24 +3223,62 @@ fn advance_react_chain<J: Journal>(
         return ReactChainStatus::Active;
     }
     // FOLD-RE-DERIVED counters (BLOCKER #4): tool_calls = the Tool-branch facts
-    // recorded so far (this turn's included — it folded before this call);
-    // turns_used = turns 0..=turn ran. Then the harness gate, line-for-line.
+    // PLUS the Rejected facts (PR-3/A2: a refused proposal is a spent tool-call
+    // attempt, so a model that only ever emits bad calls is bounded by
+    // `max_tool_calls` exactly like one that fires real tools) recorded so far
+    // (this turn's included — it folded before this call); turns_used = turns
+    // 0..=turn ran. Then the harness gate, line-for-line.
     let tool_calls = u32::try_from(
         rounds
             .iter()
-            .filter(|r| matches!(r.branch, ReactBranch::Tool { .. }))
+            .filter(|r| {
+                matches!(
+                    r.branch,
+                    ReactBranch::Tool { .. } | ReactBranch::Rejected { .. }
+                )
+            })
             .count(),
     )
     .unwrap_or(u32::MAX);
     let turns_used = turn.saturating_add(1);
-    if tool_calls >= anchor.max_tool_calls {
+    // PR-3 (A2): the just-settled turn's branch (its turn_mote_id + the durable
+    // reason if it was REJECTED). Drives both the budget-exhaustion terminal
+    // flavor and the next turn's re-prompt — a pure function of frozen facts.
+    let prev_reject: Option<(MoteId, String)> = rounds
+        .iter()
+        .filter(|r| r.turn == turn)
+        .max_by_key(|r| r.seq)
+        .and_then(|r| match &r.branch {
+            ReactBranch::Rejected { reason } => Some((r.turn_mote_id, reason.clone())),
+            _ => None,
+        });
+    if tool_calls >= anchor.max_tool_calls || turns_used >= anchor.max_turns {
         // BudgetExhausted (the harness ReactStop semantics). The gate is a pure
         // function of frozen facts — it fires identically on every later pass,
         // so the chain is permanently done: skip it (the cache classification).
+        // PR-3 (A2): a REJECTED tail means the model spent its whole budget on
+        // refused proposals and never produced an answer — freeze the LOUD
+        // terminal `DeadLettered` (BUG-27: terminal, never silent; never a
+        // fabricated answer, GR15). A `Tool` tail keeps the pre-A2 quiesce (its
+        // last observation legitimately stands). Idempotent: `append_react_branch`
+        // dedups `(turn, DeadLettered)`, so a recovery re-drive is a no-op.
+        if let Some((turn_mote_id, reason)) = &prev_reject {
+            tracing::warn!(
+                turn,
+                %reason,
+                "react chain exhausted its budget on refused tool proposals — dead-lettering"
+            );
+            append_react_branch(
+                journal,
+                projection,
+                folded_through,
+                anchor,
+                *turn_mote_id,
+                turn,
+                ReactBranch::DeadLettered,
+            );
+        }
         return ReactChainStatus::Settled;
-    }
-    if turns_used >= anchor.max_turns {
-        return ReactChainStatus::Settled; // BudgetExhausted
     }
     // Build the next turn from the run-fixed anchor. Any I/O fault fails safe
     // (the chain simply doesn't advance this pass; a later pass retries).
@@ -3188,11 +3295,23 @@ fn advance_react_chain<J: Journal>(
     let Ok(warrant) = decode_warrant(warrant_bytes.as_ref()) else {
         return ReactChainStatus::Active;
     };
+    // PR-3 (A2): if the just-settled turn was REJECTED, re-prompt the next turn
+    // with the durable reason so the model self-corrects. Deterministic (a pure
+    // function of the frozen Rejected fact + the anchor's immutable base prompt),
+    // so a recovery re-fold re-derives the byte-identical turn Mote.
+    let reprompt;
+    let turn_instruction: &str = match &prev_reject {
+        Some((_, reason)) => {
+            reprompt = crate::react_shape::render_reprompt(instruction, reason);
+            &reprompt
+        }
+        None => instruction,
+    };
     let next_turn = turn + 1;
     let model_id = ModelId(anchor.model_id.clone());
     let next = crate::react_shape::build_chain_turn(
         &model_id,
-        instruction,
+        turn_instruction,
         next_turn,
         &anchor.instance_id,
         anchor.step_salt,

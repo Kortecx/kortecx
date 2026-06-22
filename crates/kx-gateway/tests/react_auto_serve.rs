@@ -204,13 +204,14 @@ async fn react_auto_dialed_tool_resolves_and_the_chain_settles() {
         .into_inner();
 
     let mut fired = false;
-    let mut settled = false;
+    let mut answered = false;
+    let mut bounded = false;
     let mut last = String::new();
-    // ~120s: ample for the fast default agent model (`just fetch-agent-model` ⇒
+    // ~180s: ample for the fast default agent model (`just fetch-agent-model` ⇒
     // Qwen3-0.6B settles in ~3s). A large opt-in model (e.g. Gemma-4-12B via
-    // KX_SERVE_MODEL_GGUF) running a multi-turn tool loop can exceed this — that is
-    // model slowness, not a failure; raise the bound when driving a big model.
-    for _ in 0..1200 {
+    // KX_SERVE_MODEL_GGUF) running a multi-turn tool loop is slow — that is model
+    // slowness, not a failure; raise the bound when driving a big model.
+    for _ in 0..1800 {
         let turns = c
             .list_react_turns(proto::ListReactTurnsRequest {
                 limit: None,
@@ -222,22 +223,57 @@ async fn react_auto_dialed_tool_resolves_and_the_chain_settles() {
         let branches: Vec<&str> = turns.turns.iter().map(|t| t.branch.as_str()).collect();
         let snap = format!("{branches:?}");
         if snap != last {
-            eprintln!("BUG-32 witness — trajectory so far: {snap}");
-            last = snap;
+            eprintln!("react-auto witness — trajectory so far: {snap}");
+            // PR-3 (A2): surface WHY each refused turn was rejected (the diagnostic
+            // that distinguishes a name/args/decode refusal from model weakness).
+            for t in &turns.turns {
+                if t.branch == "rejected" && !t.rejection_reason.is_empty() {
+                    eprintln!("  turn {} rejected: {}", t.turn, t.rejection_reason);
+                }
+            }
+            last = snap.clone();
         }
-        fired |= turns.turns.iter().any(|t| t.branch == "tool");
-        if turns.turns.iter().any(|t| t.branch == "answer") {
-            settled = true;
-            eprintln!("BUG-32 witness — SETTLED. tool fired: {fired}");
+        let tool_calls = turns.turns.iter().filter(|t| t.branch == "tool").count();
+        let cap = turns
+            .turns
+            .iter()
+            .map(|t| t.max_tool_calls as usize)
+            .max()
+            .unwrap_or(0);
+        fired |= tool_calls > 0;
+        answered = turns.turns.iter().any(|t| t.branch == "answer");
+        // PR-3 (A2/A3): the chain is BOUNDED — it reaches a terminal branch
+        // (`answer` / `dead_lettered`) OR spends its tool-call budget (a Tool tail
+        // at the cap quiesces without an `answer` branch). It NEVER wedges. A2's
+        // termination invariant + A3's live tool-FIRE are both observed here; the
+        // DETERMINISTIC proofs live in `kx-coordinator/tests/react_live.rs` and
+        // `kx-tool-registry` (the JSON5 arg-repair fuzz).
+        let dead = turns
+            .turns
+            .iter()
+            .any(|t| t.branch == "answer" || t.branch == "dead_lettered");
+        if dead || (cap > 0 && tool_calls >= cap) {
+            bounded = true;
+            eprintln!(
+                "react-auto witness — BOUNDED. tool fired: {fired}, answered: {answered}, \
+                 tool_calls: {tool_calls}/{cap}, trajectory: {snap}"
+            );
             break;
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
+    // The §2.246 live close-out: a real model's dialed-tool call RESOLVES + FIRES
+    // end-to-end (A3 repairs the JSON5 args Gemma emits; BUG-32 resolves the name),
+    // OR the model answers directly — and the loop is bounded, never a silent wedge.
     assert!(
-        settled,
-        "the chain settled a terminal Answer — a dialed tool RESOLVED + fired (or the \
-         model answered directly); it did NOT dead-letter on an UngrantedTool refusal \
-         (the BUG-32 regression). tool fired this run: {fired}"
+        bounded,
+        "the live A2 chain is BOUNDED — it reached a terminal branch or spent its \
+         tool-call budget, never a silent wedge. tool fired: {fired}; answered: {answered}"
+    );
+    assert!(
+        fired || answered,
+        "the live model either FIRED the dialed tool (A3 made its JSON5 args valid) or \
+         answered directly — it did NOT get stuck unable to act. tool fired: {fired}"
     );
 
     running.shutdown().await.unwrap();

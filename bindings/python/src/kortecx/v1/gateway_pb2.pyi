@@ -697,7 +697,7 @@ class ListReactTurnsRequest(_message.Message):
     def __init__(self, limit: _Optional[int] = ..., instance_id: _Optional[bytes] = ...) -> None: ...
 
 class ReactTurnSummary(_message.Message):
-    __slots__ = ("turn", "turn_mote_id", "instance_id", "model_id", "branch", "tool_id", "tool_version", "max_turns", "max_tool_calls", "seq")
+    __slots__ = ("turn", "turn_mote_id", "instance_id", "model_id", "branch", "tool_id", "tool_version", "max_turns", "max_tool_calls", "seq", "rejection_reason")
     TURN_FIELD_NUMBER: _ClassVar[int]
     TURN_MOTE_ID_FIELD_NUMBER: _ClassVar[int]
     INSTANCE_ID_FIELD_NUMBER: _ClassVar[int]
@@ -708,6 +708,7 @@ class ReactTurnSummary(_message.Message):
     MAX_TURNS_FIELD_NUMBER: _ClassVar[int]
     MAX_TOOL_CALLS_FIELD_NUMBER: _ClassVar[int]
     SEQ_FIELD_NUMBER: _ClassVar[int]
+    REJECTION_REASON_FIELD_NUMBER: _ClassVar[int]
     turn: int
     turn_mote_id: bytes
     instance_id: bytes
@@ -718,7 +719,8 @@ class ReactTurnSummary(_message.Message):
     max_turns: int
     max_tool_calls: int
     seq: int
-    def __init__(self, turn: _Optional[int] = ..., turn_mote_id: _Optional[bytes] = ..., instance_id: _Optional[bytes] = ..., model_id: _Optional[str] = ..., branch: _Optional[str] = ..., tool_id: _Optional[str] = ..., tool_version: _Optional[str] = ..., max_turns: _Optional[int] = ..., max_tool_calls: _Optional[int] = ..., seq: _Optional[int] = ...) -> None: ...
+    rejection_reason: str
+    def __init__(self, turn: _Optional[int] = ..., turn_mote_id: _Optional[bytes] = ..., instance_id: _Optional[bytes] = ..., model_id: _Optional[str] = ..., branch: _Optional[str] = ..., tool_id: _Optional[str] = ..., tool_version: _Optional[str] = ..., max_turns: _Optional[int] = ..., max_tool_calls: _Optional[int] = ..., seq: _Optional[int] = ..., rejection_reason: _Optional[str] = ...) -> None: ...
 
 class ListReactTurnsResponse(_message.Message):
     __slots__ = ("turns", "has_more")
