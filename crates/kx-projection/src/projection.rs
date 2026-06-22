@@ -648,6 +648,7 @@ impl Projection {
                 max_tool_calls,
                 step_salt,
                 is_agentic_launch,
+                context_items_ref,
                 seq,
             } => {
                 // v8 (PR-2d-1). Append-many: a run accrues one record per turn
@@ -670,6 +671,7 @@ impl Projection {
                         max_tool_calls: *max_tool_calls,
                         step_salt: *step_salt,
                         is_agentic_launch: *is_agentic_launch,
+                        context_items_ref: *context_items_ref,
                         seq: *seq,
                     });
                 // PR-2d-2: maintain the DERIVED per-instance index + turn-Mote
