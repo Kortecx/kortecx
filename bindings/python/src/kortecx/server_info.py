@@ -45,6 +45,12 @@ class ServerInfo:
     feature_console: bool  # compiled with the embedded `console`
     feature_vision: bool  # compiled with the `vision` (mmproj) leg
     audit_log_enabled: bool  # the serve-path JSONL audit log is on
+    # T-MULTI-ELEMENT-TOOLCALLS: the server's DEFAULT agentic budget (also the hard
+    # ceilings) — a turn may fire several tools, so the two caps are independent. A run
+    # overrides them per-invocation via ``run_agent(max_tool_calls=...)`` / ``kx agent
+    # run --max-tool-calls``.
+    react_max_turns: int = 0
+    react_max_tool_calls: int = 0
 
     @classmethod
     def from_proto(cls, r: "_g.GetServerInfoResponse") -> "ServerInfo":
@@ -68,4 +74,6 @@ class ServerInfo:
             feature_console=r.feature_console,
             feature_vision=r.feature_vision,
             audit_log_enabled=r.audit_log_enabled,
+            react_max_turns=r.react_max_turns,
+            react_max_tool_calls=r.react_max_tool_calls,
         )

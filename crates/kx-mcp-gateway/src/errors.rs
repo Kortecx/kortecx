@@ -16,10 +16,20 @@ pub enum GatewayError {
     #[error("invalid connection spec: {0}")]
     InvalidSpec(String),
     /// A live dial (`initialize` / `tools/list` / `tools/call`) failed — transport
-    /// unreachable, egress refusal, timeout, or a fail-closed decode of an
-    /// untrusted reply.
-    #[error("dial failed: {0}")]
-    Dial(String),
+    /// unreachable, egress refusal, timeout, or a fail-closed decode of an untrusted
+    /// reply. T-CONN: `transient` classifies the flavor so `add`/`test`/`discover`
+    /// report a CONSISTENT reachability verdict (they all route through the one
+    /// `probe`): a TRANSIENT failure (a network-level fault — connect/IO/timeout — the
+    /// server may simply be down; retry-worthy) vs a PERMANENT one (the server SPOKE
+    /// but its handshake/discovery reply was fail-closed-rejected — an incompatible /
+    /// bad-spec server a retry can never fix).
+    #[error("dial failed ({}): {reason}", if *transient { "transient" } else { "permanent" })]
+    Dial {
+        /// The diagnostic detail.
+        reason: String,
+        /// `true` = a retry-worthy network fault; `false` = a permanent protocol fault.
+        transient: bool,
+    },
     /// The per-server rate-limit / concurrency budget was exceeded.
     #[error("rate limit exceeded for server {0}")]
     RateLimited(String),

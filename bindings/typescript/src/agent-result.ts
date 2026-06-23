@@ -13,21 +13,29 @@ import { decodeCriticVerdict } from "./critic.js";
 import type { ReactTurn } from "./react.js";
 
 /** One tool action the agent took — a settled ReAct `tool` turn. The `toolId` /
- *  `toolVersion` are the GRANTED tool's (SN-8), never the model's raw proposal. */
+ *  `toolVersion` are the GRANTED tool's (SN-8), never the model's raw proposal.
+ *  T-MULTI-ELEMENT-TOOLCALLS: when a turn fires N tools at once, each is a distinct
+ *  action sharing `turn`, ordered by `callIndex` (0..N-1). */
 export class AuditedAction {
   constructor(
     readonly toolId: string,
     readonly toolVersion: string,
     readonly turn: number,
+    readonly callIndex: number = 0,
   ) {}
 
   static fromTurn(t: ReactTurn): AuditedAction {
-    return new AuditedAction(t.toolId, t.toolVersion, t.turn);
+    return new AuditedAction(t.toolId, t.toolVersion, t.turn, t.callIndex);
   }
 
   /** A plain snake_case object (parity with the Python SDK + the CLI `--json`). */
   toJSON() {
-    return { tool_id: this.toolId, tool_version: this.toolVersion, turn: this.turn };
+    return {
+      tool_id: this.toolId,
+      tool_version: this.toolVersion,
+      turn: this.turn,
+      call_index: this.callIndex,
+    };
   }
 }
 
@@ -77,12 +85,13 @@ export class AgentResult {
   }
 }
 
-/** The audited action set = the chain's settled `tool` turns, in turn order. Pure
- *  client-side derivation over the durable `ListReactTurns` facts (no mutation of
- *  the input). */
+/** The audited action set = the chain's settled `tool` turns, ordered by
+ *  `(turn, callIndex)` so a multi-tool turn's parallel calls read in emission order
+ *  (T-MULTI-ELEMENT-TOOLCALLS). Pure client-side derivation over the durable
+ *  `ListReactTurns` facts (no mutation of the input). */
 export function assembleActions(turns: readonly ReactTurn[]): AuditedAction[] {
   return turns
     .filter((t) => t.branch === "tool")
-    .sort((a, b) => a.turn - b.turn)
+    .sort((a, b) => a.turn - b.turn || a.callIndex - b.callIndex)
     .map((t) => AuditedAction.fromTurn(t));
 }

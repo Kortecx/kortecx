@@ -60,6 +60,8 @@ describe("ServerInfo.fromProto", () => {
       feature_console: true,
       feature_vision: false,
       audit_log_enabled: true,
+      react_max_turns: 0,
+      react_max_tool_calls: 0,
     });
   });
 

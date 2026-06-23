@@ -619,6 +619,7 @@ pub fn react_tool_mote(
     tool_id: &ToolName,
     tool_version: &ToolVersion,
     turn: u32,
+    call_index: u32,
     turn_mote_id: MoteId,
 ) -> WorkflowMote {
     react_tool_mote_salted(
@@ -627,30 +628,42 @@ pub fn react_tool_mote(
         tool_id,
         tool_version,
         turn,
+        call_index,
         turn_mote_id,
         &[],
     )
 }
 
 /// **PR-2d-1 (react-substrate) — the RUN-SALTED [`react_tool_mote`].** Identity
-/// material becomes `blake3("kx-react-tool" ‖ salt ‖ turn)`; an EMPTY salt is
-/// byte-identical to the pre-PR-2d-1 builder (see [`react_turn_salted`] for the
-/// shared-journal collision rationale). The observation Mote carries NO marker
-/// key — its `config_subset` stays EMPTY (the PR-2d-2 `ToolArgsSink` contract:
-/// args travel out-of-band so the observation identity never moves).
+/// material becomes `blake3("kx-react-tool" ‖ salt ‖ turn ‖ [call_index if >0])`; an
+/// EMPTY salt is byte-identical to the pre-PR-2d-1 builder (see [`react_turn_salted`]
+/// for the shared-journal collision rationale). The observation Mote carries NO marker
+/// key — its `config_subset` stays EMPTY (the PR-2d-2 `ToolArgsSink` contract: args
+/// travel out-of-band so the observation identity never moves).
+///
+/// T-MULTI-ELEMENT-TOOLCALLS: `call_index` disambiguates the N observations of a
+/// multi-call (`ToolBatch`) turn, appended ONLY when `> 0` so a single-call turn
+/// (index 0) is BYTE-IDENTICAL to every pre-v13 chain. This is the R49 byte-twin of
+/// the coordinator's `react_shape::react_tool_id_material` (the `SALTED_TOOL0_GOLDEN`
+/// / `SALTED_TOOL1_GOLDEN` cross-impl goldens pin the equivalence on BOTH sides).
 #[must_use]
+#[allow(clippy::too_many_arguments)] // identity inputs: model/warrant/tool/turn/call_index/parent/salt
 pub fn react_tool_mote_salted(
     model_id: &ModelId,
     warrant: &WarrantSpec,
     tool_id: &ToolName,
     tool_version: &ToolVersion,
     turn: u32,
+    call_index: u32,
     turn_mote_id: MoteId,
     salt: &[u8],
 ) -> WorkflowMote {
     let mut material = b"kx-react-tool".to_vec();
     material.extend_from_slice(salt);
     material.extend_from_slice(&turn.to_le_bytes());
+    if call_index > 0 {
+        material.extend_from_slice(&call_index.to_le_bytes());
+    }
     let id_bytes = *blake3::hash(&material).as_bytes();
 
     let mut tool_contract = BTreeMap::new();
@@ -792,8 +805,8 @@ mod react_identity_tests {
         let turn_id = salted.motes[0].mote.id;
         let tool = ToolName("mcp-echo".to_string());
         let ver = ToolVersion("1".to_string());
-        let obs_unsalted = react_tool_mote(&m, &w, &tool, &ver, 0, turn_id);
-        let obs_salted = react_tool_mote_salted(&m, &w, &tool, &ver, 0, turn_id, &salt);
+        let obs_unsalted = react_tool_mote(&m, &w, &tool, &ver, 0, 0, turn_id);
+        let obs_salted = react_tool_mote_salted(&m, &w, &tool, &ver, 0, 0, turn_id, &salt);
         assert_ne!(obs_unsalted.mote.id, obs_salted.mote.id);
         assert!(obs_salted.mote.def.config_subset.is_empty());
         assert_eq!(
@@ -805,6 +818,21 @@ mod react_identity_tests {
             hex(&obs_salted.mote.id),
             "0797b93286b999344db0ba9a458a83105c6a6b55c29760e510311ae45ff68048",
             "the salted react_tool_mote identity moved"
+        );
+        // T-MULTI-ELEMENT-TOOLCALLS: call_index 1 (a multi-call turn's SECOND
+        // observation) is a DISTINCT, deterministic id — the SAME hex the coordinator
+        // pins as `SALTED_TOOL1_GOLDEN` (the R49 cross-impl mirror). call_index 0 above
+        // reproduced `SALTED_TOOL0_GOLDEN` byte-for-byte (the "append only if >0" rule).
+        let obs_salted_1 = react_tool_mote_salted(&m, &w, &tool, &ver, 0, 1, turn_id, &salt);
+        assert_ne!(
+            obs_salted.mote.id, obs_salted_1.mote.id,
+            "two calls at one turn must have distinct observation ids"
+        );
+        assert_eq!(
+            hex(&obs_salted_1.mote.id),
+            "6288b25bc8514c933719bfafddb4b065f02ed8a4ff54ff7ab4ca059d180d62b3",
+            "the call_index-1 react_tool_mote identity moved — the coordinator \
+             SALTED_TOOL1_GOLDEN (pinned to the same hex) must move in lock-step"
         );
     }
 }

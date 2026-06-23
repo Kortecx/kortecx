@@ -230,7 +230,16 @@ use smallvec::SmallVec;
 /// safe-default `None` presence byte (`0`) to each kind-9 body; kinds 0..=8 are
 /// byte-identical. An OLD binary still refuses a v12 journal loudly. The product
 /// identity digest is invariant (the PURE-8-mote demo never writes a `ReactRound`).
-pub const JOURNAL_SCHEMA_VERSION: u16 = 12;
+///
+/// **v12 → v13 (T-MULTI-ELEMENT-TOOLCALLS).** Adds a NEW [`ReactBranch`] tag `5`
+/// (`ToolBatch`) carrying `count(u16 LE) ‖ count × (u16-prefixed tool_id ‖
+/// u16-prefixed tool_version)` in the between-tag-and-caps slot the `Tool`/
+/// `Rejected` fields occupy. A brand-new tag means **no v12 body can contain it**
+/// (the exact v9→v10 `Rejected`=4 precedent), so the v12 → v13 migration is a
+/// PURE pass-through — every v12 body (tags 0..=4) decodes byte-identically under
+/// v13. An OLD binary still refuses a v13 journal loudly. The product identity
+/// digest is invariant (the PURE-8-mote demo never writes a `ReactRound`).
+pub const JOURNAL_SCHEMA_VERSION: u16 = 13;
 
 /// Fixed entry-header length in bytes (`journal-entry.md` §3).
 pub const HEADER_LEN: usize = 74;
@@ -420,12 +429,42 @@ pub enum ReactBranch {
         /// chars at construction); display + next-turn context only.
         reason: String,
     },
+    /// v13 (T-MULTI-ELEMENT-TOOLCALLS): the turn's committed output proposed
+    /// **N≥2 tool calls in one response** (OpenAI `tool_calls` array or repeated
+    /// marked/native segments). Each `(tool_id, tool_version)` was grant-checked
+    /// AND its args validated against the typed `inputSchema` at the settle
+    /// authority site (all-or-nothing — any one call rejecting freezes the whole
+    /// turn `Rejected`), so a recorded `ToolBatch` is always fireable. The
+    /// coordinator materializes ONE call-indexed OBSERVATION Mote per call (the
+    /// obs MoteId folds `call_index`); the chain advances (re-prompts ONCE with
+    /// all N observations) only after EVERY observation commits — the requested
+    /// back-pressure. A single-call turn stays [`Self::Tool`] (byte-identical
+    /// back-compat); only a genuinely-multi output produces `ToolBatch`. Each
+    /// call counts against `max_tool_calls`; the batch fires in full (bounded by
+    /// [`MAX_TOOL_BATCH_CALLS`]) then dead-letters loudly if the cumulative
+    /// budget is exhausted (BUG-27 "loud, never silent"). The calls are a pure,
+    /// deterministic function of the frozen turn output, so recovery/replay
+    /// re-derive identical bytes + identical observation ids.
+    ToolBatch {
+        /// The ordered `(tool_id, tool_version)` calls — the `Vec` index IS the
+        /// `call_index` that disambiguates each observation Mote. Length is in
+        /// `[2, MAX_TOOL_BATCH_CALLS]` (a 0/1-element decode is never produced;
+        /// the parser yields a normal completion or [`Self::Tool`]).
+        calls: Vec<(String, String)>,
+    },
 }
 
 /// Hard cap on a [`ReactBranch::Rejected`] `reason`'s length (char count) — a
 /// `DoS`/context-window bound. The coordinator truncates at a char boundary
 /// before building the entry; [`MAX_ENTRY_LEN`] still fences the total body.
 pub const MAX_REJECTED_REASON_LEN: usize = 512;
+
+/// Hard cap on a [`ReactBranch::ToolBatch`]'s recorded calls — a `DoS` bound
+/// independent of the size cap (v13, T-MULTI-ELEMENT-TOOLCALLS). The per-turn
+/// batch is bounded by the react tool-call ceiling (`REACT_MAX_TOOL_CALLS`,
+/// currently 20); this matches that ceiling so a single turn can fire up to the
+/// full chain budget, and keeps the entry far under [`MAX_ENTRY_LEN`].
+pub const MAX_TOOL_BATCH_CALLS: usize = 20;
 
 impl ReactBranch {
     /// The branch's closed `u8` tag (the on-disk discriminant).
@@ -437,6 +476,7 @@ impl ReactBranch {
             Self::DeadLettered => 2,
             Self::Pending => 3,
             Self::Rejected { .. } => 4,
+            Self::ToolBatch { .. } => 5,
         }
     }
 }
@@ -1375,10 +1415,20 @@ pub enum DecodeError {
     /// A `ReplanRound` entry's `has_escalation` flag is neither 0 nor 1 (v7).
     #[error("ReplanRound has_escalation flag is not boolean: {0}")]
     NonBooleanHasEscalation(u8),
-    /// A `ReactRound` entry's `branch` tag byte is not one of the four known
-    /// [`ReactBranch`] tags (v8, PR-2d-1).
+    /// A `ReactRound` entry's `branch` tag byte is not one of the known
+    /// [`ReactBranch`] tags (v8, PR-2d-1; v13 added tag 5 `ToolBatch`).
     #[error("unknown ReactRound branch tag: {0}")]
     UnknownReactBranch(u8),
+    /// A `ReactRound` entry's `ToolBatch` declares more calls than
+    /// [`MAX_TOOL_BATCH_CALLS`] (v13, T-MULTI-ELEMENT-TOOLCALLS) — a `DoS` bound.
+    #[error(
+        "ReactRound ToolBatch call count {got} exceeds max {}",
+        MAX_TOOL_BATCH_CALLS
+    )]
+    ReactRoundTooManyBatchCalls {
+        /// The declared call count.
+        got: usize,
+    },
     /// A `ReactRound` entry's trailing `is_agentic_launch` tag byte is neither `0`
     /// (run-level) nor `1` (agentic launch) (v11, PR-R1).
     #[error("unknown ReactRound is_agentic_launch tag: {0}")]
@@ -1755,6 +1805,19 @@ pub fn encode_entry(entry: &JournalEntry) -> Result<Vec<u8>, EncodeError> {
                 // the same between-tag-and-caps slot the Tool fields occupy.
                 ReactBranch::Rejected { reason } => {
                     push_len_prefixed_str(&mut out, reason)?;
+                }
+                // v13 (T-MULTI-ELEMENT-TOOLCALLS): a ToolBatch round carries its
+                // ordered calls in the same between-tag-and-caps slot:
+                // count(u16 LE) ‖ count × (u16-prefixed tool_id ‖ u16-prefixed
+                // tool_version). A brand-new tag (5), so no v12 body grows.
+                ReactBranch::ToolBatch { calls } => {
+                    let count = u16::try_from(calls.len())
+                        .map_err(|_| EncodeError::ReactRoundTooLarge { got: calls.len() })?;
+                    out.extend_from_slice(&count.to_le_bytes());
+                    for (tool_id, tool_version) in calls {
+                        push_len_prefixed_str(&mut out, tool_id)?;
+                        push_len_prefixed_str(&mut out, tool_version)?;
+                    }
                 }
                 ReactBranch::Answer | ReactBranch::DeadLettered | ReactBranch::Pending => {}
             }
@@ -2202,6 +2265,21 @@ pub fn decode_entry_with_def_hash(
                 4 => {
                     let reason = read_len_prefixed_str(body, &mut cursor, kind)?;
                     ReactBranch::Rejected { reason }
+                }
+                // v13 (T-MULTI-ELEMENT-TOOLCALLS): a ToolBatch round's count(u16)
+                // ‖ count × (u16-prefixed tool_id ‖ u16-prefixed tool_version).
+                5 => {
+                    let count = read_u16(body, &mut cursor, kind)? as usize;
+                    if count > MAX_TOOL_BATCH_CALLS {
+                        return Err(DecodeError::ReactRoundTooManyBatchCalls { got: count });
+                    }
+                    let mut calls: Vec<(String, String)> = Vec::with_capacity(count);
+                    for _ in 0..count {
+                        let tool_id = read_len_prefixed_str(body, &mut cursor, kind)?;
+                        let tool_version = read_len_prefixed_str(body, &mut cursor, kind)?;
+                        calls.push((tool_id, tool_version));
+                    }
+                    ReactBranch::ToolBatch { calls }
                 }
                 other => return Err(DecodeError::UnknownReactBranch(other)),
             };
@@ -2748,6 +2826,27 @@ mod tests {
                 },
                 505,
             ),
+            // v13 (T-MULTI-ELEMENT-TOOLCALLS): a ToolBatch's ordered calls survive
+            // the round-trip — including two calls to the SAME tool (the per-call
+            // observation ids are disambiguated downstream by call_index, not here).
+            (
+                ReactBranch::ToolBatch {
+                    calls: vec![
+                        ("mcp-echo".to_string(), "1".to_string()),
+                        ("fs-read".to_string(), "1".to_string()),
+                    ],
+                },
+                506,
+            ),
+            (
+                ReactBranch::ToolBatch {
+                    calls: vec![
+                        ("mcp-echo".to_string(), "1".to_string()),
+                        ("mcp-echo".to_string(), "1".to_string()),
+                    ],
+                },
+                507,
+            ),
         ] {
             // v11 (PR-R1): every (step_salt, is_agentic_launch) combination round-trips
             // — run-level (None/false, Some/false) and agentic (Some/true).
@@ -2928,6 +3027,47 @@ mod tests {
         assert!(matches!(
             decode_entry(&trailing),
             Err(DecodeError::TrailingBytes(1))
+        ));
+    }
+
+    /// v13 (T-MULTI-ELEMENT-TOOLCALLS): a `ToolBatch` whose declared call count
+    /// exceeds [`MAX_TOOL_BATCH_CALLS`] is fail-closed at decode (the `DoS` bound,
+    /// independent of the size cap — mirrors `ReplanRound`'s failed-step bound).
+    #[test]
+    fn react_round_rejects_over_cap_tool_batch() {
+        // A ToolBatch at exactly the cap encodes + round-trips.
+        let at_cap: Vec<(String, String)> = (0..MAX_TOOL_BATCH_CALLS)
+            .map(|i| (format!("tool-{i}"), "1".to_string()))
+            .collect();
+        let e = JournalEntry::ReactRound {
+            turn: 0,
+            turn_mote_id: MoteId::from_bytes([0xa2; 32]),
+            instance_id: [0x4e; INSTANCE_ID_LEN],
+            base_prompt_ref: ContentRef::from_bytes([1u8; 32]),
+            warrant_ref: ContentRef::from_bytes([2u8; 32]),
+            model_id: "m".to_string(),
+            branch: ReactBranch::ToolBatch { calls: at_cap },
+            max_turns: 8,
+            max_tool_calls: 20,
+            step_salt: None,
+            is_agentic_launch: false,
+            context_items_ref: None,
+            seq: 13,
+        };
+        let bytes = encode_entry(&e).unwrap();
+        assert_eq!(decode_entry(&bytes).unwrap(), e);
+        // Hand-craft a body whose ToolBatch count is cap+1: bump the u16 count that
+        // sits right after the branch tag. The branch tag is at
+        // `prefix + model_id("m"=1)`; the count follows it (so `+ 2`).
+        let count_at = HEADER_LEN + REACT_ROUND_PREFIX_LEN + 2;
+        let mut over = bytes;
+        let over_count = u16::try_from(MAX_TOOL_BATCH_CALLS + 1).unwrap();
+        over[count_at..count_at + 2].copy_from_slice(&over_count.to_le_bytes());
+        assert!(matches!(
+            decode_entry(&over),
+            Err(DecodeError::ReactRoundTooManyBatchCalls {
+                got
+            }) if got == MAX_TOOL_BATCH_CALLS + 1
         ));
     }
 

@@ -90,7 +90,10 @@ fn nd_class_wire(nd: NdClass) -> &'static str {
 fn branch_wire(branch: &ReactBranch) -> &'static str {
     match branch {
         ReactBranch::Answer => "answer",
-        ReactBranch::Tool { .. } => "tool",
+        // T-MULTI-ELEMENT-TOOLCALLS: a single tool and a multi-call batch are both a
+        // "tool" turn in the payload-free capture join key (the per-call detail lives
+        // on the durable fact + the ListReactTurns read surface).
+        ReactBranch::Tool { .. } | ReactBranch::ToolBatch { .. } => "tool",
         // PR-3 (A2): the JOIN-KEY token only — the capture is deliberately
         // payload-free, so the reason is NOT captured here (it lives on the
         // durable fact + the ListReactTurns read surface).

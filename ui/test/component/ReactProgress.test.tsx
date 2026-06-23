@@ -12,6 +12,7 @@ function vm(over: Partial<ReactTurnVM>): ReactTurnVM {
     turnMoteId: "aa".repeat(32),
     maxTurns: 8,
     rejectionReason: "",
+    callIndex: 0,
     ...over,
   };
 }

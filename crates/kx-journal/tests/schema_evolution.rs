@@ -641,6 +641,66 @@ fn v9_react_round_persists_and_resumes() {
     ));
 }
 
+/// v13 (T-MULTI-ELEMENT-TOOLCALLS): a `ReactBranch::ToolBatch` fact (a turn that
+/// proposed N≥2 tool calls) persists + resumes through the strict open path with
+/// its ordered calls intact — including two calls to the SAME tool. Proves the
+/// new branch survives a real SqliteJournal write + reopen, not just the in-memory
+/// codec round-trip.
+#[test]
+fn v13_tool_batch_round_persists_and_resumes() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("react_v13_batch.kxjournal");
+    let batch = JournalEntry::ReactRound {
+        turn: 1,
+        turn_mote_id: MoteId::from_bytes([0x8e; 32]),
+        instance_id: [0x4d; INSTANCE_ID_LEN],
+        base_prompt_ref: ContentRef::from_bytes([0x12; 32]),
+        warrant_ref: ContentRef::from_bytes([0x34; 32]),
+        model_id: "kx-serve:gemma3-12b".to_string(),
+        branch: ReactBranch::ToolBatch {
+            calls: vec![
+                ("mcp-echo".to_string(), "1".to_string()),
+                ("mcp-echo".to_string(), "1".to_string()),
+                ("fs-read".to_string(), "1".to_string()),
+            ],
+        },
+        max_turns: 8,
+        max_tool_calls: 20,
+        step_salt: None,
+        is_agentic_launch: false,
+        context_items_ref: None,
+        seq: 0,
+    };
+    {
+        let j = SqliteJournal::open(&path).unwrap();
+        j.append_batch(vec![batch.clone()]).unwrap();
+    }
+    let j = SqliteJournal::open(&path).unwrap(); // resume
+    let entries = read_all(&j);
+    assert_eq!(entries.len(), 1);
+    // `seq` is journal-assigned on append, so compare the durable fields (not the
+    // whole struct) — exactly like `v9_react_round_persists_and_resumes`.
+    let JournalEntry::ReactRound {
+        turn,
+        branch: ReactBranch::ToolBatch { calls },
+        max_tool_calls,
+        ..
+    } = &entries[0]
+    else {
+        panic!("expected a resumed ToolBatch ReactRound");
+    };
+    assert_eq!(*turn, 1);
+    assert_eq!(
+        calls.len(),
+        3,
+        "all three calls survive the reopen in order"
+    );
+    assert_eq!(calls[0], ("mcp-echo".to_string(), "1".to_string()));
+    assert_eq!(calls[1], ("mcp-echo".to_string(), "1".to_string()));
+    assert_eq!(calls[2], ("fs-read".to_string(), "1".to_string()));
+    assert_eq!(*max_tool_calls, 20, "the raised tool-call ceiling persists");
+}
+
 // ---------------------------------------------------------------------------
 // The frozen v9 representation (PR-3, A2). v9 = v10 minus the brand-new
 // `ReactBranch::Rejected` (branch tag 4). Every existing kind/tag (including the

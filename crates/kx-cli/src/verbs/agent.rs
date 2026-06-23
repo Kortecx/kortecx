@@ -22,7 +22,9 @@ const DEFAULT_TIMEOUT_SECS: u64 = 120;
 const REACT_RECIPE_HANDLE: &str = "kx/recipes/react";
 /// The recipe's anchored bounded-loop budget (mirrors the SDK + the UI's planReactArgs).
 const DEFAULT_MAX_TURNS: u32 = 8;
-const DEFAULT_MAX_TOOL_CALLS: u32 = 6;
+// T-MULTI-ELEMENT-TOOLCALLS: the default tool-call cap rose 6 → 20 (decoupled from
+// max_turns — a turn can now fire N tools). Overridable per run via `--max-tool-calls`.
+const DEFAULT_MAX_TOOL_CALLS: u32 = 20;
 
 /// Parsed `agent run` arguments.
 #[derive(Debug)]
@@ -37,6 +39,11 @@ pub struct AgentArgs {
     pub inputs: Vec<(String, String)>,
     /// Settle timeout in seconds.
     pub timeout_secs: u64,
+    /// Max model turns (`--max-turns`; default 8, ceiling 8).
+    pub max_turns: u32,
+    /// Max total tool calls (`--max-tool-calls`; default 20, ceiling 20). A turn may
+    /// fire N tools at once (T-MULTI-ELEMENT-TOOLCALLS), so this is independent of turns.
+    pub max_tool_calls: u32,
     /// Common client flags.
     pub common: ClientCommon,
 }
@@ -57,6 +64,8 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<AgentArgs, CliErr
     let mut context_refs = Vec::new();
     let mut inputs: Vec<(String, String)> = Vec::new();
     let mut timeout_secs = DEFAULT_TIMEOUT_SECS;
+    let mut max_turns = DEFAULT_MAX_TURNS;
+    let mut max_tool_calls = DEFAULT_MAX_TOOL_CALLS;
     let mut common = ClientCommon::default();
     while let Some(flag) = args.next() {
         if common.try_consume(&flag, &mut args)? {
@@ -79,6 +88,18 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<AgentArgs, CliErr
                     CliError::Usage(format!("--timeout-secs expects an integer, got {v:?}"))
                 })?;
             }
+            "--max-turns" => {
+                let v = next_value(&mut args, "--max-turns")?;
+                max_turns = v.parse().map_err(|_| {
+                    CliError::Usage(format!("--max-turns expects an integer, got {v:?}"))
+                })?;
+            }
+            "--max-tool-calls" => {
+                let v = next_value(&mut args, "--max-tool-calls")?;
+                max_tool_calls = v.parse().map_err(|_| {
+                    CliError::Usage(format!("--max-tool-calls expects an integer, got {v:?}"))
+                })?;
+            }
             other => return Err(CliError::Usage(format!("unknown flag {other:?}"))),
         }
     }
@@ -89,6 +110,8 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<AgentArgs, CliErr
         context_refs,
         inputs,
         timeout_secs,
+        max_turns,
+        max_tool_calls,
         common,
     })
 }
@@ -110,8 +133,8 @@ pub async fn execute(args: AgentArgs) -> Result<(), CliError> {
     let instruction = fold_inputs(&args.goal, &args.inputs);
     let req_args = serde_json::json!({
         "instruction": instruction,
-        "max_turns": DEFAULT_MAX_TURNS,
-        "max_tool_calls": DEFAULT_MAX_TOOL_CALLS,
+        "max_turns": args.max_turns,
+        "max_tool_calls": args.max_tool_calls,
     })
     .to_string()
     .into_bytes();
@@ -152,12 +175,22 @@ pub async fn execute(args: AgentArgs) -> Result<(), CliError> {
         .map_err(CliError::from_status)?
         .into_inner()
         .turns;
-    let mut actions: Vec<(String, String, u32)> = turns
+    // T-MULTI-ELEMENT-TOOLCALLS: a multi-call turn fans into N "tool" rows (one per
+    // call_index), so a single turn can contribute several actions — list them ALL,
+    // ordered by (turn, call_index) so a parallel-tool turn reads N.0, N.1, ….
+    let mut actions: Vec<(String, String, u32, u32)> = turns
         .iter()
         .filter(|t| t.branch == "tool")
-        .map(|t| (t.tool_id.clone(), t.tool_version.clone(), t.turn))
+        .map(|t| {
+            (
+                t.tool_id.clone(),
+                t.tool_version.clone(),
+                t.turn,
+                t.call_index,
+            )
+        })
         .collect();
-    actions.sort_by_key(|(_, _, turn)| *turn);
+    actions.sort_by_key(|(_, _, turn, call_index)| (*turn, *call_index));
 
     println!(
         "{}",

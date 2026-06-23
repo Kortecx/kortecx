@@ -36,6 +36,11 @@ class ReactTurn:
     seq: int
     rejection_reason: str = ""  # set iff branch == "rejected" (PR-3/A2)
     step_salt: str = ""  # PR-R1: the chain key (hex 32B); "" for a legacy run-level chain
+    # T-MULTI-ELEMENT-TOOLCALLS: when a model fires N tools in ONE turn, the gateway
+    # fans that turn into N "tool" rows sharing ``turn``/``turn_mote_id``/``seq``,
+    # distinguished by ``call_index`` (0..N-1, emission order). 0 for a single-call
+    # turn and every non-tool branch.
+    call_index: int = 0
 
     @classmethod
     def from_proto(cls, r: "_g.ReactTurnSummary") -> "ReactTurn":
@@ -52,6 +57,7 @@ class ReactTurn:
             seq=r.seq,
             rejection_reason=r.rejection_reason,
             step_salt=hexids.encode(r.step_salt) if r.step_salt else "",
+            call_index=r.call_index,
         )
 
 

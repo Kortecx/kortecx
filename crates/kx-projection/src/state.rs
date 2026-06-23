@@ -278,6 +278,15 @@ pub(crate) struct State {
     /// args-or-skip rule). Same derived/never-serialized contract as
     /// [`Self::react_index`].
     pub(crate) react_turn_motes: BTreeSet<MoteId>,
+    /// T-MULTI-ELEMENT-TOOLCALLS — DERIVED map from a react TURN's `MoteId` to the
+    /// `react_rounds` index of its TOOL-FIRING settled branch ([`ReactBranch::Tool`]
+    /// or [`ReactBranch::ToolBatch`]). The coordinator's `resolve_tool_args` reads it
+    /// at lease time to recover a multi-call observation's `call_index` (which of the
+    /// turn's N calls THIS observation fires) without an O(all-facts) scan — the
+    /// "performant at scale" lease path. A turn's records fold `Pending` then a settled
+    /// branch; last-write-wins lands the settled branch. Same derived/never-serialized
+    /// contract as [`Self::react_turn_motes`] (re-derived on checkpoint load).
+    pub(crate) react_tool_round_of_turn: BTreeMap<MoteId, usize>,
 }
 
 impl State {
@@ -301,6 +310,17 @@ impl State {
             .or_default()
             .push(idx);
         self.react_turn_motes.insert(record.turn_mote_id);
+        // T-MULTI-ELEMENT-TOOLCALLS: map a turn to its tool-firing branch's index so
+        // a multi-call observation can recover its `call_index` at lease time. Only a
+        // Tool/ToolBatch branch fires observations; last-write-wins (a turn folds
+        // `Pending` then the settled branch, so the tool branch lands last).
+        if matches!(
+            record.branch,
+            kx_journal::ReactBranch::Tool { .. } | kx_journal::ReactBranch::ToolBatch { .. }
+        ) {
+            self.react_tool_round_of_turn
+                .insert(record.turn_mote_id, idx);
+        }
     }
 
     /// `true` iff any declared Mote is a deterministic critic (`critic_for =

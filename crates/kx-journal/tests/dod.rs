@@ -312,10 +312,11 @@ fn obligation_13_schema_version_mismatch_loud_refusal() {
 /// the trailing `ReactRound.step_salt`, PR-9b-2a; v9→v10 added the
 /// `ReactBranch::Rejected` variant, PR-3 / A2; v10→v11 added the trailing
 /// `ReactRound.is_agentic_launch` flag, PR-R1; v11→v12 added the trailing
-/// `ReactRound.context_items_ref`, PR-9d.)
+/// `ReactRound.context_items_ref`, PR-9d; v12→v13 added the `ReactBranch::ToolBatch`
+/// variant (branch tag 5), T-MULTI-ELEMENT-TOOLCALLS.)
 #[test]
-fn schema_version_is_v12() {
-    assert_eq!(JOURNAL_SCHEMA_VERSION, 12);
+fn schema_version_is_v13() {
+    assert_eq!(JOURNAL_SCHEMA_VERSION, 13);
 }
 
 /// IMP-2 (M2.x-E): pin the migration floor. The schema-migration ladder

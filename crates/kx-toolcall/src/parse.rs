@@ -82,6 +82,10 @@ fn strip_code_fence(text: &str) -> &str {
 
 /// Gemma-4's NATIVE tool-call open delimiter (`<|tool_call>call:NAME{ARGS}<tool_call|>`).
 const GEMMA_TOOL_OPEN: &str = "<|tool_call>";
+/// Gemma-4's NATIVE tool-call CLOSE delimiter — optional + truncation-tolerant for a
+/// SINGLE call, but consumed between segments when a model emits a BATCH of native
+/// calls back-to-back (T-MULTI-ELEMENT-TOOLCALLS).
+const GEMMA_TOOL_CLOSE: &str = "<tool_call|>";
 /// The optional `call:` marker after the open delimiter (observed: `call:fs_list{}`).
 const GEMMA_CALL_MARKER: &str = "call:";
 
@@ -167,6 +171,10 @@ const PYTHON_TAG_OPEN: &str = "<|python_tag|>";
 /// DISTINCT from Gemma's `<|tool_call>` (note the `|`): `strip_prefix` is exact, so
 /// the two delimiters never collide, and the Gemma arm runs first.
 const XML_TOOL_OPEN: &str = "<tool_call>";
+/// Qwen3/Hermes XML-ish tool-call CLOSE tag — consumed between segments when a model
+/// emits a BATCH of `<tool_call>{…}</tool_call><tool_call>{…}</tool_call>` calls
+/// (T-MULTI-ELEMENT-TOOLCALLS). `<|python_tag|>` has no close delimiter.
+const XML_TOOL_CLOSE: &str = "</tool_call>";
 
 /// Strip a DEFINED open delimiter, then return the brace-balanced inner `{ … }`
 /// object that follows it (after optional whitespace) — or `None`. Shared by the
@@ -338,6 +346,129 @@ fn markerless_call(
     }))
 }
 
+/// Resolve a MARKED/NATIVE (COMMITTED) call — a Gemma-native `NativeCall` — to a
+/// granted `ToolCall`, fail-closed. A marker IS the model's commitment, so an
+/// ungranted/ambiguous name is a LOUD refusal (`UngrantedTool`), never silent prose
+/// (unlike [`markerless_call`]). Shared by the single Gemma arm of [`parse_tool_call`]
+/// and the batch scan of [`parse_tool_calls`], so single + multi resolve identically.
+fn resolve_native_call(
+    native: &NativeCall<'_>,
+    warrant: &WarrantSpec,
+    max_args_bytes: usize,
+) -> Result<ToolCall, DecodeError> {
+    let Some(grant) = resolve_granted_name(native.raw_name, warrant) else {
+        return Err(DecodeError::UngrantedTool {
+            name: ToolName(native.raw_name.to_string()),
+            version: ToolVersion(String::new()),
+        });
+    };
+    let args_bytes = native.args.as_bytes().to_vec();
+    if args_bytes.len() > max_args_bytes {
+        return Err(DecodeError::Oversize {
+            got: args_bytes.len(),
+            max: max_args_bytes,
+        });
+    }
+    Ok(ToolCall {
+        name: grant.tool_id,
+        version: grant.tool_version,
+        args_bytes,
+    })
+}
+
+/// Resolve a MARKED (COMMITTED) named call — the `(raw_name, args_bytes)` decoded
+/// from a `<|python_tag|>` / `<tool_call>` object — to a granted `ToolCall`,
+/// fail-closed (a bad name is a LOUD refusal). Shared by the single marked arm of
+/// [`parse_tool_call`] and the batch scan of [`parse_tool_calls`].
+fn resolve_marked_call(
+    raw_name: String,
+    args_bytes: Vec<u8>,
+    warrant: &WarrantSpec,
+    max_args_bytes: usize,
+) -> Result<ToolCall, DecodeError> {
+    let Some(grant) = resolve_granted_name(&raw_name, warrant) else {
+        return Err(DecodeError::UngrantedTool {
+            name: ToolName(raw_name),
+            version: ToolVersion(String::new()),
+        });
+    };
+    if args_bytes.len() > max_args_bytes {
+        return Err(DecodeError::Oversize {
+            got: args_bytes.len(),
+            max: max_args_bytes,
+        });
+    }
+    Ok(ToolCall {
+        name: grant.tool_id,
+        version: grant.tool_version,
+        args_bytes,
+    })
+}
+
+/// T-MULTI-ELEMENT-TOOLCALLS: scan ALL back-to-back Gemma-native
+/// `<|tool_call>call:NAME{ARGS}<tool_call|>` segments, in order. Each segment is
+/// promoted ONLY after its DEFINED open delimiter (never a mid-string `{` search —
+/// the SN-8 injection boundary is unchanged); `balanced_object` bounds each args
+/// object so a close delim / the next segment can never leak in. The optional
+/// `<tool_call|>` close between segments is consumed. Stops at the first byte that
+/// does not open with the delimiter. Total + panic-free; a single segment yields a
+/// 1-element vec (byte-identical to [`extract_gemma_native`]).
+fn collect_gemma_calls(text: &str) -> Vec<NativeCall<'_>> {
+    let mut out = Vec::new();
+    let mut rest = text.trim_start();
+    while let Some(after_open) = rest.strip_prefix(GEMMA_TOOL_OPEN) {
+        let after_marker_ws = after_open.trim_start();
+        let after_marker = after_marker_ws
+            .strip_prefix(GEMMA_CALL_MARKER)
+            .unwrap_or(after_marker_ws);
+        let Some(brace) = after_marker.find('{') else {
+            break;
+        };
+        let raw_name = after_marker[..brace].trim();
+        if raw_name.is_empty() {
+            break;
+        }
+        let args_region = &after_marker[brace..];
+        let Some(args) = balanced_object(args_region) else {
+            break;
+        };
+        out.push(NativeCall { raw_name, args });
+        // Advance past this segment's args object (a prefix of `args_region`), then a
+        // single optional close delimiter. Pure str slicing — `args.len()` is a valid
+        // byte index into `args_region` (`args` == `&args_region[..=i]`).
+        rest = args_region[args.len()..].trim_start();
+        if let Some(after_close) = rest.strip_prefix(GEMMA_TOOL_CLOSE) {
+            rest = after_close.trim_start();
+        }
+    }
+    out
+}
+
+/// T-MULTI-ELEMENT-TOOLCALLS: scan ALL back-to-back marked objects under a DEFINED
+/// `open` delimiter (`<|python_tag|>` / `<tool_call>`), in order, consuming the
+/// optional `close` tag between segments. Each object is the brace-balanced `{ … }`
+/// following the marker (never a mid-string `{` search — SN-8 unchanged). Stops at
+/// the first byte that does not open with `open`. Total + panic-free; a single
+/// segment yields a 1-element vec (byte-identical to [`marked_object`]).
+fn collect_marked_objects<'a>(text: &'a str, open: &str, close: Option<&str>) -> Vec<&'a str> {
+    let mut out = Vec::new();
+    let mut rest = text.trim_start();
+    while let Some(after_open) = rest.strip_prefix(open) {
+        let after_ws = after_open.trim_start();
+        let Some(obj) = balanced_object(after_ws) else {
+            break;
+        };
+        out.push(obj);
+        rest = after_ws[obj.len()..].trim_start();
+        if let Some(c) = close {
+            if let Some(after_close) = rest.strip_prefix(c) {
+                rest = after_close.trim_start();
+            }
+        }
+    }
+    out
+}
+
 /// PR-R1: the COMMITMENT-AWARE markerless tool-call shapes — the JSON-envelope arm's
 /// complement to the marked detectors. Recognizes two shapes more model families emit
 /// with no `tool_call` wrapper and no marker: a bare named object
@@ -426,26 +557,7 @@ pub fn parse_tool_call(
     //      delimiter falls through to the JSON envelope path, byte-identical for
     //      every existing row (no current input begins with `<|tool_call>`).
     if let Some(native) = extract_gemma_native(trimmed) {
-        let Some(grant) = resolve_granted_name(native.raw_name, warrant) else {
-            // The model COMMITTED to a native call but named an unknown/ambiguous
-            // tool ⇒ fail-closed (a bad name is a refusal, never silent prose).
-            return Err(DecodeError::UngrantedTool {
-                name: ToolName(native.raw_name.to_string()),
-                version: ToolVersion(String::new()),
-            });
-        };
-        let args_bytes = native.args.as_bytes().to_vec();
-        if args_bytes.len() > max_args_bytes {
-            return Err(DecodeError::Oversize {
-                got: args_bytes.len(),
-                max: max_args_bytes,
-            });
-        }
-        return Ok(Some(ToolCall {
-            name: grant.tool_id,
-            version: grant.tool_version,
-            args_bytes,
-        }));
+        return Ok(Some(resolve_native_call(&native, warrant, max_args_bytes)?));
     }
 
     // (1b) Llama-3.1 `<|python_tag|>{…}` and Qwen3/Hermes `<tool_call>{…}</tool_call>`
@@ -465,23 +577,12 @@ pub fn parse_tool_call(
         };
         // The model COMMITTED to a named marked call ⇒ resolve or fail-closed (a bad
         // name is a refusal, never silent prose — mirrors the Gemma-native arm).
-        let Some(grant) = resolve_granted_name(&raw_name, warrant) else {
-            return Err(DecodeError::UngrantedTool {
-                name: ToolName(raw_name),
-                version: ToolVersion(String::new()),
-            });
-        };
-        if args_bytes.len() > max_args_bytes {
-            return Err(DecodeError::Oversize {
-                got: args_bytes.len(),
-                max: max_args_bytes,
-            });
-        }
-        return Ok(Some(ToolCall {
-            name: grant.tool_id,
-            version: grant.tool_version,
+        return Ok(Some(resolve_marked_call(
+            raw_name,
             args_bytes,
-        }));
+            warrant,
+            max_args_bytes,
+        )?));
     }
 
     if !trimmed.starts_with('{') {
@@ -547,6 +648,135 @@ pub fn parse_tool_call(
         version: grant.tool_version,
         args_bytes,
     }))
+}
+
+/// Decode ALL model-proposed tool calls from raw model output, fail-closed —
+/// the multi-element (parallel tool-calling) complement to [`parse_tool_call`]
+/// (T-MULTI-ELEMENT-TOOLCALLS).
+///
+/// Returns an ORDERED `Vec<ToolCall>` (the index is the `call_index` the coordinator
+/// uses to disambiguate each observation): `[]` for a normal completion (prose,
+/// non-envelope JSON, empty array, or any output under a no-grant warrant), `[c]`
+/// for a single call (byte-identical to [`parse_tool_call`]'s `Ok(Some(c))`), and
+/// `[c0, c1, …]` when the model emits N≥2 calls in one response — an `OpenAI`
+/// `{"tool_calls":[…]}` array OR repeated marked/native segments
+/// (`<|tool_call>…<|tool_call>…`, `<|python_tag|>…`×N, `<tool_call>…</tool_call>`×N).
+///
+/// Every call flows through the SAME grant resolution (exact `tool_grants`
+/// membership, SN-8) + per-call args cap as the single decoder; the genuinely-multi
+/// shapes are ALL-OR-NOTHING (a markerless array degrades the WHOLE body to a normal
+/// completion if any element names no grant; a COMMITTED marked/native batch is a
+/// LOUD `Err` if any segment names an ungranted tool). Total + panic-free.
+///
+/// # Errors
+///
+/// As [`parse_tool_call`] — [`DecodeError::Malformed`] / [`DecodeError::UngrantedTool`]
+/// / [`DecodeError::Oversize`] — raised by the first offending call in a committed
+/// envelope/marked batch.
+pub fn parse_tool_calls(
+    bytes: &[u8],
+    warrant: &WarrantSpec,
+    max_args_bytes: usize,
+) -> Result<Vec<ToolCall>, DecodeError> {
+    // Try the genuinely-multi shapes (≥2 calls) FIRST. If the output is not a
+    // multi shape, fall back to the UNCHANGED single decoder — so every single-call
+    // input decodes byte-identically (the same ToolCall the coordinator/harness
+    // froze before this PR), preserving the react_shape ↔ harness golden equivalence.
+    if let Some(calls) = try_decode_multi(bytes, warrant, max_args_bytes)? {
+        return Ok(calls);
+    }
+    Ok(parse_tool_call(bytes, warrant, max_args_bytes)?
+        .into_iter()
+        .collect())
+}
+
+/// The multi-element (≥2 calls) detection that sits in front of the single decoder.
+/// Returns `Ok(Some(vec))` when the output IS a multi shape (the vec is the decoded
+/// batch — possibly empty for an all-or-nothing markerless degrade), `Ok(None)` when
+/// it is NOT a multi shape (let [`parse_tool_call`] handle it), or `Err` when a
+/// COMMITTED multi shape is malformed/ungranted/oversize. Total + panic-free; the
+/// SN-8 boundary is the SAME defined-delimiter / `starts_with('{')` discipline as the
+/// single path (no mid-string `{` search).
+fn try_decode_multi(
+    bytes: &[u8],
+    warrant: &WarrantSpec,
+    max_args_bytes: usize,
+) -> Result<Option<Vec<ToolCall>>, DecodeError> {
+    if warrant.tool_grants.is_empty() {
+        return Ok(None);
+    }
+    let Ok(text) = std::str::from_utf8(bytes) else {
+        return Ok(None);
+    };
+    let trimmed = extract_json_envelope(text);
+
+    // (1a) Repeated Gemma-native segments. A COMMITTED batch ⇒ each segment resolves
+    //      or is a loud refusal (mirrors the single Gemma arm).
+    let gemma = collect_gemma_calls(trimmed);
+    if gemma.len() >= 2 {
+        let mut out = Vec::with_capacity(gemma.len());
+        for native in &gemma {
+            out.push(resolve_native_call(native, warrant, max_args_bytes)?);
+        }
+        return Ok(Some(out));
+    }
+
+    // (1b) Repeated python_tag / XML marked objects. A marked object that is not a
+    //      recognizable named call ENDS the committed sequence (a trailing prose tail);
+    //      a named one resolves or is a loud refusal.
+    for (open, close) in [
+        (PYTHON_TAG_OPEN, None),
+        (XML_TOOL_OPEN, Some(XML_TOOL_CLOSE)),
+    ] {
+        let objs = collect_marked_objects(trimmed, open, close);
+        if objs.len() >= 2 {
+            let mut out = Vec::with_capacity(objs.len());
+            for obj in objs {
+                let Some((raw_name, args_bytes)) = decode_named_object(obj, false) else {
+                    break; // a marked-but-not-named object ends the batch
+                };
+                out.push(resolve_marked_call(
+                    raw_name,
+                    args_bytes,
+                    warrant,
+                    max_args_bytes,
+                )?);
+            }
+            if out.len() >= 2 {
+                return Ok(Some(out));
+            }
+            // <2 resolved ⇒ not a genuine batch; let the single decoder handle it.
+        }
+    }
+
+    // (2) A `{"tool_calls":[…]}` wrapper with ≥2 elements (OpenAI / vLLM parallel
+    //     calls). Markerless ⇒ ALL-OR-NOTHING: any element that names no grant OR is
+    //     not a named-call object degrades the WHOLE body to a normal completion
+    //     (no false-positive refusal, no silent first-element cap).
+    if trimmed.starts_with('{') {
+        #[derive(Deserialize)]
+        struct ToolCalls<'a> {
+            #[serde(borrow)]
+            tool_calls: Vec<&'a RawValue>,
+        }
+        if let Ok(wrapper) = serde_json::from_str::<ToolCalls>(trimmed) {
+            if wrapper.tool_calls.len() >= 2 {
+                let mut out = Vec::with_capacity(wrapper.tool_calls.len());
+                for raw in &wrapper.tool_calls {
+                    let Some((raw_name, args_bytes)) = decode_named_object(raw.get(), true) else {
+                        return Ok(Some(Vec::new())); // not a named call ⇒ whole body degrades
+                    };
+                    match markerless_call(&raw_name, args_bytes, warrant, max_args_bytes)? {
+                        Some(call) => out.push(call),
+                        None => return Ok(Some(Vec::new())), // ungranted name ⇒ prose (whole body)
+                    }
+                }
+                return Ok(Some(out));
+            }
+        }
+    }
+
+    Ok(None)
 }
 
 #[cfg(test)]
@@ -1275,13 +1505,131 @@ mod tests {
     }
 
     #[test]
-    fn tool_calls_multi_element_array_is_deferred() {
-        // DEFERRED: multiple-tool-calls-per-turn is a coordinator loop-semantics change
-        // (one Tool fact/turn). A multi-element wrapper yields Ok(None) — NO silent
-        // first-element cap (GR: no silent caps).
+    fn tool_calls_multi_element_array_singular_defers() {
+        // BACK-COMPAT: the SINGULAR `parse_tool_call` still defers a multi-element
+        // wrapper to Ok(None) — NO silent first-element cap (the multi path is the
+        // plural `parse_tool_calls`, tested below). A caller still on the singular sees
+        // the historical "deferred" behavior, never a silent cap.
         let w = warrant_granting(Some(("mcp-echo", "1")));
         let env = br#"{"tool_calls":[{"name":"mcp-echo","arguments":{}},{"name":"mcp-echo","arguments":{}}]}"#;
         assert_eq!(parse_tool_call(env, &w, 4096), Ok(None));
+    }
+
+    #[test]
+    fn parse_tool_calls_multi_element_array_fires_all() {
+        // T-MULTI-ELEMENT-TOOLCALLS: the PLURAL decoder fires ALL N calls in order,
+        // each grant-resolved with its args carried verbatim (the Vec index is the
+        // call_index). No silent cap.
+        let w = warrant_granting_many(&[("mcp-echo", "1"), ("fs-read", "1")]);
+        let env = br#"{"tool_calls":[{"name":"mcp-echo","arguments":{"q":"x"}},{"name":"fs-read","arguments":{"p":"/a"}}]}"#;
+        let calls = parse_tool_calls(env, &w, 4096).unwrap();
+        assert_eq!(calls.len(), 2, "both calls fire");
+        assert_eq!(calls[0].name, ToolName("mcp-echo".into()));
+        assert_eq!(calls[0].args_bytes, br#"{"q":"x"}"#.to_vec());
+        assert_eq!(calls[1].name, ToolName("fs-read".into()));
+        assert_eq!(calls[1].args_bytes, br#"{"p":"/a"}"#.to_vec());
+    }
+
+    #[test]
+    fn parse_tool_calls_same_tool_twice_fires_both() {
+        // Two calls to the SAME tool with DIFFERENT args both fire (the observation
+        // ids are disambiguated downstream by call_index, not here). No dedup.
+        let w = warrant_granting(Some(("mcp-echo", "1")));
+        let env = br#"{"tool_calls":[{"name":"mcp-echo","arguments":{"q":"x"}},{"name":"mcp-echo","arguments":{"q":"y"}}]}"#;
+        let calls = parse_tool_calls(env, &w, 4096).unwrap();
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].args_bytes, br#"{"q":"x"}"#.to_vec());
+        assert_eq!(calls[1].args_bytes, br#"{"q":"y"}"#.to_vec());
+    }
+
+    #[test]
+    fn parse_tool_calls_single_is_byte_identical_to_singular() {
+        // A single-call input through the plural decoder yields the SAME ToolCall the
+        // singular returns — the byte-identical equivalence the react_shape ↔ harness
+        // golden depends on.
+        let w = warrant_granting(Some(("mcp-echo", "1")));
+        for env in [
+            br#"{"tool_call":{"name":"mcp-echo","version":"1","args":{"q":"x"}}}"#.as_slice(),
+            br#"{"tool_calls":[{"name":"mcp-echo","arguments":{"q":"x"}}]}"#.as_slice(),
+            br#"<|tool_call>call:mcp_echo{"q":"x"}<tool_call|>"#.as_slice(),
+            br#"<tool_call>{"name":"mcp-echo","arguments":{"q":"x"}}</tool_call>"#.as_slice(),
+        ] {
+            let plural = parse_tool_calls(env, &w, 4096).unwrap();
+            let singular = parse_tool_call(env, &w, 4096).unwrap();
+            assert_eq!(plural.len(), 1, "single input ⇒ one call: {env:?}");
+            assert_eq!(Some(plural[0].clone()), singular, "plural[0] == singular");
+        }
+    }
+
+    #[test]
+    fn parse_tool_calls_empty_array_is_completion() {
+        let w = warrant_granting(Some(("mcp-echo", "1")));
+        assert_eq!(
+            parse_tool_calls(br#"{"tool_calls":[]}"#, &w, 4096).unwrap(),
+            vec![]
+        );
+    }
+
+    #[test]
+    fn parse_tool_calls_array_with_one_ungranted_degrades_whole_body() {
+        // ALL-OR-NOTHING markerless: a 2-element array where ONE name is ungranted
+        // degrades the WHOLE body to a normal completion (no partial fire, no refusal).
+        let w = warrant_granting(Some(("mcp-echo", "1")));
+        let env = br#"{"tool_calls":[{"name":"mcp-echo","arguments":{"q":"x"}},{"name":"not-granted","arguments":{}}]}"#;
+        assert_eq!(parse_tool_calls(env, &w, 4096).unwrap(), vec![]);
+    }
+
+    #[test]
+    fn parse_tool_calls_repeated_gemma_native_segments_fire_all() {
+        // Repeated Gemma-native `<|tool_call>…<tool_call|>` segments back-to-back fire
+        // all N (the live-Gemma parallel-call shape). SN-8: each segment is promoted
+        // ONLY after its defined open delimiter.
+        let w = warrant_granting_many(&[("mcp-echo", "1"), ("fs-read", "1")]);
+        let env = br#"<|tool_call>call:mcp_echo{"q":"x"}<tool_call|><|tool_call>call:fs_read{"p":"/a"}<tool_call|>"#;
+        let calls = parse_tool_calls(env, &w, 4096).unwrap();
+        assert_eq!(calls.len(), 2, "both native segments fire");
+        assert_eq!(calls[0].name, ToolName("mcp-echo".into()));
+        assert_eq!(calls[1].name, ToolName("fs-read".into()));
+    }
+
+    #[test]
+    fn parse_tool_calls_repeated_xml_segments_fire_all() {
+        // Repeated Qwen3/Hermes `<tool_call>{…}</tool_call>` segments fire all N.
+        let w = warrant_granting_many(&[("mcp-echo", "1"), ("fs-read", "1")]);
+        let env = br#"<tool_call>{"name":"mcp-echo","arguments":{"q":"x"}}</tool_call><tool_call>{"name":"fs-read","arguments":{"p":"/a"}}</tool_call>"#;
+        let calls = parse_tool_calls(env, &w, 4096).unwrap();
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[1].name, ToolName("fs-read".into()));
+    }
+
+    #[test]
+    fn parse_tool_calls_repeated_python_tag_segments_fire_all() {
+        // Repeated Llama `<|python_tag|>{…}` markers fire all N.
+        let w = warrant_granting_many(&[("mcp-echo", "1"), ("fs-read", "1")]);
+        let env = br#"<|python_tag|>{"name":"mcp-echo","parameters":{"q":"x"}}<|python_tag|>{"name":"fs-read","parameters":{"p":"/a"}}"#;
+        let calls = parse_tool_calls(env, &w, 4096).unwrap();
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].name, ToolName("mcp-echo".into()));
+    }
+
+    #[test]
+    fn parse_tool_calls_committed_batch_with_ungranted_segment_is_refused() {
+        // A COMMITTED marked/native batch with an ungranted name is a LOUD refusal
+        // (mirrors the single-call marked commitment rule — a marker IS commitment).
+        let w = warrant_granting(Some(("mcp-echo", "1")));
+        let env = br#"<tool_call>{"name":"mcp-echo","arguments":{}}</tool_call><tool_call>{"name":"not-granted","arguments":{}}</tool_call>"#;
+        assert!(matches!(
+            parse_tool_calls(env, &w, 4096),
+            Err(DecodeError::UngrantedTool { .. })
+        ));
+    }
+
+    #[test]
+    fn parse_tool_calls_no_grants_is_empty() {
+        // The security default: no grants ⇒ no call can ever fire, even a multi body.
+        let w = warrant_granting(None);
+        let env = br#"{"tool_calls":[{"name":"mcp-echo","arguments":{}},{"name":"mcp-echo","arguments":{}}]}"#;
+        assert_eq!(parse_tool_calls(env, &w, 4096).unwrap(), vec![]);
     }
 
     #[test]

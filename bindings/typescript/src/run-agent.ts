@@ -19,9 +19,11 @@ import { defaultClient } from "./defaults.js";
 import type { KxClient } from "./node.js";
 import type { Result, Run } from "./run.js";
 
-/** The recipe's anchored bounded-loop budget (mirrors Agent + the UI's planReactArgs). */
+/** The recipe's anchored bounded-loop budget (mirrors Agent + the UI's planReactArgs).
+ *  T-MULTI-ELEMENT-TOOLCALLS: the tool-call cap rose 6 → 20 (decoupled from max_turns —
+ *  a turn can fire N tools); overridable per call via `maxToolCalls`. */
 const DEFAULT_MAX_TURNS = 8;
-const DEFAULT_MAX_TOOL_CALLS = 6;
+const DEFAULT_MAX_TOOL_CALLS = 20;
 
 export interface RunAgentOptions {
   /** What to accomplish — becomes the react recipe's instruction. */
@@ -30,6 +32,8 @@ export interface RunAgentOptions {
   context?: readonly string[];
   /** Structured inputs folded into the goal prompt (no structured recipe slot yet). */
   inputs?: Readonly<Record<string, string>>;
+  /** Max total tool calls (default 20, ceiling 20; a turn may fire several at once). */
+  maxToolCalls?: number;
   /** `true` (default) returns an {@link AgentResult}; `false` returns the started {@link Run}. */
   wait?: boolean;
   timeoutMs?: number;
@@ -54,7 +58,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentResult | Run
   const args = {
     instruction: foldInputs(opts.goal, opts.inputs),
     max_turns: DEFAULT_MAX_TURNS,
-    max_tool_calls: DEFAULT_MAX_TOOL_CALLS,
+    max_tool_calls: opts.maxToolCalls ?? DEFAULT_MAX_TOOL_CALLS,
   };
   if (opts.wait === false) {
     return (await kx.invoke(REACT_RECIPE_HANDLE, args, {

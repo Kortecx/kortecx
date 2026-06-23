@@ -195,7 +195,8 @@ def model(
     ``{name: version}`` map) to make this a **deterministic-agentic step** — the
     model runs a bounded reason→tool→observe loop over the granted tool SET (the
     same step the string DSL authors as ``handle@tool@tool``). ``max_turns`` /
-    ``max_tool_calls`` bound the loop (default 8 / 6; ignored when no tools).
+    ``max_tool_calls`` bound the loop (default 8 / 20 — decoupled, a turn can fire
+    N tools; ignored when no tools).
 
     V2b: ``tools`` may also include ``@kx.tool``-decorated LOCAL functions — the SDK
     registers each as a stdio MCP server at the run terminal and fills the

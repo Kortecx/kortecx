@@ -40,14 +40,22 @@ use smallvec::SmallVec;
 /// recorded DURABLY at anchor time so a recovered coordinator enforces the
 /// budget the run was admitted under, never a default that drifted across
 /// binary versions (red-team BLOCKER #4).
-pub(crate) const REACT_MAX_TURNS: u32 = 8;
-/// The default per-run tool-call (observation) budget (PR-2d-2). Deliberately
-/// `< REACT_MAX_TURNS`: the harness `ReactBudget` docs pin that a useful loop
-/// leaves at least one turn to READ the last observation and answer — an 8/8
-/// budget is degenerate (the harness default predates live tool firing). Seed
-/// caps are validated `0 < max_tool_calls < max_turns ≤ 8`; chains anchored
-/// under the old 8/8 default keep their recorded caps (durable per-anchor).
-pub(crate) const REACT_DEFAULT_MAX_TOOL_CALLS: u32 = 6;
+pub const REACT_MAX_TURNS: u32 = 8;
+/// The HARD CEILING on a chain's total tool-call (observation) budget
+/// (T-MULTI-ELEMENT-TOOLCALLS). A seed cap above it is refused LOUDLY. DECOUPLED
+/// from `REACT_MAX_TURNS`: a single model turn can now fire N tools at once (a
+/// `ToolBatch`), so the total tool-call budget legitimately exceeds the model-turn
+/// budget — the old `max_tool_calls < max_turns` coupling (≤1 tool per turn) no
+/// longer holds. Mirrors `kx_journal::MAX_TOOL_BATCH_CALLS` (the per-turn cap) so a
+/// single turn can, in the limit, fire up to the full chain budget.
+pub const REACT_MAX_TOOL_CALLS: u32 = 20;
+/// The DEFAULT per-run tool-call (observation) budget (PR-2d-2; raised 6 → 20 at
+/// T-MULTI-ELEMENT-TOOLCALLS for parallel tool calling, user-directed). Now equal to
+/// the ceiling: with batched calls a chain may legitimately fire many tools across
+/// its model turns. Server-configurable via `GatewayConfig.react_max_tool_calls` /
+/// `KX_SERVE_REACT_MAX_TOOL_CALLS` (surfaced read-only in Settings); chains anchored
+/// under an older default keep their recorded caps (durable per-anchor).
+pub const REACT_DEFAULT_MAX_TOOL_CALLS: u32 = 20;
 
 /// Truncate a refusal reason to [`kx_journal::MAX_REJECTED_REASON_LEN`] chars at a
 /// char boundary (deterministic, panic-free, total) before it freezes onto a
@@ -191,16 +199,30 @@ pub(crate) fn build_react_turn(
 }
 
 /// The run-salted 32-byte identity material for a ReAct OBSERVATION (the tool
-/// Mote that fires the model's frozen `Tool` decision at `turn`):
-/// `blake3(b"kx-react-tool" ‖ instance_id ‖ turn.to_le_bytes())`. The TOOL
-/// identity is deliberately NOT in the material — it enters the `MoteId` via
-/// `tool_contract` (def-hash), exactly like the harness
+/// Mote that fires the model's frozen decision at `turn`):
+/// `blake3(b"kx-react-tool" ‖ instance_id ‖ turn.to_le_bytes() ‖ [call_index if >0])`.
+/// The TOOL identity is deliberately NOT in the material — it enters the `MoteId`
+/// via `tool_contract` (def-hash), exactly like the harness
 /// `kx_model_harness::workflows::react_tool_mote_salted`.
+///
+/// T-MULTI-ELEMENT-TOOLCALLS: a `ToolBatch` turn fires N observations; `call_index`
+/// (the position of the call within the turn's frozen output) disambiguates them so
+/// two calls to the SAME tool at the same turn never collide on one `MoteId` (the
+/// red-team BLOCKER #1 dedup-collision class). The index is appended ONLY when `> 0`,
+/// so a single-call turn (index 0, the `Tool` branch) is BYTE-IDENTICAL to every
+/// pre-v13 chain — `SALTED_TOOL0_GOLDEN` holds and no shipped observation moves.
 #[must_use]
-pub(crate) fn react_tool_id_material(instance_id: &[u8; INSTANCE_ID_LEN], turn: u32) -> [u8; 32] {
+pub(crate) fn react_tool_id_material(
+    instance_id: &[u8; INSTANCE_ID_LEN],
+    turn: u32,
+    call_index: u32,
+) -> [u8; 32] {
     let mut material = b"kx-react-tool".to_vec();
     material.extend_from_slice(instance_id);
     material.extend_from_slice(&turn.to_le_bytes());
+    if call_index > 0 {
+        material.extend_from_slice(&call_index.to_le_bytes());
+    }
     *ContentRef::of(&material).as_bytes()
 }
 
@@ -229,9 +251,10 @@ pub(crate) fn build_react_tool(
     tool_version: &ToolVersion,
     turn: u32,
     instance_id: &[u8; INSTANCE_ID_LEN],
+    call_index: u32,
     turn_mote_id: MoteId,
 ) -> Mote {
-    let id_bytes = react_tool_id_material(instance_id, turn);
+    let id_bytes = react_tool_id_material(instance_id, turn, call_index);
 
     let mut tool_contract = BTreeMap::new();
     tool_contract.insert(tool_id.clone(), tool_version.clone());
@@ -346,17 +369,24 @@ pub(crate) fn build_agentic_turn(
 }
 
 /// The salt-2 identity material for an agentic-step OBSERVATION:
-/// `blake3(b"kx-agentic-tool" ‖ instance_id ‖ step_salt ‖ turn.to_le_bytes())`.
+/// `blake3(b"kx-agentic-tool" ‖ instance_id ‖ step_salt ‖ turn.to_le_bytes() ‖
+/// [call_index if >0])`. T-MULTI-ELEMENT-TOOLCALLS: `call_index` disambiguates the N
+/// observations of a `ToolBatch` turn, appended ONLY when `> 0` so a single-call
+/// agentic step (index 0) is byte-identical to every pre-v13 chain (`AGENTIC_TOOL0_GOLDEN`).
 #[must_use]
 pub(crate) fn react_tool_id_material2(
     instance_id: &[u8; INSTANCE_ID_LEN],
     step_salt: &[u8; 32],
     turn: u32,
+    call_index: u32,
 ) -> [u8; 32] {
     let mut material = b"kx-agentic-tool".to_vec();
     material.extend_from_slice(instance_id);
     material.extend_from_slice(step_salt);
     material.extend_from_slice(&turn.to_le_bytes());
+    if call_index > 0 {
+        material.extend_from_slice(&call_index.to_le_bytes());
+    }
     *ContentRef::of(&material).as_bytes()
 }
 
@@ -366,6 +396,7 @@ pub(crate) fn react_tool_id_material2(
 /// `(tool_id, tool_version)` in `tool_contract`) EXCEPT the id is salt-2 derived
 /// and the parent is the agentic turn.
 #[must_use]
+#[allow(clippy::too_many_arguments)] // identity inputs: model/tool/turn/instance/step_salt/call_index/parent
 pub(crate) fn build_agentic_tool(
     model_id: &ModelId,
     tool_id: &ToolName,
@@ -373,9 +404,10 @@ pub(crate) fn build_agentic_tool(
     turn: u32,
     instance_id: &[u8; INSTANCE_ID_LEN],
     step_salt: &[u8; 32],
+    call_index: u32,
     turn_mote_id: MoteId,
 ) -> Mote {
-    let id_bytes = react_tool_id_material2(instance_id, step_salt, turn);
+    let id_bytes = react_tool_id_material2(instance_id, step_salt, turn, call_index);
 
     let mut tool_contract = BTreeMap::new();
     tool_contract.insert(tool_id.clone(), tool_version.clone());
@@ -436,6 +468,7 @@ pub(crate) fn build_chain_turn(
 /// the salt-1 [`build_react_tool`] for the run-level chain, the salt-2
 /// [`build_agentic_tool`] for an agentic step's chain. The twin of [`build_chain_turn`].
 #[must_use]
+#[allow(clippy::too_many_arguments)] // identity inputs: model/tool/turn/instance/step_salt/call_index/parent
 pub(crate) fn build_chain_tool(
     model_id: &ModelId,
     tool_id: &ToolName,
@@ -443,6 +476,7 @@ pub(crate) fn build_chain_tool(
     turn: u32,
     instance_id: &[u8; INSTANCE_ID_LEN],
     step_salt: Option<[u8; 32]>,
+    call_index: u32,
     turn_mote_id: MoteId,
 ) -> Mote {
     match step_salt {
@@ -453,6 +487,7 @@ pub(crate) fn build_chain_tool(
             turn,
             instance_id,
             &salt,
+            call_index,
             turn_mote_id,
         ),
         None => build_react_tool(
@@ -461,6 +496,7 @@ pub(crate) fn build_chain_tool(
             tool_version,
             turn,
             instance_id,
+            call_index,
             turn_mote_id,
         ),
     }
@@ -525,6 +561,7 @@ mod tests {
             &ToolVersion("1".to_string()),
             0,
             &salt,
+            0, // call_index 0 (single-call turn) ⇒ byte-identical to pre-v13
             turn.id,
         );
         assert_eq!(hex(obs.id.as_bytes()), SALTED_TOOL0_GOLDEN);
@@ -547,12 +584,21 @@ mod tests {
 
     #[test]
     fn react_tool_id_is_deterministic_and_run_isolated() {
-        let a = react_tool_id_material(&[1; 16], 0);
-        assert_eq!(a, react_tool_id_material(&[1; 16], 0));
-        assert_ne!(a, react_tool_id_material(&[1; 16], 1));
-        assert_ne!(a, react_tool_id_material(&[2; 16], 0));
+        let a = react_tool_id_material(&[1; 16], 0, 0);
+        assert_eq!(a, react_tool_id_material(&[1; 16], 0, 0));
+        assert_ne!(a, react_tool_id_material(&[1; 16], 1, 0));
+        assert_ne!(a, react_tool_id_material(&[2; 16], 0, 0));
         // Distinct from the TURN namespace at the same coordinates.
         assert_ne!(a, react_turn_id_material(&[1; 16], 0));
+        // T-MULTI-ELEMENT-TOOLCALLS: call_index 0 is byte-identical to the no-index
+        // material (the "append only if >0" rule), while >0 is distinct + deterministic.
+        assert_eq!(a, react_tool_id_material(&[1; 16], 0, 0));
+        let c1 = react_tool_id_material(&[1; 16], 0, 1);
+        assert_ne!(a, c1, "call_index 1 must differ from call_index 0");
+        assert_eq!(c1, react_tool_id_material(&[1; 16], 0, 1), "deterministic");
+        assert_ne!(c1, react_tool_id_material(&[1; 16], 0, 2));
+        // A multi-call turn's index-1 obs must NOT collide with the NEXT turn's index-0.
+        assert_ne!(c1, react_tool_id_material(&[1; 16], 1, 0));
     }
 
     #[test]
@@ -632,6 +678,7 @@ mod tests {
             0,
             &salt,
             &step_salt,
+            0, // call_index 0 (single-call turn) ⇒ byte-identical to pre-v13
             turn.id,
         );
         // Shape: one Data edge to the turn, empty config (out-of-band args), WM +
@@ -648,10 +695,58 @@ mod tests {
             &ToolVersion("1".to_string()),
             0,
             &salt,
+            0,
             turn.id,
         );
         assert_ne!(obs.id, react_obs.id);
         assert_eq!(hex(obs.id.as_bytes()), AGENTIC_TOOL0_GOLDEN);
+    }
+
+    /// T-MULTI-ELEMENT-TOOLCALLS — the CROSS-IMPL golden for a multi-call turn's
+    /// SECOND observation (`call_index = 1`). Same inputs as `SALTED_TOOL0_GOLDEN`
+    /// (model `kx-test:q8:deadbeef`, tool `mcp-echo@1`, turn 0, salt `[0x4d; 16]`,
+    /// turn_mote_id = the salted turn-0 golden) EXCEPT `call_index = 1`. The SAME
+    /// hex is pinned in the harness `react_identity_tests`, so a drift on EITHER copy
+    /// of the call-indexed material fails CI — the R49 equivalence the live drain and
+    /// the harness oracle depend on. MUST differ from `SALTED_TOOL0_GOLDEN`.
+    const SALTED_TOOL1_GOLDEN: &str =
+        "6288b25bc8514c933719bfafddb4b065f02ed8a4ff54ff7ab4ca059d180d62b3";
+
+    #[test]
+    fn salted_observation_call1_matches_the_harness_golden() {
+        let model = ModelId("kx-test:q8:deadbeef".to_string());
+        let salt = [0x4d_u8; 16];
+        let turn = build_react_turn(&model, "list the files", 0, &salt, 64);
+        // call_index 0 reproduces the EXISTING golden byte-for-byte (the
+        // "append only if >0" byte-preservation rule).
+        let obs0 = build_react_tool(
+            &model,
+            &ToolName("mcp-echo".to_string()),
+            &ToolVersion("1".to_string()),
+            0,
+            &salt,
+            0,
+            turn.id,
+        );
+        assert_eq!(hex(obs0.id.as_bytes()), SALTED_TOOL0_GOLDEN);
+        // call_index 1 is a DISTINCT, deterministic id pinned by the cross-impl golden.
+        let obs1 = build_react_tool(
+            &model,
+            &ToolName("mcp-echo".to_string()),
+            &ToolVersion("1".to_string()),
+            0,
+            &salt,
+            1,
+            turn.id,
+        );
+        assert_ne!(
+            obs0.id, obs1.id,
+            "two calls at one turn must have distinct observation ids"
+        );
+        assert_eq!(hex(obs1.id.as_bytes()), SALTED_TOOL1_GOLDEN);
+        // Both still declare the SAME tool contract + parent (only the id differs).
+        assert_eq!(obs1.parents[0].parent_id, turn.id);
+        assert!(obs1.def.config_subset.is_empty());
     }
 
     #[test]
@@ -731,9 +826,16 @@ mod tests {
         assert_ne!(a, react_turn_id_material2(&[1; 16], &[3; 32], 0)); // per step
         assert_ne!(a, react_turn_id_material2(&[9; 16], &[2; 32], 0)); // per run
                                                                        // Distinct from the agentic-tool namespace at the same coords.
-        assert_ne!(a, react_tool_id_material2(&[1; 16], &[2; 32], 0));
+        assert_ne!(a, react_tool_id_material2(&[1; 16], &[2; 32], 0, 0));
         // Distinct from BOTH salt-1 namespaces.
         assert_ne!(a, react_turn_id_material(&[1; 16], 0));
-        assert_ne!(a, react_tool_id_material(&[1; 16], 0));
+        assert_ne!(a, react_tool_id_material(&[1; 16], 0, 0));
+        // T-MULTI-ELEMENT-TOOLCALLS: salt-2 call_index 0 is byte-identical to the
+        // no-index material, while >0 is distinct + deterministic.
+        let t0 = react_tool_id_material2(&[1; 16], &[2; 32], 0, 0);
+        assert_eq!(t0, react_tool_id_material2(&[1; 16], &[2; 32], 0, 0));
+        let t1 = react_tool_id_material2(&[1; 16], &[2; 32], 0, 1);
+        assert_ne!(t0, t1, "agentic call_index 1 must differ from 0");
+        assert_ne!(t1, react_tool_id_material2(&[1; 16], &[2; 32], 1, 0));
     }
 }

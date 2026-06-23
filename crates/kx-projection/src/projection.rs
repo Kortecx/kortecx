@@ -1148,6 +1148,23 @@ impl Projection {
         self.state.react_turn_motes.contains(id)
     }
 
+    /// The TOOL-FIRING settled `ReactRound` record ([`kx_journal::ReactBranch::Tool`]
+    /// or [`kx_journal::ReactBranch::ToolBatch`]) for the turn whose `turn_mote_id`
+    /// is `id`, or `None` (T-MULTI-ELEMENT-TOOLCALLS). O(log n) off the derived
+    /// `turn → tool-round` map — the coordinator's `resolve_tool_args` reads it to
+    /// recover a multi-call observation's `call_index` at lease time without scanning
+    /// every chain's facts in serve's shared journal.
+    #[must_use]
+    pub fn react_tool_round_of_turn(
+        &self,
+        id: &kx_mote::MoteId,
+    ) -> Option<&crate::state::ReactRoundRecord> {
+        self.state
+            .react_tool_round_of_turn
+            .get(id)
+            .map(|&idx| &self.state.react_rounds[idx])
+    }
+
     /// The highest-`turn` `ReactRound` record for ONE chain — the
     /// `(instance_id, step_salt)` pair — folded so far, or `None` if that chain
     /// has anchored no ReAct turn. Scoped by the chain key because serve's

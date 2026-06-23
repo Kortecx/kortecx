@@ -92,7 +92,7 @@ def test_run_agent_assembles_answer_and_actions() -> None:
     # the steered react recipe was invoked with the bounded-loop budget
     call = fc.invoke_calls[0]
     assert call["handle"] == "kx/recipes/react"
-    assert call["args"]["max_turns"] == 8 and call["args"]["max_tool_calls"] == 6
+    assert call["args"]["max_turns"] == 8 and call["args"]["max_tool_calls"] == 20
     assert call["args"]["instruction"] == "echo pong"
 
 
@@ -129,7 +129,9 @@ def test_agent_result_json_shape() -> None:
     assert j == r.to_dict()
     assert j["answer"] == "hi"
     assert j["instance_id"] == "ab"
-    assert j["actions"] == [{"tool_id": "mcp-echo/echo", "tool_version": "1", "turn": 0}]
+    assert j["actions"] == [
+        {"tool_id": "mcp-echo/echo", "tool_version": "1", "turn": 0, "call_index": 0}
+    ]
 
 
 def test_run_agent_zero_config_default_client(monkeypatch: pytest.MonkeyPatch) -> None:

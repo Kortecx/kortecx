@@ -107,6 +107,10 @@ fn print_human(info: &proto::GetServerInfoResponse) {
         on_off(info.feature_vision),
     );
     println!("  audit      {}", on_off(info.audit_log_enabled));
+    println!(
+        "  agentic    max_turns {} · max_tool_calls {} (default; per-run overridable)",
+        info.react_max_turns, info.react_max_tool_calls,
+    );
 }
 
 fn render_json(info: &proto::GetServerInfoResponse) -> String {
@@ -130,6 +134,8 @@ fn render_json(info: &proto::GetServerInfoResponse) -> String {
         "feature_console": info.feature_console,
         "feature_vision": info.feature_vision,
         "audit_log_enabled": info.audit_log_enabled,
+        "react_max_turns": info.react_max_turns,
+        "react_max_tool_calls": info.react_max_tool_calls,
     })
     .to_string()
 }
@@ -162,6 +168,8 @@ mod tests {
             model_id: "m".into(),
             auth_mode: "token".into(),
             tls_enabled: true,
+            react_max_turns: 8,
+            react_max_tool_calls: 20,
             ..Default::default()
         };
         let s = render_json(&info);
@@ -170,5 +178,7 @@ mod tests {
             !s.contains("token-value"),
             "no secret token value is ever rendered"
         );
+        // T-MULTI-ELEMENT-TOOLCALLS: the agentic budget is projected read-only.
+        assert!(s.contains("\"react_max_tool_calls\":20"));
     }
 }

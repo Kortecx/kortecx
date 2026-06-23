@@ -20,15 +20,22 @@ from .react import ReactTurn
 class AuditedAction:
     """One tool action the agent took — a settled ReAct ``tool`` turn. The
     ``tool_id`` / ``tool_version`` are the GRANTED tool's (SN-8), never the model's
-    raw proposal."""
+    raw proposal. T-MULTI-ELEMENT-TOOLCALLS: when a turn fires N tools at once, each
+    is a distinct action sharing ``turn``, ordered by ``call_index`` (0..N-1)."""
 
     tool_id: str
     tool_version: str
     turn: int
+    call_index: int = 0
 
     @classmethod
     def from_turn(cls, t: ReactTurn) -> "AuditedAction":
-        return cls(tool_id=t.tool_id, tool_version=t.tool_version, turn=t.turn)
+        return cls(
+            tool_id=t.tool_id,
+            tool_version=t.tool_version,
+            turn=t.turn,
+            call_index=t.call_index,
+        )
 
 
 @dataclass(frozen=True)
@@ -62,7 +69,12 @@ class AgentResult:
             "instance_id": self.instance_id,
             "run_handle": self.run_handle,
             "actions": [
-                {"tool_id": a.tool_id, "tool_version": a.tool_version, "turn": a.turn}
+                {
+                    "tool_id": a.tool_id,
+                    "tool_version": a.tool_version,
+                    "turn": a.turn,
+                    "call_index": a.call_index,
+                }
                 for a in self.actions
             ],
         }
@@ -79,10 +91,12 @@ class AgentResult:
 
 
 def assemble_actions(turns: List[ReactTurn]) -> List[AuditedAction]:
-    """The audited action set = the chain's settled ``tool`` turns, in turn order.
-    Pure client-side derivation over the durable ``ListReactTurns`` facts."""
+    """The audited action set = the chain's settled ``tool`` turns, ordered by
+    ``(turn, call_index)`` so a multi-tool turn's parallel calls read in emission
+    order (T-MULTI-ELEMENT-TOOLCALLS). Pure client-side derivation over the durable
+    ``ListReactTurns`` facts."""
     return [
         AuditedAction.from_turn(t)
-        for t in sorted(turns, key=lambda t: t.turn)
+        for t in sorted(turns, key=lambda t: (t.turn, t.call_index))
         if t.branch == "tool"
     ]

@@ -122,11 +122,12 @@ export class Agent {
     if (this.opts.dynamic) {
       // The react / react-auto recipes REQUIRE the bounded-loop budget (the
       // `react_contract` slots; the UI's planReactArgs mirrors this) — default to
-      // the recipe's anchored 8 / 6 when the agent didn't set them.
+      // the recipe's anchored 8 / 20 when the agent didn't set them (the tool-call cap
+      // rose 6 → 20 at T-MULTI-ELEMENT-TOOLCALLS — a turn can fire N tools at once).
       const args = {
         instruction: this.prompt(task),
         max_turns: this.opts.maxTurns ?? 8,
-        max_tool_calls: this.opts.maxToolCalls ?? 6,
+        max_tool_calls: this.opts.maxToolCalls ?? 20,
       };
       const runOpts = { wait: opts.wait ?? true, timeoutMs: opts.timeoutMs };
       if (!hasTools(tools)) {

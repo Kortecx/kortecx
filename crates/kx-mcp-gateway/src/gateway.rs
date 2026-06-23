@@ -334,15 +334,18 @@ impl McpGateway {
     /// helper (no `self`), so the rate-limit + store fold stay with the callers.
     fn probe(conn: &Connection, wall_clock_ms: u64) -> Result<Vec<RemoteToolDecl>, GatewayError> {
         let transport = build_transport(conn)?;
-        let mut session = transport
-            .open_session()
-            .map_err(|e| GatewayError::Dial(e.to_string()))?;
+        // T-CONN: open is a TRANSPORT round-trip (connect / spawn / I/O) ⇒ TRANSIENT —
+        // the server may simply be down; a retry can recover.
+        let mut session = transport.open_session().map_err(|e| GatewayError::Dial {
+            reason: e.to_string(),
+            transient: true,
+        })?;
         // PR-6b-3: capture the server's negotiated protocol version (recorded for
         // diagnostics — never a hard gate, so old `2025-06-18` + new `2026-07-28`
         // servers both dial successfully).
         let negotiated = session
             .initialize(wall_clock_ms)
-            .map_err(|e| GatewayError::Dial(e.to_string()))?;
+            .map_err(|e| dial_error_of_session(&e))?;
         tracing::info!(
             server = %conn.name,
             negotiated_version = %if negotiated.is_empty() { "unspecified" } else { &negotiated },
@@ -351,7 +354,7 @@ impl McpGateway {
         );
         session
             .list_tools(DISCOVERY_MAX_BYTES, wall_clock_ms)
-            .map_err(|e| GatewayError::Dial(e.to_string()))
+            .map_err(|e| dial_error_of_session(&e))
     }
 
     /// Dial a server, `tools/list`, and register each discovered tool into the
@@ -441,6 +444,19 @@ impl McpGateway {
             count += 1;
         }
         Ok(count)
+    }
+}
+
+/// T-CONN: classify a `SessionError` from `initialize`/`tools/list` into a dial
+/// failure with the right reachability flavor. A `Transport` fault (connect / I/O /
+/// timeout / egress refusal) is TRANSIENT (retry-worthy); a `Decode` fault (the server
+/// SPOKE but its reply was fail-closed-rejected — an incompatible / bad-spec server)
+/// is PERMANENT (a retry can never fix it). Keeps `add`/`test`/`discover` — all routed
+/// through `probe` — reporting the SAME flavor for the SAME failure.
+fn dial_error_of_session(e: &kx_mcp::SessionError) -> GatewayError {
+    GatewayError::Dial {
+        reason: e.to_string(),
+        transient: matches!(e, kx_mcp::SessionError::Transport(_)),
     }
 }
 
@@ -671,6 +687,56 @@ fn url_authority(u: &str) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dial_error_classifies_transient_vs_permanent() {
+        // T-CONN: a TRANSPORT fault (timeout / I/O / connect) is TRANSIENT — the
+        // server may be down; a retry can recover.
+        let timeout = dial_error_of_session(&kx_mcp::SessionError::Transport(
+            kx_mcp::TransportError::Timeout { wall_clock_ms: 500 },
+        ));
+        assert!(
+            matches!(
+                timeout,
+                GatewayError::Dial {
+                    transient: true,
+                    ..
+                }
+            ),
+            "a transport timeout is a transient dial failure"
+        );
+        let io = dial_error_of_session(&kx_mcp::SessionError::Transport(
+            kx_mcp::TransportError::Io("broken pipe".into()),
+        ));
+        assert!(matches!(
+            io,
+            GatewayError::Dial {
+                transient: true,
+                ..
+            }
+        ));
+        // A DECODE fault (the server SPOKE but its reply was fail-closed-rejected — an
+        // incompatible / bad-spec server) is PERMANENT — a retry can never fix it.
+        let proto = dial_error_of_session(&kx_mcp::SessionError::Decode(
+            kx_mcp::DecodeError::ProtocolError {
+                code: -32601,
+                message: "method not found".into(),
+            },
+        ));
+        assert!(
+            matches!(
+                proto,
+                GatewayError::Dial {
+                    transient: false,
+                    ..
+                }
+            ),
+            "a protocol-error decode is a permanent dial failure"
+        );
+        // The flavor surfaces in the Display (the operator-facing detail).
+        assert!(proto.to_string().contains("permanent"));
+        assert!(timeout.to_string().contains("transient"));
+    }
 
     #[test]
     fn json_schema_maps_known_types_and_required() {

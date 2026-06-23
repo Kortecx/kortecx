@@ -48,9 +48,10 @@ export interface BuilderStep {
    *  (byte-identical to before). The SERVER builds the union warrant + drives the loop
    *  (SN-8: client tool_grants stay refused). */
   readonly toolContract: Readonly<Record<string, string>>;
-  /** MODEL agentic: the per-step turn budget (default 8; `0 < maxToolCalls < maxTurns ≤ 8`). */
+  /** MODEL agentic: the per-step model-turn budget (default 8; `0 < maxTurns ≤ 8`). */
   readonly maxTurns?: number;
-  /** MODEL agentic: the per-step tool-call budget (default 6). */
+  /** MODEL agentic: the per-step total tool-call budget (default 20, ceiling 20 —
+   *  decoupled from maxTurns at T-MULTI-ELEMENT-TOOLCALLS; a turn can fire N tools). */
   readonly maxToolCalls?: number;
 }
 
