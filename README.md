@@ -23,7 +23,7 @@ world-touching step twice.
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Kortecx/kortecx/main/scripts/install.sh | sh
 kx serve --journal /tmp/kx.db --content /tmp/kx-content --dev-allow-local
-# → gRPC 127.0.0.1:50151 · events ws://127.0.0.1:50152 · web console http://127.0.0.1:50180
+# → gRPC 127.0.0.1:50151 · events ws://127.0.0.1:50152 · web console http://127.0.0.1:8888
 ```
 
 ---
@@ -54,7 +54,7 @@ kx serve --journal /tmp/kx.db --content /tmp/kx-content --dev-allow-local
 | **Run capture (Morphic)** | Every serve-path run's actions are captured to a durable sidecar — your agents' exhaust becomes queryable data | SDKs (`ListCaptureRecords`) |
 | **Teams & grants** | Durable membership + asset grants with resolved-warrant views | console Systems · SDKs |
 | **Audit trail** | An off-the-truth-path JSONL record of the run lifecycle | `kx run --audit-log` |
-| **The web console** | All of the above in a browser — served by `kx` itself, zero extra setup | `http://127.0.0.1:50180` |
+| **The web console** | All of the above in a browser — served by `kx` itself, zero extra setup | `http://127.0.0.1:8888` |
 
 Every capability is reachable from the **CLI**, the **Python and TypeScript
 SDKs**, and the **web console** — same wire, same guarantees.
@@ -128,7 +128,7 @@ bridge, and (prebuilt binaries) the web console:
 ```bash
 kx serve --journal /tmp/kx.db --content /tmp/kx-content --dev-allow-local
 #    gRPC on 127.0.0.1:50151 · events on ws://127.0.0.1:50152
-#    web console at http://127.0.0.1:50180  ← open this in your browser
+#    web console at http://127.0.0.1:8888  ← open this in your browser
 ```
 
 **2. Run your first blueprints** (another terminal):
@@ -186,7 +186,7 @@ turns — that's the whole point.
 ## The web console
 
 `kx serve` (prebuilt binaries) hosts the full console at
-**`http://127.0.0.1:50180`** — no node, no separate install. Connect to your
+**`http://127.0.0.1:8888`** — no node, no separate install. Connect to your
 gateway endpoint (pre-filled: `http://127.0.0.1:50151`; the bearer token, if you
 use one, stays in browser memory and is never stored).
 
@@ -240,7 +240,7 @@ kx serve --journal <path> --content <dir> [flags]
 |---|---|---|
 | `--listen <addr:port>` | `127.0.0.1:50151` | the gRPC + gRPC-web endpoint |
 | `--ws-listen <addr:port>` | `127.0.0.1:50152` | the live-event WebSocket bridge |
-| `--console-listen <addr:port>` | `127.0.0.1:50180` | the embedded web console (loopback only) |
+| `--console-listen <addr:port>` | `127.0.0.1:8888` | the embedded web console (loopback only) |
 | `--no-console` | — | disable the web console |
 | `--dev-allow-local` | off | dev auth: allow loopback callers (loopback binds only) |
 | `--auth-token <token>=<party>` | — | accept a bearer token as a party (repeatable) |

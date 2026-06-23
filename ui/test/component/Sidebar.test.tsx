@@ -73,6 +73,17 @@ describe("Sidebar", () => {
     }
   });
 
+  it("renders in-development placeholders as honest-disabled (GR15/≈D166)", () => {
+    render(<Sidebar collapsed={false} onToggle={() => {}} />);
+    expect(screen.getByTestId("nav-group-dev")).toHaveTextContent("Coming");
+    for (const id of ["apps", "policies"]) {
+      const el = screen.getByTestId(`dev-${id}`);
+      expect(el).toBeInTheDocument();
+      expect(el).toHaveAttribute("aria-disabled", "true");
+      expect(el.tagName).toBe("DIV");
+    }
+  });
+
   it("hides labels, group labels and the footer (icon rail) when collapsed", () => {
     render(<Sidebar collapsed={true} onToggle={() => {}} />);
     // The items remain (icons), but the text labels are not rendered.

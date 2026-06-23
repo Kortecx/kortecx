@@ -32,7 +32,7 @@ use kx_model_harness::{
 use kx_mote::{ModelId, ToolName, ToolVersion};
 use kx_projection::{MoteState, Projection};
 use kx_runtime::config::Mode;
-use kx_runtime::{RuntimeConfig, RuntimeError};
+use kx_runtime::{digest_journal, RuntimeConfig, RuntimeError};
 use kx_tool_registry::{
     IdempotencyClass, InMemoryToolRegistry, McpEndpointId, ToolDef, ToolKind, ToolProvenance,
     ToolRegistry,
@@ -654,6 +654,59 @@ fn rejected_proposal_reprompts_then_answers() {
         backend.inputs()[1].contains("REJECTED") && backend.inputs()[1].contains("not granted"),
         "the re-prompt steer + reason reached the next turn: {}",
         backend.inputs()[1]
+    );
+}
+
+#[test]
+fn rejected_branch_cold_folds_identically() {
+    // GR15 / R49: a journal that CONTAINS an A2 `Rejected` branch must be
+    // replay-stable — two independent COLD re-folds of the on-disk journal
+    // reproduce the live committed-facts digest byte-for-byte (recovery re-reads
+    // the frozen rejected turn + its DETERMINISTIC re-prompt, never re-samples).
+    // This pins the harness A2 mirror's recovery determinism DETERMINISTICALLY;
+    // the `with-model` invariant test only exercises the happy path (a real model
+    // may or may not actually reject), so the rejected branch needs its own pin.
+    let script = vec![
+        envelope("mcp-danger", "1", "x"), // turn 0: ungranted → A2 `Rejected`
+        envelope("mcp-tool", "1", "q"),   // turn 1: granted → fires (observation)
+        b"Done.".to_vec(),                // turn 2: final answer
+    ];
+    let dir = tempfile::tempdir().unwrap();
+    let (outcome, _backend, journal) = drive(
+        dir.path(),
+        script,
+        vec![jsonrpc_result(r#"{"obs":"OBSERVATION"}"#)],
+        ReactBudget {
+            max_turns: 6,
+            max_tool_calls: 6,
+        },
+    );
+    let outcome = outcome.expect("loop runs");
+    assert_eq!(outcome.outcome, ReactStop::Answered);
+    assert_eq!(
+        outcome.tool_calls, 2,
+        "the rejected attempt + the good tool both count against the budget"
+    );
+    // The precondition this test pins: the journal carries a rejected branch — a
+    // refused proposal that COMMITTED (A2), never a terminal Failed fact.
+    assert_eq!(
+        failed_count(&journal),
+        0,
+        "A2: the rejected turn committed, not dead-lettered"
+    );
+
+    let live = digest_journal(&*journal).expect("digest the live journal");
+    // Two independent COLD folds from the on-disk journal (the recovery path).
+    let path = config_for(dir.path()).journal_path;
+    let cold1 = digest_journal(&SqliteJournal::open(&path).unwrap()).expect("cold fold 1");
+    let cold2 = digest_journal(&SqliteJournal::open(&path).unwrap()).expect("cold fold 2");
+    assert_eq!(
+        live, cold1,
+        "a cold re-fold reproduces the live digest with a rejected branch present (R49)"
+    );
+    assert_eq!(
+        cold1, cold2,
+        "two cold re-folds agree — deterministic A2 recovery"
     );
 }
 

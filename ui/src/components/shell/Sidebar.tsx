@@ -7,6 +7,8 @@ import { TokenUsageFooter } from "./TokenUsageFooter";
 import {
   CLOUD_GROUP_LABEL,
   CLOUD_PLACEHOLDERS,
+  DEV_GROUP_LABEL,
+  DEV_PLACEHOLDERS,
   NAV_GROUPS,
   NAV_SECTIONS,
   SETTINGS_SECTION,
@@ -116,6 +118,33 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
             })}
           </div>
         ))}
+        <div
+          className="sidebar__group"
+          data-color="neutral"
+          data-testid="nav-group-dev"
+          aria-label="Coming soon (in development)"
+        >
+          {collapsed ? null : <p className="sidebar__group-label">{DEV_GROUP_LABEL}</p>}
+          {DEV_PLACEHOLDERS.map((p) => (
+            <div
+              key={p.id}
+              className="navitem navitem--disabled"
+              aria-disabled="true"
+              data-testid={`dev-${p.id}`}
+              title={`${p.label} — in development (coming in the POC roadmap)`}
+            >
+              <span className="navitem__icon">
+                <Icon name={p.icon} />
+              </span>
+              {collapsed ? null : (
+                <>
+                  <span className="navitem__label">{p.label}</span>
+                  <span className="chip chip--soon">In dev</span>
+                </>
+              )}
+            </div>
+          ))}
+        </div>
         <div
           className="sidebar__group"
           data-color="neutral"

@@ -30,7 +30,7 @@ pub const DEFAULT_CONTENT_MAX_BYTES: u64 = 32 * 1024 * 1024;
 /// CORS self-grant derives from this origin, and remote browsers have the
 /// supported static-host + explicit `--cors-origin` path instead).
 pub const DEFAULT_CONSOLE_LISTEN: SocketAddr =
-    SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 50180);
+    SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8888);
 
 /// How the embedded web console should run (D139). Parsed feature-free so the
 /// SAME flags are accepted by every build: on a console-less binary `Default`
@@ -849,8 +849,8 @@ mod tests {
             ConsoleMode::Listen("127.0.0.1:0".parse().unwrap())
         );
         // D139.3: non-loopback console binds are refused outright.
-        assert!(base(&["--console-listen", "0.0.0.0:50180"]).is_err());
-        assert!(base(&["--console-listen", "192.168.1.10:50180"]).is_err());
+        assert!(base(&["--console-listen", "0.0.0.0:8888"]).is_err());
+        assert!(base(&["--console-listen", "192.168.1.10:8888"]).is_err());
         // The two console flags are mutually exclusive, in either order.
         assert!(base(&["--no-console", "--console-listen", "127.0.0.1:0"]).is_err());
         assert!(base(&["--console-listen", "127.0.0.1:0", "--no-console"]).is_err());
@@ -870,7 +870,7 @@ mod tests {
             "--content",
             "/tmp/c",
             "--console-listen",
-            "127.0.0.1:50180",
+            "127.0.0.1:8888",
         ])
         .unwrap_err();
         assert!(

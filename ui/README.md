@@ -2,7 +2,7 @@
 
 > **End users don't need any of this**: the prebuilt `kx` (the `curl|sh` install)
 > ships this console **embedded** — `kx serve` hosts it at
-> `http://127.0.0.1:50180` with zero node/npm (D139; `--console-listen` /
+> `http://127.0.0.1:8888` with zero node/npm (D139; `--console-listen` /
 > `--no-console` to override). This README is the **developer** workflow (Vite
 > dev server + HMR against a local gateway).
 

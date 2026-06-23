@@ -104,7 +104,7 @@ export interface SpawnOpts {
   /**
    * Serve the embedded web console (D139) on a free loopback port. Needs a
    * `--features console` kx (the CI ui job builds one); everything else passes
-   * `--no-console` so a default-on console build can never collide on 50180.
+   * `--no-console` so a default-on console build can never collide on 8888.
    */
   console?: boolean;
   /**
@@ -133,7 +133,7 @@ export async function spawnGateway(opts: SpawnOpts = {}): Promise<Gateway> {
     "--dev-allow-local",
   ];
   // `--no-console` parses as a no-op on console-less builds, so it is safe to
-  // pass unconditionally — and REQUIRED for console builds (default-on 50180
+  // pass unconditionally — and REQUIRED for console builds (default-on 8888
   // would collide across parallel spawns).
   if (opts.console) {
     args.push("--console-listen", `127.0.0.1:${consolePort}`);

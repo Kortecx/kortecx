@@ -60,7 +60,7 @@ auth posture; the journal, content store, and catalog auto-resolve:
 ```bash
 kx serve --dev-allow-local
 #    gRPC on 127.0.0.1:50151 · events on ws://127.0.0.1:50152
-#    web console at http://127.0.0.1:50180  ← open this in your browser
+#    web console at http://127.0.0.1:8888  ← open this in your browser
 ```
 
 On start, the server prints a banner with every resolved path and endpoint:
@@ -69,7 +69,7 @@ On start, the server prints a banner with every resolved path and endpoint:
 kx-gateway STARTUP — resolved durable layout + endpoints
   data_dir=~/.kortecx  journal=~/.kortecx/kx.db  content_dir=~/.kortecx/content
   catalog_dir=~/.kortecx/catalog  (catalog.db · members.db · telemetry.db · capture.db · uploads.db · datasets/)
-  grpc_endpoint=http://127.0.0.1:50151  ws_endpoint=ws://127.0.0.1:50152  console_url=http://127.0.0.1:50180/
+  grpc_endpoint=http://127.0.0.1:50151  ws_endpoint=ws://127.0.0.1:50152  console_url=http://127.0.0.1:8888/
   auth_mode=dev-allow-local  connect_hint=kx runs list --endpoint http://127.0.0.1:50151
 ```
 
