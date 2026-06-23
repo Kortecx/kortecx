@@ -447,17 +447,21 @@ pub fn render_wait(outcome: &WaitOutcome, json: bool, include_payload: bool) -> 
 /// tool-action set (the chain's settled `tool` turns, in order). `--json` mirrors
 /// the SDK `AgentResult.json()` shape (`instance_id` / `run_handle` / `actions` /
 /// `answer`); a non-committed disposition is surfaced honestly via `state`.
-/// `actions` is a pre-filtered `(tool_id, tool_version, turn)` list.
+/// `actions` is a pre-filtered `(tool_id, tool_version, turn, call_index)` list — a
+/// multi-call turn contributes several actions sharing `turn`, distinguished by
+/// `call_index` (T-MULTI-ELEMENT-TOOLCALLS).
 #[must_use]
 pub fn render_agent_result(
     outcome: &WaitOutcome,
-    actions: &[(String, String, u32)],
+    actions: &[(String, String, u32, u32)],
     json: bool,
 ) -> String {
     if json {
         let action_vals: Vec<Value> = actions
             .iter()
-            .map(|(id, ver, turn)| json!({ "tool_id": id, "tool_version": ver, "turn": turn }))
+            .map(|(id, ver, turn, call_index)| {
+                json!({ "tool_id": id, "tool_version": ver, "turn": turn, "call_index": call_index })
+            })
             .collect();
         let mut map = serde_json::Map::new();
         map.insert(
@@ -508,8 +512,10 @@ pub fn render_agent_result(
             }),
         }
         let _ = write!(out, "\n\nActions taken: {}", actions.len());
-        for (id, ver, turn) in actions {
-            let _ = write!(out, "\n  turn {turn}: {id}@{ver}");
+        for (id, ver, turn, call_index) in actions {
+            // `turn N.call_index` so two parallel tools at turn 2 read `turn 2.0` /
+            // `turn 2.1` (T-MULTI-ELEMENT-TOOLCALLS).
+            let _ = write!(out, "\n  turn {turn}.{call_index}: {id}@{ver}");
         }
         let _ = write!(out, "\ninstance_id {}", hex::encode(&outcome.instance_id));
         out
@@ -2005,6 +2011,7 @@ pub fn render_react_turns(resp: &proto::ListReactTurnsResponse, json: bool) -> S
                     "max_tool_calls": t.max_tool_calls,
                     "seq": t.seq,
                     "rejection_reason": t.rejection_reason,
+                    "call_index": t.call_index,
                 })
             })
             .collect();
@@ -2015,7 +2022,9 @@ pub fn render_react_turns(resp: &proto::ListReactTurnsResponse, json: bool) -> S
         let mut out = String::new();
         for t in &resp.turns {
             let detail = if !t.tool_id.is_empty() {
-                format!(" tool {}@{}", t.tool_id, t.tool_version)
+                // T-MULTI-ELEMENT-TOOLCALLS: show the call_index so a multi-tool turn's
+                // parallel calls read `tool[0]` / `tool[1]`.
+                format!(" tool[{}] {}@{}", t.call_index, t.tool_id, t.tool_version)
             } else if !t.rejection_reason.is_empty() {
                 // PR-3 (A2): show WHY a turn was rejected so an operator can see
                 // the model self-correct (or, at budget exhaustion, why it died).
@@ -2245,7 +2254,7 @@ mod tests {
             result_ref: None,
             payload: None,
         };
-        let actions = vec![("mcp-echo/echo".to_string(), "1".to_string(), 0u32)];
+        let actions = vec![("mcp-echo/echo".to_string(), "1".to_string(), 0u32, 0u32)];
         let human = render_agent_result(&outcome, &actions, false);
         assert!(
             human.contains("exhausted its tool-call budget without settling"),
@@ -2395,6 +2404,7 @@ mod tests {
                     seq: 33,
                     rejection_reason: String::new(),
                     step_salt: Vec::new(),
+                    call_index: 0,
                 },
                 // PR-3 (A2): a rejected turn carries its reason on both surfaces.
                 proto::ReactTurnSummary {
@@ -2410,6 +2420,7 @@ mod tests {
                     seq: 32,
                     rejection_reason: "args do not match inputSchema".into(),
                     step_salt: Vec::new(),
+                    call_index: 0,
                 },
             ],
             has_more: true,
@@ -2427,7 +2438,8 @@ mod tests {
         assert_eq!(v["turns"][0]["max_tool_calls"], 6);
         assert_eq!(v["has_more"], true);
         let human = render_react_turns(&react, false);
-        assert!(human.contains("tool mcp-echo@1") && human.contains("caps 8/6"));
+        // T-MULTI-ELEMENT-TOOLCALLS: a tool turn shows its call_index (`tool[0]`).
+        assert!(human.contains("tool[0] mcp-echo@1") && human.contains("caps 8/6"));
         assert!(
             human.contains("branch rejected") && human.contains("reason args do not match"),
             "the rejected turn shows its reason in human output: {human}"

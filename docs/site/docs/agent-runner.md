@@ -26,14 +26,14 @@ loop, then returns the committed answer with the tools it fired. It never uses
 ```python
 import kortecx as kx
 
-result = kx.run_agent("Use the echo tool to repeat 'pong'.")
+result = kx.run_agent("Use the echo tool to repeat 'pong'.", max_tool_calls=20)
 print(result.answer)                        # the reasoned final answer
-for a in result.actions:                    # the audited action set
-    print(f"  turn {a.turn}: {a.tool_id}@{a.tool_version}")
+for a in result.actions:                    # the audited action set (one per fired call)
+    print(f"  turn {a.turn}.{a.call_index}: {a.tool_id}@{a.tool_version}")
 # async: await kx.run_agent_async(goal, client=async_client)
 ```
 
-**TypeScript** — `runAgent({ goal, context?, inputs?, wait? })`:
+**TypeScript** — `runAgent({ goal, context?, inputs?, maxToolCalls?, wait? })`:
 
 ```ts
 import { runAgent } from "@kortecx/sdk";
@@ -41,15 +41,15 @@ import { runAgent } from "@kortecx/sdk";
 const result = await runAgent({ goal: "Use the echo tool to repeat 'pong'." });
 console.log(result.answer);
 for (const a of result.actions) {
-  console.log(`  turn ${a.turn}: ${a.toolId}@${a.toolVersion}`);
+  console.log(`  turn ${a.turn}.${a.callIndex}: ${a.toolId}@${a.toolVersion}`);
 }
 ```
 
 **CLI** — `kx agent run`:
 
 ```bash
-kx agent run --goal "Use the echo tool to repeat 'pong'." --json
-# { "answer": "...", "actions": [{ "tool_id": "mcp-echo/echo", "tool_version": "1", "turn": 1 }],
+kx agent run --goal "Use the echo tool to repeat 'pong'." --max-tool-calls 20 --json
+# { "answer": "...", "actions": [{ "tool_id": "mcp-echo/echo", "tool_version": "1", "turn": 1, "call_index": 0 }],
 #   "run_handle": "<hex>", "instance_id": "<hex>" }
 # exit 0 = answered · 1 = the run failed · 3 = timed out (resume with `kx react list`)
 ```
@@ -57,9 +57,15 @@ kx agent run --goal "Use the echo tool to repeat 'pong'." --json
 - **`context`** attaches published [context bundles](./context.md) the server resolves
   and injects (identity-bearing — a different context is a different run).
 - **`inputs`** (`k=v` on the CLI, a map in the SDKs) fold into the goal prompt.
+- **`max_tool_calls`** bounds the chain's *total* tool calls (default **20**, ceiling
+  20). A single turn can fire **several tools at once** (the model emits N calls in one
+  response — see [parallel tool calls](./tools.md#parallel-tool-calls-multi-element-tool-calling)),
+  so this is independent of the model-turn budget (`max_turns`, default 8). The
+  resolved server defaults show in **Settings → Workspace** and `kx info`.
 - The returned **`AgentResult`** carries `answer` (+ `answer_bytes`), `actions` (the
-  audited tool set), and the re-attachable `run_handle` / `instance_id`. With
-  `wait=False` you get the run handle back instead and assemble the result later.
+  audited tool set), and the re-attachable `run_handle` / `instance_id`. A turn that
+  fires N parallel tools yields **N actions** sharing `turn`, ordered by `call_index`.
+  With `wait=False` you get the run handle back instead and assemble the result later.
 
 > **Composing in a chain.** The agent-runner is the *steered* whole-run entry (the
 > model picks tools turn by turn). To put a tool-using agent *step* inside a larger

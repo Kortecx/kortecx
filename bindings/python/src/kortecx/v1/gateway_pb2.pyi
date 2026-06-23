@@ -701,7 +701,7 @@ class ListReactTurnsRequest(_message.Message):
     def __init__(self, limit: _Optional[int] = ..., instance_id: _Optional[bytes] = ..., step_salt: _Optional[bytes] = ...) -> None: ...
 
 class ReactTurnSummary(_message.Message):
-    __slots__ = ("turn", "turn_mote_id", "instance_id", "model_id", "branch", "tool_id", "tool_version", "max_turns", "max_tool_calls", "seq", "rejection_reason", "step_salt")
+    __slots__ = ("turn", "turn_mote_id", "instance_id", "model_id", "branch", "tool_id", "tool_version", "max_turns", "max_tool_calls", "seq", "rejection_reason", "step_salt", "call_index")
     TURN_FIELD_NUMBER: _ClassVar[int]
     TURN_MOTE_ID_FIELD_NUMBER: _ClassVar[int]
     INSTANCE_ID_FIELD_NUMBER: _ClassVar[int]
@@ -714,6 +714,7 @@ class ReactTurnSummary(_message.Message):
     SEQ_FIELD_NUMBER: _ClassVar[int]
     REJECTION_REASON_FIELD_NUMBER: _ClassVar[int]
     STEP_SALT_FIELD_NUMBER: _ClassVar[int]
+    CALL_INDEX_FIELD_NUMBER: _ClassVar[int]
     turn: int
     turn_mote_id: bytes
     instance_id: bytes
@@ -726,7 +727,8 @@ class ReactTurnSummary(_message.Message):
     seq: int
     rejection_reason: str
     step_salt: bytes
-    def __init__(self, turn: _Optional[int] = ..., turn_mote_id: _Optional[bytes] = ..., instance_id: _Optional[bytes] = ..., model_id: _Optional[str] = ..., branch: _Optional[str] = ..., tool_id: _Optional[str] = ..., tool_version: _Optional[str] = ..., max_turns: _Optional[int] = ..., max_tool_calls: _Optional[int] = ..., seq: _Optional[int] = ..., rejection_reason: _Optional[str] = ..., step_salt: _Optional[bytes] = ...) -> None: ...
+    call_index: int
+    def __init__(self, turn: _Optional[int] = ..., turn_mote_id: _Optional[bytes] = ..., instance_id: _Optional[bytes] = ..., model_id: _Optional[str] = ..., branch: _Optional[str] = ..., tool_id: _Optional[str] = ..., tool_version: _Optional[str] = ..., max_turns: _Optional[int] = ..., max_tool_calls: _Optional[int] = ..., seq: _Optional[int] = ..., rejection_reason: _Optional[str] = ..., step_salt: _Optional[bytes] = ..., call_index: _Optional[int] = ...) -> None: ...
 
 class ListReactTurnsResponse(_message.Message):
     __slots__ = ("turns", "has_more")
@@ -1720,7 +1722,7 @@ class GetServerInfoRequest(_message.Message):
     def __init__(self) -> None: ...
 
 class GetServerInfoResponse(_message.Message):
-    __slots__ = ("model_id", "model_path", "listen_addr", "ws_addr", "console_addr", "metrics_addr", "content_root", "journal_path", "catalog_dir", "max_lease", "content_max_bytes", "cors_origins", "tls_enabled", "auth_mode", "feature_hnsw", "feature_inference", "feature_console", "feature_vision", "audit_log_enabled")
+    __slots__ = ("model_id", "model_path", "listen_addr", "ws_addr", "console_addr", "metrics_addr", "content_root", "journal_path", "catalog_dir", "max_lease", "content_max_bytes", "cors_origins", "tls_enabled", "auth_mode", "feature_hnsw", "feature_inference", "feature_console", "feature_vision", "audit_log_enabled", "react_max_turns", "react_max_tool_calls")
     MODEL_ID_FIELD_NUMBER: _ClassVar[int]
     MODEL_PATH_FIELD_NUMBER: _ClassVar[int]
     LISTEN_ADDR_FIELD_NUMBER: _ClassVar[int]
@@ -1740,6 +1742,8 @@ class GetServerInfoResponse(_message.Message):
     FEATURE_CONSOLE_FIELD_NUMBER: _ClassVar[int]
     FEATURE_VISION_FIELD_NUMBER: _ClassVar[int]
     AUDIT_LOG_ENABLED_FIELD_NUMBER: _ClassVar[int]
+    REACT_MAX_TURNS_FIELD_NUMBER: _ClassVar[int]
+    REACT_MAX_TOOL_CALLS_FIELD_NUMBER: _ClassVar[int]
     model_id: str
     model_path: str
     listen_addr: str
@@ -1759,4 +1763,6 @@ class GetServerInfoResponse(_message.Message):
     feature_console: bool
     feature_vision: bool
     audit_log_enabled: bool
-    def __init__(self, model_id: _Optional[str] = ..., model_path: _Optional[str] = ..., listen_addr: _Optional[str] = ..., ws_addr: _Optional[str] = ..., console_addr: _Optional[str] = ..., metrics_addr: _Optional[str] = ..., content_root: _Optional[str] = ..., journal_path: _Optional[str] = ..., catalog_dir: _Optional[str] = ..., max_lease: _Optional[int] = ..., content_max_bytes: _Optional[int] = ..., cors_origins: _Optional[_Iterable[str]] = ..., tls_enabled: bool = ..., auth_mode: _Optional[str] = ..., feature_hnsw: bool = ..., feature_inference: bool = ..., feature_console: bool = ..., feature_vision: bool = ..., audit_log_enabled: bool = ...) -> None: ...
+    react_max_turns: int
+    react_max_tool_calls: int
+    def __init__(self, model_id: _Optional[str] = ..., model_path: _Optional[str] = ..., listen_addr: _Optional[str] = ..., ws_addr: _Optional[str] = ..., console_addr: _Optional[str] = ..., metrics_addr: _Optional[str] = ..., content_root: _Optional[str] = ..., journal_path: _Optional[str] = ..., catalog_dir: _Optional[str] = ..., max_lease: _Optional[int] = ..., content_max_bytes: _Optional[int] = ..., cors_origins: _Optional[_Iterable[str]] = ..., tls_enabled: bool = ..., auth_mode: _Optional[str] = ..., feature_hnsw: bool = ..., feature_inference: bool = ..., feature_console: bool = ..., feature_vision: bool = ..., audit_log_enabled: bool = ..., react_max_turns: _Optional[int] = ..., react_max_tool_calls: _Optional[int] = ...) -> None: ...

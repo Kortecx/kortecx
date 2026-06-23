@@ -252,8 +252,10 @@ where
             )?
         };
 
-        // Decode the proposal FAIL-CLOSED via the ONE authority gate.
-        let branch = toolcall::parse_tool_call(&raw, warrant, toolcall::max_args_bytes(warrant));
+        // Decode the proposal FAIL-CLOSED via the ONE authority gate. T-MULTI-ELEMENT-
+        // TOOLCALLS: the plural gate decodes ALL proposed calls (N≥1) so a multi-element
+        // body fires every call (mirrors the live coordinator); a single call is one.
+        let branch = toolcall::parse_tool_calls(&raw, warrant, toolcall::max_args_bytes(warrant));
 
         // PR-3 (A2): a refused proposal is NOT terminal — mirror the live serve
         // coordinator. COMMIT the rejected turn (so the next turn sees the bad
@@ -313,21 +315,42 @@ where
         }
 
         // A non-refused turn clears any prior re-prompt steer. A committed turn
-        // re-decodes to the SAME `Ok` it committed on; `None` ⇒ final answer,
-        // `Some` ⇒ a tool proposal.
+        // re-decodes to the SAME `Ok` it committed on; an EMPTY list ⇒ final answer,
+        // N≥1 calls ⇒ a (possibly multi-element) tool proposal. T-MULTI-ELEMENT-
+        // TOOLCALLS: the harness mirrors the live coordinator's fire-ALL-N drain (the
+        // R49 byte-twin) — N call-indexed observations fire in one turn.
         pending_reprompt = None;
-        let call: Option<ToolCall> = branch.ok().flatten();
+        // An Err proposal already took the A2 re-prompt path above (the `continue`), so
+        // here `branch` is always `Ok`; an empty list = a normal answer (the fail-closed
+        // default), so a future-impossible `Err` degrades safely, never panics.
+        let calls: Vec<ToolCall> = branch.unwrap_or_default();
 
-        // Build this round's workflow: [turn] (+ [observation] if a tool was named).
-        // The fresh turn output is staged via the ReactBroker; a committed turn is
-        // served by the engine's P0.4 gate (its entry in the map is then inert).
-        let tool_wm: Option<WorkflowMote> = call.as_ref().map(|c| {
-            workflows::react_tool_mote(model_id, warrant, &c.name, &c.version, turn, turn_id)
-        });
+        // Build this round's workflow: [turn] (+ one call-indexed [observation] per
+        // proposed call). The fresh turn output is staged via the ReactBroker; a
+        // committed turn is served by the engine's P0.4 gate (its map entry is inert).
+        let tool_wms: Vec<WorkflowMote> = calls
+            .iter()
+            .enumerate()
+            .map(|(i, c)| {
+                workflows::react_tool_mote(
+                    model_id,
+                    warrant,
+                    &c.name,
+                    &c.version,
+                    turn,
+                    u32::try_from(i).unwrap_or(u32::MAX),
+                    turn_id,
+                )
+            })
+            .collect();
         let mut round_motes = vec![turn_wm.clone()];
+        // PreCommitStc targets the FIRST observation (the single-call crash injection
+        // point is unchanged; a multi-call batch crashes on call_index 0).
         let mut stc_crash_target = workflows::sentinel_shaper();
-        if let Some(tw) = &tool_wm {
-            stc_crash_target = tw.mote.id; // PreCommitStc targets the observation.
+        if let Some(first) = tool_wms.first() {
+            stc_crash_target = first.mote.id;
+        }
+        for tw in &tool_wms {
             round_motes.push(tw.clone());
         }
         let round_wf = DemoWorkflow {
@@ -342,7 +365,7 @@ where
             turn_responses.insert(turn_id, raw.clone());
         }
         let mut tool_call_map: BTreeMap<MoteId, ToolCall> = BTreeMap::new();
-        if let (Some(tw), Some(c)) = (&tool_wm, &call) {
+        for (tw, c) in tool_wms.iter().zip(calls.iter()) {
             tool_call_map.insert(tw.mote.id, c.clone());
         }
 
@@ -361,37 +384,39 @@ where
             tool_call_map,
         )?;
 
-        if let Some(tw) = &tool_wm {
-            // A tool fired — record the trajectory (turn output + observation),
-            // count it, and bound the loop on either cap.
-            //
-            // The observation MUST have committed. A fail-closed tool dispatch (MCP
-            // protocol error / refusal / non-resolvable tool) leaves it non-committed
-            // (PR-1 `Failed`) — stop cleanly rather than feed a non-existent
-            // observation into the next turn's assemble.
-            let post = Projection::from_journal(&*journal)?;
-            if post.state_of(&tw.mote.id) != MoteState::Committed {
-                tracing::warn!(
-                    turn,
-                    observation = ?tw.mote.id,
-                    "react: tool dispatch did not commit — stopping the loop fail-closed"
-                );
-                break (run, ReactStop::DeadLettered);
-            }
-            trajectory.push(turn_id);
-            trajectory.push(tw.mote.id);
-            tool_calls += 1;
-            if tool_calls >= budget.max_tool_calls {
-                break (run, ReactStop::BudgetExhausted);
-            }
-            if turns_used >= budget.max_turns {
-                break (run, ReactStop::BudgetExhausted);
-            }
-        } else {
+        if tool_wms.is_empty() {
             // Final answer (no tool call) — the loop is done; the committed turn
             // fact IS the answer.
             final_answer = Projection::from_journal(&*journal)?.result_ref_of(&turn_id);
             break (run, ReactStop::Answered);
+        }
+        // The tools fired — record the trajectory (turn output + EVERY observation in
+        // call_index order), count each call against the budget, and bound the loop.
+        // BACK-PRESSURE: every observation MUST have committed before the next turn (a
+        // fail-closed tool dispatch leaves one non-committed (PR-1 `Failed`) ⇒ stop
+        // cleanly rather than feed a non-existent observation forward).
+        let post = Projection::from_journal(&*journal)?;
+        if tool_wms
+            .iter()
+            .any(|tw| post.state_of(&tw.mote.id) != MoteState::Committed)
+        {
+            tracing::warn!(
+                turn,
+                "react: a tool dispatch did not commit — stopping the loop fail-closed"
+            );
+            break (run, ReactStop::DeadLettered);
+        }
+        trajectory.push(turn_id);
+        for tw in &tool_wms {
+            trajectory.push(tw.mote.id);
+        }
+        // Each fired call counts against max_tool_calls (a batch of N spends N).
+        tool_calls += u32::try_from(tool_wms.len()).unwrap_or(u32::MAX);
+        if tool_calls >= budget.max_tool_calls {
+            break (run, ReactStop::BudgetExhausted);
+        }
+        if turns_used >= budget.max_turns {
+            break (run, ReactStop::BudgetExhausted);
         }
     };
 

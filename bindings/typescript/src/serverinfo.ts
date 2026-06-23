@@ -52,6 +52,12 @@ export class ServerInfo {
     readonly featureVision: boolean,
     /** A JSONL operator audit log is configured. */
     readonly auditLogEnabled: boolean,
+    /** T-MULTI-ELEMENT-TOOLCALLS: the server's DEFAULT agentic model-turn budget (also
+     *  the hard ceiling); a run overrides it per-invocation via `maxTurns`. */
+    readonly reactMaxTurns: number = 0,
+    /** T-MULTI-ELEMENT-TOOLCALLS: the server's DEFAULT total tool-call budget (a turn
+     *  may fire several at once, so independent of `reactMaxTurns`); overridable per-run. */
+    readonly reactMaxToolCalls: number = 0,
   ) {}
 
   static fromProto(r: PbGetServerInfoResponse): ServerInfo {
@@ -75,6 +81,8 @@ export class ServerInfo {
       r.featureConsole,
       r.featureVision,
       r.auditLogEnabled,
+      r.reactMaxTurns,
+      r.reactMaxToolCalls,
     );
   }
 
@@ -100,6 +108,8 @@ export class ServerInfo {
       feature_console: this.featureConsole,
       feature_vision: this.featureVision,
       audit_log_enabled: this.auditLogEnabled,
+      react_max_turns: this.reactMaxTurns,
+      react_max_tool_calls: this.reactMaxToolCalls,
     };
   }
 }

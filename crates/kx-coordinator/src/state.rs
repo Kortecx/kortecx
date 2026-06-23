@@ -794,6 +794,7 @@ impl ArgResolution {
 /// tool was DEREGISTERED since the `Tool` branch froze) is
 /// [`Permanent`](ArgResolution::Permanent) — the settle pass dead-letters the chain
 /// instead of skipping forever (BUG-27).
+#[allow(clippy::too_many_lines)] // T-MULTI-ELEMENT-TOOLCALLS: + the call_index recovery branch
 fn resolve_tool_args(
     mote: &Mote,
     warrant: &WarrantSpec,
@@ -819,13 +820,16 @@ fn resolve_tool_args(
     // at freeze. If the SAME bytes no longer decode to a granted call, or the
     // decoded call disagrees with the frozen contract, the facts are inconsistent —
     // a permanent fault, never a transient skip.
-    let call = match kx_toolcall::parse_tool_call(
+    // T-MULTI-ELEMENT-TOOLCALLS: decode ALL the turn's calls (the plural gate). A
+    // single-call turn yields one call (byte-identical to PR-2d-2); a ToolBatch turn
+    // yields N, and THIS observation fires exactly one of them.
+    let mut calls = match kx_toolcall::parse_tool_calls(
         raw.as_ref(),
         warrant,
         kx_toolcall::max_args_bytes(warrant),
     ) {
-        Ok(Some(call)) => call,
-        Ok(None) => {
+        Ok(calls) if !calls.is_empty() => calls,
+        Ok(_) => {
             return ArgResolution::Permanent {
                 reason: "committed turn output no longer decodes to a granted tool call"
                     .to_string(),
@@ -836,6 +840,43 @@ fn resolve_tool_args(
                 reason: format!("tool-call decode rejected: {error:?}"),
             };
         }
+    };
+    // Select the call THIS observation fires. A single-call turn uses call[0]
+    // (byte-identical). A ToolBatch turn's observation RECOVERS its `call_index` by
+    // matching its own MoteId against the candidates rebuilt from the frozen branch's
+    // turn coordinates — so two calls to the SAME tool resolve to their OWN args (a
+    // PURE function of frozen facts ⇒ recovery re-derives byte-identical args).
+    let call = if calls.len() == 1 {
+        calls.remove(0)
+    } else {
+        let Some(record) = projection.react_tool_round_of_turn(&parent) else {
+            return ArgResolution::Permanent {
+                reason: "no tool-firing react round for the observation's parent turn".to_string(),
+            };
+        };
+        let mut chosen: Option<usize> = None;
+        for (i, c) in calls.iter().enumerate() {
+            let candidate = crate::react_shape::build_chain_tool(
+                &mote.def.model_id,
+                &c.name,
+                &c.version,
+                record.turn,
+                &record.instance_id,
+                record.step_salt,
+                u32::try_from(i).unwrap_or(u32::MAX),
+                parent,
+            );
+            if candidate.id == mote.id {
+                chosen = Some(i);
+                break;
+            }
+        }
+        let Some(i) = chosen else {
+            return ArgResolution::Permanent {
+                reason: "observation does not match any call in the frozen batch".to_string(),
+            };
+        };
+        calls.swap_remove(i)
     };
     let Some(declared_version) = mote.def.tool_contract.get(&call.name) else {
         return ArgResolution::Permanent {
@@ -1148,11 +1189,19 @@ fn resolve_parent_context(
                     if let Some(turn_ref) = projection.result_ref_of(&r.turn_mote_id) {
                         out.push((r.turn_mote_id, turn_ref));
                     }
-                    if let ReactBranch::Tool {
-                        tool_id,
-                        tool_version,
-                    } = &r.branch
-                    {
+                    // The turn's tool observation(s) interleave right after it: ONE
+                    // for a `Tool` branch, N (in call_index order) for a `ToolBatch`
+                    // — so the next turn is re-prompted with EVERY tool's result in
+                    // the trajectory (T-MULTI-ELEMENT-TOOLCALLS).
+                    let batch: Vec<(String, String)> = match &r.branch {
+                        ReactBranch::Tool {
+                            tool_id,
+                            tool_version,
+                        } => vec![(tool_id.clone(), tool_version.clone())],
+                        ReactBranch::ToolBatch { calls } => calls.clone(),
+                        _ => Vec::new(),
+                    };
+                    for (i, (tool_id, tool_version)) in batch.iter().enumerate() {
                         let obs = crate::react_shape::build_chain_tool(
                             &ModelId(r.model_id.clone()),
                             &ToolName(tool_id.clone()),
@@ -1160,6 +1209,7 @@ fn resolve_parent_context(
                             r.turn,
                             &instance_id,
                             step_salt,
+                            u32::try_from(i).unwrap_or(u32::MAX),
                             r.turn_mote_id,
                         );
                         if let Some(obs_ref) = projection.result_ref_of(&obs.id) {
@@ -2476,13 +2526,20 @@ fn react_seed_params(seed: &Mote) -> Result<(String, (u32, u32)), CoordinatorErr
         REACT_MAX_TOOL_CALLS_KEY,
         crate::react_shape::REACT_DEFAULT_MAX_TOOL_CALLS,
     )?;
-    if max_tool_calls == 0
-        || max_tool_calls >= max_turns
+    // T-MULTI-ELEMENT-TOOLCALLS: the two caps are now INDEPENDENT. A turn can fire N
+    // tools at once (a `ToolBatch`), so the total tool-call budget legitimately
+    // exceeds the model-turn budget — the old `max_tool_calls < max_turns` coupling
+    // (which assumed ≤1 tool per turn) no longer holds. Each cap is bounded by its own
+    // hard ceiling: model turns ≤ REACT_MAX_TURNS (8), total tool calls ≤
+    // REACT_MAX_TOOL_CALLS (20). A seed cap above either ceiling is refused LOUDLY.
+    if max_turns == 0
         || max_turns > crate::react_shape::REACT_MAX_TURNS
+        || max_tool_calls == 0
+        || max_tool_calls > crate::react_shape::REACT_MAX_TOOL_CALLS
     {
         return Err(CoordinatorError::ReactSeedRefused(
-            "react budget caps must satisfy 0 < max_tool_calls < max_turns <= 8 \
-             (a chain needs a turn left to read its last observation and answer)",
+            "react budget caps must satisfy 0 < max_turns <= 8 AND \
+             0 < max_tool_calls <= 20",
         ));
     }
     Ok((instruction, (max_turns, max_tool_calls)))
@@ -2913,11 +2970,12 @@ fn drive_react_chain<J: Journal>(
         // A frozen Tool decision (just decided this pass on an earlier drain, or
         // an advance interrupted by a crash): PR-2d-2 — drive the OBSERVATION
         // lifecycle (materialize → fire via the worker → commit), then advance
-        // to the next turn under the budget gate.
+        // to the next turn under the budget gate. A single-call `Tool` is a
+        // 1-element batch through the SAME drain (call_index 0 ⇒ byte-identical).
         ReactBranch::Tool {
             tool_id,
             tool_version,
-        } => progress_tool_round(
+        } => progress_tool_batch(
             journal,
             store,
             projection,
@@ -2926,11 +2984,23 @@ fn drive_react_chain<J: Journal>(
             anchor,
             &rounds,
             turn,
-            &ToolRound {
-                tool_id: tool_id.clone(),
-                tool_version: tool_version.clone(),
-                turn_mote_id: latest.turn_mote_id,
-            },
+            latest.turn_mote_id,
+            &[(tool_id.clone(), tool_version.clone())],
+            tool_registry,
+        ),
+        // T-MULTI-ELEMENT-TOOLCALLS: a frozen ToolBatch decision — drive ALL N
+        // observations (call-indexed), advancing only once EVERY one commits.
+        ReactBranch::ToolBatch { calls } => progress_tool_batch(
+            journal,
+            store,
+            projection,
+            folded_through,
+            dispatch,
+            anchor,
+            &rounds,
+            turn,
+            latest.turn_mote_id,
+            calls,
             tool_registry,
         ),
         // The in-flight turn: settle it once its Mote reaches a terminal state.
@@ -2994,46 +3064,14 @@ fn drive_react_chain<J: Journal>(
                 return ReactChainStatus::Active;
             };
             let max_args = kx_toolcall::max_args_bytes(&warrant);
-            let branch = match kx_toolcall::parse_tool_call(raw.as_ref(), &warrant, max_args) {
-                // A normal completion IS the final answer — the committed turn
-                // fact is the answer (the harness two-fact contract).
-                Ok(None) => ReactBranch::Answer,
-                // A warrant-granted tool proposal. PR-2d-2: this is the ONE
-                // decode/validate authority site — resolve the tool and validate
-                // the args against its typed `inputSchema` FAIL-CLOSED (the
-                // harness `dispatch_decoded_call` gate, D110.4) BEFORE freezing
-                // the irreversible branch, so a frozen `Tool` fact GUARANTEES
-                // registered, schema-valid args (the lease-time re-derivation
-                // can then only fail on I/O, never on a decode disagreement).
-                // PR-3 (A2): a refused proposal is NOT terminal — it freezes a
-                // `Rejected { reason }` round that the next turn reads (via the
-                // re-prompt) and self-corrects over, bounded by the budget (the
-                // loud `DeadLettered` happens only at exhaustion). The `Tool`
-                // arm is byte-unchanged, so the invariant above still holds.
-                Ok(Some(call)) => match tool_registry.lookup(&call.name, &call.version) {
-                    None => ReactBranch::Rejected {
-                        reason: crate::react_shape::bounded_reason(format!(
-                            "the proposed tool `{}@{}` is not granted to this run \
-                             or is no longer registered",
-                            call.name.0, call.version.0
-                        )),
-                    },
-                    Some(def) => match def.input_schema.as_ref().map_or(Ok(()), |schema| {
-                        kx_tool_registry::validate_args(schema, &call.args_bytes)
-                    }) {
-                        Ok(()) => ReactBranch::Tool {
-                            tool_id: call.name.0,
-                            tool_version: call.version.0,
-                        },
-                        Err(error) => ReactBranch::Rejected {
-                            reason: crate::react_shape::bounded_reason(format!(
-                                "the arguments for `{}@{}` do not match its \
-                                 inputSchema: {error}",
-                                call.name.0, call.version.0
-                            )),
-                        },
-                    },
-                },
+            // T-MULTI-ELEMENT-TOOLCALLS: decode ALL proposed calls (the plural gate).
+            // A normal completion IS the final answer; ≥1 grant-checked, schema-valid
+            // call freezes `Tool` (one) or `ToolBatch` (N — fire all N, no silent cap);
+            // any call that fails validation (or a malformed/oversize/ungranted
+            // envelope) freezes a `Rejected` round (the next turn self-corrects under
+            // the budget). The SINGLE path is byte-identical to PR-2d-2's `Tool` arm.
+            let branch = match kx_toolcall::parse_tool_calls(raw.as_ref(), &warrant, max_args) {
+                Ok(calls) => settle_calls_to_branch(&calls, tool_registry),
                 // Malformed / oversize / a name that decoded to no grant ⇒ a
                 // `Rejected` round (the committed turn fact remains; the model
                 // gets a chance to re-propose under the budget).
@@ -3053,18 +3091,15 @@ fn drive_react_chain<J: Journal>(
                     }),
                 },
             };
-            let advanced = if let ReactBranch::Tool {
-                tool_id,
-                tool_version,
-            } = &branch
-            {
-                Some(ToolRound {
-                    tool_id: tool_id.clone(),
-                    tool_version: tool_version.clone(),
-                    turn_mote_id: latest.turn_mote_id,
-                })
-            } else {
-                None
+            // The calls this branch will drive (1 for `Tool`, N for `ToolBatch`, none
+            // otherwise) — used to start the observation drain in the same pass.
+            let advanced: Option<Vec<(String, String)>> = match &branch {
+                ReactBranch::Tool {
+                    tool_id,
+                    tool_version,
+                } => Some(vec![(tool_id.clone(), tool_version.clone())]),
+                ReactBranch::ToolBatch { calls } => Some(calls.clone()),
+                _ => None,
             };
             let rejected = matches!(branch, ReactBranch::Rejected { .. });
             append_react_branch(
@@ -3076,16 +3111,17 @@ fn drive_react_chain<J: Journal>(
                 turn,
                 branch,
             );
-            if let Some(round) = advanced {
-                // Re-read the folded rounds (the Tool fact just folded) and
-                // start the tool round in the same pass (no wasted drain) —
-                // materializes the observation; the advance to the next turn
-                // happens on a later pass, once the observation commits.
+            if let Some(calls) = advanced {
+                // Re-read the folded rounds (the Tool/ToolBatch fact just folded) and
+                // start the observation drain in the same pass (no wasted drain) —
+                // materializes the N observations; the advance to the next turn
+                // happens on a later pass, once EVERY observation commits (the
+                // back-pressure gate in `progress_tool_batch`).
                 let rounds: Vec<ReactRoundRecord> = projection
                     .react_rounds_of(&instance_id, &step_salt)
                     .cloned()
                     .collect();
-                progress_tool_round(
+                progress_tool_batch(
                     journal,
                     store,
                     projection,
@@ -3094,7 +3130,8 @@ fn drive_react_chain<J: Journal>(
                     anchor,
                     &rounds,
                     turn,
-                    &round,
+                    latest.turn_mote_id,
+                    &calls,
                     tool_registry,
                 )
             } else if rejected {
@@ -3124,44 +3161,96 @@ fn drive_react_chain<J: Journal>(
     }
 }
 
-/// The frozen `Tool` decision a settle pass is driving: which tool fires at
-/// which turn (from the durable branch fact) and the proposing turn's Mote id
-/// (the observation's Data parent + the source of its committed args).
-struct ToolRound {
-    tool_id: String,
-    tool_version: String,
-    turn_mote_id: MoteId,
+/// T-MULTI-ELEMENT-TOOLCALLS — the settle authority's branch decision for the
+/// decoded call list. This is the ONE decode/validate gate (PR-2d-2): resolve EACH
+/// proposed tool and validate its args against the typed `inputSchema` FAIL-CLOSED
+/// BEFORE freezing the irreversible branch, so a frozen `Tool`/`ToolBatch` fact
+/// GUARANTEES registered, schema-valid args (the lease-time re-derivation can then
+/// only fail on I/O). ALL-OR-NOTHING: any one call that fails resolution/validation
+/// freezes the WHOLE turn `Rejected` (one frozen branch/turn, no partial fire) — the
+/// next turn self-corrects under the budget (PR-3/A2). `[]` ⇒ `Answer`; one valid
+/// call ⇒ `Tool` (byte-identical to PR-2d-2); N≥2 valid calls ⇒ `ToolBatch` (fire all
+/// N), bounded by [`kx_journal::MAX_TOOL_BATCH_CALLS`] (a batch over the cap is a LOUD
+/// `Rejected`, never a silent truncation — BUG-27).
+fn settle_calls_to_branch(
+    calls: &[kx_toolcall::ToolCall],
+    tool_registry: &dyn ToolRegistry,
+) -> ReactBranch {
+    if calls.is_empty() {
+        // A normal completion IS the final answer (the harness two-fact contract).
+        return ReactBranch::Answer;
+    }
+    let mut validated: Vec<(String, String)> = Vec::with_capacity(calls.len());
+    for call in calls {
+        match tool_registry.lookup(&call.name, &call.version) {
+            None => {
+                return ReactBranch::Rejected {
+                    reason: crate::react_shape::bounded_reason(format!(
+                        "the proposed tool `{}@{}` is not granted to this run \
+                         or is no longer registered",
+                        call.name.0, call.version.0
+                    )),
+                };
+            }
+            Some(def) => {
+                if let Some(schema) = def.input_schema.as_ref() {
+                    if let Err(error) = kx_tool_registry::validate_args(schema, &call.args_bytes) {
+                        return ReactBranch::Rejected {
+                            reason: crate::react_shape::bounded_reason(format!(
+                                "the arguments for `{}@{}` do not match its \
+                                 inputSchema: {error}",
+                                call.name.0, call.version.0
+                            )),
+                        };
+                    }
+                }
+            }
+        }
+        validated.push((call.name.0.clone(), call.version.0.clone()));
+    }
+    if validated.len() == 1 {
+        // swap_remove(0) on a len-1 vec returns the sole element (no panic, no expect).
+        let (tool_id, tool_version) = validated.swap_remove(0);
+        ReactBranch::Tool {
+            tool_id,
+            tool_version,
+        }
+    } else if validated.len() > kx_journal::MAX_TOOL_BATCH_CALLS {
+        // A per-turn batch over the cap dead-letters loudly rather than firing a
+        // silent prefix (no silent cap; the journal could not encode it either).
+        ReactBranch::Rejected {
+            reason: crate::react_shape::bounded_reason(format!(
+                "the model proposed {} tool calls in one turn, exceeding the \
+                 per-turn batch cap of {}",
+                validated.len(),
+                kx_journal::MAX_TOOL_BATCH_CALLS
+            )),
+        }
+    } else {
+        ReactBranch::ToolBatch { calls: validated }
+    }
 }
 
-/// PR-2d-2 — drive ONE tool round past its frozen `Tool` fact: the OBSERVATION
-/// lifecycle. The observation Mote is a PURE function of the durable facts
-/// (`react_shape::build_react_tool` over the anchor's model + the branch's
-/// tool + the turn ids), so this function is idempotent across passes,
-/// crashes, and recovery — the frozen fact IS the durable marker.
+/// T-MULTI-ELEMENT-TOOLCALLS — drive a frozen tool decision past its OBSERVATION
+/// lifecycle: ONE observation for a `Tool` branch, N CALL-INDEXED observations for a
+/// `ToolBatch`. Generalizes PR-2d-2's single-observation drain with BACK-PRESSURE —
+/// the chain advances to the next (re-prompted) turn ONLY once EVERY observation has
+/// committed, so the model is re-prompted ONCE with all N results in its trajectory.
 ///
-/// - **not yet committed** ⇒ (re-)materialize it (idempotent) and stay
-///   `Active`: the ready-set releases it (its parent turn is committed by
-///   construction — the settle only freezes `Tool` on a committed turn), the
-///   worker leases it WITH the coordinator-validated args
-///   (`resolve_tool_args`), fires through the broker's warrant gate, and
-///   commits the staged result.
-/// - **Committed** ⇒ the observation is the trajectory's next entry (the F-7
-///   react interleave serves it) — advance to the next turn under the budget
-///   gate (the harness order: fire the tool, THEN bound the loop,
-///   `react.rs:334-341`).
-/// - **Failed, crash flavor** (`failure_reason` unrecorded ⇒ a pre-commit
-///   `WorkerCrashed`/`TimedOut` reap) ⇒ stay `Active` — the reaped worker's
-///   late commit may still land (the fold lets a later `Committed` win), and a
-///   genuinely dead worker leaves the observation stuck-but-operator-
-///   recoverable (the standing non-PURE crash semantics) — never an
-///   auto-dead-letter (the PR-2d-1 adversarial-review flavor guard, mirrored).
-/// - **Failed, terminal flavor** (an F4 `ReportFailure` dead-letter — e.g. the
-///   MCP tool returned an error / did not resolve) — or a repudiation/anomaly —
-///   ⇒ freeze a same-turn `DeadLettered` fact and settle: the harness
-///   fail-closed stop ("tool dispatch did not commit", `react.rs:326-332`); a
-///   non-existent observation is never fed into a next turn's assemble.
+/// Each observation Mote is a PURE function of the durable facts
+/// (`react_shape::build_chain_tool` over the anchor's model + the call's tool + the
+/// turn ids + its `call_index`), so this is idempotent across passes, crashes, and
+/// recovery — the frozen branch fact + the call-indexed id IS the durable cursor (no
+/// separate cursor field). Within a batch the observations are independent WM Motes
+/// that the ready-set releases together (their parent turn is committed by
+/// construction) and that workers may execute concurrently; the back-pressure gate is
+/// purely the "all committed" read. Per observation, the state handling is the
+/// PR-2d-2 single-call logic, looped: Committed ⇒ count it; Failed (crash flavor) ⇒
+/// stay `Active`; Failed (terminal) / anomaly ⇒ freeze same-turn `DeadLettered` (one
+/// hard-failed call kills the chain — the harness fail-closed stop); not-yet-committed
+/// ⇒ (re-)materialize idempotently (the BUG-27 permanent-arg guard first).
 #[allow(clippy::too_many_arguments)]
-fn progress_tool_round<J: Journal>(
+fn progress_tool_batch<J: Journal>(
     journal: &J,
     store: &LocalFsContentStore,
     projection: &mut Projection,
@@ -3170,20 +3259,110 @@ fn progress_tool_round<J: Journal>(
     anchor: &ReactRoundRecord,
     rounds: &[ReactRoundRecord],
     turn: u32,
-    round: &ToolRound,
+    turn_mote_id: MoteId,
+    calls: &[(String, String)],
     tool_registry: &dyn ToolRegistry,
 ) -> ReactChainStatus {
-    let obs = crate::react_shape::build_chain_tool(
-        &ModelId(anchor.model_id.clone()),
-        &ToolName(round.tool_id.clone()),
-        &ToolVersion(round.tool_version.clone()),
-        turn,
-        &anchor.instance_id,
-        anchor.step_salt,
-        round.turn_mote_id,
-    );
-    let obs_state = projection.state_of(&obs.id);
-    if obs_state == MoteState::Committed {
+    // The chain warrant — load once for the whole batch (store fault ⇒ retry next pass).
+    let Ok(warrant_bytes) = store.get(&anchor.warrant_ref) else {
+        return ReactChainStatus::Active;
+    };
+    let Ok(warrant) = decode_warrant(warrant_bytes.as_ref()) else {
+        return ReactChainStatus::Active;
+    };
+    let mut all_committed = true;
+    for (i, (tool_id, tool_version)) in calls.iter().enumerate() {
+        let call_index = u32::try_from(i).unwrap_or(u32::MAX);
+        let obs = crate::react_shape::build_chain_tool(
+            &ModelId(anchor.model_id.clone()),
+            &ToolName(tool_id.clone()),
+            &ToolVersion(tool_version.clone()),
+            turn,
+            &anchor.instance_id,
+            anchor.step_salt,
+            call_index,
+            turn_mote_id,
+        );
+        let obs_state = projection.state_of(&obs.id);
+        if obs_state == MoteState::Committed {
+            continue; // this call's observation has landed — keep checking the rest
+        }
+        if is_terminal(obs_state) {
+            // The flavor guard, line-for-line the turn arm's: only a recorded
+            // TERMINAL failure reason (or a non-Failed anomaly) kills the chain.
+            let crash_retryable = obs_state == MoteState::Failed
+                && projection
+                    .failure_reason_of(&obs.id)
+                    .is_none_or(kx_journal::is_pre_commit_crash);
+            if crash_retryable {
+                return ReactChainStatus::Active;
+            }
+            // One hard-failed call dead-letters the WHOLE chain (a batch with a
+            // non-existent observation is never fed into a next turn's assemble).
+            append_react_branch(
+                journal,
+                projection,
+                folded_through,
+                anchor,
+                turn_mote_id,
+                turn,
+                ReactBranch::DeadLettered,
+            );
+            return ReactChainStatus::Settled;
+        }
+        // Pending / Scheduled / never-materialized ⇒ (re-)materialize idempotently.
+        // PR-9a (BUG-27): an observation whose args can never resolve (the granted
+        // tool was DEREGISTERED / re-schema'd since the branch froze) would otherwise
+        // re-materialize forever — re-derive on the sole writer and dead-letter on a
+        // PERMANENT fault. `resolve_tool_args` self-recovers THIS observation's
+        // call_index from the frozen branch fact, so the right call's args are checked.
+        if !dispatch.tracker.is_leased(obs.id) {
+            if let ArgResolution::Permanent { reason } =
+                resolve_tool_args(&obs, &warrant, projection, Some(store), tool_registry)
+            {
+                tracing::warn!(
+                    turn,
+                    call_index,
+                    observation = ?obs.id,
+                    tool = %tool_id,
+                    %reason,
+                    "react observation can never resolve its args — dead-lettering the chain (BUG-27)"
+                );
+                append_react_branch(
+                    journal,
+                    projection,
+                    folded_through,
+                    anchor,
+                    turn_mote_id,
+                    turn,
+                    ReactBranch::DeadLettered,
+                );
+                dispatch.submitted.remove(&obs.id);
+                dispatch.defs.remove(&obs.id);
+                dispatch.tracker.resolve_committed(obs.id);
+                return ReactChainStatus::Settled;
+            }
+        }
+        materialize_react_tool(
+            projection,
+            dispatch,
+            Some(store),
+            &obs,
+            anchor.warrant_ref,
+            warrant.clone(),
+        );
+        tracing::info!(
+            turn,
+            call_index,
+            observation = ?obs.id,
+            tool = %tool_id,
+            "react observation materialized"
+        );
+        all_committed = false;
+    }
+    if all_committed {
+        // BACK-PRESSURE: every observation in the batch has committed ⇒ advance to
+        // the next turn under the budget gate (re-prompt ONCE with all N results).
         return advance_react_chain(
             journal,
             store,
@@ -3195,89 +3374,6 @@ fn progress_tool_round<J: Journal>(
             turn,
         );
     }
-    if is_terminal(obs_state) {
-        // The flavor guard, line-for-line the turn arm's: only a recorded
-        // TERMINAL failure reason (or a non-Failed anomaly) kills the chain.
-        let crash_retryable = obs_state == MoteState::Failed
-            && projection
-                .failure_reason_of(&obs.id)
-                .is_none_or(kx_journal::is_pre_commit_crash);
-        if crash_retryable {
-            return ReactChainStatus::Active;
-        }
-        append_react_branch(
-            journal,
-            projection,
-            folded_through,
-            anchor,
-            round.turn_mote_id,
-            turn,
-            ReactBranch::DeadLettered,
-        );
-        return ReactChainStatus::Settled;
-    }
-    // Pending / Scheduled (including never-materialized — a fresh decision, a
-    // crash before materialization, or a restart that emptied dispatch.defs):
-    // (re-)materialize, idempotently, and wait for the commit.
-    let Ok(warrant_bytes) = store.get(&anchor.warrant_ref) else {
-        return ReactChainStatus::Active; // store fault — retry next pass
-    };
-    let Ok(warrant) = decode_warrant(warrant_bytes.as_ref()) else {
-        return ReactChainStatus::Active;
-    };
-    // PR-9a (BUG-27): an observation materialized but UNLEASEABLE — its args can no
-    // longer resolve because the granted tool was DEREGISTERED / re-schema'd since
-    // the `Tool` branch froze — would otherwise be skipped by the lease arm on
-    // every poll and re-materialized here FOREVER (a silent infinite-Active wedge).
-    // Re-derive on the sole-writer thread; on a PERMANENT fault, dead-letter the
-    // chain instead of wedging. Guarded by `!is_leased`: an observation a worker is
-    // already executing is left to its normal commit/fail lifecycle (no race with a
-    // worker about to commit — the broker capability is separate from this registry
-    // lookup); a TRANSIENT fault falls through to (re-)materialize + retry.
-    if !dispatch.tracker.is_leased(obs.id) {
-        if let ArgResolution::Permanent { reason } =
-            resolve_tool_args(&obs, &warrant, projection, Some(store), tool_registry)
-        {
-            tracing::warn!(
-                turn,
-                observation = ?obs.id,
-                tool = %round.tool_id,
-                %reason,
-                "react observation can never resolve its args — dead-lettering the chain (BUG-27)"
-            );
-            append_react_branch(
-                journal,
-                projection,
-                folded_through,
-                anchor,
-                round.turn_mote_id,
-                turn,
-                ReactBranch::DeadLettered,
-            );
-            // Retire the orphaned (never-leased) observation so it leaves the
-            // ready-set — mirror `dead_letter_failure`'s dispatch cleanup. The
-            // observation is never journaled, so a restart simply does not re-create
-            // it; the durable terminal is the `DeadLettered` chain branch.
-            dispatch.submitted.remove(&obs.id);
-            dispatch.defs.remove(&obs.id);
-            dispatch.tracker.resolve_committed(obs.id);
-            return ReactChainStatus::Settled;
-        }
-    }
-    materialize_react_tool(
-        projection,
-        dispatch,
-        Some(store),
-        &obs,
-        anchor.warrant_ref,
-        warrant,
-    );
-    tracing::info!(
-        turn,
-        observation = ?obs.id,
-        tool = %round.tool_id,
-        "react observation materialized"
-    );
     ReactChainStatus::Active
 }
 
@@ -3356,22 +3452,24 @@ fn advance_react_chain<J: Journal>(
     if rounds.iter().any(|r| r.turn == turn + 1) {
         return ReactChainStatus::Active;
     }
-    // FOLD-RE-DERIVED counters (BLOCKER #4): tool_calls = the Tool-branch facts
-    // PLUS the Rejected facts (PR-3/A2: a refused proposal is a spent tool-call
-    // attempt, so a model that only ever emits bad calls is bounded by
-    // `max_tool_calls` exactly like one that fires real tools) recorded so far
-    // (this turn's included — it folded before this call); turns_used = turns
-    // 0..=turn ran. Then the harness gate, line-for-line.
+    // FOLD-RE-DERIVED counters (BLOCKER #4): tool_calls = the per-call total across
+    // the recorded branches — each `Tool` fact is ONE call, each `Rejected` fact is
+    // one spent attempt (PR-3/A2: a model that only ever emits bad calls is bounded by
+    // `max_tool_calls` exactly like one that fires real tools), and a `ToolBatch` fact
+    // is ALL N of its calls (T-MULTI-ELEMENT-TOOLCALLS: each fired call counts against
+    // the budget — fire-all + back-pressure means a batch is bounded by the per-turn
+    // cap, and the chain dead-letters loudly once the cumulative total reaches the
+    // ceiling). This turn's branch is included (it folded before this call);
+    // turns_used = turns 0..=turn ran (a batch is ONE model turn). Then the harness gate.
     let tool_calls = u32::try_from(
         rounds
             .iter()
-            .filter(|r| {
-                matches!(
-                    r.branch,
-                    ReactBranch::Tool { .. } | ReactBranch::Rejected { .. }
-                )
+            .map(|r| match &r.branch {
+                ReactBranch::Tool { .. } | ReactBranch::Rejected { .. } => 1,
+                ReactBranch::ToolBatch { calls } => calls.len(),
+                _ => 0,
             })
-            .count(),
+            .sum::<usize>(),
     )
     .unwrap_or(u32::MAX);
     let turns_used = turn.saturating_add(1);
@@ -3409,7 +3507,11 @@ fn advance_react_chain<J: Journal>(
             Some(ReactBranch::Rejected { .. }) => prev_reject
                 .as_ref()
                 .map(|(id, reason)| (*id, Some(reason.as_str()))),
-            Some(ReactBranch::Tool { .. }) => prev_round.map(|r| (r.turn_mote_id, None)),
+            // A `Tool` OR `ToolBatch` tail that exhausted the budget without ever
+            // answering dead-letters identically (T-MULTI-ELEMENT-TOOLCALLS).
+            Some(ReactBranch::Tool { .. } | ReactBranch::ToolBatch { .. }) => {
+                prev_round.map(|r| (r.turn_mote_id, None))
+            }
             _ => None,
         };
         if let Some((turn_mote_id, reason)) = dead_letter_tail {
@@ -4487,6 +4589,7 @@ mod agentic_launch_disjointness_tests {
             &ToolVersion("1".into()),
             0,
             &INSTANCE,
+            0,
             parent,
         );
         let agentic = crate::react_shape::build_agentic_tool(
@@ -4496,6 +4599,7 @@ mod agentic_launch_disjointness_tests {
             0,
             &INSTANCE,
             &STEP_SALT,
+            0,
             parent,
         );
         assert!(!is_agentic_launch(&run));

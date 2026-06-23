@@ -644,6 +644,14 @@ message ReactTurnSummary {
   // chain on serve's shared journal. Additive (D120.6): old client ignores it; a new
   // client reads "" from an old server.
   bytes step_salt = 12;                  // 32B chain key; EMPTY for a legacy run-level chain
+  // T-MULTI-ELEMENT-TOOLCALLS (additive): when a model emits N>1 tool calls in ONE
+  // turn (a ToolBatch), the gateway FANS that one durable fact into N "tool" rows —
+  // one per call — sharing this turn's turn/turn_mote_id/seq and distinguished by
+  // call_index (0..N-1, in emission order). A single-call turn and every non-tool
+  // branch carry call_index 0. Lets a client render the full multi-tool trajectory
+  // (turn N.0, N.1, …). Additive (D120.6): an old client ignores it (sees N correctly-
+  // typed "tool" rows); a new client reads 0 from an old server.
+  uint32 call_index = 13;                // 0 for a single-call turn; 0..N-1 for a ToolBatch turn's N calls
 }
 message ListReactTurnsResponse {
   repeated ReactTurnSummary turns = 1;   // newest-first (descending seq)
@@ -1499,6 +1507,12 @@ message GetServerInfoResponse {
   bool   feature_console   = 17;  // embedded console available
   bool   feature_vision    = 18;  // the serve model is image-capable
   bool   audit_log_enabled = 19;  // a JSONL operator audit log is configured
+  // T-MULTI-ELEMENT-TOOLCALLS (additive): the server's DEFAULT agentic budget (also the
+  // hard ceilings). A turn may fire several tools at once, so the two caps are
+  // independent. Read-only display; a run overrides them per-invocation. Additive
+  // (D120.6): an old client ignores them; a new client reads 0 from an old server.
+  uint32 react_max_turns      = 20;  // default/ceiling model-turn budget (8)
+  uint32 react_max_tool_calls = 21;  // default/ceiling total tool-call budget (20)
 }
 
 service KxGateway {

@@ -2325,10 +2325,11 @@ fn vision_handle() -> Result<AssetPath, GatewayError> {
 }
 
 /// The react recipe's free-param contract (PR-2d-2): `instruction` (`Str`) plus
-/// the per-run budget caps `max_turns` / `max_tool_calls` (`Int`, 1..=8). The
+/// the per-run budget caps `max_turns` (`Int`, 1..=8) / `max_tool_calls` (`Int`,
+/// 1..=20 — DECOUPLED at T-MULTI-ELEMENT-TOOLCALLS: a turn can fire N tools). The
 /// slot names ARE the seed's config keys (the binder writes a bound arg into
-/// `config_subset[<slot name>]`), which the coordinator's seed-swap reads —
-/// and re-validates `0 < max_tool_calls < max_turns ≤ 8` fail-closed.
+/// `config_subset[<slot name>]`), which the coordinator's seed-swap reads — and
+/// re-validates `0 < max_turns ≤ 8` AND `0 < max_tool_calls ≤ 20` fail-closed.
 fn react_contract() -> FreeParamContract {
     FreeParamContract::new()
         .with_slot(
@@ -2368,14 +2369,20 @@ impl SchemaResolver for DemoSchemaResolver {
             || *schema_ref == REACT_INSTRUCTION_SCHEMA_REF
         {
             Some(encode_param_schema(&ParamType::Str { max_len: 8192 }))
-        } else if *schema_ref == REACT_MAX_TURNS_SCHEMA_REF
-            || *schema_ref == REACT_MAX_TOOL_CALLS_SCHEMA_REF
-        {
-            // The hard ceiling 8 matches the coordinator's seed-swap validation
+        } else if *schema_ref == REACT_MAX_TURNS_SCHEMA_REF {
+            // The model-turn ceiling 8 matches the coordinator's seed-swap validation
             // (`react_seed_params`) — the form refuses what the swap would refuse.
             Some(encode_param_schema(&ParamType::Int {
                 min: Some(1),
-                max: Some(8),
+                max: Some(i64::from(kx_coordinator::REACT_MAX_TURNS)),
+            }))
+        } else if *schema_ref == REACT_MAX_TOOL_CALLS_SCHEMA_REF {
+            // T-MULTI-ELEMENT-TOOLCALLS: the tool-call ceiling (20) is DECOUPLED from
+            // max_turns — a single turn can fire N tools, so the total tool-call budget
+            // legitimately exceeds the model-turn budget. Matches the coordinator.
+            Some(encode_param_schema(&ParamType::Int {
+                min: Some(1),
+                max: Some(i64::from(kx_coordinator::REACT_MAX_TOOL_CALLS)),
             }))
         } else if *schema_ref == VISION_IMAGE_SCHEMA_REF {
             // A 32-byte content ref as 64 hex chars (the JSON value is a string).
@@ -2941,11 +2948,12 @@ fn agentic_step_warrant(
 }
 
 /// PR-9b-2b: validate a deterministic-agentic step's declared budget AT AUTHORING
-/// (fail fast) — the same `0 < max_tool_calls < max_turns ≤ 8` gate the coordinator
-/// enforces durably at anchor (`react_seed_params`) + the SDK enforces at lowering.
-/// The caps ride `params` as canonical-JSON `u32` under the react budget keys; an
-/// absent cap defaults (8 turns / 6 tool-calls — the coordinator `react_shape`
-/// constants), an explicit malformed/out-of-range cap is refused.
+/// (fail fast) — the same DECOUPLED gate the coordinator enforces durably at anchor
+/// (`react_seed_params`) + the SDK enforces at lowering. T-MULTI-ELEMENT-TOOLCALLS:
+/// the caps are INDEPENDENT (a turn can fire N tools): `0 < max_turns ≤ 8` AND
+/// `0 < max_tool_calls ≤ 20`. The caps ride `params` as canonical-JSON `u32` under the
+/// react budget keys; an absent cap defaults (8 turns / 20 tool-calls — the coordinator
+/// `react_shape` constants), an explicit malformed/out-of-range cap is refused.
 fn validate_agentic_budget(s: &AuthorStep) -> Result<(), BinderError> {
     let parse = |key: &str, default: u32| -> Result<u32, BinderError> {
         match s.params.get(key) {
@@ -2957,11 +2965,21 @@ fn validate_agentic_budget(s: &AuthorStep) -> Result<(), BinderError> {
             }),
         }
     };
-    let max_turns = parse(kx_mote::REACT_MAX_TURNS_KEY, 8)?;
-    let max_tool_calls = parse(kx_mote::REACT_MAX_TOOL_CALLS_KEY, 6)?;
-    if max_tool_calls == 0 || max_tool_calls >= max_turns || max_turns > 8 {
+    let max_turns = parse(
+        kx_mote::REACT_MAX_TURNS_KEY,
+        kx_coordinator::REACT_MAX_TURNS,
+    )?;
+    let max_tool_calls = parse(
+        kx_mote::REACT_MAX_TOOL_CALLS_KEY,
+        kx_coordinator::REACT_DEFAULT_MAX_TOOL_CALLS,
+    )?;
+    if max_turns == 0
+        || max_turns > kx_coordinator::REACT_MAX_TURNS
+        || max_tool_calls == 0
+        || max_tool_calls > kx_coordinator::REACT_MAX_TOOL_CALLS
+    {
         return Err(BinderError::InvalidArgs(
-            "agentic budget must satisfy 0 < max_tool_calls < max_turns <= 8".into(),
+            "agentic budget must satisfy 0 < max_turns <= 8 AND 0 < max_tool_calls <= 20".into(),
         ));
     }
     Ok(())
@@ -3059,6 +3077,38 @@ fn demo_warrant(exec_class: ExecutorClass) -> WarrantSpec {
 mod tests {
     use super::*;
     use kx_catalog::{InMemoryCatalog, RecipeSnapshot, SignatureEntry, TaskSignature};
+
+    /// T-MULTI-ELEMENT-TOOLCALLS: the react free-param schemas DECOUPLE the two caps —
+    /// `max_turns` is `Int 1..=8`, `max_tool_calls` is `Int 1..=20` (a turn can fire N
+    /// tools). The live campaign caught a regression where both resolved to `1..=8`,
+    /// so a `--max-tool-calls 20` agent run was refused `OutOfRange` at binding.
+    #[test]
+    fn react_cap_free_param_schemas_are_decoupled() {
+        let resolver = DemoSchemaResolver { serve_model: None };
+        let turns = resolver
+            .resolve_schema(&REACT_MAX_TURNS_SCHEMA_REF)
+            .expect("max_turns schema resolves");
+        let tool_calls = resolver
+            .resolve_schema(&REACT_MAX_TOOL_CALLS_SCHEMA_REF)
+            .expect("max_tool_calls schema resolves");
+        // max_turns admits up to REACT_MAX_TURNS (8) — and NOT 20.
+        assert_eq!(
+            turns,
+            encode_param_schema(&ParamType::Int {
+                min: Some(1),
+                max: Some(i64::from(kx_coordinator::REACT_MAX_TURNS)),
+            })
+        );
+        // max_tool_calls admits up to REACT_MAX_TOOL_CALLS (20) — the decoupled ceiling.
+        assert_eq!(
+            tool_calls,
+            encode_param_schema(&ParamType::Int {
+                min: Some(1),
+                max: Some(i64::from(kx_coordinator::REACT_MAX_TOOL_CALLS)),
+            })
+        );
+        assert_ne!(turns, tool_calls, "the two caps no longer share one schema");
+    }
 
     /// Build a minimal, valid `SignatureEntry` for `fingerprint` (a distinct
     /// fingerprint → a distinct task signature → a distinct id).

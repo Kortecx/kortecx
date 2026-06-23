@@ -354,6 +354,30 @@ refused on a version mismatch.
   for the server to validate) — preventing a malicious schema from driving an
   SSRF/fetch or a deep-recursion DoS.
 
+### Parallel tool calls (multi-element tool-calling)
+
+When a model emits **more than one tool call in a single response** — an OpenAI
+`{"tool_calls":[…]}` array, or repeated native/marked segments (Gemma
+`<|tool_call>…`, Llama `<|python_tag|>`, Qwen `<tool_call>…</tool_call>`) — the
+runtime fires **all of them**, in order, **never a silent first-element cap**:
+
+- The turn freezes **one durable decision** carrying every call (each call is
+  grant-checked and schema-validated up front — all-or-nothing; one bad call refuses
+  the whole turn so the model self-corrects under the budget).
+- Each call fires its **own observation**, distinguished by a `call_index` (so the
+  same tool called twice resolves to its own arguments).
+- **Back-pressure:** the model is re-prompted **once**, only after *every* call's
+  observation has committed — so the next turn sees all results together.
+- Each fired call counts against `max_tool_calls`. With parallel calls the two caps
+  are **independent** — a turn can fire several tools, so the total tool-call budget
+  (default **20**) is decoupled from the model-turn budget (default 8). Override per
+  run with `kx agent run --max-tool-calls N` / the SDK `max_tool_calls` param; the
+  resolved server defaults show in the **Settings → Workspace** card and `kx info`.
+
+Every surface renders the full multi-tool trajectory: `kx agent run` prints
+`turn N.0` / `turn N.1`, the SDK `AgentResult.actions` lists every call (with its
+`call_index`), and the console's ReAct trajectory shows each tool chip at the turn.
+
 ### What's still coming
 
 OAuth / device-flow setup and a hosted credential marketplace are a **Cloud**
@@ -362,6 +386,5 @@ capability (the OSS console shows them as an honest-disabled affordance). The
 from an authored DAG, across Python / TypeScript / CLI / the console builder). The
 autonomous ReAct loop's **auto-grant** of dialed tools (the model auto-picking from
 the live dialed set) lands in the next batch (it rebuilds the react warrant live
-from the registry). **Parallel tool fan-out** (N concurrent tool calls per turn)
-arrives with the embeddable agent-runner. (Branched write-back over the
-content-addressed store is the D155 post-RC epic.)
+from the registry). (Branched write-back over the content-addressed store is the
+D155 post-RC epic.)

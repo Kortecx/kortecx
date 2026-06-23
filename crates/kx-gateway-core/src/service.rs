@@ -1925,6 +1925,8 @@ impl KxGateway for GatewayService {
             feature_console: facts.feature_console,
             feature_vision: facts.feature_vision,
             audit_log_enabled: facts.audit_log_enabled,
+            react_max_turns: facts.react_max_turns,
+            react_max_tool_calls: facts.react_max_tool_calls,
         }))
     }
 

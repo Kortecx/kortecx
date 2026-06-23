@@ -35,6 +35,11 @@ server configuration. Every field traces to the gateway's resolved configuration
   `inference`, `console`, `vision`).
 - **Audit** — whether an audit log is configured (see
   [Security → audit trail](./security.md#audit-trail)).
+- **Agentic budget** — the server's default `max_turns` and `max_tool_calls` for a
+  react/agent run (also the hard ceilings). A single turn can fire
+  [several tools at once](./tools.md#parallel-tool-calls-multi-element-tool-calling),
+  so the two caps are independent. A run overrides them per-invocation
+  (`kx agent run --max-tool-calls N` / the SDK `max_tool_calls` param).
 
 ## CLI
 

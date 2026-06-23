@@ -97,8 +97,14 @@ pub fn migrate_entry(
     // double-append its `idempotency_class` byte). `from_version` is guaranteed in
     // [MIN_SUPPORTED, CURRENT] by the guard above.
     match from_version {
-        // v12 (current): no transform, the single source of truth for decode.
+        // v13 (current): no transform, the single source of truth for decode.
         JOURNAL_SCHEMA_VERSION => Ok(decode_entry_with_def_hash(bytes, def_hash)?),
+        // v12 → v13: a PURE pass-through. The lone v12→v13 delta is the brand-new
+        // `ReactBranch::ToolBatch` (branch tag 5) — no v12 journal can contain a
+        // tag-5 `ReactRound` body (the exact v9→v10 `Rejected`=4 precedent) — so
+        // every existing kind/tag is byte-identical and v12 bytes decode correctly
+        // under v13 unchanged.
+        12 => Ok(decode_entry_with_def_hash(bytes, def_hash)?),
         // v11 → v12: a PURE pass-through. The lone v11→v12 delta is the trailing
         // `context_items_ref` presence byte on a `ReactRound` (kind 9) body; a v11
         // body lacks it, and the canonical decoder up-converts a byte-absent body to

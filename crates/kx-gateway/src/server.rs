@@ -1122,6 +1122,10 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
             feature_console: cfg!(feature = "console"),
             feature_vision,
             audit_log_enabled: cfg.audit_log.is_some(),
+            // T-MULTI-ELEMENT-TOOLCALLS: the resolved server agentic-budget defaults
+            // (also the hard ceilings) — a run overrides them per-invocation.
+            react_max_turns: kx_coordinator::REACT_MAX_TURNS,
+            react_max_tool_calls: kx_coordinator::REACT_DEFAULT_MAX_TOOL_CALLS,
         }
     };
     // Batch A: the content WRITE seam shares the same store Arc the read seam

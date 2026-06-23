@@ -27,10 +27,15 @@ export interface ReactTurnVM {
   readonly maxTurns: number;
   /** PR-3 (A2): the fail-closed reason a `rejected` turn re-prompts over; "" otherwise. */
   readonly rejectionReason: string;
+  /** T-MULTI-ELEMENT-TOOLCALLS: when a turn fires N tools at once, the gateway fans it
+   *  into N `tool` rows sharing `turn`, distinguished by `callIndex` (0..N-1). 0 for a
+   *  single call + every non-tool branch. */
+  readonly callIndex: number;
 }
 
 export interface ReactProgress {
-  /** All turns, ascending by turn number (newest fact wins per turn). */
+  /** All turn rows, ordered by `(turn, callIndex)` (newest fact wins per row). A
+   *  multi-tool turn contributes several rows (one per call). */
   readonly turns: ReactTurnVM[];
   /** The settled terminal turn (`answer` / `dead_lettered`), once one exists. */
   readonly terminal: ReactTurnVM | null;
@@ -38,14 +43,18 @@ export interface ReactProgress {
 
 function toProgress(turns: ReactTurnVM[]): ReactProgress {
   // The wire is newest-first and a turn's branch is re-announced as it settles
-  // (pending → answer/tool); keep the NEWEST fact per turn number.
-  const byTurn = new Map<number, ReactTurnVM>();
+  // (pending → answer/tool); a multi-tool turn fans into N `tool` rows sharing the
+  // turn number, distinguished by callIndex. Key on `(turn, callIndex)` so all N tool
+  // rows survive (NOT just one) and the newest fact per row wins — the settled Tool
+  // rows (higher seq, newest-first) supersede the same-turn Pending at callIndex 0.
+  const byRow = new Map<string, ReactTurnVM>();
   for (const t of turns) {
-    if (!byTurn.has(t.turn)) {
-      byTurn.set(t.turn, t);
+    const key = `${t.turn}:${t.callIndex}`;
+    if (!byRow.has(key)) {
+      byRow.set(key, t);
     }
   }
-  const ordered = [...byTurn.values()].sort((a, b) => a.turn - b.turn);
+  const ordered = [...byRow.values()].sort((a, b) => a.turn - b.turn || a.callIndex - b.callIndex);
   const terminal =
     ordered.find((t) => t.branch === "answer" || t.branch === "dead_lettered") ?? null;
   return { turns: ordered, terminal };
@@ -77,6 +86,7 @@ export function useReactProgress(instanceId: string | undefined, chainSalt?: str
           turnMoteId: t.turnMoteId,
           maxTurns: t.maxTurns,
           rejectionReason: t.rejectionReason,
+          callIndex: t.callIndex,
         })),
       );
     },

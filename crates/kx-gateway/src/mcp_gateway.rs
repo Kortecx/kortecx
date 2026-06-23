@@ -198,7 +198,16 @@ fn map_err(e: GatewayError) -> McpAdminError {
     match e {
         GatewayError::HostRejected(d) => McpAdminError::HostRejected(d),
         GatewayError::InvalidSpec(d) => McpAdminError::InvalidArgument(d),
-        GatewayError::Dial(d) => McpAdminError::Dial(d),
+        // T-CONN: surface the reachability FLAVOR in the detail so a client gets a
+        // consistent transient-vs-permanent verdict across add/test/discover.
+        GatewayError::Dial { reason, transient } => McpAdminError::Dial(format!(
+            "{reason} ({})",
+            if transient {
+                "transient — the server may be down; retry"
+            } else {
+                "permanent — the server is incompatible or misconfigured; check the spec"
+            }
+        )),
         GatewayError::RateLimited(d) => McpAdminError::RateLimited(d),
         GatewayError::NotFound(d) => McpAdminError::NotFound(d),
         GatewayError::Storage(d) => McpAdminError::Storage(d),

@@ -23,8 +23,10 @@ if TYPE_CHECKING:
     from .run import AsyncRun, Result, Run
 
 #: The recipe's anchored bounded-loop budget (mirrors Agent + the UI's planReactArgs).
+#: T-MULTI-ELEMENT-TOOLCALLS: the tool-call cap rose 6 → 20 (decoupled from max_turns —
+#: a turn can fire N tools); overridable per call via ``max_tool_calls``.
 _DEFAULT_MAX_TURNS = 8
-_DEFAULT_MAX_TOOL_CALLS = 6
+_DEFAULT_MAX_TOOL_CALLS = 20
 
 
 def _fold_inputs(goal: str, inputs: Optional[Mapping[str, str]]) -> str:
@@ -35,11 +37,15 @@ def _fold_inputs(goal: str, inputs: Optional[Mapping[str, str]]) -> str:
     return f"{goal}\n\nInputs:\n{lines}"
 
 
-def _args(goal: str, inputs: Optional[Mapping[str, str]]) -> dict:
+def _args(
+    goal: str,
+    inputs: Optional[Mapping[str, str]],
+    max_tool_calls: int = _DEFAULT_MAX_TOOL_CALLS,
+) -> dict:
     return {
         "instruction": _fold_inputs(goal, inputs),
         "max_turns": _DEFAULT_MAX_TURNS,
-        "max_tool_calls": _DEFAULT_MAX_TOOL_CALLS,
+        "max_tool_calls": max_tool_calls,
     }
 
 
@@ -48,6 +54,7 @@ def run_agent(
     *,
     context: Optional[Sequence[str]] = None,
     inputs: Optional[Mapping[str, str]] = None,
+    max_tool_calls: int = _DEFAULT_MAX_TOOL_CALLS,
     wait: bool = True,
     timeout: float = 120.0,
     client: "Optional[KxClient]" = None,
@@ -55,9 +62,10 @@ def run_agent(
     """Complete ``goal`` agentically and return an :class:`~kortecx.agent_result.AgentResult`
     (the final answer + the audited tool actions). ``context`` = published
     context-bundle handles (PR-7) the server resolves + injects; ``inputs`` fold into
-    the prompt. With ``wait=False`` returns the started :class:`~kortecx.run.Run`
-    (assemble the result later via ``ListReactTurns``). Uses the process-wide default
-    client unless one is passed.
+    the prompt. ``max_tool_calls`` bounds the chain's total tool calls (default 20,
+    ceiling 20; a turn may fire several at once — T-MULTI-ELEMENT-TOOLCALLS). With
+    ``wait=False`` returns the started :class:`~kortecx.run.Run` (assemble the result
+    later via ``ListReactTurns``). Uses the process-wide default client unless one is passed.
 
     Raises :class:`~kortecx.errors.KxRunFailed` if the chain dead-letters (terminal
     failure) and :class:`~kortecx.errors.KxWaitTimeout` if it does not settle in time —
@@ -65,7 +73,7 @@ def run_agent(
     from .defaults import default_client
 
     kx = client if client is not None else default_client()
-    args = _args(goal, inputs)
+    args = _args(goal, inputs, max_tool_calls)
     if not wait:
         return cast("Run", kx.invoke(REACT_RECIPE_HANDLE, args, context=context, wait=False))
     # invoke(wait=True) on a react handle always settles to a Result (never a Run).
@@ -91,12 +99,13 @@ async def run_agent_async(
     client: "AsyncKxClient",
     context: Optional[Sequence[str]] = None,
     inputs: Optional[Mapping[str, str]] = None,
+    max_tool_calls: int = _DEFAULT_MAX_TOOL_CALLS,
     wait: bool = True,
     timeout: float = 120.0,
 ) -> "Union[AgentResult, AsyncRun]":
     """Async mirror of :func:`run_agent`. Requires an explicit
     :class:`~kortecx.client.AsyncKxClient` (there is no async default singleton)."""
-    args = _args(goal, inputs)
+    args = _args(goal, inputs, max_tool_calls)
     if not wait:
         return cast(
             "AsyncRun",

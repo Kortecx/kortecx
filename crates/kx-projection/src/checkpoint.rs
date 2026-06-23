@@ -575,10 +575,11 @@ struct ReactRoundRecordDto {
 impl From<&State> for CheckpointState {
     fn from(state: &State) -> Self {
         // Destructure WITHOUT `..` — a new `State` field breaks this build.
-        // `react_index` / `react_turn_motes` are DERIVED views over
-        // `react_rounds` (PR-2d-2): deliberately NOT serialized — the load path
-        // re-derives them, so the checkpoint format (v4), `encode_state`, and
-        // the `state_content_digest` are byte-unchanged by their existence.
+        // `react_index` / `react_turn_motes` / `react_tool_round_of_turn` are
+        // DERIVED views over `react_rounds` (PR-2d-2 / T-MULTI-ELEMENT-TOOLCALLS):
+        // deliberately NOT serialized — the load path re-derives them, so the
+        // checkpoint format (v4), `encode_state`, and the `state_content_digest`
+        // are byte-unchanged by their existence.
         let State {
             motes,
             children,
@@ -589,6 +590,7 @@ impl From<&State> for CheckpointState {
             react_rounds,
             react_index: _,
             react_turn_motes: _,
+            react_tool_round_of_turn: _,
         } = state;
         Self {
             motes: motes
@@ -816,6 +818,7 @@ impl TryFrom<CheckpointState> for State {
                 .collect(),
             react_index: BTreeMap::new(),
             react_turn_motes: BTreeSet::new(),
+            react_tool_round_of_turn: BTreeMap::new(),
         };
         // PR-2d-2: RE-DERIVE the react index/turn-set from the deserialized
         // facts — the same shape the fold maintains incrementally, so both
@@ -827,12 +830,14 @@ impl TryFrom<CheckpointState> for State {
     }
 }
 
-/// Re-derive the PR-2d-2 react index + turn-set over an already-populated
-/// `react_rounds` (the checkpoint-load path; the fold path maintains them
-/// incrementally via `State::index_last_react_round`).
+/// Re-derive the PR-2d-2 react index + turn-set (+ the T-MULTI-ELEMENT-TOOLCALLS
+/// turn→tool-round map) over an already-populated `react_rounds` (the
+/// checkpoint-load path; the fold path maintains them incrementally via
+/// `State::index_last_react_round` — keep the two in lock-step).
 fn derive_react_index(state: &mut State) {
     state.react_index.clear();
     state.react_turn_motes.clear();
+    state.react_tool_round_of_turn.clear();
     for (idx, record) in state.react_rounds.iter().enumerate() {
         state
             .react_index
@@ -842,6 +847,14 @@ fn derive_react_index(state: &mut State) {
             .or_default()
             .push(idx);
         state.react_turn_motes.insert(record.turn_mote_id);
+        if matches!(
+            record.branch,
+            kx_journal::ReactBranch::Tool { .. } | kx_journal::ReactBranch::ToolBatch { .. }
+        ) {
+            state
+                .react_tool_round_of_turn
+                .insert(record.turn_mote_id, idx);
+        }
     }
 }
 

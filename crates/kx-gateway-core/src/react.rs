@@ -30,23 +30,59 @@ const MAX_PAGE: usize = 500;
 /// The page size when the request omits `limit`.
 const DEFAULT_PAGE: usize = 200;
 
-/// The closed wire vocabulary for a settled branch (frozen at append; mirrored
-/// in the proto doc-comment — a string, not an enum, so a future branch is
-/// additive on the wire).
-fn branch_wire(branch: &ReactBranch) -> (&'static str, String, String, String) {
+/// One wire row of a settled branch: `(branch_str, tool_id, tool_version, reason,
+/// call_index)`. The branch vocabulary is frozen at append + mirrored in the proto
+/// doc-comment — a string, not an enum, so a future branch is additive on the wire.
+struct BranchRow {
+    branch: &'static str,
+    tool_id: String,
+    tool_version: String,
+    reason: String,
+    call_index: u32,
+}
+
+/// The wire ROWS for a settled branch. Every branch is ONE row EXCEPT a `ToolBatch`,
+/// which FANS into N `"tool"` rows (one per call, call_index 0..N-1) so a client sees
+/// the full multi-tool trajectory (T-MULTI-ELEMENT-TOOLCALLS). A single-call `Tool`
+/// (and every non-tool branch) is one row with call_index 0 — byte-compatible with a
+/// pre-v13 server (the new field defaults to 0).
+fn branch_wire(branch: &ReactBranch) -> Vec<BranchRow> {
+    let one = |branch, tool_id: String, tool_version: String, reason: String| {
+        vec![BranchRow {
+            branch,
+            tool_id,
+            tool_version,
+            reason,
+            call_index: 0,
+        }]
+    };
     match branch {
-        ReactBranch::Answer => ("answer", String::new(), String::new(), String::new()),
+        ReactBranch::Answer => one("answer", String::new(), String::new(), String::new()),
         ReactBranch::Tool {
             tool_id,
             tool_version,
-        } => ("tool", tool_id.clone(), tool_version.clone(), String::new()),
+        } => one("tool", tool_id.clone(), tool_version.clone(), String::new()),
         // PR-3 (A2): a refused proposal the model re-prompts over — carry the
         // durable reason for operator troubleshooting (display only).
         ReactBranch::Rejected { reason } => {
-            ("rejected", String::new(), String::new(), reason.clone())
+            one("rejected", String::new(), String::new(), reason.clone())
         }
-        ReactBranch::DeadLettered => ("dead_lettered", String::new(), String::new(), String::new()),
-        ReactBranch::Pending => ("pending", String::new(), String::new(), String::new()),
+        ReactBranch::DeadLettered => {
+            one("dead_lettered", String::new(), String::new(), String::new())
+        }
+        ReactBranch::Pending => one("pending", String::new(), String::new(), String::new()),
+        // T-MULTI-ELEMENT-TOOLCALLS: N "tool" rows, call-indexed in emission order.
+        ReactBranch::ToolBatch { calls } => calls
+            .iter()
+            .enumerate()
+            .map(|(i, (tool_id, tool_version))| BranchRow {
+                branch: "tool",
+                tool_id: tool_id.clone(),
+                tool_version: tool_version.clone(),
+                reason: String::new(),
+                call_index: u32::try_from(i).unwrap_or(u32::MAX),
+            })
+            .collect(),
     }
 }
 
@@ -89,7 +125,7 @@ pub(crate) fn list_react_turns(
     let mut all: Vec<proto::ReactTurnSummary> = reader
         .read_entries_by_seq(0..head.saturating_add(1))
         .map_err(internal)?
-        .filter_map(|entry| match entry {
+        .flat_map(|entry| match entry {
             JournalEntry::ReactRound {
                 turn,
                 turn_mote_id,
@@ -104,27 +140,36 @@ pub(crate) fn list_react_turns(
             } if filter.is_none_or(|f| f == instance_id)
                 && chain_filter.is_none_or(|cf| cf == step_salt) =>
             {
-                let (branch_str, tool_id, tool_version, rejection_reason) = branch_wire(&branch);
-                Some(proto::ReactTurnSummary {
-                    turn,
-                    turn_mote_id: turn_mote_id.as_bytes().to_vec(),
-                    instance_id: instance_id.to_vec(),
-                    model_id,
-                    branch: branch_str.to_string(),
-                    tool_id,
-                    tool_version,
-                    max_turns,
-                    max_tool_calls,
-                    seq,
-                    rejection_reason,
-                    // PR-R1: the chain key (empty for a legacy run-level `None` chain).
-                    step_salt: step_salt.map(|s| s.to_vec()).unwrap_or_default(),
-                })
+                // One row per branch — EXCEPT a ToolBatch, which fans into N "tool"
+                // rows sharing this turn's coordinates (T-MULTI-ELEMENT-TOOLCALLS).
+                let step_salt_wire = step_salt.map(|s| s.to_vec()).unwrap_or_default();
+                branch_wire(&branch)
+                    .into_iter()
+                    .map(|row| proto::ReactTurnSummary {
+                        turn,
+                        turn_mote_id: turn_mote_id.as_bytes().to_vec(),
+                        instance_id: instance_id.to_vec(),
+                        model_id: model_id.clone(),
+                        branch: row.branch.to_string(),
+                        tool_id: row.tool_id,
+                        tool_version: row.tool_version,
+                        max_turns,
+                        max_tool_calls,
+                        seq,
+                        rejection_reason: row.reason,
+                        // PR-R1: the chain key (empty for a legacy run-level `None` chain).
+                        step_salt: step_salt_wire.clone(),
+                        // T-MULTI-ELEMENT-TOOLCALLS: 0 for one-row branches; 0..N-1 for a batch.
+                        call_index: row.call_index,
+                    })
+                    .collect::<Vec<_>>()
             }
-            _ => None,
+            _ => Vec::new(),
         })
         .collect();
-    all.reverse(); // newest-first (descending seq)
+    // Newest-first (descending seq); within one turn's fanned ToolBatch (the rows
+    // share one seq), ascending call_index so the trajectory reads left-to-right.
+    all.sort_by(|a, b| b.seq.cmp(&a.seq).then(a.call_index.cmp(&b.call_index)));
 
     let page = limit.map_or(DEFAULT_PAGE, |l| (l as usize).clamp(1, MAX_PAGE));
     let has_more = all.len() > page;
@@ -246,6 +291,51 @@ mod tests {
         // Strictly descending seq.
         assert!(resp.turns[0].seq > resp.turns[1].seq);
         assert!(resp.turns[1].seq > resp.turns[2].seq);
+        // A single-call Tool / non-tool branch carries call_index 0 (default).
+        assert!(resp.turns.iter().all(|t| t.call_index == 0));
+    }
+
+    #[test]
+    fn tool_batch_fans_into_call_indexed_tool_rows() {
+        // T-MULTI-ELEMENT-TOOLCALLS: ONE ToolBatch fact fans into N "tool" rows,
+        // call-indexed 0..N-1 in emission order, sharing the turn's coordinates.
+        let j = InMemoryJournal::new();
+        j.append(turn_fact(0, 0xc0, ReactBranch::Pending)).unwrap();
+        j.append(turn_fact(
+            0,
+            0xc0,
+            ReactBranch::ToolBatch {
+                calls: vec![
+                    ("mcp-echo".to_string(), "1".to_string()),
+                    ("fs-read".to_string(), "1".to_string()),
+                ],
+            },
+        ))
+        .unwrap();
+        j.append(turn_fact(1, 0xc0, ReactBranch::Answer)).unwrap();
+        let r = ReadOnly::new(j);
+
+        let resp = list_react_turns(&r, None, None, None).unwrap();
+        // 1 Pending + 2 fanned tool rows + 1 Answer = 4 wire rows from 3 facts.
+        assert_eq!(resp.turns.len(), 4, "the batch fact fans into 2 tool rows");
+        let tool_rows: Vec<_> = resp.turns.iter().filter(|t| t.branch == "tool").collect();
+        assert_eq!(tool_rows.len(), 2);
+        // Both fanned rows share the turn's coordinates, distinguished by call_index.
+        assert!(tool_rows.iter().all(|t| t.turn == 0));
+        assert!(tool_rows
+            .iter()
+            .all(|t| t.turn_mote_id == tool_rows[0].turn_mote_id));
+        assert!(tool_rows.iter().all(|t| t.seq == tool_rows[0].seq));
+        let mut by_index: Vec<_> = tool_rows
+            .iter()
+            .map(|t| (t.call_index, t.tool_id.clone()))
+            .collect();
+        by_index.sort();
+        assert_eq!(
+            by_index,
+            vec![(0, "mcp-echo".to_string()), (1, "fs-read".to_string())],
+            "call_index 0 = first call, 1 = second, in emission order"
+        );
     }
 
     #[test]

@@ -367,7 +367,9 @@ async fn react_seed_swaps_in_a_salted_turn0_and_anchors() {
             assert_eq!(turn_mote_id.as_bytes().to_vec(), turn0_id);
             assert_eq!(fact_instance.to_vec(), instance_id);
             assert_eq!(*branch, ReactBranch::Pending);
-            assert_eq!((*max_turns, *max_tool_calls), (8, 6));
+            // T-MULTI-ELEMENT-TOOLCALLS: the default tool-call cap rose 6 → 20 and
+            // decoupled from max_turns (a turn can now fire N tools).
+            assert_eq!((*max_turns, *max_tool_calls), (8, 20));
         }
         other => panic!("expected a ReactRound anchor, got {other:?}"),
     }
@@ -1123,20 +1125,23 @@ async fn unrecognized_tool_shape_under_grant_answers_and_fires_nothing() {
     );
 }
 
-/// PR-9c-1 deferral pin (coordinator surface): a multi-element `{"tool_calls":[…,…]}`
-/// body is NOT yet run in a single turn — one Tool fact per turn (the loop-semantics
-/// change is deferred to its own PR). It degrades to a normal `Answer` at the SETTLE
-/// authority site (not just the parser leaf), NEVER a silent first-element fire.
+/// T-MULTI-ELEMENT-TOOLCALLS (coordinator surface): a multi-element
+/// `{"tool_calls":[…,…]}` body FIRES ALL N calls in one turn — a single `ToolBatch`
+/// fact freezes, N call-indexed observations materialize and fire (each with its OWN
+/// args, even for the SAME tool twice), and the chain re-prompts ONCE only after EVERY
+/// observation commits (BACK-PRESSURE). No silent first-element cap.
 #[tokio::test]
-async fn multi_element_tool_calls_settles_as_answer_not_fire() {
+async fn multi_element_tool_calls_fires_all_in_order() {
     let dir = TempDir::new().unwrap();
     let (svc, store) = coordinator(&dir);
-    let w = warrant(true); // mcp-echo@1 GRANTED — yet a multi-element body must NOT fire
+    let w = warrant(true); // mcp-echo@1 GRANTED
 
     let (_, _) = submit_react(&svc, &seed_mote(), &w).await;
     let worker = common::register(&svc, "w").await;
     let leased = common::lease_work(&svc, worker, MAC, 16).await;
     let turn0: Mote = leased[0].mote.clone().unwrap().try_into().unwrap();
+    // Two calls to the SAME tool with DIFFERENT args — proves the per-observation
+    // call_index disambiguation (both echo, but {q:x} then {q:y}).
     commit_raw(
         &svc,
         &store,
@@ -1147,22 +1152,64 @@ async fn multi_element_tool_calls_settles_as_answer_not_fire() {
     )
     .await;
 
+    // A SINGLE ToolBatch fact froze for turn 0 (not two Tool facts, not an Answer).
     let facts = react_facts(&svc, &dir).await;
-    assert_eq!(facts.len(), 2, "anchor + the Answer settle");
+    let batch = facts.iter().find_map(|f| match f {
+        JournalEntry::ReactRound {
+            turn: 0,
+            branch: ReactBranch::ToolBatch { calls },
+            ..
+        } => Some(calls.clone()),
+        _ => None,
+    });
+    let calls = batch.expect("a ToolBatch fact froze (both calls fire)");
+    assert_eq!(calls.len(), 2, "both calls recorded in one ToolBatch fact");
     assert!(
-        matches!(
-            &facts[1],
-            JournalEntry::ReactRound {
-                turn: 0,
-                branch: ReactBranch::Answer,
-                ..
-            }
-        ),
-        "a multi-element tool_calls body is deferred — it ANSWERS, never fires a tool"
+        calls.iter().all(|(id, ver)| id == "mcp-echo" && ver == "1"),
+        "both calls name the granted tool"
     );
+
+    // BOTH observations are leasable in one batch, EACH with its OWN args.
+    let obs_lease = common::lease_work(&svc, worker, MAC, 16).await;
+    assert_eq!(obs_lease.len(), 2, "two call-indexed observations fire");
+    let mut seen_args: Vec<Vec<u8>> = obs_lease
+        .iter()
+        .map(|it| {
+            it.tool_args
+                .as_ref()
+                .expect("each observation leases WITH its validated args")
+                .args_bytes
+                .clone()
+        })
+        .collect();
+    seen_args.sort();
+    assert_eq!(
+        seen_args,
+        vec![br#"{"q":"x"}"#.to_vec(), br#"{"q":"y"}"#.to_vec()],
+        "each observation resolves its OWN args by call_index (same tool, distinct args)"
+    );
+
+    // BACK-PRESSURE: commit only the FIRST observation ⇒ the chain does NOT advance
+    // (no turn-1 Pending yet — it waits for the whole batch).
+    let obs0: Mote = obs_lease[0].mote.clone().unwrap().try_into().unwrap();
+    commit_raw(&svc, &store, &obs0, &w, br#"{"echoed":1}"#, worker).await;
+    let after_one = react_facts(&svc, &dir).await;
     assert!(
-        common::lease_work(&svc, worker, MAC, 16).await.is_empty(),
-        "no observation materialized — no tool fired (no silent first-element cap)"
+        !after_one
+            .iter()
+            .any(|f| matches!(f, JournalEntry::ReactRound { turn: 1, .. })),
+        "back-pressure: turn 1 is NOT built until EVERY batch observation commits"
+    );
+
+    // Commit the SECOND ⇒ the whole batch is done ⇒ the chain advances to turn 1.
+    let obs1: Mote = obs_lease[1].mote.clone().unwrap().try_into().unwrap();
+    commit_raw(&svc, &store, &obs1, &w, br#"{"echoed":2}"#, worker).await;
+    let after_both = react_facts(&svc, &dir).await;
+    assert!(
+        after_both
+            .iter()
+            .any(|f| matches!(f, JournalEntry::ReactRound { turn: 1, .. })),
+        "once the whole batch commits, the chain re-prompts (turn 1) ONCE"
     );
 }
 
@@ -1284,14 +1331,14 @@ async fn failed_turn_dead_letters_the_chain() {
     );
 }
 
-/// Every turn proposes a tool ⇒ the chain is bounded by the durable budget
-/// (the default 6 tool calls), then dead-letters honestly — no runaway chain /
-/// unbounded journal growth. PR-2d-2: each round now alternates turn → observation
-/// (the observation FIRES even on the final tool call — the harness order: fire,
-/// THEN bound the loop). The gate is the harness mirror: tool-budget first,
-/// `>=`, fold-re-derived. W2 (this PR): a no-answer `Tool` tail at exhaustion now
-/// freezes a LOUD terminal `DeadLettered` (was a silent quiesce) so a run-level
-/// chain's terminal is honest (`agent run` → exit 1, not a masquerading timeout).
+/// Every turn proposes ONE tool ⇒ the chain is bounded by the durable budget, then
+/// dead-letters honestly — no runaway chain / unbounded journal growth. PR-2d-2: each
+/// round alternates turn → observation (the observation FIRES even on the final tool
+/// call — the harness order: fire, THEN bound the loop). The gate is the harness
+/// mirror: `>=`, fold-re-derived. T-MULTI-ELEMENT-TOOLCALLS: with the caps DECOUPLED
+/// (default (8, 20)), a SINGLE-tool-per-turn chain now binds on the model-turn budget
+/// (max_turns = 8) BEFORE the raised tool-call cap (20). W2: a no-answer `Tool` tail at
+/// exhaustion freezes a LOUD terminal `DeadLettered` (honest `agent run` → exit 1).
 #[tokio::test]
 async fn chain_is_bounded_by_the_durable_budget() {
     let dir = TempDir::new().unwrap();
@@ -1320,27 +1367,25 @@ async fn chain_is_bounded_by_the_durable_budget() {
             commit_raw(&svc, &store, &mote, &w, br#"{"echoed":{"q":"x"}}"#, worker).await;
         }
     }
-    // turns 0..5 each propose + fire a tool (6 tool calls = the default cap);
-    // after observation 5 commits the gate fires (tool_calls = 6 >= 6) and no
-    // turn 6 spawns — but the final observation DID fire (harness parity).
+    // turns 0..7 each propose + fire ONE tool (8 single tool calls); after observation
+    // 7 commits the gate fires (turns_used = 8 >= max_turns 8) and no turn 8 spawns —
+    // but the final observation DID fire (harness parity). The tool-call cap (20) is
+    // not reached: one tool/turn binds on max_turns first (the decoupled-cap behavior).
+    assert_eq!(turns_leased, 8, "exactly max_turns turns, then quiesce");
     assert_eq!(
-        turns_leased, 6,
-        "exactly max_tool_calls turns, then quiesce"
-    );
-    assert_eq!(
-        observations_committed, 6,
+        observations_committed, 8,
         "every frozen Tool decision fired its observation, the last included"
     );
     assert!(common::lease_work(&svc, worker, MAC, 16).await.is_empty());
     // W2: the no-answer Tool tail at exhaustion freezes a LOUD terminal DeadLettered
-    // (the honest terminal — never a silent quiesce that masquerades as a resumable
-    // timeout). The terminal lands on the LAST tool turn (index max_tool_calls - 1).
+    // (the honest terminal — never a silent quiesce). The terminal lands on the LAST
+    // tool turn (index max_turns - 1 = 7).
     let facts = react_facts(&svc, &dir).await;
     assert!(
         facts.iter().any(|f| matches!(
             f,
             JournalEntry::ReactRound {
-                turn: 5,
+                turn: 7,
                 branch: ReactBranch::DeadLettered,
                 ..
             }
@@ -1355,7 +1400,7 @@ async fn chain_is_bounded_by_the_durable_budget() {
             ..
         } = fact
         {
-            assert_eq!((max_turns, max_tool_calls), (8, 6));
+            assert_eq!((max_turns, max_tool_calls), (8, 20));
         }
     }
 }
@@ -1401,8 +1446,9 @@ async fn last_useful_turn_is_settle_nudged() {
         }
     }
 
-    // 6 turns (max_tool_calls), and EXACTLY the last one (turn index 5) is nudged.
-    assert_eq!(turn_prompts.len(), 6, "exactly max_tool_calls turns");
+    // 8 turns (max_turns, the binding cap for a single-tool chain), and EXACTLY the
+    // last one (turn index 7) is nudged (T-MULTI-ELEMENT-TOOLCALLS decoupled caps).
+    assert_eq!(turn_prompts.len(), 8, "exactly max_turns turns");
     let nudged: Vec<usize> = turn_prompts
         .iter()
         .enumerate()
@@ -1411,11 +1457,11 @@ async fn last_useful_turn_is_settle_nudged() {
         .collect();
     assert_eq!(
         nudged,
-        vec![5],
-        "exactly one nudged turn, on the last useful round (index max_tool_calls-1)"
+        vec![7],
+        "exactly one nudged turn, on the last useful round (index max_turns-1)"
     );
     assert!(
-        turn_prompts[5].contains("give your FINAL answer"),
+        turn_prompts[7].contains("give your FINAL answer"),
         "the nudged turn carries the answer-now steer"
     );
     // Bounded + honest terminal (the model never answered ⇒ DeadLettered, W2).
@@ -1933,13 +1979,13 @@ async fn bad_args_reject_then_the_model_recovers_with_an_answer() {
 async fn repeated_bad_args_exhaust_the_budget_then_dead_letter() {
     let dir = TempDir::new().unwrap();
     let (svc, store) = coordinator(&dir);
-    let w = warrant(true); // default caps: 8 turns / 6 tool calls
+    let w = warrant(true); // default caps: 8 turns / 20 tool calls (decoupled)
 
     let (_, _) = submit_react(&svc, &seed_mote(), &w).await;
     let worker = common::register(&svc, "w").await;
 
     let mut rejected_turns = 0u32;
-    for _ in 0..16 {
+    for _ in 0..24 {
         let leased = common::lease_work(&svc, worker, MAC, 16).await;
         let Some(item) = leased.into_iter().next() else {
             break;
@@ -1971,13 +2017,14 @@ async fn repeated_bad_args_exhaust_the_budget_then_dead_letter() {
             )
         })
         .count();
-    // Bounded by the tool-call budget (6), not the turn budget (8) — every round
-    // is a refused proposal, so the tool-call cap fires first.
+    // Bounded by the TURN budget (8): every round is a refused proposal that spends
+    // one turn AND one tool call, and with the decoupled caps max_turns (8) is now
+    // smaller than max_tool_calls (20), so the turn cap fires first.
     assert_eq!(
-        rejected, 6,
-        "exactly max_tool_calls Rejected rounds, then bounded"
+        rejected, 8,
+        "exactly max_turns Rejected rounds, then bounded"
     );
-    assert_eq!(rejected_turns, 6, "no turn 7 ever spawned");
+    assert_eq!(rejected_turns, 8, "no turn 8 ever spawned");
     assert!(
         matches!(
             facts.last().unwrap(),
@@ -1995,9 +2042,12 @@ async fn repeated_bad_args_exhaust_the_budget_then_dead_letter() {
 }
 
 /// The `kx/recipes/react` caps plumbing: a seed carrying canonical-JSON
-/// `max_turns` / `max_tool_calls` config keys anchors THOSE durable caps; a
-/// degenerate budget (`max_tool_calls >= max_turns`, or a cap above the hard
-/// ceiling 8) is refused LOUDLY before anything is written.
+/// `max_turns` / `max_tool_calls` config keys anchors THOSE durable caps. The caps
+/// are now INDEPENDENT (T-MULTI-ELEMENT-TOOLCALLS — a turn can fire N tools), each
+/// bounded by its OWN hard ceiling: `0 < max_turns ≤ 8`, `0 < max_tool_calls ≤ 20`.
+/// A cap above either ceiling is refused LOUDLY before anything is written; the old
+/// `max_tool_calls < max_turns` coupling is GONE (a small max_turns + larger
+/// max_tool_calls is now valid).
 #[tokio::test]
 async fn seed_caps_are_anchored_and_validated() {
     let dir = TempDir::new().unwrap();
@@ -2024,28 +2074,48 @@ async fn seed_caps_are_anchored_and_validated() {
         other => panic!("expected the anchor, got {other:?}"),
     }
 
-    // A degenerate budget is refused (no turn left to read the observation).
-    let mut bad = seed_mote();
-    bad.def.config_subset.insert(
+    // The DECOUPLING: a small max_turns with a LARGER max_tool_calls is now VALID
+    // (a turn can fire N tools). The old `max_tool_calls < max_turns` coupling is gone.
+    let mut decoupled = seed_mote();
+    decoupled.def.config_subset.insert(
         ConfigKey(kx_mote::REACT_MAX_TURNS_KEY.to_string()),
-        ConfigVal(b"2".to_vec()),
+        ConfigVal(b"3".to_vec()),
     );
-    bad.def.config_subset.insert(
+    decoupled.def.config_subset.insert(
         ConfigKey(kx_mote::REACT_MAX_TOOL_CALLS_KEY.to_string()),
-        ConfigVal(b"2".to_vec()),
+        ConfigVal(b"12".to_vec()),
+    );
+    let (_, _) = submit_react(&svc, &decoupled, &w).await;
+    assert!(
+        react_facts(&svc, &dir).await.iter().any(|f| matches!(
+            f,
+            JournalEntry::ReactRound {
+                max_turns: 3,
+                max_tool_calls: 12,
+                ..
+            }
+        )),
+        "decoupled caps (3 turns, 12 tool calls) anchor — max_tool_calls > max_turns is valid now"
+    );
+
+    // A tool-call cap above its hard ceiling (20) is refused LOUDLY.
+    let mut over_tools = seed_mote();
+    over_tools.def.config_subset.insert(
+        ConfigKey(kx_mote::REACT_MAX_TOOL_CALLS_KEY.to_string()),
+        ConfigVal(b"21".to_vec()),
     );
     let err = svc
         .submit_mote(Request::new(kx_coordinator::proto::SubmitMoteRequest {
-            mote: Some(bad.into()),
+            mote: Some(over_tools.into()),
             warrant: Some(w.clone().into()),
             accept_at_least_once: false,
             react_seed: true,
         }))
         .await
-        .expect_err("max_tool_calls >= max_turns is refused");
+        .expect_err("a max_tool_calls above the hard ceiling (20) is refused");
     assert_eq!(err.code(), tonic::Code::FailedPrecondition);
 
-    // A cap above the hard ceiling is refused.
+    // A turn cap above its hard ceiling (8) is refused.
     let mut over = seed_mote();
     over.def.config_subset.insert(
         ConfigKey(kx_mote::REACT_MAX_TURNS_KEY.to_string()),
@@ -2059,7 +2129,7 @@ async fn seed_caps_are_anchored_and_validated() {
             react_seed: true,
         }))
         .await
-        .expect_err("a cap above the hard ceiling (8) is refused");
+        .expect_err("a max_turns above the hard ceiling (8) is refused");
     assert_eq!(err.code(), tonic::Code::FailedPrecondition);
 }
 

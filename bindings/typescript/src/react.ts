@@ -30,6 +30,10 @@ export class ReactTurn {
     readonly rejectionReason: string = "",
     /** PR-R1: the chain key (hex 32B); "" for a legacy run-level chain. */
     readonly stepSalt: string = "",
+    /** T-MULTI-ELEMENT-TOOLCALLS: when a turn fires N tools at once, the gateway fans
+     *  it into N `tool` rows sharing `turn`/`turnMoteId`/`seq`, distinguished by
+     *  `callIndex` (0..N-1, emission order). 0 for a single call + every non-tool branch. */
+    readonly callIndex: number = 0,
   ) {}
 
   static fromProto(t: PbReactTurnSummary): ReactTurn {
@@ -46,6 +50,7 @@ export class ReactTurn {
       Number(t.seq),
       t.rejectionReason,
       t.stepSalt.length > 0 ? encode(t.stepSalt) : "",
+      t.callIndex,
     );
   }
 
@@ -64,6 +69,7 @@ export class ReactTurn {
       seq: this.seq,
       rejection_reason: this.rejectionReason,
       step_salt: this.stepSalt,
+      call_index: this.callIndex,
     };
   }
 }
