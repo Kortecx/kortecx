@@ -57,6 +57,8 @@ export const queryKeys = {
     ["kx", endpoint, "fuzzy-discovery", dataset, text, k] as const,
   /** Gateway liveness probe (endpoint-scoped). */
   health: (endpoint: string) => ["kx", endpoint, "health"] as const,
+  /** POC-1 Settings "Workspace": the non-secret server configuration (`GetServerInfo`). */
+  serverInfo: (endpoint: string) => ["kx", endpoint, "server-info"] as const,
   /** The re-plan-round trail (`ListReplanRounds`), scoped by page size. */
   replanRounds: (endpoint: string, limit: number) =>
     ["kx", endpoint, "replan-rounds", limit] as const,

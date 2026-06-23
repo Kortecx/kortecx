@@ -31,6 +31,7 @@ from .context import ContextBundle, ContextBundleItem, PutContextBundleResult
 from .critic import decode_critic_verdict
 from .datasets import DatasetHit, DatasetSummary, FuzzyHit, IngestDocument, IngestResult
 from .defaults import (
+    chat,
     default_client,
     invoke,
     make_client,
@@ -74,6 +75,7 @@ from .replan import ReplanRound, ReplanRoundPage
 from .run import AsyncRun, Result, Run
 from .run_agent import run_agent, run_agent_async
 from .runs import RunInputs, RunPage, RunSummary
+from .server_info import ServerInfo
 from .teams import TeamMember, TeamMembers, TeamSummary, WarrantView
 from .telemetry import ModelTokenRollup, MoteTelemetryRow, TelemetryPage, TelemetrySummary
 from .tools import LocalToolDef, ToolError, tool
@@ -174,6 +176,7 @@ __all__ = [
     "ToolError",
     "run",
     "invoke",
+    "chat",
     "make_client",
     "default_client",
     "set_default_client",
@@ -195,6 +198,8 @@ __all__ = [
     "SnapshotResult",
     "AdvanceResult",
     "ModelSummary",
+    # POC-1 Settings: the connected gateway's effective config (display-only, SN-8)
+    "ServerInfo",
     # Batch B: per-mote definition inspection (display-only)
     "MoteDetail",
     "MoteConfigItem",

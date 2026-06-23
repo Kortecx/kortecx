@@ -7,6 +7,7 @@
 //! [`HostSignatureCatalog`] (the three catalog signature RPCs); R2b adds the
 //! recipe binder (the `Invoke` path).
 
+use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
 use std::path::Path;
@@ -21,9 +22,9 @@ use kx_catalog::{
 use kx_content::ContentRef;
 use kx_gateway_core::{
     AuthorEdge, AuthorExecutionMode, AuthorStep, AuthorStepKind, BinderError, BoundRecipe,
-    BundleStore, CatalogSeamError, RecipeBinder, RecipeCatalog, RecipeFormFieldEntry,
-    RecipeMetadataEntry, RecipeParamKind, RegisteredSignature, ScoredRecipeEntry, SignatureCatalog,
-    SignatureSummaryEntry, WorkflowAuthor,
+    BundleStore, CatalogSeamError, ContentWriter, DatasetView, RecipeBinder, RecipeCatalog,
+    RecipeFormFieldEntry, RecipeMetadataEntry, RecipeParamKind, RegisteredSignature,
+    ScoredRecipeEntry, SignatureCatalog, SignatureSummaryEntry, WorkflowAuthor,
 };
 use kx_invoke::{bind_snapshot, InvokeError, UseWarrantResolver};
 use kx_mote::{
@@ -153,6 +154,39 @@ const MODEL_PROMPT_SCHEMA_REF: [u8; 32] = [0x3d; 32];
 /// `logic_ref`, so this is a distinct, ignored sentinel (≠ the `echo` placeholder
 /// so the two recipe bodies get distinct manifests).
 const MODEL_LOGIC_REF: [u8; 32] = [0x3c; 32];
+
+/// POC-1 CHAT-RAG: the wire handle of the AUTO-RAG chat recipe — the SAME single
+/// PURE (greedy) model step as [`MODEL_RECIPE_HANDLE`], but a bind of THIS handle
+/// carrying a `dataset` arg GROUNDS the turn: the binder embeds the `prompt`,
+/// retrieves the dataset's top-k nearest documents, and folds the EXACT retrieved
+/// content refs into the entry Mote's identity-bearing `config_subset[CONTEXT_ITEMS_KEY]`
+/// (the PR-7/D155 `context_refs` rail — edge-free, replayable, SN-8 exact-out; the
+/// ANN non-determinism is resolved ONCE at bind and frozen into the MoteId). A
+/// SEPARATE recipe BY DESIGN (the vision/react-fs precedent) so canonical
+/// `kx/recipes/chat` + the projection digest stay byte-unchanged. Seeded whenever a
+/// model is served (NOT gated on a dataset — datasets are ingested AFTER serve
+/// starts); with no dataset / no embedder / no index the bind DEGRADES to a plain
+/// chat answer (honest — grounding is never faked).
+pub const CHAT_RAG_RECIPE_HANDLE: &str = "kx/recipes/chat-rag";
+
+/// A DISTINCT placeholder `logic_ref` for the chat-rag step (the BUG-25 class — a
+/// shared logic ref collides with `kx/recipes/chat` at seed; the storing executor
+/// ignores `logic_ref`, routing by `prompt` + `model_id`). `0x58` is the next free
+/// sentinel after the judge refs (`0x56`/`0x57`).
+const CHAT_RAG_LOGIC_REF: [u8; 32] = [0x58; 32];
+
+/// POC-1: the default + max number of dataset documents folded into a grounded
+/// chat turn. Bounded so an untrusted `k` cannot blow the assemble window (32 KiB;
+/// the fold fails closed on overflow regardless — this keeps the common case inside
+/// it). The host `query` additionally clamps to its own server-side `MAX_K`.
+const CHAT_RAG_DEFAULT_K: usize = 4;
+/// See [`CHAT_RAG_DEFAULT_K`].
+const CHAT_RAG_MAX_K: usize = 16;
+/// The chat-rag args key naming the dataset to ground on (stripped from the args
+/// before free-param binding — it is NOT a declared recipe slot). Absent ⇒ plain chat.
+const CHAT_RAG_DATASET_KEY: &str = "dataset";
+/// The optional chat-rag args key overriding the top-`k` (stripped before binding).
+const CHAT_RAG_K_KEY: &str = "k";
 
 /// The wire handle of the PR-2d-2 live-ReAct recipe: a SEED Mote carrying an
 /// `instruction` + the per-run budget caps; the Invoke arm submits it with
@@ -501,6 +535,41 @@ impl DemoLibrary {
                 model_h,
                 RecipeMeta {
                     owner_root: model_w,
+                    free_params: prompt_contract(),
+                },
+            ));
+        }
+
+        // (chat-rag) POC-1: the AUTO-RAG chat recipe — the SAME single greedy model
+        // step as `chat` (PROMPT_KEY slot, `model_warrant`), but a bind carrying a
+        // `dataset` arg embeds the prompt → retrieves the dataset's top-k docs →
+        // folds the EXACT refs into the entry Mote's CONTEXT_ITEMS (the PR-7/D155
+        // context-refs rail — edge-free, replayable, SN-8). A SEPARATE recipe with
+        // its OWN logic ref (BUG-25) so `kx/recipes/chat` + the digest stay
+        // byte-unchanged. Seeded whenever a model is served (the bind degrades to a
+        // plain chat answer when there is no dataset/embedder/index — grounding is
+        // never faked).
+        if let Some(model_id) = serve_model {
+            let chat_rag_w = model_warrant(exec_class, model_id);
+            let chat_rag_h = chat_rag_handle()?;
+            seed_recipe(
+                &versions,
+                &bodies,
+                &grants,
+                &owner,
+                parties,
+                &chat_rag_h,
+                recipe_body(
+                    LogicRef::from_bytes(CHAT_RAG_LOGIC_REF),
+                    &chat_rag_w,
+                    &[PROMPT_KEY],
+                ),
+                &chat_rag_w,
+            )?;
+            recipes.push((
+                chat_rag_h,
+                RecipeMeta {
+                    owner_root: chat_rag_w,
                     free_params: prompt_contract(),
                 },
             ));
@@ -965,6 +1034,14 @@ fn recipe_advisory(handle: &str) -> (&'static str, &'static [&'static str]) {
             "Chat — a single greedy completion from the served model.",
             &["model", "chat", "text", "agent", "completion"],
         ),
+        CHAT_RAG_RECIPE_HANDLE => (
+            "Chat (RAG) — a grounded completion: a `dataset` arg retrieves the top-k \
+             documents and folds the exact refs into the prompt before answering; honest \
+             plain chat when no dataset/index (grounding is never faked).",
+            &[
+                "model", "chat", "rag", "grounding", "retrieval", "dataset", "text", "completion",
+            ],
+        ),
         REACT_RECIPE_HANDLE => (
             "ReAct — a live tool-using agent loop (plan → act → observe → answer).",
             &["agent", "react", "tools", "loop", "reasoning"],
@@ -1171,6 +1248,22 @@ pub struct HostRecipeBinder {
     /// `None` ⇒ a non-empty `context_bundles` fails closed; an empty one is
     /// byte-identical to pre-PR-7.
     bundles: Option<std::sync::Arc<dyn BundleStore>>,
+    /// POC-1 CHAT-RAG: the dataset retrieval + content-staging seams a grounded
+    /// [`CHAT_RAG_RECIPE_HANDLE`] bind needs (the SAME `Arc`s the gateway service
+    /// holds — one store, two seams). `Some` (the `hnsw` build) ⇒ a chat-rag bind
+    /// with a `dataset` arg grounds the turn; `None` ⇒ chat-rag binds as a PLAIN
+    /// chat (honest degrade — grounding is never faked). Off-journal/off-digest:
+    /// only the resolved exact refs reach the entry Mote's identity.
+    grounding: Option<DatasetGrounding>,
+}
+
+/// POC-1: the two seams a grounded chat-rag bind reads — the dataset view (embed +
+/// ANN top-k) and the run content store (stage each retrieved blob so the folded
+/// 64-hex ref RESOLVES at assemble-time; `put` is content-addressed, so the staged
+/// ref EQUALS the dataset hit's `content_ref` — SN-8 exact-out preserved).
+struct DatasetGrounding {
+    datasets: std::sync::Arc<dyn DatasetView>,
+    content: std::sync::Arc<dyn ContentWriter>,
 }
 
 /// PR-6b-4: the two LIVE seams the react-auto bind override reads — the SAME
@@ -1190,6 +1283,7 @@ impl HostRecipeBinder {
             lib: std::sync::Arc::new(lib),
             autogrant: None,
             bundles: None,
+            grounding: None,
         }
     }
 
@@ -1200,6 +1294,7 @@ impl HostRecipeBinder {
             lib,
             autogrant: None,
             bundles: None,
+            grounding: None,
         }
     }
 
@@ -1208,6 +1303,20 @@ impl HostRecipeBinder {
     #[must_use]
     pub fn with_bundles(mut self, bundles: std::sync::Arc<dyn BundleStore>) -> Self {
         self.bundles = Some(bundles);
+        self
+    }
+
+    /// POC-1 CHAT-RAG: attach the dataset retrieval + content-staging seams so a
+    /// bind of [`CHAT_RAG_RECIPE_HANDLE`] with a `dataset` arg grounds the turn
+    /// (the SAME `Arc<HostDatasetView>` + run content store the gateway service
+    /// holds). Without this (the non-`hnsw` build), chat-rag binds as a plain chat.
+    #[must_use]
+    pub fn with_dataset_grounding(
+        mut self,
+        datasets: std::sync::Arc<dyn DatasetView>,
+        content: std::sync::Arc<dyn ContentWriter>,
+    ) -> Self {
+        self.grounding = Some(DatasetGrounding { datasets, content });
         self
     }
 
@@ -1226,6 +1335,7 @@ impl HostRecipeBinder {
             lib,
             autogrant: Some(AutoGrant { tools, registered }),
             bundles: None,
+            grounding: None,
         }
     }
 
@@ -1250,6 +1360,85 @@ impl HostRecipeBinder {
             })
             .collect();
         Some(tool_union_warrant(base, &defs))
+    }
+
+    /// POC-1 CHAT-RAG: ground a [`CHAT_RAG_RECIPE_HANDLE`] bind. Returns the args +
+    /// context-refs the bind should ACTUALLY use:
+    /// * every non-chat-rag handle ⇒ the inputs unchanged (borrowed — zero-cost,
+    ///   byte-identical to pre-POC-1);
+    /// * a chat-rag bind ⇒ the args with the `dataset`/`k` selector keys STRIPPED
+    ///   (they are not declared free-params), and — when a `dataset` is named, a
+    ///   grounding seam is wired, and retrieval succeeds — the original context refs
+    ///   PLUS the exact 64-hex refs of the dataset's top-`k` documents (each staged
+    ///   into the run content store so the fold resolves; `put` is content-addressed,
+    ///   so the staged ref equals the dataset hit's `content_ref` — SN-8 exact-out).
+    ///
+    /// HONEST DEGRADE: no dataset arg, no grounding seam (the non-`hnsw` build), an
+    /// empty prompt, or any retrieval failure (unknown dataset / no embedder / empty
+    /// index) ⇒ the stripped args + the ORIGINAL refs (a plain, ungrounded chat —
+    /// never a faked grounding, never a failed turn).
+    fn ground_chat_rag<'a>(
+        &self,
+        asset_path: &AssetPath,
+        args: &'a [u8],
+        context_refs: &'a [String],
+    ) -> Result<(Cow<'a, [u8]>, Cow<'a, [String]>), BinderError> {
+        let is_chat_rag = parse_handle(CHAT_RAG_RECIPE_HANDLE).is_some_and(|p| p == *asset_path);
+        if !is_chat_rag {
+            return Ok((Cow::Borrowed(args), Cow::Borrowed(context_refs)));
+        }
+        // Read `prompt` (the query text) and pull out the `dataset`/`k` selectors so
+        // they never reach bind_snapshot's schema validation (only `prompt` is declared).
+        let mut value: serde_json::Value = if args.is_empty() {
+            serde_json::Value::Object(serde_json::Map::new())
+        } else {
+            serde_json::from_slice(args)
+                .map_err(|e| BinderError::InvalidArgs(format!("chat-rag args parse: {e}")))?
+        };
+        let obj = value.as_object_mut().ok_or_else(|| {
+            BinderError::InvalidArgs("chat-rag args must be a JSON object".into())
+        })?;
+        let dataset = obj.remove(CHAT_RAG_DATASET_KEY);
+        let k_override = obj.remove(CHAT_RAG_K_KEY);
+        let prompt = obj
+            .get(PROMPT_KEY)
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        let stripped = serde_json::to_vec(&value)
+            .map_err(|e| BinderError::InvalidArgs(format!("chat-rag args re-encode: {e}")))?;
+
+        // Resolve the dataset selector + the grounding seam; degrade honestly otherwise.
+        let dataset = dataset.as_ref().and_then(serde_json::Value::as_str);
+        let (Some(dataset), Some(g)) = (
+            dataset.filter(|_| !prompt.is_empty()),
+            self.grounding.as_ref(),
+        ) else {
+            return Ok((Cow::Owned(stripped), Cow::Borrowed(context_refs)));
+        };
+        let k = k_override
+            .as_ref()
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|k| usize::try_from(k).ok())
+            .map_or(CHAT_RAG_DEFAULT_K, |k| k.clamp(1, CHAT_RAG_MAX_K));
+        let hits = match g.datasets.query(dataset, None, &prompt, k) {
+            Ok(hits) if !hits.is_empty() => hits,
+            // Unknown dataset / embedder-unavailable / empty index / backend error ⇒
+            // a plain (ungrounded) answer rather than a failed turn (honest degrade).
+            _ => return Ok((Cow::Owned(stripped), Cow::Borrowed(context_refs))),
+        };
+        // Stage each retrieved blob in the run content store (so the folded 64-hex
+        // ref RESOLVES at assemble) + append its EXACT ref (SN-8: only refs, never
+        // the similarity score, reach the entry Mote's identity).
+        let mut refs: Vec<String> = context_refs.to_vec();
+        for hit in &hits {
+            let (stored, _) = g
+                .content
+                .put(&hit.content)
+                .map_err(|e| BinderError::Internal(format!("chat-rag content stage: {e}")))?;
+            refs.push(ContentRef::from_bytes(stored).to_hex());
+        }
+        Ok((Cow::Owned(stripped), Cow::Owned(refs)))
     }
 }
 
@@ -1310,6 +1499,14 @@ impl RecipeBinder for HostRecipeBinder {
     ) -> Result<BoundRecipe, BinderError> {
         // A malformed handle reveals nothing (uniform NotAuthorized — no probing).
         let asset_path = parse_handle(handle).ok_or(BinderError::NotAuthorized)?;
+        // POC-1 CHAT-RAG: a bind of `kx/recipes/chat-rag` carrying a `dataset` arg
+        // embeds the prompt, retrieves the dataset's top-k docs, stages them in the
+        // run content store, and ADDS their exact refs to the run's context refs;
+        // it also strips the `dataset`/`k` keys (NOT declared free-params). Every
+        // other handle (and a chat-rag bind without a dataset / grounding seam) is
+        // the identity — borrowed args + refs, byte-identical to pre-POC-1.
+        let (effective_args, effective_refs) =
+            self.ground_chat_rag(&asset_path, args, context_refs)?;
         // PR-7 + D155 Phase-3: resolve any attached context bundles (handles) AND
         // direct content refs to their item refs FIRST (fail-closed on an
         // unknown/unavailable handle or malformed ref) so the entry Mote's identity
@@ -1318,7 +1515,7 @@ impl RecipeBinder for HostRecipeBinder {
             self.bundles.as_deref(),
             party,
             context_bundles,
-            context_refs,
+            &effective_refs,
         )?;
         // Resolve the recipe's binding metadata; an unknown handle is the same
         // uniform NotAuthorized (no existence oracle on the execution surface).
@@ -1344,7 +1541,7 @@ impl RecipeBinder for HostRecipeBinder {
             &asset_path,
             &meta.free_params,
             &self.lib.schema_resolver(),
-            args,
+            &effective_args,
             &context_items,
         )
         .map_err(map_invoke_err)?;
@@ -2089,6 +2286,11 @@ fn prompt_contract() -> FreeParamContract {
 fn model_handle() -> Result<AssetPath, GatewayError> {
     parse_handle(MODEL_RECIPE_HANDLE)
         .ok_or_else(|| GatewayError::Catalog("invalid model recipe handle".into()))
+}
+
+fn chat_rag_handle() -> Result<AssetPath, GatewayError> {
+    parse_handle(CHAT_RAG_RECIPE_HANDLE)
+        .ok_or_else(|| GatewayError::Catalog("invalid chat-rag recipe handle".into()))
 }
 
 /// The vision recipe's free-param contract (Batch A): `prompt` (`Str`, the chat
@@ -3836,6 +4038,216 @@ mod tests {
                 .bind(
                     "alice@acme",
                     MODEL_RECIPE_HANDLE,
+                    br#"{"prompt":"x"}"#,
+                    &[],
+                    &[]
+                )
+                .await,
+            Err(BinderError::NotAuthorized)
+        ));
+    }
+
+    // --- POC-1 CHAT-RAG: server-side grounding at bind (the binder half) ---
+
+    /// A canned [`DatasetView`] for the chat-rag grounding tests: a normal dataset
+    /// returns up to-`k` deterministic hits keyed by NAME (so two datasets differ);
+    /// "missing" returns `NotFound`; "empty" returns no hits. The hit SCORES are
+    /// non-zero on purpose — to PROVE the score never reaches the bound identity (SN-8).
+    struct FakeDatasets;
+
+    impl DatasetView for FakeDatasets {
+        fn list_datasets(&self) -> Vec<kx_gateway_core::DatasetSummaryEntry> {
+            Vec::new()
+        }
+        fn ingest(
+            &self,
+            _dataset: &str,
+            _docs: &[kx_gateway_core::IngestDoc<'_>],
+        ) -> Result<kx_gateway_core::IngestOutcome, kx_gateway_core::DatasetError> {
+            Err(kx_gateway_core::DatasetError::InvalidArgument(
+                "test".into(),
+            ))
+        }
+        fn query(
+            &self,
+            dataset: &str,
+            _query_embedding: Option<&[f32]>,
+            _query_text: &str,
+            k: usize,
+        ) -> Result<Vec<kx_gateway_core::DatasetHitEntry>, kx_gateway_core::DatasetError> {
+            match dataset {
+                "missing" => Err(kx_gateway_core::DatasetError::NotFound),
+                "empty" => Ok(Vec::new()),
+                name => Ok((0..k.min(2))
+                    .map(|i| {
+                        let content = format!("{name}-doc-{i}").into_bytes();
+                        kx_gateway_core::DatasetHitEntry {
+                            content_ref: *ContentRef::of(&content).as_bytes(),
+                            content,
+                            #[allow(clippy::cast_precision_loss)]
+                            score: 0.9 - (i as f32) * 0.1, // display-only — must NOT reach identity
+                        }
+                    })
+                    .collect()),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn chat_rag_grounds_a_turn_and_degrades_honestly() {
+        use kx_content::{ContentStore, InMemoryContentStore};
+        let dir = tempfile::tempdir().unwrap();
+        let model_id = ModelId("kx-serve:test-model".to_string());
+        let lib = DemoLibrary::open_full(
+            dir.path(),
+            ExecutorClass::Bwrap,
+            &["alice@acme".to_string()],
+            Some(model_id),
+        )
+        .unwrap();
+        let store = std::sync::Arc::new(InMemoryContentStore::new());
+        let binder = HostRecipeBinder::new(lib)
+            .with_dataset_grounding(std::sync::Arc::new(FakeDatasets), store.clone());
+        let binder = &binder;
+        let bind = |args: String| async move {
+            binder
+                .bind(
+                    "alice@acme",
+                    CHAT_RAG_RECIPE_HANDLE,
+                    args.as_bytes(),
+                    &[],
+                    &[],
+                )
+                .await
+        };
+
+        // (1) chat-rag is SEEDED for a served model + binds for a granted party (no
+        //     dataset ⇒ a plain, ungrounded chat — the honest baseline).
+        let plain = bind(r#"{"prompt":"q"}"#.into())
+            .await
+            .expect("chat-rag binds (no dataset → plain chat)");
+        // (2) GROUNDING a turn folds the retrieved refs ⇒ a DIFFERENT entry identity.
+        let grounded = bind(r#"{"prompt":"q","dataset":"corpus"}"#.into())
+            .await
+            .expect("chat-rag grounds the turn");
+        assert_ne!(
+            plain.terminal_mote_id, grounded.terminal_mote_id,
+            "grounding the turn changes the entry MoteId (identity-bearing)"
+        );
+        // (3) The retrieved blobs were STAGED in the run content store (so the
+        //     edge-free fold resolves at assemble; `put` is content-addressed).
+        assert!(
+            store.contains(&ContentRef::of(b"corpus-doc-0")),
+            "a retrieved document is staged in the run content store"
+        );
+        // (4) SN-8: the folded items are EXACTLY the hit refs; `ContextItemRef` has
+        //     no score field, so the similarity score cannot reach the identity.
+        let entry = &grounded.motes.first().expect("an entry mote").0;
+        let encoded = entry
+            .def
+            .config_subset
+            .get(&ConfigKey(CONTEXT_ITEMS_KEY.to_string()))
+            .expect("a grounded turn carries folded context items");
+        let items = kx_mote::decode_context_items(&encoded.0);
+        assert_eq!(items.len(), 2, "top-k=default folded");
+        assert_eq!(
+            items[0].content_ref,
+            *ContentRef::of(b"corpus-doc-0").as_bytes(),
+            "the folded ref is the exact retrieved content ref"
+        );
+        // (5) Idempotent: identical prompt+dataset ⇒ identical identity (the ANN
+        //     result is resolved once and frozen; replay re-binds the same refs).
+        let grounded2 = bind(r#"{"prompt":"q","dataset":"corpus"}"#.into())
+            .await
+            .unwrap();
+        assert_eq!(
+            grounded.terminal_mote_id, grounded2.terminal_mote_id,
+            "identical prompt+dataset ⇒ identical identity"
+        );
+        // (6) Dataset-sensitive: a different dataset retrieves different docs ⇒ a
+        //     different identity (the grounding genuinely differs).
+        let other = bind(r#"{"prompt":"q","dataset":"other"}"#.into())
+            .await
+            .unwrap();
+        assert_ne!(
+            grounded.terminal_mote_id, other.terminal_mote_id,
+            "a different dataset grounds the turn differently"
+        );
+        // (7) HONEST DEGRADE: an unknown dataset (NotFound) ⇒ a plain answer (the
+        //     same identity as no-dataset), never a failed turn, never faked grounding.
+        let unknown = bind(r#"{"prompt":"q","dataset":"missing"}"#.into())
+            .await
+            .expect("an unknown dataset degrades, never fails");
+        assert_eq!(
+            plain.terminal_mote_id, unknown.terminal_mote_id,
+            "unknown dataset ⇒ plain chat (honest degrade)"
+        );
+        // (8) An EMPTY index likewise degrades to a plain answer.
+        let empty = bind(r#"{"prompt":"q","dataset":"empty"}"#.into())
+            .await
+            .expect("an empty index degrades");
+        assert_eq!(
+            plain.terminal_mote_id, empty.terminal_mote_id,
+            "empty index ⇒ plain chat (honest degrade)"
+        );
+    }
+
+    /// Without a grounding seam wired (the non-`hnsw` build), a chat-rag bind with a
+    /// `dataset` arg HARMLESSLY strips the selector and binds as a plain chat — the
+    /// `dataset`/`k` keys are not declared free-params, so they never reach validation.
+    #[tokio::test]
+    async fn chat_rag_without_a_grounding_seam_is_plain_chat() {
+        let dir = tempfile::tempdir().unwrap();
+        let model_id = ModelId("kx-serve:test-model".to_string());
+        let lib = DemoLibrary::open_full(
+            dir.path(),
+            ExecutorClass::Bwrap,
+            &["alice@acme".to_string()],
+            Some(model_id),
+        )
+        .unwrap();
+        let binder = HostRecipeBinder::new(lib); // NO grounding seam (non-hnsw build)
+        let bound = binder
+            .bind(
+                "alice@acme",
+                CHAT_RAG_RECIPE_HANDLE,
+                br#"{"prompt":"q","dataset":"corpus","k":3}"#,
+                &[],
+                &[],
+            )
+            .await
+            .expect("chat-rag binds (no grounding seam ⇒ plain chat)");
+        let entry = &bound.motes.first().unwrap().0;
+        assert!(
+            entry
+                .def
+                .config_subset
+                .get(&ConfigKey(CONTEXT_ITEMS_KEY.to_string()))
+                .is_none(),
+            "no grounding seam ⇒ no folded context (a plain chat)"
+        );
+        // The `dataset`/`k` keys were stripped; the declared `prompt` slot bound fine.
+        let got = entry
+            .def
+            .config_subset
+            .get(&ConfigKey(PROMPT_KEY.to_string()))
+            .map(|v| String::from_utf8_lossy(&v.0).into_owned())
+            .expect("prompt bound under PROMPT_KEY");
+        assert!(got.contains('q'), "bound prompt: {got:?}");
+    }
+
+    /// Digest-invariance guard: like `chat`, the chat-rag recipe is NOT provisioned
+    /// without a serve model — so it never seeds in the model-free canonical digest
+    /// projection (`7d22d4bd` invariant).
+    #[tokio::test]
+    async fn chat_rag_absent_without_a_serve_model() {
+        let dir = tempfile::tempdir().unwrap();
+        let binder = demo_lib(dir.path()); // open() ⇒ no serve model
+        assert!(matches!(
+            binder
+                .bind(
+                    "alice@acme",
+                    CHAT_RAG_RECIPE_HANDLE,
                     br#"{"prompt":"x"}"#,
                     &[],
                     &[]

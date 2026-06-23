@@ -1714,3 +1714,49 @@ class AdvanceBranchResponse(_message.Message):
     items: _containers.RepeatedCompositeFieldContainer[BranchItem]
     deduplicated: bool
     def __init__(self, branch_ref: _Optional[bytes] = ..., handle: _Optional[str] = ..., items: _Optional[_Iterable[_Union[BranchItem, _Mapping]]] = ..., deduplicated: bool = ...) -> None: ...
+
+class GetServerInfoRequest(_message.Message):
+    __slots__ = ()
+    def __init__(self) -> None: ...
+
+class GetServerInfoResponse(_message.Message):
+    __slots__ = ("model_id", "model_path", "listen_addr", "ws_addr", "console_addr", "metrics_addr", "content_root", "journal_path", "catalog_dir", "max_lease", "content_max_bytes", "cors_origins", "tls_enabled", "auth_mode", "feature_hnsw", "feature_inference", "feature_console", "feature_vision", "audit_log_enabled")
+    MODEL_ID_FIELD_NUMBER: _ClassVar[int]
+    MODEL_PATH_FIELD_NUMBER: _ClassVar[int]
+    LISTEN_ADDR_FIELD_NUMBER: _ClassVar[int]
+    WS_ADDR_FIELD_NUMBER: _ClassVar[int]
+    CONSOLE_ADDR_FIELD_NUMBER: _ClassVar[int]
+    METRICS_ADDR_FIELD_NUMBER: _ClassVar[int]
+    CONTENT_ROOT_FIELD_NUMBER: _ClassVar[int]
+    JOURNAL_PATH_FIELD_NUMBER: _ClassVar[int]
+    CATALOG_DIR_FIELD_NUMBER: _ClassVar[int]
+    MAX_LEASE_FIELD_NUMBER: _ClassVar[int]
+    CONTENT_MAX_BYTES_FIELD_NUMBER: _ClassVar[int]
+    CORS_ORIGINS_FIELD_NUMBER: _ClassVar[int]
+    TLS_ENABLED_FIELD_NUMBER: _ClassVar[int]
+    AUTH_MODE_FIELD_NUMBER: _ClassVar[int]
+    FEATURE_HNSW_FIELD_NUMBER: _ClassVar[int]
+    FEATURE_INFERENCE_FIELD_NUMBER: _ClassVar[int]
+    FEATURE_CONSOLE_FIELD_NUMBER: _ClassVar[int]
+    FEATURE_VISION_FIELD_NUMBER: _ClassVar[int]
+    AUDIT_LOG_ENABLED_FIELD_NUMBER: _ClassVar[int]
+    model_id: str
+    model_path: str
+    listen_addr: str
+    ws_addr: str
+    console_addr: str
+    metrics_addr: str
+    content_root: str
+    journal_path: str
+    catalog_dir: str
+    max_lease: int
+    content_max_bytes: int
+    cors_origins: _containers.RepeatedScalarFieldContainer[str]
+    tls_enabled: bool
+    auth_mode: str
+    feature_hnsw: bool
+    feature_inference: bool
+    feature_console: bool
+    feature_vision: bool
+    audit_log_enabled: bool
+    def __init__(self, model_id: _Optional[str] = ..., model_path: _Optional[str] = ..., listen_addr: _Optional[str] = ..., ws_addr: _Optional[str] = ..., console_addr: _Optional[str] = ..., metrics_addr: _Optional[str] = ..., content_root: _Optional[str] = ..., journal_path: _Optional[str] = ..., catalog_dir: _Optional[str] = ..., max_lease: _Optional[int] = ..., content_max_bytes: _Optional[int] = ..., cors_origins: _Optional[_Iterable[str]] = ..., tls_enabled: bool = ..., auth_mode: _Optional[str] = ..., feature_hnsw: bool = ..., feature_inference: bool = ..., feature_console: bool = ..., feature_vision: bool = ..., audit_log_enabled: bool = ...) -> None: ...

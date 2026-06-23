@@ -45,6 +45,7 @@ from .recipes import RecipeForm, RecipeInfo, ScoredRecipe
 from .replan import ReplanRound, ReplanRoundPage
 from .run import AsyncRun, Result, Run
 from .runs import RunInputs, RunPage, RunSummary
+from .server_info import ServerInfo
 from .teams import TeamMembers, TeamSummary
 from .telemetry import MoteTelemetryRow, TelemetryPage, TelemetrySummary
 from .toolscout import (
@@ -91,6 +92,14 @@ def _fill_default_model(
 #: on this handle waits on chain SETTLEMENT via ``ListReactTurns`` instead of a
 #: single terminal Mote (campaign finding F13).
 REACT_RECIPE_HANDLE = "kx/recipes/react"
+
+#: POC-1 chat recipe handles. ``chat`` takes ``{"prompt": <text>}``; the AUTO-RAG
+#: ``chat-rag`` adds ``{"dataset": <name>, "k": <int>}`` — the server embeds the
+#: prompt, retrieves the dataset's top-k docs, folds them into the prompt, and
+#: answers (HONESTLY degrading to a plain answer when the dataset is missing/empty,
+#: never faking grounding). Both settle on a single terminal model Mote.
+CHAT_RECIPE_HANDLE = "kx/recipes/chat"
+CHAT_RAG_RECIPE_HANDLE = "kx/recipes/chat-rag"
 
 ArgsType = Union[dict, bytes, bytearray, str]
 IdType = Union[str, bytes]
@@ -296,6 +305,41 @@ class KxClient:
             with open(out, "wb") as fh:
                 fh.write(result.payload)
         return result
+
+    def chat(
+        self,
+        prompt: str,
+        *,
+        dataset: Optional[str] = None,
+        k: int = 4,
+        timeout: float = 120.0,
+    ) -> str:
+        """Ask the served model a single question and get its answer text (POC-1).
+
+        A thin convenience over :meth:`invoke` + wait: it binds the published
+        ``kx/recipes/chat`` recipe to ``{"prompt": prompt}`` and returns the
+        committed answer string. When ``dataset`` is given it binds the AUTO-RAG
+        ``kx/recipes/chat-rag`` recipe to ``{"prompt": prompt, "dataset": dataset,
+        "k": k}`` instead — the server embeds the prompt, retrieves the dataset's
+        top-``k`` documents, folds them into the prompt, and answers. If the
+        dataset is missing/empty the server HONESTLY degrades to a plain answer
+        (it never fakes grounding); the grounding refs stay server-side (SN-8), so
+        this returns only the answer text.
+
+        Raises :class:`~kortecx.errors.KxRunFailed` if the run fails and
+        :class:`~kortecx.errors.KxWaitTimeout` if it does not commit in time — same
+        as ``invoke(wait=True)``. ``chat-rag`` needs a gateway with the retrieval
+        features (a recipe-not-found / unsupported run surfaces the usual error)."""
+        if dataset is not None:
+            handle = CHAT_RAG_RECIPE_HANDLE
+            args: dict = {"prompt": prompt, "dataset": dataset, "k": k}
+        else:
+            handle = CHAT_RECIPE_HANDLE
+            args = {"prompt": prompt}
+        result = self.invoke(handle, args, wait=True, timeout=timeout)
+        # invoke(wait=True) on a non-react handle always settles to a Result.
+        assert isinstance(result, Result)  # narrow for mypy (never a Run here)
+        return result.text or ""
 
     def submit_run(
         self, request: "_g.SubmitRunRequest", *, wait: bool = False, timeout: float = 120.0
@@ -600,6 +644,18 @@ class KxClient:
         raises ``KxUnimplemented``."""
         resp = self._call(lambda: self._stub.ListModels(_g.ListModelsRequest(), metadata=self._md))
         return [ModelSummary.from_proto(m) for m in resp.models]
+
+    def get_server_info(self) -> ServerInfo:
+        """The connected gateway's effective configuration (POC-1 Settings) — the
+        served model, listen/bridge/console/metrics addresses, content/journal/
+        catalog locations, the admission caps, the CORS allow-list, and the
+        compiled-in feature flags. Authenticated like every other RPC; DISPLAY/
+        SETTINGS-ONLY (SN-8) and NEVER a secret. An old gateway without the RPC
+        raises ``KxUnimplemented``."""
+        resp = self._call(
+            lambda: self._stub.GetServerInfo(_g.GetServerInfoRequest(), metadata=self._md)
+        )
+        return ServerInfo.from_proto(resp)
 
     def stream_events(
         self, instance_id: IdType, *, since: int = 0, follow: bool = False
@@ -1351,6 +1407,28 @@ class AsyncKxClient:
                 fh.write(result.payload)
         return result
 
+    async def chat(
+        self,
+        prompt: str,
+        *,
+        dataset: Optional[str] = None,
+        k: int = 4,
+        timeout: float = 120.0,
+    ) -> str:
+        """Async mirror of :meth:`KxClient.chat` — ask the served model a single
+        question (optionally AUTO-RAG-grounded against ``dataset``) and return the
+        committed answer text. The server degrades honestly to a plain answer when
+        the dataset is missing/empty (never fakes grounding)."""
+        if dataset is not None:
+            handle = CHAT_RAG_RECIPE_HANDLE
+            args: dict = {"prompt": prompt, "dataset": dataset, "k": k}
+        else:
+            handle = CHAT_RECIPE_HANDLE
+            args = {"prompt": prompt}
+        result = await self.invoke(handle, args, wait=True, timeout=timeout)
+        assert isinstance(result, Result)  # narrow for mypy (never an AsyncRun here)
+        return result.text or ""
+
     async def submit_run(
         self, request: "_g.SubmitRunRequest", *, wait: bool = False, timeout: float = 120.0
     ) -> Union["_g.RunHandle", Result]:
@@ -1435,6 +1513,15 @@ class AsyncKxClient:
         """As :meth:`KxClient.list_models` (Batch A model discovery)."""
         resp = await self._acall(self._stub.ListModels(_g.ListModelsRequest(), metadata=self._md))
         return [ModelSummary.from_proto(m) for m in resp.models]
+
+    async def get_server_info(self) -> ServerInfo:
+        """Async mirror of :meth:`KxClient.get_server_info` (POC-1 Settings) — the
+        connected gateway's effective config (display/settings-only, never a
+        secret, SN-8). An old gateway raises ``KxUnimplemented``."""
+        resp = await self._acall(
+            self._stub.GetServerInfo(_g.GetServerInfoRequest(), metadata=self._md)
+        )
+        return ServerInfo.from_proto(resp)
 
     def stream_events(
         self, instance_id: IdType, *, since: int = 0, follow: bool = False

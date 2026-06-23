@@ -1475,6 +1475,32 @@ message AdvanceBranchResponse {
 // Service — the external client-facing gateway (distinct from Coordinator).
 // ---------------------------------------------------------------------------
 
+// POC-1 (Settings "Workspace"): GetServerInfo request (no fields — the caller is
+// server-resolved; SN-8) + a NON-SECRET response projection of GatewayConfig +
+// the resolved serve model + the build's feature flags. Additive, read-only.
+message GetServerInfoRequest {}
+message GetServerInfoResponse {
+  string model_id          = 1;   // resolved serve model id ("" on a model-less serve)
+  string model_path        = 2;   // resolved GGUF path ("" on a model-less serve)
+  string listen_addr       = 3;   // gRPC listener bind addr:port
+  string ws_addr           = 4;   // R5 WebSocket live-event bridge addr:port
+  string console_addr      = 5;   // embedded console addr:port ("" if disabled)
+  string metrics_addr      = 6;   // Prometheus /metrics addr:port ("" if off)
+  string content_root      = 7;   // content store directory
+  string journal_path      = 8;   // SQLite journal path
+  string catalog_dir       = 9;   // durable catalog directory
+  uint64 max_lease         = 10;  // worker lease batch size
+  uint64 content_max_bytes = 11;  // fail-closed PutContent payload cap (bytes)
+  repeated string cors_origins = 12; // browser CORS allowlist (display; empty = deny)
+  bool   tls_enabled       = 13;  // serving in-binary TLS (POSTURE — never the key)
+  string auth_mode         = 14;  // "deny-all" | "dev-local" | "token" (label only)
+  bool   feature_hnsw      = 15;  // datasets/RAG data-plane available
+  bool   feature_inference = 16;  // live model inference available
+  bool   feature_console   = 17;  // embedded console available
+  bool   feature_vision    = 18;  // the serve model is image-capable
+  bool   audit_log_enabled = 19;  // a JSONL operator audit log is configured
+}
+
 service KxGateway {
   rpc SubmitRun(SubmitRunRequest) returns (RunHandle);
   rpc Invoke(InvokeRequest) returns (InvokeResponse);
@@ -1603,4 +1629,11 @@ service KxGateway {
   // if the branch is unknown to the caller; INVALID_ARGUMENT if the ref does not
   // resolve in the content store (fail-closed — no dangling manifest).
   rpc AdvanceBranch(AdvanceBranchRequest) returns (AdvanceBranchResponse);
+
+  // POC-1 (Settings "Workspace") — a NON-SECRET projection of the resolved server
+  // configuration: model/dirs/ports/flags + the auth/CORS/TLS POSTURE (labels +
+  // booleans only). Governed by an authenticated caller (UNAUTHENTICATED otherwise).
+  // NEVER carries a secret: no bearer-token value, no TLS private-key bytes (only
+  // `tls_enabled` + an `auth_mode` label). Off-journal, off-digest, read-only.
+  rpc GetServerInfo(GetServerInfoRequest) returns (GetServerInfoResponse);
 }

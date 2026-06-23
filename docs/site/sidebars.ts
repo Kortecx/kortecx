@@ -39,6 +39,7 @@ const sidebars: SidebarsConfig = {
         "reading-run-outputs",
         "rerun-with-changes",
         "observability",
+        "settings",
       ],
     },
     {
