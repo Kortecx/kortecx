@@ -11,7 +11,13 @@
 
 /// Non-secret server-configuration facts (the Settings "Workspace" view). The host
 /// constructs this once at serve startup; the gateway projects it read-only.
+///
+/// The boolean fields are independent feature/posture flags (TLS on/off + the build's
+/// feature flags), NOT a state machine — a flat projection is the honest shape (it
+/// mirrors the wire `GetServerInfoResponse` one-to-one), so the
+/// `struct_excessive_bools` refactor suggestion (enums / a state machine) does not apply.
 #[derive(Clone, Debug, Default)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct ServerInfoFacts {
     /// Resolved serve model id (empty on a model-less serve).
     pub model_id: String,

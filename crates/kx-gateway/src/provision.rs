@@ -1266,6 +1266,12 @@ struct DatasetGrounding {
     content: std::sync::Arc<dyn ContentWriter>,
 }
 
+/// POC-1: the effective `(args, context_refs)` a chat-rag bind uses after grounding —
+/// both BORROWED (the identity, for a non-chat-rag handle) or OWNED (the
+/// dataset-stripped args + the augmented refs). Factored out of
+/// [`HostRecipeBinder::ground_chat_rag`]'s signature (clippy::type_complexity).
+type GroundedArgs<'a> = (Cow<'a, [u8]>, Cow<'a, [String]>);
+
 /// PR-6b-4: the two LIVE seams the react-auto bind override reads — the SAME
 /// shared `Arc`s the coordinator/author/broker use, so a runtime-DIALED tool is
 /// auto-grantable the moment its firing capability registers.
@@ -1382,7 +1388,7 @@ impl HostRecipeBinder {
         asset_path: &AssetPath,
         args: &'a [u8],
         context_refs: &'a [String],
-    ) -> Result<(Cow<'a, [u8]>, Cow<'a, [String]>), BinderError> {
+    ) -> Result<GroundedArgs<'a>, BinderError> {
         let is_chat_rag = parse_handle(CHAT_RAG_RECIPE_HANDLE).is_some_and(|p| p == *asset_path);
         if !is_chat_rag {
             return Ok((Cow::Borrowed(args), Cow::Borrowed(context_refs)));
@@ -4219,11 +4225,10 @@ mod tests {
             .expect("chat-rag binds (no grounding seam ⇒ plain chat)");
         let entry = &bound.motes.first().unwrap().0;
         assert!(
-            entry
+            !entry
                 .def
                 .config_subset
-                .get(&ConfigKey(CONTEXT_ITEMS_KEY.to_string()))
-                .is_none(),
+                .contains_key(&ConfigKey(CONTEXT_ITEMS_KEY.to_string())),
             "no grounding seam ⇒ no folded context (a plain chat)"
         );
         // The `dataset`/`k` keys were stripped; the declared `prompt` slot bound fine.
