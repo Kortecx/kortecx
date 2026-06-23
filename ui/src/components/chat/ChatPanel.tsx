@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { fadeUp } from "../../app/motion";
 import { useConnection } from "../../kx/connection-context";
 import { useAttachments } from "../../kx/use-attachments";
-import { REACT_RECIPE_HANDLE, useChat } from "../../kx/use-chat";
+import { CHAT_RAG_RECIPE_HANDLE, REACT_RECIPE_HANDLE, useChat } from "../../kx/use-chat";
 import { useContextBundles } from "../../kx/use-context-bundles";
 import { useModels } from "../../kx/use-models";
 import { useRecipes } from "../../kx/use-recipes";
@@ -29,6 +29,7 @@ import { AttachmentStrip } from "./AttachmentStrip";
 import { ChatHistory } from "./ChatHistory";
 import { ChatSettingsPanel } from "./ChatSettings";
 import { Composer } from "./Composer";
+import { DatasetPicker } from "./DatasetPicker";
 import { DegradeNotice } from "./DegradeNotice";
 import { MessageList } from "./MessageList";
 import { ModelPicker } from "./ModelPicker";
@@ -49,6 +50,9 @@ export function ChatPanel() {
   const { endpoint } = useConnection();
   const [settings, setSettings] = useState<ChatSettings>(() => loadChatSettings());
   const [agentMode, setAgentMode] = useState(false);
+  // POC-1 CHAT-RAG: the grounding dataset for the NEXT turn (`undefined` = plain
+  // chat). Applies only in chat mode — an agent turn carries its own context.
+  const [dataset, setDataset] = useState<string | undefined>(undefined);
   // The agent toggle only EXISTS when the react loop is provisioned (an
   // inference serve with the bundled tool) — don't-fake-gaps.
   const recipes = useRecipes();
@@ -69,11 +73,14 @@ export function ChatPanel() {
     unsupported: models.unsupported,
     backingHandle: backing.handle,
   });
+  const agentTurn = agentMode && agentAvailable;
   const chat = useChat({
     handle: backing.handle,
     promptKey: backing.promptKey,
     modelId: settings.modelId,
-    agentMode: agentMode && agentAvailable,
+    agentMode: agentTurn,
+    // RAG grounding is a chat-mode feature; an agent turn ignores the dataset.
+    dataset: agentTurn ? undefined : dataset,
   });
   const attach = useAttachments();
   // PR-7b: the party's authored context bundles + the handles attached to the
@@ -234,10 +241,16 @@ export function ChatPanel() {
         </div>
       </div>
       <p className="muted">
-        {agentMode && agentAvailable ? (
+        {agentTurn ? (
           <>
             Each message is a TASK for the agent loop (<code>{REACT_RECIPE_HANDLE}</code>): the
             model reasons and fires tools until it answers.
+          </>
+        ) : dataset ? (
+          <>
+            Each message runs <code>{CHAT_RAG_RECIPE_HANDLE}</code>, grounded on dataset{" "}
+            <strong data-testid="chat-grounded-on">{dataset}</strong> — the retrieved documents fold
+            into the prompt before the model answers (plain chat if the dataset is empty).
           </>
         ) : (
           <>
@@ -303,6 +316,7 @@ export function ChatPanel() {
           value={settings.modelId}
           onChange={(modelId) => updateSettings({ ...settings, modelId })}
         />
+        {agentTurn ? null : <DatasetPicker value={dataset} onChange={setDataset} />}
       </div>
       <AttachmentStrip attachments={attach.attachments} onRemove={attach.remove} />
       {pendingContext.length > 0 ? (

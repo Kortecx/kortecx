@@ -720,6 +720,11 @@ pub struct GatewayService {
     /// the toolscout advisory precedent). `None` ⇒ `ListModels` returns
     /// `unimplemented`; an EMPTY catalog is the honest FFI-free answer.
     models: Option<Arc<dyn crate::models_view::ModelCatalogView>>,
+    /// POC-1 (Settings "Workspace"): the NON-SECRET server-configuration facts the
+    /// host projects via `GetServerInfo`. `None` ⇒ `GetServerInfo` returns
+    /// `unimplemented`. A plain value (not a live view) — fixed at serve startup;
+    /// it carries no secret by construction (no token / TLS-key field).
+    server_info: Option<crate::server_info::ServerInfoFacts>,
     /// The optional def-resolution seam (Batch B `GetMoteDetail` — display
     /// only). `None` ⇒ `GetMoteDetail` returns `unimplemented`; an absent def
     /// blob through a WIRED seam is the honest `def_found = false`.
@@ -827,6 +832,7 @@ impl GatewayService {
             uploads: None,
             put_cap_bytes: DEFAULT_PUT_CAP_BYTES,
             models: None,
+            server_info: None,
             mote_defs: None,
             feedback: None,
             run_inputs: None,
@@ -1069,6 +1075,16 @@ impl GatewayService {
         models: Arc<dyn crate::models_view::ModelCatalogView>,
     ) -> Self {
         self.models = Some(models);
+        self
+    }
+
+    /// POC-1: wire the NON-SECRET server-configuration facts the host projects via
+    /// `GetServerInfo` (the Settings "Workspace" view). Without this seam
+    /// `GetServerInfo` returns `unimplemented`. The facts carry no secret by
+    /// construction (no token / TLS-key field — POC-2 token-never-leaks negative).
+    #[must_use]
+    pub fn with_server_info(mut self, facts: crate::server_info::ServerInfoFacts) -> Self {
+        self.server_info = Some(facts);
         self
     }
 
@@ -1870,6 +1886,46 @@ impl KxGateway for GatewayService {
             })
             .collect();
         Ok(Response::new(proto::ListModelsResponse { models }))
+    }
+
+    async fn get_server_info(
+        &self,
+        request: Request<proto::GetServerInfoRequest>,
+    ) -> Result<Response<proto::GetServerInfoResponse>, Status> {
+        // SERVER-DERIVED identity (SN-8): config facts go ONLY to an authenticated
+        // caller (the interceptor-resolved party). The wire carries no party field,
+        // so a caller cannot assert who it is; an unresolved caller is refused.
+        let _party = request
+            .extensions()
+            .get::<CallerParty>()
+            .ok_or_else(|| Status::unauthenticated("no resolved caller identity"))?;
+        let facts = self
+            .server_info
+            .as_ref()
+            .ok_or_else(|| Status::unimplemented("GetServerInfo: no server info wired"))?;
+        // A pure projection of the NON-SECRET facts — there is no token / TLS-key
+        // field on `ServerInfoFacts` to leak (POC-2 token-never-leaks, type-level).
+        Ok(Response::new(proto::GetServerInfoResponse {
+            model_id: facts.model_id.clone(),
+            model_path: facts.model_path.clone(),
+            listen_addr: facts.listen_addr.clone(),
+            ws_addr: facts.ws_addr.clone(),
+            console_addr: facts.console_addr.clone(),
+            metrics_addr: facts.metrics_addr.clone(),
+            content_root: facts.content_root.clone(),
+            journal_path: facts.journal_path.clone(),
+            catalog_dir: facts.catalog_dir.clone(),
+            max_lease: facts.max_lease,
+            content_max_bytes: facts.content_max_bytes,
+            cors_origins: facts.cors_origins.clone(),
+            tls_enabled: facts.tls_enabled,
+            auth_mode: facts.auth_mode.clone(),
+            feature_hnsw: facts.feature_hnsw,
+            feature_inference: facts.feature_inference,
+            feature_console: facts.feature_console,
+            feature_vision: facts.feature_vision,
+            audit_log_enabled: facts.audit_log_enabled,
+        }))
     }
 
     async fn get_mote_detail(

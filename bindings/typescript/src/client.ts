@@ -48,6 +48,7 @@ import { RecipeForm, RecipeInfo, ScoredRecipe } from "./recipes.js";
 import { ReplanRound, type ReplanRoundPage } from "./replan.js";
 import { Result, Run } from "./run.js";
 import { RunInputs, type RunPage, RunSummary } from "./runs.js";
+import { ServerInfo } from "./serverinfo.js";
 import { TeamMembers, type TeamSummary, teamsFromProto } from "./teams.js";
 import { type MoteTelemetryPage, MoteTelemetryRow, TelemetrySummary } from "./telemetry.js";
 import type { TokenChunk } from "./tokens.js";
@@ -214,6 +215,32 @@ export abstract class KxClientBase {
       await this.writeOut(opts.out, result.payload);
     }
     return result;
+  }
+
+  /**
+   * One-shot conversational answer (POC-1) — the headline "ask a question, get a
+   * string" path. A thin sugar over {@link invoke}(`{ wait: true }`): with no
+   * `dataset` it binds `kx/recipes/chat` (`{ prompt }`); with `opts.dataset` it
+   * binds `kx/recipes/chat-rag` (`{ prompt, dataset, k }`) so the SERVER embeds the
+   * prompt, retrieves the dataset's top-`k` docs, folds them in, and answers —
+   * grounding is server-side (SN-8). A missing/empty dataset HONESTLY degrades to a
+   * plain answer (never faked). Returns the decoded answer string (`""` if the
+   * committed payload was not UTF-8 text), reusing {@link Result.text} — the SAME
+   * answer extraction as the `invoke` path. Throws {@link KxRunFailed} /
+   * {@link KxWaitTimeout} on a failed / timed-out run.
+   */
+  async chat(
+    prompt: string,
+    opts: { dataset?: string; k?: number; timeoutMs?: number } = {},
+  ): Promise<string> {
+    const dataset = opts.dataset;
+    const handle = dataset ? "kx/recipes/chat-rag" : "kx/recipes/chat";
+    const args: Args = dataset ? { prompt, dataset, k: opts.k ?? 4 } : { prompt };
+    const result = (await this.invoke(handle, args, {
+      wait: true,
+      timeoutMs: opts.timeoutMs,
+    })) as Result;
+    return result.text ?? "";
   }
 
   /**
@@ -509,6 +536,18 @@ export abstract class KxClientBase {
   async listModels(): Promise<ModelSummary[]> {
     const resp = await rpc(this.grpc.listModels({}));
     return resp.models.map((m) => ModelSummary.fromProto(m));
+  }
+
+  /**
+   * The resolved configuration the connected gateway is running (POC-1 Settings) —
+   * model, bind addresses, store paths, caps, and feature flags. Read by an
+   * authenticated caller; DISPLAY-ONLY (SN-8): server-derived, never a secret
+   * (`tlsEnabled` is a POSTURE flag, never the key). An old gateway without this
+   * RPC throws {@link KxUnimplemented}.
+   */
+  async getServerInfo(): Promise<ServerInfo> {
+    const resp = await rpc(this.grpc.getServerInfo({}));
+    return ServerInfo.fromProto(resp);
   }
 
   /** Native gRPC server-streaming event tail (Node + browser via Connect). */

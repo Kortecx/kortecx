@@ -64,6 +64,7 @@ mod reader;
 mod replan;
 mod run_inputs_view;
 mod runs;
+mod server_info;
 mod service;
 mod submit;
 mod telemetry_view;
@@ -106,6 +107,7 @@ pub use mote_def_view::MoteDefView;
 pub use mote_detail::{MAX_CONFIG_ENTRIES, MAX_CONFIG_VALUE_BYTES, MAX_PROMPT_BYTES};
 pub use reader::{ContentReader, JournalReader, ReadOnly};
 pub use run_inputs_view::{RunInputsEntry, RunInputsRecord, RunInputsStore};
+pub use server_info::ServerInfoFacts;
 pub use service::{
     AssetGrantsView, AuthorEdge, AuthorExecutionMode, AuthorStep, AuthorStepKind, BinderError,
     BoundRecipe, CatalogSeamError, EventStream, EventTailer, GatewayService, GlobalEventStream,

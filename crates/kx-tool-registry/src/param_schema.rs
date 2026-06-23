@@ -315,9 +315,13 @@ pub fn normalize_lenient_args(args: &[u8]) -> std::borrow::Cow<'_, [u8]> {
                 i += 1;
             }
             b',' => {
-                // Trailing comma: drop it if the next non-ws byte closes a container.
+                // Trailing comma: drop it if the next significant byte closes a
+                // container. The lookahead skips whitespace AND further commas, so a
+                // RUN of trailing commas (`,,}`) collapses in ONE pass — else the first
+                // comma would survive until a second pass dropped the rest, then re-drop
+                // it (the idempotency proptest's other failing class).
                 let mut j = i + 1;
-                while j < args.len() && args[j].is_ascii_whitespace() {
+                while j < args.len() && (args[j].is_ascii_whitespace() || args[j] == b',') {
                     j += 1;
                 }
                 if j < args.len() && (args[j] == b'}' || args[j] == b']') {
@@ -339,9 +343,15 @@ pub fn normalize_lenient_args(args: &[u8]) -> std::borrow::Cow<'_, [u8]> {
             }
             _ => {
                 if expect_key {
-                    // An UNQUOTED key: copy the identifier verbatim, wrapped in
-                    // quotes. Scan to the next delimiter (total: the first byte is a
-                    // non-delimiter, so this advances ≥ 1).
+                    // An UNQUOTED key: copy the identifier wrapped in quotes. Scan to
+                    // the next delimiter (total: the first byte is a non-delimiter, so
+                    // this advances ≥ 1). A `\` is NOT a scan delimiter, so the key can
+                    // contain a backslash — it MUST be escaped (`\` → `\\`) inside the
+                    // emitted string, else a key ending in `\` would make the closing
+                    // `"` an escaped quote, leaving the string unterminated (so a
+                    // second `normalize_lenient_args` pass would re-parse it differently
+                    // — the idempotency proptest's failing class). A `"` cannot appear
+                    // in the span (it is a scan delimiter), so `\` is the only escape.
                     let start = i;
                     while i < args.len() {
                         let cc = args[i];
@@ -351,7 +361,12 @@ pub fn normalize_lenient_args(args: &[u8]) -> std::borrow::Cow<'_, [u8]> {
                         i += 1;
                     }
                     out.push(b'"');
-                    out.extend_from_slice(&args[start..i]);
+                    for &kc in &args[start..i] {
+                        if kc == b'\\' {
+                            out.push(b'\\');
+                        }
+                        out.push(kc);
+                    }
                     out.push(b'"');
                     expect_key = false;
                 } else {

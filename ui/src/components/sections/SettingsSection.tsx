@@ -2,25 +2,27 @@ import { m } from "framer-motion";
 import { fadeUp, stagger } from "../../app/motion";
 import { useTheme } from "../../app/use-theme";
 import { useConnection } from "../../kx/connection-context";
+import { useServerInfo } from "../../kx/use-server-info";
 import { THEME_PREFERENCES } from "../../lib/theme";
 import { Badge } from "../ds/Badge";
 import { GlowCard } from "../ds/GlowCard";
 
 /**
- * Settings/Profile (W1 shell placeholder per the section taxonomy): the connection
- * profile + console appearance controls. No new RPCs; preferences persist locally
- * in this browser (theme via lib/theme.ts), never on the gateway.
+ * Settings (W1 shell + POC-1 Workspace): the connection profile + console appearance
+ * (browser-local), plus a READ-ONLY "Workspace" view of how the gateway is configured
+ * (`GetServerInfo` — non-secret facts, governed by your authenticated session).
  */
 export function SettingsSection() {
   const { status, endpoint, wsEndpoint } = useConnection();
   const { preference, resolved, setPreference } = useTheme();
+  const info = useServerInfo();
   const connected = status === "connected";
   return (
     <section className="screen" data-testid="settings-section">
       <h1>Settings</h1>
       <p className="muted">
-        Console preferences & the connection profile. Everything here lives in this browser —
-        nothing is stored on the gateway.
+        Console preferences live in this browser. The <strong>Workspace</strong> card is a read-only
+        view of how the gateway is configured — non-secret facts only.
       </p>
       <m.div className="settings-grid" variants={stagger()} initial="hidden" animate="show">
         <GlowCard variants={fadeUp}>
@@ -42,6 +44,57 @@ export function SettingsSection() {
             <dt>Bearer token</dt>
             <dd>kept in memory only — never persisted</dd>
           </dl>
+        </GlowCard>
+        <GlowCard variants={fadeUp}>
+          <h2>Workspace</h2>
+          {info.isError ? (
+            <p className="muted" data-testid="workspace-degraded">
+              This gateway doesn't expose server info (an older build), or your session isn't
+              authenticated — connect with a bearer token to view the workspace configuration.
+            </p>
+          ) : info.isLoading || info.data === undefined ? (
+            <p className="muted">Loading…</p>
+          ) : (
+            <dl className="facts" data-testid="workspace-facts">
+              <dt>Model</dt>
+              <dd className="mono">{info.data.modelId || "none — model-less serve"}</dd>
+              <dt>gRPC</dt>
+              <dd className="mono">{info.data.listenAddr}</dd>
+              <dt>WS bridge</dt>
+              <dd className="mono">{info.data.wsAddr}</dd>
+              <dt>Console</dt>
+              <dd className="mono">{info.data.consoleAddr || "disabled"}</dd>
+              <dt>Metrics</dt>
+              <dd className="mono">{info.data.metricsAddr || "off"}</dd>
+              <dt>Content store</dt>
+              <dd className="mono">{info.data.contentRoot}</dd>
+              <dt>Journal</dt>
+              <dd className="mono">{info.data.journalPath}</dd>
+              <dt>Security</dt>
+              <dd>
+                auth {info.data.authMode} · TLS {info.data.tlsEnabled ? "on" : "off"} · CORS{" "}
+                {info.data.corsOrigins.length > 0
+                  ? info.data.corsOrigins.join(", ")
+                  : "deny-by-default"}
+              </dd>
+              <dt>Features</dt>
+              <dd>
+                {[
+                  info.data.featureInference && "inference",
+                  info.data.featureHnsw && "datasets",
+                  info.data.featureConsole && "console",
+                  info.data.featureVision && "vision",
+                ]
+                  .filter(Boolean)
+                  .join(" · ") || "core only"}
+              </dd>
+              <dt>Audit log</dt>
+              <dd>{info.data.auditLogEnabled ? "on" : "off"}</dd>
+            </dl>
+          )}
+          <span className="muted">
+            Read-only · governed by your authenticated session · never includes a secret.
+          </span>
         </GlowCard>
         <GlowCard variants={fadeUp}>
           <h2>Appearance</h2>

@@ -293,6 +293,45 @@ async fn list_models_is_an_honest_empty_list_on_an_ffi_free_serve() {
     running.shutdown().await.unwrap();
 }
 
+/// POC-1 Settings "Workspace": `GetServerInfo` projects the NON-SECRET config to an
+/// AUTHENTICATED caller. The dev-local serve resolves a caller (the CallerParty gate
+/// passes, like the other read RPCs); the response carries the real dirs + a POSTURE
+/// LABEL, and NEVER a secret — the `auth_mode` field is a label such as `dev-local`
+/// (not a bearer-token value), and the response type has NO token/TLS-key field to
+/// leak (the token-never-leaks negative is type-level).
+#[tokio::test]
+async fn get_server_info_projects_non_secret_config_to_an_authed_caller() {
+    let dir = TempDir::new().unwrap();
+    let running = start(config(&dir, true)).await.unwrap();
+    let mut c = client(running.local_addr()).await;
+    let info = c
+        .get_server_info(proto::GetServerInfoRequest {})
+        .await
+        .unwrap()
+        .into_inner();
+    // Real config facts are projected.
+    assert!(
+        !info.content_root.is_empty(),
+        "the content root is projected"
+    );
+    assert!(
+        !info.journal_path.is_empty(),
+        "the journal path is projected"
+    );
+    assert!(info.max_lease > 0, "the lease batch size is projected");
+    assert!(
+        info.listen_addr.contains("127.0.0.1"),
+        "the loopback gRPC bind is projected"
+    );
+    // The auth POSTURE is a LABEL — never a secret. `dev_allow_local` ⇒ `dev-local`.
+    assert_eq!(
+        info.auth_mode, "dev-local",
+        "the auth posture is a LABEL, never a bearer-token value"
+    );
+    assert!(!info.tls_enabled, "a plaintext loopback serve");
+    running.shutdown().await.unwrap();
+}
+
 /// The stated scale envelope: a FULL 64-ref batch whose every item sits at the
 /// 512 KiB per-item clamp — a ~32 MiB response — completes through the
 /// transport, order-preserved, with honest truncation metadata.

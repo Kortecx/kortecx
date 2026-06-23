@@ -46,6 +46,109 @@ The **attach** button (next to send) opens a menu:
   release**: attaching these as message *context* rides the context-bundle work.
   They are shown (not hidden) so the surface is honest about what is coming.
 
+## Grounding with datasets (RAG)
+
+When a chat turn **names a dataset**, the runtime answers grounded on **your own
+documents** instead of the model's parametric memory. The flow is a new recipe,
+`kx/recipes/chat-rag`: the server embeds your message, runs **HNSW top-k
+retrieval** over that dataset, and folds the **exact retrieved document refs**
+into the prompt — so the model reasons over the matched content and replies
+grounded on it.
+
+The folded context is **edge-free, durable, replayable, and exactly-once**: the
+retrieved content refs become part of the committed run, so re-opening or
+replaying the turn reproduces the same grounded answer. Grounding turns on only
+**after you ingest a corpus** — there is nothing to retrieve against until then.
+
+This needs an inference build **with retrieval** and a served model:
+
+```bash
+kx serve --features inference,hnsw --dev-allow-local
+```
+
+### Ingest first, then chat
+
+Build the corpus, then name it on the chat turn:
+
+```bash
+# 1. Ingest your documents into a named dataset (text or a file).
+kx datasets ingest my-notes --text "Kortecx serves world-mutating steps from their committed result on replay."
+kx datasets ingest my-notes --file ./design-notes.md
+
+# 2. Chat grounded on that dataset (a bare positional is the message).
+kx chat "What does Kortecx do on replay?" --dataset my-notes --k 4
+#    → grounded on 'my-notes' — the answer cites your ingested docs
+
+# Ask without a dataset and it is a plain chat (no retrieval).
+kx chat "Say hello"
+```
+
+The CLI prints an **honest grounding indicator** for each turn: *grounded on
+'my-notes'* when retrieval succeeds, or *not found / empty → plain* when it
+falls back. `--k N` bounds how many documents are retrieved (default 4).
+
+### Python
+
+```python
+from kortecx import KxClient
+
+with KxClient("http://127.0.0.1:50151", token="…") as kx:
+    # Grounded — retrieves the top-k docs from `my-notes` and folds the refs in.
+    answer = kx.chat("What does Kortecx do on replay?", dataset="my-notes", k=4)
+    print(answer)
+
+    # No dataset → an honest plain chat, never faked grounding.
+    print(kx.chat("Say hello"))
+```
+
+`client.chat(prompt, dataset="…", k=4) -> str` is a thin wrapper over an invoke
+of `chat-rag`; it returns the committed answer.
+
+### TypeScript
+
+```ts
+import { KxClient } from "@kortecx/sdk";
+
+const kx = new KxClient("http://127.0.0.1:50151", { token });
+
+// Grounded on your dataset.
+const answer = await kx.chat("What does Kortecx do on replay?", {
+  dataset: "my-notes",
+  k: 4,
+});
+console.log(answer);
+
+// No dataset → plain chat.
+console.log(await kx.chat("Say hello"));
+kx.close();
+```
+
+`client.chat(prompt, { dataset, k }) -> Promise<string>` returns the answer.
+
+### Honest degrade — grounding is never faked
+
+If grounding cannot run, the turn answers as a **plain chat with a notice** — it
+never invents citations or pretends to be grounded. The fallbacks are:
+
+- **No dataset selected** — a normal chat turn.
+- **Named dataset missing or empty** — answers plainly and tells you the dataset
+  was not found or had nothing to retrieve.
+- **No embedder** (a serve without an inference model) — there is nothing to
+  embed the message with, so it degrades to plain chat. (Retrieval also needs the
+  `hnsw` feature — see [Data Lab → Degraded states](./datasets.md#degraded-states).)
+
+### Scores are display-only (SN-8)
+
+Retrieval ranks hits by an approximate similarity **score**, but the score is
+**display-only** — it never reaches run identity. Only the **exact content refs**
+of the retrieved documents are folded into the prompt, and they are matched
+downstream by exact hash. So the grounded turn stays deterministic and
+replayable: the same ingested corpus yields the same folded refs, and the
+build-order-sensitive ANN ranking never routes a `MoteId`. See
+[Data Lab → Scores are display-only](./datasets.md#scores-are-display-only-sn-8)
+and [Security → model proposes, runtime
+enforces](./security.md#model-proposes-runtime-enforces).
+
 ## Reading an answer
 
 - **Reasoning.** If a model emits a leading `<think>…</think>` block, it is split

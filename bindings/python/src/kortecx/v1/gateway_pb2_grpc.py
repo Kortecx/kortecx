@@ -26,11 +26,7 @@ if _version_not_supported:
 
 
 class KxGatewayStub(object):
-    """---------------------------------------------------------------------------
-    Service — the external client-facing gateway (distinct from Coordinator).
-    ---------------------------------------------------------------------------
-
-    """
+    """Missing associated documentation comment in .proto file."""
 
     def __init__(self, channel):
         """Constructor.
@@ -313,14 +309,15 @@ class KxGatewayStub(object):
                 request_serializer=kortecx_dot_v1_dot_gateway__pb2.AdvanceBranchRequest.SerializeToString,
                 response_deserializer=kortecx_dot_v1_dot_gateway__pb2.AdvanceBranchResponse.FromString,
                 _registered_method=True)
+        self.GetServerInfo = channel.unary_unary(
+                '/kortecx.v1.KxGateway/GetServerInfo',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.GetServerInfoRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.GetServerInfoResponse.FromString,
+                _registered_method=True)
 
 
 class KxGatewayServicer(object):
-    """---------------------------------------------------------------------------
-    Service — the external client-facing gateway (distinct from Coordinator).
-    ---------------------------------------------------------------------------
-
-    """
+    """Missing associated documentation comment in .proto file."""
 
     def SubmitRun(self, request, context):
         """Missing associated documentation comment in .proto file."""
@@ -722,6 +719,17 @@ class KxGatewayServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def GetServerInfo(self, request, context):
+        """POC-1 (Settings "Workspace") — a NON-SECRET projection of the resolved server
+        configuration: model/dirs/ports/flags + the auth/CORS/TLS POSTURE (labels +
+        booleans only). Governed by an authenticated caller (UNAUTHENTICATED otherwise).
+        NEVER carries a secret: no bearer-token value, no TLS private-key bytes (only
+        `tls_enabled` + an `auth_mode` label). Off-journal, off-digest, read-only.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_KxGatewayServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -1000,6 +1008,11 @@ def add_KxGatewayServicer_to_server(servicer, server):
                     request_deserializer=kortecx_dot_v1_dot_gateway__pb2.AdvanceBranchRequest.FromString,
                     response_serializer=kortecx_dot_v1_dot_gateway__pb2.AdvanceBranchResponse.SerializeToString,
             ),
+            'GetServerInfo': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetServerInfo,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.GetServerInfoRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.GetServerInfoResponse.SerializeToString,
+            ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
             'kortecx.v1.KxGateway', rpc_method_handlers)
@@ -1009,11 +1022,7 @@ def add_KxGatewayServicer_to_server(servicer, server):
 
  # This class is part of an EXPERIMENTAL API.
 class KxGateway(object):
-    """---------------------------------------------------------------------------
-    Service — the external client-facing gateway (distinct from Coordinator).
-    ---------------------------------------------------------------------------
-
-    """
+    """Missing associated documentation comment in .proto file."""
 
     @staticmethod
     def SubmitRun(request,
@@ -2490,6 +2499,33 @@ class KxGateway(object):
             '/kortecx.v1.KxGateway/AdvanceBranch',
             kortecx_dot_v1_dot_gateway__pb2.AdvanceBranchRequest.SerializeToString,
             kortecx_dot_v1_dot_gateway__pb2.AdvanceBranchResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GetServerInfo(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/GetServerInfo',
+            kortecx_dot_v1_dot_gateway__pb2.GetServerInfoRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.GetServerInfoResponse.FromString,
             options,
             channel_credentials,
             insecure,

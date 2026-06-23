@@ -39,6 +39,16 @@ const COMMITTED = 3;
 /** The Batch A vision recipe (provisioned only on an image-capable serve). */
 export const VISION_RECIPE_HANDLE = "kx/recipes/vision";
 
+/** POC-1 CHAT-RAG: the AUTO-RAG chat recipe (provisioned on any inference serve).
+ *  A turn routed here carries a `dataset` arg; the server embeds the prompt,
+ *  retrieves the dataset's top-k docs, and folds the exact refs into the prompt
+ *  (honest plain chat when the dataset is missing/empty — grounding is never faked). */
+export const CHAT_RAG_RECIPE_HANDLE = "kx/recipes/chat-rag";
+
+/** POC-1: the default number of grounding documents folded into a chat-rag turn
+ *  (mirrors the server-side default; the server clamps an out-of-range value). */
+const CHAT_RAG_DEFAULT_K = 4;
+
 /** The live ReAct task-loop recipe (provisioned only on an inference serve
  *  with the bundled tool — the PR-2.1 agent mode's backend). */
 export const REACT_RECIPE_HANDLE = "kx/recipes/react";
@@ -72,6 +82,11 @@ export interface UseChatOptions {
    *  the model reasons + fires tools until it answers. Only honored when the
    *  react recipe is provisioned (the caller gates the toggle). */
   readonly agentMode?: boolean;
+  /** POC-1 CHAT-RAG: ground each turn over this dataset (embed → top-k → fold the
+   *  exact refs). `undefined` ⇒ a plain chat. Ignored in agent mode (the loop has
+   *  its own context carry). The server honestly degrades to a plain answer when
+   *  the dataset is missing/empty. */
+  readonly dataset?: string;
 }
 
 export interface UseChat {
@@ -170,7 +185,13 @@ export function planVisionArgs(
   return args;
 }
 
-export function useChat({ handle, promptKey, modelId, agentMode }: UseChatOptions): UseChat {
+export function useChat({
+  handle,
+  promptKey,
+  modelId,
+  agentMode,
+  dataset,
+}: UseChatOptions): UseChat {
   const { client } = useConnection();
   const invoke = useInvoke();
   const [thread, dispatch] = useReducer(chatReducer, EMPTY_THREAD);
@@ -370,9 +391,18 @@ export function useChat({ handle, promptKey, modelId, agentMode }: UseChatOption
           }
         }
       }
+      // POC-1 CHAT-RAG: a selected dataset grounds the turn — route to the chat-rag
+      // recipe carrying the dataset selector (the server strips it + folds the
+      // retrieved refs; a missing/empty dataset degrades to a plain answer).
+      if (dataset) {
+        return {
+          handle: CHAT_RAG_RECIPE_HANDLE,
+          args: { [promptKey]: text, dataset, k: CHAT_RAG_DEFAULT_K },
+        };
+      }
       return { handle, args: { [promptKey]: text } };
     },
-    [handle, promptKey, modelId, agentMode, reactForm, visionForm],
+    [handle, promptKey, modelId, agentMode, dataset, reactForm, visionForm],
   );
 
   const startTurn = useCallback(

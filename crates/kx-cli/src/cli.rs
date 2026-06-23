@@ -44,6 +44,8 @@ usage: kx <command> [args]
               --cors-origin enables the gRPC-web browser shim for the listed origins, deny-by-default)
 
   client verbs (gRPC over the gateway; common flags: --endpoint <url> --token <t> | --token-file <p> --tls-ca <path> --json):
+    kx chat --message <text> [--dataset <name>] [--k N] [--timeout-secs N]
+                                                 (POC-1 chat: plain, or AUTO-RAG grounded over a dataset; see `kx help chat`)
     kx agent run --goal <text> [--context <handle>]... [--context-ref <hex>]... [--input k=v]... [--timeout-secs N]
                                                  (the embeddable agent-runner: goal → answer + audited actions; see `kx help agent`)
     kx invoke <handle> --args <json> [--args-file <path>] [--wait] [--stream] [--timeout-secs N] [--out <file>] [--context <handle>]...
@@ -74,6 +76,7 @@ usage: kx <command> [args]
     kx recipe list | search <intent> [--keyword <k>]... [--limit N]   (advisory recipe discovery)
     kx models list                              (display-only model discovery)
     kx datasets list | ingest <name> (--text <s>|--file <p>)... | query <name> --text <q> [--k N]   (RAG corpora)
+    kx info                                     (non-secret server config: model/dirs/ports/flags/posture)
     kx health                                   (grpc.health.v1 liveness; exit 0 iff SERVING)
 
     --endpoint defaults to http://127.0.0.1:50151
@@ -96,6 +99,8 @@ pub enum Cli {
     },
     /// Forward to the gateway server: the `serve` args (verb stripped).
     Serve(Vec<String>),
+    /// `chat` — POC-1 ergonomic chat (plain or AUTO-RAG grounded over a dataset).
+    Chat(verbs::chat::ChatArgs),
     /// `agent run` — the embeddable agent-runner (PR-9c-1; Invoke-of-react wrapper).
     Agent(verbs::agent::AgentArgs),
     /// `invoke` a published blueprint by handle (wire-legacy: recipe).
@@ -144,6 +149,8 @@ pub enum Cli {
     Datasets(verbs::datasets::DatasetsArgs),
     /// Liveness/readiness probe (grpc.health.v1).
     Health(verbs::health::HealthArgs),
+    /// POC-1 Settings "Workspace": the non-secret server configuration (`GetServerInfo`).
+    Info(verbs::info::InfoArgs),
 }
 
 impl Cli {
@@ -176,6 +183,7 @@ impl Cli {
                 })
             }
             Some("serve") => Ok(Cli::Serve(args.collect())),
+            Some("chat") => Ok(Cli::Chat(verbs::chat::parse(args)?)),
             Some("agent") => Ok(Cli::Agent(verbs::agent::parse(args)?)),
             Some("invoke") => Ok(Cli::Invoke(verbs::invoke::parse(args)?)),
             Some("blueprint") => Ok(Cli::Blueprint(verbs::blueprint::parse(args)?)),
@@ -200,6 +208,7 @@ impl Cli {
             Some("models") => Ok(Cli::Models(verbs::models::parse(args)?)),
             Some("datasets") => Ok(Cli::Datasets(verbs::datasets::parse(args)?)),
             Some("health") => Ok(Cli::Health(verbs::health::parse(args)?)),
+            Some("info") => Ok(Cli::Info(verbs::info::parse(args)?)),
             Some(other) => Err(CliError::Usage(format!(
                 "unknown command {other:?} (try `kx --help`)"
             ))),
@@ -250,6 +259,7 @@ async fn dispatch(cli: Cli) -> Result<(), CliError> {
         }
         Cli::Runtime { argv, json } => run_engine(argv, json).await,
         Cli::Serve(rest) => serve(rest).await,
+        Cli::Chat(a) => verbs::chat::execute(a).await,
         Cli::Agent(a) => verbs::agent::execute(a).await,
         Cli::Invoke(a) => verbs::invoke::execute(a).await,
         Cli::Blueprint(a) => verbs::blueprint::execute(a).await,
@@ -273,6 +283,7 @@ async fn dispatch(cli: Cli) -> Result<(), CliError> {
         Cli::Branch(a) => verbs::branch::execute(a).await,
         Cli::Models(a) => verbs::models::execute(a).await,
         Cli::Datasets(a) => verbs::datasets::execute(a).await,
+        Cli::Info(a) => verbs::info::execute(a).await,
         Cli::Health(a) => verbs::health::execute(a).await,
     }
 }
@@ -472,6 +483,16 @@ kx serve --dev-allow-local [--journal <path>] [--content <dir>] [--catalog-dir <
   loopback only) or --auth-token(-file); a bare `kx serve` with neither errors with a hint.
   Browser SPAs: --cors-origin <scheme://host[:port]> (repeatable, deny-by-default) enables the
   gRPC-web shim for the listed origins (pair with --tls-cert/--tls-key for https)."
+            .into(),
+        "chat" => "\
+kx chat --message <text> [--dataset <name>] [--k N] [--timeout-secs N] [--json] [client flags]
+  POC-1 chat over the served model. Plain by default; with --dataset it runs AUTO-RAG —
+  the server embeds the message, retrieves the dataset's top-k documents (--k, default 4),
+  and folds the EXACT retrieved refs into the prompt (edge-free, replayable, SN-8 exact-out).
+  HONEST grounding: the turn is grounded ONLY when the named dataset exists and is non-empty;
+  otherwise it answers plainly with a notice (grounding is never faked). A bare positional is
+  taken as the message (`kx chat \"hello\"`). A thin Invoke wrapper (server-warranted, SN-8);
+  ingest a corpus first with `kx datasets ingest <name> ...`."
             .into(),
         "agent" => "\
 kx agent run --goal <text> [--context <handle>]... [--context-ref <hex>]... [--input k=v]... [--timeout-secs N] [client flags]
@@ -686,6 +707,15 @@ kx health [client flags]
   Probe the gateway's grpc.health.v1 liveness/readiness. Prints SERVING / NOT_SERVING
   (or --json) and exits 0 iff SERVING — a purpose-built healthcheck (the compose
   stack uses it). Unauthenticated; honors --endpoint / --tls-ca for a TLS gateway."
+            .into(),
+        "info" => "\
+kx info [--json] [client flags]
+  POC-1 Settings \"Workspace\": the NON-SECRET server configuration — the resolved
+  model (id + path), the gRPC/WebSocket/console/metrics endpoints, the content/journal/
+  catalog dirs, lease + payload limits, the CORS allowlist, and the auth/TLS POSTURE
+  (an auth_mode label + a tls on/off flag) plus the build's feature flags. Governed by
+  an AUTHENTICATED caller (a token is required under --auth-token serves); NEVER prints
+  a secret (no bearer token, no TLS key)."
             .into(),
         "datasets" => "\
 kx datasets list [client flags]

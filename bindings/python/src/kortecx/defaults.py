@@ -128,3 +128,18 @@ def run(target: object, *, wait: bool = True, timeout: float = 120.0, **agent_kw
 def invoke(handle: str, args: "ArgsType", **kwargs):
     """Module-level convenience — invoke a published recipe via the default client."""
     return default_client().invoke(handle, args, **kwargs)
+
+
+def chat(
+    prompt: str,
+    *,
+    dataset: Optional[str] = None,
+    k: int = 4,
+    timeout: float = 120.0,
+) -> str:
+    """Module-level convenience — ask the served model a single question via the
+    default client (POC-1) and return the answer text. Pass ``dataset`` to AUTO-RAG-
+    ground the answer against a dataset's top-``k`` docs (the server degrades
+    honestly to a plain answer when it is missing/empty). See
+    :meth:`~kortecx.client.KxClient.chat`."""
+    return default_client().chat(prompt, dataset=dataset, k=k, timeout=timeout)

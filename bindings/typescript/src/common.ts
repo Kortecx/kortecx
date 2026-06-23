@@ -149,6 +149,8 @@ export {
   SnapshotResult,
 } from "./branch.js";
 export { ModelSummary } from "./models.js";
+// POC-1: the resolved gateway configuration view (Settings; display-only, SN-8).
+export { ServerInfo } from "./serverinfo.js";
 
 // Batch B: per-mote definition inspection (display-only).
 export { MoteDetail, MoteConfigItem, ndClassName, effectPatternName } from "./motes.js";

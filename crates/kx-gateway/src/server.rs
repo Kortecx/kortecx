@@ -826,21 +826,51 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         content.clone(),
         fs_list_root.clone(),
     )?);
-    let binder: Arc<dyn RecipeBinder> = if autogrant {
-        let registered: Arc<dyn kx_gateway_core::RegisteredToolsView> =
-            Arc::new(HostRegisteredTools {
-                broker: local_broker.clone(),
-            });
-        Arc::new(
+    // (3e) T3.7 / POC-1: the Datasets data-plane (RAG) view, behind the opt-in `hnsw`
+    //      feature — a durable SQLite store + a rebuilt-on-open HNSW ANN index under
+    //      the catalog dir. Built BEFORE the binder so a `kx/recipes/chat-rag` bind can
+    //      ground the turn (embed → top-k → fold the exact refs). One concrete
+    //      `Arc<HostDatasetView>` backs the binder grounding seam, the inline RAG seam
+    //      (`DatasetView`), AND the advisory Slice-B seam (`FuzzyDiscoveryView`) — one
+    //      store, three uses, cloned into the gateway below. The client-vector path is
+    //      FFI-free; an `inference` build additionally wires the resolved serve model as
+    //      the server embedder (text-only ingest/query).
+    #[cfg(feature = "hnsw")]
+    let dataset_view: Arc<crate::datasets::HostDatasetView> = {
+        let datasets_dir = catalog_dir.join("datasets");
+        #[cfg_attr(not(feature = "inference"), allow(unused_mut))]
+        let mut view = crate::datasets::HostDatasetView::open(&datasets_dir)?;
+        #[cfg(feature = "inference")]
+        if let Some(embedder) = dataset_embedder {
+            view = view.with_embedder(embedder);
+        }
+        Arc::new(view)
+    };
+    let binder: Arc<dyn RecipeBinder> = {
+        #[cfg_attr(not(feature = "hnsw"), allow(unused_mut))]
+        let mut host_binder = if autogrant {
+            let registered: Arc<dyn kx_gateway_core::RegisteredToolsView> =
+                Arc::new(HostRegisteredTools {
+                    broker: local_broker.clone(),
+                });
             HostRecipeBinder::from_shared_with_autogrant(
                 demo.clone(),
                 tool_registry.clone(),
                 registered,
             )
-            .with_bundles(bundles_db.clone()),
-        )
-    } else {
-        Arc::new(HostRecipeBinder::from_shared(demo.clone()).with_bundles(bundles_db.clone()))
+        } else {
+            HostRecipeBinder::from_shared(demo.clone())
+        }
+        .with_bundles(bundles_db.clone());
+        // POC-1 CHAT-RAG: wire the dataset retrieval + content-staging seams (the SAME
+        // `Arc<HostDatasetView>` + run content store the gateway service holds) so a
+        // bind of `kx/recipes/chat-rag` with a `dataset` arg grounds the turn. Without
+        // the `hnsw` feature there is no dataset view ⇒ chat-rag binds as a plain chat.
+        #[cfg(feature = "hnsw")]
+        {
+            host_binder = host_binder.with_dataset_grounding(dataset_view.clone(), content.clone());
+        }
+        Arc::new(host_binder)
     };
     if autogrant {
         tracing::info!(
@@ -878,24 +908,6 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     // `live_shutdown` watch lets shutdown stop the poll loops (so their endless
     // streams end and the graceful drain completes).
     let (live_shutdown, live_shutdown_rx) = watch::channel(false);
-    // (3e) T3.7: the Datasets data-plane (RAG) view, behind the opt-in `hnsw` feature —
-    //      a durable SQLite store + a rebuilt-on-open HNSW ANN index under the catalog
-    //      dir. The client-vector path is FFI-free; an `inference` build additionally
-    //      wires the resolved serve model as the server embedder (text-only ingest/query).
-    // One concrete `Arc<HostDatasetView>` backs BOTH the inline RAG seam
-    // (`DatasetView`) and the advisory Slice-B seam (`FuzzyDiscoveryView`) — one
-    // store, two views, cloned into the gateway below.
-    #[cfg(feature = "hnsw")]
-    let dataset_view: Arc<crate::datasets::HostDatasetView> = {
-        let datasets_dir = catalog_dir.join("datasets");
-        #[cfg_attr(not(feature = "inference"), allow(unused_mut))]
-        let mut view = crate::datasets::HostDatasetView::open(&datasets_dir)?;
-        #[cfg(feature = "inference")]
-        if let Some(embedder) = dataset_embedder {
-            view = view.with_embedder(embedder);
-        }
-        Arc::new(view)
-    };
     // (3f) The Morphic Data Engine (campaign Batch 2): the durable serve-path
     //      capture projection. A `capture.db` sidecar under the catalog dir,
     //      folded from the gateway's read-only journal handle (off the
@@ -1049,6 +1061,69 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         crate::toolscout::HostToolScout::new(&toolscout_defs, toolscout_verdict),
     );
 
+    // POC-1 (Settings "Workspace"): the NON-SECRET config projection `GetServerInfo`
+    // returns — built from `cfg` + the resolved serve model + the build's feature
+    // flags. NO secret enters: the bearer token / TLS key never appear, only a
+    // posture LABEL (`auth_mode`) + a `tls_enabled` boolean. Read `model_catalog_entries`
+    // BEFORE it is moved into the model catalog below.
+    let server_info_facts = {
+        let model_id = model_catalog_entries
+            .first()
+            .map(|e| e.model_id.clone())
+            .unwrap_or_default();
+        #[cfg(feature = "inference")]
+        let (model_path, feature_vision) = if model_id.is_empty() {
+            (String::new(), false)
+        } else {
+            (
+                crate::model_exec::resolve_serve_model()
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .unwrap_or_default(),
+                crate::model_exec::resolve_serve_mmproj().is_some(),
+            )
+        };
+        #[cfg(not(feature = "inference"))]
+        let (model_path, feature_vision) = (String::new(), false);
+        let auth_mode = if cfg.dev_allow_local {
+            "dev-local"
+        } else if cfg.auth_tokens.is_empty() {
+            "deny-all"
+        } else {
+            "token"
+        };
+        let console_addr = if cfg!(feature = "console") {
+            cfg.console_listen
+                .resolve()
+                .map(|a| a.to_string())
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
+        kx_gateway_core::ServerInfoFacts {
+            model_id,
+            model_path,
+            listen_addr: cfg.listen.to_string(),
+            ws_addr: cfg.ws_listen.to_string(),
+            console_addr,
+            metrics_addr: cfg
+                .metrics_listen
+                .map(|a| a.to_string())
+                .unwrap_or_default(),
+            content_root: cfg.content_root.display().to_string(),
+            journal_path: cfg.journal_path.display().to_string(),
+            catalog_dir: catalog_dir.display().to_string(),
+            max_lease: u64::from(cfg.max_lease),
+            content_max_bytes: cfg.content_max_bytes,
+            cors_origins: cfg.cors_origins.clone(),
+            tls_enabled: cfg.tls.is_some(),
+            auth_mode: auth_mode.to_string(),
+            feature_hnsw: cfg!(feature = "hnsw"),
+            feature_inference: cfg!(feature = "inference"),
+            feature_console: cfg!(feature = "console"),
+            feature_vision,
+            audit_log_enabled: cfg.audit_log.is_some(),
+        }
+    };
     // Batch A: the content WRITE seam shares the same store Arc the read seam
     // wraps (PutContent lands where GetContent reads); the model catalog is
     // always wired (an FFI-free serve answers with an honest empty list).
@@ -1088,6 +1163,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         )))
         .with_put_content_cap(cfg.content_max_bytes)
         .with_model_catalog_view(models_view)
+        .with_server_info(server_info_facts)
         .with_mote_def_view(mote_defs_view)
         .with_telemetry_view(telemetry_ledger.clone())
         .with_event_tailer(Arc::new(crate::live_tail::LiveTailer::new(
