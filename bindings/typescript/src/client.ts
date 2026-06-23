@@ -17,9 +17,23 @@ import { AdvanceResult, Branch, CreateBranchResult, SnapshotResult } from "./bra
 import { CaptureRecord, type CaptureRecordPage } from "./capture.js";
 import type { Chain } from "./chains.js";
 import { ContentItem, PutResult } from "./content.js";
-import { ContextBundle, type ContextItemInput, PutContextBundleResult } from "./context.js";
+import {
+  ContextBundle,
+  type ContextBundleItem,
+  type ContextItemInput,
+  PutContextBundleResult,
+} from "./context.js";
 import { DatasetHit, DatasetSummary, type IngestDoc, IngestResult } from "./datasets.js";
-import { KxConnectError, KxRunFailed, KxUnimplemented, KxWaitTimeout, rpc } from "./errors.js";
+import {
+  KxConnectError,
+  KxError,
+  KxFailedPrecondition,
+  KxRunFailed,
+  KxUnimplemented,
+  KxUsage,
+  KxWaitTimeout,
+  rpc,
+} from "./errors.js";
 import {
   streamAllDeltas,
   streamDeltas,
@@ -410,6 +424,130 @@ export abstract class KxClientBase {
   async deleteContextBundle(handle: string): Promise<boolean> {
     const resp = await rpc(this.grpc.deleteContextBundle({ handle }));
     return resp.removed;
+  }
+
+  /**
+   * Resolve a context-item selector to `[index, item]` against `manifest`. `item`
+   * is the advisory item NAME (a `string`) or a 0-based INDEX (a `number`); a name
+   * with more than one match is AMBIGUOUS — pass the index. Throws {@link KxUsage}
+   * (a client-side selection error) on an out-of-range index, an unknown name, or
+   * an ambiguous name.
+   */
+  private resolveContextItem(
+    manifest: ContextBundle,
+    item: string | number,
+  ): [number, ContextBundleItem] {
+    const items = manifest.items;
+    if (typeof item === "number") {
+      const found = Number.isInteger(item) ? items[item] : undefined;
+      if (found === undefined) {
+        throw new KxUsage(
+          `item index ${item} is out of range for bundle '${manifest.handle}' (${items.length} item${items.length === 1 ? "" : "s"})`,
+        );
+      }
+      return [item, found];
+    }
+    const matches = items
+      .map((it, i): [number, ContextBundleItem] => [i, it])
+      .filter(([, it]) => it.name === item);
+    if (matches.length > 1) {
+      throw new KxUsage(
+        `item name '${item}' is ambiguous in bundle '${manifest.handle}' (${matches.length} matches) — pass the integer index instead`,
+      );
+    }
+    const sole = matches[0];
+    if (sole === undefined) {
+      throw new KxUsage(`no item named '${item}' in bundle '${manifest.handle}'`);
+    }
+    return sole;
+  }
+
+  /**
+   * Re-read `handle` as the freshest edit base + run the optimistic-concurrency
+   * guard. With `expectBundleRef` set, a mismatch means the bundle changed under
+   * the caller ⇒ {@link KxFailedPrecondition} (fail-closed, never a silent
+   * last-writer-wins clobber). The content-addressed `bundleRef` is a free
+   * compare-and-swap token (any item/description change moves it).
+   */
+  private async readContextBundleOrThrow(
+    handle: string,
+    expectBundleRef: string | undefined,
+  ): Promise<ContextBundle> {
+    const manifest = await this.getContextBundle(handle);
+    if (manifest === null) throw new KxError(`context bundle '${handle}' not found`);
+    if (expectBundleRef !== undefined && manifest.bundleRef !== expectBundleRef) {
+      throw new KxFailedPrecondition(
+        `context bundle '${handle}' changed since you read it (expected bundle_ref ${expectBundleRef}, now ${manifest.bundleRef}); re-read it and re-apply your change`,
+      );
+    }
+    return manifest;
+  }
+
+  /**
+   * Replace one context-item's body IN PLACE (POC-2 context-edit). The content
+   * store is IMMUTABLE, so this uploads `newBody` (a NEW server-derived ref via
+   * {@link putContent}) and re-upserts the bundle with that item re-pointed at the
+   * new ref — the item's advisory `name` and `mediaType` are preserved unless
+   * `opts.mediaType` overrides. `item` selects by name or index. Set
+   * `opts.expectBundleRef` (the `bundleRef` you viewed) to fail-closed on a
+   * concurrent change ({@link KxFailedPrecondition}) instead of a silent overwrite.
+   * Editing to byte-identical content re-reports `deduplicated`.
+   */
+  async editContextItem(
+    handle: string,
+    item: string | number,
+    newBody: Uint8Array,
+    opts: { mediaType?: string; expectBundleRef?: string } = {},
+  ): Promise<PutContextBundleResult> {
+    const manifest = await this.readContextBundleOrThrow(handle, opts.expectBundleRef);
+    const [idx, target] = this.resolveContextItem(manifest, item);
+    const media = opts.mediaType ?? target.mediaType;
+    const put = await this.putContent(newBody, { mediaType: media, filename: target.name });
+    const items: ContextItemInput[] = manifest.items.map((it) => ({
+      name: it.name,
+      contentRef: it.contentRef,
+      mediaType: it.mediaType,
+    }));
+    items[idx] = { name: target.name, contentRef: put.contentRef, mediaType: media };
+    return this.putContextBundle(handle, items, { description: manifest.description });
+  }
+
+  /**
+   * Drop one item from a bundle (POC-2) and re-upsert the remainder. Refuses
+   * ({@link KxUsage}) if it would empty the bundle — the server rejects an empty
+   * manifest; use {@link deleteContextBundle} to unbind the whole handle.
+   * `opts.expectBundleRef` makes it fail-closed on a concurrent change.
+   */
+  async removeContextItem(
+    handle: string,
+    item: string | number,
+    opts: { expectBundleRef?: string } = {},
+  ): Promise<PutContextBundleResult> {
+    const manifest = await this.readContextBundleOrThrow(handle, opts.expectBundleRef);
+    const [idx] = this.resolveContextItem(manifest, item);
+    if (manifest.items.length <= 1) {
+      throw new KxUsage(
+        `removing the last item would empty bundle '${handle}'; use deleteContextBundle to unbind the whole handle`,
+      );
+    }
+    const items: ContextItemInput[] = manifest.items
+      .filter((_, i) => i !== idx)
+      .map((it) => ({ name: it.name, contentRef: it.contentRef, mediaType: it.mediaType }));
+    return this.putContextBundle(handle, items, { description: manifest.description });
+  }
+
+  /**
+   * Fetch one context-item's FULL body bytes (POC-2) from the uploads scope.
+   * Returns the whole payload (the single {@link getContent} read is uncapped,
+   * unlike a preview-clamped batch fetch). Throws {@link KxUsage} for an
+   * unknown/ambiguous item, {@link KxError} if the bundle is gone, and the RPC's
+   * {@link KxPermissionDenied} if the ref is not in this party's scope.
+   */
+  async exportContextItem(handle: string, item: string | number): Promise<Uint8Array> {
+    const manifest = await this.getContextBundle(handle);
+    if (manifest === null) throw new KxError(`context bundle '${handle}' not found`);
+    const [, target] = this.resolveContextItem(manifest, item);
+    return this.getContent(target.contentRef);
   }
 
   /**

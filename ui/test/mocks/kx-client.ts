@@ -29,6 +29,9 @@ export interface MockClientImpl {
   listContextBundles?: (...args: unknown[]) => Promise<unknown>;
   putContextBundle?: (...args: unknown[]) => Promise<unknown>;
   deleteContextBundle?: (...args: unknown[]) => Promise<unknown>;
+  getContextBundle?: (...args: unknown[]) => Promise<unknown>;
+  editContextItem?: (...args: unknown[]) => Promise<unknown>;
+  removeContextItem?: (...args: unknown[]) => Promise<unknown>;
 }
 
 export function makeMockClient(impl: MockClientImpl = {}) {
@@ -98,6 +101,10 @@ export function makeMockClient(impl: MockClientImpl = {}) {
       (async () => ({ bundleRef: "ab".repeat(8), handle: "", deduplicated: false })),
   );
   const deleteContextBundle = vi.fn(impl.deleteContextBundle ?? (async () => true));
+  const getContextBundle = vi.fn(impl.getContextBundle ?? (async () => null));
+  const putResult = { bundleRef: "ef".repeat(8), handle: "", deduplicated: false };
+  const editContextItem = vi.fn(impl.editContextItem ?? (async () => putResult));
+  const removeContextItem = vi.fn(impl.removeContextItem ?? (async () => putResult));
   const close = vi.fn();
   const client = {
     listSignatures,
@@ -123,6 +130,9 @@ export function makeMockClient(impl: MockClientImpl = {}) {
     listContextBundles,
     putContextBundle,
     deleteContextBundle,
+    getContextBundle,
+    editContextItem,
+    removeContextItem,
     close,
     submitRun: vi.fn(),
     registerSignature: vi.fn(),
@@ -152,6 +162,9 @@ export function makeMockClient(impl: MockClientImpl = {}) {
     listContextBundles,
     putContextBundle,
     deleteContextBundle,
+    getContextBundle,
+    editContextItem,
+    removeContextItem,
     close,
   };
 }

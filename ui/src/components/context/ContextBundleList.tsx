@@ -8,14 +8,20 @@
  */
 
 import { m } from "framer-motion";
+import { useState } from "react";
 import { fadeUp, hoverLift, stagger } from "../../app/motion";
 import { toUiError } from "../../kx/errors";
-import { useContextBundles, useDeleteContextBundle } from "../../kx/use-context-bundles";
+import {
+  useContextBundles,
+  useDeleteContextBundle,
+  useEditBundleDescription,
+} from "../../kx/use-context-bundles";
 import { DigestChip } from "../DigestChip";
 import { EmptyState } from "../EmptyState";
 import { ErrorNotice } from "../ErrorNotice";
 import { Badge } from "../ds/Badge";
 import { GlowCard } from "../ds/GlowCard";
+import { ContextItemRow } from "./ContextItemRow";
 
 export function ContextBundleList() {
   const { bundles, notWired, isLoading, isError, error, refetch } = useContextBundles();
@@ -115,17 +121,20 @@ function BundleRow({
           <Badge label={`${itemCount} item${itemCount === 1 ? "" : "s"}`} color="var(--teal)" />
           <DigestChip hex={bundleRef} label={`${handle} bundle ref`} />
         </div>
-        {description ? <p className="registry-row__desc muted">{description}</p> : null}
+        <DescriptionEditor handle={handle} bundleRef={bundleRef} description={description} />
         {items.length > 0 ? (
           <ul className="context-bundle__items">
-            {items.map((it) => (
-              <li key={`${it.name}:${it.contentRef}`} className="context-bundle__item">
-                <span className="context-bundle__item-name">{it.name || "(unnamed)"}</span>
-                {it.mediaType ? (
-                  <span className="context-bundle__item-type muted mono">{it.mediaType}</span>
-                ) : null}
-                <DigestChip hex={it.contentRef} label={it.name} />
-              </li>
+            {items.map((it, i) => (
+              <ContextItemRow
+                key={`${i}:${it.contentRef}`}
+                handle={handle}
+                bundleRef={bundleRef}
+                index={i}
+                name={it.name}
+                contentRef={it.contentRef}
+                mediaType={it.mediaType}
+                itemCount={itemCount}
+              />
             ))}
           </ul>
         ) : null}
@@ -141,5 +150,75 @@ function BundleRow({
         {pending ? "Removing…" : "Delete"}
       </button>
     </GlowCard>
+  );
+}
+
+/** The bundle's advisory description with an inline edit affordance (POC-2) — a
+ *  guarded re-upsert (items unchanged). Empty shows an honest "Add a description". */
+function DescriptionEditor({
+  handle,
+  bundleRef,
+  description,
+}: {
+  handle: string;
+  bundleRef: string;
+  description: string;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(description);
+  const save = useEditBundleDescription();
+  const error = save.error ? toUiError(save.error) : null;
+
+  if (!editing) {
+    return (
+      <p className="registry-row__desc muted" data-testid={`context-bundle-desc-${handle}`}>
+        {description || <span className="muted">No description.</span>}{" "}
+        <button
+          type="button"
+          className="linkbtn"
+          data-testid={`context-bundle-desc-edit-${handle}`}
+          onClick={() => {
+            setDraft(description);
+            setEditing(true);
+          }}
+        >
+          {description ? "Edit" : "Add description"}
+        </button>
+      </p>
+    );
+  }
+  return (
+    <div className="registry-row__desc context-bundle__desc-edit">
+      <input
+        className="builder-input"
+        data-testid={`context-bundle-desc-input-${handle}`}
+        value={draft}
+        aria-label="Bundle description"
+        maxLength={4096}
+        onChange={(e) => setDraft(e.target.value)}
+      />
+      <button
+        type="button"
+        className="linkbtn"
+        data-testid={`context-bundle-desc-save-${handle}`}
+        disabled={save.isPending}
+        onClick={() =>
+          save.mutate(
+            { handle, description: draft, expectBundleRef: bundleRef },
+            { onSuccess: () => setEditing(false) },
+          )
+        }
+      >
+        {save.isPending ? "Saving…" : "Save"}
+      </button>
+      <button type="button" className="linkbtn" onClick={() => setEditing(false)}>
+        Cancel
+      </button>
+      {error ? (
+        <span className="field-error" role="alert">
+          {error.message}
+        </span>
+      ) : null}
+    </div>
   );
 }
