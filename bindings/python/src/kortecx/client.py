@@ -26,7 +26,7 @@ from .alerts import AlertsPage, AlertSummary
 from .branch import AdvanceResult, Branch, CreateBranchResult, SnapshotResult
 from .capture import CaptureRecord, CaptureRecordPage
 from .content import ContentItem, PutResult
-from .context import ContextBundle, PutContextBundleResult
+from .context import ContextBundle, ContextBundleItem, PutContextBundleResult
 from .datasets import (
     DatasetHit,
     DatasetSummary,
@@ -35,7 +35,7 @@ from .datasets import (
     IngestResult,
     _to_documents,
 )
-from .errors import KxError, KxUsage, from_rpc_error
+from .errors import KxError, KxFailedPrecondition, KxUsage, from_rpc_error
 from .feedback import FeedbackPage, FeedbackRow, rating_to_proto
 from .grants import AssetGrants
 from .models import ModelSummary
@@ -503,6 +503,125 @@ class KxClient:
             )
         )
         return resp.removed
+
+    @staticmethod
+    def _resolve_context_item(
+        manifest: ContextBundle, item: "Union[str, int]"
+    ) -> "tuple[int, ContextBundleItem]":
+        """Resolve a context-item selector to ``(index, item)`` against ``manifest``.
+
+        ``item`` is the advisory item NAME (a ``str``) or a 0-based INDEX (an
+        ``int``). A name with more than one match is AMBIGUOUS — pass the index.
+        Raises :class:`KxUsage` (a client-side selection error) on an out-of-range
+        index, an unknown name, or an ambiguous name. ``bool`` is rejected (it is an
+        ``int`` subtype, so ``True``/``False`` would silently mean index 1/0)."""
+        items = manifest.items
+        if isinstance(item, bool):
+            raise KxUsage("item selector must be a name (str) or an index (int), not a bool")
+        if isinstance(item, int):
+            if item < 0 or item >= len(items):
+                raise KxUsage(
+                    f"item index {item} is out of range for bundle {manifest.handle!r} "
+                    f"({len(items)} item{'s' if len(items) != 1 else ''})"
+                )
+            return item, items[item]
+        matches = [(i, it) for i, it in enumerate(items) if it.name == item]
+        if not matches:
+            raise KxUsage(f"no item named {item!r} in bundle {manifest.handle!r}")
+        if len(matches) > 1:
+            raise KxUsage(
+                f"item name {item!r} is ambiguous in bundle {manifest.handle!r} "
+                f"({len(matches)} matches) — pass the integer index instead"
+            )
+        return matches[0]
+
+    def _read_context_bundle_or_raise(
+        self, handle: str, expect_bundle_ref: Optional[str]
+    ) -> ContextBundle:
+        """Re-read ``handle`` as the freshest edit base + run the optimistic-
+        concurrency guard. With ``expect_bundle_ref`` set, a mismatch means the
+        bundle changed under the caller ⇒ :class:`KxFailedPrecondition` (fail-closed,
+        never a silent last-writer-wins clobber). The content-addressed
+        ``bundle_ref`` is a free compare-and-swap token (any item/description change
+        moves it)."""
+        manifest = self.get_context_bundle(handle)
+        if manifest is None:
+            raise KxError(f"context bundle {handle!r} not found")
+        if expect_bundle_ref is not None and manifest.bundle_ref != expect_bundle_ref:
+            raise KxFailedPrecondition(
+                f"context bundle {handle!r} changed since you read it "
+                f"(expected bundle_ref {expect_bundle_ref}, now {manifest.bundle_ref}); "
+                "re-read it and re-apply your change"
+            )
+        return manifest
+
+    def edit_context_item(
+        self,
+        handle: str,
+        item: "Union[str, int]",
+        new_body: bytes,
+        *,
+        media_type: Optional[str] = None,
+        expect_bundle_ref: Optional[str] = None,
+    ) -> PutContextBundleResult:
+        """Replace one context-item's body IN PLACE (POC-2 context-edit).
+
+        The content store is IMMUTABLE, so this uploads ``new_body`` (a NEW
+        server-derived ref via :meth:`put_content`) and re-upserts the bundle with
+        that item re-pointed at the new ref — the item's advisory ``name`` and
+        ``media_type`` are preserved unless ``media_type`` overrides. ``item``
+        selects by name or index (see :meth:`_resolve_context_item`). Set
+        ``expect_bundle_ref`` (the ``bundle_ref`` you viewed) to fail-closed on a
+        concurrent change (:class:`KxFailedPrecondition`) instead of a silent
+        overwrite. Editing to byte-identical content re-reports ``deduplicated``.
+        Raises :class:`KxUsage` for an unknown/ambiguous item and :class:`KxError`
+        if the bundle is gone."""
+        manifest = self._read_context_bundle_or_raise(handle, expect_bundle_ref)
+        idx, target = self._resolve_context_item(manifest, item)
+        media = media_type if media_type is not None else target.media_type
+        new_ref = self.put_content(new_body, media_type=media, filename=target.name).content_ref
+        items = [(it.name, it.content_ref, it.media_type) for it in manifest.items]
+        items[idx] = (target.name, new_ref, media)
+        return self.put_context_bundle(handle, items, description=manifest.description)
+
+    def remove_context_item(
+        self,
+        handle: str,
+        item: "Union[str, int]",
+        *,
+        expect_bundle_ref: Optional[str] = None,
+    ) -> PutContextBundleResult:
+        """Drop one item from a bundle (POC-2) and re-upsert the remainder.
+
+        Refuses (:class:`KxUsage`) if it would empty the bundle — the server rejects
+        an empty manifest; use :meth:`delete_context_bundle` to unbind the whole
+        handle. ``expect_bundle_ref`` makes it fail-closed on a concurrent change."""
+        manifest = self._read_context_bundle_or_raise(handle, expect_bundle_ref)
+        idx, _ = self._resolve_context_item(manifest, item)
+        if len(manifest.items) <= 1:
+            raise KxUsage(
+                f"removing the last item would empty bundle {handle!r}; "
+                "use delete_context_bundle to unbind the whole handle"
+            )
+        items = [
+            (it.name, it.content_ref, it.media_type)
+            for i, it in enumerate(manifest.items)
+            if i != idx
+        ]
+        return self.put_context_bundle(handle, items, description=manifest.description)
+
+    def export_context_item(self, handle: str, item: "Union[str, int]") -> bytes:
+        """Fetch one context-item's FULL body bytes (POC-2) from the uploads scope.
+
+        Returns the whole payload (the single :meth:`get_content` read is uncapped,
+        unlike a preview-clamped batch fetch). Raises :class:`KxUsage` for an
+        unknown/ambiguous item, :class:`KxError` if the bundle is gone, and the RPC's
+        :class:`KxPermissionDenied` if the ref is not in this party's scope."""
+        manifest = self.get_context_bundle(handle)
+        if manifest is None:
+            raise KxError(f"context bundle {handle!r} not found")
+        _, target = self._resolve_context_item(manifest, item)
+        return self.get_content(target.content_ref)
 
     def create_branch(
         self, handle: str, *, parent: str = "", description: str = ""

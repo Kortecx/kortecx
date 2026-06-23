@@ -44,6 +44,10 @@ export const queryKeys = {
   /** This party's context bundles (`ListContextBundles`, PR-7) — named,
    *  content-addressed grounding. Caller-scoped; `bundleRef` is server-derived (SN-8). */
   contextBundles: (endpoint: string) => ["kx", endpoint, "context-bundles"] as const,
+  /** A context-item's FULL body (POC-2 view/edit, uploads-scope `GetContent`),
+   *  keyed by its content ref — content-addressed ⇒ immutable (cache forever). */
+  contextItemBody: (endpoint: string, contentRef: string) =>
+    ["kx", endpoint, "context-item-body", contentRef] as const,
   /** This party's D155 branches (`ListBranches`) — content-addressed file branches.
    *  Caller-scoped; `branchRef` is server-derived (SN-8). */
   branches: (endpoint: string) => ["kx", endpoint, "branches"] as const,

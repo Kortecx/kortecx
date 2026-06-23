@@ -3280,17 +3280,67 @@ button.card-grid__title:hover {
 }
 .context-bundle__item {
   display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.85rem;
+}
+/* POC-2 context-edit: the per-item row stacks a head (name + media + chip +
+   controls) over an optional expanded body (viewer / editor). Controls reuse the
+   themed `.linkbtn` / `.btn-ghost` / `.chip` / `.builder-input` tokens, so both
+   themes + AA carry by construction (D142). */
+.context-bundle__item-head {
+  display: flex;
   align-items: center;
   gap: 0.5rem;
-  font-size: 0.85rem;
+}
+.context-bundle__item-toggle {
+  font-family: var(--font-mono);
+  width: 1.1rem;
+  flex: none;
 }
 .context-bundle__item-name {
   font-weight: 600;
   min-width: 0;
   overflow-wrap: anywhere;
+  text-align: left;
 }
 .context-bundle__item-type {
   font-size: 0.75rem;
+}
+.context-bundle__item-rename {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+}
+.context-bundle__item-remove {
+  margin-left: auto;
+  flex: none;
+  font-size: 0.78rem;
+  padding: 0.1rem 0.5rem;
+}
+.context-bundle__item-body {
+  margin: 0.2rem 0 0.4rem 1.2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.context-bundle__item-edit,
+.context-bundle__item-view {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.context-bundle__item-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+.context-bundle__desc-edit {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem;
 }
 /* D155 Phase-3: the per-file agentic Edit affordance in a branch manifest. The
    editor breaks to its own full-width row; controls inherit themed tokens (the
