@@ -94,7 +94,7 @@ describe("runAgent", () => {
     const call = fc.invokeCalls[0];
     expect(call?.handle).toBe("kx/recipes/react");
     expect(call?.args.max_turns).toBe(8);
-    expect(call?.args.max_tool_calls).toBe(6);
+    expect(call?.args.max_tool_calls).toBe(20);
     expect(call?.args.instruction).toBe("echo pong");
   });
 
@@ -136,7 +136,7 @@ describe("runAgent", () => {
       instance_id: "ab",
       run_handle: "ab",
       answer: "hi",
-      actions: [{ tool_id: "mcp-echo/echo", tool_version: "1", turn: 0 }],
+      actions: [{ tool_id: "mcp-echo/echo", tool_version: "1", turn: 0, call_index: 0 }],
     });
   });
 

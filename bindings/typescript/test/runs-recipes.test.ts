@@ -162,6 +162,7 @@ describe("ReactTurn.fromProto", () => {
       seq: 42,
       rejection_reason: "",
       step_salt: "5a".repeat(32),
+      call_index: 0,
     });
   });
 

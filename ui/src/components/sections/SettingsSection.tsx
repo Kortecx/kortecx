@@ -92,9 +92,8 @@ export function SettingsSection() {
               <dd>{info.data.auditLogEnabled ? "on" : "off"}</dd>
               <dt>Agentic budget</dt>
               <dd data-testid="settings-agentic-budget">
-                up to {info.data.reactMaxTurns} model turns ·{" "}
-                {info.data.reactMaxToolCalls} tool calls{" "}
-                <span className="muted">(default; per-run overridable)</span>
+                up to {info.data.reactMaxTurns} model turns · {info.data.reactMaxToolCalls} tool
+                calls <span className="muted">(default; per-run overridable)</span>
               </dd>
             </dl>
           )}
