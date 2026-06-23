@@ -221,7 +221,7 @@ fetch-gemma-model:
 
 # The ONE-COMMAND inference serve (§2.194 guardrail): fetch the stand-in model
 # if absent (idempotent, checksum-verified), then start `kx serve` with it +
-# the embedded console at :50180. Model paths are DETERMINISTIC
+# the embedded console at :8888. Model paths are DETERMINISTIC
 # (target/models/ via the fetch recipes, or the KX_AGENT_MODEL_* overrides) —
 # never hunt the filesystem for GGUFs. Journal/content are PINNED under
 # target/serve/ here for a repeatable, inspectable layout (override:
@@ -241,7 +241,7 @@ serve-inference journal="target/serve/kx.db" content="target/serve/blobs": fetch
 # sees a FRESH console + REAL (non-echo) chat — closing the three reviewer failure
 # modes (STALE BINARY · STALE UI EMBED · NO MODEL → echo). Rebuilds ui/dist
 # (console-dist) → builds kx with inference+console → frees the console port (kills
-# any stale kx on :50180) → serves WITH the fetched model → HARD-verifies: (a) the
+# any stale kx on :8888) → serves WITH the fetched model → HARD-verifies: (a) the
 # served console index byte-matches the just-built ui/dist [stale-embed catch;
 # relies on the console serving raw `include_bytes!` bytes, no Content-Encoding],
 # (b) ListModels is non-empty [a model is loaded ⇒ chat uses kx/recipes/chat, NOT
@@ -252,7 +252,7 @@ serve-inference journal="target/serve/kx.db" content="target/serve/blobs": fetch
 review-serve journal="target/serve/kx.db" content="target/serve/blobs": fetch-agent-model console-dist
     #!/usr/bin/env bash
     set -euo pipefail
-    PORT=50180; GRPC="http://127.0.0.1:50151"
+    PORT=8888; GRPC="http://127.0.0.1:50151"
     MODEL="${KX_AGENT_MODEL_DEST:-$(pwd)/target/models/qwen3-0.6b-q4_k_m.gguf}"
     test -f "$MODEL" || { echo " ✗ model GGUF missing: $MODEL" >&2; exit 1; }
     cargo build --release -p kx-cli --features inference,hnsw,console --bin kx
@@ -297,7 +297,7 @@ review-serve journal="target/serve/kx.db" content="target/serve/blobs": fetch-ag
 review-serve-gemma journal="target/serve/kx.db" content="target/serve/blobs": fetch-gemma-model console-dist
     #!/usr/bin/env bash
     set -euo pipefail
-    PORT=50180; GRPC="http://127.0.0.1:50151"
+    PORT=8888; GRPC="http://127.0.0.1:50151"
     MODEL="${KX_GEMMA_MODEL_DEST:-$(pwd)/target/models/gemma-4-12b-it-q4_k_m.gguf}"
     MMPROJ="${KX_GEMMA_MMPROJ_DEST:-$(pwd)/target/models/gemma-4-12b-it-mmproj-f16.gguf}"
     test -f "$MODEL" || { echo " ✗ model GGUF missing: $MODEL" >&2; exit 1; }

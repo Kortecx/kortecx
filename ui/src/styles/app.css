@@ -27,19 +27,19 @@
   --border-strong: rgba(13, 13, 13, 0.26);
   --focus: #f04500;
 
-  /* semantic + accent palette (reference globals.css, AA on light surfaces) */
-  --success: #059669;
-  --warning: #d97706;
-  --error: #dc2626;
-  --info: #2563eb;
-  --teal: #0d9488;
-  --violet: #7c3aed;
-  --rose: #e11d48;
-  --indigo: #4f46e5;
-  --teal-dim: rgba(13, 148, 136, 0.08);
-  --violet-dim: rgba(124, 58, 237, 0.08);
-  --rose-dim: rgba(225, 29, 72, 0.08);
-  --indigo-dim: rgba(79, 70, 229, 0.08);
+  /* semantic + accent palette — monochrome (dark grays, AA on light surfaces) */
+  --success: #3f3f3f;
+  --warning: #555555;
+  --error: #444444;
+  --info: #5a5a5a;
+  --teal: #525252;
+  --violet: #4c4c4c;
+  --rose: #464646;
+  --indigo: #585858;
+  --teal-dim: rgba(128, 128, 128, 0.08);
+  --violet-dim: rgba(128, 128, 128, 0.08);
+  --rose-dim: rgba(128, 128, 128, 0.08);
+  --indigo-dim: rgba(128, 128, 128, 0.08);
 
   /* layout + shape */
   --radius: 6px;
@@ -70,29 +70,29 @@
   --backdrop-color: rgba(13, 13, 13, 0.32);
   --scrim-color: rgba(13, 13, 13, 0.04);
 
-  /* Mote state tones (re-mapped for light surfaces: each ≥4.5:1 as text on white
-   * AND under white pill text — the dark-theme hexes fail on light) */
-  --t-pending: #475569;
-  --t-scheduled: #b45309;
-  --t-committed: #047857;
-  --t-failed: #dc2626;
-  --t-repudiated: #c2410c;
-  --t-inconsistent: #7c3aed;
-  --t-unknown: #4b5563;
+  /* Mote state tones — monochrome (distinct dark-gray tiers; each ≥4.5:1 as text
+   * on white AND under white pill text) */
+  --t-pending: #5a5a5a;
+  --t-scheduled: #555555;
+  --t-committed: #3f3f3f;
+  --t-failed: #444444;
+  --t-repudiated: #525252;
+  --t-inconsistent: #4c4c4c;
+  --t-unknown: #606060;
 
-  /* nd_class tones */
-  --t-pure: #2563eb;
-  --t-read-only-nondet: #0f766e;
-  --t-world-mutating: #be123c;
+  /* nd_class tones — monochrome */
+  --t-pure: #4f4f4f;
+  --t-read-only-nondet: #484848;
+  --t-world-mutating: #414141;
 
-  /* notice tones */
-  --n-retry: #b45309;
-  --n-reauth: #2563eb;
-  --n-forbidden: #dc2626;
-  --n-bad-input: #c2410c;
-  --n-not-wired: #4b5563;
-  --n-not-found: #4b5563;
-  --n-generic: #dc2626;
+  /* notice tones — monochrome */
+  --n-retry: #555555;
+  --n-reauth: #5a5a5a;
+  --n-forbidden: #444444;
+  --n-bad-input: #525252;
+  --n-not-wired: #606060;
+  --n-not-found: #606060;
+  --n-generic: #444444;
 }
 
 /* ===========================================================================
@@ -126,18 +126,18 @@
   --border-strong: rgba(244, 244, 245, 0.3);
   --focus: #f04500;
 
-  --success: #34d399;
-  --warning: #fbbf24;
-  --error: #f87171;
-  --info: #60a5fa;
-  --teal: #2dd4bf;
-  --violet: #a78bfa;
-  --rose: #fb7185;
-  --indigo: #818cf8;
-  --teal-dim: rgba(45, 212, 191, 0.12);
-  --violet-dim: rgba(167, 139, 250, 0.12);
-  --rose-dim: rgba(251, 113, 133, 0.12);
-  --indigo-dim: rgba(129, 140, 248, 0.12);
+  --success: #ededed;
+  --warning: #d6d6d6;
+  --error: #e8e8e8;
+  --info: #bebebe;
+  --teal: #c2c2c2;
+  --violet: #cccccc;
+  --rose: #e0e0e0;
+  --indigo: #b0b0b0;
+  --teal-dim: rgba(128, 128, 128, 0.12);
+  --violet-dim: rgba(128, 128, 128, 0.12);
+  --rose-dim: rgba(128, 128, 128, 0.12);
+  --indigo-dim: rgba(128, 128, 128, 0.12);
 
   --bg-input: #141417;
   --accent-fg: #1a0a00;
@@ -146,29 +146,29 @@
   --backdrop-color: rgba(0, 0, 0, 0.55);
   --scrim-color: rgba(0, 0, 0, 0.3);
 
-  /* Mote state tones, brightened for dark surfaces: each ≥4.5:1 as text on
-   * --bg/--surface AND under the dark --pill-fg pill text. */
-  --t-pending: #94a3b8;
-  --t-scheduled: #fbbf24;
-  --t-committed: #34d399;
-  --t-failed: #f87171;
-  --t-repudiated: #fb923c;
-  --t-inconsistent: #a78bfa;
-  --t-unknown: #9ca3af;
+  /* Mote state tones — monochrome (distinct light-gray tiers; each ≥4.5:1 as text
+   * on --bg/--surface AND under the dark --pill-fg pill text). */
+  --t-pending: #aeaeae;
+  --t-scheduled: #d6d6d6;
+  --t-committed: #ededed;
+  --t-failed: #e8e8e8;
+  --t-repudiated: #c0c0c0;
+  --t-inconsistent: #cccccc;
+  --t-unknown: #9e9e9e;
 
-  /* nd_class tones */
-  --t-pure: #60a5fa;
-  --t-read-only-nondet: #2dd4bf;
-  --t-world-mutating: #fb7185;
+  /* nd_class tones — monochrome */
+  --t-pure: #cacaca;
+  --t-read-only-nondet: #b6b6b6;
+  --t-world-mutating: #e0e0e0;
 
-  /* notice tones */
-  --n-retry: #fbbf24;
-  --n-reauth: #60a5fa;
-  --n-forbidden: #f87171;
-  --n-bad-input: #fb923c;
-  --n-not-wired: #9ca3af;
-  --n-not-found: #9ca3af;
-  --n-generic: #f87171;
+  /* notice tones — monochrome */
+  --n-retry: #d6d6d6;
+  --n-reauth: #bebebe;
+  --n-forbidden: #e8e8e8;
+  --n-bad-input: #c0c0c0;
+  --n-not-wired: #9e9e9e;
+  --n-not-found: #9e9e9e;
+  --n-generic: #e8e8e8;
 }
 
 * {

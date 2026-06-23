@@ -128,7 +128,7 @@ export async function spawnServer(...extra: string[]): Promise<Server> {
       `127.0.0.1:${port}`,
       "--ws-listen",
       `127.0.0.1:${wsPort}`,
-      // A console-enabled binary would otherwise bind the DEFAULT :50180 —
+      // A console-enabled binary would otherwise bind the DEFAULT :8888 —
       // concurrent test servers then collide (a console-less binary accepts
       // the flag as a no-op). Every test spawn disables the console.
       "--no-console",

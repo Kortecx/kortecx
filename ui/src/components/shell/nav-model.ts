@@ -246,3 +246,21 @@ export const CLOUD_PLACEHOLDERS: readonly CloudPlaceholder[] = [
   { id: "federation", label: "Federation", icon: "systems" },
   { id: "experts", label: "Experts", icon: "activity" },
 ] as const;
+
+/**
+ * An HONEST in-development placeholder (GR15 don't-fake-gaps): a section on the POC
+ * roadmap (≈D166) that is NOT yet built. Structurally a {@link CloudPlaceholder} — NO
+ * `path`, NEVER navigable, rendered greyed with an "In dev" chip — so the nav previews
+ * what's coming without fabricating a working surface. These map to ACTUAL planned POC
+ * sections: Apps (the agentic-app workspace, POC-4/5 — subsumes Workflows/Blueprints)
+ * and Policies (the per-App agent-write gate, POC-5b). Promote one to a real
+ * {@link NAV_SECTIONS} entry in the PR that ships it.
+ */
+export type DevPlaceholder = CloudPlaceholder;
+
+export const DEV_GROUP_LABEL = "Coming";
+
+export const DEV_PLACEHOLDERS: readonly DevPlaceholder[] = [
+  { id: "apps", label: "Apps", icon: "artifacts" },
+  { id: "policies", label: "Policies", icon: "systems" },
+] as const;

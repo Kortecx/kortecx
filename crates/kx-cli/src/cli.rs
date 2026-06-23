@@ -477,7 +477,7 @@ kx serve --dev-allow-local [--journal <path>] [--content <dir>] [--catalog-dir <
   every store path + the gRPC/WebSocket/console endpoints print as a startup banner for reference.
   --listen (gRPC) defaults to 127.0.0.1:50151; --ws-listen (the R5 live-event WebSocket bridge) to
   127.0.0.1:50152. Web console: a console-build kx (the prebuilt release) also serves the embedded
-  browser console at http://127.0.0.1:50180 — override with --console-listen <addr:port> (loopback
+  browser console at http://127.0.0.1:8888 — override with --console-listen <addr:port> (loopback
   only) or disable with --no-console.
   Deny-all by default: an auth posture is REQUIRED — pass --dev-allow-local (alias --allow-local-dev,
   loopback only) or --auth-token(-file); a bare `kx serve` with neither errors with a hint.

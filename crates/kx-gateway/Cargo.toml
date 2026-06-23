@@ -249,7 +249,7 @@ inference = [
 # requests return FAILED_PRECONDITION. Independent of `inference` — they compose.
 hnsw = ["dep:kx-dataset-hnsw"]
 # D139: `kx serve` hosts the embedded web console (the built React SPA) on a third
-# loopback listener (default 127.0.0.1:50180). OFF by default: the dist is embedded
+# loopback listener (default 127.0.0.1:8888). OFF by default: the dist is embedded
 # at COMPILE time by build.rs, so a console build needs `ui/dist` (a repo checkout
 # with node, or the prebuilt release which ships it) — plain `cargo build/install`
 # stays node-free and byte-identical. FFI-free (hyper stack only); composes with

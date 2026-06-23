@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   CLOUD_PLACEHOLDERS,
+  DEV_PLACEHOLDERS,
   HIDDEN_SECTIONS,
   NAV_GROUPS,
   NAV_SECTIONS,
@@ -150,6 +151,30 @@ describe("CLOUD_PLACEHOLDERS (honest-disabled — GR15/D129)", () => {
     const sectionIds = new Set(NAV_SECTIONS.map((s) => s.id));
     for (const p of CLOUD_PLACEHOLDERS) {
       expect(sectionIds.has(p.id)).toBe(false);
+    }
+  });
+});
+
+describe("DEV_PLACEHOLDERS (honest in-development — GR15/≈D166)", () => {
+  it("are never navigable: NO path field on any placeholder", () => {
+    for (const p of DEV_PLACEHOLDERS) {
+      expect(p).not.toHaveProperty("path");
+      expect(p.label.length).toBeGreaterThan(0);
+      expect(p.icon.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("preview the headline coming POC sections (Apps · Policies)", () => {
+    expect(DEV_PLACEHOLDERS.map((p) => p.id)).toEqual(["apps", "policies"]);
+  });
+
+  it("do not collide with real section ids or the cloud placeholders", () => {
+    const taken = new Set([
+      ...NAV_SECTIONS.map((s) => s.id),
+      ...CLOUD_PLACEHOLDERS.map((p) => p.id),
+    ]);
+    for (const p of DEV_PLACEHOLDERS) {
+      expect(taken.has(p.id)).toBe(false);
     }
   });
 });

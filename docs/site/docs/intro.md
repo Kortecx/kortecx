@@ -20,7 +20,7 @@ world-touching step twice.
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Kortecx/kortecx/main/scripts/install.sh | sh
 kx serve --journal /tmp/kx.db --content /tmp/kx-content --dev-allow-local
-# → gRPC 127.0.0.1:50151 · events ws://127.0.0.1:50152 · web console http://127.0.0.1:50180
+# → gRPC 127.0.0.1:50151 · events ws://127.0.0.1:50152 · web console http://127.0.0.1:8888
 ```
 
 ## What you get

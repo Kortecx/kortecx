@@ -120,7 +120,7 @@ export async function spawnServer(...extra: string[]): Promise<Server> {
       "--ws-listen",
       `127.0.0.1:${wsPort}`,
       // A console-feature kx defaults its web console onto the well-known
-      // 50180 — disable it here so parallel contract servers never collide
+      // 8888 — disable it here so parallel contract servers never collide
       // (a no-op on console-less builds; same as the e2e fixture).
       "--no-console",
       ...extra,
