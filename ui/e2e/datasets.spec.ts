@@ -1,6 +1,6 @@
 import { KxClient } from "@kortecx/sdk/node";
 import { expect, test } from "@playwright/test";
-import { connectConsole } from "./fixtures/connect";
+import { connectConsole, gotoViaPalette } from "./fixtures/connect";
 import { type Gateway, SPA_ORIGIN, spawnGateway } from "./fixtures/serve";
 
 let gw: Gateway | undefined;
@@ -25,7 +25,7 @@ test("Datasets: lists a seeded corpus + degrades cleanly without an embedder", a
   kx.close();
 
   await connectConsole(page, gw);
-  await page.getByTestId("nav-datasets").click();
+  await gotoViaPalette(page, "datasets");
   await expect(page.getByTestId("datasets-section")).toBeVisible();
   await expect(page.getByTestId("datasets-panel")).toBeVisible();
 

@@ -1,4 +1,4 @@
-import { createRoute, useSearch } from "@tanstack/react-router";
+import { createRoute } from "@tanstack/react-router";
 import { Suspense, lazy } from "react";
 import { ConnectGate } from "../../components/ConnectGate";
 import { EmptyState } from "../../components/EmptyState";
@@ -9,28 +9,20 @@ const RunsSection = lazy(() =>
   import("../../components/sections/RunsSection").then((m) => ({ default: m.RunsSection })),
 );
 
-/** The Workflows page view-toggle (PR-A): the workflow DEFINITIONS table vs the
- *  RUN-history table — both live here (D141.1 one-home), URL-addressable. */
-type WorkflowsView = "workflows" | "runs";
-interface WorkflowsSearch {
-  view?: WorkflowsView;
-}
-
 /**
- * The Workflows section home (PR-2 route merge, D141.1; PR-A tabs): a
- * `Workflows | Runs` toggle — workflow definitions + run history, both as
- * tables. The frozen section id stays `runs` (test-ids/telemetry never rename);
- * old `/runs` deep links redirect here.
+ * The Workflows section home (POC-5c / D168): the runnable blueprint CATALOG. Run
+ * history moved to Monitoring → Runs, so the old `?view=runs` toggle is gone — the
+ * search param is accepted-but-ignored so stale `/workflows?view=runs` deep links
+ * land here (the catalog) instead of 404ing. The frozen section id stays `runs`.
  */
 function WorkflowsScreen() {
   const { status } = useConnection();
-  const { view } = useSearch({ from: "/workflows" });
   if (status !== "connected") {
     return <ConnectGate />;
   }
   return (
     <Suspense fallback={<EmptyState title="Loading workflows…" />}>
-      <RunsSection view={view ?? "runs"} />
+      <RunsSection />
     </Suspense>
   );
 }
@@ -38,9 +30,8 @@ function WorkflowsScreen() {
 export const workflowsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/workflows",
-  validateSearch: (search: Record<string, unknown>): WorkflowsSearch => {
-    const v = search.view;
-    return v === "workflows" || v === "runs" ? { view: v } : {};
-  },
+  // Tolerant of stale `?view=` deep links (D141.1 era): accept any search and
+  // drop it — the Workflows section is now the catalog only (run history → Monitoring).
+  validateSearch: (): Record<string, never> => ({}),
   component: WorkflowsScreen,
 });

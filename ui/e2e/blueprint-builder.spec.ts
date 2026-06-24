@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { connectConsole } from "./fixtures/connect";
+import { connectConsole, gotoViaPalette } from "./fixtures/connect";
 import { type Gateway, SPA_ORIGIN, spawnGateway } from "./fixtures/serve";
 
 let gw: Gateway | undefined;
@@ -16,7 +16,7 @@ test("builder: author + interact + validate, then submit a PURE blueprint to a l
   await connectConsole(page, gw);
 
   // Reach the builder via the Blueprints "New blueprint" entry.
-  await page.getByTestId("nav-recipes").click();
+  await gotoViaPalette(page, "recipes");
   await page.getByTestId("new-blueprint").click();
   await expect(page.getByTestId("builder-canvas")).toBeVisible({ timeout: 30_000 });
 
@@ -55,7 +55,7 @@ test("builder: connect two agents into a chain (an edge appears)", async ({ page
   gw = await spawnGateway({ corsOrigin: SPA_ORIGIN });
   await connectConsole(page, gw);
   // In-app navigation (a full page.goto would reset the in-memory connection).
-  await page.getByTestId("nav-recipes").click();
+  await gotoViaPalette(page, "recipes");
   await page.getByTestId("new-blueprint").click();
   await expect(page.getByTestId("builder-canvas")).toBeVisible({ timeout: 30_000 });
 

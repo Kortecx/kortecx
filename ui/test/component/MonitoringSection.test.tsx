@@ -29,6 +29,15 @@ describe("MonitoringSection", () => {
     await waitFor(() => expect(screen.getAllByText("qwen3").length).toBeGreaterThan(0));
   });
 
+  it("exposes the Runs tab (POC-5c: run history moved here from Workflows)", async () => {
+    const mock = makeMockClient();
+    render(<MonitoringSection />, { wrapper: connectedWrapper(mock.client) });
+    // The toggle wires the new Runs view (the RunsTable itself needs a router, so
+    // the full run-history render is covered by the shell e2e — here we pin that the
+    // tab is present and labelled, never silently dropped).
+    expect(screen.getByTestId("monitor-tab-runs")).toHaveTextContent("Runs");
+  });
+
   it("degrades an unimplemented RPC to a muted 'not wired' note", async () => {
     const mock = makeMockClient({ listReplanRounds: async () => unimplemented() });
     render(<MonitoringSection />, { wrapper: connectedWrapper(mock.client) });

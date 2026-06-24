@@ -6,7 +6,7 @@
  */
 
 import { expect, test } from "@playwright/test";
-import { connectConsole, runRecipe } from "./fixtures/connect";
+import { connectConsole, gotoRunHistory, gotoViaPalette, runRecipe } from "./fixtures/connect";
 import { type Gateway, SPA_ORIGIN, spawnGateway } from "./fixtures/serve";
 
 let gw: Gateway | undefined;
@@ -24,7 +24,7 @@ test("workflows run popup: Export (lightweight + with-results) downloads JSON; n
 
   await runRecipe(page, { handle: "kx/recipes/echo", fields: { topic: "export-me" } });
   await expect(page.getByTestId("mote-dag")).toBeVisible({ timeout: 30_000 });
-  await page.getByTestId("nav-runs").click();
+  await gotoRunHistory(page);
   await expect(page.getByTestId("run-list")).toBeVisible({ timeout: 30_000 });
 
   // Open the run's detail popup — all export/new-window actions live there.
@@ -56,7 +56,7 @@ test("blueprint card: Export downloads the definition JSON", async ({ page }) =>
   gw = await spawnGateway({ corsOrigin: SPA_ORIGIN });
   await connectConsole(page, gw);
 
-  await page.getByTestId("nav-recipes").click();
+  await gotoViaPalette(page, "recipes");
   await expect(page.getByTestId("recipe-catalog")).toBeVisible({ timeout: 30_000 });
 
   const bp = page

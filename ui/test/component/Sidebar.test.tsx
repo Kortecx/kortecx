@@ -21,37 +21,40 @@ vi.mock("../../src/kx/use-telemetry", () => ({
 
 import { Sidebar } from "../../src/components/shell/Sidebar";
 
-describe("Sidebar", () => {
-  it("renders an item with a label for every section when expanded", () => {
+describe("Sidebar (POC-5c / D168 flat IA)", () => {
+  it("renders a plain-button item with a label for every flat section when expanded", () => {
     render(<Sidebar collapsed={false} onToggle={() => {}} />);
-    for (const id of ["chat", "runs", "recipes", "datasets", "tools", "context", "systems"]) {
+    for (const id of ["chat", "apps", "runs", "context", "tools", "models", "monitor", "systems"]) {
       expect(screen.getByTestId(`nav-${id}`)).toBeInTheDocument();
     }
     expect(screen.getByText("New Chat")).toBeInTheDocument();
     expect(screen.getByText("Context")).toBeInTheDocument();
-    // The display renames over frozen ids (D136 / D141): recipes shows
-    // "Blueprints", runs shows "Workflows", systems shows "Security".
-    expect(screen.getByTestId("nav-recipes")).toHaveTextContent("Blueprints");
+    // The display renames over frozen ids (D136 / D141): runs shows "Workflows",
+    // systems shows "Security".
     expect(screen.getByTestId("nav-runs")).toHaveTextContent("Workflows");
     expect(screen.getByTestId("nav-systems")).toHaveTextContent("Security");
-    // Activity left the sidebar (it is the navbar drawer now).
-    expect(screen.queryByTestId("nav-activity")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("nav-artifacts")).not.toBeInTheDocument();
     expect(screen.getByTestId("sidebar")).toHaveAttribute("data-collapsed", "false");
     // The sidebar hosts the console's single brand anchor (icon + wordmark).
     expect(screen.getByTestId("brand")).toHaveTextContent("kortecx");
   });
 
-  it("groups the sections with coloured labels (PR-B / D150)", () => {
+  it("is a FLAT list — no groups, no Cloud/Coming placeholders, no demoted buttons", () => {
     render(<Sidebar collapsed={false} onToggle={() => {}} />);
-    for (const g of ["workspace", "data", "tools", "monitoring", "security", "cloud"]) {
-      expect(screen.getByTestId(`nav-group-${g}`)).toBeInTheDocument();
+    // Groups + placeholder constructs are gone (POC-5c).
+    for (const g of ["workspace", "data", "tools", "monitoring", "security", "cloud", "dev"]) {
+      expect(screen.queryByTestId(`nav-group-${g}`)).toBeNull();
     }
-    // Group labels render when expanded (scoped to the group container — single-
-    // section groups share a name with their item, so the testid disambiguates).
-    expect(screen.getByTestId("nav-group-workspace")).toHaveTextContent("Workspace");
-    expect(screen.getByTestId("nav-group-data")).toHaveTextContent("Data");
-    expect(screen.getByTestId("nav-group-cloud")).toHaveTextContent("Cloud");
+    for (const p of ["sharing", "federation", "experts"]) {
+      expect(screen.queryByTestId(`cloud-${p}`)).toBeNull();
+    }
+    // The five demoted sections are NOT sidebar buttons (folded into a section/tab;
+    // still reachable via ⌘K + deep link).
+    for (const id of ["dashboard", "recipes", "datasets", "branches", "policies"]) {
+      expect(screen.queryByTestId(`nav-${id}`)).toBeNull();
+    }
+    // Activity / Artifacts were never flat sections.
+    expect(screen.queryByTestId("nav-activity")).toBeNull();
+    expect(screen.queryByTestId("nav-artifacts")).toBeNull();
   });
 
   it("hosts the New flyout trigger and the token footer", () => {
@@ -62,35 +65,12 @@ describe("Sidebar", () => {
     expect(screen.getByTestId("token-usage-empty")).toBeInTheDocument();
   });
 
-  it("renders Cloud placeholders as honest-disabled (never navigable)", () => {
-    render(<Sidebar collapsed={false} onToggle={() => {}} />);
-    for (const id of ["sharing", "federation", "experts"]) {
-      const el = screen.getByTestId(`cloud-${id}`);
-      expect(el).toBeInTheDocument();
-      expect(el).toHaveAttribute("aria-disabled", "true");
-      // Not a link / button — a plain greyed entry.
-      expect(el.tagName).toBe("DIV");
-    }
-  });
-
-  it("has no in-development placeholders now (Apps POC-4, Policies POC-5b promoted)", () => {
-    render(<Sidebar collapsed={false} onToggle={() => {}} />);
-    // DEV_PLACEHOLDERS is empty — the "Coming" group is hidden, no dev rows.
-    expect(screen.getByTestId("nav-group-dev")).toHaveAttribute("hidden");
-    expect(screen.queryByTestId("dev-policies")).toBeNull();
-    expect(screen.queryByTestId("dev-apps")).toBeNull();
-    // Both are real, navigable sections now.
-    expect(screen.getByTestId("nav-apps")).toBeInTheDocument();
-    expect(screen.getByTestId("nav-policies")).toBeInTheDocument();
-  });
-
-  it("hides labels, group labels and the footer (icon rail) when collapsed", () => {
+  it("hides labels and the footer (icon rail) when collapsed", () => {
     render(<Sidebar collapsed={true} onToggle={() => {}} />);
     // The items remain (icons), but the text labels are not rendered.
     expect(screen.getByTestId("nav-chat")).toBeInTheDocument();
     expect(screen.queryByText("New Chat")).not.toBeInTheDocument();
-    // Group labels and the token footer drop away on the rail.
-    expect(screen.getByTestId("nav-group-workspace")).not.toHaveTextContent("Workspace");
+    // The token footer drops away on the rail.
     expect(screen.queryByTestId("token-usage")).not.toBeInTheDocument();
     expect(screen.getByTestId("sidebar")).toHaveAttribute("data-collapsed", "true");
     // Collapsed rail keeps the brand icon, drops the wordmark.

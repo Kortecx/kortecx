@@ -45,10 +45,12 @@ import { GlobalFeed } from "../activity/GlobalFeed";
 import { GlowCard } from "../ds/GlowCard";
 import { HealthIndicator } from "../metrics/HealthIndicator";
 import { MetricCard } from "../metrics/MetricCard";
+import { RunsTable } from "./RunsTable";
 
-const MONITOR_VIEWS = [undefined, "feed", "telemetry", "alerts"] as const;
+const MONITOR_VIEWS = [undefined, "runs", "feed", "telemetry", "alerts"] as const;
 const VIEW_LABEL: Record<string, string> = {
   overview: "Overview",
+  runs: "Runs",
   feed: "Live feed",
   telemetry: "Telemetry",
   alerts: "Alerts",
@@ -129,7 +131,9 @@ export function MonitoringSection({
         ))}
       </fieldset>
 
-      {tab === "feed" ? (
+      {tab === "runs" ? (
+        <RunsView />
+      ) : tab === "feed" ? (
         <FeedView />
       ) : tab === "telemetry" ? (
         <TelemetryView />
@@ -139,6 +143,21 @@ export function MonitoringSection({
         <OverviewView />
       )}
     </section>
+  );
+}
+
+/** POC-5c (D168): run history (`ListRuns` merged with this session's invocations)
+ *  now lives in Monitoring — a row-click opens the run's detail (the live-DAG at
+ *  `/workflows/$instanceId`). The Workflows section is the runnable catalog only. */
+function RunsView() {
+  return (
+    <GlowCard hover={false} className="monitor-panel" data-testid="monitor-runs">
+      <div className="monitor-panel__head">
+        <h2>Runs</h2>
+        <span className="muted">run history, newest first — open one for its live DAG</span>
+      </div>
+      <RunsTable />
+    </GlowCard>
   );
 }
 

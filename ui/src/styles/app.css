@@ -841,6 +841,7 @@ button:disabled {
 .navitem--active {
   background: var(--bg-input);
   color: var(--fg);
+  font-weight: 600;
 }
 .navitem__icon {
   display: inline-flex;
@@ -851,34 +852,7 @@ button:disabled {
   padding: 0.5rem;
 }
 
-/* PR-B (D150): per-group section colour. The accent reads on the ICON + hover/
- * active TINT + the active accent bar; the LABEL text stays high-contrast (the
- * accent palette is < 4.5:1 as small light-theme text — the AA lock). */
-.navitem--colored:hover {
-  background: color-mix(in srgb, var(--nav-color) 8%, transparent);
-  color: var(--fg);
-}
-.navitem--colored:hover .navitem__icon,
-.navitem--colored.navitem--active .navitem__icon {
-  color: var(--nav-color);
-}
-.navitem--colored.navitem--active {
-  background: color-mix(in srgb, var(--nav-color) 12%, transparent);
-  color: var(--fg);
-  font-weight: 600;
-  box-shadow: inset 2px 0 0 var(--nav-color);
-}
-/* honest-disabled Cloud placeholders (never navigable) */
-.navitem--disabled {
-  color: var(--fg-muted);
-  cursor: default;
-  opacity: 0.72;
-}
-.navitem--disabled .chip--soon {
-  margin-left: auto;
-}
-
-/* ---- sidebar: New flyout · coloured groups · token footer (PR-B / D150) ---- */
+/* ---- sidebar: New flyout · flat nav · token footer (POC-5c / D168) ---- */
 .sidebar__new {
   padding: 0.1rem 0.1rem 0.35rem;
 }
@@ -899,55 +873,14 @@ button:disabled {
 .sidebar--collapsed .sidebar__new-btn {
   padding: 0.4rem;
 }
-/* the groups flow naturally at the top (the sidebar scrolls when tall); the footer
- * + Settings pin to the bottom via their auto top margins — NEVER flex-grow the
- * groups (a tight viewport would shrink the box below its content and overlap the
- * footer/Settings, intercepting their clicks). */
-.sidebar__groups {
+/* POC-5c (D168): the eight flat sections flow at the top (the sidebar scrolls when
+ * tall); the footer + Settings pin to the bottom via their auto top margins — NEVER
+ * flex-grow the nav (a tight viewport would shrink the box below its content and
+ * overlap the footer/Settings, intercepting their clicks). */
+.sidebar__nav {
   display: flex;
   flex-direction: column;
   gap: 0.15rem;
-}
-.sidebar__group {
-  display: flex;
-  flex-direction: column;
-  gap: 0.1rem;
-}
-.sidebar__group + .sidebar__group {
-  margin-top: 0.35rem;
-}
-.sidebar__group-label {
-  font-size: 0.6rem;
-  font-weight: 700;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--section-color, var(--text-3));
-  margin: 0;
-  padding: 0.35rem 0.6rem 0.15rem;
-}
-.sidebar__group[data-color="warning"] {
-  --section-color: var(--warning);
-}
-.sidebar__group[data-color="teal"] {
-  --section-color: var(--teal);
-}
-.sidebar__group[data-color="violet"] {
-  --section-color: var(--violet);
-}
-.sidebar__group[data-color="error"] {
-  --section-color: var(--error);
-}
-.sidebar__group[data-color="success"] {
-  --section-color: var(--success);
-}
-.sidebar__group[data-color="neutral"] {
-  --section-color: var(--text-3);
-}
-/* collapsed rail: drop labels, keep a faint separator between groups */
-.sidebar--collapsed .sidebar__group + .sidebar__group {
-  margin-top: 0.3rem;
-  padding-top: 0.3rem;
-  border-top: 1px solid var(--text-4);
 }
 .sidebar__footer {
   margin-top: auto;
@@ -3656,6 +3589,16 @@ button.card-grid__title:hover {
 .node-drawer__id {
   font-size: 0.95rem;
 }
+/* POC-5c: a sub-heading inside the read-only App "View" popup (envelope summary +
+ * project-branch lineage). Token-only ⇒ both themes + AA by construction. */
+.node-drawer__section {
+  margin: 1rem 0 0.4rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
 .node-drawer__badges {
   display: flex;
   gap: 0.4rem;
@@ -3939,6 +3882,47 @@ button.card-grid__title:hover {
   max-width: 28rem;
   white-space: normal;
   font-size: 0.85em;
+}
+
+/* POC-5c (D168): the New Chat status loop — an HONEST single-line current-phase
+ * indicator (replaces the inline ReactProgress strip). The dot is the ONLY cosmetic
+ * motion; the text is fact-driven (GR15). Tokens only → both themes + AA by
+ * construction. */
+.status-loop {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.35rem 0;
+  color: var(--fg-muted);
+  font-size: 0.9em;
+}
+.status-loop__dot {
+  flex: 0 0 auto;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--primary);
+  animation: status-loop-pulse 1.2s ease-in-out infinite;
+}
+.status-loop[data-phase="dead-letter"] .status-loop__dot {
+  background: var(--danger, currentColor);
+  animation: none;
+}
+@keyframes status-loop-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: scale(0.85);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.1);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .status-loop__dot {
+    animation: none;
+  }
 }
 
 /* ----------------------------------------------------------------------------

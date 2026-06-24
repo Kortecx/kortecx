@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { connectConsole } from "./fixtures/connect";
+import { connectConsole, gotoViaPalette } from "./fixtures/connect";
 import { type Gateway, SPA_ORIGIN, spawnGateway } from "./fixtures/serve";
 
 let gw: Gateway | undefined;
@@ -37,12 +37,12 @@ test("the theme toggle switches palettes and persists across reload (pre-paint)"
   // Reconnect and smoke a data section in dark (DAG/catalog tokens re-resolve).
   await connectConsole(page, gw);
   await expect(html).toHaveAttribute("data-theme", "dark");
-  await page.getByTestId("nav-recipes").click();
+  await gotoViaPalette(page, "recipes");
   await expect(page.getByTestId("recipe-catalog")).toBeVisible({ timeout: 30_000 });
 
   // The PR-C1 Dashboard landing renders under the dark palette (KPI accent bars +
   // metric tones re-resolve; the contrast lock covers the text tiers).
-  await page.getByTestId("nav-dashboard").click();
+  await gotoViaPalette(page, "dashboard");
   await expect(page.getByTestId("dashboard-kpis")).toBeVisible({ timeout: 15_000 });
 
   // Back to system → light again (and the chip state follows).

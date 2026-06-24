@@ -6,7 +6,7 @@
  */
 
 import { expect, test } from "@playwright/test";
-import { connectConsole, runRecipe } from "./fixtures/connect";
+import { connectConsole, gotoRunHistory, gotoViaPalette, runRecipe } from "./fixtures/connect";
 import { type Gateway, SPA_ORIGIN, spawnGateway } from "./fixtures/serve";
 
 let gw: Gateway | undefined;
@@ -25,7 +25,7 @@ test("workflows: a run row's detail popup clones (prefilled), renames, and clear
   // Run echo with a distinctive topic, then land on Workflows → Runs.
   await runRecipe(page, { handle: "kx/recipes/echo", fields: { topic: "clone-me" } });
   await expect(page.getByTestId("mote-dag")).toBeVisible({ timeout: 30_000 });
-  await page.getByTestId("nav-runs").click();
+  await gotoRunHistory(page);
   await expect(page.getByTestId("run-list")).toBeVisible();
 
   // The row carries its recipe handle (clean name = "Echo").
@@ -52,7 +52,7 @@ test("workflows: a run row's detail popup clones (prefilled), renames, and clear
 
   // Back on Workflows → Runs: clearing LOCAL history keeps the durable journal row
   // (truth stays) — and the client-local RENAME survives too (separate store).
-  await page.getByTestId("nav-runs").click();
+  await gotoRunHistory(page);
   await page.getByTestId("clear-local-history").click();
   await expect(page.getByTestId("run-list")).toBeVisible({ timeout: 30_000 });
   const durable = page.getByTestId("run-row").first();
@@ -73,7 +73,7 @@ test("blueprints: the catalog is a card grid; the menu's View opens the contract
   gw = await spawnGateway({ corsOrigin: SPA_ORIGIN });
   await connectConsole(page, gw);
 
-  await page.getByTestId("nav-recipes").click();
+  await gotoViaPalette(page, "recipes");
   await expect(page.getByTestId("recipe-catalog")).toBeVisible({ timeout: 30_000 });
 
   // Open the echo card's action menu → View contract.

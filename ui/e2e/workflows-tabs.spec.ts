@@ -1,8 +1,9 @@
 /**
- * PR-A: the /workflows page is a `Workflows | Runs` toggle — the workflow
- * DEFINITIONS table and the run-history table both live here. Clicking a
- * workflow row opens its definition popup (contract + view + the new-window
- * button), per the user's point-4 spec.
+ * POC-5c (D168): the /workflows page is now the runnable CATALOG only — browse a
+ * blueprint (workflow definition) and trigger a single run from its popup. Run
+ * HISTORY moved to Monitoring → Runs (the OSS-Workflows-one-App reframe; multi-app
+ * orchestration is Cloud). This spec pins the catalog + the definition popup, and
+ * that run history is reachable from Monitoring.
  */
 
 import { expect, test } from "@playwright/test";
@@ -16,26 +17,20 @@ test.afterEach(() => {
   gw = undefined;
 });
 
-test("workflows page: the Workflows|Runs toggle + the workflow-definition popup", async ({
-  page,
-}) => {
+test("workflows page: the runnable catalog + the workflow-definition popup", async ({ page }) => {
   gw = await spawnGateway({ corsOrigin: SPA_ORIGIN });
   await connectConsole(page, gw);
 
   await page.getByTestId("nav-runs").click();
   await expect(page.getByTestId("runs-section")).toBeVisible();
 
-  // Both tabs are present; default lands on Runs.
-  await expect(page.getByTestId("workflows-tab-workflows")).toBeVisible();
-  await expect(page.getByTestId("workflows-tab-runs")).toHaveAttribute("aria-pressed", "true");
-
-  // Switch to the Workflows (definitions) table — the catalog renders as ROWS.
-  await page.getByTestId("workflows-tab-workflows").click();
+  // No view-toggle anymore — the section IS the definitions catalog (rows).
+  await expect(page.getByTestId("workflows-tab-runs")).toHaveCount(0);
   await expect(page.getByTestId("workflows-list")).toBeVisible({ timeout: 30_000 });
   await expect(page.getByTestId("workflows-list")).toContainText("kx/recipes/echo");
 
-  // Click a workflow row → the definition popup (point 4): contract + view +
-  // the new-window button (which lives ONLY in the popup).
+  // Click a workflow row → the definition popup: contract + view + the new-window
+  // button (which lives ONLY in the popup).
   await page.getByTestId("workflow-open-kx/recipes/echo").click();
   const drawer = page.getByTestId("workflow-detail-drawer");
   await expect(drawer).toBeVisible();
@@ -49,4 +44,15 @@ test("workflows page: the Workflows|Runs toggle + the workflow-definition popup"
   // The popup's Run links to the Blueprints run form for that workflow.
   await drawer.getByTestId("workflow-run").click();
   await expect(page).toHaveURL(/\/recipes\?handle=/);
+});
+
+test("run history is reachable from Monitoring → Runs (POC-5c move)", async ({ page }) => {
+  gw = await spawnGateway({ corsOrigin: SPA_ORIGIN });
+  await connectConsole(page, gw);
+
+  await page.getByTestId("nav-monitor").click();
+  await expect(page.getByTestId("monitoring-section")).toBeVisible();
+  await page.getByTestId("monitor-tab-runs").click();
+  // The run-history table (RunsTable) lives here now.
+  await expect(page.getByTestId("monitor-runs")).toBeVisible({ timeout: 15_000 });
 });

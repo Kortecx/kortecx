@@ -7,6 +7,7 @@ import { toUiError } from "../../kx/errors";
 import { useApp, useApps, useRunApp } from "../../kx/use-apps";
 import { EmptyState } from "../EmptyState";
 import { ErrorNotice } from "../ErrorNotice";
+import { AppViewPopover } from "../apps/AppViewPopover";
 import { CodeViewer } from "../editor/CodeViewer";
 import { NewAppForm } from "./NewAppForm";
 
@@ -29,6 +30,7 @@ export function AppsSection() {
   const { apps, notWired, isLoading, isError, error, refetch } = useApps();
   const runApp = useRunApp();
   const [viewing, setViewing] = useState<string | null>(null);
+  const [summaryFor, setSummaryFor] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
 
   function run(handle: string): void {
@@ -101,6 +103,7 @@ export function AppsSection() {
               app={a}
               pending={runApp.isPending}
               onRun={run}
+              onView={setSummaryFor}
               onInspect={setViewing}
               onOpen={(handle) => void navigate({ to: "/apps/$handle", params: { handle } })}
             />
@@ -110,6 +113,9 @@ export function AppsSection() {
 
       {runError ? <ErrorNotice error={runError} onRetry={() => runApp.reset()} /> : null}
 
+      {summaryFor ? (
+        <AppViewPopover handle={summaryFor} onClose={() => setSummaryFor(null)} />
+      ) : null}
       {viewing ? <AppDetailDrawer handle={viewing} onClose={() => setViewing(null)} /> : null}
     </section>
   );
@@ -121,12 +127,14 @@ function AppCard({
   app,
   pending,
   onRun,
+  onView,
   onInspect,
   onOpen,
 }: {
   app: AppSummary;
   pending: boolean;
   onRun: (handle: string) => void;
+  onView: (handle: string) => void;
   onInspect: (handle: string) => void;
   onOpen: (handle: string) => void;
 }) {
@@ -180,6 +188,15 @@ function AppCard({
         <button
           type="button"
           className="btn-ghost"
+          data-testid={`app-view-${app.handle}`}
+          title="View details — the envelope summary & project-branch lineage (read-only)"
+          onClick={() => onView(app.handle)}
+        >
+          View
+        </button>
+        <button
+          type="button"
+          className="btn-ghost"
           data-testid={`app-open-${app.handle}`}
           title="Open the App — browse & edit its project files"
           onClick={() => onOpen(app.handle)}
@@ -190,6 +207,7 @@ function AppCard({
           type="button"
           className="btn-ghost"
           data-testid={`app-inspect-${app.handle}`}
+          title="Inspect the raw kortecx.app/v1 envelope (JSON)"
           onClick={() => onInspect(app.handle)}
         >
           Inspect
