@@ -27,6 +27,7 @@ const sidebars: SidebarsConfig = {
       items: [
         "chat",
         "apps",
+        "policies",
         "workflows",
         "blueprint-builder",
         "agent-runner",

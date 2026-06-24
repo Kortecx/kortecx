@@ -79,6 +79,15 @@ kx app list                          # browse the catalog
 kx app get apps/local/echo-demo      # show the summary (--output writes the envelope)
 kx app run apps/local/echo-demo --wait   # compile the blueprint + run it
 kx app export apps/local/echo-demo --output echo.app.json   # the round-trip artifact
+
+# POC-5a — agentically scaffold the App's project tree into its CoW branch:
+kx app scaffold apps/local/echo-demo --goal "Echo the user's input" --wait
+kx app files apps/local/echo-demo            # list the scaffolded files
+kx app cat apps/local/echo-demo README.md    # print one file's body
+
+# POC-5b — lock the App (agentic in-CAS edits are then refused):
+kx app lock apps/local/echo-demo
+kx app unlock apps/local/echo-demo
 ```
 
 `kx app run` is "the runtime as a function": it fetches the saved App's blueprint and
@@ -94,16 +103,52 @@ pretty-printed but round-trips to the same canonical bytes. The `schema` field
 schema. `media_type` is carried per context reference at the envelope layer (the
 bind-time codec drops it).
 
-The optional `branch_handle` field reserves a per-App project branch; it is
-populated by the agentic App scaffold in a later release.
+The optional `branch_handle` field names the App's per-App project branch. By
+convention an App's project branch shares the App's own handle (one App, one
+branch), so `kx app files <handle>` and the console resolve it directly.
+
+## Scaffold a project tree (POC-5a)
+
+An App is more than an envelope — it has a **project**: a small tree of files the
+agent authors and you can edit in place. `kx app scaffold` (or the console's **New
+App** button) drives a server-side agentic loop that writes a **fixed skeleton** into
+the App's content-addressed (CoW) branch — the model authors the *content* of each
+file, the structure is fixed and testable:
+
+```
+README.md            prompts/system.md     skills/main.md
+app.json             rules/guardrails.md
+```
+
+The scaffold runs in the background and is observed from **real** signals — the
+branch manifest growing + a status phase (`planning → writing → done`) — never a
+cosmetic timer. It is durable and resumable: a re-`scaffold` writes only the files
+still missing. Edits stay **in-CAS** — the host filesystem is never written.
+
+## Open & edit an App's files
+
+Open an App (the console **Open** button, or `kx app files` / `kx app cat`) to browse
+the project tree (a file tree + a Monaco viewer) and chat with the App in context.
+Each file has an **Edit** affordance that runs the same agentic in-CAS rewrite as
+`kx branch edit` — the model reads the file, rewrites it, and the manifest advances to
+the new content ref (the host is never written). See [Branches](./branches.md) for the
+CoW mechanics.
+
+## Lock an App (POC-5b)
+
+`kx app lock <handle>` (or the **Policies** section) locks the App's project branch:
+every agentic in-CAS edit is then refused at the single write chokepoint
+(`FAILED_PRECONDITION`, refusal code `LOCKED_BRANCH`) — the agent-write authority
+gate. `kx app unlock` re-enables edits. Locking is a per-party policy decision (off
+the truth path); losing it fails OPEN (editing is restored, never bricked).
 
 ## The Apps console
 
-Open **Apps** in the sidebar (under Workspace, below New Chat). The section is a
-read-only catalog: browse your saved Apps, **Inspect** the full envelope, and
-**Run** one (it routes to the live run). **Share** is a Cloud capability (shown
-honest-disabled). Authoring an App — and the agentic "New App" scaffold that writes a
-project tree you can edit in place — arrives in a later release.
+Open **Apps** in the sidebar. Browse your saved Apps, **Inspect** the full envelope,
+**Run** one (it routes to the live run), click **New App** to scaffold a fresh App, or
+**Open** an App into the file tree + editor. **Share** is a Cloud capability (shown
+honest-disabled). Per-App locks live in the **Policies** section
+([policies.md](./policies.md)).
 
 ## Chains node
 

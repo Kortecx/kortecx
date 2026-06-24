@@ -123,6 +123,7 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
           data-color="neutral"
           data-testid="nav-group-dev"
           aria-label="Coming soon (in development)"
+          hidden={DEV_PLACEHOLDERS.length === 0}
         >
           {collapsed ? null : <p className="sidebar__group-label">{DEV_GROUP_LABEL}</p>}
           {DEV_PLACEHOLDERS.map((p) => (

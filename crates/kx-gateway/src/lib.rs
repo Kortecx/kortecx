@@ -83,6 +83,15 @@ mod bundles;
 // the kx-app leaf type); off-journal, off-digest, rebuildable-to-empty (like
 // bundles, no broker dep — kx_content::ContentRef::of derives app_ref).
 mod apps;
+// POC-5b: the locks.db sidecar (the LockStore seam) — per-App lock toggled by
+// LockApp/UnlockApp + enforced at the AdvanceBranch chokepoint. Off-journal,
+// off-digest, rebuildable-to-empty (FAILS OPEN on loss — an availability gate).
+mod locks;
+// POC-5a: the host AppScaffolder impl — the server-side scaffold orchestrator that
+// drives the fixed-skeleton write loop into a CoW branch. Gated to `embedded-worker`
+// (it binds + submits recipes + folds the projection to await each step).
+#[cfg(feature = "embedded-worker")]
+mod scaffold;
 // D155 Phase-A: the branches.db sidecar (the BranchStore seam) — CreateBranch /
 // SnapshotInto manifests of {host-path -> ContentRef}. SnapshotInto reads confined
 // host files into CAS (reusing fs-list's airtight confinement via kx-capability),
@@ -95,6 +104,9 @@ mod branches;
 // projection (capture.db sidecar folded from the read-only journal handle).
 // Always-on, off-truth-path; FFI-free (rusqlite is already in the closure).
 mod capture;
+// POC-5a (CAS env-knobs / F4): additive, default-preserving operator overrides for
+// the serve context window + agentic-edit decode budget + chat-RAG fan-in caps.
+mod env_caps;
 mod error;
 // PR-4.1: the feedback.db sidecar (the FeedbackStore seam) — the SubmitFeedback
 // 👍/👎 rows + their ListFeedback read-back. Rebuildable-to-empty (client-origin

@@ -180,8 +180,6 @@ const CHAT_RAG_LOGIC_REF: [u8; 32] = [0x58; 32];
 /// the fold fails closed on overflow regardless — this keeps the common case inside
 /// it). The host `query` additionally clamps to its own server-side `MAX_K`.
 const CHAT_RAG_DEFAULT_K: usize = 4;
-/// See [`CHAT_RAG_DEFAULT_K`].
-const CHAT_RAG_MAX_K: usize = 16;
 /// The chat-rag args key naming the dataset to ground on (stripped from the args
 /// before free-param binding — it is NOT a declared recipe slot). Absent ⇒ plain chat.
 const CHAT_RAG_DATASET_KEY: &str = "dataset";
@@ -253,6 +251,11 @@ pub const REACT_EDIT_RECIPE_HANDLE: &str = "kx/recipes/react-edit";
 /// the seed is SWAPPED at submit, so the ref never reaches an admitted identity).
 /// `0x55` is the next free sentinel after react-fs (`0x54`).
 const REACT_EDIT_LOGIC_REF: [u8; 32] = [0x55; 32];
+
+/// POC-5a: a DISTINCT placeholder `logic_ref` for the `app-scaffold-write` seed step
+/// (the BUG-25 class — own ref so the scaffold recipe's fingerprint never collides
+/// with `react-edit`). `0x59` is the next free sentinel after chat-rag (`0x58`).
+const APP_SCAFFOLD_WRITE_LOGIC_REF: [u8; 32] = [0x59; 32];
 
 /// T-AGENT2: the opt-in self-checking model recipe — a single greedy model
 /// PRODUCER step (a `prompt` free-param) gated by an LLM-JUDGE critic that grades
@@ -843,6 +846,34 @@ impl DemoLibrary {
             ));
         }
 
+        // (app-scaffold-write) POC-5a: the single Pure greedy write step the server-
+        // side scaffold orchestrator drives per FIXED-skeleton file (the react-edit
+        // pattern: a `prompt` directive + sibling `context_refs`, `reasoning=strip`,
+        // the terminal answer IS the file body). OWN logic ref (BUG-25); the same
+        // server-minted Pure/no-tools warrant + env-knob token caps as react-edit.
+        // Seeded only when a model is served (default-OFF ⇒ digest unchanged).
+        if let Some(model_id) = serve_model {
+            let scaffold_w = react_edit_warrant(exec_class, model_id);
+            let scaffold_h = app_scaffold_write_handle()?;
+            seed_recipe(
+                &versions,
+                &bodies,
+                &grants,
+                &owner,
+                parties,
+                &scaffold_h,
+                app_scaffold_write_body(&scaffold_w),
+                &scaffold_w,
+            )?;
+            recipes.push((
+                scaffold_h,
+                RecipeMeta {
+                    owner_root: scaffold_w,
+                    free_params: prompt_contract(),
+                },
+            ));
+        }
+
         // (judge) T-AGENT2: a SEPARATE opt-in self-checking recipe — a greedy model
         // PRODUCER (a `prompt` free-param) gated by an LLM-JUDGE critic (ReadOnlyNondet)
         // that grades the answer against a fixed rubric using the served model. Seeded
@@ -1151,6 +1182,10 @@ fn recipe_advisory(handle: &str) -> (&'static str, &'static [&'static str]) {
         REACT_EDIT_RECIPE_HANDLE => (
             "ReAct-Edit — a live agent loop that rewrites a branch file in-CAS; the edited body commits as a new content ref the branch manifest advances to (the host is never written).",
             &["agent", "react", "edit", "branch", "refactor", "filesystem"],
+        ),
+        kx_gateway_core::APP_SCAFFOLD_WRITE_RECIPE_HANDLE => (
+            "App-Scaffold-Write — the single Pure model step the App scaffold orchestrator drives per file: it authors one file body of a new agentic-app project into a CoW branch (the host is never written).",
+            &["agent", "scaffold", "app", "author", "branch", "in-cas"],
         ),
         VISION_RECIPE_HANDLE => (
             "Vision — a multimodal completion over an attached image.",
@@ -1520,7 +1555,9 @@ impl HostRecipeBinder {
             .as_ref()
             .and_then(serde_json::Value::as_u64)
             .and_then(|k| usize::try_from(k).ok())
-            .map_or(CHAT_RAG_DEFAULT_K, |k| k.clamp(1, CHAT_RAG_MAX_K));
+            .map_or(CHAT_RAG_DEFAULT_K, |k| {
+                k.clamp(1, crate::env_caps::chat_rag_max_k())
+            });
         let hits = match g.datasets.query(dataset, None, &prompt, k) {
             Ok(hits) if !hits.is_empty() => hits,
             // Unknown dataset / embedder-unavailable / empty index / backend error ⇒
@@ -2778,8 +2815,10 @@ pub(crate) fn react_edit_warrant(exec_class: ExecutorClass, model_id: &ModelId) 
             // this must be generous enough to FINISH reasoning AND emit the body
             // (a budget that ends mid-`<think>` strips to empty). Bounded so a
             // full-budget greedy decode still completes within the wall clock.
-            max_input_tokens: 8_192,
-            max_output_tokens: 3_072,
+            // POC-5a env-knobs: operators scaffolding larger files raise these via
+            // KX_SERVE_EDIT_MAX_INPUT/OUTPUT_TOKENS (default-preserving when unset).
+            max_input_tokens: crate::env_caps::edit_max_input_tokens(),
+            max_output_tokens: crate::env_caps::edit_max_output_tokens(),
             max_calls: 4,
         },
         resource_ceiling: ResourceCeiling {
@@ -2801,6 +2840,13 @@ pub(crate) fn react_edit_warrant(exec_class: ExecutorClass, model_id: &ModelId) 
 fn react_edit_handle() -> Result<AssetPath, GatewayError> {
     parse_handle(REACT_EDIT_RECIPE_HANDLE)
         .ok_or_else(|| GatewayError::Catalog("invalid react-edit recipe handle".into()))
+}
+
+/// POC-5a: the `app-scaffold-write` recipe handle (the gateway-core scaffold
+/// orchestrator binds this EXACT handle — the shared scaffold contract).
+fn app_scaffold_write_handle() -> Result<AssetPath, GatewayError> {
+    parse_handle(kx_gateway_core::APP_SCAFFOLD_WRITE_RECIPE_HANDLE)
+        .ok_or_else(|| GatewayError::Catalog("invalid app-scaffold-write recipe handle".into()))
 }
 
 fn judge_handle() -> Result<AssetPath, GatewayError> {
@@ -2909,6 +2955,32 @@ fn react_edit_body(warrant: &WarrantSpec) -> WorkflowDef {
         .insert(ConfigKey(PROMPT_KEY.into()), ConfigVal(Vec::new()));
     // FIXED: reasoning=strip ⇒ the model reasons naturally (produces content) but
     // the committed body has the leading `<think>` block stripped (clean file).
+    step.config_subset.insert(
+        ConfigKey(REASONING_CONFIG_KEY.into()),
+        ConfigVal(REASONING_STRIP.as_bytes().to_vec()),
+    );
+    wf.add_step(step);
+    wf
+}
+
+/// POC-5a: the `app-scaffold-write` body — byte-for-byte the `react-edit` single
+/// Pure greedy step (a `prompt` slot the binder fills, `reasoning=strip`), but with
+/// its OWN `APP_SCAFFOLD_WRITE_LOGIC_REF` (BUG-25 — a distinct fingerprint from
+/// react-edit). The scaffold orchestrator binds it per skeleton file: the committed
+/// terminal answer IS the file body, which it content-addresses + `AdvanceBranch`-es.
+fn app_scaffold_write_body(warrant: &WarrantSpec) -> WorkflowDef {
+    let logic = LogicRef::from_bytes(APP_SCAFFOLD_WRITE_LOGIC_REF);
+    let b = APP_SCAFFOLD_WRITE_LOGIC_REF;
+    let seed = u32::from_le_bytes([b[0], b[1], b[2], b[3]]);
+    let mut wf = WorkflowDef::new(seed);
+    let mut step = transform(
+        logic,
+        warrant.model_route.model_id.clone(),
+        warrant.clone(),
+        ToolName("demo".into()),
+    );
+    step.config_subset
+        .insert(ConfigKey(PROMPT_KEY.into()), ConfigVal(Vec::new()));
     step.config_subset.insert(
         ConfigKey(REASONING_CONFIG_KEY.into()),
         ConfigVal(REASONING_STRIP.as_bytes().to_vec()),
@@ -4835,6 +4907,53 @@ mod tests {
         assert!(!lib2
             .recipe_handles()
             .contains(&REACT_EDIT_RECIPE_HANDLE.to_string()));
+    }
+
+    #[test]
+    fn app_scaffold_write_recipe_seeded_with_distinct_fingerprint() {
+        // POC-5a: the scaffold-write recipe seeds alongside react-edit (a served
+        // model is present), with its OWN logic ref ⇒ a DISTINCT fingerprint (BUG-25),
+        // and the single-step `prompt` contract the scaffold orchestrator binds.
+        let model = ModelId("kx-serve:m".to_string());
+        let dir = tempfile::tempdir().unwrap();
+        let lib = DemoLibrary::open_complete(
+            dir.path(),
+            ExecutorClass::Bwrap,
+            &["alice@acme".to_string()],
+            Some(&model),
+            None,
+            false,
+            None,
+            false,
+        )
+        .unwrap();
+        let scaffold_handle = kx_gateway_core::APP_SCAFFOLD_WRITE_RECIPE_HANDLE;
+        assert!(lib.recipe_handles().contains(&scaffold_handle.to_string()));
+        let fp = |h: &str| lib.recipe_fingerprint(h).unwrap();
+        // Distinct from react-edit (own logic ref) despite the same warrant shape.
+        assert_ne!(fp(scaffold_handle), fp(REACT_EDIT_RECIPE_HANDLE));
+        // The published form is the single-step `prompt` contract.
+        let form = lib
+            .recipe_form(scaffold_handle)
+            .expect("app-scaffold-write is provisioned");
+        assert_eq!(form.len(), 1);
+        assert_eq!(form[0].name, PROMPT_KEY);
+
+        // No served model ⇒ NOT seeded (the digest gate — the scaffold warrant is a
+        // model step, so it never touches the model-free canonical projection).
+        let dir2 = tempfile::tempdir().unwrap();
+        let lib2 = DemoLibrary::open_complete(
+            dir2.path(),
+            ExecutorClass::Bwrap,
+            &["alice@acme".to_string()],
+            None,
+            None,
+            false,
+            None,
+            false,
+        )
+        .unwrap();
+        assert!(!lib2.recipe_handles().contains(&scaffold_handle.to_string()));
     }
 
     #[test]

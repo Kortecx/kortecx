@@ -15,8 +15,8 @@ from __future__ import annotations
 from .agent import Agent
 from .agent_result import AgentResult, AuditedAction
 from .alerts import AlertsPage, AlertSummary
-from .app import App, app
-from .apps import AppSummary, SaveAppResult, Skill, StoredApp
+from .app import App, app, minimal_app_envelope
+from .apps import AppSummary, SaveAppResult, ScaffoldLaunch, ScaffoldStatus, Skill, StoredApp
 from .blueprints import BlueprintBuilder, EdgeInput, StepInput
 from .branch import (
     AdvanceResult,
@@ -125,6 +125,10 @@ __all__ = [
     "AppSummary",
     "SaveAppResult",
     "StoredApp",
+    # POC-5a App scaffold + IDE
+    "minimal_app_envelope",
+    "ScaffoldLaunch",
+    "ScaffoldStatus",
     # run + result
     "Run",
     "AsyncRun",

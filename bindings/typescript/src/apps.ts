@@ -90,6 +90,8 @@ export class AppSummary {
     readonly description: string,
     readonly tags: string[],
     readonly stepCount: number,
+    /** POC-5b: the App's project branch is locked (agentic in-CAS edits refused). */
+    readonly locked: boolean,
   ) {}
 
   static fromProto(s: PbAppSummary): AppSummary {
@@ -101,7 +103,35 @@ export class AppSummary {
       s.description,
       [...s.tags],
       s.stepCount,
+      s.locked,
     );
+  }
+}
+
+/** POC-5a: the live App-scaffold phase. */
+export type ScaffoldPhase = "planning" | "writing" | "done" | "failed" | "unspecified";
+
+/** POC-5a: the resolved scaffold status (phase + the done/pending skeleton files). */
+export interface ScaffoldStatus {
+  readonly phase: ScaffoldPhase;
+  readonly filesDone: string[];
+  readonly filesPending: string[];
+  readonly detail: string;
+}
+
+/** Map the wire `GetScaffoldStatusResponse.Phase` enum to a stable name. */
+export function scaffoldPhaseName(phase: number): ScaffoldPhase {
+  switch (phase) {
+    case 1:
+      return "planning";
+    case 2:
+      return "writing";
+    case 3:
+      return "done";
+    case 4:
+      return "failed";
+    default:
+      return "unspecified";
   }
 }
 
@@ -132,7 +162,7 @@ export class StoredApp {
         : {};
     const summary = r.summary
       ? AppSummary.fromProto(r.summary)
-      : new AppSummary("", "", "", "", "", [], 0);
+      : new AppSummary("", "", "", "", "", [], 0, false);
     return new StoredApp(summary, envelope);
   }
 }

@@ -70,6 +70,43 @@ pub enum AppSub {
         /// The destination file.
         output: PathBuf,
     },
+    /// POC-5a: agentically scaffold an EXISTING App's fixed-skeleton project tree
+    /// into its CoW branch (server-side; the host is never written). `--wait` polls
+    /// the scaffold status until it completes.
+    Scaffold {
+        /// The catalog handle (its project branch = the same handle).
+        handle: String,
+        /// Optional authoring goal/intent (defaults to the App's name server-side).
+        goal: Option<String>,
+        /// Block + poll the scaffold status until Done/Failed.
+        wait: bool,
+        /// Wait timeout.
+        timeout_secs: u64,
+    },
+    /// POC-5a: list the files in an App's project branch (the scaffolded tree).
+    Files {
+        /// The catalog handle.
+        handle: String,
+    },
+    /// POC-5a: print one App project file's body (caller-scoped branch read).
+    Cat {
+        /// The catalog handle.
+        handle: String,
+        /// The file path within the App's project branch.
+        path: String,
+        /// Write the body here instead of stdout.
+        out: Option<PathBuf>,
+    },
+    /// POC-5b: lock the App's project branch (agentic in-CAS edits are refused).
+    Lock {
+        /// The catalog handle.
+        handle: String,
+    },
+    /// POC-5b: unlock the App's project branch (re-enable agentic edits).
+    Unlock {
+        /// The catalog handle.
+        handle: String,
+    },
 }
 
 /// A `app new` request, assembled from the flags (offline authoring).
@@ -116,10 +153,15 @@ fn parse_u32(raw: &str, flag: &str) -> Result<u32, CliError> {
 /// [`CliError::Usage`] on an unknown subcommand / flag or a missing required argument.
 pub fn parse(mut args: impl Iterator<Item = String>) -> Result<AppArgs, CliError> {
     let kw = args.next().ok_or_else(|| {
-        CliError::Usage("app needs a subcommand (new|save|list|get|run|export)".into())
+        CliError::Usage(
+            "app needs a subcommand (new|save|list|get|run|export|scaffold|files|cat|lock|unlock)"
+                .into(),
+        )
     })?;
     let mut common = ClientCommon::default();
     let mut positional: Option<String> = None;
+    let mut positional2: Option<String> = None;
+    let mut goal: Option<String> = None;
     let mut from_blueprint: Option<PathBuf> = None;
     let mut handle: Option<String> = None;
     let mut output: Option<PathBuf> = None;
@@ -160,6 +202,7 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<AppArgs, CliError
             "--tag" => tags.push(next_value(&mut args, "--tag")?),
             "--description" => description = Some(next_value(&mut args, "--description")?),
             "--branch" => branch = Some(next_value(&mut args, "--branch")?),
+            "--goal" => goal = Some(next_value(&mut args, "--goal")?),
             "--wait" => wait_flag = true,
             "--timeout-secs" => {
                 timeout_secs = u64::from(parse_u32(
@@ -171,6 +214,7 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<AppArgs, CliError
                 return Err(CliError::Usage(format!("unknown flag {other:?}")))
             }
             other if positional.is_none() => positional = Some(other.to_string()),
+            other if positional2.is_none() => positional2 = Some(other.to_string()),
             other => return Err(CliError::Usage(format!("unexpected argument {other:?}"))),
         }
     }
@@ -179,6 +223,8 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<AppArgs, CliError
         &kw,
         Flags {
             positional,
+            positional2,
+            goal,
             from_blueprint,
             handle,
             output,
@@ -199,6 +245,8 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<AppArgs, CliError
 /// The accumulated `app` flags, dispatched to a subcommand by [`assemble_sub`].
 struct Flags {
     positional: Option<String>,
+    positional2: Option<String>,
+    goal: Option<String>,
     from_blueprint: Option<PathBuf>,
     handle: Option<String>,
     output: Option<PathBuf>,
@@ -254,8 +302,32 @@ fn assemble_sub(kw: &str, f: Flags) -> Result<AppSub, CliError> {
                 .output
                 .ok_or_else(|| CliError::Usage("app export requires --output <file>".into()))?,
         }),
+        "scaffold" => Ok(AppSub::Scaffold {
+            handle: require_pos(f.positional, "a <handle>")?,
+            goal: f.goal,
+            wait: f.wait_flag,
+            timeout_secs: f.timeout_secs,
+        }),
+        "files" => Ok(AppSub::Files {
+            handle: require_pos(f.positional, "a <handle>")?,
+        }),
+        "cat" => Ok(AppSub::Cat {
+            handle: require_pos(f.positional, "a <handle>")?,
+            path: f
+                .positional2
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| CliError::Usage("app cat requires a <path> argument".into()))?,
+            out: f.out,
+        }),
+        "lock" => Ok(AppSub::Lock {
+            handle: require_pos(f.positional, "a <handle>")?,
+        }),
+        "unlock" => Ok(AppSub::Unlock {
+            handle: require_pos(f.positional, "a <handle>")?,
+        }),
         other => Err(CliError::Usage(format!(
-            "unknown app subcommand {other:?} (expected new | save | list | get | run | export)"
+            "unknown app subcommand {other:?} (expected new | save | list | get | run | \
+             export | scaffold | files | cat | lock | unlock)"
         ))),
     }
 }
@@ -326,10 +398,11 @@ fn execute_new(spec: NewSpec) -> Result<(), CliError> {
     Ok(())
 }
 
-/// Execute `app new | save | list | get | run | export`.
+/// Execute `app new | save | list | get | run | export | scaffold | files | cat | lock | unlock`.
 ///
 /// # Errors
 /// [`CliError`] on a transport / status / usage failure.
+#[allow(clippy::too_many_lines)]
 pub async fn execute(args: AppArgs) -> Result<(), CliError> {
     // `new` is offline — no gateway contact.
     if let AppSub::New(spec) = args.sub {
@@ -427,6 +500,123 @@ pub async fn execute(args: AppArgs) -> Result<(), CliError> {
                 Ok(())
             }
         }
+        AppSub::Scaffold {
+            handle,
+            goal,
+            wait: do_wait,
+            timeout_secs,
+        } => {
+            let resp = client
+                .scaffold_app(resolved.request(proto::ScaffoldAppRequest {
+                    handle: handle.clone(),
+                    branch_handle: String::new(), // one-App-one-branch ⇒ server defaults to the App handle
+                    instruction: goal.unwrap_or_default(),
+                })?)
+                .await
+                .map_err(CliError::from_status)?
+                .into_inner();
+            let branch = resp.branch_handle.clone();
+            println!("{}", format::render_scaffold_app(&resp, json));
+            if do_wait {
+                let status = poll_scaffold(
+                    &mut client,
+                    &resolved,
+                    &branch,
+                    Duration::from_secs(timeout_secs),
+                )
+                .await?;
+                println!("{}", format::render_scaffold_status(&status, json));
+                if status.phase == proto::get_scaffold_status_response::Phase::Failed as i32 {
+                    return Err(CliError::Usage(format!(
+                        "scaffold failed: {}",
+                        status.detail
+                    )));
+                }
+            }
+            Ok(())
+        }
+        AppSub::Files { handle } => {
+            let resp = client
+                .get_branch(resolved.request(proto::GetBranchRequest { handle })?)
+                .await
+                .map_err(CliError::from_status)?
+                .into_inner();
+            println!("{}", format::render_get_branch(&resp, json));
+            Ok(())
+        }
+        AppSub::Cat { handle, path, out } => {
+            let resp = client
+                .get_branch_content(resolved.request(proto::GetBranchContentRequest {
+                    handle: handle.clone(),
+                    path: path.clone(),
+                })?)
+                .await
+                .map_err(CliError::from_status)?
+                .into_inner();
+            if !resp.found {
+                return Err(CliError::Usage(format!(
+                    "app {handle:?} has no file {path:?} (or the App is not owned by you)"
+                )));
+            }
+            if let Some(path) = out {
+                std::fs::write(&path, &resp.payload)
+                    .map_err(|e| CliError::Usage(format!("write {}: {e}", path.display())))?;
+                println!("wrote {} ({} bytes)", path.display(), resp.payload.len());
+            } else {
+                use std::io::Write;
+                std::io::stdout().write_all(&resp.payload).ok();
+            }
+            Ok(())
+        }
+        AppSub::Lock { handle } => {
+            let resp = client
+                .lock_app(resolved.request(proto::LockAppRequest {
+                    branch_handle: handle.clone(),
+                })?)
+                .await
+                .map_err(CliError::from_status)?
+                .into_inner();
+            println!("{}", format::render_app_lock(&handle, resp.locked, json));
+            Ok(())
+        }
+        AppSub::Unlock { handle } => {
+            let resp = client
+                .unlock_app(resolved.request(proto::UnlockAppRequest {
+                    branch_handle: handle.clone(),
+                })?)
+                .await
+                .map_err(CliError::from_status)?
+                .into_inner();
+            println!("{}", format::render_app_lock(&handle, !resp.unlocked, json));
+            Ok(())
+        }
+    }
+}
+
+/// Poll `GetScaffoldStatus` until the scaffold reaches a terminal phase (Done/Failed)
+/// or the deadline elapses (then returns the last status — never an error on timeout,
+/// so the caller can render the partial progress honestly).
+async fn poll_scaffold(
+    client: &mut proto::kx_gateway_client::KxGatewayClient<tonic::transport::Channel>,
+    resolved: &crate::client::Resolved,
+    branch_handle: &str,
+    timeout: Duration,
+) -> Result<proto::GetScaffoldStatusResponse, CliError> {
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        let status = client
+            .get_scaffold_status(resolved.request(proto::GetScaffoldStatusRequest {
+                branch_handle: branch_handle.to_string(),
+            })?)
+            .await
+            .map_err(CliError::from_status)?
+            .into_inner();
+        let terminal = status.phase == proto::get_scaffold_status_response::Phase::Done as i32
+            || status.phase == proto::get_scaffold_status_response::Phase::Failed as i32;
+        if terminal || std::time::Instant::now() >= deadline {
+            return Ok(status);
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
     }
 }
 
@@ -509,6 +699,67 @@ mod tests {
     fn unknown_subcommand_is_usage_error() {
         let err = parse(["frobnicate"].iter().map(ToString::to_string)).unwrap_err();
         assert!(matches!(err, CliError::Usage(_)));
+    }
+
+    #[test]
+    fn parse_scaffold_with_goal_and_wait() {
+        match parse_ok(&[
+            "scaffold",
+            "apps/local/echo",
+            "--goal",
+            "summarize PDFs",
+            "--wait",
+        ])
+        .sub
+        {
+            AppSub::Scaffold {
+                handle, goal, wait, ..
+            } => {
+                assert_eq!(handle, "apps/local/echo");
+                assert_eq!(goal.as_deref(), Some("summarize PDFs"));
+                assert!(wait);
+            }
+            other => panic!("expected Scaffold, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_scaffold_requires_handle() {
+        let err = parse(["scaffold"].iter().map(ToString::to_string)).unwrap_err();
+        assert!(matches!(err, CliError::Usage(_)));
+    }
+
+    #[test]
+    fn parse_files_and_cat() {
+        assert!(matches!(
+            parse_ok(&["files", "apps/local/echo"]).sub,
+            AppSub::Files { .. }
+        ));
+        match parse_ok(&["cat", "apps/local/echo", "README.md"]).sub {
+            AppSub::Cat { handle, path, .. } => {
+                assert_eq!(handle, "apps/local/echo");
+                assert_eq!(path, "README.md");
+            }
+            other => panic!("expected Cat, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_cat_requires_path() {
+        let err = parse(["cat", "apps/local/echo"].iter().map(ToString::to_string)).unwrap_err();
+        assert!(matches!(err, CliError::Usage(_)));
+    }
+
+    #[test]
+    fn parse_lock_and_unlock() {
+        assert!(matches!(
+            parse_ok(&["lock", "apps/local/echo"]).sub,
+            AppSub::Lock { .. }
+        ));
+        assert!(matches!(
+            parse_ok(&["unlock", "apps/local/echo"]).sub,
+            AppSub::Unlock { .. }
+        ));
     }
 
     #[test]

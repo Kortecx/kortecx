@@ -73,18 +73,15 @@ describe("Sidebar", () => {
     }
   });
 
-  it("renders in-development placeholders as honest-disabled (GR15/≈D166)", () => {
+  it("has no in-development placeholders now (Apps POC-4, Policies POC-5b promoted)", () => {
     render(<Sidebar collapsed={false} onToggle={() => {}} />);
-    expect(screen.getByTestId("nav-group-dev")).toHaveTextContent("Coming");
-    // Policies is still a placeholder; Apps was PROMOTED to a real section in POC-4.
-    for (const id of ["policies"]) {
-      const el = screen.getByTestId(`dev-${id}`);
-      expect(el).toBeInTheDocument();
-      expect(el).toHaveAttribute("aria-disabled", "true");
-      expect(el.tagName).toBe("DIV");
-    }
+    // DEV_PLACEHOLDERS is empty — the "Coming" group is hidden, no dev rows.
+    expect(screen.getByTestId("nav-group-dev")).toHaveAttribute("hidden");
+    expect(screen.queryByTestId("dev-policies")).toBeNull();
     expect(screen.queryByTestId("dev-apps")).toBeNull();
-    expect(screen.getByTestId("nav-apps")).toBeInTheDocument(); // real, navigable now
+    // Both are real, navigable sections now.
+    expect(screen.getByTestId("nav-apps")).toBeInTheDocument();
+    expect(screen.getByTestId("nav-policies")).toBeInTheDocument();
   });
 
   it("hides labels, group labels and the footer (icon rail) when collapsed", () => {

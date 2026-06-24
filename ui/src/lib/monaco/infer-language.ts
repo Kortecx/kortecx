@@ -22,3 +22,21 @@ export function inferLanguage(text: string): MonacoLanguage {
     return "plaintext";
   }
 }
+
+/**
+ * POC-5d: infer the editor language from a file PATH (the App project tree). The
+ * offline Monaco bundle registers ONLY json + plaintext + markdown (see
+ * `setup.ts`), so we map the three recognised extensions and fall back to
+ * plaintext for everything else (no unregistered language is ever returned).
+ * Total + pure — unit-tested directly.
+ */
+export function inferLanguageFromPath(path: string): MonacoLanguage {
+  const lower = path.toLowerCase();
+  if (lower.endsWith(".md") || lower.endsWith(".markdown")) {
+    return "markdown";
+  }
+  if (lower.endsWith(".json")) {
+    return "json";
+  }
+  return "plaintext";
+}

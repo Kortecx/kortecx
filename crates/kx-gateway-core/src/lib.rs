@@ -56,6 +56,7 @@ mod events;
 mod feedback_view;
 mod fuzzy_discovery;
 mod identity;
+mod locks_view;
 mod mcp_gateway_admin;
 mod model_lifecycle;
 mod models_view;
@@ -66,6 +67,7 @@ mod reader;
 mod replan;
 mod run_inputs_view;
 mod runs;
+mod scaffold;
 mod server_info;
 mod service;
 mod submit;
@@ -92,6 +94,12 @@ pub use datasets::{
 pub use error::GatewayError;
 pub use feedback_view::{FeedbackEntry, FeedbackRecord, FeedbackStore};
 pub use fuzzy_discovery::{score_to_bp, FuzzyDiscoveryView, FuzzyHitEntry};
+pub use locks_view::{LockStore, LOCKED_BRANCH_REFUSAL_CODE};
+pub use scaffold::{
+    authoring_prompt, body_is_empty, derive_phase, split_done_pending, try_committed_body,
+    AppScaffolder, ScaffoldFile, ScaffoldPhase, ScaffoldStatus, ScaffoldStep,
+    APP_SCAFFOLD_WRITE_RECIPE_HANDLE, SKELETON,
+};
 // The event-source pieces a live tailer (R5, `kx-gateway`) reuses: the one-time
 // ownership gate + the per-range frame builder. The snapshot composition stays
 // crate-private (it backs the default `SnapshotTailer`). Batch C adds the

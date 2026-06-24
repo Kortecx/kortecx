@@ -276,31 +276,30 @@ fn split_top_level_commas(s: &str) -> Vec<&str> {
     parts
 }
 
-/// Parse a single kwargs value into a JSON SCALAR: a double-quoted string, a number,
-/// or `true`/`false`/`null`. Single-quoted / bareword / object / array values ⇒
-/// `None` (fail-closed — a paren kwargs value must be an unambiguous JSON scalar).
-/// Total + panic-free (delegates to `serde_json`).
-fn parse_kw_scalar(v: &str) -> Option<serde_json::Value> {
+/// Parse a single kwargs value into ANY well-formed JSON value: a double-quoted
+/// string, a number, `true`/`false`/`null`, OR a nested object/array (T-GEMMA-PAREN:
+/// Gemma emits `call:NAME(config={"k":1}, tags=["a"])`). Single-quoted / bareword /
+/// otherwise-malformed values ⇒ `None` (fail-closed — `serde_json` rejects non-JSON,
+/// so the kwarg must be unambiguous JSON). `split_top_level_commas` already spans
+/// `{}`/`[]` nesting, so a nested value arrives here intact. Total + panic-free.
+fn parse_kw_value(v: &str) -> Option<serde_json::Value> {
     let v = v.trim();
     if v.is_empty() {
         return None;
     }
-    let parsed: serde_json::Value = serde_json::from_str(v).ok()?;
-    match parsed {
-        // The kwargs grammar is FLAT — an object/array value is rejected (a model
-        // wanting structured args should emit the `{…}` object form).
-        serde_json::Value::Object(_) | serde_json::Value::Array(_) => None,
-        scalar => Some(scalar),
-    }
+    // Accept any value `serde_json` can parse WHOLE (a trailing non-JSON tail makes
+    // `from_str` fail ⇒ None), incl. nested objects/arrays. The produced map still
+    // flows through `resolve_granted_name` + typed `validate_args` (SN-8 unchanged).
+    serde_json::from_str(v).ok()
 }
 
 /// Convert Gemma's parenthesized native args (the bytes INSIDE `(…)`, T-GEMMA-PAREN)
 /// into a JSON object STRING. Handles: empty `()` → `{}`; a wrapped JSON object
 /// `({…})` → that object (whole-content only, nothing trailing); and comma-separated
-/// `key=value` kwargs where each value is a JSON scalar (double-quoted string,
-/// number, `true`/`false`/`null`). Fail-closed (`None`) on positional args,
-/// nested/unquoted/duplicate forms — an ambiguous shape falls through to a normal
-/// completion rather than fabricating args. SN-8: the produced object still flows
+/// `key=value` kwargs where each value is ANY well-formed JSON value (a scalar OR a
+/// nested object/array — `key=val, cfg={"k":1}, tags=["a"]`). Fail-closed (`None`)
+/// on positional args, unquoted/duplicate forms — an ambiguous shape falls through to
+/// a normal completion rather than fabricating args. SN-8: the produced object still flows
 /// through `resolve_granted_name` (exact grant) + the typed `validate_args`
 /// downstream, so the authority surface is unchanged. Total + panic-free.
 fn parse_paren_args(inner: &str) -> Option<String> {
@@ -326,7 +325,7 @@ fn parse_paren_args(inner: &str) -> Option<String> {
         {
             return None; // a key must be a plain identifier
         }
-        let value = parse_kw_scalar(v)?;
+        let value = parse_kw_value(v)?;
         if map.insert(key.to_string(), value).is_some() {
             return None; // duplicate key ⇒ ambiguous ⇒ fail-closed
         }
@@ -1369,6 +1368,55 @@ mod tests {
         let v: serde_json::Value = serde_json::from_slice(&call.args_bytes).unwrap();
         assert_eq!(v["q"], "a,b");
         assert_eq!(v.as_object().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn gemma_paren_nested_object_kwarg_is_decoded() {
+        // T-GEMMA-PAREN fix: a kwarg whose value is a NESTED JSON object.
+        let w = warrant_granting(Some(("fs-list", "1")));
+        let env = br#"<|tool_call>call:fs_list(cfg={"depth":2,"hidden":true})<tool_call|>"#;
+        let call = parse_tool_call(env, &w, 4096)
+            .unwrap()
+            .expect("a native paren call");
+        let v: serde_json::Value = serde_json::from_slice(&call.args_bytes).unwrap();
+        assert_eq!(v["cfg"]["depth"], 2);
+        assert_eq!(v["cfg"]["hidden"], true);
+    }
+
+    #[test]
+    fn gemma_paren_array_kwarg_is_decoded() {
+        // T-GEMMA-PAREN fix: a kwarg whose value is a JSON ARRAY (top-level commas
+        // inside `[]` must not split the kwargs — `split_top_level_commas` spans it).
+        let w = warrant_granting(Some(("fs-list", "1")));
+        let env = br#"<|tool_call>call:fs_list(tags=["a","b","c"])<tool_call|>"#;
+        let call = parse_tool_call(env, &w, 4096)
+            .unwrap()
+            .expect("a native paren call");
+        let v: serde_json::Value = serde_json::from_slice(&call.args_bytes).unwrap();
+        assert_eq!(v["tags"], serde_json::json!(["a", "b", "c"]));
+    }
+
+    #[test]
+    fn gemma_paren_mixed_scalar_object_array_kwargs_decoded() {
+        // The headline T-GEMMA-PAREN shape: a scalar + a nested object + an array.
+        let w = warrant_granting(Some(("fs-list", "1")));
+        let env = br#"<|tool_call>call:fs_list(path="x", cfg={"k":1}, tags=["a","b"])<tool_call|>"#;
+        let call = parse_tool_call(env, &w, 4096)
+            .unwrap()
+            .expect("a native paren call");
+        let v: serde_json::Value = serde_json::from_slice(&call.args_bytes).unwrap();
+        assert_eq!(v["path"], "x");
+        assert_eq!(v["cfg"]["k"], 1);
+        assert_eq!(v["tags"], serde_json::json!(["a", "b"]));
+        assert_eq!(v.as_object().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn gemma_paren_malformed_nested_value_falls_through_to_none() {
+        // A kwarg value that is NOT whole JSON (a trailing tail) ⇒ fail-closed.
+        let w = warrant_granting(Some(("fs-list", "1")));
+        let env = br#"<|tool_call>call:fs_list(cfg={"k":1} junk)<tool_call|>"#;
+        assert_eq!(parse_tool_call(env, &w, 4096), Ok(None));
     }
 
     #[test]

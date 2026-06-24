@@ -68,3 +68,6 @@ kx-cloud/
 # secret files never land in git.
 /deploy/secrets/kx_authtokens
 /deploy/secrets/kx_token
+
+# proptest failure-persistence DIRECTORIES (the pattern above only matched *.proptest-regressions files)
+**/proptest-regressions/

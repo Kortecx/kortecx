@@ -49,6 +49,17 @@ export const queryKeys = {
   apps: (endpoint: string) => ["kx", endpoint, "apps"] as const,
   /** One App's full envelope (`GetApp`), keyed by handle. */
   app: (endpoint: string, handle: string) => ["kx", endpoint, "app", handle] as const,
+  /** One App's project branch manifest (`GetBranch`, POC-5d), keyed by handle
+   *  (one-App-one-branch ⇒ the branch handle IS the App handle). */
+  appBranch: (endpoint: string, handle: string) => ["kx", endpoint, "app-branch", handle] as const,
+  /** One App project file's FULL body (`GetBranchContent`, POC-5d). Keyed by the
+   *  content ref — content-addressed ⇒ immutable (cache forever). */
+  appFileContent: (endpoint: string, handle: string, contentRef: string) =>
+    ["kx", endpoint, "app-file", handle, contentRef] as const,
+  /** An App's live scaffold status (`GetScaffoldStatus`, POC-5a), keyed by the
+   *  project branch handle. Short-poll while the scaffold is active. */
+  scaffoldStatus: (endpoint: string, branchHandle: string) =>
+    ["kx", endpoint, "scaffold-status", branchHandle] as const,
   /** A context-item's FULL body (POC-2 view/edit, uploads-scope `GetContent`),
    *  keyed by its content ref — content-addressed ⇒ immutable (cache forever). */
   contextItemBody: (endpoint: string, contentRef: string) =>

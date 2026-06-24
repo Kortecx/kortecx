@@ -27,6 +27,7 @@ import type { DagSpecJson } from "./chains.js";
 import { Chain } from "./chains.js";
 import { getDefaultClient } from "./default-client.js";
 import { KxUsage } from "./errors.js";
+import { flow } from "./flow.js";
 
 /** Anything that can produce a portable blueprint (a Flow or a Chain). */
 export interface BlueprintSource {
@@ -297,4 +298,20 @@ export class AppBuilder {
  * container that WRAPS a blueprint into a durable, reusable App. */
 export function app(name: string, opts: { version?: string } = {}): AppBuilder {
   return new AppBuilder(name, opts.version ?? "1");
+}
+
+/**
+ * POC-5a: author a MINIMAL App envelope (a single agentic step over `goal`) for the
+ * "New App" one-shot — save it, then `client.scaffoldApp(handle)` scaffolds the
+ * project tree into its branch. The envelope carries NO authority (the server
+ * re-resolves warrants at run); the blueprint is a valid single-step DAG.
+ */
+export function minimalAppEnvelope(
+  name: string,
+  goal: string,
+  opts: { model?: string } = {},
+): Record<string, unknown> {
+  const builder = app(name).describe(goal).blueprint(flow().agent(goal));
+  if (opts.model) builder.steer({ model: opts.model });
+  return builder.toEnvelope();
 }

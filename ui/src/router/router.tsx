@@ -1,6 +1,7 @@
 import { createRouter } from "@tanstack/react-router";
 import { rootRoute } from "./routes/__root";
 import { activityRoute } from "./routes/activity";
+import { appDetailRoute } from "./routes/app-detail";
 import { appsRoute } from "./routes/apps";
 import { artifactsRoute } from "./routes/artifacts";
 import { blueprintsNewRoute } from "./routes/blueprints-new";
@@ -13,6 +14,7 @@ import { datasetsRoute } from "./routes/datasets";
 import { indexRoute } from "./routes/index";
 import { modelsRoute } from "./routes/models";
 import { monitorRoute } from "./routes/monitor";
+import { policiesRoute } from "./routes/policies";
 import { recipesRoute } from "./routes/recipes";
 import { runDetailRedirectRoute, runsRoute } from "./routes/runs";
 import { settingsRoute } from "./routes/settings";
@@ -32,6 +34,8 @@ const routeTree = rootRoute.addChildren([
   dashboardRoute,
   chatRoute,
   appsRoute,
+  appDetailRoute,
+  policiesRoute,
   runsRoute,
   runDetailRedirectRoute,
   recipesRoute,

@@ -13,7 +13,15 @@ import type { MessageInitShape } from "@bufbuild/protobuf";
 import { createClient } from "@connectrpc/connect";
 import type { Client, Transport } from "@connectrpc/connect";
 import { AlertSummary, type AlertsPage } from "./alerts.js";
-import { AppSummary, SaveAppResult, StoredApp, canonicalJson, defaultHandle } from "./apps.js";
+import {
+  AppSummary,
+  SaveAppResult,
+  type ScaffoldStatus,
+  StoredApp,
+  canonicalJson,
+  defaultHandle,
+  scaffoldPhaseName,
+} from "./apps.js";
 import { AdvanceResult, Branch, CreateBranchResult, SnapshotResult } from "./branch.js";
 import { CaptureRecord, type CaptureRecordPage } from "./capture.js";
 import { Chain } from "./chains.js";
@@ -711,6 +719,59 @@ export abstract class KxClientBase {
       );
     }
     return this.advanceBranch(handle, path, result.resultRef);
+  }
+
+  /**
+   * POC-5a: agentically scaffold an existing App's FIXED-skeleton project tree into
+   * its CoW branch (server-side; the host is never written). Returns immediately —
+   * poll {@link getScaffoldStatus} (+ {@link getBranch}) for progress. The branch
+   * defaults to the App's own handle (one-App-one-branch).
+   */
+  async scaffoldApp(
+    handle: string,
+    opts: { goal?: string; branchHandle?: string } = {},
+  ): Promise<{ branchHandle: string; resumed: boolean }> {
+    const resp = await rpc(
+      this.grpc.scaffoldApp({
+        handle,
+        branchHandle: opts.branchHandle ?? "",
+        instruction: opts.goal ?? "",
+      }),
+    );
+    return { branchHandle: resp.branchHandle, resumed: resp.resumed };
+  }
+
+  /** POC-5a: the live scaffold status for a branch (phase + done/pending files). */
+  async getScaffoldStatus(branchHandle: string): Promise<ScaffoldStatus> {
+    const resp = await rpc(this.grpc.getScaffoldStatus({ branchHandle }));
+    return {
+      phase: scaffoldPhaseName(resp.phase),
+      filesDone: resp.filesDone,
+      filesPending: resp.filesPending,
+      detail: resp.detail,
+    };
+  }
+
+  /**
+   * POC-5a: read one App project file's body THROUGH the caller's OWN branch
+   * manifest (caller-scoped). Returns `null` for an absent branch / absent path /
+   * not-owned (uniform — no existence oracle).
+   */
+  async getBranchContent(handle: string, path: string): Promise<Uint8Array | null> {
+    const resp = await rpc(this.grpc.getBranchContent({ handle, path }));
+    return resp.found ? resp.payload : null;
+  }
+
+  /** POC-5b: lock the App's project branch (agentic in-CAS edits are refused). */
+  async lockApp(branchHandle: string): Promise<boolean> {
+    const resp = await rpc(this.grpc.lockApp({ branchHandle }));
+    return resp.locked;
+  }
+
+  /** POC-5b: unlock the App's project branch (re-enable agentic edits). */
+  async unlockApp(branchHandle: string): Promise<boolean> {
+    const resp = await rpc(this.grpc.unlockApp({ branchHandle }));
+    return resp.unlocked;
   }
 
   /**
