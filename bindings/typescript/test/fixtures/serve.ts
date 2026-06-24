@@ -112,34 +112,57 @@ const SERVERS: Server[] = [];
 /** Spawn a gateway with the given extra flags; tracked for {@link stopAllServers}. */
 export async function spawnServer(...extra: string[]): Promise<Server> {
   const kxBin = findOrBuildKx();
-  const [port, wsPort] = await Promise.all([freePort(), freePort()]);
   const tmp = await mkdtemp(path.join(tmpdir(), "kxsrv-"));
-  const endpoint = `http://127.0.0.1:${port}`;
-  const wsEndpoint = `ws://127.0.0.1:${wsPort}`;
-  const proc = spawn(
-    kxBin,
-    [
-      "serve",
-      "--journal",
-      path.join(tmp, "kx.db"),
-      "--content",
-      path.join(tmp, "blobs"),
-      "--listen",
-      `127.0.0.1:${port}`,
-      "--ws-listen",
-      `127.0.0.1:${wsPort}`,
-      // A console-enabled binary would otherwise bind the DEFAULT :8888 —
-      // concurrent test servers then collide (a console-less binary accepts
-      // the flag as a no-op). Every test spawn disables the console.
-      "--no-console",
-      ...extra,
-    ],
-    { stdio: ["ignore", "pipe", "pipe"] },
-  );
-  const server = new Server(endpoint, wsEndpoint, proc);
-  SERVERS.push(server);
-  await waitReady(endpoint, proc);
-  return server;
+  // `freePort()` releases the OS-assigned port the instant it closes its probe
+  // socket, so another process can grab it before `kx serve` binds (a TOCTOU race
+  // that flakes on a busy CI runner: "bind: Address already in use"). Retry the
+  // whole spawn with FRESH ports on that specific early-exit; rethrow anything
+  // else loudly. Mirrors the Python `conftest.py` spawn-retry.
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const [port, wsPort] = await Promise.all([freePort(), freePort()]);
+    const endpoint = `http://127.0.0.1:${port}`;
+    const wsEndpoint = `ws://127.0.0.1:${wsPort}`;
+    const proc = spawn(
+      kxBin,
+      [
+        "serve",
+        "--journal",
+        path.join(tmp, "kx.db"),
+        "--content",
+        path.join(tmp, "blobs"),
+        "--listen",
+        `127.0.0.1:${port}`,
+        "--ws-listen",
+        `127.0.0.1:${wsPort}`,
+        // A console-enabled binary would otherwise bind the DEFAULT :8888 —
+        // concurrent test servers then collide (a console-less binary accepts
+        // the flag as a no-op). Every test spawn disables the console.
+        "--no-console",
+        ...extra,
+      ],
+      { stdio: ["ignore", "pipe", "pipe"] },
+    );
+    let stderr = "";
+    proc.stderr?.on("data", (c) => {
+      stderr += String(c);
+    });
+    try {
+      await waitReady(endpoint, proc);
+      const server = new Server(endpoint, wsEndpoint, proc);
+      SERVERS.push(server);
+      return server;
+    } catch (e) {
+      lastErr = e;
+      proc.kill("SIGKILL");
+      // Only the port-bind race is retried; a real startup failure fails loudly.
+      if (!stderr.includes("Address already in use")) {
+        throw e;
+      }
+      await sleep(200);
+    }
+  }
+  throw new Error(`kx serve never bound a free port after retries: ${String(lastErr)}`);
 }
 
 /** A loopback `--dev-allow-local` gateway (no token needed). */
