@@ -4164,3 +4164,211 @@ button.card-grid__title:hover {
   font-size: 0.85rem;
   color: var(--fg-muted);
 }
+
+/* ===========================================================================
+ * POC-5a/5b/5d — Apps authoring, scaffold progress, the single-App IDE, the
+ * per-App lock + Policies. Token-only colours (both themes inherit); reuses the
+ * design-system surfaces (glow-card / registry / chip / view-toggle) where it can.
+ * ======================================================================== */
+
+/* The section-head right-aligned actions slot (New App / Run). */
+.section-head__actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* New App form head row (title + close). */
+.new-app-form__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+/* Scaffold progress — one row per skeleton file, honest state glyphs. */
+.scaffold-progress {
+  margin-top: 0.75rem;
+}
+.scaffold-progress__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+.scaffold-progress__title {
+  margin: 0;
+  font-size: 0.95rem;
+}
+.scaffold-progress__handle {
+  color: var(--fg-muted);
+  font-size: 0.8rem;
+}
+.scaffold-progress__rows {
+  list-style: none;
+  margin: 0.6rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.scaffold-progress__row {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.25rem 0.4rem;
+  border-radius: var(--radius-sm);
+}
+.scaffold-progress__row[data-state="done"] {
+  background: color-mix(in srgb, var(--success) 8%, var(--surface));
+}
+.scaffold-progress__glyph {
+  width: 1.1rem;
+  text-align: center;
+  font-weight: 700;
+}
+.scaffold-progress__glyph--done {
+  color: var(--success);
+}
+.scaffold-progress__glyph--writing {
+  color: var(--teal);
+  animation: spin 1.2s linear infinite;
+}
+.scaffold-progress__glyph--pending {
+  color: var(--fg-muted);
+}
+.scaffold-progress__path {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.85rem;
+}
+.scaffold-progress__state {
+  font-size: 0.75rem;
+}
+.scaffold-progress__done {
+  margin-top: 0.7rem;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .scaffold-progress__glyph--writing {
+    animation: none;
+  }
+}
+
+/* The single-App IDE — a two-pane FileTree | CodeViewer layout. */
+.app-detail__handle {
+  color: var(--fg-muted);
+  font-size: 0.8rem;
+}
+.app-detail__panes {
+  display: grid;
+  grid-template-columns: minmax(180px, 260px) 1fr;
+  gap: 1rem;
+  margin-top: 0.75rem;
+  align-items: start;
+}
+@media (max-width: 760px) {
+  .app-detail__panes {
+    grid-template-columns: 1fr;
+  }
+}
+.app-detail__tree {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: 0.5rem;
+  overflow: auto;
+  max-height: 70vh;
+}
+.app-detail__file {
+  min-width: 0;
+}
+
+/* The file tree — nested folders/files, token-only, keyboard-accessible. */
+.file-tree,
+.file-tree__children {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.file-tree__empty {
+  padding: 0.5rem;
+  font-size: 0.85rem;
+}
+.file-tree__folder,
+.file-tree__file {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  width: 100%;
+  padding: 0.28rem 0.4rem;
+  border: none;
+  background: transparent;
+  color: var(--fg);
+  text-align: left;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  font-size: 0.84rem;
+}
+.file-tree__folder:hover,
+.file-tree__file:hover {
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+}
+.file-tree__file--active {
+  background: color-mix(in srgb, var(--teal) 14%, var(--surface));
+  font-weight: 600;
+}
+.file-tree__twisty {
+  color: var(--fg-muted);
+  width: 0.9rem;
+}
+.file-tree__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The selected-file pane: path head + body + agentic edit affordance. */
+.app-file__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  margin-bottom: 0.5rem;
+}
+.app-file__path {
+  font-size: 0.85rem;
+}
+.app-file__locked {
+  font-size: 0.78rem;
+  color: var(--warning);
+}
+.app-file__editor {
+  margin-top: 0.6rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+/* The per-App lock control (chip + button, never a select). */
+.lock-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.lock-control__state--locked {
+  color: var(--warning);
+}
+.lock-control__state--unlocked {
+  color: var(--fg-muted);
+}

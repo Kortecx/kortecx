@@ -87,6 +87,10 @@ export interface UseChatOptions {
    *  its own context carry). The server honestly degrades to a plain answer when
    *  the dataset is missing/empty. */
   readonly dataset?: string;
+  /** POC-5d (AppChat): App-fixed context refs (bundle handles) attached to EVERY
+   *  turn, in ADDITION to any per-message context. Optional + additive — existing
+   *  callers (the standalone chat) pass nothing and are byte-identical. */
+  readonly contextRefs?: readonly string[];
 }
 
 export interface UseChat {
@@ -191,6 +195,7 @@ export function useChat({
   modelId,
   agentMode,
   dataset,
+  contextRefs,
 }: UseChatOptions): UseChat {
   const { client } = useConnection();
   const invoke = useInvoke();
@@ -415,10 +420,16 @@ export function useChat({
       try {
         const plan = await planTurn(text, attachments);
         // PR-7b: context is request-level — it attaches to the run regardless of
-        // which recipe route (chat / vision / react) the plan picked.
+        // which recipe route (chat / vision / react) the plan picked. POC-5d:
+        // App-fixed `contextRefs` ride EVERY turn, unioned with per-message
+        // context (dedup-stable; existing callers pass none ⇒ unchanged).
+        const merged =
+          contextRefs && contextRefs.length > 0
+            ? [...new Set([...contextRefs, ...context])]
+            : context;
         const { instanceId, terminalMoteId, reactChainSalt } = await invoke.mutateAsync({
           ...plan,
-          context: context.length > 0 ? context : undefined,
+          context: merged.length > 0 ? merged : undefined,
         });
         dispatch({ type: "turn_started", assistantId, instanceId, terminalMoteId });
         // A retried assistant id must be re-finalizable.
@@ -440,7 +451,7 @@ export function useChat({
         }
       }
     },
-    [invoke, planTurn],
+    [invoke, planTurn, contextRefs],
   );
 
   const send = useCallback(

@@ -54,6 +54,7 @@ export type RoutePath =
   | "/tools"
   | "/models"
   | "/systems"
+  | "/policies"
   | "/settings";
 
 export interface NavSection {
@@ -174,6 +175,16 @@ export const NAV_SECTIONS: readonly NavSection[] = [
     icon: "systems",
     hint: "Teams, grants & the policy view",
   },
+  {
+    // POC-5b: the per-App lock surface — the OSS agent-write policy gate. A locked
+    // App refuses agentic in-CAS edits at the advance() chokepoint. Promoted from
+    // the DEV_PLACEHOLDERS "Coming" group in POC-5b.
+    id: "policies",
+    label: "Policies",
+    path: "/policies",
+    icon: "systems",
+    hint: "Per-App locks — the agent-write policy gate",
+  },
 ] as const;
 
 /**
@@ -236,7 +247,7 @@ export const NAV_GROUPS: readonly NavGroup[] = [
   { id: "data", label: "Data", color: "teal", sectionIds: ["datasets", "context", "branches"] },
   { id: "tools", label: "Tools", color: "violet", sectionIds: ["tools", "models"] },
   { id: "monitoring", label: "Monitoring", color: "error", sectionIds: ["monitor"] },
-  { id: "security", label: "Security", color: "success", sectionIds: ["systems"] },
+  { id: "security", label: "Security", color: "success", sectionIds: ["systems", "policies"] },
 ] as const;
 
 /**
@@ -264,14 +275,13 @@ export const CLOUD_PLACEHOLDERS: readonly CloudPlaceholder[] = [
  * An HONEST in-development placeholder (GR15 don't-fake-gaps): a section on the POC
  * roadmap (≈D166) that is NOT yet built. Structurally a {@link CloudPlaceholder} — NO
  * `path`, NEVER navigable, rendered greyed with an "In dev" chip — so the nav previews
- * what's coming without fabricating a working surface. These map to ACTUAL planned POC
- * sections: Policies (the per-App agent-write gate, POC-5b). Promote one to a real
- * {@link NAV_SECTIONS} entry in the PR that ships it. (Apps was promoted in POC-4.)
+ * what's coming without fabricating a working surface. Promote one to a real
+ * {@link NAV_SECTIONS} entry in the PR that ships it. EMPTY now: Apps was promoted in
+ * POC-4 and Policies (the per-App agent-write gate) in POC-5b; the const stays so the
+ * "Coming" group keeps one shape when the next un-built POC section is previewed.
  */
 export type DevPlaceholder = CloudPlaceholder;
 
 export const DEV_GROUP_LABEL = "Coming";
 
-export const DEV_PLACEHOLDERS: readonly DevPlaceholder[] = [
-  { id: "policies", label: "Policies", icon: "systems" },
-] as const;
+export const DEV_PLACEHOLDERS: readonly DevPlaceholder[] = [] as const;

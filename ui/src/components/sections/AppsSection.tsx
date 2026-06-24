@@ -8,6 +8,7 @@ import { useApp, useApps, useRunApp } from "../../kx/use-apps";
 import { EmptyState } from "../EmptyState";
 import { ErrorNotice } from "../ErrorNotice";
 import { CodeViewer } from "../editor/CodeViewer";
+import { NewAppForm } from "./NewAppForm";
 
 /**
  * The Apps catalog (POC-4) — a READ-ONLY view over the caller's durable
@@ -16,18 +17,19 @@ import { CodeViewer } from "../editor/CodeViewer";
  * its blueprint and submits it (the server re-resolves every warrant from the
  * caller's grants, SN-8). Inspect shows the full envelope (Monaco, read-only).
  *
- * Authoring is the SDK/CLI surface (`kx app` / `app()`); the agentic "New App"
- * scaffold + in-CAS file editing land in POC-5a — so there is no New-App button
- * here yet (GR15 don't-fake-gaps). Share + Schedule are Cloud (D129) — honest-
- * disabled chips, never fake controls. Nothing currently exposed disappears:
- * Apps is ADDITIVE alongside Workflows/Blueprints (the consolidation rides the
- * deferred redesign).
+ * POC-5a adds the agentic "New App" scaffold (inline panel) — author an App
+ * here, the agent scaffolds a starter project tree into its CoW branch, then Open
+ * browses + edits it (POC-5d). The SDK/CLI surface (`kx app` / `app()`) still
+ * authors too. Share + Schedule are Cloud (D129) — honest-disabled chips, never
+ * fake controls. Nothing currently exposed disappears: Apps is ADDITIVE alongside
+ * Workflows/Blueprints (the consolidation rides the deferred redesign).
  */
 export function AppsSection() {
   const navigate = useNavigate();
   const { apps, notWired, isLoading, isError, error, refetch } = useApps();
   const runApp = useRunApp();
   const [viewing, setViewing] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
 
   function run(handle: string): void {
     runApp.mutate(
@@ -49,12 +51,25 @@ export function AppsSection() {
           <h1>Apps</h1>
           <p className="muted">
             Durable, reusable Apps — a portable blueprint plus its references, steering, and replay
-            intent. Author with <code className="mono">kx app</code> or the{" "}
-            <code className="mono">app()</code> SDK; run one here. Building + editing an App in-CAS
-            arrives in a later release.
+            intent. Create one here (the agent scaffolds a starter project tree), or author with{" "}
+            <code className="mono">kx app</code> / the <code className="mono">app()</code> SDK. Open
+            an App to browse and edit its project files.
           </p>
         </div>
+        <div className="section-head__actions">
+          <button
+            type="button"
+            className="btn-primary"
+            data-testid="new-app"
+            aria-expanded={creating}
+            onClick={() => setCreating((c) => !c)}
+          >
+            {creating ? "Close" : "New App"}
+          </button>
+        </div>
       </div>
+
+      {creating ? <NewAppForm onClose={() => setCreating(false)} /> : null}
 
       {isLoading ? <EmptyState title="Loading apps…" /> : null}
 
@@ -87,6 +102,7 @@ export function AppsSection() {
               pending={runApp.isPending}
               onRun={run}
               onInspect={setViewing}
+              onOpen={(handle) => void navigate({ to: "/apps/$handle", params: { handle } })}
             />
           ))}
         </m.div>
@@ -106,11 +122,13 @@ function AppCard({
   pending,
   onRun,
   onInspect,
+  onOpen,
 }: {
   app: AppSummary;
   pending: boolean;
   onRun: (handle: string) => void;
   onInspect: (handle: string) => void;
+  onOpen: (handle: string) => void;
 }) {
   return (
     <m.article
@@ -122,6 +140,15 @@ function AppCard({
       <div className="card-grid__head">
         <span className="card-grid__title">{app.name}</span>
         <span className="chip chip--tag">v{app.version}</span>
+        {app.locked ? (
+          <span
+            className="chip chip--tag"
+            data-testid={`app-card-locked-${app.handle}`}
+            title="This App is locked — agentic in-CAS edits are refused (manage in Policies)"
+          >
+            🔒 Locked
+          </span>
+        ) : null}
       </div>
 
       {app.description ? <p className="card-grid__sub">{app.description}</p> : null}
@@ -149,6 +176,15 @@ function AppCard({
           onClick={() => onRun(app.handle)}
         >
           {pending ? "Running…" : "Run"}
+        </button>
+        <button
+          type="button"
+          className="btn-ghost"
+          data-testid={`app-open-${app.handle}`}
+          title="Open the App — browse & edit its project files"
+          onClick={() => onOpen(app.handle)}
+        >
+          Open
         </button>
         <button
           type="button"

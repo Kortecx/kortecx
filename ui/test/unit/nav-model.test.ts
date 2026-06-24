@@ -24,6 +24,7 @@ describe("NAV_SECTIONS", () => {
       "branches",
       "monitor",
       "systems",
+      "policies",
     ]);
   });
 
@@ -50,6 +51,16 @@ describe("NAV_SECTIONS", () => {
     expect(byId.get("runs")?.icon).toBe("runs");
     expect(byId.get("systems")?.label).toBe("Security");
     expect(byId.get("systems")?.path).toBe("/systems");
+  });
+
+  it("Policies is a REAL section (promoted from a placeholder in POC-5b)", () => {
+    const byId = new Map(NAV_SECTIONS.map((s) => [s.id, s]));
+    expect(byId.get("policies")?.label).toBe("Policies");
+    expect(byId.get("policies")?.path).toBe("/policies");
+    expect(byId.get("policies")?.icon).toBe("systems");
+    // Grouped under Security (the agent-write policy gate).
+    const security = NAV_GROUPS.find((g) => g.id === "security");
+    expect(security?.sectionIds).toContain("policies");
   });
 
   it("Activity is NOT a section (it is the navbar drawer)", () => {
@@ -165,13 +176,15 @@ describe("DEV_PLACEHOLDERS (honest in-development — GR15/≈D166)", () => {
     }
   });
 
-  it("preview the headline coming POC sections (Policies; Apps promoted in POC-4)", () => {
-    expect(DEV_PLACEHOLDERS.map((p) => p.id)).toEqual(["policies"]);
+  it("is EMPTY now (Apps promoted POC-4, Policies promoted POC-5b)", () => {
+    expect(DEV_PLACEHOLDERS).toEqual([]);
   });
 
-  it("Apps is now a REAL section (promoted from a placeholder in POC-4)", () => {
+  it("Apps + Policies are now REAL sections (promoted from placeholders)", () => {
     expect(DEV_PLACEHOLDERS.some((p) => p.id === "apps")).toBe(false);
+    expect(DEV_PLACEHOLDERS.some((p) => p.id === "policies")).toBe(false);
     expect(NAV_SECTIONS.some((s) => s.id === "apps" && s.path === "/apps")).toBe(true);
+    expect(NAV_SECTIONS.some((s) => s.id === "policies" && s.path === "/policies")).toBe(true);
   });
 
   it("do not collide with real section ids or the cloud placeholders", () => {
