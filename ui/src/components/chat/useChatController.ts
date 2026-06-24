@@ -19,6 +19,7 @@ import { useConnection } from "../../kx/connection-context";
 import { useAttachments } from "../../kx/use-attachments";
 import { REACT_RECIPE_HANDLE, type UseChat, useChat } from "../../kx/use-chat";
 import { useContextBundles } from "../../kx/use-context-bundles";
+import { useDefaultModel } from "../../kx/use-default-model";
 import { useModels } from "../../kx/use-models";
 import { useRecipes } from "../../kx/use-recipes";
 import {
@@ -90,8 +91,18 @@ export function useChatController(config: ChatControllerConfig = {}): ChatContro
   const available = recipes.data ?? [];
   const agentAvailable = available.includes(REACT_RECIPE_HANDLE);
   const models = useModels();
+  const { defaultModelId } = useDefaultModel();
+  // POC-5c: when the user has not EXPLICITLY picked a model (config or settings), fall
+  // back to the client-local default — but only if it is actually served here, else
+  // let the gateway choose (GR15: never send a stale model enum). An explicit pick
+  // always wins; the default just fills the gap for new chats.
+  const explicitModelId = config.modelId ?? settings.modelId;
+  const defaultIsServed =
+    defaultModelId !== undefined &&
+    (models.models?.some((mm) => mm.modelId === defaultModelId) ?? false);
+  const effectiveModelId = explicitModelId ?? (defaultIsServed ? defaultModelId : undefined);
   const chosenModel =
-    models.models?.find((mm) => mm.modelId === settings.modelId) ?? models.models?.[0];
+    models.models?.find((mm) => mm.modelId === effectiveModelId) ?? models.models?.[0];
 
   // A pinned backing (AppChat) wins; else reconcile the persisted handle.
   const backing =
@@ -111,7 +122,7 @@ export function useChatController(config: ChatControllerConfig = {}): ChatContro
   const setDataset = (v: string | undefined) => setInteractiveDataset(v);
 
   const agentTurn = agentMode && agentAvailable;
-  const modelId = config.modelId ?? settings.modelId;
+  const modelId = effectiveModelId;
 
   const chat = useChat({
     handle: backing.handle,

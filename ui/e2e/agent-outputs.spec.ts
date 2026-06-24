@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { connectConsole, runRecipe } from "./fixtures/connect";
+import { connectConsole, gotoViaPalette, runRecipe } from "./fixtures/connect";
 import { type Gateway, SPA_ORIGIN, spawnGateway } from "./fixtures/serve";
 
 let gw: Gateway | undefined;
@@ -25,7 +25,7 @@ test("Data Lab Agent Outputs: a committed run's outputs are reviewable in the mu
     })
     .toBeGreaterThan(0);
 
-  await page.getByTestId("nav-datasets").click();
+  await gotoViaPalette(page, "datasets");
   await expect(page.getByTestId("datasets-section")).toBeVisible();
   await expect(page.getByTestId("agent-outputs")).toBeVisible();
 
@@ -37,7 +37,7 @@ test("Data Lab Agent Outputs: a committed run's outputs are reviewable in the mu
     .poll(
       async () => {
         await page.getByTestId("nav-monitor").click();
-        await page.getByTestId("nav-datasets").click();
+        await gotoViaPalette(page, "datasets");
         return rows.count();
       },
       { timeout: 30_000 },

@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { connectConsole } from "./fixtures/connect";
+import { connectConsole, gotoViaPalette } from "./fixtures/connect";
 import { type Gateway, SPA_ORIGIN, spawnGateway } from "./fixtures/serve";
 
 let gw: Gateway | undefined;
@@ -13,7 +13,7 @@ test("blueprint catalog: pick echo, fill its generated form, run → COMMITTED",
   gw = await spawnGateway({ corsOrigin: SPA_ORIGIN });
   await connectConsole(page, gw);
 
-  await page.getByTestId("nav-recipes").click();
+  await gotoViaPalette(page, "recipes");
   // The catalog (ListRecipes) + the generated form (GetRecipeForm) render — the
   // `topic` field is server-described, not hardcoded.
   await expect(page.getByTestId("recipe-catalog")).toBeVisible({ timeout: 30_000 });
@@ -36,7 +36,7 @@ test("blueprint form validation: a required field blocks submit until filled", a
   gw = await spawnGateway({ corsOrigin: SPA_ORIGIN });
   await connectConsole(page, gw);
 
-  await page.getByTestId("nav-recipes").click();
+  await gotoViaPalette(page, "recipes");
   await expect(page.getByTestId("recipe-catalog")).toBeVisible({ timeout: 30_000 });
   await page.getByTestId("recipe-pick-kx/recipes/echo").click();
   await expect(page.getByTestId("field-topic")).toBeVisible();

@@ -1,3 +1,4 @@
+import { useDefaultModel } from "../../kx/use-default-model";
 import { useModels } from "../../kx/use-models";
 
 /**
@@ -8,6 +9,10 @@ import { useModels } from "../../kx/use-models";
  * predates the RPC (or one still loading) renders nothing. The selection only
  * ever rides as a recipe ENUM free-param the SERVER validates at binding
  * (SN-8) — picking a model here grants nothing.
+ *
+ * POC-5c: when the user has NOT explicitly picked (`value` unset), pre-select the
+ * client-local default model (set in the Models section) instead of the first
+ * listed — falling back to the first when no default is set or it isn't served here.
  */
 export function ModelPicker({
   value,
@@ -17,6 +22,7 @@ export function ModelPicker({
   onChange: (modelId: string) => void;
 }) {
   const { models, unsupported, loading } = useModels();
+  const { defaultModelId } = useDefaultModel();
   if (unsupported || loading || models === undefined) {
     return null;
   }
@@ -30,7 +36,7 @@ export function ModelPicker({
       </span>
     );
   }
-  const selected = models.find((m) => m.modelId === value) ?? models[0];
+  const selected = models.find((m) => m.modelId === (value ?? defaultModelId)) ?? models[0];
   return (
     <label className="modelpicker" data-testid="model-picker">
       <span className="modelpicker__label">Model</span>

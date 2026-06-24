@@ -16,18 +16,14 @@ test("the sidebar collapses to an icon rail and the choice persists across reloa
   await connectConsole(page, gw);
 
   const sidebar = page.getByTestId("sidebar");
-  // Assert on a nav item's text (avoids colliding with the page's <h1> headings).
-  const item = page.getByTestId("nav-recipes");
-  // The PR-B group label is visible when expanded, gone on the rail.
-  const group = page.getByTestId("nav-group-data");
+  // Assert on a flat nav item's text (avoids colliding with the page's <h1> headings).
+  const item = page.getByTestId("nav-context");
   await expect(sidebar).toHaveAttribute("data-collapsed", "false");
-  await expect(item).toContainText("Blueprints");
-  await expect(group).toContainText("Data");
+  await expect(item).toContainText("Context");
 
   await page.getByTestId("sidebar-toggle").click();
   await expect(sidebar).toHaveAttribute("data-collapsed", "true");
-  await expect(item).not.toContainText("Blueprints"); // icon-only rail
-  await expect(group).not.toContainText("Data"); // group labels drop on the rail
+  await expect(item).not.toContainText("Context"); // icon-only rail
 
   // Connect is a login gate (D137): a reload drops the in-memory token, so the
   // shell is GONE until we reconnect — and the persisted collapse then survives.

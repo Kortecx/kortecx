@@ -10,6 +10,7 @@
  */
 
 import { expect, test } from "@playwright/test";
+import { gotoViaPalette } from "./fixtures/connect";
 import { type Gateway, spawnGateway } from "./fixtures/serve";
 
 let gw: Gateway | undefined;
@@ -42,7 +43,7 @@ test("the embedded console serves the SPA and runs a blueprint end to end", asyn
   await expect(page.getByTestId("chat-panel")).toBeVisible({ timeout: 30_000 });
 
   // Run the echo blueprint through the embedded console and watch it commit.
-  await page.getByTestId("nav-recipes").click();
+  await gotoViaPalette(page, "recipes");
   await expect(page.getByTestId("recipe-catalog")).toBeVisible({ timeout: 30_000 });
   await page.getByTestId("recipe-pick-kx/recipes/echo").click();
   const topic = page.getByTestId("field-topic");

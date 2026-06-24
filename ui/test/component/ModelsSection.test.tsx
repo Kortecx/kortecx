@@ -110,4 +110,31 @@ describe("ModelsSection", () => {
     await waitFor(() => expect(screen.getByText(/model discovery not wired/i)).toBeInTheDocument());
     expect(screen.queryByTestId("model-card")).not.toBeInTheDocument();
   });
+
+  it("sets a client-local default (POC-5c): the chip toggles to ★ Default and persists", async () => {
+    localStorage.clear();
+    const user = userEvent.setup();
+    const mock = makeMockClient({ listModels: async () => MODELS });
+    render(<ModelsSection />, { wrapper: connectedWrapper(mock.client) });
+    await waitFor(() => expect(screen.getAllByTestId("model-card")).toHaveLength(2));
+
+    // No default yet → every card offers "Set as default".
+    expect(screen.getByTestId("model-set-default-qwen3-4b")).toBeInTheDocument();
+    await user.click(screen.getByTestId("model-set-default-qwen3-4b"));
+
+    // The chosen card flips to the Default badge; the other still offers Set.
+    await waitFor(() =>
+      expect(screen.getByTestId("model-default-badge-qwen3-4b")).toBeInTheDocument(),
+    );
+    expect(screen.getByTestId("model-set-default-gemma-2b")).toBeInTheDocument();
+    // Persisted client-local (no backend, SN-8: still a recipe enum at bind).
+    expect(localStorage.getItem("kortecx.ui.default-model")).toBe("qwen3-4b");
+
+    // Clicking the badge clears the default.
+    await user.click(screen.getByTestId("model-default-badge-qwen3-4b"));
+    await waitFor(() =>
+      expect(screen.getByTestId("model-set-default-qwen3-4b")).toBeInTheDocument(),
+    );
+    expect(localStorage.getItem("kortecx.ui.default-model")).toBeNull();
+  });
 });

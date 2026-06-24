@@ -28,7 +28,7 @@ import { DatasetPicker } from "./DatasetPicker";
 import { DegradeNotice } from "./DegradeNotice";
 import { MessageList } from "./MessageList";
 import { ModelPicker } from "./ModelPicker";
-import { ReactProgress } from "./ReactProgress";
+import { StatusLoop } from "./StatusLoop";
 import { ThinkingTrace } from "./ThinkingTrace";
 import type { ChatController } from "./useChatController";
 
@@ -210,7 +210,7 @@ export function ChatSurface({
           }
           return (
             <>
-              {chat.reactTurns ? <ReactProgress turns={chat.reactTurns} /> : null}
+              <StatusLoop chat={chat} />
               {settings.showThinking && chat.activeProjection ? (
                 <ThinkingTrace projection={chat.activeProjection} />
               ) : null}

@@ -1,5 +1,5 @@
 import { type Page, expect, test } from "@playwright/test";
-import { connectConsole, runRecipe } from "./fixtures/connect";
+import { connectConsole, gotoRunHistory, runRecipe } from "./fixtures/connect";
 import { type Gateway, SPA_ORIGIN, spawnGateway } from "./fixtures/serve";
 
 let gw: Gateway | undefined;
@@ -11,7 +11,7 @@ test.afterEach(() => {
 
 /** Open the run-detail drawer for the first run, then the "Re-run with changes" drawer. */
 async function openRerun(page: Page): Promise<void> {
-  await page.getByTestId("nav-runs").click();
+  await gotoRunHistory(page);
   await expect(page.getByTestId("run-list")).toBeVisible({ timeout: 30_000 });
   await page.getByTestId("run-open").first().click();
   await expect(page.getByTestId("run-detail-drawer")).toBeVisible();
@@ -76,7 +76,7 @@ test("rerun: a durable run (no local history) recovers its args via GetRunInputs
   await page.evaluate(() => window.localStorage.clear());
   await page.reload();
   await connectConsole(page, gw);
-  await page.getByTestId("nav-runs").click();
+  await gotoRunHistory(page);
   await expect(page.getByTestId("run-list")).toBeVisible({ timeout: 30_000 });
 
   await page.getByTestId("run-open").first().click();

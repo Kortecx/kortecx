@@ -3,9 +3,12 @@ import { AnimatePresence, m } from "framer-motion";
 import { type KeyboardEvent, useEffect, useMemo, useState } from "react";
 import { paletteIn } from "../../app/motion";
 import { Icon } from "./Icon";
-import { NAV_SECTIONS, type NavSection, SETTINGS_SECTION } from "./nav-model";
+import { HIDDEN_SECTIONS, NAV_SECTIONS, type NavSection, SETTINGS_SECTION } from "./nav-model";
 
-const DESTINATIONS: readonly NavSection[] = [...NAV_SECTIONS, SETTINGS_SECTION];
+// POC-5c (D168): jump to any section — the eight flat sidebar sections PLUS the
+// five demoted-but-reachable routes (Blueprints/Datasets/Branches/Policies/Dashboard,
+// {@link HIDDEN_SECTIONS}) — so ⌘K never loses a capability the sidebar no longer lists.
+const DESTINATIONS: readonly NavSection[] = [...NAV_SECTIONS, ...HIDDEN_SECTIONS, SETTINGS_SECTION];
 
 function matches(section: NavSection, query: string): boolean {
   const q = query.trim().toLowerCase();

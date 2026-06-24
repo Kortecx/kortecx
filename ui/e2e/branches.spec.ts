@@ -2,7 +2,7 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { expect, test } from "@playwright/test";
-import { connectConsole } from "./fixtures/connect";
+import { connectConsole, gotoViaPalette } from "./fixtures/connect";
 import { type Gateway, SPA_ORIGIN, spawnGateway } from "./fixtures/serve";
 
 let gw: Gateway | undefined;
@@ -26,7 +26,7 @@ test("Branches (D155): snapshot a confined file, see the manifest, fork a sub-br
   await connectConsole(page, gw);
 
   // The section opens to an honest empty state on a fresh (per-spawn) gateway.
-  await page.getByTestId("nav-branches").click();
+  await gotoViaPalette(page, "branches");
   await expect(page.getByTestId("branches-section")).toBeVisible();
   await expect(page.getByTestId("branches")).toContainText("No branches yet", { timeout: 30_000 });
 
@@ -80,7 +80,7 @@ test("Branches (D155 Phase-3): the per-file agentic Edit affordance opens", asyn
   gw = await spawnGateway({ corsOrigin: SPA_ORIGIN, fsRoot });
   await connectConsole(page, gw);
 
-  await page.getByTestId("nav-branches").click();
+  await gotoViaPalette(page, "branches");
   const handle = page.getByTestId("branch-handle");
   await handle.click();
   await handle.pressSequentially(HANDLE);

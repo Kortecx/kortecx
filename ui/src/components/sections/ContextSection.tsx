@@ -1,39 +1,73 @@
+import type { ContextTab } from "../../router/routes/context";
 import { ContextBundleList } from "../context/ContextBundleList";
 import { NewContextBundleForm } from "../context/NewContextBundleForm";
+import { DatasetsSection } from "./DatasetsSection";
+
+const TABS: ReadonlyArray<{ id: ContextTab; label: string }> = [
+  { id: "bundles", label: "Bundles" },
+  { id: "datasets", label: "Datasets" },
+];
 
 /**
- * Context — named, content-addressed bundles a caller attaches to a run (PR-7) so
- * a model reasons over its grounding. Two surfaces over the gateway's bundle store:
+ * Context — the data & storage umbrella (POC-5c / D168). Two URL-addressable tabs
+ * over TWO SEPARATE stores (no backend merge — honest, GR15):
  *
- * 1. **Your bundles (govern/review)** — the durable inventory (`ListContextBundles`):
- *    every bundle this party authored, its items (each a content-store ref), the
- *    server-derived `bundleRef`, and a delete control (unbinds the handle; the CAS
- *    blobs stay). Caller-scoped (SN-8 — no cross-party listing).
- * 2. **Author** — upsert a bundle (`PutContextBundle`) from uploaded files or
- *    existing content refs. Attach it in chat (the composer attach-menu) or a chain
- *    (`kx chain run --context`, `chain(...).context(...)`).
+ * 1. **Bundles** — named, content-addressed instruction/file bundles a caller attaches
+ *    to a run (PR-7, `bundles.db`): the durable inventory (`ListContextBundles`) + an
+ *    author form (`PutContextBundle`). Caller-scoped (SN-8). The default tab.
+ * 2. **Datasets** — the RAG corpora / Data Lab (`datasets.db`): the existing
+ *    {@link DatasetsSection} verbatim (ingest, semantic search, agent outputs).
  *
- * Both degrade to a not-wired empty state on older gateways (UNIMPLEMENTED).
- * Cross-party sharing + a bundle marketplace are a Cloud capability (GR19).
+ * Tab state rides the route's validated search (the run-detail precedent) so the
+ * section stays a pure renderer; both surfaces degrade to honest not-wired states.
  */
-export function ContextSection() {
+export function ContextSection({
+  tab = "bundles",
+  onTab,
+}: {
+  tab?: ContextTab;
+  onTab?: (tab: ContextTab) => void;
+} = {}) {
   return (
     <section className="screen" data-testid="context-section">
-      <h1>Context</h1>
-      <p className="muted">
-        Reusable instruction &amp; file bundles you attach to chats and chains. The server resolves
-        each bundle to its content refs and folds them into the run's entry step — identity-bearing,
-        so a different attached context is a different, independently-cached run (SN-8).
-      </p>
+      <div className="section-head">
+        <div>
+          <h1>Context</h1>
+          <p className="muted">
+            The runtime's data &amp; storage: reusable instruction/file bundles you attach to chats
+            and chains, and the RAG corpora your agents retrieve from. Two distinct stores under one
+            roof — bundles bind to a run's entry step (SN-8), datasets ground a retrieval turn.
+          </p>
+        </div>
+      </div>
 
-      <h2>Your bundles</h2>
-      <p className="muted">
-        Every bundle you authored, with its items and the server-derived bundle ref. Deleting
-        unbinds the handle; the content-store blobs stay.
-      </p>
-      <ContextBundleList />
+      <fieldset className="view-toggle" aria-label="Context view" data-testid="context-tabs">
+        {TABS.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            data-testid={`context-tab-${t.id}`}
+            aria-pressed={tab === t.id}
+            onClick={() => onTab?.(t.id)}
+          >
+            {t.label}
+          </button>
+        ))}
+      </fieldset>
 
-      <NewContextBundleForm />
+      {tab === "datasets" ? (
+        <DatasetsSection />
+      ) : (
+        <>
+          <h2>Your bundles</h2>
+          <p className="muted">
+            Every bundle you authored, with its items and the server-derived bundle ref. Deleting
+            unbinds the handle; the content-store blobs stay.
+          </p>
+          <ContextBundleList />
+          <NewContextBundleForm />
+        </>
+      )}
     </section>
   );
 }

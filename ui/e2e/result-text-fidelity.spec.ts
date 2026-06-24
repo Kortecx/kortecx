@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { connectConsole, runRecipe } from "./fixtures/connect";
+import { connectConsole, gotoRunHistory, runRecipe } from "./fixtures/connect";
 import { type Gateway, SPA_ORIGIN, spawnGateway } from "./fixtures/serve";
 
 /**
@@ -67,7 +67,7 @@ test("run outputs resolve to TEXT across table, DAG, artifacts + feed (both them
   await page.getByTestId("theme-chip-dark").click();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
 
-  await page.getByTestId("nav-runs").click();
+  await gotoRunHistory(page);
   await page.getByTestId("run-open").first().click();
   await page.getByTestId("run-view-full").click();
   await page.getByTestId("run-tab-table").click();

@@ -1,6 +1,7 @@
 import { m } from "framer-motion";
 import { fadeUp, hoverLift, stagger } from "../../app/motion";
 import { toUiError } from "../../kx/errors";
+import { useDefaultModel } from "../../kx/use-default-model";
 import { useModelLifecycle } from "../../kx/use-model-lifecycle";
 import { useModels } from "../../kx/use-models";
 import { EmptyState } from "../EmptyState";
@@ -21,6 +22,7 @@ import { Badge } from "../ds/Badge";
 export function ModelsSection() {
   const { models, unsupported, loading } = useModels();
   const { load, offload } = useModelLifecycle();
+  const { defaultModelId, setDefault, clearDefault } = useDefaultModel();
   const hasModels = models !== undefined && models.length > 0;
 
   return (
@@ -29,7 +31,8 @@ export function ModelsSection() {
         <div>
           <h1>Models</h1>
           <p className="muted">
-            The models serving this gateway. Listing a model never routes one — selection stays a
+            The models serving this gateway. Load or offload one, and pick the default for new chats
+            (client-local). Listing or defaulting a model never routes one — selection stays a
             server-validated recipe parameter (SN-8).
           </p>
         </div>
@@ -65,6 +68,8 @@ export function ModelsSection() {
             const loadingThis = load.isPending && load.variables === mdl.modelId;
             const offloadingThis = offload.isPending && offload.variables === mdl.modelId;
             const busy = loadingThis || offloadingThis;
+            // POC-5c: the client-local default for new chats (this browser only).
+            const isDefault = mdl.modelId === defaultModelId;
             const actionError =
               load.isError && load.variables === mdl.modelId
                 ? toUiError(load.error)
@@ -115,6 +120,30 @@ export function ModelsSection() {
                     states designed: idle / pending / loaded / error. Token-based
                     `.btn-ghost` ⇒ both themes + AA carry by construction (D142). */}
                 <div className="chip-row" data-testid="model-actions">
+                  {/* POC-5c: pick the runtime default for new chats (client-local,
+                      this browser only — SN-8: still a server-validated recipe enum).
+                      A chip/button, never a controlled <select> (Playwright-safe). */}
+                  {isDefault ? (
+                    <button
+                      type="button"
+                      className="chip chip--tag model-default-chip"
+                      data-testid={`model-default-badge-${mdl.modelId}`}
+                      title="Default model for new chats on this browser. Click to clear."
+                      onClick={() => clearDefault()}
+                    >
+                      ★ Default
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className="btn-ghost"
+                      data-testid={`model-set-default-${mdl.modelId}`}
+                      title="Use this model by default for new chats (this browser only)."
+                      onClick={() => setDefault(mdl.modelId)}
+                    >
+                      Set as default
+                    </button>
+                  )}
                   {mdl.loaded ? (
                     <button
                       type="button"
