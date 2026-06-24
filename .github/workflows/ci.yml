@@ -803,6 +803,64 @@ jobs:
         run: just smoke-test-with-model
 
   # ---------------------------------------------------------------------------
+  # inference-checks — clippy (-D warnings) + the MODEL-FREE test suite under the
+  # `inference` feature. Closes two coverage gaps the default jobs miss: the
+  # `clippy`/`test` jobs build DEFAULT features, so `#[cfg(feature="inference")]`
+  # code is NEVER linted and its model-free tests NEVER run (the with-model jobs
+  # need a GGUF + don't run clippy). Builds the llama.cpp FFI once and runs both
+  # checks; the `#[ignore]` live-model tests stay skipped (no GGUF here — those run
+  # in smoke-test-with-model / real-model-e2e). A REQUIRED context once green.
+  # ---------------------------------------------------------------------------
+  inference-checks:
+    name: inference-checks (clippy + model-free tests under --features inference)
+    runs-on: ubuntu-latest
+    needs: [test, ffi-link]
+    steps:
+      - name: Checkout (with submodules for crates/kx-llamacpp-sys/llama.cpp)
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Install Rust toolchain (from rust-toolchain.toml)
+        run: |
+          rustup show active-toolchain
+
+      - name: Install bindgen + CMake build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libclang-dev clang cmake build-essential
+
+      - name: Cache Cargo registry + target
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-infcheck-${{ runner.os }}-${{ hashFiles('**/Cargo.lock', 'rust-toolchain.toml', '.gitmodules') }}
+          restore-keys: |
+            cargo-infcheck-${{ runner.os }}-
+            cargo-${{ runner.os }}-
+
+      - name: Configure RUSTFLAGS for path-stripping
+        run: |
+          echo "RUSTFLAGS=--remap-path-prefix=${GITHUB_WORKSPACE}= -Cmetadata=kortecx-v0" >> $GITHUB_ENV
+
+      # NOTE: deliberately NO `console` feature — its build.rs embeds the built
+      # `ui/dist`, which this job does not build (that is covered by the `ui` +
+      # `verify-quickstart` jobs). The inference-gated code under test
+      # (model lifecycle / cache / model_exec) lives under inference/embedded-worker.
+      - name: clippy under --features inference (the cfg(inference) lint gap)
+        run: |
+          cargo clippy -p kx-gateway --features inference,embedded-worker,hnsw \
+            --all-targets -- -D warnings
+          cargo clippy -p kx-inference --features llamacpp --all-targets -- -D warnings
+
+      - name: model-free tests under --features inference (the cfg(inference) test gap)
+        run: |
+          cargo test -p kx-gateway --features inference,embedded-worker,hnsw -- --nocapture
+
+  # ---------------------------------------------------------------------------
   # real-model-e2e — the GR15 real-model behavioral gate. Serves the public
   # Qwen3-0.6B stand-in through the FULL serve path (invoke kx/recipes/chat →
   # worker → real in-process inference → commit → GetContent) and asserts the
