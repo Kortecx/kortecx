@@ -85,7 +85,7 @@ async fn an_executed_mote_gets_a_joined_honest_row() {
     let instance = submit_pure_run(&mut c, 0x61).await;
     let (mote_id, _) = await_committed(&mut c, &instance).await;
 
-    let row = await_row_for_mote(&mut c, &mote_id.to_vec()).await;
+    let row = await_row_for_mote(&mut c, &mote_id).await;
 
     // Joined: the Committed fact's seq + the watermark instance are stamped.
     assert!(row.seq > 0);
