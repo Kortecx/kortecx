@@ -176,7 +176,9 @@ function LineageEditor({
     }),
     [nodes, edges],
   );
-  const invalid = validationError(graph);
+  // An App's agentic step may bind the SERVED model (empty modelId) — the portable
+  // convention the server resolves at run (SN-8), so it must not block a re-save.
+  const invalid = validationError(graph, { allowEmptyModel: true });
 
   const onNodeClick = useCallback<NodeMouseHandler>(
     (_e, node) => {

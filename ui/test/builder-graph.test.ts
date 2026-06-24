@@ -123,3 +123,12 @@ describe("builder-graph", () => {
     expect(validationError(graph([newStep("tool", "t")], []))).toMatch(/needs a registered tool/);
   });
 });
+
+describe("validationError allowEmptyModel (POC-5d App lineage)", () => {
+  it("empty modelId is invalid by default, valid with allowEmptyModel", () => {
+    const a = newStep("model", "a");
+    const g: BuilderGraph = { steps: [a], edges: [] };
+    expect(validationError(g)).toMatch(/needs a model/i);
+    expect(validationError(g, { allowEmptyModel: true })).toBeNull();
+  });
+});

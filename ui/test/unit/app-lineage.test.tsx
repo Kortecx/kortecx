@@ -80,6 +80,30 @@ describe("App Lineage editor (POC-5d)", () => {
     expect(screen.queryByTestId("lineage-add-agent")).toBeNull();
   });
 
+  it("served-model agentic App (empty modelId): Save is enabled, not blocked on a model", () => {
+    // The portable App convention — an agentic step binds the SERVED model (no
+    // model_id). The lineage editor must NOT flag "needs a model" (it would block
+    // every real served-model App from re-saving). Regression for the live-review find.
+    ENVELOPE = {
+      blueprint: {
+        seed: 0,
+        steps: [
+          {
+            kind: "model",
+            prompt: "Use the echo tool.",
+            tool_contract: { "mcp-echo/echo": "1" },
+            params: { max_turns: "4", max_tool_calls: "2" },
+          },
+        ],
+      },
+    };
+    render(<AppLineageSection handle="apps/local/x" locked={false} />);
+    const save = screen.getByTestId("app-lineage-save");
+    expect(save).toBeInTheDocument();
+    expect(save).not.toBeDisabled();
+    expect(screen.queryByTestId("lineage-validation")).toBeNull();
+  });
+
   it("un-round-trippable (exec) blueprint: read-only, no Save", () => {
     ENVELOPE = {
       blueprint: { seed: 0, steps: [{ kind: "exec", body_signature_id: "a".repeat(64) }] },
