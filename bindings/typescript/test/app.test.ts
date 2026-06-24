@@ -15,7 +15,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, it } from "vitest";
-import { KxClient, app, canonicalJson, flow } from "../src/node.js";
+import { KxClient, app, canonicalJson, flow, minimalAppEnvelope } from "../src/node.js";
 import { devServer, stopAllServers } from "./fixtures/serve.js";
 
 const CORPUS_PATH = join(
@@ -70,6 +70,21 @@ describe("App builder (no server)", () => {
     const canon = canonicalJson(a.toEnvelope());
     expect(canon).toContain(ref);
     expect(canon).not.toContain("secret");
+  });
+
+  it("minimalAppEnvelope produces a valid canonical single-step envelope (POC-5a)", () => {
+    const env = minimalAppEnvelope("PDF Summarizer", "Summarize uploaded PDFs", {
+      model: "gemma-4",
+    });
+    expect(env.schema).toBe("kortecx.app/v1");
+    expect(env.name).toBe("PDF Summarizer");
+    expect(env.description).toBe("Summarize uploaded PDFs");
+    expect((env.steering_config as Record<string, unknown>).model).toEqual({
+      model_route: "gemma-4",
+    });
+    // a non-empty blueprint (a single agentic step) + canonical round-trip.
+    expect(env.blueprint).toBeTruthy();
+    expect(JSON.parse(canonicalJson(env))).toEqual(env);
   });
 });
 

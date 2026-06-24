@@ -123,7 +123,7 @@ export type {
 export { Flow, flow } from "./flow.js";
 export type { FlowItem, AgentStepOptions, FlowClient } from "./flow.js";
 // POC-4 — the App builder + envelope (kortecx.app/v1) + catalog views.
-export { app, AppBuilder } from "./app.js";
+export { app, AppBuilder, minimalAppEnvelope } from "./app.js";
 export type { BlueprintSource, AppClient } from "./app.js";
 export {
   APP_SCHEMA,
@@ -133,8 +133,9 @@ export {
   canonicalJson,
   prettyJson,
   defaultHandle,
+  scaffoldPhaseName,
 } from "./apps.js";
-export type { Skill } from "./apps.js";
+export type { Skill, ScaffoldPhase, ScaffoldStatus } from "./apps.js";
 export { Agent, REACT_RECIPE_HANDLE, REACT_AUTO_RECIPE_HANDLE } from "./agent.js";
 export type { AgentOptions, AgentClient } from "./agent.js";
 // V2b — local function tools (localTool → a governed stdio MCP tool the runtime dials).

@@ -284,3 +284,17 @@ def app(name: str, *, version: str = "1", seed: int = 0) -> App:
     """Start an App: ``kx.app("my-app").blueprint(kx.flow()...).save()``. The
     authoring container that WRAPS a blueprint into a durable, reusable App."""
     return App(name, version=version, seed=seed)
+
+
+def minimal_app_envelope(name: str, goal: str, *, model: str = "") -> Dict[str, Any]:
+    """POC-5a: author a MINIMAL App envelope (a single agentic step over ``goal``)
+    for the "New App" one-shot — save it, then ``client.scaffold_app(handle)``
+    scaffolds the project tree into its branch. The envelope carries NO authority
+    (the server re-resolves warrants at run); the blueprint is a valid single-step
+    DAG."""
+    from .flow import flow
+
+    builder = app(name).describe(goal).blueprint(flow().agent(goal))
+    if model:
+        builder.steer(model=model)
+    return builder.to_envelope()

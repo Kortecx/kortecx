@@ -23,7 +23,14 @@ from . import events as _events
 from . import hexids, types
 from . import wait as _wait  # aliased: `wait` is also a public kwarg name
 from .alerts import AlertsPage, AlertSummary
-from .apps import AppSummary, SaveAppResult, StoredApp, canonical_json
+from .apps import (
+    AppSummary,
+    SaveAppResult,
+    ScaffoldLaunch,
+    ScaffoldStatus,
+    StoredApp,
+    canonical_json,
+)
 from .apps import default_handle as _default_app_handle
 from .branch import AdvanceResult, Branch, CreateBranchResult, SnapshotResult
 from .capture import CaptureRecord, CaptureRecordPage
@@ -807,6 +814,63 @@ class KxClient:
                 "contents); the branch was NOT advanced"
             )
         return self.advance_branch(handle, path, result.result_ref)
+
+    def scaffold_app(
+        self,
+        handle: str,
+        *,
+        goal: str = "",
+        branch_handle: str = "",
+    ) -> ScaffoldLaunch:
+        """POC-5a: agentically scaffold an existing App's FIXED-skeleton project tree
+        into its CoW branch (server-side; the host is never written). Returns
+        immediately — poll :meth:`get_scaffold_status` (+ :meth:`get_branch`) for
+        progress. The branch defaults to the App's own handle (one-App-one-branch)."""
+        resp = self._call(
+            lambda: self._stub.ScaffoldApp(
+                _g.ScaffoldAppRequest(handle=handle, branch_handle=branch_handle, instruction=goal),
+                metadata=self._md,
+            )
+        )
+        return ScaffoldLaunch.from_proto(resp)
+
+    def get_scaffold_status(self, branch_handle: str) -> ScaffoldStatus:
+        """POC-5a: the live scaffold status for a branch (phase + done/pending files)."""
+        resp = self._call(
+            lambda: self._stub.GetScaffoldStatus(
+                _g.GetScaffoldStatusRequest(branch_handle=branch_handle), metadata=self._md
+            )
+        )
+        return ScaffoldStatus.from_proto(resp)
+
+    def get_branch_content(self, handle: str, path: str) -> Optional[bytes]:
+        """POC-5a: read one App project file's body THROUGH the caller's OWN branch
+        manifest (caller-scoped). Returns ``None`` for an absent branch / absent path
+        / not-owned (uniform — no existence oracle)."""
+        resp = self._call(
+            lambda: self._stub.GetBranchContent(
+                _g.GetBranchContentRequest(handle=handle, path=path), metadata=self._md
+            )
+        )
+        return bytes(resp.payload) if resp.found else None
+
+    def lock_app(self, branch_handle: str) -> bool:
+        """POC-5b: lock the App's project branch (agentic in-CAS edits are refused)."""
+        resp = self._call(
+            lambda: self._stub.LockApp(
+                _g.LockAppRequest(branch_handle=branch_handle), metadata=self._md
+            )
+        )
+        return resp.locked
+
+    def unlock_app(self, branch_handle: str) -> bool:
+        """POC-5b: unlock the App's project branch (re-enable agentic edits)."""
+        resp = self._call(
+            lambda: self._stub.UnlockApp(
+                _g.UnlockAppRequest(branch_handle=branch_handle), metadata=self._md
+            )
+        )
+        return resp.unlocked
 
     def list_models(self) -> List[ModelSummary]:
         """Discover the models the connected gateway serves (Batch A). Display

@@ -60,6 +60,7 @@ class AppSummary:
     description: str
     tags: List[str]
     step_count: int
+    locked: bool = False  # POC-5b: the App's project branch is locked (edits refused)
 
     @classmethod
     def from_proto(cls, s: "_g.AppSummary") -> "AppSummary":
@@ -71,6 +72,42 @@ class AppSummary:
             description=s.description,
             tags=list(s.tags),
             step_count=s.step_count,
+            locked=s.locked,
+        )
+
+
+@dataclass(frozen=True)
+class ScaffoldLaunch:
+    """POC-5a: the result of launching a server-side App scaffold (correlate by
+    ``branch_handle`` — poll :class:`ScaffoldStatus`)."""
+
+    branch_handle: str
+    resumed: bool
+
+    @classmethod
+    def from_proto(cls, r: "_g.ScaffoldAppResponse") -> "ScaffoldLaunch":
+        return cls(branch_handle=r.branch_handle, resumed=r.resumed)
+
+
+_SCAFFOLD_PHASE_NAMES = {1: "planning", 2: "writing", 3: "done", 4: "failed"}
+
+
+@dataclass(frozen=True)
+class ScaffoldStatus:
+    """POC-5a: the live scaffold status (phase + the done/pending skeleton files)."""
+
+    phase: str  # "planning" | "writing" | "done" | "failed" | "unspecified"
+    files_done: List[str]
+    files_pending: List[str]
+    detail: str
+
+    @classmethod
+    def from_proto(cls, r: "_g.GetScaffoldStatusResponse") -> "ScaffoldStatus":
+        return cls(
+            phase=_SCAFFOLD_PHASE_NAMES.get(r.phase, "unspecified"),
+            files_done=list(r.files_done),
+            files_pending=list(r.files_pending),
+            detail=r.detail,
         )
 
 

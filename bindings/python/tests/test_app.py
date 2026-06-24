@@ -58,6 +58,18 @@ def test_blueprint_required() -> None:
         kx.app("x").to_envelope()
 
 
+def test_minimal_app_envelope_poc5a() -> None:
+    env = kx.minimal_app_envelope("PDF Summarizer", "Summarize uploaded PDFs", model="gemma-4")
+    assert env["schema"] == "kortecx.app/v1"
+    assert env["name"] == "PDF Summarizer"
+    assert env["description"] == "Summarize uploaded PDFs"
+    assert env["steering_config"]["model"] == {"model_route": "gemma-4"}
+    # a non-empty blueprint (a single agentic step) + canonical round-trip.
+    assert env["blueprint"]
+    canon = canonical_json(env)
+    assert json.loads(canon.decode()) == env
+
+
 def test_pending_body_blocks_to_envelope() -> None:
     a = kx.app("x").blueprint(kx.flow().step(topic="hi")).rule("no-pii", body="secret-body")
     with pytest.raises(ChainError):
