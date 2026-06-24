@@ -258,6 +258,128 @@ async fn lock_is_caller_scoped() {
     .unwrap();
 }
 
+/// A minimal valid `kortecx.app/v1` envelope (the SaveApp host re-canonicalizes it).
+fn minimal_envelope(name: &str) -> Vec<u8> {
+    format!("{{\"schema\":\"kortecx.app/v1\",\"name\":\"{name}\",\"blueprint\":{{\"steps\":[]}}}}")
+        .into_bytes()
+}
+
+/// POC-5d: a LOCKED App refuses a STRUCTURE edit (a re-save of the App envelope from
+/// the lineage editor) at the SaveApp chokepoint — the same `LOCKED_BRANCH` refusal
+/// as the AdvanceBranch FILE-edit gate. A locked App is fully frozen; unlock restores.
+#[tokio::test]
+async fn save_app_is_refused_on_a_locked_app_then_unlock_restores() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let running = start(common::gateway_config(&dir, false, two_party_tokens()))
+        .await
+        .unwrap();
+    let mut c = client(running.local_addr()).await;
+
+    let handle = "team/apps/lineage".to_string();
+
+    // Save v1 (unlocked) — ok.
+    c.save_app(with_bearer(
+        proto::SaveAppRequest {
+            handle: handle.clone(),
+            envelope_json: minimal_envelope("Lineage"),
+        },
+        "tok-alice",
+    ))
+    .await
+    .unwrap();
+
+    // Lock the App (one-App-one-branch ⇒ the lock keys on the App handle).
+    c.lock_app(with_bearer(
+        proto::LockAppRequest {
+            branch_handle: handle.clone(),
+        },
+        "tok-alice",
+    ))
+    .await
+    .unwrap();
+
+    // Locked: re-saving the (edited) structure is REFUSED with the structured code.
+    let err = c
+        .save_app(with_bearer(
+            proto::SaveAppRequest {
+                handle: handle.clone(),
+                envelope_json: minimal_envelope("Lineage v2"),
+            },
+            "tok-alice",
+        ))
+        .await
+        .unwrap_err();
+    assert_eq!(err.code(), Code::FailedPrecondition);
+    assert_eq!(
+        err.metadata()
+            .get(kx_gateway_core::REFUSAL_CODE_METADATA_KEY)
+            .and_then(|v| v.to_str().ok()),
+        Some("LOCKED_BRANCH"),
+    );
+
+    // Unlock restores structure saves.
+    c.unlock_app(with_bearer(
+        proto::UnlockAppRequest {
+            branch_handle: handle.clone(),
+        },
+        "tok-alice",
+    ))
+    .await
+    .unwrap();
+    c.save_app(with_bearer(
+        proto::SaveAppRequest {
+            handle: handle.clone(),
+            envelope_json: minimal_envelope("Lineage v3"),
+        },
+        "tok-alice",
+    ))
+    .await
+    .unwrap();
+}
+
+/// POC-5d: a SaveApp structure lock is CALLER-SCOPED — Bob locking the same handle
+/// string never gates Alice's own SaveApp (the lock keys on `(principal, handle)`).
+#[tokio::test]
+async fn save_app_lock_is_caller_scoped() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let running = start(common::gateway_config(&dir, false, two_party_tokens()))
+        .await
+        .unwrap();
+    let mut c = client(running.local_addr()).await;
+
+    let handle = "team/apps/scoped".to_string();
+    c.save_app(with_bearer(
+        proto::SaveAppRequest {
+            handle: handle.clone(),
+            envelope_json: minimal_envelope("Scoped"),
+        },
+        "tok-alice",
+    ))
+    .await
+    .unwrap();
+
+    // Bob locks the SAME handle string under HIS scope.
+    c.lock_app(with_bearer(
+        proto::LockAppRequest {
+            branch_handle: handle.clone(),
+        },
+        "tok-bob",
+    ))
+    .await
+    .unwrap();
+
+    // Alice's structure save still succeeds (Bob cannot freeze Alice's App).
+    c.save_app(with_bearer(
+        proto::SaveAppRequest {
+            handle: handle.clone(),
+            envelope_json: minimal_envelope("Scoped v2"),
+        },
+        "tok-alice",
+    ))
+    .await
+    .unwrap();
+}
+
 #[tokio::test]
 async fn scaffold_app_without_a_served_model_is_unimplemented() {
     let dir = tempfile::TempDir::new().unwrap();

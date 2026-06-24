@@ -129,13 +129,22 @@ export function validateAcyclic(graph: BuilderGraph): AcyclicResult {
   return { ok: false, cycle };
 }
 
-/** A human reason a graph cannot be submitted, or `null` when it is valid. */
-export function validationError(graph: BuilderGraph): string | null {
+/** A human reason a graph cannot be submitted, or `null` when it is valid.
+ *
+ *  `allowEmptyModel` (POC-5d): when true, a MODEL step may leave `modelId` empty —
+ *  it binds the SERVED model at run (the portable App convention; the server resolves
+ *  it, SN-8). The blueprint builder (authoring a one-shot run here-and-now) keeps
+ *  requiring an explicit model (default false); the App lineage editor passes true so
+ *  a served-model App can be re-saved. */
+export function validationError(
+  graph: BuilderGraph,
+  opts: { allowEmptyModel?: boolean } = {},
+): string | null {
   if (graph.steps.length === 0) {
     return "Add at least one step.";
   }
   for (const s of graph.steps) {
-    if (s.kind === "model" && s.modelId.trim() === "") {
+    if (s.kind === "model" && !opts.allowEmptyModel && s.modelId.trim() === "") {
       return `Agent step "${s.label}" needs a model.`;
     }
     if (s.kind === "tool" && s.toolId.trim() === "") {

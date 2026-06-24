@@ -12,7 +12,17 @@ import dataclasses as _dataclasses
 import json
 import os
 import warnings
-from typing import TYPE_CHECKING, AsyncIterator, Iterator, List, Mapping, Optional, Sequence, Union
+from typing import (
+    TYPE_CHECKING,
+    AsyncIterator,
+    Dict,
+    Iterator,
+    List,
+    Mapping,
+    Optional,
+    Sequence,
+    Union,
+)
 
 import grpc
 
@@ -32,7 +42,7 @@ from .apps import (
     canonical_json,
 )
 from .apps import default_handle as _default_app_handle
-from .branch import AdvanceResult, Branch, CreateBranchResult, SnapshotResult
+from .branch import AdvanceResult, Branch, CreateBranchResult, EditProposal, SnapshotResult
 from .capture import CaptureRecord, CaptureRecordPage
 from .content import ContentItem, PutResult
 from .context import ContextBundle, ContextBundleItem, PutContextBundleResult
@@ -93,6 +103,37 @@ def _fill_default_model(
         if step.kind == model_kind and not step.model_id:
             step.model_id = default_model
     return request
+
+
+def _is_model_step(step: dict) -> bool:
+    """True when a portable-blueprint step is a MODEL step (mirrors the CLI
+    ``resolve_kind`` inference: an explicit ``kind``, else model fields ⇒ model)."""
+    kind = step.get("kind")
+    if kind is not None:
+        return kind == "model"
+    return bool(step.get("model_id") or step.get("prompt"))
+
+
+def _inject_app_args(blueprint: dict, args: Optional[Dict[str, str]]) -> dict:
+    """POC-5d: fold an App's ``input_schema`` args into the ENTRY (first) model step's
+    prompt as a clearly-delimited "Inputs" block, returning a NEW blueprint (never
+    mutates the source). A NO-OP when ``args`` is empty/absent OR the blueprint has no
+    model step ⇒ byte-identical to the pre-POC-5d compile. The server still re-resolves
+    every warrant from the caller's grants (SN-8); args steer, never grant."""
+    entries = [(k, v) for k, v in (args or {}).items() if v is not None]
+    if not entries:
+        return blueprint
+    steps = blueprint.get("steps", [])
+    idx = next((i for i, s in enumerate(steps) if _is_model_step(s)), -1)
+    if idx < 0:
+        return blueprint
+    block = "\n".join(f"- {k}: {v}" for k, v in entries)
+    new_steps = list(steps)
+    target = dict(new_steps[idx])
+    prompt = target.get("prompt", "")
+    target["prompt"] = f"{prompt}\n\nInputs:\n{block}".strip()
+    new_steps[idx] = target
+    return {**blueprint, "steps": new_steps}
 
 
 #: The canonical ReAct recipe handle. A react run has NO statically-known terminal
@@ -549,19 +590,34 @@ class KxClient:
         return StoredApp.from_proto(resp) if resp.found else None
 
     def run_app(
-        self, handle: str, *, wait: bool = False, timeout: float = 120.0
+        self,
+        handle: str,
+        *,
+        args: Optional[Dict[str, str]] = None,
+        wait: bool = False,
+        timeout: float = 120.0,
     ) -> Union[Run, Result]:
         """Compile a saved App's blueprint and run it (exactly-once). Client-compose
         over ``GetApp`` → ``SubmitWorkflow`` — the server re-resolves EVERY warrant
         from the caller's grants (SN-8 / BLOCKER #5). Raises :class:`KxUsage` if the
-        App is not found."""
+        App is not found. POC-5d: ``args`` (the App's ``input_schema`` inputs) fold
+        into the entry model step's prompt; empty/absent ⇒ byte-identical compile."""
         from .chains import Chain
 
         stored = self.get_app(handle)
         if stored is None:
             raise KxUsage(f"app {handle!r} not found")
-        request = Chain.from_blueprint(stored.envelope["blueprint"])
+        blueprint = _inject_app_args(stored.envelope["blueprint"], args)
+        request = Chain.from_blueprint(blueprint)
         return self.submit_workflow(request, wait=wait, timeout=timeout)
+
+    def get_app_structure(self, handle: str) -> Optional[dict]:
+        """POC-5d: the App's portable blueprint (the agentic step structure the
+        lineage editor renders/edits). A thin convenience over :meth:`get_app`
+        (``envelope['blueprint']``); ``None`` for an absent/not-owned App (uniform —
+        no existence oracle)."""
+        stored = self.get_app(handle)
+        return None if stored is None else stored.envelope["blueprint"]
 
     @staticmethod
     def _resolve_context_item(
@@ -771,19 +827,21 @@ class KxClient:
         )
         return AdvanceResult.from_proto(resp)
 
-    def edit_branch(
+    def edit_branch_propose(
         self,
         handle: str,
         path: str,
         instruction: str,
         *,
         timeout: float = 300.0,
-    ) -> AdvanceResult:
-        """D155 Phase-3: agentically edit a branch file IN-CAS. Resolves ``path``'s
-        current ref, runs the ``kx/recipes/react-edit`` model step (the body attached
-        as a context ref; the model rewrites it per ``instruction`` under
-        reasoning=off), and advances the manifest to the new content ref. The host is
-        NEVER written. Raises ``KxError`` if the step produced no committed answer."""
+    ) -> EditProposal:
+        """POC-5d: the PROPOSE half of :meth:`edit_branch` — run the
+        ``kx/recipes/react-edit`` model step and return the proposed new body together
+        with the file's current body, WITHOUT advancing the branch. The caller reviews
+        the diff then either approves (``advance_branch(handle, path, result_ref)``) or
+        rejects (discards — the proposed blob is a harmless content-addressed orphan).
+        The host is NEVER written. Raises ``KxError`` if the step produced no committed
+        answer or an empty body (GR15 fail-closed — same guards as :meth:`edit_branch`)."""
         branch = self.get_branch(handle)
         if branch is None:
             raise KxError(f"branch {handle!r} not found")
@@ -806,14 +864,36 @@ class KxClient:
         )
         if not isinstance(result, Result) or not result.ok or result.result_ref is None:
             raise KxError("react-edit produced no committed answer to advance the branch to")
-        # Fail CLOSED on an empty edit (GR15): never advance the manifest to an
-        # empty file (a heavy-reasoning model can return only stripped reasoning).
+        # Fail CLOSED on an empty edit (GR15): never propose an empty file (a
+        # heavy-reasoning model can return only stripped reasoning).
         if not result.payload:
             raise KxError(
                 "react-edit produced an empty body (the model did not return file "
                 "contents); the branch was NOT advanced"
             )
-        return self.advance_branch(handle, path, result.result_ref)
+        current = self.get_branch_content(handle, path)
+        return EditProposal(
+            result_ref=result.result_ref,
+            proposed_text=bytes(result.payload).decode("utf-8", "replace"),
+            current_text=current.decode("utf-8", "replace") if current is not None else "",
+        )
+
+    def edit_branch(
+        self,
+        handle: str,
+        path: str,
+        instruction: str,
+        *,
+        timeout: float = 300.0,
+    ) -> AdvanceResult:
+        """D155 Phase-3: agentically edit a branch file IN-CAS in one shot. Runs the
+        ``kx/recipes/react-edit`` model step and advances the manifest to the new
+        content ref. The host is NEVER written. Raises ``KxError`` if the step produced
+        no committed answer. (POC-5d: this is :meth:`edit_branch_propose` +
+        :meth:`advance_branch` — the react-edit directive lives in exactly one place so
+        the committed blob bytes are identical across both APIs.)"""
+        proposal = self.edit_branch_propose(handle, path, instruction, timeout=timeout)
+        return self.advance_branch(handle, path, proposal.result_ref)
 
     def scaffold_app(
         self,

@@ -104,6 +104,8 @@ export {
   chain,
   chainFrom,
   TOOL_ARGS_KEY,
+  REACT_MAX_TURNS_KEY,
+  REACT_MAX_TOOL_CALLS_KEY,
   ChainParseError,
   ChainUnknownHandleError,
   ChainCycleError,

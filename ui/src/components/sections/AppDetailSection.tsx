@@ -1,81 +1,94 @@
 /**
- * POC-5d: the inline App "open" view — a single-App project IDE. A two-pane
- * layout (left: the {@link FileTree} over the App's CoW branch manifest; right:
- * the selected file via the read-only {@link CodeViewer}) plus a per-file agentic
- * Edit affordance (the same `editBranch` react-edit loop the Branches view uses)
- * and a toggle to the embedded {@link AppChat}. By convention the App's project
- * branch handle IS the App handle (one-App-one-branch).
+ * POC-5d: the single-App IDE — a full-screen workspace (the `.screen` shell, like
+ * the run detail) with three URL-addressable tabs:
+ *  - **Files**: the {@link FileTree} over the App's CoW branch manifest + a file pane
+ *    that VIEWS a file (read-only Monaco), edits it DIRECTLY (typed Monaco →
+ *    PutContent → AdvanceBranch), or edits it AGENTICALLY with a REVIEW/DIFF GATE
+ *    (propose → diff → approve/reject; closes T-AGENTIC-EDIT-REVIEW-GATE);
+ *  - **Lineage**: the editable blueprint graph ({@link AppLineageSection});
+ *  - **Chat**: the embedded App-scoped {@link AppChat}.
+ * The header carries the App name, a Lock chip, and Run (opens {@link AppRunDrawer}).
  *
- * GR15 / D142 honesty: a LOCKED App (POC-5b) disables the Edit affordance with a
- * clear refusal notice — the runtime refuses agentic in-CAS edits at the
- * advance() chokepoint, and the UI never offers a control that can't fire. Every
- * state (loading / empty-project / not-found / missing-file / locked / edit
- * pending+error) is designed.
+ * GR15 / D142 honesty: a LOCKED App disables every WRITE affordance (direct save +
+ * agentic edit + structure save) with a clear notice — the runtime refuses the write
+ * at the AdvanceBranch / SaveApp chokepoints (LOCKED_BRANCH), so the UI never offers
+ * a control that can't fire. Every state (loading / empty-project / not-found /
+ * missing-file / locked / pending / error) is designed.
  */
 
-import { useNavigate } from "@tanstack/react-router";
 import { m } from "framer-motion";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { fadeUp } from "../../app/motion";
 import { toUiError } from "../../kx/errors";
-import { useAppBranch, useAppFileContent } from "../../kx/use-app-files";
-import { useApps, useRunApp } from "../../kx/use-apps";
-import { useEditBranch } from "../../kx/use-branches";
+import { useAppBranch, useAppFileContent, useSaveFile } from "../../kx/use-app-files";
+import { useApp } from "../../kx/use-apps";
+import { useAdvanceBranch, useEditBranchPropose } from "../../kx/use-branches";
 import { buildFileTree } from "../../lib/file-tree";
 import { inferLanguageFromPath } from "../../lib/monaco/infer-language";
 import { EmptyState } from "../EmptyState";
 import { ErrorNotice } from "../ErrorNotice";
+import { AppRunDrawer } from "../apps/AppRunDrawer";
 import { FileTree } from "../apps/FileTree";
 import { AppChat } from "../chat/AppChat";
 import { CodeViewer } from "../editor/CodeViewer";
+import { DiffViewer } from "../editor/DiffViewer";
+import { MonacoMount } from "../editor/MonacoMount";
+import { AppLineageSection } from "./AppLineageSection";
 
-type Pane = "files" | "chat";
+const TABS = ["files", "lineage", "chat"] as const;
+export type IdeTab = (typeof TABS)[number];
 
-export function AppDetailSection({ handle }: { handle: string }) {
-  const navigate = useNavigate();
-  const { apps } = useApps();
-  const summary = apps.find((a) => a.handle === handle);
+export function AppDetailSection({
+  handle,
+  tab: tabProp,
+  path: pathProp,
+  onTab,
+  onPath,
+}: {
+  handle: string;
+  /** Controlled active tab (the route binds `?tab=`); uncontrolled when absent. */
+  tab?: IdeTab;
+  /** Controlled selected file path (the route binds `?path=`). */
+  path?: string;
+  onTab?: (tab: IdeTab) => void;
+  onPath?: (path: string | undefined) => void;
+}) {
+  const app = useApp(handle);
+  const summary = app.data?.summary;
   const locked = summary?.locked ?? false;
 
-  const branch = useAppBranch(handle);
-  const runApp = useRunApp();
-  const [pane, setPane] = useState<Pane>("files");
-  const [selected, setSelected] = useState<{ path: string; contentRef: string } | null>(null);
+  const [tabState, setTabState] = useState<IdeTab>("files");
+  const [pathState, setPathState] = useState<string | undefined>(undefined);
+  const tab = tabProp ?? tabState;
+  const selectedPath = pathProp ?? pathState;
+  const setTab = (t: IdeTab) => (onTab ? onTab(t) : setTabState(t));
+  const setPath = (p: string | undefined) => (onPath ? onPath(p) : setPathState(p));
 
+  const [runOpen, setRunOpen] = useState(false);
+
+  const branch = useAppBranch(handle);
   const items = branch.data?.items ?? [];
   const tree = useMemo(
     () => buildFileTree(items.map((it) => ({ path: it.path, contentRef: it.contentRef }))),
     [items],
   );
-
-  function run(): void {
-    runApp.mutate(
-      { handle },
-      {
-        onSuccess: ({ instanceId }) => {
-          void navigate({ to: "/workflows/$instanceId", params: { instanceId } });
-        },
-      },
-    );
-  }
-
-  const runError = runApp.error ? toUiError(runApp.error) : null;
+  const selected = selectedPath ? (items.find((it) => it.path === selectedPath) ?? null) : null;
 
   return (
     <section className="screen app-detail" data-testid="app-detail">
-      <div className="section-head">
+      <div className="screen__head">
         <div>
           <h1>{summary?.name ?? "App"}</h1>
           <code className="mono app-detail__handle" title={handle}>
             {handle}
           </code>
         </div>
-        <div className="section-head__actions">
+        <div className="screen__head-actions">
           {locked ? (
             <span
               className="chip chip--tag"
               data-testid="app-detail-locked"
-              title="Agentic edits are refused"
+              title="Edits are refused"
             >
               🔒 Locked
             </span>
@@ -84,37 +97,31 @@ export function AppDetailSection({ handle }: { handle: string }) {
             type="button"
             className="btn-primary"
             data-testid="app-detail-run"
-            disabled={runApp.isPending}
-            onClick={run}
+            onClick={() => setRunOpen(true)}
           >
-            {runApp.isPending ? "Running…" : "Run"}
+            Run
           </button>
         </div>
       </div>
 
-      {runError ? <ErrorNotice error={runError} onRetry={() => runApp.reset()} /> : null}
-
       <fieldset className="view-toggle" aria-label="App view" data-testid="app-detail-tabs">
-        <button
-          type="button"
-          aria-pressed={pane === "files"}
-          data-testid="app-tab-files"
-          onClick={() => setPane("files")}
-        >
-          Files
-        </button>
-        <button
-          type="button"
-          aria-pressed={pane === "chat"}
-          data-testid="app-tab-chat"
-          onClick={() => setPane("chat")}
-        >
-          Chat
-        </button>
+        {TABS.map((t) => (
+          <button
+            key={t}
+            type="button"
+            aria-pressed={tab === t}
+            data-testid={`app-tab-${t}`}
+            onClick={() => setTab(t)}
+          >
+            {t === "files" ? "Files" : t === "lineage" ? "Lineage" : "Chat"}
+          </button>
+        ))}
       </fieldset>
 
-      {pane === "chat" ? (
+      {tab === "chat" ? (
         <AppChat recipeHandle={handle} />
+      ) : tab === "lineage" ? (
+        <AppLineageSection handle={handle} locked={locked} />
       ) : branch.isLoading ? (
         <EmptyState title="Loading project…" />
       ) : branch.isError ? (
@@ -130,7 +137,7 @@ export function AppDetailSection({ handle }: { handle: string }) {
             <FileTree
               nodes={tree}
               selectedPath={selected?.path ?? null}
-              onSelect={(path, contentRef) => setSelected({ path, contentRef })}
+              onSelect={(path) => setPath(path)}
             />
           </aside>
           <div className="app-detail__file">
@@ -140,58 +147,104 @@ export function AppDetailSection({ handle }: { handle: string }) {
                 path={selected.path}
                 contentRef={selected.contentRef}
                 locked={locked}
-                onEdited={() => void branch.refetch()}
+                onCommitted={() => void branch.refetch()}
               />
             ) : (
               <EmptyState
                 title="Select a file"
-                detail="Pick a file in the tree to view its content."
+                detail="Pick a file in the tree to view or edit it."
               />
             )}
           </div>
         </div>
       )}
+
+      {runOpen ? <AppRunDrawer handle={handle} onClose={() => setRunOpen(false)} /> : null}
     </section>
   );
 }
 
-/** The right pane: the selected file's body + a per-file agentic Edit (gated by
- *  the App lock). */
+type Mode = "view" | "direct" | "agentic";
+
+/** The right pane: view a file, edit it directly (Monaco → save), or edit it
+ *  agentically through the review/diff gate. Lock-gated (GR15). */
 function FilePane({
   handle,
   path,
   contentRef,
   locked,
-  onEdited,
+  onCommitted,
 }: {
   handle: string;
   path: string;
   contentRef: string;
   locked: boolean;
-  onEdited: () => void;
+  onCommitted: () => void;
 }) {
   const body = useAppFileContent(handle, path, contentRef, true);
-  const edit = useEditBranch();
-  const [editing, setEditing] = useState(false);
-  const [instruction, setInstruction] = useState("");
-  const editError = edit.error ? toUiError(edit.error) : null;
+  const saveFile = useSaveFile();
+  const propose = useEditBranchPropose();
+  const advance = useAdvanceBranch();
 
-  const submit = (): void => {
+  const [mode, setMode] = useState<Mode>("view");
+  const [draft, setDraft] = useState("");
+  const [instruction, setInstruction] = useState("");
+  const language = inferLanguageFromPath(path);
+  const text = body.data?.text ?? "";
+
+  // Re-base on a new file selection / a committed change: drop to view + clear drafts.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: re-base when the file or its ref changes
+  useEffect(() => {
+    setMode("view");
+    setDraft("");
+    setInstruction("");
+    propose.reset();
+  }, [path, contentRef]);
+
+  const dirty = mode === "direct" && draft !== text;
+  const proposal = propose.data ?? null;
+
+  function startDirect(): void {
+    setDraft(text);
+    setMode("direct");
+  }
+  function saveDirect(): void {
+    saveFile.mutate(
+      { handle, path, text: draft },
+      {
+        onSuccess: () => {
+          setMode("view");
+          onCommitted();
+        },
+      },
+    );
+  }
+  function runPropose(): void {
     const trimmed = instruction.trim();
     if (trimmed.length === 0) {
       return;
     }
-    edit.mutate(
-      { handle, path, instruction: trimmed },
+    propose.mutate({ handle, path, instruction: trimmed });
+  }
+  function approve(): void {
+    if (!proposal) {
+      return;
+    }
+    advance.mutate(
+      { handle, path, contentRef: proposal.resultRef },
       {
         onSuccess: () => {
-          setEditing(false);
+          propose.reset();
           setInstruction("");
-          onEdited();
+          setMode("view");
+          onCommitted();
         },
       },
     );
-  };
+  }
+  function reject(): void {
+    propose.reset();
+  }
 
   return (
     <m.div
@@ -205,20 +258,38 @@ function FilePane({
         <code className="mono app-file__path">{path}</code>
         {locked ? (
           <span className="muted app-file__locked" data-testid="app-locked-notice" role="note">
-            This App is locked — agentic edits are refused. Unlock it in Policies to edit.
+            This App is locked — edits are refused. Unlock it in Security › Policies to edit.
           </span>
+        ) : mode === "view" ? (
+          <div className="app-file__actions">
+            <button
+              type="button"
+              className="btn-ghost"
+              data-testid="app-file-edit-direct"
+              onClick={startDirect}
+            >
+              Edit
+            </button>
+            <button
+              type="button"
+              className="btn-ghost"
+              data-testid="app-file-edit-agentic"
+              onClick={() => setMode("agentic")}
+            >
+              Ask agent
+            </button>
+          </div>
         ) : (
           <button
             type="button"
             className="btn-ghost"
-            data-testid="app-file-edit"
-            disabled={edit.isPending}
+            data-testid="app-file-cancel"
             onClick={() => {
-              setEditing((e) => !e);
-              setInstruction("");
+              setMode("view");
+              propose.reset();
             }}
           >
-            {editing ? "Cancel" : "Edit"}
+            Cancel
           </button>
         )}
       </div>
@@ -232,44 +303,126 @@ function FilePane({
           title="File not found"
           detail="This path is not in the App's branch (or not owned)."
         />
+      ) : mode === "direct" ? (
+        <div className="app-file__editor" data-testid="app-file-direct-editor">
+          <MonacoMount
+            value={draft}
+            language={language}
+            readOnly={false}
+            onChange={setDraft}
+            testId={`app-file-monaco-${path}`}
+            ariaLabel={`Edit ${path}`}
+            height={Math.min(560, Math.max(220, text.split("\n").length * 19 + 24))}
+          />
+          <div className="app-file__editor-actions">
+            <button
+              type="button"
+              className="btn-primary"
+              data-testid="app-file-save"
+              disabled={!dirty || saveFile.isPending}
+              onClick={saveDirect}
+            >
+              {saveFile.isPending ? "Saving…" : "Save"}
+            </button>
+            <button
+              type="button"
+              className="btn-ghost"
+              data-testid="app-file-revert"
+              disabled={!dirty || saveFile.isPending}
+              onClick={() => setDraft(text)}
+            >
+              Revert
+            </button>
+          </div>
+          {saveFile.isError ? (
+            <p className="field-error" data-testid="app-file-save-error" role="alert">
+              {toUiError(saveFile.error).message}
+            </p>
+          ) : null}
+        </div>
+      ) : mode === "agentic" ? (
+        <div className="app-file__agentic" data-testid="app-file-agentic">
+          {proposal ? (
+            <div className="app-file__review" data-testid="app-file-review">
+              <p className="muted">
+                Review the proposed change, then approve or reject. Nothing is committed yet.
+              </p>
+              <DiffViewer
+                original={proposal.currentText}
+                modified={proposal.proposedText}
+                language={language}
+                testId="app-diff"
+                ariaLabel={`Proposed change to ${path}`}
+              />
+              <div className="app-file__editor-actions">
+                <button
+                  type="button"
+                  className="btn-primary"
+                  data-testid="app-edit-approve"
+                  disabled={advance.isPending || proposal.proposedText === proposal.currentText}
+                  onClick={approve}
+                >
+                  {advance.isPending ? "Applying…" : "Approve"}
+                </button>
+                <button
+                  type="button"
+                  className="btn-ghost"
+                  data-testid="app-edit-reject"
+                  onClick={reject}
+                >
+                  Reject
+                </button>
+              </div>
+              {advance.isError ? (
+                <p className="field-error" data-testid="app-edit-approve-error" role="alert">
+                  {toUiError(advance.error).message}
+                </p>
+              ) : null}
+            </div>
+          ) : (
+            <>
+              <CodeViewer
+                value={text}
+                language={language}
+                testId={`app-file-body-${path}`}
+                ariaLabel={`File ${path}`}
+                height={Math.min(420, Math.max(160, text.split("\n").length * 19 + 24))}
+              />
+              <textarea
+                className="input"
+                data-testid="app-file-edit-instruction"
+                placeholder="Describe the change — the agent rewrites this file in-CAS; you review the diff before it commits…"
+                rows={2}
+                value={instruction}
+                disabled={propose.isPending}
+                onChange={(e) => setInstruction(e.target.value)}
+              />
+              <button
+                type="button"
+                className="btn-primary"
+                data-testid="app-file-propose"
+                disabled={propose.isPending || instruction.trim().length === 0}
+                onClick={runPropose}
+              >
+                {propose.isPending ? "Proposing…" : "Propose change"}
+              </button>
+              {propose.isError ? (
+                <p className="field-error" data-testid="app-file-propose-error" role="alert">
+                  {toUiError(propose.error).message}
+                </p>
+              ) : null}
+            </>
+          )}
+        </div>
       ) : (
         <CodeViewer
-          value={body.data?.text ?? ""}
-          language={inferLanguageFromPath(path)}
+          value={text}
+          language={language}
           testId={`app-file-body-${path}`}
           ariaLabel={`File ${path}`}
-          height={Math.min(560, Math.max(180, (body.data?.text.split("\n").length ?? 1) * 19 + 24))}
+          height={Math.min(560, Math.max(180, text.split("\n").length * 19 + 24))}
         />
       )}
-
-      {!locked && editing ? (
-        <div className="app-file__editor" data-testid="app-file-edit-form">
-          <textarea
-            className="input"
-            data-testid="app-file-edit-instruction"
-            placeholder="Describe the change — the agent rewrites this file in-CAS (the host is never written)…"
-            rows={2}
-            value={instruction}
-            disabled={edit.isPending}
-            onChange={(e) => setInstruction(e.target.value)}
-          />
-          <button
-            type="button"
-            className="btn-primary"
-            data-testid="app-file-edit-submit"
-            disabled={edit.isPending || instruction.trim().length === 0}
-            onClick={submit}
-          >
-            {edit.isPending ? "Editing…" : "Run edit"}
-          </button>
-        </div>
-      ) : null}
-
-      {editError ? (
-        <p className="field-error" data-testid="app-file-edit-error" role="alert">
-          {editError.message}
-        </p>
-      ) : null}
     </m.div>
   );
 }

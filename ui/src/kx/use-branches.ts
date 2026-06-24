@@ -108,7 +108,7 @@ export interface EditBranchVars {
 }
 
 /**
- * D155 Phase-3: agentically edit a branch file IN-CAS. Runs the
+ * D155 Phase-3: agentically edit a branch file IN-CAS in one shot. Runs the
  * `kx/recipes/react-edit` loop (the file's current body attached as a context
  * ref; the model rewrites it per `instruction`) and advances the manifest to the
  * new content ref. The host is NEVER written. The mutation can take a while
@@ -126,6 +126,60 @@ export function useEditBranch() {
     },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: queryKeys.branches(endpoint) });
+    },
+  });
+}
+
+export interface EditProposalResult {
+  readonly resultRef: string;
+  readonly proposedText: string;
+  readonly currentText: string;
+}
+
+/**
+ * POC-5d: the PROPOSE half of the agentic edit (the review/diff gate) — runs the
+ * `kx/recipes/react-edit` loop and returns the model's proposed new body + the
+ * current body WITHOUT advancing the branch. The user reviews the diff and then
+ * either approves ({@link useAdvanceBranch} with `resultRef`) or rejects (discards —
+ * the proposed blob is a harmless content-addressed orphan). Closes
+ * `T-AGENTIC-EDIT-REVIEW-GATE`. No invalidation here (nothing changed yet).
+ */
+export function useEditBranchPropose() {
+  const { client } = useConnection();
+  return useMutation<EditProposalResult, unknown, EditBranchVars>({
+    mutationFn: async ({ handle, path, instruction }) => {
+      if (!client) {
+        throw new Error("not connected");
+      }
+      return client.editBranchPropose(handle, path, instruction);
+    },
+  });
+}
+
+export interface AdvanceBranchVars {
+  readonly handle: string;
+  readonly path: string;
+  readonly contentRef: string;
+}
+
+/**
+ * POC-5d: APPROVE a proposed edit — re-point the manifest path to the committed
+ * `contentRef` (`AdvanceBranch`). A LOCKED App is refused at the server chokepoint.
+ * Invalidates the App branch manifest so the new body is re-pulled.
+ */
+export function useAdvanceBranch() {
+  const { client, endpoint } = useConnection();
+  const qc = useQueryClient();
+  return useMutation<unknown, unknown, AdvanceBranchVars>({
+    mutationFn: async ({ handle, path, contentRef }) => {
+      if (!client) {
+        throw new Error("not connected");
+      }
+      return client.advanceBranch(handle, path, contentRef);
+    },
+    onSuccess: (_res, { handle }) => {
+      void qc.invalidateQueries({ queryKey: queryKeys.branches(endpoint) });
+      void qc.invalidateQueries({ queryKey: queryKeys.appBranch(endpoint, handle) });
     },
   });
 }

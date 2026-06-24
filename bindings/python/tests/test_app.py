@@ -157,3 +157,35 @@ def test_save_uploads_pending_body(dev_server) -> None:
         # the body was uploaded → a 64-hex content_ref; the bytes never inlined.
         assert len(rules[0]["content_ref"]) == 64
         assert "Never reveal" not in json.dumps(stored.envelope)
+
+
+def test_inject_app_args_is_pure_and_no_op_when_empty() -> None:
+    """POC-5d: run_app(args=...) folds inputs into the entry model step's prompt;
+    a no-op (same object) when empty, and it never mutates the source blueprint."""
+    from kortecx.client import _inject_app_args
+
+    bp = {
+        "seed": 0,
+        "steps": [
+            {"kind": "pure"},
+            {"kind": "model", "model_id": "m", "prompt": "Answer the question."},
+        ],
+    }
+    # Empty/absent ⇒ byte-identical (same object).
+    assert _inject_app_args(bp, None) is bp
+    assert _inject_app_args(bp, {}) is bp
+
+    # Folds into the FIRST model step, leaves the pure step untouched, no mutation.
+    out = _inject_app_args(bp, {"topic": "kortecx", "n": "3"})
+    assert out is not bp
+    assert out["steps"][0] == {"kind": "pure"}
+    model_prompt = out["steps"][1]["prompt"]
+    assert "Answer the question." in model_prompt
+    assert "Inputs:" in model_prompt
+    assert "- topic: kortecx" in model_prompt
+    assert "- n: 3" in model_prompt
+    assert bp["steps"][1]["prompt"] == "Answer the question."  # source unchanged
+
+    # No model step ⇒ unchanged.
+    tool_only = {"seed": 0, "steps": [{"kind": "tool", "tool_contract": {"x/y": "1"}}]}
+    assert _inject_app_args(tool_only, {"a": "b"}) is tool_only

@@ -97,6 +97,23 @@ pub enum AppSub {
         /// Write the body here instead of stdout.
         out: Option<PathBuf>,
     },
+    /// POC-5d: dump the App's blueprint structure (the agentic step DAG the lineage
+    /// editor renders) — steps + edges. `--json` emits the raw blueprint JSON.
+    Structure {
+        /// The catalog handle.
+        handle: String,
+    },
+    /// POC-5d: directly write a file in the App's project branch from a local file
+    /// (`PutContent` → `AdvanceBranch`; the host is never read, only the `--from`
+    /// file). A locked App refuses the write server-side (LOCKED_BRANCH).
+    EditFile {
+        /// The catalog handle (its project branch = the same handle).
+        handle: String,
+        /// The file path within the App's project branch.
+        path: String,
+        /// The local file whose bytes become the new body.
+        from: PathBuf,
+    },
     /// POC-5b: lock the App's project branch (agentic in-CAS edits are refused).
     Lock {
         /// The catalog handle.
@@ -154,7 +171,8 @@ fn parse_u32(raw: &str, flag: &str) -> Result<u32, CliError> {
 pub fn parse(mut args: impl Iterator<Item = String>) -> Result<AppArgs, CliError> {
     let kw = args.next().ok_or_else(|| {
         CliError::Usage(
-            "app needs a subcommand (new|save|list|get|run|export|scaffold|files|cat|lock|unlock)"
+            "app needs a subcommand (new|save|list|get|run|export|scaffold|files|cat|\
+             structure|edit|lock|unlock)"
                 .into(),
         )
     })?;
@@ -166,6 +184,7 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<AppArgs, CliError
     let mut handle: Option<String> = None;
     let mut output: Option<PathBuf> = None;
     let mut out: Option<PathBuf> = None;
+    let mut from: Option<PathBuf> = None;
     let mut model: Option<String> = None;
     let mut max_turns: Option<u32> = None;
     let mut max_tool_calls: Option<u32> = None;
@@ -186,6 +205,7 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<AppArgs, CliError
             "--handle" => handle = Some(next_value(&mut args, "--handle")?),
             "--output" => output = Some(PathBuf::from(next_value(&mut args, "--output")?)),
             "--out" => out = Some(PathBuf::from(next_value(&mut args, "--out")?)),
+            "--from" => from = Some(PathBuf::from(next_value(&mut args, "--from")?)),
             "--model" => model = Some(next_value(&mut args, "--model")?),
             "--max-turns" => {
                 max_turns = Some(parse_u32(
@@ -229,6 +249,7 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<AppArgs, CliError
             handle,
             output,
             out,
+            from,
             model,
             max_turns,
             max_tool_calls,
@@ -251,6 +272,7 @@ struct Flags {
     handle: Option<String>,
     output: Option<PathBuf>,
     out: Option<PathBuf>,
+    from: Option<PathBuf>,
     model: Option<String>,
     max_turns: Option<u32>,
     max_tool_calls: Option<u32>,
@@ -319,6 +341,19 @@ fn assemble_sub(kw: &str, f: Flags) -> Result<AppSub, CliError> {
                 .ok_or_else(|| CliError::Usage("app cat requires a <path> argument".into()))?,
             out: f.out,
         }),
+        "structure" => Ok(AppSub::Structure {
+            handle: require_pos(f.positional, "a <handle>")?,
+        }),
+        "edit" => Ok(AppSub::EditFile {
+            handle: require_pos(f.positional, "a <handle>")?,
+            path: f
+                .positional2
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| CliError::Usage("app edit requires a <path> argument".into()))?,
+            from: f
+                .from
+                .ok_or_else(|| CliError::Usage("app edit requires --from <file>".into()))?,
+        }),
         "lock" => Ok(AppSub::Lock {
             handle: require_pos(f.positional, "a <handle>")?,
         }),
@@ -327,7 +362,7 @@ fn assemble_sub(kw: &str, f: Flags) -> Result<AppSub, CliError> {
         }),
         other => Err(CliError::Usage(format!(
             "unknown app subcommand {other:?} (expected new | save | list | get | run | \
-             export | scaffold | files | cat | lock | unlock)"
+             export | scaffold | files | cat | structure | edit | lock | unlock)"
         ))),
     }
 }
@@ -568,6 +603,49 @@ pub async fn execute(args: AppArgs) -> Result<(), CliError> {
             }
             Ok(())
         }
+        AppSub::Structure { handle } => {
+            let resp = fetch_app(&mut client, &resolved, &handle).await?;
+            if !resp.found {
+                return Err(CliError::Usage(format!("app {handle:?} not found")));
+            }
+            let env = AppEnvelope::from_json_slice(&resp.envelope_json)
+                .map_err(|e| CliError::Usage(format!("stored envelope is invalid: {e}")))?;
+            // The blueprint IS the App's portable DagSpec structure. Validate it parses
+            // (the lineage editor renders exactly this) before dumping it.
+            let dag: DagSpec = serde_json::from_value(env.blueprint.clone())
+                .map_err(|e| CliError::Usage(format!("app blueprint is not a DagSpec: {e}")))?;
+            println!(
+                "{}",
+                render_app_structure(&handle, &dag, &env.blueprint, json)
+            );
+            Ok(())
+        }
+        AppSub::EditFile { handle, path, from } => {
+            let payload = std::fs::read(&from)
+                .map_err(|e| CliError::Usage(format!("cannot read {}: {e}", from.display())))?;
+            // PutContent the new body (server-derived ref, SN-8), then AdvanceBranch the
+            // manifest path to it. A locked App refuses AdvanceBranch (LOCKED_BRANCH).
+            let put = client
+                .put_content(resolved.request(proto::PutContentRequest {
+                    payload,
+                    media_type: String::new(),
+                    filename: path.clone(),
+                })?)
+                .await
+                .map_err(CliError::from_status)?
+                .into_inner();
+            let advanced = client
+                .advance_branch(resolved.request(proto::AdvanceBranchRequest {
+                    handle: handle.clone(),
+                    path: path.clone(),
+                    content_ref: put.content_ref,
+                })?)
+                .await
+                .map_err(CliError::from_status)?
+                .into_inner();
+            println!("{}", format::render_advance_branch(&advanced, json));
+            Ok(())
+        }
         AppSub::Lock { handle } => {
             let resp = client
                 .lock_app(resolved.request(proto::LockAppRequest {
@@ -633,6 +711,63 @@ async fn fetch_app(
         .await
         .map_err(CliError::from_status)
         .map(tonic::Response::into_inner)
+}
+
+/// Render an App's blueprint structure (POC-5d `app structure`). `--json` emits the
+/// raw blueprint DagSpec JSON; otherwise a human summary of steps + edges. The kind
+/// inference mirrors the CLI `StepSpec::resolve_kind` / the SDK `inferKind` (an
+/// explicit `kind`, else model fields ⇒ model, a tool contract ⇒ tool, else pure).
+fn render_app_structure(
+    handle: &str,
+    dag: &DagSpec,
+    raw: &serde_json::Value,
+    json: bool,
+) -> String {
+    use std::fmt::Write as _;
+    if json {
+        return serde_json::to_string_pretty(raw).unwrap_or_else(|_| raw.to_string());
+    }
+    let mut out = String::new();
+    let _ = writeln!(
+        out,
+        "app {handle}  ({} step{}, {} edge{})",
+        dag.steps.len(),
+        if dag.steps.len() == 1 { "" } else { "s" },
+        dag.edges.len(),
+        if dag.edges.len() == 1 { "" } else { "s" },
+    );
+    for (i, s) in dag.steps.iter().enumerate() {
+        let kind: &str = match s.kind.as_deref() {
+            Some(k) => k,
+            None if !s.model_id.is_empty() || !s.prompt.is_empty() => "model",
+            None if !s.tool_contract.is_empty() => "tool",
+            None => "pure",
+        };
+        let mut line = format!("  [{i}] {kind}");
+        if !s.model_id.is_empty() {
+            let _ = write!(line, "  model={}", s.model_id);
+        }
+        if !s.tool_contract.is_empty() {
+            let tools: Vec<String> = s
+                .tool_contract
+                .iter()
+                .map(|(k, v)| format!("{k}@{v}"))
+                .collect();
+            let _ = write!(line, "  tools=[{}]", tools.join(", "));
+        }
+        if let Some(t) = s.max_turns {
+            let _ = write!(line, "  max_turns={t}");
+        }
+        if let Some(t) = s.max_tool_calls {
+            let _ = write!(line, "  max_tool_calls={t}");
+        }
+        let _ = writeln!(out, "{line}");
+    }
+    for e in &dag.edges {
+        let label = if e.edge.is_empty() { "data" } else { &e.edge };
+        let _ = writeln!(out, "  edge {} -> {} ({label})", e.parent, e.child);
+    }
+    out.trim_end().to_string()
 }
 
 /// Write the stored (canonical) envelope bytes back out in the human PRETTY form.
@@ -760,6 +895,77 @@ mod tests {
             parse_ok(&["unlock", "apps/local/echo"]).sub,
             AppSub::Unlock { .. }
         ));
+    }
+
+    #[test]
+    fn parse_structure() {
+        match parse_ok(&["structure", "apps/local/echo"]).sub {
+            AppSub::Structure { handle } => assert_eq!(handle, "apps/local/echo"),
+            other => panic!("expected Structure, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_edit_with_from() {
+        match parse_ok(&[
+            "edit",
+            "apps/local/echo",
+            "README.md",
+            "--from",
+            "/tmp/body.txt",
+        ])
+        .sub
+        {
+            AppSub::EditFile { handle, path, from } => {
+                assert_eq!(handle, "apps/local/echo");
+                assert_eq!(path, "README.md");
+                assert_eq!(from, PathBuf::from("/tmp/body.txt"));
+            }
+            other => panic!("expected EditFile, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_edit_requires_path_and_from() {
+        // missing --from
+        let err = parse(
+            ["edit", "apps/local/echo", "README.md"]
+                .iter()
+                .map(ToString::to_string),
+        )
+        .unwrap_err();
+        assert!(matches!(err, CliError::Usage(_)));
+        // missing <path>
+        let err = parse(
+            ["edit", "apps/local/echo", "--from", "/tmp/b.txt"]
+                .iter()
+                .map(ToString::to_string),
+        )
+        .unwrap_err();
+        assert!(matches!(err, CliError::Usage(_)));
+    }
+
+    #[test]
+    fn render_structure_human_lists_steps_and_edges() {
+        let raw = serde_json::json!({
+            "seed": 0,
+            "steps": [
+                { "kind": "model", "prompt": "go", "tool_contract": { "mcp-echo/echo": "1" }, "max_turns": 4 },
+                { "kind": "pure" }
+            ],
+            "edges": [ { "parent": 0, "child": 1 } ]
+        });
+        let dag: DagSpec = serde_json::from_value(raw.clone()).unwrap();
+        let human = render_app_structure("apps/local/echo", &dag, &raw, false);
+        assert!(human.contains("2 steps, 1 edge"));
+        assert!(human.contains("[0] model"));
+        assert!(human.contains("tools=[mcp-echo/echo@1]"));
+        assert!(human.contains("max_turns=4"));
+        assert!(human.contains("[1] pure"));
+        assert!(human.contains("edge 0 -> 1 (data)"));
+        // --json emits the raw blueprint verbatim
+        let j = render_app_structure("apps/local/echo", &dag, &raw, true);
+        assert!(j.contains("\"mcp-echo/echo\""));
     }
 
     #[test]

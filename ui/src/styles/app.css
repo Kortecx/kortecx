@@ -4342,6 +4342,110 @@ button.card-grid__title:hover {
   flex-direction: column;
   gap: 0.5rem;
 }
+/* POC-5d: the file-pane edit affordances + the agentic review/diff gate. */
+.app-file__actions {
+  display: inline-flex;
+  gap: 0.4rem;
+}
+.app-file__editor-actions {
+  display: inline-flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+.app-file__agentic {
+  margin-top: 0.6rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.app-file__review {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+/* POC-5d: the headless diff fallback (jsdom / pre-Monaco). */
+.diff-fallback {
+  margin: 0;
+  padding: 0.6rem 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-elev);
+  overflow: auto;
+  max-height: 420px;
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+.diff-line {
+  display: block;
+  white-space: pre-wrap;
+}
+.diff-line--add {
+  color: var(--success);
+  background: color-mix(in srgb, var(--success) 12%, transparent);
+}
+.diff-line--del {
+  color: var(--error);
+  background: color-mix(in srgb, var(--error) 12%, transparent);
+}
+
+/* POC-5d: the single-App lineage editor (reuses the dag-canvas tokens). */
+.app-lineage {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+.app-lineage__toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.app-lineage__canvas {
+  min-height: 360px;
+}
+
+/* POC-5d: the Workflows → Apps trigger list. */
+.runs-apps {
+  margin-top: 1.4rem;
+}
+.runs-apps__list {
+  list-style: none;
+  margin: 0.6rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.runs-apps__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+  padding: 0.55rem 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-elev);
+}
+.runs-apps__id {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+.runs-apps__name {
+  font-weight: 600;
+}
+.runs-apps__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.app-run-drawer__noinputs {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
 
 /* The per-App lock control (chip + button, never a select). */
 .lock-control {
