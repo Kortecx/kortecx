@@ -963,24 +963,60 @@ class ListModelsRequest(_message.Message):
     def __init__(self) -> None: ...
 
 class ModelSummary(_message.Message):
-    __slots__ = ("model_id", "modalities", "description", "serving", "context_len")
+    __slots__ = ("model_id", "modalities", "description", "serving", "context_len", "loaded", "chat_handle")
     MODEL_ID_FIELD_NUMBER: _ClassVar[int]
     MODALITIES_FIELD_NUMBER: _ClassVar[int]
     DESCRIPTION_FIELD_NUMBER: _ClassVar[int]
     SERVING_FIELD_NUMBER: _ClassVar[int]
     CONTEXT_LEN_FIELD_NUMBER: _ClassVar[int]
+    LOADED_FIELD_NUMBER: _ClassVar[int]
+    CHAT_HANDLE_FIELD_NUMBER: _ClassVar[int]
     model_id: str
     modalities: _containers.RepeatedScalarFieldContainer[str]
     description: str
     serving: bool
     context_len: int
-    def __init__(self, model_id: _Optional[str] = ..., modalities: _Optional[_Iterable[str]] = ..., description: _Optional[str] = ..., serving: bool = ..., context_len: _Optional[int] = ...) -> None: ...
+    loaded: bool
+    chat_handle: str
+    def __init__(self, model_id: _Optional[str] = ..., modalities: _Optional[_Iterable[str]] = ..., description: _Optional[str] = ..., serving: bool = ..., context_len: _Optional[int] = ..., loaded: bool = ..., chat_handle: _Optional[str] = ...) -> None: ...
 
 class ListModelsResponse(_message.Message):
     __slots__ = ("models",)
     MODELS_FIELD_NUMBER: _ClassVar[int]
     models: _containers.RepeatedCompositeFieldContainer[ModelSummary]
     def __init__(self, models: _Optional[_Iterable[_Union[ModelSummary, _Mapping]]] = ...) -> None: ...
+
+class LoadModelRequest(_message.Message):
+    __slots__ = ("model_id",)
+    MODEL_ID_FIELD_NUMBER: _ClassVar[int]
+    model_id: str
+    def __init__(self, model_id: _Optional[str] = ...) -> None: ...
+
+class LoadModelResponse(_message.Message):
+    __slots__ = ("model_id", "loaded", "was_resident")
+    MODEL_ID_FIELD_NUMBER: _ClassVar[int]
+    LOADED_FIELD_NUMBER: _ClassVar[int]
+    WAS_RESIDENT_FIELD_NUMBER: _ClassVar[int]
+    model_id: str
+    loaded: bool
+    was_resident: bool
+    def __init__(self, model_id: _Optional[str] = ..., loaded: bool = ..., was_resident: bool = ...) -> None: ...
+
+class OffloadModelRequest(_message.Message):
+    __slots__ = ("model_id",)
+    MODEL_ID_FIELD_NUMBER: _ClassVar[int]
+    model_id: str
+    def __init__(self, model_id: _Optional[str] = ...) -> None: ...
+
+class OffloadModelResponse(_message.Message):
+    __slots__ = ("model_id", "loaded", "was_resident")
+    MODEL_ID_FIELD_NUMBER: _ClassVar[int]
+    LOADED_FIELD_NUMBER: _ClassVar[int]
+    WAS_RESIDENT_FIELD_NUMBER: _ClassVar[int]
+    model_id: str
+    loaded: bool
+    was_resident: bool
+    def __init__(self, model_id: _Optional[str] = ..., loaded: bool = ..., was_resident: bool = ...) -> None: ...
 
 class GetMoteDetailRequest(_message.Message):
     __slots__ = ("instance_id", "mote_id")

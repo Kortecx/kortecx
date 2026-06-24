@@ -571,6 +571,8 @@ pub fn render_models(resp: &proto::ListModelsResponse, json: bool) -> String {
                     "description": m.description,
                     "serving": m.serving,
                     "context_len": m.context_len,
+                    "loaded": m.loaded,
+                    "chat_handle": m.chat_handle,
                 })
             })
             .collect();
@@ -582,16 +584,51 @@ pub fn render_models(resp: &proto::ListModelsResponse, json: bool) -> String {
             .iter()
             .map(|m| {
                 format!(
-                    "{}  [{}]  ctx={}  {}{}",
+                    "{}  [{}]  ctx={}  {}{}{}",
                     m.model_id,
                     m.modalities.join("+"),
                     m.context_len,
                     m.description,
-                    if m.serving { "  (serving)" } else { "" }
+                    if m.serving { "  (serving)" } else { "" },
+                    if m.loaded { "  (loaded)" } else { "" }
                 )
             })
             .collect::<Vec<_>>()
             .join("\n")
+    }
+}
+
+/// Render `models load`/`offload` — the residency transition (POC-3).
+#[must_use]
+pub fn render_load_model(resp: &proto::LoadModelResponse, json: bool) -> String {
+    if json {
+        json!({
+            "model_id": resp.model_id,
+            "loaded": resp.loaded,
+            "was_resident": resp.was_resident,
+        })
+        .to_string()
+    } else if resp.was_resident {
+        format!("{} already loaded", resp.model_id)
+    } else {
+        format!("{} loaded", resp.model_id)
+    }
+}
+
+/// Render `models offload` — the residency transition (POC-3).
+#[must_use]
+pub fn render_offload_model(resp: &proto::OffloadModelResponse, json: bool) -> String {
+    if json {
+        json!({
+            "model_id": resp.model_id,
+            "loaded": resp.loaded,
+            "was_resident": resp.was_resident,
+        })
+        .to_string()
+    } else if resp.was_resident {
+        format!("{} offloaded", resp.model_id)
+    } else {
+        format!("{} was not loaded", resp.model_id)
     }
 }
 

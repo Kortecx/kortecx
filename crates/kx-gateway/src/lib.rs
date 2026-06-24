@@ -131,6 +131,10 @@ mod token_tail;
 // Batch A: the host-side model catalog (the ModelCatalogView seam) — always
 // wired so an FFI-free serve answers ListModels with an honest empty list.
 mod models;
+// POC-3: the host-side model lifecycle (the ModelLifecycleControl seam +
+// BackendEngine adapter) — only the inference serve has a live model engine.
+#[cfg(feature = "inference")]
+mod model_lifecycle;
 // Batch B: the host-side def resolver (the MoteDefView seam) — always wired
 // over the SAME content store the coordinator persists admitted defs into.
 mod mote_defs;

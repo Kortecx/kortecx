@@ -720,6 +720,11 @@ pub struct GatewayService {
     /// the toolscout advisory precedent). `None` ⇒ `ListModels` returns
     /// `unimplemented`; an EMPTY catalog is the honest FFI-free answer.
     models: Option<Arc<dyn crate::models_view::ModelCatalogView>>,
+    /// POC-3 (Models "Local lifecycle"): the optional model-lifecycle CONTROL seam
+    /// behind `LoadModel`/`OffloadModel` (warm/evict the registered set's RAM
+    /// residency). `None` ⇒ both RPCs return `unimplemented` (the `GetServerInfo`
+    /// precedent). Off-journal, off-digest — pure ephemeral RAM state.
+    model_lifecycle: Option<Arc<dyn crate::model_lifecycle::ModelLifecycleControl>>,
     /// POC-1 (Settings "Workspace"): the NON-SECRET server-configuration facts the
     /// host projects via `GetServerInfo`. `None` ⇒ `GetServerInfo` returns
     /// `unimplemented`. A plain value (not a live view) — fixed at serve startup;
@@ -832,6 +837,7 @@ impl GatewayService {
             uploads: None,
             put_cap_bytes: DEFAULT_PUT_CAP_BYTES,
             models: None,
+            model_lifecycle: None,
             server_info: None,
             mote_defs: None,
             feedback: None,
@@ -1075,6 +1081,18 @@ impl GatewayService {
         models: Arc<dyn crate::models_view::ModelCatalogView>,
     ) -> Self {
         self.models = Some(models);
+        self
+    }
+
+    /// POC-3: wire the model-lifecycle CONTROL seam (warm/evict the registered
+    /// set's RAM residency). Enables `LoadModel`/`OffloadModel`; without it they
+    /// return `unimplemented`. Off-journal, off-digest — ephemeral RAM state.
+    #[must_use]
+    pub fn with_model_lifecycle(
+        mut self,
+        control: Arc<dyn crate::model_lifecycle::ModelLifecycleControl>,
+    ) -> Self {
+        self.model_lifecycle = Some(control);
         self
     }
 
@@ -1883,6 +1901,8 @@ impl KxGateway for GatewayService {
                 description: m.description,
                 serving: m.serving,
                 context_len: m.context_len,
+                loaded: m.loaded,
+                chat_handle: m.chat_handle,
             })
             .collect();
         Ok(Response::new(proto::ListModelsResponse { models }))
@@ -1927,6 +1947,51 @@ impl KxGateway for GatewayService {
             audit_log_enabled: facts.audit_log_enabled,
             react_max_turns: facts.react_max_turns,
             react_max_tool_calls: facts.react_max_tool_calls,
+        }))
+    }
+
+    async fn load_model(
+        &self,
+        request: Request<proto::LoadModelRequest>,
+    ) -> Result<Response<proto::LoadModelResponse>, Status> {
+        // SERVER-DERIVED identity (SN-8): a mutating control op needs an
+        // authenticated caller (the interceptor-resolved party); the wire carries
+        // no party field. Off-journal, off-digest — pure RAM residency.
+        let _party = request
+            .extensions()
+            .get::<CallerParty>()
+            .ok_or_else(|| Status::unauthenticated("no resolved caller identity"))?;
+        let control = self
+            .model_lifecycle
+            .as_ref()
+            .ok_or_else(|| Status::unimplemented("LoadModel: no model lifecycle wired"))?;
+        // An unregistered id ⇒ NotFound → not_found (fail-closed; never warms an
+        // arbitrary path).
+        let out = control.load(&request.into_inner().model_id)?;
+        Ok(Response::new(proto::LoadModelResponse {
+            model_id: out.model_id,
+            loaded: out.loaded,
+            was_resident: out.was_resident,
+        }))
+    }
+
+    async fn offload_model(
+        &self,
+        request: Request<proto::OffloadModelRequest>,
+    ) -> Result<Response<proto::OffloadModelResponse>, Status> {
+        let _party = request
+            .extensions()
+            .get::<CallerParty>()
+            .ok_or_else(|| Status::unauthenticated("no resolved caller identity"))?;
+        let control = self
+            .model_lifecycle
+            .as_ref()
+            .ok_or_else(|| Status::unimplemented("OffloadModel: no model lifecycle wired"))?;
+        let out = control.offload(&request.into_inner().model_id)?;
+        Ok(Response::new(proto::OffloadModelResponse {
+            model_id: out.model_id,
+            loaded: out.loaded,
+            was_resident: out.was_resident,
         }))
     }
 

@@ -366,6 +366,10 @@ pub struct DemoLibrary {
     /// The served model id, if this serve resolved one (`kx serve --features
     /// inference`). Authored MODEL steps require it (else they are refused).
     serve_model: Option<ModelId>,
+    /// POC-3: the FULL registered model set (primary first), so the `model` ENUM
+    /// free-param's `allowed` widens to every routable model (not just the
+    /// primary). Empty on a model-less serve.
+    serve_models: Vec<ModelId>,
 }
 
 /// Per-recipe binding metadata: the owner's base warrant the grant fold narrows
@@ -390,7 +394,17 @@ impl DemoLibrary {
         exec_class: ExecutorClass,
         parties: &[String],
     ) -> Result<Self, GatewayError> {
-        Self::seed(dir, exec_class, parties, None, None, false, None, false)
+        Self::seed(
+            dir,
+            exec_class,
+            parties,
+            None,
+            None,
+            false,
+            None,
+            false,
+            &[],
+        )
     }
 
     /// Like [`DemoLibrary::open`], plus (when `serve_model` is `Some`) the AL1
@@ -418,6 +432,7 @@ impl DemoLibrary {
             false,
             None,
             false,
+            &[],
         )
     }
 
@@ -450,6 +465,39 @@ impl DemoLibrary {
             vision,
             fs_list,
             autogrant,
+            &[],
+        )
+    }
+
+    /// POC-3: like [`DemoLibrary::open_complete`], plus a per-model chat recipe
+    /// (`kx/recipes/m-<id>`) for each `secondary_models` entry so a chat turn can
+    /// route to a chosen registered model (the binder-free routing path). The
+    /// primary `kx/recipes/chat` is byte-identical to [`DemoLibrary::open_complete`].
+    ///
+    /// # Errors
+    /// [`GatewayError::Catalog`] on a ledger open / seed failure.
+    #[allow(clippy::too_many_arguments)]
+    pub fn open_serve(
+        dir: &Path,
+        exec_class: ExecutorClass,
+        parties: &[String],
+        serve_model: Option<&ModelId>,
+        react_tool: Option<&(ToolName, ToolVersion)>,
+        vision: bool,
+        fs_list: Option<(&[(ToolName, ToolVersion)], &Path)>,
+        autogrant: bool,
+        secondary_models: &[ModelId],
+    ) -> Result<Self, GatewayError> {
+        Self::seed(
+            dir,
+            exec_class,
+            parties,
+            serve_model,
+            react_tool,
+            vision,
+            fs_list,
+            autogrant,
+            secondary_models,
         )
     }
 
@@ -461,6 +509,7 @@ impl DemoLibrary {
     // A flat, sequential one-block-per-recipe seeding fn — the length is the
     // recipe count, not cognitive complexity (the `start_impl` precedent).
     #[allow(clippy::too_many_lines, clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)]
     fn seed(
         dir: &Path,
         exec_class: ExecutorClass,
@@ -470,6 +519,10 @@ impl DemoLibrary {
         vision: bool,
         fs_list: Option<(&[(ToolName, ToolVersion)], &Path)>,
         autogrant: bool,
+        // POC-3: the NON-primary registered models, each seeded its OWN chat recipe
+        // (`kx/recipes/m-<id>`) so a chat turn can route to a chosen model. Empty for
+        // the single-model / non-serve paths ⇒ byte-identical to before.
+        secondary_models: &[ModelId],
     ) -> Result<Self, GatewayError> {
         let cat = |e: String| GatewayError::Catalog(e);
         let versions =
@@ -535,6 +588,38 @@ impl DemoLibrary {
                 model_h,
                 RecipeMeta {
                     owner_root: model_w,
+                    free_params: prompt_contract(),
+                },
+            ));
+        }
+
+        // (chat per-model) POC-3: route a chat turn to a CHOSEN registered model.
+        // The PRIMARY keeps `kx/recipes/chat` (above, byte-identical → the canonical
+        // projection digest stays invariant); each SECONDARY model gets its OWN chat
+        // recipe at `kx/recipes/m-<id>`, whose step warrant + MoteDef.model_id are
+        // pinned to THAT model. This is the binder-free routing path: a bound `model`
+        // arg cannot re-point the route (the warrant route + MoteDef.model_id are
+        // seed-fixed), so a distinct model needs a distinct recipe. The handle is
+        // exposed per-model via `ListModels.chat_handle`. A different model warrant ⇒
+        // a distinct recipe body (the model_id is in the body), so sharing
+        // `MODEL_LOGIC_REF` does NOT collide (the BUG-25 class is same-model-only).
+        for model_id in secondary_models {
+            let per_w = model_warrant(exec_class, model_id);
+            let per_h = per_model_chat_handle(model_id)?;
+            seed_recipe(
+                &versions,
+                &bodies,
+                &grants,
+                &owner,
+                parties,
+                &per_h,
+                recipe_body(LogicRef::from_bytes(MODEL_LOGIC_REF), &per_w, &[PROMPT_KEY]),
+                &per_w,
+            )?;
+            recipes.push((
+                per_h,
+                RecipeMeta {
+                    owner_root: per_w,
                     free_params: prompt_contract(),
                 },
             ));
@@ -814,6 +899,13 @@ impl DemoLibrary {
             &blueprint_base,
         )?;
 
+        // POC-3: the full registered set (primary first, then secondaries) for the
+        // widened `model` ENUM. Empty on a model-less serve.
+        let serve_models: Vec<ModelId> = serve_model
+            .into_iter()
+            .cloned()
+            .chain(secondary_models.iter().cloned())
+            .collect();
         Ok(Self {
             versions,
             bodies,
@@ -821,6 +913,7 @@ impl DemoLibrary {
             recipes,
             blueprint_base,
             serve_model: serve_model.cloned(),
+            serve_models,
         })
     }
 
@@ -960,9 +1053,10 @@ impl DemoLibrary {
     /// `model` ENUM's allowed set). The SAME resolver backs the published form
     /// (`recipe_form`) and the bind (`Invoke`), so they agree by construction.
     fn schema_resolver(&self) -> DemoSchemaResolver {
-        DemoSchemaResolver {
-            serve_model: self.serve_model.as_ref().map(|m| m.0.clone()),
-        }
+        let mut serve_models: Vec<String> = self.serve_models.iter().map(|m| m.0.clone()).collect();
+        serve_models.sort();
+        serve_models.dedup();
+        DemoSchemaResolver { serve_models }
     }
 }
 
@@ -2294,6 +2388,51 @@ fn model_handle() -> Result<AssetPath, GatewayError> {
         .ok_or_else(|| GatewayError::Catalog("invalid model recipe handle".into()))
 }
 
+/// POC-3: sanitize a model id into a valid [`AssetPath`] `name` segment
+/// (`[a-z0-9._-]`, no leading/trailing punct, bounded length). Lowercases, maps any
+/// other char to `-`, trims punct. Deterministic so a model always maps to the same
+/// handle across restarts. Never empty (falls back to `model`).
+fn sanitize_handle_name(id: &str) -> String {
+    let mapped: String = id
+        .chars()
+        .map(|c| {
+            let c = c.to_ascii_lowercase();
+            if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let bounded: String = mapped.trim_matches(['.', '-']).chars().take(120).collect();
+    let bounded = bounded.trim_end_matches(['.', '-']).to_string();
+    if bounded.is_empty() {
+        "model".to_string()
+    } else {
+        bounded
+    }
+}
+
+/// POC-3: the chat recipe handle (wire STRING) that routes a turn to `model_id`.
+/// The PRIMARY (`is_primary`) uses the canonical [`MODEL_RECIPE_HANDLE`]
+/// (`kx/recipes/chat`, byte-unchanged → digest invariant); a SECONDARY uses the
+/// derived `kx/recipes/m-<sanitized-id>`. Restart-stable; exposed per-model via
+/// `ListModels.chat_handle` so the client invokes the right recipe for a chosen
+/// model (the binder-free routing path).
+pub(crate) fn chat_handle_for(model_id: &ModelId, is_primary: bool) -> String {
+    if is_primary {
+        MODEL_RECIPE_HANDLE.to_string()
+    } else {
+        format!("kx/recipes/m-{}", sanitize_handle_name(&model_id.0))
+    }
+}
+
+/// The parsed per-model SECONDARY chat handle (POC-3 routing seed).
+fn per_model_chat_handle(model_id: &ModelId) -> Result<AssetPath, GatewayError> {
+    parse_handle(&chat_handle_for(model_id, false))
+        .ok_or_else(|| GatewayError::Catalog("invalid per-model chat handle".into()))
+}
+
 fn chat_rag_handle() -> Result<AssetPath, GatewayError> {
     parse_handle(CHAT_RAG_RECIPE_HANDLE)
         .ok_or_else(|| GatewayError::Catalog("invalid chat-rag recipe handle".into()))
@@ -2351,14 +2490,36 @@ fn react_handle() -> Result<AssetPath, GatewayError> {
         .ok_or_else(|| GatewayError::Catalog("invalid react recipe handle".into()))
 }
 
+/// The ReAct ceilings the recipe-form schema + the react-param validation bound
+/// against. `kx_coordinator` is linked ONLY under `embedded-worker` (the live serve
+/// loop); the gateway-only / external-coordinator config (SN-6, the `features-guard`
+/// gate) compiles `provision.rs` WITHOUT it, so this module mirrors the ceilings as
+/// pinned constants in that config and re-exports the canonical ones otherwise. The
+/// values are PINNED to `kx_coordinator::react_shape` (the `embedded-worker` build
+/// uses the re-export, so any drift is a compile-visible change there).
+mod react_caps {
+    #[cfg(feature = "embedded-worker")]
+    pub(super) use kx_coordinator::{
+        REACT_DEFAULT_MAX_TOOL_CALLS, REACT_MAX_TOOL_CALLS, REACT_MAX_TURNS,
+    };
+    #[cfg(not(feature = "embedded-worker"))]
+    pub(super) const REACT_MAX_TURNS: u32 = 8;
+    #[cfg(not(feature = "embedded-worker"))]
+    pub(super) const REACT_MAX_TOOL_CALLS: u32 = 20;
+    #[cfg(not(feature = "embedded-worker"))]
+    pub(super) const REACT_DEFAULT_MAX_TOOL_CALLS: u32 = 20;
+}
+
 /// Resolves the demo `topic`, the model `prompt`, the react, and the vision
 /// free-param schema-refs to their typed schemas. Carries the served model id
 /// so the vision `model` ENUM's allowed set is the LIVE serve fact (Batch A) —
 /// the only dynamic schema; everything else is static.
 struct DemoSchemaResolver {
-    /// The served model id (`None` on a model-less serve — the vision schema
-    /// then resolves to an EMPTY enum, which refuses every value, fail-closed).
-    serve_model: Option<String>,
+    /// The registered model ids, SORTED (POC-3: the `model` ENUM's `allowed` set
+    /// widens from the single primary to every routable model). Empty on a
+    /// model-less serve — the enum then refuses every value, fail-closed. Sorted
+    /// so the encoded schema bytes are deterministic across restarts.
+    serve_models: Vec<String>,
 }
 
 impl SchemaResolver for DemoSchemaResolver {
@@ -2374,7 +2535,7 @@ impl SchemaResolver for DemoSchemaResolver {
             // (`react_seed_params`) — the form refuses what the swap would refuse.
             Some(encode_param_schema(&ParamType::Int {
                 min: Some(1),
-                max: Some(i64::from(kx_coordinator::REACT_MAX_TURNS)),
+                max: Some(i64::from(react_caps::REACT_MAX_TURNS)),
             }))
         } else if *schema_ref == REACT_MAX_TOOL_CALLS_SCHEMA_REF {
             // T-MULTI-ELEMENT-TOOLCALLS: the tool-call ceiling (20) is DECOUPLED from
@@ -2382,15 +2543,17 @@ impl SchemaResolver for DemoSchemaResolver {
             // legitimately exceeds the model-turn budget. Matches the coordinator.
             Some(encode_param_schema(&ParamType::Int {
                 min: Some(1),
-                max: Some(i64::from(kx_coordinator::REACT_MAX_TOOL_CALLS)),
+                max: Some(i64::from(react_caps::REACT_MAX_TOOL_CALLS)),
             }))
         } else if *schema_ref == VISION_IMAGE_SCHEMA_REF {
             // A 32-byte content ref as 64 hex chars (the JSON value is a string).
             Some(encode_param_schema(&ParamType::Bytes { max_len: 64 }))
         } else if *schema_ref == VISION_MODEL_SCHEMA_REF {
-            // Allowed = exactly the served model id (server-validated selection).
+            // POC-3: allowed = the FULL registered set (server-validated selection).
+            // The BTreeSet is inherently sorted+deduped ⇒ deterministic schema bytes.
+            // Empty ⇒ refuses every value (fail-closed).
             Some(encode_param_schema(&ParamType::Enum {
-                allowed: self.serve_model.iter().cloned().collect(),
+                allowed: self.serve_models.iter().cloned().collect(),
             }))
         } else {
             None
@@ -2965,18 +3128,15 @@ fn validate_agentic_budget(s: &AuthorStep) -> Result<(), BinderError> {
             }),
         }
     };
-    let max_turns = parse(
-        kx_mote::REACT_MAX_TURNS_KEY,
-        kx_coordinator::REACT_MAX_TURNS,
-    )?;
+    let max_turns = parse(kx_mote::REACT_MAX_TURNS_KEY, react_caps::REACT_MAX_TURNS)?;
     let max_tool_calls = parse(
         kx_mote::REACT_MAX_TOOL_CALLS_KEY,
-        kx_coordinator::REACT_DEFAULT_MAX_TOOL_CALLS,
+        react_caps::REACT_DEFAULT_MAX_TOOL_CALLS,
     )?;
     if max_turns == 0
-        || max_turns > kx_coordinator::REACT_MAX_TURNS
+        || max_turns > react_caps::REACT_MAX_TURNS
         || max_tool_calls == 0
-        || max_tool_calls > kx_coordinator::REACT_MAX_TOOL_CALLS
+        || max_tool_calls > react_caps::REACT_MAX_TOOL_CALLS
     {
         return Err(BinderError::InvalidArgs(
             "agentic budget must satisfy 0 < max_turns <= 8 AND 0 < max_tool_calls <= 20".into(),
@@ -3084,7 +3244,9 @@ mod tests {
     /// so a `--max-tool-calls 20` agent run was refused `OutOfRange` at binding.
     #[test]
     fn react_cap_free_param_schemas_are_decoupled() {
-        let resolver = DemoSchemaResolver { serve_model: None };
+        let resolver = DemoSchemaResolver {
+            serve_models: Vec::new(),
+        };
         let turns = resolver
             .resolve_schema(&REACT_MAX_TURNS_SCHEMA_REF)
             .expect("max_turns schema resolves");
@@ -3096,7 +3258,7 @@ mod tests {
             turns,
             encode_param_schema(&ParamType::Int {
                 min: Some(1),
-                max: Some(i64::from(kx_coordinator::REACT_MAX_TURNS)),
+                max: Some(i64::from(react_caps::REACT_MAX_TURNS)),
             })
         );
         // max_tool_calls admits up to REACT_MAX_TOOL_CALLS (20) — the decoupled ceiling.
@@ -3104,7 +3266,7 @@ mod tests {
             tool_calls,
             encode_param_schema(&ParamType::Int {
                 min: Some(1),
-                max: Some(i64::from(kx_coordinator::REACT_MAX_TOOL_CALLS)),
+                max: Some(i64::from(react_caps::REACT_MAX_TOOL_CALLS)),
             })
         );
         assert_ne!(turns, tool_calls, "the two caps no longer share one schema");

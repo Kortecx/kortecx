@@ -81,18 +81,25 @@ describe("ModelSummary.fromProto", () => {
       description: "Qwen3 4B",
       serving: true,
       contextLen: 8192,
+      loaded: true,
+      chatHandle: "kx/recipes/chat",
     });
     const s = ModelSummary.fromProto(m);
     expect(s.modelId).toBe("kx-serve:qwen3-4b");
     expect(s.modalities).toEqual(["text", "image"]);
     expect(s.serving).toBe(true);
     expect(s.contextLen).toBe(8192);
+    // POC-3: the additive residency + routing fields carry through.
+    expect(s.loaded).toBe(true);
+    expect(s.chatHandle).toBe("kx/recipes/chat");
     expect(s.toJSON()).toEqual({
       model_id: "kx-serve:qwen3-4b",
       modalities: ["text", "image"],
       description: "Qwen3 4B",
       serving: true,
       context_len: 8192,
+      loaded: true,
+      chat_handle: "kx/recipes/chat",
     });
   });
 });

@@ -18,8 +18,8 @@ use common::{build_run, spawn, spawn_with_party, MockSubmitter, INSTANCE_ID};
 use kx_content::{ContentRef, ContentStore, InMemoryContentStore};
 use kx_gateway_core::{
     ContentReader, ContentWriter, GatewayError, GatewayService, JournalReader, ModelCatalogView,
-    ModelSummaryEntry, ReadOnly, RunSubmitter, UploadRecord, UploadsLedger, BATCH_ITEM_CLAMP_BYTES,
-    MAX_BATCH_REFS,
+    ModelLifecycleControl, ModelLifecycleOutcome, ModelSummaryEntry, ReadOnly, RunSubmitter,
+    UploadRecord, UploadsLedger, BATCH_ITEM_CLAMP_BYTES, MAX_BATCH_REFS,
 };
 use kx_proto::proto;
 use tonic::Code;
@@ -52,6 +52,50 @@ struct FixedCatalog(Vec<ModelSummaryEntry>);
 impl ModelCatalogView for FixedCatalog {
     fn list(&self) -> Result<Vec<ModelSummaryEntry>, GatewayError> {
         Ok(self.0.clone())
+    }
+}
+
+/// A deterministic (FFI-free) [`ModelLifecycleControl`] over a fixed registered
+/// set: an in-memory residency map, fail-closed on an unregistered id (POC-3).
+struct FixedLifecycle {
+    registered: std::collections::BTreeSet<String>,
+    resident: Mutex<std::collections::BTreeSet<String>>,
+}
+
+impl FixedLifecycle {
+    fn new(registered: &[&str], resident: &[&str]) -> Self {
+        Self {
+            registered: registered.iter().map(|s| (*s).to_string()).collect(),
+            resident: Mutex::new(resident.iter().map(|s| (*s).to_string()).collect()),
+        }
+    }
+    fn gate(&self, id: &str) -> Result<(), GatewayError> {
+        if self.registered.contains(id) {
+            Ok(())
+        } else {
+            Err(GatewayError::NotFound("model not registered"))
+        }
+    }
+}
+
+impl ModelLifecycleControl for FixedLifecycle {
+    fn load(&self, model_id: &str) -> Result<ModelLifecycleOutcome, GatewayError> {
+        self.gate(model_id)?;
+        let was = self.resident.lock().unwrap().insert(model_id.to_string());
+        Ok(ModelLifecycleOutcome {
+            model_id: model_id.to_string(),
+            loaded: true,
+            was_resident: !was, // insert returns true when NEWLY inserted
+        })
+    }
+    fn offload(&self, model_id: &str) -> Result<ModelLifecycleOutcome, GatewayError> {
+        self.gate(model_id)?;
+        let was = self.resident.lock().unwrap().remove(model_id);
+        Ok(ModelLifecycleOutcome {
+            model_id: model_id.to_string(),
+            loaded: false,
+            was_resident: was,
+        })
     }
 }
 
@@ -470,6 +514,8 @@ async fn list_models_maps_the_catalog_and_degrades_without_a_seam() {
         description: "Qwen3 4B".into(),
         serving: true,
         context_len: 8192,
+        loaded: true,
+        chat_handle: "kx/recipes/chat".into(),
     }]);
     let service = GatewayService::new(reader, no_submitter(), content)
         .with_model_catalog_view(Arc::new(catalog));
@@ -486,4 +532,95 @@ async fn list_models_maps_the_catalog_and_degrades_without_a_seam() {
     assert_eq!(m.description, "Qwen3 4B");
     assert!(m.serving);
     assert_eq!(m.context_len, 8192);
+    // POC-3: the additive residency + routing fields map through.
+    assert!(m.loaded);
+    assert_eq!(m.chat_handle, "kx/recipes/chat");
+}
+
+// --- Model lifecycle (POC-3 LoadModel / OffloadModel) --------------------------
+
+#[tokio::test]
+async fn load_offload_round_trip_and_unregistered_is_fail_closed() {
+    let run = build_run();
+    let reader: Arc<dyn JournalReader> = Arc::new(ReadOnly::new(run.journal));
+    let content: Arc<dyn ContentReader> = Arc::new(run.content);
+
+    let lifecycle = Arc::new(FixedLifecycle::new(&["gemma", "qwen"], &["gemma"]));
+    let service =
+        GatewayService::new(reader, no_submitter(), content).with_model_lifecycle(lifecycle);
+    // spawn_with_party stamps a server-derived CallerParty (the auth-gate passes).
+    let mut client = spawn_with_party(service, "alice@acme").await;
+
+    // A cold load of a registered model: was_resident=false ⇒ a real load.
+    let r = client
+        .load_model(proto::LoadModelRequest {
+            model_id: "qwen".into(),
+        })
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(r.model_id, "qwen");
+    assert!(r.loaded);
+    assert!(!r.was_resident, "cold load");
+
+    // Offload of an already-resident model: was_resident=true.
+    let r = client
+        .offload_model(proto::OffloadModelRequest {
+            model_id: "gemma".into(),
+        })
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(!r.loaded);
+    assert!(r.was_resident);
+
+    // The REQUIRED security negative: an UNREGISTERED id is fail-closed NotFound
+    // (never a load of an arbitrary path).
+    let err = client
+        .load_model(proto::LoadModelRequest {
+            model_id: "not-registered".into(),
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(err.code(), Code::NotFound);
+    let err = client
+        .offload_model(proto::OffloadModelRequest {
+            model_id: "not-registered".into(),
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(err.code(), Code::NotFound);
+}
+
+#[tokio::test]
+async fn load_offload_degrade_without_seam_and_require_auth() {
+    let run = build_run();
+    let reader: Arc<dyn JournalReader> = Arc::new(ReadOnly::new(run.journal));
+    let content: Arc<dyn ContentReader> = Arc::new(run.content);
+
+    // No lifecycle seam ⇒ unimplemented (an FFI-free / old-host degrade), even
+    // with an authenticated caller.
+    let bare = GatewayService::new(reader.clone(), no_submitter(), content.clone());
+    let mut client = spawn_with_party(bare, "alice@acme").await;
+    let err = client
+        .load_model(proto::LoadModelRequest {
+            model_id: "qwen".into(),
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(err.code(), Code::Unimplemented);
+
+    // Seam wired but NO CallerParty (no auth interceptor) ⇒ unauthenticated
+    // (a mutating control needs a resolved identity, SN-8).
+    let lifecycle = Arc::new(FixedLifecycle::new(&["qwen"], &[]));
+    let service =
+        GatewayService::new(reader, no_submitter(), content).with_model_lifecycle(lifecycle);
+    let mut anon = spawn(service).await;
+    let err = anon
+        .load_model(proto::LoadModelRequest {
+            model_id: "qwen".into(),
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(err.code(), Code::Unauthenticated);
 }

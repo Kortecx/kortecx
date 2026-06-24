@@ -863,12 +863,36 @@ message ModelSummary {
   string model_id = 1;
   repeated string modalities = 2;        // display strings: "text" | "image" | "audio" | "video"
   string description = 3;                // host-synthesized display prose (GGUF name / file stem)
-  bool serving = 4;                      // true iff this model backs the live serve loop
+  bool serving = 4;                      // true iff this model is the PRIMARY/default serve route
   uint32 context_len = 5;                // served context window (tokens)
+  bool loaded = 6;                       // POC-3: true iff the model is RESIDENT in RAM right now
+                                         //   (live LRU residency; additive — old clients ignore it)
+  string chat_handle = 7;                // POC-3: the recipe handle a client invokes to chat with
+                                         //   THIS model (primary = kx/recipes/chat; secondary =
+                                         //   kx/recipes/m-<id>) — the binder-free routing key
 }
 
 message ListModelsResponse {
   repeated ModelSummary models = 1;      // empty on an FFI-free build (honest, not an error)
+}
+
+// POC-3 (Models "Local lifecycle"): warm/evict a REGISTERED model in the
+// owner-thread LRU. The model_id MUST be in the server's fixed registered set
+// (startup-provisioned via KX_SERVE_MODELS) — an unregistered id is NOT_FOUND
+// (fail-closed; never a load of an arbitrary path). Governed by an authenticated
+// caller. Off-journal, off-digest: residency is ephemeral RAM state that rebuilds
+// EMPTY on restart; these RPCs never write a journal fact.
+message LoadModelRequest { string model_id = 1; }
+message LoadModelResponse {
+  string model_id = 1;
+  bool loaded = 2;        // residency AFTER the op (true on success)
+  bool was_resident = 3;  // residency BEFORE the op (false ⇒ a cold load happened)
+}
+message OffloadModelRequest { string model_id = 1; }
+message OffloadModelResponse {
+  string model_id = 1;
+  bool loaded = 2;        // residency AFTER the op (false on success)
+  bool was_resident = 3;  // residency BEFORE (false ⇒ idempotent no-op offload)
 }
 
 // ---------------------------------------------------------------------------
@@ -1650,4 +1674,11 @@ service KxGateway {
   // NEVER carries a secret: no bearer-token value, no TLS private-key bytes (only
   // `tls_enabled` + an `auth_mode` label). Off-journal, off-digest, read-only.
   rpc GetServerInfo(GetServerInfoRequest) returns (GetServerInfoResponse);
+
+  // POC-3 (Models "Local lifecycle") — warm/evict a REGISTERED local model in the
+  // owner-thread LRU (real load / `llama_model_free`). model_id must be in the
+  // server's fixed registered set (else NOT_FOUND, fail-closed). Authenticated
+  // caller required (UNAUTHENTICATED otherwise). Off-journal, off-digest.
+  rpc LoadModel(LoadModelRequest) returns (LoadModelResponse);
+  rpc OffloadModel(OffloadModelRequest) returns (OffloadModelResponse);
 }

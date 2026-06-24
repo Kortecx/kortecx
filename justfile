@@ -219,6 +219,41 @@ fetch-gemma-model:
        "${KX_GEMMA_MODEL_SHA:-43fec98c5102b1c446b4ddd0a9439f1db3a2e1f2e0b8cd143ce1ea619a9403d6}"
     echo "   Serve it (text + vision): just review-serve-gemma"
 
+# POC-3 (MODELS-LOCAL-LIFECYCLE): fetch a SECOND, small, different-family model so
+# the local multi-model routing / load / offload / swap path can be driven LIVE on
+# this 16 GB box (Gemma-4-12B ~7 GB + Qwen2.5-3B ~2 GB co-reside under capacity-2).
+# Qwen2.5-3B-Instruct (Apache-2.0) emits the Hermes `<tool_call>{…}</tool_call>`
+# format ≠ Gemma's native `call:NAME{…}` — so two REAL models exercise the
+# multi-format tool-call parser. NOT the CI Qwen3-0.6B (too weak to tool-call).
+# A SHA is REQUIRED (never an unverified download); override via KX_MODEL2_{URL,SHA,DEST}.
+fetch-2nd-model:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    URL="${KX_MODEL2_URL:-https://huggingface.co/bartowski/Qwen2.5-3B-Instruct-GGUF/resolve/main/Qwen2.5-3B-Instruct-Q4_K_M.gguf}"
+    DEST="${KX_MODEL2_DEST:-target/models/qwen2.5-3b-instruct-q4_k_m.gguf}"
+    SHA="${KX_MODEL2_SHA:-9c9f56a391a3abbd5b89d0245bf6106081bcc3173119d4229235dd9d23253f94}"
+    mkdir -p target/models
+    if [ -f "$DEST" ]; then
+      got="$(shasum -a 256 "$DEST" | cut -d' ' -f1)"
+      if [ -z "$SHA" ] || [ "$got" = "$SHA" ]; then
+        echo " ✓ already present: $DEST (sha256 $got)"; exit 0
+      fi
+    fi
+    echo "Downloading $URL → $DEST ..."
+    rm -f "$DEST" "$DEST.partial"
+    if [ -n "${HF_TOKEN:-}" ]; then
+      curl -fsSL -H "Authorization: Bearer ${HF_TOKEN}" "$URL" -o "$DEST.partial"
+    else
+      curl -fsSL "$URL" -o "$DEST.partial"
+    fi
+    got="$(shasum -a 256 "$DEST.partial" | cut -d' ' -f1)"
+    if [ -n "$SHA" ] && [ "$got" != "$SHA" ]; then
+      echo " ✗ SHA-256 mismatch: expected $SHA got $got" >&2; rm -f "$DEST.partial"; exit 1
+    fi
+    mv "$DEST.partial" "$DEST"
+    echo " ✓ saved: $DEST (sha256 $got)"
+    echo "   Serve BOTH (primary Gemma + this): KX_SERVE_MODEL_GGUF=<abs gemma> KX_SERVE_MODELS=<abs $DEST> just review-serve-gemma"
+
 # The ONE-COMMAND inference serve (§2.194 guardrail): fetch the stand-in model
 # if absent (idempotent, checksum-verified), then start `kx serve` with it +
 # the embedded console at :8888. Model paths are DETERMINISTIC

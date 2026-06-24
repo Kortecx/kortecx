@@ -148,7 +148,7 @@ export {
   CreateBranchResult,
   SnapshotResult,
 } from "./branch.js";
-export { ModelSummary } from "./models.js";
+export { ModelLifecycleResult, ModelSummary } from "./models.js";
 // POC-1: the resolved gateway configuration view (Settings; display-only, SN-8).
 export { ServerInfo } from "./serverinfo.js";
 

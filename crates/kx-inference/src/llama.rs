@@ -208,6 +208,78 @@ impl LlamaInferenceBackend {
         self.cache.get().map_or(0, ModelCache::mmproj_loads)
     }
 
+    /// Warm a registered model's weights into the loaded-model cache WITHOUT
+    /// inferring (POC-3 explicit load). **Resolver-gated**: fail-closed
+    /// [`InferenceError::ModelNotFound`] if `model_id` is not registered — a
+    /// lifecycle control can NEVER warm an arbitrary path, only the server's
+    /// fixed registered set. Spawns the cache on first use (like dispatch).
+    /// Over-capacity ⇒ honest LRU-evict-oldest (the single-owner-thread
+    /// sequential swap).
+    ///
+    /// # Errors
+    /// Returns [`InferenceError::ModelNotFound`] for an unregistered id, or a
+    /// backend error if the cold load fails.
+    pub fn warm(&self, model_id: &ModelId) -> Result<(), InferenceError> {
+        let descriptor =
+            self.resolver
+                .resolve(model_id)
+                .ok_or_else(|| InferenceError::ModelNotFound {
+                    model_id: model_id.0.clone(),
+                })?;
+        let cache = self
+            .cache
+            .get_or_init(|| ModelCache::spawn(self.cache_capacity));
+        cache.warm(descriptor.identity_digest, descriptor.gguf_path.clone())
+    }
+
+    /// Evict a specific registered model from the cache (POC-3 explicit offload),
+    /// freeing its weights via `llama_model_free`. **Resolver-gated** like
+    /// [`Self::warm`]. Idempotent: `Ok(false)` if the model was not resident (or
+    /// the cache was never spawned).
+    ///
+    /// # Errors
+    /// Returns [`InferenceError::ModelNotFound`] for an unregistered id, or a
+    /// backend error if the owner thread is gone.
+    pub fn evict(&self, model_id: &ModelId) -> Result<bool, InferenceError> {
+        let descriptor =
+            self.resolver
+                .resolve(model_id)
+                .ok_or_else(|| InferenceError::ModelNotFound {
+                    model_id: model_id.0.clone(),
+                })?;
+        match self.cache.get() {
+            // The cache exists ⇒ ask the owner thread to evict the specific id.
+            Some(cache) => cache.evict(descriptor.identity_digest),
+            // No cache spawned ⇒ nothing is resident (honest, no thread spawn).
+            None => Ok(false),
+        }
+    }
+
+    /// The `ModelId`s currently resident in the loaded-model cache (POC-3
+    /// `ListModels.loaded`). Maps each resident `ContentRef` back to a `ModelId`
+    /// via the resolver's identity map; if two registered ids share one
+    /// gguf+modalities identity, the FIRST registered id (resolver order) is
+    /// reported for that identity. Empty if no dispatch/warm has spawned the
+    /// cache yet.
+    #[must_use]
+    pub fn resident(&self) -> Vec<ModelId> {
+        let Some(cache) = self.cache.get() else {
+            return Vec::new();
+        };
+        let Ok(resident_refs) = cache.resident() else {
+            return Vec::new();
+        };
+        // ContentRef → first-registered ModelId (resolver/BTreeMap order).
+        let mut by_ref: HashMap<ContentRef, ModelId> = HashMap::new();
+        for (id, cref) in self.resolver.iter_identities() {
+            by_ref.entry(cref).or_insert(id);
+        }
+        resident_refs
+            .into_iter()
+            .filter_map(|cref| by_ref.get(&cref).cloned())
+            .collect()
+    }
+
     /// Resolve multimodal `content_refs` to fail-closed, size-capped,
     /// image-sniffed bytes ready for the projector. Gates, in order:
     /// 1. the model must DECLARE the image modality (capability);

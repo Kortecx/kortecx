@@ -74,7 +74,7 @@ usage: kx <command> [args]
     kx context add <handle> (--item <name>=<hex32> | --file <name>=<path>)... [--description <s>] | list | get <handle> | remove <handle>   (context bundles)
     kx branch create <handle> [--parent <handle>] [--description <s>] | snapshot <handle> --path <p>... [--parent <handle>] | list | get <handle> | remove <handle>   (D155 file branches)
     kx recipe list | search <intent> [--keyword <k>]... [--limit N]   (advisory recipe discovery)
-    kx models list                              (display-only model discovery)
+    kx models list|load <id>|offload <id>       (model discovery + local lifecycle)
     kx datasets list | ingest <name> (--text <s>|--file <p>)... | query <name> --text <q> [--k N]   (RAG corpora)
     kx info                                     (non-secret server config: model/dirs/ports/flags/posture)
     kx health                                   (grpc.health.v1 liveness; exit 0 iff SERVING)
@@ -696,11 +696,13 @@ kx recipe search <intent> [--keyword <k>]... [--limit N] [client flags]
   scores NEVER authorize a recipe — `kx invoke` stays the gate. No warrant is sent."
             .into(),
         "models" => "\
-kx models list [client flags]
-  Display-only model discovery (Batch A): the models the connected gateway
-  serves (id, modalities, context window, serving flag). An FFI-free serve
-  lists nothing. SN-8: listing a model never routes one — model selection
-  stays a recipe ENUM free-param validated server-side at binding."
+kx models list | load <id> | offload <id> [client flags]
+  list: display-only model discovery — the models the connected gateway serves
+  (id, modalities, context window, serving + loaded flags). An FFI-free serve
+  lists nothing. load/offload (POC-3): warm/evict a REGISTERED local model in RAM
+  (real load / llama_model_free); an unregistered id is a fail-closed `not found`.
+  SN-8: listing a model never routes one — selection stays a recipe ENUM free-param
+  validated server-side; load/offload only manage RAM residency, never authority."
             .into(),
         "health" => "\
 kx health [client flags]

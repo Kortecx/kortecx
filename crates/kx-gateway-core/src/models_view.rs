@@ -17,10 +17,18 @@ pub struct ModelSummaryEntry {
     pub modalities: Vec<String>,
     /// Host-synthesized display prose (GGUF name / file stem) — never identity.
     pub description: String,
-    /// `true` iff this model backs the live serve loop right now.
+    /// `true` iff this model is the PRIMARY/default serve route.
     pub serving: bool,
     /// The served context window in tokens.
     pub context_len: u32,
+    /// POC-3: `true` iff the model is RESIDENT in RAM right now (live LRU
+    /// residency). The host recomputes this per `list()` call from the backend's
+    /// `resident()` snapshot; an FFI-free / model-less serve reports `false`.
+    pub loaded: bool,
+    /// POC-3: the recipe handle a client invokes to chat with THIS model (the
+    /// binder-free routing key — primary = `kx/recipes/chat`, secondary =
+    /// `kx/recipes/m-<id>`). Empty when no model is served.
+    pub chat_handle: String,
 }
 
 /// The model-catalog read seam. The host implements it over the model registry
