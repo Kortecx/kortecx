@@ -23,6 +23,7 @@ from .branch import (
     Branch,
     BranchItem,
     CreateBranchResult,
+    EditProposal,
     SnapshotResult,
 )
 from .capture import CaptureRecord, CaptureRecordPage
@@ -210,6 +211,7 @@ __all__ = [
     "CreateBranchResult",
     "SnapshotResult",
     "AdvanceResult",
+    "EditProposal",
     "ModelSummary",
     # POC-3 Models lifecycle: the load/offload outcome
     "ModelLifecycleResult",

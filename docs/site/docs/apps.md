@@ -125,22 +125,48 @@ branch manifest growing + a status phase (`planning → writing → done`) — n
 cosmetic timer. It is durable and resumable: a re-`scaffold` writes only the files
 still missing. Edits stay **in-CAS** — the host filesystem is never written.
 
-## Open & edit an App's files
+## The single-App IDE (POC-5d)
 
-Open an App (the console **Open** button, or `kx app files` / `kx app cat`) to browse
-the project tree (a file tree + a Monaco viewer) and chat with the App in context.
-Each file has an **Edit** affordance that runs the same agentic in-CAS rewrite as
-`kx branch edit` — the model reads the file, rewrites it, and the manifest advances to
-the new content ref (the host is never written). See [Branches](./branches.md) for the
-CoW mechanics.
+**Open** an App (the console **Open** button, or `kx app files` / `kx app cat`) into a
+full-screen **IDE** with three tabs:
+
+- **Files** — the project tree + a Monaco editor over the App's CoW branch. Edit a file
+  two ways:
+  - **directly** — type the new contents in Monaco and **Save** (`PutContent` →
+    `AdvanceBranch`; the host is never written). The CLI equivalent is
+    `kx app edit <handle> <path> --from <file>`.
+  - **agentically, with a review gate** — describe the change; the model rewrites the
+    file and you **review the diff** (current vs proposed) before it commits. **Approve**
+    advances the manifest; **Reject** discards (nothing is written). This is the same
+    `react-edit` loop as `kx branch edit`, split so the change is previewed first.
+- **Lineage** — the App's blueprint rendered as an **editable graph** (reorder / add /
+  remove / configure steps + edges). **Save to App** persists a new App version
+  (`SaveApp`); only the blueprint is replaced — every other rail (references, steering,
+  replay, inputs) is carried verbatim. A blueprint the visual editor can't faithfully
+  round-trip (e.g. an `exec` step) opens read-only. Dump the structure with
+  `kx app structure <handle>`.
+- **Chat** — chat with the App in context.
+
+The active tab and selected file are URL-addressable (`?tab=`/`?path=`), so refresh and
+deep links are stable. See [Branches](./branches.md) for the CoW mechanics.
+
+## Run an App
+
+**Run** an App from the IDE header or the **Workflows** catalog. If the App declares an
+`input_schema`, a run drawer collects the inputs (they fold into the entry model step);
+otherwise it runs in one click. The run routes to its live DAG. OSS runs **one App at a
+time** — multi-app chaining and scheduling are Cloud capabilities. The CLI equivalent is
+`kx app run <handle>` (`--arg k=v` per input).
 
 ## Lock an App (POC-5b)
 
-`kx app lock <handle>` (or the **Policies** section) locks the App's project branch:
-every agentic in-CAS edit is then refused at the single write chokepoint
-(`FAILED_PRECONDITION`, refusal code `LOCKED_BRANCH`) — the agent-write authority
-gate. `kx app unlock` re-enables edits. Locking is a per-party policy decision (off
-the truth path); losing it fails OPEN (editing is restored, never bricked).
+`kx app lock <handle>` (or the **Security › Policies** section) **fully freezes** an
+App: a locked App refuses BOTH an in-CAS **file** edit (`AdvanceBranch`) AND a
+**structure** save from the lineage editor (`SaveApp`) at the write chokepoints
+(`FAILED_PRECONDITION`, refusal code `LOCKED_BRANCH`). `kx app unlock` re-enables
+edits. Locking is a per-party policy decision (off the truth path); losing it fails
+OPEN (editing is restored, never bricked). The console pre-disables the write controls
+on a locked App, but the runtime is the authoritative gate.
 
 ## The Apps console
 

@@ -2100,6 +2100,23 @@ impl KxGateway for GatewayService {
                 "app envelope exceeds the server cap (1 MiB)",
             ));
         }
+        // POC-5d — a LOCKED App is fully frozen: the lock refuses an agentic in-CAS
+        // FILE edit (AdvanceBranch, POC-5b) AND a STRUCTURE edit (a re-save of the
+        // App envelope/blueprint from the lineage editor). One-App-one-branch ⇒ the
+        // lock is keyed by the App's own handle. A real lock-store error fails closed;
+        // an absent lock seam degrades open (additive feature). This is an off-journal
+        // availability gate (the digest is unaffected); the run path still re-resolves
+        // every warrant from the caller's grants (SN-8).
+        if let Some(locks) = self.locks.as_ref() {
+            if locks.is_locked(&principal, &req.handle)? {
+                return Err(with_refusal_code(
+                    Status::failed_precondition(
+                        "app is locked; structure edits are refused (unlock the App to save)",
+                    ),
+                    crate::locks_view::LOCKED_BRANCH_REFUSAL_CODE,
+                ));
+            }
+        }
         // The host validates + canonicalizes the envelope and derives app_ref +
         // the summary (it carries NO authority — a bad envelope ⇒ InvalidArgument).
         let (record, deduplicated) = apps.save(&principal, &req.handle, &req.envelope_json)?;

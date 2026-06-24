@@ -25,7 +25,7 @@ import {
 import { AdvanceResult, Branch, CreateBranchResult, SnapshotResult } from "./branch.js";
 import { CaptureRecord, type CaptureRecordPage } from "./capture.js";
 import { Chain } from "./chains.js";
-import type { DagSpecJson } from "./chains.js";
+import type { DagSpecJson, DagSpecStep } from "./chains.js";
 import { ContentItem, PutResult } from "./content.js";
 import {
   ContextBundle,
@@ -145,6 +145,34 @@ export function fillDefaultModel(
       step.modelId = defaultModel;
     }
   }
+}
+
+/** True when this blueprint step is a MODEL step (mirrors the CLI `resolve_kind`
+ *  inference: an explicit `kind`, else model fields ⇒ model). */
+function isModelStep(s: DagSpecStep): boolean {
+  return s.kind === "model" || (s.kind === undefined && Boolean(s.model_id || s.prompt));
+}
+
+/**
+ * POC-5d: fold an App's `input_schema` args into the ENTRY (first) model step's
+ * prompt as a clearly-delimited "Inputs" block, returning a NEW blueprint (never
+ * mutates the source). A NO-OP when `args` is empty/absent OR the blueprint has no
+ * model step ⇒ byte-identical to the pre-POC-5d compile. The server still
+ * re-resolves every warrant from the caller's grants (SN-8); args steer, never grant.
+ */
+export function injectAppArgs(
+  blueprint: DagSpecJson,
+  args: Record<string, string> | undefined,
+): DagSpecJson {
+  const entries = args ? Object.entries(args).filter(([, v]) => v !== undefined) : [];
+  if (entries.length === 0) return blueprint;
+  const idx = (blueprint.steps ?? []).findIndex(isModelStep);
+  if (idx < 0) return blueprint;
+  const block = entries.map(([k, v]) => `- ${k}: ${v}`).join("\n");
+  const steps = blueprint.steps.map((s, i) =>
+    i === idx ? { ...s, prompt: `${s.prompt ?? ""}\n\nInputs:\n${block}`.trim() } : s,
+  );
+  return { ...blueprint, steps };
 }
 
 /** Options for {@link KxClientBase.invoke}. */
@@ -474,12 +502,26 @@ export abstract class KxClientBase {
    */
   async runApp(
     handle: string,
-    opts: { wait?: boolean; timeoutMs?: number } = {},
+    opts: { wait?: boolean; timeoutMs?: number; args?: Record<string, string> } = {},
   ): Promise<Run | Result> {
     const stored = await this.getApp(handle);
     if (stored === null) throw new KxUsage(`app ${handle} not found`);
-    const request = Chain.fromBlueprint(stored.envelope.blueprint as DagSpecJson);
+    // POC-5d: fold the App's input_schema args into the entry model step's prompt.
+    // No-op when args is empty/absent ⇒ byte-identical to the pre-POC-5d compile.
+    const blueprint = injectAppArgs(stored.envelope.blueprint as DagSpecJson, opts.args);
+    const request = Chain.fromBlueprint(blueprint);
     return this.submitWorkflow(request, opts);
+  }
+
+  /**
+   * POC-5d: the App's portable blueprint (a {@link DagSpecJson} — the agentic step
+   * structure the lineage editor renders/edits). A thin convenience over
+   * {@link getApp} (`envelope.blueprint`); `null` for an absent/not-owned App
+   * (uniform — no existence oracle).
+   */
+  async getAppStructure(handle: string): Promise<DagSpecJson | null> {
+    const stored = await this.getApp(handle);
+    return stored === null ? null : (stored.envelope.blueprint as DagSpecJson);
   }
 
   /**
@@ -685,18 +727,20 @@ export abstract class KxClientBase {
   }
 
   /**
-   * D155 Phase-3: agentically edit a branch file IN-CAS. Resolves `path`'s current
-   * ref, runs the `kx/recipes/react-edit` loop (the body attached as a context
-   * ref; the model rewrites it per `instruction`), and advances the manifest to
-   * the new content ref. The host is NEVER written. Rejects if the chain produced
-   * no committed answer.
+   * POC-5d: the PROPOSE half of {@link editBranch} — run the `kx/recipes/react-edit`
+   * loop and return the model's proposed new body together with the file's current
+   * body, WITHOUT advancing the branch. The caller reviews the diff (current vs
+   * proposed) and then either approves (`advanceBranch(handle, path, resultRef)`) or
+   * rejects (discards — the proposed blob is a harmless content-addressed orphan).
+   * The host is NEVER written. Rejects if the chain produced no committed answer or
+   * an empty body (GR15 fail-closed — same guards as the one-shot {@link editBranch}).
    */
-  async editBranch(
+  async editBranchPropose(
     handle: string,
     path: string,
     instruction: string,
     opts: { timeoutMs?: number } = {},
-  ): Promise<AdvanceResult> {
+  ): Promise<{ resultRef: string; proposedText: string; currentText: string }> {
     const branch = await this.getBranch(handle);
     if (branch === null) throw new Error(`branch '${handle}' not found`);
     const item = branch.items.find((it) => it.path === path);
@@ -711,14 +755,37 @@ export abstract class KxClientBase {
     if (!(result instanceof Result) || !result.ok || result.resultRef === null) {
       throw new Error("react-edit produced no committed answer to advance the branch to");
     }
-    // Fail CLOSED on an empty edit (GR15): never advance the manifest to an empty
-    // file (a heavy-reasoning model can return only stripped reasoning).
+    // Fail CLOSED on an empty edit (GR15): never propose an empty file (a
+    // heavy-reasoning model can return only stripped reasoning).
     if (result.payload === null || result.payload.length === 0) {
       throw new Error(
         "react-edit produced an empty body (the model did not return file contents); the branch was NOT advanced",
       );
     }
-    return this.advanceBranch(handle, path, result.resultRef);
+    const current = await this.getBranchContent(handle, path);
+    return {
+      resultRef: result.resultRef,
+      proposedText: new TextDecoder().decode(result.payload),
+      currentText: current ? new TextDecoder().decode(current) : "",
+    };
+  }
+
+  /**
+   * D155 Phase-3: agentically edit a branch file IN-CAS. Runs the
+   * `kx/recipes/react-edit` loop and advances the manifest to the new content ref
+   * in one shot. The host is NEVER written. Rejects if the chain produced no
+   * committed answer. (POC-5d: this is `editBranchPropose` + `advanceBranch` — the
+   * react-edit directive lives in exactly one place so the committed blob bytes are
+   * identical across both APIs.)
+   */
+  async editBranch(
+    handle: string,
+    path: string,
+    instruction: string,
+    opts: { timeoutMs?: number } = {},
+  ): Promise<AdvanceResult> {
+    const { resultRef } = await this.editBranchPropose(handle, path, instruction, opts);
+    return this.advanceBranch(handle, path, resultRef);
   }
 
   /**

@@ -10,8 +10,8 @@
  * file so a wide tree never N+1-fetches every body.
  */
 
-import type { Branch } from "@kortecx/sdk/web";
-import { useQuery } from "@tanstack/react-query";
+import type { AdvanceResult, Branch } from "@kortecx/sdk/web";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { decodeContent } from "../lib/content-decode";
 import { useConnection } from "./connection-context";
 import { queryKeys } from "./query-keys";
@@ -70,6 +70,37 @@ export function useAppFileContent(
         return { text: "", missing: true };
       }
       return { text: decodeContent(bytes).text, missing: false };
+    },
+  });
+}
+
+export interface SaveFileVars {
+  readonly handle: string;
+  readonly path: string;
+  readonly text: string;
+}
+
+/**
+ * POC-5d: directly save a file's edited body IN-CAS — `PutContent` (the typed bytes,
+ * server-derived ref, SN-8) → `AdvanceBranch` (re-point the manifest path). The host
+ * is NEVER written. A LOCKED App is refused at the AdvanceBranch chokepoint
+ * (`FAILED_PRECONDITION` + `LOCKED_BRANCH`); the UI also disables the editor when
+ * locked (GR15). On success the branch manifest is invalidated so the new ref/body is
+ * re-pulled (re-base the editor draft — never an optimistic clobber).
+ */
+export function useSaveFile() {
+  const { client, endpoint } = useConnection();
+  const qc = useQueryClient();
+  return useMutation<AdvanceResult, unknown, SaveFileVars>({
+    mutationFn: async ({ handle, path, text }) => {
+      if (!client) {
+        throw new Error("not connected");
+      }
+      const put = await client.putContent(new TextEncoder().encode(text), { filename: path });
+      return client.advanceBranch(handle, path, put.contentRef);
+    },
+    onSuccess: (_res, { handle }) => {
+      void qc.invalidateQueries({ queryKey: queryKeys.appBranch(endpoint, handle) });
     },
   });
 }

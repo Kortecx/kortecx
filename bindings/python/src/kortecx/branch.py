@@ -110,3 +110,16 @@ class AdvanceResult:
             items=[BranchItem.from_proto(it) for it in r.items],
             deduplicated=r.deduplicated,
         )
+
+
+@dataclass(frozen=True)
+class EditProposal:
+    """POC-5d: the PROPOSE half of an agentic branch edit — the model's proposed new
+    body for a file plus its current body, WITHOUT having advanced the branch. The
+    caller reviews the diff (``current_text`` vs ``proposed_text``) then approves via
+    ``advance_branch(handle, path, result_ref)`` or discards to reject (the proposed
+    blob is a harmless content-addressed orphan)."""
+
+    result_ref: str  # the committed content ref of the proposed body (advance target)
+    proposed_text: str  # the model's proposed new file contents
+    current_text: str  # the file's current contents (for the diff)
