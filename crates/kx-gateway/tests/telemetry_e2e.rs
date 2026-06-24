@@ -41,6 +41,30 @@ async fn await_rows(
     panic!("telemetry.db never reached {n} joined rows");
 }
 
+/// Poll until the SPECIFIC mote's joined row exists. POC-5c CI-hardening: a bare
+/// `await_rows(.., 1)` returns as soon as ANY one row joins, which RACES a
+/// multi-mote run where a different mote's row joins first (the telemetry join
+/// tick lags the Committed fact) — `.find(mote_id)` would then miss the executed
+/// mote's row. Scanning every row (no filter dependency) until the target appears
+/// is order-independent and closes the flake.
+async fn await_row_for_mote(
+    c: &mut proto::kx_gateway_client::KxGatewayClient<tonic::transport::Channel>,
+    mote_id: &[u8],
+) -> proto::MoteTelemetryRow {
+    for _ in 0..120 {
+        let resp = c
+            .list_mote_telemetry(all_rows())
+            .await
+            .unwrap()
+            .into_inner();
+        if let Some(row) = resp.rows.into_iter().find(|r| r.mote_id == mote_id) {
+            return row;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    panic!("telemetry.db never joined a row for the executed mote");
+}
+
 fn all_rows() -> proto::ListMoteTelemetryRequest {
     proto::ListMoteTelemetryRequest {
         limit: None,
@@ -61,11 +85,7 @@ async fn an_executed_mote_gets_a_joined_honest_row() {
     let instance = submit_pure_run(&mut c, 0x61).await;
     let (mote_id, _) = await_committed(&mut c, &instance).await;
 
-    let rows = await_rows(&mut c, all_rows(), 1).await;
-    let row = rows
-        .iter()
-        .find(|r| r.mote_id == mote_id.to_vec())
-        .expect("the executed mote has a telemetry row");
+    let row = await_row_for_mote(&mut c, &mote_id.to_vec()).await;
 
     // Joined: the Committed fact's seq + the watermark instance are stamped.
     assert!(row.seq > 0);
