@@ -712,6 +712,7 @@ kx models list | load <id> | offload <id> [client flags]
         "app" => "\
 kx app new <name> --from-blueprint <file> [--model <id>] [--max-turns N] [--max-tool-calls N] [--tag <t>]... [--description <s>] [--branch <h>] [--output <file>]
 kx app save <file> [--handle <h>] | list | get <handle> [--output <file>] | run <handle> [--wait] [--timeout-secs N] [--out <file>] | export <handle> --output <file> [client flags]
+kx app scaffold <handle> [--goal <text>] [--wait] [--timeout-secs N] | files <handle> | cat <handle> <path> [--out <file>] | lock <handle> | unlock <handle>   (POC-5 Apps IDE)
   POC-4 Apps: a durable, reusable App = a kortecx.app/v1 envelope (a portable blueprint
   wrapped with by-reference context/tool/connection/dataset references, a minimal prompt/
   rule/skill/memory rail, a 4-axis steering config, and per-step replay intent). `new`

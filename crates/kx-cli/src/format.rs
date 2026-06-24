@@ -1204,7 +1204,69 @@ fn app_summary_json(s: &proto::AppSummary) -> Value {
         "description": s.description,
         "tags": s.tags,
         "step_count": s.step_count,
+        "locked": s.locked,
     })
+}
+
+/// Render `app scaffold` — the launched server-side scaffold (correlate by branch).
+#[must_use]
+pub fn render_scaffold_app(resp: &proto::ScaffoldAppResponse, json: bool) -> String {
+    if json {
+        json!({ "branch_handle": resp.branch_handle, "resumed": resp.resumed }).to_string()
+    } else {
+        format!(
+            "scaffolding into branch {} (resumed={}) — poll `kx app files {}` / `kx app scaffold-status`",
+            resp.branch_handle, resp.resumed, resp.branch_handle
+        )
+    }
+}
+
+/// Render the scaffold status (phase + the done/pending skeleton files).
+#[must_use]
+pub fn render_scaffold_status(resp: &proto::GetScaffoldStatusResponse, json: bool) -> String {
+    let phase = match proto::get_scaffold_status_response::Phase::try_from(resp.phase) {
+        Ok(proto::get_scaffold_status_response::Phase::Planning) => "planning",
+        Ok(proto::get_scaffold_status_response::Phase::Writing) => "writing",
+        Ok(proto::get_scaffold_status_response::Phase::Done) => "done",
+        Ok(proto::get_scaffold_status_response::Phase::Failed) => "failed",
+        _ => "unspecified",
+    };
+    if json {
+        json!({
+            "phase": phase,
+            "files_done": resp.files_done,
+            "files_pending": resp.files_pending,
+            "detail": resp.detail,
+        })
+        .to_string()
+    } else {
+        use std::fmt::Write as _;
+        let mut s = format!(
+            "scaffold {phase} — {} done, {} pending",
+            resp.files_done.len(),
+            resp.files_pending.len()
+        );
+        for f in &resp.files_done {
+            let _ = write!(s, "\n  ✓ {f}");
+        }
+        for f in &resp.files_pending {
+            let _ = write!(s, "\n  · {f}");
+        }
+        if !resp.detail.is_empty() {
+            let _ = write!(s, "\n  ({})", resp.detail);
+        }
+        s
+    }
+}
+
+/// Render `app lock` / `app unlock` — the per-App branch lock state.
+#[must_use]
+pub fn render_app_lock(handle: &str, locked: bool, json: bool) -> String {
+    if json {
+        json!({ "branch_handle": handle, "locked": locked }).to_string()
+    } else {
+        format!("app {handle} {}", if locked { "locked" } else { "unlocked" })
+    }
 }
 
 /// Render `app list` — the caller's App catalog (deterministic handle order).

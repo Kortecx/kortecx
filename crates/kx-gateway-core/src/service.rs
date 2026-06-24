@@ -781,6 +781,18 @@ pub struct GatewayService {
     /// Caller-scoped, off-journal, off-digest, rebuildable-to-empty. The envelope
     /// carries NO authority (the host validates it); `app run` re-resolves warrants.
     apps: Option<Arc<dyn crate::apps_view::AppCatalog>>,
+    /// The optional per-App lock store seam (POC-5b — the host injects a `locks.db`
+    /// sidecar). `None` ⇒ `LockApp` / `UnlockApp` are `unimplemented` AND the
+    /// `AdvanceBranch` chokepoint degrades OPEN (an additive feature never tightens
+    /// an existing serve). Caller-scoped, off-journal, off-digest, rebuildable-to-
+    /// empty (fails OPEN on loss — a lock is an availability gate, not integrity).
+    locks: Option<Arc<dyn crate::locks_view::LockStore>>,
+    /// The optional POC-5a App-scaffold orchestrator seam (the host injects a
+    /// server-side driver that creates the branch + drives the write-recipe loop +
+    /// advances the manifest, holding its own runtime/tracker). `None` ⇒ `ScaffoldApp`
+    /// / `GetScaffoldStatus` return `unimplemented` (no served model / branch store).
+    /// Off-journal, off-digest.
+    scaffolder: Option<Arc<dyn crate::scaffold::AppScaffolder>>,
 }
 
 /// The default fail-closed `PutContent` payload cap (32 MiB).
@@ -853,6 +865,8 @@ impl GatewayService {
             bundles: None,
             branches: None,
             apps: None,
+            locks: None,
+            scaffolder: None,
         }
     }
 
@@ -1215,6 +1229,24 @@ impl GatewayService {
         self.apps = Some(apps);
         self
     }
+
+    /// Wire the POC-5b per-App lock store (the host's `locks.db` sidecar). Without it
+    /// `LockApp`/`UnlockApp` return `unimplemented` AND the `AdvanceBranch` chokepoint
+    /// degrades OPEN (an additive feature never tightens an existing serve).
+    #[must_use]
+    pub fn with_lock_store(mut self, locks: Arc<dyn crate::locks_view::LockStore>) -> Self {
+        self.locks = Some(locks);
+        self
+    }
+
+    /// Wire the POC-5a App-scaffold orchestrator (the host's server-side driver,
+    /// seeded only when a served model is present). Without it `ScaffoldApp` /
+    /// `GetScaffoldStatus` return `unimplemented` fail-closed.
+    #[must_use]
+    pub fn with_app_scaffolder(mut self, scaffolder: Arc<dyn crate::scaffold::AppScaffolder>) -> Self {
+        self.scaffolder = Some(scaffolder);
+        self
+    }
 }
 
 /// The structured-refusal metadata key (PR-2). The value is
@@ -1393,6 +1425,24 @@ fn app_record_to_proto(r: crate::AppRecord) -> proto::AppSummary {
         description: r.description,
         tags: r.tags,
         step_count: r.step_count,
+        // POC-5b: the lock lives at the App's project branch (same handle as the
+        // App — the one-App-one-branch model). The list/get handlers OVERRIDE this
+        // from the wired LockStore; `false` here = unlocked / no branch / unwired.
+        locked: false,
+    }
+}
+
+/// Map the host scaffold phase to the wire enum (POC-5a).
+fn scaffold_phase_to_proto(
+    p: crate::scaffold::ScaffoldPhase,
+) -> proto::get_scaffold_status_response::Phase {
+    use crate::scaffold::ScaffoldPhase as P;
+    use proto::get_scaffold_status_response::Phase as W;
+    match p {
+        P::Planning => W::Planning,
+        P::Writing => W::Writing,
+        P::Done => W::Done,
+        P::Failed => W::Failed,
     }
 }
 
@@ -2077,8 +2127,22 @@ impl KxGateway for GatewayService {
             Some(req.after_handle.as_str())
         };
         let (records, has_more) = apps.list(&principal, limit, after)?;
+        // POC-5b: enrich `locked` from the lock store (best-effort display — the
+        // authoritative refusal is at the AdvanceBranch chokepoint). One-App-one-
+        // branch ⇒ the lock is keyed by the App's own handle.
+        let locks = self.locks.as_ref();
+        let apps_out = records
+            .into_iter()
+            .map(|r| {
+                let mut s = app_record_to_proto(r);
+                if let Some(l) = locks {
+                    s.locked = l.is_locked(&principal, &s.handle).unwrap_or(false);
+                }
+                s
+            })
+            .collect();
         Ok(Response::new(proto::ListAppsResponse {
-            apps: records.into_iter().map(app_record_to_proto).collect(),
+            apps: apps_out,
             has_more,
         }))
     }
@@ -2094,11 +2158,17 @@ impl KxGateway for GatewayService {
         let req = request.into_inner();
         // Uniform not-found for absent OR not-owned (no cross-party existence oracle).
         match apps.get(&principal, &req.handle)? {
-            Some((record, envelope_json)) => Ok(Response::new(proto::GetAppResponse {
-                found: true,
-                envelope_json,
-                summary: Some(app_record_to_proto(record)),
-            })),
+            Some((record, envelope_json)) => {
+                let mut summary = app_record_to_proto(record);
+                if let Some(l) = self.locks.as_ref() {
+                    summary.locked = l.is_locked(&principal, &summary.handle).unwrap_or(false);
+                }
+                Ok(Response::new(proto::GetAppResponse {
+                    found: true,
+                    envelope_json,
+                    summary: Some(summary),
+                }))
+            }
             None => Ok(Response::new(proto::GetAppResponse {
                 found: false,
                 envelope_json: Vec::new(),
@@ -3140,6 +3210,19 @@ impl KxGateway for GatewayService {
                 "advance requires a non-empty path",
             ));
         }
+        // POC-5b — the per-App lock write chokepoint: a locked branch refuses every
+        // agentic in-CAS edit (the agent-write authority gate). A real lock-store
+        // error fails closed; an absent lock seam degrades open (additive feature).
+        if let Some(locks) = self.locks.as_ref() {
+            if locks.is_locked(&principal, &req.handle)? {
+                return Err(with_refusal_code(
+                    Status::failed_precondition(
+                        "branch is locked; agentic in-CAS edits are refused (unlock the App to edit)",
+                    ),
+                    crate::locks_view::LOCKED_BRANCH_REFUSAL_CODE,
+                ));
+            }
+        }
         // The edited body the ReAct loop committed; an unresolvable ref is rejected
         // in the store (fail-closed) — here we only enforce the 32-byte shape.
         let content_ref: [u8; 32] = req
@@ -3155,6 +3238,145 @@ impl KxGateway for GatewayService {
             handle: req.handle,
             items: proto_branch.items,
             deduplicated,
+        }))
+    }
+
+    async fn get_branch_content(
+        &self,
+        request: Request<proto::GetBranchContentRequest>,
+    ) -> Result<Response<proto::GetBranchContentResponse>, Status> {
+        let branches = self.branches.as_ref().ok_or_else(|| {
+            Status::unimplemented("GetBranchContent: no branch store wired (branches.db absent)")
+        })?;
+        let principal = caller_principal(&request)?;
+        let req = request.into_inner();
+        // Caller-scoped: resolve the body THROUGH the caller's OWN branch manifest.
+        // Uniform `found=false` for absent branch / absent path / unresolvable ref —
+        // no cross-party existence oracle (the GetBranch / GetApp posture).
+        let payload = branches.get(&principal, &req.handle)?.and_then(|manifest| {
+            let item = manifest.items.iter().find(|it| it.path == req.path)?;
+            self.content
+                .get(&kx_content::ContentRef::from_bytes(item.content_ref))
+        });
+        Ok(Response::new(match payload {
+            Some(payload) => proto::GetBranchContentResponse {
+                payload,
+                found: true,
+            },
+            None => proto::GetBranchContentResponse {
+                payload: Vec::new(),
+                found: false,
+            },
+        }))
+    }
+
+    async fn lock_app(
+        &self,
+        request: Request<proto::LockAppRequest>,
+    ) -> Result<Response<proto::LockAppResponse>, Status> {
+        let locks = self.locks.as_ref().ok_or_else(|| {
+            Status::unimplemented("LockApp: no lock store wired (locks.db absent)")
+        })?;
+        let principal = caller_principal(&request)?;
+        let req = request.into_inner();
+        if !valid_bundle_handle(&req.branch_handle) {
+            return Err(Status::invalid_argument(
+                "branch_handle must be a 'namespace/collection/name' AssetPath",
+            ));
+        }
+        let locked = locks.lock(&principal, &req.branch_handle)?;
+        Ok(Response::new(proto::LockAppResponse { locked }))
+    }
+
+    async fn unlock_app(
+        &self,
+        request: Request<proto::UnlockAppRequest>,
+    ) -> Result<Response<proto::UnlockAppResponse>, Status> {
+        let locks = self.locks.as_ref().ok_or_else(|| {
+            Status::unimplemented("UnlockApp: no lock store wired (locks.db absent)")
+        })?;
+        let principal = caller_principal(&request)?;
+        let req = request.into_inner();
+        if !valid_bundle_handle(&req.branch_handle) {
+            return Err(Status::invalid_argument(
+                "branch_handle must be a 'namespace/collection/name' AssetPath",
+            ));
+        }
+        let unlocked = locks.unlock(&principal, &req.branch_handle)?;
+        Ok(Response::new(proto::UnlockAppResponse { unlocked }))
+    }
+
+    async fn scaffold_app(
+        &self,
+        request: Request<proto::ScaffoldAppRequest>,
+    ) -> Result<Response<proto::ScaffoldAppResponse>, Status> {
+        let scaffolder = self.scaffolder.as_ref().ok_or_else(|| {
+            Status::unimplemented(
+                "ScaffoldApp: this serve has no scaffold orchestrator (no served model / branch store)",
+            )
+        })?;
+        let apps = self.apps.as_ref().ok_or_else(|| {
+            Status::unimplemented("ScaffoldApp: no app catalog wired (apps.db absent)")
+        })?;
+        let principal = caller_principal(&request)?;
+        let req = request.into_inner();
+        // The App must exist + be caller-owned (uniform not-found — no oracle).
+        let Some((record, _envelope)) = apps.get(&principal, &req.handle)? else {
+            return Err(Status::not_found("app not found"));
+        };
+        // One-App-one-branch: the project branch defaults to the App's own handle.
+        let branch_handle = if req.branch_handle.trim().is_empty() {
+            req.handle.clone()
+        } else {
+            req.branch_handle.clone()
+        };
+        if !valid_bundle_handle(&branch_handle) {
+            return Err(Status::invalid_argument(
+                "branch_handle must be a 'namespace/collection/name' AssetPath",
+            ));
+        }
+        // POC-5b: a locked branch refuses the scaffold (the agent-write gate).
+        if let Some(locks) = self.locks.as_ref() {
+            if locks.is_locked(&principal, &branch_handle)? {
+                return Err(with_refusal_code(
+                    Status::failed_precondition("branch is locked; scaffold refused"),
+                    crate::locks_view::LOCKED_BRANCH_REFUSAL_CODE,
+                ));
+            }
+        }
+        // The authoring goal: the instruction, else the App's name.
+        let goal = if req.instruction.trim().is_empty() {
+            record.name.clone()
+        } else {
+            req.instruction.clone()
+        };
+        // The host driver creates/resumes the branch + spawns the background loop and
+        // returns immediately (progress via GetScaffoldStatus + GetBranch).
+        let resumed = scaffolder.start(&principal, &branch_handle, &goal)?;
+        Ok(Response::new(proto::ScaffoldAppResponse {
+            // Multi-run by design — correlate by `branch_handle` (poll GetScaffoldStatus
+            // + GetBranch). Left empty rather than asserting a single run id (GR15).
+            instance_id: Vec::new(),
+            branch_handle,
+            resumed,
+        }))
+    }
+
+    async fn get_scaffold_status(
+        &self,
+        request: Request<proto::GetScaffoldStatusRequest>,
+    ) -> Result<Response<proto::GetScaffoldStatusResponse>, Status> {
+        let scaffolder = self.scaffolder.as_ref().ok_or_else(|| {
+            Status::unimplemented("GetScaffoldStatus: no scaffold orchestrator wired")
+        })?;
+        let principal = caller_principal(&request)?;
+        let req = request.into_inner();
+        let status = scaffolder.status(&principal, &req.branch_handle)?;
+        Ok(Response::new(proto::GetScaffoldStatusResponse {
+            phase: scaffold_phase_to_proto(status.phase) as i32,
+            files_done: status.files_done,
+            files_pending: status.files_pending,
+            detail: status.detail,
         }))
     }
 

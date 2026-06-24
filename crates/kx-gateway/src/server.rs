@@ -843,6 +843,10 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     // the SaveApp/ListApps/GetApp RPCs. Off-journal, off-digest, rebuildable-to-empty
     // (no broker dep — app_ref is a pure content hash, the bundles.db posture).
     let apps_db = Arc::new(crate::apps::AppsDb::open(&catalog_dir)?);
+    // POC-5b: the per-App lock store (locks.db) — caller-scoped branch locks toggled
+    // by LockApp/UnlockApp + enforced at the AdvanceBranch chokepoint. Off-journal,
+    // off-digest, rebuildable-to-empty (FAILS OPEN on loss — an availability gate).
+    let locks_db = Arc::new(crate::locks::LocksDb::open(&catalog_dir)?);
     // D155 Phase-A: the branch store (branches.db) shares the content store (the
     // SnapshotInto CAS write target) and the operator FS read root (KX_SERVE_FS_ROOT,
     // default-OFF — None ⇒ SnapshotInto fails-precondition). Off-journal, off-digest.
@@ -1196,6 +1200,22 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     // admitted defs into (always wired — an absent blob is `def_found = false`).
     let mote_defs_view: Arc<dyn kx_gateway_core::MoteDefView> =
         Arc::new(crate::mote_defs::HostMoteDefView::new(content.clone()));
+    // POC-5a: the server-side App-scaffold orchestrator — wired only when a model is
+    // served (the `app-scaffold-write` recipe is then seeded). It holds Arc clones of
+    // the binder/submitter/reader/content/branch/lock seams (taken BEFORE the builder
+    // chain consumes `submitter`/`content`) + spawns the background write loop.
+    let app_scaffolder: Option<Arc<dyn kx_gateway_core::AppScaffolder>> = if serve_model.is_some() {
+        Some(Arc::new(crate::scaffold::HostScaffolder::new(
+            binder.clone(),
+            submitter.clone(),
+            reader.clone(),
+            content.clone(),
+            branches_db.clone(),
+            Some(locks_db.clone() as Arc<dyn kx_gateway_core::LockStore>),
+        )))
+    } else {
+        None
+    };
     #[cfg_attr(not(feature = "hnsw"), allow(unused_mut))]
     let mut gateway = GatewayService::new(reader.clone(), submitter, content)
         .with_signature_catalog(signature_catalog)
@@ -1220,6 +1240,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         .with_bundles_store(bundles_db)
         .with_apps_catalog(apps_db)
         .with_branches_store(branches_db)
+        .with_lock_store(locks_db)
         .with_tool_admin(Arc::new(crate::tools::HostToolRegistry::new(
             tool_registry.clone(),
             crate::tools::tool_host_allowlist(),
@@ -1257,6 +1278,11 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     #[cfg(feature = "inference")]
     if let Some(lifecycle) = model_lifecycle_view {
         gateway = gateway.with_model_lifecycle(lifecycle);
+    }
+    // POC-5a: wire the App-scaffold orchestrator (present only when a model is
+    // served). Without it ScaffoldApp/GetScaffoldStatus return `unimplemented`.
+    if let Some(scaffolder) = app_scaffolder {
+        gateway = gateway.with_app_scaffolder(scaffolder);
     }
     // PR-6b-1: wire the EXTERNAL MCP gateway (the 5 MCP-server RPCs + the live
     // Connections govern surface). Opens the off-journal connections.db beside the

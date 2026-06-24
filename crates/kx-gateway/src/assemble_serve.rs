@@ -11,7 +11,7 @@
 //! across leases and recovery re-folds (R49). To guarantee that:
 //!
 //! - parents are **sorted by `MoteId`** (and de-duplicated) before rendering, and
-//! - the block is **hard-capped at [`WINDOW_BYTES`]**, failing closed on overflow
+//! - the block is **hard-capped at [`crate::env_caps::window_bytes`]**, failing closed on overflow
 //!   (mirroring the assembler's `OverflowDecisionRequired`) so a runaway upstream
 //!   can never silently truncate or blow the model window.
 //!
@@ -22,11 +22,6 @@ use std::fmt;
 use kx_content::{ContentRef, ContentStore, LocalFsContentStore};
 use kx_mote::{ContextItemRef, MoteId};
 
-/// The hard cap on assembled F-7 context bytes prepended to a model prompt. Pinned
-/// (NOT warrant-derived) so the leaf's content-addressed result stays deterministic
-/// and a runaway upstream fails closed rather than silently truncating.
-pub(crate) const WINDOW_BYTES: usize = 32 * 1024;
-
 /// Failure assembling F-7 serve context. Both variants are fail-closed: the model
 /// never runs on partial or unbounded context.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -34,7 +29,7 @@ pub(crate) enum AssembleError {
     /// A declared parent `result_ref` did not resolve in the shared store (a forged,
     /// or not-yet-replicated, ref). Never run the model on missing context.
     UpstreamMissing(ContentRef),
-    /// The rendered context exceeded [`WINDOW_BYTES`].
+    /// The rendered context exceeded the serve window cap (`KX_SERVE_WINDOW_BYTES`).
     Overflow { needed: usize, cap: usize },
 }
 
@@ -82,11 +77,9 @@ pub(crate) fn assemble_from_parent_results(
             String::from_utf8_lossy(bytes.as_ref())
         );
         let needed = out.len() + block.len();
-        if needed > WINDOW_BYTES {
-            return Err(AssembleError::Overflow {
-                needed,
-                cap: WINDOW_BYTES,
-            });
+        let cap = crate::env_caps::window_bytes();
+        if needed > cap {
+            return Err(AssembleError::Overflow { needed, cap });
         }
         out.push_str(&block);
     }
@@ -124,11 +117,9 @@ pub(crate) fn assemble_context_items(
             String::from_utf8_lossy(bytes.as_ref())
         );
         let needed = out.len() + block.len();
-        if needed > WINDOW_BYTES {
-            return Err(AssembleError::Overflow {
-                needed,
-                cap: WINDOW_BYTES,
-            });
+        let cap = crate::env_caps::window_bytes();
+        if needed > cap {
+            return Err(AssembleError::Overflow { needed, cap });
         }
         out.push_str(&block);
     }
@@ -213,10 +204,12 @@ mod tests {
     fn overflow_fails_closed() {
         let (_dir, store) = store();
         // A single parent larger than the window must fail closed (no silent truncation).
-        let big = vec![b'x'; WINDOW_BYTES + 1];
+        // (env unset ⇒ window_bytes() == the default cap.)
+        let cap = crate::env_caps::DEFAULT_WINDOW_BYTES;
+        let big = vec![b'x'; cap + 1];
         let r = store.put(&big).unwrap();
         let err = assemble_from_parent_results(&[(mote_id(1), r)], &store).unwrap_err();
-        assert!(matches!(err, AssembleError::Overflow { cap, .. } if cap == WINDOW_BYTES));
+        assert!(matches!(err, AssembleError::Overflow { cap: c, .. } if c == cap));
     }
 
     // --- PR-7 context items ------------------------------------------------

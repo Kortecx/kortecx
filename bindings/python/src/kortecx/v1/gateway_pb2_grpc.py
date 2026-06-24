@@ -309,6 +309,11 @@ class KxGatewayStub(object):
                 request_serializer=kortecx_dot_v1_dot_gateway__pb2.AdvanceBranchRequest.SerializeToString,
                 response_deserializer=kortecx_dot_v1_dot_gateway__pb2.AdvanceBranchResponse.FromString,
                 _registered_method=True)
+        self.GetBranchContent = channel.unary_unary(
+                '/kortecx.v1.KxGateway/GetBranchContent',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.GetBranchContentRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.GetBranchContentResponse.FromString,
+                _registered_method=True)
         self.GetServerInfo = channel.unary_unary(
                 '/kortecx.v1.KxGateway/GetServerInfo',
                 request_serializer=kortecx_dot_v1_dot_gateway__pb2.GetServerInfoRequest.SerializeToString,
@@ -338,6 +343,26 @@ class KxGatewayStub(object):
                 '/kortecx.v1.KxGateway/GetApp',
                 request_serializer=kortecx_dot_v1_dot_gateway__pb2.GetAppRequest.SerializeToString,
                 response_deserializer=kortecx_dot_v1_dot_gateway__pb2.GetAppResponse.FromString,
+                _registered_method=True)
+        self.ScaffoldApp = channel.unary_unary(
+                '/kortecx.v1.KxGateway/ScaffoldApp',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.ScaffoldAppRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.ScaffoldAppResponse.FromString,
+                _registered_method=True)
+        self.GetScaffoldStatus = channel.unary_unary(
+                '/kortecx.v1.KxGateway/GetScaffoldStatus',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.GetScaffoldStatusRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.GetScaffoldStatusResponse.FromString,
+                _registered_method=True)
+        self.LockApp = channel.unary_unary(
+                '/kortecx.v1.KxGateway/LockApp',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.LockAppRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.LockAppResponse.FromString,
+                _registered_method=True)
+        self.UnlockApp = channel.unary_unary(
+                '/kortecx.v1.KxGateway/UnlockApp',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.UnlockAppRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.UnlockAppResponse.FromString,
                 _registered_method=True)
 
 
@@ -744,6 +769,14 @@ class KxGatewayServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def GetBranchContent(self, request, context):
+        """POC-5a — caller-scoped read of a branch file body (manifest path -> CAS body).
+        Uniform NotFound (found=false) for absent branch / absent path / not-owned.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
     def GetServerInfo(self, request, context):
         """POC-1 (Settings "Workspace") — a NON-SECRET projection of the resolved server
         configuration: model/dirs/ports/flags + the auth/CORS/TLS POSTURE (labels +
@@ -790,6 +823,40 @@ class KxGatewayServicer(object):
         raise NotImplementedError('Method not implemented!')
 
     def GetApp(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ScaffoldApp(self, request, context):
+        """POC-5a (Apps "scaffold") — drive a server-side async scaffold of the App's
+        fixed skeleton into a fresh CoW-on-CAS branch (plan -> N writes -> N
+        AdvanceBranch). Returns immediately (the orchestration runs in the
+        background; observe via GetScaffoldStatus + GetBranch + StreamEvents).
+        Warrants are server-minted (SN-8). Unimplemented when no served model /
+        branch store. Off-journal, off-digest.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def GetScaffoldStatus(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def LockApp(self, request, context):
+        """POC-5b (Policies "per-App lock") — lock / unlock the App's project branch.
+        A locked branch refuses agentic in-CAS edits at the AdvanceBranch chokepoint
+        (FAILED_PRECONDITION + kx-refusal-code: LOCKED_BRANCH). Caller-scoped;
+        unimplemented when the locks sidecar is absent (degrade-open). Off-journal.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def UnlockApp(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -1073,6 +1140,11 @@ def add_KxGatewayServicer_to_server(servicer, server):
                     request_deserializer=kortecx_dot_v1_dot_gateway__pb2.AdvanceBranchRequest.FromString,
                     response_serializer=kortecx_dot_v1_dot_gateway__pb2.AdvanceBranchResponse.SerializeToString,
             ),
+            'GetBranchContent': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetBranchContent,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.GetBranchContentRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.GetBranchContentResponse.SerializeToString,
+            ),
             'GetServerInfo': grpc.unary_unary_rpc_method_handler(
                     servicer.GetServerInfo,
                     request_deserializer=kortecx_dot_v1_dot_gateway__pb2.GetServerInfoRequest.FromString,
@@ -1102,6 +1174,26 @@ def add_KxGatewayServicer_to_server(servicer, server):
                     servicer.GetApp,
                     request_deserializer=kortecx_dot_v1_dot_gateway__pb2.GetAppRequest.FromString,
                     response_serializer=kortecx_dot_v1_dot_gateway__pb2.GetAppResponse.SerializeToString,
+            ),
+            'ScaffoldApp': grpc.unary_unary_rpc_method_handler(
+                    servicer.ScaffoldApp,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.ScaffoldAppRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.ScaffoldAppResponse.SerializeToString,
+            ),
+            'GetScaffoldStatus': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetScaffoldStatus,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.GetScaffoldStatusRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.GetScaffoldStatusResponse.SerializeToString,
+            ),
+            'LockApp': grpc.unary_unary_rpc_method_handler(
+                    servicer.LockApp,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.LockAppRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.LockAppResponse.SerializeToString,
+            ),
+            'UnlockApp': grpc.unary_unary_rpc_method_handler(
+                    servicer.UnlockApp,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.UnlockAppRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.UnlockAppResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -2600,6 +2692,33 @@ class KxGateway(object):
             _registered_method=True)
 
     @staticmethod
+    def GetBranchContent(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/GetBranchContent',
+            kortecx_dot_v1_dot_gateway__pb2.GetBranchContentRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.GetBranchContentResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
     def GetServerInfo(request,
             target,
             options=(),
@@ -2751,6 +2870,114 @@ class KxGateway(object):
             '/kortecx.v1.KxGateway/GetApp',
             kortecx_dot_v1_dot_gateway__pb2.GetAppRequest.SerializeToString,
             kortecx_dot_v1_dot_gateway__pb2.GetAppResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ScaffoldApp(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/ScaffoldApp',
+            kortecx_dot_v1_dot_gateway__pb2.ScaffoldAppRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.ScaffoldAppResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GetScaffoldStatus(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/GetScaffoldStatus',
+            kortecx_dot_v1_dot_gateway__pb2.GetScaffoldStatusRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.GetScaffoldStatusResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def LockApp(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/LockApp',
+            kortecx_dot_v1_dot_gateway__pb2.LockAppRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.LockAppResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def UnlockApp(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/UnlockApp',
+            kortecx_dot_v1_dot_gateway__pb2.UnlockAppRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.UnlockAppResponse.FromString,
             options,
             channel_credentials,
             insecure,

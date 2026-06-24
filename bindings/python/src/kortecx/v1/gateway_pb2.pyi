@@ -1019,7 +1019,7 @@ class OffloadModelResponse(_message.Message):
     def __init__(self, model_id: _Optional[str] = ..., loaded: bool = ..., was_resident: bool = ...) -> None: ...
 
 class AppSummary(_message.Message):
-    __slots__ = ("handle", "app_ref", "name", "version", "description", "tags", "step_count")
+    __slots__ = ("handle", "app_ref", "name", "version", "description", "tags", "step_count", "locked")
     HANDLE_FIELD_NUMBER: _ClassVar[int]
     APP_REF_FIELD_NUMBER: _ClassVar[int]
     NAME_FIELD_NUMBER: _ClassVar[int]
@@ -1027,6 +1027,7 @@ class AppSummary(_message.Message):
     DESCRIPTION_FIELD_NUMBER: _ClassVar[int]
     TAGS_FIELD_NUMBER: _ClassVar[int]
     STEP_COUNT_FIELD_NUMBER: _ClassVar[int]
+    LOCKED_FIELD_NUMBER: _ClassVar[int]
     handle: str
     app_ref: bytes
     name: str
@@ -1034,7 +1035,8 @@ class AppSummary(_message.Message):
     description: str
     tags: _containers.RepeatedScalarFieldContainer[str]
     step_count: int
-    def __init__(self, handle: _Optional[str] = ..., app_ref: _Optional[bytes] = ..., name: _Optional[str] = ..., version: _Optional[str] = ..., description: _Optional[str] = ..., tags: _Optional[_Iterable[str]] = ..., step_count: _Optional[int] = ...) -> None: ...
+    locked: bool
+    def __init__(self, handle: _Optional[str] = ..., app_ref: _Optional[bytes] = ..., name: _Optional[str] = ..., version: _Optional[str] = ..., description: _Optional[str] = ..., tags: _Optional[_Iterable[str]] = ..., step_count: _Optional[int] = ..., locked: bool = ...) -> None: ...
 
 class SaveAppRequest(_message.Message):
     __slots__ = ("handle", "envelope_json")
@@ -1085,6 +1087,80 @@ class GetAppResponse(_message.Message):
     envelope_json: bytes
     summary: AppSummary
     def __init__(self, found: bool = ..., envelope_json: _Optional[bytes] = ..., summary: _Optional[_Union[AppSummary, _Mapping]] = ...) -> None: ...
+
+class ScaffoldAppRequest(_message.Message):
+    __slots__ = ("handle", "branch_handle", "instruction")
+    HANDLE_FIELD_NUMBER: _ClassVar[int]
+    BRANCH_HANDLE_FIELD_NUMBER: _ClassVar[int]
+    INSTRUCTION_FIELD_NUMBER: _ClassVar[int]
+    handle: str
+    branch_handle: str
+    instruction: str
+    def __init__(self, handle: _Optional[str] = ..., branch_handle: _Optional[str] = ..., instruction: _Optional[str] = ...) -> None: ...
+
+class ScaffoldAppResponse(_message.Message):
+    __slots__ = ("instance_id", "branch_handle", "resumed")
+    INSTANCE_ID_FIELD_NUMBER: _ClassVar[int]
+    BRANCH_HANDLE_FIELD_NUMBER: _ClassVar[int]
+    RESUMED_FIELD_NUMBER: _ClassVar[int]
+    instance_id: bytes
+    branch_handle: str
+    resumed: bool
+    def __init__(self, instance_id: _Optional[bytes] = ..., branch_handle: _Optional[str] = ..., resumed: bool = ...) -> None: ...
+
+class GetScaffoldStatusRequest(_message.Message):
+    __slots__ = ("branch_handle",)
+    BRANCH_HANDLE_FIELD_NUMBER: _ClassVar[int]
+    branch_handle: str
+    def __init__(self, branch_handle: _Optional[str] = ...) -> None: ...
+
+class GetScaffoldStatusResponse(_message.Message):
+    __slots__ = ("phase", "files_done", "files_pending", "detail")
+    class Phase(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+        __slots__ = ()
+        PHASE_UNSPECIFIED: _ClassVar[GetScaffoldStatusResponse.Phase]
+        PLANNING: _ClassVar[GetScaffoldStatusResponse.Phase]
+        WRITING: _ClassVar[GetScaffoldStatusResponse.Phase]
+        DONE: _ClassVar[GetScaffoldStatusResponse.Phase]
+        FAILED: _ClassVar[GetScaffoldStatusResponse.Phase]
+    PHASE_UNSPECIFIED: GetScaffoldStatusResponse.Phase
+    PLANNING: GetScaffoldStatusResponse.Phase
+    WRITING: GetScaffoldStatusResponse.Phase
+    DONE: GetScaffoldStatusResponse.Phase
+    FAILED: GetScaffoldStatusResponse.Phase
+    PHASE_FIELD_NUMBER: _ClassVar[int]
+    FILES_DONE_FIELD_NUMBER: _ClassVar[int]
+    FILES_PENDING_FIELD_NUMBER: _ClassVar[int]
+    DETAIL_FIELD_NUMBER: _ClassVar[int]
+    phase: GetScaffoldStatusResponse.Phase
+    files_done: _containers.RepeatedScalarFieldContainer[str]
+    files_pending: _containers.RepeatedScalarFieldContainer[str]
+    detail: str
+    def __init__(self, phase: _Optional[_Union[GetScaffoldStatusResponse.Phase, str]] = ..., files_done: _Optional[_Iterable[str]] = ..., files_pending: _Optional[_Iterable[str]] = ..., detail: _Optional[str] = ...) -> None: ...
+
+class LockAppRequest(_message.Message):
+    __slots__ = ("branch_handle",)
+    BRANCH_HANDLE_FIELD_NUMBER: _ClassVar[int]
+    branch_handle: str
+    def __init__(self, branch_handle: _Optional[str] = ...) -> None: ...
+
+class LockAppResponse(_message.Message):
+    __slots__ = ("locked",)
+    LOCKED_FIELD_NUMBER: _ClassVar[int]
+    locked: bool
+    def __init__(self, locked: bool = ...) -> None: ...
+
+class UnlockAppRequest(_message.Message):
+    __slots__ = ("branch_handle",)
+    BRANCH_HANDLE_FIELD_NUMBER: _ClassVar[int]
+    branch_handle: str
+    def __init__(self, branch_handle: _Optional[str] = ...) -> None: ...
+
+class UnlockAppResponse(_message.Message):
+    __slots__ = ("unlocked",)
+    UNLOCKED_FIELD_NUMBER: _ClassVar[int]
+    unlocked: bool
+    def __init__(self, unlocked: bool = ...) -> None: ...
 
 class GetMoteDetailRequest(_message.Message):
     __slots__ = ("instance_id", "mote_id")
@@ -1820,6 +1896,22 @@ class AdvanceBranchResponse(_message.Message):
     items: _containers.RepeatedCompositeFieldContainer[BranchItem]
     deduplicated: bool
     def __init__(self, branch_ref: _Optional[bytes] = ..., handle: _Optional[str] = ..., items: _Optional[_Iterable[_Union[BranchItem, _Mapping]]] = ..., deduplicated: bool = ...) -> None: ...
+
+class GetBranchContentRequest(_message.Message):
+    __slots__ = ("handle", "path")
+    HANDLE_FIELD_NUMBER: _ClassVar[int]
+    PATH_FIELD_NUMBER: _ClassVar[int]
+    handle: str
+    path: str
+    def __init__(self, handle: _Optional[str] = ..., path: _Optional[str] = ...) -> None: ...
+
+class GetBranchContentResponse(_message.Message):
+    __slots__ = ("payload", "found")
+    PAYLOAD_FIELD_NUMBER: _ClassVar[int]
+    FOUND_FIELD_NUMBER: _ClassVar[int]
+    payload: bytes
+    found: bool
+    def __init__(self, payload: _Optional[bytes] = ..., found: bool = ...) -> None: ...
 
 class GetServerInfoRequest(_message.Message):
     __slots__ = ()

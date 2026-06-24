@@ -914,6 +914,7 @@ message AppSummary {
   string description   = 5;  // advisory (never parsed for enforcement)
   repeated string tags = 6;  // catalog tags
   uint32 step_count    = 7;  // blueprint step count (display only)
+  bool   locked        = 8;  // POC-5b: the App's project branch is locked (agentic edits refused); false when no branch / not locked / lock store unwired
 }
 message SaveAppRequest {
   string handle        = 1;  // catalog key (upsert key within the caller's scope)
@@ -938,6 +939,44 @@ message GetAppResponse {
   bytes      envelope_json = 2;  // canonical stored bytes (empty when not found)
   AppSummary summary       = 3;  // the derived summary (absent when not found)
 }
+
+// ---------------------------------------------------------------------------
+// POC-5a — App scaffold + POC-5b — per-App lock. Additive, off-journal,
+// off-digest. ScaffoldApp drives a server-side async orchestration (plan step
+// -> N fixed-skeleton write steps -> N AdvanceBranch) into a fresh CoW-on-CAS
+// branch, reusing the proven single-step react-edit pattern; the frozen
+// coordinator loop is UNTOUCHED. Warrants are SERVER-minted (SN-8/BLOCKER#5):
+// the `instruction` is DATA only. The lock gates the single AdvanceBranch write
+// chokepoint (a locked App refuses further agentic in-CAS edits).
+// ---------------------------------------------------------------------------
+message ScaffoldAppRequest {
+  string handle        = 1;  // an existing saved App handle (caller-scoped)
+  string branch_handle = 2;  // target project branch (created if absent); empty ⇒ server derives from `handle`
+  string instruction   = 3;  // free-form authoring intent (UNTRUSTED model input; never names authority)
+}
+message ScaffoldAppResponse {
+  bytes  instance_id   = 1;  // 16B — the plan run's instance (progress observable via GetProjection/StreamEvents)
+  string branch_handle = 2;  // echoed (the branch the skeleton is scaffolded into)
+  bool   resumed       = 3;  // true iff a prior in-flight scaffold was resumed (pending paths only)
+}
+message GetScaffoldStatusRequest { string branch_handle = 1; }
+message GetScaffoldStatusResponse {
+  enum Phase {
+    PHASE_UNSPECIFIED = 0;
+    PLANNING          = 1;  // the plan step is producing the file manifest
+    WRITING           = 2;  // writing the skeleton files (files_pending non-empty)
+    DONE              = 3;  // all skeleton files advanced into the branch
+    FAILED            = 4;  // the orchestration failed (detail carries the advisory reason)
+  }
+  Phase phase = 1;
+  repeated string files_done    = 2;  // skeleton paths already present in the branch manifest
+  repeated string files_pending = 3;  // skeleton paths still to write
+  string detail                 = 4;  // advisory progress / failure text (never authority)
+}
+message LockAppRequest   { string branch_handle = 1; }  // lock the App's project branch (caller-scoped)
+message LockAppResponse  { bool locked = 1; }
+message UnlockAppRequest { string branch_handle = 1; }
+message UnlockAppResponse{ bool unlocked = 1; }
 
 // ---------------------------------------------------------------------------
 // Batch B — Mote definition inspection (PR-2). Additive RPC (D120.6).
@@ -1547,6 +1586,20 @@ message AdvanceBranchResponse {
   bool   deduplicated       = 4;         // true iff the re-point was a no-op (idempotent)
 }
 
+// POC-5a — caller-scoped read of a branch FILE BODY (the F3 finding). GetContent
+// is run/uploads-scoped; this resolves the body via the caller's OWN branch
+// manifest (NotFound is uniform for absent branch / absent path / not-owned —
+// no existence oracle). Powers the Apps FileTree+Monaco open view and the
+// scaffold resume read of `.kx/scaffold-plan.json`.
+message GetBranchContentRequest {
+  string handle = 1;                     // the branch (caller-scoped)
+  string path   = 2;                     // the manifest path whose body to resolve
+}
+message GetBranchContentResponse {
+  bytes payload = 1;                     // the file body bytes (empty when not found)
+  bool  found   = 2;                     // false uniformly for absent branch / absent path / not-owned
+}
+
 // ---------------------------------------------------------------------------
 // Service — the external client-facing gateway (distinct from Coordinator).
 // ---------------------------------------------------------------------------
@@ -1711,6 +1764,9 @@ service KxGateway {
   // if the branch is unknown to the caller; INVALID_ARGUMENT if the ref does not
   // resolve in the content store (fail-closed — no dangling manifest).
   rpc AdvanceBranch(AdvanceBranchRequest) returns (AdvanceBranchResponse);
+  // POC-5a — caller-scoped read of a branch file body (manifest path -> CAS body).
+  // Uniform NotFound (found=false) for absent branch / absent path / not-owned.
+  rpc GetBranchContent(GetBranchContentRequest) returns (GetBranchContentResponse);
 
   // POC-1 (Settings "Workspace") — a NON-SECRET projection of the resolved server
   // configuration: model/dirs/ports/flags + the auth/CORS/TLS POSTURE (labels +
@@ -1735,4 +1791,20 @@ service KxGateway {
   rpc SaveApp(SaveAppRequest) returns (SaveAppResponse);
   rpc ListApps(ListAppsRequest) returns (ListAppsResponse);
   rpc GetApp(GetAppRequest) returns (GetAppResponse);
+
+  // POC-5a (Apps "scaffold") — drive a server-side async scaffold of the App's
+  // fixed skeleton into a fresh CoW-on-CAS branch (plan -> N writes -> N
+  // AdvanceBranch). Returns immediately (the orchestration runs in the
+  // background; observe via GetScaffoldStatus + GetBranch + StreamEvents).
+  // Warrants are server-minted (SN-8). Unimplemented when no served model /
+  // branch store. Off-journal, off-digest.
+  rpc ScaffoldApp(ScaffoldAppRequest) returns (ScaffoldAppResponse);
+  rpc GetScaffoldStatus(GetScaffoldStatusRequest) returns (GetScaffoldStatusResponse);
+
+  // POC-5b (Policies "per-App lock") — lock / unlock the App's project branch.
+  // A locked branch refuses agentic in-CAS edits at the AdvanceBranch chokepoint
+  // (FAILED_PRECONDITION + kx-refusal-code: LOCKED_BRANCH). Caller-scoped;
+  // unimplemented when the locks sidecar is absent (degrade-open). Off-journal.
+  rpc LockApp(LockAppRequest) returns (LockAppResponse);
+  rpc UnlockApp(UnlockAppRequest) returns (UnlockAppResponse);
 }
