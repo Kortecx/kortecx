@@ -1,15 +1,15 @@
 //! POC-5d LIVE witness (`--ignored`): drive the single-App IDE write paths against a
-//! live model end-to-end — (1) a LINEAGE structure edit (GetApp → mutate the blueprint
-//! → SaveApp → GetApp reflects it), (2) a DIRECT in-CAS file edit (PutContent →
-//! AdvanceBranch → GetBranchContent shows the new body), (3) the per-App LOCK freezing
-//! BOTH a file edit AND a structure save (LOCKED_BRANCH), then (4) RUN the edited
-//! agentic App's blueprint on the served model and assert it settles (whether a `tool`
-//! round fires is model-nondeterministic, so it is LOGGED — the deterministic
-//! fire-commit proofs live in `kx-coordinator`/`kx-toolcall`).
+//! live model end-to-end — (1) a LINEAGE structure edit (`GetApp` → mutate the
+//! blueprint → `SaveApp` → `GetApp` reflects it), (2) a DIRECT in-CAS file edit
+//! (`PutContent` → `AdvanceBranch` → `GetBranchContent` shows the new body), (3) the
+//! per-App LOCK freezing BOTH a file edit AND a structure save (`LOCKED_BRANCH`), then
+//! (4) RUN the edited agentic App's blueprint on the served model and assert it settles
+//! (whether a `tool` round fires is model-nondeterministic, so it is LOGGED — the
+//! deterministic fire-commit proofs live in `kx-coordinator`/`kx-toolcall`).
 //!
 //! The agentic propose→diff→approve review gate is a CLIENT-SIDE decomposition of the
 //! already-live `editBranch` (propose = invoke `react-edit` WITHOUT advancing; approve
-//! = AdvanceBranch) — its server behaviour is unchanged, so it is covered by the
+//! = `AdvanceBranch`) — its server behaviour is unchanged, so it is covered by the
 //! deterministic UI tests + the live console walk-through rather than re-proven here.
 //!
 //! Gated `#[cfg(feature = "inference")]` AND `#[ignore]`; runtime-skips without a GGUF.
